@@ -151,6 +151,7 @@ try {
 		assert.equal(runtime.telemetryEnabled, true);
 		assert.equal(runtime.firstLaunch, true);
 		assert.match(runtime.installationId, /^[0-9a-f-]{36}$/);
+		assert.match(html, /window\.__COZYCLAY_LIVE__ = true;/, "the served studio opts into the loopback live socket (issue #58)");
 
 		const forged = await fetch(`http://127.0.0.1:${port}/__cozyclay/telemetry`, {
 			method: "POST",

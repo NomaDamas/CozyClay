@@ -432,7 +432,10 @@ server = createServer((req, res) => {
 		if (runtime.firstLaunch) {
 			markTelemetryFirstLaunch(STATE_FILE);
 		}
-		const script = `<script>window.__COZYCLAY_RUNTIME__ = ${JSON.stringify(runtime).replaceAll("<", "\\u003c")};</script>`;
+		// __COZYCLAY_LIVE__ opts the production build into the loopback live
+		// socket (src/App.jsx gates on DEV || this flag); without it an
+		// npx-served studio can never attach to the MCP server's live hub.
+		const script = `<script>window.__COZYCLAY_RUNTIME__ = ${JSON.stringify(runtime).replaceAll("<", "\\u003c")}; window.__COZYCLAY_LIVE__ = true;</script>`;
 		const html = readFileSync(target, "utf8").replace("</head>", `${script}\n</head>`);
 		res.writeHead(200, {
 			"content-type": "text/html; charset=utf-8",
