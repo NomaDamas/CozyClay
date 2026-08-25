@@ -36,7 +36,6 @@ const NODE_FILES = [
 	"test/process/verify-lifecycle.mjs",
 	"test/process/verify-mcp-package-isolation.mjs",
 	"test/process/verify-package-telemetry.mjs",
-	"test/verify-mcp-motion-job.mjs",
 	"test/verify-analytics.mjs",
 	"test/verify-appearance.mjs",
 	"test/verify-asset-shelf.mjs",
@@ -57,7 +56,6 @@ const NODE_FILES = [
 	"test/verify-live-control.mjs",
 	"test/verify-matte-editor.mjs",
 	"test/verify-matte.mjs",
-	"test/verify-mcp-http-origin.mjs",
 	"test/verify-mp4-duration.mjs",
 	"test/verify-mcp-invariants.mjs",
 	"test/verify-motion-edit.mjs",
@@ -86,6 +84,16 @@ const NODE_FILES = [
 	"test/verify-update-check.mjs",
 	"test/verify-usd-camera.mjs",
 	"test/verify-video-frames.mjs",
+	"mcp/verify.mjs",
+	"mcp/verify-http-origin.mjs",
+	"mcp/verify-live.mjs",
+	"mcp/verify-live-motion-job.mjs",
+	"mcp/verify-live-p0.mjs",
+	"mcp/verify-live-port.mjs",
+	"mcp/verify-live-routing.mjs",
+	"mcp/verify-prompts.mjs",
+	"mcp/verify-protocol-version.mjs",
+	"mcp/verify-tool-annotations.mjs",
 ];
 
 const BROWSER_FILES = [
@@ -102,8 +110,8 @@ function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })
 		.flatMap((entry) => {
 			const path = join(directory, entry.name);
-			if (entry.isDirectory()) return verificationFiles(path);
-			return entry.isFile() && /^verify-.*\.mjs$/.test(entry.name) ? [relative(".", path)] : [];
+			if (entry.isDirectory()) return entry.name === "node_modules" ? [] : verificationFiles(path);
+			return entry.isFile() && /^verify(-.*)?\.mjs$/.test(entry.name) ? [relative(".", path)] : [];
 		})
 		.sort();
 }
@@ -144,9 +152,12 @@ const categories = new Map([
 	...BROWSER_FILES.map((file) => [file, { kind: "browser", reason: "requires the QA browser wrapper and a running Vite app" }]),
 	["test/ardy/verify-npz.mjs", { kind: "external", reason: "requires a configured remote ARDY host and NumPy environment" }],
 	["test/process/verify-mcp-package-isolation.mjs", { kind: "package-integration", reason: "installs the MCP runtime from the npm registry with an isolated cache" }],
+	...["mcp/verify-live-batch.mjs", "mcp/verify-live-capture.mjs", "mcp/verify-live-editor-model.mjs", "mcp/verify-live-scene-parity.mjs"].map(
+		(file) => [file, { kind: "browser", reason: "drives a real Chrome editor over the live socket" }],
+	),
 ]);
 const { listOnly, scope } = parseArguments(process.argv.slice(2));
-const inventory = verificationFiles("test");
+const inventory = [...verificationFiles("test"), ...verificationFiles("mcp")];
 const unclassified = inventory.filter((file) => !categories.has(file));
 const stale = [...categories.keys()].filter((file) => !inventory.includes(file));
 if (unclassified.length > 0 || stale.length > 0) {

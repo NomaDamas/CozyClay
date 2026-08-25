@@ -29,16 +29,10 @@ jobs:
             mcp/package-lock.json
       - run: npm ci
       - run: npm --prefix mcp ci
+      # tools/run-tests.mjs inventories mcp/ alongside test/ (#52), so the
+      # MCP verify suites — including the hermetic verify:live family — run
+      # under `npm test`; only browser-bound suites stay classified out.
       - run: npm test
-      # Hermetic MCP verify suites (#52). tools/run-tests.mjs inventories only
-      # test/, so these behavioral suites never reach `npm test`; run them
-      # directly. The verify:live family stays out until it is confirmed
-      # hermetic on the runner.
-      - name: MCP verify suites
-        run: |
-          npm --prefix mcp run verify
-          npm --prefix mcp run verify:annotations
-          npm --prefix mcp run verify:prompts
 
   # Real-browser rendering regressions via the CDP QA wrapper. Only the suites
   # that are green against origin/main run here (ik, camera-rail); the other
