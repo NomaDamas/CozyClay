@@ -32,10 +32,10 @@ const withTimeout = (promise, label, milliseconds = 30_000) => {
 	]).finally(() => clearTimeout(timer));
 };
 
-const waitForOutput = (child, pattern, label, milliseconds) =>
-	withTimeout(
+const waitForOutput = (child, pattern, label, milliseconds) => {
+	let output = "";
+	return withTimeout(
 		new Promise((resolve, reject) => {
-			let output = "";
 			const inspect = (chunk) => {
 				output += chunk.toString();
 				if (pattern.test(output)) finish(resolve);
@@ -53,7 +53,12 @@ const waitForOutput = (child, pattern, label, milliseconds) =>
 		}),
 		label,
 		milliseconds,
-	);
+	).catch((error) => {
+		// A bare timeout hides what the child actually said; name it.
+		error.message += output ? `\nchild output:\n${output}` : "\n(child produced no output)";
+		throw error;
+	});
+};
 
 const terminate = async (child) => {
 	if (child.exitCode !== null || child.signalCode !== null) return;
