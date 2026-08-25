@@ -123,15 +123,15 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 							</div>
 						</div>
 						{folderDenied && (
-						<p className="project-browser-empty">
-							{lostFolder
-								? ko("Folder access needs to be re-allowed.", "폴더 접근을 다시 허용해야 해요.")
-								: ko("Folder access is not granted — choose it again.", "폴더 접근 권한이 없어요. 다시 지정해 주세요.")}
-							{lostFolder && (
-								<button type="button" onClick={reauthorizeFolder}>{ko("Re-allow", "다시 허용")}</button>
-							)}
-						</p>
-					)}
+							<p className="project-browser-empty">
+								{lostFolder
+									? ko("Folder access needs to be re-allowed.", "폴더 접근을 다시 허용해야 해요.")
+									: ko("Folder access is not granted — choose it again.", "폴더 접근 권한이 없어요. 다시 지정해 주세요.")}
+								{lostFolder && (
+									<button type="button" onClick={reauthorizeFolder}>{ko("Re-allow", "다시 허용")}</button>
+								)}
+							</p>
+						)}
 						{folder && folderProjects.length === 0 && !folderDenied && (
 							<p className="project-browser-empty">{ko("No .cclayproject files in this folder.", "이 폴더에 .cclayproject 파일이 없어요.")}</p>
 						)}
