@@ -22,17 +22,17 @@ const reservePort = () =>
 		});
 	});
 
-const withTimeout = (promise, label) => {
+const withTimeout = (promise, label, milliseconds = 30_000) => {
 	let timer;
 	return Promise.race([
 		promise,
 		new Promise((_, reject) => {
-			timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}.`)), 30_000);
+			timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}.`)), milliseconds);
 		}),
 	]).finally(() => clearTimeout(timer));
 };
 
-const waitForOutput = (child, pattern, label) =>
+const waitForOutput = (child, pattern, label, milliseconds) =>
 	withTimeout(
 		new Promise((resolve, reject) => {
 			let output = "";
@@ -52,6 +52,7 @@ const waitForOutput = (child, pattern, label) =>
 			child.once("exit", onExit);
 		}),
 		label,
+		milliseconds,
 	);
 
 const terminate = async (child) => {
@@ -75,7 +76,10 @@ const child = spawn(process.execPath, ["tools/dev-full.mjs", "--host", "127.0.0.
 	stdio: ["ignore", "pipe", "pipe"],
 });
 try {
-	await waitForOutput(child, new RegExp(`http://127\\.0\\.0\\.1:${vitePort}/`), "dev-full Vite startup");
+	// A cold Vite start on a CI runner optimizes dependencies first and can
+	// take well past 30s; ci.yml's own dev-server step allows 120s for the
+	// same boot.
+	await waitForOutput(child, new RegExp(`http://127\\.0\\.0\\.1:${vitePort}/`), "dev-full Vite startup", 120_000);
 	const source = await (await fetch(`http://127.0.0.1:${vitePort}/src/live-control.js`)).text();
 	assert.match(source, new RegExp(`\"VITE_COZYCLAY_LIVE_PORT\": \"${livePort}\"`));
 	assert.equal(liveControlUrl(String(livePort)), `ws://127.0.0.1:${livePort}/live`);
