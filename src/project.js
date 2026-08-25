@@ -371,3 +371,16 @@ export async function queryHandlePermission(handle) {
 		return "denied";
 	}
 }
+
+/** Escalate a stored handle back to "granted". Chromium demotes a persisted
+ * handle's permission to "prompt" when the page is next opened; inside a user
+ * gesture the browser answers requestPermission() with a one-click prompt.
+ * "granted" | "prompt" | "denied" — never throws. */
+export async function requestHandlePermission(handle) {
+	try {
+		if ((await handle.queryPermission({ mode: "readwrite" })) === "granted") return "granted";
+		return await handle.requestPermission({ mode: "readwrite" });
+	} catch {
+		return "denied";
+	}
+}

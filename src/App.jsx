@@ -124,6 +124,7 @@ import {
 	pickProjectFileForOpen,
 	pickProjectFileForSave,
 	queryHandlePermission,
+	requestHandlePermission,
 	readProjectDocument,
 	readProjectFile,
 	storeProjectHandle,
@@ -3557,6 +3558,12 @@ globalThis.playMode = centerTab === "play";
 	 * recents list or a file enumerated in the projects folder. */
 	async function openProjectByHandle(handle) {
 		try {
+			// A stored handle may have been demoted to "prompt" since the last
+			// session (#51); this click is the user gesture that can re-grant it.
+			if ((await requestHandlePermission(handle)) !== "granted") {
+				setToast(ko("Project access was not granted — allow access and try again.", "프로젝트 접근이 허용되지 않았어요. 접근을 허용하고 다시 시도해 주세요."));
+				return;
+			}
 			const file = await readProjectFile(handle);
 			const result = readProjectDocument(file.text);
 			if (!result.ok) {
@@ -3591,24 +3598,34 @@ globalThis.playMode = centerTab === "play";
 	}
 
 	// Re-open the last project on launch when the browser still grants access.
+	// A handle Chromium demoted to "prompt" cannot be re-requested here (no
+	// user gesture), so it becomes a one-click restore offer instead (#51).
 	const projectAutoOpenedRef = useRef(false);
+	const [restoreOffer, setRestoreOffer] = useState(null);
+	async function restoreStoredProject(record) {
+		try {
+			const file = await readProjectFile(record.handle);
+			const result = readProjectDocument(file.text);
+			if (!result.ok) return;
+			projectHandleRef.current = record.handle;
+			await rehydrateProjectAssets(result.project, result.warnings);
+			applyProject(result.project);
+			setToast(isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`);
+		} catch {
+			/* missing or unreadable file: fall back to the session cache */
+		}
+	}
 	useEffect(() => {
 		if (projectAutoOpenedRef.current) return;
 		projectAutoOpenedRef.current = true;
 		loadStoredProjectHandle().then(async (record) => {
 			if (!record?.handle) return;
-			if ((await queryHandlePermission(record.handle)) !== "granted") return;
-			try {
-				const file = await readProjectFile(record.handle);
-				const result = readProjectDocument(file.text);
-				if (!result.ok) return;
-				projectHandleRef.current = record.handle;
-				await rehydrateProjectAssets(result.project, result.warnings);
-				applyProject(result.project);
-				setToast(isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`);
-			} catch {
-				/* missing or unreadable file: fall back to the session cache */
+			const permission = await queryHandlePermission(record.handle);
+			if (permission === "granted") {
+				await restoreStoredProject(record);
+				return;
 			}
+			if (permission === "prompt") setRestoreOffer(record);
 		});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
@@ -8939,6 +8956,26 @@ function resizePromptClip(id, edge, rawFrame) {
 					<button type="button" aria-label={ko("Undo object deletion", "오브젝트 삭제 실행 취소")} onClick={undoObjectDeletion}>
 						{ko("Undo", "실행 취소")}
 					</button>
+				</div>
+			)}
+			{restoreOffer && (
+				<div className="asset-delete-toast" role="status">
+					<span>{isKo ? `마지막 프로젝트 복원${restoreOffer.name ? `: ${restoreOffer.name}` : ""}` : `Restore last project${restoreOffer.name ? `: ${restoreOffer.name}` : ""}`}</span>
+					<button
+						type="button"
+						onClick={async () => {
+							const record = restoreOffer;
+							setRestoreOffer(null);
+							if ((await requestHandlePermission(record.handle)) !== "granted") {
+								setToast(ko("Project access was not granted.", "프로젝트 접근이 허용되지 않았어요."));
+								return;
+							}
+							await restoreStoredProject(record);
+						}}
+					>
+						{ko("Restore", "복원")}
+					</button>
+					<button type="button" onClick={() => setRestoreOffer(null)} aria-label={ko("Dismiss", "닫기")}>✕</button>
 				</div>
 			)}
 			{assetTrash.length > 0 && assetUndoOffered && (

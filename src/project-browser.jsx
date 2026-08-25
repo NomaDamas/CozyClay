@@ -9,6 +9,7 @@ import {
 	pickProjectsDirectory,
 	queryHandlePermission,
 	removeRecentProject,
+	requestHandlePermission,
 	storeProjectsDirectory,
 } from "./project.js";
 
@@ -25,6 +26,9 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 	const [folder, setFolder] = useState(null);
 	const [folderProjects, setFolderProjects] = useState([]);
 	const [folderDenied, setFolderDenied] = useState(false);
+	// A stored folder handle Chromium demoted to "prompt": one click on the
+	// re-allow button re-grants it without re-picking the folder (#51).
+	const [lostFolder, setLostFolder] = useState(null);
 
 	useEffect(() => {
 		loadRecentProjects().then(setRecents);
@@ -33,6 +37,7 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 			const permission = await queryHandlePermission(handle);
 			if (permission !== "granted") {
 				setFolderDenied(true);
+				if (permission === "prompt") setLostFolder(handle);
 				return;
 			}
 			setFolder(handle);
@@ -40,12 +45,23 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 		});
 	}, []);
 
+	const reauthorizeFolder = async () => {
+		if (!lostFolder) return;
+		if ((await requestHandlePermission(lostFolder)) !== "granted") return;
+		const handle = lostFolder;
+		setLostFolder(null);
+		setFolderDenied(false);
+		setFolder(handle);
+		setFolderProjects(await listProjectsInDirectory(handle));
+	};
+
 	const chooseFolder = async () => {
 		try {
 			const handle = await pickProjectsDirectory();
 			await storeProjectsDirectory(handle);
 			setFolder(handle);
 			setFolderDenied(false);
+			setLostFolder(null);
 			setFolderProjects(await listProjectsInDirectory(handle));
 		} catch (err) {
 			if (err?.name !== "AbortError") setFolderDenied(true);
@@ -106,7 +122,16 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 								</button>
 							</div>
 						</div>
-						{folderDenied && <p className="project-browser-empty">{ko("Folder access is not granted — choose it again.", "폴더 접근 권한이 없어요. 다시 지정해 주세요.")}</p>}
+						{folderDenied && (
+						<p className="project-browser-empty">
+							{lostFolder
+								? ko("Folder access needs to be re-allowed.", "폴더 접근을 다시 허용해야 해요.")
+								: ko("Folder access is not granted — choose it again.", "폴더 접근 권한이 없어요. 다시 지정해 주세요.")}
+							{lostFolder && (
+								<button type="button" onClick={reauthorizeFolder}>{ko("Re-allow", "다시 허용")}</button>
+							)}
+						</p>
+					)}
 						{folder && folderProjects.length === 0 && !folderDenied && (
 							<p className="project-browser-empty">{ko("No .cclayproject files in this folder.", "이 폴더에 .cclayproject 파일이 없어요.")}</p>
 						)}

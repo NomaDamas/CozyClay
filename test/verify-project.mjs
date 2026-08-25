@@ -117,6 +117,43 @@ assert.equal(malformedAssets.ok, true, "malformed embedded assets never reject a
 assert.deepEqual(malformedAssets.project.assets, [], "malformed embedded assets are skipped");
 assert.equal(malformedAssets.warnings.length, 3, "each skipped embedded asset is warned about");
 
+// --- handle re-authorization (#51) -----------------------------------------
+// Chromium demotes a persisted handle's permission to "prompt" on the next
+// visit; requestHandlePermission escalates it back inside a user gesture.
+import { requestHandlePermission } from "../src/project.js";
+
+{
+	const calls = [];
+	const handle = (query, request) => ({
+		async queryPermission(options) {
+			calls.push(["query", options?.mode]);
+			if (query instanceof Error) throw query;
+			return query;
+		},
+		async requestPermission(options) {
+			calls.push(["request", options?.mode]);
+			if (request instanceof Error) throw request;
+			return request;
+		},
+	});
+
+	calls.length = 0;
+	assert.equal(await requestHandlePermission(handle("granted", "granted")), "granted", "a granted handle stays granted");
+	assert.deepEqual(calls, [["query", "readwrite"]], "a granted handle never re-prompts");
+
+	calls.length = 0;
+	assert.equal(await requestHandlePermission(handle("prompt", "granted")), "granted", "a demoted handle is re-requested");
+	assert.deepEqual(calls, [["query", "readwrite"], ["request", "readwrite"]], "a demoted handle escalates through requestPermission");
+
+	assert.equal(await requestHandlePermission(handle("prompt", "denied")), "denied", "a refused prompt reports denied");
+	assert.equal(await requestHandlePermission(handle(new Error("boom"), "granted")), "denied", "a throwing queryPermission reports denied, never throws");
+	assert.equal(await requestHandlePermission(handle("prompt", new Error("boom"))), "denied", "a throwing requestPermission reports denied, never throws");
+}
+
+const browserSource = readFileSync(new URL("../src/project-browser.jsx", import.meta.url), "utf8");
+assert.match(appSource, /requestHandlePermission/, "opening a stored handle re-authorizes it inside the click gesture (#51)");
+assert.match(browserSource, /requestHandlePermission/, "the projects folder offers one-click re-authorization (#51)");
+
 // --- App wiring ------------------------------------------------------------
 assert.match(appSource, /createProjectDocument/, "App builds the project envelope");
 assert.match(appSource, /readProjectDocument/, "App parses project files");
