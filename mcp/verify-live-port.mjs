@@ -77,6 +77,9 @@ const child = spawn(process.execPath, ["tools/dev-full.mjs", "--host", "127.0.0.
 		CCLAY_ARDY_MODE: "remote",
 		CCLAY_ARDY_HOST: "test@ardy",
 		COZYCLAY_LIVE_PORT: String(livePort),
+		// On CI runners picocolors turns color on for a piped Vite, wrapping
+		// the port in ANSI bold and defeating the URL match below.
+		NO_COLOR: "1",
 	},
 	stdio: ["ignore", "pipe", "pipe"],
 });
