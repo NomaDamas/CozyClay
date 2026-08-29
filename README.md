@@ -55,7 +55,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 - Node.js 22.13 or newer
 - npm, or bun
 - A Chromium-based browser
-* An SSH-accessible NVIDIA machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the first setup downloads the Kimodo checkpoint and text-encoder stack.
+- An SSH-accessible NVIDIA machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the first setup downloads the Kimodo checkpoint and text-encoder stack.
 
 ## Quick start
 
@@ -65,7 +65,7 @@ npx cozyclay
 bunx cozyclay
 ```
 
-That downloads the built studio and opens it at `http://127.0.0.1:5180`. Nothing to compile, no dependency tree to install. Useful flags: `--port 5200`, `--no-open`, `--no-motion`.
+That downloads the built studio and opens it at `http://127.0.0.1:5180/app/`. Nothing to compile, no dependency tree to install. Useful flags: `--port 5200`, `--no-open`, `--no-motion`.
 
 A global install gives you `cclay`, the same command with less typing. Once a day the launcher checks npm for a newer release and prints a one-line notice after the studio is up; it stays quiet when you're current or offline. `cclay update` installs the latest release, and `--no-update-check` skips the check entirely.
 
@@ -120,7 +120,7 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5180`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
+Open `http://127.0.0.1:5180/app/`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
 
 ## Hosted demo
 
@@ -204,10 +204,10 @@ See [`workers/api/README.md`](workers/api/README.md) for the deployment, migrati
 | `cd mcp && npm run verify:live` | Live-control protocol against a fake editor (same `npm install` first) |
 | `npm run build` | Production build |
 
-Ad-hoc browser QA, while a dev server is available:
+Ad-hoc browser QA, while a dev server is available (the browser opens the studio at `/app/`):
 
 ```bash
-npm run qa:browser -- <qa-script>
+npm run qa:browser -- node <qa-script>
 ```
 
 ## Contributing

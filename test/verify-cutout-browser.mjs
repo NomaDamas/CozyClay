@@ -9,8 +9,9 @@
  * size the right way up. This drives Chrome over CDP with a real file on a
  * real <input type="file">.
  *
- * Run: `npm run dev:ui` in one shell, then `npm run test:cutout`, which
- * launches the headless QA browser against QA_URL (default 127.0.0.1:5180).
+ * Run: `npm run dev:ui` in one shell, then
+ * `QA_URL=http://127.0.0.1:5180/app/ npm run qa:browser -- node test/verify-cutout-browser.mjs`.
+ * The QA browser defaults to the studio route (`/app/`), not the landing page.
  */
 
 import { deflateSync } from "node:zlib";

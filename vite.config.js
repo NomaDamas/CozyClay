@@ -4,9 +4,15 @@ import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { PROMPT_MAX_CHARS } from "./tools/ardy/prompt-limits.mjs";
 
-const motionBridgeUrl = process.env.COZYCLAY_BRIDGE_PORT
-	? `http://127.0.0.1:${process.env.COZYCLAY_BRIDGE_PORT}`
-	: process.env.COZYCLAY_BRIDGE_URL || "http://127.0.0.1:5181";
+// Vite can run as a UI-only server. Do not silently proxy /ardy to the
+// bridge's historical default port: a different local process may own it.
+// dev-full supplies COZYCLAY_BRIDGE_PORT after starting its own sidecar;
+// COZYCLAY_BRIDGE_URL remains an explicit escape hatch for a user-managed
+// bridge.
+const explicitBridgePort = process.env.COZYCLAY_BRIDGE_PORT?.trim();
+const motionBridgeUrl = explicitBridgePort
+	? `http://127.0.0.1:${explicitBridgePort}`
+	: process.env.COZYCLAY_BRIDGE_URL?.trim() || null;
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
 
 export default defineConfig({
@@ -48,10 +54,17 @@ export default defineConfig({
 			apply: "serve",
 			configureServer(server) {
 				server.middlewares.use((req, res, next) => {
+					const path = (req.url || "").split("?")[0];
+					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
+						res.statusCode = 503;
+						res.setHeader("content-type", "application/json; charset=utf-8");
+						res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
+						return;
+					}
 					// The lying clip is a browser-regression fixture. Serve it only from
 					// the dev server so it can exercise the real UI without shipping a
 					// second motion archive in production output.
-					if ((req.url || "").split("?")[0] === "/demo/qa-lying.npz") {
+					if (path === "/demo/qa-lying.npz") {
 						res.statusCode = 200;
 						res.setHeader("content-type", "application/octet-stream");
 						res.setHeader("cache-control", "no-store");
@@ -80,22 +93,25 @@ export default defineConfig({
 	server: {
 		port: 5180,
 		// Dev-only: the motion sidecar (tools/ardy/bridge.mjs) is an optional
-		// companion on loopback. COZYCLAY_BRIDGE_PORT selects it for dev-full;
-		// direct Vite use falls back to 5181. The production build stays fully static
-		// (`base: "./"`, no build-time coupling), so this proxy must never be
-		// promoted into a server-side requirement.
-		proxy: {
-			// Only the routes the bridge actually owns. /ardy/ is ALSO a public
-			// asset directory (cskel27-rest.json), and a blanket proxy would
-			// hand those static files to the bridge, which 404s them.
-			"/ardy": {
-				target: motionBridgeUrl,
-				bypass(req) {
-					const path = (req.url || "").split("?")[0];
-					if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;
-					return req.url; // not a bridge route: serve the static asset
+		// companion on loopback. The proxy is enabled only when dev-full (or a
+		// user-managed bridge) explicitly provides its endpoint. The production
+		// build stays fully static, so this proxy must never become a requirement.
+		...(motionBridgeUrl
+			? {
+				proxy: {
+					// Only the routes the bridge actually owns. /ardy/ is ALSO a public
+					// asset directory (cskel27-rest.json), and a blanket proxy would
+					// hand those static files to the bridge, which 404s them.
+					"/ardy": {
+						target: motionBridgeUrl,
+						bypass(req) {
+							const path = (req.url || "").split("?")[0];
+							if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;
+							return req.url; // not a bridge route: serve the static asset
+						},
+					},
 				},
-			},
-		},
+			}
+			: {}),
 	},
 });

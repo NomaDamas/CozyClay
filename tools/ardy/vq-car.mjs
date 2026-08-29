@@ -37,7 +37,7 @@ const tab = await newTab();
 await tab.send("Page.enable"); await tab.send("Runtime.enable");
 await tab.send("Network.enable");
 await tab.send("Network.setCacheDisabled", { cacheDisabled: true });
-await tab.send("Page.navigate", { url: "http://127.0.0.1:5180/?v=" + Date.now() });
+await tab.send("Page.navigate", { url: "http://127.0.0.1:5180/app/?v=" + Date.now() });
 await sleep(7000);
 await shot(tab, "car-default-view");
 // wide preset for a broader read of the set

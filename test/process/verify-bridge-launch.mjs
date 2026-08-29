@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { execFile, fork } from "node:child_process";
 import { once } from "node:events";
+import { createServer as createHttpServer } from "node:http";
 import { createConnection, createServer } from "node:net";
 import { promisify } from "node:util";
 import { spawnOwned, terminateOwned } from "../../tools/process-supervisor.mjs";
@@ -164,6 +165,64 @@ function launch(kind, port, env = {}) {
 	return { child, output: createOutputWatcher(child) };
 }
 
+function launchPackageNoMotion(port) {
+	const env = { ...process.env, CCLAY_MOTION_BACKEND: "kimodo" };
+	delete env.CCLAY_KIMODO_HOST;
+	delete env.COZYCLAY_BRIDGE_PORT;
+	delete env.COZYCLAY_BRIDGE_URL;
+	const child = spawnOwned(
+		process.execPath,
+		["bin/cozyclay.mjs", "--host", "127.0.0.1", "--port", String(port), "--no-open", "--no-star", "--no-motion"],
+		{ cwd: REPO, env, stdio: ["ignore", "pipe", "pipe"] },
+	);
+	return { child, output: createOutputWatcher(child) };
+}
+
+async function expectNoMotionDoesNotProxyForeignBridge() {
+	const foreign = createHttpServer((_req, res) => {
+		res.writeHead(200, { "content-type": "application/json" });
+		res.end(JSON.stringify({ foreign: true }));
+	});
+	let foreignListening = false;
+	try {
+		try {
+			await listen(foreign, 5181);
+			foreignListening = true;
+		} catch (error) {
+			if (error?.code !== "EADDRINUSE") throw error;
+		}
+		const reservation = createServer();
+		const port = await listen(reservation);
+		await close(reservation);
+		const { child, output } = launchPackageNoMotion(port);
+		try {
+			await output.waitFor(/CozyClay is running at http:\/\/127\.0\.0\.1:(\d+)\/app\//, "package no-motion server readiness");
+			const response = await fetch(`http://127.0.0.1:${port}/ardy/health`);
+			const body = await response.text();
+			assert.equal(response.status, 503, "no-motion /ardy routes return unavailable instead of proxying");
+			assert.match(body, /motion sidecar is not running/, "no-motion response identifies the unavailable sidecar");
+		} finally {
+			await terminateOwned(child);
+		}
+	} finally {
+		if (foreignListening) await close(foreign);
+	}
+}
+
+async function expectViteProxyRequiresExplicitBridge() {
+	const script = "import config from './vite.config.js'; console.log(JSON.stringify(config.server?.proxy?.['/ardy']?.target ?? null));";
+	const withoutBridge = { ...process.env };
+	delete withoutBridge.COZYCLAY_BRIDGE_PORT;
+	delete withoutBridge.COZYCLAY_BRIDGE_URL;
+	const none = await execFileAsync(process.execPath, ["--input-type=module", "-e", script], { cwd: REPO, env: withoutBridge });
+	assert.equal(JSON.parse(none.stdout.trim()), null, "Vite UI-only mode does not proxy to a default bridge port");
+	const explicit = await execFileAsync(process.execPath, ["--input-type=module", "-e", script], {
+		cwd: REPO,
+		env: { ...withoutBridge, COZYCLAY_BRIDGE_PORT: "61234" },
+	});
+	assert.equal(JSON.parse(explicit.stdout.trim()), "http://127.0.0.1:61234", "Vite preserves an explicit dev-full bridge endpoint");
+}
+
 async function expectLaunchFailure(kind, env, expected) {
 	const reservation = createServer();
 	const port = await listen(reservation);
@@ -316,6 +375,8 @@ async function expectDevStartsWithoutKimodoHost() {
 await expectBridgeIpcReadiness();
 await expectForeignListenerDoesNotReportBridgeReady();
 await expectDevStartsWithoutKimodoHost();
+await expectNoMotionDoesNotProxyForeignBridge();
+await expectViteProxyRequiresExplicitBridge();
 {
 	const invalidMainPort = spawnOwned(process.execPath, ["bin/cozyclay.mjs", "--port", "65535", "--no-open", "--no-star"], {
 		cwd: REPO,

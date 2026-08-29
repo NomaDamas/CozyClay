@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { FBXLoader } from "three/examples/jsm/loaders/FBXLoader.js";
-import { SkeletonUtils } from "three/examples/jsm/Addons.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import { applyPose, primeBindPose, POSE_BONES } from "./poses.js";
 
 /**

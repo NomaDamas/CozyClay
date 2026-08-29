@@ -50,7 +50,12 @@ const OFFICIAL_PACKAGE = (
 	&& !existsSync(join(PKG_ROOT, ".git"))
 	&& verifyPackageMarker(join(DIST, "cozyclay-package.json"), PKG_ROOT, packageMetadata)
 );
-let bridgePort = 5181;
+// A bridge is optional. Keep the endpoint unset until this launcher owns a
+// sidecar; otherwise /ardy requests could accidentally reach an unrelated
+// process that happens to be listening on the bridge's historical default
+// port (5181).
+let bridge = null;
+let bridgePort = null;
 
 const TYPES = {
 	".html": "text/html; charset=utf-8",
@@ -145,6 +150,12 @@ function serveFile(res, path) {
 // Forward /ardy to the sidecar. Same contract as the Vite dev proxy, so the
 // browser code needs no build-time knowledge of how it was launched.
 function proxyToBridge(req, res) {
+	if (!bridge || bridgePort === null || bridge.exitCode !== null || bridge.signalCode !== null) {
+		req.resume();
+		res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+		res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		return;
+	}
 	const upstream = httpRequest(
 		{ host: "127.0.0.1", port: bridgePort, path: req.url, method: req.method, headers: req.headers },
 		(upstreamRes) => {
@@ -297,7 +308,6 @@ if (!existsSync(join(DIST, "app", "index.html"))) {
 // unconditionally would greet a first-time `npx cozyclay` with an error it
 // cannot act on. An unset CCLAY_KIMODO_HOST is the normal case, not a fault.
 const kimodoHost = process.env.CCLAY_KIMODO_HOST?.trim();
-let bridge = null;
 let server = null;
 const startedAt = Date.now();
 let shuttingDown = false;

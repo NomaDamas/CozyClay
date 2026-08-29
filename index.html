@@ -98,7 +98,7 @@
             "name": "How does motion generation work?",
             "acceptedAnswer": {
               "@type": "Answer",
-              "text": "You sequence multi-phase motion as Prompt Blocks on the timeline and send them to NVIDIA ARDY through a local bridge, then play the result back with sparse IK correction. ARDY is a separate third-party project maintained by NVIDIA; it is not bundled with CozyClay. Staging, root paths, cameras and playback all work without it, and the build ships a pre-generated clip so the timeline has real motion on it from the first run."
+              "text": "You sequence multi-phase motion as Prompt Blocks on the timeline and send them to Kimodo through a local bridge, then play the result back with sparse IK correction. Kimodo is optional: staging, root paths, cameras and playback all work without the bridge, and the build ships a pre-generated clip so the timeline has real motion on it from the first run."
             }
           },
           {
@@ -314,7 +314,7 @@
             <h3>Generate motion</h3>
             <p>
               Pose characters, sequence multi-phase motion as Prompt Blocks on a resizable
-              timeline, send them to NVIDIA ARDY, then play the result back with sparse IK
+              timeline, send them to Kimodo, then play the result back with sparse IK
               correction where the generated motion needs fixing.
             </p>
           </div>
@@ -335,7 +335,7 @@ cd CozyClay
 npm install
 npm run dev</code></pre>
         <p class="note">
-          <code>npm run dev</code> starts the studio together with its local ARDY bridge;
+          <code>npm run dev</code> starts the studio together with its local Kimodo bridge;
           <code>npm run dev:ui</code> starts the browser UI alone, without motion generation.
         </p>
       </section>
@@ -417,12 +417,10 @@ npm run dev</code></pre>
           <summary>How does motion generation work?</summary>
           <p>
             You sequence multi-phase motion as Prompt Blocks on the timeline and send them to
-            <a href="https://github.com/nv-tlabs/ardy">NVIDIA ARDY</a> through a local bridge,
-            then play the result back with sparse IK correction. ARDY is a separate third-party
-            project owned and maintained by NVIDIA; it is not bundled here, and CozyClay is not
-            affiliated with or endorsed by NVIDIA. Staging, root paths, cameras and playback all
-            work without it, and the build ships a pre-generated clip so the timeline has real
-            motion on it from the first run.
+            Kimodo through a local bridge, then play the result back with sparse IK correction.
+            The bridge is optional: staging, root paths, cameras and playback all work without
+            it, and the build ships a pre-generated clip so the timeline has real motion on it
+            from the first run.
           </p>
         </details>
         <details>

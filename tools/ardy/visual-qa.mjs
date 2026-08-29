@@ -5,11 +5,12 @@
  * frames for pose review.
  *
  * Usage: node tools/ardy/visual-qa.mjs <outDir> [url]
+ * The default URL is the studio route (`/app/`), not the marketing landing page.
  */
 import { writeFileSync, mkdirSync } from "node:fs";
 
 const OUT = process.argv[2] || "/tmp/visual-qa";
-const URL = process.argv[3] || "http://127.0.0.1:5180/";
+const URL = process.argv[3] || "http://127.0.0.1:5180/app/";
 mkdirSync(OUT, { recursive: true });
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -75,12 +76,24 @@ await tab.send("Runtime.enable");
 await tab.send("Page.navigate", { url: URL });
 await sleep(6000);
 
+// Prompt Blocks replaced the old single "Generate motion" field. Select the
+// first character, open the Prompt Blocks foldout, then add a block before
+// looking for its prompt input and batch Generate action.
+await evaluate(tab, `(() => {
+	const character = [...document.querySelectorAll('.hierarchy-row')].find((row) => /Character 1|Subject 1|인물 1/.test(row.textContent));
+	character?.click();
+	const foldout = [...document.querySelectorAll('.foldout-head')].find((button) => /Prompt Blocks|프롬프트 블록/.test(button.textContent));
+	foldout?.click();
+	const add = document.querySelector('.tl-track.prompts .tl-track-add') || document.querySelector('.tl-track-add[title*="prompt"]');
+	add?.click();
+	return true;
+})()`);
+await sleep(400);
 const state0 = await evaluate(tab, `(() => {
 	const seed = document.querySelector('input[placeholder="empty = random"]');
-	const gen = [...document.querySelectorAll("button")].find(b => /generate motion/i.test(b.textContent));
-	const promptEl = [...document.querySelectorAll("textarea, input")].find(e =>
-		(e.closest("div,label")?.textContent || "").includes("Motion prompt"));
-	return { seedValue: seed?.value ?? null, hasGenerate: !!gen, hasPrompt: !!promptEl };
+	const promptEl = document.querySelector('input[placeholder*="motion block"], input[placeholder*="모션 블록"]');
+	const gen = document.querySelector('button.prompt-block-generate');
+	return { seedValue: seed?.value ?? null, hasGenerate: !!gen, generateDisabled: !!gen?.disabled, hasPrompt: !!promptEl };
 })()`);
 console.log("initial:", JSON.stringify(state0));
 
@@ -88,15 +101,13 @@ if (!state0.hasGenerate || !state0.hasPrompt) {
 	await shot(tab, "00-no-ui");
 	throw new Error("studio UI not ready");
 }
-if (state0.seedValue !== "2") {
-	console.log("WARN: seed default is not 2:", state0.seedValue);
-}
+if (state0.seedValue === null) throw new Error("Prompt Blocks panel did not open");
 
 // Set the prompt and generate: focus the field, then type via the Input
 // domain so React's controlled input sees real key events.
 await evaluate(tab, `(() => {
-	const el = [...document.querySelectorAll("textarea, input")].find(e =>
-		(e.closest("div,label")?.textContent || "").includes("Motion prompt"));
+	const el = document.querySelector('input[placeholder*="motion block"], input[placeholder*="모션 블록"]');
+	if (!el) return false;
 	el.focus();
 	el.select?.();
 	return true;
@@ -107,11 +118,13 @@ for (const key of ["a", " ", "p", "e", "r", "s", "o", "n", " ", "w", "a", "l", "
 }
 await sleep(300);
 await shot(tab, "01-before-generate");
-await evaluate(tab, `(() => {
-	const gen = [...document.querySelectorAll("button")].find(b => /generate motion/i.test(b.textContent));
+const clicked = await evaluate(tab, `(() => {
+const gen = document.querySelector('button.prompt-block-generate');
+	if (!gen || gen.disabled) return false;
 	gen.click();
 	return true;
 })()`);
+if (!clicked) throw new Error("Kimodo bridge is unavailable or generation is disabled");
 console.log("generate clicked, waiting for the clip...");
 
 // Wait for "Motion loaded" or the PLAYBACK badge (generation ~12 s).
@@ -128,27 +141,22 @@ if (!loaded) {
 }
 await sleep(1500);
 
-// Scrub to specific frames via the timeline frame buttons and capture.
+// Scrub to specific frames by clicking the timeline's accessible ruler. The
+// old tick-text selector clicked labels, not the scrub surface, after the
+// timeline was redesigned.
 const frames = [0, 20, 40, 60, 79];
 for (const f of frames) {
-	const okFrame = await evaluate(tab, `(() => {
-		const btns = [...document.querySelectorAll("button, span, div")].filter(e =>
-			e.textContent.trim() === "${f}" && e.closest('[class*="tl"], [class*="frame"], [class*="track"]'));
-		if (btns.length) { btns[0].click(); return "tick"; }
-		return "no-tick";
+	const point = await evaluate(tab, `(() => {
+		const lane = document.querySelector('[role="slider"][aria-label*="Scrub timeline"], [role="slider"][aria-label*="타임라인"]');
+		if (!lane) return null;
+		const rect = lane.getBoundingClientRect();
+		const max = Math.max(1, Number(lane.getAttribute('aria-valuemax')) || 1);
+		return { x: rect.left + rect.width * Math.min(1, ${f} / max), y: rect.top + rect.height / 2 };
 	})()`);
-	if (okFrame === "no-tick") {
-		// fall back: type the frame into a frame input if one exists
-		await evaluate(tab, `(() => {
-			const inp = [...document.querySelectorAll("input")].find(e => /frame/i.test(e.closest("div,label")?.textContent || "") || e.type === "number");
-			if (!inp) return false;
-			const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-			setter.call(inp, "${f}");
-			inp.dispatchEvent(new Event("input", { bubbles: true }));
-			inp.dispatchEvent(new Event("change", { bubbles: true }));
-			return true;
-		})()`);
-	}
+	if (!point) throw new Error("timeline scrub ruler not found");
+	await tab.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
+	await tab.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", clickCount: 1 });
+	await tab.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button: "left", clickCount: 1 });
 	await sleep(700);
 	await shot(tab, `10-frame-${String(f).padStart(2, "0")}`);
 }
