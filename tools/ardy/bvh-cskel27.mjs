@@ -45,9 +45,10 @@ const CM_TO_M = 0.01;
 //    per-frame threshold the same physical spin reads half as fast at 60 fps
 //    and the repair silently stops firing) and bridged with one shortest-path
 //    slerp, corrected on EVERY joint so local articulation survives.
-//  - TORSO: mild zero-lag three-frame slerp on the trunk only; hands and
-//    arms stay untouched so punch timing and impact speed survive.
+//  - TORSO: mild zero-lag three-frame slerp on the trunk only.
 //  - LEGS: the same slerp, harder, on both leg chains — see LEG_BLEND.
+//  - ARMS: a One-Euro filter instead (#84) — speed-adaptive, so guard-band
+//    tremor is cut while punch speed survives; see the ARM_* block.
 const SPIN_DEG_PER_S = 25 * 30; // = 25°/frame at 30 fps
 const TORSO_BLEND = 0.2;
 const TORSO_JOINTS = ["Hips", "Spine", "Spine1", "Spine2", "Neck", "Head"].map((n) => `mixamorig:${n}`);
@@ -61,13 +62,42 @@ const TORSO_JOINTS = ["Hips", "Spine", "Spine1", "Spine2", "Neck", "Head"].map((
 // 1.78 on shadow17); take it back out of the finished stack and the ankle
 // returns to 2.35. It costs almost nothing in motion: the 95th percentile
 // ankle speed falls 318 → 303 cm/s, so the footwork is smoothed, not killed.
-// Arms are still deliberately NOT smoothed: a punch is a two-frame
+// Arms deliberately do NOT get this slerp: a punch is a two-frame
 // acceleration into an impact, and blending it with its neighbours is exactly
-// what softens the landing the animation exists to show. A foot has no such
-// event — it plants and it swings — so the same filter costs it nothing.
+// what softens the landing the animation exists to show — measured, this
+// slerp on the arm chains cuts peak hand speed 802 -> 724 cm/s while leaving
+// the guard-band wrist tremor it was meant to fix untouched (1.36 -> 1.36).
+// A foot has no such event — it plants and it swings — so the same filter
+// costs it nothing. The arms get the speed-adaptive filter below instead.
 const LEG_BLEND = 0.4;
 const LEG_JOINTS = ["LeftUpLeg", "LeftLeg", "LeftFoot", "LeftToeBase", "RightUpLeg", "RightLeg", "RightFoot", "RightToeBase"]
 	.map((n) => `mixamorig:${n}`);
+// ARMS (#84): a One-Euro filter on the arm chains only — an adaptive low-pass
+// whose cutoff RISES with angular speed. The neighbour slerp above is the
+// wrong tool here: it attenuates by frequency regardless of amplitude, and a
+// punch is a two-frame acceleration into contact that shares its band with
+// the tremor. One-Euro separates them by SPEED instead: near rest the chain
+// is filtered at ARM_MIN_CUTOFF_HZ (SAM's per-frame shoulder/elbow noise is
+// what reads as wrist tremble in a guard), while a strike drives the cutoff
+// up by ARM_BETA per °/s until the filter passes it essentially untouched.
+// Constants are durations/rates (Hz, °/s), so 30 and 60 fps clips filter the
+// same amount of TIME — dt enters only through the alpha formula (measured:
+// wrist accel per second² lands within 1.20x across a rate doubling, inside
+// the legs' 1.35x bar).
+// Measured on the fixtures (boxing / shadow17): wrist accel RMS 2.76 -> 2.56
+// / 2.69 -> 2.49 cm, the guard-band wrist accel (hands under 1.2 m/s, the
+// tremble the complaint is about) 1.36 -> 1.24 / 1.28 -> 1.19, while PEAK
+// hand speed keeps 799 of 802 cm/s — against the rejected leg-style slerp's
+// 724 with the guard band untouched. Swept: a lower ARM_MIN_CUTOFF_HZ buys
+// nothing (a boxer's arms are never still enough for the floor term to bind)
+// and a higher ARM_BETA_PER_DEG_S under-filters the guard band; the speed
+// cutoff at 5 Hz is what lets the filter snap OPEN on punch onset instead of
+// shaving its first frame (1 Hz there cost 25 cm/s of peak).
+const ARM_JOINTS = ["LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand", "RightShoulder", "RightArm", "RightForeArm", "RightHand"]
+	.map((n) => `mixamorig:${n}`);
+const ARM_MIN_CUTOFF_HZ = 1.5; // rest-tremor low-pass on the arm chain
+const ARM_BETA_PER_DEG_S = 0.02; // cutoff gain: +1 Hz per 20 °/s of joint speed
+const ARM_SPEED_CUTOFF_HZ = 5.0; // smoothing on the speed estimate the cutoff reads
 // Neighbour span of that slerp: ±1 frame at 30 fps. Widening the span instead
 // of repeating the pass would be wrong — a stride-2 three-tap filter has unity
 // gain at Nyquist, so at 60 fps it would leave the every-other-frame noise
@@ -377,6 +407,7 @@ export function bvhToCskel27Motion(bvh) {
 	const bvhIndices = (names) => names.map((name) => bvhIndex.get(name)).filter((i) => i !== undefined);
 	stabilizeChain(worldsByFrame, bvhIndices(TORSO_JOINTS), TORSO_BLEND, torsoPasses);
 	stabilizeChain(worldsByFrame, bvhIndices(LEG_JOINTS), LEG_BLEND, torsoPasses);
+	oneEuroChain(worldsByFrame, bvhIndices(ARM_JOINTS), fps);
 
 	// The BVH's own sole heights, via FK over ITS skeleton. SAM's offline
 	// foot-contact pass already leveled the ground relationship in that
@@ -915,6 +946,33 @@ function stabilizeChain(worldsByFrame, chainIndices, blend, passes) {
 				const mid = slerpQuat(original[f - 1], original[f + 1], 0.5);
 				worldsByFrame[f][j] = quatToMat(slerpQuat(original[f], mid, blend));
 			}
+		}
+	}
+}
+
+/** One-Euro on world rotations (#84): sequential per joint, the filtered
+ *  quaternion slides toward each frame's raw one by an alpha derived from a
+ *  cutoff that RISES with the (smoothed) angular speed — slow tremor is cut,
+ *  a fast strike passes. See the ARM_* constants for why the arms get this
+ *  instead of the neighbour slerp above. Causal (a first frame of lag at
+ *  rest, none at speed) where the slerp is zero-lag — acceptable on arms,
+ *  wrong on legs, whose planted-foot metrics read absolute position. */
+function oneEuroChain(worldsByFrame, chainIndices, fps) {
+	const frames = worldsByFrame.length;
+	if (frames < 2 || chainIndices.length === 0) return;
+	const dt = 1 / fps;
+	const alphaFor = (cutoffHz) => 1 / (1 + 1 / (2 * Math.PI * cutoffHz * dt));
+	const speedAlpha = alphaFor(ARM_SPEED_CUTOFF_HZ);
+	for (const j of chainIndices) {
+		let filtered = matToQuat(worldsByFrame[0][j]);
+		let speedFiltered = 0;
+		for (let f = 1; f < frames; f += 1) {
+			const raw = matToQuat(worldsByFrame[f][j]);
+			const dot = Math.min(1, Math.abs(raw[0] * filtered[0] + raw[1] * filtered[1] + raw[2] * filtered[2] + raw[3] * filtered[3]));
+			const speedDegPerS = ((2 * Math.acos(dot) * 180) / Math.PI) / dt;
+			speedFiltered += speedAlpha * (speedDegPerS - speedFiltered);
+			filtered = slerpQuat(filtered, raw, alphaFor(ARM_MIN_CUTOFF_HZ + ARM_BETA_PER_DEG_S * speedFiltered));
+			worldsByFrame[f][j] = quatToMat(filtered);
 		}
 	}
 }

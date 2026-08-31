@@ -65,11 +65,35 @@ function takeMetrics(motion) {
 	const ankle = accelRms([idx.LeftFoot, idx.RightFoot]);
 	const toe = accelRms([idx.LeftToeBase, idx.RightToeBase]);
 	const hips = accelRms([idx.Hips]);
+	// Hand speed and the guard-band wrist accel (#84). GUARD frames are the
+	// ones whose hand moves under 1.2 m/s across both steps of the second
+	// difference — the band the "our take jitters" complaint lives in, and the
+	// band a speed-adaptive filter is allowed to touch. Peak hand speed is the
+	// punch: the filter must leave it standing.
+	const handSpeed = (f, j) => Math.hypot(...[0, 1, 2].map((axis) => at(f, j, axis) - at(f - 1, j, axis))) * 100 * motion.fps;
+	const handSpeeds = [];
+	let guardSum = 0;
+	let guardCount = 0;
+	for (const j of [idx.LeftHand, idx.RightHand]) {
+		for (let f = 1; f < motion.frames; f += 1) handSpeeds.push(handSpeed(f, j));
+		for (let f = 1; f < motion.frames - 1; f += 1) {
+			if (handSpeed(f, j) > 120 || handSpeed(f + 1, j) > 120) continue;
+			for (let axis = 0; axis < 3; axis += 1) {
+				const acc = at(f + 1, j, axis) - 2 * at(f, j, axis) + at(f - 1, j, axis);
+				guardSum += acc * acc;
+				guardCount += 1;
+			}
+		}
+	}
+	const wrist = accelRms([idx.LeftHand, idx.RightHand]);
 	return {
 		lowest,
-		wrist: accelRms([idx.LeftHand, idx.RightHand]),
+		wrist,
+		guardWrist: Math.sqrt(guardSum / Math.max(1, guardCount)) * 100, // cm per frame²
+		handSpeedMax: Math.max(...handSpeeds), // cm/s — the punch peak
 		ankle, toe, hips, kneeJerk, worstKneeStep,
 		// per-second forms — comparable across frame rates
+		wristPerS2: wrist * motion.fps ** 2,
 		anklePerS2: ankle * motion.fps ** 2,
 		hipsPerS2: hips * motion.fps ** 2,
 		kneeJerkPerS2: kneeJerk * motion.fps ** 2,
@@ -259,6 +283,19 @@ const offlineMetrics = takeMetrics(offline);
 	pass("the offline-pipeline take stays smooth (wrist accel < 3.5 cm) and grounded");
 }
 
+// The arm One-Euro (#84), pinned from both sides. Unfiltered, this fixture
+// measures wrist accel 2.76 cm and guard-band wrist accel 1.36; the filter
+// takes them to 2.56 / 1.24 while peak hand speed keeps 799 of its 802 cm/s.
+// The rejected leg-style slerp on the arms scores 724 cm/s of peak with the
+// guard band UNTOUCHED at 1.36 — so the peak bound catches swapping in any
+// blunt smoother, and the two accel bounds catch removing the filter.
+{
+	assert.ok(offlineMetrics.wrist < 2.7, `wrist accel ${offlineMetrics.wrist} — arm filter missing?`);
+	assert.ok(offlineMetrics.guardWrist < 1.32, `guard-band wrist accel ${offlineMetrics.guardWrist} — arm filter missing?`);
+	assert.ok(offlineMetrics.handSpeedMax > 760, `peak hand speed ${offlineMetrics.handSpeedMax} cm/s — the punch got smoothed`);
+	pass("the arm One-Euro quiets the guard-band wrists without collapsing punch speed");
+}
+
 // The legs get the same zero-lag slerp as the torso (harder), and the 4f
 // penetration guard's correction is dilated-then-blurred rather than applied
 // raw. Together they took ankle accel RMS 2.33 → 1.72 cm, knee angle jerk
@@ -321,6 +358,10 @@ const offlineMetrics = takeMetrics(offline);
 		`60 fps ankle jitter ${fast.anklePerS2.toFixed(0)} cm/s² vs 30 fps ${offlineMetrics.anklePerS2.toFixed(0)}`);
 	assert.ok(fast.kneeJerkPerS2 < offlineMetrics.kneeJerkPerS2 * 1.35,
 		`60 fps knee jerk ${fast.kneeJerkPerS2.toFixed(0)} °/s² vs 30 fps ${offlineMetrics.kneeJerkPerS2.toFixed(0)}`);
+	// The arm One-Euro's constants are Hz, not frame counts: measured 1.20x
+	// here, held to the same bar as the legs.
+	assert.ok(fast.wristPerS2 < offlineMetrics.wristPerS2 * 1.35,
+		`60 fps wrist jitter ${fast.wristPerS2.toFixed(0)} cm/s² vs 30 fps ${offlineMetrics.wristPerS2.toFixed(0)}`);
 	// The hip bound is looser because the hips ride the ground line, which is
 	// read from the input sole track and cannot be smoother than it: measured
 	// 1.34x here against 1.72x before the conversion.
