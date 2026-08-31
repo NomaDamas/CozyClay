@@ -70,7 +70,48 @@ jobs:
           done
           echo "dev server did not come up" >&2
           exit 1
+      # MCP <-> real-editor element management, end to end: each suite spawns
+      # its own Vite, Chrome and MCP server on reserved ports (the shared 5180
+      # server above is not involved). These are the only checks that prove an
+      # element placed/updated/removed over MCP actually lands in the live
+      # editor — they existed but ran nowhere, which is exactly how a broken
+      # capture_frame shipped. Assertions are protocol/JSON-level, not GPU
+      # pixels, so SwiftShader is not a risk factor.
+      - name: MCP live suites (gating)
+        run: |
+          npm --prefix mcp ci
+          {
+            echo "## MCP live suites (gating)"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          failed=0
+          for t in verify-live-batch verify-live-scene-parity verify-live-editor-model verify-live-capture; do
+            if node "mcp/$t.mjs" > "/tmp/$t.log" 2>&1; then
+              echo "- :white_check_mark: $t" >> "$GITHUB_STEP_SUMMARY"
+              echo "$t: PASS"
+            else
+              failed=1
+              echo "::error title=MCP live suite failed::$t (see step summary)"
+              echo "::group::$t failure log (last 40 lines)"
+              echo "$t: FAIL"
+              tail -40 "/tmp/$t.log"
+              echo "::endgroup::"
+              {
+                echo "- :x: $t"
+                echo "  <details><summary>log tail</summary>"
+                echo ""
+                echo '  ```'
+                tail -40 "/tmp/$t.log" | sed 's/^/  /'
+                echo '  ```'
+                echo "  </details>"
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
+          done
+          exit "$failed"
       - name: Browser suites (gating)
+        # Runs even when the MCP step above is red: one failing tier must not
+        # hide how the other fared.
+        if: ${{ always() }}
         run: |
           {
             echo "## Browser suites (gating)"
