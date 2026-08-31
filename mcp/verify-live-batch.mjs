@@ -42,7 +42,11 @@ const waitForOutput = (child, pattern, label) =>
 		new Promise((resolve, reject) => {
 			let output = "";
 			const inspect = (chunk) => {
-				output += chunk.toString();
+				// picocolors turns colour ON when CI is set even without a TTY, and
+				// the port lands inside bold escapes ("...127.0.0.1:\x1b[1m5599...")
+				// — strip ANSI before matching or the ready banner never matches
+				// on a GitHub runner while passing everywhere locally.
+				output += chunk.toString().replace(/\u001b\[[0-9;]*m/g, "");
 				if (pattern.test(output)) finish(resolve);
 			};
 			const onExit = (code, signal) => finish(reject, new Error(`${label} exited (${code ?? signal ?? "unknown"}): ${output}`));
