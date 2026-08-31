@@ -48,6 +48,7 @@ const NODE_FILES = [
 	"test/verify-error-boundary.mjs",
 	"test/verify-footage-bridge.mjs",
 	"test/verify-g006-css.mjs",
+	"test/verify-gizmo-claim.mjs",
 	"test/verify-grid-view.mjs",
 	"test/verify-hierarchy.mjs",
 	"test/verify-history.mjs",

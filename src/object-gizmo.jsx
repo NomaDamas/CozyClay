@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { GIZMO_LAYER, SHOT_ASPECT, fitAspect } from "./dualview.jsx";
+import { HANDLE_PROXY_FLAG, claimsPress } from "./gizmo-claim.js";
 import {
 	CUTOUT_KIND,
 	objectSize,
@@ -661,26 +662,16 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			// deselected the character and killed the drag it had just started.
 			if (!rayFrom(event)) return;
 			tools.raycaster.layers.set(GIZMO_LAYER);
-			// The default Line threshold is 1 WORLD METRE, and the layer also holds
-			// line furniture (the selection cage, axis lines). At that slop a large
-			// selected object's cage claims presses across most of the frame, so an
-			// empty-space press never reaches the deselect below. The twin's grabbable
-			// handles are solid surfaces; only a press truly ON a line should count.
-			const lineParams = tools.raycaster.params.Line;
-			const prevThreshold = lineParams.threshold;
-			lineParams.threshold = 0.02;
-			// The camera ghost rides GIZMO_LAYER too, but it is a selection target
-			// for pickObject below, not a twin's handles — it must not eat the
-			// press. The key-light sun is NOT exempted: its puck owns its own press
-			// (select + body drag) after this guard lets the event through.
-			const twinClaims = tools.raycaster.intersectObjects(scene.children, true).filter((entry) => {
-				for (let node = entry.object; node; node = node.parent) {
-					if (node.userData?.shotCameraPick) return false;
-				}
-				return true;
-			}).length;
-			lineParams.threshold = prevThreshold;
-			if (twinClaims) return;
+			// Only surfaces that OWN their press may veto selection (#81): the
+			// twin's marked pick proxies, the key-light sun, path and crane dots
+			// — see gizmo-claim.js. Everything else on the layer is furniture
+			// (the selection cage, drawn arrows and rings, rail lines, labels):
+			// counting ANY layer hit here let the SELECTED object's own cage veto
+			// a press aimed at a different object's body, so the press never
+			// reached pickObject and Cube -> Sphere selection silently failed.
+			// The camera ghost is deliberately NOT a claimer: it is a selection
+			// target for pickObject below, so its press must fall through.
+			if (claimsPress(tools.raycaster.intersectObjects(scene.children, true))) return;
 			// Selection. A left press on a body selects it and does nothing else;
 			// a press on empty space clears the selection. Both claim the press so
 			// the fly camera cannot also react — navigation lives on the right and
@@ -814,6 +805,9 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 	const register = (axis, dir) => (mesh) => {
 		if (!mesh) return;
 		mesh.layers.set(GIZMO_LAYER);
+		// The claim mark (gizmo-claim.js): the OTHER gizmo instance's selection
+		// handler yields presses on this proxy instead of deselecting mid-grab.
+		mesh.userData[HANDLE_PROXY_FLAG] = true;
 		handlesRef.current.set(axis ?? "centre", { mesh, axis, dir });
 	};
 	/** the group whose rotation.z picks which half of this axis ring is near */
@@ -824,12 +818,14 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 	const registerPlane = (plane) => (mesh) => {
 		if (!mesh) return;
 		mesh.layers.set(GIZMO_LAYER);
+		mesh.userData[HANDLE_PROXY_FLAG] = true;
 		handlesRef.current.set(`plane:${plane.id}`, { mesh, axis: null, plane });
 	};
 	/** a cutout card's corner: resizes the picture, so it owns no axis either */
 	const registerCorner = (corner) => (mesh) => {
 		if (!mesh) return;
 		mesh.layers.set(GIZMO_LAYER);
+		mesh.userData[HANDLE_PROXY_FLAG] = true;
 		handlesRef.current.set(`corner:${corner.id}`, { mesh, axis: null, corner });
 	};
 	/** invisible-but-raycastable pick volume */
