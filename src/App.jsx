@@ -1698,9 +1698,13 @@ globalThis.playMode = centerTab === "play";
 		return () => window.removeEventListener("keydown", onKeyDown);
 	});
 
+	// Deps are identities, not the entry objects: charA/charB are rebuilt as
+	// fresh fallback objects on EVERY render when the cast is short (748-749),
+	// so depending on the objects fired this on each render and the actions
+	// menu closed the instant it opened.
 	useEffect(() => {
 		setInspectorActionsOpen(false);
-	}, [selectedSceneObjectId, selectedHierarchyId, keyLight, charA, charB, showB]);
+	}, [selectedSceneObjectId, selectedHierarchyId, charA.id, charB.id, showB]);
 	// A point index belongs to one object's route; carrying it to the next
 	// selection would point the gizmo at a stale dot.
 	useEffect(() => {
