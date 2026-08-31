@@ -152,6 +152,15 @@ try {
 	const closed = once(socket, "close");
 	socket.close();
 	await closed;
+	// The client-side close resolves before the hub has necessarily processed
+	// the disconnect; on a slow runner the next command can still race down
+	// the live path. Wait until the hub itself reports the editor gone — the
+	// fallback assertions below then test fallback, not close latency.
+	const disconnectDeadline = Date.now() + 5_000;
+	while (!(await call("live_status")).includes("No live editor")) {
+		if (Date.now() > disconnectDeadline) throw new Error("live hub never noticed the editor disconnect");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
 	const fallback = await call("set_camera", { x: 9 });
 	assert(fallback.includes("Camera set") && !(fallback.includes("Live editor error")), "tools did not fall back to memory after disconnect");
 	assert((await call("describe_scene")).includes("x 9"), "memory fallback did not retain the camera update");
