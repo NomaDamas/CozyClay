@@ -381,6 +381,7 @@ import {
 	attachWorldMatrix,
 	buildPromptSchedule,
 	cameraMoveLabelKo,
+	captureMcpFrame,
 	characterModelUrl,
 	defaultCharacterTint,
 	hierarchyIdForIkFocus,

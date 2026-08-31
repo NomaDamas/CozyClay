@@ -2355,7 +2355,7 @@ export function CaptureRig({ apiRef, camRef, width = CAPTURE_W, height = CAPTURE
 	return null;
 }
 
-async function captureMcpFrame({ capture, camera, characters, activeCharacterId, objects, rigs, readAuthoredState }) {
+export async function captureMcpFrame({ capture, camera, characters, activeCharacterId, objects, rigs, readAuthoredState }) {
 	if (!capture || !camera) throw new Error("No renderable shot camera is available for capture_frame.");
 	const authoredStateBefore = JSON.stringify(readAuthoredState());
 	const buffer = capture.render();
