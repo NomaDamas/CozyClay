@@ -12,9 +12,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { WebSocket } from "ws";
 
+import { chromeArgs, resolveChromePath } from "./qa-chrome.mjs";
+
 const root = fileURLToPath(new URL("..", import.meta.url));
 const serverPath = fileURLToPath(new URL("./server.mjs", import.meta.url));
-const chromePath = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
 const peerArtifactPath = join(tmpdir(), `cozyclay-capture-${randomUUID()}.png`);
 await writeFile(peerArtifactPath, "owned by another live MCP process", { mode: 0o600 });
 
@@ -115,7 +116,7 @@ const cdpPort = await reservePort();
 const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
 	cwd: root, env: { ...process.env, COZYCLAY_LIVE_PORT: String(livePort) }, stdio: ["ignore", "pipe", "pipe"],
 });
-const browser = spawn(chromePath, ["--headless=new", "--no-first-run", "--no-default-browser-check", `--remote-debugging-port=${cdpPort}`], {
+const browser = spawn(resolveChromePath(), chromeArgs(cdpPort), {
 	stdio: ["ignore", "pipe", "pipe"],
 });
 let cdp;

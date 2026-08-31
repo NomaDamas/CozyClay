@@ -7,6 +7,8 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 
+import { chromeArgs, resolveChromePath } from "./qa-chrome.mjs";
+
 const root = fileURLToPath(new URL("..", import.meta.url));
 const serverPath = fileURLToPath(new URL("./server.mjs", import.meta.url));
 
@@ -71,12 +73,7 @@ const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host",
 	env: { ...process.env, COZYCLAY_LIVE_PORT: String(livePort) },
 	stdio: ["ignore", "pipe", "pipe"],
 });
-const browser = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [
-	"--headless=new",
-	"--no-first-run",
-	"--no-default-browser-check",
-	`--remote-debugging-port=${cdpPort}`,
-], { stdio: ["ignore", "pipe", "pipe"] });
+const browser = spawn(resolveChromePath(), chromeArgs(cdpPort), { stdio: ["ignore", "pipe", "pipe"] });
 let socket;
 let client;
 try {

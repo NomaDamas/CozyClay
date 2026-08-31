@@ -9,6 +9,8 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { WebSocket } from "ws";
 
+import { chromeArgs, resolveChromePath } from "./qa-chrome.mjs";
+
 const root = fileURLToPath(new URL("..", import.meta.url)); const serverPath = fileURLToPath(new URL("./server.mjs", import.meta.url));
 
 const reservePort = () =>
@@ -70,12 +72,7 @@ const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host",
 	env: { ...process.env, COZYCLAY_LIVE_PORT: String(livePort) },
 	stdio: ["ignore", "pipe", "pipe"],
 });
-const browser = spawn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [
-	"--headless=new",
-	"--no-first-run",
-	"--no-default-browser-check",
-	`--remote-debugging-port=${cdpPort}`,
-], { stdio: ["ignore", "pipe", "pipe"] });
+const browser = spawn(resolveChromePath(), chromeArgs(cdpPort), { stdio: ["ignore", "pipe", "pipe"] });
 
 let socket;
 let client;
@@ -171,6 +168,33 @@ try {
 	assert.equal((await history()).past - singleDepth.past, 1);
 	await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyZ", ctrlKey: true, bubbles: true, cancelable: true }))');
 	assert.deepEqual(JSON.parse(await description()).objects, JSON.parse(beforeSingle).objects);
+
+	// Given an agent managing one element end to end — the reported "an MCP
+	// element sometimes goes missing" class of failure
+	// When place -> update -> remove run back to back as separate commands
+	// Then every step is visible in the editor's OWN description immediately:
+	// the placed object appears under its returned id, the update lands on
+	// that id, and the removal leaves no trace. No step may silently drop.
+	const placedResult = await call("place_object", { kind: "cube", x: 2, z: -2, name: "Lifecycle Crate" });
+	assert.equal(placedResult.isError, undefined, JSON.stringify(placedResult));
+	const placedId = placedResult.content[0].text.match(/Placed object as ([^.\s]+)\./)?.[1];
+	assert.ok(placedId, placedResult.content[0].text);
+	const afterPlace = JSON.parse(await description()).objects.find((object) => object.id === placedId);
+	assert.ok(afterPlace, `placed object ${placedId} missing from the editor description`);
+	assert.equal(afterPlace.name, "Lifecycle Crate");
+	const updated = await call("update_object", { id: placedId, x: 4, color: "#ff0000", name: "Lifecycle Crate B" });
+	assert.equal(updated.isError, undefined, JSON.stringify(updated));
+	const afterUpdate = JSON.parse(await description()).objects.find((object) => object.id === placedId);
+	assert.ok(afterUpdate, `updated object ${placedId} missing from the editor description`);
+	assert.equal(afterUpdate.x, 4);
+	assert.equal(afterUpdate.color, "#ff0000");
+	assert.equal(afterUpdate.name, "Lifecycle Crate B");
+	const removed = await call("remove_object", { id: placedId });
+	assert.equal(removed.isError, undefined, JSON.stringify(removed));
+	assert.ok(
+		!JSON.parse(await description()).objects.some((object) => object.id === placedId),
+		"removed object still present in the editor description",
+	);
 
 	// Given the real editor has an empty object history
 	// When an MCP agent applies multiple mutations as a batch
