@@ -183,6 +183,14 @@ try {
 	const closed = once(socket, "close");
 	socket.close();
 	await closed;
+	// The client-side close resolves before the hub has processed the
+	// disconnect; poll until the hub itself reports fallback mode so the
+	// headless assertions below test fallback, not close latency.
+	const fallbackDeadline = Date.now() + 5_000;
+	while (!(await call("live_status")).content[0].text.includes("No live editor")) {
+		if (Date.now() > fallbackDeadline) throw new Error("live hub never noticed the editor disconnect");
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
 
 	// Given no connected editor
 	// When scenes are created, switched, saved, and reopened

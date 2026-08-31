@@ -150,6 +150,17 @@ try {
 	assert.notEqual(first.workspace, second.workspace, "each editor needs a distinct workspace handle");
 
 	const call = (name, args = {}) => client.callTool({ name, arguments: args });
+	/** Poll until the hub itself no longer lists this workspace — bounded, so
+	 * a hub that truly never notices a disconnect still fails loudly. */
+	const waitForWorkspaceGone = async (handle) => {
+		const deadline = Date.now() + 5_000;
+		for (;;) {
+			const status = await call("live_status");
+			if (!status.content[0].text.includes(handle)) return;
+			if (Date.now() > deadline) throw new Error(`live hub never dropped workspace ${handle}`);
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
+	};
 	const beforeBoundOther = clone(second.state);
 
 	// Given two live editors and a command explicitly bound to the first handle
@@ -195,6 +206,10 @@ try {
 	const secondClosed = once(second.socket, "close");
 	second.socket.close();
 	await secondClosed;
+	// The client-side close resolves before the hub has processed the
+	// disconnect; until it does, formerHandle is still valid and the stale
+	// check below would race. Poll the hub's own view.
+	await waitForWorkspaceGone(formerHandle);
 	reconnected = await connectEditor("RECONNECTED");
 	assert.notEqual(reconnected.workspace, formerHandle, "reconnect must issue a fresh workspace handle");
 	const beforeStale = clone(reconnected.state);
@@ -206,6 +221,10 @@ try {
 	const firstClosed = once(first.socket, "close");
 	first.socket.close();
 	await firstClosed;
+	// Same hub race as above: the no-handle path below is only unambiguous
+	// once the hub has actually dropped the first workspace (first seen as a
+	// two-workspace ambiguity error on a slow CI runner).
+	await waitForWorkspaceGone(first.workspace);
 	// Given exactly one live editor
 	// When a mutation omits its handle
 	const unboundSingle = await call("set_camera", { x: 55 });
