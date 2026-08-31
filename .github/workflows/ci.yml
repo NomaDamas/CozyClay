@@ -84,21 +84,38 @@ jobs:
           done
           exit "$failed"
 
-  # Real-browser rendering regressions via the CDP QA wrapper, in two tiers:
+  # Real-browser rendering regressions via the CDP QA wrapper — one matrix
+  # job per suite, because the suites dominate wall-clock (setup is ~20 s on
+  # the npm cache while verify-ik-browser and verify-object-gizmo together
+  # ran ~12 minutes in series). Splitting makes the whole workflow as fast as
+  # the single slowest suite and lands gating verdicts in a couple of
+  # minutes instead of after the observation tail.
   #
-  # - GATING: suites proven green on the runner fail the job when they fail.
-  #   camera-rail has been green on SwiftShader since the job landed.
-  #   qa-gizmo-click-through-browser guards the #81 regression (a selected
-  #   object's cage swallowing clicks on other objects); it asserts through
-  #   CPU-side raycast hooks and the DOM, not GPU pixels, so software GL is
-  #   not a risk factor for it.
-  # - OBSERVATION: suites the runner's software GL (SwiftShader) cannot pass
+  # Tiers:
+  # - gating: suites proven green on the runner fail their job when they
+  #   fail. camera-rail has been green on SwiftShader since the job landed;
+  #   qa-gizmo-click-through-browser guards the #81 regression and asserts
+  #   through CPU-side raycast hooks and the DOM, not GPU pixels.
+  # - observation: suites the runner's software GL (SwiftShader) cannot pass
   #   yet — ik-browser fails one occlusion check that passes on real GPUs —
   #   plus suites newly joining. Results go to the step summary and a
-  #   warning annotation. Promote a suite to GATING once it is green here.
+  #   warning annotation. Promote a suite to gating once it is green here.
   browser:
+    name: browser / ${{ matrix.suite }} (${{ matrix.tier }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: verify-camera-rail-browser
+            tier: gating
+          - suite: qa-gizmo-click-through-browser
+            tier: gating
+          - suite: verify-ik-browser
+            tier: observation
+          - suite: verify-object-gizmo
+            tier: observation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -108,9 +125,9 @@ jobs:
       - run: npm ci
       # Vite only. `npm run dev` also starts the motion bridge, which since the
       # Kimodo backend landed exits 2 without CCLAY_KIMODO_HOST — a GPU box CI
-      # does not have, so the whole job died before a single suite ran. Both
-      # suites below drive the studio at /app/ and load their motion from
-      # static /demo/*.npz fixtures, so they need no motion backend.
+      # does not have, so the whole job died before a single suite ran. The
+      # suites drive the studio at /app/ and load their motion from static
+      # /demo/*.npz fixtures, so they need no motion backend.
       - name: Start dev server (vite)
         run: |
           npm run dev:ui -- --host 127.0.0.1 --port 5180 --strictPort &
@@ -120,66 +137,37 @@ jobs:
           done
           echo "dev server did not come up" >&2
           exit 1
-      - name: Browser suites (gating)
+      - name: Run ${{ matrix.suite }} (${{ matrix.tier }})
         run: |
+          t="${{ matrix.suite }}"
+          tier="${{ matrix.tier }}"
           {
-            echo "## Browser suites (gating)"
+            echo "## $t ($tier)"
             echo ""
           } >> "$GITHUB_STEP_SUMMARY"
-          failed=0
-          for t in verify-camera-rail-browser qa-gizmo-click-through-browser; do
-            if node tools/qa-browser.mjs -- node "test/$t.mjs" > "/tmp/$t.log" 2>&1; then
-              echo "- :white_check_mark: $t ($(grep -c '^PASS' "/tmp/$t.log") checks)" >> "$GITHUB_STEP_SUMMARY"
-              echo "$t: PASS ($(grep -c '^PASS' "/tmp/$t.log") checks)"
-            else
-              failed=1
-              echo "::error title=browser suite failed::$t (see step summary)"
-              echo "::group::$t failure log (last 40 lines)"
-              echo "$t: FAIL ($(grep -c '^PASS' "/tmp/$t.log") checks passed, $(grep -c '^FAIL' "/tmp/$t.log") failed)"
-              tail -40 "/tmp/$t.log"
-              echo "::endgroup::"
-              {
-                echo "- :x: $t"
-                echo "  <details><summary>log tail</summary>"
-                echo ""
-                echo '  ```'
-                tail -40 "/tmp/$t.log" | sed 's/^/  /'
-                echo '  ```'
-                echo "  </details>"
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
-          exit "$failed"
-      - name: Browser suites (observation mode)
-        # Keep observing even when a gating suite already failed: the summary
-        # for a red run should still say how the other suites fared.
-        if: ${{ always() }}
-        run: |
+          if node tools/qa-browser.mjs -- node "test/$t.mjs" > "/tmp/$t.log" 2>&1; then
+            echo "- :white_check_mark: $t ($(grep -c '^PASS' "/tmp/$t.log") checks)" >> "$GITHUB_STEP_SUMMARY"
+            echo "$t: PASS ($(grep -c '^PASS' "/tmp/$t.log") checks)"
+            exit 0
+          fi
+          # Also to stdout: the step summary is not reachable from the API,
+          # so a summary-only failure cannot be read back when triaging a
+          # run after the fact.
+          echo "::group::$t failure log (last 40 lines)"
+          echo "$t: FAIL ($(grep -c '^PASS' "/tmp/$t.log") checks passed, $(grep -c '^FAIL' "/tmp/$t.log") failed)"
+          tail -40 "/tmp/$t.log"
+          echo "::endgroup::"
           {
-            echo "## Browser suites (observation mode)"
+            echo "- :x: $t"
+            echo "  <details><summary>log tail</summary>"
             echo ""
+            echo '  ```'
+            tail -40 "/tmp/$t.log" | sed 's/^/  /'
+            echo '  ```'
+            echo "  </details>"
           } >> "$GITHUB_STEP_SUMMARY"
-          for t in verify-ik-browser verify-object-gizmo; do
-            if node tools/qa-browser.mjs -- node "test/$t.mjs" > "/tmp/$t.log" 2>&1; then
-              echo "- :white_check_mark: $t ($(grep -c '^PASS' "/tmp/$t.log") checks)" >> "$GITHUB_STEP_SUMMARY"
-              echo "$t: PASS ($(grep -c '^PASS' "/tmp/$t.log") checks)"
-            else
-              echo "::warning title=browser suite failed::$t (see step summary)"
-              # Also to stdout: the step summary is not reachable from the API,
-              # so a summary-only failure cannot be read back when triaging a
-              # run after the fact.
-              echo "::group::$t failure log (last 40 lines)"
-              echo "$t: FAIL ($(grep -c '^PASS' "/tmp/$t.log") checks passed, $(grep -c '^FAIL' "/tmp/$t.log") failed)"
-              tail -40 "/tmp/$t.log"
-              echo "::endgroup::"
-              {
-                echo "- :x: $t"
-                echo "  <details><summary>log tail</summary>"
-                echo ""
-                echo '  ```'
-                tail -40 "/tmp/$t.log" | sed 's/^/  /'
-                echo '  ```'
-                echo "  </details>"
-              } >> "$GITHUB_STEP_SUMMARY"
-            fi
-          done
+          if [ "$tier" = "gating" ]; then
+            echo "::error title=browser suite failed::$t (see step summary)"
+            exit 1
+          fi
+          echo "::warning title=browser suite failed::$t (see step summary)"
