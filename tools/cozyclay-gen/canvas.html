@@ -1,6 +1,314 @@
-<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>CozyClay · 노드 캔버스</title><style>
-:root{--bg:#101318;--panel:#171c24;--line:#2a3442;--text:#e8edf5;--muted:#8995a5;--blue:#6ea8ff;--green:#4bd49a;--red:#ff6574}*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--text);font:13px/1.4 Inter,system-ui,sans-serif}#top{height:54px;border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 18px;gap:14px;background:#131820}#brand{font-weight:700;font-size:15px}button{border:1px solid #344154;background:#202938;color:var(--text);border-radius:7px;padding:8px 13px;font:inherit;cursor:pointer}button:hover{border-color:var(--blue)}#run{background:#3e83ff;border-color:#5693ff;font-weight:700;padding:9px 18px}.spacer{flex:1}#status{color:var(--muted)}#workspace{position:relative;height:calc(100% - 54px);overflow:hidden;background-color:#11161d;background-image:radial-gradient(#2a3442 1px,transparent 1px);background-size:24px 24px;cursor:grab}.node{position:absolute;width:270px;background:var(--panel);border:1px solid #344154;border-radius:10px;box-shadow:0 12px 30px #0005;user-select:none}.node.running{border-color:var(--blue);box-shadow:0 0 0 2px #4f8cff55}.node.done{border-color:var(--green)}.node.error{border-color:var(--red)}.head{height:38px;padding:10px 12px;border-bottom:1px solid var(--line);font-weight:700;display:flex;justify-content:space-between;cursor:move}.head .tag{font-size:11px;color:var(--muted);font-weight:500}.body{padding:12px}.node label{display:block;color:var(--muted);font-size:12px;margin:0 0 5px}.node textarea,.node input,.node select{width:100%;background:#0e1218;border:1px solid #344154;color:var(--text);border-radius:6px;padding:8px;font:inherit;margin-bottom:10px}.node textarea{height:74px;resize:vertical}.port{height:18px;margin:4px -4px;display:flex;align-items:center;gap:7px;color:var(--muted);font-size:11px}.dot{width:9px;height:9px;border-radius:50%;background:var(--blue);display:inline-block}.out{justify-content:flex-end}.out .dot{background:var(--green)}.advanced{border-top:1px solid var(--line);padding-top:8px}.advanced summary{cursor:pointer;color:var(--muted);margin-bottom:8px}.thumb{height:100px;border-radius:6px;background:#0c1015;display:flex;align-items:center;justify-content:center;color:var(--muted);margin-bottom:10px}.progress{height:4px;background:#28364a;border-radius:3px;overflow:hidden;margin-top:8px}.progress i{display:block;height:100%;background:var(--blue);width:55%}.check{color:var(--green)}.errmsg{color:var(--red);font-size:12px;margin-top:6px}.video{height:110px;background:#080b0f;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);margin-bottom:8px}.toast{position:fixed;right:18px;bottom:18px;background:#4a1f29;border:1px solid var(--red);padding:12px 16px;border-radius:8px;display:none}.menu{position:fixed;background:#202938;border:1px solid #43516a;border-radius:7px;padding:6px;display:none;z-index:5;box-shadow:0 8px 24px #0008}.menu div{padding:7px 12px;border-radius:4px;cursor:pointer}.menu div:hover{background:#33445e}#hint{position:absolute;bottom:12px;left:16px;color:#718096;font-size:12px}.link{position:absolute;height:2px;background:var(--blue);transform-origin:left center;opacity:.75}.search{position:fixed;display:none;z-index:4;background:#202938;border:1px solid #50627e;border-radius:9px;padding:10px;width:250px}.search input{width:100%;background:#11161d;border:1px solid #3b4b63;color:white;padding:8px;border-radius:6px}.search div{padding:8px;color:#dbe6f5}
-</style></head><body><header id="top"><div id="brand">CozyClay <span style="color:#78879a;font-weight:500">노드 캔버스</span></div><button id="run">▶ 실행 <small>Ctrl+Enter</small></button><button id="fit">맞춤</button><button id="reset">기본 프리셋</button><span class="spacer"></span><span id="status">준비됨</span></header><main id="workspace"><div id="hint">빈 공간 더블클릭: 노드 검색 · 우클릭: 메뉴 · Space+드래그: 이동 · 휠: 확대/축소</div></main><div id="menu" class="menu"><div data-act="add">노드 추가</div><div data-act="collapse">접기/펼치기</div><div data-act="bypass">우회</div><div data-act="delete">삭제</div></div><div id="search" class="search"><input placeholder="노드 검색…"><div>Reference Image</div><div>Scene</div><div>Generate Video</div><div>Result</div></div><div id="toast" class="toast"></div><script>
-const ws=document.querySelector('#workspace'), statusEl=document.querySelector('#status'), toast=document.querySelector('#toast');let scale=1,pan={x:0,y:0},drag=null,selected=null,running=false;const defs=[['Reference Image','ref',80,130],['Scene','scene',430,100],['Generate Video','gen',800,145],['Result','result',1160,130]];function node(title,type,x,y){let e=document.createElement('section');e.className='node';e.dataset.type=type;e.style.left=x+'px';e.style.top=y+'px';let body='';if(type==='ref')body='<div class="thumb">이미지를 선택하세요</div><button class="pick">이미지 업로드</button><div class="port out"><span>image</span><i class="dot"></i></div>';if(type==='scene')body='<label>장면 설명</label><textarea placeholder="인물이 천천히 고개 숙여 인사한다…"></textarea><div class="port out"><span>prompt</span><i class="dot"></i></div>';if(type==='gen')body='<label>길이 (초)</label><input type="number" value="5" min="1" max="15"><label>화면 비율</label><select><option>16:9</option><option>9:16</option><option>1:1</option></select><label>시드</label><input type="number" value="42"><details class="advanced"><summary>고급 설정</summary><label>Steps</label><input type="number" value="4"><label>Megapixels</label><input type="number" value="0.4" step="0.1"></details><div class="port"><i class="dot"></i><span>conditioning</span></div><div class="port out"><span>video</span><i class="dot"></i></div>';if(type==='result')body='<div class="video">생성된 영상이 여기에 표시됩니다</div><button>재생</button> <button>다운로드</button><div style="color:var(--muted);margin-top:8px">대기 시간 —</div>';e.innerHTML='<div class="head"><span>'+title+'</span><span class="tag">'+(type==='gen'?'생성':'기본')+'</span></div><div class="body">'+body+'</div>';ws.appendChild(e);e.querySelector('.head').onmousedown=ev=>{if(ev.button!==0)return;selected=e;drag={e,ox:ev.clientX-e.offsetLeft,oy:ev.clientY-e.offsetTop};ev.stopPropagation()};e.onmousedown=ev=>{selected=e;ev.stopPropagation()};return e}function render(){document.querySelectorAll('.node').forEach(n=>{n.style.transform='translate('+pan.x+'px,'+pan.y+'px) scale('+scale+')';n.style.transformOrigin='0 0'});document.querySelectorAll('.link').forEach(x=>x.remove());const ns=[...document.querySelectorAll('.node')];for(let i=0;i<3;i++){let a=ns[i],b=ns[i+1];let x=a.offsetLeft+a.offsetWidth,y=a.offsetTop+45,x2=b.offsetLeft,y2=b.offsetTop+45,len=Math.hypot(x2-x,y2-y),ang=Math.atan2(y2-y,x2-x)*180/Math.PI,l=document.createElement('div');l.className='link';l.style.left=x+'px';l.style.top=y+'px';l.style.width=len+'px';l.style.transform='rotate('+ang+'deg)';ws.appendChild(l)}}function reset(){document.querySelectorAll('.node').forEach(n=>n.remove());defs.forEach(d=>node(...d));render()}reset();
-ws.onmousedown=e=>{if(e.target!==ws)return;drag={pan:true,ox:e.clientX-pan.x,oy:e.clientY-pan.y};ws.style.cursor='grabbing'};window.onmousemove=e=>{if(!drag)return;if(drag.pan){pan.x=e.clientX-drag.ox;pan.y=e.clientY-drag.oy}else{drag.e.style.left=(e.clientX-drag.ox)+'px';drag.e.style.top=(e.clientY-drag.oy)+'px'}render()};window.onmouseup=()=>{drag=null;ws.style.cursor='grab'};ws.onwheel=e=>{e.preventDefault();scale=Math.max(.55,Math.min(1.5,scale*(e.deltaY<0?1.1:.9)));render()};ws.ondblclick=e=>{if(e.target!==ws)return;let s=document.querySelector('#search');s.style.display='block';s.style.left=e.clientX+'px';s.style.top=e.clientY+'px';s.querySelector('input').focus()};ws.oncontextmenu=e=>{e.preventDefault();let m=document.querySelector('#menu');m.style.display='block';m.style.left=e.clientX+'px';m.style.top=e.clientY+'px'};document.body.onclick=e=>{if(!e.target.closest('.menu')&&!e.target.closest('.search')){document.querySelector('#menu').style.display='none';document.querySelector('#search').style.display='none'}};document.querySelector('#menu').onclick=e=>{let act=e.target.dataset.act;if(act==='delete'&&selected)selected.remove();if(act==='collapse'&&selected)selected.querySelector('.body').hidden=!selected.querySelector('.body').hidden;if(act==='add')node('Scene','scene',250,200);document.querySelector('#menu').style.display='none';render()};document.querySelector('#fit').onclick=()=>{scale=1;pan={x:0,y:0};render()};document.querySelector('#reset').onclick=reset;document.querySelector('#run').onclick=run;document.onkeydown=e=>{if((e.ctrlKey||e.metaKey)&&e.key==='Enter'){e.preventDefault();run()}if((e.ctrlKey||e.metaKey)&&e.key==='z'){e.preventDefault();statusEl.textContent='되돌림 완료'}};async function run(){if(running)return;running=true;statusEl.textContent='생성 중…';let ns=[...document.querySelectorAll('.node')];ns.forEach((n,i)=>setTimeout(()=>{n.classList.add('running');if(i)ns[i-1].classList.remove('running'),ns[i-1].classList.add('done');if(i===2)n.querySelector('.body').insertAdjacentHTML('beforeend','<div class="progress"><i></i></div>')},i*500));setTimeout(()=>{ns.forEach(n=>{n.classList.remove('running');n.classList.add('done')});ns[3].querySelector('.video').textContent='▶ 결과 영상 (mock)';ns[3].querySelector('div:last-child').textContent='벽 시간 2.4초';statusEl.textContent='완료 · 2.4초';running=false},2200)}
-</script></body></html>
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cozyclay-gen canvas</title>
+<link rel="stylesheet" href="https://unpkg.com/litegraph.js@0.7.18/css/litegraph.css">
+<style>
+  html,body{margin:0;height:100%;background:#151515;color:#ddd;font:13px -apple-system,system-ui,sans-serif;overflow:hidden}
+  #bar{position:fixed;top:0;left:0;right:0;height:42px;display:flex;align-items:center;gap:8px;padding:0 12px;background:#1d1d1d;border-bottom:1px solid #2c2c2c;z-index:5}
+  #bar b{margin-right:8px}
+  #bar button{background:#2b2b2b;color:#eee;border:1px solid #3a3a3a;border-radius:6px;padding:6px 12px;cursor:pointer;font:inherit}
+  #bar button.run{background:#4f8cff;border-color:#4f8cff;font-weight:600}
+  #bar button:disabled{opacity:.5;cursor:wait}
+  #status{margin-left:auto;color:#9a9a9a;font-size:12px}
+  #c{position:fixed;top:42px;left:0;width:100vw;height:calc(100vh - 42px)}
+  #editor{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:10}
+  #editor .box{width:min(900px,90vw);background:#1b1b1b;border:1px solid #333;border-radius:10px;padding:14px}
+  #editor textarea{width:100%;height:50vh;background:#0e0e0e;color:#eee;border:1px solid #333;border-radius:6px;padding:10px;font:12px/1.5 ui-monospace,Menlo,monospace;box-sizing:border-box}
+  #editor .btns{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+  .litegraph .dialog{z-index:20}
+  #hint{position:fixed;left:12px;bottom:10px;color:#666;font-size:11px}
+  textarea.nodeText{position:fixed;z-index:3;background:#0e0e0e;color:#eee;border:1px solid #3a3a3a;border-radius:6px;padding:6px;font:12px/1.4 ui-monospace,Menlo,monospace;resize:none;box-sizing:border-box;display:none}
+  textarea.nodeText:focus{outline:1px solid #4f8cff}
+  .nodeDom{position:fixed;z-index:3;background:#0e0e0e;color:#eee;border:1px solid #3a3a3a;border-radius:5px;padding:0 6px;font:12px -apple-system,system-ui,sans-serif;box-sizing:border-box;display:none;height:20px}
+  .nodeDom:focus{outline:1px solid #4f8cff}
+  input.nodeDom[type=number]{-moz-appearance:textfield}
+  .nodeDom.chk{width:18px;padding:0;accent-color:#4f8cff}
+</style>
+</head>
+<body>
+<div id="bar">
+  <b>cozyclay-gen</b>
+  <button class="run" id="run">Run (Ctrl+Enter)</button>
+  <button id="default">Mocap preset</button>
+  <button id="save">Save</button>
+  <button id="load">Load</button>
+  <button id="export">Export JSON</button>
+  <button id="import">Import JSON</button>
+  <input type="file" id="importFile" accept="application/json" hidden>
+  <input type="file" id="uploadFile" accept="image/*" hidden>
+  <span id="status">…</span>
+</div>
+<canvas id="c"></canvas>
+<div id="hint">double-click: search nodes · right-click: add node · click a prompt widget: editor · Ctrl+Enter: run</div>
+<div id="editor"><div class="box"><div id="edTitle" style="margin-bottom:8px;color:#aaa"></div><textarea id="edText"></textarea><div class="btns"><button id="edCancel">Cancel</button><button id="edOk" style="background:#4f8cff;color:#fff;border:0;border-radius:6px;padding:6px 14px">OK</button></div></div></div>
+<script src="https://unpkg.com/litegraph.js@0.7.18/build/litegraph.min.js"></script>
+<script>
+const base = location.origin;
+const PRESET_IMAGE = 'preset_female_gray_34.png'; // shipped with the service (presets/), 3/4 slightly elevated mocap angle
+const $ = s => document.querySelector(s);
+const status = t => $('#status').textContent = t;
+
+// ---------- multiline editor ----------
+function editText(title, value) {
+  return new Promise(res => {
+    $('#edTitle').textContent = title; $('#edText').value = value || '';
+    $('#editor').style.display = 'flex'; $('#edText').focus();
+    const close = v => { $('#editor').style.display = 'none'; $('#edOk').onclick = $('#edCancel').onclick = null; res(v); };
+    $('#edOk').onclick = () => close($('#edText').value);
+    $('#edCancel').onclick = () => close(null);
+  });
+}
+
+// ---------- node registration from /nodes ----------
+const PRIMS = new Set(['STRING', 'INT', 'FLOAT', 'BOOL', 'COMBO', 'IMAGEFILE']);
+const imgCache = {};
+function registerNode(def) {
+  function N() {
+    this.def = def;
+    this.widgetsByName = {};
+    for (const i of def.inputs) {
+      if (!PRIMS.has(i.type)) { this.addInput(i.name, i.type); continue; }
+      let w;
+      if (i.type === 'STRING' && i.multiline) {
+        w = this.addWidget('button', i.name, i.default || '', () => editText(`${def.name} · ${i.name}`, w.value).then(v => { if (v !== null) { w.value = v; if (w.ta) w.ta.value = v; this.setDirtyCanvas(true); } }));
+        w.multiline = true;
+        const ta = document.createElement('textarea'); ta.className = 'nodeText'; ta.placeholder = i.placeholder || i.name; ta.value = w.value;
+        ta.oninput = () => { w.value = ta.value; }; ta.onmousedown = e => e.stopPropagation(); ta.onwheel = e => e.stopPropagation();
+        document.body.appendChild(ta); w.ta = ta;
+        this.textAreas = this.textAreas || []; this.textAreas.push(w);
+      } else if (i.type === 'STRING') {
+        w = this.addWidget('text', i.name, i.default || '', v => { w.value = v; });
+      } else if (i.type === 'INT') {
+        w = this.addWidget('number', i.name, i.default ?? 0, v => { w.value = Math.round(v); }, { min: i.min ?? 0, max: i.max ?? 1e9, step: 10, precision: 0 });
+      } else if (i.type === 'FLOAT') {
+        w = this.addWidget('number', i.name, i.default ?? 0, v => { w.value = v; }, { min: i.min ?? 0, max: i.max ?? 1e9, step: (i.step ?? 0.1) * 10, precision: 2 });
+      } else if (i.type === 'BOOL') {
+        w = this.addWidget('toggle', i.name, !!i.default, v => { w.value = v; });
+      } else if (i.type === 'COMBO') {
+        w = this.addWidget('combo', i.name, i.default, v => { w.value = v; }, { values: i.options || [] });
+      } else if (i.type === 'IMAGEFILE') {
+        w = this.addWidget('button', i.name, i.default || '(choose image)', () => {
+          const inp = $('#uploadFile'); inp.onchange = async () => {
+            const f = inp.files[0]; if (!f) return;
+            const fd = new FormData(); fd.append('image', f, f.name);
+            const j = await (await fetch(base + '/upload', { method: 'POST', body: fd })).json();
+            w.value = j.files[0]; this.loadThumb(); this.setDirtyCanvas(true); inp.value = '';
+          }; inp.click();
+        });
+        w.isImage = true;
+      }
+      if (w) {
+        w.inputName = i.name; w.inputType = i.type; this.widgetsByName[i.name] = w;
+        if (i.type !== 'IMAGEFILE') this.addInput(i.name, i.type);
+        // native DOM control drawn over the widget row: numbers, combos, toggles, one-line text
+        let el = null;
+        if (i.type === 'INT' || i.type === 'FLOAT') {
+          el = document.createElement('input'); el.type = 'number'; el.min = i.min ?? ''; el.max = i.max ?? ''; el.step = i.type === 'INT' ? 1 : (i.step ?? 0.1); el.value = w.value;
+          el.onchange = el.oninput = () => { const v = Number(el.value); if (!Number.isNaN(v)) { w.value = i.type === 'INT' ? Math.round(v) : v; this.setDirtyCanvas(true); } };
+        } else if (i.type === 'COMBO') {
+          el = document.createElement('select'); (i.options || []).forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o; el.appendChild(op); }); el.value = w.value;
+          el.onchange = () => { w.value = el.value; this.setDirtyCanvas(true); };
+        } else if (i.type === 'BOOL') {
+          el = document.createElement('input'); el.type = 'checkbox'; el.className = 'chk'; el.checked = !!w.value;
+          el.onchange = () => { w.value = el.checked; this.setDirtyCanvas(true); };
+        } else if (i.type === 'STRING' && !i.multiline) {
+          el = document.createElement('input'); el.type = 'text'; el.value = w.value || '';
+          el.oninput = () => { w.value = el.value; };
+        }
+        if (el) { el.classList.add('nodeDom'); el.onmousedown = e => e.stopPropagation(); el.onwheel = e => e.stopPropagation(); el.onkeydown = e => e.stopPropagation(); document.body.appendChild(el); w.dom = el; (this.domWidgets = this.domWidgets || []).push(w); }
+      }
+    }
+    for (const o of def.outputs) this.addOutput(o.name, o.type);
+    this.serialize_widgets = true;
+    this.color = { input: '#223', prompt: '#232', h3: '#322', output: '#233' }[def.category] || '#222';
+  }
+  N.title = def.name;
+  N.desc = def.description;
+  // LiteGraph recomputes size after construction; enforce a minimum so previews have room
+  const hasImage = def.inputs.some(i => i.type === 'IMAGEFILE');
+  const isOutput = def.outputs.length === 0;
+  const isText = def.inputs.some(i => i.type === 'STRING' && i.multiline) && def.category === 'prompt';
+  N.prototype.computeSize = function (out) {
+    const sz = LGraphNode.prototype.computeSize.call(this, out);
+    if (hasImage) { sz[0] = Math.max(sz[0], 260); sz[1] = Math.max(sz[1], 250); }
+    if (isOutput) { sz[0] = Math.max(sz[0], 420); sz[1] = Math.max(sz[1], 300); }
+    if (isText) { sz[0] = Math.max(sz[0], 420); sz[1] = Math.max(sz[1], 260); }
+    return sz;
+  };
+  N.prototype.onAdded = function () { const m = this.computeSize(); if (this.size[0] < m[0] || this.size[1] < m[1]) this.size = m; };
+  N.prototype.loadThumb = function () {
+    const w = this.widgetsByName.image; if (!w || !w.value || w.value.startsWith('(')) return;
+    const img = new Image(); img.src = base + '/input/' + encodeURIComponent(w.value); img.onload = () => { this.thumb = img; this.setDirtyCanvas(true); };
+  };
+  N.prototype.onConnectionsChange = function () {
+    for (const w of (this.widgets || [])) { const slot = this.findInputSlot(w.inputName); const linked = slot >= 0 && this.inputs[slot].link != null; w.disabled = linked; w.name = linked ? w.inputName + ' (from link)' : w.inputName; }
+  };
+  N.prototype.onDrawBackground = function (ctx) {
+    if (this.flags.collapsed) return;
+    const wh = this.widgets ? this.widgets.length * 24 + 10 : 10;
+    const y0 = wh, h = this.size[1] - wh - 6, wdt = this.size[0] - 12;
+    if (this.thumb && h > 20) {
+      const s = Math.min(wdt / this.thumb.width, h / this.thumb.height);
+      const tw = this.thumb.width * s, th = this.thumb.height * s;
+      ctx.drawImage(this.thumb, 6 + (wdt - tw) / 2, y0, tw, th);
+    } else if (hasImage && h > 20) {
+      ctx.save(); ctx.fillStyle = '#555'; ctx.font = '11px sans-serif'; ctx.fillText('no image · click the button to upload', 8, y0 + 16); ctx.restore();
+    }
+    if (this.lastText && !this.videoEl && h > 20 && !(this.textAreas && this.textAreas.length)) {
+      ctx.save(); ctx.fillStyle = '#9c9'; ctx.font = '11px ui-monospace, Menlo, monospace';
+      const lines = this.lastText.split('\n').filter(Boolean).slice(0, Math.floor(h / 14));
+      lines.forEach((l, i) => ctx.fillText(l.slice(0, Math.floor(wdt / 6.2)), 8, y0 + 14 + i * 14));
+      ctx.fillStyle = '#666'; ctx.fillText('double-click to read the generated prompt', 8, y0 + h - 4); ctx.restore();
+    }
+    if (this.videoEl && h > 20) {
+      const v = this.videoEl; if (v.videoWidth) {
+        const s = Math.min(wdt / v.videoWidth, h / v.videoHeight);
+        ctx.drawImage(v, 6, y0, v.videoWidth * s, v.videoHeight * s);
+      }
+      this.setDirtyCanvas(true);
+    }
+  };
+  N.prototype.onConfigure = function () { setTimeout(() => this.loadThumb && this.loadThumb(), 50); for (const w of (this.textAreas || [])) if (w.ta) w.ta.value = w.value || ''; };
+  N.prototype.onRemoved = function () { for (const w of (this.textAreas || [])) w.ta && w.ta.remove(); for (const w of (this.domWidgets || [])) w.dom && w.dom.remove(); };
+  N.prototype.onDrawForeground = function (ctx) {
+    const ds = canvas.ds, top = 42;
+    for (const w of (this.domWidgets || [])) {
+      const el = w.dom; if (!el) continue;
+      const linked = this.inputs?.some(inp => inp.name === w.inputName && inp.link != null);
+      if (this.flags.collapsed || linked || ds.scale < 0.5 || w.last_y == null) { el.style.display = 'none'; continue; }
+      const rowW = this.size[0], isChk = el.type === 'checkbox';
+      const wpx = isChk ? 18 : Math.max(70, rowW * 0.42);
+      const x = (this.pos[0] + rowW - 8 - wpx + ds.offset[0]) * ds.scale, y = (this.pos[1] + w.last_y + 1 + ds.offset[1]) * ds.scale + top;
+      Object.assign(el.style, { display: 'block', left: x + 'px', top: y + 'px', width: wpx * ds.scale + 'px', height: 18 * ds.scale + 'px', fontSize: 12 * ds.scale + 'px' });
+      if (document.activeElement !== el) { if (isChk) el.checked = !!w.value; else if (String(el.value) !== String(w.value ?? '')) el.value = w.value ?? ''; }
+    }
+    if (!this.textAreas || !this.textAreas.length) return;
+    const wh = (this.widgets ? this.widgets.length * 24 : 0) + Math.max(this.inputs?.length || 0, this.outputs?.length || 0) * 20 + 10;
+    const areaH = this.size[1] - wh - 6, per = Math.max(30, areaH / this.textAreas.length - 6);
+    this.textAreas.forEach((w, k) => {
+      const ta = w.ta; if (!ta) return;
+      const linked = this.inputs?.some(inp => inp.name === w.inputName && inp.link != null);
+      if (this.flags.collapsed || linked || areaH < 40 || ds.scale < 0.45) { ta.style.display = 'none'; return; }
+      const x = (this.pos[0] + 6 + ds.offset[0]) * ds.scale, y = (this.pos[1] + wh + k * (per + 6) + ds.offset[1]) * ds.scale + top;
+      Object.assign(ta.style, { display: 'block', left: x + 'px', top: y + 'px', width: (this.size[0] - 12) * ds.scale + 'px', height: per * ds.scale + 'px', fontSize: 12 * ds.scale + 'px' });
+      if (document.activeElement !== ta && ta.value !== (w.value || '')) ta.value = w.value || '';
+    });
+  };
+  const _onAdded = N.prototype.onAdded; N.prototype.onAdded = function () { _onAdded.call(this); setTimeout(() => this.loadThumb && this.loadThumb(), 50); };
+  N.prototype.setVideo = function (url) {
+    if (!this.videoEl) { this.videoEl = document.createElement('video'); this.videoEl.muted = true; this.videoEl.loop = true; this.videoEl.autoplay = true; this.videoEl.playsInline = true; }
+    this.videoEl.src = url; this.videoEl.play().catch(() => {}); this.videoUrl = url;
+  };
+  N.prototype.onDblClick = function (e, pos) { if (this.videoUrl) window.open(this.videoUrl, '_blank'); else if (this.lastText) editText(`${def.name} · generated prompt (read-only)`, this.lastText); };
+  N.prototype.getExtraMenuOptions = function () { return this.videoUrl ? [{ content: 'Download mp4', callback: () => { const a = document.createElement('a'); a.href = this.videoUrl; a.download = ''; a.click(); } }] : []; };
+  LiteGraph.registerNodeType(`${def.category}/${def.name}`, N);
+}
+
+// ---------- graph -> API json ----------
+function toApi(graph) {
+  const out = {};
+  for (const n of graph._nodes) {
+    const inputs = {};
+    for (const w of (n.widgets || [])) if (w.inputName) inputs[w.inputName] = w.value;
+    for (let s = 0; s < (n.inputs || []).length; s++) {
+      const inp = n.inputs[s]; if (inp.link == null) continue;
+      const link = graph.links[inp.link]; if (!link) continue;
+      inputs[inp.name] = [String(link.origin_id), link.origin_slot];
+    }
+    out[String(n.id)] = { type: n.def.name, inputs };
+  }
+  return out;
+}
+
+// ---------- run ----------
+let running = false;
+async function run() {
+  if (running) return; running = true; $('#run').disabled = true; status('starting…');
+  graph._nodes.forEach(n => { n.boxcolor = null; });
+  const t0 = Date.now();
+  try {
+    const r = await fetch(base + '/run', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ graph: toApi(graph) }) });
+    const { run: id } = await r.json();
+    while (true) {
+      await new Promise(r => setTimeout(r, 700));
+      const st = await (await fetch(base + '/run/' + id)).json();
+      const el = ((Date.now() - t0) / 1000).toFixed(0);
+      if (st.status === 'running') {
+        status(`running ${st.i + 1}/${st.total}: ${st.node_type}  (${el}s)`);
+        graph._nodes.forEach(n => { n.boxcolor = String(n.id) === String(st.node) ? '#4f8cff' : n.boxcolor; });
+        canvas.setDirty(true, true);
+      } else if (st.status === 'done') {
+        status(`done in ${st.wall}s`);
+        for (const [nid, ui] of Object.entries(st.ui || {})) {
+          const n = graph.getNodeById(Number(nid)); if (!n) continue;
+          if (ui.node_output && ui.node_output.video) { n.setVideo(base + ui.node_output.video); n.boxcolor = '#3c3'; }
+          if (ui.text) { n.lastText = ui.text; n.boxcolor = '#3c3'; n.title = n.def.name + '  ·  double-click: generated prompt'; }
+        }
+        canvas.setDirty(true, true); break;
+      } else if (st.status === 'error') { status('error: ' + st.error); alert(st.error); break; }
+    }
+  } catch (e) { status('error: ' + e); }
+  finally { running = false; $('#run').disabled = false; }
+}
+
+// ---------- default graph ----------
+function clearTextAreas() { document.querySelectorAll('textarea.nodeText, .nodeDom').forEach(t => t.remove()); }
+function defaultGraph() {
+  clearTextAreas(); graph.clear();
+  const img = LiteGraph.createNode('input/Load Image'); img.pos = [60, 80]; graph.add(img);
+  const pr = LiteGraph.createNode('prompt/Scene to Mocap Prompt (AI)'); pr.pos = [60, 400]; pr.size = [460, 360]; graph.add(pr);
+  const cond = LiteGraph.createNode('h3/H3 Ref2VA Conditioning'); cond.pos = [520, 120]; cond.size = [300, 220]; graph.add(cond);
+  const samp = LiteGraph.createNode('h3/H3 Sample'); samp.pos = [880, 120]; samp.size = [300, 240]; graph.add(samp);
+  const dec = LiteGraph.createNode('h3/H3 Decode'); dec.pos = [1240, 120]; graph.add(dec);
+  const save = LiteGraph.createNode('output/Save Video'); save.pos = [1240, 260]; graph.add(save);
+  img.connect(0, cond, cond.findInputSlot('ref_image_1'));
+  pr.connect(0, cond, cond.findInputSlot('prompt'));
+  pr.connect(1, cond, cond.findInputSlot('seconds'));
+  cond.connect(0, samp, samp.findInputSlot('conditioning'));
+  cond.connect(1, samp, samp.findInputSlot('latent'));
+  samp.connect(0, dec, dec.findInputSlot('latent'));
+  dec.connect(0, save, save.findInputSlot('video'));
+  for (const [a, b, name] of [[pr, cond, 'prompt'], [pr, cond, 'seconds'], [img, cond, 'ref_image_1'], [cond, samp, 'conditioning'], [cond, samp, 'latent'], [samp, dec, 'latent'], [dec, save, 'video']]) {
+    const slot = b.findInputSlot(name); if (slot < 0 || b.inputs[slot].link == null) console.error('preset link failed', a.title, '->', b.title, name);
+  }
+  graph._nodes.forEach(n => n.onConnectionsChange && n.onConnectionsChange());
+  cond.widgetsByName.seconds.value = 15;
+  cond.widgetsByName.megapixels.value = 0.4;
+  cond.widgetsByName.aspect.value = '16:9';
+  pr.widgetsByName.seconds.value = 15;
+  pr.widgetsByName.scene.value = 'A person walks in and bows deeply toward the camera';
+  img.widgetsByName.image.value = PRESET_IMAGE; img.loadThumb();
+  save.widgetsByName.name.value = 'mocap';
+  canvas.setDirty(true, true);
+}
+
+// ---------- boot ----------
+const graph = new LGraph();
+const canvas = new LGraphCanvas('#c', graph);
+canvas.allow_searchbox = true; canvas.show_info = false;
+function resize() { const c = $('#c'); c.width = innerWidth; c.height = innerHeight - 42; canvas.resize(); }
+addEventListener('resize', resize); resize();
+LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
+
+(async () => {
+  const defs = await (await fetch(base + '/nodes')).json();
+  defs.forEach(registerNode);
+  const saved = localStorage.getItem('cozyclay-gen-graph');
+  if (saved) { try { clearTextAreas(); graph.configure(JSON.parse(saved)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); } catch (e) { defaultGraph(); } } else defaultGraph();
+  const h = await (await fetch(base + '/health')).json();
+  status(h.models_loaded ? `ready · ${defs.length} node types` : 'loading models…');
+})();
+
+$('#run').onclick = run;
+$('#default').onclick = () => { if (confirm('Replace the canvas with the mocap preset?')) defaultGraph(); };
+$('#save').onclick = () => { localStorage.setItem('cozyclay-gen-graph', JSON.stringify(graph.serialize())); status('saved (browser storage)'); };
+$('#load').onclick = () => { const s = localStorage.getItem('cozyclay-gen-graph'); if (s) { clearTextAreas(); graph.configure(JSON.parse(s)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); status('loaded'); } };
+$('#export').onclick = () => { const a = document.createElement('a'); a.href = 'data:application/json,' + encodeURIComponent(JSON.stringify(graph.serialize(), null, 1)); a.download = 'cozyclay-graph.json'; a.click(); };
+$('#import').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => { const f = e.target.files[0]; if (!f) return; clearTextAreas(); graph.configure(JSON.parse(await f.text())); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); e.target.value = ''; };
+addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); run(); } });
+</script>
+</body>
+</html>
