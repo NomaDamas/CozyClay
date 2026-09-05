@@ -73,6 +73,7 @@ const NODE_FILES = [
 	"test/verify-motion-edit.mjs",
 	"test/verify-multimodel-ingest.mjs",
 	"test/verify-offscreen-export.mjs",
+	"test/verify-object-picking.mjs",
 	"test/verify-record-mp4-source.mjs",
 	"test/verify-timeline-extent.mjs",
 	"test/verify-otio.mjs",
@@ -125,6 +126,7 @@ const BROWSER_FILES = [
 	"test/verify-ik-browser.mjs",
 	"test/verify-motion-edit-browser.mjs",
 	"test/verify-object-gizmo.mjs",
+	"test/verify-object-switch-browser.mjs",
 	"test/verify-offscreen-export-browser.mjs",
 	"test/verify-project-menu-browser.mjs",
 ];

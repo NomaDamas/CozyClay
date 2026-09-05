@@ -11,6 +11,7 @@ import {
 	translatePatch,
 	wrapAngle,
 } from "./scene-objects.js";
+import { isForeignGizmoHandleHit, shouldObjectWinSelection } from "./object-picking.js";
 
 /**
  * The transform gizmo for the selected scene object — the thing every 3D tool
@@ -623,6 +624,22 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			// stopPropagation below killed the descent. The probe must be
 			// side-effect free: it only answers "would you grab here?".
 			if (stateRef.current.claimPointer?.(event)) return;
+			if (!pickOnly && !rayFrom(event)) return;
+			let pickedObject = null;
+			if (!pickOnly) {
+				tools.raycaster.layers.set(0);
+				pickedObject = pickObject();
+				// A different body's visible surface outranks the selected
+				// gizmo's fat invisible pick volumes. This is the important
+				// Cube -> Sphere/Chair path: the current gizmo must not turn a
+				// selection click into a transform drag.
+				if (pickedObject && shouldObjectWinSelection(pickedObject.id, stateRef.current.object?.id)) {
+					event.preventDefault();
+					event.stopPropagation();
+					stateRef.current.onSelect?.(pickedObject.id);
+					return;
+				}
+			}
 			const grabbed = pickHandle(event);
 			// A press ON the key-light sun outranks any handle overlapping it:
 			// the puck's own body-drag is the primary interaction there, and the
@@ -654,39 +671,23 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			// nothing beyond its handles: selection, ground clicks and the
 			// object-hover cursor belong to the primary instance.
 			if (pickOnly) return;
-			// And the mirror duty: a press on the TWIN's handles is not ours to
-			// claim either. Handles live on GIZMO_LAYER and our own already had
-			// their chance in pickHandle above, so any gizmo-layer surface still
-			// under the pointer belongs to the other instance — claiming it here
-			// deselected the character and killed the drag it had just started.
+			// And the mirror duty: a press on the TWIN's actual handle proxies is
+			// not ours to claim either. This used to treat EVERY GIZMO_LAYER hit
+			// as a twin handle — including the selected cube's own cage, visible
+			// arrows, grid and other editor furniture — so those surfaces vetoed
+			// the object picker and made Cube -> another object clicks feel dead.
 			if (!rayFrom(event)) return;
 			tools.raycaster.layers.set(GIZMO_LAYER);
-			// The default Line threshold is 1 WORLD METRE, and the layer also holds
-			// line furniture (the selection cage, axis lines). At that slop a large
-			// selected object's cage claims presses across most of the frame, so an
-			// empty-space press never reaches the deselect below. The twin's grabbable
-			// handles are solid surfaces; only a press truly ON a line should count.
-			const lineParams = tools.raycaster.params.Line;
-			const prevThreshold = lineParams.threshold;
-			lineParams.threshold = 0.02;
-			// The camera ghost rides GIZMO_LAYER too, but it is a selection target
-			// for pickObject below, not a twin's handles — it must not eat the
-			// press. The key-light sun is NOT exempted: its puck owns its own press
-			// (select + body drag) after this guard lets the event through.
-			const twinClaims = tools.raycaster.intersectObjects(scene.children, true).filter((entry) => {
-				for (let node = entry.object; node; node = node.parent) {
-					if (node.userData?.shotCameraPick) return false;
-				}
-				return true;
-			}).length;
-			lineParams.threshold = prevThreshold;
+			const twinClaims = tools.raycaster.intersectObjects(scene.children, true)
+				.some((entry) => isForeignGizmoHandleHit(entry.object, rootRef.current));
 			if (twinClaims) return;
+			tools.raycaster.layers.set(0);
 			// Selection. A left press on a body selects it and does nothing else;
 			// a press on empty space clears the selection. Both claim the press so
 			// the fly camera cannot also react — navigation lives on the right and
 			// middle buttons now.
 			tools.raycaster.layers.set(0);
-			const picked = pickObject();
+			const picked = pickedObject ?? pickObject();
 			event.preventDefault();
 			event.stopPropagation();
 			// Path authoring outranks deselection: an empty-floor press drops a
@@ -840,7 +841,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 	const centreActive = activeHandle === "centre";
 	const centreHovered = hoveredHandle === "centre";
 	return (
-		<group ref={rootRef} position={[object.x, gizmoHeight(object), object.z]} renderOrder={999}>
+		<group ref={rootRef} position={[object.x, gizmoHeight(object), object.z]} renderOrder={999} userData={{ gizmoRoot: true }}>
 			{AXES.map(({ axis, dir, color }) => {
 				const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
 				// The handle under a drag — and, after release, the last one —
@@ -875,7 +876,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 									<torusGeometry args={[RING_R, RING_TUBE, 8, 24, Math.PI]} />
 									{material(FAR_HALF_ALPHA)}
 								</mesh>
-								<mesh ref={register(axis, dir)}>
+								<mesh ref={register(axis, dir)} userData={{ gizmoHandle: true }}>
 									<torusGeometry args={[RING_R, PICK_TUBE_R, 6, 32]} />
 									{pickMaterial}
 								</mesh>
@@ -894,7 +895,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 									)}
 									{material()}
 								</mesh>
-								<mesh ref={register(axis, dir)} position={[0, (ARROW_LEN + TIP_LEN) / 2, 0]}>
+								<mesh ref={register(axis, dir)} position={[0, (ARROW_LEN + TIP_LEN) / 2, 0]} userData={{ gizmoHandle: true }}>
 									<cylinderGeometry args={[PICK_SHAFT_R, PICK_SHAFT_R, ARROW_LEN + TIP_LEN, 8]} />
 									{pickMaterial}
 								</mesh>
@@ -920,7 +921,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 							opacity={0.95}
 						/>
 					</mesh>
-					<mesh ref={register("screen", null)}>
+					<mesh ref={register("screen", null)} userData={{ gizmoHandle: true }}>
 						<torusGeometry args={[SCREEN_RING_R, PICK_TUBE_R, 6, 48]} />
 						{pickMaterial}
 					</mesh>
@@ -949,7 +950,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 									depthWrite={false}
 								/>
 							</mesh>
-							<mesh ref={registerPlane(plane)}>
+							<mesh ref={registerPlane(plane)} userData={{ gizmoHandle: true }}>
 								<planeGeometry args={[PLANE_SIZE * 1.5, PLANE_SIZE * 1.5]} />
 								<meshBasicMaterial visible={false} side={THREE.DoubleSide} />
 							</mesh>
@@ -989,7 +990,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 									depthWrite={false}
 								/>
 							</mesh>
-							<mesh ref={registerCorner(corner)}>
+							<mesh ref={registerCorner(corner)} userData={{ gizmoHandle: true }}>
 								<sphereGeometry args={[PICK_CORNER_R, 8, 6]} />
 								{pickMaterial}
 							</mesh>
@@ -1010,7 +1011,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 							depthWrite={false}
 						/>
 					</mesh>
-					<mesh ref={register(null, null)}>
+					<mesh ref={register(null, null)} userData={{ gizmoHandle: true }}>
 						<sphereGeometry args={[PICK_CENTRE_R, 8, 6]} />
 						{pickMaterial}
 					</mesh>
