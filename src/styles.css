@@ -8407,6 +8407,20 @@ input[type=range] {
 	background: transparent;
 }
 
+/* Direct manipulation and numeric fields share the Transform concept. Keep
+   the name visible beside the icon-only tool buttons so the beginner path has
+   one vocabulary for both ways of editing a selection. */
+.editor-toolbar.scene-tools .transform-toolbar-label {
+	align-self: center;
+	flex: none;
+	padding: 0 8px;
+	color: var(--muted);
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+}
+
 .editor-toolbar.scene-tools .tool-switch button,
 .editor-toolbar.scene-tools .snap-switch {
 	height: 26px;
