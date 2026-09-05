@@ -273,12 +273,16 @@ expect(
 	!app.includes('title={ko("ARDY motion", "ARDY 모션")}'),
 );
 expect(
-	"Advanced OFF hides the Video capture foldout",
-	app.includes('localStorage?.getItem("cozyclay.advanced") === "true"'),
+	"the Studio has no Advanced mode toggle",
+	app.includes("const advancedMode = true;") && !app.includes("advanced-toggle") && !app.includes("cozyclay.advanced"),
 );
 expect(
-	"Advanced OFF hides the Video capture foldout",
-	app.includes('hidden={!advancedMode || !isCharacterSelection}') && app.includes('localStorage?.getItem("cozyclay.advanced") === "true"'),
+	"the Studio topbar returns to Workflow",
+	app.includes('className="topbar-action workflow-topbar-link" href="/workflow/"'),
+);
+expect(
+	"expert foldouts stay enabled in the always-advanced Studio",
+	app.includes('hidden={!advancedMode || !isCharacterSelection}') && app.includes("const advancedMode = true;"),
 );
 expect(
 	"ingest and extraction reach the ported core modules",

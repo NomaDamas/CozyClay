@@ -81,6 +81,9 @@
     "posthog-js": "^1.418.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-hot-toast": "^2.6.0",
+    "react-icons": "^5.7.0",
+    "reactflow": "^11.11.4",
     "three": "^0.185.1",
     "vite": "^8.2.0"
   },

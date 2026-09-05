@@ -3,7 +3,16 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { webcrypto } from "node:crypto";
-import { createProjectDocument, readProjectDocument, verifyEmbeddedAsset, PROJECT_VERSION, PROJECT_EXTENSION } from "../src/project.js";
+import {
+	createProjectDocument,
+	readProjectDocument,
+	verifyEmbeddedAsset,
+	createWorkflowGraph,
+	normalizeWorkflowGraph,
+	isWorkflowGraph,
+	PROJECT_VERSION,
+	PROJECT_EXTENSION,
+} from "../src/project.js";
 import { createSceneDocument, createSceneStage, SCENES_VERSION } from "../src/scenes.js";
 import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, referencedAssetIds } from "../src/scene-assets.js";
 
@@ -31,6 +40,39 @@ assert.equal(parsed.project.scenesDocument.scenes[0].stage.characters[0].tint, "
 assert.equal(parsed.project.workspaceLayout.hierarchyWidth, 320);
 assert.equal(parsed.project.customPoses.length, 1);
 assert.deepEqual(parsed.project.scenesDocument.scenes[0].stage.characters[0].pose, projectPose, "a project scene keeps its embedded pose data after a file round-trip");
+
+// --- workflow graph envelope + migration ---------------------------------
+const workflow = {
+	version: 1,
+	nodes: [
+		{ id: "prompt", type: "Text", position: { x: 24, y: 48 }, data: { text: "a clay robot", status: "ready" } },
+		{ id: "scene", type: "CozyClayScene", position: { x: 320, y: 48 }, data: { sceneId: "SCENE 01", outputUrl: "/renders/scene.mp4" } },
+		{ id: "bad-duplicate", type: "Ignored", position: { x: 0, y: 0 } },
+	],
+	edges: [
+		{ id: "prompt-scene", source: "prompt", target: "scene" },
+		{ source: "missing", target: "scene" },
+	],
+};
+const workflowDocument = createProjectDocument({ scenesDocument, workflow });
+assert.equal(workflowDocument.version, PROJECT_VERSION, "project envelope version advances with workflow persistence");
+assert.deepEqual(workflowDocument.workflow, normalizeWorkflowGraph(workflow), "project creation stores a sanitized workflow graph");
+const workflowRoundTrip = readProjectDocument(JSON.stringify(workflowDocument));
+assert.equal(workflowRoundTrip.ok, true);
+assert.deepEqual(workflowRoundTrip.project.workflow, workflowDocument.workflow, "workflow graph survives a project round-trip");
+assert.deepEqual(createWorkflowGraph(), { version: 1, nodes: [], edges: [] }, "new projects start with an empty workflow graph");
+assert.equal(isWorkflowGraph(workflowDocument.workflow), true, "normalized graph passes schema validation");
+assert.equal(isWorkflowGraph({ version: 1, nodes: [{ id: "x", position: { x: 0, y: 0 } }], edges: [] }), true, "node type/data are optional in the persisted schema");
+assert.equal(isWorkflowGraph({ version: 1, nodes: [], edges: [{ source: "missing", target: "also-missing" }] }), false, "dangling workflow edges fail validation");
+
+const legacyWithoutWorkflow = { ...doc, version: 2 };
+delete legacyWithoutWorkflow.workflow;
+const migratedLegacy = readProjectDocument(JSON.stringify(legacyWithoutWorkflow));
+assert.equal(migratedLegacy.ok, true, "pre-workflow project files remain readable");
+assert.deepEqual(migratedLegacy.project.workflow, createWorkflowGraph(), "legacy files migrate to an empty workflow graph");
+const malformedWorkflow = readProjectDocument(JSON.stringify({ ...doc, workflow: { version: 99, nodes: "bad", edges: [] } }));
+assert.equal(malformedWorkflow.ok, true, "malformed workflow data does not block opening the scene project");
+assert.deepEqual(malformedWorkflow.project.workflow, createWorkflowGraph(), "unsupported workflow data falls back to the safe default");
 
 // --- embedded scene assets -------------------------------------------------
 const renderedBytes = new Uint8Array([1, 2, 3]);
@@ -60,7 +102,7 @@ const fakeAssets = [
 const assetDocument = createProjectDocument({ scenesDocument: assetScenesDocument, assets: fakeAssets });
 const embeddedAssetIds = assetDocument.assets.map((asset) => asset.id).sort();
 assert.deepEqual(embeddedAssetIds, [...referencedAssetIds(assetScenesDocument.scenes)].sort(), "only the matted cutout asset closure is embedded");
-assert.equal(assetDocument.version, 2, "asset-bearing documents use envelope v2");
+assert.equal(assetDocument.version, PROJECT_VERSION, "asset-bearing documents use the current envelope version");
 assert.ok(assetDocument.assets.every((asset) => typeof asset.bytes === "string" && !asset.bytes.startsWith("data:")), "asset bytes are bare base64");
 const parsedAssets = readProjectDocument(JSON.stringify(assetDocument));
 assert.equal(parsedAssets.ok, true);

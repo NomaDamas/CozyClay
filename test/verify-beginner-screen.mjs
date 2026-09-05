@@ -15,7 +15,7 @@ expect("startup chooser has one primary create action", browser.includes('classN
 expect("startup chooser offers project open", browser.includes('className="btn ghost beginner-open"') && browser.includes("Open a project"));
 expect("startup chooser explains the three-step path", browser.includes("beginner-step-grid") && browser.includes('>1</b>') && browser.includes('>2</b>') && browser.includes('>3</b>'));
 expect("beginner hierarchy keeps characters and removes rig rows", hierarchy.includes("beginnerMode = false") && hierarchy.includes("Beginner mode keeps the cast") && hierarchy.includes("map(({ children, ...character }) => character)"));
-expect("Advanced toggle returns selection to Character 1", app.includes('if (!next) setSelectedHierarchyId("characterA")'));
+expect("Studio always opens with the full authoring surface", app.includes("const advancedMode = true;") && !app.includes("advanced-toggle"));
 expect("beginner chooser has responsive step cards", css.includes(".beginner-step-grid") && css.includes("grid-template-columns: repeat(3"));
 
 if (failures) process.exitCode = 1;

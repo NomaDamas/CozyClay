@@ -120,7 +120,11 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5180/app/`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
+Open `http://127.0.0.1:5180/` for the Workflow canvas. The full Studio remains available at `http://127.0.0.1:5180/app/` through the Workflow `Open Studio` handoff. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
+
+### Workflow canvas
+
+The Vibe-Workflow canvas is available at `http://127.0.0.1:5180/workflow/`. It keeps the original node-style flow and adds a **CozyClay Scene** node with an interactive 3D viewport, frame/camera controls, and an Open Studio handoff. Start it with the normal dev server, or run `npm run dev:ui` by itself for local-only editing. Workflow graphs are saved in the browser and execute locally; no remote workflow service or API key is required.
 
 ## Hosted demo
 
