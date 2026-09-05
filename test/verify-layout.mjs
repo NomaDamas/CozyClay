@@ -277,6 +277,10 @@ expect(
 	app.includes("const advancedMode = true;") && !app.includes("advanced-toggle") && !app.includes("cozyclay.advanced"),
 );
 expect(
+	"the Studio topbar returns to Workflow",
+	app.includes('className="topbar-action workflow-topbar-link" href="/workflow/"'),
+);
+expect(
 	"expert foldouts stay enabled in the always-advanced Studio",
 	app.includes('hidden={!advancedMode || !isCharacterSelection}') && app.includes("const advancedMode = true;"),
 );

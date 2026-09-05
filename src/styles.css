@@ -197,6 +197,12 @@ select {
 	cursor: pointer;
 }
 
+.workflow-topbar-link {
+	display: inline-flex;
+	align-items: center;
+	text-decoration: none;
+}
+
 .topbar-action:hover:not(:disabled) {
 	border-color: var(--accent);
 	background: var(--hover);

@@ -9485,6 +9485,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					)}
 				</div>
 				<div className="topbar-actions">
+					<a className="topbar-action workflow-topbar-link" href="/workflow/" aria-label={ko("Open Workflow", "워크플로 열기")}>{ko("Workflow", "워크플로우")}</a>
 					<div className="project-actions" aria-label={ko("Project actions", "프로젝트 작업")}>
 						<button
 							type="button"
