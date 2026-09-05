@@ -9383,7 +9383,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					</button>
 					{liveWorkspaceHandle && (
 						<span className="live-workspace-handle" data-live-workspace={liveWorkspaceHandle} title={liveWorkspaceHandle}>
-							Live workspace {liveWorkspaceHandle}
+							{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
 						</span>
 					)}
 					<LocaleToggle />
@@ -9603,18 +9603,31 @@ function resizePromptClip(id, edge, rawFrame) {
 						<span className="viewport-readout">FOV {Math.round(fovDeg)}° · {shot.focalMm}mm</span>
 						<span className="viewport-toolbar-spacer" />
 						<button type="button" onClick={() => stepFrame(-1)} aria-label={ko("Previous frame", "이전 프레임")}>◀</button>
-						<button type="button" onClick={() => setTlPlaying((value) => !value)}>
+						<button
+							type="button"
+							aria-label={tlPlaying ? ko("Pause playback", "재생 일시중지") : ko("Play playback", "재생 시작")}
+							title={tlPlaying ? ko("Pause playback", "재생 일시중지") : ko("Play playback", "재생 시작")}
+							onClick={() => setTlPlaying((value) => !value)}
+						>
 							{tlPlaying ? "Ⅱ" : "▶"}
 						</button>
 						<button type="button" onClick={() => stepFrame(1)} aria-label={ko("Next frame", "다음 프레임")}>▶│</button>
 						<span className="viewport-readout">1.00×</span>
 						<span className="viewport-toolbar-separator" aria-hidden="true" />
-						<button type="button" disabled={!shots.length} onClick={downloadOtioCutList}>
+						<button
+							type="button"
+							disabled={!shots.length}
+							aria-label={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
+							title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
+							onClick={downloadOtioCutList}
+						>
 							OTIO
 						</button>
 						<button
 							type="button"
 							className={recState === "recording" ? "recording" : ""}
+							aria-label={recState === "recording" ? ko("Stop recording", "녹화 중지") : ko("Record shot", "샷 녹화")}
+							title={recState === "recording" ? ko("Stop recording", "녹화 중지") : ko("Record shot", "샷 녹화")}
 							disabled={recState !== "recording" && !hasCameraKeys && !motion}
 							onClick={toggleShotRecording}
 						>
@@ -12458,6 +12471,7 @@ function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, o
 						<button
 							type="button"
 							className={"cam-toggle" + (posing ? " active" : "")}
+							aria-label={isKo ? `${label} 포즈 열기` : `Open pose studio for ${label}`}
 							title={isKo ? `${label} 포즈` : `Pose ${label}`}
 							onClick={onPose}
 						>
