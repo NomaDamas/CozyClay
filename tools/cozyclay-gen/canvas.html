@@ -62,7 +62,8 @@ function editText(title, value) {
 }
 
 // ---------- node registration from /nodes ----------
-const PRIMS = new Set(['STRING', 'INT', 'FLOAT', 'BOOL', 'COMBO', 'IMAGEFILE']);
+const PRIMS = new Set(['STRING', 'INT', 'FLOAT', 'BOOL', 'COMBO', 'IMAGEFILE', 'VIDEOFILE']);
+const LABELS={image_a:'이미지 A',image_b:'이미지 B',ref_video:'참고 영상 · 실험 중',scene:'장면 설명',seconds:'길이',prompt:'프롬프트'};
 const LABELS = {image:'이미지', scene:'장면 설명', direct:'직접 입력', manual_prompt:'완성 프롬프트', seconds:'길이(초)', aspect:'화면 비율', seed:'시드', steps:'Steps', sla:'SLA', megapixels:'Megapixels', audio:'오디오'};
 const imgCache = {};
 function registerNode(def) {
@@ -70,7 +71,7 @@ function registerNode(def) {
     this.def = def;
     this.widgetsByName = {};
     for (const i of def.inputs) {
-      if (!PRIMS.has(i.type)) { this.addInput(i.name, i.type); continue; }
+      if (!PRIMS.has(i.type)) { this.addInput(LABELS[i.name] || i.name, i.type); this.inputs[this.inputs.length-1]._id=i.name; continue; }
       let w;
       if (i.type === 'STRING' && i.multiline) {
         w = this.addWidget('button', LABELS[i.name] || i.name, i.default || '', () => editText(`${def.name} · ${i.name}`, w.value).then(v => { if (v !== null) { w.value = v; if (w.ta) w.ta.value = v; this.setDirtyCanvas(true); } }));
@@ -89,9 +90,9 @@ function registerNode(def) {
         w = this.addWidget('toggle', LABELS[i.name] || i.name, !!i.default, v => { w.value = v; });
       } else if (false && i.type === 'COMBO') {
         w = this.addWidget('combo', LABELS[i.name] || i.name, i.default, v => { w.value = v; }, { values: i.options || [] });
-      } else if (i.type === 'IMAGEFILE') {
+      } else if (i.type === 'IMAGEFILE' || i.type === 'VIDEOFILE') {
         w = this.addWidget('button', i.name, i.default || '(choose image)', () => {
-          const inp = $('#uploadFile'); inp.onchange = async () => {
+          const inp = $('#uploadFile'); inp.accept = i.type === 'VIDEOFILE' ? 'video/mp4,video/quicktime' : 'image/*'; inp.onchange = async () => {
             const f = inp.files[0]; if (!f) return;
             const fd = new FormData(); fd.append('image', f, f.name);
             const j = await (await fetch(base + '/upload', { method: 'POST', body: fd })).json();
@@ -102,7 +103,7 @@ function registerNode(def) {
       }
       if (w) {
         w.inputName = i.name; w.inputType = i.type; this.widgetsByName[i.name] = w;
-        if (i.type !== 'IMAGEFILE') this.addInput(i.name, i.type);
+        if (i.type !== 'IMAGEFILE' && i.type !== 'VIDEOFILE') { this.addInput(LABELS[i.name] || i.name, i.type); this.inputs[this.inputs.length-1]._id=i.name; }
         // native DOM control drawn over the widget row: numbers, combos, toggles, one-line text
         let el = null;
         if (false && (i.type === 'INT' || i.type === 'FLOAT')) {
@@ -121,7 +122,7 @@ function registerNode(def) {
         if (el) { el.classList.add('nodeDom'); el.onmousedown = e => e.stopPropagation(); el.onwheel = e => e.stopPropagation(); el.onkeydown = e => e.stopPropagation(); document.body.appendChild(el); w.dom = el; (this.domWidgets = this.domWidgets || []).push(w); }
       }
     }
-    for (const o of def.outputs) this.addOutput(o.name, o.type);
+    for (const o of def.outputs) this.addOutput(LABELS[o.name] || o.name, o.type);
     this.serialize_widgets = true;
     this.color = { input: '#244a68', prompt: '#4b3c68', generate: '#345f4b', output: '#684536', advanced: '#30343d', h3: '#30343d' }[def.category] || '#222'; this.bgcolor = this.color; this.boxcolor = '#445';
   }
@@ -141,7 +142,7 @@ function registerNode(def) {
   };
   N.prototype.onAdded = function () { const m = this.computeSize(); if (def.name === 'Generate Video') this.size = [360, 520]; else if (this.size[0] < m[0] || this.size[1] < m[1]) this.size = m; };
   N.prototype.loadThumb = function () {
-    const w = this.widgetsByName.image; if (!w || !w.value || w.value.startsWith('(')) return;
+    const w = this.widgetsByName.image_a || this.widgetsByName.image; if (!w || !w.value || w.value.startsWith('(')) return;
     const img = new Image(); img.src = base + '/input/' + encodeURIComponent(w.value); img.onload = () => { this.thumb = img; this.setDirtyCanvas(true); };
   };
   N.prototype.onConnectionsChange = function () {
@@ -188,6 +189,7 @@ function registerNode(def) {
       const wpx = isChk ? 18 : Math.max(70, rowW * 0.42);
       const x = (this.pos[0] + rowW - 8 - wpx + ds.offset[0]) * ds.scale, y = (this.pos[1] + w.last_y + 1 + ds.offset[1]) * ds.scale + top;
       if (def.name === 'Generate Video' && ['steps','sla','megapixels','audio'].includes(w.inputName)) { el.style.display='none'; continue; }
+      if (def.name === 'scene' && w.inputName === 'scene') { w.type='hidden'; }
       if (def.name === 'Scene' && w.inputName === 'manual_prompt' && !this.widgetsByName.direct?.value) { el.style.display='none'; continue; }
       Object.assign(el.style, { display: 'block', left: x + 'px', top: y + 'px', width: wpx * ds.scale + 'px', height: 18 * ds.scale + 'px', fontSize: 12 * ds.scale + 'px' });
       if (document.activeElement !== el) { if (isChk) el.checked = !!w.value; else if (String(el.value) !== String(w.value ?? '')) el.value = w.value ?? ''; }
@@ -197,6 +199,7 @@ function registerNode(def) {
     const areaH = this.size[1] - wh - 6, per = Math.max(30, areaH / this.textAreas.length - 6);
     this.textAreas.forEach((w, k) => {
       const ta = w.ta; if (!ta) return;
+      if (def.name === 'scene' && w.inputName === 'scene') { w.type='hidden'; }
       if (def.name === 'Scene' && w.inputName === 'manual_prompt' && !this.widgetsByName.direct?.value) { ta.style.display='none'; return; }
       const linked = this.inputs?.some(inp => inp.name === w.inputName && inp.link != null);
       if (this.flags.collapsed || linked || areaH < 40 || ds.scale < 0.45) { ta.style.display = 'none'; return; }
@@ -222,9 +225,9 @@ function toApi(graph) {
     const inputs = {};
     for (const w of (n.widgets || [])) if (w.inputName) inputs[w.inputName] = w.value;
     for (let s = 0; s < (n.inputs || []).length; s++) {
-      const inp = n.inputs[s]; if (inp.link == null) continue;
+      const inp = n.inputs[s]; if (inp.link == null) continue; const inputId = inp._id || inp.name;
       const link = graph.links[inp.link]; if (!link) continue;
-      inputs[inp.name] = [String(link.origin_id), link.origin_slot];
+      inputs[inputId] = [String(link.origin_id), link.origin_slot];
     }
     out[String(n.id)] = { type: n.def.name, inputs };
   }
@@ -286,7 +289,7 @@ LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
   defs.forEach(registerNode);
   await defaultGraph();
   const h = await (await fetch(base + '/health')).json();
-  status(h.models_loaded ? '준비됨 · 4 node types' : '모델 로딩 중…');
+  status(h.models_loaded ? '준비됨' : '모델 로딩 중…');
 })();
 
 $('#run').onclick = run;
