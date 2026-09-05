@@ -135,6 +135,7 @@ function registerNode(def) {
     const sz = LGraphNode.prototype.computeSize.call(this, out);
     if (hasImage) { sz[0] = Math.max(sz[0], 260); sz[1] = Math.max(sz[1], 250); }
     if (isOutput) { sz[0] = Math.max(sz[0], 420); sz[1] = Math.max(sz[1], 300); }
+    if (def.name === 'Generate Video') { sz[0] = Math.max(sz[0], 340); sz[1] = Math.max(sz[1], 390); }
     if (isText) { sz[0] = Math.max(sz[0], 420); sz[1] = Math.max(sz[1], 260); }
     return sz;
   };
@@ -195,6 +196,7 @@ function registerNode(def) {
     const areaH = this.size[1] - wh - 6, per = Math.max(30, areaH / this.textAreas.length - 6);
     this.textAreas.forEach((w, k) => {
       const ta = w.ta; if (!ta) return;
+      if (def.name === 'Scene' && w.inputName === 'manual_prompt' && !this.widgetsByName.direct?.value) { ta.style.display='none'; return; }
       const linked = this.inputs?.some(inp => inp.name === w.inputName && inp.link != null);
       if (this.flags.collapsed || linked || areaH < 40 || ds.scale < 0.45) { ta.style.display = 'none'; return; }
       const x = (this.pos[0] + 6 + ds.offset[0]) * ds.scale, y = (this.pos[1] + wh + k * (per + 6) + ds.offset[1]) * ds.scale + top;
