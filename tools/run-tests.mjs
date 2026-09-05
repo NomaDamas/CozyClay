@@ -137,6 +137,7 @@ const NODE_FILES = [
 const BROWSER_FILES = [
 	"test/verify-camera-rail-browser.mjs",
 	"test/verify-cutout-browser.mjs",
+	"test/verify-first-success-guide-browser.mjs",
 	"test/verify-ik-browser.mjs",
 	"test/verify-motion-edit-browser.mjs",
 	"test/verify-number-field-scrub-browser.mjs",
