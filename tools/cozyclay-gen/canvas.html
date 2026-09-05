@@ -34,14 +34,14 @@
   <button id="default">기본 프리셋</button>
   <button id="save">저장</button>
   <button id="load">불러오기</button>
-  <button id="export">Export JSON</button>
-  <button id="import">Import JSON</button>
-  <input type="file" id="importFile" accept="application/json" hidden>
+  
+  
+  
   <input type="file" id="uploadFile" accept="image/*" hidden>
   <span id="status">…</span>
 </div>
 <canvas id="c"></canvas>
-<div id="hint">double-click: search nodes · right-click: add node · click a prompt widget: editor · Ctrl+Enter: run</div>
+<div id="hint">빈 공간 더블클릭: 노드 검색 · 우클릭: 메뉴 · Ctrl+Enter: 실행</div>
 <div id="editor"><div class="box"><div id="edTitle" style="margin-bottom:8px;color:#aaa"></div><textarea id="edText"></textarea><div class="btns"><button id="edCancel">Cancel</button><button id="edOk" style="background:#4f8cff;color:#fff;border:0;border-radius:6px;padding:6px 14px">OK</button></div></div></div>
 <script src="https://unpkg.com/litegraph.js@0.7.18/build/litegraph.min.js"></script>
 <script>
@@ -282,7 +282,7 @@ addEventListener('resize', resize); resize();
 LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
 
 (async () => {
-  const defs = await (await fetch(base + '/nodes?ts=' + Date.now())).json();
+  const defs = await (await fetch(base + '/nodes?mode=' + (location.pathname === '/graph' ? 'advanced' : 'simple') + '&ts=' + Date.now())).json();
   defs.forEach(registerNode);
   const saved = localStorage.getItem('cozyclay-gen-graph');
   if (saved) { try { clearTextAreas(); graph.configure(JSON.parse(saved)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); } catch (e) { defaultGraph(); } } else await defaultGraph();

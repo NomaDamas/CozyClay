@@ -266,3 +266,29 @@ def generate_video_advanced(ctx, **kw):
 @node("Result", category="output", inputs=[inp("video", "VIDEO")], outputs=[])
 def result(ctx, video):
     return save_video(ctx, video, "cozyclay")
+
+# Simple user surface: exactly three nodes.
+@node("입력", category="input", inputs=[inp("image_a", "IMAGEFILE", default="", placeholder="이미지 A (필수)"), inp("image_b", "IMAGEFILE", default="", placeholder="이미지 B (선택)"), inp("ref_video", "VIDEOFILE", default="", placeholder="참고 영상 · 실험 중")], outputs=[("image_a", "IMAGE"), ("image_b", "IMAGE"), ("ref_video", "VIDEOFILE")])
+def simple_inputs(ctx, image_a, image_b="", ref_video=""):
+    a = _g().load_image(ctx.input_path(image_a)) if image_a else None
+    b = _g().load_image(ctx.input_path(image_b)) if image_b else None
+    return a, b, ref_video
+
+@node("장면", category="prompt", inputs=[inp("scene", "STRING", default="", multiline=True, placeholder="예: 인물이 천천히 고개 숙여 인사하고 다시 정면을 바라본다"), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1)], outputs=[("prompt", "STRING"), ("seconds", "FLOAT")])
+def simple_scene(ctx, scene, seconds):
+    return scene, float(seconds)
+
+@node("결과", category="output", inputs=[inp("image_a", "IMAGE", optional=True), inp("image_b", "IMAGE", optional=True), inp("ref_video", "VIDEOFILE", optional=True), inp("prompt", "STRING"), inp("seconds", "FLOAT", default=5.0)], outputs=[])
+def simple_result(ctx, image_a=None, image_b=None, ref_video="", prompt="", seconds=5.0):
+    seed = int(time.time() * 1000) % (2**32)
+    text = ctx.rewriter.rewrite(prompt, float(seconds), None, None, None) if ctx.rewriter else prompt
+    ctx.ui(text=text, seed=seed, stage="영상 생성 중…")
+    if image_b is not None:
+        cond, latent = h3_i2v(ctx, text, float(seconds), 0.4, "16:9", image_a, image_b)
+    else:
+        cond, latent = h3_ref2va(ctx, text, seconds, 0.4, "16:9", "match", ref_image_1=image_a)
+    (sampled,) = h3_sample(ctx, cond, latent, seed, 4, "res_multistep", "simple", True, 0.9, 12.0)
+    (video,) = h3_decode(ctx, sampled, False)
+    save_video(ctx, video, "cozyclay")
+    ctx.ui(seed=seed)
+    return ()

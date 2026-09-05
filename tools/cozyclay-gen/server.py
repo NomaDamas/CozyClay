@@ -50,7 +50,10 @@ async def graph_ui(request):
 
 
 async def nodes(request):
-    return web.json_response(graph_nodes.registry_json())
+    defs = graph_nodes.registry_json()
+    if request.query.get("mode") != "advanced":
+        defs = [d for d in defs if d["name"] in ("입력", "장면", "결과")]
+    return web.json_response(defs)
 
 
 async def upload(request):
