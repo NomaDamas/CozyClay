@@ -128,7 +128,8 @@ export function createWorkflowBridgeServer() {
       json(res, payload.ok ? 200 : 503, payload);
       return;
     }
-    const matched = routeFor(req.method || "GET", path);
+    const routePath = path.startsWith("/workflow-api/") ? path.slice("/workflow-api".length) : path;
+    const matched = routeFor(req.method || "GET", routePath);
     if (!matched) {
       json(res, 404, { ok: false, error: "Unknown workflow bridge route", code: "route-not-found" });
       return;
