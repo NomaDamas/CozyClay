@@ -166,6 +166,7 @@ function registerNode(def) {
     }
     if (isOutput && !this.videoEl && h > 20) { ctx.save(); ctx.fillStyle='#777'; ctx.font='13px sans-serif'; ctx.fillText('영상 결과가 여기에 표시됩니다', 12, y0 + 32); ctx.restore(); }
     if (this.videoEl && h > 20) {
+      this.videoEl.style.left=((this.pos[0]+6+ds.offset[0])*ds.scale)+'px'; this.videoEl.style.top=((this.pos[1]+wh+ds.offset[1])*ds.scale+top)+'px';
       const v = this.videoEl; if (v.videoWidth) {
         const s = Math.min(wdt / v.videoWidth, h / v.videoHeight);
         ctx.drawImage(v, 6, y0, v.videoWidth * s, v.videoHeight * s);
@@ -207,7 +208,7 @@ function registerNode(def) {
   const _onAdded = N.prototype.onAdded; N.prototype.onAdded = function () { _onAdded.call(this); setTimeout(() => this.loadThumb && this.loadThumb(), 50); };
   N.prototype.setVideo = function (url) {
     if (!this.videoEl) { this.videoEl = document.createElement('video'); this.videoEl.muted = true; this.videoEl.loop = true; this.videoEl.autoplay = true; this.videoEl.playsInline = true; }
-    this.videoEl.src = url; this.videoEl.play().catch(() => {}); this.videoUrl = url;
+    this.videoEl.src = url; this.videoEl.controls = true; this.videoEl.muted = true; this.videoEl.loop = true; this.videoEl.autoplay = true; this.videoEl.style.cssText='position:fixed;z-index:4;width:360px;height:180px;background:#000;object-fit:contain;border-radius:6px;'; document.body.appendChild(this.videoEl); this.videoEl.play().catch(() => {}); this.videoUrl = url;
   };
   N.prototype.onDblClick = function (e, pos) { if (this.videoUrl) window.open(this.videoUrl, '_blank'); else if (this.lastText) editText(`${def.name} · generated prompt (read-only)`, this.lastText); };
   N.prototype.getExtraMenuOptions = function () { return this.videoUrl ? [{ content: 'Download mp4', callback: () => { const a = document.createElement('a'); a.href = this.videoUrl; a.download = ''; a.click(); } }] : []; };
