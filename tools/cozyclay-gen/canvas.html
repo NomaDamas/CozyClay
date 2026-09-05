@@ -30,10 +30,10 @@
 <body>
 <div id="bar">
   <b>cozyclay-gen</b>
-  <button class="run" id="run">Run (Ctrl+Enter)</button>
-  <button id="default">Mocap preset</button>
-  <button id="save">Save</button>
-  <button id="load">Load</button>
+  <button class="run" id="run">실행 (Ctrl+Enter)</button>
+  <button id="default">기본 프리셋</button>
+  <button id="save">저장</button>
+  <button id="load">불러오기</button>
   <button id="export">Export JSON</button>
   <button id="import">Import JSON</button>
   <input type="file" id="importFile" accept="application/json" hidden>
@@ -175,6 +175,8 @@ function registerNode(def) {
   N.prototype.onConfigure = function () { setTimeout(() => this.loadThumb && this.loadThumb(), 50); for (const w of (this.textAreas || [])) if (w.ta) w.ta.value = w.value || ''; };
   N.prototype.onRemoved = function () { for (const w of (this.textAreas || [])) w.ta && w.ta.remove(); for (const w of (this.domWidgets || [])) w.dom && w.dom.remove(); };
   N.prototype.onDrawForeground = function (ctx) {
+    if (def.name === 'Generate Video' && !this.widgetsByName.advanced?.value) { ctx.save(); ctx.fillStyle=this.color || '#345f4b'; ctx.fillRect(4, 190, this.size[0]-8, this.size[1]-194); ctx.fillStyle='#d7e3ef'; ctx.font='13px sans-serif'; ctx.fillText('▸ 고급 설정', 12, 210); ctx.restore(); }
+    if (def.name === 'Scene' && !this.widgetsByName.direct?.value) { ctx.save(); ctx.fillStyle=this.color || '#4b3c68'; ctx.fillRect(6, 235, this.size[0]-12, this.size[1]-240); ctx.fillStyle='#9aa8b8'; ctx.font='12px sans-serif'; ctx.fillText('직접 입력을 켜면 수동 프롬프트를 사용할 수 있습니다', 12, 255); ctx.restore(); }
     const ds = canvas.ds, top = 42;
     for (const w of (this.domWidgets || [])) {
       const el = w.dom; if (!el) continue;
@@ -262,7 +264,7 @@ function clearTextAreas() { document.querySelectorAll('textarea.nodeText, .nodeD
 async function defaultGraph() {
   clearTextAreas(); graph.clear();
   try {
-    const preset = await (await fetch(base + '/preset')).json();
+    const preset = await (await fetch(base + '/preset?ts=' + Date.now())).json();
     graph.configure(preset); graph._nodes.forEach(n => { n.loadThumb && n.loadThumb(); n.onConnectionsChange && n.onConnectionsChange(); });
   } catch (e) { status('preset load failed: ' + e); }
   canvas.setDirty(true, true);
@@ -277,12 +279,12 @@ addEventListener('resize', resize); resize();
 LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
 
 (async () => {
-  const defs = await (await fetch(base + '/nodes')).json();
+  const defs = await (await fetch(base + '/nodes?ts=' + Date.now())).json();
   defs.forEach(registerNode);
   const saved = localStorage.getItem('cozyclay-gen-graph');
   if (saved) { try { clearTextAreas(); graph.configure(JSON.parse(saved)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); } catch (e) { defaultGraph(); } } else await defaultGraph();
   const h = await (await fetch(base + '/health')).json();
-  status(h.models_loaded ? `ready · ${defs.length} node types` : 'loading models…');
+  status(h.models_loaded ? '준비됨 · 4 node types' : '모델 로딩 중…');
 })();
 
 $('#run').onclick = run;
