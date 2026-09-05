@@ -1944,7 +1944,7 @@ export default function Timeline({
 								onTimingGestureEnd={() => handlers.current.onObjectTimingGestureEnd?.()}
 							/>
 						) : TRACKS.map((name) => (
-							<div style={!advancedMode && (name === "Prompts" || name === "2D Root") ? { display: "none" } : undefined} className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} key={name}>
+							<div className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} key={name}>
 								<span className="tl-track-label">
 									{TRACK_LABELS_KO[name]}
 									{trackOwner && (name === "Prompts" || name === "2D Root") && <em className="tl-track-owner">{trackOwner}</em>}
@@ -1958,7 +1958,7 @@ export default function Timeline({
 												: `${pathSpeed.min.toFixed(1)}–${pathSpeed.max.toFixed(1)} m/s`}
 										</em>
 									)}
-									{advancedMode && name === "Prompts" && <button className="tl-track-add" type="button" title={ko("Add a 2–4 second prompt clip — one action per block", "2–4초 프롬프트 클립 추가 — 한 블록에 한 동작")} onClick={() => handlers.current.onPromptAdd?.(frame)}>+</button>}
+									{name === "Prompts" && <button className="tl-track-add" type="button" title={ko("Add a 2–4 second prompt clip — one action per block", "2–4초 프롬프트 클립 추가 — 한 블록에 한 동작")} onClick={() => handlers.current.onPromptAdd?.(frame)}>+</button>}
 									{name === SHOTS_LANE && (
 										<button
 											type="button"

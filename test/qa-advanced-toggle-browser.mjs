@@ -18,9 +18,7 @@ try {
  async function verify(on) {
   assert.equal(await toggle.getAttribute('aria-pressed'), String(on));
   for (const locator of sections) assert.equal(await locator.isVisible(), on, 'expert inspector section visibility');
-  assert.equal(await lanes[0].isVisible(), on, 'Prompts visibility');
-  assert.equal(await lanes[1].isVisible(), on, '2D Root visibility');
-  assert.equal(await lanes[2].isVisible(), true, 'Shots lane remains visible');
+  for (const locator of lanes) assert.equal(await locator.isVisible(), true, 'all Animation lanes remain visible');
   assert.equal(await page.getByRole('button', { name: 'Root path mode', exact: true }).isVisible(), on);
   assert.equal(await page.getByRole('button', { name: '+ Add shot', exact: true }).isVisible(), true);
   assert.equal(await page.locator('.tl-ruler').isVisible(), true);
