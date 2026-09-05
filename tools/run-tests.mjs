@@ -74,6 +74,7 @@ const NODE_FILES = [
 	"test/verify-motion-trail.mjs",
 	"test/verify-kimodo-waypoints.mjs",
 	"test/verify-korean-ui.mjs",
+	"test/verify-label-tooltips.mjs",
 	"test/verify-layout.mjs",
 	"test/verify-line-edit-draw.mjs",
 	"test/verify-line-edit-pins.mjs",
