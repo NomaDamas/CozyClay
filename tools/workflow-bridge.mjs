@@ -16,11 +16,36 @@ const MUAPI_KEY = process.env.COZYCLAY_MUAPI_KEY?.trim() || "";
 const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const UPSTREAM_TIMEOUT_MS = Number.parseInt(process.env.COZYCLAY_MUAPI_TIMEOUT_MS || "30000", 10);
 
+// Keep this list aligned with the route surface used by Vibe-Workflow's
+// FastAPI server. The bridge is an allowlist: a route is only forwarded when
+// it is listed here, so adding a Vibe feature is an explicit reviewable change.
 const ROUTES = [
   { method: "POST", pattern: /^\/workflow\/create$/, upstream: "/workflow/create" },
+  { method: "GET", pattern: /^\/workflow\/get-workflow-defs$/, upstream: "/workflow/get-workflow-defs" },
+  { method: "GET", pattern: /^\/workflow\/get-workflow-def\/([^/]+)$/, upstream: (match) => `/workflow/get-workflow-def/${encodeURIComponent(match[1])}` },
+  { method: "GET", pattern: /^\/workflow\/([^/]+)\/node-schemas$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/node-schemas` },
+  { method: "GET", pattern: /^\/workflow\/([^/]+)\/api-node-schemas$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/api-node-schemas` },
+  { method: "DELETE", pattern: /^\/workflow\/delete-workflow-def\/([^/]+)$/, upstream: (match) => `/workflow/delete-workflow-def/${encodeURIComponent(match[1])}` },
+  { method: "POST", pattern: /^\/workflow\/update-name\/([^/]+)$/, upstream: (match) => `/workflow/update-name/${encodeURIComponent(match[1])}` },
+  // The browser adapter uses /workflow/run with workflow_id in the body;
+  // Vibe's original UI uses /workflow/:id/run. Support both contracts.
   { method: "POST", pattern: /^\/workflow\/run$/, upstream: "/workflow/run" },
-  { method: "POST", pattern: /^\/workflow\/([^/]+)\/node\/([^/]+)\/run$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/node/${encodeURIComponent(match[2])}/run` },
+  { method: "POST", pattern: /^\/workflow\/([^/]+)\/run$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/run` },
   { method: "GET", pattern: /^\/workflow\/run\/([^/]+)\/status$/, upstream: (match) => `/workflow/run/${encodeURIComponent(match[1])}/status` },
+  { method: "POST", pattern: /^\/workflow\/([^/]+)\/node\/([^/]+)\/run$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/node/${encodeURIComponent(match[2])}/run` },
+  { method: "POST", pattern: /^\/workflow\/workflow\/([^/]+)\/publish$/, upstream: (match) => `/workflow/workflow/${encodeURIComponent(match[1])}/publish` },
+  { method: "POST", pattern: /^\/workflow\/workflow\/([^/]+)\/template$/, upstream: (match) => `/workflow/workflow/${encodeURIComponent(match[1])}/template` },
+  { method: "POST", pattern: /^\/workflow\/cloudfront-signed-url$/, upstream: "/workflow/cloudfront-signed-url" },
+  { method: "POST", pattern: /^\/workflow\/([^/]+)\/thumbnail$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/thumbnail` },
+  { method: "GET", pattern: /^\/workflow\/get-workflow-last-run\/([^/]+)$/, upstream: (match) => `/workflow/get-workflow-last-run/${encodeURIComponent(match[1])}` },
+  { method: "POST", pattern: /^\/workflow\/architect$/, upstream: "/workflow/architect" },
+  { method: "GET", pattern: /^\/workflow\/poll-architect\/([^/]+)\/result$/, upstream: (match) => `/workflow/poll-architect/${encodeURIComponent(match[1])}/result` },
+  { method: "DELETE", pattern: /^\/workflow\/node-run\/([^/]+)$/, upstream: (match) => `/workflow/node-run/${encodeURIComponent(match[1])}` },
+  { method: "POST", pattern: /^\/workflow\/update-category\/([^/]+)$/, upstream: (match) => `/workflow/update-category/${encodeURIComponent(match[1])}` },
+  { method: "GET", pattern: /^\/workflow\/([^/]+)\/api-inputs$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/api-inputs` },
+  { method: "POST", pattern: /^\/workflow\/([^/]+)\/api-execute$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/api-execute` },
+  { method: "GET", pattern: /^\/workflow\/run\/([^/]+)\/api-outputs$/, upstream: (match) => `/workflow/run/${encodeURIComponent(match[1])}/api-outputs` },
+  { method: "POST", pattern: /^\/app\/calculate_dynamic_cost$/, upstream: "/app/calculate_dynamic_cost" },
   { method: "GET", pattern: /^\/app\/get_file_upload_url$/, upstream: "/app/get_file_upload_url" },
   { method: "POST", pattern: /^\/app\/get_file_upload_url$/, upstream: "/app/get_file_upload_url" },
 ];
@@ -80,12 +105,19 @@ async function proxy(route, match, req, res) {
       // Let MuAPI return its normal validation error for a non-JSON payload.
     }
   }
-  if (route.pattern.source === "^\\/app\\/get_file_upload_url$" && req.url?.includes("?")) {
-    upstreamPath += req.url.slice(req.url.indexOf("?"));
-  }
+  // Preserve query parameters for signed-upload and any future Vibe GET route.
+  // URL.pathname was used for matching above, so forwarding the query here is
+  // safe and keeps filename/content-type parameters intact.
+  const query = new URL(req.url || "/", `http://${HOST}`).search;
+  if (query) upstreamPath += query;
   // MuAPI's workflow service authenticates with x-api-key. Keep the Bearer
   // header as a compatibility fallback for older self-hosted gateways.
-  const headers = { "x-api-key": MUAPI_KEY, authorization: `Bearer ${MUAPI_KEY}`, accept: "application/json" };
+  const headers = {
+    "x-api-key": MUAPI_KEY,
+    authorization: `Bearer ${MUAPI_KEY}`,
+    accept: "application/json",
+    "content-type": "application/json",
+  };
   if (body?.length) headers["content-type"] = req.headers["content-type"] || "application/json";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);
@@ -116,8 +148,8 @@ export function createWorkflowBridgeServer() {
     if (req.method === "OPTIONS") {
       res.statusCode = 204;
       res.setHeader("access-control-allow-origin", "*");
-      res.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
-      res.setHeader("access-control-allow-headers", "content-type,authorization");
+      res.setHeader("access-control-allow-methods", "GET,POST,DELETE,OPTIONS");
+      res.setHeader("access-control-allow-headers", "content-type,authorization,x-api-key");
       res.end();
       return;
     }
@@ -131,7 +163,10 @@ export function createWorkflowBridgeServer() {
       json(res, payload.ok ? 200 : 503, payload);
       return;
     }
-    const routePath = path.startsWith("/workflow-api/") ? path.slice("/workflow-api".length) : path;
+    // Keep the original Vibe browser contract available alongside CozyClay's
+    // namespaced adapter path. This lets copied Vibe nodes call /api/workflow
+    // without knowing that the credentials are handled by this sidecar.
+    const routePath = path.startsWith("/workflow-api/") ? path.slice("/workflow-api".length) : path.startsWith("/api/") ? path.slice("/api".length) : path;
     const matched = routeFor(req.method || "GET", routePath);
     if (!matched) {
       json(res, 404, { ok: false, error: "Unknown workflow bridge route", code: "route-not-found" });

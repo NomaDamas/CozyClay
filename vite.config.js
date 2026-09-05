@@ -67,7 +67,7 @@ export default defineConfig({
 						res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
 						return;
 					}
-					if (!workflowBridgeUrl && /^\/workflow-api\/(health|workflow\/|app\/get_file_upload_url(?:\/|$))/.test(path)) {
+					if (!workflowBridgeUrl && /^(?:\/workflow-api|\/api)\/(health|workflow\/|app\/(?:get_file_upload_url|calculate_dynamic_cost)(?:\/|$))/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
 						res.setHeader("cache-control", "no-store");
@@ -117,6 +117,10 @@ export default defineConfig({
 							"/workflow-api": {
 								target: workflowBridgeUrl,
 								rewrite: (path) => path.replace(/^\/workflow-api/, "") || "/",
+							},
+							"/api": {
+								target: workflowBridgeUrl,
+								rewrite: (path) => path.replace(/^\/api/, "") || "/",
 							},
 						}
 						: {}),

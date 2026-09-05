@@ -79,6 +79,65 @@ try {
   assert.equal((await response.json()).workflow_id, "mock-workflow");
   assert.equal(requests[0].headers["x-api-key"], "test-key");
   assert.deepEqual(JSON.parse(requests[0].body), body);
+
+  // Exercise the route allowlist copied from Vibe's FastAPI router. These are
+  // intentionally one request each: a 404 here means the UI would silently
+  // lose that Vibe capability behind the loopback bridge.
+  const routeCases = [
+    ["GET", "/workflow/get-workflow-defs", "/workflow/get-workflow-defs"],
+    ["GET", "/workflow/get-workflow-def/wf-1", "/workflow/get-workflow-def/wf-1"],
+    ["GET", "/workflow/wf-1/node-schemas", "/workflow/wf-1/node-schemas"],
+    ["GET", "/workflow/wf-1/api-node-schemas", "/workflow/wf-1/api-node-schemas"],
+    ["DELETE", "/workflow/delete-workflow-def/wf-1", "/workflow/delete-workflow-def/wf-1"],
+    ["POST", "/workflow/update-name/wf-1", "/workflow/update-name/wf-1"],
+    ["POST", "/workflow/wf-1/run", "/workflow/wf-1/run"],
+    ["GET", "/workflow/run/run-1/status", "/workflow/run/run-1/status"],
+    ["POST", "/workflow/wf-1/node/node-1/run", "/workflow/wf-1/node/node-1/run"],
+    ["POST", "/workflow/workflow/wf-1/publish", "/workflow/workflow/wf-1/publish"],
+    ["POST", "/workflow/workflow/wf-1/template", "/workflow/workflow/wf-1/template"],
+    ["POST", "/workflow/cloudfront-signed-url", "/workflow/cloudfront-signed-url"],
+    ["POST", "/workflow/wf-1/thumbnail", "/workflow/wf-1/thumbnail"],
+    ["GET", "/workflow/get-workflow-last-run/wf-1", "/workflow/get-workflow-last-run/wf-1"],
+    ["POST", "/workflow/architect", "/workflow/architect"],
+    ["GET", "/workflow/poll-architect/request-1/result", "/workflow/poll-architect/request-1/result"],
+    ["DELETE", "/workflow/node-run/node-run-1", "/workflow/node-run/node-run-1"],
+    ["POST", "/workflow/update-category/wf-1", "/workflow/update-category/wf-1"],
+    ["GET", "/workflow/wf-1/api-inputs", "/workflow/wf-1/api-inputs"],
+    ["POST", "/workflow/wf-1/api-execute", "/workflow/wf-1/api-execute"],
+    ["GET", "/workflow/run/run-1/api-outputs", "/workflow/run/run-1/api-outputs"],
+    ["POST", "/app/calculate_dynamic_cost", "/app/calculate_dynamic_cost"],
+  ];
+  for (const [method, path, expectedUpstream] of routeCases) {
+    const routeResponse = await fetch(`http://127.0.0.1:${proxyPort}${path}`, {
+      method,
+      headers: { "content-type": "application/json" },
+      body: method === "GET" || method === "DELETE" ? undefined : "{}",
+    });
+    assert.equal(routeResponse.status, 200, `${method} ${path}`);
+    const request = requests.at(-1);
+    assert.equal(request.method, method, `${method} ${path} method`);
+    assert.equal(request.url, expectedUpstream, `${method} ${path} upstream path`);
+  }
+
+  const bodyRun = await fetch(`http://127.0.0.1:${proxyPort}/workflow/run`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ workflow_id: "wf-body", cost: 0 }),
+  });
+  assert.equal(bodyRun.status, 200);
+  assert.equal(requests.at(-1).url, "/workflow/wf-body/run");
+
+  const upload = await fetch(`http://127.0.0.1:${proxyPort}/app/get_file_upload_url?filename=clip%20one.mp4`, { method: "GET" });
+  assert.equal(upload.status, 200);
+  assert.equal(requests.at(-1).url, "/app/get_file_upload_url?filename=clip%20one.mp4");
+
+  const prefixed = await fetch(`http://127.0.0.1:${proxyPort}/workflow-api/workflow/wf-1/node-schemas`);
+  assert.equal(prefixed.status, 200);
+  assert.equal(requests.at(-1).url, "/workflow/wf-1/node-schemas");
+
+  const originalVibePath = await fetch(`http://127.0.0.1:${proxyPort}/api/workflow/wf-1/node-schemas`);
+  assert.equal(originalVibePath.status, 200);
+  assert.equal(requests.at(-1).url, "/workflow/wf-1/node-schemas");
 } finally {
   enabledChild.kill("SIGTERM");
   await once(enabledChild, "close").catch(() => {});
