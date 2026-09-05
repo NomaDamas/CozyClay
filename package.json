@@ -72,7 +72,12 @@
   },
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "dependencies": {},
+  "dependencies": {
+    "axios": "^1.20.0",
+    "react-hot-toast": "^2.6.0",
+    "react-icons": "^5.7.0",
+    "reactflow": "^11.11.4"
+  },
   "devDependencies": {
     "@mediapipe/tasks-vision": "0.10.17",
     "@react-three/drei": "^10.7.7",

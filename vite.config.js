@@ -39,6 +39,8 @@ export default defineConfig({
 				app: resolve(import.meta.dirname, "app/index.html"),
 				// Search-facing article on camera control for AI video.
 				aiCameraControl: resolve(import.meta.dirname, "ai-camera-control/index.html"),
+				// Standalone Vibe-Workflow inspired graph editor.
+				workflow: resolve(import.meta.dirname, "workflow/index.html"),
 				// Hosted demo composer and its queue/result ticket.
 				demo: resolve(import.meta.dirname, "demo/index.html"),
 				ticket: resolve(import.meta.dirname, "d/index.html"),
