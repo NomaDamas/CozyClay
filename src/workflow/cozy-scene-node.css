@@ -30,3 +30,10 @@
 .cozy-scene-node-footer { border-top: 1px solid #33404e; color: #8799aa; font-size: 10px; }.cozy-scene-node-footer span + span { margin-left: auto; }
 .cozy-scene-node-inputs, .cozy-scene-node-outputs { position: absolute; top: 0; bottom: 0; width: 12px; pointer-events: none; }.cozy-scene-node-inputs { left: -7px; }.cozy-scene-node-outputs { right: -7px; }.cozy-scene-handle { position: absolute; display: block; width: 10px; height: 10px; border: 2px solid #a9d1f0; border-radius: 50%; background: #243443; pointer-events: auto; }.cozy-scene-handle-target { left: 0; }.cozy-scene-handle-source { right: 0; }.cozy-scene-handle-asset { top: 85px; }.cozy-scene-handle-motion { top: 115px; }.cozy-scene-handle-render { top: 108px; }.cozy-scene-handle-scene { top: 140px; }
 .cozy-scene-reactflow-handle { z-index: 5; }
+/* ReactFlow's default handle rule pins every handle to 50%. Keep the four
+ * Scene ports distinct so asset/motion inputs and render/scene outputs can be
+ * connected without an invisible overlap. */
+.cozy-scene-reactflow-handle-asset { top: 85px !important; }
+.cozy-scene-reactflow-handle-motion { top: 115px !important; }
+.cozy-scene-reactflow-handle-render { top: 108px !important; }
+.cozy-scene-reactflow-handle-scene { top: 140px !important; }

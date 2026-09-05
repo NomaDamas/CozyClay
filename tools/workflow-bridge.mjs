@@ -83,7 +83,9 @@ async function proxy(route, match, req, res) {
   if (route.pattern.source === "^\\/app\\/get_file_upload_url$" && req.url?.includes("?")) {
     upstreamPath += req.url.slice(req.url.indexOf("?"));
   }
-  const headers = { authorization: `Bearer ${MUAPI_KEY}`, accept: "application/json" };
+  // MuAPI's workflow service authenticates with x-api-key. Keep the Bearer
+  // header as a compatibility fallback for older self-hosted gateways.
+  const headers = { "x-api-key": MUAPI_KEY, authorization: `Bearer ${MUAPI_KEY}`, accept: "application/json" };
   if (body?.length) headers["content-type"] = req.headers["content-type"] || "application/json";
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS);

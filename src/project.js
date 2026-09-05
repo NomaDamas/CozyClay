@@ -19,6 +19,7 @@ import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, normalizeAsset, referencedAsse
 export const PROJECT_VERSION = 3;
 export const PROJECT_EXTENSION = ".cclayproject";
 export const WORKFLOW_VERSION = 1;
+export const WORKFLOW_STORAGE_KEY = "cozyclay.workflow.v1";
 const IDB_NAME = "cozyclay.project-handle.v1";
 const IDB_STORE = "kv";
 const IDB_KEY = "lastProjectHandle";
@@ -121,6 +122,29 @@ export function normalizeWorkflowGraph(value) {
 		edgeIds.add(candidateId);
 	}
 	return { version: WORKFLOW_VERSION, nodes, edges };
+}
+
+/** Read the browser-local workflow draft used by the standalone canvas. */
+export function loadWorkflowGraph(storage = globalThis.localStorage) {
+	try {
+		return normalizeWorkflowGraph(JSON.parse(storage?.getItem(WORKFLOW_STORAGE_KEY) || "null"));
+	} catch {
+		return createWorkflowGraph();
+	}
+}
+
+/** Persist a sanitized workflow draft without allowing storage failures to
+ * take down the Studio (private browsing and full quotas are both common). */
+export function storeWorkflowGraph(graph, storage = globalThis.localStorage) {
+	const normalized = normalizeWorkflowGraph(graph);
+	try {
+		storage?.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(normalized));
+	} catch {
+		// localStorage is an optional session cache; the project file remains the
+		// durable source of truth.
+	}
+	try { globalThis.dispatchEvent?.(new CustomEvent("cozyclay:workflow-change")); } catch { /* non-browser runtime */ }
+	return normalized;
 }
 
 /* ------------------------------- envelope ------------------------------- */

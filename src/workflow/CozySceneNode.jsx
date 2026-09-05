@@ -52,9 +52,12 @@ function callbackFrom(data, prop) {
 export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, selected = false, HandleComponent = null, onDataChange = null, onRun = null, onOpenScene = null }) {
 	const data = useMemo(() => normalizeCozySceneData(rawData), [rawData]);
 	const Handle = HandleComponent || rawData.Handle || BridgeHandle;
-	const change = callbackFrom(rawData, "onDataChange") || onDataChange;
-	const run = callbackFrom(rawData, "onRun") || onRun;
-	const openScene = callbackFrom(rawData, "onOpenScene") || onOpenScene;
+	// Explicit component callbacks win over generic node data callbacks. This
+	// prevents a workflow-wide `onRun` handler from hijacking the Scene node's
+	// own render action when ReactFlow decorates every node with shared data.
+	const change = onDataChange || callbackFrom(rawData, "onDataChange");
+	const run = onRun || callbackFrom(rawData, "onRun");
+	const openScene = onOpenScene || callbackFrom(rawData, "onOpenScene");
 
 	const emit = (patch) => {
 		const nextData = applyCozyScenePatch(data, patch);
