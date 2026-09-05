@@ -1040,13 +1040,10 @@ globalThis.playMode = centerTab === "play";
 	// Keep the underlying selection model intact, but use this small workflow
 	// state to surface only the tools that belong to the current job.
 	const [workflowMode, setWorkflowMode] = useState("scene");
-	const [advancedMode, setAdvancedMode] = useState(() => { try { return globalThis.localStorage?.getItem("cozyclay.advanced") === "true"; } catch { return false; } });
-	function toggleAdvancedMode() {
-		const next = !advancedMode;
-		try { globalThis.localStorage?.setItem("cozyclay.advanced", String(next)); } catch {}
-		setAdvancedMode(next);
-		if (!next) setSelectedHierarchyId("characterA");
-	}
+	// The Studio is an authoring tool, so its full editing surface is always
+	// available. Workflow is the first screen; there is no beginner gate to
+	// hide the controls that make a scene editable.
+	const advancedMode = true;
 	function selectWorkflowMode(next) {
 		setWorkflowMode(next);
 		setCenterTab("scene");
@@ -9541,7 +9538,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						</span>
 					)}
 					<LocaleToggle />
-					<button type="button" className="auto-color-toggle advanced-toggle" aria-pressed={advancedMode} onClick={toggleAdvancedMode}>{ko("Advanced", "고급")}</button>
 					<AnalyticsToggle />
 				</div>
 			</header>

@@ -27,6 +27,13 @@
 
     <title>CozyClay — open source 3D previs software, in your browser</title>
 
+    <meta http-equiv="refresh" content="0; url=/workflow/" />
+    <script>
+      if (location.pathname === "/" || location.pathname === "/index.html") {
+        location.replace("/workflow/" + location.search + location.hash);
+      }
+    </script>
+
     <meta property="og:video" content="https://cozyclay.org/media/cozyclay-demo.mp4" />
     <meta property="og:video:type" content="video/mp4" />
     <meta property="og:video:width" content="1920" />
