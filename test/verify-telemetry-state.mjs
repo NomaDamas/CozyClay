@@ -36,6 +36,8 @@ try {
 		apiKey: "phc_CpizzZ8VhSorSS8yEeQhdpUcvB2erp5xkCbnFD8HTJ5m",
 		apiHost: "https://t.cozyclay.org",
 		firstLaunch: true,
+		firstLaunchHeardFrom: null,
+		installKind: "npx",
 	});
 	assert.equal(JSON.parse(readFileSync(stateFile, "utf8")).installationId, installationId);
 	assert.equal(
@@ -95,7 +97,7 @@ try {
 	writeFileSync(stateFile, "{ broken json");
 	assert.deepEqual(
 		readTelemetryState(stateFile),
-		{ installationId: null, telemetryEnabled: false, firstLaunchedAt: null, noticeVersion: 0 },
+		{ installationId: null, telemetryEnabled: false, firstLaunchedAt: null, noticeVersion: 0, firstLaunchHeardFrom: null },
 		"a corrupt state file fails closed without resurrecting telemetry",
 	);
 	writeFileSync(stateFile, JSON.stringify({ installationId: "person@example.com" }));

@@ -93,7 +93,7 @@ function readEmbeddedAssets(value) {
 	return { assets, warnings };
 }
 
-export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets }) {
+export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, savedAt }) {
 	const assetRecords = new Map();
 	for (const record of Array.isArray(assets) ? assets : []) {
 		const asset = embeddedAsset(record);
@@ -109,6 +109,7 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
 		kind: "project",
 		version: PROJECT_VERSION,
 		name: typeof name === "string" && name.trim() ? name.trim() : "Untitled",
+		...(Number.isFinite(savedAt) && savedAt > 0 ? { savedAt } : {}),
 		scenes: scenesDocument,
 		workspace: workspaceLayout ?? null,
 		poseLibrary: Array.isArray(customPoses) ? customPoses : [],
@@ -138,6 +139,7 @@ export function readProjectDocument(raw) {
 		warnings: embedded.warnings,
 		project: {
 			name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Untitled",
+			savedAt: Number.isFinite(parsed.savedAt) && parsed.savedAt > 0 ? parsed.savedAt : null,
 			scenesDocument: { version: scenes.version, activeSceneId: scenes.activeSceneId ?? null, scenes: scenes.scenes },
 			workspaceLayout: parsed.workspace && typeof parsed.workspace === "object" ? parsed.workspace : null,
 			customPoses: Array.isArray(parsed.poseLibrary)
@@ -182,7 +184,7 @@ export async function writeProjectFile(handle, serialized) {
 
 export async function readProjectFile(handle) {
 	const file = await handle.getFile();
-	return { name: file.name.replace(/\.cclayproject$|\.json$/i, ""), text: await file.text() };
+	return { name: file.name.replace(/\.cclayproject$|\.json$/i, ""), text: await file.text(), savedAt: file.lastModified };
 }
 
 /* --------------------------- fallback (no FS API) ------------------------ */
@@ -205,7 +207,7 @@ export function openProjectFallback() {
 		input.onchange = async () => {
 			const file = input.files?.[0];
 			if (!file) return resolve(null);
-			resolve({ name: file.name.replace(/\.cclayproject$|\.json$/i, ""), text: await file.text() });
+			resolve({ name: file.name.replace(/\.cclayproject$|\.json$/i, ""), text: await file.text(), savedAt: file.lastModified });
 		};
 		input.oncancel = () => resolve(null);
 		input.click();

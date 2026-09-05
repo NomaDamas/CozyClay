@@ -29,6 +29,7 @@ import { verifyPackageMarker } from "./package-signature.mjs";
 import {
 	markTelemetryNoticeShown,
 	markTelemetryFirstLaunch,
+	setTelemetryFirstLaunchSource,
 	effectiveTelemetryEnabled,
 	readTelemetryState,
 	setTelemetryEnabled,
@@ -51,6 +52,10 @@ const OFFICIAL_PACKAGE = (
 	&& !SOURCE_CHECKOUT
 	&& verifyPackageMarker(join(DIST, "cozyclay-package.json"), PKG_ROOT, packageMetadata)
 );
+const INSTALL_KIND = process.env.npm_config_global === "true"
+	|| (PKG_ROOT.includes("/node_modules/") && !PKG_ROOT.includes("/_npx/"))
+	? "global"
+	: "npx";
 // A bridge is optional. Keep the endpoint unset until this launcher owns a
 // sidecar; otherwise /ardy requests could accidentally reach an unrelated
 // process that happens to be listening on the bridge's historical default
@@ -114,6 +119,18 @@ const STATE_FILE = join(STATE_DIR, "state.json");
 // Only worth asking someone who actually used the thing. A prompt three
 // seconds in is a popup; a prompt after a real session is a question.
 const STAR_AFTER_MS = Number(process.env.COZYCLAY_STAR_AFTER_MS ?? 60_000);
+
+async function askFirstLaunchSource() {
+	if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+	const answer = await new Promise((resolve) => {
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		rl.question("How did you hear about CozyClay? [x/hn/reddit/github/friend/other/skip] ", (value) => {
+			rl.close();
+			resolve(value.trim().toLowerCase());
+		});
+	});
+	return ["x", "hn", "reddit", "github", "friend", "other"].includes(answer) ? answer : null;
+}
 
 const HELP = `cozyclay - browser-based 3D staging studio
 
@@ -284,7 +301,19 @@ if (opts.version) {
 let runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 	appVersion: version,
 	officialPackage: OFFICIAL_PACKAGE,
+	installKind: INSTALL_KIND,
 });
+if (runtimeTelemetry.firstLaunch && !readTelemetryState(STATE_FILE).firstLaunchHeardFrom) {
+	const heardFrom = await askFirstLaunchSource();
+	if (heardFrom) {
+		setTelemetryFirstLaunchSource(STATE_FILE, heardFrom);
+	runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
+		appVersion: version,
+		officialPackage: OFFICIAL_PACKAGE,
+		installKind: INSTALL_KIND,
+	});
+	}
+}
 const telemetryState = readTelemetryState(STATE_FILE);
 if (
 	runtimeTelemetry.telemetryEnabled
@@ -384,6 +413,7 @@ server = createServer((req, res) => {
 					runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 						appVersion: version,
 						officialPackage: OFFICIAL_PACKAGE,
+						installKind: INSTALL_KIND,
 					});
 					res.writeHead(200, {
 						"content-type": "application/json; charset=utf-8",
@@ -438,6 +468,7 @@ server = createServer((req, res) => {
 		runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 			appVersion: version,
 			officialPackage: OFFICIAL_PACKAGE,
+			installKind: INSTALL_KIND,
 		});
 		const runtime = runtimeTelemetry;
 		if (runtime.firstLaunch) {

@@ -1,4 +1,7 @@
 import { API_BASE } from "../demo/config.js";
+import { initAnalytics, track } from "../src/analytics.js";
+
+void initAnalytics();
 
 const POSITION_POLL_MS = 30_000;
 const ETA_FALLBACK_TEXT = "Usually a few minutes while the generator is online.";
@@ -7,6 +10,7 @@ let ticketToken = null;
 let pollTimer = null;
 let pollInFlight = false;
 let lastState = null;
+let resultOpenedTracked = false;
 
 function byId(id) {
   return typeof document === "undefined" ? null : document.getElementById(id);
@@ -113,6 +117,10 @@ function renderRunning(state = null) {
 }
 
 function renderDone(state) {
+	if (!resultOpenedTracked) {
+		resultOpenedTracked = true;
+		track("hosted:result_opened");
+	}
   setText("ticket-state-title", "Ready");
   setText("ticket-position", "Your motion is ready.");
   setText("ticket-eta", "Open it in CozyClay to play it back.");
@@ -287,7 +295,8 @@ function onVisibilityChange() {
 }
 
 function bindTicket() {
-  byId("copy-link")?.addEventListener("click", copyShareLink);
+	byId("copy-link")?.addEventListener("click", copyShareLink);
+	byId("open-result")?.addEventListener("click", () => track("hosted:opened_in_studio"));
   if (ticketToken) {
     const report = byId("report-link");
     if (report) report.href = `mailto:hello@cozyclay.org?subject=${encodeURIComponent(`CozyClay ticket ${ticketToken}`)}`;
