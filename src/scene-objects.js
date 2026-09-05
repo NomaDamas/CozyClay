@@ -41,7 +41,10 @@ const ROOM_LIMIT = 240;
 // gone, so this only stops a runaway coordinate. A rocket, a crane or a
 // skyline piece all have to fit under it.
 const CEILING = 240;
-const SCALE_MIN = 0.1;
+// 0.01, not 0.1: a 1 cm prop (a coin, a marble, a ring on a table) is a
+// legitimate object, and the old floor made every asset authored at metre
+// scale bottom out at 10 cm no matter what the inspector was told.
+const SCALE_MIN = 0.01;
 const SCALE_MAX = 100;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -752,7 +755,10 @@ export function scalePatch(start, axis, factor, snap = SCALE_SNAP) {
 	const patch = {};
 	for (const each of axes) {
 		const key = SCALE_KEYS[each];
-		patch[key] = Math.max(SCALE_MIN, snapTo((start[key] ?? 1) * factor, snap));
+		const raw = (start[key] ?? 1) * factor;
+		// Below one detent the 0.05 grid would round a small prop to 0.05 or
+		// straight to 0, so drags there snap at the floor's own precision.
+		patch[key] = Math.max(SCALE_MIN, snapTo(raw, raw < snap * 2 ? SCALE_MIN : snap));
 	}
 	return patch;
 }
