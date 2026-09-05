@@ -232,6 +232,8 @@ Events collected:
 | `scene:created` | Funnel and drop-off analysis |
 | `scene:loaded` | Funnel and drop-off analysis |
 | `craft:first_action` | Funnel and drop-off analysis |
+| `motion:backend_state` | Motion capability at session start (`none`, `local_kimodo`, or `hosted`) |
+| `motion:generate_blocked` | Generate intent when no motion backend is available |
 | `motion:job_started` | Motion reliability |
 | `motion:job_succeeded` | Motion reliability |
 | `motion:job_failed` | Motion reliability |

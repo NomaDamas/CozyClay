@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
 	bucketMs,
 	scrubEventUrls,
@@ -7,6 +8,7 @@ import {
 	normalizeOrigin,
 	parseAllowlist,
 	resolveAnalyticsRuntime,
+	motionBackendState,
 	sanitizeProps,
 } from "../src/analytics.js";
 
@@ -29,13 +31,14 @@ assert.equal(isOriginAllowed("https://cozyclay.org.evil.example", allowlist), fa
 
 assert.deepEqual(
 	sanitizeProps("motion:job_succeeded", {
-		latency_bucket: "1-3s",
+		backend: "hosted",
+		duration_bucket: "1-3s",
 		input_mode: "pose",
 		prompt: "secret prompt",
 		name: "private name",
 		unknown: "discarded",
 	}),
-	{ latency_bucket: "1-3s", input_mode: "pose" },
+	{ backend: "hosted", duration_bucket: "1-3s", input_mode: "pose" },
 );
 assert.deepEqual(
 	sanitizeProps("scene:created", {
@@ -49,13 +52,29 @@ assert.deepEqual(
 );
 assert.deepEqual(
 	sanitizeProps("motion:job_failed", {
-		latency_bucket: "gte30s",
+		backend: "local_kimodo",
+		duration_bucket: "gte30s",
 		input_mode: true,
 		error_code: 503,
 	}),
-	{ latency_bucket: "gte30s", input_mode: true, error_code: 503 },
+	{ backend: "local_kimodo", duration_bucket: "gte30s", input_mode: true, error_code: 503 },
 );
 assert.deepEqual(sanitizeProps("motion:job_failed", { error_code: Number.POSITIVE_INFINITY }), {});
+assert.deepEqual(motionBackendState(null), { backend: "none", host_configured: false });
+assert.deepEqual(motionBackendState({ ok: true, host: "local" }), { backend: "local_kimodo", host_configured: true });
+assert.deepEqual(motionBackendState({ ok: true, host: "user@gpu-box" }), { backend: "local_kimodo", host_configured: true });
+assert.deepEqual(motionBackendState({ ok: true, backend: "hosted", host_configured: false }), { backend: "hosted", host_configured: false });
+assert.deepEqual(
+	sanitizeProps("motion:backend_state", { backend: "hosted", host_configured: true, host: "user@gpu-box" }),
+	{ backend: "hosted", host_configured: true },
+);
+assert.deepEqual(sanitizeProps("motion:generate_blocked", { surface: "timeline", prompt: "private" }), { surface: "timeline" });
+
+const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+assert.match(appSource, /motion:job_started.*backend/);
+assert.match(appSource, /motion:job_succeeded[\s\S]*?duration_bucket/);
+assert.match(appSource, /motion:job_failed[\s\S]*?duration_bucket/);
+assert.doesNotMatch(appSource, /latency_bucket/);
 
 assert.equal(bucketMs(0), "lt1s");
 assert.equal(bucketMs(999), "lt1s");
