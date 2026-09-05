@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
 	COZY_SCENE_INPUTS,
 	COZY_SCENE_OUTPUTS,
@@ -14,6 +15,12 @@ import {
 	sceneConnectionAllowed,
 	toCozySceneRunRequest,
 } from "../src/workflow/cozy-scene-node.js";
+
+const componentSource = readFileSync(new URL("../src/workflow/CozySceneNode.jsx", import.meta.url), "utf8");
+const previewStyle = readFileSync(new URL("../src/workflow/cozy-scene-node.css", import.meta.url), "utf8");
+assert.match(componentSource, /CozyClay world environment preview/);
+assert.match(previewStyle, /cozyclay-demo-poster\.jpg/);
+assert.doesNotMatch(componentSource, /<boxGeometry/);
 
 const defaults = normalizeCozySceneData({ sceneName: 42, frame: "bad", controls: { camera: { yaw: "35" } } });
 assert.equal(defaults.type, COZY_SCENE_NODE_TYPE);

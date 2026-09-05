@@ -16,9 +16,9 @@
 .cozy-scene-node-status { max-width: 112px; color: #aebccc; font-size: 10px; text-align: right; }
 .status-running { color: #f0c979; }.status-complete { color: #8dd5b1; }.status-error { color: #f08d8d; }
 .cozy-scene-preview { position: relative; height: 134px; margin: 0 10px; overflow: hidden; border: 1px solid #3c4b5d; border-radius: 6px; background: linear-gradient(145deg, #32475d, #121820 70%); }
-.cozy-scene-canvas { position: absolute; inset: 0; cursor: grab; }
-.cozy-scene-canvas:active { cursor: grabbing; }
-.cozy-scene-canvas canvas { display: block; width: 100% !important; height: 100% !important; }
+.cozy-scene-canvas { position: absolute; inset: 0; }
+.cozy-scene-world-image { position: absolute; inset: 0; background-image: url("/media/cozyclay-demo-poster.jpg"); background-position: left center; background-repeat: no-repeat; background-size: auto 250%; filter: saturate(.78) brightness(.82); }
+.cozy-scene-world-tint { position: absolute; inset: 0; background: linear-gradient(180deg, rgba(9, 15, 22, .04), rgba(9, 15, 22, .62)); pointer-events: none; }
 .cozy-scene-render { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #111722; }
 .cozy-scene-grid { position: absolute; inset: 45% -25% -55%; transform: perspective(80px) rotateX(58deg); background: repeating-linear-gradient(90deg, transparent 0 19px, rgba(133, 180, 218, .18) 20px 21px), repeating-linear-gradient(0deg, transparent 0 17px, rgba(133, 180, 218, .14) 18px 19px); }
 .cozy-scene-stage-mark { position: absolute; top: 25px; left: 50%; width: 78px; height: 78px; transform: translateX(-50%) rotate(45deg); border: 2px solid rgba(180, 215, 241, .72); border-radius: 8px; background: rgba(121, 183, 232, .18); }

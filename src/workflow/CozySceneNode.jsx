@@ -1,6 +1,4 @@
 import { useMemo } from "react";
-import { Canvas } from "@react-three/fiber";
-import { Grid, OrbitControls } from "@react-three/drei";
 import {
 	applyCozyScenePatch,
 	COZY_SCENE_OUTPUTS,
@@ -26,22 +24,9 @@ function statusLabel(status) {
 }
 
 function SceneViewport() {
-	return <div className="cozy-scene-canvas nodrag nopan" aria-label="Interactive CozyClay 3D viewport">
-		<Canvas camera={{ position: [4.5, 3.2, 5.5], fov: 42 }} dpr={[1, 1.5]}>
-			<color attach="background" args={["#111722"]} />
-			<ambientLight intensity={1.8} />
-			<directionalLight position={[3, 5, 2]} intensity={3} />
-			<mesh position={[0, 0.7, 0]} castShadow>
-				<boxGeometry args={[1.1, 1.4, 1.1]} />
-				<meshStandardMaterial color="#ef759d" roughness={0.62} metalness={0.08} />
-			</mesh>
-			<mesh position={[0, 1.65, 0]} castShadow>
-				<sphereGeometry args={[0.42, 24, 16]} />
-				<meshStandardMaterial color="#f3d0a4" roughness={0.76} />
-			</mesh>
-			<Grid args={[8, 8]} cellSize={0.5} sectionSize={2} sectionColor="#53617d" cellColor="#2d3850" fadeDistance={10} position={[0, 0, 0]} />
-			<OrbitControls makeDefault enablePan={false} minDistance={2.5} maxDistance={9} />
-		</Canvas>
+	return <div className="cozy-scene-canvas nodrag nopan" role="img" aria-label="CozyClay world environment preview">
+		<div className="cozy-scene-world-image" aria-hidden="true" />
+		<div className="cozy-scene-world-tint" aria-hidden="true" />
 	</div>;
 }
 
@@ -87,7 +72,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 
 			<section className="cozy-scene-preview" aria-label="3D scene preview">
 				{data.preview === "render" && data.lastOutput?.renderUrl ? <video className="cozy-scene-render" src={data.lastOutput.renderUrl} controls muted /> : <SceneViewport />}
-				<div className="cozy-scene-preview-copy"><strong>{data.preview === "render" ? "Rendered frame" : "Interactive 3D scene"}</strong><span>{data.statusMessage || "Orbit the stage or open the full Studio"}</span></div>
+		<div className="cozy-scene-preview-copy"><strong>{data.preview === "render" ? "Rendered frame" : "World environment"}</strong><span>{data.statusMessage || "Open Studio to edit the scene"}</span></div>
 			</section>
 
 			<section className="cozy-scene-controls" aria-label="Scene controls">
