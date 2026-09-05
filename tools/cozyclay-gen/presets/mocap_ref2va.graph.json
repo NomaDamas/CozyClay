@@ -1,1 +1,216 @@
-{"last_node_id":6,"last_link_id":7,"nodes":[{"id":1,"type":"input/Load Image","pos":[60,80],"size":{"0":260,"1":250},"flags":{},"order":0,"mode":0,"outputs":[{"name":"image","type":"IMAGE","links":[1]}],"properties":{},"widgets_values":["preset_female_gray_34.png"],"color":"#223"},{"id":2,"type":"prompt/Scene to Mocap Prompt (AI)","pos":[60,400],"size":[460,360],"flags":{},"order":1,"mode":0,"inputs":[{"name":"scene","type":"STRING","link":null},{"name":"seconds","type":"FLOAT","link":null},{"name":"manual_prompt","type":"STRING","link":null}],"outputs":[{"name":"text","type":"STRING","links":[2]},{"name":"seconds","type":"FLOAT","links":[3]}],"properties":{},"widgets_values":["A person walks in and bows deeply toward the camera",15,""],"color":"#232","boxcolor":"#3c3"},{"id":3,"type":"h3/H3 Ref2VA Conditioning","pos":[520,120],"size":{"0":228.39999389648438,"1":294},"flags":{},"order":2,"mode":0,"inputs":[{"name":"prompt","type":"STRING","link":2},{"name":"ref_image_1","type":"IMAGE","link":1},{"name":"ref_image_2","type":"IMAGE","link":null},{"name":"ref_image_3","type":"IMAGE","link":null},{"name":"seconds","type":"FLOAT","link":3},{"name":"megapixels","type":"FLOAT","link":null},{"name":"aspect","type":"COMBO","link":null},{"name":"ref_image_size","type":"COMBO","link":null}],"outputs":[{"name":"conditioning","type":"COND","links":[4]},{"name":"latent","type":"LATENT","links":[5]}],"properties":{},"widgets_values":["",15,0.4,"16:9","match"],"color":"#322","boxcolor":"#4f8cff"},{"id":4,"type":"h3/H3 Sample","pos":[880,120],"size":{"0":210,"1":362},"flags":{},"order":3,"mode":0,"inputs":[{"name":"conditioning","type":"COND","link":4},{"name":"latent","type":"LATENT","link":5},{"name":"seed","type":"INT","link":null},{"name":"steps","type":"INT","link":null},{"name":"sampler","type":"COMBO","link":null},{"name":"scheduler","type":"COMBO","link":null},{"name":"sla","type":"BOOL","link":null},{"name":"sla_sparsity","type":"FLOAT","link":null},{"name":"shift_video","type":"FLOAT","link":null}],"outputs":[{"name":"latent","type":"LATENT","links":[6]}],"properties":{},"widgets_values":[42,4,"res_multistep","simple",true,0.9,12],"color":"#322","boxcolor":"#4f8cff"},{"id":5,"type":"h3/H3 Decode","pos":[1240,120],"size":{"0":210,"1":78},"flags":{},"order":4,"mode":0,"inputs":[{"name":"latent","type":"LATENT","link":6},{"name":"audio","type":"BOOL","link":null}],"outputs":[{"name":"video","type":"VIDEO","links":[7]}],"properties":{},"widgets_values":[false],"color":"#322","boxcolor":"#4f8cff"},{"id":6,"type":"output/Save Video","pos":[1240,260],"size":{"0":420,"1":300},"flags":{},"order":5,"mode":0,"inputs":[{"name":"video","type":"VIDEO","link":7},{"name":"name","type":"STRING","link":null}],"properties":{},"widgets_values":["mocap"],"color":"#233","boxcolor":"#3c3"}],"links":[[1,1,0,3,1,"IMAGE"],[2,2,0,3,0,"STRING"],[3,2,1,3,4,"FLOAT"],[4,3,0,4,0,"COND"],[5,3,1,4,1,"LATENT"],[6,4,0,5,0,"LATENT"],[7,5,0,6,0,"VIDEO"]],"groups":[],"config":{},"extra":{},"version":0.4}
+{
+  "last_node_id": 4,
+  "last_link_id": 3,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "input/Reference Image",
+      "pos": [
+        60,
+        140
+      ],
+      "size": [
+        280,
+        240
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {},
+      "widgets_values": [
+        "preset_female_gray_34.png"
+      ]
+    },
+    {
+      "id": 2,
+      "type": "prompt/Scene",
+      "pos": [
+        390,
+        120
+      ],
+      "size": [
+        400,
+        300
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "seconds",
+          "type": "FLOAT",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {},
+      "widgets_values": [
+        "A person walks in and bows deeply toward the camera",
+        5,
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "generate/Generate Video",
+      "pos": [
+        850,
+        140
+      ],
+      "size": [
+        330,
+        340
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "ref_image",
+          "type": "IMAGE",
+          "link": 1
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "link": 2
+        },
+        {
+          "name": "seconds",
+          "type": "FLOAT",
+          "link": 3
+        },
+        {
+          "name": "aspect",
+          "type": "COMBO",
+          "link": null
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "link": null
+        },
+        {
+          "name": "steps",
+          "type": "INT",
+          "link": null
+        },
+        {
+          "name": "sla",
+          "type": "BOOL",
+          "link": null
+        },
+        {
+          "name": "megapixels",
+          "type": "FLOAT",
+          "link": null
+        },
+        {
+          "name": "audio",
+          "type": "BOOL",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {},
+      "widgets_values": [
+        "16:9",
+        42,
+        4,
+        true,
+        0.4,
+        false
+      ]
+    },
+    {
+      "id": 4,
+      "type": "output/Result",
+      "pos": [
+        1250,
+        180
+      ],
+      "size": [
+        420,
+        300
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 4
+        }
+      ],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": []
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "STRING"
+    ],
+    [
+      3,
+      2,
+      1,
+      3,
+      2,
+      "FLOAT"
+    ],
+    [
+      4,
+      3,
+      0,
+      4,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "groups": [],
+  "config": {},
+  "extra": {},
+  "version": 0.4
+}

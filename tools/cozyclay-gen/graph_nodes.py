@@ -53,7 +53,7 @@ ASPECTS = ["16:9", "9:16", "4:3", "3:4", "1:1", "3:2", "2:3", "21:9"]
 # ---------------------------------------------------------------------------
 # input / text nodes
 
-@node("Load Image", category="input",
+@node("Load Image", category="advanced",
       inputs=[inp("image", "IMAGEFILE", default="preset_female_gray_34.png", multiline=False)],
       outputs=[("image", "IMAGE")],
       description="Upload / pick an image. Output is a [1,H,W,3] tensor.")
@@ -62,14 +62,14 @@ def load_image(ctx, image):
     return (_g().load_image(path),)
 
 
-@node("Prompt", category="input",
+@node("Prompt", category="advanced",
       inputs=[inp("text", "STRING", default="", multiline=True)],
       outputs=[("text", "STRING")])
 def prompt_text(ctx, text):
     return (text,)
 
 
-@node("Mocap Prompt (Ref2VA)", category="prompt",
+@node("Mocap Prompt (Ref2VA)", category="advanced",
       inputs=[
           inp("summary_action", "STRING", default="taking a few steps across the frame, stopping, performing one single deep formal bow toward the camera, rising", multiline=True),
           inp("beats", "STRING", multiline=True, default=(
@@ -96,7 +96,7 @@ def mocap_prompt(ctx, summary_action, beats, seconds, human):
     return (h3_prompts.ref2va(summary_action, parsed, float(seconds), human=bool(human)),)
 
 
-@node("Scene to Mocap Prompt (AI)", category="prompt",
+@node("Scene to Mocap Prompt (AI)", category="advanced",
       inputs=[
           inp("scene", "STRING", default="A person walks in and bows deeply toward the camera", multiline=True,
               placeholder="Describe the scene in plain words (Korean or English). The AI writes the H3 contract from this."),
@@ -125,7 +125,7 @@ def _res(aspect, megapixels):
     return _g().resolution(aspect, float(megapixels))
 
 
-@node("H3 Ref2VA Conditioning", category="h3",
+@node("H3 Ref2VA Conditioning", category="advanced",
       inputs=[
           inp("prompt", "STRING", default="", multiline=True),
           inp("ref_image_1", "IMAGE", optional=True),
@@ -149,7 +149,7 @@ def h3_ref2va(ctx, prompt, seconds, megapixels, aspect, ref_image_size, ref_imag
     return (cond, latent)
 
 
-@node("H3 I2V / FL2V Conditioning", category="h3",
+@node("H3 I2V / FL2V Conditioning", category="advanced",
       inputs=[
           inp("prompt", "STRING", default="", multiline=True),
           inp("first_frame", "IMAGE", optional=True),
@@ -176,7 +176,7 @@ def h3_i2v(ctx, prompt, seconds, megapixels, aspect, first_frame=None, last_fram
 # ---------------------------------------------------------------------------
 # sampling / decode / output
 
-@node("H3 Sample", category="h3",
+@node("H3 Sample", category="advanced",
       inputs=[
           inp("conditioning", "COND"),
           inp("latent", "LATENT"),
@@ -207,7 +207,7 @@ def h3_sample(ctx, conditioning, latent, seed, steps, sampler, scheduler, sla, s
     return (out,)
 
 
-@node("H3 Decode", category="h3",
+@node("H3 Decode", category="advanced",
       inputs=[inp("latent", "LATENT"), inp("audio", "BOOL", default=False)],
       outputs=[("video", "VIDEO")],
       description="Video VAE (+ optional audio VAE) -> 24 fps video object.")
@@ -221,7 +221,7 @@ def h3_decode(ctx, latent, audio):
     return (video,)
 
 
-@node("Save Video", category="output",
+@node("Save Video", category="advanced",
       inputs=[inp("video", "VIDEO"), inp("name", "STRING", default="clip")],
       outputs=[],
       description="Writes an mp4 (no prompt metadata) and shows it on the node.")
@@ -237,3 +237,25 @@ def save_video(ctx, video, name):
         video.save_to(path)
     ctx.ui(node_output={"video": f"/video/{fname}"})
     return ()
+
+# CozyClay first-run composite surface. Low-level nodes remain available for power users.
+@node("Reference Image", category="input", inputs=[inp("image", "IMAGEFILE", default="preset_female_gray_34.png")], outputs=[("image", "IMAGE")])
+def reference_image(ctx, image):
+    return (_g().load_image(ctx.input_path(image)),)
+
+@node("Scene", category="prompt", inputs=[inp("scene", "STRING", default="A person walks in and bows deeply toward the camera", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("manual_prompt", "STRING", default="", multiline=True)], outputs=[("prompt", "STRING"), ("seconds", "FLOAT")])
+def scene(ctx, scene, seconds, manual_prompt=""):
+    text = manual_prompt.strip() if manual_prompt and manual_prompt.strip() else ctx.rewriter.rewrite(scene, float(seconds), None, None, None)
+    ctx.ui(text=text)
+    return text, float(seconds)
+
+@node("Generate Video", category="generate", inputs=[inp("ref_image", "IMAGE", optional=True), inp("prompt", "STRING", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("aspect", "COMBO", default="16:9", options=ASPECTS), inp("seed", "INT", default=42, min=0, max=2**32-1), inp("steps", "INT", default=4, min=1, max=25), inp("sla", "BOOL", default=True), inp("megapixels", "FLOAT", default=0.4, min=0.2, max=1.4, step=0.1), inp("audio", "BOOL", default=False)], outputs=[("video", "VIDEO")])
+def generate_video(ctx, ref_image=None, prompt="", seconds=5.0, aspect="16:9", seed=42, steps=4, sla=True, megapixels=0.4, audio=False):
+    cond, latent = h3_ref2va(ctx, prompt, seconds, megapixels, aspect, "match", ref_image_1=ref_image)
+    (sampled,) = h3_sample(ctx, cond, latent, seed, steps, "res_multistep", "simple", sla, 0.9, 12.0)
+    (video,) = h3_decode(ctx, sampled, audio)
+    return (video,)
+
+@node("Result", category="output", inputs=[inp("video", "VIDEO")], outputs=[])
+def result(ctx, video):
+    return save_video(ctx, video, "cozyclay")
