@@ -1,0 +1,34 @@
+[
+  {
+    "claim_id": "clm_001",
+    "text": "2026-09-05 조회에서 서버의 공식 추적 코드 HEAD와 공식 main은 6ec3ca39336c50492c0fae65fba2fb831fc7d866으로 일치했다. 최신 커밋 날짜는 2026-05-21이다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_001",
+      "src_002"
+    ],
+    "counter_search": "Compared installed origin and clean tracked worktree, live git ls-remote HEAD/main and GitHub commits/main; no newer official commit or release returned. Equality scope excludes custom runner and dependency versions.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_002",
+    "text": "C++ 언어 전환만으로 속도와 품질 동시 보존을 보장할 수 없으며, 계산 경로와 정밀도 변경은 따로 검증해야 한다.",
+    "risk": "high",
+    "claim_type": "causal",
+    "source_ids": [
+      "src_012",
+      "src_013"
+    ],
+    "counter_search": "PyTorch documents legitimate C++ latency/multithreading use cases but explicitly says expensive numeric ops already call C++; NVIDIA documents reduced-precision accuracy tradeoffs. Not a claim that C++ never helps.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  }
+]

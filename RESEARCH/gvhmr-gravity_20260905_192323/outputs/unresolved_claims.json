@@ -1,0 +1,32 @@
+[
+  {
+    "claim_id": "clm_009",
+    "text": "GVHMR 중력 보정만 추가하면 해당 나무 추락 영상이 정확히 해결된다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_001"
+    ],
+    "counter_search": "No newly implemented correction or same-clip validation; scene support, scale and timing still unresolved.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  },
+  {
+    "claim_id": "clm_010",
+    "text": "TPAMI2026 SLP가 현재 배포 가중치에 반영되어 느린 낙하까지 해결한다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_015"
+    ],
+    "counter_search": "Public demo config still names gvhmr_siga24_release.ckpt; no SLP-specific release proof, full article inaccessible.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  }
+]

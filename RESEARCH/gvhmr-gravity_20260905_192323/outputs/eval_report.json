@@ -1,0 +1,22 @@
+{
+  "verdict": "PASS",
+  "metrics": {
+    "citation_resolution_rate": 1.0,
+    "orphan_source_rate": 0.0,
+    "leak_rate": 0.0,
+    "verified_coverage_rate": 0.333
+  },
+  "counts": {
+    "citations_total": 19,
+    "citations_dangling": 0,
+    "sources_total": 19,
+    "orphan_sources": 0,
+    "verified": 9,
+    "unresolved": 2,
+    "refuted": 0,
+    "leaks": 0
+  },
+  "dangling_citations": [],
+  "orphan_sources": [],
+  "leaks": []
+}

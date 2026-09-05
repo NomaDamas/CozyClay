@@ -1,0 +1,21 @@
+{
+  "topic": "GVHMR gravity representation, slow falls, and applicable research",
+  "date": "2026-09-05",
+  "mode": "quick",
+  "scope": "Read-only audit of official paper, current code and issues, plus existing local diagnosis. No product edits or model runs.",
+  "defaults": {
+    "input": "Existing CozyClay GVHMR tree-fall case",
+    "language": "Korean",
+    "output": "Concise answer with a cited technical report"
+  },
+  "source_independence": "Author paper and repository establish implementation facts but are not independent empirical replications.",
+  "verification": {
+    "passed": true,
+    "signature": "4e5437961bcfefe2e92c9756cdeb8a209e7aaa9a6218936c39fcecc5a2842bfa",
+    "verified_count": 9,
+    "unresolved_count": 2,
+    "refuted_count": 0,
+    "checked_at": "2026-09-05T10:25:50.230349+00:00",
+    "checker": "validate_ledger.py"
+  }
+}

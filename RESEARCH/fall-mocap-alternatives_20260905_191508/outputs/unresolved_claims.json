@@ -1,0 +1,17 @@
+[
+  {
+    "claim_id": "clm_005",
+    "text": "PhysHMR로 교체하면 CozyClay의 나무 추락 영상 전체가 추가 작업 없이 정확히 복원된다.",
+    "risk": "high",
+    "claim_type": "causal",
+    "source_ids": [
+      "src_001"
+    ],
+    "counter_search": "Paper explicitly does not support human-scene interactions; current exact clip was not tested, runtime and fit not established.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  }
+]

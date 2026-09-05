@@ -1,0 +1,153 @@
+[
+  {
+    "claim_id": "clm_001",
+    "text": "GVHMR의 중력 표현은 GV 기준의 방향 정렬이며 공개 파이프라인은 중력 가속도 적분 대신 학습한 프레임 이동량을 누적한다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_001",
+      "src_002",
+      "src_003",
+      "src_007",
+      "src_008"
+    ],
+    "counter_search": "Checked original method/losses, author issue1 and source inference. Learned motion may implicitly resemble gravity; absence of explicit solver does not mean it cannot ever predict a jump.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_002",
+    "text": "GVHMR 전역 이동의 부유·높이 드리프트는 저자와 후속 사용 연구가 보고한 문제다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_004",
+      "src_010",
+      "src_012"
+    ],
+    "counter_search": "Issue33 author acknowledgement and KungFuAthleteBot drift section independently identify a limitation; neither is direct replication of the specific tree clip.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_003",
+    "text": "현재 정적 카메라 후처리는 축별 오차25cm 이상에 대해 각 프레임 추가 수정을 최대2cm로 제한한다; 전체 낙하 속도의 상한은 아니다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_006",
+      "src_019"
+    ],
+    "counter_search": "Read current upstream and live server identical file hashes. Clamp changes correction only and does not clamp predicted displacement; static-joint Y correction is zero.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_004",
+    "text": "현재 서버 GVHMR 소스 리비전과 해당 후처리는 공식 main과 일치한다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_018",
+      "src_019"
+    ],
+    "counter_search": "Compared current API main SHA, SSH HEAD, git status and SHA256 of postprocess.py. Does not prove unreleased TPAMI changes/checkpoints are installed.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_005",
+    "text": "KungFuAthleteBot은 GVHMR 결과를 로봇에 리타게팅한 뒤 높이 극값·바닥 기준·포물선으로 수정하는 공개 사례다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_010",
+      "src_011",
+      "src_012"
+    ],
+    "counter_search": "Official paper and code describe same implementation, not independent benchmark validation; README restricts adjustment to jump robot qpos subset.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_006",
+    "text": "검토한 KungFuAthleteBot 포물선 보정은 수동 극값 제외와 원본FPS에 묶이지 않은 시간 샘플링을 사용하므로 원본 시간축에서 실제중력가속도를 보장하지 않는다.",
+    "risk": "high",
+    "claim_type": "causal",
+    "source_ids": [
+      "src_010",
+      "src_011"
+    ],
+    "counter_search": "Derived y_k=y0-(y0-y1)*(k/(N+1))^2 from paper eq10–12 and code15–20. Original FPS only used for output/playback, not fit. Standalone arithmetic changes g without changing heights. No motion accuracy claim.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_007",
+    "text": "자유 비행 중 중력만 외력으로 작용한다고 볼 수 있을 때 질량중심의 궤적과 중력 제약을 단일영상 복원에 활용하는 연구 근거가 있다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_013",
+      "src_014",
+      "src_017"
+    ],
+    "counter_search": "Checked sole-external-force/static-camera assumptions and articulated-body COM distinction. GraviCap needs free-flying object cues; neither proves arbitrary scene-support identification.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_008",
+    "text": "TPAMI2026 GVHMR 논문이 존재하며 공개 초록은 정지상태 예측기SLP의 추가를 설명한다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_015",
+      "src_016"
+    ],
+    "counter_search": "IEEE full text unavailable; author listing and indexed author abstract checked. No conclusion that SLP fixes free-fall acceleration.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_011",
+    "text": "정지 관절 확률은 실제 외부 지지력 판정과 같지 않다. 현재 정답 라벨은 관절 이동 속도로 만든다.",
+    "risk": "high",
+    "claim_type": "causal",
+    "source_ids": [
+      "src_007",
+      "src_008",
+      "src_001"
+    ],
+    "counter_search": "Read compute_extra_global_loss and get_static_joint_mask; original paper calls labels stationary not force. A stationary airborne apex or scene-supported wrist requires additional evidence.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  }
+]

@@ -1,0 +1,20 @@
+{
+  "topic": "GVHMR slow fall alternatives",
+  "date": "2026-09-05",
+  "mode": "quick",
+  "scope": "Read-only technical research; no application/model changes or benchmarks",
+  "defaults": {
+    "input": "Existing monocular tree-fall video",
+    "output": "Concise Korean explanation and cited supporting notes"
+  },
+  "independence_note": "Distinct domains for author paper and code corroborate only the declared design, not independently replicated performance.",
+  "verification": {
+    "passed": true,
+    "signature": "8564dc47ff9fcd8b2ed54a90c29984054392c8086499ce1f43c8014ef2c9203b",
+    "verified_count": 4,
+    "unresolved_count": 1,
+    "refuted_count": 0,
+    "checked_at": "2026-09-05T10:16:54.112831+00:00",
+    "checker": "validate_ledger.py"
+  }
+}

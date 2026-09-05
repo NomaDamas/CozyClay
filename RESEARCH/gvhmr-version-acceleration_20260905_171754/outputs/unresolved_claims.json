@@ -1,0 +1,51 @@
+[
+  {
+    "claim_id": "clm_003",
+    "text": "CozyClay RTX 3070에서 최적화 포크를 채택하면 원본과 완전 동일한 모션을 유지하면서 전체 추출이 3~4배 빨라진다.",
+    "risk": "high",
+    "claim_type": "numeric",
+    "source_ids": [
+      "src_004",
+      "src_005",
+      "src_006"
+    ],
+    "counter_search": "Author timings are RTX6000Ada min-of-N; no independent reproduction on our machine. Golden test excludes image preprocessing and changed CLI root-trajectory default; BF16 not byte-identical. Guarantee unsupported.",
+    "counter_refuted": false,
+    "conflicting": true,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  },
+  {
+    "claim_id": "clm_004",
+    "text": "공개 또는 비공개 GVHMR 완성형 C++ 동일품질 가속 구현은 세상에 존재하지 않는다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_010",
+      "src_011",
+      "src_009"
+    ],
+    "counter_search": "Searched web GVHMR C++/cpp/TensorRT/ONNX and GitHub repo language:C++; inspected strongest results. Found component exports and downstream robot consumers, not a full validated port. Search cannot prove universal absence.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  },
+  {
+    "claim_id": "clm_005",
+    "text": "NVIDIA GENMO 코드를 CozyClay 제품에 제한 없이 복사하여 사용할 수 있다.",
+    "risk": "high",
+    "claim_type": "legal",
+    "source_ids": [
+      "src_017"
+    ],
+    "counter_search": "Pinned license explicitly names noncommercial limitation. No separate product permission obtained; this report does not perform a complete license compatibility audit.",
+    "counter_refuted": false,
+    "conflicting": true,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  }
+]

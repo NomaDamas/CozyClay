@@ -1,0 +1,20 @@
+{
+  "topic": "Installed GVHMR version and quality-preserving C++/inference acceleration",
+  "started_at": "2026-09-05T08:17:54Z",
+  "status": "complete",
+  "scope": "Read-only local/remote inspection and public-source research; no installs, code changes, GPU benchmarks or upgrades.",
+  "defaults": {
+    "cpp": "native C++ and equivalent ONNX/TensorRT/compiled inference",
+    "quality": "same-checkpoint motion/trajectory/contact fidelity, not only visual plausibility"
+  },
+  "runtime_limits": "Skill-preferred gpt-5.4-mini/fast_mode unavailable; three bounded research workers use inherited model. Main checks installed SHA and integrates primary evidence.",
+  "verification": {
+    "passed": true,
+    "signature": "20b261cc74e38dc179579e42d186f3432de38364142eb5f07c33895f6f988eab",
+    "verified_count": 2,
+    "unresolved_count": 3,
+    "refuted_count": 0,
+    "checked_at": "2026-09-05T08:20:49.745694+00:00",
+    "checker": "validate_ledger.py"
+  }
+}

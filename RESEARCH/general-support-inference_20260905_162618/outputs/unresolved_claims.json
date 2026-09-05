@@ -1,0 +1,17 @@
+[
+  {
+    "claim_id": "clm_009",
+    "text": "제안 구조가 현재 CozyClay 절 영상과 두 리그에서 정해진 지연시간 안에 범용 지지 보정을 달성한다.",
+    "risk": "high",
+    "claim_type": "numeric",
+    "source_ids": [
+      "src_015"
+    ],
+    "counter_search": "현재 연구는 논문과 코드 읽기만 수행했다. 해당 새 구조의 구현·성능·원본 영상 정답 비교가 없고, PhysCap 공개 구현은 발 접촉에 한정되어 이전할 수치 근거가 없다.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "unresolved",
+    "status_reason": "독립 출처(도메인) 1개 < 2"
+  }
+]

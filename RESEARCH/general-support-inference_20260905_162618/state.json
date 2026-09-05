@@ -1,0 +1,29 @@
+{
+  "topic": "Inferring what supports an animated human without action-specific labels",
+  "date": "2026-09-05",
+  "language": "ko",
+  "objective": "Verify contact and support inference methods, physical identifiability, and a practical research-backed design for CozyClay AutoPhysics.",
+  "audience": "CozyClay product developer",
+  "scope": "Research only; no product-code changes, installations, training, or shipping claims.",
+  "inputs": "Existing GVHMR-derived motion, target rig and meshes, known Studio ground plane; source video potentially available but not necessarily retained by AutoPhysics.",
+  "success_criteria": [
+    "Explain inputs, inference and validation concretely",
+    "Separate contact from load-bearing support",
+    "Cover hands, knees, torso, rolling and flight",
+    "Audit ambiguity and compute cost",
+    "Distinguish published evidence from proposed architecture"
+  ],
+  "status": "report_ready",
+  "runtime_limits": "Preferred gpt-5.4-mini and fast_mode unavailable; three inherited-default research workers completed bounded lanes.",
+  "verification_scope": "Source gate covers high-risk published research conclusions. Local diagnostics are separately recorded direct observations, not externally benchmarked claims. No product changes or model execution.",
+  "delegation": "Three bounded research workers authorized by insane-research skill; inherited default model because requested mini/fast configuration is unavailable.",
+  "verification": {
+    "passed": true,
+    "signature": "4d39e77f19ebe9aca71619f53b38c28c394586f1d3d2821633f21e17d80c780a",
+    "verified_count": 8,
+    "unresolved_count": 1,
+    "refuted_count": 0,
+    "checked_at": "2026-09-05T07:31:44.675238+00:00",
+    "checker": "validate_ledger.py"
+  }
+}

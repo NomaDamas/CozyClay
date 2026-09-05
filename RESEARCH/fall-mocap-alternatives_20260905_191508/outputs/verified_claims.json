@@ -1,0 +1,66 @@
+[
+  {
+    "claim_id": "clm_001",
+    "text": "단일 영상에서 추출한 동작에 물리 시뮬레이션을 결합하는 모캡·복원 연구가 존재한다.",
+    "risk": "high",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_001",
+      "src_003"
+    ],
+    "counter_search": "PhysHMR limitations human scene interactions falls; Physical Motion Restoration limitation. Both report restricted scenarios; neither establishes arbitrary tree-fall recovery.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_002",
+    "text": "보정된 여러 카메라를 사용하는 광학 모캡은 여러 시점의 관측으로 3D 마커 위치를 복원하며 카메라 가시성과 보정에 의존한다.",
+    "risk": "high",
+    "claim_type": "causal",
+    "source_ids": [
+      "src_006",
+      "src_007"
+    ],
+    "counter_search": "OptiTrack camera placement calibration occlusion and Vicon reference guide camera coverage. Both require calibrated overlapping camera coverage; do not promise zero errors.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_003",
+    "text": "PhysHMR 저자 논문과 공식 구현은 GVHMR 영상 특징을 물리 시뮬레이터의 제어 정책에 입력하는 구조를 명시한다.",
+    "risk": "normal",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_001",
+      "src_002"
+    ],
+    "counter_search": "Official inference example uses prepared test data rather than a turnkey arbitrary MP4 service. This verifies documented architecture, not independent performance replication.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  },
+  {
+    "claim_id": "clm_004",
+    "text": "Physical Motion Restoration 저자 논문은 영상 마스크 기반 동작 수정과 물리 기반 동작 전이 모듈을 제안한다.",
+    "risk": "normal",
+    "claim_type": "descriptive",
+    "source_ids": [
+      "src_003",
+      "src_004"
+    ],
+    "counter_search": "Publication and preprint are the same underlying study, not independent empirical confirmation. Claim limited to declared architecture.",
+    "counter_refuted": false,
+    "conflicting": false,
+    "primary_source": true,
+    "status": "verified",
+    "status_reason": "ok"
+  }
+]
