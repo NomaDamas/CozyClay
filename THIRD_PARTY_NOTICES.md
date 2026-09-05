@@ -105,6 +105,14 @@ as third-party content that this licence does not cover.
 
 The hosted site at cozyclay.org uses [posthog-js](https://posthog.com/docs/libraries/js) for anonymous usage analytics.
 
+The disclosed wire events include session start/end (bucketed duration and
+actions), one-per-session feature usage, project save/open buckets, and the
+hosted composer/login/ticket/result funnel. Events carry only the registered
+`origin_kind`, coarse `os`, and npm `install_kind`; prompts, filenames, paths,
+project names, and timestamps are excluded. Source checkouts keep telemetry
+disabled. See the Analytics & privacy section in `README.md` for the complete
+event table and opt-out controls.
+
 - Copyright PostHog Inc.
 - License: Apache-2.0 AND MIT
 - Source: https://github.com/PostHog/posthog-js

@@ -228,9 +228,13 @@ Events collected:
 | --- | --- |
 | `install:first_launch` | First run of the official npm package |
 | `app:session_started` | Start of an official npm package session |
+| `app:session_ended` | Session duration, action count, and scenes touched (bucketed) |
+| `feature:used` | One signal per feature per session |
 | `$pageview` | Funnel and drop-off analysis |
 | `scene:created` | Funnel and drop-off analysis |
 | `scene:loaded` | Funnel and drop-off analysis |
+| `project:saved` | User-owned project persistence |
+| `project:opened` | Return to a saved project (age bucket) |
 | `craft:first_action` | Funnel and drop-off analysis |
 | `motion:backend_state` | Motion capability at session start (`none`, `local_kimodo`, or `hosted`) |
 | `motion:generate_blocked` | Generate intent when no motion backend is available |
@@ -239,6 +243,8 @@ Events collected:
 | `motion:job_failed` | Motion reliability |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |
 | `activation:completed` | Funnel and drop-off analysis |
+| `hosted:composer_viewed`, `hosted:login_started`, `hosted:ticket_created` | Hosted demo funnel |
+| `hosted:result_opened`, `hosted:opened_in_studio` | Hosted result funnel |
 
 Geo data comes from ingest-time GeoIP country lookup only — no precise location is collected. Prompt text, asset names, file names, project content, local paths, and any user-entered text are never collected.
 
@@ -249,6 +255,14 @@ be counted across ports and browser storage resets. Source checkouts, forks,
 development servers, CI, and tests do not send analytics. Official npm
 artifacts carry a signature checked by the launcher, so copying or repackaging
 the source does not enable telemetry.
+
+Each event is registered with `origin_kind` (`local` or `hosted`), a coarse
+operating-system label, and (for npm sessions) `install_kind` (`npx` or
+`global`). Source checkouts are classified as `clone` and remain telemetry-off.
+The first npm launch may optionally answer a one-line channel question
+(`x`, `hn`, `reddit`, `github`, `friend`, `other`, or `skip`); `skip` sends no
+acquisition value. Session duration and action counts are buckets, and project
+events never include names, paths, prompts, or timestamps.
 
 The npm package prints this disclosure once on first launch. Control it at any
 time:

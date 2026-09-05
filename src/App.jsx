@@ -236,7 +236,7 @@ import {
 	MAX_PATH_POINTS,
 } from "./object-path.js";
 import LocaleToggle from "./locale-toggle.jsx";
-import { bucketMs, motionBackendState, track, trackActivation } from "./analytics.js";
+import { bucketCount, bucketMs, bucketProjectAge, motionBackendState, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import {
 	DEFAULT_POSE,
@@ -2454,6 +2454,7 @@ globalThis.playMode = centerTab === "play";
 			...points.slice(gapIndex + 1),
 		];
 		changeActiveCamera({ craneHeight: { points: added } }, shotId);
+		trackFeature("crane_graph");
 		setCraneSelectedIndex(gapIndex + 1);
 	}
 	function deleteSelectedCranePoint() {
@@ -2495,6 +2496,7 @@ globalThis.playMode = centerTab === "play";
 	}
 	function commitManualCameraFraming() {
 		if (ikMode || playMode) return;
+		trackFeature("orbit");
 		manualCameraOverrideRef.current = true;
 		syncActiveCameraFraming();
 	}
@@ -2542,6 +2544,7 @@ globalThis.playMode = centerTab === "play";
 			});
 		}
 		const next = !railDraw;
+		trackFeature("dolly_rail");
 		setRailDraw(next);
 		if (next) {
 			setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
@@ -2895,7 +2898,7 @@ globalThis.playMode = centerTab === "play";
 					? `참조된 사진 ${missing.length}개를 찾지 못해보내기에서 빠졌어요`
 					: `${missing.length} referenced image${missing.length > 1 ? "s" : ""} missing — left out of the export`);
 			}
-			return JSON.stringify(createProjectDocument({ ...input, assets }), null, 2);
+			return JSON.stringify(createProjectDocument({ ...input, assets, savedAt: Date.now() }), null, 2);
 		} finally {
 			db.close();
 		}
@@ -2959,6 +2962,10 @@ globalThis.playMode = centerTab === "play";
 			}
 			markProjectClean(name);
 			setProjectSaveState("saved");
+			track("project:saved", {
+				object_count_bucket: bucketCount(projectStateRef.current.sceneObjects?.length ?? 0),
+				shot_count_bucket: bucketCount(shots.length),
+			});
 			setToast(isKo ? `프로젝트 저장됨: ${name}${PROJECT_EXTENSION}` : `Project saved: ${name}${PROJECT_EXTENSION}`);
 		} catch (err) {
 			if (err?.name === "AbortError") {
@@ -2991,6 +2998,7 @@ globalThis.playMode = centerTab === "play";
 		setProjectName(project.name);
 		storeProjectSession(project.name);
 		setProjectStartupOpen(false);
+		track("project:opened", { age_bucket: bucketProjectAge(Date.now() - (project.savedAt ?? Date.now())) });
 	}
 
 	async function openProject() {
@@ -3009,6 +3017,7 @@ globalThis.playMode = centerTab === "play";
 				setToast(isKo ? `프로젝트를 열 수 없어요: ${result.reason}` : `Cannot open project: ${result.reason}`);
 				return;
 			}
+			result.project.savedAt = result.project.savedAt ?? file.savedAt ?? null;
 			projectHandleRef.current = handle;
 			if (handle) await rememberRecentProject(handle, result.project.name);
 			await rehydrateProjectAssets(result.project, result.warnings);
@@ -3038,6 +3047,7 @@ globalThis.playMode = centerTab === "play";
 				setToast(isKo ? `프로젝트를 열 수 없어요: ${result.reason}` : `Cannot open project: ${result.reason}`);
 				return;
 			}
+			result.project.savedAt = result.project.savedAt ?? file.savedAt ?? null;
 			projectHandleRef.current = handle;
 			await rememberRecentProject(handle, result.project.name);
 			await rehydrateProjectAssets(result.project, result.warnings);
@@ -3090,6 +3100,7 @@ globalThis.playMode = centerTab === "play";
 			const file = await readProjectFile(record.handle);
 			const result = readProjectDocument(file.text);
 			if (!result.ok) return;
+			result.project.savedAt = result.project.savedAt ?? file.savedAt ?? null;
 			projectHandleRef.current = record.handle;
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
@@ -4144,7 +4155,10 @@ globalThis.playMode = centerTab === "play";
 			stopShotRecording();
 			return;
 		}
-		runShotExport().then(() => track("export:video_succeeded", { format: "mp4" })).catch((error) => {
+		runShotExport().then(() => {
+			track("export:video_succeeded", { format: "mp4" });
+			trackFeature("export_video");
+		}).catch((error) => {
 			if (error?.name !== "AbortError") setToast(error?.message || String(error));
 		});
 	}
@@ -4245,6 +4259,7 @@ globalThis.playMode = centerTab === "play";
 		if (next === shots) return;
 		recordShotUndo();
 		setShots(next);
+		trackFeature("shot_add");
 	}
 
 	function splitTimelineShot(shotId) {
@@ -4256,6 +4271,7 @@ globalThis.playMode = centerTab === "play";
 		if (next === shots) return;
 		recordShotUndo();
 		setShots(next);
+		trackFeature("shot_cut");
 	}
 
 	function selectTimelineShot(shotId) {
@@ -6006,6 +6022,7 @@ globalThis.playMode = centerTab === "play";
 	 * character: a running take must survive having its best frame bottled. */
 	function saveCurrentPose() {
 		if (!activeRig) return;
+		trackFeature("pose_edit");
 		const pose = {
 			id: `custom_${Date.now()}`,
 			label: isKo ? `내 포즈 ${customPoses.length + 1}` : `My Pose ${customPoses.length + 1}`,
@@ -6028,6 +6045,7 @@ globalThis.playMode = centerTab === "play";
 	function savePose() {
 		const rig = posedRig();
 		if (!rig) return;
+		trackFeature("pose_edit");
 		const pose = {
 			id: `custom_${Date.now()}`,
 		label: isKo ? `내 포즈 ${customPoses.length + 1}` : `My Pose ${customPoses.length + 1}`,
@@ -6375,6 +6393,7 @@ globalThis.playMode = centerTab === "play";
 			setToast(ko("Start & end frames downloaded", "시작·끝 프레임 다운로드됨"));
 			setResult((current) => current ? { ...current, downloaded: true } : current);
 			track("export:blocking_frame_succeeded", { format: "png" });
+			trackFeature("export_frame");
 			trackActivation("export");
 			return;
 		}
@@ -6382,6 +6401,7 @@ globalThis.playMode = centerTab === "play";
 		setToast(ko("Frame downloaded", "프레임 다운로드됨"));
 		setResult((current) => current ? { ...current, downloaded: true } : current);
 		track("export:blocking_frame_succeeded", { format: "png" });
+		trackFeature("export_frame");
 		trackActivation("export");
 	}
 	function downloadArdyPose() {
@@ -6390,6 +6410,7 @@ globalThis.playMode = centerTab === "play";
 			setToast(ko("Character not loaded yet", "캐릭터가 아직 로드되지 않았어요"));
 			return;
 		}
+		trackFeature("export_pose");
 		const pose = buildArdyPose({
 			rig,
 			camRef: shotCamRef,
@@ -6422,6 +6443,7 @@ globalThis.playMode = centerTab === "play";
 		// periodic hitch while orbiting/flying the camera.
 		const refreshBridge = () => checkBridge().then((state) => {
 			if (!alive) return;
+			if (state.ok) trackFeature("mcp_connected");
 			setBridge((previous) => (
 				previous &&
 				previous.ok === state.ok &&
@@ -6463,6 +6485,7 @@ globalThis.playMode = centerTab === "play";
 		setSelectedPromptId(clip.id);
 		setTlFrameCount((count) => Math.max(count, clip.endFrame));
 		setArdyDuration(Math.max(ARDY_DURATION_MIN, clip.endFrame / TIMELINE_FPS));
+		trackFeature("prompt_block_add");
 	}
 
 	function changePromptClip(id, text) {
@@ -9436,9 +9459,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							"Distinct display colors per object — captures include them while on",
 							"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
 						)}
-						onClick={() => {
+						 onClick={() => {
 							setAutoColor((on) => {
 								saveAutoColor(!on);
+								trackFeature("auto_color");
 								return !on;
 							});
 						}}
@@ -9929,9 +9953,10 @@ function resizePromptClip(id, edge, rawFrame) {
 									const size = objectSize(selectedSceneObject);
 									return { x: selectedSceneObject.x, y: (selectedSceneObject.y ?? 0) + size.height / 2, z: selectedSceneObject.z };
 								}}
-								onFlyStateChange={(flying) => {
-									flyingRef.current = flying;
-								}}
+							onFlyStateChange={(flying) => {
+								flyingRef.current = flying;
+								if (flying) trackFeature("camera_fly");
+							}}
 								onCameraChange={lookThroughShot && !ikMode ? commitManualCameraFraming : undefined}
 							/>
 							<PoseHandles
@@ -12273,7 +12298,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						return !v;
 					});
 				}}
-				onScrub={setTlFrame}
+				onScrub={(frame) => { trackFeature("timeline_scrub"); setTlFrame(frame); }}
 				onAdvance={advanceFrame}
 				onStep={stepFrame}
 				onPlayToggle={() => {

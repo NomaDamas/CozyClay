@@ -5,10 +5,19 @@ const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 	"https://www.cozyclay.org",
 ]);
 const EVENT_PROPERTIES = Object.freeze({
-	"install:first_launch": [],
+	"install:first_launch": ["heard_from"],
 	"app:session_started": [],
+	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched"],
+	"feature:used": ["name"],
+	"hosted:composer_viewed": [],
+	"hosted:login_started": [],
+	"hosted:ticket_created": [],
+	"hosted:result_opened": [],
+	"hosted:opened_in_studio": [],
 	"scene:created": ["scene_source"],
 	"scene:loaded": ["scene_source"],
+	"project:saved": ["object_count_bucket", "shot_count_bucket"],
+	"project:opened": ["age_bucket"],
 	"craft:first_action": ["action_kind"],
 	"motion:backend_state": ["backend", "host_configured"],
 	"motion:generate_blocked": ["surface"],
@@ -20,7 +29,13 @@ const EVENT_PROPERTIES = Object.freeze({
 	"sample:played": ["from"],
 	"activation:completed": ["activation_path"],
 });
-const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "name", "url", "path", "file"]);
+const FEATURE_NAMES = new Set([
+	"pose_edit", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
+	"prompt_block_add", "shot_add", "shot_cut", "export_pose", "export_frame", "export_video",
+	"mcp_connected", "auto_color", "plan_view",
+]);
+const HEARD_FROM_VALUES = new Set(["x", "hn", "reddit", "github", "friend", "other"]);
+const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "url", "path", "file"]);
 
 let posthog = null;
 let initialized = false;
@@ -28,6 +43,12 @@ let enabled = false;
 let initPromise = null;
 let activationFired = false;
 let disabledLogged = false;
+let sessionStartedAt = 0;
+let sessionActionCount = 0;
+let sessionScenesTouched = 0;
+let sessionEnded = false;
+let sessionEndListenersInstalled = false;
+const featureNamesSeen = new Set();
 
 function storage() {
 	try {
@@ -84,6 +105,8 @@ export function sanitizeProps(event, props) {
 	const sanitized = {};
 	for (const key of allowedKeys) {
 		if (DENIED_PROPERTY_KEYS.has(key) || !Object.hasOwn(props, key)) continue;
+		if (event === "feature:used" && (key !== "name" || !FEATURE_NAMES.has(props[key]))) continue;
+		if (event === "install:first_launch" && (key !== "heard_from" || !HEARD_FROM_VALUES.has(props[key]))) continue;
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;
@@ -111,6 +134,42 @@ export function motionBackendState(health) {
 		backend: "local_kimodo",
 		host_configured: Boolean(host),
 	};
+}
+
+export const FEATURE_USAGE_NAMES = Object.freeze([...FEATURE_NAMES]);
+
+export function bucketCount(value) {
+	const count = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+	if (count === 0) return "0";
+	if (count <= 3) return "1-3";
+	if (count <= 10) return "4-10";
+	return "gte11";
+}
+
+export function bucketSessionDuration(ms) {
+	if (!Number.isFinite(ms) || ms < 60_000) return "lt1m";
+	if (ms < 5 * 60_000) return "1-5m";
+	if (ms < 15 * 60_000) return "5-15m";
+	if (ms < 30 * 60_000) return "15-30m";
+	return "gte30m";
+}
+
+export function bucketProjectAge(ms) {
+	if (!Number.isFinite(ms) || ms < 0 || ms < 60 * 60_000) return "lt1h";
+	if (ms < 24 * 60 * 60_000) return "1-24h";
+	if (ms < 7 * 24 * 60 * 60_000) return "1-7d";
+	if (ms < 30 * 24 * 60 * 60_000) return "7-30d";
+	return "gte30d";
+}
+
+function detectOs() {
+	const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || "").toLowerCase();
+	if (platform.includes("mac")) return "macos";
+	if (platform.includes("win")) return "windows";
+	if (platform.includes("linux")) return "linux";
+	if (platform.includes("android")) return "android";
+	if (platform.includes("iphone") || platform.includes("ipad") || platform.includes("ios")) return "ios";
+	return "unknown";
 }
 
 export function bucketMs(ms) {
@@ -300,6 +359,9 @@ export function resolveAnalyticsRuntime({
 			appVersion: runtime.appVersion || null,
 			installationId: runtime.installationId || null,
 			firstLaunch: runtime.firstLaunch === true,
+			firstLaunchHeardFrom: HEARD_FROM_VALUES.has(runtime.firstLaunchHeardFrom) ? runtime.firstLaunchHeardFrom : null,
+			installKind: ["npx", "global", "clone"].includes(runtime.installKind) ? runtime.installKind : "npx",
+			originKind: "local",
 		};
 	}
 	if (!env.VITE_POSTHOG_KEY) return { kind: "disabled", reason: "no key" };
@@ -314,6 +376,9 @@ export function resolveAnalyticsRuntime({
 		appVersion: env.VITE_APP_VERSION || null,
 		installationId: null,
 		firstLaunch: false,
+		firstLaunchHeardFrom: null,
+		installKind: null,
+		originKind: "hosted",
 	};
 }
 
@@ -376,17 +441,25 @@ export async function initAnalytics() {
 			posthog.register({
 				distribution: resolved.distribution,
 				...(resolved.appVersion ? { app_version: resolved.appVersion } : {}),
+				origin_kind: resolved.originKind,
+				os: detectOs(),
+				...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
 			});
 			// Test hook, mirroring the window.__cozyclay convention: lets QA
 			// drivers inspect the live SDK without shipping a real global API.
 			globalThis.__cozyclayAnalytics = { instance: posthog };
 			posthog.capture("$pageview");
+			sessionStartedAt = Date.now();
+			installSessionEndListeners(resolved);
 			if (resolved.distribution === "npm") {
 				track("app:session_started");
 				// This follows the session marker so the two events form one
 				// capability baseline in funnel queries.
 				void recordMotionBackendState();
-				if (resolved.firstLaunch) track("install:first_launch");
+				if (resolved.firstLaunch) {
+					const heardFrom = resolved.firstLaunchHeardFrom;
+					track("install:first_launch", heardFrom ? { heard_from: heardFrom } : {});
+				}
 			} else {
 				// Hosted sessions have PostHog's native session marker rather than
 				// the npm-only custom event above.
@@ -413,10 +486,57 @@ async function recordMotionBackendState() {
 export function track(event, props = {}) {
 	if (!initialized || !enabled || !posthog) return;
 	try {
-		posthog.capture(event, sanitizeProps(event, props));
+		const sanitized = sanitizeProps(event, props);
+		if (event !== "app:session_started" && event !== "app:session_ended" && event !== "install:first_launch") {
+			sessionActionCount += 1;
+			if (event === "scene:created" || event === "scene:loaded") sessionScenesTouched += 1;
+		}
+		posthog.capture(event, sanitized);
 	} catch {
 		// Analytics must never affect app behavior.
 	}
+}
+
+export function trackFeature(name) {
+	if (!initialized || !enabled || !posthog || !FEATURE_NAMES.has(name) || featureNamesSeen.has(name)) return false;
+	featureNamesSeen.add(name);
+	track("feature:used", { name });
+	return true;
+}
+
+function installSessionEndListeners(resolved) {
+	if (sessionEndListenersInstalled || typeof window === "undefined") return;
+	sessionEndListenersInstalled = true;
+	const finish = () => {
+		if (sessionEnded || !sessionStartedAt) return;
+		sessionEnded = true;
+		const payload = {
+			api_key: resolved.apiKey,
+			event: "app:session_ended",
+			properties: {
+				distinct_id: posthog?.get_distinct_id?.(),
+				duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
+				action_count_bucket: bucketCount(sessionActionCount),
+				scenes_touched: Math.min(20, sessionScenesTouched),
+				origin_kind: resolved.originKind,
+				os: detectOs(),
+				...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
+			},
+		};
+		try {
+			const body = JSON.stringify(payload);
+			const endpoint = `${resolved.apiHost.replace(/\/$/, "")}/e/`;
+			if (typeof globalThis.navigator?.sendBeacon === "function") {
+				globalThis.navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }));
+			} else {
+				void fetch(endpoint, { method: "POST", body, keepalive: true, headers: { "content-type": "application/json" } });
+			}
+		} catch {
+			// Unload telemetry is best effort.
+		}
+	};
+	window.addEventListener("pagehide", finish, { once: true });
+	window.addEventListener("beforeunload", finish, { once: true });
 }
 
 export function trackActivation(path) {

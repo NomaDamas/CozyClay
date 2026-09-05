@@ -11,6 +11,7 @@ const DEFAULT_STATE = Object.freeze({
 	telemetryEnabled: true,
 	firstLaunchedAt: null,
 	noticeVersion: 0,
+	firstLaunchHeardFrom: null,
 });
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -35,6 +36,9 @@ function normalizedState(value) {
 		noticeVersion: Number.isInteger(value.telemetryNoticeVersion)
 			? value.telemetryNoticeVersion
 			: 0,
+		firstLaunchHeardFrom: ["x", "hn", "reddit", "github", "friend", "other"].includes(value.telemetryFirstLaunchHeardFrom)
+			? value.telemetryFirstLaunchHeardFrom
+			: null,
 	};
 }
 
@@ -77,11 +81,18 @@ export function markTelemetryFirstLaunch(stateFile, now = () => new Date().toISO
 	writeState(stateFile, { telemetryFirstLaunchedAt: now() });
 }
 
+export function setTelemetryFirstLaunchSource(stateFile, heardFrom) {
+	if (!["x", "hn", "reddit", "github", "friend", "other"].includes(heardFrom)) return readTelemetryState(stateFile);
+	writeState(stateFile, { telemetryFirstLaunchHeardFrom: heardFrom });
+	return readTelemetryState(stateFile);
+}
+
 export function takeRuntimeTelemetryConfig(
 	stateFile,
 	{
 		appVersion,
 		officialPackage = true,
+		installKind = null,
 		env = process.env,
 		now = () => new Date().toISOString(),
 		randomUUID = nodeRandomUUID,
@@ -107,5 +118,9 @@ export function takeRuntimeTelemetryConfig(
 		apiKey: POSTHOG_PROJECT_TOKEN,
 		apiHost: POSTHOG_API_HOST,
 		firstLaunch,
+		firstLaunchHeardFrom: existing.firstLaunchHeardFrom,
+		installKind: ["npx", "global", "clone"].includes(installKind)
+			? installKind
+			: env.npm_config_global === "true" || env.npm_config_global === true ? "global" : "npx",
 	};
 }

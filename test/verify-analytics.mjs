@@ -10,6 +10,9 @@ import {
 	resolveAnalyticsRuntime,
 	motionBackendState,
 	sanitizeProps,
+	bucketCount,
+	bucketProjectAge,
+	bucketSessionDuration,
 } from "../src/analytics.js";
 
 assert.equal(normalizeOrigin("HTTPS://CozyClay.Org/"), "https://cozyclay.org");
@@ -75,6 +78,14 @@ assert.match(appSource, /motion:job_started.*backend/);
 assert.match(appSource, /motion:job_succeeded[\s\S]*?duration_bucket/);
 assert.match(appSource, /motion:job_failed[\s\S]*?duration_bucket/);
 assert.doesNotMatch(appSource, /latency_bucket/);
+assert.deepEqual(sanitizeProps("feature:used", { name: "pose_edit", prompt: "secret" }), { name: "pose_edit" });
+assert.deepEqual(sanitizeProps("feature:used", { name: "private-feature" }), {});
+assert.deepEqual(sanitizeProps("install:first_launch", { heard_from: "github" }), { heard_from: "github" });
+assert.deepEqual(sanitizeProps("install:first_launch", { heard_from: "skip" }), {});
+assert.equal(bucketCount(0), "0");
+assert.equal(bucketCount(4), "4-10");
+assert.equal(bucketSessionDuration(0), "lt1m");
+assert.equal(bucketProjectAge(2 * 24 * 60 * 60 * 1000), "1-7d");
 
 assert.equal(bucketMs(0), "lt1s");
 assert.equal(bucketMs(999), "lt1s");
@@ -146,6 +157,9 @@ assert.deepEqual(
 		appVersion: null,
 		installationId: null,
 		firstLaunch: false,
+		firstLaunchHeardFrom: null,
+		installKind: null,
+		originKind: "hosted",
 	},
 );
 assert.deepEqual(
@@ -170,6 +184,9 @@ assert.deepEqual(
 		appVersion: "1.5.0",
 		installationId,
 		firstLaunch: true,
+		firstLaunchHeardFrom: null,
+		installKind: "npx",
+		originKind: "local",
 	},
 	"the official package can enable localhost with its injected runtime contract",
 );
