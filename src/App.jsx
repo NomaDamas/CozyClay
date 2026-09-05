@@ -9,7 +9,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import { Line, OrthographicCamera, PerspectiveCamera, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { buildArdyPose } from "./ardy/export.js";
-import { checkBridge, generate as ardyGenerate } from "./ardy/client.js";
+import { checkBridge, generate as ardyGenerate, inbetween as ardyInbetween } from "./ardy/client.js";
 import { characterScaleFor, loadMotionFromUrl } from "./ardy/npz.js";
 import { motionUrlFromQuery } from "./ardy/motion-url.js";
 import { retimeMotion } from "./ardy/retime.js";
@@ -45,7 +45,7 @@ import {
 	sampleTimes,
 	videoFrames,
 } from "./pose-extract/index.js";
-import { applyMotionFrame, captureArdyRoot, restorePlaybackBones, snapshotPlaybackBones } from "./ardy/playback.js";
+import { applyMotionFrame, captureArdyRoot, debugPrep, preparePlayback, restorePlaybackBones, snapshotPlaybackBones } from "./ardy/playback.js";
 import { PIN_BLOCKED, planPosePin } from "./ardy/pose-pin.js";
 import {
 	TRAIL_EFFECTOR_JOINTS,
@@ -276,6 +276,20 @@ import {
 import { buildCollisionCapsules, detectPenetrations, fixCollisions, fixCollisionsRange, supportsCollisionCleanup } from "./ardy/fix-collisions.js";
 import { collisionBlockers, blockerSummary } from "./ardy/collision-blockers.js";
 import { autoPhysicsRange, computeCenterOfMass } from "./ardy/auto-physics.js";
+import {
+	footPlantRange,
+	FOOT_PLANT_CHAINS,
+	CONTACT_ON_HEIGHT,
+	CONTACT_OFF_HEIGHT,
+	CONTACT_ON_SPEED,
+	CONTACT_OFF_SPEED,
+	markerPositions,
+	plantedFloorHeights,
+	xzSpeeds,
+	contactFlags,
+	despeckle,
+	flagsToIntervals,
+} from "./ardy/foot-plant.js";
 import {
 	Dropdown,
 	Field,
@@ -5194,6 +5208,16 @@ globalThis.playMode = centerTab === "play";
 	// character's rig (re)loads. A rig missing any bone resolves to null and
 	// IK mode stays unavailable.
 	useEffect(() => {
+		// Snapshot the playback bind pose before any IK edit can move a bone
+		// (see preparePlayback): a hips drag on a clip-less rig must not become
+		// its "bind" translation.
+		if (activeRig) {
+			try {
+				preparePlayback(activeRig);
+			} catch {
+				/* rigs without the mapped bones are simply not prepared */
+			}
+		}
 		const resolved = resolveIkRig(activeRig);
 		const chains = resolved ? resolved.chains : null;
 		setIkChains(chains);
@@ -5565,6 +5589,67 @@ globalThis.playMode = centerTab === "play";
 			: ko(`Airborne motion is already ballistic${skipNote}`, `공중 동작이 이미 물리적으로 자연스러워요${skipNote}`));
 	}
 
+	// Foot-plant cleanup (Cascadeur's "Fix Foot"): find every interval where a
+	// foot is in contact and re-solve the leg so the ankle stays on ONE world
+	// position for the whole interval, lowering the root when the leg cannot
+	// otherwise reach. Intervals whose foot travels too far to be a plant are
+	// refused and counted in the toast rather than half-corrected.
+	function runFootPlant() {
+		if (!ikChains || !activeRig || !motion) return;
+		if (ikStateRef.current.rig !== activeRig) return;
+		const currentFrame = tlFrame;
+		const applyFrame = (frame) => {
+			applyMotionFrame(activeRig, motion, frame);
+			ikEvaluate(ikChains, ikStateRef.current, frame, ikFkJoints, IK_CORRECTION_BLEND_FRAMES);
+		};
+		// Provisional undo entry, popped when the pass keys nothing (a clip with
+		// no skate, or an unsupported rig) — see runFixCollisionsRange.
+		const savedFuture = charHistoryRef.current.future;
+		recordCharacterUndo();
+		let result;
+		try {
+			result = footPlantRange(activeRig, ikChains, {
+				ikState: ikStateRef.current,
+				fkJoints: ikFkJoints,
+				applyFrame,
+				startFrame: 0,
+				endFrame: motion.frames - 1,
+				fps: motion.fps ?? TIMELINE_FPS,
+			});
+		} finally {
+			// The restore is the pass's CLEANUP, not its epilogue: a throw mid-walk
+			// would leave the rig frozen at whatever frame it died on.
+			applyFrame(currentFrame);
+			setIkTick((n) => n + 1);
+		}
+		if (!result.keyedFrames.length) {
+			charHistoryRef.current.past.pop();
+			charHistoryRef.current.future = savedFuture;
+		}
+		if (!result.supported) {
+			setToast(result.reason === "range-too-short"
+				? ko("The clip is too short to find a foot plant", "클립이 너무 짧아 발 접지를 찾을 수 없어요")
+				: ko("This rig doesn't support foot-skate cleanup", "이 리그는 발 고정을 지원하지 않아요"));
+			return;
+		}
+		// A refused interval must never hide behind a success message: the user
+		// reads "worked" and the foot they pressed the button for still slides.
+		const refused = result.intervals.filter((interval) => interval.refused === "step-not-skate").length;
+		const refusedNote = refused
+			? ko(` · ${refused} contact(s) skipped (a step, not a skate)`, ` · ${refused}개 접지는 건너뜀 (미끄러짐이 아니라 걸음)`)
+			: "";
+		if (!result.keyedFrames.length) {
+			setToast(refused
+				? ko(`Foot skate: ${refused} contact(s) skipped (a step, not a skate)`, `발 고정: ${refused}개 접지를 건너뛰었어요 (미끄러짐이 아니라 걸음)`)
+				: ko("No foot skate in the clip", "클립에 발 미끄러짐이 없어요"));
+			return;
+		}
+		const slide = (result.residualSlide * 100).toFixed(1);
+		setToast(ko(
+			`Foot skate fixed: keyed ${result.keyedFrames.length} frame(s) (slide ${slide} cm/s, root ${(result.maxRootDrop * 100).toFixed(1)} cm)${refusedNote}`,
+			`발 고정: ${result.keyedFrames.length}개 프레임에 키를 찍었어요 (미끄러짐 ${slide} cm/s, 루트 ${(result.maxRootDrop * 100).toFixed(1)} cm)${refusedNote}`));
+	}
+
 	function ikDeleteKeyframe(frame) {
 		if (!ikStateRef.current.keys.has(frame)) return;
 		recordCharacterUndo();
@@ -5675,6 +5760,34 @@ globalThis.playMode = centerTab === "play";
 				onTrailDragEnd({ track: "hips", grabFrame, delta });
 			},
 			trailRegenerate: runTrailRegeneration,
+			// Inbetween QA surface: bake the rig's CURRENT pose as IK keys at a
+			// frame (what a gizmo drag would leave behind), then run the fill.
+			bakeIkKey: (frame, onlyIds = null) => {
+				ikBakeKeyframe(ikChains, ikStateRef.current, frame, ikFkJoints, onlyIds);
+				setIkTick((value) => value + 1);
+			},
+			inbetween: runInbetween,
+			setInbetweenModel,
+			// Emulates a hips drag in IK mode (world-space delta in metres) on the
+			// real FK joint, so a QA run keys hips translation the way a user does.
+			captureRoot: () => (activeRig ? captureArdyRoot(activeRig) : null),
+			rootBoneCheck: () => {
+				const j = ikFkJoints?.get("hips")?.bone;
+				let sk = null;
+				activeRig?.traverse((o) => { if (!sk && o.isSkinnedMesh) sk = o.skeleton; });
+				const hipsLike = [];
+				activeRig?.traverse((o) => { if (o.isBone && /Hips$/.test(o.name)) hipsLike.push({ name: o.name, uuid: o.uuid, parent: o.parent?.name ?? null, inSkeleton: !!sk?.bones.includes(o) }); });
+				return { joint: j ? { name: j.name, uuid: j.uuid, parent: j.parent?.name ?? null } : null, prep: debugPrep(activeRig), hipsLike };
+			},
+			hipsJointWorld: () => { const j = ikFkJoints?.get("hips"); if (!j) return null; const v = new THREE.Vector3(); j.bone.getWorldPosition(v); return [v.x, v.y, v.z]; },
+			ikMoveHips: (dx, dy, dz) => {
+				const joint = ikFkJoints?.get("hips");
+				if (!joint) return null;
+				ikTouch(ikStateRef.current, "hips");
+				solveHipsTranslate(joint, new THREE.Vector3(dx, dy, dz), joint.bone.position.clone());
+				joint.bone.updateMatrixWorld(true);
+				return joint.bone.position.toArray();
+			},
 			// Fix-collisions QA surface: live penetration readout for headless
 			// checks; the fix itself runs through the buttons / runFixCollisions.
 			// null (not []) on an unsupported rig, so a check can tell "the tool
@@ -5694,6 +5807,61 @@ globalThis.playMode = centerTab === "play";
 			// What those `obj:` / `char:` names stand for, as plain numbers: the
 			// boxes and capsules the fixer is being asked to keep the body out of.
 			fcBlockers: () => blockerSummary(externalBlockers(tlFrame)),
+			// Foot-plant QA surface: the contact intervals and the per-foot slide
+			// readout the pass reasons about, measured over the WHOLE clip on the
+			// pose the viewer sees — so a headless check can quote planted% and
+			// mean XZ speed while planted before and after the button press.
+			// null (not []) when the rig has no legs the tool can describe, so a
+			// check can tell "unsupported skeleton" from "no contacts".
+			fpDetect: () => {
+				if (!activeRig || !motion || !ikChains) return null;
+				const here = tlFrame;
+				const samples = [];
+				for (let frame = 0; frame < motion.frames; frame += 1) {
+					applyMotionFrame(activeRig, motion, frame);
+					ikEvaluate(ikChains, ikStateRef.current, frame, ikFkJoints, IK_CORRECTION_BLEND_FRAMES);
+					const marks = markerPositions(activeRig);
+					if (!marks) {
+						applyMotionFrame(activeRig, motion, here);
+						ikEvaluate(ikChains, ikStateRef.current, here, ikFkJoints, IK_CORRECTION_BLEND_FRAMES);
+						return null;
+					}
+					samples.push(marks);
+				}
+				applyMotionFrame(activeRig, motion, here);
+				ikEvaluate(ikChains, ikStateRef.current, here, ikFkJoints, IK_CORRECTION_BLEND_FRAMES);
+				const floors = plantedFloorHeights(samples);
+				const fps = motion.fps ?? TIMELINE_FPS;
+				const out = { frames: samples.length, fps, feet: {} };
+				for (const foot of FOOT_PLANT_CHAINS) {
+					const ankle = samples.map((sample) => sample[foot.ankle]);
+					const heights = samples.map((sample) => Math.min(
+						sample[foot.ankle].y - floors[foot.ankle],
+						sample[foot.toe].y - floors[foot.toe],
+					));
+					const speeds = xzSpeeds(ankle, fps);
+					const flags = despeckle(contactFlags({
+						heights, speeds,
+						onHeight: CONTACT_ON_HEIGHT, offHeight: CONTACT_OFF_HEIGHT,
+						onSpeed: CONTACT_ON_SPEED, offSpeed: CONTACT_OFF_SPEED,
+					}));
+					let plantedFrames = 0;
+					let slideTotal = 0;
+					for (let index = 0; index < flags.length; index += 1) {
+						if (!flags[index]) continue;
+						plantedFrames += 1;
+						slideTotal += speeds[index];
+					}
+					out.feet[foot.id] = {
+						planted: plantedFrames / flags.length,
+						slide: plantedFrames ? slideTotal / plantedFrames : 0,
+						intervals: flagsToIntervals(flags),
+						minHeight: Math.min(...heights),
+					};
+				}
+				return out;
+			},
+			fpRun: runFootPlant,
 			// AutoPhysics QA surface: the centre of mass of the CURRENT pose, so
 			// a headless check can sample the arc before/after the button press.
 			apCom: () => {
@@ -8784,6 +8952,134 @@ function resizePromptClip(id, edge, rawFrame) {
 		setTrailEdit(null);
 	}
 
+	/* ------------------------- inbetween (experiment) ---------------------
+	 * Fill between the IK-keyed poses with the distilled Cascadeur
+	 * inbetweener. The keyed frames are hard; a context window around them is
+	 * regenerated by the model; the rest of the take is copied through. The
+	 * new take replaces the loaded one (one undo step). */
+	const INBETWEEN_CONTEXT = 12;
+	// "v3" = our distilled pose inbetweener (fast, no locomotion planning);
+	// "root" = Cascadeur's original root-motion generator (50-step diffusion,
+	// CPU, 10–20 s per window, walks between far-apart keys). Experiment only.
+	const [inbetweenModel, setInbetweenModel] = useState("v3");
+	// Read through a ref inside runInbetween: the QA surface effect captures
+	// runInbetween with its own dependency list, so state alone would be stale.
+	const inbetweenModelRef = useRef("v3");
+	inbetweenModelRef.current = inbetweenModel;
+	// The root-motion generator walks but skates; run the foot-plant pass on
+	// the delivered take automatically. runFootPlant reads `motion` from the
+	// render scope, so the hand-off waits for the take to land in state.
+	const autoFootPlantRef = useRef(null);
+	useEffect(() => {
+		if (!autoFootPlantRef.current || motion?.url !== autoFootPlantRef.current) return;
+		if (!ikChains || !activeRig) return;
+		autoFootPlantRef.current = null;
+		runFootPlant();
+	}, [motion?.url, ikChains, activeRig]); // eslint-disable-line react-hooks/exhaustive-deps
+	const INBETWEEN_MAX_SPAN = 96;
+	const INBETWEEN_MAX_WINDOW = 120;
+	async function runInbetween() {
+		console.info("[inbetween] click", { ardyRunning, linePreviewUrl, motionUrl: motion?.url, frames: motion?.frames, rig: !!activeRig, chains: !!ikChains, ikFrames });
+		if (ardyRunning) {
+			setToast(ko("A motion job is still running", "다른 모션 작업이 아직 진행 중이에요"));
+			return;
+		}
+		if (linePreviewUrl) {
+			setToast(previewBlockingReason());
+			return;
+		}
+		const rig = activeRig;
+		if (!rig || !ikChains) {
+			setToast(ko("Character not loaded yet", "캐릭터가 아직 로드되지 않았어요"));
+			return;
+		}
+		const fromScratch = !motion;
+		const keyed = ikFrames.filter((frame) => frame >= 0 && (fromScratch || frame < motion.frames)).sort((a, b) => a - b);
+		if (keyed.length < (fromScratch ? 2 : 1)) {
+			setToast(fromScratch
+				? ko("Key two poses with IK first (A and B)", "먼저 IK로 포즈 두 개(A, B)를 키로 잡으세요")
+				: ko("Key at least one pose with IK first", "먼저 IK로 포즈를 하나 이상 키로 잡으세요"));
+			return;
+		}
+		if (!fromScratch && !motion.url) {
+			setToast(ko("The current motion has no bridge source; generate once first", "현재 모션에 브리지 원본이 없어요. 먼저 한 번 생성하세요"));
+			return;
+		}
+		const span = keyed[keyed.length - 1] - keyed[0] + 1;
+		if (span > INBETWEEN_MAX_SPAN) {
+			setToast(ko(`Keys span ${span} frames; the inbetweener takes at most ${INBETWEEN_MAX_SPAN}`, `키 간격이 ${span}프레임이에요. 사이 채우기는 최대 ${INBETWEEN_MAX_SPAN}프레임까지 됩니다`));
+			return;
+		}
+		// Without a clip the new take runs from frame 0 to just past the last
+		// key; the model window is capped, so the keys must sit early enough.
+		const scratchFrames = Math.min(tlFrameCount, keyed[keyed.length - 1] + INBETWEEN_CONTEXT + 1);
+		if (fromScratch && scratchFrames > INBETWEEN_MAX_WINDOW) {
+			setToast(ko(`Without a clip the keys must lie within the first ${INBETWEEN_MAX_WINDOW - INBETWEEN_CONTEXT - 1} frames`, `클립 없이 채울 때는 키가 처음 ${INBETWEEN_MAX_WINDOW - INBETWEEN_CONTEXT - 1}프레임 안에 있어야 해요`));
+			return;
+		}
+		const blend = motion ? IK_CORRECTION_BLEND_FRAMES : 0;
+		const currentFrame = tlFrame;
+		const entries = [];
+		for (const frame of keyed) {
+			if (motion) applyMotionFrame(rig, motion, frame);
+			ikEvaluate(ikChains, ikStateRef.current, frame, ikFkJoints, blend);
+			const pose = buildArdyPose({
+				rig,
+				camRef: shotCamRef,
+				look,
+				fovDeg,
+				slate: slateLine(shot),
+				rigName: activeChar.model,
+				root: captureArdyRoot(rig),
+			});
+			entries.push({ frame: toArdyFrame(frame), pose });
+		}
+		if (motion) applyMotionFrame(rig, motion, currentFrame);
+		ikEvaluate(ikChains, ikStateRef.current, currentFrame, ikFkJoints, blend);
+		const job = {
+			charId: activeChar.id,
+			charIndex: activeCharIndex,
+			prompt: motion?.prompt || "",
+			rootRotationDeg: motion?.rotationDeg ?? activeChar.rot,
+			anchor: { x: motion?.anchorX ?? activeChar.x, z: motion?.anchorZ ?? activeChar.z },
+			ikState: ikStateRef.current,
+			committedEditKeys: keyed.map((frame) => ({ frame, tracks: [...(ikStateRef.current.keys.get(frame)?.keys() || ["hips"])] })),
+		};
+		recordCharacterUndo();
+		setArdyRunning(true);
+		reportArdyStatus(ko("Inbetweening…", "사이 채우는 중…"));
+		setToast(ko(`Inbetweening frames ${keyed[0]}–${keyed[keyed.length - 1]}…`, `${keyed[0]}~${keyed[keyed.length - 1]} 프레임 사이 채우는 중…`));
+		try {
+			const result = await ardyInbetween(fromScratch
+				? { sourceMotion: null, frames: scratchFrames, fps: ARDY_FPS, edits: entries, model: inbetweenModelRef.current }
+				: {
+					sourceMotion: motion.url,
+					startFrame: toArdyFrame(keyed[0]),
+					endFrame: toArdyFrame(keyed[keyed.length - 1]),
+					contextBefore: INBETWEEN_CONTEXT,
+					contextAfter: INBETWEEN_CONTEXT,
+					edits: entries,
+					model: inbetweenModelRef.current,
+				});
+			if (inbetweenModelRef.current === "root") autoFootPlantRef.current = result.motionUrl;
+			await deliverMotion(job, result.motionUrl);
+			setCommittedIkEdits((current) => [...current, ...job.committedEditKeys]);
+			const pending = job.ikState;
+			pending.keys.clear();
+			pending.tracked.clear();
+			pending.plants.clear();
+			setIkTick((value) => value + 1);
+			setToast(ko(
+				`Inbetweened frames ${result.window[0]}–${result.window[1]} (fit ${result.fitErrCm.toFixed(1)} cm, ${(result.ms / 1000).toFixed(1)} s)`,
+				`${result.window[0]}~${result.window[1]} 프레임 사이를 채웠어요 (피팅 오차 ${result.fitErrCm.toFixed(1)}cm, ${(result.ms / 1000).toFixed(1)}초)`,
+			));
+		} catch (err) {
+			setToast(ko(`Inbetween failed: ${err?.message || err}`, `사이 채우기 실패: ${err?.message || err}`));
+		} finally {
+			setArdyRunning(false);
+		}
+	}
+
 	/* ------------------------- motion job queue ---------------------------
 	 * One box, one job at a time: Generate never blocks, it enqueues. The
 	 * payload is frozen at enqueue time; completion delivers the clip to the
@@ -11048,6 +11344,25 @@ function resizePromptClip(id, edge, rawFrame) {
 								</p>
 							</>
 						)}
+						<label className="inspector-hint" style={{ display: "flex", gap: 8, alignItems: "center" }}>
+							{ko("Inbetween model", "사이 채우기 모델")}
+							<select value={inbetweenModel} onChange={(event) => setInbetweenModel(event.target.value)} disabled={ardyRunning}>
+								<option value="v3">{ko("Pose inbetweener (fast)", "포즈 보간 (빠름)")}</option>
+								<option value="root">{ko("Root-motion generator (walks, 10–20 s)", "루트 모션 생성기 (걷기, 10~20초)")}</option>
+							</select>
+						</label>
+						<button type="button" className="btn full" onClick={runInbetween} disabled={!ikChains || ardyRunning || ikFrames.length < (motion ? 1 : 2)}>
+						{ko("Inbetween (fill between IK keys)", "사이 채우기 (IK 키 사이)")}
+						</button>
+						<p className="inspector-hint">
+						{ko(
+							`Status: ${ikFrames.length} IK key${ikFrames.length === 1 ? "" : "s"}${ikFrames.length ? ` (${ikFrames.join(", ")})` : ""} · motion ${motion ? `${motion.frames} frames` : "none"} · source ${motion?.url ? "ok" : "none"}${ardyRunning ? " · busy" : ""}`,
+							`상태: IK 키 ${ikFrames.length}개${ikFrames.length ? ` (${ikFrames.join(", ")})` : ""} · 모션 ${motion ? `${motion.frames}프레임` : "없음"} · 원본 ${motion?.url ? "있음" : "없음"}${ardyRunning ? " · 작업 중" : ""}`,
+						)}
+						</p>
+						<p className="inspector-hint">
+						{ko("Experiment: sends the IK-keyed poses to the distilled Cascadeur inbetweener and regenerates the frames between them (plus 12 frames of context on each side). One undo step.", "실험 기능: IK로 키를 잡은 포즈들을 증류한 Cascadeur 인비트위너에 보내 그 사이 프레임(앞뒤 12프레임 포함)을 다시 만듭니다. Ctrl+Z 한 번으로 되돌립니다.")}
+						</p>
 						{/* AutoPhysics needs the hips FK joint and the mass-model bones,
 						    NOT the collision capsules — a rig without toe bases still
 						    qualifies, so this button is deliberately outside the
@@ -11058,6 +11373,18 @@ function resizePromptClip(id, edge, rawFrame) {
 						</button>
 						<p className="inspector-hint">
 						{ko("Finds airborne spans and forces the centre of mass onto a real gravity parabola, so jumps stop floating. Grounded frames are left untouched.", "공중에 뜬 구간을 찾아 무게중심을 실제 중력 포물선에 맞춥니다. 점프가 더 이상 떠 있지 않게 되고, 바닥에 닿은 프레임은 건드리지 않습니다.")}
+						</p>
+						{/* Foot-skate cleanup sits next to AutoPhysics because it is the
+						    other half of "make the ground contact believable": AutoPhysics
+						    owns the frames with no foot on the floor, this one owns the
+						    frames that have one. Like AutoPhysics it needs the leg chains
+						    and the hips joint, NOT the collision capsules, so it lives
+						    outside the collisionCleanupSupported gate. */}
+						<button type="button" className="btn full" onClick={runFootPlant} disabled={!ikChains || !motion}>
+						{ko("Fix foot skate (whole clip)", "발 고정 (클립 전체)")}
+						</button>
+						<p className="inspector-hint">
+						{ko("Finds every frame a foot is on the ground and pins it to one spot for the whole contact, bending the knees and lowering the hips instead of letting the foot slide. A contact that travels too far to be a plant is left alone.", "발이 바닥에 닿아 있는 구간을 찾아 그 접지 내내 한 자리에 고정합니다. 발이 미끄러지는 대신 무릎이 굽고 골반이 내려갑니다. 접지로 보기엔 너무 많이 움직인 구간은 그대로 둡니다.")}
 						</p>
 						{/* Motion trail editing: falloff radius + confirm-to-regenerate.
 						    Only meaningful with IK mode on and a loaded take. */}

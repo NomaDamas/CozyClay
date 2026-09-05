@@ -55,7 +55,7 @@ export default defineConfig({
 			configureServer(server) {
 				server.middlewares.use((req, res, next) => {
 					const path = (req.url || "").split("?")[0];
-					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
+					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|inbetween|footage|extract|motions)(\/|$)/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
 						res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
@@ -106,7 +106,7 @@ export default defineConfig({
 						target: motionBridgeUrl,
 						bypass(req) {
 							const path = (req.url || "").split("?")[0];
-							if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;
+							if (/^\/ardy\/(health|bases|generate|inbetween|footage|extract|motions)(\/|$)/.test(path)) return undefined;
 							return req.url; // not a bridge route: serve the static asset
 						},
 					},

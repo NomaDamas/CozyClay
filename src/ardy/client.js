@@ -82,6 +82,14 @@ export async function listBases() {
  * aborted signal (the AbortError propagates so callers can tell cancellation
  * apart from failure). `signal` is optional.
  */
+/** Fill between IK-keyed poses with the distilled inbetweener (dev sidecar
+ * → box). Plain JSON round trip; resolves to { motionUrl, window, keys, fitErrCm, ms }. */
+export async function inbetween(body, { signal } = {}) {
+	const res = await fetch("/ardy/inbetween", { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(body), signal });
+	if (!res.ok) throw new Error(await reasonOf(res, `inbetween failed (HTTP ${res.status})`));
+	return res.json();
+}
+
 export async function generate(body, onEvent, { signal } = {}) {
 	const res = await fetch("/ardy/generate", {
 		method: "POST",

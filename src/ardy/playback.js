@@ -298,11 +298,23 @@ export function captureArdyRoot(rig) {
 	];
 }
 
+/** Build (and cache) the positional-skinning prep from the rig's bind pose NOW.
+ * prepOf() snapshots the CURRENT bone translations as the bind translations,
+ * so it must run before anything (an IK hips drag, a pose tool) moves a bone.
+ * A rig that is posed before its first motion loads would otherwise bake the
+ * posed hips into its bind offsets — captureArdyRoot then reports the
+ * canonical root no matter where the hips are, and every later clip plays
+ * back offset by the drag. Call once when the rig mounts. */
+export function preparePlayback(rig) {
+	return !!prepOf(rig);
+}
+
 export function debugPrep(rig) {
 	const p = prepOf(rig);
 	return {
 		scale: p.scale,
 		offsets: p.offsets.map((o) => (o ? [o.x, o.y, o.z] : null)),
+		hipsBone: p.bones[0] ? { name: p.bones[0].name, uuid: p.bones[0].uuid, parent: p.bones[0].parent?.name ?? null } : null,
 	};
 }
 
