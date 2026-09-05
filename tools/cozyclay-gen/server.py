@@ -52,7 +52,7 @@ async def graph_ui(request):
 async def nodes(request):
     defs = graph_nodes.registry_json()
     if request.query.get("mode") != "advanced":
-        defs = [d for d in defs if d["name"] in ("입력", "장면", "결과")]
+        defs = [d for d in defs if d["name"] in ("inputs", "scene", "result")]
     return web.json_response(defs)
 
 
