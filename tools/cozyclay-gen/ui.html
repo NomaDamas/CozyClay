@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>cozyclay-gen</title>
+<style>
+  body{font:14px/1.5 -apple-system,system-ui,sans-serif;margin:0;background:#111;color:#eee}
+  .wrap{display:grid;grid-template-columns:420px 1fr;gap:16px;padding:16px;min-height:100vh;box-sizing:border-box}
+  .panel{background:#1b1b1b;border:1px solid #2a2a2a;border-radius:10px;padding:14px}
+  label{display:block;font-size:12px;color:#aaa;margin:10px 0 4px}
+  textarea,input,select{width:100%;box-sizing:border-box;background:#0e0e0e;color:#eee;border:1px solid #333;border-radius:6px;padding:8px;font:inherit}
+  textarea{height:260px;font-family:ui-monospace,Menlo,monospace;font-size:12px}
+  .row{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px}
+  button{margin-top:12px;width:100%;padding:12px;background:#4f8cff;color:#fff;border:0;border-radius:8px;font:inherit;font-weight:600;cursor:pointer}
+  button:disabled{background:#333;color:#888;cursor:wait}
+  video{width:100%;max-height:70vh;background:#000;border-radius:8px}
+  #status{font-size:12px;color:#aaa;margin-top:8px;white-space:pre-wrap}
+  .thumb{max-height:90px;border-radius:6px;margin-top:6px;display:block}
+  h1{font-size:15px;margin:0 0 6px}
+  small{color:#777}
+  .hist{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+  .hist a{color:#8fb4ff;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="panel">
+    <h1>cozyclay-gen <small id="health">…</small></h1>
+    <label>Mode</label>
+    <select id="mode">
+      <option value="ref">Ref2VA (reference image = pose/camera guide)</option>
+      <option value="i2v">I2V / FL2V (first [+ last] frame pixel-locked)</option>
+      <option value="t2v">T2V (text only)</option>
+    </select>
+    <label>Reference / first frame</label>
+    <input type="file" id="img1" accept="image/*">
+    <img id="thumb1" class="thumb" hidden>
+    <label>Last frame (FL2V only)</label>
+    <input type="file" id="img2" accept="image/*">
+    <label>Prompt <small>(official H3 contract. <a href="#" id="tpl" style="color:#8fb4ff">insert mocap bow template</a>)</small></label>
+    <textarea id="prompt"></textarea>
+    <div class="row">
+      <div><label>Seconds</label><input id="sec" type="number" value="15" min="2" max="15" step="1"></div>
+      <div><label>megapixels</label><input id="mp" type="number" value="0.4" min="0.2" max="1.4" step="0.1"></div>
+      <div><label>Aspect</label><select id="ar"><option>16:9</option><option>9:16</option><option>4:3</option><option>3:4</option><option>1:1</option><option>3:2</option><option>2:3</option></select></div>
+    </div>
+    <div class="row">
+      <div><label>seed</label><input id="seed" type="number" value="42"></div>
+      <div><label>steps</label><select id="steps"><option>4</option><option>8</option></select></div>
+      <div><label>Audio</label><select id="audio"><option value="0">off (mocap)</option><option value="1">on</option></select></div>
+    </div>
+    <button id="go">Generate</button>
+    <div id="status"></div>
+  </div>
+  <div class="panel">
+    <video id="v" controls autoplay loop muted playsinline></video>
+    <div class="hist" id="hist"></div>
+  </div>
+</div>
+<script>
+const $ = s => document.querySelector(s);
+const base = location.origin;
+fetch(base + '/health').then(r => r.json()).then(j => $('#health').textContent = j.models_loaded ? 'ready' : 'loading models…').catch(() => $('#health').textContent = 'offline');
+$('#img1').onchange = e => { const f = e.target.files[0]; if (!f) return; $('#thumb1').src = URL.createObjectURL(f); $('#thumb1').hidden = false; };
+$('#tpl').onclick = async e => { e.preventDefault(); $('#prompt').value = await (await fetch(base + '/prompt-template?mode=' + ($('#mode').value === 'ref' ? 'ref' : $('#img2').files[0] ? 'fl2v' : 'i2v'))).text(); };
+$('#go').onclick = async () => {
+  const fd = new FormData();
+  fd.append('prompt', $('#prompt').value);
+  fd.append('seconds', $('#sec').value); fd.append('megapixels', $('#mp').value); fd.append('aspect', $('#ar').value);
+  fd.append('seed', $('#seed').value); fd.append('steps', $('#steps').value); fd.append('audio', $('#audio').value);
+  const mode = $('#mode').value; fd.append('mode', mode === 'ref' ? 'ref' : 'i2v');
+  const f1 = $('#img1').files[0], f2 = $('#img2').files[0];
+  if (mode === 'ref' && f1) fd.append('ref', f1, f1.name);
+  if (mode === 'i2v' && f1) fd.append('first', f1, f1.name);
+  if (mode === 'i2v' && f2) fd.append('last', f2, f2.name);
+  $('#go').disabled = true; const t0 = Date.now();
+  const tick = setInterval(() => $('#status').textContent = `generating… ${((Date.now() - t0) / 1000).toFixed(0)}s`, 500);
+  try {
+    const r = await fetch(base + '/generate', { method: 'POST', body: fd });
+    const j = await r.json();
+    clearInterval(tick);
+    if (j.error) { $('#status').textContent = 'error: ' + j.error; return; }
+    $('#status').textContent = `done in ${j.wall_seconds}s  |  ${j.seconds}s clip, ${j.megapixels}MP ${j.aspect}, seed ${j.seed}, steps ${j.steps}`;
+    $('#v').src = base + j.mp4;
+    const a = document.createElement('a'); a.href = base + j.mp4; a.textContent = j.job; a.download = j.job + '.mp4'; $('#hist').prepend(a);
+  } catch (e) { clearInterval(tick); $('#status').textContent = 'error: ' + e; }
+  finally { $('#go').disabled = false; }
+};
+</script>
+</body>
+</html>
