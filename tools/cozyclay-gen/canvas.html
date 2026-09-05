@@ -284,8 +284,7 @@ LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
 (async () => {
   const defs = await (await fetch(base + '/nodes?mode=' + (location.pathname === '/graph' ? 'advanced' : 'simple') + '&ts=' + Date.now())).json();
   defs.forEach(registerNode);
-  const saved = localStorage.getItem('cozyclay-gen-graph');
-  if (saved) { try { clearTextAreas(); graph.configure(JSON.parse(saved)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); } catch (e) { defaultGraph(); } } else await defaultGraph();
+  await defaultGraph();
   const h = await (await fetch(base + '/health')).json();
   status(h.models_loaded ? '준비됨 · 4 node types' : '모델 로딩 중…');
 })();
