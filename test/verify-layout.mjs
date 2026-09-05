@@ -238,14 +238,14 @@ expect(
 // and the readout shows the true stored value. Both write paths (head
 // scrub, viewport gizmo) agree on max(0, y).
 expect(
-	"Subject position uses the same X Y Z numeric row as scene objects",
-	app.includes('label={ko("Position", "위치")}') &&
-		app.includes('{ axis: "X", value: value.x, step: 0.05') &&
-		app.includes('{ axis: "Y", value: value.y ?? 0, step: 0.05') &&
-		app.includes('{ axis: "Z", value: value.z, step: 0.05') &&
-		!app.includes('<Slider compact label={ko("Left / right", "좌 / 우")}') &&
-		!app.includes('<Slider compact softMax label={ko("Height", "높이")}') &&
-		!app.includes('<Slider compact label={ko("Depth", "깊이")}'),
+	"Subject transforms have one inspector home with the direct tools",
+	app.includes('<Foldout hidden={!isCharacterSelection} title={ko("Transform", "변환")}>') &&
+	app.includes('{ axis: "X", value: activeChar.x, step: 0.05') &&
+	app.includes('{ axis: "Y", value: activeChar.y ?? 0, step: 0.05') &&
+	app.includes('{ axis: "Z", value: activeChar.z, step: 0.05') &&
+	app.includes('label={ko("Rotation", "회전")}') &&
+	app.includes('label={ko("Scale", "크기")}') &&
+	app.includes('data-transform-controls'),
 );
 expect(
 	"the character gizmo no longer caps lift at 4 m",

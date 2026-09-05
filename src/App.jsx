@@ -9487,7 +9487,8 @@ function resizePromptClip(id, edge, rawFrame) {
 							{ko("Motion mode · edit the timeline below", "모션 모드 · 아래 타임라인에서 편집하세요")}
 						</span>
 					)}
-						<div className="tool-switch workflow-scene-context" role="group" aria-label={ko("Gizmo tool", "기즈모 도구")}>
+						<span className="transform-toolbar-label workflow-scene-context">{ko("Transform", "변환")}</span>
+						<div className="tool-switch workflow-scene-context" role="group" aria-label={ko("Transform tools", "변환 도구")} data-transform-controls>
 							<button
 								type="button"
 								className={gizmoMode === "move" ? "active" : ""}
@@ -10421,6 +10422,22 @@ function resizePromptClip(id, edge, rawFrame) {
 						)}
 					</Foldout>
 
+				<Foldout hidden={!isCharacterSelection} title={ko("Transform", "변환")}>
+					<p className="inspector-hint">
+						{ko("Edit the selected subject's placement, turn and size. Drag the Transform tool in the viewport for direct manipulation.", "선택한 인물의 위치·회전·크기를 편집합니다. 뷰포트의 변환 도구를 드래그해 바로 조작할 수도 있어요.")}
+					</p>
+					<Vector3Row
+						label={ko("Position", "위치")}
+						fields={[
+							{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => updateCharacterAt(activeCharIndex, { x }) },
+							{ axis: "Y", value: activeChar.y ?? 0, step: 0.05, precision: 2, scrubRange: 5, onChange: (y) => updateCharacterAt(activeCharIndex, { y: Math.max(0, y) }) },
+							{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => updateCharacterAt(activeCharIndex, { z }) },
+						]}
+					/>
+					<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => updateCharacterAt(activeCharIndex, { rot })} />
+					<Slider compact label={ko("Scale", "크기")} min={0.2} max={3} step={0.05} value={activeChar.scale ?? 1} unit="×" onChange={(scale) => updateCharacterAt(activeCharIndex, { scale })} />
+				</Foldout>
+
 				{/* Rig and Pose are chosen once when a character is cast and then left
 				    alone, so they open on demand — Subject and Prompt are the panels
 				    you actually work in. */}
@@ -11320,7 +11337,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					</div>
 					</Foldout>
 
-				<Foldout hidden={!selectedSceneObject} title={ko("Object Transform", "오브젝트 변환")}>
+				<Foldout hidden={!selectedSceneObject} title={ko("Transform", "변환")}>
 						{selectedSceneObject && (
 							<>
 								<p className="inspector-hint">
@@ -12430,7 +12447,6 @@ function Foldout({ title, hidden, defaultOpen = true, openSignal = 0, children }
 }
 
 function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, onColorChange, onColorEditStart }) {
-	const set = (key) => (v) => onChange((prev) => ({ ...prev, [key]: v }));
 	return (
 		<div className="subject-box">
 			<div className="subject-box-head">
@@ -12471,15 +12487,6 @@ function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, o
 					)}
 				</div>
 			</div>
-			<Vector3Row
-				label={ko("Position", "위치")}
-				fields={[
-					{ axis: "X", value: value.x, step: 0.05, precision: 2, onChange: (x) => set("x")(x) },
-					{ axis: "Y", value: value.y ?? 0, step: 0.05, precision: 2, onChange: (y) => set("y")(Math.max(0, y)) },
-					{ axis: "Z", value: value.z, step: 0.05, precision: 2, onChange: (z) => set("z")(z) },
-				]}
-			/>
-			<Slider compact label={ko("Rotate", "회전")} min={-180} max={180} step={1} value={value.rot} unit="°" onChange={set("rot")} />
 		</div>
 	);
 }
