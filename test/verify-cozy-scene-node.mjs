@@ -41,4 +41,3 @@ assert.equal(failed.status, "error");
 assert.equal(failed.statusMessage, "bridge unavailable");
 
 console.log("cozy scene node adapter checks passed");
-

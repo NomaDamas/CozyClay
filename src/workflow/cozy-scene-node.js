@@ -114,4 +114,3 @@ export function applyCozySceneRunResult(data, result = {}) {
 		},
 	});
 }
-
