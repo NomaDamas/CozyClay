@@ -221,6 +221,7 @@ import {
 	PROJECT_EXTENSION,
 } from "./project.js";
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
+import FirstSuccessGuide from "./first-success-guide.jsx";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
@@ -2830,6 +2831,7 @@ globalThis.playMode = centerTab === "play";
 	const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 	const [projectBrowserOpen, setProjectBrowserOpen] = useState(false);
 	const [projectNameDialog, setProjectNameDialog] = useState(null);
+	const [firstSuccessGuideOpen, setFirstSuccessGuideOpen] = useState(false);
 	// A first-run author should choose a document (or explicitly start a named
 	// local draft). Keep this as a light startup sheet so the studio remains
 	// inspectable while the choice is pending; it never traps the topbar.
@@ -3066,6 +3068,7 @@ globalThis.playMode = centerTab === "play";
 		setProjectName(name);
 		storeProjectSession(name);
 		setProjectStartupOpen(false);
+		setFirstSuccessGuideOpen(true);
 		setToast(ko(`New project: ${name}`, `새 프로젝트: ${name}`));
 	}
 
@@ -12319,6 +12322,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					else newProject(name);
 				}}
 			/>
+			<FirstSuccessGuide open={firstSuccessGuideOpen} onDismiss={() => setFirstSuccessGuideOpen(false)} />
 			<Toast message={toast} onDone={() => setToast("")} />
 			{pwaUpdate && (
 				<div className="scene-delete-toast" role="status">
