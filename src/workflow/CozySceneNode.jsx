@@ -62,18 +62,17 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 	};
 
 	const handleProps = (spec, type, position) => ({
-		type,
-		position,
-		id: spec.id,
-		key: spec.id,
-		label: spec.label,
+		 type,
+		 position,
+		 id: spec.id,
+		 label: spec.label,
 		className: `cozy-scene-reactflow-handle cozy-scene-reactflow-handle-${spec.id}`,
 	});
 
 	return (
 		<article className={`cozy-scene-node${selected ? " is-selected" : ""}`} data-node-id={id} data-node-type="cozyclay-scene" aria-label="CozyClay Scene node">
 			<div className="cozy-scene-node-inputs" aria-label="Scene inputs">
-				{COZY_SCENE_INPUTS.map((spec) => <Handle {...handleProps(spec, "target", "left")} />)}
+				{COZY_SCENE_INPUTS.map((spec) => <Handle key={spec.id} {...handleProps(spec, "target", "left")} />)}
 			</div>
 			<header className="cozy-scene-node-header">
 				<div>
@@ -104,7 +103,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 
 			<footer className="cozy-scene-node-footer"><span>{data.assetInputs.length} asset{data.assetInputs.length === 1 ? "" : "s"}</span><span>{data.motionInputs.length} motion{data.motionInputs.length === 1 ? "" : "s"}</span></footer>
 			<div className="cozy-scene-node-outputs" aria-label="Scene outputs">
-				{COZY_SCENE_OUTPUTS.map((spec) => <Handle {...handleProps(spec, "source", "right")} />)}
+				{COZY_SCENE_OUTPUTS.map((spec) => <Handle key={spec.id} {...handleProps(spec, "source", "right")} />)}
 			</div>
 		</article>
 	);

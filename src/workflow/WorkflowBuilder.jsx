@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactFlow, {
 	addEdge,
 	Background,
@@ -96,6 +96,12 @@ function ConcatNode({ id, data }) {
 
 const NODE_TYPES = { text: TextNode, image: ImageNode, video: VideoNode, upload: UploadNode, concat: ConcatNode };
 
+function SceneNodeType({ data, ...props }) {
+	return <CozySceneNode {...props} data={data} HandleComponent={Handle} onDataChange={data.onSceneChange} onRun={data.onSceneRun} onOpenScene={() => window.open("/app/", "_blank", "noopener,noreferrer")} />;
+}
+
+const FLOW_NODE_TYPES = { ...NODE_TYPES, scene: SceneNodeType };
+
 export default function WorkflowBuilder() {
 	const initial = useMemo(readGraph, []);
 	const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes);
@@ -103,12 +109,13 @@ export default function WorkflowBuilder() {
 	const [locked, setLocked] = useState(false);
 	const [runState, setRunState] = useState("local");
 	const [lastSaved, setLastSaved] = useState(false);
+	const graph = useMemo(() => serializableGraph(nodes, edges), [nodes, edges]);
+	const graphRef = useRef(graph);
+	useEffect(() => { graphRef.current = graph; }, [graph]);
 
 	const updateNode = useCallback((id, patch) => setNodes((current) => current.map((node) => node.id === id ? { ...node, data: { ...node.data, ...patch } } : node)), [setNodes]);
 	const updateScene = useCallback(({ id, patch }) => updateNode(id, patch), [updateNode]);
 	const addNode = useCallback((type) => { const id = `${type}-${Date.now()}`; setNodes((current) => [...current, makeNode(type, id, { x: 220 + (current.length % 3) * 250, y: 120 + Math.floor(current.length / 3) * 220 })]); toast.success(`${type === "scene" ? "CozyClay Scene" : type} node added`); }, [setNodes]);
-	const graph = useMemo(() => serializableGraph(nodes, edges), [nodes, edges]);
-
 	useEffect(() => { globalThis.localStorage?.setItem(STORAGE_KEY, JSON.stringify(graph)); }, [graph]);
 
 	const saveToBridge = useCallback(async () => {
@@ -138,14 +145,13 @@ export default function WorkflowBuilder() {
 	const runScene = useCallback(async ({ id, data }) => {
 		updateScene({ id, patch: { status: "running", statusMessage: "Sending scene to local bridge" } });
 		try {
-			const payload = toCozySceneRunRequest({ id, data }, { workflow: graph });
+			const payload = toCozySceneRunRequest({ id, data }, { workflow: graphRef.current });
 			const result = await jsonRequest(`/workflow-api/workflow/cozyclay-scene/node/${encodeURIComponent(id)}/run`, { method: "POST", body: JSON.stringify(payload) });
 			updateScene({ id, patch: { status: result?.error ? "error" : "complete", statusMessage: result?.error || result?.message || "Render complete", preview: result?.renderUrl ? "render" : "scene", lastOutput: { renderUrl: result?.renderUrl || null, sceneUrl: result?.sceneUrl || null, jobId: result?.jobId || result?.run_id || null } } });
 		} catch (error) { updateScene({ id, patch: { status: "error", statusMessage: error.status === 503 ? "Bridge disabled; start workflow:bridge" : error.message } }); toast.error("Scene render is unavailable"); }
-	}, [graph, updateScene]);
+	}, [updateScene]);
 
-	const flowNodeTypes = useMemo(() => ({ ...NODE_TYPES, scene: (props) => <CozySceneNode {...props} HandleComponent={Handle} onDataChange={updateScene} onRun={runScene} onOpenScene={() => window.open("/app/", "_blank", "noopener,noreferrer")} /> }), [runScene, updateScene]);
-	const decoratedNodes = useMemo(() => nodes.map((node) => ({ ...node, data: { ...node.data, id: node.id, onChange: updateNode, onRun: runWorkflow } })), [nodes, runWorkflow, updateNode]);
+	const decoratedNodes = useMemo(() => nodes.map((node) => ({ ...node, data: { ...node.data, id: node.id, onChange: updateNode, onRun: runWorkflow, onSceneChange: updateScene, onSceneRun: runScene } })), [nodes, runScene, runWorkflow, updateNode, updateScene]);
 
 	const exportGraph = useCallback(() => { const blob = new Blob([JSON.stringify(graph, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "cozyclay-workflow.json"; anchor.click(); URL.revokeObjectURL(url); toast.success("Workflow exported"); }, [graph]);
 	const onConnect = useCallback((params) => setEdges((current) => addEdge({ ...params, animated: true, style: { stroke: "#8994ff", strokeWidth: 2 } }, current)), [setEdges]);
@@ -153,6 +159,6 @@ export default function WorkflowBuilder() {
 	return <div className="workflow-app">
 		<Toaster position="bottom-right" toastOptions={{ style: { background: "#252833", color: "#f4f5fb" } }} />
 		<header className="workflow-topbar"><div className="workflow-brand"><span className="workflow-brand-mark">C</span><span>CozyClay</span><span className="workflow-divider">/</span><strong>Workflow</strong></div><div className="workflow-top-actions"><span className={`workflow-status ${runState}`}><i /> {runState === "disabled" ? "Bridge disabled" : runState === "running" ? "Running" : "Local workflow"}</span><button type="button" onClick={saveToBridge}>{lastSaved ? "Saved" : "Save"}</button><button type="button" onClick={runWorkflow}><FiPlay size={12} /> Run</button><button type="button" onClick={exportGraph}>Export</button></div></header>
-		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas"><ReactFlow nodes={decoratedNodes} edges={edges} nodeTypes={flowNodeTypes} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><MiniMap nodeColor={(node) => NODE_COLORS[node.type] || "#777"} maskColor="rgba(12,14,20,.72)" /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section></div>
+		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas"><ReactFlow nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><MiniMap nodeColor={(node) => NODE_COLORS[node.type] || "#777"} maskColor="rgba(12,14,20,.72)" /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section></div>
 	</div>;
 }
