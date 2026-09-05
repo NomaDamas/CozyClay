@@ -138,7 +138,7 @@ def _res(aspect, megapixels):
       ],
       outputs=[("conditioning", "COND"), ("latent", "LATENT")],
       description="Reference mode (05): pictures are <Picture N> references, appearance can be rewritten by the prompt.")
-def h3_ref2va(ctx, prompt, seconds, megapixels, aspect, ref_image_size, ref_image_1=None, ref_image_2=None, ref_image_3=None):
+def h3_ref2va(ctx, prompt, seconds, 0.4, aspect, ref_image_size, ref_image_1=None, ref_image_2=None, ref_image_3=None):
     g = _g()
     w, h = _res(aspect, megapixels)
     length = g.frames_for_seconds(float(seconds))
@@ -249,12 +249,19 @@ def scene(ctx, scene, seconds, direct=False, manual_prompt=""):
     ctx.ui(text=text)
     return text, float(seconds)
 
-@node("Generate Video", category="generate", inputs=[inp("ref_image", "IMAGE", optional=True), inp("prompt", "STRING", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("aspect", "COMBO", default="16:9", options=ASPECTS), inp("seed", "INT", default=42, min=0, max=2**32-1), inp("steps", "INT", default=4, min=1, max=25), inp("sla", "BOOL", default=True), inp("megapixels", "FLOAT", default=0.4, min=0.2, max=1.4, step=0.1), inp("audio", "BOOL", default=False)], outputs=[("video", "VIDEO")])
-def generate_video(ctx, ref_image=None, prompt="", seconds=5.0, aspect="16:9", seed=42, steps=4, sla=True, megapixels=0.4, audio=False):
-    cond, latent = h3_ref2va(ctx, prompt, seconds, megapixels, aspect, "match", ref_image_1=ref_image)
-    (sampled,) = h3_sample(ctx, cond, latent, seed, steps, "res_multistep", "simple", sla, 0.9, 12.0)
-    (video,) = h3_decode(ctx, sampled, audio)
+@node("Generate Video", category="generate", inputs=[inp("ref_image", "IMAGE", optional=True), inp("prompt", "STRING", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("aspect", "COMBO", default="16:9", options=ASPECTS), inp("seed", "INT", default=42, min=0, max=2**32-1)], outputs=[("video", "VIDEO")])
+def generate_video(ctx, ref_image=None, prompt="", seconds=5.0, aspect="16:9", seed=42):
+    cond, latent = h3_ref2va(ctx, prompt, seconds, 0.4, aspect, "match", ref_image_1=ref_image)
+    (sampled,) = h3_sample(ctx, cond, latent, seed, 4, "res_multistep", "simple", True, 0.9, 12.0)
+    (video,) = h3_decode(ctx, sampled, False)
     return (video,)
+
+
+@node("Generate Video (Advanced)", category="advanced", inputs=[inp("ref_image", "IMAGE", optional=True), inp("prompt", "STRING", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("aspect", "COMBO", default="16:9", options=ASPECTS), inp("seed", "INT", default=42), inp("steps", "INT", default=4), inp("sla", "BOOL", default=True), inp("megapixels", "FLOAT", default=0.4), inp("audio", "BOOL", default=False)], outputs=[("video", "VIDEO")])
+def generate_video_advanced(ctx, **kw):
+    cond, latent = h3_ref2va(ctx, kw.get("prompt",""), kw.get("seconds",5), kw.get("megapixels",0.4), kw.get("aspect","16:9"), "match", ref_image_1=kw.get("ref_image"))
+    (sampled,) = h3_sample(ctx, cond, latent, kw.get("seed",42), kw.get("steps",4), "res_multistep", "simple", kw.get("sla",True), 0.9, 12.0)
+    return h3_decode(ctx, sampled, kw.get("audio",False))
 
 @node("Result", category="output", inputs=[inp("video", "VIDEO")], outputs=[])
 def result(ctx, video):
