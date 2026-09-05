@@ -37,6 +37,8 @@
     "test:ardy": "node tools/run-tests.mjs --scope ardy",
     "test:ik-browser": "node tools/qa-browser.mjs -- node test/verify-ik-browser.mjs",
     "bridge": "node tools/ardy/bridge.mjs",
+    "workflow:bridge": "node tools/workflow-bridge.mjs",
+    "test:workflow-bridge": "node test/verify-workflow-bridge.mjs",
     "demo:api": "npm --prefix workers/api run dev",
     "demo:api:install": "npm --prefix workers/api ci",
     "demo:worker": "node tools/demo-worker/index.mjs",
