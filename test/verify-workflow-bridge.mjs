@@ -34,6 +34,10 @@ try {
   assert.equal(disabled.status, 503);
   assert.equal((await disabled.json()).code, "muapi-key-missing");
 
+  const nodeRun = await fetch(`http://127.0.0.1:${port}/workflow/cozyclay-scene/node/scene-1/run`, { method: "POST", body: "{}", headers: { "content-type": "application/json" } });
+  assert.equal(nodeRun.status, 503);
+  assert.equal((await nodeRun.json()).code, "muapi-key-missing");
+
   const missing = await fetch(`http://127.0.0.1:${port}/workflow/unknown`, { method: "POST" });
   assert.equal(missing.status, 404);
 } finally {

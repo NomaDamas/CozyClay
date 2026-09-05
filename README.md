@@ -122,6 +122,16 @@ npm run dev
 
 Open `http://127.0.0.1:5180/app/`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
 
+### Workflow canvas
+
+The Vibe-Workflow canvas is available at `http://127.0.0.1:5180/workflow/`. It keeps the original node-style flow and adds a **CozyClay Scene** node with an interactive 3D viewport, frame/camera controls, and an Open Studio handoff. Start it with the normal dev server, or run `npm run dev:ui` by itself for local-only editing. Workflow graphs are saved in the browser; to enable MuAPI-backed save/run, start the loopback bridge in a second terminal:
+
+```bash
+COZYCLAY_MUAPI_KEY=your-key npm run workflow:bridge
+```
+
+Without the key, the canvas remains usable and clearly reports that remote execution is disabled.
+
 ## Hosted demo
 
 Installing a GPU motion backend is the hard part, so `cozyclay.org` also runs a queued demo: a visitor writes one prompt, gets a ticket link, and a GPU box owned by the maintainer generates the motion and uploads it. The visitor never installs anything and never leaves the site — the result opens in the studio itself.

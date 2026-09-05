@@ -109,6 +109,7 @@ const NODE_FILES = [
 	"test/verify-scene-objects.mjs",
 	"test/verify-scenes.mjs",
 	"test/verify-cozy-scene-node.mjs",
+	"test/verify-workflow-bridge.mjs",
 	"test/verify-stable-ids.mjs",
 	"test/verify-shot-authoring.mjs",
 	"test/verify-take-recipe.mjs",

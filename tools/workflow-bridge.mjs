@@ -9,7 +9,7 @@
  */
 import { createServer } from "node:http";
 
-const HOST = process.env.COZYCLAY_WORKFLOW_BRIDGE_HOST?.trim() || "127.0.0.1";
+const HOST = "127.0.0.1";
 const PORT = Number.parseInt(process.env.COZYCLAY_WORKFLOW_BRIDGE_PORT || "5182", 10);
 const MUAPI_URL = (process.env.COZYCLAY_MUAPI_URL?.trim() || "https://api.muapi.ai").replace(/\/$/, "");
 const MUAPI_KEY = process.env.COZYCLAY_MUAPI_KEY?.trim() || "";
@@ -19,6 +19,7 @@ const UPSTREAM_TIMEOUT_MS = Number.parseInt(process.env.COZYCLAY_MUAPI_TIMEOUT_M
 const ROUTES = [
   { method: "POST", pattern: /^\/workflow\/create$/, upstream: "/workflow/create" },
   { method: "POST", pattern: /^\/workflow\/run$/, upstream: "/workflow/run" },
+  { method: "POST", pattern: /^\/workflow\/([^/]+)\/node\/([^/]+)\/run$/, upstream: (match) => `/workflow/${encodeURIComponent(match[1])}/node/${encodeURIComponent(match[2])}/run` },
   { method: "GET", pattern: /^\/workflow\/run\/([^/]+)\/status$/, upstream: (match) => `/workflow/run/${encodeURIComponent(match[1])}/status` },
   { method: "GET", pattern: /^\/app\/get_file_upload_url$/, upstream: "/app/get_file_upload_url" },
   { method: "POST", pattern: /^\/app\/get_file_upload_url$/, upstream: "/app/get_file_upload_url" },
@@ -144,7 +145,7 @@ export function createWorkflowBridgeServer() {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const server = createWorkflowBridgeServer();
-  server.listen(PORT, HOST, () => {
+  server.listen(PORT, "127.0.0.1", () => {
     console.log(`[workflow-bridge] listening on http://${HOST}:${PORT} (MuAPI ${MUAPI_KEY ? "enabled" : "disabled"})`);
   });
   const shutdown = () => server.close(() => process.exit(0));
