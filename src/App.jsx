@@ -2827,6 +2827,7 @@ globalThis.playMode = centerTab === "play";
 	 * cache; the file is the portable, user-owned document. */
 	const [projectName, setProjectName] = useState(() => loadProjectSession()?.name ?? null);
 	const [projectDirty, setProjectDirty] = useState(false);
+	const [projectSaveState, setProjectSaveState] = useState("idle");
 	const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 	const [projectBrowserOpen, setProjectBrowserOpen] = useState(false);
 	const [projectNameDialog, setProjectNameDialog] = useState(null);
@@ -2936,6 +2937,7 @@ globalThis.playMode = centerTab === "play";
 			setProjectNameDialog({ kind: "save", initialName: "My Project" });
 			return;
 		}
+		setProjectSaveState("saving");
 		const name = (explicitName ?? projectName ?? "My Project").trim() || "My Project";
 		try {
 			const serialized = await collectProjectSerialized(name);
@@ -2953,9 +2955,14 @@ globalThis.playMode = centerTab === "play";
 				await writeProjectFile(handle, serialized);
 			}
 			markProjectClean(name);
+			setProjectSaveState("saved");
 			setToast(isKo ? `프로젝트 저장됨: ${name}${PROJECT_EXTENSION}` : `Project saved: ${name}${PROJECT_EXTENSION}`);
 		} catch (err) {
-			if (err?.name === "AbortError") return; // user closed the picker
+			if (err?.name === "AbortError") {
+				setProjectSaveState(projectDirty ? "dirty" : "saved");
+				return; // user closed the picker
+			}
+			setProjectSaveState("error");
 			setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
 		}
 	}
@@ -3736,7 +3743,9 @@ globalThis.playMode = centerTab === "play";
 	useEffect(() => {
 		if (projectName === null) return; // untitled sessions are never "dirty"
 		const serialized = collectProjectSnapshot(projectName);
-		setProjectDirty(serialized !== projectSnapshotRef.current);
+		const dirty = serialized !== projectSnapshotRef.current;
+		setProjectDirty(dirty);
+		setProjectSaveState((current) => current === "saving" ? current : dirty ? "dirty" : "saved");
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, sensorId, tlFrameCount]);
 	const [selectedPromptId, setSelectedPromptId] = useState(null);
@@ -9335,6 +9344,16 @@ function resizePromptClip(id, edge, rawFrame) {
 		ardyAbortRef.current?.abort();
 	}
 
+	const projectStatus = projectSaveState === "saving"
+		? ko("Saving…", "저장 중…")
+		: projectSaveState === "error"
+			? ko("Save failed", "저장 실패")
+			: projectName === null
+				? ko("Not saved", "저장되지 않음")
+				: projectDirty
+					? ko("Unsaved changes", "저장되지 않은 변경사항")
+					: ko("Saved", "저장됨");
+
 	return (
 		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode}>
 			<header className="topbar">
@@ -9364,6 +9383,35 @@ function resizePromptClip(id, edge, rawFrame) {
 					)}
 				</div>
 				<div className="topbar-actions">
+					<div className="project-actions" aria-label={ko("Project actions", "프로젝트 작업")}>
+						<button
+							type="button"
+							className="topbar-action project-save-action"
+							data-testid="topbar-save"
+							disabled={projectSaveState === "saving"}
+							onClick={() => void saveProject(false)}
+						>
+							{projectSaveState === "saving" ? ko("Saving…", "저장 중…") : ko("Save", "저장")}
+						</button>
+						<button
+							type="button"
+							className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
+							data-testid="topbar-export"
+							disabled={recState !== "recording" && !hasCameraKeys && !motion}
+							onClick={toggleShotRecording}
+							title={ko("Export the current shot as an MP4", "현재 샷을 MP4로 내보내기")}
+						>
+							{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("Export", "내보내기")}
+						</button>
+						<span
+							className={"project-save-status status-" + projectSaveState}
+							data-testid="project-save-status"
+							role="status"
+							aria-live="polite"
+						>
+							{projectStatus}
+						</span>
+					</div>
 					<button
 						type="button"
 						className="auto-color-toggle"
