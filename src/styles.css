@@ -397,6 +397,77 @@ select {
 	color: var(--muted);
 }
 
+/* The first-run sheet gives a new author one obvious starting action and a
+ * small mental model of the editor before the full studio is opened. */
+.beginner-start {
+	display: grid;
+	gap: 16px;
+	padding: 16px;
+	border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line2));
+	border-radius: 12px;
+	background: color-mix(in srgb, var(--accent) 7%, var(--panel));
+}
+
+.beginner-start-actions {
+	display: flex;
+	gap: 10px;
+	align-items: center;
+}
+
+.beginner-create {
+	min-height: 42px;
+	padding-inline: 18px;
+	font-size: 13px;
+}
+
+.beginner-open {
+	min-height: 42px;
+}
+
+.beginner-step-grid {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.beginner-step {
+	display: grid;
+	grid-template-columns: auto 1fr;
+	column-gap: 8px;
+	row-gap: 2px;
+	padding: 10px;
+	border: 1px solid var(--line2);
+	border-radius: 9px;
+	background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+
+.beginner-step b {
+	grid-row: span 2;
+	display: grid;
+	place-items: center;
+	width: 22px;
+	height: 22px;
+	border-radius: 50%;
+	background: var(--accent);
+	color: #fff;
+	font-size: 11px;
+}
+
+.beginner-step strong {
+	font-size: 12px;
+}
+
+.beginner-step span {
+	font-size: 10.5px;
+	line-height: 1.35;
+	color: var(--muted);
+}
+
+@media (max-width: 620px) {
+	.beginner-step-grid { grid-template-columns: 1fr; }
+	.beginner-start-actions { flex-direction: column; align-items: stretch; }
+}
+
 .project-name-dialog-backdrop {
 	position: fixed;
 	inset: 0;

@@ -76,6 +76,7 @@ const NODE_FILES = [
 	"test/verify-korean-ui.mjs",
 	"test/verify-label-tooltips.mjs",
 	"test/verify-layout.mjs",
+	"test/verify-beginner-screen.mjs",
 	"test/verify-line-edit-draw.mjs",
 	"test/verify-line-edit-pins.mjs",
 	"test/verify-live-control.mjs",

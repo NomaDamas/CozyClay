@@ -1039,6 +1039,7 @@ globalThis.playMode = centerTab === "play";
 		const next = !advancedMode;
 		try { globalThis.localStorage?.setItem("cozyclay.advanced", String(next)); } catch {}
 		setAdvancedMode(next);
+		if (!next) setSelectedHierarchyId("characterA");
 	}
 	function selectWorkflowMode(next) {
 		setWorkflowMode(next);
@@ -9482,6 +9483,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					sceneObjects={sceneObjects}
 					scenes={scenes}
 					activeSceneId={activeSceneId}
+					beginnerMode={!advancedMode}
 					onSceneSelect={selectSceneDocument}
 					onSceneCreate={createSceneDocumentFromUi}
 					onSceneDuplicate={duplicateSceneDocumentFromUi}
@@ -10417,7 +10419,7 @@ function resizePromptClip(id, edge, rawFrame) {
 
 					{/* Camera animation is authored against the same playhead as motion,
 					    so keep its controls beside the Motion tools as well as Shot setup. */}
-					<Foldout hidden={!keyLightSelected} title={ko("Light", "조명")}>
+					<Foldout hidden={!advancedMode || !keyLightSelected} title={ko("Light", "조명")}>
 						<p className="hint">{ko("Drag the sun in the scene to move the light. Shadows and warmth follow it.", "씬의 해를 드래그해 조명을 옮깁니다. 그림자와 빛의 방향이 따라옵니다.")}</p>
 						<Slider label={ko("Brightness", "밝기")} min={0} max={4} step={0.05} value={keyLight.intensity} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, intensity: value }))} />
 						<Slider label={ko("Warm ↔ Cool", "따뜻함 ↔ 차가움")} min={0} max={1} step={0.05} value={keyLight.warmth ?? 0.5} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, warmth: value }))} />
@@ -11242,7 +11244,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						</button>
 					</Foldout>
 
-				<Foldout hidden={!isRigSelection} title={ko("Rig Control", "리그 제어")}>
+					<Foldout hidden={!advancedMode || !isRigSelection} title={ko("Rig Control", "리그 제어")}>
 						<p className="inspector-hint">
 							{rigSelection && rigSelection.token !== "rig"
 							? (isKo ? `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]}이 활성 제어 그룹입니다.` : `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]} is the active control group.`)
@@ -11357,7 +11359,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						)}
 					</Foldout>
 
-				<Foldout hidden={selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
+				<Foldout hidden={!advancedMode || selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
 						<label className="check">
 							<input type="checkbox" checked={hasEnvSheet} onChange={(event) => setHasEnvSheet(event.target.checked)} />
 						<span>{ko("I have an environment sheet", "환경 시트가 있어요")}</span>
@@ -11372,7 +11374,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						</Field>
 					</Foldout>
 
-				<Foldout hidden={selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
+				<Foldout hidden={!advancedMode || selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
 					<div className="props-drop" data-drop={inspectorDrop.over ? "over" : "target"} {...inspectorDrop.handlers}>
 					<p className="inspector-hint">{ko("Everything you add to the set lives here. Pick one to edit it, or click it in the shot view. Drop a picture anywhere here — or on the shot view — to stand it up as a cutout.", "세트에 추가한 모든 소품이 여기에 모입니다. 편집하려면 하나를 고르거나 샷 뷰에서 클릭하세요. 사진을 이 영역이나 샷 뷰에 끌어다 놓으면 컷아웃으로 세워집니다.")}</p>
 					<AddObjectMenu onAdd={addSceneObject} label={ko("Add object to the set", "세트에 오브젝트 추가")} />
