@@ -38,11 +38,11 @@ _runs = {}  # run_id -> {status, node, i, total, ui, error}
 
 
 async def index(request):
-    return web.FileResponse(os.path.join(HERE, "ui.html"))
+    return web.FileResponse(os.path.join(HERE, "canvas.html"))
 
 
 async def form_ui(request):
-    raise web.HTTPFound("/")
+    return web.FileResponse(os.path.join(HERE, "ui.html"))
 
 
 async def graph_ui(request):
