@@ -151,6 +151,14 @@ export function applyCozyScenePatch(data, patch = {}) {
 	return normalizeCozySceneData(next);
 }
 
+/** Advance one preview frame without wrapping past the end of the take. */
+export function nextSceneFrame(data) {
+	const current = normalizeCozySceneData(data);
+	const lastFrame = Math.max(0, current.frameCount - 1);
+	if (current.frame >= lastFrame) return { frame: lastFrame, playing: false };
+	return { frame: current.frame + 1, playing: true };
+}
+
 /** Build the serializable request consumed by a workflow bridge. */
 export function toCozySceneRunRequest(node, context = {}) {
 	const nodeId = text(node?.id, "cozy-scene");

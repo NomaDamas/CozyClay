@@ -8,6 +8,7 @@ import {
 	applyCozyScenePatch,
 	applyCozySceneRunResult,
 	normalizeCozySceneData,
+	nextSceneFrame,
 	sceneCharacterHandle,
 	sceneCharacterIdFromHandle,
 	sceneInputSpecs,
@@ -19,6 +20,8 @@ import {
 const componentSource = readFileSync(new URL("../src/workflow/CozySceneNode.jsx", import.meta.url), "utf8");
 const previewStyle = readFileSync(new URL("../src/workflow/cozy-scene-node.css", import.meta.url), "utf8");
 assert.match(componentSource, /CozyClay world environment preview/);
+assert.match(componentSource, /publishScenePlayback/);
+assert.match(componentSource, /window\.setTimeout/);
 assert.match(previewStyle, /cozyclay-demo-poster\.jpg/);
 assert.doesNotMatch(componentSource, /<boxGeometry/);
 
@@ -27,6 +30,8 @@ assert.equal(defaults.type, COZY_SCENE_NODE_TYPE);
 assert.equal(defaults.sceneName, "CozyClay Scene");
 assert.equal(defaults.frame, 0);
 assert.equal(defaults.controls.camera.yaw, 35);
+assert.deepEqual(nextSceneFrame({ frame: 0, frameCount: 3, controls: { playing: true } }), { frame: 1, playing: true });
+assert.deepEqual(nextSceneFrame({ frame: 2, frameCount: 3, controls: { playing: true } }), { frame: 2, playing: false });
 assert.deepEqual(COZY_SCENE_INPUTS.map(({ id }) => id), ["asset", "motion"]);
 assert.deepEqual(COZY_SCENE_OUTPUTS.map(({ id }) => id), ["render", "scene"]);
 assert.equal(sceneCharacterHandle("char-a"), "character:char-a");

@@ -180,7 +180,7 @@ import {
 } from "./scene-assets.js";
 import { derivedAssetIds, sourceAssetIds } from "./asset-shelf.js";
 import { assetRecord, evictAssetTexture, rememberAsset } from "./scene-asset-cache.js";
-import { subscribeToSceneDocuments } from "./workflow/scene-asset-sync.js";
+import { subscribeToSceneDocuments, subscribeToScenePlayback } from "./workflow/scene-asset-sync.js";
 import { cutOutBackground, decodeMask, maskAsset } from "./matte.js";
 import { createMatteEditor } from "./matte-editor.js";
 import {
@@ -3300,6 +3300,17 @@ globalThis.playMode = centerTab === "play";
 		setScenes(nextScenes);
 	};
 	useEffect(() => subscribeToSceneDocuments((document) => externalSceneApplyRef.current?.(document)), []);
+	useEffect(() => subscribeToScenePlayback((command) => {
+		if (command?.activeSceneId && command.activeSceneId !== activeSceneIdRef.current) return;
+		if (Number.isFinite(Number(command?.frame))) {
+			setTlFrame((frame) => Math.max(0, Math.min(Math.round(Number(command.frame)), Math.max(0, frameCountRef.current - 1))));
+		}
+		if (typeof command?.playing === "boolean") {
+			cameraPreviewEndRef.current = null;
+			manualCameraOverrideRef.current = false;
+			setTlPlaying(command.playing);
+		}
+	}), []);
 
 	// Commands are a sequential transport boundary, while React commits on a
 	// later turn. Keep its read model current synchronously so the next frame

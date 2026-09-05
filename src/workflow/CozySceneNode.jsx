@@ -1,10 +1,12 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import {
 	applyCozyScenePatch,
 	COZY_SCENE_OUTPUTS,
 	normalizeCozySceneData,
+	nextSceneFrame,
 	sceneInputSpecs,
 } from "./cozy-scene-node.js";
+import { publishScenePlayback } from "./scene-asset-sync.js";
 import "./cozy-scene-node.css";
 
 /**
@@ -44,10 +46,24 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 	const run = onRun || callbackFrom(rawData, "onRun");
 	const openScene = onOpenScene || callbackFrom(rawData, "onOpenScene");
 
-	const emit = (patch) => {
+	const emit = (patch, { syncPlayback = true } = {}) => {
 		const nextData = applyCozyScenePatch(data, patch);
 		change?.({ id, patch, data: nextData });
+		if (syncPlayback && (Object.prototype.hasOwnProperty.call(patch, "frame") || patch.controls?.playing !== undefined)) {
+			publishScenePlayback({ activeSceneId: nextData.sceneId, frame: nextData.frame, playing: nextData.controls.playing });
+		}
 	};
+	const maxFrame = Math.max(0, data.frameCount - 1);
+	useEffect(() => {
+		if (!data.controls.playing) return undefined;
+		const timer = window.setTimeout(() => {
+			const next = nextSceneFrame(data);
+			// The running Studio owns its own clock. Only send the terminal pause
+			// back across the tab boundary; per-frame storage writes would be noisy.
+			emit({ frame: next.frame, controls: { playing: next.playing } }, { syncPlayback: !next.playing });
+		}, 1000 / 24);
+		return () => window.clearTimeout(timer);
+	}, [data.controls.playing, data.frame, data.frameCount]);
 
 	const handleProps = (spec, type, position) => ({
 		 type,
@@ -77,11 +93,11 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 
 			<section className="cozy-scene-controls" aria-label="Scene controls">
 				<div className="cozy-scene-control-row">
-					<button type="button" className="cozy-scene-button" onClick={() => emit({ controls: { playing: !data.controls.playing } })} aria-label={data.controls.playing ? "Pause scene" : "Play scene"}>{data.controls.playing ? "Pause" : "Play"}</button>
+					<button type="button" className="cozy-scene-button" onClick={() => emit({ controls: { playing: !data.controls.playing } })} aria-label={data.controls.playing ? "Pause scene" : "Play scene"} aria-pressed={data.controls.playing}>{data.controls.playing ? "Pause" : "Play"}</button>
 					<button type="button" className="cozy-scene-button" onClick={() => openScene?.({ id, data })}>Open Studio</button>
 					<button type="button" className="cozy-scene-run" onClick={() => run?.({ id, data })} disabled={data.status === "running"}>{data.status === "running" ? "Rendering…" : "Run"}</button>
 				</div>
-				<label className="cozy-scene-frame-control">Frame <input type="range" min="0" max={Math.max(1, data.frameCount - 1)} value={Math.min(data.frame, Math.max(0, data.frameCount - 1))} onChange={(event) => emit({ frame: Number(event.currentTarget.value) })} /> <output>{data.frame}/{Math.max(0, data.frameCount - 1)}</output></label>
+				<label className="cozy-scene-frame-control">Frame <input aria-label="Scene frame" type="range" min="0" max={maxFrame} value={Math.min(data.frame, maxFrame)} onChange={(event) => emit({ frame: Number(event.currentTarget.value), controls: { playing: false } })} /> <output aria-live="polite">{Math.min(data.frame, maxFrame)}/{maxFrame}</output></label>
 				<div className="cozy-scene-camera-row" aria-label="Camera orbit controls">
 					<button type="button" onClick={() => emit({ controls: { camera: { yaw: data.controls.camera.yaw - 15 } } })} aria-label="Orbit camera left">◀</button>
 					<span>Camera {Math.round(data.controls.camera.yaw)}° / {Math.round(data.controls.camera.pitch)}°</span>

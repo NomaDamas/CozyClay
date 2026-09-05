@@ -26,6 +26,8 @@ import {
 } from "../scenes.js";
 
 export const SCENE_SYNC_EVENT = "cozyclay:scene-change";
+export const SCENE_PLAYBACK_STORAGE_KEY = "cozyclay.scene-playback.v1";
+export const SCENE_PLAYBACK_EVENT = "cozyclay:scene-playback";
 
 function objectHasAsset(object, assetId) {
 	if (!object || typeof object !== "object") return false;
@@ -157,6 +159,46 @@ export function subscribeToSceneDocuments(onDocument, {
 	target?.addEventListener?.("storage", onStorage);
 	return () => {
 		target?.removeEventListener?.(SCENE_SYNC_EVENT, onCustom);
+		target?.removeEventListener?.("storage", onStorage);
+	};
+}
+
+/** Send a transient workflow playback command to the matching Studio scene. */
+export function publishScenePlayback(command, {
+	storage = globalThis.localStorage,
+	target = globalThis,
+	} = {}) {
+	const payload = {
+		activeSceneId: typeof command?.activeSceneId === "string" ? command.activeSceneId : null,
+		frame: Number.isFinite(Number(command?.frame)) ? Math.max(0, Math.round(Number(command.frame))) : null,
+		playing: typeof command?.playing === "boolean" ? command.playing : false,
+		issuedAt: Date.now(),
+	};
+	try { storage?.setItem?.(SCENE_PLAYBACK_STORAGE_KEY, JSON.stringify(payload)); } catch { /* best effort cross-tab transport */ }
+	try { target?.dispatchEvent?.(new CustomEvent(SCENE_PLAYBACK_EVENT, { detail: payload })); } catch { /* storage remains available */ }
+	return payload;
+}
+
+/** Subscribe to transient playback commands from Workflow or another tab. */
+export function subscribeToScenePlayback(onCommand, {
+	storage = globalThis.localStorage,
+	target = globalThis,
+	} = {}) {
+	if (typeof onCommand !== "function") return () => {};
+	const read = (value) => {
+		try {
+			const command = typeof value === "string" ? JSON.parse(value) : value;
+			if (command && typeof command === "object") onCommand(command);
+		} catch { /* ignore malformed transient commands */ }
+	};
+	const onCustom = (event) => read(event?.detail);
+	const onStorage = (event) => {
+		if (event?.key === SCENE_PLAYBACK_STORAGE_KEY && event.newValue) read(event.newValue);
+	};
+	target?.addEventListener?.(SCENE_PLAYBACK_EVENT, onCustom);
+	target?.addEventListener?.("storage", onStorage);
+	return () => {
+		target?.removeEventListener?.(SCENE_PLAYBACK_EVENT, onCustom);
 		target?.removeEventListener?.("storage", onStorage);
 	};
 }

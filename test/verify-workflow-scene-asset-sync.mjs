@@ -1,11 +1,15 @@
 #!/usr/bin/env node
 import {
 	SCENE_SYNC_EVENT,
+	SCENE_PLAYBACK_EVENT,
+	SCENE_PLAYBACK_STORAGE_KEY,
 	appendAssetCutout,
 	applyMotionToCharacter,
 	importImageIntoActiveScene,
+	publishScenePlayback,
 	readStoredSceneDocument,
 	subscribeToSceneDocuments,
+	subscribeToScenePlayback,
 } from "../src/workflow/scene-asset-sync.js";
 import { createSceneDocument } from "../src/scenes.js";
 
@@ -71,6 +75,16 @@ expect("corrupt cross-tab scene bytes are ignored", seen.length === seenBeforeCo
 unsubscribe();
 expect("unsubscribe removes both event listeners", listeners.size === 0);
 expect("event name is stable", SCENE_SYNC_EVENT === "cozyclay:scene-change");
+
+let playback = [];
+const stopPlayback = subscribeToScenePlayback((command) => playback.push(command), { storage, target });
+const command = publishScenePlayback({ activeSceneId: document.activeSceneId, frame: 12, playing: true }, { storage, target });
+expect("playback command announces same-tab controls", playback.length === 1 && playback[0].frame === 12 && playback[0].playing === true);
+expect("playback command writes a transient storage value", storage.getItem(SCENE_PLAYBACK_STORAGE_KEY)?.includes('"frame":12'));
+listeners.get("storage")?.({ key: SCENE_PLAYBACK_STORAGE_KEY, newValue: storage.getItem(SCENE_PLAYBACK_STORAGE_KEY) });
+expect("playback storage events announce cross-tab controls", playback.length === 2 && playback[1].activeSceneId === document.activeSceneId);
+stopPlayback();
+expect("playback event name is stable", SCENE_PLAYBACK_EVENT === "cozyclay:scene-playback" && command.issuedAt > 0);
 
 if (failures) {
 	console.error(`\n${failures} failure(s)`);
