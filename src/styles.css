@@ -176,6 +176,69 @@ select {
 	gap: 6px;
 }
 
+.project-actions {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	margin-right: 4px;
+	padding-right: 10px;
+	border-right: 1px solid var(--line2);
+}
+
+.topbar-action {
+	min-height: 28px;
+	padding: 3px 10px;
+	border: 1px solid var(--line2);
+	border-radius: 5px;
+	background: var(--card2);
+	color: var(--fg);
+	font-size: 12px;
+	font-weight: 650;
+	cursor: pointer;
+}
+
+.topbar-action:hover:not(:disabled) {
+	border-color: var(--accent);
+	background: var(--hover);
+}
+
+.topbar-action:disabled {
+	opacity: .55;
+	cursor: not-allowed;
+}
+
+.project-save-action {
+	background: var(--accent);
+	border-color: var(--accent);
+	color: #20180d;
+}
+
+.project-save-action:hover:not(:disabled) {
+	background: #f2c56d;
+	border-color: #f2c56d;
+}
+
+.project-export-action.recording {
+	border-color: #e87878;
+	color: #ffb1b1;
+}
+
+.project-save-status {
+	min-width: 74px;
+	color: var(--muted2);
+	font-size: 11px;
+	white-space: nowrap;
+}
+
+.project-save-status.status-dirty,
+.project-save-status.status-error {
+	color: #f5b453;
+}
+
+.project-save-status.status-saving {
+	color: #79c0ff;
+}
+
 /* Project menu (game-engine file workflow) */
 .project-menu-wrap {
 	position: relative;
