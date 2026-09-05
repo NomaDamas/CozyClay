@@ -122,7 +122,7 @@ function registerNode(def) {
     }
     for (const o of def.outputs) this.addOutput(o.name, o.type);
     this.serialize_widgets = true;
-    this.color = { input: '#223', prompt: '#232', h3: '#322', output: '#233' }[def.category] || '#222';
+    this.color = { input: '#244a68', prompt: '#4b3c68', generate: '#345f4b', output: '#684536', advanced: '#30343d', h3: '#30343d' }[def.category] || '#222'; this.bgcolor = this.color; this.boxcolor = '#445';
   }
   N.title = def.name;
   N.desc = def.description;
@@ -247,7 +247,7 @@ async function run() {
           if (ui.text) { n.lastText = ui.text; n.boxcolor = '#3c3'; n.title = n.def.name + '  ·  double-click: generated prompt'; }
         }
         canvas.setDirty(true, true); break;
-      } else if (st.status === 'error') { status('error: ' + st.error); alert(st.error); break; }
+      } else if (st.status === 'error') { status('error: ' + st.error); graph._nodes.forEach(n => { if (String(n.id) === String(st.node)) n.boxcolor = '#d44'; }); const t=document.createElement('div'); t.textContent='오류: '+st.error; Object.assign(t.style,{position:'fixed',right:'16px',bottom:'16px',padding:'10px 14px',background:'#54232b',color:'#fff',border:'1px solid #d44',borderRadius:'6px',zIndex:20}); document.body.appendChild(t); setTimeout(()=>t.remove(),5000); canvas.setDirty(true,true); break; }
     }
   } catch (e) { status('error: ' + e); }
   finally { running = false; $('#run').disabled = false; }
@@ -255,39 +255,19 @@ async function run() {
 
 // ---------- default graph ----------
 function clearTextAreas() { document.querySelectorAll('textarea.nodeText, .nodeDom').forEach(t => t.remove()); }
-function defaultGraph() {
+async function defaultGraph() {
   clearTextAreas(); graph.clear();
-  const img = LiteGraph.createNode('input/Load Image'); img.pos = [60, 80]; graph.add(img);
-  const pr = LiteGraph.createNode('prompt/Scene to Mocap Prompt (AI)'); pr.pos = [60, 400]; pr.size = [460, 360]; graph.add(pr);
-  const cond = LiteGraph.createNode('h3/H3 Ref2VA Conditioning'); cond.pos = [520, 120]; cond.size = [300, 220]; graph.add(cond);
-  const samp = LiteGraph.createNode('h3/H3 Sample'); samp.pos = [880, 120]; samp.size = [300, 240]; graph.add(samp);
-  const dec = LiteGraph.createNode('h3/H3 Decode'); dec.pos = [1240, 120]; graph.add(dec);
-  const save = LiteGraph.createNode('output/Save Video'); save.pos = [1240, 260]; graph.add(save);
-  img.connect(0, cond, cond.findInputSlot('ref_image_1'));
-  pr.connect(0, cond, cond.findInputSlot('prompt'));
-  pr.connect(1, cond, cond.findInputSlot('seconds'));
-  cond.connect(0, samp, samp.findInputSlot('conditioning'));
-  cond.connect(1, samp, samp.findInputSlot('latent'));
-  samp.connect(0, dec, dec.findInputSlot('latent'));
-  dec.connect(0, save, save.findInputSlot('video'));
-  for (const [a, b, name] of [[pr, cond, 'prompt'], [pr, cond, 'seconds'], [img, cond, 'ref_image_1'], [cond, samp, 'conditioning'], [cond, samp, 'latent'], [samp, dec, 'latent'], [dec, save, 'video']]) {
-    const slot = b.findInputSlot(name); if (slot < 0 || b.inputs[slot].link == null) console.error('preset link failed', a.title, '->', b.title, name);
-  }
-  graph._nodes.forEach(n => n.onConnectionsChange && n.onConnectionsChange());
-  cond.widgetsByName.seconds.value = 15;
-  cond.widgetsByName.megapixels.value = 0.4;
-  cond.widgetsByName.aspect.value = '16:9';
-  pr.widgetsByName.seconds.value = 15;
-  pr.widgetsByName.scene.value = 'A person walks in and bows deeply toward the camera';
-  img.widgetsByName.image.value = PRESET_IMAGE; img.loadThumb();
-  save.widgetsByName.name.value = 'mocap';
+  try {
+    const preset = await (await fetch(base + '/preset')).json();
+    graph.configure(preset); graph._nodes.forEach(n => { n.loadThumb && n.loadThumb(); n.onConnectionsChange && n.onConnectionsChange(); });
+  } catch (e) { status('preset load failed: ' + e); }
   canvas.setDirty(true, true);
 }
 
 // ---------- boot ----------
 const graph = new LGraph();
 const canvas = new LGraphCanvas('#c', graph);
-canvas.allow_searchbox = true; canvas.show_info = false;
+canvas.allow_searchbox = true; canvas.show_info = false; canvas.render_canvas_border = false; canvas.snap_to_grid = true; canvas.grid_size = 20;
 function resize() { const c = $('#c'); c.width = innerWidth; c.height = innerHeight - 42; canvas.resize(); }
 addEventListener('resize', resize); resize();
 LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
@@ -296,13 +276,13 @@ LiteGraph.clearRegisteredTypes && LiteGraph.clearRegisteredTypes();
   const defs = await (await fetch(base + '/nodes')).json();
   defs.forEach(registerNode);
   const saved = localStorage.getItem('cozyclay-gen-graph');
-  if (saved) { try { clearTextAreas(); graph.configure(JSON.parse(saved)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); } catch (e) { defaultGraph(); } } else defaultGraph();
+  if (saved) { try { clearTextAreas(); graph.configure(JSON.parse(saved)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); } catch (e) { defaultGraph(); } } else await defaultGraph();
   const h = await (await fetch(base + '/health')).json();
   status(h.models_loaded ? `ready · ${defs.length} node types` : 'loading models…');
 })();
 
 $('#run').onclick = run;
-$('#default').onclick = () => { if (confirm('Replace the canvas with the mocap preset?')) defaultGraph(); };
+$('#default').onclick = () => { if (confirm('기본 프리셋으로 바꿀까요?')) defaultGraph(); };
 $('#save').onclick = () => { localStorage.setItem('cozyclay-gen-graph', JSON.stringify(graph.serialize())); status('saved (browser storage)'); };
 $('#load').onclick = () => { const s = localStorage.getItem('cozyclay-gen-graph'); if (s) { clearTextAreas(); graph.configure(JSON.parse(s)); graph._nodes.forEach(n => n.loadThumb && n.loadThumb()); status('loaded'); } };
 $('#export').onclick = () => { const a = document.createElement('a'); a.href = 'data:application/json,' + encodeURIComponent(JSON.stringify(graph.serialize(), null, 1)); a.download = 'cozyclay-graph.json'; a.click(); };
