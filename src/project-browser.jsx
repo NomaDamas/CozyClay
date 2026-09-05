@@ -104,13 +104,30 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 		<div className={`project-browser-backdrop${startup ? " startup" : ""}`} onPointerDown={(e) => { if (!startup && e.target === e.currentTarget) onClose(); }}>
 			<div className={`project-browser${startup ? " startup" : ""}`} role="dialog" aria-label={ko("Choose project", "프로젝트 선택")}>
 				<div className="project-browser-head">
-					<strong>{startup ? ko("Choose a project to begin", "시작할 프로젝트를 선택하세요") : ko("Projects", "프로젝트")}</strong>
+					<strong>{startup ? ko("Create your first shot", "첫 샷 만들기") : ko("Projects", "프로젝트")}</strong>
 					{!startup && <button type="button" className="x" onClick={onClose} aria-label={ko("Close", "닫기")}>✕</button>}
 				</div>
 				{startup && <p className="project-browser-intro">{ko(
-					"Your work is saved in the selected project. You can open a recent file, choose a project folder, or start a named local draft.",
-					"작업 내용은 선택한 프로젝트에 저장됩니다. 최근 파일을 열거나 프로젝트 폴더를 지정하거나, 이름을 정한 새 초안으로 시작하세요.",
+					"Start with a named project, then place a character and frame the shot. Your work is saved in that project.",
+					"프로젝트 이름을 정하고 인물을 배치한 다음 샷 구도를 잡아 보세요. 작업 내용은 이 프로젝트에 저장됩니다.",
 				)}</p>}
+				{startup && (
+					<section className="beginner-start" aria-label={ko("First shot steps", "첫 샷 단계")}>
+						<div className="beginner-start-actions">
+							<button type="button" className="btn primary beginner-create" onClick={onNew}>
+								{ko("Create a project", "프로젝트 만들기")}
+							</button>
+							<button type="button" className="btn ghost beginner-open" onClick={onOpenFile}>
+								{ko("Open a project", "프로젝트 열기")}
+							</button>
+						</div>
+						<div className="beginner-step-grid">
+							<div className="beginner-step"><b>1</b><strong>{ko("Place", "배치")}</strong><span>{ko("Choose a character and move it on the stage.", "인물을 고르고 무대에서 움직여요.")}</span></div>
+							<div className="beginner-step"><b>2</b><strong>{ko("Frame", "구도")}</strong><span>{ko("Set the camera view for your shot.", "샷의 카메라 구도를 정해요.")}</span></div>
+							<div className="beginner-step"><b>3</b><strong>{ko("Play", "재생")}</strong><span>{ko("Press play to see the scene come alive.", "재생을 눌러 장면을 확인해요.")}</span></div>
+						</div>
+					</section>
+				)}
 
 				<section>
 					<div className="project-browser-section-head">

@@ -530,6 +530,7 @@ export default function HierarchyPanel({
 	onSceneDuplicate,
 	onSceneRename,
 	onSceneDelete,
+	beginnerMode = false,
 }) {
 	const [expanded, setExpanded] = useState(() => new Set(["shot", "characters", "characterA"]));
 	const [contextMenu, setContextMenu] = useState(null);
@@ -550,8 +551,21 @@ export default function HierarchyPanel({
 	}, [activeSceneId, scenes]);
 	const hierarchyNodes = useMemo(() => {
 		const nodes = buildHierarchyNodes(sceneObjects, characters);
-		return nodes.map((node) => node.kind === "scene" ? { ...node, label: activeSceneName } : node);
-	}, [activeSceneName, sceneObjects, characters]);
+		const labelled = nodes.map((node) => node.kind === "scene" ? { ...node, label: activeSceneName } : node);
+		if (!beginnerMode) return labelled;
+		// Beginner mode keeps the cast as the only editable hierarchy surface.
+		// Rig and bone rows are expert controls; they return with Advanced.
+		return labelled.map((node) => {
+			if (node.id !== "shot") return node;
+			const charactersGroup = node.children?.find((child) => child.id === "characters");
+			return {
+				...node,
+				children: charactersGroup
+					? [{ ...charactersGroup, children: (charactersGroup.children ?? []).map(({ children, ...character }) => character) }]
+					: [],
+			};
+		});
+	}, [activeSceneName, sceneObjects, characters, beginnerMode]);
 	const parents = useMemo(() => indexParents(hierarchyNodes), [hierarchyNodes]);
 
 	useEffect(() => {
