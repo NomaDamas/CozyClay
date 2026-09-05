@@ -37,6 +37,7 @@ import {
 } from "./telemetry-state.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const SOURCE_CHECKOUT = existsSync(join(PKG_ROOT, ".git"));
 let packageMetadata = {};
 try {
 	packageMetadata = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
@@ -47,7 +48,7 @@ const DIST = join(PKG_ROOT, "dist");
 const BRIDGE = join(PKG_ROOT, "tools", "ardy", "bridge.mjs");
 const OFFICIAL_PACKAGE = (
 	packageMetadata.name === "cozyclay"
-	&& !existsSync(join(PKG_ROOT, ".git"))
+	&& !SOURCE_CHECKOUT
 	&& verifyPackageMarker(join(DIST, "cozyclay-package.json"), PKG_ROOT, packageMetadata)
 );
 // A bridge is optional. Keep the endpoint unset until this launcher owns a
@@ -262,7 +263,7 @@ if (argv[0] === "mcp") {
 	const state = readTelemetryState(STATE_FILE);
 	const effective = OFFICIAL_PACKAGE && effectiveTelemetryEnabled(state);
 	const reason = !OFFICIAL_PACKAGE
-		? " (source checkout)"
+		? ` (${SOURCE_CHECKOUT ? "source checkout" : "unofficial package: digest mismatch"})`
 		: state.telemetryEnabled && !effective
 			? " (environment override)"
 			: "";

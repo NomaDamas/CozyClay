@@ -28,6 +28,8 @@ const CONTENT_ROOTS = [
 function ignored(relativePath) {
 	return relativePath === "dist/cozyclay-package.json"
 		|| (/^dist\/media\/[^/]+\.mp4$/i.test(relativePath))
+		|| relativePath === "dist/demo/index.html"
+		|| relativePath === "dist/d/index.html"
 		|| relativePath.startsWith("tools/ardy/out/")
 		|| /^tools\/qa-[^/]+\.mjs$/i.test(relativePath);
 }
