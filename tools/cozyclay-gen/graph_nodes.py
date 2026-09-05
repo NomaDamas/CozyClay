@@ -138,7 +138,7 @@ def _res(aspect, megapixels):
       ],
       outputs=[("conditioning", "COND"), ("latent", "LATENT")],
       description="Reference mode (05): pictures are <Picture N> references, appearance can be rewritten by the prompt.")
-def h3_ref2va(ctx, prompt, seconds, 0.4, aspect, ref_image_size, ref_image_1=None, ref_image_2=None, ref_image_3=None):
+def h3_ref2va(ctx, prompt, seconds, megapixels, aspect, ref_image_size, ref_image_1=None, ref_image_2=None, ref_image_3=None):
     g = _g()
     w, h = _res(aspect, megapixels)
     length = g.frames_for_seconds(float(seconds))
