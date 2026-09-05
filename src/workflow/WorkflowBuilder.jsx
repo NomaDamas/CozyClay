@@ -10,15 +10,17 @@ import ReactFlow, {
 	useEdgesState,
 	useNodesState,
 } from "reactflow";
-import { FiBox, FiCode, FiFilm, FiImage, FiLink, FiMusic, FiPlay, FiPlus, FiUpload, FiVideo, FiType } from "react-icons/fi";
+import { FiActivity, FiBox, FiCode, FiFilm, FiImage, FiLink, FiMusic, FiPlay, FiPlus, FiUpload, FiVideo, FiType } from "react-icons/fi";
 import { Toaster, toast } from "react-hot-toast";
 import { loadWorkflowGraph, normalizeWorkflowGraph, storeWorkflowGraph, WORKFLOW_STORAGE_KEY } from "../project.js";
 import CozySceneNode from "./CozySceneNode.jsx";
-import { normalizeCozySceneData, toCozySceneRunRequest } from "./cozy-scene-node.js";
-import { applyVibeRunUpdates, summarizeVibeRunStatus, toVibeNodeRunRequest, toVibeWorkflowPayload, workflowCost } from "./vibe-payload.js";
+import { normalizeCozySceneData, sceneConnectionAllowed, toCozySceneRunRequest } from "./cozy-scene-node.js";
+import { activeSceneCharacters, characterHandleId, characterIdFromHandle, normalizeMotionInputData, motionInputOutput } from "./motion-input.js";
 import { DEFAULT_NODE_SCHEMAS, defaultFormValues, schemaCategoryForType, schemaModelEntries, schemaProperties } from "./node-schema.js";
+import { executeLocalWorkflowGraph } from "./local-workflow.js";
+import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 
-const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", scene: "#ef759d" };
+const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
 
 function makeNode(type, id, position, model = null, nodeSchemas = DEFAULT_NODE_SCHEMAS) {
 	const data = { label: type === "scene" ? "CozyClay Scene" : type[0].toUpperCase() + type.slice(1) };
@@ -30,6 +32,7 @@ function makeNode(type, id, position, model = null, nodeSchemas = DEFAULT_NODE_S
 	if (type === "api") { data.model = "api-model"; data.params = "{}"; }
 	if (type === "video-combiner") { data.model = "video-combiner"; data.videos_list = []; data.aspect_ratio = "auto"; }
 	if (type === "concat") data.model = "prompt-concatenator";
+	if (type === "motion-input") Object.assign(data, normalizeMotionInputData({ label: "Motion Input" }));
 	if (model?.id) {
 		data.model = model.id;
 		data.selectedModel = { id: model.id, name: model.name };
@@ -63,13 +66,6 @@ function serializableGraph(nodes, edges) {
 		nodes: nodes.map(({ id, type, position, data }) => ({ id, type, position, data: stripFunctions(data) })),
 		edges: edges.map(({ id, source, target, sourceHandle, targetHandle, data }) => ({ id, source, target, sourceHandle, targetHandle, data: stripFunctions(data) })),
 	});
-}
-
-async function jsonRequest(path, options = {}) {
-	const response = await fetch(path, { ...options, headers: { "content-type": "application/json", ...(options.headers || {}) } });
-	const payload = await response.json().catch(() => ({}));
-	if (!response.ok) throw Object.assign(new Error(payload.error || `Workflow API ${response.status}`), { status: response.status, payload });
-	return payload;
 }
 
 function NodeShell({ id, type, title, icon: Icon, children, source = true, target = true }) {
@@ -138,19 +134,38 @@ function ApiNode({ id, data }) {
 	return <NodeShell id={id} type="api" title="API Node" icon={FiCode}><label>Model</label><ModelSelect id={id} data={data} category="api" fallback={[data.model || "api-model"]} /><label>Parameters (JSON)</label><textarea className="workflow-textarea" value={data.params || "{}"} onChange={(event) => data.onChange?.(id, { params: event.target.value })} /><SchemaFields id={id} data={data} category="api" exclude={["params"]} /><div className="workflow-node-foot"><span>API model <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
+function MotionInputNode({ id, data }) {
+	const options = Array.isArray(data.characterOptions) ? data.characterOptions : [];
+	const normalized = normalizeMotionInputData(data);
+	const update = (patch) => data.onChange?.(id, patch);
+	const handleId = characterHandleId(normalized.characterId);
+	return <NodeShell id={id} type="motion-input" title="Motion Input" icon={FiActivity} target={false}>
+		<label>Character handle</label>
+		<select aria-label="Motion character" value={normalized.characterId} onChange={(event) => update({ characterId: event.target.value })}>
+			<option value="">Choose character…</option>
+			{options.map((character) => <option key={character.id} value={character.id}>{character.name || character.subject || character.id}</option>)}
+		</select>
+		<input aria-label="Character id" value={normalized.characterId} onChange={(event) => update({ characterId: event.target.value.trim() })} placeholder="character id (e.g. char-a)" />
+		<label>Same-origin motion URL</label>
+		<input aria-label="Motion URL" value={normalized.objectUrl ? "" : normalized.url} onChange={(event) => update({ url: event.target.value, objectUrl: null, status: event.target.value ? "ready" : "idle" })} placeholder="/ardy/motions/take.npz" />
+		<label className="workflow-upload workflow-motion-upload"><FiUpload size={18} /><span>{normalized.fileName || "Choose local .npz motion"}</span><input type="file" accept=".npz,application/octet-stream,.json" onChange={(event) => { const file = event.target.files?.[0]; if (!file) return; const objectUrl = URL.createObjectURL(file); update({ objectUrl, url: objectUrl, fileName: file.name, mimeType: file.type || "application/octet-stream", status: "ready" }); }} /></label>
+		<div className="workflow-node-foot"><span>{normalized.status === "ready" ? `${handleId} ready` : "Connect to a character handle"}</span><span>{motionInputOutput(normalized).frames ? `${motionInputOutput(normalized).frames}f` : ""}</span></div>
+	</NodeShell>;
+}
+
 function VideoCombinerNode({ id, data }) {
 	return <NodeShell id={id} type="video-combiner" title="Video Combiner" icon={FiFilm}><label>Model</label><ModelSelect id={id} data={data} category="utility" allowedModels={["video-combiner"]} fallback={["video-combiner"]} /><label>Video URLs (one per line)</label><textarea className="workflow-textarea" value={(data.videos_list || []).join("\n")} onChange={(event) => data.onChange?.(id, { videos_list: event.target.value.split(/\n+/).map((value) => value.trim()).filter(Boolean) })} placeholder="https://…" /><label>Aspect ratio</label><select value={data.aspect_ratio || "auto"} onChange={(event) => data.onChange?.(id, { aspect_ratio: event.target.value })}><option>auto</option><option>16:9</option><option>9:16</option><option>1:1</option></select><SchemaFields id={id} data={data} category="utility" exclude={["videos_list", "aspect_ratio"]} /><div className="workflow-node-foot"><span>Combined video <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
 function UploadNode({ id, data }) {
-	return <NodeShell id={id} type="upload" title="Upload" icon={FiUpload}><label className="workflow-upload"><FiUpload size={18} /><span>{data.uploading ? "Uploading…" : "Choose image, video, or audio"}</span><input type="file" accept="image/*,video/*,audio/*" disabled={data.uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) data.onUpload?.(id, file); }} /></label><p className="workflow-hint">{data.fileName || "Upload to MuAPI or keep a local preview."}</p></NodeShell>;
+	return <NodeShell id={id} type="upload" title="Upload" icon={FiUpload}><label className="workflow-upload"><FiUpload size={18} /><span>{data.uploading ? "Reading…" : "Choose image, video, or audio"}</span><input type="file" accept="image/*,video/*,audio/*" disabled={data.uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) data.onUpload?.(id, file); }} /></label><p className="workflow-hint">{data.fileName || "Files stay local to this browser session."}</p></NodeShell>;
 }
 
 function ConcatNode({ id, data }) {
 	return <NodeShell id={id} type="concat" title="Prompt Concat" icon={FiLink}><label>Template</label><input value={data.template || "{prompt} {style}"} onChange={(event) => data.onChange?.(id, { template: event.target.value })} /><div className="workflow-node-foot"><span>Text merge</span></div><Handle type="target" position={Position.Left} id="input-a" className="workflow-handle target" /></NodeShell>;
 }
 
-const NODE_TYPES = { text: TextNode, image: ImageNode, video: VideoNode, audio: AudioNode, api: ApiNode, "video-combiner": VideoCombinerNode, upload: UploadNode, concat: ConcatNode };
+const NODE_TYPES = { text: TextNode, image: ImageNode, video: VideoNode, audio: AudioNode, api: ApiNode, "video-combiner": VideoCombinerNode, upload: UploadNode, concat: ConcatNode, "motion-input": MotionInputNode };
 
 function SceneNodeType({ data, ...props }) {
 	return <CozySceneNode {...props} data={data} HandleComponent={Handle} onDataChange={data.onSceneChange} onRun={data.onSceneRun} onOpenScene={() => window.open("/app/", "_blank", "noopener,noreferrer")} />;
@@ -165,20 +180,11 @@ export default function WorkflowBuilder() {
 	const [locked, setLocked] = useState(false);
 	const [runState, setRunState] = useState("local");
 	const [lastSaved, setLastSaved] = useState(false);
-	const [workflowId, setWorkflowId] = useState(null);
-	const [runId, setRunId] = useState(null);
 	const [nodeSchemas, setNodeSchemas] = useState(() => globalThis.__COZYCLAY_NODE_SCHEMAS__ || DEFAULT_NODE_SCHEMAS);
 	const [modelSearch, setModelSearch] = useState("");
+	const [sceneCharacters, setSceneCharacters] = useState(() => activeSceneCharacters());
+	const [sceneContext, setSceneContext] = useState(() => { const doc = readStoredSceneDocument(); const scene = doc?.scenes?.find((entry) => entry?.id === doc?.activeSceneId) ?? doc?.scenes?.[0]; return { id: scene?.id || null, name: scene?.name || "CozyClay Scene" }; });
 	const graph = useMemo(() => serializableGraph(nodes, edges), [nodes, edges]);
-	const costSignature = useMemo(() => JSON.stringify(nodes.map((node) => ({
-		id: node.id,
-		model: node.data?.selectedModel?.id || node.data?.model || null,
-		formValues: node.data?.formValues || {},
-		prompt: node.data?.prompt,
-		image_url: node.data?.image_url,
-		video_url: node.data?.video_url,
-		audio_url: node.data?.audio_url,
-	}))), [nodes]);
 	const graphRef = useRef(graph);
 	useEffect(() => { graphRef.current = graph; }, [graph]);
 
@@ -212,6 +218,18 @@ export default function WorkflowBuilder() {
 		const injected = globalThis.__COZYCLAY_NODE_SCHEMAS__;
 		if (injected?.categories) setNodeSchemas(injected);
 	}, []);
+	useEffect(() => {
+		const refreshCharacters = () => {
+			const nextCharacters = activeSceneCharacters();
+			const doc = readStoredSceneDocument();
+			const scene = doc?.scenes?.find((entry) => entry?.id === doc?.activeSceneId) ?? doc?.scenes?.[0];
+			setSceneCharacters(nextCharacters);
+			setSceneContext({ id: scene?.id || null, name: scene?.name || "CozyClay Scene" });
+		};
+		window.addEventListener("storage", refreshCharacters);
+		window.addEventListener("cozyclay:scene-change", refreshCharacters);
+		return () => { window.removeEventListener("storage", refreshCharacters); window.removeEventListener("cozyclay:scene-change", refreshCharacters); };
+	}, []);
 	useEffect(() => { storeWorkflowGraph(graph); }, [graph]);
 	useEffect(() => {
 		const onStorage = (event) => {
@@ -228,16 +246,18 @@ export default function WorkflowBuilder() {
 	useEffect(() => {
 		const connected = (handle) => edges.filter((edge) => edge.targetHandle === handle).map((edge) => edge.source).filter((source, index, values) => values.indexOf(source) === index);
 		const assetInputs = connected("asset");
-		const motionInputs = connected("motion");
+		const motionInputs = edges.filter((edge) => edge.targetHandle === "motion" || characterIdFromHandle(edge.targetHandle)).map((edge) => edge.source).filter((source, index, values) => values.indexOf(source) === index);
+		const characterInputs = edges.filter((edge) => characterIdFromHandle(edge.targetHandle)).map((edge) => ({ source: edge.source, characterId: characterIdFromHandle(edge.targetHandle), handle: edge.targetHandle })).filter((entry) => entry.characterId);
 		setNodes((current) => {
 			let changed = false;
 			const next = current.map((node) => {
 				if (node.type !== "scene") return node;
 				const oldAssets = Array.isArray(node.data?.assetInputs) ? node.data.assetInputs : [];
 				const oldMotion = Array.isArray(node.data?.motionInputs) ? node.data.motionInputs : [];
-				if (JSON.stringify(oldAssets) === JSON.stringify(assetInputs) && JSON.stringify(oldMotion) === JSON.stringify(motionInputs)) return node;
+				const oldCharacters = Array.isArray(node.data?.characterInputs) ? node.data.characterInputs : [];
+				if (JSON.stringify(oldAssets) === JSON.stringify(assetInputs) && JSON.stringify(oldMotion) === JSON.stringify(motionInputs) && JSON.stringify(oldCharacters) === JSON.stringify(characterInputs)) return node;
 				changed = true;
-				return { ...node, data: { ...node.data, assetInputs, motionInputs } };
+				return { ...node, data: { ...node.data, assetInputs, motionInputs, characterInputs } };
 			});
 			return changed ? next : current;
 		});
@@ -245,146 +265,48 @@ export default function WorkflowBuilder() {
 
 	const uploadFile = useCallback(async (id, file) => {
 		updateNode(id, { uploading: true, fileName: file.name });
+		const localUrl = URL.createObjectURL(file);
+		const kind = file.type.startsWith("video/") ? "video_url" : file.type.startsWith("audio/") ? "audio_url" : "image_url";
 		try {
-			const query = `?filename=${encodeURIComponent(file.name)}`;
-			const signed = await jsonRequest(`/workflow-api/app/get_file_upload_url${query}`);
-			if (!signed.url || !signed.fields?.key) throw new Error("MuAPI upload URL is incomplete");
-			const form = new FormData();
-			Object.entries(signed.fields).forEach(([key, value]) => form.append(key, value));
-			form.append("file", file);
-			const uploaded = await fetch(signed.url, { method: "POST", body: form });
-			if (!uploaded.ok) throw new Error(`Upload failed (${uploaded.status})`);
-			const hostedUrl = `https://cdn.muapi.ai/${signed.fields.key}`;
-			const kind = file.type.startsWith("video/") ? "video_url" : file.type.startsWith("audio/") ? "audio_url" : "image_url";
-			updateNode(id, { uploading: false, fileName: file.name, mimeType: file.type, fileUrl: hostedUrl, [kind]: hostedUrl });
-			toast.success("File uploaded to MuAPI");
+			if (kind === "image_url") {
+				const imported = await importImageIntoActiveScene(file);
+				updateNode(id, { uploading: false, fileName: file.name, mimeType: file.type, fileUrl: localUrl, localPreview: true, [kind]: localUrl, assetId: imported.asset.id, outputs: [{ value: localUrl }] });
+				toast.success(imported.changed ? "Image added to the active Scene" : "Image already exists in the active Scene");
+				return;
+			}
 		} catch (error) {
-			const localUrl = URL.createObjectURL(file);
-			updateNode(id, { uploading: false, fileName: file.name, mimeType: file.type, fileUrl: localUrl, localPreview: true });
-			toast(`Bridge upload unavailable; local preview kept (${error.message})`);
+			toast(`Scene import unavailable; local preview kept (${error.message})`);
 		}
+		updateNode(id, { uploading: false, fileName: file.name, mimeType: file.type, fileUrl: localUrl, localPreview: true, [kind]: localUrl, outputs: [{ value: localUrl }] });
+		toast.success("File kept in this browser session");
 	}, [updateNode]);
-	const loadNodeSchemas = useCallback(async (workflowId) => {
-		if (!workflowId) return;
-		try {
-			const payload = await jsonRequest(`/workflow-api/workflow/${encodeURIComponent(workflowId)}/node-schemas`);
-			if (payload?.categories) setNodeSchemas(payload);
-		} catch {
-			// Offline/local mode keeps the bundled Vibe-compatible schema catalog.
-		}
-	}, []);
-	useEffect(() => {
-		let disposed = false;
-		const timer = setTimeout(async () => {
-			const candidates = nodes.filter((node) => {
-				const model = node.data?.selectedModel?.id || node.data?.model;
-				return model && !String(model).includes("passthrough");
-			});
-			if (!candidates.length) return;
-			const costs = await Promise.all(candidates.map(async (node) => {
-				const model = node.data?.selectedModel?.id || node.data?.model;
-				try {
-					const payload = { ...(node.data?.formValues || {}) };
-					for (const key of ["prompt", "image_url", "video_url", "audio_url"]) if (node.data?.[key] !== undefined && payload[key] === undefined) payload[key] = node.data[key];
-					const response = await jsonRequest("/workflow-api/app/calculate_dynamic_cost", { method: "POST", body: JSON.stringify({ task_name: model, payload }) });
-					const cost = Number(response.cost);
-					return { id: node.id, cost: Number.isFinite(cost) ? cost : null };
-				} catch {
-					return { id: node.id, cost: null };
-				}
-			}));
-			if (disposed) return;
-			setNodes((current) => current.map((node) => {
-				const next = costs.find((entry) => entry.id === node.id);
-				return next && node.data?.cost !== next.cost ? { ...node, data: { ...node.data, cost: next.cost } } : node;
-			}));
-		}, 600);
-		return () => { disposed = true; clearTimeout(timer); };
-	}, [costSignature, setNodes]);
-
-	const saveToBridge = useCallback(async () => {
+	const saveWorkflow = useCallback(() => {
 		storeWorkflowGraph(graph);
 		setLastSaved(true);
-		try {
-			const saved = await jsonRequest("/workflow-api/workflow/create", { method: "POST", body: JSON.stringify(toVibeWorkflowPayload(graph)) });
-			setWorkflowId(saved.workflow_id || saved.id || null);
-			await loadNodeSchemas(saved.workflow_id || saved.id);
-			toast.success("Workflow saved locally and to bridge");
-		}
-		catch (error) { toast(error.status === 503 ? "Workflow saved locally; bridge is disabled" : "Workflow saved locally; bridge save failed"); }
-	}, [graph, loadNodeSchemas]);
+		toast.success("Workflow saved locally");
+	}, [graph]);
 
 	const runWorkflow = useCallback(async (nodeId = null) => {
-		if (nodeId) {
-			if (!runId) {
-				toast.error("Run the workflow once before running an individual node");
-				return;
-			}
-			const remotePayload = toVibeWorkflowPayload(graph);
-			const remoteNode = remotePayload.data.nodes.find((node) => node.id === nodeId);
-			if (!remoteNode) {
-				toast.error("This node runs locally");
-				return;
-			}
-			setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, isLoading: true, errorMsg: null } } : node));
-			setRunState("running");
-			try {
-				let targetWorkflowId = workflowId;
-				if (!targetWorkflowId) {
-					const saved = await jsonRequest("/workflow-api/workflow/create", { method: "POST", body: JSON.stringify(remotePayload) });
-					targetWorkflowId = saved.workflow_id || saved.id;
-					setWorkflowId(targetWorkflowId || null);
-				}
-				if (!targetWorkflowId) throw new Error("Workflow has no id");
-				const nodeRunRequest = toVibeNodeRunRequest(graph, nodeId, runId);
-				if (!nodeRunRequest) throw new Error("Node run payload is incomplete");
-				const result = await jsonRequest(`/workflow-api/workflow/${encodeURIComponent(targetWorkflowId)}/node/${encodeURIComponent(nodeId)}/run`, {
-					method: "POST",
-					body: JSON.stringify(nodeRunRequest),
-				});
-				const nodeRunId = result.run_id || runId;
-				for (let attempt = 0; attempt < 30; attempt += 1) {
-					const status = await jsonRequest(`/workflow-api/workflow/run/${encodeURIComponent(nodeRunId)}/status`);
-					const summary = summarizeVibeRunStatus(status);
-					setNodes((current) => applyVibeRunUpdates({ version: 1, nodes: current, edges }, status).nodes);
-					if (summary.terminal) { setRunState(summary.status); toast[summary.ok ? "success" : "error"](summary.ok ? "Node finished" : "Node failed"); return; }
-					await new Promise((resolve) => setTimeout(resolve, 1000));
-				}
-				setRunState("submitted"); toast("Node is still processing");
-			} catch (error) {
-				setNodes((current) => current.map((node) => node.id === nodeId ? { ...node, data: { ...node.data, isLoading: false, errorMsg: error.message } } : node));
-				setRunState("disabled");
-				toast.error(error.status === 503 ? "Workflow bridge is disabled" : error.message);
-			}
-			return;
-		}
-		if (!toVibeWorkflowPayload(graph).data.nodes.length) {
+		if (!graph.nodes.length) {
 			setRunState("complete");
 			toast.success("Local CozyClay scene is ready");
 			return;
 		}
 		setRunState("running");
-		try {
-			const saved = await jsonRequest("/workflow-api/workflow/create", { method: "POST", body: JSON.stringify(toVibeWorkflowPayload(graph)) });
-			const workflowId = saved.workflow_id || saved.id || "cozyclay-local";
-			setWorkflowId(workflowId);
-			await loadNodeSchemas(saved.workflow_id || saved.id);
-			const result = await jsonRequest("/workflow-api/workflow/run", { method: "POST", body: JSON.stringify({ workflow_id: workflowId, cost: workflowCost(graph) }) });
-			if (result.run_id) setRunId(result.run_id);
-			if (result.run_id) {
-				for (let attempt = 0; attempt < 30; attempt += 1) {
-					const status = await jsonRequest(`/workflow-api/workflow/run/${encodeURIComponent(result.run_id)}/status`);
-					const summary = summarizeVibeRunStatus(status);
-					setNodes((current) => applyVibeRunUpdates({ version: 1, nodes: current, edges }, status).nodes);
-					if (summary.terminal) { setRunState(summary.status); toast[summary.ok ? "success" : "error"](summary.ok ? "Workflow finished" : "Workflow failed"); return; }
-					await new Promise((resolve) => setTimeout(resolve, 1000));
-				}
-				setRunState("submitted"); toast("Workflow is still processing");
-				return;
+		const result = executeLocalWorkflowGraph(graph, { runId: `local-${Date.now()}` });
+		setNodes(result.nodes);
+		const resultById = new Map(result.nodes.map((node) => [node.id, node]));
+		for (const scene of result.nodes.filter((node) => node.type === "scene")) {
+			for (const assignment of Array.isArray(scene.data?.characterInputs) ? scene.data.characterInputs : []) {
+				const source = resultById.get(assignment.source);
+				if (source?.type !== "motion-input" || !assignment.characterId) continue;
+				const motion = motionInputOutput(source.data);
+				if (motion.url) applyMotionToActiveScene(assignment.characterId, motion);
 			}
-			setRunState("submitted"); toast("Workflow submitted; waiting for a run id");
-		} catch (error) { setRunState("disabled"); toast.error(error.status === 503 ? "Workflow bridge is disabled — saved locally" : error.message); }
-	}, [edges, graph, loadNodeSchemas, runId, setNodes, workflowId]);
+		}
+		setRunState("complete");
+		toast.success(nodeId ? "Node evaluated locally" : "Workflow evaluated locally");
+	}, [graph, setNodes]);
 
 	const runScene = useCallback(async ({ id, data }) => {
 		const payload = toCozySceneRunRequest({ id, data }, { workflow: graphRef.current });
@@ -398,22 +320,32 @@ export default function WorkflowBuilder() {
 			...node.data,
 			id: node.id,
 			nodeSchemas,
+			characterOptions: sceneCharacters,
+			...(node.type === "scene" ? { characters: sceneCharacters, sceneId: sceneContext.id, sceneName: sceneContext.name } : {}),
 			onChange: updateNode,
 			onModelChange: changeModel,
 			...(node.type === "scene" ? { onSceneChange: updateScene, onSceneRun: runScene } : { onRun: runWorkflow }),
 			...(node.type === "upload" ? { onUpload: uploadFile } : {}),
 		},
-	})), [changeModel, nodeSchemas, nodes, runScene, runWorkflow, updateNode, updateScene, uploadFile]);
+	})), [changeModel, nodeSchemas, nodes, runScene, runWorkflow, sceneCharacters, sceneContext, updateNode, updateScene, uploadFile]);
 
 	const exportGraph = useCallback(() => { const blob = new Blob([JSON.stringify(graph, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "cozyclay-workflow.json"; anchor.click(); URL.revokeObjectURL(url); toast.success("Workflow exported"); }, [graph]);
-	const onConnect = useCallback((params) => setEdges((current) => addEdge({ ...params, animated: true, style: { stroke: "#8994ff", strokeWidth: 2 } }, current)), [setEdges]);
-	const runLabel = { local: "Local workflow", running: "Running", submitted: "Submitted", complete: "Complete", error: "Failed", disabled: "Bridge disabled" }[runState] || "Local workflow";
+	const onConnect = useCallback((params) => {
+		const target = nodes.find((node) => node.id === params.target);
+		const source = nodes.find((node) => node.id === params.source);
+		if (target?.type === "scene" && !sceneConnectionAllowed(source, params.targetHandle, source?.data)) {
+			toast.error((params.targetHandle || "").startsWith("character:") || params.targetHandle === "motion" ? "Character inputs accept Motion Input only" : "Scene asset input accepts images only");
+			return;
+		}
+		setEdges((current) => addEdge({ ...params, animated: true, style: { stroke: "#8994ff", strokeWidth: 2 } }, current));
+	}, [nodes, setEdges]);
+	const runLabel = { local: "Local workflow", running: "Running", complete: "Complete" }[runState] || "Local workflow";
 	const modelOptions = useMemo(() => ["text", "image", "video", "audio", "api"].flatMap((type) => schemaModelEntries(nodeSchemas, type).map((model) => ({ ...model, type }))).filter((model) => !modelSearch.trim() || `${model.name} ${model.id}`.toLowerCase().includes(modelSearch.trim().toLowerCase())).slice(0, 8), [modelSearch, nodeSchemas]);
 	const modelIcons = { text: FiType, image: FiImage, video: FiVideo, audio: FiMusic, api: FiCode };
 
 	return <div className="workflow-app">
 		<Toaster position="bottom-right" toastOptions={{ style: { background: "#252833", color: "#f4f5fb" } }} />
-		<header className="workflow-topbar"><div className="workflow-brand"><span className="workflow-brand-mark">C</span><span>CozyClay</span><span className="workflow-divider">/</span><strong>Workflow</strong></div><div className="workflow-top-actions"><span className={`workflow-status ${runState}`}><i /> {runLabel}</span><button type="button" onClick={saveToBridge}>{lastSaved ? "Saved" : "Save"}</button><button type="button" onClick={() => runWorkflow()}><FiPlay size={12} /> Run</button><button type="button" onClick={exportGraph}>Export</button></div></header>
-		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><input className="workflow-node-search" aria-label="Search nodes or models" placeholder="Search nodes or models" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />{modelSearch && <div className="workflow-model-results">{modelOptions.length ? modelOptions.map((model) => { const Icon = modelIcons[model.type] || FiBox; return <button type="button" key={`${model.type}-${model.id}`} className="workflow-add-node" onClick={() => { addNode(model.type, model); setModelSearch(""); }}><span style={{ color: NODE_COLORS[model.type] }}><Icon size={15} /></span><span>{model.name}</span><FiPlus size={13} /></button>; }) : <span className="workflow-hint">No models found</span>}</div>}<div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["audio", "Audio", FiMusic], ["api", "API Node", FiCode], ["video-combiner", "Video Combiner", FiFilm], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas"><ReactFlow nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><MiniMap nodeColor={(node) => NODE_COLORS[node.type] || "#777"} maskColor="rgba(12,14,20,.72)" /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section></div>
+		<header className="workflow-topbar"><div className="workflow-brand"><span className="workflow-brand-mark">C</span><span>CozyClay</span><span className="workflow-divider">/</span><strong>Workflow</strong></div><div className="workflow-top-actions"><span className={`workflow-status ${runState}`}><i /> {runLabel}</span><button type="button" onClick={saveWorkflow}>{lastSaved ? "Saved" : "Save"}</button><button type="button" onClick={() => runWorkflow()}><FiPlay size={12} /> Run</button><button type="button" onClick={exportGraph}>Export</button></div></header>
+		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><input className="workflow-node-search" aria-label="Search nodes or models" placeholder="Search nodes or models" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />{modelSearch && <div className="workflow-model-results">{modelOptions.length ? modelOptions.map((model) => { const Icon = modelIcons[model.type] || FiBox; return <button type="button" key={`${model.type}-${model.id}`} className="workflow-add-node" onClick={() => { addNode(model.type, model); setModelSearch(""); }}><span style={{ color: NODE_COLORS[model.type] }}><Icon size={15} /></span><span>{model.name}</span><FiPlus size={13} /></button>; }) : <span className="workflow-hint">No models found</span>}</div>}<div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["audio", "Audio", FiMusic], ["api", "API Node", FiCode], ["video-combiner", "Video Combiner", FiFilm], ["motion-input", "Motion Input", FiActivity], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas"><ReactFlow nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><MiniMap nodeColor={(node) => NODE_COLORS[node.type] || "#777"} maskColor="rgba(12,14,20,.72)" /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section></div>
 	</div>;
 }

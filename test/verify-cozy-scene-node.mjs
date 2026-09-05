@@ -7,6 +7,11 @@ import {
 	applyCozyScenePatch,
 	applyCozySceneRunResult,
 	normalizeCozySceneData,
+	sceneCharacterHandle,
+	sceneCharacterIdFromHandle,
+	sceneInputSpecs,
+	sceneInputsFromEdges,
+	sceneConnectionAllowed,
 	toCozySceneRunRequest,
 } from "../src/workflow/cozy-scene-node.js";
 
@@ -17,6 +22,19 @@ assert.equal(defaults.frame, 0);
 assert.equal(defaults.controls.camera.yaw, 35);
 assert.deepEqual(COZY_SCENE_INPUTS.map(({ id }) => id), ["asset", "motion"]);
 assert.deepEqual(COZY_SCENE_OUTPUTS.map(({ id }) => id), ["render", "scene"]);
+assert.equal(sceneCharacterHandle("char-a"), "character:char-a");
+assert.equal(sceneCharacterIdFromHandle("character:char-a"), "char-a");
+assert.equal(sceneCharacterIdFromHandle("motion"), null);
+assert.deepEqual(sceneInputSpecs([{ id: "char-a", subject: "Hero" }]).map(({ id }) => id), ["asset", "character:char-a"]);
+assert.deepEqual(sceneInputsFromEdges([
+	{ source: "image-1", target: "scene-1", targetHandle: "asset" },
+	{ source: "motion-1", target: "scene-1", targetHandle: "character:char-a" },
+	{ source: "motion-1", target: "scene-1", targetHandle: "character:char-a" },
+	{ source: "other", target: "scene-2", targetHandle: "character:char-b" },
+], "scene-1"), {
+	assetInputs: ["image-1"],
+	motionInputs: [{ source: "motion-1", handle: "character:char-a", characterId: "char-a" }],
+});
 
 const changed = applyCozyScenePatch(defaults, { frame: 14, controls: { playing: true, camera: { pitch: -8 } }, assetInputs: ["asset-1"] });
 assert.equal(changed.frame, 14);

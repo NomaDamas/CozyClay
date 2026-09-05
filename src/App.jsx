@@ -180,6 +180,7 @@ import {
 } from "./scene-assets.js";
 import { derivedAssetIds, sourceAssetIds } from "./asset-shelf.js";
 import { assetRecord, evictAssetTexture, rememberAsset } from "./scene-asset-cache.js";
+import { subscribeToSceneDocuments } from "./workflow/scene-asset-sync.js";
 import { cutOutBackground, decodeMask, maskAsset } from "./matte.js";
 import { createMatteEditor } from "./matte-editor.js";
 import {
@@ -3237,6 +3238,49 @@ globalThis.playMode = centerTab === "play";
 		persistScenes(nextScenes, target.id);
 		openScene(target, nextScenes);
 	}
+
+	// Workflow runs in a separate tab/route. Scene writes therefore arrive as
+	// either a same-tab CustomEvent or a cross-tab storage event. Keep the
+	// Studio's live editor in sync without writing the event back in a loop:
+	// compare against the current snapshot first, then replace only the active
+	// scene's objects/cast or open the newly selected scene.
+	const externalSceneApplyRef = useRef(null);
+	externalSceneApplyRef.current = (incoming) => {
+		if (!incoming || !Array.isArray(incoming.scenes)) return;
+		const incomingActiveId = typeof incoming.activeSceneId === "string" ? incoming.activeSceneId : activeSceneIdRef.current;
+		const incomingScenes = incoming.scenes;
+		const incomingScene = incomingScenes.find((scene) => scene?.id === incomingActiveId) ?? incomingScenes[0];
+		if (!incomingScene?.id) return;
+		const currentSnapshot = {
+			version: SCENES_VERSION,
+			activeSceneId: activeSceneIdRef.current,
+			scenes: snapshotActiveScene(),
+		};
+		if (JSON.stringify(currentSnapshot) === JSON.stringify({ version: SCENES_VERSION, activeSceneId: incomingActiveId, scenes: incomingScenes })) return;
+		const nextScenes = incomingScenes;
+		if (incomingScene.id !== activeSceneIdRef.current) {
+			openScene(incomingScene, nextScenes);
+			return;
+		}
+		const currentScene = currentSnapshot.scenes.find((scene) => scene?.id === incomingScene.id);
+		if (JSON.stringify(currentScene?.objects ?? []) !== JSON.stringify(incomingScene.objects ?? [])) {
+			storeRef.current.applyAtomic(() => Array.isArray(incomingScene.objects) ? incomingScene.objects : []);
+		}
+		const incomingStage = createSceneStage(incomingScene.stage);
+		const currentStage = currentScene?.stage;
+		if (JSON.stringify(currentStage ?? null) !== JSON.stringify(incomingStage)) {
+			const mergedCharacters = incomingStage.characters.map((entry) => {
+				const current = charactersRef.current.find((item) => item.id === entry.id);
+				return current?.sessionMotion ? { ...entry, sessionMotion: current.sessionMotion } : entry;
+			});
+			charactersRef.current = mergedCharacters;
+			setCharacters(mergedCharacters);
+			restoreMotionRefs(mergedCharacters);
+		}
+		scenesRef.current = nextScenes;
+		setScenes(nextScenes);
+	};
+	useEffect(() => subscribeToSceneDocuments((document) => externalSceneApplyRef.current?.(document)), []);
 
 	// Commands are a sequential transport boundary, while React commits on a
 	// later turn. Keep its read model current synchronously so the next frame

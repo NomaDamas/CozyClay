@@ -12,8 +12,71 @@ export const COZY_SCENE_NODE_VERSION = 1;
 
 export const COZY_SCENE_INPUTS = Object.freeze([
 	{ id: "asset", label: "Asset", kind: "asset" },
-	{ id: "motion", label: "Motion", kind: "motion" },
+	{ id: "motion", label: "Motion", kind: "motion", legacy: true },
 ]);
+
+export const COZY_SCENE_CHARACTER_HANDLE_PREFIX = "character:";
+
+/** Return the stable Scene target handle for a cast member. */
+export function sceneCharacterHandle(characterId) {
+	const id = typeof characterId === "string" ? characterId.trim() : "";
+	return id ? `${COZY_SCENE_CHARACTER_HANDLE_PREFIX}${id}` : null;
+}
+
+/** Parse a `character:<id>` target handle, returning null for generic handles. */
+export function sceneCharacterIdFromHandle(handle) {
+	const value = typeof handle === "string" ? handle.trim() : "";
+	if (!value.startsWith(COZY_SCENE_CHARACTER_HANDLE_PREFIX)) return null;
+	const id = value.slice(COZY_SCENE_CHARACTER_HANDLE_PREFIX.length).trim();
+	return id || null;
+}
+
+/** Scene inputs are cast-aware. The legacy generic `motion` handle remains
+ * accepted by the data adapter for old project files, while new graphs use
+ * one explicit character:<id> handle per active-scene cast member. */
+export function sceneInputSpecs(characters = [], { includeLegacyMotion = true } = {}) {
+	const hasCharacters = Array.isArray(characters) && characters.length > 0;
+	const specs = COZY_SCENE_INPUTS.filter((spec) => !hasCharacters || spec.id !== "motion").map((spec) => ({ ...spec }));
+	for (const character of Array.isArray(characters) ? characters : []) {
+		const id = typeof character === "string" ? character : character?.id;
+		if (!id || specs.some((spec) => spec.id === `character:${id}`)) continue;
+		specs.push({ id: `character:${id}`, label: typeof character === "object" && character.subject ? character.subject : id, kind: "motion", characterId: id });
+	}
+	if (includeLegacyMotion && !hasCharacters && specs.length === 1) specs.push({ id: "motion", label: "Motion", kind: "motion", legacy: true });
+	return specs;
+}
+
+/** Build the Scene input state represented by ReactFlow edges. */
+/** Restrict Scene inputs to values the Scene can actually consume. */
+export function sceneConnectionAllowed(source, targetHandle, sourceData = {}) {
+	const type = typeof source === "string" ? source : source?.type;
+	const handle = typeof targetHandle === "string" ? targetHandle : "";
+	if (handle === "asset") return type === "image" || (type === "upload" && String(sourceData?.mimeType || "").toLowerCase().startsWith("image/"));
+	if (handle === "motion" || sceneCharacterIdFromHandle(handle)) return type === "motion-input";
+	return false;
+}
+
+export function sceneInputsFromEdges(edges, sceneNodeId) {
+	const assetInputs = [];
+	const motionInputs = [];
+	const seenAssets = new Set();
+	const seenMotion = new Set();
+	for (const edge of Array.isArray(edges) ? edges : []) {
+		if (!edge || edge.target !== sceneNodeId || typeof edge.source !== "string") continue;
+		const targetHandle = typeof edge.targetHandle === "string" ? edge.targetHandle : "";
+		if (targetHandle === "asset") {
+			if (!seenAssets.has(edge.source)) { seenAssets.add(edge.source); assetInputs.push(edge.source); }
+			continue;
+		}
+		const characterId = sceneCharacterIdFromHandle(targetHandle);
+		if (!characterId) continue;
+		const key = `${edge.source}\u0000${characterId}`;
+		if (seenMotion.has(key)) continue;
+		seenMotion.add(key);
+		motionInputs.push({ source: edge.source, handle: targetHandle, characterId });
+	}
+	return { assetInputs, motionInputs };
+}
 
 export const COZY_SCENE_OUTPUTS = Object.freeze([
 	{ id: "render", label: "Render", kind: "render" },
@@ -33,6 +96,12 @@ function text(value, fallback = "") {
 
 function list(value) {
 	return Array.isArray(value) ? value.filter(Boolean) : [];
+}
+
+function characterList(value) {
+	return Array.isArray(value)
+		? value.filter((entry) => typeof entry === "string" || (entry && typeof entry.id === "string" && entry.id)).map((entry) => typeof entry === "string" ? { id: entry } : { ...entry })
+		: [];
 }
 
 /** Return a safe, serializable data envelope for a node. */
@@ -62,6 +131,8 @@ export function normalizeCozySceneData(input = {}) {
 		},
 		assetInputs: list(source.assetInputs),
 		motionInputs: list(source.motionInputs),
+		characterInputs: list(source.characterInputs),
+		characters: characterList(source.characters || source.characterOptions),
 		lastOutput: source.lastOutput && typeof source.lastOutput === "object" ? { ...source.lastOutput } : null,
 	};
 }
@@ -92,6 +163,7 @@ export function toCozySceneRunRequest(node, context = {}) {
 		inputs: {
 			asset: data.assetInputs,
 			motion: data.motionInputs,
+			...(data.characterInputs.length ? { characters: data.characterInputs } : {}),
 		},
 		controls: data.controls,
 		frame: data.frame,

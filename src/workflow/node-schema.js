@@ -1,5 +1,5 @@
 // A compact, Vibe-compatible subset of the node schema contract.
-// MuAPI can replace this object at runtime via window.__COZYCLAY_NODE_SCHEMAS__;
+// A host can replace this object at runtime via window.__COZYCLAY_NODE_SCHEMAS__;
 // the local defaults keep the canvas useful when the bridge is offline.
 
 const field = (type, title, extra = {}) => ({ type, title, ...extra });

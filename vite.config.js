@@ -13,10 +13,6 @@ const explicitBridgePort = process.env.COZYCLAY_BRIDGE_PORT?.trim();
 const motionBridgeUrl = explicitBridgePort
 	? `http://127.0.0.1:${explicitBridgePort}`
 	: process.env.COZYCLAY_BRIDGE_URL?.trim() || null;
-const explicitWorkflowBridgePort = process.env.COZYCLAY_WORKFLOW_BRIDGE_PORT?.trim();
-const workflowBridgeUrl = explicitWorkflowBridgePort
-	? `http://127.0.0.1:${explicitWorkflowBridgePort}`
-	: process.env.COZYCLAY_WORKFLOW_BRIDGE_URL?.trim() || null;
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
 
 export default defineConfig({
@@ -67,13 +63,6 @@ export default defineConfig({
 						res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
 						return;
 					}
-					if (!workflowBridgeUrl && /^(?:\/workflow-api|\/api)\/(health|workflow\/|app\/(?:get_file_upload_url|calculate_dynamic_cost)(?:\/|$))/.test(path)) {
-						res.statusCode = 503;
-						res.setHeader("content-type", "application/json; charset=utf-8");
-						res.setHeader("cache-control", "no-store");
-						res.end(JSON.stringify({ ok: false, enabled: false, error: "workflow bridge is not configured", code: "workflow-bridge-missing" }));
-						return;
-					}
 					// The lying clip is a browser-regression fixture. Serve it only from
 					// the dev server so it can exercise the real UI without shipping a
 					// second motion archive in production output.
@@ -109,22 +98,9 @@ export default defineConfig({
 		// companion on loopback. The proxy is enabled only when dev-full (or a
 		// user-managed bridge) explicitly provides its endpoint. The production
 		// build stays fully static, so this proxy must never become a requirement.
-		...(motionBridgeUrl || workflowBridgeUrl
+		...(motionBridgeUrl
 			? {
 				proxy: {
-					...(workflowBridgeUrl
-						? {
-							"/workflow-api": {
-								target: workflowBridgeUrl,
-								rewrite: (path) => path.replace(/^\/workflow-api/, "") || "/",
-							},
-							"/api": {
-								target: workflowBridgeUrl,
-								rewrite: (path) => path.replace(/^\/api/, "") || "/",
-							},
-						}
-						: {}),
-
 					...(motionBridgeUrl
 						? {
 							// Only the routes the bridge actually owns. /ardy/ is ALSO a public

@@ -1,9 +1,9 @@
 import { normalizeWorkflowGraph } from "../project.js";
 
 /**
- * Convert CozyClay's local graph envelope to the payload shape expected by
- * Vibe-Workflow/MuAPI. Custom CozyClay Scene nodes stay local and are omitted
- * from the remote graph; their inputs are retained in the local project file.
+ * Convert CozyClay's local graph envelope to the historical Vibe node shape.
+ * The standalone canvas no longer sends this payload over the network; it is
+ * retained for project migrations and import/export compatibility.
  */
 export function toVibeWorkflowPayload(graph, { name = "CozyClay Workflow", workflowId = null, sourceWorkflowId = null } = {}) {
 	const normalized = normalizeWorkflowGraph(graph);
@@ -102,9 +102,8 @@ function toVibeNode(node, edges) {
 }
 
 /**
- * MuAPI charges the sum of the node generation costs when a workflow run is
- * started. Vibe keeps that value on each node (and sends the aggregate in the
- * run request), so preserve the same contract for the CozyClay adapter.
+ * Preserve the historical per-node cost aggregate for project imports. Local
+ * execution itself never charges or requests a remote cost service.
  */
 export function workflowCost(graph) {
 	return normalizeWorkflowGraph(graph).nodes.reduce((total, node) => {
@@ -113,7 +112,7 @@ export function workflowCost(graph) {
 	}, 0);
 }
 
-/** Build the body used by Vibe's per-node run endpoint. */
+/** Build the historical per-node request shape for import/export tooling. */
 export function toVibeNodeRunRequest(graph, nodeId, runId) {
 	const normalized = normalizeWorkflowGraph(graph);
 	const localNode = normalized.nodes.find((node) => node.id === nodeId);
@@ -138,7 +137,7 @@ function latestNodeRun(runs) {
 }
 
 /**
- * Normalize MuAPI's run status map (`nodes[id] = run[]`) into updates that can
+ * Normalize a historical run status map (`nodes[id] = run[]`) into updates that can
  * be merged into ReactFlow node data. Keeping the complete latest run in
  * outputHistory is what lets Vibe's previous/next output controls survive a
  * refresh or a second run.
@@ -200,7 +199,7 @@ export function applyVibeRunUpdates(graph, payload) {
 	};
 }
 
-/** Collapse MuAPI's per-node run arrays into the status used by the canvas. */
+/** Collapse historical per-node run arrays into the status used by the canvas. */
 export function summarizeVibeRunStatus(payload) {
 	const direct = typeof payload?.status === "string" ? payload.status.toLowerCase() : "";
 	const success = new Set(["succeeded", "success", "completed", "complete"]);

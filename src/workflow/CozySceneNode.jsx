@@ -3,9 +3,9 @@ import { Canvas } from "@react-three/fiber";
 import { Grid, OrbitControls } from "@react-three/drei";
 import {
 	applyCozyScenePatch,
-	COZY_SCENE_INPUTS,
 	COZY_SCENE_OUTPUTS,
 	normalizeCozySceneData,
+	sceneInputSpecs,
 } from "./cozy-scene-node.js";
 import "./cozy-scene-node.css";
 
@@ -75,7 +75,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 	return (
 		<article className={`cozy-scene-node${selected ? " is-selected" : ""}`} data-node-id={id} data-node-type="cozyclay-scene" aria-label="CozyClay Scene node">
 			<div className="cozy-scene-node-inputs" aria-label="Scene inputs">
-				{COZY_SCENE_INPUTS.map((spec) => <Handle key={spec.id} {...handleProps(spec, "target", "left")} />)}
+				{sceneInputSpecs(data.characters?.length ? data.characters : (data.characterInputs || []).map((entry) => ({ id: entry.characterId, subject: entry.characterId })), { includeLegacyMotion: true }).map((spec) => <Handle key={spec.id} {...handleProps(spec, "target", "left")} />)}
 			</div>
 			<header className="cozy-scene-node-header">
 				<div>

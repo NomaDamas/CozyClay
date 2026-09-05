@@ -124,13 +124,7 @@ Open `http://127.0.0.1:5180/app/`. `npm run dev` starts the studio together with
 
 ### Workflow canvas
 
-The Vibe-Workflow canvas is available at `http://127.0.0.1:5180/workflow/`. It keeps the original node-style flow and adds a **CozyClay Scene** node with an interactive 3D viewport, frame/camera controls, and an Open Studio handoff. Start it with the normal dev server, or run `npm run dev:ui` by itself for local-only editing. Workflow graphs are saved in the browser; to enable MuAPI-backed save/run, start the loopback bridge in a second terminal:
-
-```bash
-COZYCLAY_MUAPI_KEY=your-key npm run workflow:bridge
-```
-
-Without the key, the canvas remains usable and clearly reports that remote execution is disabled.
+The Vibe-Workflow canvas is available at `http://127.0.0.1:5180/workflow/`. It keeps the original node-style flow and adds a **CozyClay Scene** node with an interactive 3D viewport, frame/camera controls, and an Open Studio handoff. Start it with the normal dev server, or run `npm run dev:ui` by itself for local-only editing. Workflow graphs are saved in the browser and execute locally; no remote workflow service or API key is required.
 
 ## Hosted demo
 
