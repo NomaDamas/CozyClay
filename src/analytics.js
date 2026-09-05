@@ -10,9 +10,11 @@ const EVENT_PROPERTIES = Object.freeze({
 	"scene:created": ["scene_source"],
 	"scene:loaded": ["scene_source"],
 	"craft:first_action": ["action_kind"],
-	"motion:job_started": ["input_mode"],
-	"motion:job_succeeded": ["latency_bucket", "input_mode"],
-	"motion:job_failed": ["latency_bucket", "input_mode", "error_code"],
+	"motion:backend_state": ["backend", "host_configured"],
+	"motion:generate_blocked": ["surface"],
+	"motion:job_started": ["backend", "input_mode", "duration_bucket"],
+	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode"],
+	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code"],
 	"export:blocking_frame_succeeded": ["format"],
 	"export:video_succeeded": ["format"],
 	"sample:played": ["from"],
@@ -85,6 +87,30 @@ export function sanitizeProps(event, props) {
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;
+}
+
+/**
+ * Convert the bridge health payload into the analytics contract. The bridge
+ * only exposes a safe location label; the configured host itself never leaves
+ * the local process. A missing/unhealthy bridge is the useful `none` bucket.
+ */
+export function motionBackendState(health) {
+	if (!health || health.ok !== true) return { backend: "none", host_configured: false };
+	if (typeof health.backend === "string" && ["none", "local_kimodo", "hosted"].includes(health.backend)) {
+		return {
+			backend: health.backend,
+			host_configured: health.host_configured === true
+				|| (typeof health.host === "string" && health.host.trim().length > 0),
+		};
+	}
+	const host = typeof health.host === "string" ? health.host.trim() : "";
+	return {
+		// The current /ardy bridge is the local Kimodo integration even when it
+		// dispatches to a configured GPU box over SSH. A future hosted API can
+		// opt into the explicit `backend: "hosted"` field above.
+		backend: "local_kimodo",
+		host_configured: Boolean(host),
+	};
 }
 
 export function bucketMs(ms) {
@@ -357,13 +383,31 @@ export async function initAnalytics() {
 			posthog.capture("$pageview");
 			if (resolved.distribution === "npm") {
 				track("app:session_started");
+				// This follows the session marker so the two events form one
+				// capability baseline in funnel queries.
+				void recordMotionBackendState();
 				if (resolved.firstLaunch) track("install:first_launch");
+			} else {
+				// Hosted sessions have PostHog's native session marker rather than
+				// the npm-only custom event above.
+				void recordMotionBackendState();
 			}
 		} catch {
 			console.info("[analytics] initialization failed");
 		}
 	})();
 	await initPromise;
+}
+
+async function recordMotionBackendState() {
+	let health = null;
+	try {
+		const response = await fetch("/ardy/health", { signal: AbortSignal.timeout(5000) });
+		if (response.ok) health = await response.json();
+	} catch {
+		// No bridge is a normal hosted/demo state.
+	}
+	track("motion:backend_state", motionBackendState(health));
 }
 
 export function track(event, props = {}) {
