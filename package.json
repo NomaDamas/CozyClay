@@ -58,7 +58,7 @@
     "test:korean-ui": "node test/verify-korean-ui.mjs",
     "prepack": "npm run build && node tools/prepare-package.mjs",
     "postpack": "node tools/prepare-package.mjs --clean",
-    "prepublishOnly": "node tools/prepare-package.mjs --check-key",
+    "prepublishOnly": "npm run build && node tools/prepare-package.mjs --check-key && node tools/prepare-package.mjs && node tools/verify-package-tarball.mjs",
     "metrics:traffic": "node tools/metrics/archive-traffic.mjs",
     "test:multimodel": "node test/verify-multimodel-ingest.mjs",
     "test:video-frames": "node test/verify-video-frames.mjs",
