@@ -2,7 +2,7 @@
 //
 //   import { generateH3 } from './client.mjs'
 //   const { mp4Url, wallSeconds } = await generateH3({
-//     base: 'http://localhost:8288',
+//     base: 'http://127.0.0.1:8288',
 //     prompt,                      // official H3 contract text (see h3_prompts.py / skill)
 //     refs: [pngBlob],             // Ref2VA: pose/camera refs (CozyClay render)
 //     // first: pngBlob, last: pngBlob   // or I2V / FL2V
@@ -10,7 +10,7 @@
 //   })
 //   video.src = mp4Url
 
-export async function generateH3({ base = 'http://localhost:8288', prompt, refs = [], first, last,
+export async function generateH3({ base = 'http://127.0.0.1:8288', prompt, refs = [], first, last,
   seconds = 5, megapixels = 0.4, aspect = '16:9', seed = 42, steps = 4, audio = false, signal } = {}) {
   const fd = new FormData();
   fd.append('prompt', prompt);
@@ -30,7 +30,7 @@ export async function generateH3({ base = 'http://localhost:8288', prompt, refs 
   return { ...j, mp4Url: `${base}${j.mp4}`, wallSeconds: j.wall_seconds };
 }
 
-export async function health(base = 'http://localhost:8288') {
+export async function health(base = 'http://127.0.0.1:8288') {
   const r = await fetch(`${base}/health`);
   return r.json();
 }

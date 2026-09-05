@@ -63,6 +63,7 @@ function editText(title, value) {
 
 // ---------- node registration from /nodes ----------
 const PRIMS = new Set(['STRING', 'INT', 'FLOAT', 'BOOL', 'COMBO', 'IMAGEFILE']);
+const LABELS = {image:'이미지', scene:'장면 설명', direct:'직접 입력', manual_prompt:'완성 프롬프트', seconds:'길이(초)', aspect:'화면 비율', seed:'시드', steps:'Steps', sla:'SLA', megapixels:'Megapixels', audio:'오디오'};
 const imgCache = {};
 function registerNode(def) {
   function N() {
@@ -72,22 +73,22 @@ function registerNode(def) {
       if (!PRIMS.has(i.type)) { this.addInput(i.name, i.type); continue; }
       let w;
       if (i.type === 'STRING' && i.multiline) {
-        w = this.addWidget('button', i.name, i.default || '', () => editText(`${def.name} · ${i.name}`, w.value).then(v => { if (v !== null) { w.value = v; if (w.ta) w.ta.value = v; this.setDirtyCanvas(true); } }));
+        w = this.addWidget('button', LABELS[i.name] || i.name, i.default || '', () => editText(`${def.name} · ${i.name}`, w.value).then(v => { if (v !== null) { w.value = v; if (w.ta) w.ta.value = v; this.setDirtyCanvas(true); } }));
         w.multiline = true;
         const ta = document.createElement('textarea'); ta.className = 'nodeText'; ta.placeholder = i.placeholder || i.name; ta.value = w.value;
         ta.oninput = () => { w.value = ta.value; }; ta.onmousedown = e => e.stopPropagation(); ta.onwheel = e => e.stopPropagation();
         document.body.appendChild(ta); w.ta = ta;
         this.textAreas = this.textAreas || []; this.textAreas.push(w);
       } else if (i.type === 'STRING') {
-        w = this.addWidget('text', i.name, i.default || '', v => { w.value = v; });
+        w = this.addWidget('text', LABELS[i.name] || i.name, i.default || '', v => { w.value = v; });
       } else if (i.type === 'INT') {
-        w = this.addWidget('number', i.name, i.default ?? 0, v => { w.value = Math.round(v); }, { min: i.min ?? 0, max: i.max ?? 1e9, step: 10, precision: 0 });
+        w = this.addWidget('number', LABELS[i.name] || i.name, i.default ?? 0, v => { w.value = Math.round(v); }, { min: i.min ?? 0, max: i.max ?? 1e9, step: 10, precision: 0 });
       } else if (i.type === 'FLOAT') {
-        w = this.addWidget('number', i.name, i.default ?? 0, v => { w.value = v; }, { min: i.min ?? 0, max: i.max ?? 1e9, step: (i.step ?? 0.1) * 10, precision: 2 });
+        w = this.addWidget('number', LABELS[i.name] || i.name, i.default ?? 0, v => { w.value = v; }, { min: i.min ?? 0, max: i.max ?? 1e9, step: (i.step ?? 0.1) * 10, precision: 2 });
       } else if (i.type === 'BOOL') {
-        w = this.addWidget('toggle', i.name, !!i.default, v => { w.value = v; });
+        w = this.addWidget('toggle', LABELS[i.name] || i.name, !!i.default, v => { w.value = v; });
       } else if (i.type === 'COMBO') {
-        w = this.addWidget('combo', i.name, i.default, v => { w.value = v; }, { values: i.options || [] });
+        w = this.addWidget('combo', LABELS[i.name] || i.name, i.default, v => { w.value = v; }, { values: i.options || [] });
       } else if (i.type === 'IMAGEFILE') {
         w = this.addWidget('button', i.name, i.default || '(choose image)', () => {
           const inp = $('#uploadFile'); inp.onchange = async () => {
@@ -124,7 +125,7 @@ function registerNode(def) {
     this.serialize_widgets = true;
     this.color = { input: '#244a68', prompt: '#4b3c68', generate: '#345f4b', output: '#684536', advanced: '#30343d', h3: '#30343d' }[def.category] || '#222'; this.bgcolor = this.color; this.boxcolor = '#445';
   }
-  N.title = def.name;
+  N.title = ({'Reference Image':'참조 이미지','Scene':'장면','Generate Video':'영상 생성','Result':'결과'}[def.name] || def.name) + (def.name === 'Generate Video' ? ' · 고급 설정은 숨김' : '');
   N.desc = def.description;
   // LiteGraph recomputes size after construction; enforce a minimum so previews have room
   const hasImage = def.inputs.some(i => i.type === 'IMAGEFILE');
@@ -162,6 +163,7 @@ function registerNode(def) {
       lines.forEach((l, i) => ctx.fillText(l.slice(0, Math.floor(wdt / 6.2)), 8, y0 + 14 + i * 14));
       ctx.fillStyle = '#666'; ctx.fillText('double-click to read the generated prompt', 8, y0 + h - 4); ctx.restore();
     }
+    if (isOutput && !this.videoEl && h > 20) { ctx.save(); ctx.fillStyle='#777'; ctx.font='13px sans-serif'; ctx.fillText('영상 결과가 여기에 표시됩니다', 12, y0 + 32); ctx.restore(); }
     if (this.videoEl && h > 20) {
       const v = this.videoEl; if (v.videoWidth) {
         const s = Math.min(wdt / v.videoWidth, h / v.videoHeight);
@@ -181,6 +183,8 @@ function registerNode(def) {
       const rowW = this.size[0], isChk = el.type === 'checkbox';
       const wpx = isChk ? 18 : Math.max(70, rowW * 0.42);
       const x = (this.pos[0] + rowW - 8 - wpx + ds.offset[0]) * ds.scale, y = (this.pos[1] + w.last_y + 1 + ds.offset[1]) * ds.scale + top;
+      if (def.name === 'Generate Video' && ['steps','sla','megapixels','audio'].includes(w.inputName)) { el.style.display='none'; continue; }
+      if (def.name === 'Scene' && w.inputName === 'manual_prompt' && !this.widgetsByName.direct?.value) { el.style.display='none'; continue; }
       Object.assign(el.style, { display: 'block', left: x + 'px', top: y + 'px', width: wpx * ds.scale + 'px', height: 18 * ds.scale + 'px', fontSize: 12 * ds.scale + 'px' });
       if (document.activeElement !== el) { if (isChk) el.checked = !!w.value; else if (String(el.value) !== String(w.value ?? '')) el.value = w.value ?? ''; }
     }

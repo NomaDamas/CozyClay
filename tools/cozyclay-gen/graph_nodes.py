@@ -243,9 +243,9 @@ def save_video(ctx, video, name):
 def reference_image(ctx, image):
     return (_g().load_image(ctx.input_path(image)),)
 
-@node("Scene", category="prompt", inputs=[inp("scene", "STRING", default="A person walks in and bows deeply toward the camera", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("manual_prompt", "STRING", default="", multiline=True)], outputs=[("prompt", "STRING"), ("seconds", "FLOAT")])
-def scene(ctx, scene, seconds, manual_prompt=""):
-    text = manual_prompt.strip() if manual_prompt and manual_prompt.strip() else ctx.rewriter.rewrite(scene, float(seconds), None, None, None)
+@node("Scene", category="prompt", inputs=[inp("scene", "STRING", default="A person walks in and bows deeply toward the camera", multiline=True), inp("seconds", "FLOAT", default=5.0, min=2, max=15, step=1), inp("direct", "BOOL", default=False), inp("manual_prompt", "STRING", default="", multiline=True)], outputs=[("prompt", "STRING"), ("seconds", "FLOAT")])
+def scene(ctx, scene, seconds, direct=False, manual_prompt=""):
+    text = manual_prompt.strip() if direct and manual_prompt and manual_prompt.strip() else ctx.rewriter.rewrite(scene, float(seconds), None, None, None)
     ctx.ui(text=text)
     return text, float(seconds)
 
