@@ -85,9 +85,9 @@ function registerNode(def) {
         w = this.addWidget('number', LABELS[i.name] || i.name, i.default ?? 0, v => { w.value = Math.round(v); }, { min: i.min ?? 0, max: i.max ?? 1e9, step: 10, precision: 0 });
       } else if (i.type === 'FLOAT') {
         w = this.addWidget('number', LABELS[i.name] || i.name, i.default ?? 0, v => { w.value = v; }, { min: i.min ?? 0, max: i.max ?? 1e9, step: (i.step ?? 0.1) * 10, precision: 2 });
-      } else if (i.type === 'BOOL') {
+      } else if (false && i.type === 'BOOL') {
         w = this.addWidget('toggle', LABELS[i.name] || i.name, !!i.default, v => { w.value = v; });
-      } else if (i.type === 'COMBO') {
+      } else if (false && i.type === 'COMBO') {
         w = this.addWidget('combo', LABELS[i.name] || i.name, i.default, v => { w.value = v; }, { values: i.options || [] });
       } else if (i.type === 'IMAGEFILE') {
         w = this.addWidget('button', i.name, i.default || '(choose image)', () => {
@@ -108,10 +108,10 @@ function registerNode(def) {
         if (false && (i.type === 'INT' || i.type === 'FLOAT')) {
           el = document.createElement('input'); el.type = 'number'; el.min = i.min ?? ''; el.max = i.max ?? ''; el.step = i.type === 'INT' ? 1 : (i.step ?? 0.1); el.value = w.value;
           el.onchange = el.oninput = () => { const v = Number(el.value); if (!Number.isNaN(v)) { w.value = i.type === 'INT' ? Math.round(v) : v; this.setDirtyCanvas(true); } };
-        } else if (i.type === 'COMBO') {
+        } else if (false && i.type === 'COMBO') {
           el = document.createElement('select'); (i.options || []).forEach(o => { const op = document.createElement('option'); op.value = o; op.textContent = o; el.appendChild(op); }); el.value = w.value;
           el.onchange = () => { w.value = el.value; this.setDirtyCanvas(true); };
-        } else if (i.type === 'BOOL') {
+        } else if (false && i.type === 'BOOL') {
           el = document.createElement('input'); el.type = 'checkbox'; el.className = 'chk'; el.checked = !!w.value;
           el.onchange = () => { w.value = el.checked; this.setDirtyCanvas(true); };
         } else if (i.type === 'STRING' && !i.multiline) {
