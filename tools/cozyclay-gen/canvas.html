@@ -105,7 +105,7 @@ function registerNode(def) {
         if (i.type !== 'IMAGEFILE') this.addInput(i.name, i.type);
         // native DOM control drawn over the widget row: numbers, combos, toggles, one-line text
         let el = null;
-        if (i.type === 'INT' || i.type === 'FLOAT') {
+        if (false && (i.type === 'INT' || i.type === 'FLOAT')) {
           el = document.createElement('input'); el.type = 'number'; el.min = i.min ?? ''; el.max = i.max ?? ''; el.step = i.type === 'INT' ? 1 : (i.step ?? 0.1); el.value = w.value;
           el.onchange = el.oninput = () => { const v = Number(el.value); if (!Number.isNaN(v)) { w.value = i.type === 'INT' ? Math.round(v) : v; this.setDirtyCanvas(true); } };
         } else if (i.type === 'COMBO') {
@@ -125,7 +125,7 @@ function registerNode(def) {
     this.serialize_widgets = true;
     this.color = { input: '#244a68', prompt: '#4b3c68', generate: '#345f4b', output: '#684536', advanced: '#30343d', h3: '#30343d' }[def.category] || '#222'; this.bgcolor = this.color; this.boxcolor = '#445';
   }
-  N.title = ({'Reference Image':'참조 이미지','Scene':'장면','Generate Video':'영상 생성','Result':'결과'}[def.name] || def.name) + (def.name === 'Generate Video' ? ' · 고급 설정은 숨김' : '');
+  N.title = ({'Reference Image':'참조 이미지','Scene':'장면','Generate Video':'영상 생성','Result':'결과'}[def.name] || def.name);
   N.desc = def.description;
   // LiteGraph recomputes size after construction; enforce a minimum so previews have room
   const hasImage = def.inputs.some(i => i.type === 'IMAGEFILE');
