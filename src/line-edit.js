@@ -356,6 +356,59 @@ export function projectTrailCurve({ trail, frameRange, camera }) {
 }
 
 /**
+ * Re-anchor an authored curve in WORLD space and see it through another lens.
+ *
+ * A committed edit is uv through the camera it was authored in; painted
+ * verbatim after the view moves, those uv land wherever the new lens happens
+ * to point (the "line floats across the floor" bug). But the depth a naive
+ * reprojection lacks is sitting in the take: each curve point names a frame,
+ * and the joint's ORIGINAL world position at that frame is in `trail`. So per
+ * point: measure the authored uv against the original point's image under
+ * `fromCamera`, lift that uv offset into world with unprojectDeltaC6 (image-
+ * plane at the joint's own depth — the same rule the pin gesture uses), and
+ * project the resulting WORLD point through `toCamera`. An unedited point
+ * therefore lands exactly on the trajectory under the new lens, and an edited
+ * one shows its true world displacement from wherever the user now stands.
+ *
+ * Display only: the wire payload keeps the authored camera + uv untouched,
+ * because a 2D constraint is a ray through ITS lens — rewriting it through
+ * another lens would change what the sampler is asked to satisfy.
+ *
+ * `trail` is jointTrailPoints' flat Float32Array for the whole take. Points
+ * that cannot make the trip — null in, frame off the trail's end, original or
+ * edited point behind either lens — come back null, which the painter already
+ * treats as "no image at this frame". Returns null (not a partial curve) when
+ * the inputs themselves are unusable.
+ */
+export function reprojectCurveWorld(curve, trail, fromCamera, toCamera) {
+	if (!Array.isArray(curve) || !trail || !fromCamera || !toCamera) return null;
+	const trailFrames = Math.floor(trail.length / 3);
+	const out = [];
+	for (const point of curve) {
+		if (!point || !Number.isInteger(point.frame) || point.frame < 0 || point.frame >= trailFrames) {
+			out.push(null);
+			continue;
+		}
+		const x = trail[point.frame * 3];
+		const y = trail[point.frame * 3 + 1];
+		const z = trail[point.frame * 3 + 2];
+		const authored = projectPointC6(fromCamera, x, y, z);
+		if (!authored) {
+			out.push(null);
+			continue;
+		}
+		const delta = unprojectDeltaC6(fromCamera, [x, y, z], point.u - authored[0], point.v - authored[1]);
+		if (!delta) {
+			out.push(null);
+			continue;
+		}
+		const uv = projectPointC6(toCamera, x + delta[0], y + delta[1], z + delta[2]);
+		out.push(uv ? { frame: point.frame, u: uv[0], v: uv[1] } : null);
+	}
+	return out;
+}
+
+/**
  * Pull one point of the curve and let the neighbours follow — a new curve out,
  * the input untouched.
  *

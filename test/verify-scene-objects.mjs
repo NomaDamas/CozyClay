@@ -26,6 +26,8 @@ import {
 	screenRotatePatch,
 	sceneObjectHierarchyId,
 	sceneObjectIdFromHierarchy,
+	SCENE_ATTACH_BONES,
+	setSceneObjectAttach,
 	setSceneObjectParent,
 	translatePatch,
 	updateSceneObject,
@@ -739,3 +741,157 @@ expect(
 	"parent survives a serialize/load round trip",
 	loadScene(serializeScene(grouped)).objects.find((o) => o.id === gChildA.id).parent === gParent.id,
 );
+
+/* ----------------------------------------------------- attachment --- */
+
+// A prop can ride a character's animated frame instead of the floor — the
+// "carry the baseball bat" case. `attach` is the pin; the numbers on the
+// record stay opaque to the store (the App owns the world<->local maths), so
+// everything checked here is about the pin itself: its shape, its exclusivity
+// with grouping, and its survival through storage.
+
+const aParent = createSceneObject("cube", []);
+const aProp = createSceneObject("cone", [aParent]);
+const aScene = [aParent, aProp];
+
+expect(
+	"the attach bone list is exactly the app's IK track ids",
+	JSON.stringify(SCENE_ATTACH_BONES) ===
+		JSON.stringify([
+			"hips", "spine", "chest", "neck", "head",
+			"leftShoulder", "leftElbow", "leftHand",
+			"rightShoulder", "rightElbow", "rightHand",
+			"leftKnee", "leftFoot", "rightKnee", "rightFoot",
+		]),
+	JSON.stringify(SCENE_ATTACH_BONES),
+);
+expect("the bone list is frozen, so no caller can edit the vocabulary", Object.isFrozen(SCENE_ATTACH_BONES));
+expect(
+	"a new object — primitive or cutout — starts world-anchored",
+	aProp.attach === null && createCutoutObject({ assetId: "attach-img" }, []).attach === null,
+);
+
+const rooted = setSceneObjectAttach(aScene, aProp.id, { characterId: "characterA" });
+expect("attaching returns a NEW collection and leaves the others identical", rooted !== aScene && rooted[0] === aScene[0]);
+expect(
+	"an omitted bone means the character's animated ROOT frame",
+	JSON.stringify(rooted[1].attach) === JSON.stringify({ characterId: "characterA", bone: null }),
+	JSON.stringify(rooted[1].attach),
+);
+expect(
+	"an explicit null bone is the same root frame",
+	JSON.stringify(setSceneObjectAttach(aScene, aProp.id, { characterId: "characterA", bone: null })[1].attach) ===
+		JSON.stringify({ characterId: "characterA", bone: null }),
+);
+
+const handed = setSceneObjectAttach(rooted, aProp.id, { characterId: "characterA", bone: "rightHand" });
+expect(
+	"a bone attach records the track id, not a three.js bone name",
+	handed[1].attach.characterId === "characterA" && handed[1].attach.bone === "rightHand",
+	JSON.stringify(handed[1].attach),
+);
+expect(
+	"extra keys are stripped, never stored",
+	JSON.stringify(
+		setSceneObjectAttach(aScene, aProp.id, { characterId: "characterA", bone: "head", offset: 3, parent: "x" })[1].attach,
+	) === JSON.stringify({ characterId: "characterA", bone: "head" }),
+);
+// The store owns the scene's objects and has never known the cast, so a
+// character id it cannot check is accepted here and read as detached by the App.
+expect(
+	"an unknown character id is NOT the store's business to refuse",
+	setSceneObjectAttach(aScene, aProp.id, { characterId: "ghost-actor" })[1].attach.characterId === "ghost-actor",
+);
+
+expect("an unknown object id is refused", setSceneObjectAttach(aScene, "no-such-object", { characterId: "characterA" }) === aScene);
+expect(
+	"a malformed attach is refused, leaving the SAME array",
+	[
+		undefined,
+		"characterA",
+		7,
+		[],
+		{},
+		{ characterId: "" },
+		{ characterId: 5 },
+		{ bone: "head" },
+		{ characterId: "characterA", bone: "elbow" },
+		{ characterId: "characterA", bone: "torso" },
+		{ characterId: "characterA", bone: "" },
+		{ characterId: "characterA", bone: 3 },
+	].every((bad) => setSceneObjectAttach(aScene, aProp.id, bad) === aScene),
+);
+expect(
+	"re-attaching to the very same frame keeps the SAME array, so no history entry is possible",
+	setSceneObjectAttach(handed, aProp.id, { characterId: "characterA", bone: "rightHand" }) === handed,
+);
+expect("detaching an already-detached object keeps the SAME array", setSceneObjectAttach(aScene, aProp.id, null) === aScene);
+
+// Grouping and attachment are alternative parents: a prop follows exactly one
+// frame, so each one cancels the other.
+const aGrouped = setSceneObjectParent(aScene, aProp.id, aParent.id);
+const aFromGroup = setSceneObjectAttach(aGrouped, aProp.id, { characterId: "characterA", bone: "leftHand" });
+expect(
+	"attaching drops the object out of its group",
+	aFromGroup[1].parent === null && aFromGroup[1].attach.bone === "leftHand",
+	JSON.stringify({ parent: aFromGroup[1].parent, attach: aFromGroup[1].attach }),
+);
+const aRegrouped = setSceneObjectParent(aFromGroup, aProp.id, aParent.id);
+expect(
+	"taking an object parent cancels the attachment",
+	aRegrouped[1].parent === aParent.id && aRegrouped[1].attach === null,
+	JSON.stringify({ parent: aRegrouped[1].parent, attach: aRegrouped[1].attach }),
+);
+expect(
+	"ungrouping is not detaching — a null parent leaves the attachment alone",
+	setSceneObjectParent(handed, aProp.id, null) === handed && handed[1].attach.bone === "rightHand",
+);
+const aDetached = setSceneObjectAttach(handed, aProp.id, null);
+expect(
+	"detaching clears only the attachment",
+	aDetached[1].attach === null && aDetached[1].parent === null && aDetached !== handed,
+);
+
+expect(
+	"a world-anchored scene round-trips with attach:null intact",
+	(() => {
+		const back = loadScene(serializeScene(aScene));
+		return back.status === "valid" && JSON.stringify(back.objects) === JSON.stringify(aScene);
+	})(),
+	JSON.stringify(loadScene(serializeScene(aScene)).objects),
+);
+expect(
+	"a bone attachment survives a serialize/load round trip byte-for-byte",
+	(() => {
+		const back = loadScene(serializeScene(handed));
+		return back.status === "valid" && JSON.stringify(back.objects) === JSON.stringify(handed);
+	})(),
+	JSON.stringify(loadScene(serializeScene(handed)).objects),
+);
+
+// Storage is never trusted: a pin that cannot name a real frame reads as
+// detached rather than nailing the prop to somewhere that does not exist.
+expect(
+	"a malformed stored attach decodes to detached",
+	["nope", 7, [], {}, { characterId: "" }, { bone: "head" }, { characterId: "characterA", bone: "elbow" }].every(
+		(bad) => normalizeSceneObject({ ...aProp, attach: bad }).attach === null,
+	),
+);
+expect(
+	"a stored bone is validated against the track list and stripped to two keys",
+	(() => {
+		const revived = normalizeSceneObject({ ...aProp, attach: { characterId: "characterA", bone: "rightHand", junk: 1 } });
+		return revived.attach.bone === "rightHand" && Object.keys(revived.attach).length === 2;
+	})(),
+);
+expect(
+	"a record written before attachment existed reads as world-anchored",
+	(() => {
+		const { attach, ...old } = aProp;
+		return normalizeSceneObject(old).attach === null;
+	})(),
+);
+
+// The grouping and attachment sections run after the first gate above, so they
+// need their own — otherwise a failure here would print FAIL and still exit 0.
+if (failures) process.exit(1);

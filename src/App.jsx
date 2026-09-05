@@ -4,7 +4,7 @@ import { Line, OrthographicCamera, PerspectiveCamera, Text, useFBX } from "@reac
 import * as THREE from "three";
 import { SkeletonUtils } from "three/examples/jsm/Addons.js";
 import { buildArdyPose } from "./ardy/export.js";
-import { checkBridge, generate as ardyGenerate } from "./ardy/client.js";
+import { checkBridge, generate as ardyGenerate, inbetween } from "./ardy/client.js";
 import { characterScaleFor, loadMotionFromUrl } from "./ardy/npz.js";
 import { motionUrlFromQuery } from "./ardy/motion-url.js";
 import { retimeMotion } from "./ardy/retime.js";
@@ -57,6 +57,7 @@ import {
 	nearestCurvePoint,
 	projectTrailCurve,
 	projectPointC6,
+	reprojectCurveWorld,
 	drawStrokeEdit,
 	unprojectDeltaC6,
 	pinsFrameRange,
@@ -101,6 +102,7 @@ import {
 	CUTOUT_KIND,
 	DEFAULT_SCENE_OBJECTS,
 	OBJECT_COLORS,
+	SCENE_ATTACH_BONES,
 	createCutoutObject,
 	createSceneObject,
 	duplicateCutoutOptions,
@@ -108,6 +110,7 @@ import {
 	objectSize,
 	placementInFront,
 	removeSceneObject,
+	setSceneObjectAttach,
 	setSceneObjectParent,
 	sceneObjectIdFromHierarchy,
 	updateSceneObject,
@@ -196,6 +199,7 @@ import {
 	capturePose,
 	deleteCustomPose,
 	loadCustomPoses,
+	normalizeBoneName,
 	saveCustomPoses,
 } from "./poses.js";
 import { IkHandles, PoseHandles, PoseStudioPanel, PoseThumbPreview, PoseTileGrid, warmPoseThumbnails } from "./posestudio.jsx";
@@ -223,6 +227,7 @@ import {
 	applyBodyContact,
 	clampIkTargetToFloor,
 } from "./ardy/ik.js";
+import { buildCollisionCapsules, detectPenetrations, fixCollisions, fixCollisionsRange } from "./ardy/fix-collisions.js";
 import { Dropdown, Field, Slider, Toast, Vector3Row } from "./ui.jsx";
 import { RENDER_ACTIVITY_EVENT, useRenderActivity } from "./use-render-activity.js";
 import SourceOffer from "./source-offer.jsx";
@@ -324,6 +329,173 @@ const HIERARCHY_INSPECTOR_TITLES = {
 	"rig.rightKnee": ko("Right Knee", "오른쪽 무릎"),
 	"rig.rightFoot": ko("Right Foot", "오른발"),
 };
+
+/* ----------------------------------------- carried props (attachment) --- */
+
+/** The rig rows that ARE an attach frame: `rig.<track id>`, the same camel
+ * spellings SCENE_ATTACH_BONES uses. The group rows above them (rig.torso,
+ * rig.leftArm …) name a limb, not a frame, so they are deliberately absent. */
+const ATTACH_BONE_ROWS = new Map(SCENE_ATTACH_BONES.map((bone) => [`rig.${bone}`, bone]));
+
+/** Attach track id -> the Mixamo bone carrying that frame on the shipped rigs.
+ * TRAIL_EFFECTOR_JOINTS names the cskel27 joint, and cskel27 and Mixamo agree
+ * everywhere except the spine, which sits one bone up the Mixamo chain (the
+ * same shift ardy/playback.js SKINNING_MAP makes). */
+const ATTACH_BONE_NAMES = Object.fromEntries(SCENE_ATTACH_BONES.map((bone) => {
+	const joint = TRAIL_EFFECTOR_JOINTS[bone];
+	return [bone, joint === "Spine1" ? "Spine" : joint === "Spine2" ? "Spine1" : joint];
+}));
+
+// One scratch set for the whole module: resolving a frame runs per attached
+// prop per frame and must never allocate.
+const attachPos = new THREE.Vector3();
+const attachQuat = new THREE.Quaternion();
+const attachScale = new THREE.Vector3();
+const attachRootPos = new THREE.Vector3();
+const attachRootQuat = new THREE.Quaternion();
+const ATTACH_UNIT_SCALE = new THREE.Vector3(1, 1, 1);
+const attachWorldMatrix = new THREE.Matrix4();
+const attachLocalMatrix = new THREE.Matrix4();
+const attachToMatrix = new THREE.Matrix4();
+const attachInverseMatrix = new THREE.Matrix4();
+const placePos = new THREE.Vector3();
+const placeQuat = new THREE.Quaternion();
+const placeScale = new THREE.Vector3();
+const placeEuler = new THREE.Euler();
+
+/** The bone a rig offers under `mixamoName`, by the project's matching rule
+ * (normalised names equal, or one a suffix of the other; first depth-first
+ * match wins — poses.js and ardy/playback.js agree). Cached per rig: this is
+ * asked once per attached prop per rendered frame. */
+const attachBoneCache = new WeakMap();
+function attachBoneOf(rig, mixamoName) {
+	let byName = attachBoneCache.get(rig);
+	if (!byName) attachBoneCache.set(rig, (byName = new Map()));
+	if (byName.has(mixamoName)) return byName.get(mixamoName);
+	const target = normalizeBoneName(mixamoName);
+	let found = null;
+	rig.traverse((node) => {
+		if (found || !node.isBone) return;
+		const norm = normalizeBoneName(node.name);
+		if (norm === target || norm.endsWith(target)) found = node;
+	});
+	byName.set(mixamoName, found);
+	return found;
+}
+
+/**
+ * The LIVE world frame an attachment rides, or null when the rig (or that bone)
+ * is not there — a dangling attachment then renders where its numbers say,
+ * which is exactly what a detached prop does.
+ *
+ * The frame is deliberately UNSCALED. The shipped rigs are Mixamo centimetres
+ * scaled by 0.01 on the model, so a raw bone matrix would push a hundredfold
+ * into every carried prop's local numbers and leave the Inspector unreadable.
+ * A carried prop takes the bone's place and facing; its size stays its own.
+ *
+ * `bone === null` is the character's animated ROOT: the hips' travel (during
+ * playback the whole root trajectory lives in the bones — see
+ * ardy/playback.js) carried at the character's own yaw, so a prop dropped on
+ * the character walks with the body instead of rolling with the hips.
+ */
+function attachFrameMatrix(rig, bone, out = new THREE.Matrix4()) {
+	if (!rig) return null;
+	const name = ATTACH_BONE_NAMES[bone ?? "hips"];
+	if (!name) return null;
+	const node = attachBoneOf(rig, name);
+	if (!node) return null;
+	// Ancestors included: the bones are written imperatively by playback and by
+	// the export, either of which can land before the renderer's own pass.
+	node.updateWorldMatrix(true, false);
+	node.matrixWorld.decompose(attachPos, attachQuat, attachScale);
+	if (bone != null) return out.compose(attachPos, attachQuat, ATTACH_UNIT_SCALE);
+	// The Character group carries the scene placement and the clip-to-scene yaw;
+	// the rig model hangs off it, so its parent IS that group.
+	const group = rig.parent ?? rig;
+	group.updateWorldMatrix(true, false);
+	group.matrixWorld.decompose(attachRootPos, attachRootQuat, attachScale);
+	return out.compose(attachPos, attachRootQuat, ATTACH_UNIT_SCALE);
+}
+
+/** A prop's placement as a matrix — the same compose props.jsx renders from
+ * (position, XYZ euler in degrees, per-axis scale). */
+function sceneObjectMatrix(object, out = new THREE.Matrix4()) {
+	return out.compose(
+		placePos.set(object.x ?? 0, object.y ?? 0, object.z ?? 0),
+		placeQuat.setFromEuler(placeEuler.set(
+			(object.rotX ?? 0) * THREE.MathUtils.DEG2RAD,
+			(object.rot ?? 0) * THREE.MathUtils.DEG2RAD,
+			(object.rotZ ?? 0) * THREE.MathUtils.DEG2RAD,
+		)),
+		placeScale.set(object.scaleX ?? 1, object.scaleY ?? 1, object.scaleZ ?? 1),
+	);
+}
+
+/** …and back out into the nine authored channels, or null if the matrix could
+ * not be read as a placement at all (a singular frame inverts to zeros, and a
+ * zero matrix decomposes to NaN). Rounded, because a matrix round trip
+ * otherwise turns a typed 1.5 into 1.4999999999999998 in the Inspector the
+ * moment a prop is picked up and put down again. */
+function sceneObjectPlacement(matrix) {
+	matrix.decompose(placePos, placeQuat, placeScale);
+	placeEuler.setFromQuaternion(placeQuat);
+	const round = (value) => Math.round(value * 1e6) / 1e6;
+	const placement = {
+		x: round(placePos.x), y: round(placePos.y), z: round(placePos.z),
+		rotX: round(placeEuler.x * THREE.MathUtils.RAD2DEG),
+		rot: round(placeEuler.y * THREE.MathUtils.RAD2DEG),
+		rotZ: round(placeEuler.z * THREE.MathUtils.RAD2DEG),
+		scaleX: round(placeScale.x), scaleY: round(placeScale.y), scaleZ: round(placeScale.z),
+	};
+	return Object.values(placement).every((value) => Number.isFinite(value)) ? placement : null;
+}
+
+/**
+ * The nine channels rewritten so a prop does not MOVE when it changes frames.
+ *
+ * `world` is where the prop actually IS — read off the live group in the scene
+ * graph, NOT recomputed from its numbers. That distinction is the whole point:
+ * an attach->attach drop would otherwise have to reconstruct the world
+ * transform through the frame the prop is leaving, and any disagreement
+ * between that reconstruction and what the renderer last drew (a rig posed a
+ * beat later than the last drawn frame, a frame that no longer resolves) lands
+ * on screen as a jump. Reading the group makes every drop the same one-frame
+ * conversion the world->attach and attach->world cases already were.
+ *
+ * Returns null when the frame it needs is missing — converting against a rig
+ * that is not on stage would be precisely the jump this exists to prevent —
+ * and the caller then refuses the whole drop rather than re-labelling numbers
+ * it could not convert.
+ */
+function attachPlacementPatch(world, attach, frameOf) {
+	if (!world) return null;
+	if (!attach) return sceneObjectPlacement(attachLocalMatrix.copy(world));
+	const frame = frameOf(attach.characterId, attach.bone ?? null, attachToMatrix);
+	if (!frame) return null;
+	return sceneObjectPlacement(attachLocalMatrix.copy(world).premultiply(attachInverseMatrix.copy(frame).invert()));
+}
+
+/**
+ * Write a computed placement straight onto the record, around
+ * updateSceneObject. Deliberate, and the only call site allowed to: those
+ * limits are WORLD limits (y floors at the deck, x/z stay inside the room),
+ * and while a prop is attached its numbers are a LOCAL transform in a bone
+ * frame — a hand rides 1.3 m above the deck, so a carried prop's local y is
+ * routinely negative and clamping it to the floor IS the visual jump the
+ * conversion exists to prevent. Every value here comes out of a decomposed
+ * matrix, so the record shape is sound by construction.
+ */
+function placeSceneObject(objects, id, placement) {
+	if (!placement) return objects;
+	let changed = false;
+	const next = objects.map((object) => {
+		if (object.id !== id) return object;
+		if (Object.entries(placement).every(([key, value]) => object[key] === value)) return object;
+		changed = true;
+		return { ...object, ...placement };
+	});
+	return changed ? next : objects;
+}
 
 const CAMERA_MOVE_LABELS_KO = new Map([
 	["Static / locked-off", ko("Static / locked-off", "고정 샷")],
@@ -4435,6 +4607,122 @@ globalThis.playMode = centerTab === "play";
 		});
 	}, [sceneObjects, tlFrame, tlFrameCount, tlFps]);
 
+	/* ------------------------ carried props (attachment) ------------------- */
+	// A prop attached to a character rides a LIVE frame in the scene graph, so
+	// it tracks playback, scrubbing and the offscreen export — none of which
+	// re-render React. The renderer resolves the frame through this ref on every
+	// rendered frame; the App keeps it pointed at the mounted rigs. A ref, not a
+	// prop value, so a fresh rig map never re-renders the set.
+	const attachFrameRef = useRef(null);
+	attachFrameRef.current = (characterId, bone, out) => attachFrameMatrix(rigs[characterId] ?? null, bone, out);
+	// The recorder renders through gl.render() directly, which never runs the
+	// r3f frame loop — so it asks the set for one placement pass itself, right
+	// after it has written that frame's bones.
+	const propSyncRef = useRef(null);
+	// Where a prop actually IS, read off its live group: the one authority on
+	// the transform currently on screen, and so the only honest starting point
+	// for a no-jump conversion.
+	const propWorldRef = useRef(null);
+
+	/** The prop's live world matrix, falling back to its authored numbers while
+	 * it is unattached (those ARE world) and the set has not mounted it yet. */
+	function sceneObjectWorldMatrix(object) {
+		return propWorldRef.current?.(object.id, attachWorldMatrix)
+			?? ((object.attach ?? null) ? null : sceneObjectMatrix(object, attachWorldMatrix));
+	}
+
+	/** The attachment a hierarchy row offers, or null when the row is not a
+	 * frame. A character row means the whole body's animated root; a bone row
+	 * means that one frame. The rig subtree hangs off the FIRST character row
+	 * only (hierarchy-model.js), so a bone row can only ever mean characters[0]. */
+	function attachTargetForRow(rowId) {
+		const charId = charIdFromHierarchyId(rowId);
+		if (charId) return characters.some((entry) => entry.id === charId) ? { characterId: charId, bone: null } : null;
+		const bone = ATTACH_BONE_ROWS.get(rowId);
+		if (!bone || !characters[0]) return null;
+		return { characterId: characters[0].id, bone };
+	}
+
+	/** "Character 1 · Right Hand" — the same words the rows the user dropped on
+	 * carry, so the Inspector names the target the way the tree does. */
+	function attachTargetLabel(attach) {
+		const index = characters.findIndex((entry) => entry.id === attach.characterId);
+		const who = index < 0
+			? ko("Missing character", "없는 인물")
+			: index === 0
+				? ko("Character 1", "인물 1")
+				: index === 1
+					? ko("Character 2", "인물 2")
+					: isKo ? `인물 ${index + 1}` : `Character ${index + 1}`;
+		const bone = attach.bone
+			? HIERARCHY_INSPECTOR_TITLES[`rig.${attach.bone}`] ?? attach.bone
+			: ko("Root", "루트");
+		return `${who} · ${bone}`;
+	}
+
+	/**
+	 * Hierarchy row drag policy (the panel holds none). An object row dropped on
+	 * another object GROUPS; on a character or one of its bone rows it ATTACHES;
+	 * on Props it comes back to the world. Anything else is not a drop.
+	 */
+	const hierarchyReparent = {
+		canDrop(sourceRowId, targetRowId) {
+			const id = sceneObjectIdFromHierarchy(String(sourceRowId ?? ""));
+			if (!id || sourceRowId === targetRowId) return false;
+			const object = sceneObjects.find((entry) => entry.id === id);
+			if (!object) return false;
+			const targetObjectId = sceneObjectIdFromHierarchy(String(targetRowId ?? ""));
+			// Grouping keeps its own rules (self, cycles, unknown ids) — asking the
+			// store is the only way to stay honest about them.
+			if (targetObjectId) return setSceneObjectParent(sceneObjects, id, targetObjectId) !== sceneObjects;
+			if (targetRowId === "props") return (object.attach ?? null) !== null || (object.parent ?? null) !== null;
+			const attach = attachTargetForRow(targetRowId);
+			if (!attach) return false;
+			const current = object.attach ?? null;
+			return !current || current.characterId !== attach.characterId || (current.bone ?? null) !== attach.bone;
+		},
+		onDrop(sourceRowId, targetRowId) {
+			if (!hierarchyReparent.canDrop(sourceRowId, targetRowId)) return;
+			const id = sceneObjectIdFromHierarchy(String(sourceRowId));
+			const targetObjectId = sceneObjectIdFromHierarchy(String(targetRowId));
+			// Grouping moves nothing on screen — the set places every prop at its
+			// own absolute transform. Taking a parent DOES cancel an attachment
+			// (the store's exclusivity rule), so a carried prop dropped into a
+			// group comes back to world numbers on the way, exactly as the Props
+			// row would put it back.
+			if (targetObjectId) {
+				const carried = animatedSceneObjects.find((entry) => entry.id === id) ?? null;
+				const restored = carried?.attach
+					? attachPlacementPatch(sceneObjectWorldMatrix(carried), null, attachFrameRef.current)
+					: null;
+				store.applyAtomic((objects) => {
+					const next = setSceneObjectParent(objects, id, targetObjectId);
+					return next === objects ? objects : placeSceneObject(next, id, restored);
+				});
+				return;
+			}
+			const attach = targetRowId === "props" ? null : attachTargetForRow(targetRowId);
+			// Where the prop is on screen right now, expressed in the frame it is
+			// joining (or left as world when it joins none). ONE conversion, whether
+			// the prop is coming from the world or from another frame.
+			const shown = animatedSceneObjects.find((entry) => entry.id === id) ?? null;
+			const placement = shown ? attachPlacementPatch(sceneObjectWorldMatrix(shown), attach, attachFrameRef.current) : null;
+			// A placement that could not be computed refuses the DROP, not just the
+			// numbers: attaching without converting would silently reinterpret the
+			// old frame's numbers in the new frame, which is the jump itself.
+			if (!placement) return;
+			// ONE atomic: a single undo puts back both the field and the numbers.
+			store.applyAtomic((objects) => {
+				let next = setSceneObjectAttach(objects, id, attach);
+				// Dropping on Props means "world-anchored again", which drops the
+				// grouping parent too — attach and parent are the same slot.
+				if (attach === null) next = setSceneObjectParent(next, id, null);
+				if (next === objects) return objects;
+				return placeSceneObject(next, id, placement);
+			});
+		},
+	};
+
 	const activeShotIdx = shotIndexAtFrame(shots, tlFrame);
 	const activeShot = shots[activeShotIdx] ?? null;
 	const cameraKeys = activeShot?.cameraKeys ?? [];
@@ -6021,6 +6309,10 @@ globalThis.playMode = centerTab === "play";
 		if (activeRig && ikChains && ikStateRef.current.keys.size > 0) {
 			ikEvaluate(ikChains, ikStateRef.current, frame, ikFkJoints, motion ? IK_CORRECTION_BLEND_FRAMES : 0);
 		}
+		// The bones for this frame are now written, so a carried prop can take
+		// its place on them. gl.render() never runs the r3f frame loop, so this
+		// pass is the recorder's stand-in for the useFrame the preview gets.
+		propSyncRef.current?.();
 		const sampled = sampleAt(playbackScene, shotAtFrame(shots, frame), frame);
 		const cam = shotCamRef.current;
 		if (cam && sampled.camera) {
@@ -7340,6 +7632,50 @@ globalThis.playMode = centerTab === "play";
 		setToast(isKo ? `${tlFrame}프레임에 전신 IK 키를 추가했어요` : `Full-body IK key at frame ${tlFrame}`);
 	}
 
+	// Self-collision cleanup: push interpenetrating body parts apart with the
+	// IK solver, then bake the fix as an ordinary IK correction key so it
+	// survives scrubs, undo, and blends back into the clip outside its range.
+	function runFixCollisions() {
+		if (!ikChains || !activeRig) return;
+		const result = fixCollisions(activeRig, ikChains, { ikState: ikStateRef.current });
+		if (!result.changed) {
+			setToast(ko("No body collisions at this frame", "이 프레임에는 신체 관통이 없어요"));
+			return;
+		}
+		if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
+		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
+		setIkTick((n) => n + 1);
+		setToast(result.residual > 1e-4
+			? ko(`Collisions reduced (residual ${(result.residual * 100).toFixed(1)} cm)`, `관통을 줄였어요 (잔여 ${(result.residual * 100).toFixed(1)} cm)`)
+			: ko(`Collisions fixed at frame ${tlFrame}`, `프레임 ${tlFrame}의 관통을 정리했어요`));
+	}
+
+	// Whole-clip variant: walk the motion frame by frame, clean each pose and
+	// key ONLY the frames that changed, so a clean clip stays keyless.
+	function runFixCollisionsRange() {
+		if (!ikChains || !activeRig || !motion) return;
+		const currentFrame = tlFrame;
+		const applyFrame = (frame) => {
+			applyMotionFrame(activeRig, motion, frame);
+			ikEvaluate(ikChains, ikStateRef.current, frame, ikFkJoints, IK_CORRECTION_BLEND_FRAMES);
+		};
+		recordCharacterUndo();
+		const keyed = fixCollisionsRange({
+			rig: activeRig,
+			chains: ikChains,
+			ikState: ikStateRef.current,
+			fkJoints: ikFkJoints,
+			startFrame: 0,
+			endFrame: motion.frames - 1,
+			applyFrame,
+		});
+		applyFrame(currentFrame);
+		setIkTick((n) => n + 1);
+		setToast(keyed.length
+			? ko(`Fixed collisions on ${keyed.length} frame(s)`, `${keyed.length}개 프레임의 관통을 정리했어요`)
+			: ko("No body collisions in the clip", "클립에 신체 관통이 없어요"));
+	}
+
 	function ikDeleteKeyframe(frame) {
 		if (!ikStateRef.current.keys.has(frame)) return;
 		recordCharacterUndo();
@@ -7416,6 +7752,12 @@ globalThis.playMode = centerTab === "play";
 				onTrailDragEnd({ track: "hips", grabFrame, delta });
 			},
 			trailRegenerate: runTrailRegeneration,
+			// Fix-collisions QA surface: live penetration readout for headless
+			// checks; the fix itself runs through the buttons / runFixCollisions.
+			fcDetect: () => {
+				const capsules = activeRig ? buildCollisionCapsules(activeRig) : null;
+				return capsules ? detectPenetrations(capsules).map((p) => ({ pair: `${p.a.def.id}×${p.b.def.id}`, depth: p.depth })) : null;
+			},
 			centerTab,
 			pathDraw,
 		};
@@ -8286,9 +8628,29 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * with the refusal would read as two different problems. */
 	function lineDriftHint() {
 		return ko(
-			"The view moved — the pending edit is kept and still applies; return toward the original view to see the line again, or Generate/undo from here.",
-			"시점이 움직였어요 — 편집한 궤적은 그대로 남아 있고 그대로 적용됩니다. 원래 시점 쪽으로 돌아오면 궤적이 다시 보이고, 지금 이 상태에서 생성하거나 되돌려도 됩니다.",
+			"The view moved — the pending edit still applies; the dashed line is that same edit seen from here. Return toward the original view to grab it again, or Generate/undo from here.",
+			"시점이 움직였어요 — 편집한 궤적은 그대로 적용되며, 점선은 같은 궤적을 지금 시점에서 본 모습입니다. 다시 잡으려면 원래 시점 쪽으로 돌아가고, 지금 이 상태에서 생성하거나 되돌려도 됩니다.",
 		);
+	}
+
+	/** The drifted ghost, RE-ANCHORED: lift the committed edit into world space
+	 * with the trail's own per-frame depth and see it through the LIVE lens, so
+	 * the dashed line hugs the trajectory instead of floating wherever the old
+	 * uv happen to land in the new view. Returns null when the trip cannot be
+	 * made (no live lens yet, no motion, a pins-only edit with no curves) — the
+	 * caller then paints the authored uv as before, which is at least honest
+	 * about being stale. Runs per frame like the rest of the painter; it is the
+	 * same few hundred pinhole projections projectLineCurve already pays. */
+	function reprojectDriftedEdit(pane, edit) {
+		const live = captureLineCamera(pane);
+		const jointName = TRAIL_EFFECTOR_JOINTS[lineTrack];
+		if (!live || !jointName || !motion) return null;
+		const trail = jointTrailPoints(motion, jointName, { baseY: activeChar.y ?? 0, scale: activeChar.scale ?? 1 });
+		if (!trail) return null;
+		const original = reprojectCurveWorld(edit.original, trail, edit.camera, live);
+		const edited = reprojectCurveWorld(edit.edited, trail, edit.camera, live);
+		if (!original || !edited) return null;
+		return { original, edited };
 	}
 
 	/** Project the joint's trail for the current track and range through the
@@ -8394,6 +8756,14 @@ function resizePromptClip(id, edge, rawFrame) {
 			original = edit.original;
 			edited = edit.edited;
 			ghost = !drag && lineCurveDrifted(pane, edit);
+			// A drifted line is still WORLD-anchored through the trail's depth, so
+			// draw it where the edit actually sits under the live lens rather than
+			// at its stale authored uv. Falls back to the authored uv when the
+			// re-anchoring cannot run (see reprojectDriftedEdit).
+			if (ghost) {
+				const anchored = reprojectDriftedEdit(pane, edit);
+				if (anchored) ({ original, edited } = anchored);
+			}
 		} else {
 			const live = projectLineCurve(pane);
 			lineLiveRef.current = live;
@@ -10142,7 +10512,31 @@ function resizePromptClip(id, edge, rawFrame) {
 		// bridge refuses the pair. A chained rollout (2 s + 2 s prompt blocks)
 		// must still generate — preserve silently steps aside rather than turning
 		// every multi-block generation into a 400.
-		if (!fresh && motion?.url && preserveStrength > 0 && body.regenerateSegments === undefined && body.segments === undefined) {
+		// The take being preserved must be the LENGTH of the window being
+		// generated: Kimodo's preserve prep refuses a base whose duration is off
+		// by more than a frame (there is no principled way to stretch a 8 s walk
+		// into 5 s of blend), so a duration change quietly steps aside exactly
+		// like a chained rollout does — the alternative is every "make it
+		// longer/shorter" regeneration failing outright.
+		const preserveDurationFits =
+			motion?.frames > 0 && Math.abs(motion.frames / TIMELINE_FPS - duration) <= 1 / ARDY_FPS + 1e-9;
+		// Preserve reconstructs the LOADED take wherever nothing was edited — with
+		// no edit ranges it reconstructs it nearly verbatim (G1 measured ~5 mm).
+		// So it must only ride along when this run asks for the SAME motion the
+		// take was generated from: if any prompt block changed, the user is asking
+		// for a different motion and preserve would hand them the old take back
+		// with the new prompt ignored. The take's recipe is the record of what it
+		// was generated from; no recipe (a pre-C9 take) means no way to check, and
+		// preserve steps aside rather than guessing. A motionEdit run is exempt —
+		// it rewrites a span of the take from poses, not from the prompt.
+		const requestBlocks = blocksFromRequest(body, ARDY_FPS);
+		const recipeBlocks = takeRecipeRef.current?.blocks ?? null;
+		const preservePromptMatches =
+			body.motionEdit !== undefined ||
+			(!!recipeBlocks &&
+				recipeBlocks.length === requestBlocks.length &&
+				recipeBlocks.every((block, index) => block.prompt.trim() === requestBlocks[index].prompt.trim()));
+		if (!fresh && motion?.url && preserveStrength > 0 && preserveDurationFits && preservePromptMatches && body.regenerateSegments === undefined && body.segments === undefined) {
 			body.preserve = {
 				sourceMotion: motion.url,
 				strength: preserveStrength,
@@ -10746,6 +11140,60 @@ function resizePromptClip(id, edge, rawFrame) {
 			: entry));
 	}
 
+	/** 로컬 인비트위닝: 타임라인의 IK 키들 사이를 cozy-inbetween 모델로 채운다.
+	 * 김모도/SSH 박스 불필요 — 브릿지가 맥 로컬 CPU 워커를 돌린다. */
+	async function runInbetween() {
+		try {
+		const frames = [...ikFrames].sort((a, b) => a - b);
+		if (frames.length < 2) {
+			setToast(ko("In-betweening needs at least two IK keys", "인비트윈은 IK 키를 2개 이상 찍어야 해요"));
+			return;
+		}
+		const ibRig = posedRig() ?? activeRig;
+		if (!ibRig) {
+			setToast(ko("No rig selected", "캐릭터 리그가 선택되지 않았어요"));
+			return;
+		}
+		const currentFrame = tlFrame;
+		const poses = frames.map((f) => {
+			if (motion) applyMotionFrame(ibRig, motion, f);
+			if (ikChains) ikEvaluate(ikChains, ikStateRef.current, f, ikFkJoints, motion ? IK_CORRECTION_BLEND_FRAMES : 0);
+			return {
+				frame: f,
+				pose: buildArdyPose({
+					rig: ibRig,
+					camRef: shotCamRef,
+					look,
+					fovDeg,
+					slate: slateLine(shot),
+					rigName: activeChar.model,
+					root: captureArdyRoot(ibRig),
+				}),
+			};
+		});
+		if (motion) applyMotionFrame(ibRig, motion, currentFrame);
+		if (ikChains) ikEvaluate(ikChains, ikStateRef.current, currentFrame, ikFkJoints, motion ? IK_CORRECTION_BLEND_FRAMES : 0);
+		const wire = toArdyFrameEntries(poses);
+		const f0 = wire[0].frame;
+		const shifted = wire.map((e) => ({ ...e, frame: e.frame - f0 }));
+		const totalFrames = shifted[shifted.length - 1].frame + 1;
+		setToast(ko("In-betweening locally…", "로컬 인비트윈 생성 중…"));
+		const done = await inbetween({ poses: shifted, frames: totalFrames });
+		if (done.motionUrl) {
+			await deliverMotion({
+				charId: activeChar.id,
+				prompt: "inbetween",
+				rootRotationDeg: activeChar.rot ?? 0,
+				anchor: { x: 0, z: 0 },
+			}, done.motionUrl);
+		}
+		setToast(ko(`In-between done (${done.ms ?? "?"} ms)`, `인비트윈 완료 (${done.ms ?? "?"} ms)`));
+		} catch (err) {
+			console.error("[inbetween]", err);
+			setToast(ko(`In-between failed: ${err.message}`, `인비트윈 실패: ${err.message}`));
+		}
+	}
+
 	/** After a scene (re)load, re-fetch every persisted clip reference and
 	 * rebuild the session motions. The bridge may be gone — failures just
 	 * leave the character posed, never an error the user must act on. */
@@ -10872,6 +11320,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					onDeleteObject={deleteSceneObject}
 					onFrameObject={frameSelection}
 					propsDrop={propsDrop}
+					reparent={hierarchyReparent}
 				/>
 				</aside>
 				<div
@@ -11085,7 +11534,15 @@ function resizePromptClip(id, edge, rawFrame) {
 								onChange={(patch) => setKeyLight((current) => createKeyLight({ ...current, ...patch }))}
 							/>
 							<Room />
-							<SetProps objects={animatedSceneObjects} selectedId={selectedSceneObjectId} frameRef={propFrameRef} take={{ frameCount: tlFrameCount, fps: tlFps }} />
+							<SetProps
+								objects={animatedSceneObjects}
+								selectedId={selectedSceneObjectId}
+								frameRef={propFrameRef}
+								take={{ frameCount: tlFrameCount, fps: tlFps }}
+								attachFrameRef={attachFrameRef}
+								syncRef={propSyncRef}
+								worldRef={propWorldRef}
+							/>
 
 							<PerspectiveCamera
 								ref={shotCamRef}
@@ -12603,6 +13060,21 @@ function resizePromptClip(id, edge, rawFrame) {
 						<button type="button" className={"btn full" + (ikMode ? " primary" : "")} onClick={toggleIkMode} disabled={!ikChains}>
 						{ikMode ? ko("Finish rig editing", "리그 편집 끝내기") : ko("Edit rig with IK", "IK로 리그 편집")}
 						</button>
+						<button type="button" className="btn full" onClick={runInbetween} disabled={!ikChains}>
+						{ko("In-between (fill IK keys)", "인비트윈 (IK 키 채우기)")}
+						</button>
+						<button type="button" className="btn full" onClick={runFixCollisions} disabled={!ikChains}>
+						{ko("Fix body collisions (this frame)", "신체 관통 정리 (이 프레임)")}
+						</button>
+						<button type="button" className="btn full" onClick={runFixCollisionsRange} disabled={!ikChains || !motion}>
+						{ko("Fix body collisions (whole clip)", "신체 관통 정리 (클립 전체)")}
+						</button>
+						<p className="inspector-hint">
+						{ko("Pushes interpenetrating body parts apart with IK and keys the fix. Whole clip walks the loaded motion and keys only the frames that changed.", "겹쳐 들어간 신체 파츠를 IK로 밀어내고 그 결과를 키로 남깁니다. 클립 전체는 로드된 모션을 훑으며 실제로 고쳐진 프레임만 키를 찍습니다.")}
+						</p>
+						<p className="inspector-hint">
+						{ko("Pose with IK keys on 2+ frames; the local model fills between them. No GPU box needed.", "2개 이상 프레임에 IK 키를 찍으면 로컬 모델이 그 사이를 채웁니다. GPU 박스 불필요.")}
+						</p>
 						{/* Motion trail editing: falloff radius + confirm-to-regenerate.
 						    Only meaningful with IK mode on and a loaded take. */}
 						{ikMode && motion && (
@@ -12761,6 +13233,25 @@ function resizePromptClip(id, edge, rawFrame) {
 										onChange={(event) => changeSceneObject(selectedSceneObject.id, { name: event.target.value })}
 									/>
 								</Field>
+								{/* A carried prop has no grouping parent to pick — the character
+								    IS its parent — so the dropdown gives way to what it is
+								    riding and the way off it. Detaching here is the Props drop,
+								    numbers and all. */}
+								{selectedSceneObject.attach ? (
+									<Field label={ko("Attached to", "부착 대상")}>
+										<div className="attach-target">
+											<span>{attachTargetLabel(selectedSceneObject.attach)}</span>
+											<button
+												type="button"
+												className="btn ghost"
+												onClick={() => hierarchyReparent.onDrop(`object:${selectedSceneObject.id}`, "props")}
+												title={ko("Put it back in the set, where it is now", "지금 있는 자리에 그대로 세트로 되돌립니다")}
+											>
+												{ko("Detach", "분리")}
+											</button>
+										</div>
+									</Field>
+								) : (
 								<Field label={ko("Parent", "상위 그룹")}>
 									<select
 										value={selectedSceneObject.parent ?? ""}
@@ -12782,6 +13273,7 @@ function resizePromptClip(id, edge, rawFrame) {
 											))}
 									</select>
 								</Field>
+								)}
 								<Vector3Row
 							label={ko("Position", "위치")}
 									fields={[

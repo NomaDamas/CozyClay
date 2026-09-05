@@ -92,7 +92,7 @@ export default defineConfig({
 				target: motionBridgeUrl,
 				bypass(req) {
 					const path = (req.url || "").split("?")[0];
-					if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;
+					if (/^\/ardy\/(health|bases|generate|inbetween|footage|extract|motions)(\/|$)/.test(path)) return undefined;
 					return req.url; // not a bridge route: serve the static asset
 				},
 			},

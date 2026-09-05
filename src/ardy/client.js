@@ -82,6 +82,21 @@ export async function listBases() {
  * aborted signal (the AbortError propagates so callers can tell cancellation
  * apart from failure). `signal` is optional.
  */
+/** POST /ardy/inbetween — 로컬 CMIB식 인비트위닝 (김모도/박스 불필요).
+ * body: { poses: [{frame, pose}], frames: number, style?: number }
+ * 응답: { ok, motionUrl, bytes } */
+export async function inbetween(body) {
+	const res = await fetch("/ardy/inbetween", {
+		method: "POST",
+		headers: JSON_HEADERS,
+		body: JSON.stringify(body),
+	});
+	if (!res.ok) {
+		throw new Error(await reasonOf(res, `inbetween failed (HTTP ${res.status})`));
+	}
+	return res.json();
+}
+
 export async function generate(body, onEvent, { signal } = {}) {
 	const res = await fetch("/ardy/generate", {
 		method: "POST",

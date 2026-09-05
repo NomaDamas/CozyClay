@@ -31,6 +31,8 @@ import {
 	cameraToC6,
 	pinsFrameRange,
 	projectPointC6,
+	projectTrailCurve,
+	reprojectCurveWorld,
 	unprojectDeltaC6,
 	upsertPin,
 	validateLineEdit,
@@ -370,6 +372,79 @@ await test("a point at or behind the lens has no image plane to slide in", () =>
 	assert.equal(unprojectDeltaC6(camera, [0, 1, -1], Number.NaN, 0), null);
 	assert.equal(unprojectDeltaC6(null, [0, 1, -1], 0.1, 0), null);
 	assert.equal(unprojectDeltaC6(camera, [0, 1], 0.1, 0), null);
+});
+
+console.log("reprojectCurveWorld — the drifted ghost is world-anchored, not stale uv");
+
+/** matrixWorldInverse for a camera at (4, 1.4, 0) looking down -X — the same
+ * subject as identityView's camera, seen from 90 degrees around. Rows are the
+ * camera basis (X=(0,0,-1), Y=(0,1,0), Z=(1,0,0)), translation -R*position. */
+function orbitedView() {
+	return [
+		0, 0, 1, 0,
+		0, 1, 0, 0,
+		-1, 0, 0, 0,
+		0, -1.4, -4, 1,
+	];
+}
+
+const reprojectFixtures = () => {
+	const from = cameraToC6({ fovDeg: 45, aspect: 16 / 9, matrixWorldInverse: identityView(), width: 1600, height: 900 });
+	const to = cameraToC6({ fovDeg: 45, aspect: 16 / 9, matrixWorldInverse: orbitedView(), width: 1600, height: 900 });
+	// A short trail wandering in front of BOTH cameras (near the origin).
+	const trail = new Float32Array([
+		-0.4, 1.0, -0.2,
+		-0.2, 1.1, -0.1,
+		0.0, 1.2, 0.0,
+		0.2, 1.1, 0.1,
+		0.4, 1.0, 0.2,
+	]);
+	return { from, to, trail };
+};
+
+await test("an UNEDITED curve reprojects onto the trajectory under the new lens", () => {
+	const { from, to, trail } = reprojectFixtures();
+	const range = { startFrame: 0, endFrame: 5 };
+	const authored = projectTrailCurve({ trail, frameRange: range, camera: from });
+	const ghost = reprojectCurveWorld(authored, trail, from, to);
+	const direct = projectTrailCurve({ trail, frameRange: range, camera: to });
+	assert.equal(ghost.length, 5);
+	for (let i = 0; i < 5; i += 1) {
+		assert.ok(Math.abs(ghost[i].u - direct[i].u) < 1e-9, `frame ${i}: u ${ghost[i].u} vs ${direct[i].u}`);
+		assert.ok(Math.abs(ghost[i].v - direct[i].v) < 1e-9, `frame ${i}: v ${ghost[i].v} vs ${direct[i].v}`);
+		assert.equal(ghost[i].frame, i);
+	}
+});
+
+await test("an EDITED point shows its world displacement through the new lens", () => {
+	const { from, to, trail } = reprojectFixtures();
+	const authored = projectTrailCurve({ trail, frameRange: { startFrame: 0, endFrame: 5 }, camera: from });
+	// Pull frame 2 by a known uv offset in the authoring view.
+	const [du, dv] = [0.06, -0.04];
+	const edited = authored.map((p, i) => (i === 2 ? { ...p, u: p.u + du, v: p.v + dv } : p));
+	const ghost = reprojectCurveWorld(edited, trail, from, to);
+	// The contract, spelled with the same public building blocks the pin
+	// gesture uses: lift the uv offset at the joint's own depth, then look at
+	// that WORLD point from the new camera.
+	const base = [trail[6], trail[7], trail[8]];
+	const delta = unprojectDeltaC6(from, base, du, dv);
+	const expected = projectPointC6(to, base[0] + delta[0], base[1] + delta[1], base[2] + delta[2]);
+	assert.ok(Math.abs(ghost[2].u - expected[0]) < 1e-9, `u ${ghost[2].u} vs ${expected[0]}`);
+	assert.ok(Math.abs(ghost[2].v - expected[1]) < 1e-9, `v ${ghost[2].v} vs ${expected[1]}`);
+});
+
+await test("reprojection refuses rubbish and passes nulls through by slot", () => {
+	const { from, to, trail } = reprojectFixtures();
+	assert.equal(reprojectCurveWorld(null, trail, from, to), null);
+	assert.equal(reprojectCurveWorld([], null, from, to), null);
+	assert.equal(reprojectCurveWorld([], trail, null, to), null);
+	assert.equal(reprojectCurveWorld([], trail, from, null), null);
+	const sparse = [null, { frame: 1, u: 0.5, v: 0.5 }, { frame: 99, u: 0.5, v: 0.5 }];
+	const out = reprojectCurveWorld(sparse, trail, from, to);
+	assert.equal(out.length, 3);
+	assert.equal(out[0], null, "a null slot stays null");
+	assert.ok(out[1], "a valid slot survives");
+	assert.equal(out[2], null, "a frame off the trail's end has no anchor");
 });
 
 console.log("the job's pin -> row arithmetic, with the box stubbed out");

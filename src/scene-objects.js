@@ -144,6 +144,67 @@ export function cutoutFootprint(height, aspect, stretch = 1) {
 	};
 }
 
+/* ----------------------------------------------------- attachment ---- */
+
+/**
+ * The frames a prop can be pinned to on a character. These are the APP's IK
+ * track ids — the same names the rig panel and the animation tracks speak —
+ * NOT three.js bone names: the store must never depend on which skeleton a
+ * character happens to be wearing, or a re-rigged cast would silently drop
+ * every attachment it had.
+ *
+ * `bone: null` is deliberately absent from the list: it means the character's
+ * animated ROOT frame (carry the whole body's motion, not one limb's), which
+ * is a different thing from "no bone chosen yet" and so is spelled as null
+ * rather than as a fifteenth member here.
+ */
+export const SCENE_ATTACH_BONES = Object.freeze([
+	"hips",
+	"spine",
+	"chest",
+	"neck",
+	"head",
+	"leftShoulder",
+	"leftElbow",
+	"leftHand",
+	"rightShoulder",
+	"rightElbow",
+	"rightHand",
+	"leftKnee",
+	"leftFoot",
+	"rightKnee",
+	"rightFoot",
+]);
+
+/**
+ * Repair an attachment into the exact two-key record, or report that it is not
+ * an attachment at all. THREE outcomes, which is why this returns `undefined`
+ * rather than throwing or collapsing to null:
+ *   null      — detached, a legal and meaningful value
+ *   {…}       — a live attachment, stripped to exactly characterId + bone
+ *   undefined — malformed; the caller decides whether that means "refuse the
+ *               edit" (setSceneObjectAttach) or "read it as detached" (decode)
+ *
+ * `characterId` is NOT checked against the cast: this module owns the scene's
+ * objects and has never known who is on stage. A dangling id renders as
+ * detached — the App's job, since only it can tell.
+ *
+ * Extra keys are dropped rather than refused, so an over-eager caller (or a
+ * record written by a future build) attaches correctly instead of failing.
+ */
+function normalizeSceneAttach(value) {
+	if (value === null) return null;
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const { characterId, bone } = value;
+	if (typeof characterId !== "string" || !characterId) return undefined;
+	// An absent bone is the root frame, exactly like an explicit null; anything
+	// that is not a track id is a typo, and a typo must not pin a prop to
+	// nowhere.
+	if (bone === null || bone === undefined) return { characterId, bone: null };
+	if (typeof bone !== "string" || !SCENE_ATTACH_BONES.includes(bone)) return undefined;
+	return { characterId, bone };
+}
+
 export function sceneObjectHierarchyId(id) {
 	return `object:${id}`;
 }
@@ -187,6 +248,10 @@ export function createSceneObject(kind, existing = [], placement = {}) {
 		path: null,
 		color: entry.color,
 		parent: null,
+		// Rides on a character's animated frame instead of the floor. null is a
+		// world-anchored prop — where everything starts, because a fresh object
+		// is dropped in front of the lens, not into someone's hand.
+		attach: null,
 		footprint: { ...entry.footprint },
 		height: entry.height,
 	};
@@ -235,6 +300,7 @@ export function createCutoutObject({ assetId, aspect = 1, height = CUTOUT_DEFAUL
 		path: null,
 		color: CUTOUT_TINT,
 		parent: null,
+		attach: null,
 		// Key order matches what `normalizeSceneObject` writes, so a record
 		// survives a storage round trip byte-for-byte.
 		assetId,
@@ -432,6 +498,10 @@ export function updateSceneObject(objects, id, patch) {
  * Attach `id` to `parentId` (or detach with null). Refuses the two shapes that
  * would corrupt the tree: an object parented to itself, and a cycle formed by
  * parenting an object to one of its own descendants.
+ *
+ * Grouping and character attachment are EXCLUSIVE: a prop follows exactly one
+ * frame, so taking a parent drops any attachment. Two owners of one transform
+ * would leave the record describing a position nothing renders at.
  */
 export function setSceneObjectParent(objects, id, parentId) {
 	if (id === parentId) return objects;
@@ -441,11 +511,56 @@ export function setSceneObjectParent(objects, id, parentId) {
 	const next = objects.map((object) => {
 		if (object.id !== id) return object;
 		const parent = parentId ?? null;
-		if ((object.parent ?? null) === parent) return object;
+		// Detaching from a group says nothing about a character attachment, so
+		// only a real parent clears one — and the key is written only when it
+		// has something to clear, leaving every unattached record untouched.
+		const clearsAttach = parent !== null && (object.attach ?? null) !== null;
+		if ((object.parent ?? null) === parent && !clearsAttach) return object;
 		changed = true;
-		return { ...object, parent };
+		return clearsAttach ? { ...object, parent, attach: null } : { ...object, parent };
 	});
 	return changed ? next : objects;
+}
+
+/**
+ * Pin `id` to a character (or one of its bones), or detach it with null.
+ * Returns a NEW array on a real change and the SAME array when the edit is
+ * refused or is a no-op — the `setSceneObjectParent` convention, and the thing
+ * that lets a caller pass the result straight to a history store without
+ * minting an empty undo entry.
+ *
+ * Refused: an unknown object id, and any `attach` that is neither null nor
+ * `{ characterId: <non-empty string>, bone: null | <SCENE_ATTACH_BONES member> }`.
+ * A refused edit is silent — the Hierarchy's canDrop is what tells the user a
+ * drop is illegal, long before the store sees it.
+ *
+ * Attaching CLEARS `parent`, the mirror of the rule above. NOTE for callers:
+ * while attached, the position, rotation and scale channels are the object's
+ * LOCAL transform in the attach frame. The store treats those as opaque
+ * numbers and never converts them, so taking a world transform into the
+ * attach frame on attach (and back out on detach) is the App's job — it is the
+ * one that has the three.js scene and can read where the bone actually is.
+ */
+export function setSceneObjectAttach(objects, id, attach) {
+	const next = normalizeSceneAttach(attach);
+	if (next === undefined) return objects;
+	if (!objects.some((object) => object.id === id)) return objects;
+	let changed = false;
+	const mapped = objects.map((object) => {
+		if (object.id !== id) return object;
+		const current = object.attach ?? null;
+		if (next === null) {
+			if (current === null) return object;
+			changed = true;
+			return { ...object, attach: null };
+		}
+		const same = current !== null && current.characterId === next.characterId && (current.bone ?? null) === next.bone;
+		const clearsParent = (object.parent ?? null) !== null;
+		if (same && !clearsParent) return object;
+		changed = true;
+		return clearsParent ? { ...object, attach: next, parent: null } : { ...object, attach: next };
+	});
+	return changed ? mapped : objects;
 }
 
 export function removeSceneObject(objects, id) {
@@ -507,6 +622,13 @@ export function normalizeSceneObject(record) {
 		// Group membership. null is a top-level object; the id of another object
 		// makes this one ride along when that object moves.
 		parent: typeof record.parent === "string" && record.parent ? record.parent : null,
+		// Character attachment, repaired by the same rule the editor writes
+		// through: anything that is not a well-formed pair — a string, an array,
+		// a missing characterId, a bone that is not one of SCENE_ATTACH_BONES —
+		// reads as detached rather than pinning the prop to a frame that does
+		// not exist. A record written before attachment existed has no field at
+		// all, and null is exactly what it meant: world-anchored.
+		attach: normalizeSceneAttach(record.attach) ?? null,
 		// Library kinds take their size from the library — a stored footprint is
 		// stale data, not a fact. A cutout is the exception: its size IS
 		// per-instance, so height and aspect are repaired from the record and

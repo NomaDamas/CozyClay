@@ -766,6 +766,79 @@ function tryParseReport(line) {
 // without bound; evicted ids become stale and 404, which is documented.
 const motionAllowlist = new Map();
 
+// POST /ardy/inbetween — 로컬 CMIB식 인비트위닝 (cozy-inbetween 워커).
+// 김모도 박스 없이 맥 로컬 CPU로 수 ms. pose npz 변환은 기존 코드 경로 재사용.
+const IB_PYTHON = "/Users/yun/cozy-inbetween/.venv/bin/python";
+const IB_WORKER = "/Users/yun/cozy-inbetween/cclay_inbetween_generate.py";
+const IB_CKPT = "/Users/yun/cozy-inbetween/checkpoints/ib_latest.pt";
+
+async function handleInbetween(req, res) {
+	const started = Date.now();
+	const spawnTracked = (command, args, options) => {
+		const child = spawn(command, args, options);
+		track(child);
+		return child;
+	};
+	let raw;
+	try {
+		raw = await readBody(req, MAX_BODY_BYTES);
+	} catch (err) {
+		sendJson(res, 400, { ok: false, reason: err.message });
+		return;
+	}
+	let body;
+	try {
+		body = JSON.parse(raw);
+	} catch (err) {
+		sendJson(res, 400, { ok: false, reason: `malformed JSON: ${err.message}` });
+		return;
+	}
+	const entries = Array.isArray(body?.poses) ? body.poses : [];
+	const totalFrames = Number(body?.frames);
+	if (entries.length < 2 || !entries.every((e) => e && Number.isInteger(e.frame) && e.pose)) {
+		sendJson(res, 400, { ok: false, reason: "inbetween: poses 2개 이상 필요 ({frame, pose})" });
+		return;
+	}
+	if (!Number.isInteger(totalFrames) || totalFrames < 2) {
+		sendJson(res, 400, { ok: false, reason: "inbetween: frames(정수) 필요" });
+		return;
+	}
+	if (!existsSync(IB_CKPT)) {
+		sendJson(res, 503, { ok: false, reason: `inbetween 체크포인트 없음: ${IB_CKPT}` });
+		return;
+	}
+	const stamp = `${Date.now()}-${randomBytes(3).toString("hex")}`;
+	const artifactDir = createPrivateArtifactDir(OUT_DIR, "inbetween");
+	const poseArgs = [];
+	for (let i = 0; i < entries.length; i += 1) {
+		const poseJsonPath = join(artifactDir, `pose-${i}.json`);
+		const poseNpzPath = join(artifactDir, `pose-${i}.npz`);
+		writeFileSync(poseJsonPath, `${JSON.stringify(entries[i].pose, null, 2)}\n`);
+		const convCode = await runStreaming(
+			spawnTracked(process.execPath, [POSE_TO_NPZ, poseJsonPath, "--out", poseNpzPath], { cwd: REPO, detached: true }),
+			() => {},
+		);
+		if (convCode !== 0) {
+			sendJson(res, 500, { ok: false, reason: `pose-to-npz 실패 (frame ${entries[i].frame})` });
+			return;
+		}
+		poseArgs.push("--pose", poseNpzPath, String(entries[i].frame));
+	}
+	const outNpzPath = join(OUT_DIR, `inbetween-${stamp}.npz`);
+	const code = await runStreaming(
+		spawnTracked(IB_PYTHON, [IB_WORKER, "--ckpt", IB_CKPT, "--frames", String(totalFrames),
+			"--style", String(Number(body.style) || 0), "--out", outNpzPath, ...poseArgs], { cwd: REPO, detached: true }),
+		() => {},
+	);
+	if (code !== 0 || !existsSync(outNpzPath)) {
+		sendJson(res, 500, { ok: false, reason: "inbetween 워커 실패" });
+		return;
+	}
+	registerMotion(stamp, outNpzPath);
+	console.log(`[bridge] inbetween 완료: ${entries.length} poses, ${totalFrames}f (${Date.now() - started} ms)`);
+	sendJson(res, 200, { ok: true, motionUrl: `/ardy/motions/${stamp}`, bytes: statSync(outNpzPath).size, ms: Date.now() - started });
+}
+
 function registerMotion(runId, absPath) {
 	motionAllowlist.set(runId, absPath);
 	if (motionAllowlist.size > MOTION_ALLOWLIST_MAX) {
@@ -1016,8 +1089,10 @@ async function handleGenerate(req, res) {
 	const cleanupArtifacts = () => {
 		if (artifactDir) removePrivateArtifactDir(artifactDir);
 	};
+	let clientGone = false;
 	res.on("close", () => {
 		if (!res.writableEnded) {
+			clientGone = true;
 			console.error(
 				`[bridge] client disconnected mid-generate; killing ${children.size} child process group(s)`
 			);
@@ -1440,7 +1515,25 @@ async function handleGenerate(req, res) {
 			return;
 		}
 
-		const finalReport = await runSingle(segments[0]);
+		let finalReport;
+		try {
+			finalReport = await runSingle(segments[0]);
+		} catch (error) {
+			// The base take is a different length than this generation window —
+			// Kimodo's preserve prep refuses it outright (there is no principled
+			// resample). The app now avoids sending the pair, but any other client
+			// (MCP, replay, an older app) can still ask; degrade to a plain
+			// generation LOUDLY, the same policy as a missing base motion, instead
+			// of failing a run the operator did ask for.
+			if (!preserveParams || !/Base motion duration does not match/.test(String(error?.message ?? ""))) throw error;
+			const skipped =
+				"[bridge] preserve SKIPPED: the take being preserved is a different length than this " +
+				"generation window; generating WITHOUT scheduled inpainting";
+			console.error(skipped);
+			sendStatus(skipped);
+			preserveParams = null;
+			finalReport = await runSingle(segments[0]);
+		}
 		if (finalReport) {
 			const poseResults = finalReport.poses || [];
 			const worst = (key) => poseResults.length ? Math.max(...poseResults.map((pose) => pose[key] ?? 0)) : null;
@@ -1468,7 +1561,11 @@ async function handleGenerate(req, res) {
 		killChildren();
 		cleanupArtifacts();
 		if (!res.writableEnded) sendError(`generate failed: ${err.message}`);
-		console.error(`[bridge] generate error: ${err.stack || err}`);
+		// A run whose client already hung up dies of collateral damage — its
+		// artifact dir was just removed underneath it (see the close handler), so
+		// the ENOENT that follows is the abort working, not a generation failure.
+		if (clientGone) console.error(`[bridge] generate aborted by client disconnect (${err.message.split("\n")[0]})`);
+		else console.error(`[bridge] generate error: ${err.stack || err}`);
 		finish(200);
 	}
 }
@@ -1590,6 +1687,14 @@ const server = createServer((req, res) => {
 			});
 		return;
 	}
+	if (pathname === "/ardy/inbetween" && req.method === "POST") {
+		handleInbetween(req, res).catch((err) => {
+			if (!res.headersSent) sendJson(res, 500, { ok: false, reason: `inbetween internal: ${err.message}` });
+			console.error(`[bridge] ${req.method} ${pathname} threw: ${err.stack || err}`);
+			log(500);
+		});
+		return;
+	}
 	if (pathname === "/ardy/generate" && req.method === "POST") {
 		handleGenerate(req, res).catch((err) => {
 			if (!res.headersSent) sendJson(res, 500, { ok: false, reason: `internal error: ${err.message}` });
@@ -1652,6 +1757,7 @@ const server = createServer((req, res) => {
 		pathname === "/ardy/health" ||
 		pathname === "/ardy/bases" ||
 		pathname === "/ardy/generate" ||
+		pathname === "/ardy/inbetween" ||
 		pathname === "/ardy/footage" ||
 		pathname === "/ardy/extract" ||
 		/^\/ardy\/motions\//.test(pathname) ||

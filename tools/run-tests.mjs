@@ -27,6 +27,7 @@ const NODE_FILES = [
 	"test/demo/verify-demo-worker-signing.mjs",
 	"test/demo/verify-demo-worker-loop.mjs",
 	"test/ik/verify-ik.mjs",
+	"test/ik/verify-fix-collisions.mjs",
 	"test/process/verify-bridge-launch.mjs",
 	"test/process/verify-lifecycle.mjs",
 	"test/process/verify-mcp-package-isolation.mjs",

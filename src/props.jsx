@@ -343,25 +343,94 @@ function SelectionBox({ object }) {
 
 const DEG = Math.PI / 180;
 
-function SceneObject({ object, selected, frameRef = null, take = null }) {
+// One scratch set for the whole module: placement runs per prop per frame.
+const placePos = new THREE.Vector3();
+const placeQuat = new THREE.Quaternion();
+const placeScale = new THREE.Vector3();
+const placeEuler = new THREE.Euler();
+const placeLocal = new THREE.Matrix4();
+const placeWorld = new THREE.Matrix4();
+const placeFrame = new THREE.Matrix4();
+
+function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null }) {
 	const groupRef = useRef(null);
-	// An object on a travel path is placed imperatively from the frame ref, not
-	// from React state: the offscreen export advances frames without a
-	// re-render, and a prop that only moved on re-render would freeze in the
-	// recording while the preview animated.
-	useFrame(() => {
+	const attach = object.attach ?? null;
+	// An object on a travel path — or one CARRIED by a character — is placed
+	// imperatively from the frame ref, not from React state: the offscreen
+	// export advances frames without a re-render, and a prop that only moved on
+	// re-render would freeze in the recording while the preview animated. A
+	// carried prop is the same problem one level up: the bone it rides is
+	// written straight into the scene graph by the playback code, never through
+	// React, so nothing re-renders when the character moves.
+	const place = () => {
 		const group = groupRef.current;
-		if (!group || !frameRef || !object.path) return;
-		const at = objectTransformAt(object, frameRef.current ?? 0, take ?? {});
-		if (!at) return;
-		group.position.set(at.x, at.y, at.z);
-		if (at.rot !== null) group.rotation.y = at.rot * DEG;
-		// QA hook: headless checks read the ANIMATED position here, because the
-		// store only knows the authored one. Harmless in normal use.
-		if (typeof window !== "undefined") {
-			(window.__cclayPropWorld ??= {})[object.id] = { x: at.x, y: at.y, z: at.z, frame: frameRef.current ?? 0 };
+		if (!group) return;
+		const frame = frameRef?.current ?? 0;
+		if (attach || object.path) {
+			// The authored numbers first. While attached they are the prop's LOCAL
+			// transform in the attach frame; otherwise they are already world.
+			placePos.set(object.x, object.y ?? 0, object.z);
+			placeEuler.set((object.rotX ?? 0) * DEG, object.rot * DEG, (object.rotZ ?? 0) * DEG);
+			placeScale.set(object.scaleX ?? 1, object.scaleY ?? 1, object.scaleZ ?? 1);
+			if (frameRef && object.path) {
+				const at = objectTransformAt(object, frame, take ?? {});
+				if (at) {
+					placePos.set(at.x, at.y, at.z);
+					if (at.rot !== null) placeEuler.y = at.rot * DEG;
+				}
+			}
+			// A missing rig (the character left the cast, or its model has not
+			// mounted yet) leaves a dangling attachment: place the numbers as plain
+			// world, exactly like a detached prop, rather than freeze the prop at
+			// whatever pose it last held.
+			const rigFrame = attach ? attachFrameRef?.current?.(attach.characterId, attach.bone ?? null, placeFrame) ?? null : null;
+			if (rigFrame) {
+				placeLocal.compose(placePos, placeQuat.setFromEuler(placeEuler), placeScale);
+				placeWorld.multiplyMatrices(rigFrame, placeLocal).decompose(placePos, placeQuat, placeScale);
+				group.position.copy(placePos);
+				group.quaternion.copy(placeQuat);
+				group.scale.copy(placeScale);
+			} else {
+				group.position.copy(placePos);
+				group.rotation.copy(placeEuler);
+				group.scale.copy(placeScale);
+			}
 		}
-	});
+		// QA hook: headless checks read the ANIMATED, WORLD position here, because
+		// the store only knows the authored one — and while attached the authored
+		// one is not even in world space. Harmless in normal use.
+		if (typeof window !== "undefined") {
+			(window.__cclayPropWorld ??= {})[object.id] = { x: group.position.x, y: group.position.y, z: group.position.z, frame };
+		}
+	};
+	useFrame(place);
+	// Two things the App needs to reach imperatively, registered per prop: a
+	// placement pass for the recorder (which renders through gl.render() and so
+	// never runs the frame loop — see SetProps' syncRef), and the prop's live
+	// world matrix, which is what a hierarchy drop converts FROM. The ref
+	// indirection keeps the registered callbacks reading the CURRENT object.
+	const placeRef = useRef(place);
+	placeRef.current = place;
+	const entryRef = useRef(null);
+	if (!entryRef.current) {
+		entryRef.current = {
+			place: () => placeRef.current(),
+			// Rebuilt from the transform place() last wrote, so it is exactly what
+			// is on screen — including while paused, when no frame has run since.
+			world: (out) => {
+				const group = groupRef.current;
+				if (!group) return null;
+				group.updateWorldMatrix(true, false);
+				return out ? out.copy(group.matrixWorld) : group.matrixWorld;
+			},
+		};
+	}
+	useEffect(() => {
+		if (!registryRef) return undefined;
+		const registry = registryRef.current;
+		registry.set(object.id, entryRef.current);
+		return () => { registry.delete(object.id); };
+	}, [registryRef, object.id]);
 	return (
 		<group
 			ref={groupRef}
@@ -377,8 +446,19 @@ function SceneObject({ object, selected, frameRef = null, take = null }) {
 	);
 }
 
-/** User-added scene objects, all driven by the shared object registry. */
-export function SetProps({ objects = [], selectedId = null, frameRef = null, take = null }) {
+/** User-added scene objects, all driven by the shared object registry.
+ *
+ * `attachFrameRef.current(characterId, bone, out)` resolves the live world
+ * frame a carried prop rides, or null. `syncRef` is filled with a "place every
+ * prop now" callback for the offscreen export, which renders outside the frame
+ * loop and would otherwise record props one frame stale; `worldRef` with a
+ * "where is this prop" lookup, so a reparent converts from the transform on
+ * screen instead of from a second computation of it. */
+export function SetProps({ objects = [], selectedId = null, frameRef = null, take = null, attachFrameRef = null, syncRef = null, worldRef = null }) {
+	const registryRef = useRef(null);
+	if (!registryRef.current) registryRef.current = new Map();
+	if (syncRef) syncRef.current = () => { for (const entry of registryRef.current.values()) entry.place(); };
+	if (worldRef) worldRef.current = (id, out) => registryRef.current.get(id)?.world(out) ?? null;
 	return (
 		<group>
 			{objects.map((object) => (
@@ -386,8 +466,10 @@ export function SetProps({ objects = [], selectedId = null, frameRef = null, tak
 					key={object.id}
 					object={object}
 					selected={object.id === selectedId}
-					frameRef={object.path ? frameRef : null}
+					frameRef={frameRef}
 					take={take}
+					attachFrameRef={attachFrameRef}
+					registryRef={registryRef}
 				/>
 			))}
 		</group>

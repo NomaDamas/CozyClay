@@ -38,6 +38,16 @@ const HIERARCHY_LABELS_KO = {
 
 const FALLBACK_SCENES = [{ id: "current-scene", name: "SCENE 01" }];
 
+/**
+ * The drag payload for a hierarchy ROW moved onto another row (attach a prop
+ * to a character, regroup it under another prop, drop it back on Props). A
+ * private MIME keeps it apart from the file/picture drop that shares these
+ * rows: a Files drag never carries this type, so the two never collide.
+ */
+export const HIERARCHY_DRAG_MIME = "application/x-cclay-hierarchy";
+
+const carriesHierarchyRow = (event) => !!event.dataTransfer?.types?.includes?.(HIERARCHY_DRAG_MIME);
+
 function HierarchyIcon({ kind, className = "" }) {
 	const common = {
 		className: `hierarchy-icon ${kind}${className ? ` ${className}` : ""}`,
@@ -323,6 +333,9 @@ function TreeRow({
 	onRenameCancel,
 	onRowContextMenu,
 	dropHandlers,
+	reparent,
+	dragSourceId,
+	onDragSourceChange,
 }) {
 	const branch = !!node.children?.length;
 	// The drop BEHAVIOUR is shared by every row that accepts a picture; the
@@ -349,6 +362,63 @@ function TreeRow({
 			dropHandlers.onDrop(event);
 		},
 	};
+	// Row drag: an object row is the handle, ANY row can be the landing spot —
+	// the panel holds no policy, the caller's canDrop decides every rule.
+	const [rowDropOver, setRowDropOver] = useState(false);
+	const draggableRow = node.kind === "object" && !editing;
+	const rowDropTarget = !!(reparent && dragSourceId && reparent.canDrop?.(dragSourceId, node.id));
+	const rowDrag = (reparent || draggableRow) && {
+		...(draggableRow
+			? {
+					onDragStart: (event) => {
+						event.stopPropagation();
+						event.dataTransfer.setData(HIERARCHY_DRAG_MIME, node.id);
+						event.dataTransfer.effectAllowed = "move";
+						onDragSourceChange?.(node.id);
+					},
+					onDragEnd: () => {
+						setRowDropOver(false);
+						onDragSourceChange?.(null);
+					},
+				}
+			: {}),
+		onDragEnter: (event) => {
+			drop?.onDragEnter(event);
+			if (!rowDropTarget || !carriesHierarchyRow(event)) return;
+			event.preventDefault();
+			setRowDropOver(true);
+		},
+		// Chrome hands back an EMPTY getData() during dragover, so the source id
+		// travels in panel state (set at dragstart) and the payload itself is
+		// only read at drop time, where it is readable again.
+		onDragOver: (event) => {
+			drop?.onDragOver(event);
+			if (!rowDropTarget || !carriesHierarchyRow(event)) return;
+			event.preventDefault();
+			event.dataTransfer.dropEffect = "move";
+			if (!rowDropOver) setRowDropOver(true);
+		},
+		onDragLeave: (event) => {
+			drop?.onDragLeave(event);
+			setRowDropOver(false);
+		},
+		onDrop: (event) => {
+			if (carriesHierarchyRow(event)) {
+				setRowDropOver(false);
+				const source = event.dataTransfer.getData(HIERARCHY_DRAG_MIME) || dragSourceId;
+				if (!source || !reparent?.canDrop?.(source, node.id)) return;
+				event.preventDefault();
+				event.stopPropagation();
+				onDragSourceChange?.(null);
+				reparent.onDrop?.(source, node.id);
+				return;
+			}
+			drop?.onDrop(event);
+		},
+	};
+	// A Files drag keeps the exact handlers it always had; the row-drag wrapper
+	// only exists when the caller asked for reparenting.
+	const dropEvents = rowDrag || drop || null;
 	const label = displayHierarchyLabel(node);
 	const rowWrapRef = useRef(null);
 	const inputRef = useRef(null);
@@ -376,8 +446,9 @@ function TreeRow({
 			className={"hierarchy-row-wrap" + (selectedId === node.id ? " selected" : "")}
 			style={{ "--hierarchy-depth": depth }}
 			data-node-id={node.id}
-			data-drop={drop ? (dropOver ? "over" : "target") : undefined}
-			{...(drop ?? {})}
+			data-drop={drop || rowDropTarget ? (dropOver || rowDropOver ? "over" : "target") : undefined}
+			draggable={draggableRow || undefined}
+			{...(dropEvents ?? {})}
 			role="treeitem"
 			tabIndex={-1}
 			aria-selected={selectedId === node.id}
@@ -448,6 +519,7 @@ export default function HierarchyPanel({
 	onDeleteObject,
 	onFrameObject,
 	propsDrop = null,
+	reparent = null,
 	scenes,
 	activeSceneId,
 	onSceneSelect,
@@ -461,6 +533,10 @@ export default function HierarchyPanel({
 	// Row currently in in-place rename. The panel owns it: F2/Return and the
 	// row context menu are the only ways in, so app state stays out of it.
 	const [editingId, setEditingId] = useState(null);
+	// The row being dragged. dataTransfer.getData() is deliberately blank during
+	// dragover in Chrome, so canDrop could never gate the highlight from the
+	// payload alone — the id lives here from dragstart until dragend/drop.
+	const [dragSourceId, setDragSourceId] = useState(null);
 	const treeRef = useRef(null);
 	const lastTreeSelectRef = useRef(null);
 	const firstRenderRef = useRef(true);
@@ -612,6 +688,9 @@ export default function HierarchyPanel({
 					// same gesture as dropping on the group it lives in: people
 					// aim at the list, not at the heading.
 					dropHandlers={propsDrop && (node.kind === "props" || node.kind === "object") ? propsDrop.handlers : null}
+					reparent={reparent}
+					dragSourceId={dragSourceId}
+					onDragSourceChange={setDragSourceId}
 				/>,
 				...(node.children && open ? renderNodes(node.children, depth + 1) : []),
 			];

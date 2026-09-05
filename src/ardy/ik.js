@@ -17,10 +17,14 @@ import { normalizeBoneName } from "../poses.js";
  *   re-anchoring at all.
  */
 
-/** Contact radii measured from the bind-pose skinned mesh. */
+/** Contact radii measured from the bind-pose skinned mesh. The limb/head
+ * entries drive floor contact; the Arm/UpLeg/Spine/Neck entries exist so
+ * fix-collisions.js can build per-segment capsules from the same measured
+ * radii instead of guessing body thickness. */
 const CONTACT_JOINTS = [
 	"LeftHand", "RightHand", "LeftFoot", "RightFoot",
 	"LeftForeArm", "RightForeArm", "LeftLeg", "RightLeg", "Hips", "Head",
+	"LeftArm", "RightArm", "LeftUpLeg", "RightUpLeg", "Spine", "Neck",
 ];
 const CONTACT_RADIUS_MIN = 0.01;
 const CONTACT_RADIUS_MAX = 0.25;
@@ -44,31 +48,32 @@ export function measureContactRadii(rig) {
 	const cached = contactRadiusCache.get(rig);
 	if (cached) return cached;
 	rig.updateMatrixWorld(true);
-	const bindWorld = new Map();
-	const walkBind = (node, parentWorld) => {
-		const saved = node.isBone ? rig.userData?.poseBind?.get(node) : null;
-		const position = saved?.position ? new THREE.Vector3(saved.position.x, saved.position.y, saved.position.z) : node.position;
-		const quaternion = saved ? new THREE.Quaternion(saved.x, saved.y, saved.z, saved.w) : node.quaternion;
-		const world = parentWorld.clone().multiply(new THREE.Matrix4().compose(position, quaternion, node.scale));
-		bindWorld.set(node, world);
-		for (const child of node.children) walkBind(child, world);
-	};
-	for (const child of rig.children) walkBind(child, rig.matrixWorld);
+	// Segment endpoints use the bones' CURRENT world matrices, matching the
+	// frame getVertexPosition reports (current skinning), not the bind pose:
+	// with dominant-weight (>0.4) vertices the vertex→bone distance is nearly
+	// pose-invariant, while mixing a bind-pose segment with a posed vertex
+	// inflates every rotated limb to the radius clamp.
 	const segments = new Map();
 	for (const name of CONTACT_JOINTS) {
 		const bone = findBone(rig, `mixamorig${name}`);
 		if (!bone) continue;
-		const start = new THREE.Vector3().setFromMatrixPosition(bindWorld.get(bone));
+		const start = bone.getWorldPosition(new THREE.Vector3());
 		const child = (name === "Hips" || name === "Head") ? null : bone.children.find((node) => node.isBone);
-		const end = child ? new THREE.Vector3().setFromMatrixPosition(bindWorld.get(child)) : start.clone();
+		const end = child ? child.getWorldPosition(new THREE.Vector3()) : start.clone();
 		segments.set(name, [start, end]);
 	}
-	const maxDistances = new Map(CONTACT_JOINTS.map((name) => [name, 0]));
+	// Distances are collected PER MESH: Mixamo-style exports often carry a
+	// body mesh plus a joint-sphere debug mesh (Alpha_Surface/Alpha_Joints),
+	// and the joint balls inflate every radius to the clamp. The final radius
+	// is the MIN of each mesh's 90th percentile — the tightest fit that every
+	// mesh agrees on, so fat debug geometry can never fatten the capsules.
+	const perMeshDistances = [];
 	rig.traverse((mesh) => {
 		if (!mesh.isSkinnedMesh || !mesh.skeleton || !mesh.geometry?.attributes?.position) return;
 		const indices = mesh.geometry.attributes.skinIndex;
 		const weights = mesh.geometry.attributes.skinWeight;
 		if (!indices || !weights) return;
+		const distances = new Map(CONTACT_JOINTS.map((name) => [name, []]));
 		const names = mesh.skeleton.bones.map((bone) => normalizeBoneName(bone.name));
 		const vertex = new THREE.Vector3();
 		for (let index = 0; index < indices.count; index += 1) {
@@ -91,12 +96,24 @@ export function measureContactRadii(rig) {
 			if (!segment) continue;
 			mesh.getVertexPosition(index, vertex);
 			mesh.localToWorld(vertex);
-			maxDistances.set(name, Math.max(maxDistances.get(name), pointSegmentDistance(vertex, segment[0], segment[1])));
+			distances.get(name).push(pointSegmentDistance(vertex, segment[0], segment[1]));
 		}
+		perMeshDistances.push(distances);
 	});
+	// 90th-percentile per mesh, NOT the max: stray weights and props put a
+	// few vertices far outside the limb and a max clamps every joint to
+	// CONTACT_RADIUS_MAX, fat enough to flag permanent false contacts.
 	const radii = {};
 	for (const name of CONTACT_JOINTS) {
-		radii[name] = Math.max(CONTACT_RADIUS_MIN, Math.min(CONTACT_RADIUS_MAX, maxDistances.get(name) || CONTACT_RADIUS_FALLBACK));
+		let radius = CONTACT_RADIUS_FALLBACK;
+		for (const distances of perMeshDistances) {
+			const samples = distances.get(name);
+			if (!samples.length) continue;
+			samples.sort((a, b) => a - b);
+			const p90 = samples[Math.min(samples.length - 1, Math.floor(samples.length * 0.9))];
+			radius = radius === CONTACT_RADIUS_FALLBACK ? p90 : Math.min(radius, p90);
+		}
+		radii[name] = Math.max(CONTACT_RADIUS_MIN, Math.min(CONTACT_RADIUS_MAX, radius));
 	}
 	const result = Object.freeze(radii);
 	contactRadiusCache.set(rig, result);
@@ -204,7 +221,7 @@ const CHAINS = {
 	leg: (side) => [`mixamorig${side}UpLeg`, `mixamorig${side}Leg`, `mixamorig${side}Foot`],
 };
 
-function findBone(root, name) {
+export function findBone(root, name) {
 	const target = normalizeBoneName(name);
 	let found = null;
 	root.traverse((object) => {
