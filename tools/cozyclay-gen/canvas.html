@@ -139,7 +139,7 @@ function registerNode(def) {
     if (isText) { sz[0] = Math.max(sz[0], 420); sz[1] = Math.max(sz[1], 260); }
     return sz;
   };
-  N.prototype.onAdded = function () { const m = this.computeSize(); if (this.size[0] < m[0] || this.size[1] < m[1]) this.size = m; };
+  N.prototype.onAdded = function () { const m = this.computeSize(); if (def.name === 'Generate Video') this.size = [360, 520]; else if (this.size[0] < m[0] || this.size[1] < m[1]) this.size = m; };
   N.prototype.loadThumb = function () {
     const w = this.widgetsByName.image; if (!w || !w.value || w.value.startsWith('(')) return;
     const img = new Image(); img.src = base + '/input/' + encodeURIComponent(w.value); img.onload = () => { this.thumb = img; this.setDirtyCanvas(true); };
