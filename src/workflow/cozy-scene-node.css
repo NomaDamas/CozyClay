@@ -1,0 +1,39 @@
+.cozy-scene-node {
+	position: relative;
+	width: 318px;
+	color: #e4e9ef;
+	background: #202631;
+	border: 1px solid #3b4756;
+	border-radius: 10px;
+	box-shadow: 0 12px 28px rgba(0, 0, 0, .32);
+	font: 12px/1.35 Inter, system-ui, sans-serif;
+	overflow: visible;
+}
+.cozy-scene-node.is-selected { border-color: #79b7e8; box-shadow: 0 0 0 2px rgba(121, 183, 232, .26), 0 12px 28px rgba(0, 0, 0, .32); }
+.cozy-scene-node-header, .cozy-scene-node-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 11px 13px; }
+.cozy-scene-node-kicker { color: #78a9d3; font-size: 9px; font-weight: 800; letter-spacing: .14em; }
+.cozy-scene-node h3 { margin: 2px 0 0; font-size: 14px; font-weight: 700; }
+.cozy-scene-node-status { max-width: 112px; color: #aebccc; font-size: 10px; text-align: right; }
+.status-running { color: #f0c979; }.status-complete { color: #8dd5b1; }.status-error { color: #f08d8d; }
+.cozy-scene-preview { position: relative; height: 134px; margin: 0 10px; overflow: hidden; border: 1px solid #3c4b5d; border-radius: 6px; background: linear-gradient(145deg, #32475d, #121820 70%); }
+.cozy-scene-canvas { position: absolute; inset: 0; cursor: grab; }
+.cozy-scene-canvas:active { cursor: grabbing; }
+.cozy-scene-canvas canvas { display: block; width: 100% !important; height: 100% !important; }
+.cozy-scene-render { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #111722; }
+.cozy-scene-grid { position: absolute; inset: 45% -25% -55%; transform: perspective(80px) rotateX(58deg); background: repeating-linear-gradient(90deg, transparent 0 19px, rgba(133, 180, 218, .18) 20px 21px), repeating-linear-gradient(0deg, transparent 0 17px, rgba(133, 180, 218, .14) 18px 19px); }
+.cozy-scene-stage-mark { position: absolute; top: 25px; left: 50%; width: 78px; height: 78px; transform: translateX(-50%) rotate(45deg); border: 2px solid rgba(180, 215, 241, .72); border-radius: 8px; background: rgba(121, 183, 232, .18); }
+.cozy-scene-stage-mark span { position: absolute; width: 8px; height: 8px; border: 1px solid #c3e5ff; border-radius: 50%; background: #527c9d; }.cozy-scene-stage-mark span:nth-child(1) { top: -5px; left: -5px; }.cozy-scene-stage-mark span:nth-child(2) { top: -5px; right: -5px; }.cozy-scene-stage-mark span:nth-child(3) { right: -5px; bottom: -5px; }
+.cozy-scene-preview-copy { position: absolute; right: 10px; bottom: 8px; display: grid; gap: 1px; color: #d7e4ef; text-align: right; }.cozy-scene-preview-copy span { color: #9eb0c2; font-size: 10px; }
+.cozy-scene-controls { display: grid; gap: 8px; padding: 11px 13px 9px; }.cozy-scene-control-row { display: flex; gap: 6px; }.cozy-scene-button, .cozy-scene-run, .cozy-scene-camera-row button { padding: 5px 8px; border: 1px solid #465668; border-radius: 5px; color: #d8e5f0; background: #2c3846; font: inherit; cursor: pointer; }.cozy-scene-button:hover, .cozy-scene-camera-row button:hover { background: #344658; }.cozy-scene-run { margin-left: auto; border-color: #5f96c3; background: #35658c; }.cozy-scene-run:disabled { cursor: wait; opacity: .7; }
+.cozy-scene-frame-control { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 7px; color: #acbbc9; font-size: 10px; }.cozy-scene-frame-control input { width: 100%; accent-color: #79b7e8; }.cozy-scene-frame-control output { min-width: 40px; color: #dce7f1; font-family: ui-monospace, monospace; text-align: right; }
+.cozy-scene-camera-row { display: flex; align-items: center; justify-content: center; gap: 8px; color: #9eafbf; font-size: 10px; }.cozy-scene-camera-row button { padding: 2px 7px; }
+.cozy-scene-node-footer { border-top: 1px solid #33404e; color: #8799aa; font-size: 10px; }.cozy-scene-node-footer span + span { margin-left: auto; }
+.cozy-scene-node-inputs, .cozy-scene-node-outputs { position: absolute; top: 0; bottom: 0; width: 12px; pointer-events: none; }.cozy-scene-node-inputs { left: -7px; }.cozy-scene-node-outputs { right: -7px; }.cozy-scene-handle { position: absolute; display: block; width: 10px; height: 10px; border: 2px solid #a9d1f0; border-radius: 50%; background: #243443; pointer-events: auto; }.cozy-scene-handle-target { left: 0; }.cozy-scene-handle-source { right: 0; }.cozy-scene-handle-asset { top: 85px; }.cozy-scene-handle-motion { top: 115px; }.cozy-scene-handle-render { top: 108px; }.cozy-scene-handle-scene { top: 140px; }
+.cozy-scene-reactflow-handle { z-index: 5; }
+/* ReactFlow's default handle rule pins every handle to 50%. Keep the four
+ * Scene ports distinct so asset/motion inputs and render/scene outputs can be
+ * connected without an invisible overlap. */
+.cozy-scene-reactflow-handle-asset { top: 85px !important; }
+.cozy-scene-reactflow-handle-motion { top: 115px !important; }
+.cozy-scene-reactflow-handle-render { top: 108px !important; }
+.cozy-scene-reactflow-handle-scene { top: 140px !important; }

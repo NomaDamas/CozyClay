@@ -16,11 +16,136 @@
 import { SCENES_VERSION } from "./scenes.js";
 import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
 
-export const PROJECT_VERSION = 2;
+export const PROJECT_VERSION = 3;
 export const PROJECT_EXTENSION = ".cclayproject";
+export const WORKFLOW_VERSION = 1;
+export const WORKFLOW_STORAGE_KEY = "cozyclay.workflow.v1";
 const IDB_NAME = "cozyclay.project-handle.v1";
 const IDB_STORE = "kv";
 const IDB_KEY = "lastProjectHandle";
+
+/* ---------------------------- workflow graph --------------------------- */
+
+function plainRecord(value) {
+	if (!value || typeof value !== "object") return false;
+	const prototype = Object.getPrototypeOf(value);
+	return prototype === Object.prototype || prototype === null;
+}
+
+function jsonValue(value, depth = 0) {
+	if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+	if (typeof value === "number") return Number.isFinite(value) ? value : null;
+	if (depth > 32) return null;
+	if (Array.isArray(value)) return value.map((entry) => jsonValue(entry, depth + 1));
+	if (!plainRecord(value)) return null;
+	const result = {};
+	for (const [key, entry] of Object.entries(value)) {
+		// These keys can mutate an object's prototype when a graph is consumed
+		// by a less defensive host.
+		if (key === "__proto__" || key === "constructor" || key === "prototype") continue;
+		if (entry !== undefined && typeof entry !== "function" && typeof entry !== "symbol") result[key] = jsonValue(entry, depth + 1);
+	}
+	return result;
+}
+
+function normalizedPosition(value) {
+	return {
+		x: Number.isFinite(value?.x) ? value.x : 0,
+		y: Number.isFinite(value?.y) ? value.y : 0,
+	};
+}
+
+/** Return a fresh empty graph for new projects and legacy-file migration. */
+export function createWorkflowGraph() {
+	return { version: WORKFLOW_VERSION, nodes: [], edges: [] };
+}
+
+/**
+ * Validate the persisted graph envelope. Node data is intentionally opaque;
+ * it is copied and JSON-sanitized by normalizeWorkflowGraph below.
+ */
+export function isWorkflowGraph(value) {
+	if (!plainRecord(value) || value.version !== WORKFLOW_VERSION || !Array.isArray(value.nodes) || !Array.isArray(value.edges)) return false;
+	const ids = new Set();
+	for (const node of value.nodes) {
+		if (!plainRecord(node) || typeof node.id !== "string" || !node.id.trim() || ids.has(node.id)) return false;
+		if (node.type !== undefined && (typeof node.type !== "string" || !node.type.trim())) return false;
+		if (!plainRecord(node.position) || !Number.isFinite(node.position.x) || !Number.isFinite(node.position.y)) return false;
+		if (node.data !== undefined && !plainRecord(node.data)) return false;
+		ids.add(node.id);
+	}
+	const edgeIds = new Set();
+	for (const edge of value.edges) {
+		if (!plainRecord(edge) || typeof edge.source !== "string" || typeof edge.target !== "string" || !ids.has(edge.source) || !ids.has(edge.target)) return false;
+		if (edge.id !== undefined && (typeof edge.id !== "string" || !edge.id.trim() || edgeIds.has(edge.id))) return false;
+		if (edge.sourceHandle !== undefined && typeof edge.sourceHandle !== "string") return false;
+		if (edge.targetHandle !== undefined && typeof edge.targetHandle !== "string") return false;
+		if (edge.data !== undefined && !plainRecord(edge.data)) return false;
+		if (edge.id !== undefined) edgeIds.add(edge.id);
+	}
+	return true;
+}
+
+/**
+ * Sanitize an arbitrary graph before it crosses the project-file boundary.
+ * Invalid nodes/edges are dropped, dangling edges are removed, and every
+ * returned object is detached from the caller's mutable input.
+ */
+export function normalizeWorkflowGraph(value) {
+	if (!plainRecord(value) || (value.version !== undefined && value.version !== WORKFLOW_VERSION)) return createWorkflowGraph();
+	const nodes = [];
+	const nodeIds = new Set();
+	for (const node of Array.isArray(value.nodes) ? value.nodes : []) {
+		if (!plainRecord(node) || typeof node.id !== "string" || !node.id.trim() || nodeIds.has(node.id)) continue;
+		const data = jsonValue(node.data);
+		nodes.push({
+			id: node.id,
+			type: typeof node.type === "string" && node.type.trim() ? node.type : "default",
+			position: normalizedPosition(node.position),
+			data: plainRecord(data) ? data : {},
+		});
+		nodeIds.add(node.id);
+	}
+	const edges = [];
+	const edgeIds = new Set();
+	for (let index = 0; index < (Array.isArray(value.edges) ? value.edges.length : 0); index += 1) {
+		const edge = value.edges[index];
+		if (!plainRecord(edge) || typeof edge.source !== "string" || typeof edge.target !== "string" || !nodeIds.has(edge.source) || !nodeIds.has(edge.target)) continue;
+		const candidateId = typeof edge.id === "string" && edge.id.trim() ? edge.id : `${edge.source}->${edge.target}:${index}`;
+		if (edgeIds.has(candidateId)) continue;
+		const normalized = { id: candidateId, source: edge.source, target: edge.target };
+		if (typeof edge.sourceHandle === "string" && edge.sourceHandle) normalized.sourceHandle = edge.sourceHandle;
+		if (typeof edge.targetHandle === "string" && edge.targetHandle) normalized.targetHandle = edge.targetHandle;
+		const data = jsonValue(edge.data);
+		if (plainRecord(data)) normalized.data = data;
+		edges.push(normalized);
+		edgeIds.add(candidateId);
+	}
+	return { version: WORKFLOW_VERSION, nodes, edges };
+}
+
+/** Read the browser-local workflow draft used by the standalone canvas. */
+export function loadWorkflowGraph(storage = globalThis.localStorage) {
+	try {
+		return normalizeWorkflowGraph(JSON.parse(storage?.getItem(WORKFLOW_STORAGE_KEY) || "null"));
+	} catch {
+		return createWorkflowGraph();
+	}
+}
+
+/** Persist a sanitized workflow draft without allowing storage failures to
+ * take down the Studio (private browsing and full quotas are both common). */
+export function storeWorkflowGraph(graph, storage = globalThis.localStorage) {
+	const normalized = normalizeWorkflowGraph(graph);
+	try {
+		storage?.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(normalized));
+	} catch {
+		// localStorage is an optional session cache; the project file remains the
+		// durable source of truth.
+	}
+	try { globalThis.dispatchEvent?.(new CustomEvent("cozyclay:workflow-change")); } catch { /* non-browser runtime */ }
+	return normalized;
+}
 
 /* ------------------------------- envelope ------------------------------- */
 
@@ -93,7 +218,7 @@ function readEmbeddedAssets(value) {
 	return { assets, warnings };
 }
 
-export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, savedAt }) {
+export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, savedAt, workflow }) {
 	const assetRecords = new Map();
 	for (const record of Array.isArray(assets) ? assets : []) {
 		const asset = embeddedAsset(record);
@@ -114,6 +239,7 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
 		workspace: workspaceLayout ?? null,
 		poseLibrary: Array.isArray(customPoses) ? customPoses : [],
 		assets: embeddedAssets,
+		workflow: normalizeWorkflowGraph(workflow),
 	};
 }
 
@@ -134,6 +260,7 @@ export function readProjectDocument(raw) {
 		return { ok: false, reason: "scenes-invalid" };
 	}
 	const embedded = parsed.version >= 2 ? readEmbeddedAssets(parsed.assets) : { assets: [], warnings: [] };
+	const workflow = normalizeWorkflowGraph(parsed.workflow);
 	return {
 		ok: true,
 		warnings: embedded.warnings,
@@ -146,6 +273,7 @@ export function readProjectDocument(raw) {
 				? parsed.poseLibrary.filter((p) => p && typeof p === "object" && typeof p.id === "string" && p.bones && typeof p.bones === "object")
 				: [],
 			assets: embedded.assets,
+			workflow,
 		},
 	};
 }

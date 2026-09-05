@@ -180,6 +180,7 @@ import {
 } from "./scene-assets.js";
 import { derivedAssetIds, sourceAssetIds } from "./asset-shelf.js";
 import { assetRecord, evictAssetTexture, rememberAsset } from "./scene-asset-cache.js";
+import { subscribeToSceneDocuments } from "./workflow/scene-asset-sync.js";
 import { cutOutBackground, decodeMask, maskAsset } from "./matte.js";
 import { createMatteEditor } from "./matte-editor.js";
 import {
@@ -204,6 +205,7 @@ import {
 import {
 	clearStoredProjectHandle,
 	createProjectDocument,
+	createWorkflowGraph,
 	downloadProjectFallback,
 	hasFileSystemAccess,
 	loadStoredProjectHandle,
@@ -213,11 +215,15 @@ import {
 	queryHandlePermission,
 	requestHandlePermission,
 	readProjectDocument,
+	loadWorkflowGraph,
 	readProjectFile,
 	rememberRecentProject,
 	loadProjectSession,
 	storeProjectSession,
 	writeProjectFile,
+	storeWorkflowGraph,
+	WORKFLOW_STORAGE_KEY,
+	normalizeWorkflowGraph,
 	PROJECT_EXTENSION,
 } from "./project.js";
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
@@ -2865,6 +2871,19 @@ globalThis.playMode = centerTab === "play";
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
 	projectStateRef.current = { workspaceLayout, customPoses, scenes, activeSceneId, sceneObjects };
+	const [workflowRevision, setWorkflowRevision] = useState(0);
+	useEffect(() => {
+		const onStorage = (event) => {
+			if (event.key === WORKFLOW_STORAGE_KEY) setWorkflowRevision((value) => value + 1);
+		};
+		const onWorkflowChange = () => setWorkflowRevision((value) => value + 1);
+		window.addEventListener("storage", onStorage);
+		window.addEventListener("cozyclay:workflow-change", onWorkflowChange);
+		return () => {
+			window.removeEventListener("storage", onStorage);
+			window.removeEventListener("cozyclay:workflow-change", onWorkflowChange);
+		};
+	}, []);
 
 	function projectDocumentInput(name) {
 		return {
@@ -2875,6 +2894,7 @@ globalThis.playMode = centerTab === "play";
 			},
 			workspaceLayout: projectStateRef.current.workspaceLayout,
 			customPoses: projectStateRef.current.customPoses,
+			workflow: loadWorkflowGraph(),
 			name,
 		};
 	}
@@ -2990,6 +3010,7 @@ globalThis.playMode = centerTab === "play";
 		setActiveSceneId(doc.activeSceneId);
 		if (project.workspaceLayout) setWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...project.workspaceLayout });
 		setCustomPoses(mergedCustomPoses);
+		storeWorkflowGraph(normalizeWorkflowGraph(project.workflow));
 		saveCustomPoses(mergedCustomPoses);
 		persistScenes(doc.scenes, doc.activeSceneId);
 		openScene(doc.scenes[activeSceneIndex(doc.scenes, doc.activeSceneId)], doc.scenes);
@@ -3070,6 +3091,7 @@ globalThis.playMode = centerTab === "play";
 		if (typeof name !== "string") return requestNewProject();
 		setProjectNameDialog(null);
 		const fresh = createSceneDocument(ko("SCENE 01", "씬 01"));
+		storeWorkflowGraph(createWorkflowGraph());
 		setScenes(fresh.scenes);
 		setActiveSceneId(fresh.activeSceneId);
 		persistScenes(fresh.scenes, fresh.activeSceneId);
@@ -3080,6 +3102,7 @@ globalThis.playMode = centerTab === "play";
 			scenesDocument: fresh,
 			workspaceLayout: projectStateRef.current.workspaceLayout,
 			customPoses,
+			workflow: createWorkflowGraph(),
 			name,
 		}));
 		setProjectDirty(false);
@@ -3237,6 +3260,49 @@ globalThis.playMode = centerTab === "play";
 		persistScenes(nextScenes, target.id);
 		openScene(target, nextScenes);
 	}
+
+	// Workflow runs in a separate tab/route. Scene writes therefore arrive as
+	// either a same-tab CustomEvent or a cross-tab storage event. Keep the
+	// Studio's live editor in sync without writing the event back in a loop:
+	// compare against the current snapshot first, then replace only the active
+	// scene's objects/cast or open the newly selected scene.
+	const externalSceneApplyRef = useRef(null);
+	externalSceneApplyRef.current = (incoming) => {
+		if (!incoming || !Array.isArray(incoming.scenes)) return;
+		const incomingActiveId = typeof incoming.activeSceneId === "string" ? incoming.activeSceneId : activeSceneIdRef.current;
+		const incomingScenes = incoming.scenes;
+		const incomingScene = incomingScenes.find((scene) => scene?.id === incomingActiveId) ?? incomingScenes[0];
+		if (!incomingScene?.id) return;
+		const currentSnapshot = {
+			version: SCENES_VERSION,
+			activeSceneId: activeSceneIdRef.current,
+			scenes: snapshotActiveScene(),
+		};
+		if (JSON.stringify(currentSnapshot) === JSON.stringify({ version: SCENES_VERSION, activeSceneId: incomingActiveId, scenes: incomingScenes })) return;
+		const nextScenes = incomingScenes;
+		if (incomingScene.id !== activeSceneIdRef.current) {
+			openScene(incomingScene, nextScenes);
+			return;
+		}
+		const currentScene = currentSnapshot.scenes.find((scene) => scene?.id === incomingScene.id);
+		if (JSON.stringify(currentScene?.objects ?? []) !== JSON.stringify(incomingScene.objects ?? [])) {
+			storeRef.current.applyAtomic(() => Array.isArray(incomingScene.objects) ? incomingScene.objects : []);
+		}
+		const incomingStage = createSceneStage(incomingScene.stage);
+		const currentStage = currentScene?.stage;
+		if (JSON.stringify(currentStage ?? null) !== JSON.stringify(incomingStage)) {
+			const mergedCharacters = incomingStage.characters.map((entry) => {
+				const current = charactersRef.current.find((item) => item.id === entry.id);
+				return current?.sessionMotion ? { ...entry, sessionMotion: current.sessionMotion } : entry;
+			});
+			charactersRef.current = mergedCharacters;
+			setCharacters(mergedCharacters);
+			restoreMotionRefs(mergedCharacters);
+		}
+		scenesRef.current = nextScenes;
+		setScenes(nextScenes);
+	};
+	useEffect(() => subscribeToSceneDocuments((document) => externalSceneApplyRef.current?.(document)), []);
 
 	// Commands are a sequential transport boundary, while React commits on a
 	// later turn. Keep its read model current synchronously so the next frame
@@ -3762,7 +3828,7 @@ globalThis.playMode = centerTab === "play";
 		setProjectDirty(dirty);
 		setProjectSaveState((current) => current === "saving" ? current : dirty ? "dirty" : "saved");
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, sensorId, tlFrameCount]);
+	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, sensorId, tlFrameCount, workflowRevision]);
 	const [selectedPromptId, setSelectedPromptId] = useState(null);
 	// Loaded motion: decoded arrays plus the world anchor captured at load.
 	const [motion, setMotion] = useState(null);
