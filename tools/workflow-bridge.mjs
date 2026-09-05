@@ -20,6 +20,7 @@ const ROUTES = [
   { method: "POST", pattern: /^\/workflow\/create$/, upstream: "/workflow/create" },
   { method: "POST", pattern: /^\/workflow\/run$/, upstream: "/workflow/run" },
   { method: "GET", pattern: /^\/workflow\/run\/([^/]+)\/status$/, upstream: (match) => `/workflow/run/${encodeURIComponent(match[1])}/status` },
+  { method: "GET", pattern: /^\/app\/get_file_upload_url$/, upstream: "/app/get_file_upload_url" },
   { method: "POST", pattern: /^\/app\/get_file_upload_url$/, upstream: "/app/get_file_upload_url" },
 ];
 
@@ -66,8 +67,21 @@ async function proxy(route, match, req, res) {
     json(res, 503, { ok: false, enabled: false, error: "MuAPI is not configured", code: "muapi-key-missing" });
     return;
   }
-  const upstreamPath = typeof route.upstream === "function" ? route.upstream(match) : route.upstream;
   const body = req.method === "GET" || req.method === "HEAD" ? undefined : await readBody(req);
+  let upstreamPath = typeof route.upstream === "function" ? route.upstream(match) : route.upstream;
+  // MuAPI's run endpoint carries the workflow id in the URL. The bridge keeps
+  // a stable body-based skeleton for the browser and adapts it here.
+  if (route.pattern.source === "^\\/workflow\\/run$" && body?.length) {
+    try {
+      const workflowId = JSON.parse(body.toString()).workflow_id;
+      if (typeof workflowId === "string" && workflowId) upstreamPath = `/workflow/${encodeURIComponent(workflowId)}/run`;
+    } catch {
+      // Let MuAPI return its normal validation error for a non-JSON payload.
+    }
+  }
+  if (route.pattern.source === "^\\/app\\/get_file_upload_url$" && req.url?.includes("?")) {
+    upstreamPath += req.url.slice(req.url.indexOf("?"));
+  }
   const headers = { authorization: `Bearer ${MUAPI_KEY}`, accept: "application/json" };
   if (body?.length) headers["content-type"] = req.headers["content-type"] || "application/json";
   const controller = new AbortController();
