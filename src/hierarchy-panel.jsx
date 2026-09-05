@@ -558,12 +558,15 @@ export default function HierarchyPanel({
 		return labelled.map((node) => {
 			if (node.id !== "shot") return node;
 			const charactersGroup = node.children?.find((child) => child.id === "characters");
-			return {
-				...node,
-				children: charactersGroup
-					? [{ ...charactersGroup, children: (charactersGroup.children ?? []).map(({ children, ...character }) => character) }]
-					: [],
-			};
+			const propsGroup = node.children?.find((child) => child.id === "props");
+			// Keep the beginner tree focused on the cast while still exposing
+			// objects after the user creates one. This preserves direct selection
+			// for viewport/object workflows without surfacing empty expert groups.
+			const children = charactersGroup
+				? [{ ...charactersGroup, children: (charactersGroup.children ?? []).map(({ children, ...character }) => character) }]
+				: [];
+			if (propsGroup?.children?.length) children.push(propsGroup);
+			return { ...node, children };
 		});
 	}, [activeSceneName, sceneObjects, characters, beginnerMode]);
 	const parents = useMemo(() => indexParents(hierarchyNodes), [hierarchyNodes]);
