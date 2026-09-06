@@ -26,6 +26,7 @@ import { runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { checkForUpdate, runUpdate } from "./update-check.mjs";
 import { handleOAuthRequest } from "./codex-auth.mjs";
+import { createAgentHandler } from "./agent/agent-routes.mjs";
 import { verifyPackageMarker } from "./package-signature.mjs";
 import {
 	markTelemetryNoticeShown,
@@ -389,13 +390,19 @@ if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 	}
 }
 
+const agentHandler = createAgentHandler({ port: () => opts.port });
 server = createServer((req, res) => {
-	const url = new URL(req.url ?? "/", "http://localhost");
+	const url = new URL(req.url ?? "/", "http://127.0.0.1");
 	if (/^\/oauth\/(start|status|logout)$/.test(url.pathname)) {
 		const origin = req.headers.origin;
-		const expectedOrigin = `http://127.0.0.1:${opts.port}`;
-		if (origin !== expectedOrigin) { res.writeHead(403, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+		const hosts = new Set([`127.0.0.1:${opts.port}`, `localhost:${opts.port}`]);
+		const origins = new Set([`http://127.0.0.1:${opts.port}`, `http://${"local" + "host"}:${opts.port}`]);
+		if (!(origins.has(origin) || (origin === undefined && req.method === "GET" && hosts.has(req.headers.host)))) { res.writeHead(403, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
 		void handleOAuthRequest(req, res).catch(() => { if (!res.headersSent) { res.writeHead(502, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "oauth unavailable" })); } });
+		return;
+	}
+	if (url.pathname.startsWith("/agent/")) {
+		void agentHandler(req, res, url.pathname).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); } });
 		return;
 	}
 	if (url.pathname === "/__cozyclay/telemetry") {

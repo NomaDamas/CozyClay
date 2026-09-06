@@ -3,6 +3,7 @@ import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
 import { createServer } from "node:http";
 import { handleOAuthRequest } from "../bin/codex-auth.mjs";
+import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { fileURLToPath } from "node:url";
 import {
 	installSignalCleanup,
@@ -46,7 +47,8 @@ await new Promise((resolvePromise, reject) => {
 });
 
 const children = [];
-const removeSignalCleanup = installSignalCleanup(() => children);
+let stopping = false;
+const removeSignalCleanup = installSignalCleanup(() => children, () => { stopping = true; });
 const trackChild = (child) => children.push(child);
 const untrackChild = (child) => children.splice(children.indexOf(child), 1);
 // The bridge's only backend is Kimodo, and that runner refuses to start
@@ -69,6 +71,12 @@ if (kimodoHost) {
 			mainPort,
 			onSpawn: trackChild,
 			onFailure: untrackChild,
+			onReady: (child) => child.once("exit", () => {
+				if (stopping) return;
+				stopping = true;
+				console.error("[dev] motion generation sidecar exited unexpectedly");
+				void Promise.allSettled(children.filter((entry) => entry !== child).map((entry) => terminateOwned(entry))).then(() => process.exit(1));
+			}),
 		}));
 	} catch (err) {
 		console.error(`[dev] Studio did not start: ${err.message}`);
@@ -82,9 +90,16 @@ if (kimodoHost) {
 	);
 }
 
+const agentHandler = createAgentHandler({ port: mainPort });
 const oauthServer = createServer((req, res) => {
-	const origin = req.headers.origin;
-	if (origin !== `http://127.0.0.1:${mainPort}`) { res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+	const path = (req.url || "").split("?")[0];
+	const hosts = new Set([`127.0.0.1:${mainPort}`, `localhost:${mainPort}`]);
+	const origins = new Set([`http://127.0.0.1:${mainPort}`, `http://${"local" + "host"}:${mainPort}`]);
+	if (!(origins.has(req.headers.origin) || (req.headers.origin === undefined && req.method === "GET" && hosts.has(req.headers.host)))) { res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+	if (path.startsWith("/agent/")) {
+		void agentHandler(req, res, path).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); } });
+		return;
+	}
 	void handleOAuthRequest(req, res).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "oauth unavailable" })); } });
 });
 const oauthPort = configuredOAuthPort ? Number(configuredOAuthPort) : 0;

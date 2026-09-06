@@ -16,6 +16,7 @@ const motionBridgeUrl = explicitBridgePort
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
 const oauthPort = process.env.COZYCLAY_OAUTH_PORT?.trim();
 const oauthUrl = oauthPort ? `http://127.0.0.1:${oauthPort}` : null;
+const agentUrl = oauthUrl;
 
 export default defineConfig({
 	define: {
@@ -77,6 +78,12 @@ export default defineConfig({
 						res.end(JSON.stringify({ error: "oauth sidecar is not configured" }));
 						return;
 					}
+					if (!agentUrl && /^\/agent\/(turn|stop|models)$/.test(path)) {
+						res.statusCode = 503;
+						res.setHeader("content-type", "application/json; charset=utf-8");
+						res.end(JSON.stringify({ error: "agent sidecar is not configured" }));
+						return;
+					}
 					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
@@ -118,10 +125,10 @@ export default defineConfig({
 		// companion on loopback. The proxy is enabled only when dev-full (or a
 		// user-managed bridge) explicitly provides its endpoint. The production
 		// build stays fully static, so this proxy must never become a requirement.
-		...(motionBridgeUrl
+		...(motionBridgeUrl || oauthUrl
 			? {
 				proxy: {
-					...(oauthUrl ? { "/oauth": { target: oauthUrl } } : {}),
+					...(oauthUrl ? { "/oauth": { target: oauthUrl }, "/agent": { target: agentUrl } } : {}),
 					...(motionBridgeUrl
 						? {
 							// Only the routes the bridge actually owns. /ardy/ is ALSO a public

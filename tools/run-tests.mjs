@@ -44,6 +44,7 @@ const NODE_FILES = [
 	"test/process/verify-mcp-package-isolation.mjs",
 	"test/process/verify-package-telemetry.mjs",
 	"test/verify-agent-panel.mjs",
+	"test/verify-agent-routes.mjs",
 	"test/verify-codex-auth.mjs",
 	"test/verify-analytics.mjs",
 	"test/verify-appearance.mjs",
