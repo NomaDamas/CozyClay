@@ -3335,6 +3335,13 @@ globalThis.playMode = centerTab === "play";
 		persistScenes,
 		openScene,
 		loadMotion,
+		// The framing-capture pair the agent commands call. Both are per-render
+		// closures (captureFramingPng sizes its canvas off the render's own
+		// shotOutput), so the ref must always hold THIS render's instance — a
+		// stale one would letterbox a pull taken after the shot aspect changed.
+		activeShotId: activeShot?.id ?? null,
+		captureCurrentFraming,
+		captureFramingPng,
 	};
 	if (!liveHandlersRef.current) {
 		const finitePatch = (args, fields) => {
@@ -3420,6 +3427,12 @@ globalThis.playMode = centerTab === "play";
 			else storeRef.current.applyIn(batchToken, mutation);
 			syncObjects();
 		};
+		// import_asset's "backdrop" placement: the same picture card stood up as
+		// a background plate — far enough down the shot camera's view ray to sit
+		// behind the blocking, tall enough to read as one. A "cutout" keeps the
+		// plain 1.8 m standee the Assets-shelf drop places.
+		const IMPORT_BACKDROP_DISTANCE_M = 12;
+		const IMPORT_BACKDROP_HEIGHT_M = 5;
 		liveHandlersRef.current = {
 			ping: () => ({ pong: true }),
 			describe,
@@ -3549,6 +3562,51 @@ globalThis.playMode = centerTab === "play";
 					return args.parent !== undefined ? setSceneObjectParent(next, placed.id, args.parent) : next;
 				});
 				return { id: placed.id };
+			},
+			// Agent-side image import through the Studio's own pipeline:
+			// importImageFile validates and downscales, rememberAsset stores the
+			// content-addressed bytes, and the card enters React state through the
+			// object history store — ONE applyAtomic is the whole gesture, so one
+			// Ctrl+Z removes it. That is the point: the Workflow-tab sync writes
+			// the document without touching undo; this must not repeat that.
+			import_asset: async (args) => {
+				if (typeof args.name !== "string" || !args.name.trim()) throw new Error("Invalid name");
+				if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout" or "backdrop"');
+				if (typeof args.dataUrl !== "string" || !args.dataUrl.startsWith("data:image/")) throw new Error("dataUrl must be an image data URL");
+				const mime = typeof args.mimeType === "string" && args.mimeType
+					? args.mimeType
+					: args.dataUrl.slice(5, args.dataUrl.search(/[;,]/));
+				const bytes = await (await fetch(args.dataUrl)).arrayBuffer();
+				const file = new File([bytes], args.name, { type: mime });
+				const live = liveStateRef.current;
+				const asset = await rememberAsset(await importImageFile(file));
+				const backdrop = args.placeAs === "backdrop";
+				const camera = shotCamRef.current;
+				const placement = camera
+					? placementInFront(
+						{ x: camera.position.x, z: camera.position.z },
+						look.current.yaw,
+						backdrop ? IMPORT_BACKDROP_DISTANCE_M : undefined,
+					)
+					: {};
+				if (backdrop) {
+					// The card's face is its +z; rotate by the camera's own yaw so the
+					// plate faces the lens instead of standing edge-on to it.
+					placement.rot = (look.current.yaw * 180) / Math.PI;
+				}
+				const object = createCutoutObject(
+					{
+						assetId: asset.id,
+						aspect: assetAspect(asset) ?? 1,
+						height: backdrop ? IMPORT_BACKDROP_HEIGHT_M : CUTOUT_DEFAULT_HEIGHT,
+						name: args.name,
+					},
+					live.objects,
+					placement,
+				);
+				if (!object) throw new Error("Could not create the cutout object");
+				applyObjectMutation((objects) => [...objects, object]);
+				return { assetId: asset.id, objectId: object.id };
 			},
 			update_object: (args) => {
 				const live = liveStateRef.current;
@@ -3734,6 +3792,21 @@ globalThis.playMode = centerTab === "play";
 						objects: liveStateRef.current.objects,
 					}),
 				});
+			},
+			// The full-resolution shot-camera pull the editor's own exports use —
+		// not capture_frame's 640x360 preview, which stays exactly as it is.
+			capture_framing_png: () => {
+				const live = liveStateRef.current;
+				const dataUrl = live.captureFramingPng(live.captureCurrentFraming());
+				if (!dataUrl) throw new Error("The shot renderer is not ready");
+				const output = SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
+				return {
+					dataUrl,
+					width: output.width,
+					height: output.height,
+					frame: live.timeline.currentFrame,
+					shotId: live.activeShotId,
+				};
 			},
 			load_motion: async (args) => {
 				if (typeof args.url !== "string" || !args.url.startsWith("/ardy/")) throw new Error("Invalid motion url");
