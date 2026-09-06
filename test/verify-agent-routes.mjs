@@ -63,9 +63,11 @@ console.log("agent routes verified");
 		workspaceHandleDetails: () => details,
 		resolveWorkspace: () => { throw new Error("requires workspace_handle"); },
 	});
-	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true } }, { handle: "b", meta: { project: "P" } }])), "b", "skips the embedded preview");
-	assert.equal(pickWorkspace(hub([{ handle: "a", meta: null }, { handle: "b", meta: { project: "P" } }])), "b", "prefers the most recent authoring tab");
-	assert.throws(() => pickWorkspace(hub([{ handle: "a", meta: { embed: true } }])), /requires workspace_handle/, "falls back to the hub rule when only previews are connected");
+	const agentCommands = ["capture_framing_png", "import_asset"];
+	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }])), "b", "skips the embedded preview");
+	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }])), "b", "prefers the most recent authoring tab");
+	assert.throws(() => pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }])), /requires workspace_handle/, "falls back to the hub rule when only previews are connected");
+	assert.throws(() => pickWorkspace(hub([{ handle: "old", meta: { project: "P" } }])), /requires workspace_handle/, "an editor that does not advertise commands is not a candidate");
 	console.log("PASS pickWorkspace skips embedded previews");
 }
 
