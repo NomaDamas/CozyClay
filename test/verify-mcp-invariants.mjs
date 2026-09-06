@@ -54,12 +54,21 @@ function sourceFailures(sources, pattern, label) {
 	);
 }
 
-function toolBlocks(server) {
-	const registrations = [...server.matchAll(/registerTool\(\s*\n\s*["']([^"']+)["']/g)];
+// The tools are declared in mcp/tool-handlers.mjs as `tool("name", {...})`
+// entries and registered from there by mcp/server.mjs, which may still call
+// `registerTool("name", {...})` directly. Both shapes are scanned, so moving a
+// tool between the two files cannot quietly drop it out of this contract.
+const TOOL_DECLARATION_SITES = [
+	{ path: "mcp/tool-handlers.mjs", keyword: "tool" },
+	{ path: "mcp/server.mjs", keyword: "registerTool" },
+];
+
+function toolBlocks(source, keyword = "registerTool") {
+	const registrations = [...source.matchAll(new RegExp(`(?<![\\w$.])${keyword}\\(\\s*\\n\\s*["']([^"']+)["']`, "g"))];
 	return registrations.map((match, index) => ({
 		name: match[1],
-		body: server.slice(match.index, registrations[index + 1]?.index),
-		line: lineAt(server, match.index),
+		body: source.slice(match.index, registrations[index + 1]?.index),
+		line: lineAt(source, match.index),
 	}));
 }
 
@@ -96,14 +105,20 @@ function rawArgumentFailures(scope, name, body, line, path, pattern) {
 function verifyG009(sources) {
 	const server = sources["mcp/server.mjs"] ?? "";
 	const app = sources["src/App.jsx"] ?? "";
-	const tools = toolBlocks(server);
+	const tools = TOOL_DECLARATION_SITES.flatMap(({ path, keyword }) =>
+		toolBlocks(sources[path] ?? "", keyword).map((tool) => ({ ...tool, path })),
+	);
 	const handlers = liveHandlers(app);
 	const failures = [
-		...tools.flatMap((tool) => rawArgumentFailures("tool", tool.name, schemaBody(tool.body), tool.line, "mcp/server.mjs", /\b([A-Za-z_$][\w$-]*)\s*:/g)),
+		// A rename that stops this parser finding the tools would turn every check
+		// below into a vacuous pass, so an empty scan is itself a failure.
+		...(tools.length === 0 ? [`G009 no MCP tool declarations found in ${TOOL_DECLARATION_SITES.map(({ path }) => path).join(" or ")}`] : []),
+		...tools.flatMap((tool) => rawArgumentFailures("tool", tool.name, schemaBody(tool.body), tool.line, tool.path, /\b([A-Za-z_$][\w$-]*)\s*:/g)),
 		...handlers.flatMap((handler) => rawArgumentFailures("live handler", handler.name, handler.body, handler.line, "src/App.jsx", /\bargs\.([A-Za-z_$][\w$-]*)\b/g)),
 	];
 	const handlerSources = {
 		"mcp/server.mjs": server,
+		"mcp/tool-handlers.mjs": sources["mcp/tool-handlers.mjs"] ?? "",
 		"mcp/live-hub.mjs": sources["mcp/live-hub.mjs"] ?? "",
 		"src/live-control.js": sources["src/live-control.js"] ?? "",
 		"src/App.jsx": app,
@@ -218,6 +233,8 @@ function selfTest(name, checks) {
 
 function runSelfTests() {
 	selfTest("G009", [verifyG009({ "mcp/server.mjs": 'registerTool(\n"run", { inputSchema: { code: z.string() } }, async () => eval("x"));', "src/App.jsx": "" })]);
+	selfTest("G009 registry", [verifyG009({ "mcp/tool-handlers.mjs": 'tool(\n"run", { inputSchema: { command: z.string() } }, async () => 0);', "src/App.jsx": "" })]);
+	selfTest("G009 empty scan", [verifyG009({ "src/App.jsx": "" })]);
 	selfTest("G010", [verifyG010({ "mcp/server.mjs": 'import y from "yjs";', "mcp/live-hub.mjs": 'const frame = { type: "cmd" };', "src/live-control.js": "dispatchLiveFrame", "src/App.jsx": "liveHandlersRef.current = {" })]);
 	selfTest("G012", [verifyG012({ "mcp/server.mjs": 'const method = "tasks/get";' })]);
 	selfTest("G013", [verifyG013({ root: { dependencies: {} }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE, drift: "1.0.0" } } })]);
@@ -230,7 +247,7 @@ const sources = readSources();
 const modes = entrypointModes();
 const [g009, g010, g012, g013, g014, executableEntrypoints] = runChecks(sources, packages(), modes);
 const failures = [g009, g010, g012, g013, g014, executableEntrypoints].flatMap((check) => check.failures);
-console.log(`G009 MCP tools scanned=${g009.tools.length}: ${g009.tools.map((tool) => tool.name).join(", ")}`);
+console.log(`G009 MCP tools scanned=${g009.tools.length} across ${[...new Set(g009.tools.map((tool) => tool.path))].join(", ")}: ${g009.tools.map((tool) => tool.name).join(", ")}`);
 console.log(`G009 live handlers scanned=${g009.handlers.length}: ${g009.handlers.map((handler) => handler.name).join(", ")}`);
 console.log("G010 agent mutation path: MCP tool -> appliedLiveMutation/liveHub.command -> WebSocket cmd frame -> dispatchLiveFrame -> App liveHandlersRef React-state handlers");
 console.log(`G010 source files scanned=${Object.keys(sources).length}; CRDT/OT imports=0`);

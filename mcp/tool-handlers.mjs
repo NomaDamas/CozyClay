@@ -484,8 +484,8 @@ const tool = (name, config, handler) => ({
  * @param {Promise<string>} [deps.projectRootPromise] the resolved directory
  *   `open_project`/`save_project` confine themselves to; the owner resolves it
  *   because doing so chdirs the process.
- * @param {import("./live-hub.mjs").MotionJobRegistry} [deps.motionJobs] job book
- *   `generate_motion` records work in.
+ * @param {object} [deps.motionJobs] the MotionJobRegistry `generate_motion`
+ *   records work in.
  * @param {(job: object) => Promise<void>} [deps.publishMotionJob] delivers a
  *   finished job to its workspace; the owner holds it because the live hub's
  *   reconnect and cancel paths publish jobs too.
