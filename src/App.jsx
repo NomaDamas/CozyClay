@@ -559,6 +559,7 @@ function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
 }
 
 export default function App() {
+	const embedMode = new URLSearchParams(globalThis.location?.search || "").get("embed") === "scene";
 	// QA-only render counter (same spirit as window.__cozyclay): headless perf
 	// probes read renders/second to find re-render storms. Negligible cost.
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
@@ -9468,7 +9469,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					: ko("Saved", "저장됨");
 
 	return (
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode}>
+		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "scene" : undefined}>
 			<header className="topbar">
 				<div className="logo">
 					<span className="wordmark">

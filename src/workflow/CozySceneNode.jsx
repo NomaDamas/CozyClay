@@ -26,10 +26,7 @@ function statusLabel(status) {
 }
 
 function SceneViewport() {
-	return <div className="cozy-scene-canvas nodrag nopan" role="img" aria-label="CozyClay world environment preview">
-		<div className="cozy-scene-world-image" aria-hidden="true" />
-		<div className="cozy-scene-world-tint" aria-hidden="true" />
-	</div>;
+	return <iframe className="cozy-scene-live-frame nodrag nopan" src="/app/?embed=scene" title="CozyClay Studio live scene preview" aria-label="CozyClay Studio live scene preview" />;
 }
 
 function callbackFrom(data, prop) {
@@ -88,7 +85,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 
 			<section className="cozy-scene-preview" aria-label="3D scene preview">
 				{data.preview === "render" && data.lastOutput?.renderUrl ? <video className="cozy-scene-render" src={data.lastOutput.renderUrl} controls muted /> : <SceneViewport />}
-		<div className="cozy-scene-preview-copy"><strong>{data.preview === "render" ? "Rendered frame" : "World environment"}</strong><span>{data.statusMessage || "Open Studio to edit the scene"}</span></div>
+			{data.preview === "render" && <div className="cozy-scene-preview-copy"><strong>Rendered frame</strong><span>{data.statusMessage || "Open Studio to edit the scene"}</span></div>}
 			</section>
 
 			<section className="cozy-scene-controls" aria-label="Scene controls">

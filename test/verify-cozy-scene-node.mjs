@@ -19,10 +19,11 @@ import {
 
 const componentSource = readFileSync(new URL("../src/workflow/CozySceneNode.jsx", import.meta.url), "utf8");
 const previewStyle = readFileSync(new URL("../src/workflow/cozy-scene-node.css", import.meta.url), "utf8");
-assert.match(componentSource, /CozyClay world environment preview/);
+assert.match(componentSource, /app\/\?embed=scene/);
+assert.match(componentSource, /CozyClay Studio live scene preview/);
 assert.match(componentSource, /publishScenePlayback/);
 assert.match(componentSource, /window\.setTimeout/);
-assert.match(previewStyle, /cozyclay-demo-poster\.jpg/);
+assert.match(previewStyle, /cozy-scene-live-frame/);
 assert.doesNotMatch(componentSource, /<boxGeometry/);
 
 const defaults = normalizeCozySceneData({ sceneName: 42, frame: "bad", controls: { camera: { yaw: "35" } } });

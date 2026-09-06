@@ -1120,6 +1120,41 @@ select {
 	cursor: grabbing;
 }
 
+/* The workflow Scene node embeds this same Studio surface so its preview is
+   the real active scene, with Studio chrome removed for a clean viewport. */
+.app[data-embed-mode="scene"] {
+	width: 100vw;
+	height: 100vh;
+	min-width: 0;
+	overflow: hidden;
+}
+.app[data-embed-mode="scene"] .topbar,
+.app[data-embed-mode="scene"] .brandbar,
+.app[data-embed-mode="scene"] .asset-delete-toast,
+.app[data-embed-mode="scene"] .hierarchy-left,
+.app[data-embed-mode="scene"] .hierarchy-sidebar,
+.app[data-embed-mode="scene"] .workspace-splitter,
+.app[data-embed-mode="scene"] .viewport-titlebar,
+.app[data-embed-mode="scene"] .bottom-window {
+	display: none;
+}
+.app[data-embed-mode="scene"] .main,
+.app[data-embed-mode="scene"] .workspace,
+.app[data-embed-mode="scene"] .viewport {
+	width: 100%;
+	height: 100%;
+	min-height: 0;
+}
+.app[data-embed-mode="scene"] .workspace {
+	display: block;
+}
+.app[data-embed-mode="scene"] .stage {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+}
+
 /* ------------------------------------------------------- dual viewport ---- */
 
 /* Both panes render every frame out of one canvas; these divs only supply the
