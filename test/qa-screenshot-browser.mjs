@@ -2,6 +2,13 @@ const port=Number(process.env.CDP_PORT||9222);const targets=await (await fetch(`
 if(process.env.QA_URL) await send("Page.navigate",{url:process.env.QA_URL});
 const t0=Date.now();while(Date.now()-t0<60000){if(await ev("!!(window.__cozyclay&&window.__cozyclay.motion&&window.__cozyclay.rigA&&window.__cozyclay.editorCam)").catch(()=>false))break;await new Promise(r=>setTimeout(r,250))}
 await new Promise(r=>setTimeout(r,1500)); if(process.env.HIDE_PROJECT_MODAL){ await ev(`(()=>{for(const el of document.querySelectorAll("body *")){const text=el.textContent||"";const style=getComputedStyle(el);if(style.position==="fixed"&&/Choose a project to begin|Project name|시작할 프로젝트/i.test(text))el.style.display="none";}return true;})()`); } if(process.env.CHAR_SCALE){ await ev(`window.__cozyclay.setCharacterScale(${process.env.CHAR_SCALE})`); await new Promise(r=>setTimeout(r,800)); } if(process.env.MODEL){ await ev(`window.__cozyclay.setCharacterModel("${process.env.MODEL}")`); const t1=Date.now(); await new Promise(r=>setTimeout(r,2500)); while(Date.now()-t1<30000){ if(await ev("!!(window.__cozyclay&&window.__cozyclay.rigA&&window.__cozyclay.motion)").catch(()=>false)) break; await new Promise(r=>setTimeout(r,250)); } } if(process.env.AUTO_PHYSICS){ await ev("window.__cozyclay.apRun()"); await new Promise(r=>setTimeout(r,500)); } const fs=await import("node:fs"); const frames=(process.env.FRAMES||"0,60,120,240").split(",").map(Number); const view=process.env.VIEW||"front";
+// Display-only mode: use the same React state transition as the Studio toggle.
+if (process.env.PART_COLOURS) {
+  const mode = process.env.PART_COLOURS;
+  if (!["off", "flat", "shaded"].includes(mode)) throw new Error("PART_COLOURS must be off, flat or shaded");
+  await ev(`window.__cozyclay.setPartColours(${mode !== "off"}, ${JSON.stringify(mode)})`);
+  await new Promise(r => setTimeout(r, 500));
+}
 for (const f of frames){
   const info=await ev(`(()=>{const c=window.__cozyclay; c.scrub(${f}); return new Promise(res=>{ let n=0; const tick=()=>{ const rig=c.rigA; rig.updateMatrixWorld(true); let hips=null; rig.traverse(o=>{if(!hips&&o.isBone&&/Hips$/.test(o.name))hips=o;}); const V=hips.position.constructor; const h=hips.getWorldPosition(new V()); const yaw = "${view}"==="front" ? 0 : "${view}"==="side" ? Math.PI/2 : "${view}"==="user" ? -Math.PI*0.75 : Math.PI*0.7; const dist = ("${view}"==="close"||"${view}"==="user") ? 1.9 : 3.0; const off=new V(Math.sin(yaw)*dist,0.35,Math.cos(yaw)*dist); const p=h.clone().add(off); c.frameEditorCam({x:p.x,y:p.y,z:p.z},{x:h.x,y:h.y*0.9,z:h.z}); n+=1; if(n<6) requestAnimationFrame(tick); else res({h:[h.x,h.y,h.z],cam:[p.x,p.y,p.z]}); }; requestAnimationFrame(tick); });})()`);
   await new Promise(r=>setTimeout(r,150));

@@ -244,6 +244,7 @@ import {
 import LocaleToggle from "./locale-toggle.jsx";
 import { bucketCount, bucketMs, bucketProjectAge, motionBackendState, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
+import { PART_COLOURS } from "./part-colours.js";
 import {
 	DEFAULT_POSE,
 	applyHipsOffset,
@@ -1033,6 +1034,8 @@ globalThis.playMode = centerTab === "play";
 	// every drag tick and must not re-render the scene; ikTick re-renders
 	// only the timeline markers.
 	const [ikMode, setIkMode] = useState(false);
+	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
+	const [partColoursMode, setPartColoursMode] = useState("shaded");
 	const [ikChains, setIkChains] = useState(null);
 	const [ikFkJoints, setIkFkJoints] = useState(null);
 	const [ikFocus, setIkFocus] = useState(null);
@@ -3325,6 +3328,7 @@ globalThis.playMode = centerTab === "play";
 		stage: { shotAspect: shotAspectKey, sensorId, hasCharSheet },
 		timeline: { currentFrame: tlFrame, frameCount: tlFrameCount, fps: tlFps },
 		activeCharacterId,
+		partColours: partColoursEnabled ? PART_COLOURS : null,
 		waypoints,
 		characters,
 		objects: sceneObjects,
@@ -3772,6 +3776,7 @@ globalThis.playMode = centerTab === "play";
 			capture_frame: async () => {
 				const live = liveStateRef.current;
 				return captureMcpFrame({
+					partColours: live.partColours,
 					capture: mcpCaptureRef.current,
 					camera: shotCamRef.current,
 					characters: live.characters,
@@ -3806,6 +3811,7 @@ globalThis.playMode = centerTab === "play";
 					height: output.height,
 					frame: live.timeline.currentFrame,
 					shotId: live.activeShotId,
+					partColours: live.partColours,
 				};
 			},
 			load_motion: async (args) => {
@@ -3991,6 +3997,8 @@ globalThis.playMode = centerTab === "play";
 			position: clip ? [clip.anchorX, entry.y ?? 0, clip.anchorZ] : [entry.x, entry.y ?? 0, entry.z],
 			rot: clip ? clip.rotationDeg : entry.rot,
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
+			partColoursEnabled,
+			partColoursMode,
 			pose: clip ? null : (entry.pose ?? DEFAULT_POSE),
 			// The stature the entry's take was extracted at. It rides with the
 			// clip, never separately — see Character for why.
@@ -3998,7 +4006,7 @@ globalThis.playMode = centerTab === "play";
 			onRig: reportRig(entry.id),
 			pickId: index === 0 ? "A" : index === 1 ? "B" : entry.id,
 		}];
-	}), [characters, activeChar.id, motion]);
+	}), [characters, activeChar.id, motion, partColoursEnabled, partColoursMode]);
 	// Where the selection gizmo stands: same driving rules as the render,
 	// for the active (selected) cast member only. Gated on the HIERARCHY
 	// selection, not the sticky active layer — the layer stays on the last
@@ -5925,6 +5933,10 @@ globalThis.playMode = centerTab === "play";
 			// QA-only: swap the active character's body ("x-bot-tpose" / "y-bot-tpose")
 			// or stature, so a browser QA run can check every shipped rig.
 			setCharacterModel: (id) => updateCharacterAt(activeCharIndex, { model: id }),
+			setPartColours: (enabled, mode = "shaded") => {
+				setPartColoursEnabled(!!enabled);
+				setPartColoursMode(mode === "flat" ? "flat" : "shaded");
+			},
 			setCharacterScale: (scale) => updateCharacterAt(activeCharIndex, { scale }),
 			characterScale: activeChar?.scale ?? 1,
 			characterModel: activeChar?.model ?? null,
@@ -6505,6 +6517,7 @@ globalThis.playMode = centerTab === "play";
 			prompt,
 			frame,
 			frameB,
+			partColours: partColoursEnabled ? PART_COLOURS : null,
 			move: movePlan,
 			mode,
 			modelLabel: model?.label,
@@ -6542,6 +6555,13 @@ globalThis.playMode = centerTab === "play";
 			a.click();
 			a.remove();
 		};
+		// A small sidecar keeps downloaded key frames tied to their palette.
+		if (result.partColours) {
+			const blob = new Blob([JSON.stringify({ partColours: result.partColours }, null, 2)], { type: "application/json" });
+			const url = URL.createObjectURL(blob);
+			save(url, "blocking-frame-palette.json");
+			setTimeout(() => URL.revokeObjectURL(url), 1000);
+		}
 		if (result.frameB) {
 			// named for the seat they take in a first/last-frame video request
 			save(result.frame, "blocking-frame-A-start.png");
@@ -9998,6 +10018,8 @@ function resizePromptClip(id, edge, rawFrame) {
 									position={view.position}
 									rot={view.rot}
 									tint={view.tint}
+									partColoursEnabled={view.partColoursEnabled}
+									partColoursMode={view.partColoursMode}
 									pose={view.pose}
 									scale={view.scale}
 									onRig={view.onRig}
@@ -10654,6 +10676,10 @@ function resizePromptClip(id, edge, rawFrame) {
 						</p>
 					</Foldout>
 
+				<Foldout hidden={!isCharacterSelection} title={ko("Part colours", "부위 색상")}>
+					<label className="check snap-toggle"><input type="checkbox" checked={partColoursEnabled} onChange={(e) => setPartColoursEnabled(e.target.checked)} /> {ko("Render body parts by colour", "신체 부위를 색상으로 렌더링")}</label>
+					{partColoursEnabled && <div className="move-ab"><button type="button" className={"btn ghost" + (partColoursMode === "shaded" ? " primary" : "")} onClick={() => setPartColoursMode("shaded")}>{ko("Shaded", "음영")}</button><button type="button" className={"btn ghost" + (partColoursMode === "flat" ? " primary" : "")} onClick={() => setPartColoursMode("flat")}>{ko("Flat", "평면")}</button></div>}
+				</Foldout>
 				<Foldout hidden={!isCharacterSelection} title={showB ? ko("Subjects", "인물들") : ko("Subject", "인물")}>
 						<div className={"subjects-row" + (showB ? "" : " single")}>
 							{characters.map((entry, index) => entry.hidden ? null : (

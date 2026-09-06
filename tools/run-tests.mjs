@@ -49,6 +49,7 @@ const NODE_FILES = [
 	"test/verify-analytics.mjs",
 	"test/verify-appearance.mjs",
 	"test/verify-auto-color.mjs",
+	"test/verify-part-colours.mjs",
 	"test/verify-asset-shelf.mjs",
 	"test/verify-blocking-depth.mjs",
 	"test/verify-burn-in.mjs",
