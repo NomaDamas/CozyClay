@@ -3,10 +3,25 @@ import { randomUUID } from "node:crypto";
 const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 export const SYSTEM_PROMPT = "You are CozyClay's previs assistant. Use describe_scene and describe_shot to understand the scene. Capture a blocking frame before rendering; render_from_frame edits that capture. Use place_image_in_scene to add renders to the scene. Keep responses concise and practical.";
 
+/** The Workflow page embeds the Studio as a live preview, so the hub usually
+ * sees at least two editors. Prefer the tab the user is authoring in: any
+ * workspace whose hello meta does not say embed:true. Fall back to the hub's
+ * own single-workspace rule (which throws when the choice is ambiguous). */
+export function pickWorkspace(liveHub, requiredCommands = ["capture_framing_png", "import_asset"]) {
+	const details = typeof liveHub.workspaceHandleDetails === "function" ? liveHub.workspaceHandleDetails() : [];
+	// An editor that does not advertise its commands predates the agent work;
+	// it cannot answer capture_framing_png, so it is never a candidate.
+	const supports = (entry) => Array.isArray(entry.meta?.commands) && requiredCommands.every((name) => entry.meta.commands.includes(name));
+	const authoring = details.filter((entry) => entry.meta?.embed !== true && supports(entry)).map((entry) => entry.handle);
+	if (authoring.length === 1) return authoring[0];
+	if (authoring.length > 1) return authoring[authoring.length - 1];
+	return liveHub.resolveWorkspace("agent turn");
+}
+
 export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 	const registry = new Map(handlers.map((tool) => [tool.name, tool]));
 	const workspace = () => {
-		if (liveHub?.resolveWorkspace && session.workspaceHandle === undefined) session.workspaceHandle = liveHub.resolveWorkspace("agent turn");
+		if (liveHub?.resolveWorkspace && session.workspaceHandle === undefined) session.workspaceHandle = pickWorkspace(liveHub);
 		return session.workspaceHandle;
 	};
 	const live = (name, args = {}) => {

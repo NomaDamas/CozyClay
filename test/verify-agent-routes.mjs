@@ -54,3 +54,25 @@ await new Promise((resolve) => rateServer.close(resolve));
 await new Promise((resolve) => authServer.close(resolve));
 server.close();
 console.log("agent routes verified");
+
+// #135: the embedded Studio preview is a live editor too; the agent must
+// pick the authoring tab, not throw on "several workspaces connected".
+{
+	const { pickWorkspace } = await import("../bin/agent/agent-tools.mjs");
+	const hub = (details) => ({
+		workspaceHandleDetails: () => details,
+		resolveWorkspace: () => { throw new Error("requires workspace_handle"); },
+	});
+	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true } }, { handle: "b", meta: { project: "P" } }])), "b", "skips the embedded preview");
+	assert.equal(pickWorkspace(hub([{ handle: "a", meta: null }, { handle: "b", meta: { project: "P" } }])), "b", "prefers the most recent authoring tab");
+	assert.throws(() => pickWorkspace(hub([{ handle: "a", meta: { embed: true } }])), /requires workspace_handle/, "falls back to the hub rule when only previews are connected");
+	console.log("PASS pickWorkspace skips embedded previews");
+}
+
+{
+	const { pickWorkspace } = await import("../bin/agent/agent-tools.mjs");
+	const hub = (details) => ({ workspaceHandleDetails: () => details, resolveWorkspace: () => { throw new Error("requires workspace_handle"); } });
+	// A stale tab (or another app on the live port) that lacks the agent commands is skipped.
+	assert.equal(pickWorkspace(hub([{ handle: "old", meta: { commands: ["describe"] } }, { handle: "new", meta: { commands: ["capture_framing_png", "import_asset"] } }])), "new", "skips workspaces without the agent commands");
+	console.log("PASS pickWorkspace skips workspaces lacking agent commands");
+}

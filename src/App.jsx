@@ -3858,6 +3858,14 @@ globalThis.playMode = centerTab === "play";
 						project: projectName ?? "Untitled",
 						scene: scenes.find((entry) => entry.id === activeSceneId)?.name ?? "",
 						cast: charactersRef.current.length,
+						// The Workflow page embeds this same Studio as a preview. It is a
+						// live editor too, so an agent choosing a workspace must be able to
+						// tell the preview apart from the tab the user is authoring in.
+						...(embedMode ? { embed: true } : {}),
+						// Which live commands this editor answers. A stale tab from an
+						// older build (or a different app on the same port) answers a
+						// different set; the agent picks a workspace that has what it needs.
+						commands: Object.keys(liveHandlersRef.current ?? {}),
 					},
 					onWorkspace: setLiveWorkspaceHandle,
 					onEvent: (name, payload) => {
