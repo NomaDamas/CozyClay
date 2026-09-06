@@ -876,32 +876,13 @@ export const Character = memo(function Character({ url, position, rot, tint, pos
 				child.receiveShadow = true;
 			}
 		});
+		if (partColoursEnabled) applyPartColours(clone, partColoursMode);
 		addFacingMarks(clone, jointTint);
 		// Stamp the bind pose while the rig is still untouched: the pose effect
 		// below runs immediately after and would otherwise be baked into "rest".
 		primeBindPose(clone);
 		return clone;
-	}, [fbx, tint]);
-
-	// Swap only the display surfaces. Keeping the same rig lets playback and
-	// authored poses continue across a mode change without rebuilding bones.
-	useEffect(() => {
-		if (!partColoursEnabled) return;
-		const originals = [];
-		model.traverse((mesh) => {
-			if (!mesh.isSkinnedMesh || !mesh.geometry?.attributes.skinIndex) return;
-			originals.push({ mesh, geometry: mesh.geometry, material: mesh.material });
-		});
-		applyPartColours(model, partColoursMode);
-		return () => {
-			for (const { mesh, geometry, material } of originals) {
-				mesh.geometry.dispose();
-				mesh.material.dispose();
-				mesh.geometry = geometry;
-				mesh.material = material;
-			}
-		};
-	}, [model, partColoursEnabled, partColoursMode]);
+	}, [fbx, tint, partColoursEnabled, partColoursMode]);
 
 	// A new stature (a fresh extraction on this character) must not rebuild the
 	// clone — that would drop the rig the playback effects hold. Only the world

@@ -6912,6 +6912,16 @@ input[type=range]::-moz-range-thumb {
 	font-size: 11px;
 }
 
+/* Keep the selected part-colour mode visible even though these controls use
+   the compact ghost-button treatment. */
+.move-ab .btn.ghost.primary,
+.move-ab .btn.ghost.primary:hover {
+	background: var(--grad);
+	border-color: transparent;
+	color: var(--on-accent);
+	box-shadow: var(--glow);
+}
+
 .move-ab .btn:disabled {
 	opacity: .45;
 	cursor: default;
