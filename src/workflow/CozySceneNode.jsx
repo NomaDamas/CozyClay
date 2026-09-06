@@ -26,7 +26,7 @@ function statusLabel(status) {
 }
 
 function SceneViewport() {
-	return <iframe className="cozy-scene-live-frame nodrag nopan" src="/app/?embed=scene" title="CozyClay Studio live scene preview" aria-label="CozyClay Studio live scene preview" />;
+	return <iframe className="cozy-scene-live-frame nodrag nopan" src="/app/?embed=playview" title="CozyClay Studio PlayView preview" aria-label="CozyClay Studio PlayView preview" />;
 }
 
 function callbackFrom(data, prop) {

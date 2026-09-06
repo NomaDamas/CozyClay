@@ -19,8 +19,8 @@ import {
 
 const componentSource = readFileSync(new URL("../src/workflow/CozySceneNode.jsx", import.meta.url), "utf8");
 const previewStyle = readFileSync(new URL("../src/workflow/cozy-scene-node.css", import.meta.url), "utf8");
-assert.match(componentSource, /app\/\?embed=scene/);
-assert.match(componentSource, /CozyClay Studio live scene preview/);
+assert.match(componentSource, /app\/\?embed=playview/);
+assert.match(componentSource, /CozyClay Studio PlayView preview/);
 assert.match(componentSource, /publishScenePlayback/);
 assert.match(componentSource, /window\.setTimeout/);
 assert.match(previewStyle, /cozy-scene-live-frame/);

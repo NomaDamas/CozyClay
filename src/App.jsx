@@ -559,7 +559,7 @@ function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
 }
 
 export default function App() {
-	const embedMode = new URLSearchParams(globalThis.location?.search || "").get("embed") === "scene";
+	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
 	// QA-only render counter (same spirit as window.__cozyclay): headless perf
 	// probes read renders/second to find re-render storms. Negligible cost.
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
@@ -616,7 +616,7 @@ export default function App() {
 	const planIsMain = false;
 	// Unity Scene/Game tabs: PlayView is the framed output only — no editing
 	// chrome (gizmo, inset, fly navigation) reaches it.
-	const [centerTab, setCenterTab] = useState("scene");
+	const [centerTab, setCenterTab] = useState(embedMode ? "play" : "scene");
 globalThis.playMode = centerTab === "play";
 	// PlayView is the player for the finished motion: entering starts playback,
 	// leaving pauses it. Scene stays the manipulation surface.
@@ -9469,7 +9469,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					: ko("Saved", "저장됨");
 
 	return (
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "scene" : undefined}>
+		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : undefined}>
 			<header className="topbar">
 				<div className="logo">
 					<span className="wordmark">
