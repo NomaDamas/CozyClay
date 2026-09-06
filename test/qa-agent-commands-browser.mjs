@@ -222,3 +222,7 @@ console.log("one Ctrl+Z removed the backdrop");
 console.log(`QA evidence saved: ${OUT_DIR}/capture-framing.png, ${OUT_DIR}/import-cutout.png, ${OUT_DIR}/import-backdrop.png`);
 console.log("PASS qa-agent-commands-browser");
 cdp.close();
+// The hub's WebSocketServer and the CDP socket keep the event loop alive;
+// without an explicit exit the runner waits until Chrome is killed.
+for (const client of hub.server.clients) client.terminate();
+hub.server.close(() => process.exit(0));

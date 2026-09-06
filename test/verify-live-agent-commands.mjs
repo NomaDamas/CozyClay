@@ -155,9 +155,13 @@ const badImport = await dispatchLiveFrame(
 );
 assert.deepEqual(badImport, { type: "result", id: "c3", ok: false, error: 'placeAs must be "cutout" or "backdrop"' });
 
-socket.close();
-hub.server.close();
-await withTimeout(new Promise((resolve) => socket.once("close", resolve)), "fake editor socket close");
-await withTimeout(new Promise((resolve) => hub.server.once("close", resolve)), "hub close");
+// Tear the client down hard before the server: on Linux the WebSocketServer
+// never emits "close" while a client is still draining its close handshake,
+// so a polite socket.close() here timed out in CI.
+const socketClosed = new Promise((resolve) => socket.once("close", resolve));
+socket.terminate();
+await withTimeout(socketClosed, "fake editor socket close");
+for (const client of hub.server.clients) client.terminate();
+await withTimeout(new Promise((resolve) => hub.server.close(() => resolve())), "hub close");
 
 console.log("PASS verify-live-agent-commands: capture_framing_png + import_asset round-trip, shapes, rejection path, editor dispatch");
