@@ -125,6 +125,11 @@ test("posed limb lengths equal the SMPL rest limb lengths and boneScale says so"
 	let low = Infinity; for (const j of ["LeftFoot", "RightFoot", "LeftToeBase", "RightToeBase"]) low = Math.min(low, at(0, J(j))[1]);
 	assert.ok(Math.abs(low) < 1e-3);
 });
+test("bone-scale override uses one uniform factor without changing timing", () => {
+	const input = fixture(3), derived = smplToCskel27Motion(input), uniform = smplToCskel27Motion(input, { boneScale: 1 });
+	assert.equal(uniform.frames, derived.frames); assert.equal(uniform.fps, derived.fps);
+	assert.ok([...uniform.boneScale].every((value) => value === 1)); assert.ok([...derived.boneScale].some((value) => value !== 1));
+});
 
 // Retarget POSE rotations, not the anatomical shape of SMPL's J-regressor.
 // Its zero-pose spine is an S curve and its head joint sits ~43 degrees in

@@ -49,6 +49,7 @@ sampled frames from the front and side on both shipped bodies:
 
 ```bash
 node tools/ardy/gvhmr-to-cskel27.mjs /path/to/gvhmr.npz public/demo/qa-gvhmr.npz
+# For takes extracted from CozyClay-rendered clips, use --bone-scale 1.
 node --test test/smpl-cskel27.test.mjs
 
 # Keep `npm run dev:ui -- --host 127.0.0.1 --port 5180` running separately.

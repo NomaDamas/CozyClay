@@ -112,7 +112,8 @@ function sourceGlobals(go, pose, frames) {
 function writeMat(out, offset, m) { out[offset] = m[0][0]; out[offset + 1] = m[0][1]; out[offset + 2] = m[0][2]; out[offset + 3] = m[1][0]; out[offset + 4] = m[1][1]; out[offset + 5] = m[1][2]; out[offset + 6] = m[2][0]; out[offset + 7] = m[2][1]; out[offset + 8] = m[2][2]; }
 function percentile(values, p) { const a = [...values].sort((x, y) => x - y); const x = (a.length - 1) * p, i = Math.floor(x), t = x - i; return a[i] * (1 - t) + (a[i + 1] ?? a[i]) * t; }
 
-export function smplToCskel27Motion(members) {
+export function smplToCskel27Motion(members, { boneScale: boneScaleOption = "derive" } = {}) {
+	if (boneScaleOption !== "derive" && !(typeof boneScaleOption === "number" && Number.isFinite(boneScaleOption) && boneScaleOption > 0)) throw new Error('smplToCskel27Motion: boneScale must be "derive" or a positive number');
 	const go = data(members.smpl_global_orient), poseMember = members.smpl_body_pose;
 	const goShape = poseMember?.shape?.[0] ?? members.smpl_global_orient?.shape?.[0];
 	const frames = Number.isInteger(goShape) ? goShape : go.length / 3;
@@ -127,8 +128,8 @@ export function smplToCskel27Motion(members) {
 	const cpos = skeleton.posed_joints;
 	const restVec = (j) => [rest[j * 3], rest[j * 3 + 1], rest[j * 3 + 2]];
 	const dist = (a, b) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
-	const boneScale = new Float32Array(27).fill(1);
-	for (let j = 1; j < 27; j += 1) {
+	const boneScale = new Float32Array(27).fill(typeof boneScaleOption === "number" ? boneScaleOption : 1);
+	for (let j = 1; j < 27 && boneScaleOption === "derive"; j += 1) {
 		const name = CSKEL27_JOINTS[j];
 		if (!LENGTH_SOURCE[name]) continue;
 		const [s0, s1] = LENGTH_SOURCE[name];
