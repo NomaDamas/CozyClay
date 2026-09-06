@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
+import { createServer } from "node:http";
+import { handleOAuthRequest } from "../bin/codex-auth.mjs";
 import { fileURLToPath } from "node:url";
 import {
 	installSignalCleanup,
@@ -26,6 +28,7 @@ function mainPortFrom(args) {
 }
 
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
+const configuredOAuthPort = process.env.COZYCLAY_OAUTH_PORT?.trim();
 const mainPort = mainPortFrom(viteArgs);
 
 // Vite runs with --strictPort and reports a taken port as a raw stack trace —
@@ -79,6 +82,15 @@ if (kimodoHost) {
 	);
 }
 
+const oauthServer = createServer((req, res) => {
+	const origin = req.headers.origin;
+	if (origin !== `http://127.0.0.1:${mainPort}`) { res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+	void handleOAuthRequest(req, res).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "oauth unavailable" })); } });
+});
+const oauthPort = configuredOAuthPort ? Number(configuredOAuthPort) : 0;
+await new Promise((resolvePromise, reject) => { oauthServer.once("error", reject); oauthServer.listen({ port: oauthPort, host: "127.0.0.1" }, resolvePromise); });
+const actualOAuthPort = oauthServer.address().port;
+
 const vite = spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", ...viteArgs], {
 	cwd: REPO,
 		env: {
@@ -88,6 +100,7 @@ const vite = spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", ...v
 			// gracefully instead of pointing at a port nothing owns.
 			...(bridgePort === undefined ? {} : { COZYCLAY_BRIDGE_PORT: String(bridgePort) }),
 			COZYCLAY_LIVE_PORT: livePort,
+			COZYCLAY_OAUTH_PORT: String(actualOAuthPort),
 		},
 });
 children.push(vite);
@@ -97,6 +110,7 @@ const first = await Promise.race(
 );
 
 removeSignalCleanup();
+await new Promise((resolvePromise) => oauthServer.close(resolvePromise));
 await Promise.allSettled(
 	children.filter((child) => child !== first.child).map((child) => terminateOwned(child)),
 );

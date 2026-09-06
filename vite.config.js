@@ -14,6 +14,8 @@ const motionBridgeUrl = explicitBridgePort
 	? `http://127.0.0.1:${explicitBridgePort}`
 	: process.env.COZYCLAY_BRIDGE_URL?.trim() || null;
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
+const oauthPort = process.env.COZYCLAY_OAUTH_PORT?.trim();
+const oauthUrl = oauthPort ? `http://127.0.0.1:${oauthPort}` : null;
 
 export default defineConfig({
 	define: {
@@ -69,6 +71,12 @@ export default defineConfig({
 						res.end();
 						return;
 					}
+					if (!oauthUrl && /^\/oauth\/(start|status|logout)$/.test(path)) {
+						res.statusCode = 503;
+						res.setHeader("content-type", "application/json; charset=utf-8");
+						res.end(JSON.stringify({ error: "oauth sidecar is not configured" }));
+						return;
+					}
 					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
@@ -113,6 +121,7 @@ export default defineConfig({
 		...(motionBridgeUrl
 			? {
 				proxy: {
+					...(oauthUrl ? { "/oauth": { target: oauthUrl } } : {}),
 					...(motionBridgeUrl
 						? {
 							// Only the routes the bridge actually owns. /ardy/ is ALSO a public

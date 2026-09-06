@@ -25,6 +25,7 @@ import { fileURLToPath } from "node:url";
 import { runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { checkForUpdate, runUpdate } from "./update-check.mjs";
+import { handleOAuthRequest } from "./codex-auth.mjs";
 import { verifyPackageMarker } from "./package-signature.mjs";
 import {
 	markTelemetryNoticeShown,
@@ -390,6 +391,13 @@ if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 
 server = createServer((req, res) => {
 	const url = new URL(req.url ?? "/", "http://localhost");
+	if (/^\/oauth\/(start|status|logout)$/.test(url.pathname)) {
+		const origin = req.headers.origin;
+		const expectedOrigin = `http://127.0.0.1:${opts.port}`;
+		if (origin !== expectedOrigin) { res.writeHead(403, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+		void handleOAuthRequest(req, res).catch(() => { if (!res.headersSent) { res.writeHead(502, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "oauth unavailable" })); } });
+		return;
+	}
 	if (url.pathname === "/__cozyclay/telemetry") {
 		if (req.method === "POST") {
 			const origin = req.headers.origin;
