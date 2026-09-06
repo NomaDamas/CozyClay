@@ -78,3 +78,44 @@ console.log("agent routes verified");
 	assert.equal(pickWorkspace(hub([{ handle: "old", meta: { commands: ["describe"] } }, { handle: "new", meta: { commands: ["capture_framing_png", "import_asset"] } }])), "new", "skips workspaces without the agent commands");
 	console.log("PASS pickWorkspace skips workspaces lacking agent commands");
 }
+
+{
+	const { pickWorkspace, createAgentTools, agentToolSchemas } = await import("../bin/agent/agent-tools.mjs");
+	const mapping = { describe_workflow: "get_graph", add_workflow_node: "add_node", update_workflow_node: "update_node", remove_workflow_node: "remove_node", connect_workflow_nodes: "connect", disconnect_workflow_nodes: "disconnect", run_workflow: "run_workflow", set_workflow_node_output: "set_node_output", focus_workflow_node: "focus_node" };
+	const details = [
+		{ handle: "studio", meta: { commands: ["capture_framing_png", "import_asset"] } },
+		{ handle: "preview", meta: { embed: true, commands: ["capture_framing_png", "import_asset"] } },
+		{ handle: "canvas", meta: { kind: "workflow", commands: Object.values(mapping) } },
+	];
+	const routed = [];
+	const hub = {
+		workspaceHandleDetails: () => details,
+		resolveWorkspace: () => { throw new Error("requires workspace_handle"); },
+		command: async (name, args, handle) => { routed.push({ name, args, handle }); return name === "capture_framing_png" ? { dataUrl: png, width: 1, height: 1 } : { node: { id: "new-image" } }; },
+	};
+	assert.equal(pickWorkspace(hub), "studio");
+	assert.equal(pickWorkspace(hub, ["get_graph"], "workflow"), "canvas");
+	const onlyStudio = { ...hub, workspaceHandleDetails: () => [details[0]], resolveWorkspace: () => "studio" };
+	assert.throws(() => pickWorkspace(onlyStudio, ["get_graph"], "workflow"), /workflow/i, "never route graph commands to a sole Studio");
+	const session = { signal: new AbortController().signal, images: new Map(), codex: fakeCodex };
+	const tools = createAgentTools({ liveHub: hub, session, emit: () => {} });
+	const schemas = agentToolSchemas(tools);
+	assert.deepEqual(schemas.map((tool) => tool.name).sort(), ["capture_blocking_frame", "render_from_frame", "place_image_in_scene", "describe_scene", "describe_shot", ...Object.keys(mapping)].sort());
+	assert.equal(schemas.find((tool) => tool.name === "render_from_frame").parameters.properties.addAsNode.type, "boolean");
+	for (const [name, command] of Object.entries(mapping)) {
+		const tool = tools.find((entry) => entry.name === name);
+		const args = command === "add_node" ? { type: "image" } : {};
+		await tool.handler(args);
+		assert.deepEqual(routed.at(-1), { name: command, args, handle: "canvas" });
+	}
+	assert.deepEqual(schemas.find((tool) => tool.name === "add_workflow_node").parameters.required, ["type"]);
+	assert.equal(schemas.find((tool) => tool.name === "update_workflow_node").parameters.properties.data.type, "object");
+	assert.deepEqual(schemas.find((tool) => tool.name === "connect_workflow_nodes").parameters.required, ["source", "target"]);
+	await tools.find((tool) => tool.name === "capture_blocking_frame").handler();
+	assert.equal(routed.at(-1).handle, "studio");
+	await tools.find((tool) => tool.name === "render_from_frame").handler({ prompt: "render", addAsNode: true });
+	assert.equal(routed.at(-1).name, "add_node"); assert.equal(routed.at(-1).handle, "canvas");
+	assert.equal(routed.at(-1).args.model, "image-passthrough"); assert.equal(routed.at(-1).args.data.image_url, png);
+	assert.equal(session.workspaceHandle, "studio"); assert.equal(session.workflowHandle, "canvas");
+	console.log("PASS canvas agent tools: kind isolation, schemas, one-to-one routing, independent handles, render addAsNode");
+}
