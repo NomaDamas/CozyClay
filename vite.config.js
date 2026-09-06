@@ -57,6 +57,18 @@ export default defineConfig({
 			configureServer(server) {
 				server.middlewares.use((req, res, next) => {
 					const path = (req.url || "").split("?")[0];
+					// Dev only: the root opens the Workflow canvas so local authoring
+					// starts there. The production root stays the crawlable landing
+					// page at cozyclay.org; a redirect baked into index.html would
+					// hide it from every visitor and from search. /index.html still
+					// serves the landing so it can be previewed locally.
+					if (path === "/") {
+						const query = (req.url || "").slice(path.length);
+						res.statusCode = 302;
+						res.setHeader("location", `/workflow/${query}`);
+						res.end();
+						return;
+					}
 					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
