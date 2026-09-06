@@ -122,6 +122,10 @@ npm run dev
 
 Open `http://127.0.0.1:5180/app/`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
 
+Or run the studio hosted, without a clone. Same caveat as above: no GPU box behind it, so Block Generation stays unavailable until you point `CCLAY_KIMODO_HOST` at one.
+
+[![Deploy on InstaPods](https://instapods.com/deploy-button.svg)](https://app.instapods.com/dashboard/pods/create?repo=https://github.com/NomaDamas/CozyClay&ref=gh-cozyclay)
+
 ## Hosted demo
 
 Installing a GPU motion backend is the hard part, so `cozyclay.org` also runs a queued demo: a visitor writes one prompt, gets a ticket link, and a GPU box owned by the maintainer generates the motion and uploads it. The visitor never installs anything and never leaves the site — the result opens in the studio itself.
