@@ -3,9 +3,11 @@ import * as THREE from "three";
 // One table travels with the captured frame: the video inbetweener and a
 // downstream colour segmenter must agree on which colour names each limb.
 // Keep these hex values stable; they are the original palette's sRGB colours.
+// The segmenter treats neutral grey as uncoloured and locates the head by its
+// adjacency to the torso, so the head intentionally has no hue.
 export const PART_COLOURS = Object.freeze([
 	{ part: "torso", bones: ["Hips", "Spine", "Spine1", "Spine2", "Neck", "LeftShoulder", "RightShoulder"], hex: "#FFFFFF", hue: null },
-	{ part: "head", bones: ["Head", "HeadTop_End"], hex: "#000000", hue: null },
+	{ part: "head", bones: ["Head", "HeadTop_End"], hex: "#8C8C8C", hue: null },
 	{ part: "leftUpperArm", bones: ["LeftArm"], hex: "#FFD500", hue: 40 },
 	{ part: "rightUpperArm", bones: ["RightArm"], hex: "#00D0FF", hue: 202 },
 	{ part: "leftForeArm", bones: ["LeftForeArm"], hex: "#F1FF00", hue: 67 },

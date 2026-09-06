@@ -9,7 +9,15 @@ import { PART_COLOURS, paletteViolations, partForBone, applyPartColours } from "
 assert.equal(PART_COLOURS.length, 14);
 assert.deepEqual(paletteViolations(PART_COLOURS), []);
 assert.equal(PART_COLOURS.find((entry) => entry.part === "torso").hex, "#FFFFFF");
-assert.equal(PART_COLOURS.find((entry) => entry.part === "head").hex, "#000000");
+const headHex = PART_COLOURS.find((entry) => entry.part === "head").hex;
+assert.equal(headHex, "#8C8C8C");
+const headChannels = headHex.slice(1).match(/../g).map((hex) => parseInt(hex, 16) / 255);
+const headMax = Math.max(...headChannels);
+const headMin = Math.min(...headChannels);
+const headSaturation = headMax === 0 ? 0 : (headMax - headMin) / headMax;
+assert.ok(headSaturation < 0.1, `head saturation ${headSaturation} should be neutral`);
+assert.ok(headMax > 0.3, `head value ${headMax} should not be near-black`);
+assert.ok(headMax < 0.8, `head value ${headMax} should not be near-white`);
 for (const entry of PART_COLOURS.filter((part) => part.hue !== null)) {
 	const channels = entry.hex.slice(1).match(/../g).map((hex) => parseInt(hex, 16));
 	assert.equal(Math.min(...channels), 0, `${entry.part}: full saturation`);
