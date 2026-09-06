@@ -315,7 +315,7 @@ export default function WorkflowBuilder() {
 		const store = {
 			getGraph: () => graphRef.current,
 			setGraph: (next) => { setNodes(next.nodes || []); setEdges(next.edges || []); },
-			run: async () => { const result = executeLocalWorkflowGraph(graphRef.current, { runId: `agent-${Date.now()}` }); setNodes(result.nodes); return { graph: serializableGraph(result.nodes, graphRef.current.edges), outputs: result.nodes.map((node) => ({ id: node.id, outputs: node.data?.outputs || [] })) }; },
+			run: async (input = graphRef.current) => { const result = executeLocalWorkflowGraph(input, { runId: `agent-${Date.now()}` }); setNodes(result.nodes); return { graph: serializableGraph(result.nodes, input.edges), outputs: result.nodes.map((node) => ({ id: node.id, outputs: node.data?.outputs || [] })) }; },
 			focus: (id) => { document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", inline: "center" }); },
 		};
 		commandsRef.current = createCanvasCommands({ store, makeNode, nodeSchemas });

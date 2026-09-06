@@ -27,9 +27,14 @@ await hub.command("run_workflow", {}, handle);
 await waitFor("two workflow nodes", () => evaluate("document.querySelectorAll('.react-flow__node').length >= 2"));
 await waitFor("workflow edge", () => evaluate("document.querySelectorAll('.react-flow__edge').length >= 1"));
 await writeFile(`${out}/connected.png`, Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"));
-for (const type of ["rawKeyDown", "keyUp"]) await send("Input.dispatchKeyEvent", { type, modifiers: 2, key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, nativeVirtualKeyCode: 90 });
-await waitFor("edge undo", () => evaluate("document.querySelectorAll('.react-flow__edge').length === 0"));
-await waitFor("node undo", () => evaluate(`document.querySelectorAll('.react-flow__node').length === ${baseline.nodes + 1}`));
+// One Ctrl+Z reverts one agent command: connect, then the image node, then the text node.
+const undo = async () => { for (const type of ["rawKeyDown", "keyUp"]) await send("Input.dispatchKeyEvent", { type, modifiers: 2, key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, nativeVirtualKeyCode: 90 }); };
+await undo();
+await waitFor("edge undo", () => evaluate(`document.querySelectorAll('.react-flow__edge').length === ${baseline.edges}`));
+await undo();
+await waitFor("image node undo", () => evaluate(`document.querySelectorAll('.react-flow__node').length === ${baseline.nodes + 1}`));
+await undo();
+await waitFor("text node undo", () => evaluate(`document.querySelectorAll('.react-flow__node').length === ${baseline.nodes}`));
 await writeFile(`${out}/undone.png`, Buffer.from((await send("Page.captureScreenshot", { format: "png" })).data, "base64"));
-console.log(`PASS qa-canvas-agent-browser: ${out}/connected.png (2 nodes + edge), ${out}/undone.png (1 node, no edge)`);
+console.log(`PASS qa-canvas-agent-browser: ${out}/connected.png (+2 nodes, +1 edge), ${out}/undone.png (three Ctrl+Z restore the baseline)`);
 cdp.close(); for (const client of hub.server.clients) client.terminate(); hub.server.close(() => process.exit(0));

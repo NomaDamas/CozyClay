@@ -58,3 +58,23 @@ for (let i = 0; i < 60; i++) await ok("update_node", { id, data: { prompt: Strin
 assert.equal(history.length, 50, "history is bounded");
 while (history.length) undo(); assert.equal(undo().undone, false);
 console.log("PASS canvas commands: all nine dispatch handlers, model/schema validation, rejected edits are atomic, output evaluation, focus, bounded undo");
+
+// The live hub sends commands back to back. WorkflowBuilder's store publishes
+// the graph through React state, which only reaches graphRef after a render,
+// so a store whose getGraph lags one mutation behind must still be usable:
+// the command layer has to thread its own latest graph between mutations.
+{
+	let committed = structuredClone(graph);
+	let lagging = committed;
+	const lagStore = { getGraph: () => lagging, setGraph: (next) => { lagging = committed; committed = next; }, run: (input) => { lagging = committed; committed = executeLocalWorkflowGraph(input, { runId: "lag" }); return committed; }, focus: () => {} };
+	const lagged = createCanvasCommands({ store: lagStore, makeNode, nodeSchemas: DEFAULT_NODE_SCHEMAS });
+	const first = lagged.add_node({ type: "text" }).node;
+	const second = lagged.add_node({ type: "image" }).node;
+	lagged.connect({ source: first.id, target: second.id });
+	assert.equal(committed.nodes.filter((node) => [first.id, second.id].includes(node.id)).length, 2, "back-to-back add_node keeps both nodes");
+	assert.equal(committed.edges.filter((edge) => edge.source === first.id && edge.target === second.id).length, 1, "connect sees nodes added a moment earlier");
+	const ran = await lagged.run_workflow();
+	assert.equal(ran.graph.edges.length, committed.edges.length, "run_workflow right after connect keeps the new edge");
+	assert.ok(ran.outputs[second.id], "run_workflow evaluates the node added a moment earlier");
+	console.log("PASS canvas commands survive a store whose reads lag one render");
+}
