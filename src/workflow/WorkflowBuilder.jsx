@@ -18,6 +18,8 @@ import { normalizeCozySceneData, sceneConnectionAllowed, toCozySceneRunRequest }
 import { activeSceneCharacters, characterHandleId, characterIdFromHandle, normalizeMotionInputData, motionInputOutput } from "./motion-input.js";
 import { DEFAULT_NODE_SCHEMAS, defaultFormValues, schemaCategoryForType, schemaModelEntries, schemaProperties } from "./node-schema.js";
 import { executeLocalWorkflowGraph } from "./local-workflow.js";
+import { createLiveControl } from "../live-control.js";
+import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 
 const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
@@ -186,6 +188,7 @@ export default function WorkflowBuilder() {
 	const [sceneContext, setSceneContext] = useState(() => { const doc = readStoredSceneDocument(); const scene = doc?.scenes?.find((entry) => entry?.id === doc?.activeSceneId) ?? doc?.scenes?.[0]; return { id: scene?.id || null, name: scene?.name || "CozyClay Scene" }; });
 	const graph = useMemo(() => serializableGraph(nodes, edges), [nodes, edges]);
 	const graphRef = useRef(graph);
+	const commandsRef = useRef(null);
 	useEffect(() => { graphRef.current = graph; }, [graph]);
 
 	const updateNode = useCallback((id, patch) => setNodes((current) => current.map((node) => node.id === id ? { ...node, data: { ...node.data, ...patch } } : node)), [setNodes]);
@@ -308,6 +311,19 @@ export default function WorkflowBuilder() {
 		toast.success(nodeId ? "Node evaluated locally" : "Workflow evaluated locally");
 	}, [graph, setNodes]);
 
+	useEffect(() => {
+		const store = {
+			getGraph: () => graphRef.current,
+			setGraph: (next) => { setNodes(next.nodes || []); setEdges(next.edges || []); },
+			run: async () => { const result = executeLocalWorkflowGraph(graphRef.current, { runId: `agent-${Date.now()}` }); setNodes(result.nodes); return { graph: serializableGraph(result.nodes, graphRef.current.edges), outputs: result.nodes.map((node) => ({ id: node.id, outputs: node.data?.outputs || [] })) }; },
+			focus: (id) => { document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", inline: "center" }); },
+		};
+		commandsRef.current = createCanvasCommands({ store, makeNode, nodeSchemas });
+		const control = createLiveControl({ handlers: commandsRef.current.handlers, meta: { kind: "workflow", commands: Object.keys(commandsRef.current.handlers) } });
+		const onKeyDown = (event) => { const target = event.target; const editing = target instanceof HTMLElement && (target.matches("input,textarea,select,[contenteditable=true]") || target.isContentEditable); if (!editing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); commandsRef.current.undo(); } };
+		window.addEventListener("keydown", onKeyDown);
+		return () => { window.removeEventListener("keydown", onKeyDown); control.close(); commandsRef.current = null; };
+	}, [nodeSchemas, setEdges, setNodes]);
 	const runScene = useCallback(async ({ id, data }) => {
 		const payload = toCozySceneRunRequest({ id, data }, { workflow: graphRef.current });
 		updateScene({ id, patch: { status: "complete", statusMessage: `Local scene ready at frame ${payload.frame}`, preview: "scene", lastOutput: { renderUrl: null, sceneUrl: "/app/", jobId: null } } });

@@ -29,12 +29,13 @@ function StatusDot({ tone, title }) {
 
 function ToolCallCard({ call, onRetry }) {
 	const tone = call.status === "running" ? "busy" : call.status === "failed" ? "alert" : "ok";
+	const canvasTool = ["describe_workflow", "add_workflow_node", "update_workflow_node", "remove_workflow_node", "connect_workflow_nodes", "disconnect_workflow_nodes", "run_workflow", "set_workflow_node_output", "focus_workflow_node"].includes(call.name);
 	const detail = call.error ? `error: ${call.error}` : JSON.stringify(call.result ?? call.args ?? {}, null, 2);
 	return <div className={`agent-card agent-tool-card${call.status === "failed" ? " failed" : ""}`} data-tool-status={call.status} data-tool-name={call.name}>
 		<details>
 			<summary>
 				<StatusDot tone={tone} title={call.status} />
-				<span className="agent-tool-label">{toolCallLabel(call)}</span>
+				<span className="agent-tool-label">{toolCallLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
 				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : formatElapsed(call.elapsedMs)}</span>
 				<FiChevronRight size={12} aria-hidden="true" />
 			</summary>
