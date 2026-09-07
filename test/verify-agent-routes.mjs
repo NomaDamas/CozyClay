@@ -181,6 +181,18 @@ console.log("agent routes verified");
 		}
 		console.log("PASS canvas tool results are summarised for the model");
 	}
+	{
+		// A panel session outlives page reloads; its cached handles must not point
+		// at an editor that is gone, or at the canvas when a scene command is due.
+		const stale = { ...session, workspaceHandle: "canvas", workflowHandle: "gone" };
+		const staleTools = createAgentTools({ liveHub: hub, session: stale, emit: () => {} });
+		routed.length = 0;
+		await staleTools.internal.capture.handler({});
+		assert.equal(routed.at(-1).handle, "studio", "a scene command re-picks a scene editor instead of the canvas");
+		await staleTools.find((tool) => tool.name === "describe_workflow").handler({});
+		assert.equal(routed.at(-1).handle, "canvas", "a canvas command re-picks the canvas when its cached handle vanished");
+		console.log("PASS stale session handles are re-picked");
+	}
 	assert.match(SYSTEM_PROMPT, /describe_workflow/);
 	for (const [name, command] of Object.entries(mapping)) {
 		const tool = tools.find((entry) => entry.name === name);

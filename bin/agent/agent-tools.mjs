@@ -46,7 +46,12 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 	const registry = new Map(handlers.map((tool) => [tool.name, tool]));
 	const workspace = (kind = "scene") => {
 		const key = kind === "workflow" ? "workflowHandle" : "workspaceHandle";
-		if (liveHub?.resolveWorkspace && session[key] === undefined) session[key] = pickWorkspace(liveHub, kind === "workflow" ? [] : undefined, kind);
+		// The panel session outlives page reloads, so a cached handle may name an
+		// editor that is gone or the wrong kind of workspace; re-pick when it does.
+		const details = typeof liveHub?.workspaceHandleDetails === "function" ? liveHub.workspaceHandleDetails() : [];
+		const current = details.find((entry) => entry.handle === session[key]);
+		const fits = current && ((current.meta?.kind === "workflow") === (kind === "workflow"));
+		if (liveHub?.resolveWorkspace && !fits) session[key] = pickWorkspace(liveHub, kind === "workflow" ? [] : undefined, kind);
 		return session[key];
 	};
 	const live = (name, args = {}, kind = "scene") => {
