@@ -24,6 +24,9 @@ export function pickWorkspace(liveHub, requiredCommands = ["capture_framing_png"
 	// at; use it when no standalone editor tab is open.
 	const embedded = details.filter((entry) => entry.meta?.embed === true && supports(entry)).map((entry) => entry.handle);
 	if (embedded.length) return embedded[embedded.length - 1];
+	// The hub's own rule would hand back whatever single workspace exists —
+	// on the Workflow page that is the canvas, which cannot capture a frame.
+	if (details.some((entry) => entry.meta?.kind === "workflow")) throw new Error("No scene editor is connected yet.");
 	return liveHub.resolveWorkspace("agent turn");
 }
 
@@ -54,6 +57,18 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 		if (liveHub?.resolveWorkspace && !fits) session[key] = pickWorkspace(liveHub, kind === "workflow" ? [] : undefined, kind);
 		return session[key];
 	};
+	// The embedded Studio says hello a moment after the canvas; give it up to
+	// ten seconds before declaring that no scene editor exists.
+	const waitForSceneEditor = async () => {
+		const deadline = Date.now() + 10_000;
+		for (;;) {
+			try { return workspace("scene"); } catch (error) {
+				if (!/scene editor/i.test(error.message) || Date.now() >= deadline) throw error;
+				session.signal?.throwIfAborted?.();
+				await new Promise((resolve) => setTimeout(resolve, 250));
+			}
+		}
+	};
 	const live = (name, args = {}, kind = "scene") => {
 		if (!liveHub) throw new Error("Live editor is not connected.");
 		return liveHub.command(name, args, workspace(kind));
@@ -68,6 +83,7 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 	const capture = {
 		name: "capture_blocking_frame", description: "Capture the current blocking frame before rendering.", parameters: objectSchema(),
 		handler: async () => {
+			await waitForSceneEditor();
 			const result = await live("capture_framing_png");
 			session.signal.throwIfAborted();
 			const imageId = randomUUID();

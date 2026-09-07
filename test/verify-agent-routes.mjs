@@ -193,6 +193,19 @@ console.log("agent routes verified");
 		assert.equal(routed.at(-1).handle, "canvas", "a canvas command re-picks the canvas when its cached handle vanished");
 		console.log("PASS stale session handles are re-picked");
 	}
+	{
+		// The canvas connects before the embedded Studio finishes booting. A scene
+		// command must never land on the canvas, and capture waits for the editor.
+		const canvasOnly = [{ handle: "canvas", meta: { kind: "workflow", commands: ["get_graph"] } }];
+		const late = { workspaceHandleDetails: () => canvasOnly, resolveWorkspace: () => "canvas", command: async (name, args, handle) => ({ handle, dataUrl: png, width: 1, height: 1 }) };
+		assert.throws(() => pickWorkspace(late), /scene editor/i, "a scene command is refused rather than sent to the canvas");
+		const waited = createAgentTools({ liveHub: late, session: { ...session, images: new Map() }, emit: () => {} });
+		const pending = waited.internal.capture.handler({});
+		canvasOnly.push({ handle: "preview", meta: { embed: true, commands: ["capture_framing_png", "import_asset"] } });
+		const result = await pending;
+		assert.ok(result.imageId, "capture waits for the editor to say hello, then proceeds");
+		console.log("PASS scene commands wait for a scene editor and never hit the canvas");
+	}
 	assert.match(SYSTEM_PROMPT, /describe_workflow/);
 	for (const [name, command] of Object.entries(mapping)) {
 		const tool = tools.find((entry) => entry.name === name);
