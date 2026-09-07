@@ -78,3 +78,23 @@ console.log("PASS canvas commands: all nine dispatch handlers, model/schema vali
 	assert.ok(ran.outputs[second.id], "run_workflow evaluates the node added a moment earlier");
 	console.log("PASS canvas commands survive a store whose reads lag one render");
 }
+
+// Scene nodes expose "render"/"scene" source handles, never "output"; an edge
+// with the wrong handle is silently dropped by React Flow, so the command layer
+// has to pick the right default and refuse the wrong one.
+{
+	let g = { version: 1, nodes: [], edges: [] };
+	const st = { getGraph: () => g, setGraph: (next) => { g = next; }, run: () => g, focus: () => {} };
+	const cmds = createCanvasCommands({ store: st, makeNode, nodeSchemas: DEFAULT_NODE_SCHEMAS });
+	const scene = cmds.add_node({ type: "scene" }).node;
+	const image = cmds.add_node({ type: "image", model: "image-generation" }).node;
+	const edge = cmds.connect({ source: scene.id, target: image.id }).edge;
+	assert.equal(edge.sourceHandle, "render", "a Scene source defaults to its render handle");
+	assert.throws(() => cmds.connect({ source: scene.id, target: image.id, sourceHandle: "output" }), /Invalid source handle/, "a Scene has no output handle");
+	const other = cmds.add_node({ type: "image" }).node;
+	assert.equal(cmds.connect({ source: scene.id, target: other.id, sourceHandle: "scene" }).edge.sourceHandle, "scene", "the scene handle is accepted");
+	const upload = cmds.add_node({ type: "upload", data: { image_url: "data:image/png;base64,AA==", fileName: "ref.png", mimeType: "image/png", outputs: [{ value: "data:image/png;base64,AA==" }] } }).node;
+	assert.equal(upload.data.image_url, "data:image/png;base64,AA==", "an upload node can be created holding an image");
+	assert.throws(() => cmds.connect({ source: upload.id, target: image.id, sourceHandle: "render" }), /Invalid source handle/, "non-Scene nodes only have output");
+	console.log("PASS canvas commands: Scene source handles and upload node data");
+}
