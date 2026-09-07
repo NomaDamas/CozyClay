@@ -68,6 +68,21 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	guideServer.close();
 	console.log("PASS /agent/image: full-size frame accepted, validation, reference forwarded");
 }
+{
+	// Attaching the frame captures through the sidecar's internal tool even though
+	// the model-facing list no longer offers capture_blocking_frame.
+	const seenInputs = [];
+	const attachHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: { ...fakeCodex, streamResponses: ({ input }) => { seenInputs.push(input); return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() { yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } }; } }; } }, liveHub: fakeLive, port: () => attachServer.address().port });
+	const attachServer = createServer((req, res) => attachHandler(req, res).catch(() => {})); attachServer.listen(0, "127.0.0.1"); await once(attachServer, "listening");
+	const attachPort = attachServer.address().port;
+	const attachText = await fetch(`http://127.0.0.1:${attachPort}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${attachPort}` }, body: JSON.stringify({ sessionId: "att", text: "hi", attachFrame: true }) }).then((r) => r.text());
+	const attachEvents = [...attachText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+	assert.deepEqual(attachEvents.filter((event) => event.type === "tool.start").map((event) => event.name), ["capture_blocking_frame"], "the attached frame is captured and shown as a tool card");
+	assert.ok(attachEvents.every((event) => event.type !== "error"), "attaching a frame does not fail the turn");
+	assert.match(seenInputs[0].find((item) => item.role === "user").content[0].text, /Attached frame imageId: /, "the model is told which image was attached");
+	attachServer.close();
+	console.log("PASS attachFrame captures through the internal tool");
+}
 const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers: { origin: "http://evil.example" } });
 assert.equal(forbidden.status, 403);
 assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);

@@ -114,7 +114,11 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 		name, description: registry.get(name)?.description || name,
 		parameters: objectSchema(), handler: () => registered(name),
 	}));
-	return [reference, ...workflow, ...direct];
+	const tools = [reference, ...workflow, ...direct];
+	// The sidecar captures the frame itself when the user attaches it; the
+	// model never sees this tool, it builds an Image node instead.
+	tools.internal = { capture };
+	return tools;
 }
 
 export const agentToolSchemas = (tools) => tools.map(({ name, description, parameters }) => ({ type: "function", name, description, parameters }));

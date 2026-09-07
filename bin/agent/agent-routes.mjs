@@ -194,9 +194,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			const dependencies = await runtime;
 			session.codex = { editImage: (args) => retryAuth(() => codex.editImage(args)) };
 			const tools = createAgentTools({ ...dependencies, session, emit: send });
-			const executeTool = async (item) => {
+			const executeTool = async (item, override) => {
 				signal.throwIfAborted();
-				const tool = tools.find((entry) => entry.name === item.name);
+				const tool = override ?? tools.find((entry) => entry.name === item.name);
 				if (!tool) throw new Error("Unknown tool.");
 				const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments;
 				send({ type: "tool.start", callId: item.call_id, name: item.name, label: item.name.replaceAll("_", " "), args });
@@ -214,7 +214,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			};
 			let text = value.text;
 			if (value.attachFrame) {
-				const captured = await executeTool({ call_id: "attached-frame", name: "capture_blocking_frame", arguments: {} });
+				const captured = await executeTool({ call_id: "attached-frame", name: "capture_blocking_frame", arguments: {} }, tools.internal.capture);
 				text += `\nAttached frame imageId: ${captured.imageId}`;
 			}
 			const history = [...session.history, { role: "user", content: [{ type: "input_text", text }] }];
