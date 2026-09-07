@@ -22,7 +22,8 @@ expect("WorkflowBuilder imports AgentPanel", builder.includes('import AgentPanel
 expect("AgentPanel renders as a sibling AFTER .workflow-canvas", (() => {
 	const canvasClose = builder.indexOf("</section>");
 	const mount = builder.indexOf("<AgentPanel");
-	const canvasOpen = builder.indexOf('<section className="workflow-canvas">');
+	// The canvas section may carry refs/handlers (paste, drop); only its class matters here.
+	const canvasOpen = builder.search(/<section className="workflow-canvas"[^>]*>/);
 	return canvasOpen !== -1 && canvasClose !== -1 && mount > canvasClose;
 })(), "AgentPanel must follow the closing </section> of .workflow-canvas");
 expect("the panel lives inside .workflow-main", (() => {
