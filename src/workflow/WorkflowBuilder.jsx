@@ -430,6 +430,9 @@ export default function WorkflowBuilder() {
 		// Everything runWorkflow writes to a node also lands in the graph it
 		// returns, so a caller that republishes that graph keeps the results.
 		const patches = new Map();
+		// This run's captured references per Scene node, for the Image nodes fed
+		// by it — same precedence as sceneMeta: a fresh capture wins.
+		const sceneReferences = new Map();
 		const patchNode = (id, patch) => { patches.set(id, { ...(patches.get(id) || {}), ...patch }); updateNode(id, patch); };
 		for (const id of result.order) {
 			const current = result.nodes.find((node) => node.id === id);
@@ -439,9 +442,13 @@ export default function WorkflowBuilder() {
 					const frame = await captureSceneFrame(id);
 					values.set(id, frame.dataUrl);
 					// The capture metadata rides along on lastOutput so a downstream
-					// Shot Prompt node can describe the shot without re-capturing.
-					patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
+					// Shot Prompt node can describe the shot without re-capturing, and
+					// the identity/environment references (#167) ride with it so an
+					// Image node downstream can attach them.
+					const references = Array.isArray(frame.references) ? frame.references : [];
+					patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
 					sceneMeta.set(id, frame.meta ?? current.data?.lastOutput?.meta ?? null);
+					sceneReferences.set(id, references);
 				} catch (error) { patchNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message }); }
 			} else if (current.type === "shot-prompt") {
 				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => result.nodes.find((node) => node.id === edge.source)).filter(Boolean);
@@ -481,8 +488,13 @@ export default function WorkflowBuilder() {
 				// one, otherwise the structured prompt from an upstream Shot Prompt.
 				const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
 				const prompt = String(current.data.prompt || "").trim() || upstreamPrompt || "";
+				// Identity sheets and the environment reference come from whichever
+				// Scene node feeds this one: this run's capture first, else the one
+				// stored on the node from an earlier run.
+				const sceneNode = incoming.find((entry) => entry.node?.type === "scene")?.node;
+				const references = (sceneNode && sceneReferences.get(sceneNode.id)) || (Array.isArray(sceneNode?.data?.lastOutput?.references) ? sceneNode.data.lastOutput.references : []);
 				patchNode(id, { isLoading: true, errorMsg: null });
-				try { const output = await createHttpTransport().image({ prompt, imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", errorMsg: null, ...appendVersion(current.data, { dataUrl: output.dataUrl, prompt, referenceDataUrl: reference || null, frameDataUrl: source, at: Date.now() }) }); }
+				try { const output = await createHttpTransport().image({ prompt, imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), ...(references.length ? { references } : {}), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", errorMsg: null, ...appendVersion(current.data, { dataUrl: output.dataUrl, prompt, referenceDataUrl: reference || null, frameDataUrl: source, at: Date.now() }) }); }
 				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
 			} else values.set(id, current.data?.outputs?.[0]?.value);
 		}
@@ -519,7 +531,7 @@ export default function WorkflowBuilder() {
 	}, [nodeSchemas, setEdges, setNodes]);
 	const runScene = useCallback(async ({ id, data }) => {
 		updateScene({ id, patch: { status: "running", statusMessage: "Capturing framing PNG" } });
-		try { const frame = await captureSceneFrame(id); updateScene({ id, patch: { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl } }); toast.success("Scene frame captured"); }
+		try { const frame = await captureSceneFrame(id); updateScene({ id, patch: { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references: Array.isArray(frame.references) ? frame.references : [] }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl } }); toast.success("Scene frame captured"); }
 		catch (error) { updateScene({ id, patch: { status: "error", errorMsg: error.message, statusMessage: error.message } }); }
 	}, [updateScene]);
 

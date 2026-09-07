@@ -231,8 +231,14 @@ export function createCodexClient({
 		return { history: continued, finalText };
 	}
 
-	async function editImage({ prompt, imageDataUrl, referenceDataUrl, quality = "auto", signal }) {
-		const images = [imageDataUrl, referenceDataUrl].filter((value) => typeof value === "string" && value);
+	/**
+	 * `extraImages` are the scene's reference pictures (#167) — identity sheets
+	 * and the environment reference. They are appended AFTER the frame and the
+	 * reference image, because the prompt describes the attachments in that
+	 * order and the first image is always the clay frame.
+	 */
+	async function editImage({ prompt, imageDataUrl, referenceDataUrl, extraImages = [], quality = "auto", signal }) {
+		const images = [imageDataUrl, referenceDataUrl, ...(Array.isArray(extraImages) ? extraImages : [])].filter((value) => typeof value === "string" && value);
 		const response = await postJson("/images/edits", {
 			model: "gpt-image-2",
 			prompt,

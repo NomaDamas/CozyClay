@@ -43,6 +43,7 @@ const NODE_FILES = [
 	"test/process/verify-lifecycle.mjs",
 	"test/process/verify-mcp-package-isolation.mjs",
 	"test/process/verify-package-telemetry.mjs",
+	"test/verify-agent-image-references.mjs",
 	"test/verify-agent-panel.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-canvas-commands.mjs",
@@ -121,6 +122,7 @@ const NODE_FILES = [
 	"test/verify-scene-asset-cache.mjs",
 	"test/verify-scene-assets.mjs",
 	"test/verify-scene-objects.mjs",
+	"test/verify-reference-slots.mjs",
 	"test/verify-scenes.mjs",
 	"test/verify-cozy-scene-node.mjs",
 	"test/verify-motion-input.mjs",
@@ -175,13 +177,14 @@ const BROWSER_FILES = [
 	"test/verify-offscreen-export-browser.mjs",
 	"test/verify-project-menu-browser.mjs",
 	"test/qa-keyframe-pack-browser.mjs",
+	"test/qa-reference-slots-browser.mjs",
 	"test/qa-send-to-ai-browser.mjs",
 ];
 
 // The inventory sweep only picks up `verify*.mjs`; a browser suite named for
 // the QA runner it needs is listed here so it still shows up in the manifest
 // (as an EXCLUDE with its reason) instead of going unmentioned.
-const EXTRA_INVENTORY = ["test/qa-keyframe-pack-browser.mjs", "test/qa-send-to-ai-browser.mjs"];
+const EXTRA_INVENTORY = ["test/qa-keyframe-pack-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-send-to-ai-browser.mjs"];
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })

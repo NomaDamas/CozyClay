@@ -41,6 +41,8 @@ export const DEFAULT_SCENE_STAGE = Object.freeze({
 		Object.freeze({ id: "char-a", model: DEFAULT_CHARACTER_MODEL, x: 0, z: 0, rot: 0, hidden: false, pose: null, subject: DEFAULT_SUBJECT_ONE }),
 	]),
 	hasCharSheet: false,
+	// The look reference for the location: a data URL so it survives save/load
+	environmentImage: null,
 	shotAspect: "16:9",
 	cameraPresetId: null,
 	sensorId: DEFAULT_SENSOR_FORMAT,
@@ -98,6 +100,14 @@ function cloneValue(value, copies = new WeakMap()) {
 
 const finiteOr = (value, fallback) => (Number.isFinite(value) ? value : fallback);
 
+/** A reference picture kept inside the document. Only inline data URLs are
+ * accepted: a file:// or http:// path would break the moment the project is
+ * moved or reopened elsewhere, so a slot either holds its own bytes or is
+ * empty. */
+export function normalizeReferenceImage(value) {
+	return typeof value === "string" && value.startsWith("data:image/") ? value : null;
+}
+
 /** Stature band for a cast member. Wider than ardy/npz.js's mocap band
  * (0.6-1.5, a sanity clamp on ESTIMATED statures): the gizmo's scale handles
  * are a deliberate artistic ask, and a previs giant or child is legitimate. */
@@ -139,6 +149,10 @@ export function createCharacterEntry(source = null, index = 0) {
 		// whiter clay) so the entry survives future default tweaks.
 		tint: typeof s.tint === "string" && /^#[0-9a-fA-F]{6}$/.test(s.tint) ? s.tint : null,
 		pose: plainObject(s.pose) ? cloneValue(s.pose) : null,
+		// Who this cast member IS: a character sheet / reference photo that rides
+		// with the capture so a generator matches face, hair and wardrobe instead
+		// of re-inventing them per shot.
+		identityImage: normalizeReferenceImage(s.identityImage),
 		// Stature multiplier: 1 is the canonical body, an extracted take carries
 		// the FILMED person's leg ratio. It persists with the entry because the
 		// take's root travel was authored against it — see the render path.
@@ -254,7 +268,7 @@ function migrateLegacyCast(source) {
 }
 
 const STAGE_ENVELOPE_KEYS = new Set([
-	"characters", "hasCharSheet", "shotAspect", "cameraPresetId", "sensorId", "keyLight",
+	"characters", "hasCharSheet", "environmentImage", "shotAspect", "cameraPresetId", "sensorId", "keyLight",
 	"charA", "charB", "showB", "poseA", "poseB", "subject", "subject2",
 ]);
 
@@ -273,6 +287,9 @@ export function createSceneStage(stage = null) {
 		...extras,
 		characters,
 		hasCharSheet: source.hasCharSheet === true,
+		// Persisted exactly like shotAspect: part of the stage envelope, written
+		// on every save and read back on load.
+		environmentImage: normalizeReferenceImage(source.environmentImage),
 		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7"].includes(source.shotAspect)
 			? source.shotAspect
 			: DEFAULT_SCENE_STAGE.shotAspect,

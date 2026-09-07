@@ -10401,3 +10401,110 @@ input[type=range] {
 	font-size: 11px;
 	line-height: 1.45;
 }
+
+/* Reference slots (#167): the cast member's identity sheet and the set's
+   environment reference. One control, two homes — the picture is the control,
+   so the thumbnail itself is the picker and an empty slot reads as a hole
+   waiting to be filled rather than as a disabled button. */
+.reference-slot {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin-top: 10px;
+	padding-top: 10px;
+	border-top: 1px solid var(--line2);
+}
+
+.reference-slot-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.reference-slot-label {
+	color: var(--fg);
+	font-size: 11px;
+	font-weight: 600;
+	letter-spacing: -.01em;
+}
+
+.reference-slot-body {
+	display: flex;
+	align-items: flex-start;
+	gap: 10px;
+}
+
+.reference-slot-thumb {
+	flex: 0 0 auto;
+	display: grid;
+	place-items: center;
+	width: 58px;
+	height: 58px;
+	padding: 0;
+	overflow: hidden;
+	border: 1px solid var(--line2);
+	border-radius: 8px;
+	background: var(--card2);
+	box-shadow: none;
+	cursor: pointer;
+	transition: border-color var(--fast), background var(--fast);
+}
+
+.reference-slot-thumb:hover {
+	border-color: var(--accent);
+	background: var(--hover);
+}
+
+.reference-slot-thumb[data-empty] {
+	border-style: dashed;
+}
+
+.reference-slot-thumb img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.reference-slot-plus {
+	color: var(--muted2);
+	font-size: 16px;
+	line-height: 1;
+}
+
+.reference-slot-copy {
+	flex: 1 1 auto;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.reference-slot-copy .inspector-hint {
+	margin: 0;
+}
+
+/* Slot buttons are secondary to the thumbnail: the panel's small control size,
+   not the full-width `.btn.ghost` action the inspector uses for a primary
+   gesture, so the width and its stacking margin are both reset here. */
+.reference-slot .btn.ghost {
+	align-self: flex-start;
+	width: auto;
+	margin-top: 0;
+	padding: 5px 10px;
+	border-radius: 6px;
+	font-size: 10px;
+	font-weight: 600;
+	box-shadow: none;
+}
+
+.reference-slot .btn.ghost:hover {
+	transform: none;
+	box-shadow: none;
+}
+
+.reference-slot-error {
+	margin: 0;
+	color: #e08a7a;
+}

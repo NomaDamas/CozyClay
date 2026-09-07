@@ -169,6 +169,7 @@ import {
 	assetUsageCounts,
 	deleteAsset,
 	deleteAssetWithGraphGuard,
+	downscaleTarget,
 	getAsset,
 	imageFilesFromClipboard,
 	importImageFile,
@@ -196,6 +197,7 @@ import {
 	CHARACTER_MODEL_IDS,
 	duplicateScene,
 	migrateStageFrames,
+	normalizeReferenceImage,
 	readSceneDocument,
 	removeScene,
 	renameScene,
@@ -588,6 +590,47 @@ function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
 	}
 }
 
+/** The longest edge a stored reference picture may have. A character sheet is
+ * read as a LOOK, not as texture detail, and the whole thing has to survive
+ * inside the project document — 1024 px keeps a face legible at a fraction of
+ * the bytes a phone photo would cost. */
+export const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
+
+/**
+ * Read one picked file into the data URL a reference slot stores: FileReader
+ * for the bytes (so the result survives save/load exactly like an Upload node's
+ * image), then a canvas pass to cap the long side. The source type is kept, so
+ * a JPEG photo stays a JPEG instead of being re-encoded into a much larger PNG.
+ */
+export async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIMENSION } = {}) {
+	if (!file) throw new Error("No file");
+	if (!ASSET_IMAGE_TYPES.includes(String(file.type).toLowerCase())) {
+		throw new Error("unsupported image type");
+	}
+	const dataUrl = await new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onerror = () => reject(new Error("could not read the file"));
+		reader.onload = () => resolve(String(reader.result));
+		reader.readAsDataURL(file);
+	});
+	const bitmap = await createImageBitmap(file);
+	try {
+		const target = downscaleTarget(bitmap.width, bitmap.height, maxDimension);
+		if (!target) throw new Error("could not decode that image");
+		if (!target.scaled) return dataUrl;
+		const canvas = document.createElement("canvas");
+		canvas.width = target.width;
+		canvas.height = target.height;
+		const context = canvas.getContext("2d");
+		context.drawImage(bitmap, 0, 0, target.width, target.height);
+		// GIF and WebP re-encode to PNG: a still frame is what a reference is.
+		const type = file.type === "image/jpeg" ? "image/jpeg" : "image/png";
+		return canvas.toDataURL(type, type === "image/jpeg" ? 0.92 : undefined);
+	} finally {
+		bitmap.close?.();
+	}
+}
+
 export default function App() {
 	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
 	useEffect(() => {
@@ -599,7 +642,11 @@ export default function App() {
 				if (!dataUrl) throw new Error("The shot renderer is not ready");
 				const output = SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
 				const meta = live.captureShotMeta(live.timeline.currentFrame);
-				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height, meta }, "*");
+				// The identity sheets and the environment reference ride with the
+				// frame (#167): the PNG says where the bodies stand, these say who
+				// they are and what the location is made of.
+				const references = live.captureShotReferences();
+				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height, meta, references }, "*");
 			} catch (error) { window.parent.postMessage({ type: "cozyclay:capture-framing-result", error: error.message }, "*"); }
 		};
 		// The Workflow page's Scene node asks the embed for a whole reference
@@ -645,6 +692,10 @@ export default function App() {
 	const [preset, setPreset] = useState("medium");
 	const [fovDeg, setFovDeg] = useState(PRESETS.medium.fov);
 	const [shotAspectKey, setShotAspectKey] = useState(startupStage.shotAspect);
+	// The set's look reference (#167): one picture that says what this location
+	// is made of. Persisted on the stage envelope exactly like shotAspect, and
+	// attached to every framing capture so the generator sees it.
+	const [environmentImage, setEnvironmentImage] = useState(startupStage.environmentImage ?? null);
 	const shotOutput = SHOT_ASPECT_PRESETS[shotAspectKey] ?? SHOT_ASPECT_PRESETS["16:9"];
 	// Which named camera framing the shot camera currently stands in, or null
 	// after any manual placement. Recorded on the scene so a take says how it
@@ -2877,6 +2928,7 @@ globalThis.playMode = centerTab === "play";
 		// too heavy for the stage envelope; paths and prompt blocks persist.
 		characters: characters.map(({ sessionMotion, ...entry }) => entry),
 		hasCharSheet,
+		environmentImage,
 		shotAspect: shotAspectKey,
 		cameraPresetId,
 		sensorId,
@@ -3278,6 +3330,7 @@ globalThis.playMode = centerTab === "play";
 		setCharacters(stage.characters);
 		setRigMountEpoch((value) => value + 1);
 		setHasCharSheet(stage.hasCharSheet);
+		setEnvironmentImage(stage.environmentImage ?? null);
 		setShotAspectKey(stage.shotAspect);
 		setCameraPresetId(stage.cameraPresetId ?? null);
 		setSensorFormat(stage.sensorId);
@@ -3428,7 +3481,7 @@ globalThis.playMode = centerTab === "play";
 		camera: cameraPos,
 		fovDeg,
 		filmback,
-		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet },
+		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet, environmentImage },
 		timeline: { currentFrame: tlFrame, frameCount: tlFrameCount, fps: tlFps },
 		activeCharacterId,
 		partColours: partColoursEnabled ? PART_COLOURS : null,
@@ -3450,6 +3503,8 @@ globalThis.playMode = centerTab === "play";
 		captureCurrentFraming,
 		captureFramingPng,
 		captureShotMeta,
+		// The identity / environment reference pictures a capture carries (#167).
+		captureShotReferences,
 		// Reference exports (#165): the embed message handler and the QA hooks
 		// both go through this render's closures, so a pack always describes the
 		// cut as it stands now.
@@ -3953,6 +4008,8 @@ globalThis.playMode = centerTab === "play";
 					// The production notes the PNG cannot carry: lens, delivery
 					// aspect, cast and the video model this shot is aimed at.
 					meta: live.captureShotMeta(live.timeline.currentFrame),
+					// Identity sheets per cast member plus the environment reference.
+					references: live.captureShotReferences(),
 				};
 			},
 			load_motion: async (args) => {
@@ -4038,7 +4095,7 @@ globalThis.playMode = centerTab === "play";
 		dirtyRef.current = true;
 		const timer = setTimeout(flushScenes, 400);
 		return () => clearTimeout(timer);
-	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
+	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, environmentImage, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
 	useEffect(() => {
 		const onPageHide = () => flushScenes();
 		const onVisibility = () => {
@@ -4065,7 +4122,7 @@ globalThis.playMode = centerTab === "play";
 		setProjectDirty(dirty);
 		setProjectSaveState((current) => current === "saving" ? current : dirty ? "dirty" : "saved");
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, sensorId, tlFrameCount, workflowRevision]);
+	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, environmentImage, sensorId, tlFrameCount, workflowRevision]);
 	const [selectedPromptId, setSelectedPromptId] = useState(null);
 	// Loaded motion: decoded arrays plus the world anchor captured at load.
 	const [motion, setMotion] = useState(null);
@@ -4749,6 +4806,23 @@ globalThis.playMode = centerTab === "play";
 	// still handed to a generator arrives with its production notes.
 	// A frame that falls in a gap between shots describes the first shot — a
 	// pull still belongs to the piece even when the playhead sits outside a cut.
+	/**
+	 * The reference pictures a capture travels with (#167): every visible cast
+	 * member's identity sheet, then the set's environment reference. Slots that
+	 * are empty simply do not appear — the array is the pictures that EXIST,
+	 * never a fixed-length list with holes in it, so a consumer can attach the
+	 * whole thing without filtering.
+	 */
+	function captureShotReferences() {
+		const references = characters
+			.filter((entry) => !entry.hidden && typeof entry.identityImage === "string" && entry.identityImage)
+			.map((entry) => ({ role: "character", name: entry.subject || entry.id, dataUrl: entry.identityImage }));
+		if (typeof environmentImage === "string" && environmentImage) {
+			references.push({ role: "environment", dataUrl: environmentImage });
+		}
+		return references;
+	}
+
 	function captureShotMeta(frame) {
 		const index = shotIndexAtFrame(shots, frame);
 		const resolvedIndex = index >= 0 ? index : shots.length ? 0 : null;
@@ -6339,6 +6413,18 @@ globalThis.playMode = centerTab === "play";
 			// effect does not depend on the shot list, so a closure over it would
 			// answer with the cut as it stood when the effect last ran.
 			captureMeta: (frame) => liveStateRef.current.captureShotMeta(frame ?? liveStateRef.current.timeline.currentFrame),
+			// QA-only reference slots (#167): set the pictures a headless run cannot
+			// reach through a file dialog, then take the capture the live
+			// capture_framing_png command returns — references included.
+			setCharacterIdentityImage: (index, dataUrl) => {
+				updateCharacterAt(index, { identityImage: normalizeReferenceImage(dataUrl) });
+				return true;
+			},
+			setEnvironmentImage: (dataUrl) => {
+				setEnvironmentImage(normalizeReferenceImage(dataUrl));
+				return true;
+			},
+			captureWithReferences: () => liveHandlersRef.current.capture_framing_png({}),
 			// QA-only reference exports (#165): the production builders without the
 			// download, so a headless run can unzip a real pack and diff the passes
 			// instead of driving a file dialog. Same liveStateRef reasoning as
@@ -11331,6 +11417,24 @@ function resizePromptClip(id, edge, rawFrame) {
 					>
 						{ko("Save current pose", "지금 자세 저장")}
 					</button>
+					{/* Identity sits beside "Pose from photo" on purpose: both take a
+					    picture of a person, but that one reads a SHAPE off it while
+					    this one keeps the picture itself as who the character is. */}
+					<ReferenceImageField
+						label={ko("Identity image", "인물 이미지")}
+						hint={ko(
+							"A character sheet or photo of this person. It travels with every framing capture so a render keeps the same face, hair and wardrobe.",
+							"이 인물의 캐릭터 시트나 사진입니다. 모든 프레이밍 캐프처에 함께 실려 얼굴·머리·의상을 유지합니다.",
+						)}
+						value={activeChar.identityImage ?? null}
+						alt={ko("Identity reference", "인물 참고 이미지")}
+						inputProps={{ "data-identity-image-input": "" }}
+						onPick={(dataUrl) => {
+							updateCharacterAt(activeCharIndex, { identityImage: dataUrl });
+							setToast(ko("Identity image set", "인물 이미지를 설정했어요"));
+						}}
+						onClear={() => updateCharacterAt(activeCharIndex, { identityImage: null })}
+					/>
 				</Foldout>
 
 				<Foldout hidden={!advancedMode || !isCharacterSelection} defaultOpen={false} title={ko("Video capture", "영상 모캡")}>
@@ -12102,6 +12206,21 @@ function resizePromptClip(id, edge, rawFrame) {
 					<Field label={ko("Look / style", "룩 / 스타일")}>
 							<input type="text" value={style} onChange={(event) => setStyle(event.target.value)} />
 						</Field>
+						<ReferenceImageField
+							label={ko("Environment reference", "환경 참고 이미지")}
+							hint={ko(
+								"A picture of this location. It travels with every framing capture so a render takes its materials, palette and lighting from the real place.",
+								"이 장소의 사진입니다. 모든 프레이밍 캐프처에 함께 실려 재질·색감·조명을 실제 장소에서 가져옵니다.",
+							)}
+							value={environmentImage}
+							alt={ko("Environment reference", "환경 참고 이미지")}
+							inputProps={{ "data-environment-image-input": "" }}
+							onPick={(dataUrl) => {
+								setEnvironmentImage(dataUrl);
+								setToast(ko("Environment reference set", "환경 참고 이미지를 설정했어요"));
+							}}
+							onClear={() => setEnvironmentImage(null)}
+						/>
 					</Foldout>
 
 				<Foldout hidden={!advancedMode || selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
@@ -13223,6 +13342,72 @@ function fmtMeters(value) {
 }
 
 /** Mid-clip frame of a base motion, the sensible default for the destination. */
+
+/**
+ * One reference-picture slot (#167): pick a file, see what is loaded, clear it.
+ * Used by the cast member's identity sheet and by the set's environment
+ * reference, so both slots behave identically — same picker, same thumbnail,
+ * same Clear — rather than growing two dialects of the same control.
+ *
+ * The value IS the stored data URL: there is no separate "pending" state, so
+ * what the panel shows is exactly what a capture will attach.
+ */
+function ReferenceImageField({ label, hint, value, alt, onPick, onClear, inputProps = {} }) {
+	const inputRef = useRef(null);
+	const [error, setError] = useState("");
+	return (
+		<div className="reference-slot">
+			<div className="reference-slot-head">
+				<span className="reference-slot-label">{label}</span>
+				{value && (
+					<button type="button" className="btn ghost small" onClick={() => { setError(""); onClear(); }}>
+						{ko("Clear", "지우기")}
+					</button>
+				)}
+			</div>
+			<div className="reference-slot-body">
+				<button
+					type="button"
+					className="reference-slot-thumb"
+					data-empty={value ? undefined : "true"}
+					onClick={() => inputRef.current?.click()}
+					title={ko("Choose a reference picture", "참고 이미지를 선택합니다")}
+				>
+					{value
+						? <img src={value} alt={alt ?? label} />
+						: <span className="reference-slot-plus" aria-hidden="true">＋</span>}
+				</button>
+				<div className="reference-slot-copy">
+					<p className="inspector-hint">{hint}</p>
+					<button type="button" className="btn ghost small" onClick={() => inputRef.current?.click()}>
+						{value ? ko("Replace", "교체") : ko("Choose image", "이미지 선택")}
+					</button>
+				</div>
+			</div>
+			{error && <p className="inspector-hint reference-slot-error" role="status">{error}</p>}
+			<input
+				ref={inputRef}
+				type="file"
+				className="multimodel-file-input"
+				accept="image/*"
+				{...inputProps}
+				onChange={async (event) => {
+					const file = event.target.files?.[0];
+					// Cleared before the await: re-picking the same file after an
+					// error must fire change again.
+					event.target.value = "";
+					if (!file) return;
+					setError("");
+					try {
+						onPick(await readReferenceImage(file));
+					} catch (failure) {
+						setError(isKo ? `이미지를 불러오지 못했어요 — ${failure.message}` : `Could not load that image — ${failure.message}`);
+					}
+				}}
+			/>
+		</div>
+	);
+}
 
 /** Unity Inspector-style foldout: a titled section the user can collapse.
  * Cards default to open; the fold state is per-title session state. */

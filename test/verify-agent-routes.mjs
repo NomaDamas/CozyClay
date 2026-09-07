@@ -58,6 +58,13 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	await post({ prompt: "x", imageDataUrl: png, referenceDataUrl: png }, refServer.address().port);
 	assert.equal(seen[0].referenceDataUrl, png, "the reference image reaches codex");
 	assert.equal(seen[0].prompt, "x", "without a scene to describe, the prompt is sent as written");
+	// Scene reference slots (#167) attach after the frame/reference pair and are
+	// named in the prompt. test/verify-agent-image-references.mjs covers the
+	// validation matrix; this pins that the shipped route carries them at all.
+	await post({ prompt: "x", imageDataUrl: png, referenceDataUrl: png, references: [{ role: "character", name: "Alpha", dataUrl: png }, { role: "environment", dataUrl: png }] }, refServer.address().port);
+	assert.equal([seen[1].imageDataUrl, seen[1].referenceDataUrl, ...seen[1].extraImages].filter(Boolean).length, 4, "frame + reference + two scene references");
+	assert.ok(seen[1].prompt.includes("Character Alpha"), seen[1].prompt);
+	assert.equal((await post({ prompt: "x", imageDataUrl: png, references: [{ role: "character", dataUrl: "data:text/plain;base64,aGk=" }] }, refServer.address().port)).status, 400, "a reference that is not an image is rejected");
 	refServer.close();
 	const guided = [];
 	const guideLive = { ...fakeLive, connected: true, workspaceHandleDetails: () => [{ handle: "w", meta: { commands: ["capture_framing_png", "import_asset"] } }], resolveWorkspace: () => "w" };
@@ -66,7 +73,7 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	await post({ prompt: "golden hour", imageDataUrl: png }, guideServer.address().port);
 	assert.equal(guided[0], "golden hour\n[image] medium shot, 24mm, subject faces camera (golden hour)", "scene guidance is appended to the node prompt like render_from_frame does");
 	guideServer.close();
-	console.log("PASS /agent/image: full-size frame accepted, validation, reference forwarded");
+	console.log("PASS /agent/image: full-size frame accepted, validation, reference and scene references forwarded");
 }
 {
 	// Attaching the frame captures through the sidecar's internal tool even though

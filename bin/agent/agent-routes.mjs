@@ -21,6 +21,41 @@ export function allowAgentOrigin(req, port) {
 // Two 1920x1080 PNG data URLs (frame + reference) fit comfortably in this.
 const IMAGE_BODY_LIMIT = 24 * 1024 * 1024;
 
+// Attached scene references (#167): identity sheets and the environment
+// reference. Capped because every one of them is another full image the
+// backend has to read, and a shot with seven of them is a prompt nobody wrote.
+const IMAGE_REFERENCES_MAX = 6;
+
+/** Reject anything that is not a list of {role, name?, dataUrl} inline images. */
+function validReferences(references) {
+	if (references === undefined) return true;
+	if (!Array.isArray(references) || references.length > IMAGE_REFERENCES_MAX) return false;
+	return references.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+		&& typeof entry.role === "string" && entry.role
+		&& (entry.name === undefined || typeof entry.name === "string")
+		&& typeof entry.dataUrl === "string" && entry.dataUrl.startsWith("data:image/"));
+}
+
+/**
+ * What the attached pictures MEAN, in the order they are attached. Without
+ * this the backend sees a pile of images and guesses; with it the clay frame
+ * owns the geometry, each character sheet owns one performer's look and the
+ * environment reference owns the location.
+ */
+export function referenceGuidance(references = []) {
+	const list = Array.isArray(references) ? references : [];
+	if (!list.length) return "";
+	const lines = ["Geometry, camera and blocking come from the first image (the clay frame)."];
+	for (const entry of list) {
+		if (entry.role === "character") {
+			lines.push(`Character ${entry.name || "reference"}: match the identity, face, hair and wardrobe from the attached character sheet.`);
+		} else if (entry.role === "environment") {
+			lines.push("Environment: take the location look, materials, palette and lighting from the attached environment reference.");
+		}
+	}
+	return `\n${lines.join("\n")}`;
+}
+
 async function readBody(req, limit = 64 * 1024) {
 	let text = "";
 	for await (const chunk of req) {
@@ -132,14 +167,17 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			let value;
 			try {
 				value = await readBody(req, IMAGE_BODY_LIMIT);
-				if (typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.referenceDataUrl !== undefined && (typeof value.referenceDataUrl !== "string" || !value.referenceDataUrl.startsWith("data:image/"))) || (value.quality !== undefined && !["auto", "low", "medium", "high"].includes(value.quality))) throw new Error("Invalid request.");
+				if (typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.referenceDataUrl !== undefined && (typeof value.referenceDataUrl !== "string" || !value.referenceDataUrl.startsWith("data:image/"))) || !validReferences(value.references) || (value.quality !== undefined && !["auto", "low", "medium", "high"].includes(value.quality))) throw new Error("Invalid request.");
 			} catch { json(res, 400, { error: "invalid request" }); return true; }
 			if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "auth", message: "Sign in with ChatGPT in the Agent panel." } }); return true; }
 			try {
 				// Same composition guidance the agent's render_from_frame appends: the
 				// node's prompt is intent only; camera, cast and set come from the scene.
-				const prompt = `${value.prompt}${await renderGuidance(value.prompt)}`;
-				const result = await codex.editImage({ ...value, prompt });
+				// Scene references (#167) are appended after the frame/reference pair,
+				// and the prompt says what each attachment is for.
+				const references = Array.isArray(value.references) ? value.references : [];
+				const prompt = `${value.prompt}${await renderGuidance(value.prompt)}${referenceGuidance(references)}`;
+				const result = await codex.editImage({ ...value, prompt, extraImages: references.map((entry) => entry.dataUrl) });
 				json(res, 200, { dataUrl: `data:image/png;base64,${result.pngBase64}`, width: result.width, height: result.height });
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
 			return true;
