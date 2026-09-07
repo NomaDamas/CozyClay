@@ -42,6 +42,7 @@ export const DEFAULT_SCENE_STAGE = Object.freeze({
 	]),
 	hasCharSheet: false,
 	shotAspect: "16:9",
+	cameraPresetId: null,
 	sensorId: DEFAULT_SENSOR_FORMAT,
 	// The key light the user can grab: position of the sun puck, the rig's
 	// master brightness, and a warm/cool colour offset. Values mirror the
@@ -272,7 +273,7 @@ export function createSceneStage(stage = null) {
 		...extras,
 		characters,
 		hasCharSheet: source.hasCharSheet === true,
-		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3"].includes(source.shotAspect)
+		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7"].includes(source.shotAspect)
 			? source.shotAspect
 			: DEFAULT_SCENE_STAGE.shotAspect,
 		// `sensorFormat` was this field's name for one unreleased day; read it so

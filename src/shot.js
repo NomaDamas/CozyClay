@@ -30,6 +30,7 @@ export const SHOT_ASPECT_RATIOS = Object.freeze({
 	"9:16": 9 / 16,
 	"1:1": 1,
 	"4:3": 4 / 3,
+	"12:7": 12 / 7,
 });
 
 export function shotAspectRatio(value) {

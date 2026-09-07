@@ -441,6 +441,7 @@ export const SHOT_ASPECT_PRESETS = Object.freeze({
 	"9:16": Object.freeze({ label: "9:16", aspect: SHOT_ASPECT_RATIOS["9:16"], width: 1080, height: 1920 }),
 	"1:1": Object.freeze({ label: "1:1", aspect: SHOT_ASPECT_RATIOS["1:1"], width: 1080, height: 1080 }),
 	"4:3": Object.freeze({ label: "4:3", aspect: SHOT_ASPECT_RATIOS["4:3"], width: 1440, height: 1080 }),
+	"12:7": Object.freeze({ label: "12:7", aspect: SHOT_ASPECT_RATIOS["12:7"], width: 1536, height: 896, title: "12:7 video-inbetweener ratio" }),
 });
 // Pre-generated clip shipped with the build so a bridge-less session (a hosted
 // static demo, or `npm run dev:ui`) still shows real generated motion.
@@ -956,7 +957,7 @@ export function ShotRig({ preset, nonce, fovDeg, charA, charB, showB, probeX, pr
 		const horizontal = p.distance * Math.cos(el);
 		cam.position.set(
 			aim.x + horizontal * Math.sin(az),
-			Math.max(p.targetY + p.distance * Math.sin(el), 0.15),
+			p.height ?? Math.max(p.targetY + p.distance * Math.sin(el), 0.15),
 			aim.z + horizontal * Math.cos(az),
 		);
 		const angles = aimAt(cam.position, { x: aim.x, y: p.targetY, z: aim.z });
