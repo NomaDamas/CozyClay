@@ -219,6 +219,16 @@ const USER_ITEM = { type: "message", role: "user", content: [{ type: "input_text
 	pass("editImage body shape + IHDR dims");
 }
 
+// --- 4b. editImage with a reference image sends both, frame first ----------
+{
+	const fetch = mockFetch([() => new Response(JSON.stringify({ data: [{ b64_json: PNG_1X1_BASE64 }] }), { status: 200, headers: { "content-type": "application/json" } })]);
+	const client = createCodexClient({ getAccessToken: async () => "tok-123", getAccountId: async () => "acct-9", fetch });
+	const frame = "data:image/png;base64," + PNG_1X1_BASE64, reference = "data:image/jpeg;base64,/9j/4AAQ";
+	await client.editImage({ prompt: "match the framing", imageDataUrl: frame, referenceDataUrl: reference });
+	assert.deepEqual(fetch.calls[0].body.images, [{ image_url: frame }, { image_url: reference }]);
+	pass("editImage sends frame + reference as two images");
+}
+
 // --- 5. generateImage: /images/generations body ------------------------------
 {
 	const fetch = mockFetch([

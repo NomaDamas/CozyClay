@@ -34,6 +34,34 @@ const text = await response.text();
 const events = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
 assert.deepEqual(events.map((event) => event.type), ["quota", "text.delta", "tool.start", "tool.done", "tool.start", "image", "tool.done", "text.delta", "done"]);
 assert.equal(calls[0][0].content[0].text.includes(png), false);
+{
+	const post = (body, p = port) => fetch(`http://127.0.0.1:${p}/agent/image`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${p}` }, body: JSON.stringify(body) });
+	// A real 1920x1080 shot PNG is a few MB as a data URL; the route must not
+	// fall under the 64 KB limit that protects the chat routes.
+	const bigFrame = "data:image/png;base64," + "A".repeat(3 * 1024 * 1024);
+	const ok = await post({ prompt: "golden hour", imageDataUrl: bigFrame, referenceDataUrl: png, quality: "auto" });
+	assert.equal(ok.status, 200, "a full-size frame is accepted");
+	const image = await ok.json();
+	assert.ok(image.dataUrl.startsWith("data:image/png;base64,") && image.width === 1 && image.height === 1);
+	assert.equal((await post({ prompt: "", imageDataUrl: png })).status, 400, "empty prompt is rejected");
+	assert.equal((await post({ prompt: "x", imageDataUrl: "https://example.com/a.png" })).status, 400, "only data URLs are accepted");
+	assert.equal((await post({ prompt: "x", imageDataUrl: png, quality: "ultra" })).status, 400, "unknown quality is rejected");
+	const seen = [];
+	const refHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: { ...fakeCodex, editImage: async (args) => { seen.push(args); return fakeCodex.editImage(args); } }, liveHub: fakeLive, port: () => refServer.address().port });
+	const refServer = createServer((req, res) => refHandler(req, res).catch(() => {})); refServer.listen(0, "127.0.0.1"); await once(refServer, "listening");
+	await post({ prompt: "x", imageDataUrl: png, referenceDataUrl: png }, refServer.address().port);
+	assert.equal(seen[0].referenceDataUrl, png, "the reference image reaches codex");
+	assert.equal(seen[0].prompt, "x", "without a scene to describe, the prompt is sent as written");
+	refServer.close();
+	const guided = [];
+	const guideLive = { ...fakeLive, connected: true, workspaceHandleDetails: () => [{ handle: "w", meta: { commands: ["capture_framing_png", "import_asset"] } }], resolveWorkspace: () => "w" };
+	const guideHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: { ...fakeCodex, editImage: async (args) => { guided.push(args.prompt); return fakeCodex.editImage(args); } }, liveHub: guideLive, handlers: [{ name: "render_prompt", handler: async ({ mode, environment }) => ({ content: [{ type: "text", text: `[${mode}] medium shot, 24mm, subject faces camera (${environment})` }] }) }], port: () => guideServer.address().port });
+	const guideServer = createServer((req, res) => guideHandler(req, res).catch(() => {})); guideServer.listen(0, "127.0.0.1"); await once(guideServer, "listening");
+	await post({ prompt: "golden hour", imageDataUrl: png }, guideServer.address().port);
+	assert.equal(guided[0], "golden hour\n[image] medium shot, 24mm, subject faces camera (golden hour)", "scene guidance is appended to the node prompt like render_from_frame does");
+	guideServer.close();
+	console.log("PASS /agent/image: full-size frame accepted, validation, reference forwarded");
+}
 const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers: { origin: "http://evil.example" } });
 assert.equal(forbidden.status, 403);
 assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);

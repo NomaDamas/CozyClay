@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import * as defaultAuth from "../codex-auth.mjs";
 import { createCodexClient } from "./codex-client.mjs";
-import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT } from "./agent-tools.mjs";
+import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -17,11 +17,14 @@ export function allowAgentOrigin(req, port) {
 			&& [`127.0.0.1:${port}`, `localhost:${port}`].includes(req.headers.host));
 }
 
-async function readBody(req) {
+// Two 1920x1080 PNG data URLs (frame + reference) fit comfortably in this.
+const IMAGE_BODY_LIMIT = 24 * 1024 * 1024;
+
+async function readBody(req, limit = 64 * 1024) {
 	let text = "";
 	for await (const chunk of req) {
 		text += chunk;
-		if (Buffer.byteLength(text) > 64 * 1024) throw new Error("Request too large.");
+		if (Buffer.byteLength(text) > limit) throw new Error("Request too large.");
 	}
 	return JSON.parse(text || "{}");
 }
@@ -86,6 +89,18 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();
+	const renderGuidance = async (environment) => {
+		try {
+			const { handlers: tools, liveHub: hub } = await runtime;
+			const tool = tools.find((entry) => entry.name === "render_prompt");
+			if (!tool || !hub?.connected) return "";
+			const workspaceHandle = pickWorkspace(hub);
+			const result = await tool.handler({ mode: "image", environment }, { workspaceHandle });
+			if (result?.isError) return "";
+			const text = typeof result === "string" ? result : (result?.content ?? []).filter((part) => part.type === "text").map((part) => part.text).join("\n");
+			return text ? `\n${text}` : "";
+		} catch { return ""; }
+	};
 	const sessions = new Map();
 	const unsubscribe = auth.onAuthChange?.(() => {
 		for (const session of sessions.values()) session.controller?.abort();
@@ -113,12 +128,15 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		if (path === "/agent/image" && req.method === "POST") {
 			let value;
 			try {
-				value = await readBody(req);
+				value = await readBody(req, IMAGE_BODY_LIMIT);
 				if (typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.referenceDataUrl !== undefined && (typeof value.referenceDataUrl !== "string" || !value.referenceDataUrl.startsWith("data:image/"))) || (value.quality !== undefined && !["auto", "low", "medium", "high"].includes(value.quality))) throw new Error("Invalid request.");
 			} catch { json(res, 400, { error: "invalid request" }); return true; }
 			if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "auth", message: "Sign in with ChatGPT in the Agent panel." } }); return true; }
 			try {
-				const result = await codex.editImage(value);
+				// Same composition guidance the agent's render_from_frame appends: the
+				// node's prompt is intent only; camera, cast and set come from the scene.
+				const prompt = `${value.prompt}${await renderGuidance(value.prompt)}`;
+				const result = await codex.editImage({ ...value, prompt });
 				json(res, 200, { dataUrl: `data:image/png;base64,${result.pngBase64}`, width: result.width, height: result.height });
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
 			return true;
