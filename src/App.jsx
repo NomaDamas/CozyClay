@@ -325,6 +325,11 @@ import {
 	writeStoredGuideMode,
 } from "./shot-guides.js";
 import { shotCaptureMeta } from "./shot-meta.js";
+import { buildShotPrompt } from "./shot-prompt.js";
+import { keyframePackEntries, keyframePackName } from "./keyframe-pack.js";
+import { buildZip } from "./zip-store.js";
+import { composeStoryboard } from "./storyboard.js";
+import { passFileName, renderPass } from "./render-passes.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
 import { serializeOtio } from "./otio.js";
 import {
@@ -468,6 +473,28 @@ function ShotGuideOverlay({ mode, aspect, className = "" }) {
 // scaled on (0..1 visibility), so it reads as "less than half seen".
 const PHOTO_POSE_LOW_CONFIDENCE = 0.5;
 
+// The storyboard contact sheet is drawn on a bare 2d canvas, which has no
+// stylesheet to inherit from: it gets the studio's own type stack explicitly
+// so the sheet reads like the app it came out of.
+const STORYBOARD_FONT = '12px Inter, "Pretendard", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+// One unwrapped caption line at 12px inside a 480px cell holds about 64
+// characters before it runs into the next column.
+const STORYBOARD_CAPTION_CHARS = 64;
+
+/** Cut a caption to what one unwrapped cell line holds. */
+function storyboardLine(text) {
+	return text.length > STORYBOARD_CAPTION_CHARS ? `${text.slice(0, STORYBOARD_CAPTION_CHARS - 1)}\u2026` : text;
+}
+
+/** Fold a labelled shot prompt into the one line a board cell can hold. */
+function storyboardCaption(prompt) {
+	return storyboardLine(prompt
+		.split("\n")
+		.filter((line) => line.startsWith("SHOT:") || line.startsWith("LENS:"))
+		.map((line) => line.slice(line.indexOf(":") + 1).trim())
+		.join(" · "));
+}
+
 // cskel27 joint names are rig vocabulary — "RightForeArm" means nothing to
 // someone holding a photograph. Every joint collapses into one of six groups a
 // viewer can check against their own picture, ordered so the sentence always
@@ -575,7 +602,29 @@ export default function App() {
 				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height, meta }, "*");
 			} catch (error) { window.parent.postMessage({ type: "cozyclay:capture-framing-result", error: error.message }, "*"); }
 		};
-		const onMessage = (event) => { if (event.data?.type === "cozyclay:capture-framing") capture(); };
+		// The Workflow page's Scene node asks the embed for a whole reference
+		// pack (#165). The zip is transferred rather than copied: a pack carries a
+		// clip, and structured-cloning tens of megabytes across the frame boundary
+		// is the one part of this that would actually be felt.
+		const exportPack = async (shotId) => {
+			try {
+				const live = liveStateRef.current;
+				const index = live.shotIndexForPack(shotId ?? null);
+				const pack = await live.buildShotKeyframePack(live.shots[index], index);
+				const bytes = pack.bytes.buffer.slice(pack.bytes.byteOffset, pack.bytes.byteOffset + pack.bytes.byteLength);
+				window.parent.postMessage(
+					{ type: "cozyclay:export-keyframe-pack-result", name: pack.name, bytes, entries: pack.entries.map((entry) => entry.name) },
+					"*",
+					[bytes],
+				);
+			} catch (error) {
+				window.parent.postMessage({ type: "cozyclay:export-keyframe-pack-result", error: error?.message || String(error) }, "*");
+			}
+		};
+		const onMessage = (event) => {
+			if (event.data?.type === "cozyclay:capture-framing") capture();
+			if (event.data?.type === "cozyclay:export-keyframe-pack") void exportPack(event.data.shotId);
+		};
 		window.addEventListener("message", onMessage);
 		return () => window.removeEventListener("message", onMessage);
 	}, [embedMode]);
@@ -2902,6 +2951,25 @@ globalThis.playMode = centerTab === "play";
 			window.removeEventListener("keydown", onKeyDown);
 		};
 	}, [projectMenuOpen]);
+	// The PlayView reference-export menu (#165) dismisses the same way.
+	const [exportMenuOpen, setExportMenuOpen] = useState(false);
+	const [exportMenuAnchor, setExportMenuAnchor] = useState({ top: 0, right: 0 });
+	useEffect(() => {
+		if (!exportMenuOpen) return undefined;
+		const onPointerDown = (event) => {
+			if (event.target instanceof Element && event.target.closest(".export-menu-wrap")) return;
+			setExportMenuOpen(false);
+		};
+		const onKeyDown = (event) => {
+			if (event.key === "Escape") setExportMenuOpen(false);
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [exportMenuOpen]);
 	const projectHandleRef = useRef(null);
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
@@ -3382,6 +3450,13 @@ globalThis.playMode = centerTab === "play";
 		captureCurrentFraming,
 		captureFramingPng,
 		captureShotMeta,
+		// Reference exports (#165): the embed message handler and the QA hooks
+		// both go through this render's closures, so a pack always describes the
+		// cut as it stands now.
+		buildShotKeyframePack,
+		shotIndexForPack,
+		renderPassDataUrls,
+		shots,
 	};
 	if (!liveHandlersRef.current) {
 		const finitePatch = (args, fields) => {
@@ -4426,6 +4501,237 @@ globalThis.playMode = centerTab === "play";
 			setToast(isKo
 				? `OTIO 저장됨 · ${shots.length}샷 · ${frameCount}프레임`
 				: `OTIO saved · ${shots.length} shots · ${frameCount} frames`);
+		} catch (error) {
+			setToast(error?.message || String(error));
+		}
+	}
+
+	/* ======================= reference-pack exports (#165) =================
+	 * Three deliverables a video model actually asks for, all built from the
+	 * SAME offscreen capture rig the MP4 export uses, so what ships matches
+	 * what the editor previewed:
+	 *   - a per-shot keyframe pack (first/last frame, clip, camera, prompt),
+	 *   - depth + normal conditioning passes of the current framing,
+	 *   - a storyboard contact sheet of the whole cut.
+	 */
+
+	function saveDownload(href, name) {
+		const anchor = document.createElement("a");
+		anchor.href = href;
+		anchor.download = name;
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+	}
+
+	function loadImage(dataUrl) {
+		return new Promise((resolve, reject) => {
+			const image = new Image();
+			image.onload = () => resolve(image);
+			image.onerror = () => reject(new Error("A captured frame could not be decoded"));
+			image.src = dataUrl;
+		});
+	}
+
+	function dataUrlToBytes(dataUrl) {
+		const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+		const bytes = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+		return bytes;
+	}
+
+	// One frame of the shot as the recorder would draw it: applyExportFrame
+	// poses every cast member and parks the shot camera for that absolute
+	// frame, exactly as the MP4 pass does. Bones and camera are put back
+	// afterwards, so a pack built mid-session leaves the viewport untouched.
+	function captureShotFramePng(frame) {
+		if (!captureRef.current || !shotCamRef.current) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+		const cam = shotCamRef.current;
+		const cameraSnapshot = {
+			position: cam.position.clone(),
+			quaternion: cam.quaternion.clone(),
+			rotationOrder: cam.rotation.order,
+			fov: cam.fov,
+			yaw: look.current.yaw,
+			pitch: look.current.pitch,
+		};
+		const rigSnapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
+		try {
+			const buffer = applyExportFrame(frame);
+			return buffer ? bufferToPng(buffer) : null;
+		} finally {
+			for (const snapshot of rigSnapshots) restorePlaybackBones(snapshot.rig, snapshot.bones);
+			cam.position.copy(cameraSnapshot.position);
+			cam.rotation.order = cameraSnapshot.rotationOrder;
+			cam.quaternion.copy(cameraSnapshot.quaternion);
+			cam.fov = cameraSnapshot.fov;
+			cam.updateProjectionMatrix();
+			look.current.yaw = cameraSnapshot.yaw;
+			look.current.pitch = cameraSnapshot.pitch;
+		}
+	}
+
+	// The framing the shot camera stands in at a frame, in the same shape the
+	// camera keys use — camera.json carries it so a tool can rebuild the pull.
+	function shotFramingAtFrame(entry, frame) {
+		const sampled = sampleAt(playbackScene, entry, frame).camera;
+		if (!sampled) return null;
+		return { pos: { x: sampled.pos.x, y: sampled.pos.y, z: sampled.pos.z }, yaw: sampled.yaw, pitch: sampled.pitch, fovDeg: sampled.fovDeg };
+	}
+
+	function packMetaForShot(entry, shotIndex) {
+		return shotCaptureMeta({
+			shot: entry,
+			shotIndex,
+			stage: { keyLight },
+			cast: characters,
+			fps: tlFps,
+			aspectKey: shotAspectKey,
+			size: { width: shotOutput.width, height: shotOutput.height },
+			frame: entry.startFrame,
+			// The shot's camera block stores the MOVE; the lens lives on the
+			// stage, so the live focal length fills in when the block has none.
+			lens: { focalMm: shot.focalMm, fovDeg },
+		});
+	}
+
+	// Build one shot's pack: both endpoint frames, the clip between them, the
+	// camera state and the prompt. Returns the archive bytes plus the entry
+	// names, so the download path, the embed message and QA all share it.
+	async function buildShotKeyframePack(entry, index, onProgress = null) {
+		const packShot = { title: entry.name, index: index + 1, startFrame: entry.startFrame, endFrame: entry.endFrame };
+		onProgress?.(ko(`Rendering frames for "${entry.name}"`, `"${entry.name}" 프레임 렌더링 중`));
+		const firstUrl = captureShotFramePng(entry.startFrame);
+		if (!firstUrl) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+		const lastUrl = entry.endFrame > entry.startFrame ? captureShotFramePng(entry.endFrame) : null;
+		onProgress?.(ko(`Recording the clip for "${entry.name}"`, `"${entry.name}" 클립 녹화 중`));
+		const recorded = await runShotExport({ startFrame: entry.startFrame, endFrame: entry.endFrame, download: false });
+		const clipBytes = new Uint8Array(await recorded.blob.arrayBuffer());
+		const meta = packMetaForShot(entry, index);
+		const entries = keyframePackEntries({
+			shot: packShot,
+			fps: tlFps,
+			firstFramePng: dataUrlToBytes(firstUrl),
+			lastFramePng: lastUrl ? dataUrlToBytes(lastUrl) : null,
+			clip: { data: clipBytes, ext: recorded.mimeType === "video/webm" ? "webm" : "mp4" },
+			camera: {
+				...meta,
+				framing: {
+					start: shotFramingAtFrame(entry, entry.startFrame),
+					end: shotFramingAtFrame(entry, entry.endFrame),
+				},
+			},
+			prompt: buildShotPrompt(meta, { target: "video" }),
+		});
+		return { name: keyframePackName(packShot), entries, bytes: buildZip(entries) };
+	}
+
+	// The shot a pack is built for: an explicit id, else the one under the
+	// playhead, else the first authored shot.
+	function shotIndexForPack(shotId = null) {
+		if (shotId) {
+			const index = shots.findIndex((entry) => entry.id === shotId);
+			if (index < 0) throw new Error(`Unknown shots ID: ${shotId}`);
+			return index;
+		}
+		if (!shots.length) throw new Error(ko("Add at least one Shot before exporting a keyframe pack", "키프레임 팩을 내보내려면 샷을 하나 이상 추가하세요"));
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		return atPlayhead >= 0 ? atPlayhead : 0;
+	}
+
+	/** Download the keyframe pack for one shot, or (Shift) for every shot. */
+	async function exportKeyframePacks(everyShot = false) {
+		try {
+			// shotIndexForPack runs either way: it is what rejects an empty cut.
+			const current = shotIndexForPack();
+			const targets = everyShot ? shots.map((_, index) => index) : [current];
+			for (const [order, index] of targets.entries()) {
+				const label = targets.length > 1 ? ` (${order + 1}/${targets.length})` : "";
+				const pack = await buildShotKeyframePack(shots[index], index, (message) => setToast(message + label));
+				const url = URL.createObjectURL(new Blob([pack.bytes], { type: "application/zip" }));
+				saveDownload(url, pack.name);
+				setTimeout(() => URL.revokeObjectURL(url), 10_000);
+				setToast(isKo
+					? `${pack.name} 저장됨 · 파일 ${pack.entries.length}개${label}`
+					: `Saved ${pack.name} · ${pack.entries.length} files${label}`);
+			}
+			trackFeature("export_keyframe_pack");
+		} catch (error) {
+			if (error?.name !== "AbortError") setToast(error?.message || String(error));
+		}
+	}
+
+	/** Depth and normal conditioning passes of the framing on screen now. */
+	function exportRenderPasses() {
+		try {
+			const dataUrls = renderPassDataUrls();
+			for (const kind of ["depth", "normal"]) saveDownload(dataUrls[kind], passFileName(kind));
+			setToast(ko("Depth and normal passes downloaded", "뎁스·노멀 패스를 다운로드했어요"));
+			trackFeature("export_render_pass");
+		} catch (error) {
+			setToast(error?.message || String(error));
+		}
+	}
+
+	// Both passes of the framing the shot camera stands in right now, as PNG
+	// data URLs. The rig draws through that same camera for the RGB plate, so
+	// the three images register pixel for pixel.
+	function renderPassDataUrls(kinds = ["depth", "normal"]) {
+		const capture = captureRef.current;
+		const cam = shotCamRef.current;
+		if (!capture || !cam) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+		const output = {};
+		for (const kind of kinds) {
+			const dataUrl = renderPass(capture, capture.scene, cam, kind, bufferToPng);
+			if (!dataUrl) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+			output[kind] = dataUrl;
+		}
+		return output;
+	}
+
+	/** Contact sheet of the whole cut: one thumbnail and prompt per shot. */
+	async function exportStoryboard() {
+		try {
+			if (!shots.length) throw new Error(ko("Add at least one Shot before exporting a storyboard", "스토리보드를 내보내려면 샷을 하나 이상 추가하세요"));
+			setToast(ko("Composing the storyboard…", "스토리보드 구성 중…"));
+			const cells = [];
+			for (const [index, entry] of shots.entries()) {
+				const dataUrl = captureShotFramePng(entry.startFrame);
+				const meta = packMetaForShot(entry, index);
+				cells.push({
+					title: storyboardLine(`${index + 1}. ${entry.name}`),
+					durationSeconds: Number(((entry.endFrame - entry.startFrame + 1) / tlFps).toFixed(2)),
+					// The sheet gives each shot one caption line, and the composer draws
+					// it unwrapped: the labelled prompt is folded down to the two lines a
+					// board is read for (what the shot is, and on what lens), cut to what
+					// fits the cell. The pack's prompt.txt keeps the full block.
+					prompt: storyboardCaption(buildShotPrompt(meta, { target: "image" })),
+					image: dataUrl ? await loadImage(dataUrl) : null,
+				});
+			}
+			const canvas = composeStoryboard({
+				shots: cells,
+				columns: Math.min(3, cells.length),
+				// 480x300 leaves a 464x164 thumbnail box (16:9 lands at 464x261 before
+				// the fit, so the frame is scaled to height) and a caption block wide
+				// enough for the 90 characters the composer draws at this size.
+				cell: { width: 480, height: 300 },
+				createCanvas: (width, height) => {
+					const element = document.createElement("canvas");
+					element.width = width;
+					element.height = height;
+					const ctx = element.getContext("2d");
+					// The sheet is a deliverable, so it uses the studio's own type
+					// stack rather than the canvas default (10px sans-serif).
+					ctx.font = STORYBOARD_FONT;
+					ctx.textAlign = "left";
+					ctx.textBaseline = "top";
+					return element;
+				},
+			});
+			saveDownload(canvas.toDataURL("image/png"), "cozyclay-storyboard.png");
+			setToast(isKo ? `스토리보드 저장됨 · ${cells.length}샷` : `Storyboard saved · ${cells.length} shots`);
+			trackFeature("export_storyboard");
 		} catch (error) {
 			setToast(error?.message || String(error));
 		}
@@ -6033,6 +6339,24 @@ globalThis.playMode = centerTab === "play";
 			// effect does not depend on the shot list, so a closure over it would
 			// answer with the cut as it stood when the effect last ran.
 			captureMeta: (frame) => liveStateRef.current.captureShotMeta(frame ?? liveStateRef.current.timeline.currentFrame),
+			// QA-only reference exports (#165): the production builders without the
+			// download, so a headless run can unzip a real pack and diff the passes
+			// instead of driving a file dialog. Same liveStateRef reasoning as
+			// captureMeta — the effect does not depend on the shot list.
+			exportKeyframePack: async (shotId) => {
+				const live = liveStateRef.current;
+				const index = live.shotIndexForPack(shotId ?? null);
+				const pack = await live.buildShotKeyframePack(live.shots[index], index);
+				// base64: a pack holds an MP4, and a megabyte-scale JS number array
+				// is not something to hand a CDP evaluate.
+				let binary = "";
+				for (const byte of pack.bytes) binary += String.fromCharCode(byte);
+				return { name: pack.name, entries: pack.entries.map((entry) => entry.name), byteLength: pack.bytes.byteLength, bytes: btoa(binary) };
+			},
+			renderPass: (kind) => liveStateRef.current.renderPassDataUrls([kind])[kind],
+			// The RGB plate the passes are compared against — same rig, same
+			// framing, no material override.
+			capturePlate: () => liveStateRef.current.captureFramingPng(liveStateRef.current.captureCurrentFraming()),
 			characterScale: activeChar?.scale ?? 1,
 			characterModel: activeChar?.model ?? null,
 			// QA-only framing: FlyControls rewrites the editor camera's rotation
@@ -10001,6 +10325,70 @@ function resizePromptClip(id, edge, rawFrame) {
 						>
 							OTIO
 						</button>
+						{/* Reference exports a video model asks for. They sit behind one
+						    trigger because each is a whole render pass, not a toggle — and
+						    the PlayView bar has no room for three more labelled buttons. */}
+						<div className="export-menu-wrap">
+							<button
+								type="button"
+								className="export-menu-trigger"
+								data-testid="export-menu-trigger"
+								aria-expanded={exportMenuOpen}
+								aria-haspopup="menu"
+								title={ko("Reference exports for AI video tools", "AI 영상 도구용 레퍼런스 내보내기")}
+								onClick={(event) => {
+									// The 27px title bar clips its own overflow (the scene
+									// toolbar scrolls inside it), so an absolutely positioned
+									// popover would be cut off at the bar's edge. The panel is
+									// fixed to the viewport instead, anchored to this trigger.
+									const box = event.currentTarget.getBoundingClientRect();
+									setExportMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+									setExportMenuOpen((open) => !open);
+								}}
+							>
+								{ko("Export", "내보내기")}
+								<span className="caret">▾</span>
+							</button>
+							{exportMenuOpen && (
+								<div
+									className="project-menu export-menu"
+									role="menu"
+									style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
+									onClick={() => setExportMenuOpen(false)}
+								>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-keyframe-pack"
+										disabled={!shots.length || recState === "recording"}
+										title={ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")}
+										onClick={(event) => void exportKeyframePacks(event.shiftKey)}
+									>
+										{ko("Keyframe pack", "키프레임 팩")}
+										<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-render-passes"
+										title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
+										onClick={exportRenderPasses}
+									>
+										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-storyboard"
+										disabled={!shots.length}
+										title={ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")}
+										onClick={() => void exportStoryboard()}
+									>
+										{ko("Storyboard", "스토리보드")}
+									</button>
+								</div>
+							)}
+						</div>
 						<button
 							type="button"
 							className={recState === "recording" ? "recording" : ""}

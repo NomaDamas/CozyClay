@@ -8901,6 +8901,72 @@ input[type=range] {
 	color: #ff8d86;
 }
 
+/* Reference exports menu in the PlayView bar (#165). It reuses the project
+   menu's popover, so the studio has one dropdown language; only the trigger
+   takes the toolbar's own flat button treatment. The 27px title bar clips its
+   own overflow, so the panel is fixed to the viewport and anchored to the
+   trigger in JS — it hangs from the right because this bar is right-aligned. */
+.export-menu-wrap {
+	position: relative;
+	flex: none;
+	align-self: stretch;
+	display: flex;
+	align-items: center;
+}
+
+.export-menu-trigger {
+	flex: none;
+	height: 26px;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 6px;
+	border: 0;
+	border-right: 1px solid var(--line);
+	background: transparent;
+	color: #bdbdbd;
+	font: inherit;
+	font-size: 9px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.export-menu-trigger:hover,
+.export-menu-trigger[aria-expanded="true"] {
+	background: #363636;
+	color: #fff;
+}
+
+.export-menu-trigger .caret {
+	color: var(--muted2);
+	font-size: 8px;
+}
+
+.export-menu {
+	position: fixed;
+	left: auto;
+	min-width: 220px;
+	z-index: 80;
+}
+
+.export-menu button {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.export-menu button:disabled {
+	opacity: .38;
+	cursor: default;
+	background: none;
+}
+
+.export-menu button small {
+	color: var(--muted2);
+	font-size: 10px;
+}
+
 /* ----------------------------------------------------- Unity axis colors --- */
 /* X red / Y green / Z blue — Unity's axis colour-coding (class-Transform). */
 .vec3-row .number-field:nth-of-type(1) .axis { color: #e5484d; }

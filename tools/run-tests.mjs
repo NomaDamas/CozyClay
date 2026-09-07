@@ -145,6 +145,7 @@ const NODE_FILES = [
 	"test/verify-usd-camera.mjs",
 	"test/verify-video-frames.mjs",
 	"test/verify-zip-store.mjs",
+	"test/verify-render-passes.mjs",
 	"mcp/verify.mjs",
 	"mcp/verify-http-origin.mjs",
 	"mcp/verify-live.mjs",
@@ -171,7 +172,13 @@ const BROWSER_FILES = [
 	"test/verify-object-gizmo.mjs",
 	"test/verify-offscreen-export-browser.mjs",
 	"test/verify-project-menu-browser.mjs",
+	"test/qa-keyframe-pack-browser.mjs",
 ];
+
+// The inventory sweep only picks up `verify*.mjs`; a browser suite named for
+// the QA runner it needs is listed here so it still shows up in the manifest
+// (as an EXCLUDE with its reason) instead of going unmentioned.
+const EXTRA_INVENTORY = ["test/qa-keyframe-pack-browser.mjs"];
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })
@@ -278,7 +285,7 @@ if (!mcpDepsInstalled) {
 }
 
 const { listOnly, scope } = parseArguments(process.argv.slice(2));
-const inventory = [...verificationFiles("test"), ...verificationFiles("mcp")];
+const inventory = [...verificationFiles("test"), ...verificationFiles("mcp"), ...EXTRA_INVENTORY].sort();
 const unclassified = inventory.filter((file) => !categories.has(file));
 const stale = [...categories.keys()].filter((file) => !inventory.includes(file));
 if (unclassified.length > 0 || stale.length > 0) {
