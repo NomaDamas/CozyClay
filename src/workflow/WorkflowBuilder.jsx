@@ -22,7 +22,7 @@ import { createLiveControl } from "../live-control.js";
 import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 import { createHttpTransport } from "./agent-client.js";
-import { fileToDataUrl, imageFileFromTransfer, pastedImageNodeData } from "./clipboard-image.js";
+import { canvasTakesPaste, fileToDataUrl, imageFileFromTransfer, pastedImageNodeData } from "./clipboard-image.js";
 
 const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
 
@@ -243,10 +243,8 @@ export default function WorkflowBuilder() {
 	}, [addNode]);
 	useEffect(() => {
 		const onPaste = (event) => {
-			const target = event.target;
-			if (target instanceof HTMLElement && (target.matches("input,textarea,select,[contenteditable=true]") || target.isContentEditable)) return;
+			if (!canvasTakesPaste(event.target, event.clipboardData)) return;
 			const file = imageFileFromTransfer(event.clipboardData);
-			if (!file) return;
 			event.preventDefault();
 			placeImage(file).catch((error) => toast.error(`Could not paste the image (${error.message})`));
 		};

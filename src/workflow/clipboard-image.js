@@ -32,3 +32,13 @@ export function pastedImageNodeData(file, dataUrl) {
 	const name = file.name && file.name !== "image.png" ? file.name : `pasted-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-")}.png`;
 	return { fileName: name, mimeType: file.type || "image/png", fileUrl: dataUrl, image_url: dataUrl, localPreview: true, outputs: [{ value: dataUrl }] };
 }
+
+/** Whether a paste aimed at `target` should land on the canvas. The Agent
+ * composer autofocuses, so most real pastes target a textarea; a plain text
+ * field cannot hold an image, so the canvas takes it. Text stays in the field
+ * and a rich editor keeps images it can hold. */
+export function canvasTakesPaste(target, transfer) {
+	if (!imageFileFromTransfer(transfer)) return false;
+	if (!target || typeof target.matches !== "function") return true;
+	return !(target.isContentEditable || target.matches("[contenteditable=true]"));
+}
