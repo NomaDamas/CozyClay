@@ -208,6 +208,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 					send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: Math.round(performance.now() - started), result });
 					return result;
 				} catch (error) {
+					if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message);
 					send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: Math.round(performance.now() - started), error: errorInfo(error).message });
 					throw error;
 				}
@@ -252,6 +253,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		catch (error) {
 			if (!signal.aborted) {
 				if (error.headers) observeHeaders(error.headers);
+				if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.body ?? "").slice(0, 300));
 				send({ type: "error", ...errorInfo(error, quota) });
 			}
 		} finally {

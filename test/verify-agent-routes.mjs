@@ -168,6 +168,19 @@ console.log("agent routes verified");
 	for (const removed of ["capture_blocking_frame", "render_from_frame", "place_image_in_scene"]) assert.equal(names.includes(removed), false, `${removed} is removed from the tool list`);
 	assert.ok(names.includes("describe_workflow") && names.includes("add_reference_node"), "describe_workflow and add_reference_node are exposed");
 	assert.match(SYSTEM_PROMPT, /run_workflow/);
+	{
+		// Canvas results echo the whole graph and any data URLs; the model must get a
+		// bounded summary, otherwise a reference image blows the request.
+		const big = "data:image/png;base64," + "A".repeat(200_000);
+		const echoHub = { ...hub, command: async (name) => name === "add_node" ? { node: { id: "upload-1", type: "upload", data: { image_url: big, outputs: [{ value: big }] } }, graph: { nodes: [{ id: "x", data: { image_url: big } }], edges: [] } } : name === "get_graph" ? { nodes: [{ id: "u", type: "upload", model: null, data: { image_url: big }, position: { x: 0, y: 0 } }], edges: [], outputs: { u: [{ value: big }] } } : {} };
+		const echoTools = createAgentTools({ liveHub: echoHub, session: { ...session, images: new Map([["img", big]]), latestCaptureId: "img" }, emit: () => {} });
+		for (const name of ["add_workflow_node", "add_reference_node", "describe_workflow"]) {
+			const out = JSON.stringify(await echoTools.find((tool) => tool.name === name).handler({ type: "upload" }));
+			assert.ok(out.length < 2000, `${name} result stays small (${out.length} chars)`);
+			assert.ok(!out.includes("AAAAAAAA"), `${name} result carries no image bytes`);
+		}
+		console.log("PASS canvas tool results are summarised for the model");
+	}
 	assert.match(SYSTEM_PROMPT, /describe_workflow/);
 	for (const [name, command] of Object.entries(mapping)) {
 		const tool = tools.find((entry) => entry.name === name);

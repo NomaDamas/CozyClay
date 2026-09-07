@@ -27,6 +27,21 @@ export function pickWorkspace(liveHub, requiredCommands = ["capture_framing_png"
 	return liveHub.resolveWorkspace("agent turn");
 }
 
+/** What the model gets back from a canvas command: ids, types, models and
+ * small fields only. Data URLs become a size note and the echoed graph is
+ * dropped — the model can call describe_workflow when it needs the graph. */
+export function summariseCanvasResult(result) {
+	const strip = (value) => {
+		if (typeof value === "string") return value.startsWith("data:") ? `[image ${Math.round(value.length * 3 / 4 / 1024)} KB]` : value;
+		if (Array.isArray(value)) return value.map(strip);
+		if (value && typeof value === "object") return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, strip(item)]));
+		return value;
+	};
+	if (!result || typeof result !== "object") return result;
+	const { graph, ...rest } = result;
+	return strip(rest);
+}
+
 export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 	const registry = new Map(handlers.map((tool) => [tool.name, tool]));
 	const workspace = (kind = "scene") => {
@@ -100,7 +115,7 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 		handler: async ({ imageId } = {}) => {
 			const dataUrl = session.images.get(imageId ?? session.latestCaptureId);
 			if (!dataUrl) throw new Error("No reference image is available. Capture or attach one first.");
-			return live("add_node", { type: "upload", data: { image_url: dataUrl, fileName: "reference.png", mimeType: "image/png", outputs: [{ value: dataUrl }] } }, "workflow");
+			return summariseCanvasResult(await live("add_node", { type: "upload", data: { image_url: dataUrl, fileName: "reference.png", mimeType: "image/png", outputs: [{ value: dataUrl }] } }, "workflow"));
 		},
 	};
 	const workflow = [
@@ -113,7 +128,7 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 		["run_workflow", "Run the workflow locally.", "run_workflow", objectSchema()],
 		["set_workflow_node_output", "Set a workflow node output.", "set_node_output", objectSchema({ id: { type: "string" }, value: {} }, ["id", "value"])],
 		["focus_workflow_node", "Focus a workflow node.", "focus_node", objectSchema({ id: { type: "string" } }, ["id"])],
-	].map(([name, description, command, parameters]) => ({ name, description, parameters, handler: (args) => live(command, args, "workflow") }));
+	].map(([name, description, command, parameters]) => ({ name, description, parameters, handler: async (args) => summariseCanvasResult(await live(command, args, "workflow")) }));
 	const direct = ["describe_scene", "describe_shot"].map((name) => ({
 		name, description: registry.get(name)?.description || name,
 		parameters: objectSchema(), handler: () => registered(name),
