@@ -84,7 +84,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 			</header>
 
 			<section className="cozy-scene-preview" aria-label="3D scene preview">
-				{data.preview === "render" && data.lastOutput?.renderUrl ? <video className="cozy-scene-render" src={data.lastOutput.renderUrl} controls muted /> : <SceneViewport />}
+				{data.preview === "render" && data.lastOutput?.renderUrl ? <img className="cozy-scene-render" src={data.lastOutput.renderUrl} alt="Captured scene frame" /> : <SceneViewport />}
 			{data.preview === "render" && <div className="cozy-scene-preview-copy"><strong>Rendered frame</strong><span>{data.statusMessage || "Open Studio to edit the scene"}</span></div>}
 			</section>
 

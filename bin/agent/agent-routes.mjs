@@ -110,6 +110,19 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
 			return true;
 		}
+		if (path === "/agent/image" && req.method === "POST") {
+			let value;
+			try {
+				value = await readBody(req);
+				if (typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.referenceDataUrl !== undefined && (typeof value.referenceDataUrl !== "string" || !value.referenceDataUrl.startsWith("data:image/"))) || (value.quality !== undefined && !["auto", "low", "medium", "high"].includes(value.quality))) throw new Error("Invalid request.");
+			} catch { json(res, 400, { error: "invalid request" }); return true; }
+			if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "auth", message: "Sign in with ChatGPT in the Agent panel." } }); return true; }
+			try {
+				const result = await codex.editImage(value);
+				json(res, 200, { dataUrl: `data:image/png;base64,${result.pngBase64}`, width: result.width, height: result.height });
+			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
+			return true;
+		}
 		if (req.method !== "POST" || !["/agent/turn", "/agent/stop"].includes(path)) {
 			json(res, 404, { error: "not found" }); return true;
 		}

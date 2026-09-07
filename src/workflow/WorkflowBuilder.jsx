@@ -21,6 +21,7 @@ import { executeLocalWorkflowGraph } from "./local-workflow.js";
 import { createLiveControl } from "../live-control.js";
 import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
+import { createHttpTransport } from "./agent-client.js";
 
 const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
 
@@ -54,6 +55,21 @@ function readGraph() {
 	const graph = loadWorkflowGraph();
 	if (!graph.nodes.length) return DEFAULT_GRAPH;
 	return { ...graph, nodes: graph.nodes.map((node) => node.type === "video-combiner" && !node.data?.model ? { ...node, data: { ...node.data, model: "video-combiner" } } : node) };
+}
+
+function captureSceneFrame(id) {
+	return new Promise((resolve, reject) => {
+		const iframe = document.querySelector(`[data-node-id="${CSS.escape(id)}"] iframe`);
+		if (!iframe?.contentWindow) { reject(new Error("Scene preview is unavailable.")); return; }
+		const timer = window.setTimeout(() => { window.removeEventListener("message", onMessage); reject(new Error("Scene capture timed out.")); }, 10000);
+		const onMessage = (event) => {
+			if (event.source !== iframe.contentWindow || event.data?.type !== "cozyclay:capture-framing-result") return;
+			window.clearTimeout(timer); window.removeEventListener("message", onMessage);
+			if (event.data.error) reject(new Error(event.data.error)); else resolve(event.data);
+		};
+		window.addEventListener("message", onMessage);
+		iframe.contentWindow.postMessage({ type: "cozyclay:capture-framing" }, "*");
+	});
 }
 
 function stripFunctions(value) {
@@ -121,7 +137,8 @@ function TextNode({ id, data }) {
 }
 
 function ImageNode({ id, data }) {
-	return <NodeShell id={id} type="image" title="Image" icon={FiImage}><label>Model</label><ModelSelect id={id} data={data} category="image" fallback={["image-passthrough", "image-generation"]} /><div className="workflow-dropzone"><FiImage size={18} /><span>Connect an image or prompt</span></div><SchemaFields id={id} data={data} category="image" /><div className="workflow-node-foot"><span>Image output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)}><FiPlay size={12} /></button></div></NodeShell>;
+	const generated = data.model === "image-generation";
+	return <NodeShell id={id} type="image" title="Image" icon={FiImage}><label>Model</label><ModelSelect id={id} data={data} category="image" fallback={["image-passthrough", "image-generation"]} />{generated && data.resultUrl ? <img className="workflow-image-preview" src={data.resultUrl} alt="Generated workflow output" /> : <div className="workflow-dropzone"><FiImage size={18} /><span>{generated ? "Connect a Scene frame" : "Connect an image or prompt"}</span></div>}{generated && data.isLoading && <div className="workflow-hint">Generating image…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>}<SchemaFields id={id} data={data} category="image" /><div className="workflow-node-foot"><span>Image output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
 function VideoNode({ id, data }) {
@@ -298,6 +315,25 @@ export default function WorkflowBuilder() {
 		setRunState("running");
 		const result = executeLocalWorkflowGraph(graph, { runId: `local-${Date.now()}` });
 		setNodes(result.nodes);
+		const runId = `local-${Date.now()}`;
+		const values = new Map();
+		for (const id of result.order) {
+			const current = result.nodes.find((node) => node.id === id);
+			if (!current) continue;
+			if (current.type === "scene") {
+				try {
+					const frame = await captureSceneFrame(id);
+					values.set(id, frame.dataUrl);
+					updateNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
+				} catch (error) { updateNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message }); }
+			} else if (current.type === "image" && current.data?.model === "image-generation") {
+				const source = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => values.get(edge.source)).find(Boolean) || current.data.image_url;
+				if (!source) { updateNode(id, { status: "error", errorMsg: "Connect a Scene frame before generating." }); continue; }
+				updateNode(id, { isLoading: true, errorMsg: null });
+				try { const output = await createHttpTransport().image({ prompt: current.data.prompt || "", imageDataUrl: source, referenceDataUrl: current.data.image_url, quality: "auto" }); values.set(id, output.dataUrl); updateNode(id, { isLoading: false, status: "complete", resultUrl: output.dataUrl, outputs: [{ value: output.dataUrl }], errorMsg: null }); }
+				catch (error) { updateNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
+			} else values.set(id, current.data?.outputs?.[0]?.value);
+		}
 		const resultById = new Map(result.nodes.map((node) => [node.id, node]));
 		for (const scene of result.nodes.filter((node) => node.type === "scene")) {
 			for (const assignment of Array.isArray(scene.data?.characterInputs) ? scene.data.characterInputs : []) {
@@ -325,9 +361,9 @@ export default function WorkflowBuilder() {
 		return () => { window.removeEventListener("keydown", onKeyDown); control.close(); commandsRef.current = null; };
 	}, [nodeSchemas, setEdges, setNodes]);
 	const runScene = useCallback(async ({ id, data }) => {
-		const payload = toCozySceneRunRequest({ id, data }, { workflow: graphRef.current });
-		updateScene({ id, patch: { status: "complete", statusMessage: `Local scene ready at frame ${payload.frame}`, preview: "scene", lastOutput: { renderUrl: null, sceneUrl: "/app/", jobId: null } } });
-		toast.success("CozyClay Scene updated locally");
+		updateScene({ id, patch: { status: "running", statusMessage: "Capturing framing PNG" } });
+		try { const frame = await captureSceneFrame(id); updateScene({ id, patch: { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl } }); toast.success("Scene frame captured"); }
+		catch (error) { updateScene({ id, patch: { status: "error", errorMsg: error.message, statusMessage: error.message } }); }
 	}, [updateScene]);
 
 	const decoratedNodes = useMemo(() => nodes.map((node) => ({

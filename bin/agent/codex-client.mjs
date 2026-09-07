@@ -231,11 +231,12 @@ export function createCodexClient({
 		return { history: continued, finalText };
 	}
 
-	async function editImage({ prompt, imageDataUrl, quality = "auto", signal }) {
+	async function editImage({ prompt, imageDataUrl, referenceDataUrl, quality = "auto", signal }) {
+		const images = [imageDataUrl, referenceDataUrl].filter((value) => typeof value === "string" && value);
 		const response = await postJson("/images/edits", {
 			model: "gpt-image-2",
 			prompt,
-			images: [{ image_url: imageDataUrl }],
+			images: images.map((image_url) => ({ image_url })),
 			quality,
 		}, signal);
 		const payload = await response.json();

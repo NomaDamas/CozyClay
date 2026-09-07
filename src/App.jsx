@@ -561,6 +561,21 @@ function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
 
 export default function App() {
 	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
+	useEffect(() => {
+		if (!embedMode) return undefined;
+		const capture = () => {
+			try {
+				const live = liveStateRef.current;
+				const dataUrl = live.captureFramingPng(live.captureCurrentFraming());
+				if (!dataUrl) throw new Error("The shot renderer is not ready");
+				const output = SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
+				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height }, "*");
+			} catch (error) { window.parent.postMessage({ type: "cozyclay:capture-framing-result", error: error.message }, "*"); }
+		};
+		const onMessage = (event) => { if (event.data?.type === "cozyclay:capture-framing") capture(); };
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [embedMode]);
 	// QA-only render counter (same spirit as window.__cozyclay): headless perf
 	// probes read renders/second to find re-render storms. Negligible cost.
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
