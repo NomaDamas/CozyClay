@@ -122,6 +122,8 @@ const NODE_FILES = [
 	"test/verify-motion-input.mjs",
 	"test/verify-vibe-payload.mjs",
 	"test/verify-vibe-node-schema.mjs",
+	"test/verify-video-adapters.mjs",
+	"test/verify-video-route.mjs",
 	"test/verify-local-workflow.mjs",
 	"test/verify-workflow-scene-asset-sync.mjs",
 	"test/verify-stable-ids.mjs",

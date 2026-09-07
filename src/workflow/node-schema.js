@@ -17,7 +17,7 @@ export const DEFAULT_NODE_SCHEMAS = {
 		} },
 		video: { models: {
 			"video-passthrough": { name: "Input Video", input_schema: { schemas: { input_data: { properties: { video_url: field("string", "Video URL", { format: "uri" }) } } } } },
-			"video-generation": { name: "Video Generation", input_schema: { schemas: { input_data: { properties: { prompt: field("string", "Motion prompt"), duration: field("integer", "Duration", { default: 5, minimum: 1, maximum: 30 }), aspect_ratio: field("string", "Aspect ratio", { enum: ["auto", "16:9", "9:16"] }) } } } } },
+			"video-generation": { name: "Video Generation", input_schema: { schemas: { input_data: { properties: { provider: field("string", "Provider", { enum: ["comfy", "fal"], default: "comfy" }), prompt: field("string", "Motion prompt"), duration_seconds: field("number", "Duration", { default: 5, minimum: 1, maximum: 15, step: 1 }), aspect: field("string", "Aspect ratio", { enum: ["16:9", "9:16", "1:1", "21:9", "12:7"], default: "16:9" }) } } } } },
 		} },
 		audio: { models: {
 			"audio-passthrough": { name: "Input Audio", input_schema: { schemas: { input_data: { properties: { audio_url: field("string", "Audio URL", { format: "uri" }) } } } } },

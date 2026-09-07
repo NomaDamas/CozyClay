@@ -188,6 +188,12 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		async image({ prompt, imageDataUrl, referenceDataUrl, quality = "auto" }, signal) {
 			return request("/agent/image", { method: "POST", body: JSON.stringify({ prompt, imageDataUrl, ...(referenceDataUrl ? { referenceDataUrl } : {}), quality }), signal });
 		},
+		async video(payload, signal) {
+			return request("/agent/video", { method: "POST", body: JSON.stringify(payload), signal });
+		},
+		async videoProviders() {
+			return request("/agent/video/providers");
+		},
 		/** Streams sidecar events to `onEvent`. Resolves when the turn ends. */
 		async turn({ sessionId, text, attachFrame, model, effort }, onEvent, signal) {
 			const response = await fetchImpl(sidecarUrl("/agent/turn"), {

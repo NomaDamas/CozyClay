@@ -2,6 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import * as defaultAuth from "../codex-auth.mjs";
 import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
+import { createVideoAdapters } from "./video-adapters.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -141,6 +142,24 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 				const result = await codex.editImage({ ...value, prompt });
 				json(res, 200, { dataUrl: `data:image/png;base64,${result.pngBase64}`, width: result.width, height: result.height });
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
+			return true;
+		}
+		if (path === "/agent/video/providers" && req.method === "GET") {
+			json(res, 200, { providers: createVideoAdapters().map((adapter) => ({ id: adapter.id, name: adapter.name, configured: adapter.configured() })) });
+			return true;
+		}
+		if (path === "/agent/video" && req.method === "POST") {
+			let value;
+			try {
+				value = await readBody(req, IMAGE_BODY_LIMIT);
+				if (!value || typeof value.provider !== "string" || typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.lastFrameDataUrl !== undefined && (typeof value.lastFrameDataUrl !== "string" || !value.lastFrameDataUrl.startsWith("data:image/"))) || !Number.isFinite(Number(value.durationSeconds)) || Number(value.durationSeconds) < 1 || Number(value.durationSeconds) > 15 || typeof value.aspect !== "string" || (value.model !== undefined && typeof value.model !== "string")) throw new Error("Invalid request.");
+			} catch { json(res, 400, { error: "invalid request" }); return true; }
+			const adapter = createVideoAdapters().find((entry) => entry.id === value.provider);
+			if (!adapter || !adapter.configured()) { json(res, 409, { error: "video provider is not configured" }); return true; }
+			try {
+				const result = await adapter.generate({ ...value, durationSeconds: Number(value.durationSeconds) });
+				json(res, 200, { ...(result.mp4Base64 ? { dataUrl: `data:video/mp4;base64,${result.mp4Base64}` } : { url: result.url }), width: result.width, height: result.height, seconds: result.seconds });
+			} catch (error) { json(res, 502, { error: error?.message || "video provider failed" }); }
 			return true;
 		}
 		if (req.method !== "POST" || !["/agent/turn", "/agent/stop"].includes(path)) {

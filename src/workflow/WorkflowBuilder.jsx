@@ -143,7 +143,12 @@ function ImageNode({ id, data }) {
 }
 
 function VideoNode({ id, data }) {
-	return <NodeShell id={id} type="video" title="Video" icon={FiVideo}><label>Model</label><ModelSelect id={id} data={data} category="video" fallback={["video-passthrough"]} /><label>Motion prompt</label><input value={data.prompt || ""} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} placeholder="Motion prompt" /><label>Duration</label><select value={data.duration || "5"} onChange={(event) => data.onChange?.(id, { duration: event.target.value })}><option value="5">5 seconds</option><option value="10">10 seconds</option></select><SchemaFields id={id} data={data} category="video" /><div className="workflow-node-foot"><span>Video output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)}><FiPlay size={12} /></button></div></NodeShell>;
+	const generated = data.model === "video-generation";
+	const [providers, setProviders] = useState([]);
+	useEffect(() => { if (generated) createHttpTransport().videoProviders().then((result) => setProviders(result.providers || [])).catch(() => {}); }, [generated]);
+	const provider = data.formValues?.provider || data.provider || "comfy";
+	const update = (key, value) => data.onChange?.(id, { [key]: value, formValues: { ...(data.formValues || {}), [key]: value } });
+	return <NodeShell id={id} type="video" title="Video" icon={FiVideo}><label>Model</label><ModelSelect id={id} data={data} category="video" fallback={["video-passthrough", "video-generation"]} />{generated && <><label>Provider</label><select value={provider} onChange={(event) => update("provider", event.target.value)}>{(providers.length ? providers : [{ id: "comfy", name: "ComfyUI", configured: false }, { id: "fal", name: "Fal.ai", configured: false }]).map((entry) => <option key={entry.id} value={entry.id} disabled={!entry.configured}>{entry.name} {!entry.configured ? `(set ${entry.id === "comfy" ? "COZYCLAY_COMFY_URL" : "FAL_KEY"})` : ""}</option>)}</select><label>Motion prompt</label><textarea className="workflow-textarea" value={data.formValues?.prompt ?? data.prompt ?? ""} onChange={(event) => update("prompt", event.target.value)} placeholder="Motion prompt" /><label>Duration (seconds)</label><input type="number" min="1" max="15" value={data.formValues?.duration_seconds ?? data.duration_seconds ?? 5} onChange={(event) => update("duration_seconds", Number(event.target.value))} /><label>Aspect</label><select value={data.formValues?.aspect ?? data.aspect ?? "16:9"} onChange={(event) => update("aspect", event.target.value)}>{["16:9", "9:16", "1:1", "21:9", "12:7"].map((aspect) => <option key={aspect}>{aspect}</option>)}</select></>}{data.videoUrl && <video controls className="workflow-video-preview" src={data.videoUrl} />}{generated && data.isLoading && <div className="workflow-hint">Generating video…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>} {!generated && <SchemaFields id={id} data={data} category="video" />}<div className="workflow-node-foot"><span>Video output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
 function AudioNode({ id, data }) {
@@ -364,6 +369,16 @@ export default function WorkflowBuilder() {
 					values.set(id, frame.dataUrl);
 					patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
 				} catch (error) { patchNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message }); }
+			} else if (current.type === "video" && current.data?.model === "video-generation") {
+				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
+				const imageInputs = incoming.filter((entry) => typeof entry.value === "string" && entry.value.startsWith("data:image/"));
+				const frame = imageInputs[0]?.value;
+				const lastFrameDataUrl = imageInputs[1]?.value;
+				if (!frame) { patchNode(id, { status: "error", errorMsg: "Connect a Scene frame or an image before generating." }); continue; }
+				const form = current.data.formValues || {};
+				patchNode(id, { isLoading: true, errorMsg: null });
+				try { const output = await createHttpTransport().video({ provider: form.provider || current.data.provider || "comfy", prompt: form.prompt ?? current.data.prompt ?? "", imageDataUrl: frame, ...(lastFrameDataUrl ? { lastFrameDataUrl } : {}), durationSeconds: Number(form.duration_seconds ?? current.data.duration_seconds ?? 5), aspect: form.aspect || current.data.aspect || "16:9", ...(current.data.model ? { model: current.data.model } : {}) }); const videoUrl = output.dataUrl || output.url; values.set(id, videoUrl); patchNode(id, { isLoading: false, status: "complete", videoUrl, resultUrl: videoUrl, outputs: [{ value: videoUrl }], errorMsg: null }); }
+				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
 			} else if (current.type === "image" && current.data?.model === "image-generation") {
 				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
 				const frame = incoming.find((entry) => entry.node?.type === "scene" && entry.value)?.value;
