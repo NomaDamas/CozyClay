@@ -52,8 +52,10 @@ await waitFor("Agent panel ready", () => evaluate("!!document.querySelector('.ag
 const before = await evaluate("({ nodes: document.querySelectorAll('.react-flow__node').length, edges: document.querySelectorAll('.react-flow__edge').length })");
 await screenshot("01-before");
 
-await evaluate("(() => { const select = document.querySelector('.agent-model-select'); const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; setter.call(select, 'gpt-6-astra'); select.dispatchEvent(new Event('change', { bubbles: true })); })()");
-await waitFor("model selection", () => evaluate("document.querySelector('.agent-model-select')?.value === 'gpt-6-astra'"), 5000);
+const MODEL = process.env.QA_MODEL || "gpt-6-astra";
+await waitFor("model list", () => evaluate("[...document.querySelectorAll('.agent-model-select option')].some((option) => option.value === '" + MODEL + "')"), 20000);
+await evaluate("(() => { const select = document.querySelector('.agent-model-select'); const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set; setter.call(select, '" + MODEL + "'); select.dispatchEvent(new Event('change', { bubbles: true })); })()");
+await waitFor("model selection", () => evaluate("document.querySelector('.agent-model-select')?.value === '" + MODEL + "'"), 5000);
 await evaluate("document.querySelector('.agent-attach-chip').click()");
 await waitFor("frame attachment", () => evaluate("document.querySelector('.agent-attach-chip')?.getAttribute('aria-pressed') === 'true'"), 5000);
 await evaluate("(() => { const input = document.querySelector('.agent-input'); const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set; setter.call(input, 'Regenerate the attached reference in the current scene framing, photoreal golden hour'); input.dispatchEvent(new Event('input', { bubbles: true })); })()");

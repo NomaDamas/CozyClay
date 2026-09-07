@@ -340,13 +340,15 @@ export default function WorkflowBuilder() {
 		toast.success("Workflow saved locally");
 	}, [graph]);
 
-	const runWorkflow = useCallback(async (nodeId = null) => {
-		if (!graph.nodes.length) {
+	const runWorkflowRef = useRef(null);
+	const runWorkflow = useCallback(async (nodeId = null, input = graph) => {
+		if (!input.nodes.length) {
 			setRunState("complete");
 			toast.success("Local CozyClay scene is ready");
-			return;
+			return { graph: input, outputs: [] };
 		}
 		setRunState("running");
+		const graph = input;
 		const result = executeLocalWorkflowGraph(graph, { runId: `local-${Date.now()}` });
 		setNodes(result.nodes);
 		const runId = `local-${Date.now()}`;
@@ -382,13 +384,18 @@ export default function WorkflowBuilder() {
 		}
 		setRunState("complete");
 		toast.success(nodeId ? "Node evaluated locally" : "Workflow evaluated locally");
+		const outputs = result.nodes.map((node) => ({ id: node.id, outputs: values.has(node.id) && values.get(node.id) !== undefined ? [{ value: values.get(node.id) }] : node.data?.outputs || [] }));
+		return { graph: serializableGraph(result.nodes.map((node) => values.has(node.id) ? { ...node, data: { ...node.data, outputs: outputs.find((entry) => entry.id === node.id).outputs } } : node), graph.edges), outputs };
 	}, [graph, setNodes]);
 
+	useEffect(() => { runWorkflowRef.current = runWorkflow; }, [runWorkflow]);
 	useEffect(() => {
 		const store = {
 			getGraph: () => graphRef.current,
 			setGraph: (next) => { setNodes(next.nodes || []); setEdges(next.edges || []); },
-			run: async (input = graphRef.current) => { const result = executeLocalWorkflowGraph(input, { runId: `agent-${Date.now()}` }); setNodes(result.nodes); return { graph: serializableGraph(result.nodes, input.edges), outputs: result.nodes.map((node) => ({ id: node.id, outputs: node.data?.outputs || [] })) }; },
+			// The agent's run_workflow is the same run as the Run button: Scene
+			// capture and Image generation included, not just the local evaluator.
+			run: (input = graphRef.current) => runWorkflowRef.current(null, input),
 			focus: (id) => { document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", inline: "center" }); },
 		};
 		commandsRef.current = createCanvasCommands({ store, makeNode, nodeSchemas });
