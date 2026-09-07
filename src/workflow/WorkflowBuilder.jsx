@@ -22,6 +22,7 @@ import { createLiveControl } from "../live-control.js";
 import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 import { createHttpTransport } from "./agent-client.js";
+import { fileToDataUrl, imageFileFromTransfer, pastedImageNodeData } from "./clipboard-image.js";
 
 const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
 
@@ -177,7 +178,7 @@ function VideoCombinerNode({ id, data }) {
 }
 
 function UploadNode({ id, data }) {
-	return <NodeShell id={id} type="upload" title="Upload" icon={FiUpload}><label className="workflow-upload"><FiUpload size={18} /><span>{data.uploading ? "Reading…" : "Choose image, video, or audio"}</span><input type="file" accept="image/*,video/*,audio/*" disabled={data.uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) data.onUpload?.(id, file); }} /></label><p className="workflow-hint">{data.fileName || "Files stay local to this browser session."}</p></NodeShell>;
+	return <NodeShell id={id} type="upload" title="Upload" icon={FiUpload}><label className="workflow-upload"><FiUpload size={18} /><span>{data.uploading ? "Reading…" : "Choose image, video, or audio"}</span><input type="file" accept="image/*,video/*,audio/*" disabled={data.uploading} onChange={(event) => { const file = event.target.files?.[0]; if (file) data.onUpload?.(id, file); }} /></label>{typeof data.image_url === "string" && data.image_url.startsWith("data:image/") && <img className="workflow-image-preview" src={data.image_url} alt={data.fileName || "Uploaded image"} />}<p className="workflow-hint">{data.fileName || "Files stay local to this browser session. Paste or drop an image onto the canvas to add one here."}</p></NodeShell>;
 }
 
 function ConcatNode({ id, data }) {
@@ -215,17 +216,50 @@ export default function WorkflowBuilder() {
 		// change cannot shallow-replace sibling controls and reset them.
 		updateNode(id, data || patch);
 	}, [updateNode]);
-	const addNode = useCallback((type, model = null) => {
+	const flowRef = useRef(null);
+	const addNode = useCallback((type, model = null, { position: at, data } = {}) => {
 		const id = `${type}-${Date.now()}`;
 		setNodes((current) => {
 			const extraIndex = Math.max(0, current.length - 3);
-			const position = current.length < 3
+			const position = at ?? (current.length < 3
 				? { x: 80 + current.length * 300, y: 100 }
-				: { x: 80 + (extraIndex % 2) * 360, y: 560 + Math.floor(extraIndex / 2) * 260 };
-			return [...current, makeNode(type, id, position, model, nodeSchemas)];
+				: { x: 80 + (extraIndex % 2) * 360, y: 560 + Math.floor(extraIndex / 2) * 260 });
+			const node = makeNode(type, id, position, model, nodeSchemas);
+			return [...current, data ? { ...node, data: { ...node.data, ...data } } : node];
 		});
 		toast.success(`${type === "scene" ? "CozyClay Scene" : type} node added`);
+		return id;
 	}, [nodeSchemas, setNodes]);
+	// An image pasted or dropped onto the canvas becomes an Upload node holding
+	// a data URL, so it survives reload and can feed the Image node's reference.
+	const canvasRef = useRef(null);
+	const placeImage = useCallback(async (file, screen) => {
+		const dataUrl = await fileToDataUrl(file);
+		const instance = flowRef.current;
+		const bounds = canvasRef.current?.getBoundingClientRect();
+		const point = screen ?? (bounds ? { x: bounds.left + bounds.width / 2, y: bounds.top + bounds.height / 2 } : null);
+		const position = instance && point ? instance.screenToFlowPosition(point) : undefined;
+		addNode("upload", null, { position, data: pastedImageNodeData(file, dataUrl) });
+	}, [addNode]);
+	useEffect(() => {
+		const onPaste = (event) => {
+			const target = event.target;
+			if (target instanceof HTMLElement && (target.matches("input,textarea,select,[contenteditable=true]") || target.isContentEditable)) return;
+			const file = imageFileFromTransfer(event.clipboardData);
+			if (!file) return;
+			event.preventDefault();
+			placeImage(file).catch((error) => toast.error(`Could not paste the image (${error.message})`));
+		};
+		window.addEventListener("paste", onPaste);
+		return () => window.removeEventListener("paste", onPaste);
+	}, [placeImage]);
+	const onCanvasDragOver = useCallback((event) => { if (imageFileFromTransfer(event.dataTransfer) || Array.from(event.dataTransfer?.types ?? []).includes("Files")) { event.preventDefault(); event.dataTransfer.dropEffect = "copy"; } }, []);
+	const onCanvasDrop = useCallback((event) => {
+		const file = imageFileFromTransfer(event.dataTransfer);
+		if (!file) return;
+		event.preventDefault();
+		placeImage(file, { x: event.clientX, y: event.clientY }).catch((error) => toast.error(`Could not add the image (${error.message})`));
+	}, [placeImage]);
 	const changeModel = useCallback((id, type, model) => {
 		const category = schemaCategoryForType(type);
 		const properties = schemaProperties(nodeSchemas, category, model.id);
@@ -285,8 +319,8 @@ export default function WorkflowBuilder() {
 
 	const uploadFile = useCallback(async (id, file) => {
 		updateNode(id, { uploading: true, fileName: file.name });
-		const localUrl = URL.createObjectURL(file);
 		const kind = file.type.startsWith("video/") ? "video_url" : file.type.startsWith("audio/") ? "audio_url" : "image_url";
+		const localUrl = kind === "image_url" ? await fileToDataUrl(file) : URL.createObjectURL(file);
 		try {
 			if (kind === "image_url") {
 				const imported = await importImageIntoActiveScene(file);
@@ -327,10 +361,13 @@ export default function WorkflowBuilder() {
 					updateNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
 				} catch (error) { updateNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message }); }
 			} else if (current.type === "image" && current.data?.model === "image-generation") {
-				const source = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => values.get(edge.source)).find(Boolean) || current.data.image_url;
+				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
+				const frame = incoming.find((entry) => entry.node?.type === "scene" && entry.value)?.value;
+				const reference = incoming.find((entry) => entry.node?.type !== "scene" && typeof entry.value === "string" && entry.value.startsWith("data:image/"))?.value;
+				const source = frame || incoming.map((entry) => entry.value).find(Boolean) || current.data.image_url;
 				if (!source) { updateNode(id, { status: "error", errorMsg: "Connect a Scene frame before generating." }); continue; }
 				updateNode(id, { isLoading: true, errorMsg: null });
-				try { const output = await createHttpTransport().image({ prompt: current.data.prompt || "", imageDataUrl: source, referenceDataUrl: current.data.image_url, quality: "auto" }); values.set(id, output.dataUrl); updateNode(id, { isLoading: false, status: "complete", resultUrl: output.dataUrl, outputs: [{ value: output.dataUrl }], errorMsg: null }); }
+				try { const output = await createHttpTransport().image({ prompt: current.data.prompt || "", imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), quality: "auto" }); values.set(id, output.dataUrl); updateNode(id, { isLoading: false, status: "complete", resultUrl: output.dataUrl, outputs: [{ value: output.dataUrl }], errorMsg: null }); }
 				catch (error) { updateNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
 			} else values.set(id, current.data?.outputs?.[0]?.value);
 		}
@@ -398,6 +435,6 @@ export default function WorkflowBuilder() {
 	return <div className="workflow-app">
 		<Toaster position="bottom-right" toastOptions={{ style: { background: "#252833", color: "#f4f5fb" } }} />
 		<header className="workflow-topbar"><div className="workflow-brand"><span className="workflow-brand-mark">C</span><span>CozyClay</span><span className="workflow-divider">/</span><strong>Workflow</strong></div><div className="workflow-top-actions"><span className={`workflow-status ${runState}`}><i /> {runLabel}</span><button type="button" onClick={saveWorkflow}>{lastSaved ? "Saved" : "Save"}</button><button type="button" onClick={() => runWorkflow()}><FiPlay size={12} /> Run</button><button type="button" onClick={exportGraph}>Export</button><button type="button" className="workflow-agent-toggle" title="Toggle agent panel (Cmd/Ctrl+B)" onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}>Agent</button></div></header>
-		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><input className="workflow-node-search" aria-label="Search nodes or models" placeholder="Search nodes or models" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />{modelSearch && <div className="workflow-model-results">{modelOptions.length ? modelOptions.map((model) => { const Icon = modelIcons[model.type] || FiBox; return <button type="button" key={`${model.type}-${model.id}`} className="workflow-add-node" onClick={() => { addNode(model.type, model); setModelSearch(""); }}><span style={{ color: NODE_COLORS[model.type] }}><Icon size={15} /></span><span>{model.name}</span><FiPlus size={13} /></button>; }) : <span className="workflow-hint">No models found</span>}</div>}<div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["audio", "Audio", FiMusic], ["api", "API Node", FiCode], ["video-combiner", "Video Combiner", FiFilm], ["motion-input", "Motion Input", FiActivity], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas"><ReactFlow nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section><AgentPanel sceneName={sceneContext.name} /></div>
+		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><input className="workflow-node-search" aria-label="Search nodes or models" placeholder="Search nodes or models" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />{modelSearch && <div className="workflow-model-results">{modelOptions.length ? modelOptions.map((model) => { const Icon = modelIcons[model.type] || FiBox; return <button type="button" key={`${model.type}-${model.id}`} className="workflow-add-node" onClick={() => { addNode(model.type, model); setModelSearch(""); }}><span style={{ color: NODE_COLORS[model.type] }}><Icon size={15} /></span><span>{model.name}</span><FiPlus size={13} /></button>; }) : <span className="workflow-hint">No models found</span>}</div>}<div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["audio", "Audio", FiMusic], ["api", "API Node", FiCode], ["video-combiner", "Video Combiner", FiFilm], ["motion-input", "Motion Input", FiActivity], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas" ref={canvasRef} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}><ReactFlow onInit={(instance) => { flowRef.current = instance; }} nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section><AgentPanel sceneName={sceneContext.name} /></div>
 	</div>;
 }
