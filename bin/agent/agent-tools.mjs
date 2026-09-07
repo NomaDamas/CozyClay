@@ -20,6 +20,10 @@ export function pickWorkspace(liveHub, requiredCommands = ["capture_framing_png"
 	const authoring = details.filter((entry) => entry.meta?.embed !== true && supports(entry)).map((entry) => entry.handle);
 	if (authoring.length === 1) return authoring[0];
 	if (authoring.length > 1) return authoring[authoring.length - 1];
+	// On the Workflow page the embedded Studio IS the scene the user is looking
+	// at; use it when no standalone editor tab is open.
+	const embedded = details.filter((entry) => entry.meta?.embed === true && supports(entry)).map((entry) => entry.handle);
+	if (embedded.length) return embedded[embedded.length - 1];
 	return liveHub.resolveWorkspace("agent turn");
 }
 

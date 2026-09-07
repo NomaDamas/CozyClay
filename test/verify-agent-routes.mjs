@@ -129,7 +129,8 @@ console.log("agent routes verified");
 	const agentCommands = ["capture_framing_png", "import_asset"];
 	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }])), "b", "skips the embedded preview");
 	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }])), "b", "prefers the most recent authoring tab");
-	assert.throws(() => pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }])), /requires workspace_handle/, "falls back to the hub rule when only previews are connected");
+	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }])), "a", "the embedded Studio is the scene when no standalone editor is open");
+	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }, { handle: "w", meta: { kind: "workflow", commands: ["get_graph"] } }])), "a", "the workflow canvas never counts as a scene editor");
 	assert.throws(() => pickWorkspace(hub([{ handle: "old", meta: { project: "P" } }])), /requires workspace_handle/, "an editor that does not advertise commands is not a candidate");
 	console.log("PASS pickWorkspace skips embedded previews");
 }
