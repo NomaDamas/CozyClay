@@ -7,6 +7,7 @@ import { ko, isKo } from "../locale.js";
 import { buildRail, craneHeightAt } from "../camera-follow.js";
 import { pathMetrics } from "../object-path.js";
 import { flatTiming, timingIsFlat, envelopeDrag, insertCut, removeCut, CUT_MIN_GAP } from "../speed-envelope.js";
+import { checkShotAgainstPreset, presetById } from "../model-presets.js";
 
 /**
  * ARDY Viser-style animation timeline — the live motion workspace.
@@ -968,6 +969,10 @@ export default function Timeline({
 	footSnap = true, // feet stay planted while the body moves
 	bodyContact = true, // body markers stay above the floor
 	shots = [],
+	// The stage's delivery aspect label ("16:9", "9:16", …). A shot aimed at a
+	// video model is checked against it, so the badge can say when the cut
+	// leaves the target's supported ratios.
+	shotAspect = null,
 	activeShotIdx = 0,
 	selectedCameraBlockIdx,
 	shotCutDisabled = false,
@@ -2036,6 +2041,13 @@ export default function Timeline({
 											: null;
 										const railOff = storedRail?.mode === "off" || mode !== "rail";
 										const localProgress = frame - shot.startFrame;
+										// A shot aimed at a video model is measured against that
+										// model's clip lengths and delivery aspects. The badge is
+										// advisory: nothing here trims or re-crops the cut.
+										const targetPreset = shot.targetModel ? presetById(shot.targetModel) : null;
+										const modelWarnings = targetPreset
+											? checkShotAgainstPreset({ frames: durationFrames, fps, aspect: shotAspect }, targetPreset).warnings
+											: [];
 										return (
 											<div
 												key={shot.id}
@@ -2087,6 +2099,15 @@ export default function Timeline({
 													<span className="tl-shot-label">
 														<b>{shot.name}</b>
 														<small>{shot.startFrame}–{lastFrame} · {durationS.toFixed(1)}{ko("s", "초")}</small>
+													</span>
+												)}
+												{modelWarnings.length > 0 && (
+													<span
+														className="tl-shot-warn"
+														role="status"
+														title={modelWarnings.join("; ")}
+													>
+														⚠ {targetPreset.name}
 													</span>
 												)}
 											<span className="tl-shot-actions">

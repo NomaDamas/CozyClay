@@ -132,6 +132,7 @@ const NODE_FILES = [
 	"test/verify-stable-ids.mjs",
 	"test/verify-storyboard.mjs",
 	"test/verify-shot-authoring.mjs",
+	"test/verify-shot-meta.mjs",
 	"test/verify-shot-prompt.mjs",
 	"test/verify-take-recipe.mjs",
 	"test/verify-theme.mjs",

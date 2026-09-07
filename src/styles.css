@@ -4903,6 +4903,23 @@ input[type=range]::-moz-range-thumb {
 	cursor: default;
 }
 
+/* The shot outruns (or out-crops) the video model it is aimed at. Advisory
+   only — same amber the timeline already uses for an over-speed path, sized
+   like the state chip beside it so the strip keeps one type scale. */
+.tl-shot-warn {
+	flex: 0 0 auto;
+	padding: 1px 3px;
+	border: 1px solid rgba(245, 180, 83, .5);
+	border-radius: 2px;
+	background: rgba(245, 180, 83, .16);
+	color: var(--warn, #f5b453);
+	font-size: 7.5px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	white-space: nowrap;
+	cursor: help;
+}
+
 .tl-camera-block-state {
 	padding: 1px 3px;
 	border: 1px solid rgba(255, 255, 255, .22);

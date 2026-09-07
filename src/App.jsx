@@ -324,6 +324,8 @@ import {
 	readStoredGuideMode,
 	writeStoredGuideMode,
 } from "./shot-guides.js";
+import { shotCaptureMeta } from "./shot-meta.js";
+import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
 import { serializeOtio } from "./otio.js";
 import {
 	addShotAtFrame,
@@ -569,7 +571,8 @@ export default function App() {
 				const dataUrl = live.captureFramingPng(live.captureCurrentFraming());
 				if (!dataUrl) throw new Error("The shot renderer is not ready");
 				const output = SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
-				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height }, "*");
+				const meta = live.captureShotMeta(live.timeline.currentFrame);
+				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height, meta }, "*");
 			} catch (error) { window.parent.postMessage({ type: "cozyclay:capture-framing-result", error: error.message }, "*"); }
 		};
 		const onMessage = (event) => { if (event.data?.type === "cozyclay:capture-framing") capture(); };
@@ -2453,6 +2456,15 @@ globalThis.playMode = centerTab === "play";
 		else recordShotUndo();
 		setShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, camera: updateCameraBlock(shot.camera, patch) }), "shots"));
 	}
+	/** Which video model this shot is being cut FOR. A label, never a
+	 * constraint: nothing re-times or re-crops the shot, the timeline simply
+	 * says when the cut breaks the target's limits. One Ctrl+Z entry per pick,
+	 * exactly like a camera-block commit. */
+	function changeShotTargetModel(targetModel, shotId = activeShot?.id) {
+		if (!shots.some((entry) => entry.id === shotId)) return;
+		recordShotUndo();
+		setShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, targetModel: targetModel || null }), "shots"));
+	}
 	function addActiveCranePoint(requestedT = null, shotId = activeShot?.id) {
 		const shot = shots.find((entry) => entry.id === shotId);
 		const camera = createCameraBlock(shot?.camera);
@@ -3369,6 +3381,7 @@ globalThis.playMode = centerTab === "play";
 		activeShotId: activeShot?.id ?? null,
 		captureCurrentFraming,
 		captureFramingPng,
+		captureShotMeta,
 	};
 	if (!liveHandlersRef.current) {
 		const finitePatch = (args, fields) => {
@@ -3862,6 +3875,9 @@ globalThis.playMode = centerTab === "play";
 					frame: live.timeline.currentFrame,
 					shotId: live.activeShotId,
 					partColours: live.partColours,
+					// The production notes the PNG cannot carry: lens, delivery
+					// aspect, cast and the video model this shot is aimed at.
+					meta: live.captureShotMeta(live.timeline.currentFrame),
 				};
 			},
 			load_motion: async (args) => {
@@ -4419,6 +4435,28 @@ globalThis.playMode = centerTab === "play";
 		const cam = shotCamRef.current;
 		const pos = cam ? cam.position : cameraPos;
 		return captureFraming({ pos: { x: pos.x, y: pos.y, z: pos.z }, yaw: look.current.yaw, pitch: look.current.pitch, fovDeg });
+	}
+
+	// What a framing capture says about the shot it came from: lens, delivery
+	// aspect, cast, cut range and the video model the shot is aimed at. Both
+	// capture paths (the live command and the embed message) attach this, so a
+	// still handed to a generator arrives with its production notes.
+	// A frame that falls in a gap between shots describes the first shot — a
+	// pull still belongs to the piece even when the playhead sits outside a cut.
+	function captureShotMeta(frame) {
+		const index = shotIndexAtFrame(shots, frame);
+		const resolvedIndex = index >= 0 ? index : shots.length ? 0 : null;
+		return shotCaptureMeta({
+			shot: resolvedIndex == null ? null : shots[resolvedIndex],
+			shotIndex: resolvedIndex,
+			stage: { keyLight },
+			cast: characters,
+			fps: tlFps,
+			aspectKey: shotAspectKey,
+			size: { width: shotOutput.width, height: shotOutput.height },
+			frame,
+			lens: { focalMm: shot.focalMm, fovDeg },
+		});
 	}
 
 	// Key authoring lives in each unified Shot block's lower key strip: clicking
@@ -5988,6 +6026,13 @@ globalThis.playMode = centerTab === "play";
 				setPartColoursMode(mode === "flat" ? "flat" : "shaded");
 			},
 			setCharacterScale: (scale) => updateCharacterAt(activeCharIndex, { scale }),
+			// QA-only: the production notes a framing capture carries (lens,
+			// delivery aspect, cast, cut range, target video model) for the frame
+			// the playhead is on — the same object both capture paths attach.
+			// Read through liveStateRef, which every render refreshes: this hook's
+			// effect does not depend on the shot list, so a closure over it would
+			// answer with the cut as it stood when the effect last ran.
+			captureMeta: (frame) => liveStateRef.current.captureShotMeta(frame ?? liveStateRef.current.timeline.currentFrame),
 			characterScale: activeChar?.scale ?? 1,
 			characterModel: activeChar?.model ?? null,
 			// QA-only framing: FlyControls rewrites the editor camera's rotation
@@ -10741,6 +10786,29 @@ function resizePromptClip(id, edge, rawFrame) {
 								? ko(`Editing ${activeShot.name} in the timeline camera bar below.`, `아래 타임라인 카메라 바에서 ${activeShot.name}을 편집합니다.`)
 								: ko("Select a Shot block below to edit its camera.", "아래에서 샷 블록을 선택하면 카메라를 편집할 수 있습니다.")}
 						</p>
+
+						{/* Which generator this cut is being made FOR. Nothing here
+						    re-times or re-crops the shot — the timeline simply warns
+						    when the cut runs past the target's clip length or leaves
+						    its delivery aspects. */}
+						<h3 className="move-head">{ko("Target model", "타깃 모델")}</h3>
+						<p className="inspector-hint">
+							{ko("The timeline flags this shot when the cut runs past the model's clip length or leaves its delivery ratios. Nothing is re-timed or re-cropped.", "컷 길이나 화면 비율이 모델 한계를 벗어나면 타임라인이 표시해줘요. 자동으로 재조정하지는 않습니다.")}
+						</p>
+						<Field label={ko("Cut for", "맞출 모델")}>
+							<select
+								data-shot-target-model
+								aria-label={ko("Target video model", "타깃 영상 모델")}
+								disabled={!activeShot}
+								value={activeShot?.targetModel ?? ""}
+								onChange={(event) => changeShotTargetModel(event.target.value)}
+							>
+								<option value="">{ko("None", "없음")}</option>
+								{VIDEO_MODEL_PRESETS.map((entry) => (
+									<option key={entry.id} value={entry.id}>{entry.name}</option>
+								))}
+							</select>
+						</Field>
 					</Foldout>
 
 				<Foldout hidden={!isCharacterSelection} title={ko("Part colours", "부위 색상")}>
@@ -12505,6 +12573,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				footSnap={footSnap}
 				bodyContact={bodyContact}
 					shots={shots}
+					shotAspect={shotAspectKey}
 					activeShotIdx={activeShotIdx}
 					railDraw={railDraw}
 					pathDraw={pathDraw}
