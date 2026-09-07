@@ -71,6 +71,7 @@ const NODE_FILES = [
 	"test/verify-hierarchy.mjs",
 	"test/verify-history.mjs",
 	"test/verify-image-pose.mjs",
+	"test/verify-image-versions.mjs",
 	"test/verify-kimodo-cskel27.mjs",
 	"test/verify-kimodo-edit.mjs",
 	"test/verify-kimodo-effector.mjs",

@@ -23,6 +23,7 @@ import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 import { createHttpTransport } from "./agent-client.js";
 import { canvasTakesPaste, fileToDataUrl, imageFileFromTransfer, pastedImageNodeData } from "./clipboard-image.js";
+import { appendVersion, compareIndex, pinnedInputs, selectVersion, versionLabel, versionState } from "./image-versions.js";
 
 const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
 
@@ -137,9 +138,46 @@ function TextNode({ id, data }) {
 	return <NodeShell id={id} type="text" title="Text" icon={FiType} target={false}><label>Model</label><ModelSelect id={id} data={data} category="text" fallback={["text-passthrough"]} /><label>Prompt</label><textarea className="workflow-textarea" value={data.prompt || ""} onChange={(event) => data.onChange?.(id, { prompt: event.target.value })} /><SchemaFields id={id} data={data} category="text" /><div className="workflow-node-foot"><span>Prompt input <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
+// Every generation stays on the node as a version, so an author can walk back
+// to an earlier take, flip between two of them, and regenerate against the
+// same inputs instead of re-staging the shot.
+function ImageVersions({ id, data }) {
+	const { versions, index, current } = versionState(data);
+	const [showCompare, setShowCompare] = useState(false);
+	const other = compareIndex(data);
+	const shown = showCompare ? versions[other] || current : current;
+	const select = (next) => { setShowCompare(false); data.onChange?.(id, selectVersion(data, next)); };
+	if (!versions.length) return null;
+	return <div className="workflow-versions">
+		<img
+			className={`workflow-image-preview${data.abMode ? " workflow-ab-toggle" : ""}`}
+			src={shown?.dataUrl}
+			alt={`Generated image version ${(showCompare ? other : index) + 1}`}
+			data-version-index={showCompare ? other : index}
+			onClick={() => { if (data.abMode && versions.length > 1) setShowCompare((value) => !value); }}
+		/>
+		<div className="workflow-version-bar">
+			<button type="button" aria-label="Previous version" disabled={index <= 0} onClick={() => select(index - 1)}>‹</button>
+			<span className="workflow-version-count">v{versionLabel(data)}</span>
+			<button type="button" aria-label="Next version" disabled={index >= versions.length - 1} onClick={() => select(index + 1)}>›</button>
+			<button
+				type="button"
+				className={`workflow-version-ab${data.abMode ? " active" : ""}`}
+				aria-pressed={Boolean(data.abMode)}
+				disabled={versions.length < 2}
+				onClick={() => { setShowCompare(false); data.onChange?.(id, { abMode: !data.abMode, abIndex: compareIndex(data) }); }}
+			>A/B</button>
+		</div>
+		{data.abMode && versions.length > 1 && <label className="workflow-version-compare">Compare with<select aria-label="Compare version" value={other} onChange={(event) => { setShowCompare(false); data.onChange?.(id, { abIndex: Number(event.target.value) }); }}>{versions.map((version, position) => <option key={version.at ?? position} value={position} disabled={position === index}>v{position + 1}</option>)}</select></label>}
+		<label className="workflow-schema-check workflow-version-pin"><input type="checkbox" checked={Boolean(data.pinReferences)} onChange={(event) => data.onChange?.(id, { pinReferences: event.target.checked })} />Pin refs</label>
+		<button type="button" className="workflow-version-reuse" onClick={() => data.onUseAsReference?.(id, index)}>Use as reference</button>
+	</div>;
+}
+
 function ImageNode({ id, data }) {
 	const generated = data.model === "image-generation";
-	return <NodeShell id={id} type="image" title="Image" icon={FiImage}><label>Model</label><ModelSelect id={id} data={data} category="image" fallback={["image-passthrough", "image-generation"]} />{generated && data.resultUrl ? <img className="workflow-image-preview" src={data.resultUrl} alt="Generated workflow output" /> : <div className="workflow-dropzone"><FiImage size={18} /><span>{generated ? "Connect a Scene frame" : "Connect an image or prompt"}</span></div>}{generated && data.isLoading && <div className="workflow-hint">Generating image…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>}<SchemaFields id={id} data={data} category="image" /><div className="workflow-node-foot"><span>Image output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
+	const hasVersions = versionState(data).versions.length > 0;
+	return <NodeShell id={id} type="image" title="Image" icon={FiImage}><label>Model</label><ModelSelect id={id} data={data} category="image" fallback={["image-passthrough", "image-generation"]} />{generated && hasVersions ? <ImageVersions id={id} data={data} /> : generated && data.resultUrl ? <img className="workflow-image-preview" src={data.resultUrl} alt="Generated workflow output" /> : <div className="workflow-dropzone"><FiImage size={18} /><span>{generated ? "Connect a Scene frame" : "Connect an image or prompt"}</span></div>}{generated && data.isLoading && <div className="workflow-hint">Generating image…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>}<SchemaFields id={id} data={data} category="image" /><div className="workflow-node-foot"><span>Image output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
 function VideoNode({ id, data }) {
@@ -268,6 +306,29 @@ export default function WorkflowBuilder() {
 		const properties = schemaProperties(nodeSchemas, category, model.id);
 		updateNode(id, { model: model.id, selectedModel: model, formValues: defaultFormValues(properties) });
 	}, [nodeSchemas, updateNode]);
+	// "Use as reference" branches off a version: the picked take becomes an
+	// Upload node (a data URL, like a pasted image) feeding a fresh Image node,
+	// so the next round of generations starts from that frame.
+	const useVersionAsReference = useCallback((id, index) => {
+		const node = nodes.find((entry) => entry.id === id);
+		const { versions, index: current } = versionState(node?.data);
+		const position = Number.isInteger(index) ? Math.min(Math.max(index, 0), versions.length - 1) : current;
+		const version = versions[position];
+		if (!version?.dataUrl) { toast.error("Generate an image before using it as a reference"); return; }
+		const origin = node.position || { x: 0, y: 0 };
+		const name = `version-${position + 1}.png`;
+		const file = { name, type: version.dataUrl.slice(5, version.dataUrl.indexOf(";")) || "image/png" };
+		const uploadId = addNode("upload", null, {
+			position: { x: origin.x + 320, y: origin.y },
+			data: { ...pastedImageNodeData(file, version.dataUrl), uploadName: name, thumbnail: version.dataUrl, label: "Upload" },
+		});
+		const imageId = addNode("image", { id: "image-generation", name: "Image generation" }, {
+			position: { x: origin.x + 640, y: origin.y },
+			data: { prompt: version.prompt || "" },
+		});
+		setEdges((currentEdges) => addEdge({ id: `e-${uploadId}-${imageId}`, source: uploadId, target: imageId, sourceHandle: "output", targetHandle: "input", animated: true, style: { stroke: "#8994ff", strokeWidth: 2 } }, currentEdges));
+		toast.success(`v${position + 1} reused as a reference`);
+	}, [addNode, nodes, setEdges]);
 	useEffect(() => {
 		// A host app can inject the same schema envelope fetched by Vibe's
 		// /api/workflow/:id/node-schemas endpoint. Keep the local defaults if it
@@ -382,11 +443,15 @@ export default function WorkflowBuilder() {
 			} else if (current.type === "image" && current.data?.model === "image-generation") {
 				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
 				const frame = incoming.find((entry) => entry.node?.type === "scene" && entry.value)?.value;
-				const reference = incoming.find((entry) => entry.node?.type !== "scene" && typeof entry.value === "string" && entry.value.startsWith("data:image/"))?.value;
-				const source = frame || incoming.map((entry) => entry.value).find(Boolean) || current.data.image_url;
+				const upstreamReference = incoming.find((entry) => entry.node?.type !== "scene" && typeof entry.value === "string" && entry.value.startsWith("data:image/"))?.value;
+				const upstreamSource = frame || incoming.map((entry) => entry.value).find(Boolean) || current.data.image_url;
+				// Pinned references keep the frame and reference of the shown version,
+				// so a prompt tweak is the only thing that changes between takes.
+				const { source, reference } = pinnedInputs(current.data, { source: upstreamSource, reference: upstreamReference });
 				if (!source) { patchNode(id, { status: "error", errorMsg: "Connect a Scene frame before generating." }); continue; }
+				const prompt = current.data.prompt || "";
 				patchNode(id, { isLoading: true, errorMsg: null });
-				try { const output = await createHttpTransport().image({ prompt: current.data.prompt || "", imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", resultUrl: output.dataUrl, outputs: [{ value: output.dataUrl }], errorMsg: null }); }
+				try { const output = await createHttpTransport().image({ prompt, imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", errorMsg: null, ...appendVersion(current.data, { dataUrl: output.dataUrl, prompt, referenceDataUrl: reference || null, frameDataUrl: source, at: Date.now() }) }); }
 				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
 			} else values.set(id, current.data?.outputs?.[0]?.value);
 		}
@@ -439,8 +504,9 @@ export default function WorkflowBuilder() {
 			onModelChange: changeModel,
 			...(node.type === "scene" ? { onSceneChange: updateScene, onSceneRun: runScene } : { onRun: runWorkflow }),
 			...(node.type === "upload" ? { onUpload: uploadFile } : {}),
+			...(node.type === "image" ? { onUseAsReference: useVersionAsReference } : {}),
 		},
-	})), [changeModel, nodeSchemas, nodes, runScene, runWorkflow, sceneCharacters, sceneContext, updateNode, updateScene, uploadFile]);
+	})), [changeModel, nodeSchemas, nodes, runScene, runWorkflow, sceneCharacters, sceneContext, updateNode, updateScene, uploadFile, useVersionAsReference]);
 
 	const exportGraph = useCallback(() => { const blob = new Blob([JSON.stringify(graph, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "cozyclay-workflow.json"; anchor.click(); URL.revokeObjectURL(url); toast.success("Workflow exported"); }, [graph]);
 	const onConnect = useCallback((params) => {
