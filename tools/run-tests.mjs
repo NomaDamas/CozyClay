@@ -46,6 +46,7 @@ const NODE_FILES = [
 	"test/verify-agent-panel.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-canvas-commands.mjs",
+	"test/verify-clipboard-image.mjs",
 	"test/verify-codex-auth.mjs",
 	"test/verify-analytics.mjs",
 	"test/verify-appearance.mjs",
