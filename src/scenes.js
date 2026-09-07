@@ -254,7 +254,7 @@ function migrateLegacyCast(source) {
 }
 
 const STAGE_ENVELOPE_KEYS = new Set([
-	"characters", "hasCharSheet", "shotAspect", "sensorId", "keyLight",
+	"characters", "hasCharSheet", "shotAspect", "cameraPresetId", "sensorId", "keyLight",
 	"charA", "charB", "showB", "poseA", "poseB", "subject", "subject2",
 ]);
 
@@ -276,6 +276,12 @@ export function createSceneStage(stage = null) {
 		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7"].includes(source.shotAspect)
 			? source.shotAspect
 			: DEFAULT_SCENE_STAGE.shotAspect,
+		// A label recording which named framing the shot camera was placed by.
+		// Unknown ids are dropped rather than kept: a stage that names a preset
+		// this build cannot apply would claim a framing nobody can reproduce.
+		cameraPresetId: typeof source.cameraPresetId === "string" && source.cameraPresetId
+			? source.cameraPresetId
+			: DEFAULT_SCENE_STAGE.cameraPresetId,
 		// `sensorFormat` was this field's name for one unreleased day; read it so
 		// a stage saved in that window still loads with its camera intact.
 		sensorId: Object.hasOwn(SENSOR_FORMATS, source.sensorId ?? source.sensorFormat)

@@ -312,7 +312,7 @@ import {
 	fovToFocalMm,
 	slateLine,
 } from "./shot.js";
-import { captureFraming, classifyMove, moveSequenceSlate, moveSequencePhrase } from "./camera-move.js";
+import { CAMERA_PRESETS, cameraPresetFraming, captureFraming, classifyMove, moveSequenceSlate, moveSequencePhrase } from "./camera-move.js";
 import { sampleAt } from "./sample-at.js";
 import { exportOffscreenVideo } from "./offscreen-export.js";
 import { parseRigNodeId } from "./hierarchy-model.js";
@@ -594,6 +594,10 @@ export default function App() {
 	const [fovDeg, setFovDeg] = useState(PRESETS.medium.fov);
 	const [shotAspectKey, setShotAspectKey] = useState(startupStage.shotAspect);
 	const shotOutput = SHOT_ASPECT_PRESETS[shotAspectKey] ?? SHOT_ASPECT_PRESETS["16:9"];
+	// Which named camera framing the shot camera currently stands in, or null
+	// after any manual placement. Recorded on the scene so a take says how it
+	// was framed; it is a label, not a constraint — nothing re-applies it.
+	const [cameraPresetId, setCameraPresetId] = useState(startupStage.cameraPresetId ?? null);
 	// Composition guides over the shot frame (Blender's camera display guides).
 	// A viewer preference, not scene data: it persists per browser, never in
 	// the scene document, and never touches exported pixels.
@@ -2811,6 +2815,7 @@ globalThis.playMode = centerTab === "play";
 		characters: characters.map(({ sessionMotion, ...entry }) => entry),
 		hasCharSheet,
 		shotAspect: shotAspectKey,
+		cameraPresetId,
 		sensorId,
 		keyLight,
 	};
@@ -3192,6 +3197,7 @@ globalThis.playMode = centerTab === "play";
 		setRigMountEpoch((value) => value + 1);
 		setHasCharSheet(stage.hasCharSheet);
 		setShotAspectKey(stage.shotAspect);
+		setCameraPresetId(stage.cameraPresetId ?? null);
 		setSensorFormat(stage.sensorId);
 		setKeyLight(stage.keyLight);
 		// The motion-layer buffer reloads from the scene's first character.
@@ -3340,7 +3346,7 @@ globalThis.playMode = centerTab === "play";
 		camera: cameraPos,
 		fovDeg,
 		filmback,
-		stage: { shotAspect: shotAspectKey, sensorId, hasCharSheet },
+		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet },
 		timeline: { currentFrame: tlFrame, frameCount: tlFrameCount, fps: tlFps },
 		activeCharacterId,
 		partColours: partColoursEnabled ? PART_COLOURS : null,
@@ -3457,8 +3463,35 @@ globalThis.playMode = centerTab === "play";
 			describe,
 			// Camera moves are not undoable in the UI. This is the free-camera and
 			// Top-View path: drive the shot camera, lens state, then manual ownership.
-			set_camera: (args) => {
+			set_camera: (rawArgs) => {
 				const live = liveStateRef.current;
+				// A named preset is shorthand for a full framing: it is resolved
+				// against the ACTIVE subject and the CURRENT filmback, so the same
+				// preset re-frames correctly after the subject moves or the output
+				// ratio changes. Everything below then runs on plain coordinates.
+				let args = rawArgs;
+				if (rawArgs.preset !== undefined) {
+					if (typeof rawArgs.preset !== "string" || !CAMERA_PRESETS[rawArgs.preset]) throw new Error("Unknown camera preset");
+					const actor = live.characters.find((entry) => entry.id === live.activeCharacterId) ?? live.characters[0];
+					const framing = cameraPresetFraming(rawArgs.preset, {
+						x: actor?.x ?? 0,
+						z: actor?.z ?? 0,
+						height: SUBJECT_HEIGHT_M * (actor?.scale ?? 1),
+					}, live.filmback);
+					if (!framing) throw new Error("Unknown camera preset");
+					args = {
+						x: framing.pos.x, y: framing.pos.y, z: framing.pos.z,
+						lookAtX: actor?.x ?? 0,
+						lookAtY: SUBJECT_HEIGHT_M * (actor?.scale ?? 1) * 0.52,
+						lookAtZ: actor?.z ?? 0,
+						focalMm: framing.focalMm,
+					};
+					setCameraPresetId(rawArgs.preset);
+				} else if (Object.keys(finitePatch(rawArgs, ["x", "y", "z", "lookAtX", "lookAtY", "lookAtZ"])).length || rawArgs.focalMm !== undefined) {
+					// Any manual placement invalidates the recorded preset: the scene
+					// must not claim a framing it no longer has.
+					setCameraPresetId(null);
+				}
 				const patch = finitePatch(args, ["x", "y", "z"]);
 				let nextFov = live.fovDeg;
 				if (args.focalMm !== undefined) {
@@ -9828,6 +9861,23 @@ function resizePromptClip(id, edge, rawFrame) {
 							>
 								{Object.entries(PRESETS).map(([key, value]) => (
 									<option key={key} value={key}>{value.label}</option>
+								))}
+							</select>
+						</label>
+						<label className="viewport-toolbar-field ratio-field workflow-camera-context">
+							<span>{ko("Cam", "카메라")}</span>
+							<select
+								aria-label={ko("Camera preset", "카메라 프리셋")}
+								value={cameraPresetId ?? ""}
+								onChange={(event) => {
+									const id = event.target.value;
+									if (!id) { setCameraPresetId(null); return; }
+									liveHandlersRef.current?.set_camera({ preset: id });
+								}}
+							>
+								<option value="">{ko("Free", "자유")}</option>
+								{Object.values(CAMERA_PRESETS).map((value) => (
+									<option key={value.id} value={value.id}>{value.label}</option>
 								))}
 							</select>
 						</label>

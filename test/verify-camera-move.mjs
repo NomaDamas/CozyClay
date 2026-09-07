@@ -3,7 +3,9 @@
 // stays on the arc instead of cutting the chord, and the classifier only
 // claims a move the two framings geometrically prove.
 import {
+	CAMERA_PRESETS,
 	cameraMoveAt,
+	cameraPresetFraming,
 	captureFraming,
 	classifyMove,
 	easeInOut,
@@ -244,6 +246,50 @@ const near = (a, b, eps = 1e-6) => Math.abs(a - b) <= eps;
 	const phrase = moveSequencePhrase(segs);
 	expect("sequence phrase chains in time order", phrase.includes(", then ") && phrase.startsWith(segs[0].phrase), phrase);
 	expect("one segment phrase is the segment phrase", moveSequencePhrase([segs[0]]) === segs[0].phrase);
+}
+
+/* ------------------------------------------------- camera presets --- */
+{
+	// A preset is only useful if the frame it builds actually holds the body it
+	// was asked to hold, at both output ratios and for both shipped presets.
+	const filmbacks = [
+		{ label: "16:9", sensorId: DEFAULT_SENSOR_FORMAT, aspectRatio: 16 / 9 },
+		{ label: "12:7", sensorId: DEFAULT_SENSOR_FORMAT, aspectRatio: 12 / 7 },
+	];
+	for (const id of Object.keys(CAMERA_PRESETS)) {
+		const preset = CAMERA_PRESETS[id];
+		for (const filmback of filmbacks) {
+			const f = cameraPresetFraming(id, { x: 0, z: 0, height: 1.8 }, filmback);
+			expect(`${id} @ ${filmback.label} builds a framing`, !!f);
+			expect(`${id} @ ${filmback.label} stands at the preset height`, Math.abs(f.pos.y - preset.height) < 1e-9,
+				`${f.pos.y} != ${preset.height}`);
+			expect(`${id} @ ${filmback.label} keeps the preset focal length`, f.focalMm === preset.focalMm);
+			// Azimuth is measured off +z the way framingAt does it above.
+			const azDeg = (Math.atan2(f.pos.x, f.pos.z) * 180) / Math.PI;
+			expect(`${id} @ ${filmback.label} sits at the preset azimuth`, Math.abs(azDeg - preset.azimuthDeg) < 1e-6,
+				`${azDeg} != ${preset.azimuthDeg}`);
+			// The subject must project to the requested fraction of frame height:
+			// half the body subtends atan((h/2)/d) against half the vertical fov.
+			const dist = Math.hypot(f.pos.x, f.pos.z);
+			const halfFov = (f.fovDeg * Math.PI) / 360;
+			const fraction = Math.atan((1.8 / 2) / dist) / halfFov;
+			expect(`${id} @ ${filmback.label} frames the body at its subject fraction`,
+				Math.abs(fraction - preset.subjectFraction) < 0.06, `${fraction.toFixed(3)} vs ${preset.subjectFraction}`);
+			expect(`${id} @ ${filmback.label} leaves the whole body inside the frame`, fraction < 1,
+				`body fills ${fraction.toFixed(3)} of the frame height`);
+		}
+	}
+	// The interaction preset is the wider of the two: that is its whole purpose,
+	// holding a tall prop and the ground under it beside the subject.
+	const loco = cameraPresetFraming("mocapLocomotion", { x: 0, z: 0, height: 1.8 }, filmbacks[1]);
+	const inter = cameraPresetFraming("mocapInteraction", { x: 0, z: 0, height: 1.8 }, filmbacks[1]);
+	expect("the interaction preset is wider than the locomotion preset", inter.fovDeg > loco.fovDeg);
+	// A 4 m prop standing 2 m from the subject still fits the interaction frame.
+	const interDist = Math.hypot(inter.pos.x, inter.pos.z);
+	const propHalfAngle = Math.atan((4 / 2) / Math.max(interDist - 2, 0.1));
+	expect("a 4 m prop fits the interaction frame", propHalfAngle < (inter.fovDeg * Math.PI) / 360,
+		`prop ${(propHalfAngle * 360 / Math.PI).toFixed(1)} deg vs fov ${inter.fovDeg.toFixed(1)} deg`);
+	expect("an unknown preset id builds nothing", cameraPresetFraming("nope", { x: 0, z: 0 }, filmbacks[0]) === null);
 }
 
 if (failures > 0) {
