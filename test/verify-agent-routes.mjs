@@ -94,6 +94,10 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	const always = await turn(make(10));
 	const err = always.find((event) => event.type === "error");
 	assert.equal(err?.code, "overloaded", "a persistent overload is reported with its own code");
+	const serverError = { type: "error", error: { type: "server_error", code: "server_error", message: "An error occurred while processing your request." } };
+	let se = 0;
+	const flaky = { ...fakeCodex, streamResponses: () => ({ headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() { if (se++ < 1) { yield serverError; return; } yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } }; } }) };
+	assert.ok((await turn(flaky)).every((event) => event.type !== "error"), "a transient server_error stream is retried too");
 	console.log("PASS overloaded model streams are retried, then reported");
 }
 const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers: { origin: "http://evil.example" } });

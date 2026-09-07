@@ -46,6 +46,7 @@ function errorInfo(error, quota) {
 	if (error?.status === 429) return { code: "rate_limit", message: "Rate limit exceeded.", resetAt: quota?.primary.resetAt ?? null };
 	if (error?.code === "entitlement") return { code: "entitlement", message: "This account cannot generate images." };
 	if (error?.code === "overloaded") return { code: "overloaded", message: "The model service is overloaded right now. Try again in a moment." };
+	if (error?.code === "server_error") return { code: "overloaded", message: "The model service hit an internal error. Try again in a moment." };
 	// Backend errors may echo credentials or image inputs. Never forward their bodies.
 	return { code: "upstream", message: "The model or live editor could not complete this turn." };
 }
@@ -185,7 +186,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		const retryOverloaded = async (operation, attempts = 2) => {
 			for (let attempt = 0; ; attempt += 1) {
 				try { return await operation(); } catch (error) {
-					if (error.code !== "overloaded" || attempt >= attempts || signal.aborted) throw error;
+					if (!["overloaded", "server_error"].includes(error.code) || attempt >= attempts || signal.aborted) throw error;
 					await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
 				}
 			}
@@ -246,7 +247,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 							if (event.type === "error" || event.type === "response.failed") {
 								if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] model event:", JSON.stringify(event).slice(0, 600));
 								const code = event.error?.code ?? event.response?.error?.code;
-								throw Object.assign(new Error("Model response failed."), code === "server_is_overloaded" ? { code: "overloaded" } : {});
+								throw Object.assign(new Error("Model response failed."), code === "server_is_overloaded" ? { code: "overloaded" } : code === "server_error" ? { code: "server_error" } : {});
 							}
 						}
 						await headers;
