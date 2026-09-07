@@ -59,11 +59,12 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 	};
 	// The embedded Studio says hello a moment after the canvas; give it up to
 	// ten seconds before declaring that no scene editor exists.
-	const waitForSceneEditor = async () => {
+	const warmingUp = (error) => /scene editor|renderer is not ready/i.test(error?.message ?? "");
+	const untilReady = async (attempt) => {
 		const deadline = Date.now() + 10_000;
 		for (;;) {
-			try { return workspace("scene"); } catch (error) {
-				if (!/scene editor/i.test(error.message) || Date.now() >= deadline) throw error;
+			try { return await attempt(); } catch (error) {
+				if (!warmingUp(error) || Date.now() >= deadline) throw error;
 				session.signal?.throwIfAborted?.();
 				await new Promise((resolve) => setTimeout(resolve, 250));
 			}
@@ -83,8 +84,7 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 	const capture = {
 		name: "capture_blocking_frame", description: "Capture the current blocking frame before rendering.", parameters: objectSchema(),
 		handler: async () => {
-			await waitForSceneEditor();
-			const result = await live("capture_framing_png");
+			const result = await untilReady(() => live("capture_framing_png"));
 			session.signal.throwIfAborted();
 			const imageId = randomUUID();
 			session.images.set(imageId, result.dataUrl);

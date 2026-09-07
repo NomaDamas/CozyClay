@@ -205,6 +205,13 @@ console.log("agent routes verified");
 		const result = await pending;
 		assert.ok(result.imageId, "capture waits for the editor to say hello, then proceeds");
 		console.log("PASS scene commands wait for a scene editor and never hit the canvas");
+		// The embedded Studio answers hello before its shot renderer exists.
+		let attempts = 0;
+		const warming = { workspaceHandleDetails: () => canvasOnly, resolveWorkspace: () => "preview", command: async () => { attempts += 1; if (attempts < 3) throw new Error("The shot renderer is not ready"); return { dataUrl: png, width: 1, height: 1 }; } };
+		const warmTools = createAgentTools({ liveHub: warming, session: { ...session, images: new Map() }, emit: () => {} });
+		assert.ok((await warmTools.internal.capture.handler({})).imageId, "capture retries while the renderer warms up");
+		assert.equal(attempts, 3);
+		console.log("PASS capture retries until the shot renderer is ready");
 	}
 	assert.match(SYSTEM_PROMPT, /describe_workflow/);
 	for (const [name, command] of Object.entries(mapping)) {
