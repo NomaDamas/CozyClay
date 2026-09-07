@@ -2811,7 +2811,6 @@ globalThis.playMode = centerTab === "play";
 		characters: characters.map(({ sessionMotion, ...entry }) => entry),
 		hasCharSheet,
 		shotAspect: shotAspectKey,
-		cameraPresetId: preset.startsWith("mocap") ? preset : null,
 		sensorId,
 		keyLight,
 	};
