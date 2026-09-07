@@ -83,6 +83,19 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	attachServer.close();
 	console.log("PASS attachFrame captures through the internal tool");
 }
+{
+	// The backend sometimes answers a whole stream with server_is_overloaded.
+	// One retry usually clears it; a persistent overload is reported as such.
+	const overloaded = { type: "error", error: { type: "service_unavailable_error", code: "server_is_overloaded", message: "Our servers are currently overloaded." } };
+	const make = (failures) => { let n = 0; return { ...fakeCodex, streamResponses: () => ({ headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() { if (n++ < failures) { yield overloaded; return; } yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } }; } }) }; };
+	const turn = async (codex) => { const h = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex, liveHub: fakeLive, port: () => s.address().port, retryDelayMs: 1 }); const s = createServer((req, res) => h(req, res).catch(() => {})); s.listen(0, "127.0.0.1"); await once(s, "listening"); const p = s.address().port; const text = await fetch(`http://127.0.0.1:${p}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${p}` }, body: JSON.stringify({ sessionId: "ov" + Math.random(), text: "hi" }) }).then((r) => r.text()); s.close(); return [...text.matchAll(/^data: (.+)$/gm)].map((m) => JSON.parse(m[1])); };
+	const once1 = await turn(make(1));
+	assert.ok(once1.every((event) => event.type !== "error"), "one overloaded stream is retried and the turn completes");
+	const always = await turn(make(10));
+	const err = always.find((event) => event.type === "error");
+	assert.equal(err?.code, "overloaded", "a persistent overload is reported with its own code");
+	console.log("PASS overloaded model streams are retried, then reported");
+}
 const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers: { origin: "http://evil.example" } });
 assert.equal(forbidden.status, 403);
 assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);

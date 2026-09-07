@@ -124,6 +124,7 @@ export const ERROR_COPY = {
 	entitlement: "This account cannot generate images.",
 	rate_limit: "You have hit the usage limit for this window.",
 	upstream: "The model service failed to answer.",
+	overloaded: "The model service is overloaded right now. Try again in a moment.",
 };
 
 /** Split an SSE body into `data:` payload objects. Exported so the reader can
