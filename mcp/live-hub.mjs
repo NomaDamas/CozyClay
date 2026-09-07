@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { WebSocket, WebSocketServer } from "ws";
 
 export const DEFAULT_COMMAND_TIMEOUT_MS = 5_000;
+export const RUN_WORKFLOW_TIMEOUT_MS = 180_000;
 export const LOAD_MOTION_TIMEOUT_MS = 30_000;
 export const MOTION_JOB_TTL_MS = 10 * 60_000;
 export const MOTION_JOB_POLL_INTERVAL_MS = 0;
@@ -149,7 +150,10 @@ export class LiveHub {
 	}
 
 	static commandTimeoutMs(name) {
-		return name === "load_motion" ? LOAD_MOTION_TIMEOUT_MS : DEFAULT_COMMAND_TIMEOUT_MS;
+		if (name === "load_motion") return LOAD_MOTION_TIMEOUT_MS;
+		// A workflow run captures a frame and may generate an image upstream.
+		if (name === "run_workflow") return RUN_WORKFLOW_TIMEOUT_MS;
+		return DEFAULT_COMMAND_TIMEOUT_MS;
 	}
 
 	static commandMayMutate(name) {

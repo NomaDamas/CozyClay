@@ -100,6 +100,12 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	assert.ok((await turn(flaky)).every((event) => event.type !== "error"), "a transient server_error stream is retried too");
 	console.log("PASS overloaded model streams are retried, then reported");
 }
+{
+	const { LiveHub, RUN_WORKFLOW_TIMEOUT_MS, DEFAULT_COMMAND_TIMEOUT_MS } = await import("../mcp/live-hub.mjs");
+	assert.equal(LiveHub.commandTimeoutMs("run_workflow"), RUN_WORKFLOW_TIMEOUT_MS, "run_workflow waits for capture + generation");
+	assert.equal(LiveHub.commandTimeoutMs("add_node"), DEFAULT_COMMAND_TIMEOUT_MS);
+	console.log("PASS run_workflow gets a long live command timeout");
+}
 const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers: { origin: "http://evil.example" } });
 assert.equal(forbidden.status, 403);
 assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);
