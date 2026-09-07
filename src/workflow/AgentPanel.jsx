@@ -7,6 +7,7 @@ import {
 	AGENT_PANEL_WIDTH_MIN,
 	AGENT_STATES,
 	DEFAULT_MODELS,
+	effortOptions,
 	ERROR_COPY,
 	IMAGE_COST_HINT,
 	SUGGESTION_CHIPS,
@@ -97,6 +98,10 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	const [authState, setAuthState] = useState("loading");
 	const [models, setModels] = useState(DEFAULT_MODELS);
 	const [model, setModel] = useState(DEFAULT_MODELS[0].id);
+	// null = the model's backend default; picking a model resets it.
+	const [effort, setEffort] = useState(null);
+	const efforts = useMemo(() => effortOptions(models.find((entry) => entry.id === model)), [models, model]);
+	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); }, []);
 	const [draft, setDraft] = useState("");
 	const [attachFrame, setAttachFrame] = useState(false);
 	const [items, setItems] = useState([]);
@@ -264,14 +269,14 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 		const controller = new AbortController();
 		abortRef.current = controller;
 		try {
-			await transport.turn({ sessionId: sessionRef.current, text: trimmed, attachFrame, model }, applyEvent, controller.signal);
+			await transport.turn({ sessionId: sessionRef.current, text: trimmed, attachFrame, model, effort: effort ?? undefined }, applyEvent, controller.signal);
 		} catch (error) {
 			if (!controller.signal.aborted) applyEvent({ type: "error", code: "upstream", message: String(error?.message || error) });
 		} finally {
 			abortRef.current = null;
 			setStreaming(false);
 		}
-	}, [applyEvent, attachFrame, model, streaming, transport]);
+	}, [applyEvent, attachFrame, effort, model, streaming, transport]);
 	runTurnRef.current = runTurn;
 
 	const stopTurn = useCallback(() => {
@@ -323,9 +328,9 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	const switchModel = useCallback(() => {
 		const index = models.findIndex((entry) => entry.id === model);
 		const next = models[(index + 1) % models.length];
-		if (next) setModel(next.id);
+		if (next) chooseModel(next.id);
 		setRateLimit(null);
-	}, [model, models]);
+	}, [chooseModel, model, models]);
 
 	const onComposerKeyDown = useCallback((event) => {
 		if (event.key === "Escape" && streaming) {
@@ -453,14 +458,22 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 				onChange={(event) => setDraft(event.target.value)}
 				onKeyDown={onComposerKeyDown}
 			/>
+			<div className="agent-composer-controls agent-composer-picks">
+				<select className="agent-model-select" aria-label="Model" value={model} onChange={(event) => chooseModel(event.target.value)}>
+					{models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+				</select>
+				{efforts.length > 0 && (
+					<select className="agent-model-select agent-effort-select" aria-label="Reasoning effort" title="Reasoning effort" value={effort ?? efforts[0]} onChange={(event) => setEffort(event.target.value)}>
+						{efforts.map((value, index) => <option key={value} value={value}>{index === 0 ? `${value} · default` : value}</option>)}
+					</select>
+				)}
+			</div>
 			<div className="agent-composer-controls">
 				<button type="button" className="agent-attach-chip" aria-pressed={attachFrame} onClick={() => setAttachFrame((value) => !value)}>
 					{attachFrame ? <span className="agent-attach-thumb" aria-hidden="true" /> : <FiPaperclip size={11} aria-hidden="true" />}
 					Attach current frame
 				</button>
-				<select className="agent-model-select" aria-label="Model" value={model} onChange={(event) => setModel(event.target.value)}>
-					{models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
-				</select>
+				<span className="agent-composer-spacer" aria-hidden="true" />
 				{streaming
 					? <button type="button" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
 					: <button type="button" className="agent-send" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}>Send</button>}

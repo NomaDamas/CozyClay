@@ -7,7 +7,7 @@ const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCA
 const calls = [];
 const fakeLive = { command: async (name) => name === "capture_framing_png" ? { dataUrl: png, width: 1920, height: 1080 } : { assetId: "a1", objectId: "o1" } };
 const fakeCodex = {
-  listModels: async () => ["gpt-5", "gpt-6-astra"],
+  listModels: async () => ["gpt-5", { slug: "gpt-6-astra", supported_reasoning_levels: [{ effort: "low" }, { effort: "medium" }, { effort: "xhigh" }], default_reasoning_level: "medium" }],
   parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: { hasCredits: true } }),
   editImage: async () => ({ pngBase64: png.split(",")[1], width: 1, height: 1 }),
   streamResponses: ({ input }) => {
@@ -39,6 +39,20 @@ assert.equal(forbidden.status, 403);
 assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);
 const models = await fetch(`http://127.0.0.1:${port}/agent/models`).then((r) => r.json());
 assert.equal(models.models[0].id, "gpt-6-astra");
+assert.deepEqual(models.models[0].efforts, ["low", "medium", "xhigh"]); assert.equal(models.models[0].defaultEffort, "medium");
+assert.deepEqual(models.models[1].efforts, []); assert.equal(models.models[1].defaultEffort, null);
+{
+	const bad = await fetch(`http://127.0.0.1:${port}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` }, body: JSON.stringify({ sessionId: "e", text: "hi", effort: "bogus" }) });
+	assert.equal(bad.status, 400, "an effort the backend would reject never leaves the sidecar");
+	const seen = [];
+	const effortHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: { ...fakeCodex, streamResponses: (request) => { seen.push(request.effort); return fakeCodex.streamResponses(request); } }, liveHub: fakeLive, port: () => effortServer.address().port });
+	const effortServer = createServer((req, res) => effortHandler(req, res).catch(() => {})); effortServer.listen(0, "127.0.0.1"); await once(effortServer, "listening");
+	const effortPort = effortServer.address().port;
+	await fetch(`http://127.0.0.1:${effortPort}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${effortPort}` }, body: JSON.stringify({ sessionId: "e2", text: "hi", effort: "xhigh" }) }).then((r) => r.text());
+	assert.ok(seen.length > 0 && seen.every((effort) => effort === "xhigh"), "the chosen effort reaches every codex request of the turn");
+	effortServer.close();
+	console.log("PASS reasoning effort: models expose efforts/default, invalid effort is 400, chosen effort reaches codex");
+}
 const authHandler = createAgentHandler({ auth: { getAccessToken: async () => null }, codex: fakeCodex, liveHub: fakeLive, port: () => authServer.address().port });
 const authServer = createServer((req, res) => authHandler(req, res).catch(() => {})); authServer.listen(0, "127.0.0.1"); await once(authServer, "listening");
 const authPort = authServer.address().port;

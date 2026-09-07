@@ -34,6 +34,14 @@ export const AGENT_STATES = [
 	"error",
 ];
 
+/** Effort options for a model entry from /agent/models; the backend default comes first. */
+export function effortOptions(entry) {
+	const efforts = Array.isArray(entry?.efforts) ? entry.efforts : [];
+	if (!efforts.length) return [];
+	const fallback = entry.defaultEffort && efforts.includes(entry.defaultEffort) ? entry.defaultEffort : efforts[0];
+	return [fallback, ...efforts.filter((effort) => effort !== fallback)];
+}
+
 export const DEFAULT_MODELS = [
 	{ id: "gpt-5.1-codex", label: "Codex (default)" },
 	{ id: "gpt-5.1", label: "GPT-5.1" },
@@ -177,11 +185,11 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			return request("/agent/stop", { method: "POST", body: JSON.stringify({ sessionId }) });
 		},
 		/** Streams sidecar events to `onEvent`. Resolves when the turn ends. */
-		async turn({ sessionId, text, attachFrame, model }, onEvent, signal) {
+		async turn({ sessionId, text, attachFrame, model, effort }, onEvent, signal) {
 			const response = await fetchImpl(sidecarUrl("/agent/turn"), {
 				method: "POST",
 				headers: { "content-type": "application/json", accept: "text/event-stream" },
-				body: JSON.stringify({ sessionId, text, attachFrame, model }),
+				body: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}) }),
 				signal,
 			});
 			if (!response.ok || !response.body) {

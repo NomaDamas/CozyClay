@@ -144,6 +144,7 @@ export function createCodexClient({
 			store: false,
 			stream: true,
 			...(request.model ? { model: request.model } : {}),
+			...(request.effort ? { reasoning: { effort: request.effort } } : {}),
 		};
 	}
 
@@ -185,11 +186,11 @@ export function createCodexClient({
 	 * item and re-POSTs until the model produces a final assistant message.
 	 * Reasoning items are replayed verbatim exactly as the backend emitted them.
 	 */
-	async function runAgentTurn({ history, tools = [], executeTool, onEvent, signal, instructions, model }) {
+	async function runAgentTurn({ history, tools = [], executeTool, onEvent, signal, instructions, model, effort }) {
 		const continued = [...history];
 		let finalText = "";
 		while (true) {
-			const stream = streamResponses({ input: continued, tools, instructions, model, signal });
+			const stream = streamResponses({ input: continued, tools, instructions, model, effort, signal });
 			const outputItems = [];
 			for await (const event of stream) {
 				if (onEvent) onEvent(event);

@@ -3,6 +3,9 @@ import * as defaultAuth from "../codex-auth.mjs";
 import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT } from "./agent-tools.mjs";
 
+// Values the codex backend accepts for reasoning.effort (its own 400 lists them).
+export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
 const json = (res, status, value) => {
 	res.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" });
 	res.end(JSON.stringify(value));
@@ -99,7 +102,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 				const result = await codex.listModels();
 				const models = (Array.isArray(result) ? result : result.models).map((model) => {
 					const id = typeof model === "string" ? model : model.slug || model.id;
-					return { id, label: id };
+					const efforts = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels.map((level) => (typeof level === "string" ? level : level.effort)).filter(Boolean) : [];
+					return { id, label: id, efforts, defaultEffort: typeof model.default_reasoning_level === "string" ? model.default_reasoning_level : efforts[0] ?? null };
 				});
 				models.sort((a, b) => Number(b.id === "gpt-6-astra") - Number(a.id === "gpt-6-astra"));
 				json(res, 200, { models });
@@ -115,7 +119,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			if (!value || typeof value.sessionId !== "string" || !value.sessionId
 				|| (path === "/agent/turn" && (typeof value.text !== "string"
 					|| (value.attachFrame !== undefined && typeof value.attachFrame !== "boolean")
-					|| (value.model !== undefined && typeof value.model !== "string")))) throw new Error("Invalid request.");
+					|| (value.model !== undefined && typeof value.model !== "string")
+					|| (value.effort !== undefined && !REASONING_EFFORTS.includes(value.effort))))) throw new Error("Invalid request.");
 		} catch { json(res, 400, { error: "invalid request" }); return true; }
 		if (path === "/agent/stop") {
 			sessions.get(value.sessionId)?.controller?.abort();
@@ -187,7 +192,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			// the failed request rather than replaying already-executed scene tools.
 			while (true) {
 				const output = await retryAuth(async () => {
-					const stream = codex.streamResponses({ input: history, tools: agentToolSchemas(tools), instructions: SYSTEM_PROMPT, model: value.model, signal });
+					const stream = codex.streamResponses({ input: history, tools: agentToolSchemas(tools), instructions: SYSTEM_PROMPT, model: value.model, effort: value.effort, signal });
 					const headers = stream.headers.then(observeHeaders, () => {});
 					const items = [];
 					try {

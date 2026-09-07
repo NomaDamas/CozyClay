@@ -85,7 +85,17 @@ const USER_ITEM = { type: "message", role: "user", content: [{ type: "input_text
 	for (const forbidden of ["max_output_tokens", "previous_response_id", "background"]) {
 		assert.ok(!(forbidden in call.body), `must never send ${forbidden}`);
 	}
+	assert.ok(!("reasoning" in call.body), "no effort chosen → let the backend pick its default");
 	pass("streamResponses sends codex /responses shape + headers");
+}
+
+// --- 1b. reasoning effort is forwarded only when chosen ----------------------
+{
+	const fetch = mockFetch([() => sseResponse([COMPLETED])]);
+	const client = createCodexClient({ getAccessToken: async () => "tok-123", getAccountId: async () => "acct-9", fetch });
+	for await (const _ of await client.streamResponses({ input: [USER_ITEM], effort: "xhigh" })) { /* drain */ }
+	assert.deepEqual(fetch.calls[0].body.reasoning, { effort: "xhigh" });
+	pass("streamResponses sends reasoning.effort when the user picked one");
 }
 
 // --- 2. SSE parsing of function_call items ----------------------------------

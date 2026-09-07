@@ -638,6 +638,9 @@
 }
 
 .agent-model-select:focus { border-color: var(--agent-border-focus); }
+.agent-composer-picks { margin-bottom: var(--agent-space-2); }
+.agent-effort-select { flex: 0 0 auto; width: auto; max-width: 42%; }
+.agent-composer-spacer { flex: 1; }
 
 .agent-send {
 	flex: none;
