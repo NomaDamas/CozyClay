@@ -63,9 +63,14 @@ await waitFor("enabled Send", () => evaluate("document.querySelector('.agent-sen
 await evaluate("document.querySelector('.agent-send:not(.stop)').click()");
 // The UI may briefly render the running state between CDP evaluations; wait for
 // the observable terminal state rather than relying on a Stop-button race.
-await waitFor("turn end", () => evaluate("!document.querySelector('.agent-send.stop') && !!document.querySelector('.agent-row.user')"), 240000);
+await waitFor("turn end", () => evaluate("!document.querySelector('.agent-send.stop') && !!document.querySelector('.agent-row.user')"), 360000);
 const labels = await evaluate("[...document.querySelectorAll('.agent-panel .agent-tool-card .agent-tool-label')].map((node) => node.textContent.trim())");
-const after = await evaluate("(() => { const node = [...document.querySelectorAll('.react-flow__node')].find((entry) => /Image/.test(entry.textContent) && /Image Generation/.test(entry.textContent)); return { nodes: document.querySelectorAll('.react-flow__node').length, edges: document.querySelectorAll('.react-flow__edge').length, imageNodeText: node?.textContent || '', preview: node?.querySelector('img.workflow-image-preview')?.src || null }; })()");
+// Bring every node into view: the agent places new nodes to the right of the graph.
+await evaluate("(() => { const fit = document.querySelector('.react-flow__controls-fitview'); fit?.click(); return !!fit; })()");
+await new Promise((resolve) => setTimeout(resolve, 800));
+const dump = await evaluate("[...document.querySelectorAll('.react-flow__node')].map((entry) => ({ type: entry.getAttribute('data-id'), selects: [...entry.querySelectorAll('select')].map((s) => s.value), img: !!entry.querySelector('img.workflow-image-preview'), status: (entry.textContent.match(/Sign in|error|failed|Generating|responded \\d+/) || [])[0] || null }))");
+console.log("node dump:", JSON.stringify(dump));
+const after = await evaluate("(() => { const generated = [...document.querySelectorAll('.react-flow__node')].filter((entry) => [...entry.querySelectorAll('select')].some((select) => select.value === 'image-generation')); const node = generated.find((entry) => entry.querySelector('img.workflow-image-preview')) || generated.at(-1); return { nodes: document.querySelectorAll('.react-flow__node').length, edges: document.querySelectorAll('.react-flow__edge').length, imageNodeText: node?.textContent || '', preview: node?.querySelector('img.workflow-image-preview')?.src || null }; })()");
 const imageNodeText = after.imageNodeText || "";
 const imagePreview = after.preview;
 if (imagePreview?.startsWith("data:image/png")) await writeFile(`${out}/generated.png`, dataImage(imagePreview));

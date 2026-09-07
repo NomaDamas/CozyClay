@@ -98,3 +98,15 @@ console.log("PASS canvas commands: all nine dispatch handlers, model/schema vali
 	assert.throws(() => cmds.connect({ source: upload.id, target: image.id, sourceHandle: "render" }), /Invalid source handle/, "non-Scene nodes only have output");
 	console.log("PASS canvas commands: Scene source handles and upload node data");
 }
+
+// run_workflow republishes the graph the runner returns, node data included,
+// so a result the runner attached (a generated image) survives the publish.
+{
+	let g = { version: 1, nodes: [], edges: [] };
+	const st = { getGraph: () => g, setGraph: (next) => { g = next; }, run: async (input) => ({ graph: { ...input, nodes: input.nodes.map((node) => ({ ...node, data: { ...node.data, resultUrl: "data:image/png;base64,AA==", outputs: [{ value: "data:image/png;base64,AA==" }] } })) } }), focus: () => {} };
+	const cmds = createCanvasCommands({ store: st, makeNode, nodeSchemas: DEFAULT_NODE_SCHEMAS });
+	const image = cmds.add_node({ type: "image", model: "image-generation" }).node;
+	await cmds.run_workflow();
+	assert.equal(g.nodes.find((node) => node.id === image.id).data.resultUrl, "data:image/png;base64,AA==", "the runner's node data is what gets published");
+	console.log("PASS run_workflow publishes the runner's node data");
+}
