@@ -2,7 +2,7 @@ import { schemaCategoryForType, schemaProperties } from "./node-schema.js";
 
 const clone = (value) => structuredClone(value);
 const commonKeys = new Set(["label", "model", "selectedModel", "formValues", "outputs", "outputHistory", "resultUrl", "cost", "errorMsg", "isLoading", "status", "statusMessage", "preview", "lastOutput", "assetInputs", "motionInputs", "characterInputs", "sceneName", "sceneId", "scene", "characterId", "url", "objectUrl", "fileName", "mimeType", "fileUrl", "localPreview", "uploading"]);
-const typeKeys = { text: ["prompt"], image: ["prompt", "image_url"], video: ["prompt", "video_url", "duration"], audio: ["prompt", "audio_url", "duration"], api: ["params"], "video-combiner": ["videos_list", "aspect_ratio"], concat: ["template"], "motion-input": ["characterId"], upload: ["image_url", "video_url", "audio_url"] };
+const typeKeys = { text: ["prompt"], image: ["prompt", "image_url"], video: ["prompt", "video_url", "duration"], audio: ["prompt", "audio_url", "duration"], api: ["params"], "video-combiner": ["videos_list", "aspect_ratio"], concat: ["template"], "motion-input": ["characterId"], upload: ["image_url", "video_url", "audio_url"], "shot-prompt": ["prompt", "target", "referenceOwnsCamera"] };
 
 // New nodes go to the right of everything on the canvas so agent additions
 // never land on top of what the user already placed.
@@ -38,7 +38,7 @@ export function createCanvasCommands({ store, makeNode, nodeSchemas }) {
 	const handlers = {
 		get_graph: () => { const graph = clone(current()); return { ...graph, nodes: graph.nodes.map((node) => ({ id: node.id, type: node.type, model: node.data?.model || null, data: node.data, position: node.position })), outputs: Object.fromEntries(graph.nodes.map((node) => [node.id, node.data?.outputs || []])) }; },
 		add_node: ({ type, model, data = {}, position } = {}) => { const next = mutate((graph) => {
-			if (typeof type !== "string" || !type || !["text", "image", "video", "audio", "api", "video-combiner", "scene", "upload", "concat", "motion-input"].includes(type)) throw new Error("Unknown node type");
+			if (typeof type !== "string" || !type || !["text", "image", "video", "audio", "api", "video-combiner", "scene", "upload", "concat", "motion-input", "shot-prompt"].includes(type)) throw new Error("Unknown node type");
 			if (position && (!Number.isFinite(position.x) || !Number.isFinite(position.y))) throw new Error("position must contain finite x and y");
 			const id = `${type}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
 			const modelValue = typeof model === "string" ? model : model;

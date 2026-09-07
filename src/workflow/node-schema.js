@@ -60,5 +60,5 @@ export function defaultFormValues(properties = {}) {
 }
 
 export function schemaCategoryForType(type) {
-	return type === "concat" ? "utility" : type === "video-combiner" ? "utility" : type;
+	return ["concat", "video-combiner", "shot-prompt"].includes(type) ? "utility" : type;
 }

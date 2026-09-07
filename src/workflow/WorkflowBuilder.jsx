@@ -9,7 +9,7 @@ import ReactFlow, {
 	useEdgesState,
 	useNodesState,
 } from "reactflow";
-import { FiActivity, FiBox, FiCode, FiFilm, FiImage, FiLink, FiMusic, FiPlay, FiPlus, FiUpload, FiVideo, FiType } from "react-icons/fi";
+import { FiActivity, FiBox, FiCode, FiFileText, FiFilm, FiImage, FiLink, FiMusic, FiPlay, FiPlus, FiUpload, FiVideo, FiType } from "react-icons/fi";
 import { Toaster, toast } from "react-hot-toast";
 import { loadWorkflowGraph, normalizeWorkflowGraph, storeWorkflowGraph, WORKFLOW_STORAGE_KEY } from "../project.js";
 import AgentPanel from "./AgentPanel.jsx";
@@ -24,11 +24,13 @@ import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDo
 import { createHttpTransport } from "./agent-client.js";
 import { canvasTakesPaste, fileToDataUrl, imageFileFromTransfer, pastedImageNodeData } from "./clipboard-image.js";
 import { appendVersion, compareIndex, pinnedInputs, selectVersion, versionLabel, versionState } from "./image-versions.js";
+import ShotPromptNode from "./ShotPromptNode.jsx";
+import { shotPromptFromInputs, shotPromptNodeData } from "./shot-prompt-node.js";
 
-const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d" };
+const NODE_COLORS = { text: "#6c7cff", image: "#44c2a4", video: "#d9955b", audio: "#6bb6dc", api: "#cf8de8", "video-combiner": "#efb064", upload: "#a88cdb", concat: "#d6b55e", "motion-input": "#79b5ed", scene: "#ef759d", "shot-prompt": "#8fd4b0" };
 
 function makeNode(type, id, position, model = null, nodeSchemas = DEFAULT_NODE_SCHEMAS) {
-	const data = { label: type === "scene" ? "CozyClay Scene" : type[0].toUpperCase() + type.slice(1) };
+	const data = { label: type === "scene" ? "CozyClay Scene" : type === "shot-prompt" ? "Shot Prompt" : type[0].toUpperCase() + type.slice(1) };
 	Object.assign(data, { cost: 0, outputHistory: [], outputs: [], resultUrl: null, isLoading: false, errorMsg: null });
 	if (type === "text") data.prompt = "Describe a shot for your scene...";
 	if (type === "image") data.model = "image-passthrough";
@@ -38,6 +40,7 @@ function makeNode(type, id, position, model = null, nodeSchemas = DEFAULT_NODE_S
 	if (type === "video-combiner") { data.model = "video-combiner"; data.videos_list = []; data.aspect_ratio = "auto"; }
 	if (type === "concat") data.model = "prompt-concatenator";
 	if (type === "motion-input") Object.assign(data, normalizeMotionInputData({ label: "Motion Input" }));
+	if (type === "shot-prompt") Object.assign(data, shotPromptNodeData());
 	if (model?.id) {
 		data.model = model.id;
 		data.selectedModel = { id: model.id, name: model.name };
@@ -228,7 +231,13 @@ function ConcatNode({ id, data }) {
 	return <NodeShell id={id} type="concat" title="Prompt Concat" icon={FiLink}><label>Template</label><input value={data.template || "{prompt} {style}"} onChange={(event) => data.onChange?.(id, { template: event.target.value })} /><div className="workflow-node-foot"><span>Text merge</span></div><Handle type="target" position={Position.Left} id="input-a" className="workflow-handle target" /></NodeShell>;
 }
 
-const NODE_TYPES = { text: TextNode, image: ImageNode, video: VideoNode, audio: AudioNode, api: ApiNode, "video-combiner": VideoCombinerNode, upload: UploadNode, concat: ConcatNode, "motion-input": MotionInputNode };
+// ShotPromptNode lives in its own file and takes NodeShell by injection, so it
+// never has to import back into this module.
+function ShotPromptNodeType(props) {
+	return <ShotPromptNode {...props} NodeShell={NodeShell} />;
+}
+
+const NODE_TYPES = { text: TextNode, image: ImageNode, video: VideoNode, audio: AudioNode, api: ApiNode, "video-combiner": VideoCombinerNode, upload: UploadNode, concat: ConcatNode, "motion-input": MotionInputNode, "shot-prompt": ShotPromptNodeType };
 
 function SceneNodeType({ data, ...props }) {
 	return <CozySceneNode {...props} data={data} HandleComponent={Handle} onDataChange={data.onSceneChange} onRun={data.onSceneRun} onOpenScene={() => window.open("/app/", "_blank", "noopener,noreferrer")} />;
@@ -417,6 +426,7 @@ export default function WorkflowBuilder() {
 		setNodes(result.nodes);
 		const runId = `local-${Date.now()}`;
 		const values = new Map();
+		const sceneMeta = new Map();
 		// Everything runWorkflow writes to a node also lands in the graph it
 		// returns, so a caller that republishes that graph keeps the results.
 		const patches = new Map();
@@ -428,8 +438,22 @@ export default function WorkflowBuilder() {
 				try {
 					const frame = await captureSceneFrame(id);
 					values.set(id, frame.dataUrl);
-					patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
+					// The capture metadata rides along on lastOutput so a downstream
+					// Shot Prompt node can describe the shot without re-capturing.
+					patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
+					sceneMeta.set(id, frame.meta ?? current.data?.lastOutput?.meta ?? null);
 				} catch (error) { patchNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message }); }
+			} else if (current.type === "shot-prompt") {
+				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => result.nodes.find((node) => node.id === edge.source)).filter(Boolean);
+				const scene = incoming.find((node) => node.type === "scene");
+				// This run's capture wins; the stored one keeps the node useful when
+				// the Scene was captured in an earlier run.
+				const meta = (scene && sceneMeta.get(scene.id)) || scene?.data?.lastOutput?.meta || null;
+				const intent = incoming.filter((node) => node.type === "text").map((node) => node.data?.prompt ?? values.get(node.id)).find((value) => typeof value === "string" && value.trim());
+				const { prompt, error } = shotPromptFromInputs({ meta, intent, target: current.data?.target, referenceOwnsCamera: current.data?.referenceOwnsCamera });
+				if (error) { patchNode(id, { status: "error", errorMsg: error, prompt: "", outputs: [], resultUrl: null }); continue; }
+				values.set(id, prompt);
+				patchNode(id, { status: "complete", errorMsg: null, prompt, outputs: [{ value: prompt }], resultUrl: null });
 			} else if (current.type === "video" && current.data?.model === "video-generation") {
 				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
 				const imageInputs = incoming.filter((entry) => typeof entry.value === "string" && entry.value.startsWith("data:image/"));
@@ -437,8 +461,12 @@ export default function WorkflowBuilder() {
 				const lastFrameDataUrl = imageInputs[1]?.value;
 				if (!frame) { patchNode(id, { status: "error", errorMsg: "Connect a Scene frame or an image before generating." }); continue; }
 				const form = current.data.formValues || {};
+				// A Shot Prompt node upstream is an explicit prompt: it wins over an
+				// empty motion prompt on the node itself.
+				const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
+				const motionPrompt = String(form.prompt ?? current.data.prompt ?? "").trim() || upstreamPrompt || "";
 				patchNode(id, { isLoading: true, errorMsg: null });
-				try { const output = await createHttpTransport().video({ provider: form.provider || current.data.provider || "comfy", prompt: form.prompt ?? current.data.prompt ?? "", imageDataUrl: frame, ...(lastFrameDataUrl ? { lastFrameDataUrl } : {}), durationSeconds: Number(form.duration_seconds ?? current.data.duration_seconds ?? 5), aspect: form.aspect || current.data.aspect || "16:9", ...(current.data.model ? { model: current.data.model } : {}) }); const videoUrl = output.dataUrl || output.url; values.set(id, videoUrl); patchNode(id, { isLoading: false, status: "complete", videoUrl, resultUrl: videoUrl, outputs: [{ value: videoUrl }], errorMsg: null }); }
+				try { const output = await createHttpTransport().video({ provider: form.provider || current.data.provider || "comfy", prompt: motionPrompt, imageDataUrl: frame, ...(lastFrameDataUrl ? { lastFrameDataUrl } : {}), durationSeconds: Number(form.duration_seconds ?? current.data.duration_seconds ?? 5), aspect: form.aspect || current.data.aspect || "16:9", ...(current.data.model ? { model: current.data.model } : {}) }); const videoUrl = output.dataUrl || output.url; values.set(id, videoUrl); patchNode(id, { isLoading: false, status: "complete", videoUrl, resultUrl: videoUrl, outputs: [{ value: videoUrl }], errorMsg: null }); }
 				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
 			} else if (current.type === "image" && current.data?.model === "image-generation") {
 				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
@@ -449,7 +477,10 @@ export default function WorkflowBuilder() {
 				// so a prompt tweak is the only thing that changes between takes.
 				const { source, reference } = pinnedInputs(current.data, { source: upstreamSource, reference: upstreamReference });
 				if (!source) { patchNode(id, { status: "error", errorMsg: "Connect a Scene frame before generating." }); continue; }
-				const prompt = current.data.prompt || "";
+				// Same precedence as the Video node: the node's own prompt if it has
+				// one, otherwise the structured prompt from an upstream Shot Prompt.
+				const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
+				const prompt = String(current.data.prompt || "").trim() || upstreamPrompt || "";
 				patchNode(id, { isLoading: true, errorMsg: null });
 				try { const output = await createHttpTransport().image({ prompt, imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", errorMsg: null, ...appendVersion(current.data, { dataUrl: output.dataUrl, prompt, referenceDataUrl: reference || null, frameDataUrl: source, at: Date.now() }) }); }
 				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
@@ -525,6 +556,6 @@ export default function WorkflowBuilder() {
 	return <div className="workflow-app">
 		<Toaster position="bottom-right" toastOptions={{ style: { background: "#252833", color: "#f4f5fb" } }} />
 		<header className="workflow-topbar"><div className="workflow-brand"><span className="workflow-brand-mark">C</span><span>CozyClay</span><span className="workflow-divider">/</span><strong>Workflow</strong></div><div className="workflow-top-actions"><span className={`workflow-status ${runState}`}><i /> {runLabel}</span><button type="button" onClick={saveWorkflow}>{lastSaved ? "Saved" : "Save"}</button><button type="button" onClick={() => runWorkflow()}><FiPlay size={12} /> Run</button><button type="button" onClick={exportGraph}>Export</button><button type="button" className="workflow-agent-toggle" title="Toggle agent panel (Cmd/Ctrl+B)" onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}>Agent</button></div></header>
-		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><input className="workflow-node-search" aria-label="Search nodes or models" placeholder="Search nodes or models" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />{modelSearch && <div className="workflow-model-results">{modelOptions.length ? modelOptions.map((model) => { const Icon = modelIcons[model.type] || FiBox; return <button type="button" key={`${model.type}-${model.id}`} className="workflow-add-node" onClick={() => { addNode(model.type, model); setModelSearch(""); }}><span style={{ color: NODE_COLORS[model.type] }}><Icon size={15} /></span><span>{model.name}</span><FiPlus size={13} /></button>; }) : <span className="workflow-hint">No models found</span>}</div>}<div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["audio", "Audio", FiMusic], ["api", "API Node", FiCode], ["video-combiner", "Video Combiner", FiFilm], ["motion-input", "Motion Input", FiActivity], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas" ref={canvasRef} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}><ReactFlow onInit={(instance) => { flowRef.current = instance; }} nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section><AgentPanel sceneName={sceneContext.name} /></div>
+		<div className="workflow-main"><aside className="workflow-sidebar"><div className="workflow-sidebar-title">Nodes</div><p className="workflow-sidebar-copy">Build a visual chain from prompts to a staged CozyClay scene.</p><input className="workflow-node-search" aria-label="Search nodes or models" placeholder="Search nodes or models" value={modelSearch} onChange={(event) => setModelSearch(event.target.value)} />{modelSearch && <div className="workflow-model-results">{modelOptions.length ? modelOptions.map((model) => { const Icon = modelIcons[model.type] || FiBox; return <button type="button" key={`${model.type}-${model.id}`} className="workflow-add-node" onClick={() => { addNode(model.type, model); setModelSearch(""); }}><span style={{ color: NODE_COLORS[model.type] }}><Icon size={15} /></span><span>{model.name}</span><FiPlus size={13} /></button>; }) : <span className="workflow-hint">No models found</span>}</div>}<div className="workflow-node-menu">{[["text", "Text", FiType], ["image", "Image", FiImage], ["video", "Video", FiVideo], ["audio", "Audio", FiMusic], ["api", "API Node", FiCode], ["video-combiner", "Video Combiner", FiFilm], ["motion-input", "Motion Input", FiActivity], ["shot-prompt", "Shot Prompt", FiFileText], ["upload", "Upload", FiUpload], ["concat", "Prompt Concat", FiLink], ["scene", "CozyClay Scene", FiBox]].map(([type, label, Icon]) => <button type="button" key={type} className="workflow-add-node" onClick={() => addNode(type)}><span style={{ color: NODE_COLORS[type] }}><Icon size={16} /></span><span>{label}</span><FiPlus size={13} /></button>)}</div><div className="workflow-sidebar-bottom"><button type="button" onClick={() => setLocked((value) => !value)}>{locked ? "Unlock canvas" : "Lock canvas"}</button><a href="/app/">Open Studio ↗</a></div></aside><section className="workflow-canvas" ref={canvasRef} onDragOver={onCanvasDragOver} onDrop={onCanvasDrop}><ReactFlow onInit={(instance) => { flowRef.current = instance; }} nodes={decoratedNodes} edges={edges} nodeTypes={FLOW_NODE_TYPES} onNodesChange={locked ? undefined : onNodesChange} onEdgesChange={locked ? undefined : onEdgesChange} onConnect={locked ? undefined : onConnect} fitView snapToGrid snapGrid={[16, 16]} defaultEdgeOptions={{ type: "smoothstep" }}><Background color="#282c38" gap={24} size={1} /><Controls showInteractive={false} /><Panel position="top-right" className="workflow-canvas-panel"><button type="button" onClick={() => addNode("scene")}><FiPlus size={13} /> Add node</button></Panel></ReactFlow></section><AgentPanel sceneName={sceneContext.name} /></div>
 	</div>;
 }
