@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
-export const SYSTEM_PROMPT = "You are CozyClay's previs assistant. The user is looking at the workflow canvas. Call describe_workflow before editing it. Use workflow tools to make precise graph changes. Capture a blocking frame before rendering; render_from_frame edits that capture. Use place_image_in_scene to add renders to the scene. Keep responses concise and practical.";
+export const SYSTEM_PROMPT = "You are CozyClay's workflow agent. The user is looking at the Workflow canvas, and you work by building and running nodes on that canvas, so every step is visible and editable. Always call describe_workflow first to read the current graph. To render the scene in a new look: reuse the existing Scene node, add an Image node with model image-generation whose data.prompt is the user's intent, connect the Scene node to it with connect_workflow_nodes (sourceHandle render, targetHandle input), and when the user attached or mentioned a reference image, add one with add_reference_node and connect it to the same Image node's input handle; then call run_workflow. Finish with one or two sentences naming the nodes you created. Never describe results you did not run. Keep responses concise and practical.";
 
 /** The Workflow page embeds the Studio as a live preview, so the hub usually
  * sees at least two editors. Prefer the tab the user is authoring in: any
@@ -90,6 +90,15 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 			return live("import_asset", { name: `${imageId}.png`, mimeType: "image/png", dataUrl, placeAs });
 		},
 	};
+	const reference = {
+		name: "add_reference_node", description: "Add an attached or captured image to the canvas as a reference upload node.",
+		parameters: objectSchema({ imageId: { type: "string" } }),
+		handler: async ({ imageId } = {}) => {
+			const dataUrl = session.images.get(imageId ?? session.latestCaptureId);
+			if (!dataUrl) throw new Error("No reference image is available. Capture or attach one first.");
+			return live("add_node", { type: "upload", data: { image_url: dataUrl, fileName: "reference.png", mimeType: "image/png", outputs: [{ value: dataUrl }] } }, "workflow");
+		},
+	};
 	const workflow = [
 		["describe_workflow", "Describe the current workflow canvas.", "get_graph", objectSchema()],
 		["add_workflow_node", "Add a node to the workflow canvas.", "add_node", objectSchema({ type: { type: "string" }, model: { type: "string" }, data: { type: "object" }, position: { type: "object" } }, ["type"])],
@@ -105,7 +114,7 @@ export function createAgentTools({ liveHub, handlers = [], session, emit }) {
 		name, description: registry.get(name)?.description || name,
 		parameters: objectSchema(), handler: () => registered(name),
 	}));
-	return [capture, render, place, ...workflow, ...direct];
+	return [reference, ...workflow, ...direct];
 }
 
 export const agentToolSchemas = (tools) => tools.map(({ name, description, parameters }) => ({ type: "function", name, description, parameters }));

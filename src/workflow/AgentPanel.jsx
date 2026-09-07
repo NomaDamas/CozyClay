@@ -28,15 +28,30 @@ function StatusDot({ tone, title }) {
 	return <span className={`agent-status-dot ${tone}`} title={title} aria-hidden="true" />;
 }
 
+// Canvas tools read as actions, never as raw function names; the map takes
+// precedence over the server's underscore-to-space label.
+const CANVAS_TOOL_LABELS = {
+	describe_workflow: "Read canvas",
+	add_workflow_node: "Add node",
+	update_workflow_node: "Edit node",
+	remove_workflow_node: "Remove node",
+	connect_workflow_nodes: "Connect nodes",
+	disconnect_workflow_nodes: "Disconnect nodes",
+	run_workflow: "Run workflow",
+	set_workflow_node_output: "Set node output",
+	focus_workflow_node: "Focus node",
+	add_reference_node: "Add reference image",
+};
+
 function ToolCallCard({ call, onRetry }) {
 	const tone = call.status === "running" ? "busy" : call.status === "failed" ? "alert" : "ok";
-	const canvasTool = ["describe_workflow", "add_workflow_node", "update_workflow_node", "remove_workflow_node", "connect_workflow_nodes", "disconnect_workflow_nodes", "run_workflow", "set_workflow_node_output", "focus_workflow_node"].includes(call.name);
+	const canvasTool = Object.hasOwn(CANVAS_TOOL_LABELS, call.name);
 	const detail = call.error ? `error: ${call.error}` : JSON.stringify(call.result ?? call.args ?? {}, null, 2);
 	return <div className={`agent-card agent-tool-card${call.status === "failed" ? " failed" : ""}`} data-tool-status={call.status} data-tool-name={call.name}>
 		<details>
 			<summary>
 				<StatusDot tone={tone} title={call.status} />
-				<span className="agent-tool-label">{toolCallLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
+				<span className="agent-tool-label">{canvasTool ? CANVAS_TOOL_LABELS[call.name] : toolCallLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
 				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : formatElapsed(call.elapsedMs)}</span>
 				<FiChevronRight size={12} aria-hidden="true" />
 			</summary>

@@ -13,10 +13,12 @@ const fakeCodex = {
   streamResponses: ({ input }) => {
     calls.push(input);
     const items = calls.length === 1
-      ? [{ type: "message", role: "assistant" }, { type: "function_call", call_id: "c1", name: "capture_blocking_frame", arguments: "{}" }]
+      ? [{ type: "message", role: "assistant" }, { type: "function_call", call_id: "c1", name: "describe_workflow", arguments: "{}" }]
       : calls.length === 2
-        ? [{ type: "function_call", call_id: "c2", name: "render_from_frame", arguments: JSON.stringify({ prompt: "render" }) }]
-        : [{ type: "message", role: "assistant" }];
+        ? [{ type: "function_call", call_id: "c2", name: "add_workflow_node", arguments: JSON.stringify({ type: "image", model: "image-generation", data: { prompt: "render" } }) }]
+        : calls.length === 3
+          ? [{ type: "function_call", call_id: "c3", name: "run_workflow", arguments: "{}" }]
+          : [{ type: "message", role: "assistant" }];
     return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
       if (calls.length !== 2) yield { type: "response.output_text.delta", delta: calls.length === 1 ? "hello" : " done" };
       for (const item of items) yield { type: "response.output_item.done", item };
@@ -32,7 +34,11 @@ const { port } = server.address();
 const response = await fetch(`http://127.0.0.1:${port}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` }, body: JSON.stringify({ sessionId: "s", text: "hi", attachFrame: false }) });
 const text = await response.text();
 const events = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
-assert.deepEqual(events.map((event) => event.type), ["quota", "text.delta", "tool.start", "tool.done", "tool.start", "image", "tool.done", "text.delta", "done"]);
+assert.deepEqual(events.map((event) => event.type), ["quota", "text.delta", "tool.start", "tool.done", "tool.start", "tool.done", "text.delta", "tool.start", "tool.done", "text.delta", "done"]);
+const toolEvents = events.filter((event) => event.type === "tool.start" || event.type === "tool.done");
+assert.deepEqual(toolEvents.map((event) => event.callId), ["c1", "c1", "c2", "c2", "c3", "c3"], "every tool.start is paired with its tool.done");
+assert.ok(toolEvents.every((event) => event.type !== "tool.done" || event.ok), "every scripted tool call succeeds");
+assert.equal(events.some((event) => event.type === "image"), false, "the canvas turn builds nodes instead of emitting images");
 assert.equal(calls[0][0].content[0].text.includes(png), false);
 {
 	const post = (body, p = port) => fetch(`http://127.0.0.1:${p}/agent/image`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${p}` }, body: JSON.stringify(body) });
@@ -122,7 +128,7 @@ console.log("agent routes verified");
 }
 
 {
-	const { pickWorkspace, createAgentTools, agentToolSchemas } = await import("../bin/agent/agent-tools.mjs");
+	const { pickWorkspace, createAgentTools, agentToolSchemas, SYSTEM_PROMPT } = await import("../bin/agent/agent-tools.mjs");
 	const mapping = { describe_workflow: "get_graph", add_workflow_node: "add_node", update_workflow_node: "update_node", remove_workflow_node: "remove_node", connect_workflow_nodes: "connect", disconnect_workflow_nodes: "disconnect", run_workflow: "run_workflow", set_workflow_node_output: "set_node_output", focus_workflow_node: "focus_node" };
 	const details = [
 		{ handle: "studio", meta: { commands: ["capture_framing_png", "import_asset"] } },
@@ -142,8 +148,11 @@ console.log("agent routes verified");
 	const session = { signal: new AbortController().signal, images: new Map(), codex: fakeCodex };
 	const tools = createAgentTools({ liveHub: hub, session, emit: () => {} });
 	const schemas = agentToolSchemas(tools);
-	assert.deepEqual(schemas.map((tool) => tool.name).sort(), ["capture_blocking_frame", "render_from_frame", "place_image_in_scene", "describe_scene", "describe_shot", ...Object.keys(mapping)].sort());
-	assert.equal(schemas.find((tool) => tool.name === "render_from_frame").parameters.properties.addAsNode.type, "boolean");
+	const names = schemas.map((tool) => tool.name);
+	for (const removed of ["capture_blocking_frame", "render_from_frame", "place_image_in_scene"]) assert.equal(names.includes(removed), false, `${removed} is removed from the tool list`);
+	assert.ok(names.includes("describe_workflow") && names.includes("add_reference_node"), "describe_workflow and add_reference_node are exposed");
+	assert.match(SYSTEM_PROMPT, /run_workflow/);
+	assert.match(SYSTEM_PROMPT, /describe_workflow/);
 	for (const [name, command] of Object.entries(mapping)) {
 		const tool = tools.find((entry) => entry.name === name);
 		const args = command === "add_node" ? { type: "image" } : {};
@@ -153,11 +162,21 @@ console.log("agent routes verified");
 	assert.deepEqual(schemas.find((tool) => tool.name === "add_workflow_node").parameters.required, ["type"]);
 	assert.equal(schemas.find((tool) => tool.name === "update_workflow_node").parameters.properties.data.type, "object");
 	assert.deepEqual(schemas.find((tool) => tool.name === "connect_workflow_nodes").parameters.required, ["source", "target"]);
-	await tools.find((tool) => tool.name === "capture_blocking_frame").handler();
-	assert.equal(routed.at(-1).handle, "studio");
-	await tools.find((tool) => tool.name === "render_from_frame").handler({ prompt: "render", addAsNode: true });
+	assert.deepEqual(schemas.find((tool) => tool.name === "add_reference_node").parameters.required, [], "imageId is optional on add_reference_node");
+	await tools.find((tool) => tool.name === "describe_workflow").handler();
+	assert.equal(routed.at(-1).handle, "canvas");
+	await assert.rejects(tools.find((tool) => tool.name === "add_reference_node").handler({}), /image/i, "no reference image, no node");
+	session.images.set("ref", png);
+	session.latestCaptureId = "ref";
+	await tools.find((tool) => tool.name === "add_reference_node").handler({});
 	assert.equal(routed.at(-1).name, "add_node"); assert.equal(routed.at(-1).handle, "canvas");
-	assert.equal(routed.at(-1).args.model, "image-passthrough"); assert.equal(routed.at(-1).args.data.image_url, png);
-	assert.equal(session.workspaceHandle, "studio"); assert.equal(session.workflowHandle, "canvas");
-	console.log("PASS canvas agent tools: kind isolation, schemas, one-to-one routing, independent handles, render addAsNode");
+	assert.equal(routed.at(-1).args.type, "upload");
+	assert.equal(routed.at(-1).args.data.image_url, png);
+	assert.equal(routed.at(-1).args.data.fileName, "reference.png");
+	assert.equal(routed.at(-1).args.data.mimeType, "image/png");
+	assert.deepEqual(routed.at(-1).args.data.outputs, [{ value: png }]);
+	await tools.find((tool) => tool.name === "add_reference_node").handler({ imageId: "ref" });
+	assert.equal(routed.at(-1).args.data.image_url, png);
+	assert.equal(session.workflowHandle, "canvas");
+	console.log("PASS canvas agent tools: kind isolation, schemas, one-to-one routing, add_reference_node, independent handles");
 }
