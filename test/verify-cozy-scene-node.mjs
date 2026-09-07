@@ -72,3 +72,13 @@ assert.equal(failed.status, "error");
 assert.equal(failed.statusMessage, "bridge unavailable");
 
 console.log("cozy scene node adapter checks passed");
+
+// The embedded Studio is the Scene node's preview: it must look through the
+// shot camera (what capture_framing_png renders), not the editor camera.
+{
+	const { readFileSync } = await import("node:fs");
+	const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+	assert.match(app, /useState\(embedMode\)/, "lookThroughShot defaults to the embed mode");
+	assert.match(app, /if \(!lookThroughShot \|\| embedMode\) return undefined;/, "Escape does not leave the shot view inside the embed");
+	console.log("PASS embedded Studio previews through the shot camera");
+}

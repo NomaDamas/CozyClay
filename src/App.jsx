@@ -650,15 +650,17 @@ globalThis.playMode = centerTab === "play";
 	// records; the shot camera keeps the framing. Look-through hands the fly
 	// controls the shot camera itself — the pre-split single-view behaviour —
 	// for framing by flying.
-	const [lookThroughShot, setLookThroughShot] = useState(false);
+	// The Workflow page embeds this Studio as the Scene node's preview; that
+	// preview must show what the node captures on Run: the shot camera's view.
+	const [lookThroughShot, setLookThroughShot] = useState(embedMode);
 	useEffect(() => {
-		if (!lookThroughShot) return undefined;
+		if (!lookThroughShot || embedMode) return undefined;
 		const onKey = (event) => {
 			if (event.key === "Escape") setLookThroughShot(false);
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [lookThroughShot]);
+	}, [lookThroughShot, embedMode]);
 	useEffect(() => {
 		// The player always starts the finished piece from frame 0; auto-play
 		// only exists once there is a motion to play.
