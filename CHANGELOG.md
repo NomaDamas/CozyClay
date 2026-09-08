@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.7.1
+
+- Open the complete Studio at the development server root; the unfinished
+  Workflow canvas remains available at `/workflow/`.
+
 ## 1.7.0
 
 Kimodo becomes the default motion-generation backend, and a full edit-and-refine
