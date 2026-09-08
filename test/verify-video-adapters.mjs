@@ -129,7 +129,8 @@ writeFileSync(h3WorkflowPath, JSON.stringify({
 assert.equal(hasH3SceneComposite(JSON.parse(readFileSync(h3WorkflowPath, "utf8")), new Set(["7"])).pass, true, "H3 graph has an uploaded-plate compositor on the final output path");
 assert.equal(hasH3SceneComposite(JSON.parse(readFileSync(h3WorkflowPath, "utf8")), new Set(["7", "1"])).pass, false, "every final video output must pass through the compositor");
 const h3 = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: h3WorkflowPath }).find((adapter) => adapter.id === "comfy");
-await h3.generate({ prompt: "a person climbs onto the chair", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
+const h3Result = await h3.generate({ prompt: "a person climbs onto the chair", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
+assert.equal(h3Result.preservation.compositor.pass, true, "successful H3 result carries the verified compositor receipt");
 const h3PromptCall = requests.filter((entry) => entry.path === "/prompt").at(-1);
 assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /immutable scene plate/);
 assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /locked camera/);
@@ -169,6 +170,31 @@ execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i
 const driftCheck = await inspectH3Output({ imageDataUrl: png, videoBytes: readFileSync(driftVideo), expectedWidth: 1, expectedHeight: 1 });
 assert.equal(driftCheck.pass, false, "H3 output guard rejects a changed plate");
 console.log("PASS H3 output guard: decoded plate drift is fail-closed");
+
+// A tracked compositor is allowed to move a large foreground subject while
+// copying the plate into every background pixel. Full-frame percentiles would
+// reject that valid close-up; the perimeter/camera checks must still run.
+const closeupPlate = join(dir, "closeup-plate.png");
+	execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=100x100:d=1", "-vf", "drawbox=x=27:y=15:w=45:h=70:color=red:t=fill", "-frames:v", "1", "-y", closeupPlate]);
+const closeupFrames = [];
+for (let index = 0; index < 5; index += 1) {
+	const framePath = join(dir, `closeup-${index}.png`);
+	// Keep the perimeter black while moving the subject far enough that an
+	// uncomposited full-frame comparison clearly sees the change.
+	const x = index % 2 ? 65 : 13;
+	execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=100x100:d=1", "-vf", `drawbox=x=${x}:y=15:w=22:h=70:color=red:t=fill`, "-frames:v", "1", "-y", framePath]);
+	closeupFrames.push(framePath);
+}
+const closeupList = join(dir, "closeup-list.txt");
+	writeFileSync(closeupList, closeupFrames.map((framePath) => `file '${framePath}'\nduration 0.2`).join("\n"));
+const closeupVideo = join(dir, "closeup.mp4");
+execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", closeupList, "-r", "5", "-pix_fmt", "yuv420p", "-c:v", "libx264", "-y", closeupVideo]);
+const closeupImage = `data:image/png;base64,${readFileSync(closeupPlate).toString("base64")}`;
+const closeupCheck = await inspectH3Output({ imageDataUrl: closeupImage, videoBytes: readFileSync(closeupVideo), expectedWidth: 100, expectedHeight: 100, compositorVerified: true });
+assert.equal(closeupCheck.pass, true, "verified compositor allows large foreground motion with a stable perimeter");
+const unverifiedCloseupCheck = await inspectH3Output({ imageDataUrl: closeupImage, videoBytes: readFileSync(closeupVideo), expectedWidth: 100, expectedHeight: 100 });
+assert.equal(unverifiedCloseupCheck.pass, false, "unverified output remains fail-closed when foreground motion changes most pixels");
+console.log("PASS H3 output guard: compositor-aware foreground motion handling");
 
 const unlockedWorkflowPath = join(dir, "h3-unlocked.json");
 writeFileSync(unlockedWorkflowPath, JSON.stringify({ "1": { class_type: "MiniMaxH3ImageToVideo", inputs: { prompt: "stale" } } }));

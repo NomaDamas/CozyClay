@@ -183,13 +183,22 @@ function ImageNode({ id, data }) {
 	return <NodeShell id={id} type="image" title="Image" icon={FiImage}><label>Model</label><ModelSelect id={id} data={data} category="image" fallback={["image-passthrough", "image-generation"]} />{generated && hasVersions ? <ImageVersions id={id} data={data} /> : generated && data.resultUrl ? <img className="workflow-image-preview" src={data.resultUrl} alt="Generated workflow output" /> : <div className="workflow-dropzone"><FiImage size={18} /><span>{generated ? "Connect a Scene frame" : "Connect an image or prompt"}</span></div>}{generated && data.isLoading && <div className="workflow-hint">Generating image…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>}<SchemaFields id={id} data={data} category="image" /><div className="workflow-node-foot"><span>Image output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
+function h3VerificationMetrics(preservation) {
+	const worst = preservation?.worst;
+	if (!worst || !Number.isFinite(Number(worst.p95Rgb))) return "";
+	const edge = Number(worst.p95Rgb).toFixed(1);
+	const global = Number.isFinite(Number(worst.globalP80Rgb)) ? ` · full-frame P80 ${Number(worst.globalP80Rgb).toFixed(1)} RGB` : "";
+	const camera = Number.isFinite(Number(worst.cameraDriftPx)) ? ` · camera shift ${Number(worst.cameraDriftPx).toFixed(1)} px` : "";
+	return ` · edge p95 ${edge} RGB${global}${camera}`;
+}
+
 function VideoNode({ id, data }) {
 	const generated = data.model === "video-generation";
 	const [providers, setProviders] = useState([]);
 	useEffect(() => { if (generated) createHttpTransport().videoProviders().then((result) => setProviders(result.providers || [])).catch(() => {}); }, [generated]);
 	const provider = data.formValues?.provider || data.provider || "comfy";
 	const update = (key, value) => data.onChange?.(id, { [key]: value, formValues: { ...(data.formValues || {}), [key]: value } });
-	return <NodeShell id={id} type="video" title="Video" icon={FiVideo}><label>Model</label><ModelSelect id={id} data={data} category="video" fallback={["video-passthrough", "video-generation"]} />{generated && <><label>Provider</label><select value={provider} onChange={(event) => update("provider", event.target.value)}>{(providers.length ? providers : [{ id: "comfy", name: "ComfyUI", configured: false }, { id: "fal", name: "Fal.ai", configured: false }]).map((entry) => <option key={entry.id} value={entry.id} disabled={!entry.configured}>{entry.name} {!entry.configured ? `(set ${entry.id === "comfy" ? "COZYCLAY_COMFY_URL" : "FAL_KEY"})` : ""}</option>)}</select><label>Motion prompt</label><textarea className="workflow-textarea" value={data.formValues?.prompt ?? data.prompt ?? ""} onChange={(event) => update("prompt", event.target.value)} placeholder="Motion prompt" /><label>Duration (seconds)</label><input type="number" min="1" max="15" value={data.formValues?.duration_seconds ?? data.duration_seconds ?? 5} onChange={(event) => update("duration_seconds", Number(event.target.value))} /><label>Aspect</label><select value={data.formValues?.aspect ?? data.aspect ?? "16:9"} onChange={(event) => update("aspect", event.target.value)}>{["16:9", "9:16", "1:1", "21:9", "12:7"].map((aspect) => <option key={aspect}>{aspect}</option>)}</select></>}{data.videoUrl && <video controls className="workflow-video-preview" src={data.videoUrl} />}{generated && data.preservation?.pass && <div className="workflow-hint workflow-preservation-ok" data-testid="h3-preservation-receipt">✓ Scene and camera lock verified</div>}{generated && data.isLoading && <div className="workflow-hint">Generating video…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>} {!generated && <SchemaFields id={id} data={data} category="video" />}<div className="workflow-node-foot"><span>Video output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
+	return <NodeShell id={id} type="video" title="Video" icon={FiVideo}><label>Model</label><ModelSelect id={id} data={data} category="video" fallback={["video-passthrough", "video-generation"]} />{generated && <><label>Provider</label><select value={provider} onChange={(event) => update("provider", event.target.value)}>{(providers.length ? providers : [{ id: "comfy", name: "ComfyUI", configured: false }, { id: "fal", name: "Fal.ai", configured: false }]).map((entry) => <option key={entry.id} value={entry.id} disabled={!entry.configured}>{entry.name} {!entry.configured ? `(set ${entry.id === "comfy" ? "COZYCLAY_COMFY_URL" : "FAL_KEY"})` : ""}</option>)}</select><label>Motion prompt</label><textarea className="workflow-textarea" value={data.formValues?.prompt ?? data.prompt ?? ""} onChange={(event) => update("prompt", event.target.value)} placeholder="Motion prompt" /><label>Duration (seconds)</label><input type="number" min="1" max="15" value={data.formValues?.duration_seconds ?? data.duration_seconds ?? 5} onChange={(event) => update("duration_seconds", Number(event.target.value))} /><label>Aspect</label><select value={data.formValues?.aspect ?? data.aspect ?? "16:9"} onChange={(event) => update("aspect", event.target.value)}>{["16:9", "9:16", "1:1", "21:9", "12:7"].map((aspect) => <option key={aspect}>{aspect}</option>)}</select></>}{data.videoUrl && <video controls className="workflow-video-preview" src={data.videoUrl} />}{generated && data.preservation?.pass && <div className="workflow-hint workflow-preservation-ok" data-testid="h3-preservation-receipt">✓ H3 scene/camera lock verified{h3VerificationMetrics(data.preservation)}</div>}{generated && data.preservation && !data.preservation.pass && <div className="workflow-error workflow-preservation-failed" data-testid="h3-preservation-failed">✕ H3 output rejected: background/camera drift{h3VerificationMetrics(data.preservation)}</div>}{generated && data.isLoading && <div className="workflow-hint">Generating video…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>} {!generated && <SchemaFields id={id} data={data} category="video" />}<div className="workflow-node-foot"><span>Video output <NodeCost data={data} /></span><button className="workflow-mini-button" type="button" onClick={() => data.onRun?.(id)} disabled={data.isLoading}><FiPlay size={12} /></button></div></NodeShell>;
 }
 
 function AudioNode({ id, data }) {
@@ -472,9 +481,13 @@ export default function WorkflowBuilder() {
 				// empty motion prompt on the node itself.
 				const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
 				const motionPrompt = String(form.prompt ?? current.data.prompt ?? "").trim() || upstreamPrompt || "";
-				patchNode(id, { isLoading: true, errorMsg: null });
+				// Remove the previous take while a new one is being verified. Keeping it
+				// visible during a failed H3 run makes an old, valid clip look like the
+				// newly requested result.
+				values.delete(id);
+				patchNode(id, { isLoading: true, status: "running", errorMsg: null, videoUrl: null, resultUrl: null, outputs: [], preservation: null });
 				try { const output = await createHttpTransport().video({ provider: form.provider || current.data.provider || "comfy", prompt: motionPrompt, imageDataUrl: frame, ...(lastFrameDataUrl ? { lastFrameDataUrl } : {}), durationSeconds: Number(form.duration_seconds ?? current.data.duration_seconds ?? 5), aspect: form.aspect || current.data.aspect || "16:9", ...(current.data.model ? { model: current.data.model } : {}) }); const videoUrl = output.dataUrl || output.url; values.set(id, videoUrl); patchNode(id, { isLoading: false, status: "complete", videoUrl, resultUrl: videoUrl, outputs: [{ value: videoUrl }], preservation: output.preservation || null, errorMsg: null }); }
-				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
+				catch (error) { values.delete(id); patchNode(id, { isLoading: false, status: "error", errorMsg: error.message, statusMessage: error.message, videoUrl: null, resultUrl: null, outputs: [], preservation: error?.preservation || null }); }
 			} else if (current.type === "image" && current.data?.model === "image-generation") {
 				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
 				const frame = incoming.find((entry) => entry.node?.type === "scene" && entry.value)?.value;
@@ -509,7 +522,11 @@ export default function WorkflowBuilder() {
 		}
 		setRunState("complete");
 		toast.success(nodeId ? "Node evaluated locally" : "Workflow evaluated locally");
-		const outputs = result.nodes.map((node) => ({ id: node.id, outputs: values.has(node.id) && values.get(node.id) !== undefined ? [{ value: values.get(node.id) }] : node.data?.outputs || [] }));
+		const outputs = result.nodes.map((node) => {
+			const patch = patches.get(node.id);
+			const hasPatchedOutputs = patch && Object.prototype.hasOwnProperty.call(patch, "outputs");
+			return { id: node.id, outputs: values.has(node.id) && values.get(node.id) !== undefined ? [{ value: values.get(node.id) }] : hasPatchedOutputs ? patch.outputs : node.data?.outputs || [] };
+		});
 		return { graph: serializableGraph(result.nodes.map((node) => ({ ...node, data: { ...node.data, ...(patches.get(node.id) || {}), outputs: outputs.find((entry) => entry.id === node.id).outputs } })), graph.edges), outputs };
 	}, [graph, setNodes]);
 

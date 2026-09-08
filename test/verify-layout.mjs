@@ -18,8 +18,15 @@ const timeline = readFileSync(new URL("../src/ardy/timeline.jsx", import.meta.ur
 const dualview = readFileSync(new URL("../src/dualview.jsx", import.meta.url), "utf8");
 const offscreenExport = readFileSync(new URL("../src/offscreen-export.js", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../src/ui.jsx", import.meta.url), "utf8");
+const workflowBuilder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
+const agentClient = readFileSync(new URL("../src/workflow/agent-client.js", import.meta.url), "utf8");
 
 expect("workspace layout persists across reloads", app.includes("WORKSPACE_LAYOUT_KEY") && app.includes("localStorage.setItem"));
+expect("H3 lock evidence is visible on successful video takes", workflowBuilder.includes('data-testid="h3-preservation-receipt"') && workflowBuilder.includes("H3 scene/camera lock verified"));
+expect("H3 drift evidence is visible when a take is rejected", workflowBuilder.includes('data-testid="h3-preservation-failed"') && workflowBuilder.includes("H3 output rejected: background/camera drift"));
+expect("failed H3 takes cannot leave a stale video preview visible", workflowBuilder.includes("videoUrl: null, resultUrl: null, outputs: [], preservation: error?.preservation || null"));
+expect("failed H3 outputs stay cleared in the returned workflow graph", workflowBuilder.includes('hasPatchedOutputs') && workflowBuilder.includes('Object.prototype.hasOwnProperty.call(patch, "outputs")'));
+expect("video requests preserve structured H3 rejection metrics", agentClient.includes("error.preservation = detail.preservation") && agentClient.includes("error.status = response.status"));
 expect("sidebar width has a pointer resize path", app.includes('beginWorkspaceResize("sidebar"'));
 expect("frame monitor height has a pointer resize path", app.includes('beginWorkspaceResize("timeline"'));
 expect("inset view has a diagonal resize path", app.includes("beginInsetResize") && app.includes("vp-inset-resize"));

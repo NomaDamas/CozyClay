@@ -21,6 +21,14 @@ export const H3_OUTPUT_LIMITS = Object.freeze({
 	// The full-frame 80th percentile catches a camera translation in the
 	// middle of the set even when the border happens to be covered by a subject.
 	globalP80Rgb: 16,
+	// Once the output's first decoded frame has established the model's codec
+	// reconstruction, every later frame must keep the static scene band stable.
+	// This catches a camera move that happens to reconstruct to a similar value
+	// relative to the uploaded plate (and avoids treating subject motion as set
+	// motion).
+	temporalEdgeP95Rgb: 14,
+	temporalEdgeMeanRgb: 6,
+	temporalGlobalP80Rgb: 16,
 	cameraDriftPx: 2,
 	aspectError: 0.01,
 	borderFraction: 0.12,
@@ -34,7 +42,11 @@ export function estimateH3CameraShift(reference, frame, width, height, { borderF
 	let best = { x: 0, y: 0, error: Infinity }; let baseline = Infinity;
 	for (let dy = -maxShift; dy <= maxShift; dy += 1) for (let dx = -maxShift; dx <= maxShift; dx += 1) {
 		let sum = 0; let count = 0;
-		for (let y = borderY; y < height - borderY; y += 6) for (let x = borderX; x < width - borderX; x += 6) {
+		for (let y = 0; y < height; y += 4) for (let x = 0; x < width; x += 4) {
+			// Estimate rigid movement only from the static perimeter. Sampling the
+			// interior lets a moving performer win the alignment search and can
+			// incorrectly call subject motion a camera correction.
+			if (!(x < borderX || x >= width - borderX || y < borderY || y >= height - borderY)) continue;
 			if (x + dx < 0 || x + dx >= width || y + dy < 0 || y + dy >= height) continue;
 			const a = (y * width + x) * 3; const b = ((y + dy) * width + x + dx) * 3;
 			sum += (Math.abs(reference[a] - frame[b]) + Math.abs(reference[a + 1] - frame[b + 1]) + Math.abs(reference[a + 2] - frame[b + 2])) / 3;
@@ -49,6 +61,26 @@ export function estimateH3CameraShift(reference, frame, width, height, { borderF
 	// shift as camera evidence when the alignment materially improves error.
 	const distancePx = improvementRgb >= 8 ? Math.hypot(best.x, best.y) : 0;
 	return { x: best.x, y: best.y, errorRgb: best.error, baselineErrorRgb: baseline, improvementRgb, distancePx };
+}
+
+/** Compare two generated frames in the static perimeter and full frame. */
+export function compareH3FrameStability(reference, frame, width, height, { borderFraction = H3_OUTPUT_LIMITS.borderFraction } = {}) {
+	if (!(reference instanceof Uint8Array) || !(frame instanceof Uint8Array) || reference.length < width * height * 3 || frame.length < width * height * 3) throw new TypeError("compareH3FrameStability needs two decoded RGB frames");
+	const borderX = Math.max(1, Math.floor(width * borderFraction));
+	const borderY = Math.max(1, Math.floor(height * borderFraction));
+	const edge = []; const global = [];
+	for (let y = 0; y < height; y += 2) for (let x = 0; x < width; x += 2) {
+		const i = (y * width + x) * 3;
+		const d = (Math.abs(reference[i] - frame[i]) + Math.abs(reference[i + 1] - frame[i + 1]) + Math.abs(reference[i + 2] - frame[i + 2])) / 3;
+		global.push(d);
+		if (x < borderX || x >= width - borderX || y < borderY || y >= height - borderY) edge.push(d);
+	}
+	edge.sort((a, b) => a - b); global.sort((a, b) => a - b);
+	const meanRgb = edge.reduce((sum, value) => sum + value, 0) / Math.max(1, edge.length);
+	const p95Rgb = edge[Math.min(edge.length - 1, Math.floor(edge.length * 0.95))] ?? 255;
+	const globalP80Rgb = global[Math.min(global.length - 1, Math.floor(global.length * 0.8))] ?? 255;
+	const camera = estimateH3CameraShift(reference, frame, width, height, { borderFraction });
+	return { meanRgb, p95Rgb, globalP80Rgb, cameraDriftPx: camera.distancePx, cameraShift: { x: camera.x, y: camera.y }, cameraErrorRgb: camera.errorRgb, cameraImprovementRgb: camera.improvementRgb, samples: edge.length, globalSamples: global.length };
 }
 
 function run(command, args, input = null) {
@@ -68,9 +100,14 @@ function run(command, args, input = null) {
 
 async function decode(path, width, height, seek = null, inputFormat = null) {
 	const args = ["-hide_banner", "-loglevel", "error"];
-	if (seek !== null) args.push("-ss", String(Math.max(0, seek)));
 	if (inputFormat) args.push("-f", inputFormat);
-	args.push("-i", path, "-vf", `scale=${width}:${height}:flags=bicubic`, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1");
+	args.push("-i", path);
+	// Place -ss after the input so ffmpeg decodes through the preceding GOP and
+	// returns the requested frame. Fast input seeking would repeatedly return
+	// the first keyframe on long-GOP H3 clips, making temporal camera drift look
+	// stable when it was never inspected.
+	if (seek !== null) args.push("-ss", String(Math.max(0, seek)));
+	args.push("-vf", `scale=${width}:${height}:flags=bicubic`, "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "pipe:1");
 	const { stdout } = await run("ffmpeg", args);
 	const expected = width * height * 3;
 	if (stdout.length < expected) throw new Error(`decoded frame is ${stdout.length} bytes; expected ${expected}`);
@@ -122,7 +159,7 @@ export function compareH3Plate(reference, frame, width, height, { borderFraction
  * deliberately fail-closed: if ffmpeg/ffprobe cannot inspect the result, the
  * caller must not present it as a scene-locked take.
  */
-export async function inspectH3Output({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits = H3_OUTPUT_LIMITS }) {
+export async function inspectH3Output({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits = H3_OUTPUT_LIMITS, compositorVerified = false }) {
 	if (!imageDataUrl?.startsWith("data:image/")) throw new Error("H3 preservation requires the uploaded first image.");
 	if (!Buffer.isBuffer(videoBytes) || videoBytes.length === 0) throw new Error("H3 preservation requires non-empty video bytes.");
 	const dir = await mkdtemp(join(tmpdir(), "cozyclay-h3-"));
@@ -154,16 +191,28 @@ export async function inspectH3Output({ imageDataUrl, videoBytes, expectedWidth,
 		const frameStep = Number.isFinite(meta.fps) && meta.fps > 0 ? 1 / meta.fps : 1 / 24;
 		const lastFrameTime = Math.max(0, duration - frameStep);
 		const times = [...new Set([0, lastFrameTime * 0.25, lastFrameTime * 0.5, lastFrameTime * 0.75, lastFrameTime])];
-		const frames = [];
-		for (const time of times) frames.push(compareH3Plate(reference, await decodeNearest(videoPath, width, height, time, duration), width, height, limits));
+		const frames = []; const decoded = [];
+		for (const time of times) {
+			const frame = await decodeNearest(videoPath, width, height, time, duration);
+			decoded.push(frame); frames.push(compareH3Plate(reference, frame, width, height, limits));
+		}
+		const temporal = decoded.slice(1).map((frame) => compareH3FrameStability(decoded[0], frame, width, height, limits));
 		const worst = frames.reduce((acc, item) => ({ meanRgb: Math.max(acc.meanRgb, item.meanRgb), p95Rgb: Math.max(acc.p95Rgb, item.p95Rgb), globalP80Rgb: Math.max(acc.globalP80Rgb, item.globalP80Rgb), cameraDriftPx: Math.max(acc.cameraDriftPx, item.cameraDriftPx) }), { meanRgb: 0, p95Rgb: 0, globalP80Rgb: 0, cameraDriftPx: 0 });
-		const pass = worst.p95Rgb <= limits.edgeP95Rgb && worst.meanRgb <= limits.edgeMeanRgb && worst.globalP80Rgb <= limits.globalP80Rgb && worst.cameraDriftPx <= limits.cameraDriftPx;
-		return { pass, width, height, seconds: meta.seconds, aspectError, frames, worst, limits };
+		const temporalWorst = temporal.reduce((acc, item) => ({ meanRgb: Math.max(acc.meanRgb, item.meanRgb), p95Rgb: Math.max(acc.p95Rgb, item.p95Rgb), globalP80Rgb: Math.max(acc.globalP80Rgb, item.globalP80Rgb), cameraDriftPx: Math.max(acc.cameraDriftPx, item.cameraDriftPx) }), { meanRgb: 0, p95Rgb: 0, globalP80Rgb: 0, cameraDriftPx: 0 });
+		// A verified SAM3/ImageCompositeMasked graph owns the foreground mask and
+		// copies the uploaded plate into every non-subject pixel. In that mode a
+		// full-frame percentile would mistake legitimate actor motion for a set
+		// change (especially in close-up shots). Keep the hard perimeter checks for
+		// camera/background drift; retain full-frame checks for unverified callers.
+		const plateGlobalPass = compositorVerified || worst.globalP80Rgb <= limits.globalP80Rgb;
+		const temporalGlobalPass = compositorVerified || temporalWorst.globalP80Rgb <= limits.temporalGlobalP80Rgb;
+		const pass = worst.p95Rgb <= limits.edgeP95Rgb && worst.meanRgb <= limits.edgeMeanRgb && plateGlobalPass && worst.cameraDriftPx <= limits.cameraDriftPx && temporalWorst.p95Rgb <= limits.temporalEdgeP95Rgb && temporalWorst.meanRgb <= limits.temporalEdgeMeanRgb && temporalGlobalPass && temporalWorst.cameraDriftPx <= limits.cameraDriftPx;
+		return { pass, width, height, seconds: meta.seconds, aspectError, frames, temporal, worst, temporalWorst, compositorVerified, limits };
 	} finally {
 		await rm(dir, { recursive: true, force: true });
 	}
 }
 
-export async function inspectH3OutputFromData({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits }) {
-	return inspectH3Output({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits });
+export async function inspectH3OutputFromData({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits, compositorVerified = false }) {
+	return inspectH3Output({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits, compositorVerified });
 }

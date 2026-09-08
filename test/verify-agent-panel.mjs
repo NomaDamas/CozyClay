@@ -5,6 +5,7 @@
 // red: where the panel is mounted, the width contract, the no-token rule, and
 // the presence of every state the issue enumerates.
 import { readFileSync } from "node:fs";
+import assert from "node:assert/strict";
 
 const panel = readFileSync(new URL("../src/workflow/AgentPanel.jsx", import.meta.url), "utf8");
 const client = readFileSync(new URL("../src/workflow/agent-client.js", import.meta.url), "utf8");
@@ -140,6 +141,13 @@ expect("the scripted turn emits an image and a done event", client.includes('typ
 
 // --- behaviour of the pure helpers --------------------------------------
 const module_ = await import("../src/workflow/agent-client.js");
+const rejectedTransport = module_.createHttpTransport({ fetchImpl: async () => ({
+	ok: false,
+	status: 422,
+	clone: () => ({ json: async () => ({ error: "H3 preservation failed", preservation: { pass: false, worst: { p95Rgb: 44 } } }) }),
+}) });
+await assert.rejects(() => rejectedTransport.video({}), (error) => error.status === 422 && error.preservation?.worst?.p95Rgb === 44);
+expect("video transport keeps H3 rejection evidence for the node", true);
 expect("clampPanelWidth pins the floor", module_.clampPanelWidth(120) === 300);
 expect("clampPanelWidth pins the ceiling", module_.clampPanelWidth(9000) === 560);
 expect("clampPanelWidth keeps a legal width", module_.clampPanelWidth(412) === 412);

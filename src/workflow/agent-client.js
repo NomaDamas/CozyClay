@@ -165,7 +165,14 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			let detail = null;
 			try { detail = await response.clone().json(); } catch { /* preserve the status when the server did not send JSON */ }
 			const message = typeof detail?.error === "string" ? detail.error : detail?.error?.message;
-			throw new Error(message || `${path} responded ${response.status}`);
+			const error = new Error(message || `${path} responded ${response.status}`);
+			// Keep machine-readable verification evidence alongside the human message.
+			// The Workflow node can show why an H3 take was rejected without exposing
+			// or retaining the rejected video itself.
+			error.status = response.status;
+			if (detail?.error && typeof detail.error === "object") Object.assign(error, detail.error);
+			if (detail?.preservation && typeof detail.preservation === "object") error.preservation = detail.preservation;
+			throw error;
 		}
 		return response.json();
 	};
