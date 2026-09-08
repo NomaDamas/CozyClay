@@ -1075,6 +1075,9 @@ select {
 .app[data-embed-mode="playview"] .bottom-window {
 	display: none;
 }
+.app[data-embed-mode="playview"] .agent-panel {
+	display: none;
+}
 .app[data-embed-mode="playview"] .main,
 .app[data-embed-mode="playview"] .workspace,
 .app[data-embed-mode="playview"] .viewport {

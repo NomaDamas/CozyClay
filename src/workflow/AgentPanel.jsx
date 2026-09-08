@@ -101,11 +101,15 @@ function PausedCard({ resetAt, onRetry, onSwitchModel }) {
 	</div>;
 }
 
-export default function AgentPanel({ transport: injectedTransport = null, sceneName = "CozyClay Scene" }) {
+// `defaultCollapsed` + `onCollapsedChange` let a host mirror the panel's
+// visibility in its own chrome (the studio's View ▾ menu) without taking the
+// flag away from the panel: the rail button, Cmd/Ctrl+B and the toggle event
+// all still flip it here, and the host is told after every flip.
+export default function AgentPanel({ transport: injectedTransport = null, sceneName = "CozyClay Scene", defaultCollapsed = false, onCollapsedChange = null }) {
 	const transport = useMemo(() => injectedTransport || createAgentTransport(), [injectedTransport]);
 	const mockState = transport.mock ? transport.state : null;
 
-	const [collapsed, setCollapsed] = useState(false);
+	const [collapsed, setCollapsed] = useState(defaultCollapsed);
 	const [width, setWidth] = useState(readStoredPanelWidth);
 	const [resizing, setResizing] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
@@ -190,6 +194,10 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 		window.addEventListener("cozyclay:agent-panel-toggle", onToggle);
 		return () => window.removeEventListener("cozyclay:agent-panel-toggle", onToggle);
 	}, []);
+
+	useEffect(() => {
+		onCollapsedChange?.(collapsed);
+	}, [collapsed, onCollapsedChange]);
 
 	// Focus moves to the composer whenever the panel opens. The composer only
 	// mounts once the session resolves, so authState is a dependency too:

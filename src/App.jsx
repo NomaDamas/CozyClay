@@ -61,6 +61,7 @@ import Timeline from "./ardy/timeline.jsx";
 import { alignArdyPath, judgeAuthoredPath, judgeNextWaypoint } from "./ardy/waypoints.js";
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
 import { createLiveControl } from "./live-control.js";
+import AgentPanel from "./workflow/AgentPanel.jsx";
 import HierarchyPanel from "./hierarchy-panel.jsx";
 import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor, saveAutoColor } from "./auto-color.js";
@@ -3073,6 +3074,11 @@ export default function App() {
 			window.removeEventListener("keydown", onKeyDown);
 		};
 	}, [viewMenuOpen]);
+	// The agent panel keeps owning its own collapsed flag (the rail button and
+	// Cmd/Ctrl+B both live inside it); the studio only mirrors the flag so the
+	// View ▾ item can render a checkmark. It boots collapsed here: the studio
+	// opens on the stage, not on a chat column.
+	const [agentCollapsed, setAgentCollapsed] = useState(true);
 	const projectHandleRef = useRef(null);
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
@@ -10626,6 +10632,26 @@ function resizePromptClip(id, edge, rawFrame) {
 											})}
 										</div>
 									)}
+									{/* Panel visibility belongs to the same menu (R4): the
+									    agent column is something you show, not a mode, so it
+									    gets a checkmark here instead of a topbar button. */}
+									{!embedMode && (
+										<div className="view-menu-group" role="group" aria-label={ko("Panels", "패널")}>
+											<span className="view-menu-label" aria-hidden="true">{ko("Panels", "패널")}</span>
+											<button
+												type="button"
+												role="menuitemcheckbox"
+												className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
+												aria-checked={!agentCollapsed}
+												aria-pressed={!agentCollapsed}
+												title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
+												onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
+											>
+												<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
+												{ko("Agent panel", "에이전트 패널")}
+											</button>
+										</div>
+									)}
 								</div>
 							)}
 						</div>
@@ -12974,6 +13000,13 @@ function resizePromptClip(id, edge, rawFrame) {
 						/>
 					)}
 				</aside>
+				{!embedMode && (
+					<AgentPanel
+						sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
+						defaultCollapsed
+						onCollapsedChange={setAgentCollapsed}
+					/>
+				)}
 			</div>
 
 			<div

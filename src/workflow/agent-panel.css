@@ -8,11 +8,14 @@
  * as one surface. No component rule may hardcode a colour, radius or spacing
  * value: extend the token block instead. */
 
-.workflow-app {
+.workflow-app,
+.app {
 	--agent-width-default: 360px;
 	--agent-width-min: 300px;
 	--agent-width-max: 560px;
 	--agent-rail-width: 36px;
+	/* Top of the overlay drawer: the host's top bar height. */
+	--agent-drawer-top: 58px;
 
 	--agent-bg: #14161d;
 	--agent-bg-raised: #1a1d26;
@@ -54,6 +57,20 @@
 	--agent-dot: 6px;
 	--agent-shadow: 0 12px 34px #0006;
 	--agent-motion: 140ms ease;
+}
+
+/* The studio top bar is 48px where the workflow one is 58px, so the drawer
+ * hangs from a different line in the same rules. */
+.app {
+	--agent-drawer-top: 48px;
+}
+
+/* The studio keeps no collapsed rail. The builder can afford a permanent strip
+ * next to a canvas; the studio cannot — a rail button would spend one of the
+ * mode's visible controls (docs/studio-ui-ia.md R6) on chrome nobody asked
+ * for. View ▾ (and Cmd/Ctrl+B) is the way in, like every other panel. */
+.app .agent-panel.collapsed {
+	display: none;
 }
 
 /* --- shell ------------------------------------------------------------- */
@@ -673,7 +690,7 @@
 @media (max-width: 1100px) {
 	.agent-panel:not(.collapsed) {
 		position: fixed;
-		top: 58px;
+		top: var(--agent-drawer-top);
 		right: 0;
 		bottom: 0;
 		z-index: 20;
@@ -682,7 +699,7 @@
 
 	.agent-panel.collapsed {
 		position: fixed;
-		top: 58px;
+		top: var(--agent-drawer-top);
 		right: 0;
 		bottom: 0;
 		z-index: 20;
