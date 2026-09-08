@@ -13,9 +13,9 @@
  *                   heights AND whose horizontal speed is below the side's
  *                   median — that is the stance phase, without needing the
  *                   contact logits (a converted take has dropped them).
- *   jitter          mean |second difference| of posed_joints in mm/frame^2.
- *                   Frame-independent noise in the keypoints shows up here
- *                   and nowhere else; real motion is smooth at this scale.
+ *   jitter          mean |second difference| of posed_joints.  The raw
+ *                   mm/frame^2 value is retained for diagnostics and the
+ *                   fps-normalised mm/s^2 value is used for cross-rate gates.
  *   below floor     frames whose lowest foot joint sits under Y=0. The
  *                   converter grounds the clip on its 10th percentile, so a
  *                   few frames are expected; many mean the legs are wrong.
@@ -84,12 +84,18 @@ export function mocapMetricsFromMotion(motion, { path = "<memory>" } = {}) {
 	}
 	const take = { path, frames: motion.frames, fps, joints, root };
 	const floor = belowFloor(take);
+	const jitterMmPerFrame2 = jitter(take);
 	return {
 		path,
 		frames: take.frames,
 		fps: take.fps,
 		footSlideCmPerS: footSlide(take),
-		jitterMmPerFrame2: jitter(take),
+		// Keep the raw frame-space value for backwards-compatible diagnostics,
+		// but also expose a time-normalised acceleration.  A second difference
+		// scales with dt², so the raw value alone would make the same physical
+		// shake look 4x smaller when a 30fps take is sampled at 60fps.
+		jitterMmPerFrame2,
+		jitterMmPerS2: jitterMmPerFrame2 * take.fps * take.fps,
 		framesBelowFloor: floor.count,
 		deepestBelowFloorCm: floor.deepestCm,
 		rootTravelM: travel(take),
@@ -173,7 +179,7 @@ export function mocapMetrics(input) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
 	const paths = process.argv.slice(2);
 	if (!paths.length) {
-		console.error("usage: node tools/ardy/mocap-metrics.mjs <a.npz> [<b.npz> ...]");
+	console.error("usage: node tools/ardy/mocap-metrics.mjs <a.npz> [<b.npz> ...]");
 		process.exit(2);
 	}
 	const rows = paths.map(mocapMetrics);
@@ -183,6 +189,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
 		["fps", (row) => String(row.fps), 3],
 		["foot slide cm/s", (row) => row.footSlideCmPerS.toFixed(2), 15],
 		["jitter mm/f^2", (row) => row.jitterMmPerFrame2.toFixed(3), 13],
+		["jitter mm/s^2", (row) => row.jitterMmPerS2.toFixed(1), 13],
 		["below floor", (row) => `${row.framesBelowFloor} (${row.deepestBelowFloorCm.toFixed(1)} cm)`, 16],
 		["root travel m", (row) => row.rootTravelM.toFixed(2), 13],
 	];

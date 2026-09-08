@@ -52,7 +52,35 @@ assert.equal(measured.frames, frames);
 assert.equal(measured.fps, 24);
 assert.equal(measured.framesBelowFloor, 0);
 assert.equal(measured.jitterMmPerFrame2, 0);
+assert.equal(measured.jitterMmPerS2, 0);
 const report = qualityReportForMotion(motion);
 assert.equal(report.pass, true);
 assert.equal(report.metrics.frames, frames);
+
+// A second difference is expressed per sample, so the raw value changes with
+// fps even when the physical acceleration is identical.  The normalised
+// metric must remain stable and is the value the gate uses for extracted
+// takes.
+function acceleratedTake(fps) {
+	const count = fps * 2;
+	const joints = new Float32Array(count * 27 * 3);
+	for (let frame = 0; frame < count; frame += 1) {
+		const t = frame / fps;
+		for (let joint = 0; joint < 27; joint += 1) {
+			const offset = (frame * 27 + joint) * 3;
+			joints[offset] = 0.5 * t * t;
+			joints[offset + 1] = 0.5;
+		}
+	}
+	return mocapMetricsFromMotion({ frames: count, fps, posedJoints: joints });
+}
+const at30 = acceleratedTake(30);
+const at60 = acceleratedTake(60);
+assert.ok(at30.jitterMmPerFrame2 > at60.jitterMmPerFrame2 * 3.9);
+assert.ok(Math.abs(at30.jitterMmPerS2 - at60.jitterMmPerS2) < 1);
+const rateInvariantBad = evaluateQuality({ ...at60, jitterMmPerFrame2: 0.1 }, { ...DEFAULT_LIMITS, maxJitterMmPerS2: 500 });
+assert.equal(rateInvariantBad.pass, false);
+assert.equal(rateInvariantBad.checks.find((check) => check.name === "jitter").unit, "mm/s²");
+const legacyOverride = evaluateQuality({ ...at60, footSlideCmPerS: 0, framesBelowFloor: 0, deepestBelowFloorCm: 0, jitterMmPerFrame2: 0.1 }, { ...DEFAULT_LIMITS, maxJitterMmPerFrame2: 8 });
+assert.equal(legacyOverride.pass, true, "legacy @30fps override remains effective for normalised takes");
 console.log("PASS in-memory motion metrics feed the extraction quality report");
