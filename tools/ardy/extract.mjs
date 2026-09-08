@@ -24,7 +24,7 @@ import { bvhToCskel27Motion, parseBvh } from "./bvh-cskel27.mjs";
 import { createPrivateArtifactDir, removePrivateArtifactDir } from "./artifacts.mjs";
 import { readNpz } from "../kimodo/read-npz.mjs";
 import { smplToCskel27Motion } from "./smpl-cskel27.mjs";
-import { gvhmrWorker } from "./runners/gvhmr-worker.mjs";
+import { gvhmrDetectorFromEnv, gvhmrRunnerArgs, gvhmrWorker } from "./runners/gvhmr-worker.mjs";
 import { guardTrajectoryFloor } from "./gvhmr-floor.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -47,9 +47,19 @@ const SAM_ENV = 'LD_LIBRARY_PATH="$(echo $HOME/cclay-ingest/.venv/lib/python3.12
 //   CCLAY_EXTRACT_BACKEND=gvhmr   (default: sam)
 //   CCLAY_EXTRACT_STATIC_CAM=0    to run visual odometry for a moving camera
 //                                 (default 1: tripod footage, skips the VO)
+//   CCLAY_EXTRACT_DETECTOR        yolo | palette | auto (default auto) — which
+//                                 detector frames the subject for GVHMR.
+//                                 YOLO's person class barely sees the
+//                                 part-coloured mannequin (#137): 28 of 124
+//                                 frames at conf 0.5, against 481/481 for a
+//                                 real person. `palette` finds it by its 12
+//                                 limb hues instead (124/124 on the same
+//                                 clip); `auto` measures the palette first
+//                                 and keeps YOLO when the hues are absent.
 const EXTRACT_BACKEND = (process.env.CCLAY_EXTRACT_BACKEND?.trim() || "sam").toLowerCase();
 const GVHMR_DIR = "~/cclay-ingest/GVHMR";
 const GVHMR_STATIC_CAM = (process.env.CCLAY_EXTRACT_STATIC_CAM?.trim() || "1") !== "0";
+const GVHMR_DETECTOR = gvhmrDetectorFromEnv();
 // Rollback keeps the original one-shot command completely unchanged.
 const GVHMR_WORKER = process.env.CCLAY_GVHMR_WORKER?.trim() !== "0";
 // Independent of preparation acceleration; disable to recover exact legacy output.
@@ -333,8 +343,9 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		const remoteCommand = EXTRACT_CMD
 			? `${EXTRACT_CMD} ${remoteVideo} ${remoteBvh}`
 			: gvhmr
-			? `cd ${GVHMR_DIR} && .venv/bin/python cclay_gvhmr_extract.py ${remoteVideo} ${remoteNpz}` +
-				`${GVHMR_STATIC_CAM ? " --static-cam" : ""} --out-root /tmp/cclay-gvhmr-${stamp}`
+			? `cd ${GVHMR_DIR} && .venv/bin/python cclay_gvhmr_extract.py ${remoteVideo} ${remoteNpz} ` +
+				`${gvhmrRunnerArgs({ staticCam: GVHMR_STATIC_CAM, detector: GVHMR_DETECTOR }).join(" ")}` +
+				` --out-root /tmp/cclay-gvhmr-${stamp}`
 			: `cd ${SAM_DIR} && ${SAM_ENV} ./build/offline_sam_3dbody_render ` +
 				`--onnx-dir ./onnx --gguf ./onnx/pipeline.gguf --yolo ./onnx/yolo.onnx ` +
 				`--from ${remoteVideo} --bvh ${remoteBvh} --bvh-template ./mixamo.bvh --max-persons 2 ` +

@@ -130,6 +130,31 @@ function setup(command, args, signal) {
 	});
 }
 
+const DETECTORS = ["yolo", "palette", "auto"];
+
+/** Runner CLI flags shared by the one-shot ssh command and the worker.
+ *  Pure so the flag wiring is testable without a box: the part-coloured
+ *  mannequin (#137) is invisible to YOLO's person class (28/124 frames at
+ *  conf 0.5 against 481/481 for a real person), so the runner's palette
+ *  detector takes over on those clips. `auto` measures the palette first and
+ *  keeps YOLO when the hue evidence is thin, which is why it is the default.
+ */
+export function gvhmrRunnerArgs({ staticCam = true, fMm = null, detector = "auto" } = {}) {
+	const args = [];
+	if (staticCam) args.push("--static-cam");
+	if (fMm != null) args.push("--f-mm", String(Math.trunc(fMm)));
+	args.push("--detector", DETECTORS.includes(detector) ? detector : "auto");
+	return args;
+}
+
+/** CCLAY_EXTRACT_DETECTOR as the runner understands it. Anything unrecognised
+ *  becomes `auto` rather than reaching the runner's argparse choices, where it
+ *  would abort the extraction instead of degrading to the safe default. */
+export function gvhmrDetectorFromEnv(env = process.env) {
+	const value = env.CCLAY_EXTRACT_DETECTOR?.trim().toLowerCase() || "auto";
+	return DETECTORS.includes(value) ? value : "auto";
+}
+
 const clients = new Map();
 export function gvhmrWorker({ host, sshOptions, scpOptions }) {
 	const key = JSON.stringify([host, sshOptions, scpOptions]);
