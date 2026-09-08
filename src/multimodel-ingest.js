@@ -150,7 +150,7 @@ export async function requestBridgeFootage(url, options = {}) {
 }
 
 /**
- * Ask the dev bridge to run GPU motion extraction (SAM-3D-Body on the ARDY
+ * Ask the dev bridge to run GPU motion extraction (GVHMR on the ARDY
  * box) over footage it already holds ({ footage: id }) or over uploaded
  * bytes (a Blob). Resolves to `{ motionUrl, frames, fps }` — an ordinary
  * /ardy/motions address the app loads exactly like a generated take.

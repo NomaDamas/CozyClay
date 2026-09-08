@@ -36,16 +36,6 @@ import {
 	sourceLabel,
 	trajectoryReceipt,
 } from "./multimodel-ingest.js";
-import {
-	bakeExtractedTake,
-	bakePoseFrame,
-	collectLandmarkTrack,
-	createPoseDetector,
-	decodeImage,
-	detectMirrorAveraged,
-	sampleTimes,
-	videoFrames,
-} from "./pose-extract/index.js";
 import { applyMotionFrame, captureArdyRoot, restorePlaybackBones, snapshotPlaybackBones } from "./ardy/playback.js";
 import { PIN_BLOCKED, planPosePin } from "./ardy/pose-pin.js";
 import {
@@ -394,7 +384,6 @@ import {
 	MCP_CAPTURE_W,
 	MIN_CURVE_POINTS,
 	MULTIMODEL_REASONS,
-	MULTIMODEL_SAMPLE_FPS,
 	MotionTrails,
 	MoveRig,
 	OBJECT_DELETE_UNDO_MS,
@@ -4171,13 +4160,7 @@ globalThis.playMode = centerTab === "play";
 	const [multiModelExtract, setMultiModelExtract] = useState("idle"); // idle | running | done | error
 	const [multiModelExtractProgress, setMultiModelExtractProgress] = useState(null);
 	const [multiModelExtractError, setMultiModelExtractError] = useState("");
-	const multiModelDetectorRef = useRef(null); // engine survives re-runs; the 15 MB download happens once
-	const multiModelRestRef = useRef(null);
-	// A still needs its own landmarker: MediaPipe fixes the running mode at
-	// creation and refuses detect() on a VIDEO-mode instance. The weights are
-	// already cached by then, so the second instance is cheap.
 	const photoPoseFileRef = useRef(null);
-	const photoPoseDetectorRef = useRef(null);
 	const [photoPoseState, setPhotoPoseState] = useState("idle");
 	const [photoPoseError, setPhotoPoseError] = useState("");
 
@@ -5295,12 +5278,21 @@ globalThis.playMode = centerTab === "play";
 	}
 
 	/** Extract motion from the ingested footage. With the bridge up this goes
-	 *  to the GPU box (SAM-3D-Body: whole-clip temporal context, real 3D body
-	 *  prior — previs-grade). Without it, the browser MediaPipe path below
-	 *  still works offline as the rough-blocking fallback. */
+	 *  to the GPU box (GVHMR: whole-clip temporal context, real 3D body
+	 *  prior — previs-grade). If the bridge is unavailable or is configured for
+	 *  another backend, extraction stops with a named error. */
 	async function extractMultiModelMotion() {
-		if (bridge?.ok) return extractMultiModelMotionGpu();
-		return extractMultiModelMotionBrowser();
+		if (!bridge?.ok) {
+			setMultiModelExtract("error");
+			setMultiModelExtractError(MULTIMODEL_REASONS["extract-bridge-required"]?.[isKo ? 1 : 0] ?? "extract-bridge-required");
+			return;
+		}
+		if (bridge.extractionBackend !== "gvhmr") {
+			setMultiModelExtract("error");
+			setMultiModelExtractError(MULTIMODEL_REASONS["extract-backend-unsupported"]?.[isKo ? 1 : 0] ?? "extract-backend-unsupported");
+			return;
+		}
+		return extractMultiModelMotionGpu();
 	}
 
 	async function extractMultiModelMotionGpu() {
@@ -5462,91 +5454,6 @@ globalThis.playMode = centerTab === "play";
 		// Their takes are trimmable the moment they become the active layer.
 		for (const { id, patch } of assignments) motionFullRef.current.set(id, patch.sessionMotion);
 		return assignments.length;
-	}
-
-	async function extractMultiModelMotionBrowser() {
-		const footage = multiModelFootage;
-		if (!footage || multiModelExtract === "running") return;
-		const run = multiModelRunRef.current;
-		const live = () => multiModelRunRef.current === run;
-		setMultiModelExtract("running");
-		setMultiModelExtractProgress(null); // indeterminate while the engine spins up
-		setMultiModelExtractError("");
-		setMultiModelTake(null);
-		try {
-			if (!multiModelRestRef.current) {
-				const response = await fetch("/ardy/cskel27-rest.json").catch(() => null);
-				if (!response?.ok) throw new Error("rest-unavailable");
-				multiModelRestRef.current = await response.json().catch(() => {
-					throw new Error("rest-unavailable");
-				});
-			}
-			if (!multiModelDetectorRef.current) {
-				multiModelDetectorRef.current = await createPoseDetector();
-			}
-			const detector = multiModelDetectorRef.current;
-			const total = sampleTimes(footage.durationS, MULTIMODEL_SAMPLE_FPS).length;
-			const samples = await collectLandmarkTrack({
-				frames: videoFrames(footage.objectUrl, {
-					createVideo: () => document.createElement("video"),
-					sampleFps: MULTIMODEL_SAMPLE_FPS,
-				}),
-				detect: detector.detect,
-				onProgress: ({ processed }) => {
-					if (live()) setMultiModelExtractProgress(total > 0 ? processed / total : null);
-				},
-			});
-			if (!live()) return;
-			if (samples.length === 0) throw new Error("no-person-found");
-			const take = bakeExtractedTake({
-				samples,
-				rest: multiModelRestRef.current,
-				fps: MULTIMODEL_SAMPLE_FPS,
-				durationS: footage.durationS,
-				createdMs: Date.now(),
-			});
-			if (!live()) return;
-			const rig = activeRig;
-			if (!rig) throw new Error("rig-not-loaded");
-			beginPlaybackOn(rig);
-			const loaded = {
-				prompt: multiModelSource?.name ?? sourceLabel(footage.objectUrl),
-				frames: take.frames,
-				fps: take.fps,
-				rotMats: take.rotMats,
-				rootPos: take.rootPos,
-				posedJoints: take.posedJoints,
-				anchorX: activeChar.x,
-				anchorZ: activeChar.z,
-				anchorFrame: 0,
-				rotationDeg: activeChar.rot,
-				editSegments: createMotionEdit(take.frames),
-			};
-			// A baked take is trimmable like any other: without this the strip's
-			// handles would drag against an empty map and cut nothing at all.
-			motionFullRef.current.set(activeChar.id, loaded);
-			// The browser fallback estimates no stature, and its root travel is
-			// in canonical units — so it must not inherit the scale a previous
-			// GPU take left on the character.
-			setCharacters((list) => list.map((entry) => entry.id === activeChar.id
-				? { ...entry, scale: characterScaleFor(take) }
-				: entry));
-			setMotion(loaded);
-			setTlFrameCount(take.frames);
-			setTlFps(take.fps);
-			setTlFrame(0);
-			setTlPlaying(false);
-			setMultiModelTake({ frames: take.frames, fitted: take.fitted, held: take.held, sampled: total, accepted: samples.length });
-			setMultiModelExtract("done");
-			setToast(isKo
-				? `모션 추출됨 — ${take.frames}프레임 테이크 @ ${take.fps} fps (실측 ${take.fitted}, 유지 ${take.held})`
-				: `Motion extracted — a ${take.frames}-frame take @ ${take.fps} fps (${take.fitted} measured, ${take.held} held)`);
-		} catch (error) {
-			if (!live()) return;
-			const code = error?.message ?? String(error);
-			setMultiModelExtract("error");
-			setMultiModelExtractError(MULTIMODEL_REASONS[code]?.[isKo ? 1 : 0] ?? code);
-		}
 	}
 
 	useEffect(() => () => {
@@ -6761,87 +6668,39 @@ globalThis.playMode = centerTab === "play";
 		setPhotoPoseError("");
 		try {
 			if (!rig) throw new Error("rig-not-loaded");
-			if (!multiModelRestRef.current) {
-				const response = await fetch("/ardy/cskel27-rest.json").catch(() => null);
-				if (!response?.ok) throw new Error("rest-unavailable");
-				multiModelRestRef.current = await response.json().catch(() => {
-					throw new Error("rest-unavailable");
-				});
-			}
 			objectUrl = URL.createObjectURL(file);
 			let bones = null;
 			let rootY = 0;
-			let warning = "";
-			// Which measurement produced the pose. The GPU route and the browser
-			// landmarker differ by a class in depth accuracy, so a silent fallback
-			// left the user judging one while believing they saw the other.
-			let route = "gpu";
-			// GPU route first: SAM-3D-Body on the box MEASURES the body in 3D,
-			// which beats anything a browser landmarker can infer from one frame.
+			let gpuError = null;
+			// GVHMR on the box measures the body over the whole clip,
+			// which is more reliable than a single-frame depth estimate.
 			// The bridge wraps the still into a second of video and runs the exact
-			// footage pipeline; the in-browser landmark path below is the fallback
-			// for a missing bridge or a failed run, never the first choice.
+			// GVHMR footage pipeline. A missing bridge or another backend is an error.
 			try {
 				const health = await fetch("/ardy/health", { signal: AbortSignal.timeout(2000) }).catch(() => null);
-				if (health?.ok) {
-					const done = await requestBridgeExtract(file, {});
-					const take = await loadMotionFromUrl(done.motionUrl);
-					// The middle frame: the wrap's smoothing passes have settled
-					// there, while frame 0 can still carry filter warm-up.
-					const frame = Math.floor((take.frames - 1) / 2);
-					const snapshot = snapshotPlaybackBones(rig);
-					try {
-						applyMotionFrame(rig, { ...take, anchorFrame: frame }, frame);
-						bones = capturePose(rig);
-						// SAM measured the hips' true height — a crouch is a crouch
-						// because the hips came DOWN, not just because the knees bent.
-						rootY = captureHipsOffset(rig);
-					} finally {
-						restorePlaybackBones(rig, snapshot);
-					}
-				}
-			} catch (error) {
-				console.warn("photo pose: GPU extract failed, falling back to browser landmarks", error);
-			}
-			if (!bones) {
-				route = "browser";
-				if (!photoPoseDetectorRef.current) {
-					// "heavy", not the "full" the footage path uses: a photograph is one
-					// offline frame, so the ~25 MB one-time download and the several-times
-					// slower inference are paid once and buy accuracy no later step can
-					// recover. This ref only ever holds the photo detector, so caching it
-					// without a model key is safe.
-					photoPoseDetectorRef.current = await createPoseDetector({ runningMode: "IMAGE", model: "heavy" });
-				}
-				// One detection of one still is the least evidence this app ever works
-				// from, so the still is measured twice — as shot and mirrored — and
-				// averaged. Downstream sees one ordinary landmark sample at t=0.
-				const image = await decodeImage(objectUrl, { createImage: () => new Image() });
-				const landmarks = await detectMirrorAveraged(image, photoPoseDetectorRef.current.detect);
-				if (!landmarks) throw new Error("no-person-in-photo");
-				const samples = [{ timeS: 0, landmarks }];
-				const take = bakePoseFrame({ samples, rest: multiModelRestRef.current, createdMs: Date.now() });
-				// Pose the rig, read the pose back, then put the rig exactly as it was:
-				// the capture is the product, the posing is only how it is measured.
+				if (!health?.ok) throw new Error("extract-bridge-required");
+				const healthPayload = await health.json().catch(() => null);
+				if (healthPayload?.extractionBackend !== "gvhmr") throw new Error("extract-backend-unsupported");
+				const done = await requestBridgeExtract(file, {});
+				const take = await loadMotionFromUrl(done.motionUrl);
+				// The middle frame: the wrap's smoothing passes have settled
+				// there, while frame 0 can still carry filter warm-up.
+				const frame = Math.floor((take.frames - 1) / 2);
 				const snapshot = snapshotPlaybackBones(rig);
 				try {
-					applyMotionFrame(rig, { ...take, anchorFrame: 0 }, 0);
+					applyMotionFrame(rig, { ...take, anchorFrame: frame }, frame);
 					bones = capturePose(rig);
+					// GVHMR measured the hips' true height — a crouch is a crouch
+					// because the hips came DOWN, not just because the knees bent.
 					rootY = captureHipsOffset(rig);
 				} finally {
 					restorePlaybackBones(rig, snapshot);
 				}
-				warning = photoPoseWarning(take);
-				// Name the fallback in the same slot the fit warning uses: the
-				// landmark route is the reduced-accuracy path, and that is worth
-				// one sentence more than a partly-occluded limb.
-				const fallbackNote = ko(
-					"GPU pose extraction failed, so this pose came from the browser landmarker (less accurate in depth).",
-					"GPU 자세 추출이 실패해서 브라우저 추정으로 잡았어요 (깊이 정확도가 낮아요)."
-				);
-				warning = warning ? `${fallbackNote} ${warning}` : fallbackNote;
+			} catch (error) {
+				gpuError = error;
+				console.warn("photo pose: GVHMR extract failed", error);
 			}
-			console.info(`photo pose: route=${route}`);
+			if (!bones) throw new Error(gpuError?.message || "extract-run-failed");
 			const pose = {
 				id: `photo_${Date.now()}`,
 				label: isKo ? `사진 포즈 ${customPoses.length + 1}` : `Photo Pose ${customPoses.length + 1}`,
@@ -6869,14 +6728,9 @@ globalThis.playMode = centerTab === "play";
 			else recordCharacterUndo();
 			updateCharacterAt(poseTargetIndex, { pose });
 			setPhotoPoseState("done");
-			// The pose is already saved and written by this point, so the warning
-			// only changes what the user is told, never whether the read happened.
-			// It takes the success slot rather than queueing a second toast: two
-			// toasts in a row means the first one is never read. (The GPU route
-			// leaves it empty — SAM measures the whole body or fails outright.)
-			setToast(warning
-				? (hadMotion ? `${ko("Cleared the motion.", "모션을 지웠어요.")} ${warning}` : warning)
-				: hadMotion
+			// The pose is already saved and written by this point. GVHMR either
+			// returns a measured pose or the named error above reaches the user.
+			setToast(hadMotion
 					? ko("Cleared the motion and posed from the photo — refine it with the handles", "모션을 지우고 사진으로 자세를 잡았어요 — 핸들로 다듬어 보세요")
 					: ko("Pose read from the photo — refine it with the handles", "사진에서 자세를 읽었어요 — 핸들로 다듬어 보세요"));
 		} catch (error) {
@@ -7131,6 +6985,7 @@ globalThis.playMode = centerTab === "play";
 				previous.host === state.host &&
 				previous.encoder === state.encoder &&
 				previous.device === state.device &&
+				previous.extractionBackend === state.extractionBackend &&
 				previous.reason === state.reason
 					? previous
 					: state
@@ -11557,11 +11412,11 @@ function resizePromptClip(id, edge, rawFrame) {
 								)}
 								{multiModelExtract === "error" && <p className="multimodel-error">{multiModelExtractError}</p>}
 								{multiModelTake && (
-									<p className="multimodel-extract-receipt">
-										{multiModelTake.gpu
-											? (isKo
-												? `GPU 테이크 ${multiModelTake.frames}프레임 추출됨 — 타임라인에서 재생하세요`
-												: `GPU take extracted, ${multiModelTake.frames} frames — press play on the timeline`)
+					<p className="multimodel-extract-receipt">
+						{multiModelTake.gpu
+							? (isKo
+								? `GVHMR 테이크 ${multiModelTake.frames}프레임 추출됨 — 타임라인에서 재생하세요`
+								: `GVHMR take extracted, ${multiModelTake.frames} frames — press play on the timeline`)
 											: (isKo
 												? `${multiModelTake.frames}프레임 테이크 구움 (실측 ${multiModelTake.fitted} · 유지 ${multiModelTake.held}) — 타임라인에서 재생하세요`
 												: `Baked a ${multiModelTake.frames}-frame take (${multiModelTake.fitted} measured · ${multiModelTake.held} held) — press play on the timeline`)}
@@ -11578,17 +11433,17 @@ function resizePromptClip(id, edge, rawFrame) {
 								)}
 								{multiModelExtract === "idle" && !multiModelTake && (
 									<p className="multimodel-note">
-										{bridge === null
-											? ko("Checking for the dev bridge…", "개발 브리지를 확인하는 중…")
-											: bridge.ok
-												? ko(
-													"Extraction runs on the GPU box (about a minute per 15 s of footage).",
-													"추출은 GPU 박스에서 돌아갑니다(영상 15초당 약 1분)."
-												)
-												: ko(
-													"No bridge: extraction runs in this browser (rougher). First run downloads the pose engine (~15 MB).",
-													"브리지 없음: 이 브라우저에서 추출합니다(품질 낮음). 첫 실행은 포즈 엔진(~15 MB)을 내려받습니다."
-												)}
+						{bridge === null
+							? ko("Checking for the dev bridge…", "개발 브리지를 확인하는 중…")
+							: bridge.ok && bridge.extractionBackend === "gvhmr"
+								? ko(
+									"GVHMR extraction runs on the GPU box (about a minute per 15 s of footage).",
+									"GVHMR 추출은 GPU 박스에서 돌아갑니다(영상 15초당 약 1분)."
+								)
+								: ko(
+									"GVHMR extraction is unavailable until the local GPU bridge is connected.",
+									"로컬 GPU 브리지가 연결될 때까지 GVHMR 추출을 사용할 수 없어요."
+								)}
 									</p>
 								)}
 							</div>

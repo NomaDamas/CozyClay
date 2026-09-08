@@ -46,7 +46,7 @@ import { globalChildren, killGroup, runStreaming, track } from "./runners/proc.m
 import { createRunner } from "./runners/index.mjs";
 import { DURATION_MAX, DURATION_MIN, PROMPT_MAX_CHARS } from "./prompt-limits.mjs";
 import { footagePath, handleFootage, serveFootage } from "./footage.mjs";
-import { handleExtract } from "./extract.mjs";
+import { EXTRACT_BACKEND, EXTRACT_BACKEND_SUPPORTED, handleExtract } from "./extract.mjs";
 import { createPrivateArtifactDir, evictPrivateArtifact, removePrivateArtifactDir } from "./artifacts.mjs";
 // The IK track ids a preserve edit range may scope itself to. Imported rather
 // than restated: tools/kimodo/preserve-mask.mjs is the single source of truth
@@ -1593,7 +1593,11 @@ const server = createServer((req, res) => {
 		// artist draw a stroke that would 503. Probed, never assumed.
 		Promise.all([getHealth(), getLineEditCapability()])
 			.then(([value, lineEdit]) => {
-				sendJson(res, 200, { ...value, capabilities: { lineEdit } });
+				sendJson(res, 200, {
+					...value,
+					extractionBackend: EXTRACT_BACKEND_SUPPORTED ? EXTRACT_BACKEND : "unsupported",
+					capabilities: { lineEdit, extractionBackend: EXTRACT_BACKEND_SUPPORTED ? EXTRACT_BACKEND : "unsupported" },
+				});
 				log(200);
 			})
 			.catch((err) => {

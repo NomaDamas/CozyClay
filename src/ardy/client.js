@@ -32,7 +32,8 @@ async function reasonOf(res, fallback) {
 }
 
 /**
- * Probe the sidecar once. Resolves to { ok:true, host, encoder, device } on a
+ * Probe the sidecar once. Resolves to { ok:true, host, encoder, device,
+ * extractionBackend } on a
  * healthy 200, otherwise { ok:false, reason }. Never rejects: the most common
  * failure (no sidecar running) is a UI state, not a crash.
  */
@@ -48,6 +49,7 @@ export async function checkBridge() {
 			host: payload.host,
 			encoder: payload.encoder,
 			device: payload.device,
+			extractionBackend: payload.extractionBackend,
 		};
 	} catch (err) {
 		return { ok: false, reason: err?.message || ko("bridge unreachable", "브리지에 연결할 수 없어요") };
