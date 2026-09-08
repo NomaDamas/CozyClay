@@ -24,6 +24,8 @@ jobs:
           node-version: 22
       - run: npm ci
       - run: npm --prefix mcp ci
+      - name: Install media inspection tools
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm test
         env:
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
