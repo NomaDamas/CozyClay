@@ -25,7 +25,7 @@ export function comfyDimensionsForAspect(aspect) {
 // such as windows or curtains in a negative prompt has repeatedly caused H3 to
 // hallucinate those objects into the set.
 export const H3_PRESERVATION_CONTRACT =
-	"Treat the provided first image as an immutable scene plate for the entire video. Keep the exact background, floor, set geometry, lighting, horizon, lens, viewpoint, framing, and object positions unchanged from the first frame through the last frame. Animate only the foreground human subject. Use one continuous shot with a locked camera: no pan, tilt, orbit, dolly, zoom, crop, reframing, cut, transition, or time jump. Preserve all non-subject pixels and keep the subject's silhouette edges sharp.";
+	"Treat the provided first image as an immutable scene plate for the entire video. Keep the exact background, floor, set geometry, lighting, horizon, lens, viewpoint, framing, and object positions unchanged from the first frame through the last frame. Animate only the foreground human subject. Use one continuous shot with a locked camera: no pan, tilt, orbit, dolly, zoom, crop, reframing, cut, transition, or time jump. Preserve all non-subject pixels and keep the subject's silhouette edges sharp. Motion priority: honor the requested subject action, including climbing, sitting, hanging, jumping, or any other vertical movement; never flatten that movement or force the subject to remain on the floor. This subject-motion rule changes only the performer, never the scene plate or camera.";
 
 export function isH3Workflow(workflow) {
 	let found = false;
@@ -119,8 +119,18 @@ const isLoadImageNode = (node) => /loadimage/i.test(String(node?.class_type || "
 const isCompositeNode = (node) => /imagecomposite|compositeimage|imagemattecomposite/i.test(String(node?.class_type || ""));
 const isMaskNode = (node) => {
 	if (isCompositeNode(node)) return false;
-	return /sam3|segmentation|videomask|tracktomask|masktoimage|imagemask/i.test(String(node?.class_type || ""));
+	// A generic/static mask can hide a broken tracker and would not preserve a
+	// moving performer across frames. Only accept a temporal SAM3/tracked-mask
+	// node on the compositor path.
+	return /sam3[_-]?(videotrack|tracktomask)|tracktomask|videomask/i.test(String(node?.class_type || ""));
 };
+
+function h3GuardError(message, reason) {
+	return Object.assign(new Error(message), {
+		code: "h3-preservation-failed",
+		preservation: { pass: false, reason },
+	});
+}
 
 function linkedNodeIds(value, result = []) {
 	if (Array.isArray(value)) {
@@ -157,25 +167,25 @@ export function hasH3SceneComposite(workflow, outputNodeIds) {
 	const checkOutput = (outputId) => {
 		const compositors = new Set();
 		const collect = (id, visiting = new Set()) => {
-		if (!id || visiting.has(id)) return;
-		const node = nodes[id];
-		if (!node || typeof node !== "object") return;
-		if (isCompositeNode(node)) compositors.add(String(id));
-		const nextVisiting = new Set(visiting);
-		nextVisiting.add(id);
-		for (const value of Object.values(node.inputs || {})) for (const linkedId of linkedNodeIds(value)) collect(linkedId, nextVisiting);
+			if (!id || visiting.has(id)) return;
+			const node = nodes[id];
+			if (!node || typeof node !== "object") return;
+			if (isCompositeNode(node)) compositors.add(String(id));
+			const nextVisiting = new Set(visiting);
+			nextVisiting.add(id);
+			for (const value of Object.values(node.inputs || {})) for (const linkedId of linkedNodeIds(value)) collect(linkedId, nextVisiting);
 		};
 		collect(outputId);
 		for (const compositorId of compositors) {
-		const node = nodes[compositorId];
-		const entries = Object.entries(node.inputs || {});
-		const background = entries.filter(([key]) => /destination|background|plate|base/i.test(key));
-		const source = entries.filter(([key]) => /source|foreground|overlay|subject|image2|video/i.test(key));
-		const mask = entries.filter(([key]) => /mask|alpha|matte/i.test(key));
-		const reaches = (entries, predicate) => entries.some(([, value]) => linkedNodeIds(value).some((id) => reachesNode(nodes, id, predicate)));
-		if (reaches(background, isLoadImageNode) && reaches(source, isH3Node) && reaches(mask, isMaskNode)) {
-			return { pass: true, outputId, compositorId, classType: String(node.class_type || "") };
-		}
+			const node = nodes[compositorId];
+			const entries = Object.entries(node.inputs || {});
+			const background = entries.filter(([key]) => /destination|background|plate|base/i.test(key));
+			const source = entries.filter(([key]) => /source|foreground|overlay|subject|image2|video/i.test(key));
+			const mask = entries.filter(([key]) => /mask|alpha|matte/i.test(key));
+			const reaches = (entries, predicate) => entries.some(([, value]) => linkedNodeIds(value).some((id) => reachesNode(nodes, id, predicate)));
+			if (reaches(background, isLoadImageNode) && reaches(source, isH3Node) && reaches(mask, isMaskNode)) {
+				return { pass: true, outputId, compositorId, classType: String(node.class_type || "") };
+			}
 		}
 		return { pass: false, outputId };
 	};
@@ -223,14 +233,14 @@ function createComfy(env, fetchImpl) {
 			const h3 = isH3Workflow(workflow);
 			const preferredOutputs = h3 ? preferredVideoOutputNodes(workflow) : new Set();
 			if (h3 && !hasFirstFrameCondition(workflow)) {
-				throw new Error("H3 workflow must connect the uploaded image to the first_frame input; refusing an unlocked camera/background run.");
+				throw h3GuardError("H3 workflow must connect the uploaded image to the first_frame input; refusing an unlocked camera/background run.", "missing-first-frame");
 			}
 			if (h3 && !preferredOutputs.size) {
-				throw new Error("H3 workflow must expose a final SaveVideo/VideoCombine output; refusing an unverified camera/background run.");
+				throw h3GuardError("H3 workflow must expose a final SaveVideo/VideoCombine output; refusing an unverified camera/background run.", "missing-final-output");
 			}
 			const sceneComposite = h3 ? hasH3SceneComposite(workflow, preferredOutputs) : { pass: true };
 			if (h3 && !sceneComposite.pass) {
-				throw new Error("H3 workflow must composite the generated subject over the uploaded plate with a tracked mask before final video output; refusing an unlocked camera/background run.");
+				throw h3GuardError("H3 workflow must composite the generated subject over the uploaded plate with a tracked mask before final video output; refusing an unlocked camera/background run.", "missing-compositor");
 			}
 			const form = new FormData();
 			form.append("image", dataUrlBlob(imageDataUrl), "cozyclay-frame.png");
@@ -260,7 +270,7 @@ function createComfy(env, fetchImpl) {
 							const dimensions = findDimensions(entry, width, height);
 							let preservation;
 							if (h3) {
-								preservation = await inspectH3Output({ imageDataUrl, videoBytes: bytes, expectedWidth: width, expectedHeight: height });
+								preservation = await inspectH3Output({ imageDataUrl, videoBytes: bytes, expectedWidth: width, expectedHeight: height, compositorVerified: sceneComposite.pass });
 								if (!preservation.pass) {
 									const { worst } = preservation;
 									throw Object.assign(new Error(`H3 preservation failed: background/camera drift p95=${worst.p95Rgb.toFixed(1)} RGB, mean=${worst.meanRgb.toFixed(1)} RGB.`), { code: "h3-preservation-failed", preservation });
