@@ -97,5 +97,18 @@ for (let frame = 0; frame < FRAMES; frame += 1) {
 }
 const footFirstStaged = applySupportRise(footFirst, [{ x: 0.7, z: 0, width: 0.2, depth: 1, supportY: 0.3 }]);
 expect("a foot entering before the pelvis still triggers the support rise", footFirstStaged.surfaceRise?.applied === true, JSON.stringify(footFirstStaged.surfaceRise));
+
+// During a real climb one foot can still be on the deck while the other has
+// reached the seat. The deck foot must not become the height datum for the
+// supported foot, or the lift overshoots/undershoots the authored surface.
+const splitFoot = take();
+for (let frame = 0; frame < FRAMES; frame += 1) {
+	const rootX = splitFoot.rootPos[frame * 3];
+	for (const joint of [21, 22]) splitFoot.posedJoints[(frame * JOINTS + joint) * 3] = rootX;
+	for (const joint of [25, 26]) splitFoot.posedJoints[(frame * JOINTS + joint) * 3] = rootX - 0.7;
+	for (const joint of [21, 22]) splitFoot.posedJoints[(frame * JOINTS + joint) * 3 + 1] = 0.4;
+}
+const splitStaged = applySupportRise(splitFoot, [{ x: 1.1, z: 0, width: 0.8, depth: 1, supportY: 0.6 }], { blendFrames: 2 });
+expect("mixed deck/seat contact uses the foot on the support as its datum", splitStaged.surfaceRise?.applied === true && Math.abs(splitStaged.surfaceRise.offsetWorld - 0.2) < 0.02, JSON.stringify(splitStaged.surfaceRise));
 if (failures) process.exit(1);
 console.log("all surface-rise checks PASS");

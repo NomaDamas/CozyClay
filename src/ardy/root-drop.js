@@ -79,8 +79,12 @@ export function applySupportRise(
 	const feet = SUPPORT_FEET.filter((joint) => joint < joints);
 	const footWorldAt = (frame, joint) => {
 		const p = (frame * joints + joint) * 3;
-		const dx = motion.posedJoints[p] - motion.rootPos[0];
-		const dz = motion.posedJoints[p + 2] - motion.rootPos[2];
+		// posedJoints and rootPos are both frame-local; subtract the root from
+		// the same frame before rotating into world space. Using frame zero here
+		// made a walking foot drift with the accumulated root travel and caused
+		// support detection to miss later chair/platform contacts.
+		const dx = motion.posedJoints[p] - motion.rootPos[frame * 3];
+		const dz = motion.posedJoints[p + 2] - motion.rootPos[frame * 3 + 2];
 		return { x: Number(subjectX) + (dx * cos + dz * sin) * scale, z: Number(subjectZ) + (-dx * sin + dz * cos) * scale };
 	};
 	const inside = candidates.map((support) => points.map((point, frame) => insideSupport({
@@ -117,14 +121,41 @@ export function applySupportRise(
 			if (rise < Number(minRise) || slope < Number(minSlope)) continue;
 			const feet = SUPPORT_FEET.filter((joint) => joint < joints);
 			if (!feet.length) continue;
+			const supportRect = {
+				x: Number(support.x) || 0, z: Number(support.z) || 0,
+				rotDeg: Number(support.rotDeg) || 0, width: Number(support.width), depth: Number(support.depth),
+			};
 			const occupiedYs = [];
 			for (let probe = evidenceFrame; probe < frames && inside[si][probe] && probe <= evidenceFrame + Math.round(motion.fps * 0.75); probe += 1) {
-				const ys = feet.map((joint) => motion.posedJoints[(probe * joints + joint) * 3 + 1] * scale).filter(Number.isFinite);
-				if (ys.length) occupiedYs.push(Math.min(...ys));
+				// A climb often straddles the deck and the prop: one foot remains
+				// on the floor while the other is already on the seat. Measuring the
+				// minimum of *all* feet therefore used the deck foot as the seat
+				// datum and left the climbing foot below the authored support. Use
+				// only feet whose XZ footprint is actually on this support.
+				const onSupport = feet.filter((joint) => {
+					const foot = footWorldAt(probe, joint);
+					return insideSupport(supportRect, foot.x, foot.z);
+				});
+				// Root occupancy is valid evidence while the pelvis is over a support
+				// but the feet have not entered its rectangle yet. In that phase keep
+				// the legacy all-foot fallback; once a foot is actually on the support,
+				// use only those feet so a deck foot cannot set the seat datum.
+				const ys = (onSupport.length ? onSupport : feet)
+					.map((joint) => motion.posedJoints[(probe * joints + joint) * 3 + 1] * scale).filter(Number.isFinite);
+				// If a second foot is still on the deck but its footprint overlaps
+				// the prop edge, the lower sample is not the seat contact. The upper
+				// supported foot is the conservative datum; when both feet are on
+				// the same surface their heights agree.
+				if (ys.length) occupiedYs.push(Math.max(...ys));
 			}
 			occupiedYs.sort((a, b) => a - b);
 			const observedFootY = occupiedYs[Math.floor(occupiedYs.length * 0.7)];
-			const footYs = feet.map((joint) => motion.posedJoints[(evidenceFrame * joints + joint) * 3 + 1] * scale).filter(Number.isFinite);
+			const onSupportAtEvidence = feet.filter((joint) => {
+				const foot = footWorldAt(evidenceFrame, joint);
+				return insideSupport(supportRect, foot.x, foot.z);
+			});
+			const footYs = (onSupportAtEvidence.length ? onSupportAtEvidence : feet)
+				.map((joint) => motion.posedJoints[(evidenceFrame * joints + joint) * 3 + 1] * scale).filter(Number.isFinite);
 			if (!footYs.length) continue;
 			const baseY = Number(subjectY) || 0;
 			const offsetWorld = Number(support.supportY) - (baseY + (Number.isFinite(observedFootY) ? observedFootY : Math.min(...footYs)));
