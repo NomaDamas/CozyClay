@@ -137,14 +137,14 @@ export async function inspectH3Output({ imageDataUrl, videoBytes, expectedWidth,
 		const meta = await probe(videoPath);
 		const plateMeta = await probe(imagePath);
 		const width = meta.width; const height = meta.height;
-		// H3 may quantise the canvas to its own 32-pixel grid (the current
-		// 12:7 workflow returns 1152x672 even when the UI requested 16:9).
-		// Compare against the uploaded plate's authored aspect first; otherwise
-		// a valid locked shot would be rejected solely for model canvas padding.
-		const requestedAspect = Number(plateMeta.width) / Number(plateMeta.height)
-			|| (Number(expectedWidth) / Number(expectedHeight));
+		// H3 may quantise the canvas to its own 32-pixel grid. The uploaded plate
+		// is the source of truth for a locked camera; accepting a second requested
+		// ratio would allow a crop/reframe to pass the preservation gate.
+		const plateAspect = Number(plateMeta.width) / Number(plateMeta.height);
+		const requestedAspect = Number(expectedWidth) / Number(expectedHeight);
 		const outputAspect = width / height;
-		const aspectError = Number.isFinite(requestedAspect) && requestedAspect > 0 ? Math.abs(outputAspect - requestedAspect) / requestedAspect : 0;
+		const targetAspect = Number.isFinite(plateAspect) && plateAspect > 0 ? plateAspect : requestedAspect;
+		const aspectError = Number.isFinite(targetAspect) && targetAspect > 0 ? Math.abs(outputAspect - targetAspect) / targetAspect : 0;
 		if (aspectError > limits.aspectError) throw new Error(`H3 preservation failed: output aspect drift ${(aspectError * 100).toFixed(2)}%.`);
 		const reference = await decode(imagePath, width, height);
 		const duration = Number.isFinite(meta.seconds) && meta.seconds > 0 ? meta.seconds : 1;

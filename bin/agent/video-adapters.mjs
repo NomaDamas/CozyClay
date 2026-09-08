@@ -1,7 +1,8 @@
+import { inspectH3Output } from "./h3-preservation.mjs";
+
 const COMFY_DEFAULT_WIDTH = 1024;
 const COMFY_DEFAULT_HEIGHT = 576;
 const MAX_INLINE_VIDEO = 24 * 1024 * 1024;
-import { inspectH3Output } from "./h3-preservation.mjs";
 
 export function comfyDimensionsForAspect(aspect) {
 	if (aspect === "9:16") return { width: 576, height: 1024 };
@@ -10,7 +11,10 @@ export function comfyDimensionsForAspect(aspect) {
 	// valid canvas and makes MiniMaxH3ImageToVideo reject the graph.  1312x768
 	// is the nearest valid 12:7 canvas under H3's 768-short-edge pixel cap.
 	if (aspect === "12:7") return { width: 1312, height: 768 };
-	if (aspect === "2.39:1" || aspect === "21:9") return { width: 1024, height: aspect === "2.39:1" ? 428 : 440 };
+	// Keep every axis on H3's 32-pixel latent grid. These are the closest
+	// representable canvases to the requested cinematic ratios.
+	if (aspect === "2.39:1") return { width: 1152, height: 480 };
+	if (aspect === "21:9") return { width: 1120, height: 480 };
 	if (aspect === "4:3") return { width: 768, height: 576 };
 	return { width: COMFY_DEFAULT_WIDTH, height: COMFY_DEFAULT_HEIGHT };
 }
@@ -148,6 +152,9 @@ function createComfy(env, fetchImpl) {
 			const preferredOutputs = h3 ? preferredVideoOutputNodes(workflow) : new Set();
 			if (h3 && !hasFirstFrameCondition(workflow)) {
 				throw new Error("H3 workflow must connect the uploaded image to the first_frame input; refusing an unlocked camera/background run.");
+			}
+			if (h3 && !preferredOutputs.size) {
+				throw new Error("H3 workflow must expose a final SaveVideo/VideoCombine output; refusing an unverified camera/background run.");
 			}
 			const form = new FormData();
 			form.append("image", dataUrlBlob(imageDataUrl), "cozyclay-frame.png");

@@ -5,13 +5,18 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildH3LockedPrompt, createVideoAdapters, H3_PRESERVATION_CONTRACT, isH3Workflow } from "../bin/agent/video-adapters.mjs";
+import { buildH3LockedPrompt, comfyDimensionsForAspect, createVideoAdapters, H3_PRESERVATION_CONTRACT, isH3Workflow } from "../bin/agent/video-adapters.mjs";
 import { compareH3Plate, inspectH3Output } from "../bin/agent/h3-preservation.mjs";
 
 assert.equal(buildH3LockedPrompt("walk").includes(H3_PRESERVATION_CONTRACT), true, "H3 prompts carry the immutable plate contract");
 assert.equal(buildH3LockedPrompt(buildH3LockedPrompt("walk")), buildH3LockedPrompt("walk"), "H3 contract injection is idempotent");
 assert.equal(isH3Workflow({ "1": { class_type: "MiniMaxH3ImageToVideo", inputs: {} } }), true, "H3 workflow detection recognizes the MiniMax node");
 assert.equal(isH3Workflow({ "1": { class_type: "KSampler", inputs: {} } }), false, "non-H3 workflows are left untouched");
+for (const aspect of ["2.39:1", "21:9", "12:7", "9:16", "1:1", "4:3"]) {
+	const dimensions = comfyDimensionsForAspect(aspect);
+	assert.equal(dimensions.width % 32, 0, `${aspect} width stays on H3 latent grid`);
+	assert.equal(dimensions.height % 32, 0, `${aspect} height stays on H3 latent grid`);
+}
 const plate = new Uint8Array(4 * 4 * 3).fill(12);
 const same = compareH3Plate(plate, plate, 4, 4);
 assert.equal(same.p95Rgb, 0, "plate comparison accepts unchanged border pixels");
@@ -138,6 +143,15 @@ writeFileSync(emptyImageWorkflowPath, JSON.stringify({
 const emptyImage = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: emptyImageWorkflowPath }).find((adapter) => adapter.id === "comfy");
 await assert.rejects(() => emptyImage.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must connect the uploaded image/);
 console.log("PASS H3 adapter: a LoadImage node without an image input is rejected");
+
+const noOutputWorkflowPath = join(dir, "h3-no-output.json");
+writeFileSync(noOutputWorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
+	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+}));
+const noOutput = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: noOutputWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => noOutput.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /final SaveVideo\/VideoCombine output/);
+console.log("PASS H3 adapter: a graph without an explicit final video output is rejected");
 
 const falCalls = [];
 globalThis.__origFetch = globalThis.fetch;
