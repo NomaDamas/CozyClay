@@ -70,7 +70,9 @@ export const OBJECT_LIBRARY = [
 	{ kind: "cylinder", label: "Cylinder", group: "Primitives", footprint: { width: 1, depth: 1 }, height: 1, color: GREY_BOX },
 	{ kind: "cone", label: "Cone", group: "Primitives", footprint: { width: 1, depth: 1 }, height: 1, color: GREY_BOX },
 	{ kind: "plane", label: "Plane", group: "Primitives", footprint: { width: 2, depth: 2 }, height: 0, color: GREY_BOX },
-	{ kind: "chair", label: "Chair", group: "Set pieces", footprint: { width: 0.6, depth: 0.6 }, height: 1.15, color: "#b9855d" },
+	// supportY is the walkable surface, which can differ from the object's
+	// bounding height (a chair's back rises above its seat).
+	{ kind: "chair", label: "Chair", group: "Set pieces", footprint: { width: 0.6, depth: 0.6 }, height: 1.15, supportY: 0.495, color: "#b9855d" },
 	{ kind: "car", label: "Car", group: "Set pieces", footprint: { width: 1.8, depth: 4.5 }, height: 1.4, color: "#d98770" },
 	{ kind: "small-plane", label: "Plane (aircraft)", group: "Set pieces", footprint: { width: 3.4, depth: 3.6 }, height: 1.4, color: "#7896a4" },
 ];
@@ -200,6 +202,14 @@ const CUTOUT_ENTRY = {
 function objectLibraryEntry(kind) {
 	if (kind === CUTOUT_KIND) return CUTOUT_ENTRY;
 	return OBJECT_LIBRARY.find((entry) => entry.kind === kind) ?? null;
+}
+
+/** Return the authored walkable surface for mocap contact staging. */
+export function supportHeightForObject(object) {
+	if (!object || typeof object !== "object") return 0;
+	const entry = objectLibraryEntry(object.renderer);
+	const local = Number(object.supportY ?? entry?.supportY ?? object.height ?? entry?.height);
+	return Number.isFinite(local) ? local : 0;
 }
 
 const cutoutHeight = (value) => Math.max(CUTOUT_HEIGHT_MIN, value);
@@ -340,6 +350,7 @@ export function createSceneObject(kind, existing = [], placement = {}) {
 		attach: null,
 		footprint: { ...entry.footprint },
 		height: entry.height,
+		supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height,
 	};
 }
 
@@ -739,7 +750,7 @@ export function normalizeSceneObject(record) {
 					),
 					height: cutoutHeight(pick(record.height, CUTOUT_DEFAULT_HEIGHT)),
 				}
-			: { footprint: { ...entry.footprint }, height: entry.height }),
+			: { footprint: { ...entry.footprint }, height: entry.height, supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height }),
 	};
 }
 

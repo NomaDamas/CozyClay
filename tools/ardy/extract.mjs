@@ -1,11 +1,9 @@
 /**
- * extract.mjs — the bridge's GPU motion-extraction side. The browser's
- * MediaPipe path is per-frame guessing (jittery, rough blocking only); this
- * route ships the footage to the ARDY box, runs SAM-3D-Body over the whole
- * clip (temporal context, real 3D body prior), converts the returned Mixamo
- * BVH to cskel27 arrays and serves them as an ordinary motion npz — so the
- * app loads a GPU-extracted take through the exact same loadMotion path an
- * ARDY generation uses.
+ * extract.mjs — the bridge's GVHMR-only GPU motion-extraction side. The
+ * browser does not provide an extraction fallback: this route ships footage
+ * to the ARDY box, runs GVHMR over the whole clip (temporal context, real 3D
+ * body prior), retargets the returned SMPL arrays to cskel27 and serves an
+ * ordinary motion npz through the same loadMotion path as ARDY generation.
  *
  * Same posture as generation: children die with the client connection, the
  * served npz enters the motion allowlist only after this process wrote and
@@ -24,43 +22,37 @@ import { bvhToCskel27Motion, parseBvh } from "./bvh-cskel27.mjs";
 import { createPrivateArtifactDir, removePrivateArtifactDir } from "./artifacts.mjs";
 import { readNpz } from "../kimodo/read-npz.mjs";
 import { smplToCskel27Motion } from "./smpl-cskel27.mjs";
+import { stabilizeMotion } from "./motion-stabilize.mjs";
 import { gvhmrDetectorFromEnv, gvhmrKeypointsFromEnv, gvhmrRunnerArgs, gvhmrWorker } from "./runners/gvhmr-worker.mjs";
 import { guardTrajectoryFloor } from "./gvhmr-floor.mjs";
+import { mocapMetricsFromMotion } from "./mocap-metrics.mjs";
+import { evaluateQuality } from "./mocap-quality-gate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const OUT_DIR = join(HERE, "out");
-const SAM_DIR = "~/cclay-ingest/SAM3DBody-cpp"; // the box-side checkout the old ingest pipeline left behind
-// Non-interactive ssh shells carry no LD_LIBRARY_PATH, and the CUDA EP needs
-// the cudnn that lives inside the ingest workspace's venv — without it the
-// pipeline silently falls back to CPU and then refuses to load at all.
-const SAM_ENV = 'LD_LIBRARY_PATH="$(echo $HOME/cclay-ingest/.venv/lib/python3.12/site-packages/nvidia/*/lib | tr \' \' :)"';
-// GVHMR (SIGGRAPH Asia 24) — a VIDEO model, unlike SAM-3D-Body which solves
-// every frame on its own with no floor and a monocular root. GVHMR predicts
+// GVHMR (SIGGRAPH Asia 24) — a VIDEO model that predicts
 // in a gravity-aligned world frame with temporal context and per-foot contact
-// logits; on a locomotion clip SAM's support foot measured 250 cm/s of skate
-// where a planted foot should read 0. The box-side runner
+// logits. The box-side runner
 // (cclay_gvhmr_extract.py, kept in the GVHMR checkout) writes GVHMR's SMPL
 // joint ROTATIONS (contract: GVHMR-NPZ.md) which smplToCskel27Motion
 // retargets directly — lifting positions back to rotations, as the first
 // cut did through the ProjFlow converter, discarded wrist orientation and
 // limb twist and added 50 % hand jitter on the same clip. Select with
-//   CCLAY_EXTRACT_BACKEND=gvhmr   (default: sam)
+//   CCLAY_EXTRACT_BACKEND=gvhmr   (default and only supported backend)
 //   CCLAY_EXTRACT_STATIC_CAM=0    to run visual odometry for a moving camera
 //                                 (default 1: tripod footage, skips the VO)
-//   CCLAY_EXTRACT_DETECTOR        yolo | palette | auto (default auto) — which
-//                                 detector frames the subject for GVHMR.
-//                                 YOLO's person class barely sees the
-//                                 part-coloured mannequin (#137): 28 of 124
-//                                 frames at conf 0.5, against 481/481 for a
-//                                 real person. `palette` finds it by its 12
-//                                 limb hues instead (124/124 on the same
-//                                 clip); `auto` measures the palette first
-//                                 and keeps YOLO when the hues are absent.
+//   CCLAY_EXTRACT_DETECTOR        retained for deployment compatibility;
+//                                 detector is always palette. YOLO's person
+//                                 class barely sees the part-coloured
+//                                 mannequin (#137): 28 of 124 frames at conf
+//                                 0.5, against 481/481 for a real person.
+//                                 Palette finds it by its 12 limb hues
+//                                 instead (124/124 on the same clip).
 //   CCLAY_EXTRACT_KEYPOINTS       vitpose | palette | auto (default auto) — auto keeps ViTPose
 //     (fed the palette bbox); palette keypoints are opt-in because the AI
 //     render shifts limb hues and, measured on issue #180, they make the 3D
 //     result worse (foot slide 41 vs 25 cm/s, jitter 32 vs 13).
-const EXTRACT_BACKEND = (process.env.CCLAY_EXTRACT_BACKEND?.trim() || "sam").toLowerCase();
+export const EXTRACT_BACKEND = (process.env.CCLAY_EXTRACT_BACKEND?.trim() || "gvhmr").toLowerCase();
 const GVHMR_DIR = "~/cclay-ingest/GVHMR";
 const GVHMR_STATIC_CAM = (process.env.CCLAY_EXTRACT_STATIC_CAM?.trim() || "1") !== "0";
 const GVHMR_DETECTOR = gvhmrDetectorFromEnv();
@@ -89,8 +81,14 @@ function sshHost() {
 const EXTRACT_SSH_PORT = process.env.CCLAY_EXTRACT_SSH_PORT?.trim() || "";
 const EXTRACT_TMP = process.env.CCLAY_EXTRACT_TMP?.trim() || "/tmp";
 const EXTRACT_CMD = process.env.CCLAY_EXTRACT_CMD?.trim() || "";
+export const EXTRACT_BACKEND_SUPPORTED = EXTRACT_BACKEND === "gvhmr" && !EXTRACT_CMD;
 const SSH_OPTS = EXTRACT_SSH_PORT ? [...SSH_BASE_OPTS, "-p", EXTRACT_SSH_PORT] : SSH_BASE_OPTS;
 const SCP_OPTS = EXTRACT_SSH_PORT ? [...SSH_BASE_OPTS, "-P", EXTRACT_SSH_PORT] : SSH_BASE_OPTS;
+
+/** Measure and classify a converted take before it is exposed to the browser. */
+export function qualityReportForMotion(motion, limits) {
+	return evaluateQuality(mocapMetricsFromMotion(motion), limits);
+}
 
 /** Magic-byte sniff for the three photo formats browsers hand over. Returns
  *  an extension or null for anything else (i.e. actual video bytes). */
@@ -165,10 +163,15 @@ function run(command, args, { children, timeoutMs, onLine }) {
  * bridge-downloaded clip, or the raw video bytes themselves. Answer ndjson:
  *   {event:"status", message}                  upload / extract / convert
  *   {event:"progress", stage:"extract", ratio} per-frame GPU movement
- *   {event:"done", motionUrl, frames, fps}
+ *   {event:"done", motionUrl, frames, fps, quality:{pass,checks,metrics}}
  *   {event:"error", message}                   a NAMED reason
  */
 export async function handleExtract(req, res, { readBody, footagePath, registerMotion, artifactRoot = OUT_DIR }) {
+	if (!EXTRACT_BACKEND_SUPPORTED) {
+		res.writeHead(503, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+		res.end(`${JSON.stringify({ ok: false, reason: "extract-backend-unsupported" })}\n`);
+		return;
+	}
 	const started = performance.now();
 	const host = sshHost();
 	const contentType = req.headers["content-type"] ?? "";
@@ -211,7 +214,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		artifactDir = createPrivateArtifactDir(artifactRoot, "extract");
 		// A still photograph rides the same route as footage: it is sniffed by
 		// magic bytes (the browser's photo-pose path posts the file untouched)
-		// and wrapped into a short constant clip below, so SAM's offline
+		// and wrapped into a short constant clip below, so GVHMR's
 		// multi-pass pipeline sees ordinary frames instead of a JPEG named .mp4.
 		stillExt = imageExtOf(bytes);
 		uploadedTemp = join(artifactDir, stillExt ? `upload.${stillExt}` : "upload.mp4");
@@ -289,7 +292,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		}).catch(() => {});
 	};
 
-	// Both intake routes converge here, and only here is the rate SAM will see
+	// Both intake routes converge here, and only here is the rate GVHMR will see
 	// certain: a bridge download was already normalized at the same ceiling
 	// (so this probes ≤ the cap and re-encodes nothing — a second encode would
 	// cost a generation of quality for no frames removed), while raw bytes
@@ -331,30 +334,17 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		return;
 	}
 
-	// SAM-3D-Body's OFFLINE multi-pass renderer — the live binary's causal
-	// filter lags in phase and skips the repair passes, and measured 80 %
-	// more wrist jitter on the same clip. The offline pipeline runs identity
-	// tracking, gap fill, spike interpolation (--interpolate-jitter), then
-	// ZERO-PHASE forward+backward smoothing at 6 Hz, and --foot-contact's
-	// per-foot leg IK pins planted feet against skate. --max-persons 2
-	// matches the scene: CozyClay holds two subjects, so the two most
-	// confident performers come back (one BVH each) and a single-person clip
-	// simply yields one file.
+	// GVHMR runs on the remote GPU box with temporal context and writes the
+	// SMPL NPZ that the browser retargets to cskel27. Backend validation at the
+	// handler boundary makes this the only reachable extraction command.
 	send({ event: "status", message: "extracting" });
-	const gvhmr = EXTRACT_BACKEND === "gvhmr" && !EXTRACT_CMD;
+	const gvhmr = EXTRACT_BACKEND === "gvhmr";
 	const remoteNpz = remoteBvh.replace(/\.bvh$/, ".npz");
 	let extractionPerformance = null;
 	try {
-		const remoteCommand = EXTRACT_CMD
-			? `${EXTRACT_CMD} ${remoteVideo} ${remoteBvh}`
-			: gvhmr
-			? `cd ${GVHMR_DIR} && .venv/bin/python cclay_gvhmr_extract.py ${remoteVideo} ${remoteNpz} ` +
+		const remoteCommand = `cd ${GVHMR_DIR} && .venv/bin/python cclay_gvhmr_extract.py ${remoteVideo} ${remoteNpz} ` +
 				`${gvhmrRunnerArgs({ staticCam: GVHMR_STATIC_CAM, detector: GVHMR_DETECTOR, keypoints: GVHMR_KEYPOINTS }).join(" ")}` +
-				` --out-root /tmp/cclay-gvhmr-${stamp}`
-			: `cd ${SAM_DIR} && ${SAM_ENV} ./build/offline_sam_3dbody_render ` +
-				`--onnx-dir ./onnx --gguf ./onnx/pipeline.gguf --yolo ./onnx/yolo.onnx ` +
-				`--from ${remoteVideo} --bvh ${remoteBvh} --bvh-template ./mixamo.bvh --max-persons 2 ` +
-				`--smoothing zero-phase --bw-cutoff 6 --interpolate-jitter --foot-contact`;
+				` --out-root /tmp/cclay-gvhmr-${stamp}`;
 		const runOptions = {
 				children,
 				timeoutMs: EXTRACT_TIMEOUT_MS,
@@ -395,6 +385,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 	// One BVH per tracked person. Person 0 must exist; person 1 is optional
 	// (a single-person clip yields one file, and that is not an error).
 	const motions = [];
+	const qualityReports = [];
 	if (gvhmr) {
 		// GVHMR's demo tracker follows ONE person, so exactly one npz comes back.
 		const localNpz = join(artifactDir, "gvhmr.npz");
@@ -407,9 +398,16 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 			return;
 		}
 		try {
-			const converted = smplToCskel27Motion(readNpz(localNpz));
+			// GVHMR's temporal model supplies the pose, while this small centred
+			// pass removes one-frame segmentation spikes before the browser sees
+			// the take. Fast motion is retained by reducing the blend at speed.
+			const converted = stabilizeMotion(smplToCskel27Motion(readNpz(localNpz)), {
+				enabled: process.env.CCLAY_GVHMR_SMOOTHING?.trim() !== "0",
+				smoothRotations: process.env.CCLAY_GVHMR_ROTATION_SMOOTHING?.trim() !== "0",
+			});
 			const guarded = guardTrajectoryFloor(converted, extractionPerformance?.trajectory?.events ?? []);
 			motions.push(guarded.motion);
+			qualityReports.push(qualityReportForMotion(guarded.motion));
 			if (extractionPerformance?.trajectory?.events?.length) extractionPerformance.trajectory.floor = guarded.diagnostics;
 		} catch (err) {
 			console.error(`[bridge] extract convert failed (gvhmr): ${err.message}`);
@@ -437,7 +435,9 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 			break;
 		}
 		try {
-			motions.push(bvhToCskel27Motion(parseBvh(readFileSync(localBvh, "utf8"))));
+			const motion = bvhToCskel27Motion(parseBvh(readFileSync(localBvh, "utf8")));
+			motions.push(motion);
+			qualityReports.push(qualityReportForMotion(motion));
 		} catch (err) {
 			console.error(`[bridge] extract convert failed (person ${person}): ${err.message}`);
 			if (person === 0) {
@@ -479,6 +479,8 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 			frames: motion.frames,
 			fps: motion.fps,
 			personScale: motion.personScale,
+			...(motion.stabilization ? { stabilization: motion.stabilization } : {}),
+			quality: qualityReports[person],
 			// person 1's placement RELATIVE to person 0, in the shared raw
 			// camera space (real metres, X/Z on the floor plane).
 			offsetX: person === 0 ? 0 : motion.rawRootStart[0] - motions[0].rawRootStart[0],
@@ -491,6 +493,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		frames: takes[0].frames,
 		fps: takes[0].fps,
 		personScale: takes[0].personScale,
+		quality: qualityReports[0],
 		takes,
 		...(extractionPerformance ? { performance: { ...extractionPerformance, totalSeconds: (performance.now() - started) / 1000 } } : {}),
 	});

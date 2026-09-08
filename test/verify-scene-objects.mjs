@@ -14,6 +14,7 @@ import {
 	normalizeObjectColor,
 	rememberObjectColor,
 	createSceneObject,
+	supportHeightForObject,
 	createCutoutObject,
 	duplicateCutoutOptions,
 	cutoutFootprint,
@@ -105,6 +106,7 @@ expect("repeat creation gets a unique id", twoCubes[0].id !== twoCubes[1].id);
 expect("repeat creation gets a numbered name", twoCubes[1].name === "Cube 2", twoCubes[1].name);
 
 const placed = createSceneObject("chair", [], { x: 999, z: -999, rot: 540 });
+expect("chair support datum targets seat, not backrest", supportHeightForObject(placed) === 0.495);
 expect("creation clamps placement onto the stage", placed.x === 240 && placed.z === -240);
 expect("an explicit placement angle is still wrapped", placed.rot === -180, String(placed.rot));
 

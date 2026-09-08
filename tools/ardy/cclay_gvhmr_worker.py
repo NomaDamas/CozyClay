@@ -22,23 +22,22 @@ import traceback
 
 
 
-DETECTORS = ("yolo", "palette", "auto")
+DETECTORS = ("palette",)
 KEYPOINTS = ("vitpose", "palette", "auto")
 
 
 def runner_argv(request, runner_path):
     """argv for cclay_gvhmr_extract.py built from one worker request. Kept pure
-    so the flag plumbing is testable; the detector rides the request the same
-    way staticCam/fMm do, so CCLAY_EXTRACT_DETECTOR is honoured on the
-    persistent-worker path too, not only the one-shot ssh command."""
+    so the flag plumbing is testable. The detector is a fixed palette contract
+    on the persistent-worker path, matching the one-shot ssh command."""
     argv = [str(runner_path), str(request["video"]), str(request["output"]), "--out-root", str(request["outRoot"])]
     if request.get("staticCam", True):
         argv.append("--static-cam")
     if request.get("fMm") is not None:
         argv.extend(["--f-mm", str(int(request["fMm"]))])
-    detector = request.get("detector")
-    if detector in DETECTORS:
-        argv.extend(["--detector", detector])
+    # The coloured-mannequin pipeline is palette-only. Always pass the flag so
+    # the remote runner's default (`auto`) cannot silently change the route.
+    argv.extend(["--detector", "palette"])
     keypoints = request.get("keypoints")
     if keypoints in KEYPOINTS:
         argv.extend(["--keypoints", keypoints])

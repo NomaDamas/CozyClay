@@ -4,7 +4,12 @@ import { once } from "node:events";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createVideoAdapters } from "../bin/agent/video-adapters.mjs";
+import { buildH3LockedPrompt, createVideoAdapters, H3_PRESERVATION_CONTRACT, isH3Workflow } from "../bin/agent/video-adapters.mjs";
+
+assert.equal(buildH3LockedPrompt("walk").includes(H3_PRESERVATION_CONTRACT), true, "H3 prompts carry the immutable plate contract");
+assert.equal(buildH3LockedPrompt(buildH3LockedPrompt("walk")), buildH3LockedPrompt("walk"), "H3 contract injection is idempotent");
+assert.equal(isH3Workflow({ "1": { class_type: "MiniMaxH3ImageToVideo", inputs: {} } }), true, "H3 workflow detection recognizes the MiniMax node");
+assert.equal(isH3Workflow({ "1": { class_type: "KSampler", inputs: {} } }), false, "non-H3 workflows are left untouched");
 
 const mp4Bytes = Buffer.from("000000206674797069736f6d0000020069736f6d69736f3261766331", "hex");
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -64,6 +69,24 @@ assert.match(viewCall.path, /filename=cozyclay\.mp4&subfolder=video&type=output/
 const uploadCall = requests.find((entry) => entry.path.startsWith("/upload/image"));
 assert.ok(uploadCall.multipart, "the first frame is uploaded as multipart");
 console.log("PASS comfy adapter: upload, prompt substitution, polling, video fetch");
+
+const h3WorkflowPath = join(dir, "h3-workflow.json");
+writeFileSync(h3WorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale saved example sentence" } },
+	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+}));
+const h3 = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: h3WorkflowPath }).find((adapter) => adapter.id === "comfy");
+await h3.generate({ prompt: "a person climbs onto the chair", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
+const h3PromptCall = requests.filter((entry) => entry.path === "/prompt").at(-1);
+assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /immutable scene plate/);
+assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /locked camera/);
+console.log("PASS H3 adapter: immutable background/camera contract is injected");
+
+const unlockedWorkflowPath = join(dir, "h3-unlocked.json");
+writeFileSync(unlockedWorkflowPath, JSON.stringify({ "1": { class_type: "MiniMaxH3ImageToVideo", inputs: { prompt: "stale" } } }));
+const unlocked = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: unlockedWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => unlocked.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must connect the uploaded image/);
+console.log("PASS H3 adapter: unlocked graph is rejected before queue");
 
 const falCalls = [];
 globalThis.__origFetch = globalThis.fetch;

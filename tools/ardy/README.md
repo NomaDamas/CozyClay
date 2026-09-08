@@ -1,6 +1,7 @@
 # Motion bridge support files
 
-The local Studio uses Kimodo as its only motion-generation backend. The bridge
+The local Studio uses Kimodo for authored motion generation. Video mocap
+extraction is a separate path and uses GVHMR as its only backend. The bridge
 entry point remains at `tools/ardy/bridge.mjs` for compatibility with the
 existing `/ardy/*` browser protocol and stored motion URLs; the name is a
 wire-format path, not a selectable backend.
@@ -30,9 +31,19 @@ The hosted demo worker still has a separately managed local runner for its
 queue jobs; that deployment path is intentionally independent of the local
 Studio selector.
 
-## GVHMR extraction acceleration
+## GVHMR extraction (required backend)
 
-With `CCLAY_EXTRACT_BACKEND=gvhmr`, extraction now uses one serial SSH worker.
+`CCLAY_EXTRACT_BACKEND` defaults to `gvhmr`, and GVHMR is the only supported
+video mocap backend. The bridge rejects another backend value or a custom
+`CCLAY_EXTRACT_CMD` with `extract-backend-unsupported`; the Studio also refuses
+to extract until the local GPU bridge reports GVHMR. There is no browser
+MediaPipe fallback for video or photo mocap.
+
+GVHMR's subject detector is fixed to the `palette` segmentation path for
+CozyClay's coloured mannequin. `CCLAY_EXTRACT_DETECTOR` is retained for
+deployment compatibility but cannot switch the detector to YOLO or auto.
+
+With GVHMR enabled, extraction uses one serial SSH worker.
 It deploys the repo-owned worker, preparation and trajectory Python modules into a content-addressed
 remote `/tmp/cozyclay-gvhmr-worker-*` directory and imports the existing
 `~/cclay-ingest/GVHMR/cclay_gvhmr_extract.py`. The original runner and model
@@ -53,8 +64,9 @@ minutes. Restart the bridge after upgrading upstream code. Checkpoint
 size/mtime changes invalidate cached preprocessing models. The final `done`
 event includes stage timing, cache hits and PyTorch GPU-memory metrics.
 
-Rollback: launch the bridge with `CCLAY_GVHMR_WORKER=0` to use its original
-one-shot command. `CCLAY_EXTRACT_CMD` and SAM extraction still bypass the worker.
+Rollback: launch the bridge with `CCLAY_GVHMR_WORKER=0` to use the original
+GVHMR one-shot command. Other extraction backends and `CCLAY_EXTRACT_CMD` stay
+unsupported so a misconfigured bridge fails explicitly.
 CPU lifecycle tests run in `npm test`; `test/qa-gvhmr-speed.py` performs real
 GPU raw-output/preprocessing equality checks, and `test/qa-gvhmr-bridge.mjs`
 compares original/cold/warm HTTP extraction including retargeted NPZ arrays.

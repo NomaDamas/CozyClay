@@ -33,6 +33,115 @@ function insideSupport(support, px, pz) {
 	return Math.abs(lx) <= support.width / 2 && Math.abs(lz) <= support.depth / 2;
 }
 
+const SUPPORT_FEET = [21, 22, 25, 26];
+const smoothstep = (value) => {
+	const t = Math.max(0, Math.min(1, value));
+	return t * t * (3 - 2 * t);
+};
+
+/**
+ * Lift a take onto an explicitly authored scene surface.  ARDY clips are
+ * normally rooted on the deck, so a performer climbing onto a prop needs a
+ * small, time-continuous offset while their root is inside that prop's
+ * footprint.  We require a real upward root trend before applying anything;
+ * a flat walk through a prop therefore stays untouched.
+ *
+ * `supports` are world-space rectangles with an explicit `supportY` (the top
+ * of the surface).  `subject` supplies the character's world anchor and yaw,
+ * matching the transform used by `autoRoofDrop`.  The input motion is never
+ * mutated.  The returned object carries `surfaceRise` diagnostics.
+ */
+export function applySupportRise(
+	motion,
+	supports,
+	{ subjectX = 0, subjectZ = 0, rotationDeg = 0, minRise = 0.08, minSlope = 0.04, lookbackFrames = 6, blendFrames = 6, maxOffset = 1.5 } = {},
+) {
+	if (!motion || !Number.isFinite(motion.fps) || motion.fps <= 0 || !motion.rootPos || !motion.posedJoints) return motion;
+	const frames = Number(motion.frames);
+	if (!Number.isInteger(frames) || frames < 2 || motion.rootPos.length < frames * 3) return motion;
+	if (!Array.isArray(supports) || !supports.length) return motion;
+	const candidates = supports.filter((support) =>
+		support && Number.isFinite(Number(support.supportY)) && Number(support.width) > 0 && Number(support.depth) > 0,
+	);
+	if (!candidates.length) return motion;
+	const radians = (Number(rotationDeg) || 0) * Math.PI / 180;
+	const cos = Math.cos(radians), sin = Math.sin(radians);
+	const worldAt = (frame) => {
+		const dx = motion.rootPos[frame * 3] - motion.rootPos[0];
+		const dz = motion.rootPos[frame * 3 + 2] - motion.rootPos[2];
+		return { x: Number(subjectX) + dx * cos + dz * sin, z: Number(subjectZ) + (-dx * sin + dz * cos) };
+	};
+	const points = Array.from({ length: frames }, (_, frame) => worldAt(frame));
+	const inside = candidates.map((support) => points.map((point) => insideSupport({
+		x: Number(support.x) || 0, z: Number(support.z) || 0,
+		rotDeg: Number(support.rotDeg) || 0, width: Number(support.width), depth: Number(support.depth),
+	}, point.x, point.z)));
+	let selected = null;
+	for (let si = 0; si < candidates.length; si += 1) {
+		const support = candidates[si];
+		// A performer often enters a prop's footprint before lifting a foot
+		// (approach, brace, then climb). Search the first second of continuous
+		// support occupancy instead of requiring the rise on the boundary frame.
+		let entry = -1;
+		for (let frame = 1; frame < frames; frame += 1) {
+			if (!inside[si][frame]) { entry = -1; continue; }
+			if (entry < 0 && !inside[si][frame - 1]) entry = frame;
+			if (entry < 0 || frame - entry > Math.round(motion.fps)) continue;
+			const from = Math.max(0, frame - Math.max(1, Math.round(lookbackFrames)));
+			// A foot can enter the footprint one or two frames before the body
+			// commits to the climb. Look a short distance ahead, while retaining
+			// the entry frame as the point where the blend begins.
+			const evidenceFrame = Math.min(frames - 1, frame + Math.max(1, Math.round(lookbackFrames)));
+			const rise = motion.rootPos[evidenceFrame * 3 + 1] - motion.rootPos[from * 3 + 1];
+			const slope = rise / ((evidenceFrame - from) / motion.fps);
+			if (rise < Number(minRise) || slope < Number(minSlope)) continue;
+			const f0 = SUPPORT_FEET.filter((joint) => (evidenceFrame * 27 + joint) * 3 + 1 < motion.posedJoints.length);
+			const occupiedYs = [];
+			for (let probe = evidenceFrame; probe < frames && inside[si][probe] && probe <= evidenceFrame + Math.round(motion.fps * 0.75); probe += 1) {
+				const ys = SUPPORT_FEET.map((joint) => motion.posedJoints[(probe * 27 + joint) * 3 + 1]).filter(Number.isFinite);
+				if (ys.length) occupiedYs.push(Math.min(...ys));
+			}
+			occupiedYs.sort((a, b) => a - b);
+			const observedFootY = occupiedYs[Math.floor(occupiedYs.length * 0.7)];
+			const footYs = f0.map((joint) => motion.posedJoints[(evidenceFrame * 27 + joint) * 3 + 1]).filter(Number.isFinite);
+			if (!footYs.length) continue;
+			const offset = Number(support.supportY) - (Number.isFinite(observedFootY) ? observedFootY : Math.min(...footYs));
+			if (!(offset > 0.01) || offset > Number(maxOffset)) continue;
+			selected = { si, frame, support, offset, rise, slope };
+			break;
+		}
+		if (selected) break;
+	}
+	if (!selected) return motion;
+	const { si, frame: enter, offset, support, rise, slope } = selected;
+	let exit = frames - 1;
+	for (let frame = enter + 1; frame < frames; frame += 1) {
+		if (!inside[si][frame]) { exit = frame; break; }
+	}
+	const blend = Math.max(1, Math.round(blendFrames));
+	const offsets = new Float32Array(frames);
+	for (let frame = enter; frame < frames; frame += 1) {
+		const up = smoothstep((frame - enter + 1) / blend);
+		const down = exit < frames - 1 ? smoothstep((exit - frame) / blend) : 1;
+		offsets[frame] = offset * Math.min(up, down);
+	}
+	const rootPos = Float32Array.from(motion.rootPos);
+	const posedJoints = Float32Array.from(motion.posedJoints);
+	const joints = Math.round(posedJoints.length / frames / 3);
+	for (let frame = 0; frame < frames; frame += 1) {
+		const dy = offsets[frame];
+		if (!dy) continue;
+		rootPos[frame * 3 + 1] += dy;
+		for (let joint = 0; joint < joints; joint += 1) posedJoints[(frame * joints + joint) * 3 + 1] += dy;
+	}
+	return {
+		...motion,
+		rootPos,
+		posedJoints,
+		surfaceRise: { applied: true, supportY: Number(support.supportY), offset, enterFrame: enter, exitFrame: exit, rise, slope },
+	};
+}
+
 /**
  * Stage a fall the author did not have to ask for: a character standing on a
  * raised support (a roof — place_character's y) whose take walks past the

@@ -2,6 +2,45 @@ const COMFY_DEFAULT_WIDTH = 1024;
 const COMFY_DEFAULT_HEIGHT = 576;
 const MAX_INLINE_VIDEO = 24 * 1024 * 1024;
 
+// MiniMax H3 is conditioned on the uploaded first frame, but the model is
+// still free to invent a new set or camera unless the contract is repeated in
+// every request. Keep this wording positive and structural: mentioning things
+// such as windows or curtains in a negative prompt has repeatedly caused H3 to
+// hallucinate those objects into the set.
+export const H3_PRESERVATION_CONTRACT =
+	"Treat the provided first image as an immutable scene plate for the entire video. Keep the exact background, floor, set geometry, lighting, horizon, lens, viewpoint, framing, and object positions unchanged from the first frame through the last frame. Animate only the foreground human subject. Use one continuous shot with a locked camera: no pan, tilt, orbit, dolly, zoom, crop, reframing, cut, transition, or time jump. Preserve all non-subject pixels and keep the subject's silhouette edges sharp.";
+
+export function isH3Workflow(workflow) {
+	let found = false;
+	const walk = (value) => {
+		if (found || !value || typeof value !== "object") return;
+		if (typeof value.class_type === "string" && /minimax.?h3|h3.*video/i.test(value.class_type)) found = true;
+		for (const [key, child] of Object.entries(value)) {
+			if (typeof child === "string" && /minimax.?h3|h3.*video/i.test(child)) found = true;
+			else if (key !== "prompt") walk(child);
+		}
+	};
+	walk(workflow);
+	return found;
+}
+
+export function buildH3LockedPrompt(prompt) {
+	const source = String(prompt ?? "").trim();
+	if (!source) return H3_PRESERVATION_CONTRACT;
+	if (source.includes("immutable scene plate for the entire video")) return source;
+	return `${source}\n\n${H3_PRESERVATION_CONTRACT}`;
+}
+
+function hasFirstFrameCondition(workflow) {
+	if (!isH3Workflow(workflow)) return true;
+	return Object.values(workflow || {}).some((node) => {
+		if (!node || typeof node !== "object" || !/minimax.?h3|h3.*video/i.test(String(node.class_type || ""))) return false;
+		const inputs = node.inputs || {};
+		const value = inputs.first_frame ?? inputs.image;
+		return Array.isArray(value) ? value.length >= 1 : Boolean(value && typeof value === "object");
+	});
+}
+
 const sleep = (ms, signal) => new Promise((resolve, reject) => {
 	if (signal?.aborted) return reject(Object.assign(new Error("Aborted"), { name: "AbortError" }));
 	const timer = setTimeout(resolve, ms);
@@ -43,6 +82,10 @@ function replaceWorkflowInputs(value, prompt, imageName, width, height) {
 	const output = {};
 	for (const [key, item] of Object.entries(value)) {
 		if (key === "image" && typeof item === "string" && /loadimage/i.test(String(value.class_type || ""))) output[key] = imageName;
+		// Workflow exports often contain a real example sentence rather than the
+		// literal PROMPT marker. Replace every node prompt so the H3 preservation
+		// contract cannot be bypassed by a stale saved sentence.
+		else if (key === "prompt" && typeof item === "string") output[key] = prompt;
 		else if ((key === "length" || key === "width" || key === "height") && Number.isInteger(Number(item))) output[key] = key === "length" ? Number(item) : (key === "width" ? width : height);
 		else output[key] = replaceWorkflowInputs(item, prompt, imageName, width, height);
 	}
@@ -58,6 +101,10 @@ function createComfy(env, fetchImpl) {
 		configured: () => Boolean(base && workflowPath),
 		async generate({ prompt, imageDataUrl, durationSeconds, aspect, fps = 24, signal }) {
 			if (!workflow) workflow = JSON.parse(await (await import("node:fs/promises")).readFile(workflowPath, "utf8"));
+			const h3 = isH3Workflow(workflow);
+			if (h3 && !hasFirstFrameCondition(workflow)) {
+				throw new Error("H3 workflow must connect the uploaded image to the first_frame input; refusing an unlocked camera/background run.");
+			}
 			const form = new FormData();
 			form.append("image", dataUrlBlob(imageDataUrl), "cozyclay-frame.png");
 			form.append("overwrite", "true");
@@ -66,7 +113,7 @@ function createComfy(env, fetchImpl) {
 			if (!imageName) throw new Error("ComfyUI did not return an uploaded filename.");
 			const width = aspect === "9:16" ? 576 : aspect === "1:1" ? 768 : 1024;
 			const height = aspect === "9:16" ? 1024 : aspect === "1:1" ? 768 : 576;
-			const promptGraph = replaceWorkflowInputs(workflow, prompt, imageName, width, height);
+			const promptGraph = replaceWorkflowInputs(workflow, h3 ? buildH3LockedPrompt(prompt) : prompt, imageName, width, height);
 			const queued = await fetchImpl(`${base}/prompt`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ prompt: promptGraph, client_id: `cozyclay-${Date.now()}` }), signal }).then(jsonResponse);
 			if (!queued.prompt_id) throw new Error("ComfyUI did not return a prompt id.");
 			const deadline = Date.now() + 15 * 60 * 1000;
