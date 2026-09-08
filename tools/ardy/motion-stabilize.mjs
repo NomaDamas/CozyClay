@@ -46,6 +46,82 @@ function smoothPositions(input, frames, stride, fps) {
 			corrected += 1;
 		}
 	}
+	// A segmentation/keypoint dropout can persist for a few frames. A single
+	// three-tap pass repairs the edges of that burst but leaves its centre at the
+	// wrong location. Detect a short burst against a longer chord, using the
+	// immutable source so a correction cannot spread into clean entry/exit
+	// frames. The radius is tied to time (about 100 ms), not a fixed frame count,
+	// so 24, 30 and 60 fps clips behave alike.
+	const radius = Math.max(3, Math.min(5, Math.round(fps * 0.1)));
+	if (frames > radius * 2 + 1) {
+		const pass = new Float32Array(out);
+		// Hips (joint 0) is the authored root trajectory. A real stair or chair
+		// ascent can be a short, high-amplitude change, so never run the dropout
+		// repair over it; only limb observations are eligible.
+		const firstItem = stride === JOINTS ? 1 : stride;
+		for (let item = firstItem; item < stride; item += 1) {
+			// First identify a contiguous run from the raw input. Requiring two
+			// adjacent outliers rejects a genuine one-frame limb snap, which the
+			// preceding three-tap pass already handles with a smaller correction.
+			const candidates = new Uint8Array(frames);
+			for (let f = radius; f < frames - radius; f += 1) {
+				const o = (f * stride + item) * 3;
+				const before = ((f - radius) * stride + item) * 3;
+				const after = ((f + radius) * stride + item) * 3;
+				const rawCurrent = [input[o], input[o + 1], input[o + 2]];
+				const rawEstimate = [(input[before] + input[after]) * 0.5,
+					(input[before + 1] + input[after + 1]) * 0.5,
+					(input[before + 2] + input[after + 2]) * 0.5];
+				// 8 cm is above ordinary retarget noise and catches the short,
+				// high-amplitude plateaus seen when a detector loses a limb.
+				if (distance3(rawCurrent, rawEstimate) < 0.08) continue;
+				const spanSpeed = distance3(
+					[input[before], input[before + 1], input[before + 2]],
+					[input[after], input[after + 1], input[after + 2]],
+				) * fps / (2 * radius);
+				// Preserve running/throwing trajectories; the long chord is only a
+				// dropout signal when the surrounding motion is below 2 m/s.
+				if (spanSpeed > 2) continue;
+				candidates[f] = 1;
+			}
+			for (let f = radius; f < frames - radius;) {
+				if (!candidates[f]) { f += 1; continue; }
+				const start = f;
+				while (f < frames - radius && candidates[f]) f += 1;
+				if (f - start < 2) continue;
+			// A dropout plateau has almost no movement inside its run. Reject a
+			// run whose own samples are moving quickly; that is a real gesture,
+			// even when its longer chord happens to curve by several centimetres.
+				let coherent = true;
+				for (let g = start + 1; g < f; g += 1) {
+					const prev = ((g - 1) * stride + item) * 3;
+					const curr = (g * stride + item) * 3;
+				if (distance3([input[prev], input[prev + 1], input[prev + 2]], [input[curr], input[curr + 1], input[curr + 2]]) > 0.015) {
+						coherent = false;
+						break;
+					}
+				}
+				if (!coherent) continue;
+				for (let currentFrame = start; currentFrame < f; currentFrame += 1) {
+					const o = (currentFrame * stride + item) * 3;
+					const before = ((currentFrame - radius) * stride + item) * 3;
+					const after = ((currentFrame + radius) * stride + item) * 3;
+				const estimate = [(pass[before] + pass[after]) * 0.5,
+					(pass[before + 1] + pass[after + 1]) * 0.5,
+					(pass[before + 2] + pass[after + 2]) * 0.5];
+				const current = [pass[o], pass[o + 1], pass[o + 2]];
+				const residual = distance3(current, estimate);
+				const amount = Math.min(0.1, residual * 0.9);
+				if (amount < 1e-5) continue;
+				const scale = amount / Math.max(residual, 1e-8);
+				out[o] = current[0] + (estimate[0] - current[0]) * scale;
+				out[o + 1] = current[1] + (estimate[1] - current[1]) * scale;
+				out[o + 2] = current[2] + (estimate[2] - current[2]) * scale;
+					corrected += 1;
+				}
+			}
+		}
+	}
 	return { values: out, corrected };
 }
 

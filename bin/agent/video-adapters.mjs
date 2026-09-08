@@ -183,7 +183,26 @@ export function hasH3SceneComposite(workflow, outputNodeIds) {
 			const source = entries.filter(([key]) => /source|foreground|overlay|subject|image2|video/i.test(key));
 			const mask = entries.filter(([key]) => /mask|alpha|matte/i.test(key));
 			const reaches = (entries, predicate) => entries.some(([, value]) => linkedNodeIds(value).some((id) => reachesNode(nodes, id, predicate)));
-			if (reaches(background, isLoadImageNode) && reaches(source, isH3Node) && reaches(mask, isMaskNode)) {
+			// A TrackToMask node by itself is not proof of a subject mask: a stale
+			// graph can feed it unrelated track data (or a static all-white mask).
+			// Require its SAM3_VideoTrack input to be derived from the H3 frames so
+			// the compositor cannot silently paste an untracked/generated scene.
+			const reachesTrackedMask = (id, visiting = new Set()) => {
+				if (!id || visiting.has(id)) return false;
+				const candidate = nodes[id];
+				if (!candidate || typeof candidate !== "object") return false;
+				const nextVisiting = new Set(visiting);
+				nextVisiting.add(id);
+				if (/sam3[_-]?videotrack/i.test(String(candidate.class_type || ""))) {
+					return linkedNodeIds(candidate.inputs?.images).some((imageId) => reachesNode(nodes, imageId, isH3Node));
+				}
+				if (/sam3[_-]?tracktomask/i.test(String(candidate.class_type || ""))) {
+					return linkedNodeIds(candidate.inputs?.track_data).some((trackId) => reachesTrackedMask(trackId, nextVisiting));
+				}
+				return Object.values(candidate.inputs || {}).some((value) => linkedNodeIds(value).some((linkedId) => reachesTrackedMask(linkedId, nextVisiting)));
+			};
+			const hasTrackedMask = mask.some(([, value]) => linkedNodeIds(value).some((id) => reachesTrackedMask(id)));
+			if (reaches(background, isLoadImageNode) && reaches(source, isH3Node) && hasTrackedMask) {
 				return { pass: true, outputId, compositorId, classType: String(node.class_type || "") };
 			}
 		}

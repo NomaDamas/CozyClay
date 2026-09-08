@@ -120,9 +120,9 @@ const h3WorkflowPath = join(dir, "h3-workflow.json");
 writeFileSync(h3WorkflowPath, JSON.stringify({
 	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale saved example sentence" } },
 	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
-	"9": { class_type: "SAM3_VideoTrack", inputs: { prompt: "person" } },
+	"9": { class_type: "SAM3_VideoTrack", inputs: { images: ["8", 0], prompt: "person" } },
 	"8": { class_type: "VAEDecode", inputs: { samples: ["1", 0] } },
-	"10": { class_type: "SAM3_TrackToMask", inputs: { track: ["9", 0] } },
+	"10": { class_type: "SAM3_TrackToMask", inputs: { track_data: ["9", 0], object_indices: "" } },
 	"6": { class_type: "ImageCompositeMasked", inputs: { destination: ["2", 0], source: ["8", 0], mask: ["10", 0] } },
 	"7": { class_type: "SaveVideo", inputs: { video: ["6", 0] } },
 }));
@@ -158,6 +158,19 @@ writeFileSync(genericMaskWorkflowPath, JSON.stringify({
 const genericMask = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: genericMaskWorkflowPath }).find((adapter) => adapter.id === "comfy");
 await assert.rejects(() => genericMask.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must composite the generated subject over the uploaded plate/);
 console.log("PASS H3 adapter: untracked generic mask is rejected");
+
+const staleTrackWorkflowPath = join(dir, "h3-stale-track.json");
+writeFileSync(staleTrackWorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
+	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+	"3": { class_type: "SAM3_VideoTrack", inputs: { images: ["2", 0] } },
+	"4": { class_type: "SAM3_TrackToMask", inputs: { track_data: ["3", 0], object_indices: "" } },
+	"5": { class_type: "ImageCompositeMasked", inputs: { destination: ["2", 0], source: ["1", 0], mask: ["4", 0] } },
+	"7": { class_type: "SaveVideo", inputs: { video: ["5", 0] } },
+}));
+const staleTrack = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: staleTrackWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => staleTrack.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must composite the generated subject over the uploaded plate/);
+console.log("PASS H3 adapter: tracker disconnected from H3 frames is rejected");
 
 // Exercise the fail-closed output guard with real ffmpeg-decoded frames. The
 // tiny plate is black; replacing it with a red plate must be rejected.

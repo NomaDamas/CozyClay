@@ -34,6 +34,24 @@ test("high-speed translation remains close to the authored trajectory", () => {
 	assert.ok(Math.abs(output.posedJoints[(4 * 27) * 3] - 2) < .03, "fast step should not be smoothed away");
 });
 
+test("short multi-frame detector dropout is corrected without flattening a jump", () => {
+	const input = motion(24);
+	for (let f = 0; f < input.frames; f += 1) {
+		const x = f * 0.01 + (f >= 15 ? Math.min((f - 15) * 0.02, 0.12) : 0);
+		for (let j = 0; j < 27; j += 1) input.posedJoints[(f * 27 + j) * 3] = x;
+	}
+	for (const f of [8, 9, 10]) for (let j = 0; j < 27; j += 1) input.posedJoints[(f * 27 + j) * 3] += 0.12;
+	for (const f of [8, 9, 10]) input.posedJoints[(f * 27) * 3 + 1] += 0.12;
+	const output = stabilizeMotion(input);
+	for (const f of [8, 9, 10]) {
+		const expected = f * 0.01;
+		assert.ok(Math.abs(output.posedJoints[(f * 27 + 1) * 3] - expected) < .045, `dropout remains at frame ${f}`);
+	}
+	assert.ok(output.posedJoints[(9 * 27) * 3 + 1] > 1.06, "real root ascent was flattened");
+	// A real, gradual vertical/forward jump remains intact after the dropout.
+	assert.ok(output.posedJoints[(20 * 27) * 3] > .19, "real post-dropout travel was flattened");
+});
+
 test("optional contact height is explicit and bounded", () => {
 	const input = motion();
 	assert.equal(stabilizeMotion(input).stabilization.correctedContacts, 0, "no surface means no guessed contact snap");
