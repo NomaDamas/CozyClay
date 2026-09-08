@@ -1,45 +1,31 @@
 import assert from "node:assert/strict";
 import { gvhmrDetectorFromEnv, gvhmrKeypointsFromEnv, gvhmrRunnerArgs } from "../tools/ardy/runners/gvhmr-worker.mjs";
 
-// CCLAY_EXTRACT_DETECTOR reaches the box-side runner as an argv flag, the same
-// way --static-cam and --f-mm do: extract.mjs reads the env through
-// gvhmrDetectorFromEnv and hands the value to gvhmrRunnerArgs.
+// The coloured-mannequin pipeline is palette-only. The legacy environment
+// variable remains accepted for deployment compatibility, but must never
+// select YOLO or the auto detector.
 const detectorOf = (args) => args[args.indexOf("--detector") + 1];
 const fromEnv = (CCLAY_EXTRACT_DETECTOR) =>
 	detectorOf(gvhmrRunnerArgs({ detector: gvhmrDetectorFromEnv({ CCLAY_EXTRACT_DETECTOR }) }));
 
-// The env end of the wire: set it and the flag changes, leave it and it does not.
-assert.equal(fromEnv("palette"), "palette");
-assert.equal(fromEnv("yolo"), "yolo");
-assert.equal(fromEnv(undefined), "auto");
-assert.equal(fromEnv("  PALETTE "), "palette", "env values are trimmed and lowercased");
-assert.equal(fromEnv("nonsense"), "auto", "an unknown env value must degrade, not abort the run");
+for (const value of ["palette", "yolo", "auto", undefined, "nonsense", "  YOLO "]) {
+	assert.equal(fromEnv(value), "palette", `detector env ${String(value)} cannot bypass palette`);
+}
 
-// Default: `auto` measures the palette first and keeps YOLO when the
-// part-colour hues are absent, so an unset env must not change real-person runs.
-assert.equal(detectorOf(gvhmrRunnerArgs()), "auto");
-assert.equal(detectorOf(gvhmrRunnerArgs({ staticCam: true })), "auto");
-
-// Explicit selection, as the env would supply it.
-for (const detector of ["yolo", "palette", "auto"]) {
-	assert.equal(detectorOf(gvhmrRunnerArgs({ detector })), detector);
+// Defaults and explicit arguments are both forced to palette.
+for (const detector of ["yolo", "palette", "auto", "sam", undefined]) {
+	assert.equal(detectorOf(gvhmrRunnerArgs({ detector })), "palette");
 }
 assert.deepEqual(gvhmrRunnerArgs({ staticCam: true, detector: "palette" }),
 	["--static-cam", "--detector", "palette", "--keypoints", "auto"]);
 
-// An unknown value must not reach the runner's argparse choices, which would
-// abort the whole extraction; fall back to the default instead.
-for (const bogus of ["", "YOLO ", "sam", "palette; rm -rf /", null, undefined]) {
-	assert.equal(detectorOf(gvhmrRunnerArgs({ detector: bogus })), "auto");
-}
-
 // The flag is additive: the existing camera flags keep their meaning.
 assert.deepEqual(gvhmrRunnerArgs({ staticCam: false, fMm: 24, detector: "yolo" }),
-	["--f-mm", "24", "--detector", "yolo", "--keypoints", "auto"]);
+	["--f-mm", "24", "--detector", "palette", "--keypoints", "auto"]);
 assert.deepEqual(gvhmrRunnerArgs({ staticCam: true, fMm: 35.9, detector: "palette" }),
 	["--static-cam", "--f-mm", "35", "--detector", "palette", "--keypoints", "auto"]);
 
-console.log("PASS GVHMR detector flag: default auto, explicit palette/yolo, invalid values rejected");
+console.log("PASS GVHMR detector flag: palette is fixed for defaults, env, and overrides");
 
 // CCLAY_EXTRACT_KEYPOINTS (#180) rides the same wire: which estimator fills
 // GVHMR's kp2d observation. ViTPose reads photographic cues a flat-coloured
@@ -76,8 +62,8 @@ assert.deepEqual(gvhmrRunnerArgs({ staticCam: true, detector: "palette", keypoin
 console.log("PASS GVHMR keypoints flag: default auto, explicit palette/vitpose, invalid values rejected");
 
 // The persistent box worker (tools/ardy/cclay_gvhmr_worker.py) builds the
-// runner argv from the JSON request; the detector must ride along or the env
-// is silently ignored on the default extraction path.
+// runner argv from the JSON request; the palette flag must always ride along
+// so the remote runner's own default cannot silently switch to `auto`.
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 const workerPy = fileURLToPath(new URL("../tools/ardy/cclay_gvhmr_worker.py", import.meta.url));
@@ -96,7 +82,7 @@ print(json.dumps(ns["runner_argv"]({**base, "keypoints": "nonsense"}, "/runner.p
 assert.equal(py.status, 0, `python helper missing or broken: ${py.stderr.slice(0, 300)}`);
 const [withDetector, defaults, withKeypoints, bogusKeypoints] = py.stdout.trim().split("\n").map((line) => JSON.parse(line));
 assert.deepEqual(withDetector.slice(-2), ["--detector", "palette"], "worker request detector reaches the runner argv");
-assert.equal(defaults.includes("--detector"), false, "no detector key → runner default (auto)");
+assert.deepEqual(defaults.slice(-2), ["--detector", "palette"], "worker always sends the palette detector");
 console.log("PASS GVHMR worker request: detector key becomes --detector on the runner argv");
 
 // Same for the keypoints selection, so CCLAY_EXTRACT_KEYPOINTS is honoured on

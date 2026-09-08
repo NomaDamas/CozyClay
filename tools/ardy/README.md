@@ -39,6 +39,10 @@ video mocap backend. The bridge rejects another backend value or a custom
 to extract until the local GPU bridge reports GVHMR. There is no browser
 MediaPipe fallback for video or photo mocap.
 
+GVHMR's subject detector is fixed to the `palette` segmentation path for
+CozyClay's coloured mannequin. `CCLAY_EXTRACT_DETECTOR` is retained for
+deployment compatibility but cannot switch the detector to YOLO or auto.
+
 With GVHMR enabled, extraction uses one serial SSH worker.
 It deploys the repo-owned worker, preparation and trajectory Python modules into a content-addressed
 remote `/tmp/cozyclay-gvhmr-worker-*` directory and imports the existing

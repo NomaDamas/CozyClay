@@ -38,15 +38,13 @@ const OUT_DIR = join(HERE, "out");
 //   CCLAY_EXTRACT_BACKEND=gvhmr   (default and only supported backend)
 //   CCLAY_EXTRACT_STATIC_CAM=0    to run visual odometry for a moving camera
 //                                 (default 1: tripod footage, skips the VO)
-//   CCLAY_EXTRACT_DETECTOR        yolo | palette | auto (default auto) — which
-//                                 detector frames the subject for GVHMR.
-//                                 YOLO's person class barely sees the
-//                                 part-coloured mannequin (#137): 28 of 124
-//                                 frames at conf 0.5, against 481/481 for a
-//                                 real person. `palette` finds it by its 12
-//                                 limb hues instead (124/124 on the same
-//                                 clip); `auto` measures the palette first
-//                                 and keeps YOLO when the hues are absent.
+//   CCLAY_EXTRACT_DETECTOR        retained for deployment compatibility;
+//                                 detector is always palette. YOLO's person
+//                                 class barely sees the part-coloured
+//                                 mannequin (#137): 28 of 124 frames at conf
+//                                 0.5, against 481/481 for a real person.
+//                                 Palette finds it by its 12 limb hues
+//                                 instead (124/124 on the same clip).
 //   CCLAY_EXTRACT_KEYPOINTS       vitpose | palette | auto (default auto) — auto keeps ViTPose
 //     (fed the palette bbox); palette keypoints are opt-in because the AI
 //     render shifts limb hues and, measured on issue #180, they make the 3D

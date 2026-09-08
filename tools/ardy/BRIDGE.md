@@ -30,6 +30,8 @@ Video mocap extraction requires `CCLAY_EXTRACT_BACKEND=gvhmr` (the default).
 Any other backend or `CCLAY_EXTRACT_CMD` makes `/ardy/extract` return the named
 `extract-backend-unsupported` error. Set `CCLAY_EXTRACT_HOST` (or
 `CCLAY_ARDY_HOST`) to the GPU host that has the GVHMR checkout and virtualenv.
+The GVHMR detector is fixed to palette segmentation for the coloured mannequin;
+`CCLAY_EXTRACT_DETECTOR` cannot switch it to YOLO or auto.
 
 The wire path stays `/ardy` for backward compatibility; this does not
 re-enable the removed ARDY backend.
