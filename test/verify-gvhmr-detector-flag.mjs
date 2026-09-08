@@ -56,7 +56,8 @@ assert.equal(keypointsFromEnv(undefined), "auto");
 assert.equal(keypointsFromEnv(" PALETTE "), "palette", "env values are trimmed and lowercased");
 assert.equal(keypointsFromEnv("nonsense"), "auto", "an unknown env value must degrade, not abort the run");
 
-// Default `auto` lets the runner follow its detector: palette keypoints only
+// Default `auto` resolves to ViTPose inside the runner (palette keypoints are
+// opt-in: measured worse on shifted render hues, issue #180); palette keypoints only
 // where the palette detector claimed the clip, ViTPose on real footage.
 assert.equal(keypointsOf(gvhmrRunnerArgs()), "auto");
 for (const keypoints of ["vitpose", "palette", "auto"]) {

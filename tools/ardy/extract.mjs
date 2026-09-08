@@ -56,19 +56,10 @@ const SAM_ENV = 'LD_LIBRARY_PATH="$(echo $HOME/cclay-ingest/.venv/lib/python3.12
 //                                 limb hues instead (124/124 on the same
 //                                 clip); `auto` measures the palette first
 //                                 and keeps YOLO when the hues are absent.
-//   CCLAY_EXTRACT_KEYPOINTS       vitpose | palette | auto (default auto) —
-//                                 what fills GVHMR's 2D keypoint observation.
-//                                 ViTPose reads joints from photographic cues
-//                                 the mannequin does not carry: on h3_warm_s7
-//                                 its median body joint lands 10.4 % of bbox
-//                                 height off the palette joints and the
-//                                 shoulders 30-65 % off. `palette` reads them
-//                                 from the part masks instead — a joint is
-//                                 where two limb-colour masks meet (16.8/17
-//                                 joints per frame) — and skips ViTPose's
-//                                 weights entirely. `auto` follows the
-//                                 detector: palette keypoints only on a clip
-//                                 the palette detector claimed.
+//   CCLAY_EXTRACT_KEYPOINTS       vitpose | palette | auto (default auto) — auto keeps ViTPose
+//     (fed the palette bbox); palette keypoints are opt-in because the AI
+//     render shifts limb hues and, measured on issue #180, they make the 3D
+//     result worse (foot slide 41 vs 25 cm/s, jitter 32 vs 13).
 const EXTRACT_BACKEND = (process.env.CCLAY_EXTRACT_BACKEND?.trim() || "sam").toLowerCase();
 const GVHMR_DIR = "~/cclay-ingest/GVHMR";
 const GVHMR_STATIC_CAM = (process.env.CCLAY_EXTRACT_STATIC_CAM?.trim() || "1") !== "0";
