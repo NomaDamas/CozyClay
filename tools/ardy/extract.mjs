@@ -373,7 +373,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		if (gvhmr && GVHMR_WORKER) {
 			extractionPerformance = await gvhmrWorker({ host, sshOptions: SSH_OPTS, scpOptions: SCP_OPTS }).run({
 				video: remoteVideo, output: remoteNpz, outRoot: `/tmp/cclay-gvhmr-${stamp}`, staticCam: GVHMR_STATIC_CAM,
-				trajectory: GVHMR_TRAJECTORY,
+				detector: GVHMR_DETECTOR, trajectory: GVHMR_TRAJECTORY,
 			}, { signal: abort.signal, timeoutMs: EXTRACT_TIMEOUT_MS, onLine: runOptions.onLine });
 			console.error(`[bridge] GVHMR performance ${JSON.stringify(extractionPerformance)}`);
 		} else {

@@ -21,6 +21,25 @@ import time
 import traceback
 
 
+
+DETECTORS = ("yolo", "palette", "auto")
+
+
+def runner_argv(request, runner_path):
+    """argv for cclay_gvhmr_extract.py built from one worker request. Kept pure
+    so the flag plumbing is testable; the detector rides the request the same
+    way staticCam/fMm do, so CCLAY_EXTRACT_DETECTOR is honoured on the
+    persistent-worker path too, not only the one-shot ssh command."""
+    argv = [str(runner_path), str(request["video"]), str(request["output"]), "--out-root", str(request["outRoot"])]
+    if request.get("staticCam", True):
+        argv.append("--static-cam")
+    if request.get("fMm") is not None:
+        argv.extend(["--f-mm", str(int(request["fMm"]))])
+    detector = request.get("detector")
+    if detector in DETECTORS:
+        argv.extend(["--detector", detector])
+    return argv
+
 def emit(value):
     print(json.dumps(value), flush=True)
 
@@ -74,11 +93,7 @@ def main():
             if not video.is_file():
                 raise ValueError("extract-video-missing")
             root.mkdir(parents=True, exist_ok=True)
-            sys.argv = [str(runner_path), str(video), str(output), "--out-root", str(root)]
-            if request.get("staticCam", True):
-                sys.argv.append("--static-cam")
-            if request.get("fMm") is not None:
-                sys.argv.extend(["--f-mm", str(int(request["fMm"]))])
+            sys.argv = runner_argv({**request, "video": str(video), "output": str(output), "outRoot": str(root)}, runner_path)
             torch.cuda.reset_peak_memory_stats()
             with contextlib.redirect_stdout(sys.stderr), runtime.job(root if request.get("evidence") else None) as metrics:
                 with trajectory_job(runner, video, root,
