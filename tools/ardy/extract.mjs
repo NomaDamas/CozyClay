@@ -24,7 +24,7 @@ import { bvhToCskel27Motion, parseBvh } from "./bvh-cskel27.mjs";
 import { createPrivateArtifactDir, removePrivateArtifactDir } from "./artifacts.mjs";
 import { readNpz } from "../kimodo/read-npz.mjs";
 import { smplToCskel27Motion } from "./smpl-cskel27.mjs";
-import { gvhmrDetectorFromEnv, gvhmrRunnerArgs, gvhmrWorker } from "./runners/gvhmr-worker.mjs";
+import { gvhmrDetectorFromEnv, gvhmrKeypointsFromEnv, gvhmrRunnerArgs, gvhmrWorker } from "./runners/gvhmr-worker.mjs";
 import { guardTrajectoryFloor } from "./gvhmr-floor.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -56,10 +56,24 @@ const SAM_ENV = 'LD_LIBRARY_PATH="$(echo $HOME/cclay-ingest/.venv/lib/python3.12
 //                                 limb hues instead (124/124 on the same
 //                                 clip); `auto` measures the palette first
 //                                 and keeps YOLO when the hues are absent.
+//   CCLAY_EXTRACT_KEYPOINTS       vitpose | palette | auto (default auto) —
+//                                 what fills GVHMR's 2D keypoint observation.
+//                                 ViTPose reads joints from photographic cues
+//                                 the mannequin does not carry: on h3_warm_s7
+//                                 its median body joint lands 10.4 % of bbox
+//                                 height off the palette joints and the
+//                                 shoulders 30-65 % off. `palette` reads them
+//                                 from the part masks instead — a joint is
+//                                 where two limb-colour masks meet (16.8/17
+//                                 joints per frame) — and skips ViTPose's
+//                                 weights entirely. `auto` follows the
+//                                 detector: palette keypoints only on a clip
+//                                 the palette detector claimed.
 const EXTRACT_BACKEND = (process.env.CCLAY_EXTRACT_BACKEND?.trim() || "sam").toLowerCase();
 const GVHMR_DIR = "~/cclay-ingest/GVHMR";
 const GVHMR_STATIC_CAM = (process.env.CCLAY_EXTRACT_STATIC_CAM?.trim() || "1") !== "0";
 const GVHMR_DETECTOR = gvhmrDetectorFromEnv();
+const GVHMR_KEYPOINTS = gvhmrKeypointsFromEnv();
 // Rollback keeps the original one-shot command completely unchanged.
 const GVHMR_WORKER = process.env.CCLAY_GVHMR_WORKER?.trim() !== "0";
 // Independent of preparation acceleration; disable to recover exact legacy output.
@@ -344,7 +358,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 			? `${EXTRACT_CMD} ${remoteVideo} ${remoteBvh}`
 			: gvhmr
 			? `cd ${GVHMR_DIR} && .venv/bin/python cclay_gvhmr_extract.py ${remoteVideo} ${remoteNpz} ` +
-				`${gvhmrRunnerArgs({ staticCam: GVHMR_STATIC_CAM, detector: GVHMR_DETECTOR }).join(" ")}` +
+				`${gvhmrRunnerArgs({ staticCam: GVHMR_STATIC_CAM, detector: GVHMR_DETECTOR, keypoints: GVHMR_KEYPOINTS }).join(" ")}` +
 				` --out-root /tmp/cclay-gvhmr-${stamp}`
 			: `cd ${SAM_DIR} && ${SAM_ENV} ./build/offline_sam_3dbody_render ` +
 				`--onnx-dir ./onnx --gguf ./onnx/pipeline.gguf --yolo ./onnx/yolo.onnx ` +
@@ -373,7 +387,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		if (gvhmr && GVHMR_WORKER) {
 			extractionPerformance = await gvhmrWorker({ host, sshOptions: SSH_OPTS, scpOptions: SCP_OPTS }).run({
 				video: remoteVideo, output: remoteNpz, outRoot: `/tmp/cclay-gvhmr-${stamp}`, staticCam: GVHMR_STATIC_CAM,
-				detector: GVHMR_DETECTOR, trajectory: GVHMR_TRAJECTORY,
+				detector: GVHMR_DETECTOR, keypoints: GVHMR_KEYPOINTS, trajectory: GVHMR_TRAJECTORY,
 			}, { signal: abort.signal, timeoutMs: EXTRACT_TIMEOUT_MS, onLine: runOptions.onLine });
 			console.error(`[bridge] GVHMR performance ${JSON.stringify(extractionPerformance)}`);
 		} else {

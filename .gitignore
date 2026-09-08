@@ -10,6 +10,9 @@ tools/ardy/out/
 # Exceptions: the hosted demo seed clip ships with the build; test-only clips
 # stay tracked as fixtures but are never copied into production output.
 !public/demo/*.npz
+# QA evidence archives are extraction output staged for a local replay run,
+# not fixtures; the exception above would otherwise make them committable.
+public/demo/qa-h3-*.npz
 !test/fixtures/qa-lying.npz
 
 .DS_Store

@@ -23,6 +23,7 @@ import traceback
 
 
 DETECTORS = ("yolo", "palette", "auto")
+KEYPOINTS = ("vitpose", "palette", "auto")
 
 
 def runner_argv(request, runner_path):
@@ -38,6 +39,9 @@ def runner_argv(request, runner_path):
     detector = request.get("detector")
     if detector in DETECTORS:
         argv.extend(["--detector", detector])
+    keypoints = request.get("keypoints")
+    if keypoints in KEYPOINTS:
+        argv.extend(["--keypoints", keypoints])
     return argv
 
 def emit(value):

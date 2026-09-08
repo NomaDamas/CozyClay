@@ -131,6 +131,7 @@ function setup(command, args, signal) {
 }
 
 const DETECTORS = ["yolo", "palette", "auto"];
+const KEYPOINTS = ["vitpose", "palette", "auto"];
 
 /** Runner CLI flags shared by the one-shot ssh command and the worker.
  *  Pure so the flag wiring is testable without a box: the part-coloured
@@ -138,12 +139,21 @@ const DETECTORS = ["yolo", "palette", "auto"];
  *  conf 0.5 against 481/481 for a real person), so the runner's palette
  *  detector takes over on those clips. `auto` measures the palette first and
  *  keeps YOLO when the hue evidence is thin, which is why it is the default.
+ *
+ *  `keypoints` picks what fills GVHMR's kp2d observation (#180). ViTPose has
+ *  to infer joints a flat-coloured render gives it no cue for — measured on
+ *  h3_warm_s7 its median body joint sits 10.4 % of bbox height off the
+ *  palette joints, the shoulders 30-65 % — while the mannequin's per-segment
+ *  hues put every joint exactly where two segment masks meet. `auto` follows
+ *  the detector: palette keypoints for a palette-detected clip, ViTPose for
+ *  real footage, which is the only place ViTPose is the better estimate.
  */
-export function gvhmrRunnerArgs({ staticCam = true, fMm = null, detector = "auto" } = {}) {
+export function gvhmrRunnerArgs({ staticCam = true, fMm = null, detector = "auto", keypoints = "auto" } = {}) {
 	const args = [];
 	if (staticCam) args.push("--static-cam");
 	if (fMm != null) args.push("--f-mm", String(Math.trunc(fMm)));
 	args.push("--detector", DETECTORS.includes(detector) ? detector : "auto");
+	args.push("--keypoints", KEYPOINTS.includes(keypoints) ? keypoints : "auto");
 	return args;
 }
 
@@ -153,6 +163,13 @@ export function gvhmrRunnerArgs({ staticCam = true, fMm = null, detector = "auto
 export function gvhmrDetectorFromEnv(env = process.env) {
 	const value = env.CCLAY_EXTRACT_DETECTOR?.trim().toLowerCase() || "auto";
 	return DETECTORS.includes(value) ? value : "auto";
+}
+
+/** CCLAY_EXTRACT_KEYPOINTS as the runner understands it, degrading unknown
+ *  values to `auto` for the same reason the detector does. */
+export function gvhmrKeypointsFromEnv(env = process.env) {
+	const value = env.CCLAY_EXTRACT_KEYPOINTS?.trim().toLowerCase() || "auto";
+	return KEYPOINTS.includes(value) ? value : "auto";
 }
 
 const clients = new Map();
