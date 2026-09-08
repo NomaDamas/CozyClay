@@ -114,6 +114,75 @@ function preferredVideoOutputNodes(workflow) {
 		.map(([id]) => id));
 }
 
+const isH3Node = (node) => /minimax.?h3|h3.*video/i.test(String(node?.class_type || ""));
+const isLoadImageNode = (node) => /loadimage/i.test(String(node?.class_type || ""));
+const isCompositeNode = (node) => /imagecomposite|compositeimage|imagemattecomposite/i.test(String(node?.class_type || ""));
+const isMaskNode = (node) => {
+	if (isCompositeNode(node)) return false;
+	return /sam3|segmentation|videomask|tracktomask|masktoimage|imagemask/i.test(String(node?.class_type || ""));
+};
+
+function linkedNodeIds(value, result = []) {
+	if (Array.isArray(value)) {
+		if (typeof value[0] === "string") result.push(value[0]);
+		else for (const child of value) linkedNodeIds(child, result);
+	} else if (value && typeof value === "object") {
+		for (const child of Object.values(value)) linkedNodeIds(child, result);
+	}
+	return result;
+}
+
+function reachesNode(nodes, startId, predicate, visiting = new Set()) {
+	if (!startId || visiting.has(startId)) return false;
+	const node = nodes?.[startId];
+	if (!node || typeof node !== "object") return false;
+	if (predicate(node)) return true;
+	const nextVisiting = new Set(visiting);
+	nextVisiting.add(startId);
+	return Object.values(node.inputs || {}).some((value) => linkedNodeIds(value).some((id) => reachesNode(nodes, id, predicate, nextVisiting)));
+}
+
+/**
+ * H3 itself is an image-to-video sampler and cannot guarantee that generated
+ * pixels outside the performer stay unchanged. A valid production graph must
+ * therefore composite the generated subject over the uploaded plate before
+ * its final video writer. Keep this structural check alongside the pixel
+ * validator: the pixel check catches a bad run, while this check prevents a
+ * graph with no deterministic preservation stage from running at all.
+ */
+export function hasH3SceneComposite(workflow, outputNodeIds) {
+	const nodes = workflow && typeof workflow === "object" ? workflow : {};
+	const outputIds = [...(outputNodeIds || [])].map(String);
+	if (!outputIds.length) return { pass: false, outputs: [] };
+	const checkOutput = (outputId) => {
+		const compositors = new Set();
+		const collect = (id, visiting = new Set()) => {
+		if (!id || visiting.has(id)) return;
+		const node = nodes[id];
+		if (!node || typeof node !== "object") return;
+		if (isCompositeNode(node)) compositors.add(String(id));
+		const nextVisiting = new Set(visiting);
+		nextVisiting.add(id);
+		for (const value of Object.values(node.inputs || {})) for (const linkedId of linkedNodeIds(value)) collect(linkedId, nextVisiting);
+		};
+		collect(outputId);
+		for (const compositorId of compositors) {
+		const node = nodes[compositorId];
+		const entries = Object.entries(node.inputs || {});
+		const background = entries.filter(([key]) => /destination|background|plate|base/i.test(key));
+		const source = entries.filter(([key]) => /source|foreground|overlay|subject|image2|video/i.test(key));
+		const mask = entries.filter(([key]) => /mask|alpha|matte/i.test(key));
+		const reaches = (entries, predicate) => entries.some(([, value]) => linkedNodeIds(value).some((id) => reachesNode(nodes, id, predicate)));
+		if (reaches(background, isLoadImageNode) && reaches(source, isH3Node) && reaches(mask, isMaskNode)) {
+			return { pass: true, outputId, compositorId, classType: String(node.class_type || "") };
+		}
+		}
+		return { pass: false, outputId };
+	};
+	const outputs = outputIds.map(checkOutput);
+	return { pass: outputs.every((output) => output.pass), outputs, ...(outputs.length === 1 ? outputs[0] : {}) };
+}
+
 function replaceWorkflowInputs(value, prompt, imageName, width, height, { h3Only = false, h3Context = false } = {}) {
 	if (Array.isArray(value)) return value.map((item) => replaceWorkflowInputs(item, prompt, imageName, width, height, { h3Only, h3Context }));
 	if (!value || typeof value !== "object") {
@@ -159,6 +228,10 @@ function createComfy(env, fetchImpl) {
 			if (h3 && !preferredOutputs.size) {
 				throw new Error("H3 workflow must expose a final SaveVideo/VideoCombine output; refusing an unverified camera/background run.");
 			}
+			const sceneComposite = h3 ? hasH3SceneComposite(workflow, preferredOutputs) : { pass: true };
+			if (h3 && !sceneComposite.pass) {
+				throw new Error("H3 workflow must composite the generated subject over the uploaded plate with a tracked mask before final video output; refusing an unlocked camera/background run.");
+			}
 			const form = new FormData();
 			form.append("image", dataUrlBlob(imageDataUrl), "cozyclay-frame.png");
 			form.append("overwrite", "true");
@@ -193,7 +266,7 @@ function createComfy(env, fetchImpl) {
 									throw Object.assign(new Error(`H3 preservation failed: background/camera drift p95=${worst.p95Rgb.toFixed(1)} RGB, mean=${worst.meanRgb.toFixed(1)} RGB.`), { code: "h3-preservation-failed", preservation });
 								}
 							}
-							return { mp4Base64: bytes.length <= MAX_INLINE_VIDEO ? bytes.toString("base64") : undefined, url: bytes.length > MAX_INLINE_VIDEO ? `${base}/view?${query}` : undefined, width: dimensions.width, height: dimensions.height, seconds: dimensions.seconds ?? durationSeconds, ...(preservation ? { preservation } : {}) };
+			return { mp4Base64: bytes.length <= MAX_INLINE_VIDEO ? bytes.toString("base64") : undefined, url: bytes.length > MAX_INLINE_VIDEO ? `${base}/view?${query}` : undefined, width: dimensions.width, height: dimensions.height, seconds: dimensions.seconds ?? durationSeconds, ...(preservation ? { preservation: { ...preservation, compositor: sceneComposite } } : {}) };
 						}
 						}
 					}

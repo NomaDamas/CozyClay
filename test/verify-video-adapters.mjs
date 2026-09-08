@@ -5,8 +5,8 @@ import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildH3LockedPrompt, comfyDimensionsForAspect, createVideoAdapters, H3_PRESERVATION_CONTRACT, isH3Workflow } from "../bin/agent/video-adapters.mjs";
-import { compareH3Plate, inspectH3Output } from "../bin/agent/h3-preservation.mjs";
+import { buildH3LockedPrompt, comfyDimensionsForAspect, createVideoAdapters, H3_PRESERVATION_CONTRACT, hasH3SceneComposite, isH3Workflow } from "../bin/agent/video-adapters.mjs";
+import { compareH3FrameStability, compareH3Plate, inspectH3Output } from "../bin/agent/h3-preservation.mjs";
 
 assert.equal(buildH3LockedPrompt("walk").includes(H3_PRESERVATION_CONTRACT), true, "H3 prompts carry the immutable plate contract");
 assert.equal(buildH3LockedPrompt(buildH3LockedPrompt("walk")), buildH3LockedPrompt("walk"), "H3 contract injection is idempotent");
@@ -22,6 +22,30 @@ const same = compareH3Plate(plate, plate, 4, 4);
 assert.equal(same.p95Rgb, 0, "plate comparison accepts unchanged border pixels");
 const changed = compareH3Plate(plate, new Uint8Array(4 * 4 * 3).fill(255), 4, 4);
 assert.ok(changed.p95Rgb > 200, "plate comparison exposes a changed background");
+
+// Camera alignment must use the perimeter, where the actor is expected to be
+// absent. A moving foreground block should not look like a camera move, while
+// a one-pixel translation across a textured plate must be measurable.
+const sceneWidth = 32; const sceneHeight = 24;
+const scene = new Uint8Array(sceneWidth * sceneHeight * 3);
+for (let y = 0; y < sceneHeight; y += 1) for (let x = 0; x < sceneWidth; x += 1) {
+	const i = (y * sceneWidth + x) * 3; scene[i] = (x * 17 + y * 3) % 251; scene[i + 1] = (x * 7 + y * 19) % 251; scene[i + 2] = (x * 13 + y * 11) % 251;
+}
+const actorOnly = scene.slice();
+for (let y = 8; y < 16; y += 1) for (let x = 12; x < 20; x += 1) {
+	const i = (y * sceneWidth + x) * 3; actorOnly[i] = 250; actorOnly[i + 1] = 30; actorOnly[i + 2] = 30;
+}
+const actorStability = compareH3FrameStability(scene, actorOnly, sceneWidth, sceneHeight);
+assert.equal(actorStability.cameraDriftPx, 0, "foreground subject motion is excluded from camera-shift evidence");
+const shifted = new Uint8Array(scene.length);
+for (let y = 0; y < sceneHeight; y += 1) for (let x = 0; x < sceneWidth; x += 1) {
+	const sourceX = Math.max(0, Math.min(sceneWidth - 1, x - 2));
+	const source = (y * sceneWidth + sourceX) * 3; const target = (y * sceneWidth + x) * 3;
+	shifted[target] = scene[source]; shifted[target + 1] = scene[source + 1]; shifted[target + 2] = scene[source + 2];
+}
+const shiftStability = compareH3FrameStability(scene, shifted, sceneWidth, sceneHeight);
+assert.ok(shiftStability.cameraDriftPx > 0, "textured perimeter movement is reported as camera drift");
+console.log("PASS H3 validator: perimeter-only camera evidence separates subject motion from plate translation");
 
 const fixturePath = join(tmpdir(), `cozyclay-video-fixture-${process.pid}.mp4`);
 execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=2x2:r=2:d=1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", fixturePath]);
@@ -97,15 +121,42 @@ writeFileSync(h3WorkflowPath, JSON.stringify({
 	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale saved example sentence" } },
 	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
 	"9": { class_type: "SAM3_VideoTrack", inputs: { prompt: "person" } },
+	"8": { class_type: "VAEDecode", inputs: { samples: ["1", 0] } },
+	"10": { class_type: "SAM3_TrackToMask", inputs: { track: ["9", 0] } },
+	"6": { class_type: "ImageCompositeMasked", inputs: { destination: ["2", 0], source: ["8", 0], mask: ["10", 0] } },
 	"7": { class_type: "SaveVideo", inputs: { video: ["6", 0] } },
 }));
+assert.equal(hasH3SceneComposite(JSON.parse(readFileSync(h3WorkflowPath, "utf8")), new Set(["7"])).pass, true, "H3 graph has an uploaded-plate compositor on the final output path");
+assert.equal(hasH3SceneComposite(JSON.parse(readFileSync(h3WorkflowPath, "utf8")), new Set(["7", "1"])).pass, false, "every final video output must pass through the compositor");
 const h3 = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: h3WorkflowPath }).find((adapter) => adapter.id === "comfy");
 await h3.generate({ prompt: "a person climbs onto the chair", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
 const h3PromptCall = requests.filter((entry) => entry.path === "/prompt").at(-1);
 assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /immutable scene plate/);
 assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /locked camera/);
 assert.equal(h3PromptCall.body.prompt["9"].inputs.prompt, "person", "H3 prompt replacement does not overwrite tracker prompts");
-console.log("PASS H3 adapter: immutable background/camera contract is injected");
+console.log("PASS H3 adapter: immutable background/camera contract and compositor are enforced");
+
+const plainH3WorkflowPath = join(dir, "h3-plain-with-output.json");
+writeFileSync(plainH3WorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
+	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+	"7": { class_type: "SaveVideo", inputs: { video: ["1", 0] } },
+}));
+const plainH3 = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: plainH3WorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => plainH3.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must composite the generated subject over the uploaded plate/);
+console.log("PASS H3 adapter: graph without deterministic compositor is rejected before queue");
+
+const genericMaskWorkflowPath = join(dir, "h3-generic-mask.json");
+writeFileSync(genericMaskWorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
+	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+	"6": { class_type: "ImageCompositeMasked", inputs: { destination: ["2", 0], source: ["1", 0], mask: ["5", 0] } },
+	"5": { class_type: "SolidMask", inputs: { value: 1 } },
+	"7": { class_type: "SaveVideo", inputs: { video: ["6", 0] } },
+}));
+const genericMask = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: genericMaskWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => genericMask.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must composite the generated subject over the uploaded plate/);
+console.log("PASS H3 adapter: untracked generic mask is rejected");
 
 // Exercise the fail-closed output guard with real ffmpeg-decoded frames. The
 // tiny plate is black; replacing it with a red plate must be rejected.
