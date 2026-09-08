@@ -5485,14 +5485,40 @@ export default function App() {
 	 *  layer: it goes to that entry's sessionMotion, NOT through the editing
 	 *  buffer, which holds the active character's clip alone. Returns how many
 	 *  performers actually landed. */
+	const authoredSupportDescriptors = () => sceneObjects.map((object) => ({
+		x: object.x,
+		z: object.z,
+		rotDeg: object.rot ?? 0,
+		supportY: (object.y ?? 0) + supportHeightForObject(object) * (object.scaleY ?? 1),
+		topY: (object.y ?? 0) + supportHeightForObject(object) * (object.scaleY ?? 1),
+		width: (object.footprint?.width ?? 0) * (object.scaleX ?? 1),
+		depth: (object.footprint?.depth ?? 0) * (object.scaleZ ?? 1),
+	}));
+	const applyAuthoredSupportRise = (clip, anchor, rotationDeg, worldScale = characterScaleFor(clip)) => applySupportRise(clip, authoredSupportDescriptors(), {
+		subjectX: anchor.x,
+		subjectY: anchor.y ?? 0,
+		subjectZ: anchor.z,
+		rotationDeg,
+		worldScale,
+	});
+
 	async function deliverExtraTakes(extras, active, label) {
 		const decoded = await Promise.all(extras.map(async (take, index) => {
 			if (typeof take?.motionUrl !== "string" || !take.motionUrl) return null;
 			try {
 				// Inbound boundary, exactly like every other clip: decode, then
 				// retime onto the production clock before anything counts frames.
-				const clip = retimeMotion(await loadMotionFromUrl(take.motionUrl), TIMELINE_FPS);
 				const anchor = takeAnchor(active, take.offsetX, take.offsetZ);
+				const clip = retimeMotion(await loadMotionFromUrl(take.motionUrl), TIMELINE_FPS);
+				const scale = characterScaleFor(clip, take.personScale);
+				const raised = applyAuthoredSupportRise(clip, { ...anchor, y: active.y ?? 0 }, active.rot, scale);
+				const staging = autoRoofDrop(
+					raised,
+					{ x: anchor.x, z: anchor.z, y: active.y ?? 0, rotationDeg: active.rot },
+					authoredSupportDescriptors(),
+					{ worldScale: scale },
+				);
+				const stagedClip = staging ? applyAutoFall(raised, staging, { worldScale: scale }) : raised;
 				return {
 					url: take.motionUrl,
 					prompt: `${label} · ${index + 2}`,
@@ -5502,7 +5528,7 @@ export default function App() {
 					// their own stature, and the response estimate is only the
 					// fallback for an npz that stores none.
 					scale: characterScaleFor(clip, take.personScale),
-					clip,
+					clip: stagedClip,
 				};
 			} catch {
 				return null; // one unreadable take never voids the others
@@ -5597,35 +5623,35 @@ export default function App() {
 			// A drop is staging applied to the clip itself, so it happens at
 			// the same boundary — trims and IK then see the dropped take.
 			const raw = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			// Staging descriptors are authored in scene metres while decoded
+			// trajectories are canonical-body units. Resolve stature before any
+			// support or fall math so a 0.8x/1.2x performer still lands exactly on
+			// the same authored surface after playback multiplies the clip.
+			const motionScale = characterScaleFor(raw);
 			const targetCharacter = charactersRef.current.find((entry) => entry.id === targetCharacterId);
 			if (!targetCharacter) throw new Error(`Motion target ${targetCharacterId} no longer exists.`);
 			const rig = rigs[targetCharacter.id] ?? await waitForRig(targetCharacter.id);
 			// No explicit drop staged: a character standing on a raised object
 			// whose take walks off the edge falls on its own — ARDY motion is
 			// flat-ground, so the stage supplies the gravity.
-			const supports = sceneObjects.map((object) => ({
-				x: object.x,
-				z: object.z,
-				rotDeg: object.rot ?? 0,
-				supportY: (object.y ?? 0) + supportHeightForObject(object) * (object.scaleY ?? 1),
-				topY: (object.y ?? 0) + supportHeightForObject(object) * (object.scaleY ?? 1),
-				width: (object.footprint?.width ?? 0) * (object.scaleX ?? 1),
-				depth: (object.footprint?.depth ?? 0) * (object.scaleZ ?? 1),
-			}));
+			const supports = authoredSupportDescriptors();
 			// A support's top is scene data, never guessed from the motion.  Apply
 			// only when the clip shows an upward root trend entering its footprint;
 			// ordinary deck walks remain byte-for-byte unchanged.
 			const raised = drop ? raw : applySupportRise(raw, supports, {
 				subjectX: targetCharacter.x,
+				subjectY: targetCharacter.y ?? 0,
 				subjectZ: targetCharacter.z,
 				rotationDeg,
+				worldScale: motionScale,
 			});
 			const staging = drop ?? autoRoofDrop(
 				raised,
 				{ x: targetCharacter.x, z: targetCharacter.z, y: targetCharacter.y ?? 0, rotationDeg },
 				supports,
+				{ worldScale: motionScale },
 			);
-			const decoded = drop ? applyRootDrop(raised, staging) : applyAutoFall(raised, staging);
+			const decoded = drop ? applyRootDrop(raised, staging, { worldScale: motionScale }) : applyAutoFall(raised, staging, { worldScale: motionScale });
 			if (!drop && staging && !preview) {
 				setToast(ko(
 					`Auto drop staged: the take leaves its support at ${staging.fromS.toFixed(1)}s and falls ${staging.meters.toFixed(1)}m`,

@@ -196,8 +196,14 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			if (!adapter || !adapter.configured()) { json(res, 409, { error: "video provider is not configured" }); return true; }
 			try {
 				const result = await adapter.generate({ ...value, durationSeconds: Number(value.durationSeconds) });
-				json(res, 200, { ...(result.mp4Base64 ? { dataUrl: `data:video/mp4;base64,${result.mp4Base64}` } : { url: result.url }), width: result.width, height: result.height, seconds: result.seconds });
-			} catch (error) { json(res, 502, { error: error?.message || "video provider failed" }); }
+				json(res, 200, { ...(result.mp4Base64 ? { dataUrl: `data:video/mp4;base64,${result.mp4Base64}` } : { url: result.url }), width: result.width, height: result.height, seconds: result.seconds, ...(result.preservation ? { preservation: result.preservation } : {}) });
+			} catch (error) {
+				// A generated H3 take that fails the plate check is unsafe to show as
+				// a locked shot. Keep the distinction visible to the client so it can
+				// ask for a retry instead of silently accepting a drifting set.
+				const status = error?.code === "h3-preservation-failed" ? 422 : 502;
+				json(res, status, { error: error?.message || "video provider failed", ...(error?.preservation ? { preservation: error.preservation } : {}) });
+			}
 			return true;
 		}
 		if (req.method !== "POST" || !["/agent/turn", "/agent/stop"].includes(path)) {

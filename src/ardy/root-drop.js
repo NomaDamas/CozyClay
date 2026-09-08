@@ -47,18 +47,22 @@ const smoothstep = (value) => {
  * a flat walk through a prop therefore stays untouched.
  *
  * `supports` are world-space rectangles with an explicit `supportY` (the top
- * of the surface).  `subject` supplies the character's world anchor and yaw,
- * matching the transform used by `autoRoofDrop`.  The input motion is never
- * mutated.  The returned object carries `surfaceRise` diagnostics.
+ * of the surface). `subjectX/Y/Z` supply the character's scene anchor and
+ * `worldScale` converts canonical clip units to scene metres, matching the
+ * transform used by `autoRoofDrop`. The input motion is never mutated. The
+ * returned object carries `surfaceRise` diagnostics.
  */
 export function applySupportRise(
 	motion,
 	supports,
-	{ subjectX = 0, subjectZ = 0, rotationDeg = 0, minRise = 0.08, minSlope = 0.04, lookbackFrames = 6, blendFrames = 6, maxOffset = 1.5 } = {},
+	{ subjectX = 0, subjectY = 0, subjectZ = 0, rotationDeg = 0, minRise = 0.08, minSlope = 0.04, lookbackFrames = 6, blendFrames = 6, maxOffset = 1.5, worldScale = 1 } = {},
 ) {
 	if (!motion || !Number.isFinite(motion.fps) || motion.fps <= 0 || !motion.rootPos || !motion.posedJoints) return motion;
 	const frames = Number(motion.frames);
 	if (!Number.isInteger(frames) || frames < 2 || motion.rootPos.length < frames * 3) return motion;
+	const joints = motion.posedJoints.length / (frames * 3);
+	if (!Number.isInteger(joints) || joints <= 0) return motion;
+	const scale = Number.isFinite(Number(worldScale)) && Number(worldScale) > 0 ? Number(worldScale) : 1;
 	if (!Array.isArray(supports) || !supports.length) return motion;
 	const candidates = supports.filter((support) =>
 		support && Number.isFinite(Number(support.supportY)) && Number(support.width) > 0 && Number(support.depth) > 0,
@@ -69,13 +73,26 @@ export function applySupportRise(
 	const worldAt = (frame) => {
 		const dx = motion.rootPos[frame * 3] - motion.rootPos[0];
 		const dz = motion.rootPos[frame * 3 + 2] - motion.rootPos[2];
-		return { x: Number(subjectX) + dx * cos + dz * sin, z: Number(subjectZ) + (-dx * sin + dz * cos) };
+		return { x: Number(subjectX) + (dx * cos + dz * sin) * scale, z: Number(subjectZ) + (-dx * sin + dz * cos) * scale };
 	};
 	const points = Array.from({ length: frames }, (_, frame) => worldAt(frame));
-	const inside = candidates.map((support) => points.map((point) => insideSupport({
+	const feet = SUPPORT_FEET.filter((joint) => joint < joints);
+	const footWorldAt = (frame, joint) => {
+		const p = (frame * joints + joint) * 3;
+		const dx = motion.posedJoints[p] - motion.rootPos[0];
+		const dz = motion.posedJoints[p + 2] - motion.rootPos[2];
+		return { x: Number(subjectX) + (dx * cos + dz * sin) * scale, z: Number(subjectZ) + (-dx * sin + dz * cos) * scale };
+	};
+	const inside = candidates.map((support) => points.map((point, frame) => insideSupport({
 		x: Number(support.x) || 0, z: Number(support.z) || 0,
 		rotDeg: Number(support.rotDeg) || 0, width: Number(support.width), depth: Number(support.depth),
-	}, point.x, point.z)));
+	}, point.x, point.z) || feet.some((joint) => {
+		const foot = footWorldAt(frame, joint);
+		return insideSupport({
+			x: Number(support.x) || 0, z: Number(support.z) || 0,
+			rotDeg: Number(support.rotDeg) || 0, width: Number(support.width), depth: Number(support.depth),
+		}, foot.x, foot.z);
+	})));
 	let selected = null;
 	for (let si = 0; si < candidates.length; si += 1) {
 		const support = candidates[si];
@@ -83,62 +100,92 @@ export function applySupportRise(
 		// (approach, brace, then climb). Search the first second of continuous
 		// support occupancy instead of requiring the rise on the boundary frame.
 		let entry = -1;
-		for (let frame = 1; frame < frames; frame += 1) {
+		for (let frame = 0; frame < frames; frame += 1) {
 			if (!inside[si][frame]) { entry = -1; continue; }
-			if (entry < 0 && !inside[si][frame - 1]) entry = frame;
+			// A take can begin already standing on a platform. Treat frame 0 as
+			// an entry so the same evidence search handles both approaches and
+			// starts-on-support clips.
+			if (entry < 0 && (frame === 0 || !inside[si][frame - 1])) entry = frame;
 			if (entry < 0 || frame - entry > Math.round(motion.fps)) continue;
 			const from = Math.max(0, frame - Math.max(1, Math.round(lookbackFrames)));
 			// A foot can enter the footprint one or two frames before the body
 			// commits to the climb. Look a short distance ahead, while retaining
 			// the entry frame as the point where the blend begins.
 			const evidenceFrame = Math.min(frames - 1, frame + Math.max(1, Math.round(lookbackFrames)));
-			const rise = motion.rootPos[evidenceFrame * 3 + 1] - motion.rootPos[from * 3 + 1];
+			const rise = (motion.rootPos[evidenceFrame * 3 + 1] - motion.rootPos[from * 3 + 1]) * scale;
 			const slope = rise / ((evidenceFrame - from) / motion.fps);
 			if (rise < Number(minRise) || slope < Number(minSlope)) continue;
-			const f0 = SUPPORT_FEET.filter((joint) => (evidenceFrame * 27 + joint) * 3 + 1 < motion.posedJoints.length);
+			const feet = SUPPORT_FEET.filter((joint) => joint < joints);
+			if (!feet.length) continue;
 			const occupiedYs = [];
 			for (let probe = evidenceFrame; probe < frames && inside[si][probe] && probe <= evidenceFrame + Math.round(motion.fps * 0.75); probe += 1) {
-				const ys = SUPPORT_FEET.map((joint) => motion.posedJoints[(probe * 27 + joint) * 3 + 1]).filter(Number.isFinite);
+				const ys = feet.map((joint) => motion.posedJoints[(probe * joints + joint) * 3 + 1] * scale).filter(Number.isFinite);
 				if (ys.length) occupiedYs.push(Math.min(...ys));
 			}
 			occupiedYs.sort((a, b) => a - b);
 			const observedFootY = occupiedYs[Math.floor(occupiedYs.length * 0.7)];
-			const footYs = f0.map((joint) => motion.posedJoints[(evidenceFrame * 27 + joint) * 3 + 1]).filter(Number.isFinite);
+			const footYs = feet.map((joint) => motion.posedJoints[(evidenceFrame * joints + joint) * 3 + 1] * scale).filter(Number.isFinite);
 			if (!footYs.length) continue;
-			const offset = Number(support.supportY) - (Number.isFinite(observedFootY) ? observedFootY : Math.min(...footYs));
-			if (!(offset > 0.01) || offset > Number(maxOffset)) continue;
-			selected = { si, frame, support, offset, rise, slope };
+			const baseY = Number(subjectY) || 0;
+			const offsetWorld = Number(support.supportY) - (baseY + (Number.isFinite(observedFootY) ? observedFootY : Math.min(...footYs)));
+			if (!(offsetWorld > 0.01) || offsetWorld > Number(maxOffset)) continue;
+			selected = {
+				si,
+				frame,
+				support,
+				offset: offsetWorld / scale,
+				offsetWorld,
+				rise,
+				slope,
+				baseRootY: motion.rootPos[from * 3 + 1],
+			};
 			break;
 		}
 		if (selected) break;
 	}
 	if (!selected) return motion;
-	const { si, frame: enter, offset, support, rise, slope } = selected;
+	const { si, frame: enter, offset, offsetWorld, support, rise, slope, baseRootY } = selected;
 	let exit = frames - 1;
 	for (let frame = enter + 1; frame < frames; frame += 1) {
 		if (!inside[si][frame]) { exit = frame; break; }
+	}
+	// Some shots climb and then step down while the root remains inside a
+	// generous footprint (a chair turn, a platform landing, or a jump in
+	// place). Release the lift when the root has come back near its pre-climb
+	// level; otherwise the rigid support offset would leave the performer
+	// floating even though the take has visibly descended.
+	let release = exit;
+	const descendThreshold = Math.max(Number(minRise), 0.08);
+	let peakRootY = motion.rootPos[enter * 3 + 1];
+	for (let frame = enter + 1; frame <= exit; frame += 1) {
+		peakRootY = Math.max(peakRootY, motion.rootPos[frame * 3 + 1]);
+		const current = motion.rootPos[frame * 3 + 1];
+		if (peakRootY - current >= descendThreshold && current <= baseRootY + descendThreshold * 0.5) {
+			release = frame;
+			break;
+		}
 	}
 	const blend = Math.max(1, Math.round(blendFrames));
 	const offsets = new Float32Array(frames);
 	for (let frame = enter; frame < frames; frame += 1) {
 		const up = smoothstep((frame - enter + 1) / blend);
-		const down = exit < frames - 1 ? smoothstep((exit - frame) / blend) : 1;
+		const down = release < frames - 1 ? smoothstep((release - frame) / blend) : 1;
 		offsets[frame] = offset * Math.min(up, down);
 	}
 	const rootPos = Float32Array.from(motion.rootPos);
 	const posedJoints = Float32Array.from(motion.posedJoints);
-	const joints = Math.round(posedJoints.length / frames / 3);
+	const jointCount = Math.round(posedJoints.length / frames / 3);
 	for (let frame = 0; frame < frames; frame += 1) {
 		const dy = offsets[frame];
 		if (!dy) continue;
 		rootPos[frame * 3 + 1] += dy;
-		for (let joint = 0; joint < joints; joint += 1) posedJoints[(frame * joints + joint) * 3 + 1] += dy;
+		for (let joint = 0; joint < jointCount; joint += 1) posedJoints[(frame * jointCount + joint) * 3 + 1] += dy;
 	}
 	return {
 		...motion,
 		rootPos,
 		posedJoints,
-		surfaceRise: { applied: true, supportY: Number(support.supportY), offset, enterFrame: enter, exitFrame: exit, rise, slope },
+		surfaceRise: { applied: true, supportY: Number(support.supportY), offset, offsetWorld, worldScale: scale, enterFrame: enter, exitFrame: exit, releaseFrame: release, rise, slope },
 	};
 }
 
@@ -156,12 +203,13 @@ export function applySupportRise(
  * the ground, never stood on a support, or never leaves it — null means
  * "stage nothing", so this is safe to leave on the load path.
  */
-export function autoRoofDrop(motion, subject, supports, { gravity = 9.81, topTolerance = 0.3, fallTimeScale = 1.15 } = {}) {
+export function autoRoofDrop(motion, subject, supports, { gravity = 9.81, topTolerance = 0.3, fallTimeScale = 1.15, worldScale = 1 } = {}) {
 	if (!motion || !Number.isFinite(motion.fps) || motion.fps <= 0 || !motion.rootPos) return null;
 	const frames = motion.frames;
 	if (!Number.isFinite(frames) || frames < 2) return null;
 	const y = Number(subject?.y) || 0;
 	if (y <= 0.05 || !Array.isArray(supports) || supports.length === 0) return null;
+	const scale = Number.isFinite(Number(worldScale)) && Number(worldScale) > 0 ? Number(worldScale) : 1;
 
 	const radians = ((Number.isFinite(subject.rotationDeg) ? subject.rotationDeg : 0) * Math.PI) / 180;
 	const cos = Math.cos(radians);
@@ -170,8 +218,8 @@ export function autoRoofDrop(motion, subject, supports, { gravity = 9.81, topTol
 		const dx = motion.rootPos[frame * 3] - motion.rootPos[0];
 		const dz = motion.rootPos[frame * 3 + 2] - motion.rootPos[2];
 		return {
-			x: subject.x + dx * cos + dz * sin,
-			z: subject.z + (-dx * sin + dz * cos),
+			x: subject.x + (dx * cos + dz * sin) * scale,
+			z: subject.z + (-dx * sin + dz * cos) * scale,
 		};
 	};
 
@@ -210,9 +258,10 @@ export function autoRoofDrop(motion, subject, supports, { gravity = 9.81, topTol
  *   clip does next (walking away twelve metres underground-level) is comedy.
  * Explicit MCP drops keep the rigid applyRootDrop bake below.
  */
-export function applyAutoFall(motion, spec, { landHoldS = 0.35, launchLookbackS = 0.15 } = {}) {
+export function applyAutoFall(motion, spec, { landHoldS = 0.35, launchLookbackS = 0.15, worldScale = 1 } = {}) {
 	if (!spec || !motion || !Number.isFinite(motion.fps) || motion.fps <= 0) return motion;
 	const fps = motion.fps;
+	const scale = Number.isFinite(Number(worldScale)) && Number(worldScale) > 0 ? Number(worldScale) : 1;
 	const fExit = Math.max(0, Math.round(spec.fromS * fps));
 	if (fExit >= motion.frames - 1) return motion;
 	const fallS = Math.max(spec.toS - spec.fromS, 1 / fps);
@@ -231,7 +280,7 @@ export function applyAutoFall(motion, spec, { landHoldS = 0.35, launchLookbackS 
 		const t = (f - fExit) / fps;
 		const progress = Math.min(t / fallS, 1);
 		const air = Math.min(t, fallS);
-		const dy = -spec.meters * progress * progress;
+		const dy = -(spec.meters / scale) * progress * progress;
 		const dx = exitX + vx * air - rootPos[f * 3];
 		const dz = exitZ + vz * air - rootPos[f * 3 + 2];
 		rootPos[f * 3] += dx;
@@ -269,9 +318,10 @@ export function applyAutoFall(motion, spec, { landHoldS = 0.35, launchLookbackS 
  * The curve is t² (uniform acceleration): a body leaving a roof gathers
  * speed, and an eased-both-ends fall reads as a elevator, not gravity.
  */
-export function applyRootDrop(motion, drop) {
+export function applyRootDrop(motion, drop, { worldScale = 1 } = {}) {
 	const spec = normalizeRootDrop(drop);
 	if (!spec || !motion || !Number.isFinite(motion.fps) || motion.fps <= 0) return motion;
+	const scale = Number.isFinite(Number(worldScale)) && Number(worldScale) > 0 ? Number(worldScale) : 1;
 	const frames = motion.frames;
 	if (!Number.isFinite(frames) || frames <= 0) return motion;
 
@@ -281,7 +331,7 @@ export function applyRootDrop(motion, drop) {
 	for (let f = 0; f < frames; f += 1) {
 		const t = Math.min(Math.max((f / motion.fps - spec.fromS) / (spec.toS - spec.fromS), 0), 1);
 		if (t === 0) continue;
-		const dy = -spec.meters * t * t;
+		const dy = -(spec.meters / scale) * t * t;
 		for (let j = 0; j < joints; j += 1) posedJoints[(f * joints + j) * 3 + 1] += dy;
 		rootPos[f * 3 + 1] += dy;
 	}

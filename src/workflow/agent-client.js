@@ -161,7 +161,12 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			headers: { "content-type": "application/json" },
 			...init,
 		});
-		if (!response.ok) throw new Error(`${path} responded ${response.status}`);
+		if (!response.ok) {
+			let detail = null;
+			try { detail = await response.clone().json(); } catch { /* preserve the status when the server did not send JSON */ }
+			const message = typeof detail?.error === "string" ? detail.error : detail?.error?.message;
+			throw new Error(message || `${path} responded ${response.status}`);
+		}
 		return response.json();
 	};
 	return {

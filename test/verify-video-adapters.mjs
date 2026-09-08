@@ -1,17 +1,26 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildH3LockedPrompt, createVideoAdapters, H3_PRESERVATION_CONTRACT, isH3Workflow } from "../bin/agent/video-adapters.mjs";
+import { compareH3Plate, inspectH3Output } from "../bin/agent/h3-preservation.mjs";
 
 assert.equal(buildH3LockedPrompt("walk").includes(H3_PRESERVATION_CONTRACT), true, "H3 prompts carry the immutable plate contract");
 assert.equal(buildH3LockedPrompt(buildH3LockedPrompt("walk")), buildH3LockedPrompt("walk"), "H3 contract injection is idempotent");
 assert.equal(isH3Workflow({ "1": { class_type: "MiniMaxH3ImageToVideo", inputs: {} } }), true, "H3 workflow detection recognizes the MiniMax node");
 assert.equal(isH3Workflow({ "1": { class_type: "KSampler", inputs: {} } }), false, "non-H3 workflows are left untouched");
+const plate = new Uint8Array(4 * 4 * 3).fill(12);
+const same = compareH3Plate(plate, plate, 4, 4);
+assert.equal(same.p95Rgb, 0, "plate comparison accepts unchanged border pixels");
+const changed = compareH3Plate(plate, new Uint8Array(4 * 4 * 3).fill(255), 4, 4);
+assert.ok(changed.p95Rgb > 200, "plate comparison exposes a changed background");
 
-const mp4Bytes = Buffer.from("000000206674797069736f6d0000020069736f6d69736f3261766331", "hex");
+const fixturePath = join(tmpdir(), `cozyclay-video-fixture-${process.pid}.mp4`);
+execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=2x2:r=2:d=1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", fixturePath]);
+const mp4Bytes = readFileSync(fixturePath);
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const requests = [];
 let promptId = 0;
@@ -70,23 +79,65 @@ const uploadCall = requests.find((entry) => entry.path.startsWith("/upload/image
 assert.ok(uploadCall.multipart, "the first frame is uploaded as multipart");
 console.log("PASS comfy adapter: upload, prompt substitution, polling, video fetch");
 
+// A long-lived agent process must pick up a newly saved Comfy graph instead of
+// submitting the first graph it happened to read at startup.
+writeFileSync(workflowPath, JSON.stringify({ ...workflow, "3": { ...workflow["3"], inputs: { ...workflow["3"].inputs, prompt: "stale replacement" } } }));
+await comfy.generate({ prompt: "fresh graph prompt", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
+const refreshedPromptCall = requests.filter((entry) => entry.path === "/prompt").at(-1);
+assert.equal(refreshedPromptCall.body.prompt["3"].inputs.prompt, "fresh graph prompt", "adapter reloads a graph saved while the process is running");
+console.log("PASS comfy adapter: saved graph changes are picked up per request");
+
 const h3WorkflowPath = join(dir, "h3-workflow.json");
 writeFileSync(h3WorkflowPath, JSON.stringify({
 	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale saved example sentence" } },
 	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+	"9": { class_type: "SAM3_VideoTrack", inputs: { prompt: "person" } },
+	"7": { class_type: "SaveVideo", inputs: { video: ["6", 0] } },
 }));
 const h3 = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: h3WorkflowPath }).find((adapter) => adapter.id === "comfy");
 await h3.generate({ prompt: "a person climbs onto the chair", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
 const h3PromptCall = requests.filter((entry) => entry.path === "/prompt").at(-1);
 assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /immutable scene plate/);
 assert.match(h3PromptCall.body.prompt["1"].inputs.prompt, /locked camera/);
+assert.equal(h3PromptCall.body.prompt["9"].inputs.prompt, "person", "H3 prompt replacement does not overwrite tracker prompts");
 console.log("PASS H3 adapter: immutable background/camera contract is injected");
+
+// Exercise the fail-closed output guard with real ffmpeg-decoded frames. The
+// tiny plate is black; replacing it with a red plate must be rejected.
+const stableVideo = join(dir, "stable.mp4");
+execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=black:s=2x2:r=2:d=1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", stableVideo]);
+const stableCheck = await inspectH3Output({ imageDataUrl: png, videoBytes: readFileSync(stableVideo), expectedWidth: 1, expectedHeight: 1 });
+assert.equal(stableCheck.pass, true, "H3 output guard accepts an unchanged plate");
+const driftVideo = join(dir, "drift.mp4");
+execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "color=c=red:s=2x2:r=2:d=1", "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-y", driftVideo]);
+const driftCheck = await inspectH3Output({ imageDataUrl: png, videoBytes: readFileSync(driftVideo), expectedWidth: 1, expectedHeight: 1 });
+assert.equal(driftCheck.pass, false, "H3 output guard rejects a changed plate");
+console.log("PASS H3 output guard: decoded plate drift is fail-closed");
 
 const unlockedWorkflowPath = join(dir, "h3-unlocked.json");
 writeFileSync(unlockedWorkflowPath, JSON.stringify({ "1": { class_type: "MiniMaxH3ImageToVideo", inputs: { prompt: "stale" } } }));
 const unlocked = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: unlockedWorkflowPath }).find((adapter) => adapter.id === "comfy");
 await assert.rejects(() => unlocked.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must connect the uploaded image/);
 console.log("PASS H3 adapter: unlocked graph is rejected before queue");
+
+const miswiredWorkflowPath = join(dir, "h3-miswired.json");
+writeFileSync(miswiredWorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["3", 0], prompt: "stale" } },
+	"2": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+	"3": { class_type: "EmptyImage", inputs: { width: 1024, height: 576 } },
+}));
+const miswired = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: miswiredWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => miswired.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must connect the uploaded image/);
+console.log("PASS H3 adapter: a first_frame link that bypasses LoadImage is rejected before upload");
+
+const emptyImageWorkflowPath = join(dir, "h3-empty-loadimage.json");
+writeFileSync(emptyImageWorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
+	"2": { class_type: "LoadImage", inputs: {} },
+}));
+const emptyImage = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: emptyImageWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => emptyImage.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must connect the uploaded image/);
+console.log("PASS H3 adapter: a LoadImage node without an image input is rejected");
 
 const falCalls = [];
 globalThis.__origFetch = globalThis.fetch;
