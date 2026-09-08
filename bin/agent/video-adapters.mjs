@@ -64,8 +64,11 @@ function hasFirstFrameCondition(workflow) {
 		const node = nodes[id];
 		if (!node || typeof node !== "object") return false;
 		if (/loadimage/i.test(String(node.class_type || "")) && typeof node.inputs?.image === "string" && node.inputs.image.trim()) return true;
-		visiting.add(id);
-		return Object.values(node.inputs || {}).some((value) => reachesLoadImage(refId(value), visiting));
+		// Keep each link traversal independent. A dead branch must not mark a
+		// shared node as visited and hide a later valid path to LoadImage.
+		const nextVisiting = new Set(visiting);
+		nextVisiting.add(id);
+		return Object.values(node.inputs || {}).some((value) => reachesLoadImage(refId(value), nextVisiting));
 	};
 	return Object.values(nodes).some((node) => {
 		if (!node || typeof node !== "object" || !/minimax.?h3|h3.*video/i.test(String(node.class_type || ""))) return false;

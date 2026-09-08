@@ -144,6 +144,18 @@ const emptyImage = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:$
 await assert.rejects(() => emptyImage.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /must connect the uploaded image/);
 console.log("PASS H3 adapter: a LoadImage node without an image input is rejected");
 
+const branchedWorkflowPath = join(dir, "h3-branched-first-frame.json");
+writeFileSync(branchedWorkflowPath, JSON.stringify({
+	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
+	"2": { class_type: "ImageBatch", inputs: { dead: ["3", 0], valid: ["4", 0] } },
+	"3": { class_type: "ImageScale", inputs: { image: ["5", 0] } },
+	"4": { class_type: "ImageScale", inputs: { image: ["5", 0] } },
+	"5": { class_type: "LoadImage", inputs: { image: "cozyclay-frame.png" } },
+}));
+const branched = createVideoAdapters({ COZYCLAY_COMFY_URL: `http://127.0.0.1:${port}`, COZYCLAY_COMFY_WORKFLOW: branchedWorkflowPath }).find((adapter) => adapter.id === "comfy");
+await assert.rejects(() => branched.generate({ prompt: "walk", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" }), /final SaveVideo\/VideoCombine output/);
+console.log("PASS H3 adapter: branched first_frame links retain the valid LoadImage path");
+
 const noOutputWorkflowPath = join(dir, "h3-no-output.json");
 writeFileSync(noOutputWorkflowPath, JSON.stringify({
 	"1": { class_type: "MiniMaxH3ImageToVideo", inputs: { first_frame: ["2", 0], prompt: "stale" } },
