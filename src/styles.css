@@ -10554,3 +10554,142 @@ input[type=range] {
 	margin: 0;
 	color: #e08a7a;
 }
+
+/* ------------------------------------------------- camera tutorial ------- */
+
+/* The Studio-native camera tutorial (#206): a strip of seven step chips and
+   one hint card, hung under the 27px viewport titlebar, left of the Top-View
+   inset (right:15px). The overlay is transparent to the pointer — every step
+   is finished by working the stage underneath it — so only the close button
+   takes clicks. */
+.camera-tutorial {
+	position: absolute;
+	top: 35px;
+	left: 12px;
+	z-index: 7;
+	width: min(430px, calc(100% - 24px - 26%));
+	padding: 8px 10px 9px;
+	display: flex;
+	flex-direction: column;
+	gap: 7px;
+	background: color-mix(in srgb, var(--panel) 94%, #000);
+	border: 1px solid var(--line2);
+	border-radius: 8px;
+	box-shadow: var(--shadow-md);
+	pointer-events: none;
+	animation: rise var(--med) var(--ease) both;
+}
+
+/* The look-through exit pill is centred in the same band (top:60px), and it
+   is the only way back to the free camera without the keyboard. While the
+   player is up the card gives that width back rather than covering it. */
+.camera-tutorial[data-previewing="1"] {
+	width: clamp(220px, calc(50% - 92px), 360px);
+}
+
+.camera-tutorial-steps {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px;
+	margin: 0;
+	padding: 0 22px 0 0;
+	list-style: none;
+}
+
+.camera-tutorial-steps li {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+	padding: 2px 7px;
+	border: 1px solid var(--line2);
+	border-radius: 999px;
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: .02em;
+}
+
+.camera-tutorial-steps li i {
+	font-family: var(--mono);
+	font-style: normal;
+	font-size: 9px;
+	opacity: .85;
+}
+
+.camera-tutorial-steps li[data-current="1"] {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+	color: var(--fg);
+}
+
+.camera-tutorial-steps li[data-done="1"] {
+	border-color: color-mix(in srgb, #65c18c 55%, transparent);
+	color: #65c18c;
+}
+
+.camera-tutorial-card {
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	color: var(--fg);
+	font-size: 11.5px;
+	line-height: 1.45;
+}
+
+.camera-tutorial-card p {
+	margin: 0;
+}
+
+.camera-tutorial-count {
+	flex: none;
+	color: var(--accent);
+	font-family: var(--mono);
+	font-size: 9.5px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+}
+
+.camera-tutorial-count.done {
+	color: #65c18c;
+}
+
+.camera-tutorial kbd {
+	padding: 1px 5px;
+	border: 1px solid var(--line2);
+	border-radius: 4px;
+	background: var(--card2);
+	color: var(--fg);
+	font-family: var(--mono);
+	font-size: 9.5px;
+}
+
+.camera-tutorial-keys {
+	display: inline-flex;
+	gap: 3px;
+	margin: 0 2px;
+}
+
+.camera-tutorial-keys kbd[data-done="1"] {
+	border-color: color-mix(in srgb, #65c18c 55%, transparent);
+	color: #65c18c;
+}
+
+.camera-tutorial-close {
+	position: absolute;
+	top: 4px;
+	right: 5px;
+	padding: 0 4px;
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	font-size: 15px;
+	line-height: 1;
+	cursor: pointer;
+	pointer-events: auto;
+}
+
+.camera-tutorial-close:hover,
+.camera-tutorial-close:focus-visible {
+	color: var(--fg);
+}

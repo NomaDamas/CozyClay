@@ -224,6 +224,7 @@ import {
 } from "./project.js";
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
 import FirstSuccessGuide from "./first-success-guide.jsx";
+import { CameraTutorial } from "./camera-tutorial.jsx";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
@@ -632,6 +633,19 @@ export default function App() {
 	const playgroundMode = isPlaygroundEmbed(globalThis.location?.search);
 	const [playgroundHint, setPlaygroundHint] = useState(null);
 	const playgroundExportRef = useRef(null);
+	// The camera tutorial (#206): the landing page's seven steps, run against
+	// the real studio instead of the playground iframe. It opens from
+	// /app/?tutorial=camera or from Settings ▾; opening it changes nothing else
+	// about the session, and it is not offered inside an embed.
+	const [cameraTutorial, setCameraTutorial] = useState(() => !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera");
+	useEffect(() => {
+		const onTutorial = (event) => setCameraTutorial(event.detail?.open !== false);
+		window.addEventListener("cozyclay:camera-tutorial", onTutorial);
+		return () => window.removeEventListener("cozyclay:camera-tutorial", onTutorial);
+	}, []);
+	useEffect(() => {
+		if (cameraTutorial) trackFeature("camera_tutorial");
+	}, [cameraTutorial]);
 	useEffect(() => {
 		if (!embedMode) return undefined;
 		// The Workflow page's Scene node embeds the studio as its preview, so the
@@ -10667,6 +10681,12 @@ function resizePromptClip(id, edge, rawFrame) {
 					</div>
 				</div>
 
+					{/* Sits under the mode tabs and left of the Top-View inset, over the
+					    stage it is teaching. The overlay itself never takes the pointer
+					    (styles.css) — every step is completed in the studio underneath. */}
+					{cameraTutorial && !embedMode && (
+						<CameraTutorial previewing={lookThroughShot} onClose={() => setCameraTutorial(false)} />
+					)}
 					<div className="stage" id="stage" ref={stageRef} data-render-loop={renderActive ? "always" : "demand"}>
 						{/* Shadows were off, so every castShadow in props.jsx was inert and
 						    nothing on the open stage ever touched the floor. A contact
