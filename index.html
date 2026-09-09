@@ -110,7 +110,7 @@
       header.site nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
       header.site nav a:hover { color: var(--ink); }
 
-      .hero { padding: 64px 0 40px; }
+      .hero { padding: 48px 0 40px; }
       h1 { font-size: clamp(30px, 5.2vw, 46px); line-height: 1.12; margin: 0 0 18px; letter-spacing: -.02em; color: var(--clay); }
       .lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); margin: 0 0 28px; max-width: 44em; }
       .cta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
@@ -128,13 +128,12 @@
 
       /* The mark is blue on white and the eyes are knocked out of the fill, so
          it sits on a light plate rather than straight on the dark page. */
-      .mark { margin: 0 0 26px; max-width: 190px; }
-      .mark img {
-        border: 0;
-        border-radius: 14px;
-        background: var(--clay);
-        padding: 14px 12px;
+      .hero-head { display: flex; align-items: center; gap: 18px; margin: 0 0 16px; }
+      .mark {
+        width: 72px; height: auto; flex: none; border: 0;
+        border-radius: 12px; background: var(--clay); padding: 6px 5px;
       }
+      .hero-head h1 { margin: 0; }
 
       .reels {
         display: grid;
@@ -153,10 +152,15 @@
       }
       .reel video { display: block; width: 100%; height: auto; }
       .reel-note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
+      .reel-note .chip {
+        display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px;
+        border: 1px solid var(--line); color: var(--muted); text-decoration: none; font-size: 12px;
+      }
+      .reel-note .chip:hover { color: var(--ink); border-color: var(--muted); }
 
       .playground {
         position: relative;
-        aspect-ratio: 16 / 9;
+        height: clamp(420px, 62vh, 640px);
         border: 1px solid var(--line);
         border-radius: 12px;
         overflow: hidden;
@@ -184,6 +188,7 @@
         display: none; gap: 14px; align-items: center; flex-wrap: wrap;
         margin: 10px 0 0; font-size: 13px; color: var(--muted);
       }
+      .playground-bar a { color: var(--muted); }
       .playground[data-state="live"] + .playground-bar,
       .playground[data-state="loading"] + .playground-bar { display: flex; }
       .playground-bar button {
@@ -193,24 +198,38 @@
       .playground-bar .spacer { flex: 1; }
       .playground-phone { display: none; }
 
-      .tutorial { display: none; margin: 0 0 12px; }
-      .playground-live .tutorial { display: block; }
-      .tutorial-steps { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; padding: 0; list-style: none; }
+      .tutorial-steps { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; padding: 0; list-style: none; }
       .tutorial-steps li {
         font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
-        padding: 4px 11px; background: var(--panel);
+        padding: 4px 11px; background: var(--panel); opacity: .55; transition: opacity .2s;
       }
+      .playground-live .tutorial-steps li { opacity: 1; }
       .tutorial-steps li[data-done="1"] { color: var(--ink); border-color: #4f7a4a; background: #24301f; }
       .tutorial-steps li[data-done="1"]::before { content: "✓ "; color: #8fd47f; }
       .tutorial-steps li[data-current="1"] { color: var(--clay); border-color: var(--accent); }
-      .tutorial-now { margin: 0; color: var(--clay); font-size: 15px; min-height: 1.6em; }
-      .tutorial-now kbd {
+      .tutorial-card {
+        position: absolute; left: 14px; top: 14px; z-index: 2; max-width: 46%;
+        display: flex; gap: 10px; align-items: baseline;
+        padding: 10px 14px; border-radius: 10px; pointer-events: none;
+        background: rgba(20, 20, 20, .82); border: 1px solid var(--line); color: var(--clay);
+        font-size: 15px; line-height: 1.45; backdrop-filter: blur(6px);
+      }
+      .tutorial-card[hidden] { display: none; }
+      .tutorial-card-step { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+      .tutorial-card kbd, .tutorial-done kbd {
         font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 6px; border-radius: 5px;
         border: 1px solid var(--line); background: var(--panel); color: var(--ink);
       }
-      .tutorial-done { display: none; margin: 0; font-size: 15px; color: var(--clay); }
-      .tutorial[data-complete="1"] .tutorial-now { display: none; }
-      .tutorial[data-complete="1"] .tutorial-done { display: block; }
+      .tutorial-done { flex-basis: 100%; margin: 0 0 4px; font-size: 14px; color: var(--clay); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .tutorial-done a { color: var(--accent); }
+      .tutorial-done[hidden] { display: none; }
+      button.copy {
+        background: var(--panel); border: 1px solid var(--line); color: var(--ink);
+        border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
+      }
+      button.copy[data-state="copied"] { border-color: #4f7a4a; color: #8fd47f; }
+      pre.with-copy { position: relative; }
+      pre.with-copy .copy { position: absolute; right: 10px; top: 10px; }
       @media (max-width: 720px), (hover: none) {
         .playground-cover .btn, .playground-cover small { display: none; }
         .playground-phone { display: block; color: var(--ink); font-size: 14px; padding: 0 24px; text-align: center; }
@@ -222,9 +241,11 @@
       h3 { font-size: 17px; margin: 0 0 6px; color: var(--clay); }
       .sub { color: var(--muted); margin: 0 0 26px; max-width: 48em; }
 
-      .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 18px; }
-      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 20px; }
-      .card p { margin: 0; color: var(--muted); font-size: 15px; }
+      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+      @media (min-width: 900px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+      @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
+      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
+      .card p { margin: 0; color: var(--muted); font-size: 14px; }
 
       pre {
         background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
@@ -239,6 +260,9 @@
       .scroller { overflow-x: auto; }
 
       details { border-bottom: 1px solid var(--line); padding: 16px 0; }
+      #controls { padding: 8px 0 0; border-top: 0; }
+      #controls details { padding: 8px 0 16px; }
+      #controls .scroller { margin-top: 12px; }
       details summary { cursor: pointer; font-weight: 600; color: var(--clay); font-size: 16px; }
       details p { color: var(--muted); margin: 12px 0 0; }
 
@@ -250,6 +274,8 @@
       }
       @media (max-width: 620px) {
         .hero { padding: 40px 0 28px; }
+        .hero-head { align-items: flex-start; }
+        .tutorial-card { max-width: 90%; font-size: 14px; }
         .btn { width: 100%; text-align: center; }
         header.site nav { gap: 14px; width: 100%; margin-left: 0; padding-bottom: 10px; }
       }
@@ -261,9 +287,7 @@
         <a class="brand" href="/">CozyClay</a>
         <nav>
           <a href="#try">Try it</a>
-          <a href="#what">What it does</a>
           <a href="#start">Quick start</a>
-          <a href="#controls">Controls</a>
           <a href="/ai-camera-control/">AI camera control</a>
           <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
         </nav>
@@ -272,11 +296,10 @@
 
     <main class="wrap">
       <div class="hero">
-        <figure class="mark">
-          <img src="/media/cozyclay-logo.png" width="880" height="714" alt="CozyClay" />
-        </figure>
-
-        <h1>Block the shot before you pay to render it</h1>
+        <div class="hero-head">
+          <img class="mark" src="/media/cozyclay-logo.png" width="880" height="714" alt="CozyClay" />
+          <h1>Block the shot before you pay to render it</h1>
+        </div>
         <p class="lede">
           Free, open source previs in your browser. Block the scene, pose the characters,
           set the camera, then hand that exact shot to an AI video model.
@@ -289,7 +312,7 @@
                 src="/media/cozyclay-demo.mp4"
                 poster="/media/cozyclay-demo-poster.jpg"
                 width="1920" height="1080"
-                autoplay muted loop playsinline controls preload="metadata"
+                autoplay muted loop playsinline preload="metadata"
               ></video>
             </div>
             <p class="reel-note">Greybox left of the wipe, generated result right. Same camera, every cut.</p>
@@ -300,30 +323,26 @@
                 src="/media/cozyclay-seedance-vs-greybox.mp4"
                 poster="/media/cozyclay-seedance-vs-greybox-poster.jpg"
                 width="1104" height="946"
-                muted loop playsinline controls preload="metadata"
+                autoplay muted loop playsinline preload="metadata"
               ></video>
             </div>
-            <p class="reel-note">Top: blocked in CozyClay. Bottom: Seedance 2.5 from that camera. <a href="https://x.com/Yun_HDY/status/2091577179914338583">The post</a>.</p>
+            <p class="reel-note">Top: blocked here. Bottom: Seedance 2.5, same camera. <a class="chip" href="https://x.com/Yun_HDY/status/2091577179914338583">the post ↗</a></p>
           </div>
         </div>
 
         <div class="cta">
-          <a class="btn primary" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
-          <a class="btn ghost" href="#start">Run it locally</a>
+          <a class="btn primary" href="#try">Try it in your browser</a>
+          <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
         </div>
         <p class="note">
-          No Blender, no Unity. One command.
+          Or run it on your machine: <code>npx cozyclay</code>. No Blender, no Unity.
         </p>
       </div>
 
       <section id="try">
         <h2>Try it</h2>
-        <p class="sub">The city block from the reels, live. Right-drag to look, WASD to walk, scroll to dolly, play to run the take.</p>
-        <div class="tutorial" id="tutorial">
-          <ol class="tutorial-steps" id="tutorial-steps"></ol>
-          <p class="tutorial-now" id="tutorial-now"></p>
-          <p class="tutorial-done">That is the whole camera department. Everything you just did is what gets handed to the video model. Keep going with <code>npx cozyclay</code> or <a href="https://github.com/NomaDamas/CozyClay">the source</a>.</p>
-        </div>
+        <p class="sub">The city block from the reels, live. Six moves and you have the whole camera department.</p>
+        <ol class="tutorial-steps" id="tutorial-steps"></ol>
         <div class="playground" id="playground" style="background-image: url('/media/playground-poster.jpg')">
           <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
             <span class="btn primary">Play with the scene</span>
@@ -331,36 +350,55 @@
             <span class="playground-phone">Needs a mouse and keyboard. Come back on a computer, or run <code>npx cozyclay</code>.</span>
           </button>
           <div class="playground-loading">Loading the studio…</div>
+          <div class="tutorial-card" id="tutorial-card" aria-live="polite">
+            <span class="tutorial-card-step" id="tutorial-card-step"></span>
+            <span class="tutorial-card-text" id="tutorial-now"></span>
+          </div>
         </div>
         <div class="playground-bar">
-          <span>Esc leaves the camera. Staging runs here; motion generation needs a GPU: <code>npx cozyclay</code></span>
+          <p class="tutorial-done" id="tutorial-done">
+            That is the whole camera department, and it is exactly what gets handed to the video model.
+            <button type="button" class="copy" data-copy="npx cozyclay">Copy <code>npx cozyclay</code></button>
+            <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
+          </p>
           <span class="spacer"></span>
           <button type="button" id="playground-full">Fullscreen</button>
-          <a href="/app/" target="_blank" rel="noopener">Open the full studio ↗</a>
+          <a href="/app/" target="_blank" rel="noopener">Open studio ↗</a>
           <button type="button" id="playground-close">Close</button>
         </div>
         <script>
           (() => {
             const box = document.getElementById("playground");
             const section = document.getElementById("try");
-            const tutorial = document.getElementById("tutorial");
             const stepsEl = document.getElementById("tutorial-steps");
+            const card = document.getElementById("tutorial-card");
+            const cardStep = document.getElementById("tutorial-card-step");
             const nowEl = document.getElementById("tutorial-now");
+            const doneEl = document.getElementById("tutorial-done");
+            const start = document.getElementById("playground-start");
+            const full = document.getElementById("playground-full");
+            const close = document.getElementById("playground-close");
+            const SRC = "/app/?embed=playground&scene=/scenes/city-block.cclayproject";
+            const canPlay = () => matchMedia("(min-width: 721px) and (hover: hover)").matches;
             const STEPS = [
-              { kind: "fly",   label: "Look",  how: "Right-drag inside the box to look around." },
-              { kind: "walk",  label: "Walk",  how: "Keep the right button held and press <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>." },
+              { kind: "fly",   label: "Look",  how: "Right-drag to look around." },
+              { kind: "walk",  label: "Walk",  how: "Keep the right button held, press <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>." },
               { kind: "dolly", label: "Dolly", how: "Scroll to push in and pull out." },
-              { kind: "orbit", label: "Orbit", how: "Click the character, then <kbd>Alt</kbd> + left-drag to orbit around it." },
-              { kind: "shot",  label: "Shot",  how: "Click the ↗ on the Shot monitor (bottom right) to fly the shot camera itself. <kbd>Esc</kbd> returns." },
-              { kind: "play",  label: "Play",  how: "Press ▶ on the timeline and watch the take from your camera." },
+              { kind: "orbit", label: "Orbit", how: "<kbd>Alt</kbd> + left-drag to orbit." },
+              { kind: "shot",  label: "Shot",  how: "Click ↗ on the Shot monitor (bottom right) to fly the shot camera itself. <kbd>Esc</kbd> returns." },
+              { kind: "play",  label: "Play",  how: "Press ▶ and watch the take from your camera." },
             ];
             const done = new Set();
+            let frame = null;
             const renderTutorial = () => {
-              const current = STEPS.find((s) => !done.has(s.kind));
+              const live = box.dataset.state === "live";
+              const current = live ? STEPS.find((s) => !done.has(s.kind)) : null;
               stepsEl.innerHTML = STEPS.map((s, i) => `<li data-done="${done.has(s.kind) ? 1 : 0}" data-current="${current === s ? 1 : 0}">${i + 1} ${s.label}</li>`).join("");
-              nowEl.innerHTML = current ? current.how : "";
-              tutorial.dataset.complete = current ? "0" : "1";
-              if (!current && window.posthog?.capture) window.posthog.capture("landing:playground_tutorial_done");
+              card.hidden = !current;
+              if (current) { cardStep.textContent = `${STEPS.indexOf(current) + 1} / ${STEPS.length}`; nowEl.innerHTML = current.how; }
+              doneEl.hidden = !(live && !current);
+              frame?.contentWindow?.postMessage({ type: "cozyclay:playground-hint", kind: current?.kind ?? null }, "*");
+              if (live && !current && !renderTutorial.reported) { renderTutorial.reported = true; if (window.posthog?.capture) window.posthog.capture("landing:playground_tutorial_done"); }
             };
             window.addEventListener("message", (event) => {
               if (event.data?.type !== "cozyclay:playground-nav") return;
@@ -369,12 +407,6 @@
               done.add(kind);
               renderTutorial();
             });
-            const start = document.getElementById("playground-start");
-            const full = document.getElementById("playground-full");
-            const close = document.getElementById("playground-close");
-            const SRC = "/app/?embed=playground&scene=/scenes/city-block.cclayproject";
-            const canPlay = () => matchMedia("(min-width: 721px) and (hover: hover)").matches;
-            let frame = null;
             const stop = () => {
               if (frame) frame.remove();
               frame = null;
@@ -382,6 +414,7 @@
               start.hidden = false;
               section.classList.remove("playground-live");
               done.clear();
+              renderTutorial();
             };
             start.addEventListener("click", () => {
               if (!canPlay() || frame) return;
@@ -406,6 +439,12 @@
             });
             full.addEventListener("click", () => { if (frame?.requestFullscreen) frame.requestFullscreen(); });
             close.addEventListener("click", stop);
+            document.querySelectorAll("button.copy[data-copy]").forEach((button) => {
+              button.addEventListener("click", async () => {
+                try { await navigator.clipboard.writeText(button.dataset.copy); button.dataset.state = "copied"; setTimeout(() => { button.dataset.state = ""; }, 1400); } catch {}
+              });
+            });
+            renderTutorial();
           })();
         </script>
       </section>
@@ -435,7 +474,7 @@
       <section id="start">
         <h2>Quick start</h2>
         <p class="sub">Node.js 22.13+ and a Chromium browser.</p>
-        <pre><code>npx cozyclay</code></pre>
+        <pre class="with-copy"><code>npx cozyclay</code><button type="button" class="copy" data-copy="npx cozyclay">Copy</button></pre>
         <p class="sub">Or from source:</p>
         <pre><code>git clone https://github.com/NomaDamas/CozyClay.git
 cd CozyClay
@@ -444,7 +483,8 @@ npm run dev</code></pre>
       </section>
 
       <section id="controls">
-        <h2>Controls</h2>
+        <details>
+          <summary>Full control list (Unity conventions)</summary>
         <div class="scroller">
           <table>
             <thead><tr><th>Input</th><th>Action</th></tr></thead>
@@ -462,6 +502,7 @@ npm run dev</code></pre>
             </tbody>
           </table>
         </div>
+        </details>
       </section>
 
       <section id="faq">

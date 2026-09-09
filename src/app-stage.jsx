@@ -2587,6 +2587,9 @@ export const DEFAULT_WORKSPACE_LAYOUT = Object.freeze({
 });
 
 export function loadWorkspaceLayout() {
+	// The landing-page playground is a fixed, chrome-less layout: the plan
+	// inset starts folded and nothing the visitor drags is written back.
+	if (isPlaygroundEmbed(globalThis.location?.search)) return { ...DEFAULT_WORKSPACE_LAYOUT, insetCollapsed: true };
 	try {
 		const saved = JSON.parse(localStorage.getItem(WORKSPACE_LAYOUT_KEY) || "null");
 		return saved ? { ...DEFAULT_WORKSPACE_LAYOUT, ...saved } : { ...DEFAULT_WORKSPACE_LAYOUT };

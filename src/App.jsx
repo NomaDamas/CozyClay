@@ -636,6 +636,7 @@ export default function App() {
 	// The landing page's try-it iframe: full studio interaction on a preset
 	// scene with the project chrome hidden and saving off (see playground.js).
 	const playgroundMode = isPlaygroundEmbed(globalThis.location?.search);
+	const [playgroundHint, setPlaygroundHint] = useState(null);
 	useEffect(() => {
 		if (!embedMode) return undefined;
 		// The Workflow page's Scene node embeds the studio as its preview, so the
@@ -700,10 +701,13 @@ export default function App() {
 		// The landing page keeps a loading veil over the iframe until the
 		// studio has actually mounted; a bare `load` fires far too early.
 		window.parent?.postMessage({ type: "cozyclay:playground-ready" }, "*");
-		// Camera gestures feed the landing page's tutorial checklist.
+		// Camera gestures feed the landing page's tutorial checklist, and the
+		// checklist points back at one control (the shot look-through) by hint.
 		const onNav = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
+		const onHint = (event) => { if (event.data?.type === "cozyclay:playground-hint") setPlaygroundHint(typeof event.data.kind === "string" ? event.data.kind : null); };
 		window.addEventListener("cozyclay:nav", onNav);
-		return () => window.removeEventListener("cozyclay:nav", onNav);
+		window.addEventListener("message", onHint);
+		return () => { window.removeEventListener("cozyclay:nav", onNav); window.removeEventListener("message", onHint); };
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 	const [startup] = useState(loadSceneStartup);
@@ -837,7 +841,7 @@ export default function App() {
 		// Quota-guarded like persistScenes: a full disk used to throw out of
 		// this effect and blank the studio mid-resize (issue #63).
 		try {
-			localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(workspaceLayout));
+			if (!playgroundMode) localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(workspaceLayout));
 		} catch (err) {
 			console.warn("[cozyclay] workspace layout not saved:", err?.name ?? err);
 		}
@@ -11256,6 +11260,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								<button
 									type="button"
 									className="vp-look-through"
+									data-hint={playgroundHint === "shot" ? 1 : undefined}
 									aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
 									title={ko("Look through the shot camera — the framed player, no editing chrome (Esc returns)", "샷 카메라 시점으로 보기 — 편집 도구 없는 플레이어 (Esc로 복귀)")}
 									onClick={enterPreview}
