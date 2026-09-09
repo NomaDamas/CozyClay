@@ -32,7 +32,13 @@ jobs:
       # H3 preservation tests decode real frames with ffmpeg/ffprobe, matching
       # the fail-closed runtime check used by the Comfy adapter.
       - name: Install media inspection tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+        # The runner image ships a Google Chrome apt source whose index
+        # intermittently fails its hash check; ffmpeg comes from Ubuntu, so
+        # that source is dropped before the update instead of failing the job.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       # tools/run-tests.mjs inventories mcp/ alongside test/ (#52), so the
       # MCP verify suites — including the hermetic verify:live family — run
       # under `npm test`; only browser-bound suites stay classified out.
