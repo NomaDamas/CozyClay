@@ -19,12 +19,15 @@ import {
 	normalizeSourceUrl,
 	probeFootage,
 	requestBridgeFootage,
+	segmentationReceipt,
 	sourceLabel,
 	trajectoryReceipt,
 } from "../src/multimodel-ingest.js";
 
 let failures = 0;
 assert.equal(trajectoryReceipt(null), "");
+assert.equal(segmentationReceipt(null), "");
+assert.match(segmentationReceipt({ detector: "palette", detectionRate: .98, coverage: { mean: .12 }, longestGapFrames: 2, hueErrorDeg: { p95: 8 } }, true), /98%.*12%.*2프레임.*8°/);
 assert.match(trajectoryReceipt({ status: "unchanged", rejected: [{ reason: "world-endpoint-unsettled" }] }), /not applied.*never settles/);
 assert.match(trajectoryReceipt({ status: "corrected", changedFrames: 67, rejected: [{ reason: "uncertain-depth" }] }, true), /67프레임.*1구간 미해결/);
 assert.match(trajectoryReceipt({ status: "disabled" }, true), /꺼짐/);

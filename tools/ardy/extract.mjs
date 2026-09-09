@@ -481,6 +481,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 			personScale: motion.personScale,
 			...(motion.stabilization ? { stabilization: motion.stabilization } : {}),
 			quality: qualityReports[person],
+			...(extractionPerformance?.segmentation ? { segmentation: extractionPerformance.segmentation } : {}),
 			// person 1's placement RELATIVE to person 0, in the shared raw
 			// camera space (real metres, X/Z on the floor plane).
 			offsetX: person === 0 ? 0 : motion.rawRootStart[0] - motions[0].rawRootStart[0],
@@ -494,6 +495,7 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 		fps: takes[0].fps,
 		personScale: takes[0].personScale,
 		quality: qualityReports[0],
+		...(extractionPerformance?.segmentation ? { segmentation: extractionPerformance.segmentation } : {}),
 		takes,
 		...(extractionPerformance ? { performance: { ...extractionPerformance, totalSeconds: (performance.now() - started) / 1000 } } : {}),
 	});

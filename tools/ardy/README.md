@@ -63,6 +63,11 @@ bridge shutdown terminates the owned worker; it also exits after ten idle
 minutes. Restart the bridge after upgrading upstream code. Checkpoint
 size/mtime changes invalidate cached preprocessing models. The final `done`
 event includes stage timing, cache hits and PyTorch GPU-memory metrics.
+Palette takes also include `performance.segmentation`: detected and missing
+frames, dropout gaps, mask coverage quantiles, per-frame coverage, and HSV hue
+error (median/P95/max). These values come from the detector's own mask; older
+bridges without the instrumentation omit this optional report rather than
+reporting a clean zero-valued take.
 
 Rollback: launch the bridge with `CCLAY_GVHMR_WORKER=0` to use the original
 GVHMR one-shot command. Other extraction backends and `CCLAY_EXTRACT_CMD` stay

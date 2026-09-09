@@ -35,6 +35,24 @@ export function trajectoryReceipt(report, korean = false) {
 	return `${korean ? "낙하 보정 미적용" : "Descent recovery not applied"}: ${labels[reason]?.[korean ? 1 : 0] ?? reason}`;
 }
 
+/** Human-readable evidence from the palette detector, when the GVHMR worker
+ * exposes it. Older bridges may omit the report. */
+export function segmentationReceipt(report, korean = false) {
+	if (!report) return "";
+	if (report.available === false) return korean ? "색 세그멘테이션 측정 불가" : "Palette segmentation metrics unavailable";
+	if (report.detector !== "palette" || !Number.isFinite(report.detectionRate)) return "";
+	const rate = Math.round(report.detectionRate * 100);
+	const coverage = Number.isFinite(report.coverage?.mean) ? Math.round(report.coverage.mean * 100) : null;
+	const range = Number.isFinite(report.coverage?.p10) && Number.isFinite(report.coverage?.p90)
+		? `${Math.round(report.coverage.p10 * 100)}–${Math.round(report.coverage.p90 * 100)}%`
+		: null;
+	const parts = Number.isFinite(report.parts?.mean) ? Math.round(report.parts.mean) : null;
+	const gap = Number.isFinite(report.longestGapFrames) ? report.longestGapFrames : 0;
+	const hue = Number.isFinite(report.hueErrorDeg?.p95) ? Math.round(report.hueErrorDeg.p95) : null;
+	if (korean) return `색 세그멘테이션: ${rate}% 검출${coverage === null ? "" : ` · 마스크 ${coverage}%${range ? ` (${range})` : ""}`}${parts === null ? "" : ` · 색 파트 ${parts}개`}${gap ? ` · 최대 끊김 ${gap}프레임` : ""}${hue === null ? "" : ` · 색 오차 P95 ${hue}°`}`;
+	return `Palette segmentation: ${rate}% detected${coverage === null ? "" : ` · ${coverage}% mask${range ? ` (${range})` : ""}`}${parts === null ? "" : ` · ${parts} colour parts`}${gap ? ` · longest gap ${gap} frames` : ""}${hue === null ? "" : ` · hue error P95 ${hue}°`}`;
+}
+
 // Addresses we accept: absolute http(s), or a root-relative path served by this
 // origin. Protocol-relative "//host" is refused because it silently inherits
 // the page scheme, and blob:/data:/javascript: are refused from the text field
@@ -152,7 +170,7 @@ export async function requestBridgeFootage(url, options = {}) {
 /**
  * Ask the dev bridge to run GPU motion extraction (GVHMR on the ARDY
  * box) over footage it already holds ({ footage: id }) or over uploaded
- * bytes (a Blob). Resolves to `{ motionUrl, frames, fps, quality }` — an ordinary
+ * bytes (a Blob). Resolves to `{ motionUrl, frames, fps, quality, segmentation }` — an ordinary
  * /ardy/motions address the app loads exactly like a generated take.
  */
 export async function requestBridgeExtract(source, options = {}) {

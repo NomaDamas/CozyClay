@@ -34,6 +34,7 @@ import {
 	requestBridgeExtract,
 	requestBridgeFootage,
 	sourceLabel,
+	segmentationReceipt,
 	trajectoryReceipt,
 } from "./multimodel-ingest.js";
 import { applyMotionFrame, captureArdyRoot, restorePlaybackBones, snapshotPlaybackBones } from "./ardy/playback.js";
@@ -5468,7 +5469,7 @@ export default function App() {
 			const placed = await deliverExtraTakes(takes.slice(1), active, label);
 			if (!live()) return;
 			const persons = 1 + placed;
-			setMultiModelTake({ frames: done.frames, fps: done.fps, gpu: true, personScale, persons, trajectory: done.performance?.trajectory, quality: done.quality ?? takes[0]?.quality ?? null });
+			setMultiModelTake({ frames: done.frames, fps: done.fps, gpu: true, personScale, persons, trajectory: done.performance?.trajectory, segmentation: done.segmentation ?? done.performance?.segmentation ?? takes[0]?.segmentation ?? null, quality: done.quality ?? takes[0]?.quality ?? null });
 			setMultiModelExtract("done");
 			setToast(isKo
 				? `GPU 모션 추출됨 — ${done.frames}프레임 @ ${done.fps} fps${persons > 1 ? ` · ${persons}명` : ""} · 인물 스케일 ×${personScale.toFixed(2)}`
@@ -11644,6 +11645,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									</p>
 								)}
 								{multiModelTake?.trajectory && <p className="multimodel-note" data-testid="trajectory-receipt">{trajectoryReceipt(multiModelTake.trajectory, isKo)}</p>}
+								{multiModelTake?.segmentation && <p className="multimodel-note" data-testid="segmentation-receipt">{segmentationReceipt(multiModelTake.segmentation, isKo)}</p>}
 								{multiModelTake?.quality && <p className="multimodel-note" data-testid="mocap-quality-receipt">
 									{multiModelTake.quality.pass
 										? ko("모캡 품질 게이트 통과", "Mocap quality gate passed")
