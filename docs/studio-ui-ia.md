@@ -1,5 +1,5 @@
 # CozyClay Studio UI 정보구조(IA) — 남길 것, 접을 것, 지울 것
-STATUS: 결정 완료 — 리서치 세션 `.omo/ulw-research/20260909-224600-studio-ui-simplify/` (보고서 PDF 포함), HEAD `385d340` (v1.7.1) 기준. 구현 진행 상황은 §7의 PR 목록 참조.
+STATUS: 구현 완료 — 6개 PR 머지(#196 #198 #197 #200 #201 #204) + 테스트 수정 #202. 리서치 세션 `.omo/ulw-research/20260909-224600-studio-ui-simplify/` (보고서 PDF 포함). 실측은 §1 표.
 
 > 이 문서는 Studio(`/app/`) UI 단순화의 결정 기록이다. 컨트롤 하나마다 **유지 / 이동 / 접기 / 삭제**를 정하고, 근거와 새 위치와 영향받는 테스트를 적는다. 구현 PR은 §7의 순서로 연다.
 
@@ -7,11 +7,13 @@ STATUS: 결정 완료 — 리서치 세션 `.omo/ulw-research/20260909-224600-st
 
 2026-09-09, 1600×1000, 캐릭터 1 + 432프레임 모션, 샷 없음 기준 동시 노출 컨트롤 수 (`tools/qa/studio-control-count.mjs`, 렌더된 DOM에서 박스가 있는 button/select/range/checkbox):
 
-| 상태 | 현재 | 목표 |
-|---|---|---|
-| Scene | 49 | ≤35 (추정 32) |
-| Camera | 54 (샷 선택 시 59) | ≤38 (추정 37 / 47) |
-| Motion | 65 (캐릭터 선택 시 68) | ≤52 (추정 44 / 50) |
+| 상태 | 시작 (385d340) | 목표 (R6) | 6개 PR 후 (e384d00) | 꼬리 PR 후 |
+|---|---|---|---|---|
+| Scene | 49 | ≤35 | 38 | (측정 대기) |
+| Camera | 54 (샷 선택 시 59) | ≤38 | 41 | (측정 대기) |
+| Motion | 65 (캐릭터 선택 시 68) | ≤52 | 55 | (측정 대기) |
+
+e384d00에서 남은 초과분은 세 모드 모두 같은 세 컨트롤이다: 씬 루트 행의 접기 캐럿, `Characters` 그룹 행과 그 캐럿, 블록이 0개일 때도 렌더되는 `Generate all 0 blocks`(R3 위반). 꼬리 PR이 이 셋을 처리한다. 추정치(32/37/44)와 실측이 어긋난 이유: 트리 캐럿은 3개가 아니라 4개였고 씬 선택 필이 새 버튼으로 잡히며(계층 16→14, 12가 아님), QA 프로젝트는 로드된 Full-Body 세그먼트를 자동 선택해 Motion 모드에 세그먼트 도구 6개가 렌더된다.
 
 마지막으로 수치를 잰 정리는 `bf76a89`(08-27, 65/64/66/76 → 62/52/44/63)였고, 그 뒤 12일 동안 Export 메뉴·Part colours·Target model·Workflow 링크 등이 얹히며 다시 늘었다.
 
@@ -55,7 +57,7 @@ STATUS: 결정 완료 — 리서치 세션 `.omo/ulw-research/20260909-224600-st
 | 컨트롤 | 현재 | 결정 | 새 위치 / 라벨 | 규칙 | 영향 테스트 |
 |---|---|---|---|---|---|
 | Projects… | 계층 헤더 (App 10173) | 삭제 | 프로젝트 메뉴 "Open Project…"가 이미 있음 (c95d478이 지웠다가 3fa3006이 되돌린 행) | R1 | — |
-| Scenes 블록(SceneSwitcher: 목록 + New Scene + Scene…) | 트리 위 | 이동 | 트리 루트 행 오른쪽에 **씬 선택 필**("SCENE 01 ▾", aria-label "Select scene", 포털 리스트박스, 키보드 탐색, + New scene). 왼쪽 펼침 캐럿과 구분. 루트 우클릭 = Rename/Duplicate/Delete(씬 문서 분기, CatalogueEntries로 빠지지 않음). F2 인라인 이름 변경은 onSceneRename으로. 씬 1개면 Delete 미렌더 + 키보드 호출 시 이유 토스트 | R1/R3 | verify-hierarchy, verify-project, qa-multichar-rig-browser, verify-beginner-screen |
+| Scenes 블록(SceneSwitcher: 목록 + New Scene + Scene…) | 트리 위 | 이동 | 트리 루트 행의 **씬 선택 필**(필이 곧 행 이름; 이름을 두 번 쓰지 않는다)("SCENE 01 ▾", aria-label "Select scene", 포털 리스트박스, 키보드 탐색, + New scene). 왼쪽 펼침 캐럿과 구분. 루트 우클릭 = Rename/Duplicate/Delete(씬 문서 분기, CatalogueEntries로 빠지지 않음). F2 인라인 이름 변경은 onSceneRename으로. 씬 1개면 Delete 미렌더 + 키보드 호출 시 이유 토스트 | R1/R3 | verify-hierarchy, verify-project, qa-multichar-rig-browser, verify-beginner-screen |
 | + Add object | 계층 | 유지 | — | R5 | — |
 | 트리 행 8 + 캐럿 3 | 트리 | 유지 | — | — | — |
 
@@ -117,16 +119,19 @@ IK/물리/Prompt Blocks/Video capture/Rig Control/OTIO/Depth·normal/Storyboard/
 ## 7. 구현 계획 (PR 순서 = 위험 순서, App.jsx는 절대 병렬 작업 금지)
 | PR | 파일/영역 | 내용 | 갱신 테스트 | 위험 |
 |---|---|---|---|---|
-| 1 (#190) | App.jsx:1174, 10191, Foldout `hidden={!advancedMode…}` 9곳(11211-12226), timeline.jsx:1066, hierarchy-panel beginnerMode prop | 죽은 게이트 삭제 | qa-advanced-toggle-browser 정리, verify-beginner-screen 확인 | 없음 |
-| 2 (#191) | timeline.jsx만 | Prompts + Motion 전용; Full-Body Cut/Retime/트림 세그먼트 선택 시; speed/Clear 조건부; IK 미렌더-until-rig; Snap/Contact는 IK on 안에 | verify-ik-browser:90,151,227,234,324 | 낮음 |
-| 3 (#192) | hierarchy-panel.jsx + App.jsx:10166-10176 | Projects… 삭제; SceneSwitcher → 루트 행 씬 선택 필 + 컨텍스트 메뉴 씬 분기 (§3 계층 AC 4개) | verify-hierarchy, verify-project, qa-multichar-rig-browser | 중 |
-| 4 (#193) | App.jsx 상단바 10079-10165 + play 바 10395-10490 + 인스펙터 Record 11232-11242 + FOV/Recenter 11225-11231 + selectHierarchy/selectTimelineShot + runShotExport 프리플라이트 | `Export ▾`(Keyframe pack 우선, Video 조건부 + 정적 샷 프리플라이트, OTIO 조건부), `Settings`(첫 실행 한국어 단서), play 바 트랜스포트/Record/OTIO 삭제, 인스펙터 Record/FOV/Recenter 삭제, **카메라 선택 → Camera 모드 자동 전환** | verify-project-menu-browser:110-114, verify-layout:36,281, verify-object-gizmo Recenter 4곳, 신규 3건: 옵트아웃 도달성·카메라 선택 모드 전환·키 없는 40프레임 정적 샷 → 40프레임 mp4 | 중 |
-| 5 (#194) | App.jsx 뷰포트 바 10233-10310 + Part colours ~11290 + styles.css 8713-8794 | `View ▾`(Grid/Auto Color/Part colours), 캐릭터 Transform 기본 닫힘 | qa-auto-color-browser:70,94, verify-auto-color:58, qa-grid-view-browser:56 | 낮음 |
-| 6 (#195) | App.jsx pane-tabs 10233-10252 + centerTab 참조(742-774, 6471, 6525, 6644, 10078, 10544, 10684, 10865-10897, 10938-10941, 11018, 11066, 11091-11100, 11128-11136) + dualview.jsx 377-405 + styles `.pane-tabs` | **명시적 상태기계**: `enterPreview()` = preview on + 프레임 0 + 모션 있으면 자동재생 + lookThrough on; `exitPreview()` = 전부 해제 + 일시정지. PiP look-through 버튼 → enterPreview, Esc/PiP 닫기 → exitPreview. dualview는 preview를 playMode 분기(377-385)로 라우팅. embed 초기화(742/758)도 enterPreview 경로. CTA 삭제. `globalThis.playMode` = preview로 유지 | verify-timeline-camera:44-45, verify-layout:37-38 계약 문자열 재작성; verify-cozy-scene-node:22-23 무변경; 브라우저 증명: enter → 기즈모 레이어 없음 + 레터박스, exit → 편집 크롬 복귀; /workflow/ embed QA | 중 |
+| 1 (#190 → PR #196) | App.jsx:1174, 10191, Foldout `hidden={!advancedMode…}` 9곳(11211-12226), timeline.jsx:1066, hierarchy-panel beginnerMode prop | 죽은 게이트 삭제 | qa-advanced-toggle-browser 정리, verify-beginner-screen 확인 | 없음 |
+| 2 (#191 → PR #198) | timeline.jsx만 | Prompts + Motion 전용; Full-Body Cut/Retime/트림 세그먼트 선택 시; speed/Clear 조건부; IK 미렌더-until-rig; Snap/Contact는 IK on 안에 | verify-ik-browser:90,151,227,234,324 | 낮음 |
+| 3 (#192 → PR #197, 테스트 후속 #202) | hierarchy-panel.jsx + App.jsx:10166-10176 | Projects… 삭제; SceneSwitcher → 루트 행 씬 선택 필 + 컨텍스트 메뉴 씬 분기 (§3 계층 AC 4개) | verify-hierarchy, verify-project, qa-multichar-rig-browser | 중 |
+| 4 (#193 → PR #200) | App.jsx 상단바 10079-10165 + play 바 10395-10490 + 인스펙터 Record 11232-11242 + FOV/Recenter 11225-11231 + selectHierarchy/selectTimelineShot + runShotExport 프리플라이트 | `Export ▾`(Keyframe pack 우선, Video 조건부 + 정적 샷 프리플라이트, OTIO 조건부), `Settings`(첫 실행 한국어 단서), play 바 트랜스포트/Record/OTIO 삭제, 인스펙터 Record/FOV/Recenter 삭제, **카메라 선택 → Camera 모드 자동 전환** | verify-project-menu-browser:110-114, verify-layout:36,281, verify-object-gizmo Recenter 4곳, 신규 3건: 옵트아웃 도달성·카메라 선택 모드 전환·키 없는 40프레임 정적 샷 → 40프레임 mp4 | 중 |
+| 5 (#194 → PR #201) | App.jsx 뷰포트 바 10233-10310 + Part colours ~11290 + styles.css 8713-8794 | `View ▾`(Grid/Auto Color/Part colours), 캐릭터 Transform 기본 닫힘 | qa-auto-color-browser:70,94, verify-auto-color:58, qa-grid-view-browser:56 | 낮음 |
+| 6 (#195 → PR #204) | App.jsx pane-tabs 10233-10252 + centerTab 참조(742-774, 6471, 6525, 6644, 10078, 10544, 10684, 10865-10897, 10938-10941, 11018, 11066, 11091-11100, 11128-11136) + dualview.jsx 377-405 + styles `.pane-tabs` | **명시적 상태기계**: `enterPreview()` = preview on + 프레임 0 + 모션 있으면 자동재생 + lookThrough on; `exitPreview()` = 전부 해제 + 일시정지. PiP look-through 버튼 → enterPreview, Esc/PiP 닫기 → exitPreview. dualview는 preview를 playMode 분기(377-385)로 라우팅. embed 초기화(742/758)도 enterPreview 경로. CTA 삭제. `globalThis.playMode` = preview로 유지 | verify-timeline-camera:44-45, verify-layout:37-38 계약 문자열 재작성; verify-cozy-scene-node:22-23 무변경; 브라우저 증명: enter → 기즈모 레이어 없음 + 레터박스, exit → 편집 크롬 복귀; /workflow/ embed QA | 중 |
 
 PR4가 새 집을 먼저 세우고 PR5/6이 옛 집을 허문다(R9). 완료 후 `tools/qa/studio-control-count.mjs`를 main에서 재실행해 §1 표의 "목표" 열을 실측으로 바꾼다.
 
 ## 8. 미해결
+- 로드된 테이크에서 배치(Placement) 드래그가 clip.anchor가 아니라 entry.x/z만 바꾸는 기존 함정(App 4184-4214 vs 1045-1054) — #201에서 발견, 미수정.
+- `test/verify-object-gizmo.mjs` 스토리지 섹션이 레거시 키 `cozyclay.scene.v1`을 시드하는데 scenes.js는 9d7ea8e부터 `cozyclay.scenes.v4`를 쓴다 — observation 티어 스위트의 기존 실패, #202가 :356 셀렉터만 고침.
+- Full-Body 레인의 IK 키 `+`는 IK를 켠 채 Scene/Camera로 가면 여전히 렌더된다(#198에서 보고).
 - 카메라 바 Follow 하위 필드(거리/시작점/스무딩/look-ahead) `Follow ▾` 접기 — 샷 선택 Camera 47이 문제로 판단될 때만.
 - 분석 계측: FEATURE_NAMES 누락 3건, featureNamesSeen 원샷 게이트(페이지 로드당 1회 도달 지표), 18개 UI 모듈 미계측 — 별도 이슈.
 - Carroll 1984 1차 논문·Blender 2.8 설계 문서·Jensen Harris 리본 강연 원문 미회수(archive.org 429). 본문 수치는 2차 출처 표기.
