@@ -12199,6 +12199,11 @@ function resizePromptClip(id, edge, rawFrame) {
 								)}
 							</Field>
 						)}
+						{/* Nothing to generate yet is not a disabled button: with no blocks
+						    the panel's own "Add block at frame N" and its hint already say
+						    what comes next, so the action stays absent until there is at
+						    least one block to run (docs/studio-ui-ia.md R3). */}
+						{promptClips.length >= 1 && (
 						<button
 							type="button"
 							className="btn primary full generate prompt-block-generate"
@@ -12216,6 +12221,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									? `${promptClips.length}개 블록 모두 생성`
 									: `Generate all ${promptClips.length} blocks`}
 						</button>
+						)}
 						{ardyRunning && (
 							<button type="button" className="btn ghost full" onClick={cancelArdy}>
 								{ko("Cancel run", "실행 취소")}

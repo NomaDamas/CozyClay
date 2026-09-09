@@ -314,6 +314,10 @@ function TreeRow({
 	// The scene root row hands its name to the pill in `rowExtra`; printing it
 	// twice on one row is the duplication this panel just removed.
 	showLabel = true,
+	// A row that owns children still does not always earn a fold caret: the
+	// scene ROOT would fold the whole scene away, which no workflow needs
+	// (docs/studio-ui-ia.md R6).
+	foldable = true,
 	rowExtra,
 	dropHandlers,
 	reparent,
@@ -443,7 +447,7 @@ function TreeRow({
 			aria-expanded={branch ? expanded : undefined}
 			onContextMenu={(event) => onRowContextMenu(event, node.id)}
 		>
-			{branch ? (
+			{branch && foldable ? (
 				<button
 					type="button"
 					className="hierarchy-toggle"
@@ -453,7 +457,9 @@ function TreeRow({
 					{expanded ? "▾" : "▸"}
 				</button>
 			) : (
-				<span className="hierarchy-toggle placeholder" />
+				// A leaf has nothing to fold and the root must not fold; both keep the
+				// caret column so every row's icon stays on the same line.
+				<span className={foldable ? "hierarchy-toggle placeholder" : "hierarchy-fold-space"} />
 			)}
 			{editing ? (
 				// In-place rename, Unity-style: Enter commits, Escape reverts,
@@ -526,7 +532,7 @@ export default function HierarchyPanel({
 	onSceneRename,
 	onSceneDelete,
 }) {
-	const [expanded, setExpanded] = useState(() => new Set(["shot", "characters", "characterA"]));
+	const [expanded, setExpanded] = useState(() => new Set(["shot", "characterA"]));
 	const [contextMenu, setContextMenu] = useState(null);
 	// Row currently in in-place rename. The panel owns it: F2/Return and the
 	// row context menu are the only ways in, so app state stays out of it.
@@ -547,8 +553,19 @@ export default function HierarchyPanel({
 	const activeSceneName = activeScene.name;
 	const hierarchyNodes = useMemo(() => {
 		const nodes = buildHierarchyNodes(sceneObjects, characters);
-		const labelled = nodes.map((node) => node.kind === "scene" ? { ...node, label: activeSceneName } : node);
-		return labelled;
+		// The model keeps the `characters` GROUP so every id selection, the
+		// inspector and IK already route to stays exactly where it was; the
+		// RENDERED tree drops that row. One heading over one character row cost
+		// two controls (the row and its caret) and its badge only repeated the
+		// number of rows underneath it (docs/studio-ui-ia.md R6), so the cast
+		// sits directly under the root beside Camera/Light/Environment/Props.
+		return nodes.map((node) => ({
+			...node,
+			...(node.kind === "scene" ? { label: activeSceneName } : {}),
+			...(node.children
+				? { children: node.children.flatMap((child) => (child.id === "characters" ? (child.children ?? []) : [child])) }
+				: {}),
+		}));
 	}, [activeSceneName, sceneObjects, characters]);
 	const parents = useMemo(() => indexParents(hierarchyNodes), [hierarchyNodes]);
 
@@ -600,9 +617,6 @@ export default function HierarchyPanel({
 		});
 	};
 	const badgeFor = (id) => {
-		if (id === "characters") {
-			return Array.isArray(characters) ? characters.filter((entry) => !entry.hidden).length : (showB ? 2 : 1);
-		}
 		if (id === "props") return sceneObjects.length;
 		return null;
 	};
@@ -704,8 +718,10 @@ export default function HierarchyPanel({
 	const renderNodes = (nodes, depth = 0) =>
 		nodes.flatMap((node) => {
 			if (node.optional === "showB" && !showB) return [];
-			const open = expanded.has(node.id);
 			const sceneRoot = node.id === SCENE_ROOT_ID;
+			// The root carries no fold caret, so nothing can close it: the scene is
+			// always open under its own name.
+			const open = sceneRoot || expanded.has(node.id);
 			const editing = editingId === node.id;
 			return [
 				<TreeRow
@@ -728,6 +744,7 @@ export default function HierarchyPanel({
 					// On the root row the pill IS the name: the row keeps its icon,
 					// and the rename input takes the pill's place while editing.
 					showLabel={!sceneRoot}
+					foldable={!sceneRoot}
 					rowExtra={sceneRoot && !editing ? (
 						<ScenePill
 							scenes={availableScenes}

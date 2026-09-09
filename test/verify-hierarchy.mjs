@@ -206,7 +206,25 @@ expect(
 		panelSource.includes("canDelete: availableScenes.length > 1,") &&
 		panelSource.includes('setSceneHint(ko("At least one scene is required", "장면은 최소 하나 필요합니다"))'),
 );
-expect("entity tree root follows the active scene name", panelSource.includes('node.kind === "scene" ? { ...node, label: activeSceneName } : node'));
+expect("entity tree root follows the active scene name", panelSource.includes('node.kind === "scene" ? { label: activeSceneName } : {}'));
+// docs/studio-ui-ia.md R6: the last two hierarchy affordances that folded the
+// whole scene are gone. The MODEL keeps the `characters` group (ids above are
+// unchanged, so selection, IK and inspector routing are too); the RENDERED
+// tree splices its children under the root, and the root gets no fold caret.
+expect(
+	"the rendered tree lifts the cast out of the Characters group",
+	panelSource.includes('node.children.flatMap((child) => (child.id === "characters" ? (child.children ?? []) : [child]))'),
+);
+expect(
+	"the group row's count badge went with it",
+	!panelSource.includes('if (id === "characters")') && panelSource.includes('if (id === "props") return sceneObjects.length;'),
+);
+expect(
+	"the scene root renders no fold caret, and cannot be folded",
+	panelSource.includes("foldable={!sceneRoot}") &&
+		panelSource.includes("{branch && foldable ? (") &&
+		panelSource.includes("const open = sceneRoot || expanded.has(node.id);"),
+);
 
 // The studio source spans App.jsx and app-stage.jsx (module-level extraction); pin against both.
 const appSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")

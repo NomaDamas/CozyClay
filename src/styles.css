@@ -2156,6 +2156,14 @@ select {
 
 .hierarchy-toggle.placeholder { pointer-events: none; }
 
+/* The scene root has no fold caret — folding it would hide the whole scene
+   (docs/studio-ui-ia.md R6) — but the row still reserves the caret column so
+   its icon lines up with the rows below it. */
+.hierarchy-fold-space {
+	flex: 0 0 20px;
+	pointer-events: none;
+}
+
 .hierarchy-row {
 	flex: 1;
 	min-width: 0;

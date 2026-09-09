@@ -124,7 +124,9 @@ expect("the hierarchy column carries no second Projects… button", await evalua
 expect("the tree root row carries the scene pill", await waitFor(`!!document.querySelector("${PILL}")`));
 expect("the pill says which scene is open", await pillLabel() === "SCENE 01", String(await pillLabel()));
 expect("the pill announces itself as the scene selector", await evaluate(`document.querySelector("${PILL}").getAttribute("aria-label")`) === "Select scene");
-expect("the pill carries its own caret, apart from the row's expand caret", await evaluate(`!!document.querySelector(".hierarchy-scene-pill .dd-caret") && !!document.querySelector("${ROOT_ROW} .hierarchy-toggle")`));
+// The pill's caret is the row's ONLY caret: the root lost its fold toggle,
+// because folding the root hid the whole scene (docs/studio-ui-ia.md R6).
+expect("the pill carries the row's only caret", await evaluate(`!!document.querySelector(".hierarchy-scene-pill .dd-caret") && !document.querySelector("${ROOT_ROW} .hierarchy-toggle")`));
 expect("the root row prints the scene name once, in the pill", await rootRowNameCount("SCENE 01") === 1 && await evaluate(`!document.querySelector("${ROOT_ROW} .hierarchy-label")`), String(await rootRowNameCount("SCENE 01")));
 expect("the row still names itself for assistive tech", await rootLabel() === "SCENE 01", String(await rootLabel()));
 
@@ -144,7 +146,9 @@ expect("all three scenes are listed", listed.length === 3, JSON.stringify(listed
 expect("the active scene is marked in the list", await evaluate(`[...document.querySelectorAll('.dropdown-menu [role=option]')].filter((node) => node.getAttribute("aria-selected") === "true").map((node) => node.textContent.trim()).join()`) === "SCENE 03");
 expect("the list offers a create item after the scenes", await evaluate(`/New scene/.test([...document.querySelectorAll(".dropdown-menu [role=option]")].at(-1).textContent)`));
 expect("the pill list is portaled clear of the panel that clips it", await evaluate(`document.querySelector(".dropdown-menu")?.parentElement === document.body`));
-expect("opening the pill does not fold the tree", await evaluate(`document.querySelector("${ROOT_ROW}").getAttribute("aria-expanded")`) === "true");
+// Nothing can fold the root any more, so the proof is the scene's own rows:
+// they are still on screen behind the open pill.
+expect("opening the pill does not fold the tree", await evaluate(`!!document.querySelector("[data-node-id='camera']") && !!document.querySelector("[data-node-id='characterA']")`));
 expect("the pill screenshot has bytes", (await shot("pill-open-three-scenes")) > 2000);
 
 /* --- switch between the three ------------------------------------------------ */
