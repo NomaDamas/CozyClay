@@ -234,7 +234,7 @@ import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
 import ResultModal from "./result-modal.jsx";
-import AnalyticsToggle from "./analytics-toggle.jsx";
+import SettingsMenu from "./settings-menu.jsx";
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
@@ -243,7 +243,6 @@ import {
 	strokeToPathPoints,
 	MAX_PATH_POINTS,
 } from "./object-path.js";
-import LocaleToggle from "./locale-toggle.jsx";
 import { bucketCount, bucketMs, bucketProjectAge, motionBackendState, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import { PART_COLOURS } from "./part-colours.js";
@@ -1357,6 +1356,12 @@ globalThis.playMode = centerTab === "play";
 		// render-captured store can still settle the scene that was left.
 		storeRef.current.settle();
 		setSelectedHierarchyId(id);
+		// Selecting the camera IS the request to frame a shot (#193). The camera
+		// bar owns FOV/Recenter/presets and is CSS-gated to Camera mode, so a
+		// camera picked from Scene mode would otherwise select a subject whose
+		// controls are all hidden. selectWorkflowMode re-selects the camera
+		// itself, so this cannot bounce back here.
+		if (id === "camera" && workflowMode !== "camera") selectWorkflowMode("camera");
 		// Moving the focus anywhere but the camera releases the crane dot too:
 		// a press on the floor or the sky must not leave a mark selected.
 		if (id !== "camera") setCraneSelectedIndex(null);
@@ -3507,6 +3512,7 @@ globalThis.playMode = centerTab === "play";
 		buildShotKeyframePack,
 		shotIndexForPack,
 		renderPassDataUrls,
+		exportShotVideo,
 		shots,
 	};
 	if (!liveHandlersRef.current) {
@@ -4404,6 +4410,11 @@ globalThis.playMode = centerTab === "play";
 	const recRef = useRef(null);
 	const tlFrameRef = useRef(0);
 	tlFrameRef.current = tlFrame;
+	// The cut an export samples. A preflight that materializes a framing key
+	// (see exportShotVideo) commits it through setShots, but this render's
+	// applyExportFrame closure still holds the pre-commit list — the export runs
+	// before React re-renders. The ref carries the list the export must read.
+	const exportShotsRef = useRef(null);
 
 	function applyExportFrame(frame) {
 		// Props on a travel path read this ref inside their own useFrame, so a
@@ -4421,7 +4432,7 @@ globalThis.playMode = centerTab === "play";
 		// its place on them. gl.render() never runs the r3f frame loop, so this
 		// pass is the recorder's stand-in for the useFrame the preview gets.
 		propSyncRef.current?.();
-		const sampled = sampleAt(playbackScene, shotAtFrame(shots, frame), frame);
+		const sampled = sampleAt(playbackScene, shotAtFrame(exportShotsRef.current ?? shots, frame), frame);
 		const cam = shotCamRef.current;
 		if (cam && sampled.camera) {
 			cam.position.set(sampled.camera.pos.x, sampled.camera.pos.y, sampled.camera.pos.z);
@@ -4508,16 +4519,48 @@ globalThis.playMode = centerTab === "play";
 		recRef.current?.controller.abort();
 	}
 
-	function toggleShotRecording() {
+	/** Export the shot under the playhead (else the first one) as an MP4, or
+	 *  stop the export that is already running.
+	 *
+	 *  Two preflights (#193) stand between the menu item and runShotExport:
+	 *  a shot with no camera keys has nothing for cameraMoveAt to interpolate,
+	 *  so the recording would capture wherever the physical shot camera happens
+	 *  to sit — one framing key from the current camera, the same default
+	 *  addShotAtFrame writes, makes the static shot exportable. And without
+	 *  motion the timeline extent ignores shots and falls back to the whole
+	 *  production duration, so a 40-frame static shot must record its own
+	 *  [startFrame, endFrame] range instead of 360 frames of held pose. */
+	function exportShotVideo({ download = true } = {}) {
 		if (recRef.current) {
 			stopShotRecording();
-			return;
+			return null;
 		}
-		runShotExport().then(() => {
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		let exportShots = shots;
+		if (target && target.cameraKeys.length === 0) {
+			const framing = captureCurrentFraming();
+			exportShots = updateStableItem(
+				shots,
+				target.id,
+				(shot) => ({ ...shot, cameraKeys: [{ id: createStableItemId("camera-key"), frame: shot.startFrame, framing }] }),
+				"shots",
+			);
+			recordShotUndo();
+			setShots(exportShots);
+			setToast(ko("Framing keyed at the shot's first frame", "샷 첫 프레임에 현재 프레이밍을 저장했습니다"));
+		}
+		exportShotsRef.current = exportShots;
+		const range = target && !motion ? { startFrame: target.startFrame, endFrame: target.endFrame } : {};
+		return runShotExport({ ...range, download }).then((result) => {
 			track("export:video_succeeded", { format: "mp4" });
 			trackFeature("export_video");
+			return result;
 		}).catch((error) => {
 			if (error?.name !== "AbortError") setToast(error?.message || String(error));
+			return null;
+		}).finally(() => {
+			exportShotsRef.current = null;
 		});
 	}
 
@@ -4908,6 +4951,7 @@ globalThis.playMode = centerTab === "play";
 		manualCameraOverrideRef.current = false;
 		setTlFrame(selected.startFrame);
 		setSelectedHierarchyId("camera");
+		if (workflowMode !== "camera") selectWorkflowMode("camera");
 	}
 
 	function duplicateTimelineShot(shotId) {
@@ -6436,6 +6480,10 @@ globalThis.playMode = centerTab === "play";
 				return { name: pack.name, entries: pack.entries.map((entry) => entry.name), byteLength: pack.bytes.byteLength, bytes: btoa(binary) };
 			},
 			renderPass: (kind) => liveStateRef.current.renderPassDataUrls([kind])[kind],
+			// QA-only video export (#193): the Export menu's Video item without the
+			// download, so a headless run can assert that a keyless 40-frame static
+			// shot yields 40 frames. Same liveStateRef reasoning as captureMeta.
+			exportShotVideo: (options = {}) => liveStateRef.current.exportShotVideo(options),
 			// The RGB plate the passes are compared against — same rig, same
 			// framing, no material override.
 			capturePlate: () => liveStateRef.current.captureFramingPng(liveStateRef.current.captureCurrentFraming()),
@@ -10110,16 +10158,111 @@ function resizePromptClip(id, edge, rawFrame) {
 						>
 							{projectSaveState === "saving" ? ko("Saving…", "저장 중…") : ko("Save", "저장")}
 						</button>
-						<button
-							type="button"
-							className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
-							data-testid="topbar-export"
-							disabled={recState !== "recording" && !hasCameraKeys && !motion}
-							onClick={toggleShotRecording}
-							title={ko("Export the current shot as an MP4", "현재 샷을 MP4로 내보내기")}
-						>
-							{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("Export", "내보내기")}
-						</button>
+						{/* One Export menu for every delivery this studio makes (#193,
+						    R4). The keyframe pack leads because it is the pack an AI video
+						    tool is fed; items whose precondition is missing are not
+						    rendered disabled — the footer line says what to author first. */}
+						{/* One element cannot carry two data-testids: the topbar contract
+						    keeps the attribute, the menu contract gets the same handle as an
+						    id, so both selectors still reach this one trigger. */}
+						<div className="export-menu-wrap">
+							<button
+								type="button"
+								className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
+								data-testid="topbar-export"
+								id="export-menu-trigger"
+								aria-expanded={exportMenuOpen}
+								aria-haspopup="menu"
+								title={ko("Exports: keyframe pack, video, passes, storyboard, cut list", "내보내기: 키프레임 팩·영상·패스·스토리보드·컷 목록")}
+								onClick={(event) => {
+									// The panel is fixed to the viewport and anchored to this
+									// trigger in JS, the way it was in the PlayView bar: one
+									// popover geometry for the studio's export menu wherever
+									// its trigger lives.
+									const box = event.currentTarget.getBoundingClientRect();
+									setExportMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+									setExportMenuOpen((open) => !open);
+								}}
+							>
+								{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("Export", "내보내기")}
+								<span className="caret">▾</span>
+							</button>
+							{exportMenuOpen && (
+								<div
+									className="project-menu export-menu"
+									role="menu"
+									style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
+									onClick={() => setExportMenuOpen(false)}
+								>
+									<button
+										type="button"
+										role="menuitem"
+										className="export-menu-primary"
+										data-testid="export-keyframe-pack"
+										disabled={!shots.length || recState === "recording"}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={shots.length
+											? ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")
+											: ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다")}
+										onClick={(event) => void exportKeyframePacks(event.shiftKey)}
+									>
+										{ko("Keyframe pack (zip)", "키프레임 팩 (zip)")}
+										<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
+									</button>
+									{(shots.length > 0 || hasCameraKeys || motion) && (
+										<button
+											type="button"
+											role="menuitem"
+											data-testid="export-video"
+											title={ko("Render the shot to an MP4 — camera move and character motion, no editor chrome", "샷을 MP4로 렌더링합니다 — 카메라 움직임과 캐릭터 모션만, 편집 UI는 제외")}
+											onClick={() => void exportShotVideo()}
+										>
+											{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("Video (mp4)", "영상 (mp4)")}
+										</button>
+									)}
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-render-passes"
+										title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
+										onClick={exportRenderPasses}
+									>
+										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-storyboard"
+										disabled={!shots.length}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={shots.length
+											? ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")
+											: ko("Add a shot first — a storyboard is one row per shot", "샷을 먼저 추가하세요 — 스토리보드는 샷마다 한 줄입니다")}
+										onClick={() => void exportStoryboard()}
+									>
+										{ko("Storyboard (PNG)", "스토리보드 (PNG)")}
+									</button>
+									{shots.length > 0 && (
+										<button
+											type="button"
+											role="menuitem"
+											data-testid="export-otio"
+											title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
+											onClick={downloadOtioCutList}
+										>
+											{ko("OTIO cut list", "OTIO 컷 목록")}
+										</button>
+									)}
+									{!shots.length && (
+										<p className="export-menu-hint">
+											{hasCameraKeys || motion
+												? ko("Add a shot to export OTIO", "OTIO를 내보내려면 샷을 추가하세요")
+												: ko("Add a shot to export video or OTIO", "영상·OTIO를 내보내려면 샷을 추가하세요")}
+										</p>
+									)}
+								</div>
+							)}
+						</div>
 						<span
 							className={"project-save-status status-" + projectSaveState}
 							data-testid="project-save-status"
@@ -10152,8 +10295,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
 						</span>
 					)}
-					<LocaleToggle />
-					<AnalyticsToggle />
+					<SettingsMenu />
 				</div>
 			</header>
 
@@ -10383,102 +10525,6 @@ function resizePromptClip(id, edge, rawFrame) {
 					<div className="editor-toolbar play-tools" aria-label={ko("PlayView tools", "재생 보기 도구")}>
 						<span className="viewport-readout">{shotOutput.label}</span>
 						<span className="viewport-readout">FOV {Math.round(fovDeg)}° · {shot.focalMm}mm</span>
-						<span className="viewport-toolbar-spacer" />
-						<button type="button" onClick={() => stepFrame(-1)} aria-label={ko("Previous frame", "이전 프레임")}>◀</button>
-						<button
-							type="button"
-							aria-label={tlPlaying ? ko("Pause playback", "재생 일시중지") : ko("Play playback", "재생 시작")}
-							title={tlPlaying ? ko("Pause playback", "재생 일시중지") : ko("Play playback", "재생 시작")}
-							onClick={() => setTlPlaying((value) => !value)}
-						>
-							{tlPlaying ? "Ⅱ" : "▶"}
-						</button>
-						<button type="button" onClick={() => stepFrame(1)} aria-label={ko("Next frame", "다음 프레임")}>▶│</button>
-						<span className="viewport-readout">1.00×</span>
-						<span className="viewport-toolbar-separator" aria-hidden="true" />
-						<button
-							type="button"
-							disabled={!shots.length}
-							aria-label={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
-							title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
-							onClick={downloadOtioCutList}
-						>
-							OTIO
-						</button>
-						{/* Reference exports a video model asks for. They sit behind one
-						    trigger because each is a whole render pass, not a toggle — and
-						    the PlayView bar has no room for three more labelled buttons. */}
-						<div className="export-menu-wrap">
-							<button
-								type="button"
-								className="export-menu-trigger"
-								data-testid="export-menu-trigger"
-								aria-expanded={exportMenuOpen}
-								aria-haspopup="menu"
-								title={ko("Reference exports for AI video tools", "AI 영상 도구용 레퍼런스 내보내기")}
-								onClick={(event) => {
-									// The 27px title bar clips its own overflow (the scene
-									// toolbar scrolls inside it), so an absolutely positioned
-									// popover would be cut off at the bar's edge. The panel is
-									// fixed to the viewport instead, anchored to this trigger.
-									const box = event.currentTarget.getBoundingClientRect();
-									setExportMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
-									setExportMenuOpen((open) => !open);
-								}}
-							>
-								{ko("Export", "내보내기")}
-								<span className="caret">▾</span>
-							</button>
-							{exportMenuOpen && (
-								<div
-									className="project-menu export-menu"
-									role="menu"
-									style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
-									onClick={() => setExportMenuOpen(false)}
-								>
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-keyframe-pack"
-										disabled={!shots.length || recState === "recording"}
-										title={ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")}
-										onClick={(event) => void exportKeyframePacks(event.shiftKey)}
-									>
-										{ko("Keyframe pack", "키프레임 팩")}
-										<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-render-passes"
-										title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
-										onClick={exportRenderPasses}
-									>
-										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-storyboard"
-										disabled={!shots.length}
-										title={ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")}
-										onClick={() => void exportStoryboard()}
-									>
-										{ko("Storyboard", "스토리보드")}
-									</button>
-								</div>
-							)}
-						</div>
-						<button
-							type="button"
-							className={recState === "recording" ? "recording" : ""}
-							aria-label={recState === "recording" ? ko("Stop recording", "녹화 중지") : ko("Record shot", "샷 녹화")}
-							title={recState === "recording" ? ko("Stop recording", "녹화 중지") : ko("Record shot", "샷 녹화")}
-							disabled={recState !== "recording" && !hasCameraKeys && !motion}
-							onClick={toggleShotRecording}
-						>
-							{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("● Record", "● 녹화")}
-						</button>
 					</div>
 				)}
 				</div>
@@ -11213,29 +11259,18 @@ function resizePromptClip(id, edge, rawFrame) {
 							{ko("Reset light", "조명 초기화")}
 						</button>
 					</Foldout>
+					{/* Lens, Recenter and Record used to live here as well as in the
+					    viewport camera bar and the topbar Export menu. One home each
+					    (#193, R1): framing is the bar's job, delivery is Export's, and
+					    selecting the camera now switches to Camera mode so the bar's
+					    controls are on screen when this panel opens. */}
 					<Foldout hidden={!isCameraSelection} title={ko("Camera", "카메라")}>
-					<Slider label={ko("Lens (FOV)", "렌즈 (FOV)")} min={14} max={90} step={1} value={fovDeg} unit="°" onChange={setFovDeg} />
 						<div className="readout">
 						<span title={ko("camera to subject", "카메라와 피사체 거리")}>{shot.distance.toFixed(2)} m</span>
 						<span title={ko("nearest prime on the cropped filmback", "크롭된 필름백 기준 가장 가까운 단렌즈")}>{shot.focalMm} mm</span>
 						<span title={ko("angle relative to the subject's eyes", "피사체 눈높이 기준 각도")}>{shot.elevationDeg.toFixed(0)}°</span>
 						</div>
-						<button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
-							{ko("Recenter on subject", "피사체 다시 맞추기")}
-						</button>
-
 						<h3 className="move-head">{ko("Move keys", "움직임 키")}</h3>
-						<div className="move-ab">
-							<button
-								type="button"
-								className={"btn ghost" + (recState === "recording" ? " rec-live" : "")}
-								disabled={!hasCameraKeys && !motion}
-								title={ko("Play the piece in PlayView and save it as a video file — camera move and character motion, no editor chrome", "재생 보기에서 장면을 재생하고 영상 파일로 저장합니다. 카메라 움직임과 캐릭터 모션만 담고 편집 UI는 제외됩니다")}
-								onClick={toggleShotRecording}
-							>
-								{recState === "recording" ? ko("■ Stop rec", "■ 녹화 정지") : ko("● Record", "● 녹화")}
-							</button>
-						</div>
 						{moveSequence ? (
 							<div className="move-slate" title={ko("derived from the keyframings, not chosen from a list", "목록에서 고른 값이 아니라 키프레임에서 계산된 움직임입니다")}>
 								{moveSequence.displaySlate} · {moveSequence.spanS}{ko("s", "초")}
@@ -13154,6 +13189,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				onPromptRemove={removePromptClip}
 				onCameraMoveSelect={() => {
 					setSelectedHierarchyId("camera");
+					if (workflowMode !== "camera") selectWorkflowMode("camera");
 				}}
 				onCameraKeyframeAdd={addCameraKeyframe}
 				onCameraKeyframeMove={moveCameraKeyframe}
@@ -13163,6 +13199,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						if (!selected) throw new Error(`Unknown shots ID: ${shotId}`);
 						setTlFrame(selected.startFrame);
 						setSelectedHierarchyId("camera");
+						if (workflowMode !== "camera") selectWorkflowMode("camera");
 					}}
 					onCameraBlockChange={(patch, shotId) => {
 						if (patch.mode === "follow") syncActiveCameraFraming();

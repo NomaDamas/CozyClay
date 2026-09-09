@@ -17,6 +17,10 @@ function stored() {
 
 export const LOCALE = stored() ?? "en";
 export const isKo = LOCALE === "ko";
+// Whether the operator has ever picked a language. A Korean browser that has
+// not chosen yet still gets the English default, so the Settings trigger wears
+// "한국어" as its first-run cue until a choice is stored (#193).
+export const localeChosen = stored() !== null;
 
 /** Pick the label for the active locale: ko("Frame", "프레임"). */
 export function ko(en, koText) {

@@ -34,8 +34,29 @@ expect("zoom shrinks the ortho extent, not the pane", dualview.includes("planZoo
 expect("demand loop wakes on mount and model commit", dualview.includes("requestAnimationFrame(() => requestAnimationFrame(invalidate))") && app.includes("const frame = requestAnimationFrame(invalidate);"));
 expect("double-click no longer swaps Scene and Top-View", !app.includes('setViewMode((current) => (current === "plan" ? "shot" : "plan"))'));
 expect("Scene toolbar exposes shot preset, aspect, FOV, recenter, and Top-View controls", app.includes("viewport-toolbar-field shot-field") && app.includes("SHOT_ASPECT_PRESETS") && app.includes("viewport-fov-control") && app.includes("Recenter on subject") && app.includes('ko("Top", "탑")'));
+// #193 (R1): the viewport camera bar is the ONLY home for lens and recentring.
+// The camera inspector used to carry a second copy of both.
+expect(
+	"lens and recentring live once, in the viewport camera bar",
+	app.includes('aria-label={ko("Recenter on subject", "피사체 다시 맞추기")}') &&
+	!app.includes('ko("Lens (FOV)", "렌즈 (FOV)")') &&
+	!app.includes('<button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>'),
+);
 expect("Scene and PlayView tools share one horizontal title bar", app.includes('className="viewport-titlebar"') && css.includes(".viewport-titlebar") && css.includes("position: static"));
-expect("PlayView toolbar exposes framing readouts, playback, and recording", app.includes("editor-toolbar play-tools") && app.includes("shotOutput.label") && app.includes("toggleShotRecording"));
+// #193: transport, OTIO and Record left this bar — the timeline owns playback
+// and the topbar Export menu owns every delivery. Only the readouts remain.
+expect(
+	"PlayView toolbar keeps the framing readouts and nothing else",
+	app.includes("editor-toolbar play-tools") && app.includes("shotOutput.label") && !app.includes("toggleShotRecording"),
+);
+expect(
+	"one topbar Export menu leads with the keyframe pack",
+	app.includes('data-testid="topbar-export"') &&
+	app.includes('id="export-menu-trigger"') &&
+	app.includes('className="export-menu-primary"') &&
+	app.includes('data-testid="export-video"') &&
+	app.includes('data-testid="export-otio"'),
+);
 // Letterbox bars are editor chrome. Painting them with the scene background
 // put a sheet of near-white either side of the frame the moment a narrower
 // aspect was picked; they wear the editor's own tone now, and the scene draw
@@ -84,7 +105,9 @@ expect(
 	"recording captures the clean render without a frame stamp",
 	app.includes("capture: applyExportFrame") &&
 		!app.includes("burnInCapture") &&
-		app.includes("sampleAt(playbackScene, shotAtFrame(shots, frame), frame)"),
+		// #193: the preflight can commit a framing key the render closure has not
+		// seen yet, so the export samples the list the ref carries when set.
+		app.includes("sampleAt(playbackScene, shotAtFrame(exportShotsRef.current ?? shots, frame), frame)"),
 );
 expect(
 	"recording uses current motion content instead of a stale timeline tail",

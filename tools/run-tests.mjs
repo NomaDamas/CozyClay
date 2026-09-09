@@ -167,6 +167,7 @@ const NODE_FILES = [
 ];
 
 const BROWSER_FILES = [
+	"test/verify-camera-mode-browser.mjs",
 	"test/verify-camera-rail-browser.mjs",
 	"test/verify-cutout-browser.mjs",
 	"test/verify-first-success-guide-browser.mjs",
@@ -177,6 +178,8 @@ const BROWSER_FILES = [
 	"test/verify-object-gizmo.mjs",
 	"test/verify-offscreen-export-browser.mjs",
 	"test/verify-project-menu-browser.mjs",
+	"test/verify-settings-menu-browser.mjs",
+	"test/verify-static-shot-export-browser.mjs",
 	"test/qa-keyframe-pack-browser.mjs",
 	"test/qa-reference-slots-browser.mjs",
 	"test/qa-scene-switcher-browser.mjs",

@@ -821,29 +821,8 @@ select {
 	flex: 1;
 }
 
-.locale-toggle {
-	display: inline-flex;
-	align-items: center;
-	height: 28px;
-	padding: 0 10px;
-	border: 1px solid var(--line2);
-	border-radius: 2px;
-	background: #2c2c2c;
-	color: var(--fg);
-	font-size: 10px;
-	font-weight: 620;
-	cursor: pointer;
-}
-
-.locale-toggle:hover,
-.locale-toggle:focus-visible {
-	border-color: var(--accent);
-	background: var(--accent-soft);
-	outline: none;
-}
-
-/* Auto color: same chrome as the locale toggle; pressed state carries the
-   accent so "the viewport is recolored right now" is visible at a glance. */
+/* Auto color: compact topbar chrome; the pressed state carries the accent so
+   "the viewport is recolored right now" is visible at a glance. */
 .auto-color-toggle {
 	display: inline-flex;
 	align-items: center;
@@ -6904,11 +6883,6 @@ input[type=range]::-moz-range-thumb {
 	cursor: default;
 }
 
-.move-ab .btn.rec-live {
-	color: #e2574d;
-	border-color: rgba(226, 87, 77, 0.6);
-}
-
 .move-slate {
 	margin: 4px 0 10px;
 	font-size: 10.5px;
@@ -8861,51 +8835,34 @@ input[type=range] {
 	color: #ff8d86;
 }
 
-/* Reference exports menu in the PlayView bar (#165). It reuses the project
-   menu's popover, so the studio has one dropdown language; only the trigger
-   takes the toolbar's own flat button treatment. The 27px title bar clips its
-   own overflow, so the panel is fixed to the viewport and anchored to the
-   trigger in JS — it hangs from the right because this bar is right-aligned. */
+/* The studio's one Export menu (#165, moved to the topbar in #193). It reuses
+   the project menu's popover so the studio has a single dropdown language;
+   the trigger is a plain .topbar-action. The panel stays fixed to the viewport
+   and anchored to the trigger in JS, hanging from the right because the topbar
+   actions are right-aligned. */
 .export-menu-wrap {
 	position: relative;
 	flex: none;
-	align-self: stretch;
 	display: flex;
 	align-items: center;
 }
 
-.export-menu-trigger {
-	flex: none;
-	height: 26px;
+.export-menu-wrap .topbar-action {
 	display: inline-flex;
 	align-items: center;
-	gap: 4px;
-	padding: 0 6px;
-	border: 0;
-	border-right: 1px solid var(--line);
-	background: transparent;
-	color: #bdbdbd;
-	font: inherit;
-	font-size: 9px;
-	cursor: pointer;
+	gap: 6px;
 	white-space: nowrap;
 }
 
-.export-menu-trigger:hover,
-.export-menu-trigger[aria-expanded="true"] {
-	background: #363636;
-	color: #fff;
-}
-
-.export-menu-trigger .caret {
+.export-menu-wrap .topbar-action .caret {
 	color: var(--muted2);
-	font-size: 8px;
+	font-size: 10px;
 }
 
 .export-menu {
 	position: fixed;
 	left: auto;
-	min-width: 220px;
+	min-width: 240px;
 	z-index: 80;
 }
 
@@ -8914,6 +8871,13 @@ input[type=range] {
 	align-items: baseline;
 	justify-content: space-between;
 	gap: 12px;
+}
+
+/* The keyframe pack is the delivery this studio exists to make, so it leads
+   the menu and wears the accent instead of reading as one option of five. */
+.export-menu button.export-menu-primary {
+	font-weight: 700;
+	color: var(--cyan);
 }
 
 .export-menu button:disabled {
@@ -8925,6 +8889,74 @@ input[type=range] {
 .export-menu button small {
 	color: var(--muted2);
 	font-size: 10px;
+}
+
+/* R3: an export whose precondition is missing is not rendered as a dead row —
+   this line says what to author to get it back. */
+.export-menu-hint {
+	margin: 4px 2px 0;
+	padding: 7px 10px 3px;
+	border-top: 1px solid var(--line);
+	color: var(--muted2);
+	font-size: 10px;
+	line-height: 1.4;
+}
+
+/* Settings menu (#193): app preferences — language, analytics — under one
+   labelled topbar trigger. Same popover as the project menu, anchored to its
+   own wrap because the topbar does not clip its overflow. */
+.settings-menu-wrap {
+	position: relative;
+	flex: none;
+	display: flex;
+	align-items: center;
+}
+
+/* The live-workspace handle can fill the row; a settings label that wrapped to
+   one glyph per line is how the topbar used to squeeze the language button. */
+.settings-menu-trigger {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	white-space: nowrap;
+}
+
+.settings-menu-trigger .caret {
+	color: var(--muted2);
+	font-size: 10px;
+}
+
+.settings-menu {
+	top: calc(100% + 6px);
+	left: auto;
+	right: 0;
+	min-width: 210px;
+	z-index: 80;
+}
+
+.settings-menu h4 {
+	margin: 6px 10px 2px;
+	color: var(--muted2);
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: .06em;
+	text-transform: uppercase;
+}
+
+.settings-menu button {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 12px;
+}
+
+.settings-menu button .mark {
+	color: var(--muted2);
+	font-size: 10px;
+}
+
+.settings-menu button[aria-pressed="true"] .mark {
+	color: var(--cyan);
 }
 
 /* ----------------------------------------------------- Unity axis colors --- */
@@ -10323,19 +10355,6 @@ input[type=range] {
 	}
 }
 
-/* Language control: short, stable geometry prevents the Korean label from
-   stretching the top bar while still leaving a comfortable click target. */
-.locale-toggle {
-		min-width: 34px;
-		height: 26px;
-		padding: 0 8px;
-		font-size: 10px;
-		font-weight: 600;
-		line-height: 1;
-		letter-spacing: -.02em;
-		white-space: nowrap;
-}
-
 /* Korean copy should not create oversized rows or split words mid-syllable.
    These selectors cover labels and controls without changing the model-facing
    prompt contract or the English-default typography. */
@@ -10347,7 +10366,7 @@ input[type=range] {
 .foldout-head,
 .right-panel-tabs,
 .bottom-window-tabs,
-.locale-toggle {
+.settings-menu {
 	word-break: keep-all;
 	overflow-wrap: anywhere;
 }

@@ -108,7 +108,14 @@ const openMenu = async () => {
 // Boot: wait for the studio topbar; the app document may still be loading.
 expect("the topbar renders the project menu trigger", await waitFor("!!document.querySelector('.project-menu-trigger')", 30000));
 expect("the topbar renders a direct Save action", await waitFor("!!document.querySelector('[data-testid=topbar-save]')"));
-expect("the topbar renders a direct Export action", await waitFor("!!document.querySelector('[data-testid=topbar-export]')"));
+// #193: the topbar Export action became the Export ▾ menu trigger. It keeps
+// the data-testid and carries the menu handle as an id, and — R3 — it is never
+// disabled: a project without shots simply gets a shorter menu.
+expect("the topbar renders the Export menu trigger", await waitFor("!!document.querySelector('[data-testid=topbar-export]#export-menu-trigger')"));
+expect(
+	"the Export trigger is enabled in a fresh project",
+	(await evaluate("document.querySelector('[data-testid=topbar-export]').disabled")) === false,
+);
 expect(
 	"the topbar exposes an understandable save status",
 	Boolean(await evaluate("document.querySelector('[data-testid=project-save-status]')?.textContent.trim()")),

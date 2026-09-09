@@ -388,7 +388,7 @@ expect("dragging the object body does NOT fly the camera", (await gizmoPose()) =
 // The fly/pan/orbit section leaves the camera wherever the gestures took it —
 // possibly right on top of the cube, where every pixel picks the body. Reset
 // to the shot preset first so empty floor is actually on screen.
-await evaluate("[...document.querySelectorAll('.inspector-pane .btn')].find(b => b.textContent.startsWith('Recenter'))?.click()");
+await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 // empty floor near the canvas lower-left, clear of the overlay toolbar and the subject
 const emptySpot = await evaluate(
@@ -437,7 +437,7 @@ expect("navigation never edits the object", JSON.stringify(await transform()) ==
 // The camera section leaves the pose wherever fly/pan/orbit took it; at a
 // grazing angle to the floor the XZ plane turns pixels into metres of travel
 // and the object leaves the frame. Reset to the shot preset first.
-await evaluate("[...document.querySelectorAll('.inspector-pane .btn')].find(b => b.textContent.startsWith('Recenter'))?.click()");
+await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 
 await pressKey("w", "KeyW");
@@ -920,7 +920,7 @@ await waitFor(`${positionInput(1)} === 1`);
 // it; the Chair's gizmo can project under the bird's-eye inset pane, where a
 // real press never reaches the canvas. Reset to the shot preset, then park
 // the inset in the stage's lower-left so it cannot occlude the handle.
-await evaluate("[...document.querySelectorAll('.inspector-pane .btn')].find(b => b.textContent.startsWith('Recenter'))?.click()");
+await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 globalThis.insetTag = await evaluate("(() => { const t = document.querySelector('.vp-inset-tag'); if (!t) return null; const r = t.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
 if (insetTag) {
@@ -1181,7 +1181,7 @@ for (const [index, value] of [[0, 0.5], [2, 0.5]]) {
 	);
 }
 await evaluate("document.activeElement?.blur()");
-await evaluate("[...document.querySelectorAll('.inspector-pane .btn')].find(b => b.textContent.startsWith('Recenter'))?.click()");
+await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 for (let i = 0; i < 20; i++) {
 	const a = JSON.stringify(await evaluate("window.__gizmoHandles()"));

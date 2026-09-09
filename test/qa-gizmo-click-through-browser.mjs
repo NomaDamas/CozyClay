@@ -102,7 +102,7 @@ await addObject("Sphere");
 expect("the sphere owns the selection", (await selectedLabel()) === "Sphere", await selectedLabel());
 await typePosition(0, cubePos[0] + 1.2);
 await typePosition(2, cubePos[2]);
-await evaluate("[...document.querySelectorAll('.inspector-pane .btn')].find(b => b.textContent.startsWith('Recenter'))?.click()");
+await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(1200); // the shot camera eases onto the sphere: scan when it lands
 
 // A pixel that is unambiguously the Cube's body while the Sphere owns the
