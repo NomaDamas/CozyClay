@@ -1,5 +1,74 @@
 # Changelog
 
+## 1.8.0
+
+The Studio's chrome gets a research-backed cut: the same capabilities, a third
+fewer controls on screen at once, and one place for each of them. A first-time
+creator can now learn the camera inside the Studio itself, or on cozyclay.org
+before installing, and keep the scene they made. Video mocap gets a quality
+gate, and AI video takes are checked against the scene they were supposed to
+preserve.
+
+### Studio UI simplification
+
+- Simultaneously visible controls drop from 49 / 54 / 65 (Scene / Camera /
+  Motion mode) to 35 / 38 / 51, measured by `tools/qa/studio-control-count.mjs`
+  and recorded with the per-control rationale in `docs/studio-ui-ia.md`.
+- The top bar keeps five actions. One **Export ▾** menu leads with the keyframe
+  pack and folds the mp4, depth/normal passes, storyboard and blocking frame
+  under it; the three Record buttons and the inspector's duplicate FOV/Recenter
+  are gone. **Settings ▾** holds language and analytics.
+- **View ▾** on the viewport bar owns the reference grid, Auto Color and body
+  part colours; Move/Rotate/Scale stay on the transform strip only.
+- The scene switcher sits on the hierarchy's root row; the Projects… button,
+  the root fold caret and the Characters group row are removed and characters
+  sit directly under the scene.
+- Timeline motion tools (IK, Foot, Body, speed, Clear, take bar) render only in
+  Motion mode; Foot snap and Body contact appear only while IK is on.
+- The Scene/PlayView tabs are replaced by the viewport's look-through button:
+  it enters an explicit preview of the shot camera and Esc returns.
+- Selecting the camera switches to Camera mode; the Placement row appears in
+  Motion mode; Generate all waits for at least one prompt block.
+- The `advancedMode` / `beginnerMode` gates that had been hardcoded on are
+  removed.
+
+### Learn the camera
+
+- A seven-step camera tutorial runs inside the Studio: Look, Walk (W A S D
+  Q E), Dolly, Orbit, Shot, Rail, Play. Open it from Settings ▾ → Camera
+  tutorial or `/app/?tutorial=camera`; each step completes only when the
+  gesture actually happens, and the strip never takes the pointer.
+- cozyclay.org embeds a live Studio playground on a preset city block with the
+  same seven steps, a second demo reel, and leaner copy. The tutorial ends by
+  handing over `npx cozyclay --scene city-block`, which opens the local Studio
+  on that starter scene; starter scenes are also offered from the project
+  browser, and the visitor can download the scene they made.
+
+### Agent panel in the Studio
+
+- The Workflow page's Agent chat column is available in the Studio, toggled
+  from View ▾ → Panels → Agent panel or Cmd/Ctrl+B. It boots collapsed so the
+  mode budgets above are unchanged.
+
+### Video mocap and AI video takes
+
+- GVHMR is the only extraction backend; the bridge and the Studio return a
+  named error instead of silently falling back to browser MediaPipe.
+- GVHMR output goes through adaptive position/rotation stabilisation, explicit
+  contact correction, support-surface height (a chair lifts the motion), a
+  mocap quality gate, and scene calibration that survives restore. Palette
+  segmentation diagnostics are exposed for AI-rendered mannequin clips.
+- H3 video takes are checked against the requested scene and camera: the
+  Workflow shows a lock receipt on success and rejects a take whose background
+  or camera drifted, keeping no stale preview.
+
+### Site
+
+- Four search-facing pages (greybox to video, previs software, Seedance camera
+  control, privacy), `robots.txt` with an explicit AI-crawler policy,
+  `llms.txt`, a generated sitemap with real last-modified dates, and IndexNow
+  pings on deploy.
+
 ## 1.7.1
 
 - Open the complete Studio at the development server root; the unfinished
