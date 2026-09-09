@@ -1092,8 +1092,9 @@ select {
 	height: 100%;
 }
 
-/* The landing page's playground iframe: the viewport, its tool strip and the
-   timeline stay interactive; project chrome, hierarchy and inspector go. */
+/* The landing page's playground iframe: the viewport, a one-row transport,
+   the Shots lane (the camera tutorial adds a shot and draws its rail) and the
+   shot monitor stay; project chrome, hierarchy, inspector and the other lanes go. */
 .app[data-embed-mode="playground"] {
 	width: 100vw;
 	height: 100vh;
@@ -1109,17 +1110,18 @@ select {
 .app[data-embed-mode="playground"] .viewport-titlebar,
 .app[data-embed-mode="playground"] .bottom-window-tabs,
 .app[data-embed-mode="playground"] .take-bar,
-.app[data-embed-mode="playground"] .tl-body,
-.app[data-embed-mode="playground"] .tl-view-tools,
 .app[data-embed-mode="playground"] .tl-pose-tools,
 .app[data-embed-mode="playground"] .tl-motion-tools,
 .app[data-embed-mode="playground"] .tl-badge,
 .app[data-embed-mode="playground"] .tl-toggle,
-.app[data-embed-mode="playground"] .vp-inset.plan,
+.app[data-embed-mode="playground"] .tl-track:not(.shots),
 .app[data-embed-mode="playground"] .vp-inset-tag:not(.vp-shot-preview-tag) {
 	display: none;
 }
-/* One-row transport: play, frame counter, nothing else. */
+.app[data-embed-mode="playground"] .tl-view-tools { display: none !important; }
+/* The plan inset only matters while a rail is being drawn into it. */
+.app[data-embed-mode="playground"]:not([data-rail-draw="1"]) .vp-inset.plan { display: none; }
+.app[data-embed-mode="playground"][data-rail-draw="1"] .vp-inset.plan { width: 44% !important; height: 62% !important; }
 .app[data-embed-mode="playground"] .bottom-window,
 .app[data-embed-mode="playground"] .bottom-timeline {
 	flex: 0 0 auto;
@@ -1128,15 +1130,26 @@ select {
 }
 .app[data-embed-mode="playground"] .timeline,
 .app[data-embed-mode="playground"] .timeline.empty-shots { height: auto !important; min-height: 0 !important; max-height: none; }
-.app[data-embed-mode="playground"] .tl-view-tools { display: none !important; }
+.app[data-embed-mode="playground"] .tl-body { flex: 0 0 auto; overflow: hidden; }
+.app[data-embed-mode="playground"] .tl-body { min-height: 0 !important; height: auto !important; }
+.app[data-embed-mode="playground"] .tl-surface { height: auto !important; min-height: 0; grid-template-rows: auto auto !important; }
+/* The Shots lane keeps its full-studio height so the block's hover actions
+   (Duplicate / Delete) sit in a strip above the clickable body instead of
+   covering it. */
+.app[data-embed-mode="playground"] .tl-track.shots { height: 68px; min-height: 68px; }
 .app[data-embed-mode="playground"] .tl-head { padding: 6px 10px; }
 .app[data-embed-mode="playground"] .viewport { flex: 1 1 auto; }
-/* The shot monitor is the one pane the tutorial points at: keep it small. */
+/* The shot monitor is the pane the tutorial points at: keep it small. */
 .app[data-embed-mode="playground"] .vp-shot-preview { width: 22% !important; height: auto !important; aspect-ratio: 16 / 9; right: 12px; bottom: 12px; }
 .app[data-embed-mode="playground"] .vp-shot-preview-tag { font-size: 12px; }
 .app[data-embed-mode="playground"] .vp-look-through { width: 24px; height: 24px; }
 .app[data-embed-mode="playground"] .vp-look-through svg { width: 15px; height: 15px; }
-.app[data-embed-mode="playground"] .vp-look-through[data-hint="1"] {
+/* Tutorial hints: the landing page names the control the current step needs. */
+.app[data-playground-hint="look"] .vp-look-through,
+.app[data-playground-hint="shot"] .tl-track.shots .tl-track-add,
+.app[data-playground-hint="rail"] .tl-track.shots .tl-shot-block:not(.selected),
+.app[data-playground-hint="rail"] .tl-rail-draw,
+.app[data-playground-hint="play"] .tl-transport button:nth-child(2) {
 	animation: playground-pulse 1.1s ease-in-out infinite;
 	box-shadow: 0 0 0 2px #d9a066;
 }

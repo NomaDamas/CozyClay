@@ -160,7 +160,7 @@
 
       .playground {
         position: relative;
-        height: clamp(420px, 62vh, 640px);
+        height: clamp(480px, 70vh, 720px);
         border: 1px solid var(--line);
         border-radius: 12px;
         overflow: hidden;
@@ -216,6 +216,8 @@
       }
       .tutorial-card[hidden] { display: none; }
       .tutorial-card-step { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
+      .tutorial-card kbd[data-done="1"] { border-color: #4f7a4a; color: #8fd47f; background: #24301f; }
+      .tutorial-card b { color: var(--accent); font-weight: 600; }
       .tutorial-card kbd, .tutorial-done kbd {
         font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 6px; border-radius: 5px;
         border: 1px solid var(--line); background: var(--panel); color: var(--ink);
@@ -341,7 +343,7 @@
 
       <section id="try">
         <h2>Try it</h2>
-        <p class="sub">The city block from the reels, live. Six moves and you have the whole camera department.</p>
+        <p class="sub">The city block from the reels, live. Seven moves: fly the camera, cut a shot, draw its dolly, play it back.</p>
         <ol class="tutorial-steps" id="tutorial-steps"></ol>
         <div class="playground" id="playground" style="background-image: url('/media/playground-poster.jpg')">
           <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
@@ -357,7 +359,7 @@
         </div>
         <div class="playground-bar">
           <p class="tutorial-done" id="tutorial-done">
-            That is the whole camera department, and it is exactly what gets handed to the video model.
+            You just flew the camera, cut a shot and laid its dolly. That is exactly what gets handed to the video model.
             <button type="button" class="copy" data-copy="npx cozyclay">Copy <code>npx cozyclay</code></button>
             <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
           </p>
@@ -380,13 +382,17 @@
             const close = document.getElementById("playground-close");
             const SRC = "/app/?embed=playground&scene=/scenes/city-block.cclayproject";
             const canPlay = () => matchMedia("(min-width: 721px) and (hover: hover)").matches;
+            const WALK_KEYS = ["w", "a", "s", "d", "q", "e"];
+            const walked = new Set();
+            const walkHow = () => "Keep the right button held and press each key once: " + WALK_KEYS.map((k) => `<kbd data-done="${walked.has(k) ? 1 : 0}">${k.toUpperCase()}</kbd>`).join(" ") + ". W A S D walk, Q E crane.";
             const STEPS = [
-              { kind: "fly",   label: "Look",  how: "Right-drag to look around." },
-              { kind: "walk",  label: "Walk",  how: "Keep the right button held and press <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd> to walk, <kbd>Q</kbd> <kbd>E</kbd> to crane." },
-              { kind: "dolly", label: "Dolly", how: "Scroll to push in and pull out." },
-              { kind: "orbit", label: "Orbit", how: "Hold <kbd>Alt</kbd> (<kbd>⌥ Option</kbd> on Mac) and left-drag to circle the character." },
-              { kind: "shot",  label: "Shot",  how: "Click ↗ on the Shot monitor (bottom right) to fly the shot camera itself. <kbd>Esc</kbd> returns." },
-              { kind: "play",  label: "Play",  how: "Press ▶ and watch the take from your camera." },
+              { kind: "fly",   label: "Look",  how: () => "Right-drag to look around." },
+              { kind: "walk",  label: "Walk",  how: walkHow },
+              { kind: "dolly", label: "Dolly", how: () => "Scroll to push in and pull out." },
+              { kind: "orbit", label: "Orbit", how: () => "Hold <kbd>Alt</kbd> (<kbd>⌥ Option</kbd> on Mac) and left-drag to circle the character." },
+              { kind: "shot",  label: "Shot",  how: () => "Click <b>+ Add shot</b> in the Shots lane below. That is your cut." },
+              { kind: "rail",  label: "Rail",  how: () => "Click the shot block, then <b>Draw rail</b>, and drag a line across the map that pops up. That line is the dolly move." },
+              { kind: "play",  label: "Play",  how: () => "Press ▶ and watch the Shot monitor ride the rail." },
             ];
             const done = new Set();
             let frame = null;
@@ -395,7 +401,7 @@
               const current = live ? STEPS.find((s) => !done.has(s.kind)) : null;
               stepsEl.innerHTML = STEPS.map((s, i) => `<li data-done="${done.has(s.kind) ? 1 : 0}" data-current="${current === s ? 1 : 0}">${i + 1} ${s.label}</li>`).join("");
               card.hidden = !current;
-              if (current) { cardStep.textContent = `${STEPS.indexOf(current) + 1} / ${STEPS.length}`; nowEl.innerHTML = current.how; }
+              if (current) { cardStep.textContent = `${STEPS.indexOf(current) + 1} / ${STEPS.length}`; nowEl.innerHTML = current.how(); }
               doneEl.hidden = !(live && !current);
               frame?.contentWindow?.postMessage({ type: "cozyclay:playground-hint", kind: current?.kind ?? null }, "*");
               if (live && !current && !renderTutorial.reported) { renderTutorial.reported = true; if (window.posthog?.capture) window.posthog.capture("landing:playground_tutorial_done"); }
@@ -404,6 +410,10 @@
               if (event.data?.type !== "cozyclay:playground-nav") return;
               const kind = event.data.kind;
               if (!STEPS.some((s) => s.kind === kind) || done.has(kind)) return;
+              if (kind === "walk") {
+                if (typeof event.data.key === "string") walked.add(event.data.key);
+                if (!WALK_KEYS.every((k) => walked.has(k))) { renderTutorial(); return; }
+              }
               done.add(kind);
               renderTutorial();
             });
@@ -414,6 +424,7 @@
               start.hidden = false;
               section.classList.remove("playground-live");
               done.clear();
+              walked.clear();
               renderTutorial();
             };
             start.addEventListener("click", () => {

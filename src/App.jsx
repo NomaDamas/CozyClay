@@ -703,11 +703,13 @@ export default function App() {
 		window.parent?.postMessage({ type: "cozyclay:playground-ready" }, "*");
 		// Camera gestures feed the landing page's tutorial checklist, and the
 		// checklist points back at one control (the shot look-through) by hint.
-		const onNav = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
+		const onNav = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind, key: event.detail?.key ?? null }, "*");
+		const onSignal = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
+		window.addEventListener("cozyclay:playground-signal", onSignal);
 		const onHint = (event) => { if (event.data?.type === "cozyclay:playground-hint") setPlaygroundHint(typeof event.data.kind === "string" ? event.data.kind : null); };
 		window.addEventListener("cozyclay:nav", onNav);
 		window.addEventListener("message", onHint);
-		return () => { window.removeEventListener("cozyclay:nav", onNav); window.removeEventListener("message", onHint); };
+		return () => { window.removeEventListener("cozyclay:nav", onNav); window.removeEventListener("cozyclay:playground-signal", onSignal); window.removeEventListener("message", onHint); };
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 	const [startup] = useState(loadSceneStartup);
@@ -2124,6 +2126,10 @@ export default function App() {
 	// active strip; there is no shared key list that could blend through a cut.
 	const [shots, setShots] = useState(() => startupShotState?.shots ?? initialShots(startupShotState?.frameCount ?? DEFAULT_DURATION_S * TIMELINE_FPS));
 	const [movePlaying, setMovePlaying] = useState(false);
+	useEffect(() => {
+		if (playgroundMode && movePlaying) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "play" }, "*");
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [playgroundMode, movePlaying]);
 	// Follow slaves the move to the timeline playhead so camera and character
 	// motion share one time axis; off frees the camera while both stay set.
 	const [moveFollow, setMoveFollow] = useState(true);
@@ -2719,6 +2725,7 @@ export default function App() {
 		if (kind === "prompt-text") recordSessionUndo(promptTextSessionRef, `prompt-text:${id}`);
 	}
 	function changeCameraRail(points) {
+		if (Array.isArray(points) && points.length >= 2) window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "rail" } }));
 		changeActiveCamera({
 			cameraRail: points,
 			railFollow: points ? railFollowForNewGeometry(activeCamera.railFollow, activeShotDuration) : null,
@@ -5009,6 +5016,7 @@ export default function App() {
 		recordShotUndo();
 		setShots(next);
 		trackFeature("shot_add");
+		window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "shot" } }));
 	}
 
 	function splitTimelineShot(shotId) {
@@ -10202,7 +10210,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					: ko("Saved", "저장됨");
 
 	return (
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined}>
+		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}>
 			<header className="topbar">
 				<div className="logo">
 					<span className="wordmark">
@@ -11260,7 +11268,6 @@ function resizePromptClip(id, edge, rawFrame) {
 								<button
 									type="button"
 									className="vp-look-through"
-									data-hint={playgroundHint === "shot" ? 1 : undefined}
 									aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
 									title={ko("Look through the shot camera — the framed player, no editing chrome (Esc returns)", "샷 카메라 시점으로 보기 — 편집 도구 없는 플레이어 (Esc로 복귀)")}
 									onClick={enterPreview}

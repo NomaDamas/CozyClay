@@ -787,7 +787,7 @@ function CameraBlockEditor({
 					<button type="button" className={"tl-camera-tool" + (previewing ? " active" : "")} onClick={() => onPreview?.()}>
 						{previewing ? ko("Stop", "정지") : ko("Preview", "미리보기")}
 					</button>
-					<button type="button" className={"tl-camera-tool" + (railDraw ? " active" : "")} onClick={() => onRailDrawToggle?.()}>
+					<button type="button" className={"tl-camera-tool tl-rail-draw" + (railDraw ? " active" : "")} onClick={() => onRailDrawToggle?.()}>
 						{railDraw ? ko("Drawing…", "그리는 중…") : railLength != null ? ko("Redraw rail", "레일 다시 그리기") : ko("Draw rail", "레일 그리기")}
 					</button>
 

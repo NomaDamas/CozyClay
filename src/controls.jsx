@@ -52,9 +52,9 @@ export function aimAt(position, target) {
 /** Coarse navigation signal for onboarding surfaces (the landing-page
  * tutorial listens through the playground bridge). Fires once per gesture
  * start, not per frame. */
-function announceNav(kind) {
+function announceNav(kind, key = null) {
 	if (typeof window === "undefined") return;
-	window.dispatchEvent(new CustomEvent("cozyclay:nav", { detail: { kind } }));
+	window.dispatchEvent(new CustomEvent("cozyclay:nav", { detail: { kind, key } }));
 }
 
 export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange, onCameraChange }) {
@@ -111,7 +111,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			if (gesture.current?.kind !== "fly") return;
 			const key = KEY_BY_CODE[e.code];
 			if (key) {
-				if (!keys.current.has(key) && key !== "shift") announceNav("walk");
+				if (!keys.current.has(key) && key !== "shift") announceNav("walk", key);
 				keys.current.add(key);
 				e.preventDefault();
 			}
