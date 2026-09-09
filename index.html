@@ -337,7 +337,7 @@
           <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
         </div>
         <p class="note">
-          Or run it on your machine: <code>npx cozyclay</code>. No Blender, no Unity.
+          Or run it on your machine: <code>npx cozyclay</code>. No Blender, no Unity. Open a saved <code>.cclayproject</code> from the first dialog.
         </p>
       </div>
 
@@ -360,7 +360,9 @@
         <div class="playground-bar">
           <p class="tutorial-done" id="tutorial-done">
             You just flew the camera, cut a shot and laid its dolly. That is exactly what gets handed to the video model.
-            <button type="button" class="copy" data-copy="npx cozyclay">Copy <code>npx cozyclay</code></button>
+            Keep going on your machine with the same set:
+            <button type="button" class="copy" data-copy="npx cozyclay --scene city-block">Copy <code>npx cozyclay --scene city-block</code></button>
+            <button type="button" id="playground-download" class="copy">Download my scene</button>
             <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
           </p>
           <span class="spacer"></span>
@@ -449,6 +451,27 @@
               if (window.posthog?.capture) window.posthog.capture("landing:playground_started");
             });
             full.addEventListener("click", () => { if (frame?.requestFullscreen) frame.requestFullscreen(); });
+            const download = document.getElementById("playground-download");
+            download.addEventListener("click", () => {
+              if (!frame) return;
+              download.disabled = true;
+              frame.contentWindow.postMessage({ type: "cozyclay:playground-export" }, "*");
+            });
+            window.addEventListener("message", (event) => {
+              if (event.data?.type !== "cozyclay:playground-export-result") return;
+              download.disabled = false;
+              if (!event.data.serialized) return;
+              const blob = new Blob([event.data.serialized], { type: "application/json" });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "city-block.cclayproject";
+              a.click();
+              setTimeout(() => URL.revokeObjectURL(url), 1000);
+              download.dataset.state = "copied";
+              setTimeout(() => { download.dataset.state = ""; }, 1400);
+              if (window.posthog?.capture) window.posthog.capture("landing:playground_scene_downloaded");
+            });
             close.addEventListener("click", stop);
             document.querySelectorAll("button.copy[data-copy]").forEach((button) => {
               button.addEventListener("click", async () => {

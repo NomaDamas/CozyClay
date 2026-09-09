@@ -6,6 +6,7 @@
 
 import { readProjectDocument } from "./project.js";
 import { SCENES_VERSION, migrateStageFrames } from "./scenes.js";
+import { resolveSceneParam } from "./starter-scenes.js";
 
 export const PLAYGROUND_EMBED = "playground";
 const PLAYGROUND_GLOBAL = "__cozyclayPlayground";
@@ -17,9 +18,20 @@ export function isPlaygroundEmbed(search) {
 /** `?scene=` is a same-origin path only (`/scenes/foo.cclayproject`): the
  * landing page owns which preset loads, never a third-party URL. */
 export function playgroundSceneUrl(search) {
-	const value = new URLSearchParams(search ?? "").get("scene");
-	if (typeof value !== "string" || !value.startsWith("/") || value.startsWith("//")) return null;
-	return value;
+	return resolveSceneParam(new URLSearchParams(search ?? "").get("scene"));
+}
+
+/** The same fetch, returning the whole project (name, scenes, poses, layout)
+ * for the full studio to open as a project rather than a read-only preset. */
+export async function fetchSceneProject(url) {
+	try {
+		const response = await fetch(url);
+		if (!response.ok) return null;
+		const result = readProjectDocument(await response.text());
+		return result.ok ? result.project : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Fetch and validate the preset; returns the scene document or null. */

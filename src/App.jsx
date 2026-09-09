@@ -239,7 +239,8 @@ import {
 } from "./object-path.js";
 import { bucketCount, bucketMs, bucketProjectAge, motionBackendState, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
-import { isPlaygroundEmbed } from "./playground.js";
+import { fetchSceneProject, isPlaygroundEmbed, playgroundSceneUrl } from "./playground.js";
+import { STARTER_SCENES } from "./starter-scenes.js";
 import { PART_COLOURS } from "./part-colours.js";
 import {
 	DEFAULT_POSE,
@@ -630,6 +631,7 @@ export default function App() {
 	// scene with the project chrome hidden and saving off (see playground.js).
 	const playgroundMode = isPlaygroundEmbed(globalThis.location?.search);
 	const [playgroundHint, setPlaygroundHint] = useState(null);
+	const playgroundExportRef = useRef(null);
 	useEffect(() => {
 		if (!embedMode) return undefined;
 		// The Workflow page's Scene node embeds the studio as its preview, so the
@@ -699,7 +701,17 @@ export default function App() {
 		const onNav = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind, key: event.detail?.key ?? null }, "*");
 		const onSignal = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
 		window.addEventListener("cozyclay:playground-signal", onSignal);
-		const onHint = (event) => { if (event.data?.type === "cozyclay:playground-hint") setPlaygroundHint(typeof event.data.kind === "string" ? event.data.kind : null); };
+		const onHint = (event) => {
+			if (event.data?.type === "cozyclay:playground-hint") setPlaygroundHint(typeof event.data.kind === "string" ? event.data.kind : null);
+			if (event.data?.type === "cozyclay:playground-export") {
+				// The visitor keeps what they made: the landing page turns this
+				// into a .cclayproject download they can open after npx cozyclay.
+				playgroundExportRef.current?.("City Block").then(
+					(serialized) => window.parent?.postMessage({ type: "cozyclay:playground-export-result", serialized }, "*"),
+					(error) => window.parent?.postMessage({ type: "cozyclay:playground-export-result", error: String(error?.message ?? error) }, "*"),
+				);
+			}
+		};
 		window.addEventListener("cozyclay:nav", onNav);
 		window.addEventListener("message", onHint);
 		return () => { window.removeEventListener("cozyclay:nav", onNav); window.removeEventListener("cozyclay:playground-signal", onSignal); window.removeEventListener("message", onHint); };
@@ -3040,7 +3052,7 @@ export default function App() {
 	// A first-run author should choose a document (or explicitly start a named
 	// local draft). Keep this as a light startup sheet so the studio remains
 	// inspectable while the choice is pending; it never traps the topbar.
-	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !playgroundMode && !loadProjectSession()?.name);
+	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !playgroundMode && !playgroundSceneUrl(globalThis.location?.search) && !loadProjectSession()?.name);
 
 	// Dismissal mirrors the inspector-actions menu: only listen while open,
 	// ignore presses inside the wrap (the trigger's own click keeps toggling),
@@ -3146,6 +3158,7 @@ export default function App() {
 		return JSON.stringify(createProjectDocument(projectDocumentInput(name)));
 	}
 
+	playgroundExportRef.current = collectProjectSerialized;
 	async function collectProjectSerialized(name) {
 		const input = projectDocumentInput(name);
 		const db = await openAssetDb();
@@ -3264,6 +3277,31 @@ export default function App() {
 		setProjectStartupOpen(false);
 		track("project:opened", { age_bucket: bucketProjectAge(Date.now() - (project.savedAt ?? Date.now())) });
 	}
+
+	/** Open a bundled starter scene as a fresh, saveable project. Used by the
+	 * first-run dialog and by `npx cozyclay --scene <id>` (`?scene=`), which is
+	 * how the landing-page tutorial hands people into the local studio. */
+	async function openStarterScene(id, source = "starter") {
+		const url = playgroundSceneUrl(`?scene=${encodeURIComponent(id)}`);
+		const project = url ? await fetchSceneProject(url) : null;
+		if (!project) {
+			setToast(ko("That starter scene is not in this build", "이 빌드에는 그 시작 장면이 없어요"));
+			return false;
+		}
+		applyProject({ ...project, savedAt: null });
+		projectHandleRef.current = null;
+		track("scene:loaded", { scene_source: source });
+		return true;
+	}
+	const starterOpened = useRef(false);
+	useEffect(() => {
+		if (starterOpened.current || playgroundMode) return;
+		const requested = new URLSearchParams(globalThis.location?.search || "").get("scene");
+		if (!requested) return;
+		starterOpened.current = true;
+		void openStarterScene(requested, "launch");
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	async function openProject() {
 		try {
@@ -13426,6 +13464,11 @@ function resizePromptClip(id, edge, rawFrame) {
 					onOpenFile={() => {
 						setProjectBrowserOpen(false);
 						openProject();
+					}}
+					starters={STARTER_SCENES}
+					onStarter={(id) => {
+						setProjectBrowserOpen(false);
+						void openStarterScene(id);
 					}}
 					onNew={() => {
 						setProjectBrowserOpen(false);

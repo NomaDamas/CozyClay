@@ -49,7 +49,7 @@ export function ProjectNameDialog({ open, initialName = "My Project", onCancel, 
  * Fallback for browsers without the File System Access API: recents plus a
  * plain "open file" button (the folder section is hidden).
  */
-export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew, onClose, startup = false }) {
+export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew, onClose, startup = false, starters = [], onStarter }) {
 	const [recents, setRecents] = useState([]);
 	const [folder, setFolder] = useState(null);
 	const [folderProjects, setFolderProjects] = useState([]);
@@ -126,6 +126,24 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 							<div className="beginner-step"><b>2</b><strong>{ko("Frame", "구도")}</strong><span>{ko("Set the camera view for your shot.", "샷의 카메라 구도를 정해요.")}</span></div>
 							<div className="beginner-step"><b>3</b><strong>{ko("Play", "재생")}</strong><span>{ko("Press play to see the scene come alive.", "재생을 눌러 장면을 확인해요.")}</span></div>
 						</div>
+					</section>
+				)}
+
+				{starters.length > 0 && (
+					<section>
+						<div className="project-browser-section-head">
+							<span>{ko("Start from a scene", "장면에서 시작")}</span>
+						</div>
+						<ul className="project-browser-list starter-list">
+							{starters.map((scene) => (
+								<li key={scene.id}>
+									<button type="button" onClick={() => onStarter?.(scene.id)}>
+										<strong>{scene.name}</strong>
+										<span>{scene.blurb}</span>
+									</button>
+								</li>
+							))}
+						</ul>
 					</section>
 				)}
 

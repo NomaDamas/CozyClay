@@ -34,7 +34,13 @@ CozyClay is a browser-based 3D staging studio built with Three.js and React Thre
 npx cozyclay
 ```
 
-That is the whole install. **[cozyclay.org](https://cozyclay.org/)** has the demo reel and a walkthrough of what the studio does; to use it, run it on your own machine. It ships seeded with a pre-generated motion clip, so you can scrub the timeline, drive the cameras and draw a dolly rail straight away — generating *new* motion is optional and uses the Kimodo bridge when configured.
+That is the whole install. Not sure yet? **[Try it in the browser first](https://cozyclay.org/#try)** — a seven-step camera tutorial on a live scene — then keep going on your machine with the same set:
+
+```bash
+npx cozyclay --scene city-block
+```
+
+The studio ships seeded with a pre-generated motion clip, so you can scrub the timeline, drive the cameras and draw a dolly rail straight away — generating *new* motion is optional and uses the Kimodo bridge when configured.
 
 ## Demo
 
@@ -65,7 +71,7 @@ npx cozyclay
 bunx cozyclay
 ```
 
-That downloads the built studio and opens it at `http://127.0.0.1:5180/app/`. Nothing to compile, no dependency tree to install. Useful flags: `--port 5200`, `--no-open`, `--no-motion`.
+That downloads the built studio and opens it at `http://127.0.0.1:5180/app/`. Nothing to compile, no dependency tree to install. Useful flags: `--port 5200`, `--no-open`, `--no-motion`, `--scene city-block` (start on the bundled starter scene instead of an empty room; the first-run dialog offers the same under **Start from a scene**, and a `.cclayproject` downloaded from the browser tutorial opens with **Open a project**).
 
 A global install gives you `cclay`, the same command with less typing. Once a day the launcher checks npm for a newer release and prints a one-line notice after the studio is up; it stays quiet when you're current or offline. `cclay update` installs the latest release, and `--no-update-check` skips the check entirely.
 

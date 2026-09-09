@@ -92,6 +92,8 @@ function parseArgs(argv) {
 		else if (arg.startsWith("--host=")) opts.host = arg.slice(7);
 		else if (arg === "--no-motion") opts.motion = false;
 		else if (arg === "--no-open") opts.open = false;
+		else if (arg === "--scene") opts.scene = String(argv[++i] ?? "");
+		else if (arg.startsWith("--scene=")) opts.scene = arg.slice(8);
 		else if (arg === "--no-star") opts.star = false;
 		else if (arg === "--no-update-check") opts.updateCheck = false;
 		else if (arg === "--help" || arg === "-h") opts.help = true;
@@ -142,6 +144,9 @@ const HELP = `cozyclay - browser-based 3D staging studio
   npx cozyclay --port 5200  serve on another port
   npx cozyclay --no-motion  skip the optional motion-generation sidecar
   npx cozyclay --no-open    do not open a browser
+  npx cozyclay --scene city-block
+                            open the studio on a bundled starter scene
+                            (the set from the cozyclay.org tutorial)
   npx cozyclay --no-star    never ask about starring the repo
   npx cozyclay --no-update-check
                             do not look for a newer release
@@ -518,7 +523,12 @@ server.listen({ port: opts.port, host: "127.0.0.1", ipv6Only: false }, () => {
 	// The package exists to open the studio, which the site serves from /app/.
 	// Landing on "/" would greet someone who just typed `npx cozyclay` with a
 	// marketing page.
-	const url = `http://127.0.0.1:${opts.port}/app/`;
+	// --scene <id> continues from a bundled starter scene (the landing-page
+	// tutorial hands people this exact command). Only a bare id is accepted
+	// here; the studio resolves it to dist/scenes/<id>.cclayproject.
+	const sceneParam = opts.scene && /^[a-z0-9-]+$/i.test(opts.scene) ? `?scene=${encodeURIComponent(opts.scene)}` : "";
+	if (opts.scene && !sceneParam) console.error(`cozyclay: --scene expects a starter id such as city-block (got ${opts.scene}); opening the studio without it.`);
+	const url = `http://127.0.0.1:${opts.port}/app/${sceneParam}`;
 	console.log(`CozyClay is running at ${url}`);
 	console.log("Use a Chromium-based browser — Safari and Firefox are not supported.");
 	if (!opts.motion) console.log("Motion generation: off (--no-motion).");
