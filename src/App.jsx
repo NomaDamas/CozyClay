@@ -10992,6 +10992,20 @@ function resizePromptClip(id, edge, rawFrame) {
 									changeCameraRail(simplified);
 									setRailDraw(false);
 									const curve = buildRail(simplified);
+									if (playgroundMode && activeShot && curve) {
+										// Playground: a first-timer drew a dolly and wants to see the
+										// whole ride. Stretch the cut to the rail's travel time at the
+										// dolly's speed cap and put them behind the shot camera, so ▶
+										// plays the move full-screen instead of in the corner monitor.
+										const speed = Math.max(0.2, activeCamera.followCam?.maxDollySpeed ?? 4);
+										const travel = Math.ceil((curve.length / speed) * tlFps) + Math.round(tlFps * 0.5);
+										const endFrame = Math.min(tlFrameCount - 1, activeShot.startFrame + Math.max(travel, activeShot.endFrame - activeShot.startFrame));
+										setShots((current) => resizeShot(current, activeShot.id, "end", endFrame, tlFrameCount));
+										setTlFrame(activeShot.startFrame);
+										setCenterTab("play");
+										setToast(isKo ? "레일 완성 — PlayView로 전환했습니다. ▶ 로 재생, Scene 탭으로 복귀" : "Rail drawn — switched to PlayView. Press ▶ to ride it; the Scene tab goes back to flying.");
+										return;
+									}
 									setToast(isKo ? `카메라 레일 완성 — ${curve ? curve.length.toFixed(1) : "?"} m, 제어점 ${simplified.length}개` : `Camera rail drawn — ${curve ? curve.length.toFixed(1) : "?"} m, ${simplified.length} control points`);
 								}}
 								onPathStroke={(stroke) => {

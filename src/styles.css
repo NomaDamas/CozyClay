@@ -1107,7 +1107,6 @@ select {
 .app[data-embed-mode="playground"] .hierarchy-left,
 .app[data-embed-mode="playground"] .hierarchy-sidebar,
 .app[data-embed-mode="playground"] .workspace-splitter,
-.app[data-embed-mode="playground"] .viewport-titlebar,
 .app[data-embed-mode="playground"] .bottom-window-tabs,
 .app[data-embed-mode="playground"] .take-bar,
 .app[data-embed-mode="playground"] .tl-pose-tools,
@@ -1119,8 +1118,16 @@ select {
 	display: none;
 }
 .app[data-embed-mode="playground"] .tl-view-tools { display: none !important; }
+/* Title bar keeps only the Scene / PlayView pair: PlayView is where the
+   drawn dolly plays full-screen, Scene is the way back to flying. */
+.app[data-embed-mode="playground"] .viewport-titlebar .workflow-mode-switch,
+.app[data-embed-mode="playground"] .viewport-titlebar .editor-toolbar { display: none !important; }
+.app[data-playground-hint="play"] .pane-tabs button:nth-child(2) {
+	animation: playground-pulse 1.1s ease-in-out infinite;
+	box-shadow: 0 0 0 2px #d9a066;
+}
 /* The plan inset only matters while a rail is being drawn into it. */
-.app[data-embed-mode="playground"]:not([data-rail-draw="1"]) .vp-inset.plan { display: none; }
+.app[data-embed-mode="playground"]:not([data-rail-draw="1"]) .vp-inset.plan { display: none !important; }
 .app[data-embed-mode="playground"][data-rail-draw="1"] .vp-inset.plan { width: 44% !important; height: 62% !important; }
 .app[data-embed-mode="playground"] .bottom-window,
 .app[data-embed-mode="playground"] .bottom-timeline {
