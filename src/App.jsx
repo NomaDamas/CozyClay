@@ -5685,6 +5685,8 @@ export default function App() {
 			// canonical, 1.
 			const scale = characterScaleFor(decoded);
 			const loaded = {
+			// Identity calibration retains the legacy frame-zero anchorX: targetCharacter.x
+			// and anchorZ: targetCharacter.z contract; calibrated takes use the scene anchor.
 			// Capture the exact prompt this motion was generated from; the
 			// timeline keeps showing it even if the input field is edited
 			// afterwards.
