@@ -67,7 +67,14 @@ def install_palette_metrics(runner):
                     if len(xs):
                         observed = hue[ys, xs].astype(np.float32)
                         delta = np.abs((observed - centre + 180) % 360 - 180)
-                        hue_error.extend(delta.tolist())
+                        # Keep the diagnostic bounded on large 1080p clips:
+                        # exact mask area is retained above, while P95 only
+                        # needs a representative sample of colour errors.
+                        values = delta.tolist()
+                        if len(values) > 2048:
+                            step = max(1, len(values) // 2048)
+                            values = values[::step][:2048]
+                        hue_error.extend(values)
             state["samples"].append({"frame": len(state["samples"]), "coverage": pixels / total,
                                      "colouredCoverage": coloured / total,
                                      "parts": sum(int(one.sum() > 0) for one in per_hue),
