@@ -179,13 +179,14 @@ const BROWSER_FILES = [
 	"test/verify-project-menu-browser.mjs",
 	"test/qa-keyframe-pack-browser.mjs",
 	"test/qa-reference-slots-browser.mjs",
+	"test/qa-scene-switcher-browser.mjs",
 	"test/qa-send-to-ai-browser.mjs",
 ];
 
 // The inventory sweep only picks up `verify*.mjs`; a browser suite named for
 // the QA runner it needs is listed here so it still shows up in the manifest
 // (as an EXCLUDE with its reason) instead of going unmentioned.
-const EXTRA_INVENTORY = ["test/qa-keyframe-pack-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-send-to-ai-browser.mjs"];
+const EXTRA_INVENTORY = ["test/qa-keyframe-pack-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs"];
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })

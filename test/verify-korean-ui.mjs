@@ -122,7 +122,7 @@ includesAll("src/locale-toggle.jsx", ["한국어로 전환", "한국어", "Switc
 includesAll("src/result-modal.jsx", ["장면이 준비됐어요", "프롬프트 복사", "프레임 다운로드", "AI에 넣는 순서", "AI에 이미지 첨부"]);
 includesAll("src/App.jsx", ["장면", "재생 보기", "속성", "모션 생성", "변환", "카메라 레일 완성", "연결 중…"]);
 includesAll("src/ardy/client.js", ["브리지 상태가 좋지 않아요", "브리지에 연결할 수 없어요", "생성 응답에 본문 스트림이 없어요"]);
-includesAll("src/hierarchy-panel.jsx", ["이름 바꾸기", "장면 구조", "장면 계층", "프레임 맞추기", "장면 문서", "+ 새 장면", "장면은 최소 하나 필요합니다"]);
+includesAll("src/hierarchy-panel.jsx", ["이름 바꾸기", "장면 구조", "장면 계층", "프레임 맞추기", "장면 선택", "+ 새 장면", "장면은 최소 하나 필요합니다"]);
 includesAll("src/ardy/timeline.jsx", ["애니메이션 타임라인", "프롬프트", "타임라인 펼치기"]);
 includesAll("src/posestudio.jsx", ["포즈 스튜디오", "포즈 적용", "포즈 저장"]);
 includesAll("src/ardy/waypoints.js", ["핀 사이에는 최소", "자연스럽게 걷기엔 너무 느려요", "이전 구간보다 속도가"]);

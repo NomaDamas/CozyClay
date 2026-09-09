@@ -10166,7 +10166,6 @@ function resizePromptClip(id, edge, rawFrame) {
 					<span className="hierarchy-project-label">{ko("Project", "프로젝트")}</span>
 					<strong>{projectName ?? (projectStartupOpen ? ko("Choose Project", "프로젝트 선택") : ko("Untitled", "제목 없음"))}</strong>
 					{projectDirty && <i className="project-dirty-dot" aria-label={ko("Unsaved changes", "저장되지 않은 변경사항")} />}
-					<button type="button" onClick={() => { setProjectStartupOpen(false); setProjectBrowserOpen(true); }}>{ko("Projects…", "프로젝트…")}</button>
 				</div>
 				<HierarchyPanel
 					selectedId={selectedHierarchyId}

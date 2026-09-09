@@ -177,11 +177,35 @@ expect("row handlers never swallow a picture drop", panelSource.includes("if (ca
 for (const callback of ["onSceneSelect", "onSceneCreate", "onSceneDuplicate", "onSceneRename", "onSceneDelete"]) {
 	expect(`panel exposes ${callback}`, panelSource.includes(callback));
 }
-expect("scene selector is separate from entity tree", panelSource.includes('className="scene-switcher"') && panelSource.includes('className="hierarchy-tree"'));
-expect("scene rename supports double-click", panelSource.includes("onDoubleClick={() => setEditingId(scene.id)}"));
+expect(
+	"the scene selector rides the tree root row",
+	panelSource.includes('className="hierarchy-scene-pill"') &&
+		panelSource.includes("const sceneRoot = node.id === SCENE_ROOT_ID;") &&
+		panelSource.includes('ariaLabel={ko("Select scene", "장면 선택")}'),
+);
+expect("the scene list is the portaled Dropdown, so the panel cannot clip it", panelSource.includes('import { Dropdown } from "./ui.jsx"'));
+expect("the scene list ends with a create item", panelSource.includes('{ value: NEW_SCENE_OPTION, label: ko("+ New scene", "+ 새 장면") }'));
+expect("the pill's clicks never reach the row, so picking a scene cannot fold the tree", panelSource.includes("onClick={(event) => event.stopPropagation()}"));
+expect("the root row right-click opens scene verbs, not the object catalogue", panelSource.includes("} else if (id === SCENE_ROOT_ID) {") && panelSource.includes('kind: "scene",'));
+expect(
+	"the root row prints the scene name once: the pill is the name",
+	panelSource.includes("showLabel={!sceneRoot}") &&
+		panelSource.includes("{showLabel && <span className=\"hierarchy-label\">{label}</span>}") &&
+		panelSource.includes("rowExtra={sceneRoot && !editing ? ("),
+);
+// The row outlives its renames: a second rename on the same row must not be
+// blocked by the first session's "already finished" flag.
+expect("the once-only rename flag is per edit session", panelSource.includes("if (editing) doneRef.current = false;"));
+expect("scene rename supports double-click, on the row icon and on the pill", panelSource.includes("onRenameStart={sceneRoot ? () => setEditingId(node.id) : null}") && panelSource.includes("onRenameStart={() => setEditingId(node.id)}"));
+expect("F2 on the root row renames the scene document", panelSource.includes("if (selectedId !== SCENE_ROOT_ID && sceneObjectIdFromHierarchy(selectedId) === null) return;") && panelSource.includes("if (hierarchyId === SCENE_ROOT_ID) {"));
 expect("scene deletion requires a second deliberate click", panelSource.includes("deleteArmed") && panelSource.includes('ko("Confirm delete", "삭제 확인")'));
-expect("active scene clicks do not repeat selection callbacks", panelSource.includes("if (!active) onSceneSelect?.(scene.id)"));
-expect("last scene deletion is protected", panelSource.includes("disabled={availableScenes.length <= 1}"));
+expect("active scene clicks do not repeat selection callbacks", panelSource.includes("else if (value !== activeSceneId) onSceneSelect?.(value)"));
+expect(
+	"last scene deletion is protected, with a reason",
+	panelSource.includes("{menu.canDelete && (") &&
+		panelSource.includes("canDelete: availableScenes.length > 1,") &&
+		panelSource.includes('setSceneHint(ko("At least one scene is required", "장면은 최소 하나 필요합니다"))'),
+);
 expect("entity tree root follows the active scene name", panelSource.includes('node.kind === "scene" ? { ...node, label: activeSceneName } : node'));
 
 // The studio source spans App.jsx and app-stage.jsx (module-level extraction); pin against both.
@@ -199,6 +223,10 @@ expect(
 for (const prop of ["scenes={scenes}", "activeSceneId={activeSceneId}", "onSceneSelect={selectSceneDocument}", "onSceneCreate={createSceneDocumentFromUi}", "onSceneDuplicate={duplicateSceneDocumentFromUi}", "onSceneRename={renameSceneDocumentFromUi}", "onSceneDelete={deleteSceneDocumentFromUi}"]) {
 	expect(`App wires ${prop.split("=")[0]}`, appSource.includes(prop));
 }
+// The project row keeps the name and the dirty dot; opening a project is the
+// Project menu's "Open Project…", not a second button in the hierarchy column.
+expect("the hierarchy column has no duplicate Projects… button", !appSource.includes('ko("Projects…", "프로젝트…")'));
+expect("the Project menu still opens the project browser", appSource.includes('ko("Open Project…", "프로젝트 열기…")'));
 expect("App seals shots inside the active Scene", appSource.includes("shotDocument: shotDocumentRef.current"));
 expect("App persists the unified Scene document", appSource.includes("serializeSceneDocument({"));
 expect("Scene switch snapshots outgoing work first", appSource.indexOf("const savedScenes = snapshotActiveScene();", appSource.indexOf("function selectSceneDocument")) < appSource.indexOf("openScene(target, savedScenes);", appSource.indexOf("function selectSceneDocument")));
