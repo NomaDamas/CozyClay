@@ -11,6 +11,7 @@ import * as THREE from "three";
 import { buildArdyPose } from "./ardy/export.js";
 import { checkBridge, generate as ardyGenerate } from "./ardy/client.js";
 import { characterScaleFor, loadMotionFromUrl } from "./ardy/npz.js";
+import { applyMotionCalibration } from "./ardy/motion-calibration.js";
 import { motionUrlFromQuery } from "./ardy/motion-url.js";
 import { retimeMotion } from "./ardy/retime.js";
 import { applyAutoFall, applyRootDrop, applySupportRise, autoRoofDrop, normalizeRootDrop } from "./ardy/root-drop.js";
@@ -5613,7 +5614,7 @@ export default function App() {
 		// load toast, the auto-drop toast, clearing the IK keys, snapping the
 		// playhead back to 0 — is an announcement about a take CHANGING. A
 		// preview is the same take seen a second time, so it makes none of them.
-		{ preview = false } = {},
+		{ preview = false, calibration = null } = {},
 	) {
 		setMotionBusy(true);
 		setMotionError("");
@@ -5623,7 +5624,11 @@ export default function App() {
 			// the timeline counts its frames. Same-rate input rides through.
 			// A drop is staging applied to the clip itself, so it happens at
 			// the same boundary — trims and IK then see the dropped take.
-			const raw = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			const retimed = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			// Scene calibration is optional metadata from the capture boundary. It
+			// runs before support/fall staging so every downstream measurement uses
+			// the same scene-space coordinates.
+			const raw = applyMotionCalibration(retimed, calibration).motion;
 			// Staging descriptors are authored in scene metres while decoded
 			// trajectories are canonical-body units. Resolve stature before any
 			// support or fall math so a 0.8x/1.2x performer still lands exactly on
@@ -9988,6 +9993,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * lightweight motionRef is persisted with the entry either way, so the
 	 * clip can be re-fetched after a reload. */
 	async function deliverMotion(job, motionUrl) {
+		const calibration = job.calibration ?? job.sceneCalibration ?? null;
 		const motionRef = {
 			url: motionUrl,
 			prompt: job.prompt,
@@ -9995,13 +10001,15 @@ function resizePromptClip(id, edge, rawFrame) {
 			anchorX: job.anchor.x,
 			anchorZ: job.anchor.z,
 		};
+		if (calibration && typeof calibration === "object") motionRef.calibration = calibration;
 		setCharacters((list) => list.map((entry) => entry.id === job.charId ? { ...entry, motionRef } : entry));
 		if (job.charId === loadedLayerCharRef.current) {
-			await loadMotion(motionUrl, job.prompt, job.rootRotationDeg);
+			await loadMotion(motionUrl, job.prompt, job.rootRotationDeg, null, job.charId, null, { calibration });
 			return;
 		}
 		// Inbound boundary for a clip delivered to a non-active layer.
-		const decoded = retimeMotion(await loadMotionFromUrl(motionUrl), TIMELINE_FPS);
+		const retimed = retimeMotion(await loadMotionFromUrl(motionUrl), TIMELINE_FPS);
+		const decoded = applyMotionCalibration(retimed, calibration).motion;
 		const clip = {
 			...decoded,
 			url: motionUrl,
@@ -10012,6 +10020,7 @@ function resizePromptClip(id, edge, rawFrame) {
 			rotationDeg: job.rootRotationDeg,
 			editSegments: createMotionEdit(decoded.frames),
 		};
+		if (calibration && typeof calibration === "object") clip.sceneCalibration = calibration;
 		// Same stature rule as loadMotion, on the layer that asked for the clip.
 		const scale = characterScaleFor(decoded);
 		motionFullRef.current.set(job.charId, clip);
@@ -10029,7 +10038,8 @@ function resizePromptClip(id, edge, rawFrame) {
 			// Inbound boundary: a re-fetched clip is retimed exactly like a
 			// freshly generated one, so a reload cannot resurrect 20 fps frames.
 			loadMotionFromUrl(entry.motionRef.url).then((raw) => {
-				const decoded = retimeMotion(raw, TIMELINE_FPS);
+				const retimed = retimeMotion(raw, TIMELINE_FPS);
+				const decoded = applyMotionCalibration(retimed, entry.motionRef.calibration).motion;
 				const clip = {
 					...decoded,
 					url: entry.motionRef.url,
@@ -10040,6 +10050,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					rotationDeg: entry.motionRef.rotationDeg,
 					editSegments: createMotionEdit(decoded.frames),
 				};
+				if (entry.motionRef.calibration) clip.sceneCalibration = entry.motionRef.calibration;
 				motionFullRef.current.set(entry.id, clip);
 				setCharacters((current) => current.map((item) => item.id === entry.id
 					// The stature rides inside the npz, so a restored take

@@ -246,6 +246,15 @@ assert.equal(createCharacterEntry({ scale: 99 }).scale, 3, "an absurd stature cl
 assert.equal(createCharacterEntry({ scale: 0.05 }).scale, 0.2, "a tiny stature clamps to the band");
 assert.equal(createCharacterEntry({ y: -2 }).y, 0, "lift cannot sink below the deck");
 assert.equal(createCharacterEntry({ y: 10 }).y, 10, "lift has no ceiling — a crane shot may hoist the body");
+const sceneCalibration = { scale: 1.12, yawDeg: 14, offsetX: 0.4, offsetY: 0.08, offsetZ: -0.2 };
+const calibratedEntry = createCharacterEntry({ motionRef: { url: "/ardy/motions/calibrated.npz", calibration: sceneCalibration } });
+assert.deepEqual(calibratedEntry.motionRef.calibration, sceneCalibration, "scene calibration survives character normalization");
+assert.notEqual(calibratedEntry.motionRef.calibration, sceneCalibration, "scene calibration is owned by the normalized entry");
+sceneCalibration.offsetX = 99;
+assert.equal(calibratedEntry.motionRef.calibration.offsetX, 0.4, "mutating the source calibration cannot rewrite the entry");
+const clampedCalibration = createCharacterEntry({ motionRef: { url: "/ardy/motions/clamped.npz", calibration: { scale: 99, yawDeg: 540, offsetX: 101 } } }).motionRef.calibration;
+assert.deepEqual(clampedCalibration, { scale: 10, yawDeg: -180, offsetX: 100, offsetY: 0, offsetZ: 0 }, "persisted calibration uses the bounded scene envelope");
+assert.equal(createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz" } }).motionRef.calibration, undefined, "legacy motion refs remain free of calibration fields");
 const staturedStage = createSceneStage({ characters: [{ id: "char-a", scale: 1.18 }, { id: "char-b" }] });
 assert.equal(staturedStage.characters[0].scale, 1.18, "a stored stature survives the stage envelope");
 assert.equal(staturedStage.characters[1].scale, 1, "a cast member without a take stays canonical");

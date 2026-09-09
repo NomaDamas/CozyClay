@@ -4,6 +4,7 @@
 
 import { DEFAULT_SENSOR_FORMAT, SENSOR_FORMATS } from "./shot.js";
 import { normalizeStableItems } from "./stable-items.js";
+import { normalizeMotionCalibration } from "./ardy/motion-calibration.js";
 
 export const SCENES_VERSION = 4;
 export const SCENES_STORAGE_KEY = "cozyclay.scenes.v4";
@@ -169,13 +170,20 @@ export function createCharacterEntry(source = null, index = 0) {
 
 function normalizeMotionRef(ref) {
 	if (!plainObject(ref) || typeof ref.url !== "string" || !ref.url) return null;
-	return {
+	const normalized = {
 		url: ref.url,
 		prompt: typeof ref.prompt === "string" ? ref.prompt : "",
 		rotationDeg: Number.isFinite(ref.rotationDeg) ? ref.rotationDeg : 0,
 		anchorX: Number.isFinite(ref.anchorX) ? ref.anchorX : 0,
 		anchorZ: Number.isFinite(ref.anchorZ) ? ref.anchorZ : 0,
 	};
+	// Scene calibration is deliberately metadata on the lightweight motionRef,
+	// never an NPZ member.  Keep it optional so old documents retain their exact
+	// shape, while preserving the calibration produced by the extraction/load
+	// boundary for a later scene reload. cloneValue also strips non-finite values
+	// and recursively owns the object, so a caller cannot mutate the saved stage.
+	if (plainObject(ref.calibration)) normalized.calibration = normalizeMotionCalibration(ref.calibration);
+	return normalized;
 }
 
 function normalizeLayer(layer) {
