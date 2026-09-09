@@ -11,7 +11,7 @@ import * as THREE from "three";
 import { buildArdyPose } from "./ardy/export.js";
 import { checkBridge, generate as ardyGenerate } from "./ardy/client.js";
 import { characterScaleFor, loadMotionFromUrl } from "./ardy/npz.js";
-import { applyMotionCalibration } from "./ardy/motion-calibration.js";
+import { applyMotionCalibration, normalizeMotionCalibration } from "./ardy/motion-calibration.js";
 import { motionUrlFromQuery } from "./ardy/motion-url.js";
 import { retimeMotion } from "./ardy/retime.js";
 import { applyAutoFall, applyRootDrop, applySupportRise, autoRoofDrop, normalizeRootDrop } from "./ardy/root-drop.js";
@@ -5625,10 +5625,15 @@ export default function App() {
 			// A drop is staging applied to the clip itself, so it happens at
 			// the same boundary — trims and IK then see the dropped take.
 			const retimed = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			const normalizedCalibration = normalizeMotionCalibration(calibration);
+			// Scene yaw/XY translation belong to the character's scene transform.
+			// Applying them to both the arrays and the Character group would rotate
+			// the trajectory twice and leave rotMats facing the old direction.
+			const playbackCalibration = { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 };
 			// Scene calibration is optional metadata from the capture boundary. It
 			// runs before support/fall staging so every downstream measurement uses
 			// the same scene-space coordinates.
-			const raw = applyMotionCalibration(retimed, calibration).motion;
+			const raw = applyMotionCalibration(retimed, playbackCalibration).motion;
 			// Staging descriptors are authored in scene metres while decoded
 			// trajectories are canonical-body units. Resolve stature before any
 			// support or fall math so a 0.8x/1.2x performer still lands exactly on
@@ -5636,6 +5641,9 @@ export default function App() {
 			const motionScale = characterScaleFor(raw);
 			const targetCharacter = charactersRef.current.find((entry) => entry.id === targetCharacterId);
 			if (!targetCharacter) throw new Error(`Motion target ${targetCharacterId} no longer exists.`);
+			const sceneAnchorX = targetCharacter.x + normalizedCalibration.offsetX;
+			const sceneAnchorZ = targetCharacter.z + normalizedCalibration.offsetZ;
+			const sceneRotationDeg = rotationDeg + normalizedCalibration.yawDeg;
 			const rig = rigs[targetCharacter.id] ?? await waitForRig(targetCharacter.id);
 			// No explicit drop staged: a character standing on a raised object
 			// whose take walks off the edge falls on its own — ARDY motion is
@@ -5645,15 +5653,15 @@ export default function App() {
 			// only when the clip shows an upward root trend entering its footprint;
 			// ordinary deck walks remain byte-for-byte unchanged.
 			const raised = drop ? raw : applySupportRise(raw, supports, {
-				subjectX: targetCharacter.x,
+				subjectX: sceneAnchorX,
 				subjectY: targetCharacter.y ?? 0,
-				subjectZ: targetCharacter.z,
-				rotationDeg,
+				subjectZ: sceneAnchorZ,
+				rotationDeg: sceneRotationDeg,
 				worldScale: motionScale,
 			});
 			const staging = drop ?? autoRoofDrop(
 				raised,
-				{ x: targetCharacter.x, z: targetCharacter.z, y: targetCharacter.y ?? 0, rotationDeg },
+				{ x: sceneAnchorX, z: sceneAnchorZ, y: targetCharacter.y ?? 0, rotationDeg: sceneRotationDeg },
 				supports,
 				{ worldScale: motionScale },
 			);
@@ -5683,10 +5691,11 @@ export default function App() {
 			prompt: typeof prompt === "string" ? prompt : "",
 				...decoded,
 				url,
-				anchorX: targetCharacter.x,
-				anchorZ: targetCharacter.z,
+				anchorX: sceneAnchorX,
+				anchorZ: sceneAnchorZ,
 				anchorFrame: 0,
-				rotationDeg,
+				rotationDeg: sceneRotationDeg,
+				sceneCalibration: normalizedCalibration,
 				editSegments: createMotionEdit(decoded.frames),
 			};
 			setCharacters((list) => {
@@ -9889,6 +9898,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				prompt: entry.recipe?.blocks?.[0]?.prompt ?? motion?.prompt ?? "",
 				rootRotationDeg: motion?.rotationDeg ?? activeChar.rot,
 				anchor: { x: motion?.anchorX ?? activeChar.x, z: motion?.anchorZ ?? activeChar.z },
+				calibration: motion?.sceneCalibration ?? null,
 			}, entry.motionUrl);
 		} catch {
 			/* loadMotion already surfaced the decode failure in the panel */
@@ -9994,14 +10004,18 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * clip can be re-fetched after a reload. */
 	async function deliverMotion(job, motionUrl) {
 		const calibration = job.calibration ?? job.sceneCalibration ?? null;
+		const normalizedCalibration = normalizeMotionCalibration(calibration);
+		const sceneAnchorX = job.anchor.x + normalizedCalibration.offsetX;
+		const sceneAnchorZ = job.anchor.z + normalizedCalibration.offsetZ;
+		const sceneRotationDeg = job.rootRotationDeg + normalizedCalibration.yawDeg;
 		const motionRef = {
 			url: motionUrl,
 			prompt: job.prompt,
-			rotationDeg: job.rootRotationDeg,
-			anchorX: job.anchor.x,
-			anchorZ: job.anchor.z,
+			rotationDeg: sceneRotationDeg,
+			anchorX: sceneAnchorX,
+			anchorZ: sceneAnchorZ,
 		};
-		if (calibration && typeof calibration === "object") motionRef.calibration = calibration;
+		if (calibration && typeof calibration === "object") motionRef.calibration = normalizedCalibration;
 		setCharacters((list) => list.map((entry) => entry.id === job.charId ? { ...entry, motionRef } : entry));
 		if (job.charId === loadedLayerCharRef.current) {
 			await loadMotion(motionUrl, job.prompt, job.rootRotationDeg, null, job.charId, null, { calibration });
@@ -10009,18 +10023,19 @@ function resizePromptClip(id, edge, rawFrame) {
 		}
 		// Inbound boundary for a clip delivered to a non-active layer.
 		const retimed = retimeMotion(await loadMotionFromUrl(motionUrl), TIMELINE_FPS);
-		const decoded = applyMotionCalibration(retimed, calibration).motion;
+		const decoded = applyMotionCalibration(retimed, { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 }).motion;
 		const clip = {
 			...decoded,
 			url: motionUrl,
 			prompt: job.prompt,
-			anchorX: job.anchor.x,
-			anchorZ: job.anchor.z,
+			anchorX: sceneAnchorX,
+			anchorZ: sceneAnchorZ,
 			anchorFrame: 0,
-			rotationDeg: job.rootRotationDeg,
+			rotationDeg: sceneRotationDeg,
+			sceneCalibration: normalizedCalibration,
 			editSegments: createMotionEdit(decoded.frames),
 		};
-		if (calibration && typeof calibration === "object") clip.sceneCalibration = calibration;
+		if (calibration && typeof calibration === "object") clip.sceneCalibration = normalizedCalibration;
 		// Same stature rule as loadMotion, on the layer that asked for the clip.
 		const scale = characterScaleFor(decoded);
 		motionFullRef.current.set(job.charId, clip);
@@ -10039,7 +10054,8 @@ function resizePromptClip(id, edge, rawFrame) {
 			// freshly generated one, so a reload cannot resurrect 20 fps frames.
 			loadMotionFromUrl(entry.motionRef.url).then((raw) => {
 				const retimed = retimeMotion(raw, TIMELINE_FPS);
-				const decoded = applyMotionCalibration(retimed, entry.motionRef.calibration).motion;
+				const normalizedCalibration = normalizeMotionCalibration(entry.motionRef.calibration);
+				const decoded = applyMotionCalibration(retimed, { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 }).motion;
 				const clip = {
 					...decoded,
 					url: entry.motionRef.url,
@@ -10048,6 +10064,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					anchorZ: entry.motionRef.anchorZ,
 					anchorFrame: 0,
 					rotationDeg: entry.motionRef.rotationDeg,
+					sceneCalibration: normalizedCalibration,
 					editSegments: createMotionEdit(decoded.frames),
 				};
 				if (entry.motionRef.calibration) clip.sceneCalibration = entry.motionRef.calibration;
