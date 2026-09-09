@@ -953,6 +953,12 @@ export default function Timeline({
 	// cast's schedule is visible while only the active layer is editable.
 	ghostLayers = [], // [{ owner, promptClips: [], waypointFrames: [] }]
 	waypointMode,
+	// Which department the studio is in ("scene" | "camera" | "motion"). The
+	// motion-layer track tools — Prompts +, the Full-Body Cut, the trim and
+	// retime grips — only mean something while motion is the job, so they are
+	// not rendered anywhere else. The Root path (Waypoint) toggle stays in
+	// every mode: blocking uses it to stage where a subject walks.
+	workflowMode = "motion",
 	waypoints = [],
 	pathSpeed = null, // { min, max, warn } in m/s, shown on the 2D Root label
 	badge,
@@ -1709,6 +1715,13 @@ export default function Timeline({
 			return shift === 0 ? segment : { ...segment, timelineStart: segment.timelineStart + shift, timelineEnd: segment.timelineEnd + shift };
 		});
 	})();
+	// The motion-layer track tools (Prompts +, the Full-Body Cut, the trim and
+	// retime grips) edit the take, so Scene and Camera never render them.
+	const motionTools = workflowMode === "motion";
+	// A trim or retime grip edits ONE segment: it belongs to the segment the
+	// playhead selects. The trim preview clip carries the live gesture, so it
+	// keeps its grips while the pointer is down.
+	const segmentTools = (segment) => motionTools && (segment.preview === true || selectedMotionSegment?.id === segment.id);
 	const changeSelectedMotionSpeed = (speed) => {
 		if (!selectedMotionSegment || !Number.isFinite(speed)) return;
 		handlers.current.onMotionSpeedChange?.(selectedMotionSegment.id, Math.max(0.1, Math.min(4, speed)));
@@ -1773,37 +1786,47 @@ export default function Timeline({
 							</button>
 						</div>
 						<div className="tl-head-group tl-pose-tools" role="group" aria-label={ko("Pose correction tools", "포즈 보정 도구")} style={TL_HEAD_GROUP_STYLE}>
-							<button
-								type="button"
-								className={"tl-btn ik" + (ikMode ? " on" : "")}
-								aria-pressed={ikMode}
-								disabled={ikDisabled && !ikMode}
-								aria-label={ko("Inverse kinematics", "역운동학")}
-								title={ikDisabled && !ikMode ? ko("IK needs Subject 1's rig loaded", "IK를 사용하려면 인물 1의 리그를 먼저 불러와야 해요") : ko("IK mode — drag a wrist / ankle handle; keys land on the Full-Body lane. With a motion loaded, keys correct it layer-style", "IK 모드 — 손목이나 발목 핸들을 드래그하세요. 키는 전신 레인에 찍히며, 모션을 불러온 뒤에는 레이어 방식으로 보정합니다")}
-								onClick={() => handlers.current.onIkToggle?.()}
-							>
-								{isKo ? `IK ${ikMode ? "켜짐" : "꺼짐"}` : `IK ${ikMode ? "on" : "off"}`}
-							</button>
-							<button
-								type="button"
-								className={"tl-btn ik snap" + (footSnap ? " on" : "")}
-								aria-pressed={footSnap}
-								aria-label={ko("Foot snap", "발 스냅")}
-								title={ko("Foot snap — keep the feet planted while you move the body (hips); the knees bend instead of the feet sinking through the floor", "발 스냅 — 몸(엉덩이)을 움직여도 발을 바닥에 고정합니다. 발이 바닥으로 가라앉는 대신 무릎이 구부러집니다")}
-								onClick={() => handlers.current.onFootSnapToggle?.()}
-							>
-								{isKo ? `스냅 ${footSnap ? "켜짐" : "꺼짐"}` : `Snap ${footSnap ? "on" : "off"}`}
-							</button>
-							<button
-								type="button"
-								className={"tl-btn ik contact" + (bodyContact ? " on" : "")}
-								aria-pressed={bodyContact}
-								aria-label={ko("Body contact", "바닥 접촉")}
-								title={ko("Body contact — keep hands, knees, feet, head, and hips above the floor", "바닥 접촉 — 손, 무릎, 발, 머리, 엉덩이가 바닥 아래로 내려가지 않게 합니다")}
-								onClick={() => handlers.current.onBodyContactToggle?.()}
-							>
-								{isKo ? `바닥 접촉 ${bodyContact ? "켜짐" : "꺼짐"}` : `Body contact ${bodyContact ? "on" : "off"}`}
-							</button>
+							{/* No rig, no pose editing: the group says why instead of
+							    offering a button that cannot do anything (R3). */}
+							{ikDisabled && !ikMode ? (
+								<span className="tl-pose-hint">{ko("Load a rig to edit poses", "리그를 로드하면 포즈를 편집할 수 있어요")}</span>
+							) : (<>
+								<button
+									type="button"
+									className={"tl-btn ik" + (ikMode ? " on" : "")}
+									aria-pressed={ikMode}
+									aria-label={ko("Inverse kinematics", "역운동학")}
+									title={ko("IK mode — drag a wrist / ankle handle; keys land on the Full-Body lane. With a motion loaded, keys correct it layer-style", "IK 모드 — 손목이나 발목 핸들을 드래그하세요. 키는 전신 레인에 찍히며, 모션을 불러온 뒤에는 레이어 방식으로 보정합니다")}
+									onClick={() => handlers.current.onIkToggle?.()}
+								>
+									{isKo ? `IK ${ikMode ? "켜짐" : "꺼짐"}` : `IK ${ikMode ? "on" : "off"}`}
+								</button>
+								{/* Foot snap and Body contact only reinterpret an IK drag, so
+								    they live for exactly as long as IK does (R7). Two
+								    independent bits, two toggles. */}
+								{ikMode && (<>
+									<button
+										type="button"
+										className={"tl-btn ik snap" + (footSnap ? " on" : "")}
+										aria-pressed={footSnap}
+										aria-label={ko("Foot snap", "발 스냅")}
+										title={ko("Foot snap — keep the feet planted while you move the body (hips); the knees bend instead of the feet sinking through the floor", "발 스냅 — 몸(엉덩이)을 움직여도 발을 바닥에 고정합니다. 발이 바닥으로 가라앉는 대신 무릎이 구부러집니다")}
+										onClick={() => handlers.current.onFootSnapToggle?.()}
+									>
+										{isKo ? `스냅 ${footSnap ? "켜짐" : "꺼짐"}` : `Snap ${footSnap ? "on" : "off"}`}
+									</button>
+									<button
+										type="button"
+										className={"tl-btn ik contact" + (bodyContact ? " on" : "")}
+										aria-pressed={bodyContact}
+										aria-label={ko("Body contact", "바닥 접촉")}
+										title={ko("Body contact — keep hands, knees, feet, head, and hips above the floor", "바닥 접촉 — 손, 무릎, 발, 머리, 엉덩이가 바닥 아래로 내려가지 않게 합니다")}
+										onClick={() => handlers.current.onBodyContactToggle?.()}
+									>
+										{isKo ? `바닥 접촉 ${bodyContact ? "켜짐" : "꺼짐"}` : `Body contact ${bodyContact ? "on" : "off"}`}
+									</button>
+								</>)}
+							</>)}
 						</div>
 						{(selectedMotionSegment || onClearMotion) && (
 							<div className="tl-head-group tl-motion-tools" role="group" aria-label={ko("Motion controls", "모션 컨트롤")} style={TL_HEAD_GROUP_STYLE}>
@@ -1962,7 +1985,7 @@ export default function Timeline({
 												: `${pathSpeed.min.toFixed(1)}–${pathSpeed.max.toFixed(1)} m/s`}
 										</em>
 									)}
-									{name === "Prompts" && <button className="tl-track-add" type="button" title={ko("Add a 2–4 second prompt clip — one action per block", "2–4초 프롬프트 클립 추가 — 한 블록에 한 동작")} onClick={() => handlers.current.onPromptAdd?.(frame)}>+</button>}
+									{motionTools && name === "Prompts" && <button className="tl-track-add" type="button" title={ko("Add a 2–4 second prompt clip — one action per block", "2–4초 프롬프트 클립 추가 — 한 블록에 한 동작")} onClick={() => handlers.current.onPromptAdd?.(frame)}>+</button>}
 									{name === SHOTS_LANE && (
 										<button
 											type="button"
@@ -1984,7 +2007,9 @@ export default function Timeline({
 											+
 										</button>
 									)}
-									{name === IK_LANE && motion && (
+									{/* Cutting the take addresses the selected segment, so it is
+									    offered only where that selection means something (R2). */}
+									{name === IK_LANE && motion && motionTools && selectedMotionSegment && (
 										<button
 											className="tl-track-add motion-cut"
 											type="button"
@@ -2224,7 +2249,7 @@ export default function Timeline({
 												handlers.current.onMotionSegmentRemove?.(segment.id);
 											}}
 										>
-											{index === 0 && <button
+											{index === 0 && segmentTools(segment) && <button
 												className="tl-motion-clip-handle start"
 												type="button"
 												aria-label={ko("Trim take start", "테이크 시작점 자르기")}
@@ -2239,7 +2264,7 @@ export default function Timeline({
 													? `${trimPreview.start}–${trimPreview.end} (${trimPreview.end - trimPreview.start + 1}f)`
 													: `${index + 1} · ${segment.previewSpeed ?? segment.speed}×`}
 											</span>
-											{!segment.preview && <button
+											{!segment.preview && segmentTools(segment) && <button
 												className="tl-motion-clip-handle speed"
 												type="button"
 												aria-label={ko("Retime segment by stretch", "드래그로 구간 배속 조절")}
@@ -2249,7 +2274,7 @@ export default function Timeline({
 												onPointerUp={endMotionSpeed}
 												onPointerCancel={endMotionSpeed}
 											/>}
-											{index === displayMotionSegments.length - 1 && <button
+											{index === displayMotionSegments.length - 1 && segmentTools(segment) && <button
 												className="tl-motion-clip-handle end"
 												type="button"
 												aria-label={ko("Trim take end", "테이크 끝점 자르기")}

@@ -102,6 +102,16 @@ const contactTable = async (label) => {
 	console.log(`${label} skinned-mesh min Y`, JSON.stringify(values));
 	return values;
 };
+// Foot snap and Body contact are IK drag modifiers, so they only exist while
+// IK does (#191). Every fresh navigation lands with IK off: enter it before
+// reading or driving the contact toggle.
+const ikButton = (state) => `[...document.querySelectorAll("button")].find((item) => item.textContent.trim() === "IK ${state}")`;
+const enterIk = async () => {
+	expect("IK rig resolves", await waitFor("!!window.__cozyclay?.ikChains", 10000));
+	if (!(await evaluate("window.__cozyclay?.ikMode === true"))) await evaluate(`(${ikButton("off")})?.click()`);
+	expect("IK mode is on before the contact toggle", await waitFor("window.__cozyclay?.ikMode === true", 4000));
+	expect("Body contact appears with IK on", await waitFor(`!!(${contactButton})`, 4000));
+};
 const toggleContact = async (on) => {
 	const pressed = await evaluate(`${contactButton}?.getAttribute("aria-pressed") === "true"`);
 	if (pressed !== on) await evaluate(`(${contactButton})?.click()`);
@@ -111,6 +121,8 @@ const toggleContact = async (on) => {
 await send("Page.navigate", { url: `${baseUrl}?motion=/demo/qa-lying.npz` });
 expect("app becomes ready", await waitFor("!!window.__cozyclay?.rigA && !window.__cozyclay?.ikMode", 10000));
 expect("lying QA motion becomes ready", await waitFor("!!window.__cozyclay?.motion", 10000));
+expect("body contact stays hidden while IK is off", await evaluate(`!(${contactButton})`));
+await enterIk();
 expect("body contact toggle exists", await evaluate(`!!(${contactButton})`));
 const radii = await evaluate("window.__cozyclay.contactRadii");
 console.log("measured contact radii", JSON.stringify(radii));
@@ -126,6 +138,7 @@ await toggleContact(true);
 
 await send("Page.navigate", { url: `${baseUrl}?motion=/demo/walk-then-stop.npz` });
 expect("walk motion resets after contact regression", await waitFor("!!window.__cozyclay?.rigA && !!window.__cozyclay?.motion", 10000));
+await enterIk();
 const walkOn = await contactTable("walk-then-stop ON");
 await toggleContact(false);
 const walkOff = await contactTable("walk-then-stop OFF");
@@ -136,6 +149,7 @@ await toggleContact(true);
 // world matrix at fixed frames with the toggle in both states.
 await send("Page.navigate", { url: `${baseUrl}?motion=/demo/qa-lying.npz` });
 expect("playback identity fixture loads", await waitFor("!!window.__cozyclay?.rigA && !!window.__cozyclay?.motion", 10000));
+await enterIk();
 await toggleContact(true);
 const playbackOn = {};
 for (const frame of [0, 23, 47, 71]) { await evaluate(`window.__cozyclay.scrub(${frame})`); await waitFor(`window.__cozyclay.tlFrame === ${frame}`, 2000); playbackOn[frame] = await boneSnapshot(); }

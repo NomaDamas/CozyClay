@@ -13051,6 +13051,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				ghostLayers={ghostLayers}
 				pathSpeed={pathSpeed}
 				playing={tlPlaying}
+				workflowMode={workflowMode}
 				waypointMode={waypointMode}
 				waypoints={waypoints}
 				pathSpeed={pathSpeed}

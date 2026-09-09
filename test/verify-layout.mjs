@@ -349,12 +349,30 @@ expect(
 	(app.match(/motionFullRef\.current\.set\(/g) ?? []).length >= 4,
 );
 expect(
-	"the timeline receives the active take and both trim handlers",
+	"the timeline receives the active take, both trim handlers, and the department it draws for",
 	app.includes("onMotionTrim={applyMotionTrim}") &&
 	app.includes("onMotionTrimReset={resetMotionTrim}") &&
 	app.includes("motion={motion ? {") &&
 	app.includes("frames: motion.frames,") &&
-	app.includes("segments: motionEditLayout("),
+	app.includes("segments: motionEditLayout(") &&
+	app.includes("workflowMode={workflowMode}"),
+);
+// Trim, retime and Cut edit the take: Scene and Camera never draw them, and
+// inside Motion they belong to the segment the playhead selects (#191).
+expect(
+	"take trim, retime and Cut render only in Motion mode on the selected segment",
+	timeline.includes('const motionTools = workflowMode === "motion";') &&
+	timeline.includes("segmentTools = (segment) => motionTools && (segment.preview === true || selectedMotionSegment?.id === segment.id)") &&
+	timeline.includes("segmentTools(segment) && <button") &&
+	timeline.includes("name === IK_LANE && motion && motionTools && selectedMotionSegment && ("),
+);
+// Foot snap and Body contact only reinterpret an IK drag (R7).
+expect(
+	"foot snap and body contact stay under IK, as two independent toggles",
+	timeline.includes("{ikMode && (<>") &&
+	timeline.includes('"tl-btn ik snap"') &&
+	timeline.includes('"tl-btn ik contact"') &&
+	timeline.includes('ko("Load a rig to edit poses"'),
 );
 expect("a deleted character takes its full take with it", app.includes("motionFullRef.current.delete(charId);"));
 

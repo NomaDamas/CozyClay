@@ -5210,6 +5210,14 @@ input[type=range]::-moz-range-thumb {
 	color: #ffd166;
 }
 
+/* A tool group with nothing to offer yet says why, in the same quiet voice
+   the timeline head uses for its other hints. */
+.tl-pose-hint {
+	font-size: 10.5px;
+	color: var(--muted);
+	white-space: nowrap;
+}
+
 .tl-playhead {
 	position: absolute;
 	top: 0;
