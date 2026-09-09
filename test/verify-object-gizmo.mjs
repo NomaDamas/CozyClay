@@ -353,7 +353,7 @@ globalThis.objectCentre = await evaluate(
 	" const x = Math.round(c.x + r * Math.cos(a * Math.PI / 180)); const y = Math.round(c.y + r * Math.sin(a * Math.PI / 180));" +
 	" if (window.__objectPick(x, y) && !window.__gizmoPick(x, y) && document.elementFromPoint(x, y)?.tagName === \"CANVAS\") return { x, y }; } } return { x: Math.round(c.x), y: Math.round(c.y) }; })()",
 );
-await click("[...document.querySelectorAll('.hierarchy-row')].find(b => b.textContent.includes('SCENE 01'))");
+await click("[...document.querySelectorAll('.hierarchy-row')].find(b => (b.getAttribute('aria-label') || b.textContent).includes('SCENE 01'))");
 // the deselection commit unmounts the gizmo; poll for it
 await waitFor("window.__gizmoHandles().length === 0");
 expect("selecting something else drops the gizmo", await evaluate("window.__gizmoHandles().length === 0"));
