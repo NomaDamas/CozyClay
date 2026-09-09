@@ -61,62 +61,16 @@
         "@context": "https://schema.org",
         "@type": "FAQPage",
         "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "What is CozyClay?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "CozyClay is open source previs software that runs in a browser. You block a scene with primitives and set pieces, pose characters, draw root paths, author camera moves and cuts on a timeline, and preview generated motion."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "What is previs, and is it spelled previz?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Previs is short for previsualization: the rough 3D pass where a shot gets blocked — camera position, lens, character movement, cut points — before anyone commits to final assets or render budget. It is written both previs and previz; the industry mostly writes previs, and both mean the same thing."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Is there free previs software?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "CozyClay is free and open source under AGPL-3.0-or-later, and it runs in the browser. Run it locally with npx cozyclay: project content stays on your machine, while anonymous usage metrics can be disabled at any time with cclay telemetry off. Modified network services must offer their users the corresponding source."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Do I need Blender or Unity to use CozyClay?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No. CozyClay runs entirely in a Chromium-based browser using Three.js and React Three Fiber. The camera and gizmo controls deliberately follow Unity Editor conventions, so the handling is familiar, but no desktop DCC install is required."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "How does motion generation work?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "You sequence multi-phase motion as Prompt Blocks on the timeline and send them to Kimodo through a local bridge, then play the result back with sparse IK correction. Kimodo is optional: staging, root paths, cameras and playback all work without the bridge, and the build ships a pre-generated clip so the timeline has real motion on it from the first run."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Is CozyClay free and open source?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Yes. CozyClay is free and open source on GitHub, and it can be run locally with a single command: npx cozyclay."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Can I run CozyClay offline?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Yes. CozyClay runs on your own machine with npx cozyclay or from a clone, and the studio keeps working without a network connection once it is running. Project content is never uploaded; the official npm package sends anonymous usage metrics by default, which can be disabled with cclay telemetry off. Source checkouts do not send analytics."
-            }
-          }
+          { "@type": "Question", "name": "What is CozyClay?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Open source previs software in a browser: block a scene, pose characters, author camera moves and cuts, preview motion." } },
+          { "@type": "Question", "name": "Previs or previz?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Same thing. Previsualization: the rough 3D pass where a shot gets blocked before anyone pays for final assets or renders." } },
+          { "@type": "Question", "name": "Can I use it for camera control in AI video?",
+            "acceptedAnswer": { "@type": "Answer", "text": "That is why it exists. Block the shot in 3D, then hand the camera move to the video model instead of describing it in a prompt." } },
+          { "@type": "Question", "name": "Do I need Blender or Unity?",
+            "acceptedAnswer": { "@type": "Answer", "text": "No. It runs in a Chromium browser. Controls follow Unity conventions, nothing to install." } },
+          { "@type": "Question", "name": "Is it free? Does it phone home?",
+            "acceptedAnswer": { "@type": "Answer", "text": "Free, AGPL-3.0, runs on your machine and works offline. Project content is never uploaded. The npm package sends anonymous usage metrics; cclay telemetry off disables them." } }
         ]
       }
     </script>
@@ -182,8 +136,15 @@
         padding: 14px 12px;
       }
 
-      .reel {
+      .reels {
+        display: grid;
+        grid-template-columns: 1.778fr 1.167fr;
+        gap: 16px;
+        align-items: start;
         margin: 0 0 30px;
+      }
+      .reel {
+        margin: 0;
         border: 1px solid var(--line);
         border-radius: 12px;
         overflow: hidden;
@@ -191,8 +152,7 @@
         box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
       }
       .reel video { display: block; width: 100%; height: auto; }
-      .reel-second { margin-top: 26px; }
-      .reel-note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+      .reel-note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
 
       section { padding: 40px 0; border-top: 1px solid var(--line); }
       h2 { font-size: clamp(22px, 3.2vw, 28px); margin: 0 0 8px; color: var(--clay); letter-spacing: -.01em; }
@@ -222,6 +182,9 @@
       footer.site { border-top: 1px solid var(--line); padding: 32px 0 56px; color: var(--muted); font-size: 14px; }
       footer.site a { color: var(--muted); }
 
+      @media (max-width: 720px) {
+        .reels { grid-template-columns: 1fr; }
+      }
       @media (max-width: 620px) {
         .hero { padding: 40px 0 28px; }
         .btn { width: 100%; text-align: center; }
@@ -251,114 +214,79 @@
 
         <h1>Block the shot before you pay to render it</h1>
         <p class="lede">
-          CozyClay is free, open source previs software that runs in your browser. Block a
-          scene, pose characters, and author camera moves and cuts — then hand the same
-          shots to an AI video model. No Blender, no Unity — one command.
+          Free, open source previs in your browser. Block the scene, pose the characters,
+          set the camera, then hand that exact shot to an AI video model.
         </p>
 
-        <div class="reel">
-          <video
-            src="/media/cozyclay-demo.mp4"
-            poster="/media/cozyclay-demo-poster.jpg"
-            width="1920" height="1080"
-            autoplay muted loop playsinline controls preload="metadata"
-          ></video>
+        <div class="reels">
+          <div>
+            <div class="reel">
+              <video
+                src="/media/cozyclay-demo.mp4"
+                poster="/media/cozyclay-demo-poster.jpg"
+                width="1920" height="1080"
+                autoplay muted loop playsinline controls preload="metadata"
+              ></video>
+            </div>
+            <p class="reel-note">Greybox left of the wipe, generated result right. Same camera, every cut.</p>
+          </div>
+          <div>
+            <div class="reel">
+              <video
+                src="/media/cozyclay-seedance-vs-greybox.mp4"
+                poster="/media/cozyclay-seedance-vs-greybox-poster.jpg"
+                width="1104" height="946"
+                muted loop playsinline controls preload="metadata"
+              ></video>
+            </div>
+            <p class="reel-note">Top: blocked in CozyClay. Bottom: Seedance 2.5 from that camera. <a href="https://x.com/Yun_HDY/status/2091577179914338583">The post</a>.</p>
+          </div>
         </div>
-        <p class="reel-note">
-          Thirty seconds: greybox previs on the left of the wipe, the generated result on the
-          right. Every cut came out of the same camera setup you see being built — more on
-          <a href="/ai-camera-control/">camera control for AI video</a>.
-        </p>
-
-        <div class="reel reel-second">
-          <video
-            src="/media/cozyclay-seedance-vs-greybox.mp4"
-            poster="/media/cozyclay-seedance-vs-greybox-poster.jpg"
-            width="1104" height="946"
-            muted loop playsinline controls preload="metadata"
-          ></video>
-        </div>
-        <p class="reel-note">
-          Seedance 2.5 charges about $17 for 30 seconds, and one missed shot means paying it
-          again. Top: the greybox blocked in CozyClay. Bottom: the generated shot from that
-          exact camera. Same clip as
-          <a href="https://x.com/Yun_HDY/status/2091577179914338583">the post on X</a>.
-        </p>
 
         <div class="cta">
           <a class="btn primary" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
           <a class="btn ghost" href="#start">Run it locally</a>
         </div>
         <p class="note">
-          Free and open source. Built with Three.js and React Three Fiber.
-          <a href="https://github.com/NomaDamas/CozyClay/issues">Report anything broken</a>.
+          No Blender, no Unity. One command.
         </p>
       </div>
 
       <section id="what">
         <h2>What you can do</h2>
-        <p class="sub">
-          Previs is the part of animation where you decide what happens before anyone commits
-          to final assets. CozyClay keeps that whole loop in one page.
-        </p>
         <div class="grid">
           <div class="card">
             <h3>Stage a scene</h3>
-            <p>
-              Create primitives and set pieces, then move, rotate, and scale them with a
-              W/E/R gizmo. Grid snapping is a preference, not a law — hold Ctrl during a drag
-              to invert it. A bird's-eye plan view drives 2D root waypoints for character paths.
-            </p>
+            <p>Primitives, set pieces, a W/E/R gizmo, and a plan view for character paths.</p>
           </div>
           <div class="card">
             <h3>Edit like Unity</h3>
-            <p>
-              Right-drag flies the camera, WASD walks, Q/E cranes, middle-drag pans,
-              Alt+drag orbits the selection, F frames it. The rule set follows Unity's manual
-              on purpose, so muscle memory carries over.
-            </p>
+            <p>Right-drag flies, WASD walks, Alt-drag orbits, F frames. Muscle memory carries over.</p>
           </div>
           <div class="card">
-            <h3>Undo anything</h3>
-            <p>
-              Every scene mutation goes through a single history store: one interaction —
-              a drag, a scrub, an inspector edit — is exactly one undo entry. Esc cancels
-              an in-flight drag and restores the pre-drag transform.
-            </p>
+            <h3>Author the camera</h3>
+            <p>Lens, dolly, crane, cuts on a timeline. Export the move, not a prompt.</p>
           </div>
           <div class="card">
             <h3>Generate motion</h3>
-            <p>
-              Pose characters, sequence multi-phase motion as Prompt Blocks on a resizable
-              timeline, send them to Kimodo, then play the result back with sparse IK
-              correction where the generated motion needs fixing.
-            </p>
+            <p>Pose characters, sequence Prompt Blocks, play generated motion back with IK fixes.</p>
           </div>
         </div>
       </section>
 
       <section id="start">
         <h2>Quick start</h2>
-        <p class="sub">
-          CozyClay runs on your machine — you need Node.js 22.13 or newer and a Chromium-based
-          browser. One command is enough — there is nothing to compile and no dependency tree
-          to install.
-        </p>
+        <p class="sub">Node.js 22.13+ and a Chromium browser.</p>
         <pre><code>npx cozyclay</code></pre>
-        <p class="sub">Or clone and run the source:</p>
+        <p class="sub">Or from source:</p>
         <pre><code>git clone https://github.com/NomaDamas/CozyClay.git
 cd CozyClay
 npm install
 npm run dev</code></pre>
-        <p class="note">
-          <code>npm run dev</code> starts the studio together with its local Kimodo bridge;
-          <code>npm run dev:ui</code> starts the browser UI alone, without motion generation.
-        </p>
       </section>
 
       <section id="controls">
         <h2>Controls</h2>
-        <p class="sub">Unity Editor conventions, with the divergences documented in the repo.</p>
         <div class="scroller">
           <table>
             <thead><tr><th>Input</th><th>Action</th></tr></thead>
@@ -369,12 +297,8 @@ npm run dev</code></pre>
               <tr><td>Middle-drag</td><td>Pan</td></tr>
               <tr><td>Alt + drag</td><td>Orbit the selection</td></tr>
               <tr><td>Scroll</td><td>Dolly</td></tr>
-              <tr><td>Click</td><td>Select; empty space clears</td></tr>
               <tr><td>W / E / R</td><td>Move / rotate / scale tool</td></tr>
-              <tr><td>Ctrl (during drag)</td><td>Invert grid snapping</td></tr>
               <tr><td>Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z</td><td>Undo / redo</td></tr>
-              <tr><td>Esc</td><td>Cancel the in-flight drag</td></tr>
-              <tr><td>End</td><td>Drop the selection to the surface</td></tr>
               <tr><td>Ctrl/Cmd+D</td><td>Duplicate the selection</td></tr>
               <tr><td>F</td><td>Frame the selection</td></tr>
             </tbody>
@@ -386,76 +310,23 @@ npm run dev</code></pre>
         <h2>FAQ</h2>
         <details open>
           <summary>What is CozyClay?</summary>
-          <p>
-            CozyClay is open source previs software that runs in a browser. You block a scene
-            with primitives and set pieces, pose characters, draw root paths, author camera
-            moves and cuts on a timeline, and preview generated motion.
-          </p>
+          <p>Open source previs software in a browser: block a scene, pose characters, author camera moves and cuts, preview motion.</p>
         </details>
         <details>
-          <summary>What is previs, and is it spelled previz?</summary>
-          <p>
-            Previs is short for previsualization: the rough 3D pass where a shot gets blocked —
-            camera position, lens, character movement, cut points — before anyone commits to
-            final assets or render budget. It is written both <strong>previs</strong> and
-            <strong>previz</strong>; the industry mostly writes previs, and both mean the same
-            thing.
-          </p>
-        </details>
-        <details>
-          <summary>Is there free previs software?</summary>
-          <p>
-            CozyClay is free and open source under AGPL-3.0-or-later, and it runs in the browser.
-            Run it locally with <code>npx cozyclay</code>; project content stays on your machine,
-            while the official npm package sends anonymous usage metrics by default. Disable them
-            anytime with <code>cclay telemetry off</code>. Modified network services must offer
-            their users the corresponding source.
-          </p>
+          <summary>Previs or previz?</summary>
+          <p>Same thing. Previsualization: the rough 3D pass where a shot gets blocked before anyone pays for final assets or renders.</p>
         </details>
         <details>
           <summary>Can I use it for camera control in AI video?</summary>
-          <p>
-            That is the reason it exists. Block the shot in 3D — angle, lens, dolly, the frame
-            the cut lands on — then take those camera moves to a video model instead of
-            describing them in a prompt and hoping. See
-            <a href="/ai-camera-control/">camera control for AI video</a>.
-          </p>
+          <p>That is why it exists. Block the shot in 3D, then hand the camera move to the video model instead of describing it in a prompt. See <a href="/ai-camera-control/">camera control for AI video</a>.</p>
         </details>
         <details>
           <summary>Do I need Blender or Unity?</summary>
-          <p>
-            No. CozyClay runs entirely in a Chromium-based browser using Three.js and React
-            Three Fiber. The camera and gizmo controls deliberately follow Unity Editor
-            conventions, so the handling is familiar, but no desktop DCC install is required.
-          </p>
+          <p>No. It runs in a Chromium browser. Controls follow Unity conventions, nothing to install.</p>
         </details>
         <details>
-          <summary>How does motion generation work?</summary>
-          <p>
-            You sequence multi-phase motion as Prompt Blocks on the timeline and send them to
-            Kimodo through a local bridge, then play the result back with sparse IK correction.
-            The bridge is optional: staging, root paths, cameras and playback all work without
-            it, and the build ships a pre-generated clip so the timeline has real motion on it
-            from the first run.
-          </p>
-        </details>
-        <details>
-          <summary>Is it free and open source?</summary>
-          <p>
-            Yes. The source lives on
-            <a href="https://github.com/NomaDamas/CozyClay">GitHub</a> and the studio can be run
-            locally with <code>npx cozyclay</code>.
-          </p>
-        </details>
-        <details>
-          <summary>Can I run it offline?</summary>
-          <p>
-            Yes. CozyClay runs on your own machine with <code>npx cozyclay</code> or from a clone,
-            and the studio keeps working without a network connection once it is running. Project
-            content is never uploaded; the official npm package sends anonymous usage metrics by
-            default, which can be disabled with <code>cclay telemetry off</code>. Source checkouts
-            do not send analytics.
-          </p>
+          <summary>Is it free? Does it phone home?</summary>
+          <p>Free, AGPL-3.0, runs on your machine and works offline. Project content is never uploaded. The npm package sends anonymous usage metrics; <code>cclay telemetry off</code> disables them.</p>
         </details>
       </section>
     </main>
