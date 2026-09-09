@@ -192,6 +192,25 @@
       }
       .playground-bar .spacer { flex: 1; }
       .playground-phone { display: none; }
+
+      .tutorial { display: none; margin: 0 0 12px; }
+      .playground-live .tutorial { display: block; }
+      .tutorial-steps { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 8px; padding: 0; list-style: none; }
+      .tutorial-steps li {
+        font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
+        padding: 4px 11px; background: var(--panel);
+      }
+      .tutorial-steps li[data-done="1"] { color: var(--ink); border-color: #4f7a4a; background: #24301f; }
+      .tutorial-steps li[data-done="1"]::before { content: "✓ "; color: #8fd47f; }
+      .tutorial-steps li[data-current="1"] { color: var(--clay); border-color: var(--accent); }
+      .tutorial-now { margin: 0; color: var(--clay); font-size: 15px; min-height: 1.6em; }
+      .tutorial-now kbd {
+        font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 6px; border-radius: 5px;
+        border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+      }
+      .tutorial-done { display: none; margin: 0; font-size: 15px; color: var(--clay); }
+      .tutorial[data-complete="1"] .tutorial-now { display: none; }
+      .tutorial[data-complete="1"] .tutorial-done { display: block; }
       @media (max-width: 720px), (hover: none) {
         .playground-cover .btn, .playground-cover small { display: none; }
         .playground-phone { display: block; color: var(--ink); font-size: 14px; padding: 0 24px; text-align: center; }
@@ -300,6 +319,11 @@
       <section id="try">
         <h2>Try it</h2>
         <p class="sub">The city block from the reels, live. Right-drag to look, WASD to walk, scroll to dolly, play to run the take.</p>
+        <div class="tutorial" id="tutorial">
+          <ol class="tutorial-steps" id="tutorial-steps"></ol>
+          <p class="tutorial-now" id="tutorial-now"></p>
+          <p class="tutorial-done">That is the whole camera department. Everything you just did is what gets handed to the video model. Keep going with <code>npx cozyclay</code> or <a href="https://github.com/NomaDamas/CozyClay">the source</a>.</p>
+        </div>
         <div class="playground" id="playground" style="background-image: url('/media/playground-poster.jpg')">
           <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
             <span class="btn primary">Play with the scene</span>
@@ -318,6 +342,33 @@
         <script>
           (() => {
             const box = document.getElementById("playground");
+            const section = document.getElementById("try");
+            const tutorial = document.getElementById("tutorial");
+            const stepsEl = document.getElementById("tutorial-steps");
+            const nowEl = document.getElementById("tutorial-now");
+            const STEPS = [
+              { kind: "fly",   label: "Look",  how: "Right-drag inside the box to look around." },
+              { kind: "walk",  label: "Walk",  how: "Keep the right button held and press <kbd>W</kbd> <kbd>A</kbd> <kbd>S</kbd> <kbd>D</kbd>." },
+              { kind: "dolly", label: "Dolly", how: "Scroll to push in and pull out." },
+              { kind: "orbit", label: "Orbit", how: "Click the character, then <kbd>Alt</kbd> + left-drag to orbit around it." },
+              { kind: "shot",  label: "Shot",  how: "Click the ↗ on the Shot monitor (bottom right) to fly the shot camera itself. <kbd>Esc</kbd> returns." },
+              { kind: "play",  label: "Play",  how: "Press ▶ on the timeline and watch the take from your camera." },
+            ];
+            const done = new Set();
+            const renderTutorial = () => {
+              const current = STEPS.find((s) => !done.has(s.kind));
+              stepsEl.innerHTML = STEPS.map((s, i) => `<li data-done="${done.has(s.kind) ? 1 : 0}" data-current="${current === s ? 1 : 0}">${i + 1} ${s.label}</li>`).join("");
+              nowEl.innerHTML = current ? current.how : "";
+              tutorial.dataset.complete = current ? "0" : "1";
+              if (!current && window.posthog?.capture) window.posthog.capture("landing:playground_tutorial_done");
+            };
+            window.addEventListener("message", (event) => {
+              if (event.data?.type !== "cozyclay:playground-nav") return;
+              const kind = event.data.kind;
+              if (!STEPS.some((s) => s.kind === kind) || done.has(kind)) return;
+              done.add(kind);
+              renderTutorial();
+            });
             const start = document.getElementById("playground-start");
             const full = document.getElementById("playground-full");
             const close = document.getElementById("playground-close");
@@ -329,6 +380,8 @@
               frame = null;
               box.dataset.state = "";
               start.hidden = false;
+              section.classList.remove("playground-live");
+              done.clear();
             };
             start.addEventListener("click", () => {
               if (!canPlay() || frame) return;
@@ -340,7 +393,12 @@
               box.appendChild(frame);
               box.dataset.state = "loading";
               start.hidden = true;
-              const ready = () => { if (box.dataset.state === "loading") box.dataset.state = "live"; };
+              const ready = () => {
+                if (box.dataset.state !== "loading") return;
+                box.dataset.state = "live";
+                section.classList.add("playground-live");
+                renderTutorial();
+              };
               const onReady = (event) => { if (event.data?.type === "cozyclay:playground-ready") { ready(); window.removeEventListener("message", onReady); } };
               window.addEventListener("message", onReady);
               setTimeout(ready, 15000);

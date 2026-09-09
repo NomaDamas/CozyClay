@@ -695,11 +695,15 @@ export default function App() {
 		track(playgroundMode ? "playground:first_action" : "craft:first_action", { action_kind: actionKind });
 	};
 	useEffect(() => {
-		if (!playgroundMode) return;
+		if (!playgroundMode) return undefined;
 		track("playground:opened");
 		// The landing page keeps a loading veil over the iframe until the
 		// studio has actually mounted; a bare `load` fires far too early.
 		window.parent?.postMessage({ type: "cozyclay:playground-ready" }, "*");
+		// Camera gestures feed the landing page's tutorial checklist.
+		const onNav = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
+		window.addEventListener("cozyclay:nav", onNav);
+		return () => window.removeEventListener("cozyclay:nav", onNav);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 	const [startup] = useState(loadSceneStartup);
@@ -767,6 +771,9 @@ export default function App() {
 	// Preview is the player for the finished motion: entering starts playback,
 	// leaving pauses it. The editor view stays the manipulation surface.
 	const [tlPlaying, setTlPlaying] = useState(false);
+	useEffect(() => {
+		if (playgroundMode && tlPlaying) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "play" }, "*");
+	}, [playgroundMode, tlPlaying]);
 	const cameraPreviewEndRef = useRef(null);
 	// Once the operator touches the viewport, the physical camera stays in
 	// their hands. Follow/Rail only take it back through an explicit Preview or
@@ -779,6 +786,9 @@ export default function App() {
 	// The Workflow page embeds this Studio as the Scene node's preview; that
 	// preview must show what the node captures on Run: the shot camera's view.
 	const [lookThroughShot, setLookThroughShot] = useState(embedMode);
+	useEffect(() => {
+		if (playgroundMode && lookThroughShot) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "shot" }, "*");
+	}, [playgroundMode, lookThroughShot]);
 	useEffect(() => {
 		if (!lookThroughShot || embedMode) return undefined;
 		const onKey = (event) => {
