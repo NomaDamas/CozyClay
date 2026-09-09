@@ -55,7 +55,13 @@ expect(
 	app.includes("object.renderer === CUTOUT_KIND ? object : { ...object, autoColor:"),
 );
 expect("the toggle persists under its own key", app.includes("saveAutoColor(") && AUTO_COLOR_KEY === "cozyclay.auto-color.v1");
-expect("the toggle reports its state", app.includes('className="auto-color-toggle"') && app.includes("aria-pressed={autoColor}"));
+// The toggle lives in the viewport bar's View menu (#194); it kept its class
+// and its aria-pressed contract through the move.
+expect(
+	"the toggle reports its state",
+	app.includes('className={"view-menu-item auto-color-toggle" + (autoColor ? " active" : "")}') &&
+	app.includes("aria-pressed={autoColor}"),
+);
 expect(
 	"the viewport renderers consume the marker with authored fallback",
 	props.includes("autoColor ?? color"),

@@ -1172,7 +1172,10 @@ globalThis.playMode = centerTab === "play";
 		setCenterTab("scene");
 		if (next === "camera") setSelectedHierarchyId("camera");
 		else if (next === "motion") {
-			setSelectedHierarchyId("characters");
+			// The active character's ROW, not the group: the placement gizmo only
+			// renders for a specific cast member, so selecting the group used to
+			// drop the operator into Motion with nothing to drag.
+			setSelectedHierarchyId(rowIdForCharIndex(activeCharIndex));
 			// Selecting Motion should land on its first useful control rather than
 			// leaving the operator to hunt through a long inspector column.
 			setPromptBlocksReveal((signal) => signal + 1);
@@ -3023,6 +3026,31 @@ globalThis.playMode = centerTab === "play";
 			window.removeEventListener("keydown", onKeyDown);
 		};
 	}, [exportMenuOpen]);
+	// `View ▾` on the viewport bar (#194): one home for the display-only
+	// toggles that used to be scattered across the topbar, the scene bar and
+	// the inspector. Same dismissal as the two menus above, plus focus
+	// returning to the trigger on Escape — the bar is a keyboard stop.
+	const [viewMenuOpen, setViewMenuOpen] = useState(false);
+	const [viewMenuAnchor, setViewMenuAnchor] = useState({ top: 0, right: 0 });
+	const viewMenuTriggerRef = useRef(null);
+	useEffect(() => {
+		if (!viewMenuOpen) return undefined;
+		const onPointerDown = (event) => {
+			if (event.target instanceof Element && event.target.closest(".view-menu-wrap")) return;
+			setViewMenuOpen(false);
+		};
+		const onKeyDown = (event) => {
+			if (event.key !== "Escape") return;
+			setViewMenuOpen(false);
+			viewMenuTriggerRef.current?.focus();
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [viewMenuOpen]);
 	const projectHandleRef = useRef(null);
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
@@ -5001,6 +5029,11 @@ globalThis.playMode = centerTab === "play";
 		|| selectedHierarchyId === "characterA"
 		|| selectedHierarchyId === "characterB"
 		|| selectedHierarchyId.startsWith("character:");
+	// The View menu's three toggles, as the menu reads them: one radio choice
+	// for the part colours, and a dot on the trigger whenever the viewport is
+	// showing something other than the plain stage.
+	const partColoursChoice = partColoursEnabled ? partColoursMode : "off";
+	const viewLooksActive = gridView || autoColor || partColoursEnabled;
 	const rigSelection = parseRigNodeId(selectedHierarchyId);
 	const isRigSelection = rigSelection !== null;
 	const inspectorHasContent = isSceneSelection || isCameraSelection || isCharacterSelection || isRigSelection
@@ -10272,24 +10305,6 @@ function resizePromptClip(id, edge, rawFrame) {
 							{projectStatus}
 						</span>
 					</div>
-					<button
-						type="button"
-						className="auto-color-toggle"
-						aria-pressed={autoColor}
-						title={ko(
-							"Distinct display colors per object — captures include them while on",
-							"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
-						)}
-						 onClick={() => {
-							setAutoColor((on) => {
-								saveAutoColor(!on);
-								trackFeature("auto_color");
-								return !on;
-							});
-						}}
-					>
-						{ko("Auto Color", "자동 색")}
-					</button>
 					{liveWorkspaceHandle && (
 						<span className="live-workspace-handle" data-live-workspace={liveWorkspaceHandle} title={liveWorkspaceHandle}>
 							{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
@@ -10435,15 +10450,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						>
 							{ko("Snap", "스냅")}
 						</button>
-						<button
-							type="button"
-							className={"snap-switch grid-view-switch workflow-scene-context" + (gridView ? " active" : "")}
-							title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
-							aria-pressed={gridView}
-							onClick={() => setGridView((v) => !v)}
-						>
-							{ko("Grid", "그리드")}
-						</button>
 						<span className="viewport-toolbar-separator settings-separator workflow-camera-context" aria-hidden="true" />
 						<label className="viewport-toolbar-field shot-field workflow-camera-context">
 							<span>{ko("Shot", "샷")}</span>
@@ -10520,6 +10526,108 @@ function resizePromptClip(id, edge, rawFrame) {
 						>
 							{ko("Top", "탑")} {workspaceLayout.insetCollapsed ? "▸" : "▾"}
 						</button>
+						{/* One menu for every viewport-look toggle (R4), in every mode:
+						    what the stage LOOKS like is not a mode's business. The 27px
+						    bar clips its own overflow, so the panel is fixed to the
+						    viewport and anchored to the trigger, like the export menu.
+						    Items keep the menu open: these are toggles you compare, not
+						    commands you fire. */}
+						<div className="view-menu-wrap">
+							<button
+								type="button"
+								className="view-menu-trigger"
+								data-testid="view-menu-trigger"
+								ref={viewMenuTriggerRef}
+								aria-haspopup="menu"
+								aria-expanded={viewMenuOpen}
+								title={ko("Viewport display toggles", "뷰포트 표시 토글")}
+								onClick={(event) => {
+									const box = event.currentTarget.getBoundingClientRect();
+									setViewMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+									setViewMenuOpen((open) => !open);
+								}}
+							>
+								{ko("View", "보기")}
+								<span className="caret">▾</span>
+								{viewLooksActive && <span className="view-menu-dot" data-testid="view-menu-dot" aria-hidden="true" />}
+							</button>
+							{viewMenuOpen && (
+								<div
+									className="project-menu view-menu"
+									role="menu"
+									aria-label={ko("Viewport display", "뷰포트 표시")}
+									style={{ top: `${viewMenuAnchor.top}px`, right: `${viewMenuAnchor.right}px` }}
+								>
+									{/* aria-pressed rides along with aria-checked: the toggles
+									    published that state contract in their old homes and QA
+									    still reads it, so the move keeps the signpost (R9). */}
+									<button
+										type="button"
+										role="menuitemcheckbox"
+										className={"view-menu-item grid-view-switch" + (gridView ? " active" : "")}
+										aria-checked={gridView}
+										aria-pressed={gridView}
+										title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
+										onClick={() => setGridView((v) => !v)}
+									>
+										<span className="view-menu-mark" aria-hidden="true">{gridView ? "✓" : ""}</span>
+										{ko("Reference grid", "기준 그리드")}
+									</button>
+									<button
+										type="button"
+										role="menuitemcheckbox"
+										className={"view-menu-item auto-color-toggle" + (autoColor ? " active" : "")}
+										aria-checked={autoColor}
+										aria-pressed={autoColor}
+										title={ko(
+											"Distinct display colors per object — captures include them while on",
+											"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
+										)}
+										onClick={() => {
+											setAutoColor((on) => {
+												saveAutoColor(!on);
+												trackFeature("auto_color");
+												return !on;
+											});
+										}}
+									>
+										<span className="view-menu-mark" aria-hidden="true">{autoColor ? "✓" : ""}</span>
+										{ko("Auto Color", "자동 색")}
+									</button>
+									{/* Part colours repaint a BODY, so the section only exists
+									    while a character is selected (R2). */}
+									{isCharacterSelection && (
+										<div className="view-menu-group" role="group" aria-label={ko("Body part colours", "부위 색상")}>
+											<span className="view-menu-label" aria-hidden="true">{ko("Body part colours", "부위 색상")}</span>
+											{[
+												{ value: "off", label: ko("Off", "끕") },
+												{ value: "shaded", label: ko("Shaded", "음영") },
+												{ value: "flat", label: ko("Flat", "평면") },
+											].map((option) => {
+												const checked = option.value === partColoursChoice;
+												return (
+													<button
+														type="button"
+														key={option.value}
+														role="menuitemradio"
+														className={"view-menu-item part-colour-option" + (checked ? " active" : "")}
+														data-part-colours={option.value}
+														aria-checked={checked}
+														onClick={() => {
+															setPartColoursEnabled(option.value !== "off");
+															if (option.value !== "off") setPartColoursMode(option.value);
+														}}
+													>
+														<span className="view-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
+														{option.label}
+													</button>
+												);
+											})}
+										</div>
+									)}
+								</div>
+							)}
+						</div>
 					</div>
 				) : (
 					<div className="editor-toolbar play-tools" aria-label={ko("PlayView tools", "재생 보기 도구")}>
@@ -11314,10 +11422,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						</Field>
 					</Foldout>
 
-				<Foldout hidden={!isCharacterSelection} title={ko("Part colours", "부위 색상")}>
-					<label className="check snap-toggle"><input type="checkbox" checked={partColoursEnabled} onChange={(e) => setPartColoursEnabled(e.target.checked)} /> {ko("Render body parts by colour", "신체 부위를 색상으로 렌더링")}</label>
-					{partColoursEnabled && <div className="move-ab"><button type="button" className={"btn ghost" + (partColoursMode === "shaded" ? " primary" : "")} onClick={() => setPartColoursMode("shaded")}>{ko("Shaded", "음영")}</button><button type="button" className={"btn ghost" + (partColoursMode === "flat" ? " primary" : "")} onClick={() => setPartColoursMode("flat")}>{ko("Flat", "평면")}</button></div>}
-				</Foldout>
 				<Foldout hidden={!isCharacterSelection} title={showB ? ko("Subjects", "인물들") : ko("Subject", "인물")}>
 						<div className={"subjects-row" + (showB ? "" : " single")}>
 							{characters.map((entry, index) => entry.hidden ? null : (
@@ -11345,20 +11449,48 @@ function resizePromptClip(id, edge, rawFrame) {
 						)}
 					</Foldout>
 
-				<Foldout hidden={!isCharacterSelection} title={ko("Transform", "변환")}>
-					<p className="inspector-hint">
-						{ko("Edit the selected subject's placement, turn and size. Drag the Transform tool in the viewport for direct manipulation.", "선택한 인물의 위치·회전·크기를 편집합니다. 뷰포트의 변환 도구를 드래그해 바로 조작할 수도 있어요.")}
-					</p>
-					<Vector3Row
-						label={ko("Position", "위치")}
-						fields={[
-							{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => updateCharacterAt(activeCharIndex, { x }) },
-							{ axis: "Y", value: activeChar.y ?? 0, step: 0.05, precision: 2, scrubRange: 5, onChange: (y) => updateCharacterAt(activeCharIndex, { y: Math.max(0, y) }) },
-							{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => updateCharacterAt(activeCharIndex, { z }) },
-						]}
-					/>
-					<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => updateCharacterAt(activeCharIndex, { rot })} />
-					<Slider compact label={ko("Scale", "크기")} min={0.2} max={3} step={0.05} value={activeChar.scale ?? 1} unit="×" onChange={(scale) => updateCharacterAt(activeCharIndex, { scale })} />
+				{/* Scene mode: the viewport gizmo and Move/Rotate/Scale are the primary
+				    path, so the numeric form starts folded (R5). Motion mode hides
+				    those tools, so the same foldout becomes the open Placement row —
+				    where the body stands on stage, which is all Motion can restage.
+				    Foldout reads defaultOpen once, so the key remounts it per mode. */}
+				<Foldout
+					key={workflowMode === "motion" ? "placement" : "transform"}
+					hidden={!isCharacterSelection}
+					defaultOpen={workflowMode === "motion"}
+					title={workflowMode === "motion" ? ko("Placement", "배치") : ko("Transform", "변환")}
+				>
+					{workflowMode === "motion" ? (
+						<div className="placement-fields">
+							<p className="inspector-hint">
+								{ko("Stage position — does not change the take", "무대 위치 — 테이크는 바꾸지 않습니다")}
+							</p>
+							<Vector3Row
+								label={ko("Position", "위치")}
+								fields={[
+									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => updateCharacterAt(activeCharIndex, { x }) },
+									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => updateCharacterAt(activeCharIndex, { z }) },
+								]}
+							/>
+							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => updateCharacterAt(activeCharIndex, { rot })} />
+						</div>
+					) : (
+						<>
+							<p className="inspector-hint">
+								{ko("Edit the selected subject's placement, turn and size. Drag the Transform tool in the viewport for direct manipulation.", "선택한 인물의 위치·회전·크기를 편집합니다. 뷰포트의 변환 도구를 드래그해 바로 조작할 수도 있어요.")}
+							</p>
+							<Vector3Row
+								label={ko("Position", "위치")}
+								fields={[
+									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => updateCharacterAt(activeCharIndex, { x }) },
+									{ axis: "Y", value: activeChar.y ?? 0, step: 0.05, precision: 2, scrubRange: 5, onChange: (y) => updateCharacterAt(activeCharIndex, { y: Math.max(0, y) }) },
+									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => updateCharacterAt(activeCharIndex, { z }) },
+								]}
+							/>
+							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => updateCharacterAt(activeCharIndex, { rot })} />
+							<Slider compact label={ko("Scale", "크기")} min={0.2} max={3} step={0.05} value={activeChar.scale ?? 1} unit="×" onChange={(scale) => updateCharacterAt(activeCharIndex, { scale })} />
+						</>
+					)}
 				</Foldout>
 
 				{/* Rig and Pose are chosen once when a character is cast and then left

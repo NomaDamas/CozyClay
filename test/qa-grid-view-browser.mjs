@@ -53,8 +53,18 @@ const deckPresent = `(() => { let found = false; ${sceneRoot}.traverse((c) => { 
 
 expect("app becomes ready", await waitFor("!!document.querySelector('.add-object-trigger')", 30000));
 expect("the scene graph hook is live", await waitFor("!!window.__cozyclay?.editorCam?.parent", 30000));
+// The toggle folded into the viewport bar's View ▾ menu (#194), keeping its
+// class and aria-pressed contract; the menu is opened before each use.
 const toggle = "document.querySelector('.grid-view-switch')";
-expect("the toolbar offers the Grid toggle", await evaluate(`!!${toggle}`));
+const openViewMenu = async () => {
+	if (!(await evaluate("!!document.querySelector('.view-menu')"))) {
+		await evaluate("document.querySelector('.view-menu-trigger').click()");
+	}
+	return waitFor("!!document.querySelector('.view-menu')", 8000);
+};
+expect("the viewport bar offers the View menu", await waitFor("!!document.querySelector('.view-menu-trigger')", 15000));
+expect("the View menu opens", await openViewMenu());
+expect("the View menu offers the Reference grid toggle", await evaluate(`!!${toggle}`));
 expect("mode OFF shows the clay stage background", await evaluate(`${backgroundHex} === "eef4f3"`));
 expect("mode OFF has the floor deck", await evaluate(deckPresent));
 expect("mode OFF has no grid mesh", await evaluate(`${gridMesh} === null`));
@@ -73,7 +83,8 @@ expect("the preference is stored under its own key", await evaluate(`localStorag
 await send("Page.enable");
 await send("Page.reload", { ignoreCache: false });
 await sleep(1000);
-expect("app returns after reload", await waitFor(`!!${toggle}`, 30000));
+expect("app returns after reload", await waitFor("!!document.querySelector('.view-menu-trigger')", 30000));
+expect("the View menu reopens after the reload", await openViewMenu());
 expect("the mode survives the reload", await waitFor(`${toggle}.getAttribute("aria-pressed") === "true"`, 8000));
 expect("the void background survives the reload", await waitFor(`${backgroundHex} === "2c2e33"`, 8000));
 

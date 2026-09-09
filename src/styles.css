@@ -821,34 +821,6 @@ select {
 	flex: 1;
 }
 
-/* Auto color: compact topbar chrome; the pressed state carries the accent so
-   "the viewport is recolored right now" is visible at a glance. */
-.auto-color-toggle {
-	display: inline-flex;
-	align-items: center;
-	height: 28px;
-	padding: 0 10px;
-	border: 1px solid var(--line2);
-	border-radius: 2px;
-	background: #2c2c2c;
-	color: var(--fg);
-	font-size: 10px;
-	font-weight: 620;
-	cursor: pointer;
-}
-
-.auto-color-toggle:hover,
-.auto-color-toggle:focus-visible {
-	border-color: var(--accent);
-	background: var(--accent-soft);
-	outline: none;
-}
-
-.auto-color-toggle[aria-pressed="true"] {
-	border-color: var(--accent);
-	background: var(--accent-soft);
-}
-
 .auto-color-hex {
 	align-self: center;
 	font-size: 10px;
@@ -8912,6 +8884,19 @@ input[type=range] {
 	align-items: center;
 }
 
+/* View ▾ (#194): the viewport bar's own menu of look toggles. It borrows the
+   export menu's trigger and the project menu's popover so the studio keeps one
+   dropdown language; the wrap's auto margin parks it at the bar's right end in
+   every mode, and the dot says a toggle is on without opening the menu. */
+.view-menu-wrap {
+	position: relative;
+	flex: none;
+	margin-left: auto;
+	align-self: stretch;
+	display: flex;
+	align-items: center;
+}
+
 /* The live-workspace handle can fill the row; a settings label that wrapped to
    one glyph per line is how the topbar used to squeeze the language button. */
 .settings-menu-trigger {
@@ -8958,6 +8943,93 @@ input[type=range] {
 .settings-menu button[aria-pressed="true"] .mark {
 	color: var(--cyan);
 }
+
+.view-menu-trigger {
+	position: relative;
+	flex: none;
+	height: 26px;
+	display: inline-flex;
+	align-items: center;
+	gap: 4px;
+	padding: 0 8px;
+	border: 0;
+	border-left: 1px solid var(--line);
+	background: transparent;
+	color: #bdbdbd;
+	font: inherit;
+	font-size: 9px;
+	cursor: pointer;
+	white-space: nowrap;
+}
+
+.view-menu-trigger:hover,
+.view-menu-trigger[aria-expanded="true"] {
+	background: #363636;
+	color: #fff;
+}
+
+.view-menu-trigger .caret {
+	color: var(--muted2);
+	font-size: 8px;
+}
+
+.view-menu-dot {
+	width: 5px;
+	height: 5px;
+	border-radius: 50%;
+	background: var(--accent);
+	flex: none;
+}
+
+.view-menu {
+	position: fixed;
+	left: auto;
+	min-width: 200px;
+	z-index: 80;
+}
+
+.view-menu .view-menu-item {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.view-menu .view-menu-item.active {
+	background: var(--accent-soft);
+}
+
+.view-menu-mark {
+	width: 12px;
+	flex: none;
+	color: var(--accent);
+	font-size: 11px;
+	text-align: center;
+}
+
+.view-menu-group {
+	display: flex;
+	flex-direction: column;
+	margin-top: 4px;
+	padding-top: 4px;
+	border-top: 1px solid var(--line);
+}
+
+.view-menu-label {
+	padding: 4px 10px;
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+}
+
+/* Placement (Motion mode) drops the Y axis: the row is two fields wide, not a
+   truncated XYZ, and the second field is Z — Unity's blue, not the Y green. */
+.placement-fields .vec3-row {
+	grid-template-columns: 56px 1fr 1fr;
+}
+
+.placement-fields .vec3-row .number-field:nth-of-type(2) .axis { color: #79c0ff; }
 
 /* ----------------------------------------------------- Unity axis colors --- */
 /* X red / Y green / Z blue — Unity's axis colour-coding (class-Transform). */
@@ -10309,9 +10381,6 @@ input[type=range] {
 		height: 23px;
 		border: 1px solid var(--line2);
 		border-radius: 3px;
-	}
-	.editor-toolbar.scene-tools > .grid-view-switch {
-		margin-left: 4px;
 	}
 	.editor-toolbar.scene-tools .viewport-toolbar-field,
 	.editor-toolbar.scene-tools .viewport-fov-control {

@@ -262,13 +262,28 @@ expect(
 // scrub, viewport gizmo) agree on max(0, y).
 expect(
 	"Subject transforms have one inspector home with the direct tools",
-	app.includes('<Foldout hidden={!isCharacterSelection} title={ko("Transform", "변환")}>') &&
+	app.includes('title={workflowMode === "motion" ? ko("Placement", "배치") : ko("Transform", "변환")}') &&
 	app.includes('{ axis: "X", value: activeChar.x, step: 0.05') &&
 	app.includes('{ axis: "Y", value: activeChar.y ?? 0, step: 0.05') &&
 	app.includes('{ axis: "Z", value: activeChar.z, step: 0.05') &&
 	app.includes('label={ko("Rotation", "회전")}') &&
 	app.includes('label={ko("Scale", "크기")}') &&
 	app.includes('data-transform-controls'),
+);
+// Motion mode hides Move/Rotate/Scale, so the same foldout becomes the open
+// Placement row (stage X/Z + turn) and Scene mode folds the full form away
+// behind the gizmo (#194). Foldout reads defaultOpen once, hence the key.
+expect(
+	"the character transform is mode-aware",
+	app.includes('key={workflowMode === "motion" ? "placement" : "transform"}') &&
+	app.includes('defaultOpen={workflowMode === "motion"}') &&
+	app.includes('ko("Stage position — does not change the take", "무대 위치 — 테이크는 바꾸지 않습니다")'),
+);
+// Entering Motion selects the active character's ROW: the placement gizmo only
+// renders for a specific cast member, never for the group.
+expect(
+	"Motion mode lands on a character the gizmo can draw",
+	app.includes("setSelectedHierarchyId(rowIdForCharIndex(activeCharIndex));"),
 );
 expect(
 	"the character gizmo no longer caps lift at 4 m",
