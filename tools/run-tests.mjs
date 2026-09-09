@@ -13,6 +13,7 @@ const NODE_FILES = [
 	"test/ardy/verify-fk.mjs",
 	"test/ardy/verify-gvhmr-worker.mjs",
 	"test/ardy/verify-mocap-quality-gate.mjs",
+	"test/ardy/verify-motion-calibration.mjs",
 	"test/ardy/verify-palette-segmentation.mjs",
 	"test/verify-motion-stabilize.mjs",
 	"test/ardy/verify-gvhmr-floor.mjs",
