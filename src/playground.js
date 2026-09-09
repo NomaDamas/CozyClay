@@ -25,7 +25,7 @@ export function playgroundSceneUrl(search) {
 /** Fetch and validate the preset; returns the scene document or null. */
 export async function fetchPlaygroundProject(url) {
 	try {
-		const response = await fetch(url, { cache: "force-cache" });
+		const response = await fetch(url);
 		if (!response.ok) return null;
 		const result = readProjectDocument(await response.text());
 		if (!result.ok) return null;
