@@ -245,6 +245,7 @@ import {
 } from "./object-path.js";
 import { bucketCount, bucketMs, bucketProjectAge, motionBackendState, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
+import { isPlaygroundEmbed } from "./playground.js";
 import { PART_COLOURS } from "./part-colours.js";
 import {
 	DEFAULT_POSE,
@@ -632,6 +633,9 @@ export async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_
 
 export default function App() {
 	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
+	// The landing page's try-it iframe: full studio interaction on a preset
+	// scene with the project chrome hidden and saving off (see playground.js).
+	const playgroundMode = isPlaygroundEmbed(globalThis.location?.search);
 	useEffect(() => {
 		if (!embedMode) return undefined;
 		// The Workflow page's Scene node embeds the studio as its preview, so the
@@ -686,8 +690,14 @@ export default function App() {
 	const markCraftAction = (actionKind) => {
 		if (craftActionTrackedRef.current) return;
 		craftActionTrackedRef.current = true;
-		track("craft:first_action", { action_kind: actionKind });
+		// Playground pokes are funnel data for the landing page, not for the
+		// install -> first craft funnel the studio reports.
+		track(playgroundMode ? "playground:first_action" : "craft:first_action", { action_kind: actionKind });
 	};
+	useEffect(() => {
+		if (playgroundMode) track("playground:opened");
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 	const [startup] = useState(loadSceneStartup);
 	const startupScene = startup.document.scenes[activeSceneIndex(startup.document.scenes, startup.document.activeSceneId)];
 	const startupStage = createSceneStage(startupScene.stage);
@@ -3008,7 +3018,7 @@ export default function App() {
 	// A first-run author should choose a document (or explicitly start a named
 	// local draft). Keep this as a light startup sheet so the studio remains
 	// inspectable while the choice is pending; it never traps the topbar.
-	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !loadProjectSession()?.name);
+	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !playgroundMode && !loadProjectSession()?.name);
 
 	// Dismissal mirrors the inspector-actions menu: only listen while open,
 	// ignore presses inside the wrap (the trigger's own click keeps toggling),
@@ -10174,7 +10184,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					: ko("Saved", "저장됨");
 
 	return (
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : undefined}>
+		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined}>
 			<header className="topbar">
 				<div className="logo">
 					<span className="wordmark">

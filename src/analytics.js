@@ -27,6 +27,8 @@ const EVENT_PROPERTIES = Object.freeze({
 	"export:blocking_frame_succeeded": ["format"],
 	"export:video_succeeded": ["format"],
 	"sample:played": ["from"],
+	"playground:opened": [],
+	"playground:first_action": ["action_kind"],
 	"activation:completed": ["activation_path"],
 });
 const FEATURE_NAMES = new Set([

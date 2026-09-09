@@ -1,0 +1,811 @@
+{
+	"app": "cozyclay",
+	"kind": "project",
+	"version": 1,
+	"name": "CITY BLOCK STUDY",
+	"scenes": {
+		"version": 4,
+		"activeSceneId": "scene-mt1b9laj-2",
+		"scenes": [
+			{
+				"id": "scene-mt1b0tpj-1",
+				"name": "SCENE 01",
+				"objects": [
+					{
+						"id": "cube",
+						"name": "Cube",
+						"renderer": "cube",
+						"x": 1.5,
+						"y": 0,
+						"z": -2,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1,
+						"scaleY": 1,
+						"scaleZ": 1,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					}
+				],
+				"shotDocument": null,
+				"stage": {
+					"characters": [
+						{
+							"id": "char-a",
+							"model": "y-bot-tpose",
+							"x": 0,
+							"y": 0,
+							"z": 0,
+							"rot": 0,
+							"hidden": false,
+							"tint": null,
+							"pose": null,
+							"scale": 1,
+							"subject": "a young woman in a tan coat",
+							"layer": {
+								"waypoints": [],
+								"promptClips": []
+							},
+							"motionRef": null
+						}
+					],
+					"hasCharSheet": false,
+					"shotAspect": "16:9"
+				}
+			},
+			{
+				"id": "scene-mt1b9laj-2",
+				"name": "SCENE 01",
+				"objects": [
+					{
+						"id": "cube-2",
+						"name": "Cube 2",
+						"renderer": "cube",
+						"x": -7,
+						"y": 0,
+						"z": -6,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 5.2,
+						"scaleY": 13.5,
+						"scaleZ": 5.5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "plane",
+						"name": "Plane",
+						"renderer": "plane",
+						"x": -6.5,
+						"y": 0,
+						"z": -14.100000000000001,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 7.2,
+						"scaleY": 1,
+						"scaleZ": 32,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 2,
+							"depth": 2
+						},
+						"height": 0
+					},
+					{
+						"id": "cube",
+						"name": "Cube",
+						"renderer": "cube",
+						"x": -4.5,
+						"y": 0,
+						"z": 0,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1.4,
+						"scaleY": 0.22,
+						"scaleZ": 32,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-3",
+						"name": "Cube 3",
+						"renderer": "cube",
+						"x": 4.5,
+						"y": 0,
+						"z": 0,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1.4,
+						"scaleY": 0.22,
+						"scaleZ": 32,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-4",
+						"name": "Cube 4",
+						"renderer": "cube",
+						"x": -11.8,
+						"y": 0,
+						"z": -14.9,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4.6,
+						"scaleY": 8,
+						"scaleZ": 5.2,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-5",
+						"name": "Cube 5",
+						"renderer": "cube",
+						"x": -9.5,
+						"y": 0,
+						"z": -5.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 5.8,
+						"scaleY": 17,
+						"scaleZ": 6.2,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-6",
+						"name": "Cube 6",
+						"renderer": "cube",
+						"x": -8,
+						"y": 0,
+						"z": 2,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4.5,
+						"scaleY": 9.5,
+						"scaleZ": 5.5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-7",
+						"name": "Cube 7",
+						"renderer": "cube",
+						"x": -10.2,
+						"y": 0,
+						"z": 8.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 6,
+						"scaleY": 12.5,
+						"scaleZ": 5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-8",
+						"name": "Cube 8",
+						"renderer": "cube",
+						"x": -7.2,
+						"y": 0,
+						"z": 14,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4,
+						"scaleY": 6.5,
+						"scaleZ": 4.5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder",
+						"name": "Cylinder",
+						"renderer": "cylinder",
+						"x": 9,
+						"y": 0,
+						"z": -12,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4.2,
+						"scaleY": 14,
+						"scaleZ": 4.2,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-9",
+						"name": "Cube 9",
+						"renderer": "cube",
+						"x": 8,
+						"y": 0,
+						"z": -5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4.5,
+						"scaleY": 7.5,
+						"scaleZ": 5.5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-10",
+						"name": "Cube 10",
+						"renderer": "cube",
+						"x": 10.5,
+						"y": 0,
+						"z": 1.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 6.2,
+						"scaleY": 11,
+						"scaleZ": 5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-11",
+						"name": "Cube 11",
+						"renderer": "cube",
+						"x": 8,
+						"y": 0,
+						"z": 8,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4.8,
+						"scaleY": 8.5,
+						"scaleZ": 5.5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-12",
+						"name": "Cube 12",
+						"renderer": "cube",
+						"x": 10.2,
+						"y": 0,
+						"z": 14,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 6,
+						"scaleY": 15.5,
+						"scaleZ": 5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-13",
+						"name": "Cube 13",
+						"renderer": "cube",
+						"x": -15,
+						"y": 0,
+						"z": -10,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4,
+						"scaleY": 9,
+						"scaleZ": 4,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-14",
+						"name": "Cube 14",
+						"renderer": "cube",
+						"x": -15,
+						"y": 0,
+						"z": 3,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 5,
+						"scaleY": 6,
+						"scaleZ": 5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-15",
+						"name": "Cube 15",
+						"renderer": "cube",
+						"x": 15,
+						"y": 0,
+						"z": -6,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 5,
+						"scaleY": 10,
+						"scaleZ": 5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-16",
+						"name": "Cube 16",
+						"renderer": "cube",
+						"x": 15,
+						"y": 0,
+						"z": 7,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 4.5,
+						"scaleY": 7,
+						"scaleZ": 4.5,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cube-17",
+						"name": "Cube 17",
+						"renderer": "cube",
+						"x": 0,
+						"y": 4.3,
+						"z": -7.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 15,
+						"scaleY": 0.55,
+						"scaleZ": 2.4,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-2",
+						"name": "Cylinder 2",
+						"renderer": "cylinder",
+						"x": -4.4,
+						"y": 0,
+						"z": -7.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.55,
+						"scaleY": 4.3,
+						"scaleZ": 0.55,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-3",
+						"name": "Cylinder 3",
+						"renderer": "cylinder",
+						"x": 4.4,
+						"y": 0,
+						"z": -7.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.55,
+						"scaleY": 4.3,
+						"scaleZ": 0.55,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "car",
+						"name": "Car",
+						"renderer": "car",
+						"x": -1.6,
+						"y": 0,
+						"z": -7,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1,
+						"scaleY": 1,
+						"scaleZ": 1,
+						"color": "#d98770",
+						"parent": null,
+						"footprint": {
+							"width": 1.8,
+							"depth": 4.5
+						},
+						"height": 1.4
+					},
+					{
+						"id": "car-2",
+						"name": "Car 2",
+						"renderer": "car",
+						"x": 1.5,
+						"y": 0,
+						"z": -1.5,
+						"rot": -180,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.95,
+						"scaleY": 0.95,
+						"scaleZ": 0.95,
+						"color": "#d98770",
+						"parent": null,
+						"footprint": {
+							"width": 1.8,
+							"depth": 4.5
+						},
+						"height": 1.4
+					},
+					{
+						"id": "car-3",
+						"name": "Car 3",
+						"renderer": "car",
+						"x": -1.3,
+						"y": 0,
+						"z": 5.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1.05,
+						"scaleY": 1.05,
+						"scaleZ": 1.05,
+						"color": "#d98770",
+						"parent": null,
+						"footprint": {
+							"width": 1.8,
+							"depth": 4.5
+						},
+						"height": 1.4
+					},
+					{
+						"id": "car-4",
+						"name": "Car 4",
+						"renderer": "car",
+						"x": 1.4,
+						"y": 0,
+						"z": 12,
+						"rot": -180,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.9,
+						"scaleY": 0.9,
+						"scaleZ": 0.9,
+						"color": "#d98770",
+						"parent": null,
+						"footprint": {
+							"width": 1.8,
+							"depth": 4.5
+						},
+						"height": 1.4
+					},
+					{
+						"id": "cylinder-4",
+						"name": "Cylinder 4",
+						"renderer": "cylinder",
+						"x": -3.45,
+						"y": 0,
+						"z": -11,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.11,
+						"scaleY": 5.5,
+						"scaleZ": 0.11,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-5",
+						"name": "Cylinder 5",
+						"renderer": "cylinder",
+						"x": 3.45,
+						"y": 0,
+						"z": -7,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.11,
+						"scaleY": 5.5,
+						"scaleZ": 0.11,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-6",
+						"name": "Cylinder 6",
+						"renderer": "cylinder",
+						"x": -3.45,
+						"y": 0,
+						"z": -2,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.11,
+						"scaleY": 5.5,
+						"scaleZ": 0.11,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-7",
+						"name": "Cylinder 7",
+						"renderer": "cylinder",
+						"x": 3.45,
+						"y": 0,
+						"z": 3,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.11,
+						"scaleY": 5.5,
+						"scaleZ": 0.11,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-8",
+						"name": "Cylinder 8",
+						"renderer": "cylinder",
+						"x": -3.45,
+						"y": 0,
+						"z": 9,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.11,
+						"scaleY": 5.5,
+						"scaleZ": 0.11,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-9",
+						"name": "Cylinder 9",
+						"renderer": "cylinder",
+						"x": 3.45,
+						"y": 0,
+						"z": 14,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 0.11,
+						"scaleY": 5.5,
+						"scaleZ": 0.11,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cylinder-10",
+						"name": "Cylinder 10",
+						"renderer": "cylinder",
+						"x": 8,
+						"y": 8.5,
+						"z": 8,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1.1,
+						"scaleY": 1.5,
+						"scaleZ": 1.1,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "cone",
+						"name": "Cone",
+						"renderer": "cone",
+						"x": 8,
+						"y": 10,
+						"z": 8,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 1.4,
+						"scaleY": 1.2,
+						"scaleZ": 1.4,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					},
+					{
+						"id": "sphere",
+						"name": "Sphere",
+						"renderer": "sphere",
+						"x": 4.2,
+						"y": 1.4,
+						"z": -13.5,
+						"rot": 0,
+						"rotX": 0,
+						"rotZ": 0,
+						"scaleX": 2.2,
+						"scaleY": 2.2,
+						"scaleZ": 2.2,
+						"color": "#c2c6c8",
+						"parent": null,
+						"footprint": {
+							"width": 1,
+							"depth": 1
+						},
+						"height": 1
+					}
+				],
+				"shotDocument": null,
+				"stage": {
+					"characters": [
+						{
+							"id": "char-a",
+							"model": "y-bot-tpose",
+							"x": 0,
+							"y": 0,
+							"z": 0,
+							"rot": 0,
+							"hidden": false,
+							"tint": null,
+							"pose": null,
+							"scale": 1,
+							"subject": "a young woman in a tan coat",
+							"layer": {
+								"waypoints": [],
+								"promptClips": []
+							},
+							"motionRef": null
+						}
+					],
+					"hasCharSheet": false,
+					"shotAspect": "16:9"
+				}
+			}
+		]
+	},
+	"workspace": null,
+	"poseLibrary": []
+}

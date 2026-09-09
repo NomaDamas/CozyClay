@@ -1092,6 +1092,23 @@ select {
 	height: 100%;
 }
 
+/* The landing page's playground iframe: the viewport, its tool strip and the
+   timeline stay interactive; project chrome, hierarchy and inspector go. */
+.app[data-embed-mode="playground"] {
+	width: 100vw;
+	height: 100vh;
+	min-width: 0;
+	overflow: hidden;
+}
+.app[data-embed-mode="playground"] .topbar,
+.app[data-embed-mode="playground"] .brandbar,
+.app[data-embed-mode="playground"] .asset-delete-toast,
+.app[data-embed-mode="playground"] .hierarchy-left,
+.app[data-embed-mode="playground"] .hierarchy-sidebar,
+.app[data-embed-mode="playground"] .workspace-splitter-vertical {
+	display: none;
+}
+
 /* ------------------------------------------------------- dual viewport ---- */
 
 /* Both panes render every frame out of one canvas; these divs only supply the

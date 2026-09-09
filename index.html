@@ -154,6 +154,42 @@
       .reel video { display: block; width: 100%; height: auto; }
       .reel-note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
 
+      .playground {
+        position: relative;
+        aspect-ratio: 16 / 9;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: #000 center / cover no-repeat;
+        box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+      }
+      .playground iframe { display: block; width: 100%; height: 100%; border: 0; background: #1b1b1b; }
+      .playground-cover {
+        position: absolute; inset: 0; display: flex; flex-direction: column;
+        align-items: center; justify-content: center; gap: 12px;
+        background: rgba(0, 0, 0, .35); cursor: pointer; border: 0; color: var(--ink);
+        font: inherit; padding: 0; width: 100%;
+      }
+      .playground-cover:hover { background: rgba(0, 0, 0, .25); }
+      .playground-cover .btn { pointer-events: none; }
+      .playground-cover small { color: var(--ink); font-size: 13px; opacity: .85; }
+      .playground-bar {
+        display: none; gap: 14px; align-items: center; flex-wrap: wrap;
+        margin: 10px 0 0; font-size: 13px; color: var(--muted);
+      }
+      .playground[data-state="live"] + .playground-bar { display: flex; }
+      .playground-bar button {
+        background: none; border: 1px solid var(--line); color: var(--ink);
+        border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
+      }
+      .playground-bar .spacer { flex: 1; }
+      .playground-phone { display: none; }
+      @media (max-width: 720px), (hover: none) {
+        .playground-cover .btn, .playground-cover small { display: none; }
+        .playground-phone { display: block; color: var(--ink); font-size: 14px; padding: 0 24px; text-align: center; }
+        .playground-cover { cursor: default; }
+      }
+
       section { padding: 40px 0; border-top: 1px solid var(--line); }
       h2 { font-size: clamp(22px, 3.2vw, 28px); margin: 0 0 8px; color: var(--clay); letter-spacing: -.01em; }
       h3 { font-size: 17px; margin: 0 0 6px; color: var(--clay); }
@@ -197,6 +233,7 @@
       <div class="wrap">
         <a class="brand" href="/">CozyClay</a>
         <nav>
+          <a href="#try">Try it</a>
           <a href="#what">What it does</a>
           <a href="#start">Quick start</a>
           <a href="#controls">Controls</a>
@@ -251,6 +288,56 @@
           No Blender, no Unity. One command.
         </p>
       </div>
+
+      <section id="try">
+        <h2>Try it</h2>
+        <p class="sub">The city block from the reels, live. Right-drag to look, WASD to walk, scroll to dolly, play to run the take.</p>
+        <div class="playground" id="playground" style="background-image: url('/media/playground-poster.jpg')">
+          <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
+            <span class="btn primary">Play with the scene</span>
+            <small>Loads the studio in this box (about 2 MB)</small>
+            <span class="playground-phone">Needs a mouse and keyboard. Come back on a computer, or run <code>npx cozyclay</code>.</span>
+          </button>
+        </div>
+        <div class="playground-bar">
+          <span>Esc leaves the camera. Staging runs here; motion generation needs a GPU: <code>npx cozyclay</code></span>
+          <span class="spacer"></span>
+          <button type="button" id="playground-full">Fullscreen</button>
+          <a href="/app/" target="_blank" rel="noopener">Open the full studio ↗</a>
+          <button type="button" id="playground-close">Close</button>
+        </div>
+        <script>
+          (() => {
+            const box = document.getElementById("playground");
+            const start = document.getElementById("playground-start");
+            const full = document.getElementById("playground-full");
+            const close = document.getElementById("playground-close");
+            const SRC = "/app/?embed=playground&scene=/scenes/city-block.cclayproject";
+            const canPlay = () => matchMedia("(min-width: 721px) and (hover: hover)").matches;
+            let frame = null;
+            const stop = () => {
+              if (frame) frame.remove();
+              frame = null;
+              box.dataset.state = "";
+              start.hidden = false;
+            };
+            start.addEventListener("click", () => {
+              if (!canPlay() || frame) return;
+              frame = document.createElement("iframe");
+              frame.src = SRC;
+              frame.title = "CozyClay playground";
+              frame.allow = "fullscreen";
+              frame.loading = "eager";
+              box.appendChild(frame);
+              box.dataset.state = "live";
+              start.hidden = true;
+              if (window.posthog?.capture) window.posthog.capture("landing:playground_started");
+            });
+            full.addEventListener("click", () => { if (frame?.requestFullscreen) frame.requestFullscreen(); });
+            close.addEventListener("click", stop);
+          })();
+        </script>
+      </section>
 
       <section id="what">
         <h2>What you can do</h2>
