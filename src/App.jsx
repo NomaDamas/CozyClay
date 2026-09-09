@@ -840,14 +840,18 @@ export default function App() {
 	const planHostRef = planIsMain ? mainPaneRef : insetPaneRef;
 
 	useEffect(() => {
+		// The landing-page playground runs a fixed, throwaway layout: whatever a
+		// visitor drags in the iframe must never overwrite the layout they use in
+		// the real studio (same origin, same key).
+		if (playgroundMode) return;
 		// Quota-guarded like persistScenes: a full disk used to throw out of
 		// this effect and blank the studio mid-resize (issue #63).
 		try {
-			if (!playgroundMode) localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(workspaceLayout));
+			localStorage.setItem(WORKSPACE_LAYOUT_KEY, JSON.stringify(workspaceLayout));
 		} catch (err) {
 			console.warn("[cozyclay] workspace layout not saved:", err?.name ?? err);
 		}
-	}, [workspaceLayout]);
+	}, [playgroundMode, workspaceLayout]);
 
 	// Wheel over the inset zooms the Top-View plan: scroll up closes in on
 	// the pucks (camera lower), scroll down widens out (camera higher) — the
@@ -11002,9 +11006,9 @@ function resizePromptClip(id, edge, rawFrame) {
 										const travel = Math.ceil((curve.length / speed) * tlFps) + Math.round(tlFps * 0.5);
 										const endFrame = Math.min(tlFrameCount - 1, activeShot.startFrame + Math.max(travel, activeShot.endFrame - activeShot.startFrame));
 										setShots((current) => resizeShot(current, activeShot.id, "end", endFrame, tlFrameCount));
+										enterPreview();
 										setTlFrame(activeShot.startFrame);
-										setCenterTab("play");
-										setToast(isKo ? "레일 완성 — PlayView로 전환했습니다. ▶ 로 재생, Scene 탭으로 복귀" : "Rail drawn — switched to PlayView. Press ▶ to ride it; the Scene tab goes back to flying.");
+										setToast(isKo ? "레일 완성 — 샷 카메라 시점으로 전환했습니다. ▶ 로 재생, Esc 로 복귀" : "Rail drawn — you are looking through the shot camera. Press ▶ to ride it; Esc goes back to flying.");
 										return;
 									}
 									setToast(isKo ? `카메라 레일 완성 — ${curve ? curve.length.toFixed(1) : "?"} m, 제어점 ${simplified.length}개` : `Camera rail drawn — ${curve ? curve.length.toFixed(1) : "?"} m, ${simplified.length} control points`);
