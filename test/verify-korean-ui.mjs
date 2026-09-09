@@ -122,7 +122,9 @@ for (const path of ["src/result-modal.jsx", "src/hierarchy-panel.jsx", "src/obje
 // and the first-run "한국어" cue — travelled with it.
 includesAll("src/settings-menu.jsx", ["한국어로 전환", "한국어", "Switch to English", "설정"]);
 includesAll("src/result-modal.jsx", ["장면이 준비됐어요", "프롬프트 복사", "프레임 다운로드", "AI에 넣는 순서", "AI에 이미지 첨부"]);
-includesAll("src/App.jsx", ["장면", "재생 보기", "속성", "모션 생성", "변환", "카메라 레일 완성", "연결 중…"]);
+// "재생 보기" was the PlayView centre tab's label; the tabs are gone (#195)
+// and the framed player is entered from the shot PiP instead.
+includesAll("src/App.jsx", ["장면", "샷 카메라 시점으로 보기", "속성", "모션 생성", "변환", "카메라 레일 완성", "연결 중…"]);
 includesAll("src/ardy/client.js", ["브리지 상태가 좋지 않아요", "브리지에 연결할 수 없어요", "생성 응답에 본문 스트림이 없어요"]);
 includesAll("src/hierarchy-panel.jsx", ["이름 바꾸기", "장면 구조", "장면 계층", "프레임 맞추기", "장면 선택", "+ 새 장면", "장면은 최소 하나 필요합니다"]);
 includesAll("src/ardy/timeline.jsx", ["애니메이션 타임라인", "프롬프트", "타임라인 펼치기"]);

@@ -41,9 +41,20 @@ expect("sequence slate and phrase derive per segment", app.includes("moveSequenc
 expect("generation exports first/last key conditioning frames", app.includes("captureFramingPng(cameraKeys[0].framing)") && app.includes("captureFramingPng(cameraKeys[cameraKeys.length - 1].framing)"));
 expect("the duration slider is gone — dots own timing", !app.includes("moveDurationS"));
 
-expect("PlayView restarts the piece from frame 0", app.includes('if (centerTab === "play") setTlFrame(0);'));
-expect("PlayView always rides the camera move", app.includes('centerTab === "play" || (moveFollow && !ikMode && !waypointMode && !posing)'));
-expect("Scene tab keeps the authoring gates on Follow mode", app.includes("moveFollow && !ikMode && !waypointMode && !posing"));
+// #195: the Scene/PlayView tabs are gone. The framed player is the `preview`
+// state, entered from the shot PiP's look-through button, and the two
+// transitions are the whole contract.
+expect(
+	"entering preview restarts the piece from frame 0 and plays it when there is motion",
+	/function enterPreview\(\) \{[^}]*setPreview\(true\);[^}]*setLookThroughShot\(true\);[^}]*setTlFrame\(0\);[^}]*if \(motion\) setTlPlaying\(true\);/s.test(app),
+);
+expect(
+	"leaving preview restores the editor view and pauses",
+	/function exitPreview\(\) \{[^}]*setPreview\(false\);[^}]*setLookThroughShot\(false\);[^}]*setTlPlaying\(false\);/s.test(app),
+);
+expect("the look-through button is the way in, Escape the way out", app.includes("onClick={enterPreview}") && app.includes('if (event.key === "Escape") exitPreview();'));
+expect("preview always rides the camera move", app.includes("preview || (moveFollow && !ikMode && !waypointMode && !posing)"));
+expect("the editor view keeps the authoring gates on Follow mode", app.includes("moveFollow && !ikMode && !waypointMode && !posing"));
 expect(
 	"Draw Rail row owns the distance Follow On Off toggle",
 	timeline.includes('aria-pressed={mode === "follow"}') &&

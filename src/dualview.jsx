@@ -374,6 +374,10 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 		}
 		planCam.updateProjectionMatrix();
 
+		// Branch order is the contract: `playMode` (the preview state, #195) is
+		// tested first, so the look-through button lands HERE — the framed player —
+		// and never in the editing draw below that keeps the gizmo layer and the
+		// plan inset.
 		if (playMode) {
 			// PlayView (Unity Game view): the shot camera owns the whole pane —
 			// no plan inset, no editing chrome, just the framed output. Editor
@@ -417,6 +421,10 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 				}
 			}
 		} else {
+			// Shot camera in the main pane WITH the editing chrome. Since #195 the
+			// studio always enters look-through through the preview state above, so
+			// this is the no-editor-camera fallback and the QA hook's
+			// (`window.__cozyclay.setLookThrough`) draw.
 			draw(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
 			if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(planCam, planPane, null, false);
 		}

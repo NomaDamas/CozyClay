@@ -7648,7 +7648,9 @@ input[type=range]::-moz-range-thumb {
 	padding-top: 13px;
 }
 
-/* Unity pane tabs (Scene / PlayView) — the pane's title strip */
+/* The pane's title strip: mode tabs on the left, scene tools filling the rest.
+   The Scene/PlayView centre tabs that named this strip are gone (#195) — the
+   framed player is an internal state now, entered from the shot PiP. */
 .viewport-titlebar {
 	position: absolute;
 	top: 0;
@@ -7725,37 +7727,7 @@ input[type=range]::-moz-range-thumb {
 .app[data-workflow-mode="camera"] .tl-motion-tools,
 .app[data-workflow-mode="camera"] .take-bar { display: none !important; }
 
-.pane-tabs {
-	position: static;
-	flex: none;
-	display: flex;
-}
-
-.pane-tabs button {
-	height: 26px;
-	padding: 0 14px;
-	border: 0;
-	border-right: 1px solid var(--line);
-	border-bottom: 2px solid transparent;
-	background: var(--panel);
-	color: var(--muted);
-	font: inherit;
-	font-size: 11px;
-	font-weight: 600;
-	cursor: pointer;
-}
-
-.pane-tabs button:hover {
-	color: var(--fg);
-}
-
-.pane-tabs button.active {
-	background: #232323;
-	color: var(--fg);
-	border-bottom-color: #3a7cbf;
-}
-
-/* the Shot/Top-View toggle sits right of the pane tabs in Scene view */
+/* the Shot/Top-View toggle sits right of the mode tabs in Scene view */
 .viewport .viewmode.scene-only {
 	top: 0;
 	left: 168px;
@@ -8012,26 +7984,6 @@ input[type=range]::-moz-range-thumb {
 	width: 13px;
 	height: 13px;
 	flex: none;
-}
-
-.playview-empty {
-	position: absolute;
-	inset: 0;
-	z-index: 7;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 6px;
-	pointer-events: none;
-	color: var(--muted);
-	font-size: 12px;
-}
-
-.playview-empty strong {
-	color: var(--fg);
-	font-size: 14px;
-	font-weight: 600;
 }
 
 /* ------------------------------------------- Unity inspector density ------ */
@@ -8753,8 +8705,7 @@ input[type=range] {
 	display: none;
 }
 
-.editor-toolbar.scene-tools > button,
-.editor-toolbar.play-tools > button {
+.editor-toolbar.scene-tools > button {
 	flex: none;
 	height: 26px;
 	padding: 0 6px;
@@ -8768,43 +8719,9 @@ input[type=range] {
 	white-space: nowrap;
 }
 
-.editor-toolbar.scene-tools > button:hover,
-.editor-toolbar.play-tools > button:hover {
+.editor-toolbar.scene-tools > button:hover {
 	background: #363636;
 	color: #fff;
-}
-
-.editor-toolbar.play-tools > button:disabled {
-	opacity: .38;
-	cursor: default;
-}
-
-.editor-toolbar.play-tools {
-	position: static;
-	flex: 1;
-	min-width: 0;
-	height: 27px;
-	display: flex;
-	align-items: center;
-	justify-content: flex-end;
-	gap: 0;
-	background: var(--panel);
-}
-
-.viewport-readout {
-	flex: none;
-	height: 26px;
-	display: inline-flex;
-	align-items: center;
-	padding: 0 8px;
-	border-right: 1px solid var(--line);
-	color: #b7b7b7;
-	font-size: 9px;
-	white-space: nowrap;
-}
-
-.editor-toolbar.play-tools > button.recording {
-	color: #ff8d86;
 }
 
 /* The studio's one Export menu (#165, moved to the topbar in #193). It reuses

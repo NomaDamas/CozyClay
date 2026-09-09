@@ -42,12 +42,27 @@ expect(
 	!app.includes('ko("Lens (FOV)", "렌즈 (FOV)")') &&
 	!app.includes('<button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>'),
 );
-expect("Scene and PlayView tools share one horizontal title bar", app.includes('className="viewport-titlebar"') && css.includes(".viewport-titlebar") && css.includes("position: static"));
-// #193: transport, OTIO and Record left this bar — the timeline owns playback
-// and the topbar Export menu owns every delivery. Only the readouts remain.
+// #195: the title bar is one horizontal strip — mode tabs plus the scene
+// tools, rendered unconditionally. The Scene/PlayView centre tabs are gone.
 expect(
-	"PlayView toolbar keeps the framing readouts and nothing else",
-	app.includes("editor-toolbar play-tools") && app.includes("shotOutput.label") && !app.includes("toggleShotRecording"),
+	"the viewport title bar is one horizontal strip without centre tabs",
+	app.includes('className="viewport-titlebar"') &&
+	css.includes(".viewport-titlebar") &&
+	css.includes("position: static") &&
+	app.includes('className="editor-toolbar scene-tools"') &&
+	!app.includes('className="pane-tabs"') &&
+	!css.includes(".pane-tabs"),
+);
+// #193 emptied the PlayView bar down to two readouts; #195 removed the bar
+// itself along with the tab that reached it — the framed player is an internal
+// preview state now, and it carries no toolbar at all.
+expect(
+	"the PlayView toolbar is gone, markup and styles alike",
+	!app.includes("editor-toolbar play-tools") &&
+	!css.includes(".editor-toolbar.play-tools") &&
+	!app.includes("toggleShotRecording") &&
+	!app.includes("viewport-readout") &&
+	!css.includes(".viewport-readout"),
 );
 expect(
 	"one topbar Export menu leads with the keyframe pack",

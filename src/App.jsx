@@ -634,6 +634,11 @@ export default function App() {
 	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
 	useEffect(() => {
 		if (!embedMode) return undefined;
+		// The Workflow page's Scene node embeds the studio as its preview, so the
+		// embed enters the player through the same door the look-through button
+		// uses. The states are seeded from embedMode as well, so the first painted
+		// frame is already the shot view rather than a flash of editor chrome.
+		enterPreview();
 		const capture = () => {
 			try {
 				const live = liveStateRef.current;
@@ -736,12 +741,17 @@ export default function App() {
 	// The Top-View is always the inset: the old double-click swap that let the
 	// plan own the big pane is gone, so there is no view mode to toggle.
 	const planIsMain = false;
-	// Unity Scene/Game tabs: PlayView is the framed output only — no editing
-	// chrome (gizmo, inset, fly navigation) reaches it.
-	const [centerTab, setCenterTab] = useState(embedMode ? "play" : "scene");
-globalThis.playMode = centerTab === "play";
-	// PlayView is the player for the finished motion: entering starts playback,
-	// leaving pauses it. Scene stays the manipulation surface.
+	// The framed output only — no editing chrome (gizmo, inset, fly navigation)
+	// reaches it. The Scene/PlayView centre tabs are gone (#195): this is an
+	// internal state with two entry points (the shot PiP's look-through button
+	// and the Workflow embed) and one exit (Esc / the exit pill).
+	const [preview, setPreview] = useState(embedMode);
+	// The name stays `playMode`: window.__cozyclay QA hooks and the MCP live
+	// bridge read this global, and the render path is still PlayView's.
+	globalThis.playMode = preview;
+	const playMode = preview;
+	// Preview is the player for the finished motion: entering starts playback,
+	// leaving pauses it. The editor view stays the manipulation surface.
 	const [tlPlaying, setTlPlaying] = useState(false);
 	const cameraPreviewEndRef = useRef(null);
 	// Once the operator touches the viewport, the physical camera stays in
@@ -758,19 +768,29 @@ globalThis.playMode = centerTab === "play";
 	useEffect(() => {
 		if (!lookThroughShot || embedMode) return undefined;
 		const onKey = (event) => {
-			if (event.key === "Escape") setLookThroughShot(false);
+			if (event.key === "Escape") exitPreview();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [lookThroughShot, embedMode]);
-	useEffect(() => {
-		// The player always starts the finished piece from frame 0; auto-play
-		// only exists once there is a motion to play.
-		if (centerTab === "play") setTlFrame(0);
-		if (centerTab === "play" && motion) setTlPlaying(true);
-		if (centerTab === "scene") setTlPlaying(false);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [centerTab]);
+	}, [lookThroughShot, embedMode]);
+	/** The one way in. The shot camera takes the whole pane (DualRender's
+	 * playMode branch), the piece restarts from frame 0, and auto-play only
+	 * exists once there is a motion to play. Look-through rides along so every
+	 * site that picks a camera keeps pointing at the shot camera. */
+	function enterPreview() {
+		setPreview(true);
+		setLookThroughShot(true);
+		setTlFrame(0);
+		if (motion) setTlPlaying(true);
+	}
+	/** ...and the one way out: editing chrome back, playback paused, so leaving
+	 * the player never leaves the timeline running underneath it. */
+	function exitPreview() {
+		setPreview(false);
+		setLookThroughShot(false);
+		setTlPlaying(false);
+	}
 	const stageRef = useRef();
 	const mainPaneRef = useRef();
 	const insetPaneRef = useRef();
@@ -1169,7 +1189,9 @@ globalThis.playMode = centerTab === "play";
 	const [workflowMode, setWorkflowMode] = useState("scene");
 	function selectWorkflowMode(next) {
 		setWorkflowMode(next);
-		setCenterTab("scene");
+		// Picking a department is an editing act: it always lands in the editor
+		// view, never inside the player.
+		exitPreview();
 		if (next === "camera") setSelectedHierarchyId("camera");
 		else if (next === "motion") {
 			// The active character's ROW, not the group: the placement gizmo only
@@ -6545,7 +6567,7 @@ globalThis.playMode = centerTab === "play";
 			// the selected prop's route, so QA can aim a gesture at the line
 			objectPath: selectedSceneObject?.path ?? null,
 			pathPointIndex,
-			pathHandlesEnabled: centerTab === "scene" && !lookThroughShot && !ikMode && !posing && !playMode && !!selectedSceneObject?.path,
+			pathHandlesEnabled: !preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path,
 			scrub: (frame) => setTlFrame(Math.max(0, Math.min(tlFrameCount - 1, Math.round(frame)))),
 			pause: () => setTlPlaying(false),
 			// Motion-trail QA surface: read the current trail policy and drive the
@@ -6591,7 +6613,7 @@ globalThis.playMode = centerTab === "play";
 			apRun: runAutoPhysics,
 			physics: { preview: physicsPreview, show: physicsShow, running: autoPhysicsRunning, options: physicsOptions },
 			apOptions: changePhysicsOptions,
-			centerTab,
+			preview,
 			pathDraw,
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -6599,7 +6621,7 @@ globalThis.playMode = centerTab === "play";
 		// close over them: a stale closure would report the set as it was two
 		// edits ago — and, after an undo that removes a subject, would keep
 		// reporting the ghost's capsules.
-	}, [activeRig, motion, tlFrame, ikMode, ikChains, ikFocus, ikTick, charA, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, centerTab, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning]);
+	}, [activeRig, motion, tlFrame, ikMode, ikChains, ikFocus, ikTick, charA, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, preview, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning]);
 	// QA hook (plan §6.5): exposes history depth and the present === objects
 	// invariant so the browser suite can assert undo entry counts directly.
 	// Reads live store state at call time; re-registered after every render.
@@ -6718,7 +6740,7 @@ globalThis.playMode = centerTab === "play";
 	// The follow camera owns the shot camera in the same situations key
 	// following would: never while an authoring mode holds the viewport.
 	const followCamActive =
-		activeCamera.mode !== "keys" && !!followTrack?.[tlFrame] && (centerTab === "play" || (!ikMode && !waypointMode && !posing));
+		activeCamera.mode !== "keys" && !!followTrack?.[tlFrame] && (preview || (!ikMode && !waypointMode && !posing));
 
 	// Implied locomotion speed per authored segment, on the timeline clock
 	// (m/s is physical, so the judge always uses tlFps). Shown in the
@@ -9020,13 +9042,13 @@ function resizePromptClip(id, edge, rawFrame) {
 		poll();
 		const id = window.setInterval(poll, 250);
 		return () => window.clearInterval(id);
-		// lookThroughShot / centerTab / ikMode are dependencies even though the
+		// lookThroughShot / preview / ikMode are dependencies even though the
 		// body never reads them directly: they are what lineEditPane branches on,
 		// so a stale closure would keep measuring the camera the pane used to
 		// hold and a view SWITCH — the most obvious way to invalidate a curve —
 		// would go undetected. Lens and aspect changes need no dependency: they
 		// move fx/fy, which the comparison sees on its own.
-	}, [lineEditMode, lineCurve, lookThroughShot, centerTab, ikMode]);
+	}, [lineEditMode, lineCurve, lookThroughShot, preview, ikMode]);
 
 	// Wave-2 capability preflight. `checkBridge` reports health only, so the
 	// line-edit route is probed here: today's bridge IGNORES unknown request
@@ -10381,27 +10403,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						</button>
 					))}
 				</div>
-				<div className="pane-tabs" role="tablist" aria-label={ko("Center view", "가운데 보기")}>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={centerTab === "scene"}
-						className={centerTab === "scene" ? "active" : ""}
-						onClick={() => setCenterTab("scene")}
-					>
-						{ko("Scene", "장면")}
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={centerTab === "play"}
-						className={centerTab === "play" ? "active" : ""}
-						onClick={() => setCenterTab("play")}
-					>
-						{ko("PlayView", "재생 보기")}
-					</button>
-				</div>
-				{centerTab === "scene" ? (
 				<div className="editor-toolbar scene-tools" aria-label={ko("Scene tools", "장면 도구")}>
 					{workflowMode === "motion" && (
 						<span className="workflow-toolbar-hint" role="status">
@@ -10629,12 +10630,6 @@ function resizePromptClip(id, edge, rawFrame) {
 							)}
 						</div>
 					</div>
-				) : (
-					<div className="editor-toolbar play-tools" aria-label={ko("PlayView tools", "재생 보기 도구")}>
-						<span className="viewport-readout">{shotOutput.label}</span>
-						<span className="viewport-readout">FOV {Math.round(fovDeg)}° · {shot.focalMm}mm</span>
-					</div>
-				)}
 				</div>
 
 					<div className="stage" id="stage" ref={stageRef} data-render-loop={renderActive ? "always" : "demand"}>
@@ -10689,7 +10684,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							<KeyLightPuck
 								keyLight={keyLight}
 								selected={keyLightSelected}
-								visible={centerTab === "scene" && !lookThroughShot && !playMode}
+								visible={!preview && !lookThroughShot}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={() => selectHierarchy("light")}
@@ -10824,12 +10819,12 @@ function resizePromptClip(id, edge, rawFrame) {
 								// waypoint scrubs the playhead as a side effect, and follow
 								// must not turn that scrub into a camera lurch. Same for IK
 								// and pose studio, where the shot camera is deliberately frozen.
-								// PlayView is the finished-output player: the move always rides
+								// Preview is the finished-output player: the move always rides
 								// the playhead there. The Follow toggle and authoring-mode gates
-								// only protect the Scene tab's manipulation surfaces.
+								// only protect the editor view's manipulation surfaces.
 								// This shot's Camera Block owns the camera while Follow or Rail is active;
 								// editorial camera keys resume when the block returns to Keys mode.
-								following={!followCamActive && hasCameraKeys && (centerTab === "play" || (moveFollow && !ikMode && !waypointMode && !posing))}
+								following={!followCamActive && hasCameraKeys && (preview || (moveFollow && !ikMode && !waypointMode && !posing))}
 								followFrame={tlFrame}
 								fps={tlFps}
 								keys={cameraKeys}
@@ -11010,7 +11005,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								onGroundClick={waypointMode && !planIsMain ? addFloorWaypoint : undefined}
 								claimPointer={lineEditMode ? lineGrabProbe : undefined}
 							/>
-							{centerTab === "scene" && railCurve && (
+							{!preview && railCurve && (
 								<CameraRailScenePreview
 									points={railCurve.points}
 									cumLen={railCurve.cumLen}
@@ -11021,7 +11016,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							<ObjectPathHandles
 								path={selectedSceneObject?.path ?? null}
 								selectedIndex={pathPointIndex}
-								enabled={centerTab === "scene" && !lookThroughShot && !ikMode && !posing && !playMode && !!selectedSceneObject?.path}
+								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setPathPointIndex}
@@ -11042,7 +11037,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								crane={activeCamera.craneHeight}
 								controlPoints={activeCamera.cameraRail}
 								selectedIndex={craneSelectedIndex}
-								enabled={centerTab === "scene" && !lookThroughShot && !ikMode && !posing && !playMode && !!railCurve && !!activeCamera.craneHeight}
+								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!railCurve && !!activeCamera.craneHeight}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setCraneSelectedIndex}
@@ -11083,10 +11078,10 @@ function resizePromptClip(id, edge, rawFrame) {
 								camRef={shotCamRef}
 								fovDeg={fovDeg}
 								aspect={shotOutput.aspect}
-								visible={centerTab === "scene" && !lookThroughShot && !ikMode && !posing}
+								visible={!preview && !lookThroughShot && !ikMode && !posing}
 								selected={shotCameraSelected}
 							/>
-							{waypointMode && centerTab === "scene" && (
+							{waypointMode && !preview && (
 								<ShotPathPreview waypoints={waypoints} start={charA} activeWaypointId={activeWaypointId} />
 							)}
 							<CaptureRig
@@ -11124,7 +11119,10 @@ function resizePromptClip(id, edge, rawFrame) {
 								editorCamRef={editorCamRef}
 								ikMode={ikMode}
 								planIsMain={planIsMain}
-								playMode={playMode}
+								// Preview IS PlayView's render path: DualRender tests this branch
+								// first, so look-through lands in the letterboxed, chrome-free
+								// player rather than the editing draw that keeps the plan inset.
+								playMode={preview}
 								lookThrough={lookThroughShot}
 								insetCollapsed={workspaceLayout.insetCollapsed || workflowMode === "motion"}
 								planZoom={workspaceLayout.planZoom}
@@ -11235,8 +11233,8 @@ function resizePromptClip(id, edge, rawFrame) {
 									type="button"
 									className="vp-look-through"
 									aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
-									title={ko("Fly the shot camera itself (Esc returns)", "샷 카메라를 직접 조종 (Esc로 복귀)")}
-									onClick={() => setLookThroughShot(true)}
+									title={ko("Look through the shot camera — the framed player, no editing chrome (Esc returns)", "샷 카메라 시점으로 보기 — 편집 도구 없는 플레이어 (Esc로 복귀)")}
+									onClick={enterPreview}
 								>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
 										<path d="M15 3h6v6" />
@@ -11247,12 +11245,15 @@ function resizePromptClip(id, edge, rawFrame) {
 								</button>
 							</span>
 						</div>
-						{lookThroughShot && !playMode && !ikMode && (
+						{/* The player's only visible affordance: without it Esc would be
+						    the sole way back, and the embed has no way back at all — the
+						    Workflow node's preview is meant to stay in the shot view. */}
+						{lookThroughShot && !ikMode && !embedMode && (
 							<button
 								type="button"
 								className="vp-inset-tag vp-look-through-exit"
 								title={ko("Return to the editor view (Esc)", "에디터 시점으로 돌아가기 (Esc)")}
-								onClick={() => setLookThroughShot(false)}
+								onClick={exitPreview}
 							>
 								<span className="vp-rec-dot" aria-hidden="true" />
 								{ko("Shot camera", "샷 카메라")}
@@ -11260,7 +11261,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							</button>
 						)}
 
-						{lookThroughShot && !playMode && !ikMode && (
+						{/* Composition guides are an opt-in viewer preference (default off),
+						    so they follow the shot camera into the player rather than being
+						    counted as chrome. */}
+						{lookThroughShot && !ikMode && (
 							<ShotGuideOverlay mode={guideMode} aspect={shotOutput.aspect} className="lookthrough" />
 						)}
 						<div className="film-frame" hidden={playMode || !lookThroughShot}>
@@ -11273,21 +11277,6 @@ function resizePromptClip(id, edge, rawFrame) {
 							{subjectVisible ? slateLineKo(shot) : ko("SUBJECT OUT OF FRAME", "피사체가 프레임 밖에 있어요")}
 						</div>
 
-						{playMode && !motion && (
-							<div className="playview-empty" role="status">
-								<strong>{ko("No motion yet", "아직 모션이 없어요")}</strong>
-								{bridge?.ok ? (
-									<span>{ko("Generate motion in the Scene tab — PlayView plays the finished result.", "장면 탭에서 모션을 생성하세요. 재생 보기는 완성 결과를 보여줍니다.")}</span>
-								) : (
-									<>
-										<span>{ko("This hosted demo loads a sample walk cycle for you — switch to the Scene tab and press play.", "이 데모는 샘플 걷기 모션을 불러왔어요 — 장면 탭에서 재생을 눌러보세요.")}</span>
-										<button type="button" className="btn ghost" onClick={() => { setCenterTab("scene"); track("sample:played", { from: "playview_empty" }); }}>
-											{ko("▶ Watch the sample", "▶ 샘플 구경하기")}
-										</button>
-									</>
-								)}
-							</div>
-						)}
 
 						</div>
 					</div>
