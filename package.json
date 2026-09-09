@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "node tools/dev-full.mjs --host 127.0.0.1 --port 5180",
     "dev:ui": "vite",
-    "build": "vite build",
+    "build": "vite build && node tools/sitemap.mjs",
     "test": "npm run build && node tools/run-tests.mjs",
     "test:manifest": "node tools/run-tests.mjs --list",
     "test:analytics": "node test/verify-analytics.mjs",

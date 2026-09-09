@@ -56,24 +56,6 @@
         "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
       }
     </script>
-    <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        "mainEntity": [
-          { "@type": "Question", "name": "What is CozyClay?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Open source previs software in a browser: block a scene, pose characters, author camera moves and cuts, preview motion." } },
-          { "@type": "Question", "name": "Previs or previz?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Same thing. Previsualization: the rough 3D pass where a shot gets blocked before anyone pays for final assets or renders." } },
-          { "@type": "Question", "name": "Can I use it for camera control in AI video?",
-            "acceptedAnswer": { "@type": "Answer", "text": "That is why it exists. Block the shot in 3D, then hand the camera move to the video model instead of describing it in a prompt." } },
-          { "@type": "Question", "name": "Do I need Blender or Unity?",
-            "acceptedAnswer": { "@type": "Answer", "text": "No. It runs in a Chromium browser. Controls follow Unity conventions, nothing to install." } },
-          { "@type": "Question", "name": "Is it free? Does it phone home?",
-            "acceptedAnswer": { "@type": "Answer", "text": "Free, AGPL-3.0, runs on your machine and works offline. Project content is never uploaded. The npm package sends anonymous usage metrics; cclay telemetry off disables them." } }
-        ]
-      }
-    </script>
 
     <style>
       :root {
@@ -224,6 +206,10 @@
       }
       .tutorial-done { flex-basis: 100%; margin: 0 0 4px; font-size: 14px; color: var(--clay); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
       .tutorial-done a { color: var(--accent); }
+      .related { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+      .related a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; text-decoration: none; color: var(--clay); font-weight: 600; }
+      .related a small { display: block; color: var(--muted); margin-top: 4px; font-weight: 400; }
+      .related a:hover { border-color: var(--muted); }
       .tutorial-done[hidden] { display: none; }
       button.copy {
         background: var(--panel); border: 1px solid var(--line); color: var(--ink);
@@ -290,7 +276,8 @@
         <nav>
           <a href="#try">Try it</a>
           <a href="#start">Quick start</a>
-          <a href="/ai-camera-control/">AI camera control</a>
+          <a href="/greybox-to-video/">Greybox to video</a>
+          <a href="/previs-software/">Previs software</a>
           <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
         </nav>
       </div>
@@ -539,6 +526,16 @@ npm run dev</code></pre>
         </details>
       </section>
 
+      <section id="read">
+        <h2>Read</h2>
+        <div class="related">
+          <a href="/greybox-to-video/">Greybox to AI video<small>Why a grey blockout is the input models keep</small></a>
+          <a href="/seedance-camera-control/">Seedance 2.5 camera control<small>Reference clip beats camera prompts</small></a>
+          <a href="/previs-software/">Previs software compared<small>Free, open source, browser</small></a>
+          <a href="/ai-camera-control/">Camera control for AI video<small>Why prompts drift</small></a>
+        </div>
+      </section>
+
       <section id="faq">
         <h2>FAQ</h2>
         <details open>
@@ -568,8 +565,8 @@ npm run dev</code></pre>
       <div class="wrap">
         <p>
           <a href="https://github.com/NomaDamas/CozyClay">Source code (AGPL)</a> ·
-          <a href="LICENSE">License</a> ·
-          <a href="https://www.npmjs.com/package/cozyclay">npm</a>
+          <a href="https://www.npmjs.com/package/cozyclay">npm</a> ·
+          <a href="/privacy/">Privacy</a>
         </p>
         <p>
           CozyClay is not affiliated with or endorsed by NVIDIA or Unity Technologies.

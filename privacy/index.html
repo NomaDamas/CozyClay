@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores." />
+    <meta name="theme-color" content="#232323" />
+    <link rel="canonical" href="https://cozyclay.org/privacy/" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48 96x96 192x192" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/site.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="CozyClay" />
+    <meta property="og:title" content="CozyClay privacy: analytics and telemetry disclosure" />
+    <meta property="og:description" content="What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores." />
+    <meta property="og:url" content="https://cozyclay.org/privacy/" />
+    <meta property="og:image" content="https://cozyclay.org/media/cozyclay-demo-poster.jpg" />
+    <meta property="og:image:width" content="1920" />
+    <meta property="og:image:height" content="1080" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CozyClay privacy: analytics and telemetry disclosure" />
+    <meta name="twitter:description" content="What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores." />
+    <meta name="twitter:image" content="https://cozyclay.org/media/cozyclay-demo-poster.jpg" />
+
+    <title>Privacy — CozyClay</title>
+    <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "6a4384d1375d4ffc8a30a6346a8ad1a0"}'></script>
+    <script type="application/ld+json">
+{
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "description": "What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores.",
+      "image": "https://cozyclay.org/media/cozyclay-demo-poster.jpg",
+      "mainEntityOfPage": "https://cozyclay.org/privacy/",
+      "datePublished": "2026-09-10",
+      "dateModified": "2026-09-10",
+      "name": "Privacy"
+}
+    </script>
+  </head>
+  <body>
+    <header class="site">
+      <div class="wrap">
+        <a class="brand" href="/">CozyClay</a>
+        <nav>
+          <a href="/#try">Try it</a>
+          <a href="/greybox-to-video/">Greybox to video</a>
+          <a href="/previs-software/">Previs software</a>
+          <a href="/ai-camera-control/">Camera control</a>
+          <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap article">
+      <div class="hero">
+        <h1>Privacy</h1>
+        <p class="lede">Short version: anonymous usage counts, no cookies, no recordings, never your project content. Every part of it can be turned off.</p>
+        <p class="meta">Effective September 10, 2026</p>
+      </div>
+
+      <section>
+        <h2>The website (cozyclay.org)</h2>
+        <p>
+          The site uses <a href="https://posthog.com/">PostHog</a> (US Cloud) for anonymous usage analytics and
+          Cloudflare Web Analytics for page counts. There are no cookies and no session recording, and
+          Do-Not-Track is respected. PostHog keeps a random pseudonymous identifier in your browser's
+          localStorage so returning visits can be counted; it is never linked to an account or to anything you
+          make, and clearing site data removes it. Country comes from ingest-time GeoIP only; no precise
+          location is collected.
+        </p>
+        <p>
+          The in-browser playground on the home page runs the studio inside the page. It does not read or
+          write your saved scenes, and nothing you build there leaves your browser unless you download it.
+        </p>
+      </section>
+
+      <section>
+        <h2>The npm package (npx cozyclay)</h2>
+        <p>
+          The official npm package measures anonymous first launches, sessions and an in-app usage funnel on
+          its local studio. It stores one random installation identifier in <code>~/.config/cozyclay/state.json</code>
+          so returning use can be counted across ports and browser storage resets. Prompt text, asset names,
+          file names, project content, local paths and any user-entered text are never collected. Session
+          duration and action counts are bucketed. Source checkouts, forks, development servers, CI and tests
+          send nothing.
+        </p>
+        <p>The package prints this disclosure once on first launch. Control it at any time:</p>
+        <pre><code>cclay telemetry status
+cclay telemetry off
+cclay telemetry on</code></pre>
+        <p>
+          <code>COZYCLAY_TELEMETRY=0</code> or <code>DO_NOT_TRACK=1</code> disable collection for a launch. The
+          topbar toggle inside the studio changes the same setting and removes the installation identifier.
+        </p>
+      </section>
+
+      <section>
+        <h2>Events collected</h2>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Event</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td>install:first_launch, app:session_started, app:session_ended</td><td>Counting installs and sessions; duration and action counts are bucketed</td></tr>
+              <tr><td>feature:used</td><td>One signal per feature per session</td></tr>
+              <tr><td>$pageview, scene:created, scene:loaded, craft:first_action, activation:completed</td><td>Funnel and drop-off analysis</td></tr>
+              <tr><td>project:saved, project:opened</td><td>Whether people keep their work (object counts and ages are bucketed; never names or paths)</td></tr>
+              <tr><td>motion:backend_state, motion:generate_blocked, motion:job_started, motion:job_succeeded, motion:job_failed</td><td>Motion generation reliability</td></tr>
+              <tr><td>export:blocking_frame_succeeded, export:video_succeeded</td><td>Export reliability</td></tr>
+              <tr><td>playground:opened, playground:first_action</td><td>Whether the home-page playground gets used</td></tr>
+              <tr><td>hosted:composer_viewed, hosted:login_started, hosted:ticket_created, hosted:result_opened, hosted:opened_in_studio</td><td>Hosted demo funnel</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Each event carries an origin kind (local or hosted), a coarse operating-system label and, for npm sessions, whether the install was npx or global. PostHog's free plan retains events for one year.</p>
+      </section>
+
+      <section>
+        <h2>The hosted demo (Google sign-in)</h2>
+        <p>
+          The hosted motion demo asks you to sign in with Google so that the daily generation cap can be
+          enforced per account. It receives your Google account's email address and basic profile only, stores
+          a session cookie signed by our server, and keeps your prompt and the generated result for up to 30
+          days so the ticket link keeps working. Results are stored on Cloudflare R2 and deleted after that
+          window. The demo does not post to your account or read anything else from it. Cloudflare Turnstile
+          is used to block automated submissions.
+        </p>
+      </section>
+
+      <section>
+        <h2>Your rights and contact</h2>
+        <p>
+          Nothing collected is tied to a person, so there is nothing to look up by name; opting out and
+          clearing site data is the complete remedy. For anything else, open an issue on
+          <a href="https://github.com/NomaDamas/CozyClay/issues">GitHub</a> or email
+          <a href="mailto:doyunha16@gmail.com">doyunha16@gmail.com</a>.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site">
+      <div class="wrap">
+        <p>
+          <a href="https://github.com/NomaDamas/CozyClay">Source code (AGPL)</a> ·
+          <a href="https://www.npmjs.com/package/cozyclay">npm</a> ·
+          <a href="/privacy/">Privacy</a>
+        </p>
+        <p>CozyClay is not affiliated with or endorsed by NVIDIA, ByteDance, Kuaishou, Google or Unity Technologies.</p>
+      </div>
+    </footer>
+  </body>
+</html>

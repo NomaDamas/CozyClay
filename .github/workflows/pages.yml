@@ -19,6 +19,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # tools/sitemap.mjs reads each page's last commit date for <lastmod>.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -48,3 +51,13 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+      # Bing and the other IndexNow engines learn about the change now instead
+      # of on their next crawl. Google ignores IndexNow and reads the sitemap.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: tools
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node tools/indexnow.mjs
+        continue-on-error: true

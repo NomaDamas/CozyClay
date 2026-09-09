@@ -38,6 +38,10 @@ export default defineConfig({
 				app: resolve(import.meta.dirname, "app/index.html"),
 				// Search-facing article on camera control for AI video.
 				aiCameraControl: resolve(import.meta.dirname, "ai-camera-control/index.html"),
+				greyboxToVideo: resolve(import.meta.dirname, "greybox-to-video/index.html"),
+				previsSoftware: resolve(import.meta.dirname, "previs-software/index.html"),
+				seedanceCameraControl: resolve(import.meta.dirname, "seedance-camera-control/index.html"),
+				privacy: resolve(import.meta.dirname, "privacy/index.html"),
 				// Standalone Vibe-Workflow inspired graph editor.
 				workflow: resolve(import.meta.dirname, "workflow/index.html"),
 				// Hosted demo composer and its queue/result ticket.

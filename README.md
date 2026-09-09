@@ -18,7 +18,9 @@
 </p>
 
 <p align="center">
-  <a href="https://cozyclay.org/">Demo reel</a> ·
+  <a href="https://cozyclay.org/#try">Try it in the browser</a> ·
+  <a href="https://cozyclay.org/greybox-to-video/">Greybox to AI video</a> ·
+  <a href="https://cozyclay.org/previs-software/">Previs software compared</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#what-you-can-do">Features</a> ·
   <a href="#ai-control-mcp">AI control</a> ·

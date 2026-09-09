@@ -1,0 +1,17 @@
+# CozyClay
+
+> Free, open source previs (previsualization) software that runs in a Chromium browser. Block a scene with primitives, pose characters, author camera moves and cuts on a timeline, then hand the same shot to an AI video model (Seedance, Kling, Veo) as a first frame or a reference clip. AGPL-3.0. Install: `npx cozyclay`.
+
+## Pages
+
+- [Home](https://cozyclay.org/): what it does, demo reels, an in-browser playground with a seven-step camera tutorial, quick start.
+- [Greybox to AI video](https://cozyclay.org/greybox-to-video/): why a grey blockout is the most reliable input to a video model, and the block-then-generate workflow.
+- [Previs software compared](https://cozyclay.org/previs-software/): free, open source and browser-based previs tools side by side.
+- [Seedance 2.5 camera control](https://cozyclay.org/seedance-camera-control/): getting the same camera every take with a reference clip instead of camera prompts.
+- [Camera control for AI video](https://cozyclay.org/ai-camera-control/): why camera prompts drift and what the models actually accept.
+- [Privacy](https://cozyclay.org/privacy/): analytics and telemetry disclosure.
+
+## Source
+
+- GitHub: https://github.com/NomaDamas/CozyClay
+- npm: https://www.npmjs.com/package/cozyclay

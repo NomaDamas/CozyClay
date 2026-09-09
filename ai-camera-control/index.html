@@ -34,6 +34,8 @@
         "description": "Why camera prompts drift between takes, and how blocking the angle, lens and dolly in 3D first gets you the same shot every time.",
         "image": "https://cozyclay.org/media/cozyclay-demo-poster.jpg",
         "mainEntityOfPage": "https://cozyclay.org/ai-camera-control/",
+        "datePublished": "2026-08-15",
+        "dateModified": "2026-09-10",
         "author": {
           "@type": "Organization",
           "name": "CozyClay",
@@ -47,46 +49,6 @@
             "url": "https://cozyclay.org/media/cozyclay-logo.png"
           }
         }
-      }
-    </script>
-    <script type="application/ld+json">
-      {
-        "@context": "https://schema.org",
-        "@type": "FAQPage",
-        "mainEntity": [
-          {
-            "@type": "Question",
-            "name": "Why does my camera angle change between takes?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "Because the prompt never fixed it. Words like low angle or close up carry no height, distance or focal length, so the model fills those in and fills them in differently on each run. Pinning composition needs something with numbers behind it - a starting frame, or a camera that exists in a scene."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Do camera movement prompts work at all?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "They work as a nudge. Slow dolly in reliably gets you a push rather than a pan. What it will not do is get you the same push twice, or a push that matches the one in the shot you are cutting to."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "What is the highest-leverage thing I can control in AI video?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "The first frame. Composition, lens compression and eyeline are all decided the moment that image exists, and the generation inherits them instead of guessing. This is what blocking a shot in 3D gives you."
-            }
-          },
-          {
-            "@type": "Question",
-            "name": "Do I need Blender or Unreal to block a shot?",
-            "acceptedAnswer": {
-              "@type": "Answer",
-              "text": "No. Both will do it, and both ask you to learn a full DCC to move one camera. CozyClay does the blocking part in a browser tab with Unity-style controls."
-            }
-          }
-        ]
       }
     </script>
 
@@ -191,6 +153,9 @@
       footer.site { border-top: 1px solid var(--line); padding: 32px 0 56px; color: var(--muted); font-size: 14px; }
       footer.site a { color: var(--muted); }
 
+      .related { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+      .related a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; text-decoration: none; color: var(--clay); font-weight: 600; }
+      .related a small { display: block; color: var(--muted); margin-top: 4px; font-weight: 400; }
       @media (max-width: 620px) {
         .hero { padding: 40px 0 28px; }
         .btn { width: 100%; text-align: center; }
@@ -203,9 +168,10 @@
       <div class="wrap">
         <a class="brand" href="/">CozyClay</a>
         <nav>
-          <a href="/#what">What it does</a>
-          <a href="/#start">Quick start</a>
-          <a href="/ai-camera-control/">AI camera control</a>
+          <a href="/#try">Try it</a>
+          <a href="/greybox-to-video/">Greybox to video</a>
+          <a href="/previs-software/">Previs software</a>
+          <a href="/seedance-camera-control/">Seedance</a>
           <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
         </nav>
       </div>
@@ -385,6 +351,14 @@
             see <a href="/">what it does</a>.
           </p>
         </details>
+      </section>
+      <section>
+        <h2>Related</h2>
+        <div class="related">
+          <a href="/seedance-camera-control/">Seedance 2.5 camera control<small>Reference clip beats camera prompts</small></a>
+          <a href="/greybox-to-video/">Greybox to AI video<small>Block it grey, then generate</small></a>
+          <a href="/previs-software/">Previs software compared<small>Free, open source and browser options</small></a>
+        </div>
       </section>
     </main>
 
