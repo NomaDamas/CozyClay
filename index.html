@@ -171,13 +171,21 @@
         font: inherit; padding: 0; width: 100%;
       }
       .playground-cover:hover { background: rgba(0, 0, 0, .25); }
+      .playground-cover[hidden] { display: none; }
+      .playground[data-state="loading"] iframe { opacity: 0; }
+      .playground-loading {
+        position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+        color: var(--ink); font-size: 14px; background: rgba(0, 0, 0, .45); pointer-events: none;
+      }
+      .playground[data-state="loading"] .playground-loading { display: flex; }
       .playground-cover .btn { pointer-events: none; }
       .playground-cover small { color: var(--ink); font-size: 13px; opacity: .85; }
       .playground-bar {
         display: none; gap: 14px; align-items: center; flex-wrap: wrap;
         margin: 10px 0 0; font-size: 13px; color: var(--muted);
       }
-      .playground[data-state="live"] + .playground-bar { display: flex; }
+      .playground[data-state="live"] + .playground-bar,
+      .playground[data-state="loading"] + .playground-bar { display: flex; }
       .playground-bar button {
         background: none; border: 1px solid var(--line); color: var(--ink);
         border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
@@ -298,6 +306,7 @@
             <small>Loads the studio in this box (about 2 MB)</small>
             <span class="playground-phone">Needs a mouse and keyboard. Come back on a computer, or run <code>npx cozyclay</code>.</span>
           </button>
+          <div class="playground-loading">Loading the studio…</div>
         </div>
         <div class="playground-bar">
           <span>Esc leaves the camera. Staging runs here; motion generation needs a GPU: <code>npx cozyclay</code></span>
@@ -329,8 +338,12 @@
               frame.allow = "fullscreen";
               frame.loading = "eager";
               box.appendChild(frame);
-              box.dataset.state = "live";
+              box.dataset.state = "loading";
               start.hidden = true;
+              const ready = () => { if (box.dataset.state === "loading") box.dataset.state = "live"; };
+              const onReady = (event) => { if (event.data?.type === "cozyclay:playground-ready") { ready(); window.removeEventListener("message", onReady); } };
+              window.addEventListener("message", onReady);
+              setTimeout(ready, 15000);
               if (window.posthog?.capture) window.posthog.capture("landing:playground_started");
             });
             full.addEventListener("click", () => { if (frame?.requestFullscreen) frame.requestFullscreen(); });

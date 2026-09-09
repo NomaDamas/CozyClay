@@ -695,7 +695,11 @@ export default function App() {
 		track(playgroundMode ? "playground:first_action" : "craft:first_action", { action_kind: actionKind });
 	};
 	useEffect(() => {
-		if (playgroundMode) track("playground:opened");
+		if (!playgroundMode) return;
+		track("playground:opened");
+		// The landing page keeps a loading veil over the iframe until the
+		// studio has actually mounted; a bare `load` fires far too early.
+		window.parent?.postMessage({ type: "cozyclay:playground-ready" }, "*");
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 	const [startup] = useState(loadSceneStartup);
