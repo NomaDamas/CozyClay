@@ -462,7 +462,7 @@ function WaypointPath({ waypoints, start, activeWaypointId }) {
  * reports moves that still hit it, so a fast drag off the edge silently strands
  * the puck.
  */
-export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, characters = [], onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, pathStart = null, waypoints, activeWaypointId, onSelectWaypoint, onMoveWaypoint, onSelectEntity, sceneObjects = [], selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, cameraRailPoints = null, railDraw = false, onRailStroke, pathDraw = false, onPathStroke, objectPathPoints = null, objectPathSelectedIndex = null, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, subjectTrack = null, onCameraChange, keyLight = null }) {
+export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, characters = [], onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, pathStart = null, waypoints, activeWaypointId, onSelectWaypoint, onMoveWaypoint, onSelectEntity, sceneObjects = [], selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, cameraRailPoints = null, railDraw = false, onRailStroke, pathDraw = false, onPathStroke, objectPathPoints = null, objectPathSelectedIndex = null, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, subjectTrack = null, onCameraChange, keyLight = null, minimal = false }) {
 	const [drag, setDrag] = useState(null); // { id, mode }
 	// live stroke while the rail is being drawn; world XZ, display only
 	const [railStroke, setRailStroke] = useState(null);
@@ -884,7 +884,10 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 				);
 			})}
 
-			{sceneObjects.map((object) => (
+			{/* Minimal board (landing playground): camera, cast and the rail only.
+			    Footprints, labels, waypoints, guides and the light are the working
+			    board's business and read as clutter to someone drawing a first dolly. */}
+			{!minimal && sceneObjects.map((object) => (
 				<SceneObjectFootprint
 					key={object.id}
 					object={object}
@@ -893,18 +896,18 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 				/>
 			))}
 
-			{waypoints.length > 0 && <WaypointPath waypoints={waypoints} start={pathStart ?? characters[0] ?? { x: 0, z: 0 }} activeWaypointId={activeWaypointId} />}
-			{(railDraw || cameraRailPoints) && <SubjectMovementGuide track={subjectTrack} />}
+			{!minimal && waypoints.length > 0 && <WaypointPath waypoints={waypoints} start={pathStart ?? characters[0] ?? { x: 0, z: 0 }} activeWaypointId={activeWaypointId} />}
+			{!minimal && (railDraw || cameraRailPoints) && <SubjectMovementGuide track={subjectTrack} />}
 			{cameraRailPoints && cameraRailPoints.length > 1 && <CameraRailLine points={cameraRailPoints} />}
 			{railStroke && railStroke.length > 1 && <CameraRailLine points={railStroke} live />}
 			{/* The selected object's travel path, drawn in its own colour so a
 			    prop's route never reads as the camera's rail. */}
-			{objectPathPoints && objectPathPoints.length > 1 && <ObjectPathLine points={objectPathPoints} selectedIndex={objectPathSelectedIndex} />}
+			{!minimal && objectPathPoints && objectPathPoints.length > 1 && <ObjectPathLine points={objectPathPoints} selectedIndex={objectPathSelectedIndex} />}
 			{/* The sun on the floor plan: a gold disc + a stem toward the stage
 			    centre, so blocking can read where the light comes from without
 			    switching to the 3D scene. Not draggable here — the 3D puck owns
 			    the gesture; this is a readout. */}
-			{keyLight && (
+			{!minimal && keyLight && (
 				<group position={[keyLight.x, 0, keyLight.z]}>
 					<mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={10}>
 						<circleGeometry args={[PUCK_R * 0.7, 20]} />

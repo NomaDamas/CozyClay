@@ -10918,6 +10918,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								onDragEnd={ikDragEnd}
 							/>
 							<PlanBoard
+								minimal={playgroundMode}
 								hostRef={planHostRef}
 								planCamRef={planCamRef}
 								shotCamRef={shotCamRef}
