@@ -268,13 +268,12 @@ expect("resize handles opt out on compact layouts", css.includes(".workspace-spl
 // place — each of them was a bug in the two-character prototype.
 expect(
 	"a character owns a Video capture foldout without a legacy ARDY card",
-	app.includes('hidden={!advancedMode || !isCharacterSelection}') &&
 	app.includes('title={ko("Video capture", "영상 모캡")}') &&
 	!app.includes('title={ko("ARDY motion", "ARDY 모션")}'),
 );
 expect(
 	"the Studio has no Advanced mode toggle",
-	app.includes("const advancedMode = true;") && !app.includes("advanced-toggle") && !app.includes("cozyclay.advanced"),
+	!app.includes("advanced-toggle") && !app.includes("cozyclay.advanced"),
 );
 expect(
 	"the Studio topbar returns to Workflow",
@@ -282,7 +281,7 @@ expect(
 );
 expect(
 	"expert foldouts stay enabled in the always-advanced Studio",
-	app.includes('hidden={!advancedMode || !isCharacterSelection}') && app.includes("const advancedMode = true;"),
+	app.includes('hidden={!isCharacterSelection}'),
 );
 expect(
 	"ingest and extraction reach the ported core modules",

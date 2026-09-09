@@ -1168,10 +1168,6 @@ globalThis.playMode = centerTab === "play";
 	// Keep the underlying selection model intact, but use this small workflow
 	// state to surface only the tools that belong to the current job.
 	const [workflowMode, setWorkflowMode] = useState("scene");
-	// The Studio is an authoring tool, so its full editing surface is always
-	// available. Workflow is the first screen; there is no beginner gate to
-	// hide the controls that make a scene editable.
-	const advancedMode = true;
 	function selectWorkflowMode(next) {
 		setWorkflowMode(next);
 		setCenterTab("scene");
@@ -10188,7 +10184,6 @@ function resizePromptClip(id, edge, rawFrame) {
 					sceneObjects={sceneObjects}
 					scenes={scenes}
 					activeSceneId={activeSceneId}
-					beginnerMode={!advancedMode}
 					onSceneSelect={selectSceneDocument}
 					onSceneCreate={createSceneDocumentFromUi}
 					onSceneDuplicate={duplicateSceneDocumentFromUi}
@@ -11208,7 +11203,7 @@ function resizePromptClip(id, edge, rawFrame) {
 
 					{/* Camera animation is authored against the same playhead as motion,
 					    so keep its controls beside the Motion tools as well as Shot setup. */}
-					<Foldout hidden={!advancedMode || !keyLightSelected} title={ko("Light", "조명")}>
+					<Foldout hidden={!keyLightSelected} title={ko("Light", "조명")}>
 						<p className="hint">{ko("Drag the sun in the scene to move the light. Shadows and warmth follow it.", "씬의 해를 드래그해 조명을 옮깁니다. 그림자와 빛의 방향이 따라옵니다.")}</p>
 						<Slider label={ko("Brightness", "밝기")} min={0} max={4} step={0.05} value={keyLight.intensity} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, intensity: value }))} />
 						<Slider label={ko("Warm ↔ Cool", "따뜻함 ↔ 차가움")} min={0} max={1} step={0.05} value={keyLight.warmth ?? 0.5} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, warmth: value }))} />
@@ -11335,7 +11330,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				{/* Rig and Pose are chosen once when a character is cast and then left
 				    alone, so they open on demand — Subject and Prompt are the panels
 				    you actually work in. */}
-				<Foldout hidden={!advancedMode || !isCharacterSelection} defaultOpen={false} title={ko("Rig", "리그")}>
+				<Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Rig", "리그")}>
 					{/* The rig is a property of the character, and swapping it is a
 					    look decision made while blocking — so it belongs beside the
 					    subject, not buried in the project file. */}
@@ -11361,7 +11356,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					</div>
 				</Foldout>
 
-				<Foldout hidden={!advancedMode || !isCharacterSelection} defaultOpen={false} title={ko("Pose", "포즈")}>
+				<Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Pose", "포즈")}>
 					{/* Tiles, not a dropdown: a pose read out of a photograph has no
 					    name worth reading — it is recognisable only as a shape. This
 					    is the same grid the studio shows, applied to whichever
@@ -11437,7 +11432,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					/>
 				</Foldout>
 
-				<Foldout hidden={!advancedMode || !isCharacterSelection} defaultOpen={false} title={ko("Video capture", "영상 모캡")}>
+				<Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Video capture", "영상 모캡")}>
 					<div className="multimodel-card">
 						<div className="multimodel-card-head">
 							<div>
@@ -11781,7 +11776,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						</>
 					)}
 				</Foldout>}
-				<Foldout hidden={!advancedMode || !isCharacterSelection} defaultOpen={false} openSignal={promptBlocksReveal} title={ko("Prompt Blocks", "프롬프트 블록")}>
+				<Foldout hidden={!isCharacterSelection} defaultOpen={false} openSignal={promptBlocksReveal} title={ko("Prompt Blocks", "프롬프트 블록")}>
 					<p className="inspector-hint">{ko("Blocks define what ARDY generates over each frame range. Selecting one also moves editing context to that prompt.", "블록은 각 프레임 범위에서 ARDY가 생성할 내용을 정합니다. 블록을 선택하면 편집 기준도 해당 프롬프트로 이동합니다.")}</p>
 						<div className="inspector-list">
 							{promptClips.map((clip) => (
@@ -12078,7 +12073,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						</button>
 					</Foldout>
 
-					<Foldout hidden={!advancedMode || !isRigSelection} title={ko("Rig Control", "리그 제어")}>
+					<Foldout hidden={!isRigSelection} title={ko("Rig Control", "리그 제어")}>
 						<p className="inspector-hint">
 							{rigSelection && rigSelection.token !== "rig"
 							? (isKo ? `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]}이 활성 제어 그룹입니다.` : `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]} is the active control group.`)
@@ -12193,7 +12188,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						)}
 					</Foldout>
 
-				<Foldout hidden={!advancedMode || selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
+				<Foldout hidden={selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
 						<label className="check">
 							<input type="checkbox" checked={hasEnvSheet} onChange={(event) => setHasEnvSheet(event.target.checked)} />
 						<span>{ko("I have an environment sheet", "환경 시트가 있어요")}</span>
@@ -12223,7 +12218,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						/>
 					</Foldout>
 
-				<Foldout hidden={!advancedMode || selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
+				<Foldout hidden={selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
 					<div className="props-drop" data-drop={inspectorDrop.over ? "over" : "target"} {...inspectorDrop.handlers}>
 					<p className="inspector-hint">{ko("Everything you add to the set lives here. Pick one to edit it, or click it in the shot view. Drop a picture anywhere here — or on the shot view — to stand it up as a cutout.", "세트에 추가한 모든 소품이 여기에 모입니다. 편집하려면 하나를 고르거나 샷 뷰에서 클릭하세요. 사진을 이 영역이나 샷 뷰에 끌어다 놓으면 컷아웃으로 세워집니다.")}</p>
 					<AddObjectMenu onAdd={addSceneObject} label={ko("Add object to the set", "세트에 오브젝트 추가")} />
@@ -13052,7 +13047,6 @@ function resizePromptClip(id, edge, rawFrame) {
 					frameCount={tlFrameCount}
 					fps={tlFps}
 					playbackSpeed={DEFAULT_PLAYBACK_SPEED}
-					advancedMode={advancedMode}
 				trackOwner={characters.length > 1 ? `S${activeCharIndex + 1}` : null}
 				ghostLayers={ghostLayers}
 				pathSpeed={pathSpeed}

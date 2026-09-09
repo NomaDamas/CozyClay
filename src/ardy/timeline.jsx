@@ -953,7 +953,6 @@ export default function Timeline({
 	// cast's schedule is visible while only the active layer is editable.
 	ghostLayers = [], // [{ owner, promptClips: [], waypointFrames: [] }]
 	waypointMode,
-	advancedMode = true,
 	waypoints = [],
 	pathSpeed = null, // { min, max, warn } in m/s, shown on the 2D Root label
 	badge,
@@ -1762,7 +1761,7 @@ export default function Timeline({
 							>
 								{zoom.toFixed(2)}×
 							</button>
-							{advancedMode && <button
+							<button
 								type="button"
 								className={"tl-btn wp" + (waypointMode ? " on" : "")}
 								aria-pressed={waypointMode}
@@ -1771,7 +1770,7 @@ export default function Timeline({
 								onClick={() => handlers.current.onWaypointToggle?.()}
 							>
 								{isKo ? `웨이포인트 ${waypointMode ? "켜짐" : "꺼짐"}` : `Waypoint ${waypointMode ? "on" : "off"}`}
-							</button>}
+							</button>
 						</div>
 						<div className="tl-head-group tl-pose-tools" role="group" aria-label={ko("Pose correction tools", "포즈 보정 도구")} style={TL_HEAD_GROUP_STYLE}>
 							<button
@@ -1949,7 +1948,7 @@ export default function Timeline({
 								onTimingGestureEnd={() => handlers.current.onObjectTimingGestureEnd?.()}
 							/>
 						) : TRACKS.map((name) => (
-							<div style={!advancedMode && (name === "Prompts" || name === "2D Root") ? { display: "none" } : undefined} className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} key={name}>
+							<div className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} key={name}>
 								<span className="tl-track-label">
 									{TRACK_LABELS_KO[name]}
 									{trackOwner && (name === "Prompts" || name === "2D Root") && <em className="tl-track-owner">{trackOwner}</em>}
@@ -1963,7 +1962,7 @@ export default function Timeline({
 												: `${pathSpeed.min.toFixed(1)}–${pathSpeed.max.toFixed(1)} m/s`}
 										</em>
 									)}
-									{advancedMode && name === "Prompts" && <button className="tl-track-add" type="button" title={ko("Add a 2–4 second prompt clip — one action per block", "2–4초 프롬프트 클립 추가 — 한 블록에 한 동작")} onClick={() => handlers.current.onPromptAdd?.(frame)}>+</button>}
+									{name === "Prompts" && <button className="tl-track-add" type="button" title={ko("Add a 2–4 second prompt clip — one action per block", "2–4초 프롬프트 클립 추가 — 한 블록에 한 동작")} onClick={() => handlers.current.onPromptAdd?.(frame)}>+</button>}
 									{name === SHOTS_LANE && (
 										<button
 											type="button"
