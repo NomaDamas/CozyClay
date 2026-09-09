@@ -95,6 +95,21 @@ export default function SettingsMenu() {
 						{ko("Anonymous analytics", "익명 사용 통계")}
 						<span className="mark">{optedOut ? ko("off", "끔") : ko("on", "켬")}</span>
 					</button>
+					{/* Learning the camera is not a document edit and not a topbar
+					    button (R4): the tutorial opens from this closed popover, so the
+					    mode budgets in docs/studio-ui-ia.md §1 are untouched. */}
+					<h4>{ko("Help", "도움말")}</h4>
+					<button
+						type="button"
+						data-testid="settings-camera-tutorial"
+						title={ko("Learn the camera in seven steps", "일곱 단계로 카메라 익히기")}
+						onClick={() => {
+							window.dispatchEvent(new CustomEvent("cozyclay:camera-tutorial", { detail: { open: true } }));
+							setOpen(false);
+						}}
+					>
+						{ko("Camera tutorial", "카메라 튜토리얼")}
+					</button>
 				</div>
 			)}
 		</div>
