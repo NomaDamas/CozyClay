@@ -30,7 +30,7 @@
 
 ---
 
-CozyClay is a browser-based 3D staging studio built with Three.js and React Three Fiber. Block a scene, pose characters, sequence motion prompts on a timeline, and preview generated motion — all in one local workspace.
+CozyClay is a browser-based previs studio built with Three.js and React Three Fiber. Block a scene, pose the cast, cut the camera on a timeline, then hand the same shot to an AI video model (Seedance, Kling, Veo, or your own) as a first frame, a reference clip, or a prompt — all from one local workspace.
 
 ```bash
 npx cozyclay
@@ -44,6 +44,8 @@ npx cozyclay --scene city-block
 
 The studio ships seeded with a pre-generated motion clip, so you can scrub the timeline, drive the cameras and draw a dolly rail straight away — generating *new* motion is optional and uses the Kimodo bridge when configured.
 
+New to the camera? The same seven-step tutorial runs inside the Studio on the City Block set: **Settings ▾ → Camera tutorial**, or open `http://127.0.0.1:5180/app/?tutorial=camera`. Each step points at the control it needs and completes only when you actually make the move.
+
 ## Demo
 
 https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
@@ -52,18 +54,21 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 
 |  | |
 | --- | --- |
-| **Stage a scene** | Create primitives and set pieces, then move, rotate and scale them with a W/E/R gizmo. Grid snapping is a preference, not a law — hold `Ctrl` mid-drag to invert it. A bird's-eye plan view drives 2D root waypoints for character paths. The topbar's Auto Color toggle gives every object its own stable display color — Blender's random viewport color, so twenty grey blockout boxes stay tellable apart — without touching the colors you authored (captures include the display colors while it is on). |
-| **Fly the camera** | Right-drag flies (WASD walks, Q/E cranes), middle-drag pans, Alt+drag orbits the selection, click selects, `F` frames — the muscle memory you already have from a 3D editor. |
+| **Stage a scene** | Create primitives and set pieces, then move, rotate and scale them with the transform strip's gizmo. Grid snapping is a preference, not a law — hold `Ctrl` mid-drag to invert it. A bird's-eye Top-View drives 2D root waypoints for character paths. **View ▾** on the viewport bar holds the reference grid and Auto Color — Blender's random viewport color, so twenty grey blockout boxes stay tellable apart without touching the colors you authored (captures include the display colors while it is on). |
+| **Fly the camera** | Right-drag flies (WASD walks, Q/E cranes), middle-drag pans, Alt+drag orbits the selection, click selects, `F` frames — the muscle memory you already have from a 3D editor. Selecting the camera switches to Camera mode; the viewport's look-through button shows the shot camera, `Esc` returns. |
+| **Cut and move the camera** | Add shots on the timeline, draw a dolly rail on the Top-View, set speed, height and crane, and preview the move through the shot camera. Each shot carries a **Target model** (Seedance 2.5, Kling 2, Veo 3, self-hosted MiniMax-H3) and is flagged when the cut runs past that model's limits. |
+| **Export for AI video** | One **Export ▾** menu: a keyframe pack (first/last frame, clip, camera JSON, prompt, README) as a zip, an mp4 of the shot, depth + normal conditioning passes, a storyboard contact sheet, and an OTIO cut list. The **Shot Prompt** turns the framing into a structured prompt for the model you picked. |
 | **Undo anything** | Every scene mutation goes through one history store: a drag, a scrub, an inspector edit is exactly one undo entry. `Esc` cancels an in-flight drag and restores the pre-drag transform. |
-| **Generate motion** | Pose characters and export poses, sequence multi-phase motion as Prompt Blocks on a resizable timeline, send them to Kimodo, then play the result back with sparse IK correction where the generated motion needs fixing. |
-| **Direct it with an AI** | Connect Claude — or any MCP client — and ask for a shot in plain language. It places the cast, frames “a low wide profile”, generates multi-phase motion, and the viewport moves in front of you. See [AI control](#ai-control-mcp). |
+| **Generate motion** | Pose characters and export poses, sequence multi-phase motion as Prompt Blocks on a resizable timeline, send them to Kimodo, then play the result back with sparse IK correction where the generated motion needs fixing. Draw over a joint's trail to reshape a take, keep most of it and regenerate a window, and step back through its history. |
+| **Capture motion from video or a photo** | Drop a clip or a still: the GPU box runs [GVHMR](https://github.com/zju3dv/GVHMR) and the result is retargeted onto the character with stabilisation, contact correction and a quality gate. |
+| **Direct it with an AI** | Connect Claude — or any MCP client — and ask for a shot in plain language. It places the cast, frames “a low wide profile”, generates multi-phase motion, and the viewport moves in front of you. See [AI control](#ai-control-mcp). Inside the Studio, **View ▾ → Panels → Agent panel** (or `Cmd/Ctrl+B`) opens a chat column that signs in with your ChatGPT account and works the same scene. |
 
 ## Requirements
 
 - Node.js 22.13 or newer
 - npm, or bun
 - A Chromium-based browser
-- An SSH-accessible NVIDIA machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the first setup downloads the Kimodo checkpoint and text-encoder stack.
+- An SSH-accessible NVIDIA machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the first setup downloads the Kimodo checkpoint and text-encoder stack. The same box runs GVHMR for video and photo mocap (`CCLAY_EXTRACT_BACKEND=gvhmr` is the default; there is no browser fallback).
 
 ## Quick start
 
@@ -128,11 +133,11 @@ npm install
 npm run dev
 ```
 
-Open `http://127.0.0.1:5180/` for the Studio. The Workflow canvas remains available at `http://127.0.0.1:5180/workflow/` when you need its node editor. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
+Open `http://127.0.0.1:5180/app/` for the Studio (the root redirects there). The Workflow canvas is at `http://127.0.0.1:5180/workflow/`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
 
 ### Workflow canvas
 
-The Vibe-Workflow canvas is available at `http://127.0.0.1:5180/workflow/`. It keeps the original node-style flow and adds a **CozyClay Scene** node with an interactive 3D viewport, frame/camera controls, and an Open Studio handoff. Start it with the normal dev server, or run `npm run dev:ui` by itself for local-only editing. Workflow graphs are saved in the browser and execute locally; no remote workflow service or API key is required.
+The Workflow canvas at `http://127.0.0.1:5180/workflow/` is a node editor around the Studio: a **CozyClay Scene** node with a live viewport that previews the shot camera, a **Shot Prompt** node that builds a structured prompt from the capture, **Image** nodes (versions, A/B, pinned references) and a **Video** node that runs through your own ComfyUI (`COZYCLAY_COMFY_URL`) or fal (`FAL_KEY`) — bring your own key, nothing is proxied. The **Agent** panel on the right signs in with your ChatGPT account (Codex OAuth, token stored in `~/.config/cozyclay/`) and builds and runs canvas nodes for you. Graphs are saved in the browser and execute locally.
 
 ## Hosted demo
 
@@ -192,7 +197,7 @@ See [`workers/api/README.md`](workers/api/README.md) for the deployment, migrati
 | Alt + drag | Orbit the selection |
 | Scroll | Dolly; while flying, sets the fly speed instead |
 | Click | Select; empty space clears |
-| W / E / R | Move / rotate / scale tool |
+| Transform strip | Move / rotate / scale tool, snap |
 | Ctrl/Cmd (during drag) | Invert grid snapping |
 | Ctrl/Cmd+Z, Ctrl/Cmd+Shift+Z | Undo / redo |
 | Esc | Cancel the in-flight drag |
@@ -200,6 +205,10 @@ See [`workers/api/README.md`](workers/api/README.md) for the deployment, migrati
 | Ctrl/Cmd+D | Duplicate the selection |
 | Delete / Backspace | Delete the selection |
 | F | Frame the selection |
+| Look-through button / Esc | Enter / leave the shot camera |
+| Cmd/Ctrl+B | Show / hide the Agent panel |
+
+Every control's home is recorded in [`docs/studio-ui-ia.md`](docs/studio-ui-ia.md), with the rule behind each placement.
 
 ## Validate
 
@@ -212,6 +221,9 @@ See [`workers/api/README.md`](workers/api/README.md) for the deployment, migrati
 | `npm run test:theme` / `test:appearance` / `test:layout` | UI theme, appearance, layout |
 | `npm run test:lifecycle` | Dev-server process lifecycle |
 | `npm run test:ardy` | Motion conversion, playback, and IK pipeline |
+| `node tools/run-tests.mjs` | Every Node verification file (what CI runs) |
+| `npm run qa:browser -- node test/qa-camera-tutorial-browser.mjs` | The seven-step tutorial driven with real input, beacons pinned to their controls |
+| `QA_URL=… CDP_PORT=… OUT=/tmp/count npm run qa:browser -- node tools/qa/studio-control-count.mjs` | Simultaneously visible controls per mode (budget: Scene ≤35 / Camera ≤38 / Motion ≤52) |
 | `cd mcp && npm install && npm run verify` | MCP server over real stdio — all 420 framing combinations |
 | `cd mcp && npm run verify:live` | Live-control protocol against a fake editor (same `npm install` first) |
 | `npm run build` | Production build |
@@ -286,8 +298,8 @@ cclay telemetry on
 ```
 
 `COZYCLAY_TELEMETRY=0` and `DO_NOT_TRACK=1` disable collection for a launch.
-The in-app topbar toggle changes the same npm-package setting and removes its
-anonymous installation identifier. Hosted-site visitors can opt out with that
+The in-app toggle under **Settings ▾ → Privacy** changes the same npm-package
+setting and removes its anonymous installation identifier. Hosted-site visitors can opt out with that
 toggle, browser Do-Not-Track, or a content blocker.
 
 PostHog's free plan retains events for 1 year.
