@@ -261,6 +261,16 @@ expect(
 	})(),
 );
 
+/* ---------------------------------------------------------- top view ----- */
+
+// The Rail step is drawn on the Top-View. The landing playground clears that
+// board down to camera, cast and rail (PlanBoard's `minimal`); the studio
+// tutorial must get the same board, not 34 footprints under the stroke.
+expect(
+	"the top view is minimal while the tutorial is open",
+	/<PlanBoard\s+minimal=\{playgroundMode \|\| cameraTutorial\}/.test(app),
+);
+
 /* ---------------------------------------------------------- manifest ----- */
 
 expect("the browser suite is registered", manifest.includes('"test/qa-camera-tutorial-browser.mjs"'));

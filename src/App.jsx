@@ -11025,8 +11025,11 @@ function resizePromptClip(id, edge, rawFrame) {
 								onSolve={ikSolve}
 								onDragEnd={ikDragEnd}
 							/>
+							{/* The tutorial's top view is the landing playground's: camera, cast
+							    and the rail only, so the line the Rail step asks for is drawn on
+							    a clean floor instead of over 34 footprints. */}
 							<PlanBoard
-								minimal={playgroundMode}
+								minimal={playgroundMode || cameraTutorial}
 								hostRef={planHostRef}
 								planCamRef={planCamRef}
 								shotCamRef={shotCamRef}
