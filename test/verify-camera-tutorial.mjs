@@ -85,7 +85,7 @@ expect(
 expect("there is exactly one mount site", (app.match(/<CameraTutorial/g) ?? []).length === 1);
 expect(
 	"it is mounted only while the tutorial is on and outside embeds",
-	/\{cameraTutorial && !embedMode && \(\s*<CameraTutorial previewing=\{lookThroughShot\} onClose=\{\(\) => setCameraTutorial\(false\)\} \/>/.test(app),
+	/\{cameraTutorial && !embedMode && \(\s*<CameraTutorial previewing=\{lookThroughShot\} onStepChange=\{setCameraTutorialStep\} onClose=\{\(\) => setCameraTutorial\(false\)\} \/>/.test(app),
 );
 expect(
 	"the mount sits inside the viewport pane, above the stage",
@@ -179,6 +179,53 @@ expect(
 expect("it closes the menu behind itself", /cozyclay:camera-tutorial[\s\S]{0,120}setOpen\(false\)/.test(settings));
 expect("no topbar button was added (R4)", (settings.match(/topbar-action/g) ?? []).length === 1 && !/topbar-action[^"]*tutorial/i.test(app));
 
+/* ------------------------------------------- the step → control map (#211) */
+
+// The overlay names the gesture; the studio has to show WHERE. The current
+// step leaves the component through onStepChange, lands on the .app root as
+// data-tutorial-step, and styles.css spotlights that step's control.
+expect("the overlay reports its current step outward", tutorial.includes("onStepChange?.(currentKind)"));
+expect("it reports null when it unmounts", tutorial.includes("useEffect(() => () => onStepChange?.(null), [onStepChange])"));
+expect("App keeps the reported step", app.includes("const [cameraTutorialStep, setCameraTutorialStep] = useState(null);"));
+expect(
+	"the .app root publishes it only while the tutorial is open",
+	app.includes("data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined}"),
+);
+expect(
+	"the landing playground's own hint attribute is untouched",
+	app.includes("data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined}"),
+);
+expect("the beacon and the gesture cue are exported", /export function TutorialBeacon\(/.test(tutorial) && /export function GestureCue\(/.test(tutorial));
+expect("the beacon targets are declared as a table", tutorial.includes("export const TUTORIAL_BEACONS = {"));
+for (const [name, needle] of [
+	["the Shots lane's add button", '.tl-track.shots .tl-track-add"'],
+	["the shot to select", '.tl-track.shots .tl-shot-block:not(.selected)"'],
+	["Draw rail", '".tl-rail-draw"'],
+	["the Top-View inset", '".vp-inset"'],
+	["the look-through button", '".vp-look-through"'],
+]) expect(`the map names ${name}`, tutorial.includes(needle), needle);
+expect(
+	"the rail step swaps its advice on the camera bar's own existence",
+	tutorial.includes('absent: ".tl-rail-draw"') && tutorial.includes('requires: ".tl-rail-draw"'),
+);
+expect("the beacon and the cue are addressable", tutorial.includes('data-testid="camera-tutorial-beacon"') && tutorial.includes('data-testid="camera-tutorial-gesture"'));
+expect("the beacon publishes the step kind and which target it is on", /data-kind=\{kind\}[\s\S]{0,80}data-role=\{role\}/.test(tutorial));
+expect("the beacon rides a portal so no pane can clip it", tutorial.includes("createPortal(") && tutorial.includes("document.body,"));
+expect(
+	"it re-measures on resize, on the panes, and on DOM churn",
+	tutorial.includes('window.addEventListener("resize", schedule)')
+		&& tutorial.includes("new ResizeObserver(schedule)")
+		&& tutorial.includes("new MutationObserver(schedule)"),
+);
+expect(
+	"every observer is torn down with the beacon",
+	tutorial.includes("resize.disconnect()") && tutorial.includes("mutations.disconnect()") && tutorial.includes('window.removeEventListener("resize", schedule)'),
+);
+expect("the gesture cue only stands in for the four nav steps", /NAV_KINDS\.has\(currentKind\)/.test(tutorial));
+expect("the walk cue reads the same pressed-key set as the card", /walked\?\.has\(walkKey\)/.test(tutorial));
+expect("the card points at the region the control lives in", tutorial.includes('where: ko("\u2193 Timeline, Shots lane"') && tutorial.includes('where: ko("\u2192 Viewport"'));
+expect("the card renders that pointer before the copy", /camera-tutorial-where"?>\{current\.where\}/.test(tutorial));
+
 /* ------------------------------------------------------------ styles ----- */
 
 expect("the overlay has its own block", css.includes(".camera-tutorial {"));
@@ -186,6 +233,33 @@ expect("it hangs under the 27px viewport titlebar", /\.camera-tutorial \{[^}]*to
 expect("the overlay never takes the pointer", /\.camera-tutorial \{[^}]*pointer-events: none/.test(css));
 expect("except on the close button", /\.camera-tutorial-close \{[^}]*pointer-events: auto/.test(css));
 expect("it uses the studio's own tokens", /\.camera-tutorial \{[^}]*var\(--panel\)/.test(css) && /\.camera-tutorial \{[^}]*var\(--line2\)/.test(css));
+
+// The spotlight (#211): the same idea as the landing page's hint pulse, keyed
+// on the Studio's own attribute and one region louder.
+for (const selector of [
+	'.app[data-tutorial-step="shot"] .tl-track.shots .tl-track-add',
+	'.app[data-tutorial-step="rail"] .tl-track.shots .tl-shot-block:not(.selected)',
+	'.app[data-tutorial-step="rail"] .tl-rail-draw',
+	'.app[data-tutorial-step="play"] .vp-look-through',
+]) expect(`the spotlight covers ${selector}`, css.includes(selector), selector);
+expect("the rail step also outlines the Top-View it is drawn into", /\.app\[data-tutorial-step="rail"\] \.vp-inset \{[^}]*var\(--accent-ring\)/.test(css));
+expect("the spotlight has its own, stronger keyframes", /@keyframes tutorial-spotlight \{[^}]*0 0 0 3px var\(--accent\)/.test(css));
+expect("the landing page's own hint pulse is untouched", css.includes('.app[data-playground-hint="look"] .vp-look-through') && /@keyframes playground-pulse \{/.test(css));
+expect("the beacon never takes the pointer", /\.tutorial-beacon \{[^}]*pointer-events: none/.test(css));
+expect("the beacon clears every viewport and timeline layer", /\.tutorial-beacon \{[^}]*z-index: 14/.test(css));
+expect("the cue never takes the pointer either", /\.tutorial-cue \{[^}]*pointer-events: none/.test(css));
+expect("the cue fades rather than blinking out", /\.tutorial-cue \{[^}]*transition: opacity/.test(css) && /\.tutorial-cue\[data-leaving="1"\] \{[^}]*opacity: 0/.test(css));
+expect("every cue and beacon colour is a studio token", /\.tutorial-beacon-dot \{[^}]*background: var\(--accent\)/.test(css) && /\.tutorial-cue-caption \{[^}]*color: var\(--fg\)/.test(css));
+expect(
+	"reduced motion keeps the pointing and drops the movement",
+	(() => {
+		const block = css.slice(css.lastIndexOf("@media (prefers-reduced-motion: reduce)"));
+		return block.includes('.app[data-tutorial-step="shot"] .tl-track.shots .tl-track-add')
+			&& block.includes(".tutorial-cue,")
+			&& block.includes(".tutorial-beacon,")
+			&& /animation: none/.test(block);
+	})(),
+);
 
 /* ---------------------------------------------------------- manifest ----- */
 

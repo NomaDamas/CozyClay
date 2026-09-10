@@ -646,6 +646,9 @@ export default function App() {
 	// always call the current render's closure (the confirm reads projectDirty).
 	const cameraTutorialQuery = !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera";
 	const [cameraTutorial, setCameraTutorial] = useState(false);
+	// The step the tutorial is on, published on the .app root so styles.css can
+	// spotlight the one control that step needs (#211).
+	const [cameraTutorialStep, setCameraTutorialStep] = useState(null);
 	const startCameraTutorialRef = useRef(null);
 	const cameraTutorialStarted = useRef(false);
 	// The starter scene the tutorial opened for itself: replacing it again is not
@@ -10289,7 +10292,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					: ko("Saved", "저장됨");
 
 	return (
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}>
+		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}>
 			<header className="topbar">
 				<div className="logo">
 					<span className="wordmark">
@@ -10771,7 +10774,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					    stage it is teaching. The overlay itself never takes the pointer
 					    (styles.css) — every step is completed in the studio underneath. */}
 					{cameraTutorial && !embedMode && (
-						<CameraTutorial previewing={lookThroughShot} onClose={() => setCameraTutorial(false)} />
+						<CameraTutorial previewing={lookThroughShot} onStepChange={setCameraTutorialStep} onClose={() => setCameraTutorial(false)} />
 					)}
 					<div className="stage" id="stage" ref={stageRef} data-render-loop={renderActive ? "always" : "demand"}>
 						{/* Shadows were off, so every castShadow in props.jsx was inert and

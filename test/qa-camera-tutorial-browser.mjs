@@ -109,6 +109,50 @@ const step = (kind) => `document.querySelector('[data-testid="camera-tutorial-st
 const doneFlag = (kind) => `${step(kind)}?.dataset.done === "1"`;
 const currentFlag = (kind) => `${step(kind)}?.dataset.current === "1"`;
 
+/* ------------------------------------------- the step → control map (#211) */
+
+/** the gesture cue for one of the four nav steps */
+const cue = (kind) => `document.querySelector('[data-testid="camera-tutorial-gesture"][data-kind="${kind}"]')`;
+/** one beacon, optionally the one pinned to a named target */
+const beacon = (kind, role = null) =>
+	`document.querySelector('[data-testid="camera-tutorial-beacon"][data-kind="${kind}"]${role ? `[data-role="${role}"]` : ""}')`;
+/** the gap in px between two elements' boxes — 0 when they overlap */
+const gapBetween = (one, two) => evaluate(`(() => {
+	const a = ${one};
+	const b = document.querySelector(${JSON.stringify(two)});
+	if (!a || !b) return null;
+	const p = a.getBoundingClientRect();
+	const q = b.getBoundingClientRect();
+	const dx = Math.max(q.left - p.right, p.left - q.right, 0);
+	const dy = Math.max(q.top - p.bottom, p.top - q.bottom, 0);
+	return Math.round(Math.hypot(dx, dy));
+})()`);
+/** true once an entrance animation has landed, so screenshots catch the settled frame */
+const settled = (expression) => waitFor(`(() => { const el = ${expression}; return !!el && Number(getComputedStyle(el).opacity) === 1; })()`);
+/** do two elements' boxes intersect at all? the beacon must never cover a control */
+const overlaps = (one, two) => evaluate(`(() => {
+	const a = ${one};
+	const b = document.querySelector(${JSON.stringify(two)});
+	if (!a || !b) return null;
+	const p = a.getBoundingClientRect();
+	const q = b.getBoundingClientRect();
+	return p.left < q.right && q.left < p.right && p.top < q.bottom && q.top < p.bottom;
+})()`);
+/** the spotlight is a real running animation on the real control */
+const spotlightOn = (selector) => evaluate(`(() => {
+	const el = document.querySelector(${JSON.stringify(selector)});
+	return el ? getComputedStyle(el).animationName : null;
+})()`);
+const tutorialStep = `document.querySelector('.app').dataset.tutorialStep ?? null`;
+const PINNED = 60;
+
+/** every beacon must sit on its target, and its step must own the .app root */
+const expectPinned = async (kind, role, target, label) => {
+	expect(`${label}: the beacon is up`, await waitFor(`!!${beacon(kind, role)}`), await evaluate(tutorialStep));
+	const gap = await gapBetween(beacon(kind, role), target);
+	expect(`${label}: it is pinned within ${PINNED}px of ${target}`, gap !== null && gap <= PINNED, String(gap));
+};
+
 /* --------------------------------------------------------- page setup --- */
 
 // The QA browser inherits the host locale; pin English so label matching is
@@ -170,6 +214,17 @@ expect("the card carries the first instruction", await evaluate(`/Right-drag/.te
 await screenshot("tutorial-step1");
 await screenshot("tutorial-city-block-step1");
 
+// #211: the studio has to SHOW where the step happens. Steps 1–4 are gestures
+// with no control to point at, so they get an animated cue; steps 5–7 point at
+// a real control with a beacon plus a spotlight on the control itself.
+expect("the .app root publishes the current step", await waitFor(`${tutorialStep} === "fly"`), String(await evaluate(tutorialStep)));
+expect("step 1 shows the Look gesture cue", await waitFor(`!!${cue("fly")}`));
+expect("no beacon is up while the step is a gesture", await evaluate(`!document.querySelector('[data-testid="camera-tutorial-beacon"]')`));
+expect("the cue never takes the pointer", await evaluate(`getComputedStyle(${cue("fly")}).pointerEvents === "none"`));
+expect("the cue settles before it is judged", await settled(cue("fly")));
+expect("the cue clears the shot preview", await overlaps(cue("fly"), ".vp-shot-preview") === false);
+await screenshot("step1-fly-cue");
+
 /* ------------------------------------------------------- the gestures --- */
 
 const canvas = await centreOf(".stage canvas");
@@ -181,6 +236,9 @@ await mouse("mouseMoved", { x: canvas.x + 70, y: canvas.y + 20, button: "right",
 await mouse("mouseMoved", { x: canvas.x + 130, y: canvas.y + 34, button: "right", buttons: 2 });
 expect("right-drag completes the Look step", await waitFor(doneFlag("fly")));
 expect("Walk becomes the current step", await waitFor(currentFlag("walk")));
+expect("the Look cue leaves with its step", await waitFor(`!${cue("fly")}`));
+expect("step 2 shows the Walk gesture cue", await waitFor(`!!${cue("walk")}`));
+expect("the .app root follows the step", await waitFor(`${tutorialStep} === "walk"`), String(await evaluate(tutorialStep)));
 
 // 2. Walk — the six keys, pressed while the right button is still held.
 await key("KeyW", "w", 87);
@@ -188,6 +246,13 @@ await key("KeyA", "a", 65);
 await key("KeyS", "s", 83);
 expect("three of six keys do not finish Walk", await evaluate(`${step("walk")}.dataset.done === "0"`));
 expect("the pressed keys are marked on the card", await waitFor(`document.querySelectorAll('[data-testid="camera-tutorial-card"] kbd[data-done="1"]').length === 3`));
+expect(
+	"the cue's keycaps light up with them",
+	await waitFor(`${cue("walk")}.querySelectorAll('kbd[data-done="1"]').length === 3`),
+	String(await evaluate(`${cue("walk")}?.querySelectorAll('kbd[data-done="1"]').length`)),
+);
+expect("the Walk cue settles before it is judged", await settled(cue("walk")));
+await screenshot("step2-walk-cue");
 await key("KeyD", "d", 68);
 await key("KeyQ", "q", 81);
 await key("KeyE", "e", 69);
@@ -195,10 +260,19 @@ expect("all six keys complete the Walk step", await waitFor(doneFlag("walk")));
 await mouse("mouseReleased", { x: canvas.x + 130, y: canvas.y + 34, button: "right", buttons: 0, clickCount: 1 });
 
 // 3. Dolly — the wheel over the viewport.
+expect("the Walk cue leaves with its step", await waitFor(`!${cue("walk")}`));
+expect("step 3 shows the Dolly gesture cue", await waitFor(`!!${cue("dolly")}`));
+expect("the Dolly cue settles before it is judged", await settled(cue("dolly")));
+await screenshot("step3-dolly-cue");
 await mouse("mouseWheel", { x: canvas.x, y: canvas.y, deltaX: 0, deltaY: -120 });
 expect("the wheel completes the Dolly step", await waitFor(doneFlag("dolly")));
 
 // 4. Orbit — Alt + left drag (modifier bit 1 is Alt in the CDP contract).
+expect("the Dolly cue leaves with its step", await waitFor(`!${cue("dolly")}`));
+expect("step 4 shows the Orbit gesture cue", await waitFor(`!!${cue("orbit")}`));
+expect("the .app root follows the step", await waitFor(`${tutorialStep} === "orbit"`), String(await evaluate(tutorialStep)));
+expect("the Orbit cue settles before it is judged", await settled(cue("orbit")));
+await screenshot("step4-orbit-cue");
 await mouse("mousePressed", { x: canvas.x, y: canvas.y, button: "left", buttons: 1, clickCount: 1, modifiers: 1 });
 await mouse("mouseMoved", { x: canvas.x + 90, y: canvas.y, button: "left", buttons: 1, modifiers: 1 });
 await mouse("mouseReleased", { x: canvas.x + 90, y: canvas.y, button: "left", buttons: 0, clickCount: 1, modifiers: 1 });
@@ -208,14 +282,47 @@ await screenshot("tutorial-midway");
 
 // 5. Shot — the timeline's Shots lane header button.
 expect("the Shots lane offers + Add shot", await waitFor(`!!document.querySelector('.tl-track-add.cut')`));
+expect("the Orbit cue leaves with the gesture steps", await waitFor(`!document.querySelector('[data-testid="camera-tutorial-gesture"]')`));
+expect("the .app root switches to the Shot step", await waitFor(`${tutorialStep} === "shot"`), String(await evaluate(tutorialStep)));
+await expectPinned("shot", "add-shot", ".tl-track.shots .tl-track-add", "step 5");
+expect(
+	"step 5 spotlights + Add shot itself",
+	await spotlightOn(".tl-track.shots .tl-track-add") === "tutorial-spotlight",
+	String(await spotlightOn(".tl-track.shots .tl-track-add")),
+);
+expect("the beacon never takes the pointer", await evaluate(`getComputedStyle(${beacon("shot")}).pointerEvents === "none"`));
+expect("the beacon carries the step number", await evaluate(`${beacon("shot")}.querySelector('.tutorial-beacon-dot').textContent === "5"`));
+expect("the beacon settles before it is judged", await settled(beacon("shot")));
+expect("it does not cover the timeline's transport row", await overlaps(beacon("shot"), ".tl-transport") === false);
+await screenshot("step5-shot-beacon");
 expect("+ Add shot is clickable", await click(".tl-track-add.cut"));
 expect("adding a shot completes the Shot step", await waitFor(doneFlag("shot")));
 expect("the shot block appears in the lane", await waitFor("!!document.querySelector('.tl-shot-block')"));
 await screenshot("tutorial-city-block-shot");
 
 // 6. Rail — select the shot, arm Draw rail, then stroke across the Top-View.
+expect("the .app root switches to the Rail step", await waitFor(`${tutorialStep} === "rail"`), String(await evaluate(tutorialStep)));
+await expectPinned("rail", "select-shot", ".tl-track.shots .tl-shot-block", "step 6a");
+expect(
+	"the unselected shot block is the one spotlit",
+	await spotlightOn(".tl-track.shots .tl-shot-block:not(.selected)") === "tutorial-spotlight",
+	String(await spotlightOn(".tl-track.shots .tl-shot-block:not(.selected)")),
+);
 expect("the shot block can be selected", await click(".tl-shot-block"));
 expect("the camera bar appears for the shot", await waitFor("!!document.querySelector('.tl-camera-editor .tl-rail-draw')"));
+expect("the select-the-shot beacon steps aside once it is selected", await waitFor(`!${beacon("rail", "select-shot")}`));
+await expectPinned("rail", "draw-rail", ".tl-rail-draw", "step 6b");
+await expectPinned("rail", "top-view", ".vp-inset", "step 6c");
+expect(
+	"Draw rail is spotlit once it exists",
+	await spotlightOn(".tl-rail-draw") === "tutorial-spotlight",
+	String(await spotlightOn(".tl-rail-draw")),
+);
+expect("both rail beacons settle before they are judged", await settled(beacon("rail", "draw-rail")) && await settled(beacon("rail", "top-view")));
+expect("the Draw rail beacon clears the transport row", await overlaps(beacon("rail", "draw-rail"), ".tl-transport") === false);
+expect("the Top-View beacon sits outside the inset it points at", await overlaps(beacon("rail", "top-view"), ".vp-inset") === false);
+expect("and clears the shot preview", await overlaps(beacon("rail", "top-view"), ".vp-shot-preview") === false);
+await screenshot("step6-rail-beacon");
 expect("Draw rail is clickable", await click(".tl-camera-editor .tl-rail-draw"));
 expect("the studio arms rail drawing", await waitFor(`document.querySelector('.app').dataset.railDraw === "1"`));
 const inset = await centreOf(".vp-inset");
@@ -236,12 +343,27 @@ expect(
 
 // 7. Play — the look-through button hands the pane to the shot camera.
 expect("Play is the last current step", await waitFor(currentFlag("play")));
+expect("the .app root switches to the Play step", await waitFor(`${tutorialStep} === "play"`), String(await evaluate(tutorialStep)));
+expect("the rail beacons are gone with their step", await evaluate(`!${beacon("rail")}`));
+await expectPinned("play", "look-through", ".vp-look-through", "step 7");
+expect(
+	"the look-through button is spotlit",
+	await spotlightOn(".vp-look-through") === "tutorial-spotlight",
+	String(await spotlightOn(".vp-look-through")),
+);
+expect("the Play beacon settles before it is judged", await settled(beacon("play")));
+expect("it sits clear of the viewport titlebar", await overlaps(beacon("play"), ".viewport-titlebar") === false);
+expect("it sits clear of the shot preview it points into", await overlaps(beacon("play"), ".vp-shot-preview") === false);
+await screenshot("step7-play-beacon");
 expect("the look-through button is clickable", await click(".vp-look-through"));
 expect("look-through completes the Play step", await waitFor(doneFlag("play")));
 expect("every step reads done", await evaluate(`[...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].every((li) => li.dataset.done === "1")`));
 expect("the overlay reports the Done state", await waitFor(`document.querySelector('[data-testid="camera-tutorial"]').dataset.state === "done"`));
 expect("the card says the run is finished", await evaluate(`/Done/.test(document.querySelector('[data-testid="camera-tutorial-card"]').textContent)`));
+expect("nothing is left pointing at a control", await waitFor(`!document.querySelector('[data-testid="camera-tutorial-beacon"]') && !document.querySelector('[data-testid="camera-tutorial-gesture"]')`));
+expect("the .app root drops the step attribute", await waitFor(`${tutorialStep} === null`), String(await evaluate(tutorialStep)));
 await screenshot("tutorial-done");
+await screenshot("done");
 
 // The close button removes the overlay outright.
 expect("the close button is clickable", await click('[data-testid="camera-tutorial-close"]'));
