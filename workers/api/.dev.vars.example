@@ -1,9 +1,0 @@
-ENVIRONMENT=development
-SITE_ORIGIN=http://127.0.0.1:5180
-API_ORIGIN=http://127.0.0.1:8787
-GOOGLE_CLIENT_ID=development-google-client-id
-TURNSTILE_SITE_KEY=1x00000000000000000000AA
-TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA
-SESSION_SIGNING_KEY=replace-with-a-local-only-random-key
-CC_WORKER_SECRET=replace-with-a-local-worker-key
-GOOGLE_CLIENT_SECRET=replace-with-development-google-secret
