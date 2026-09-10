@@ -28,12 +28,23 @@ export function createCanvasCommands({ store, makeNode, nodeSchemas }) {
 	const snapshot = () => clone(current());
 	const mutate = (fn) => { const before = snapshot(); const next = fn(snapshot()); history.push(before); if (history.length > maxHistory) history.shift(); publish(next); return next; };
 	const findNode = (graph, id) => graph.nodes.find((node) => node.id === id);
-	const validateData = (node, data) => {
+	// The agent sometimes pads data keys with stray whitespace ("prompt ").
+	// Trim keys before validating and merging, keep strict unknown-key
+	// rejection, and refuse edits where trimming would collide two keys.
+	const normalizeData = (node, data, path = "data") => {
 		if (!data || typeof data !== "object" || Array.isArray(data)) throw new Error("data must be an object");
 		const properties = schemaProperties(nodeSchemas, schemaCategoryForType(node.type), node.data?.model || data.model);
 		const allowed = new Set([...commonKeys, ...(typeKeys[node.type] || []), ...Object.keys(properties || {})]);
-		for (const key of Object.keys(data)) if (!allowed.has(key)) throw new Error(`Unknown node data key: ${key}`);
-		if (data.formValues && typeof data.formValues === "object") for (const key of Object.keys(data.formValues)) if (!allowed.has(key)) throw new Error(`Unknown node data key: ${key}`);
+		const normalized = {};
+		const seen = new Map();
+		for (const [key, value] of Object.entries(data)) {
+			const trimmed = key.trim();
+			if (seen.has(trimmed)) throw new Error(`Node data key conflict after whitespace normalization in ${path}: ${JSON.stringify(trimmed)}`);
+			seen.set(trimmed, key);
+			if (!allowed.has(trimmed)) throw new Error(`Unknown node data key: ${trimmed}`);
+			normalized[trimmed] = trimmed === "formValues" && value && typeof value === "object" ? normalizeData(node, value, "data.formValues") : value;
+		}
+		return normalized;
 	};
 	const handlers = {
 		get_graph: () => { const graph = clone(current()); return { ...graph, nodes: graph.nodes.map((node) => ({ id: node.id, type: node.type, model: node.data?.model || null, data: node.data, position: node.position })), outputs: Object.fromEntries(graph.nodes.map((node) => [node.id, node.data?.outputs || []])) }; },
@@ -48,9 +59,9 @@ export function createCanvasCommands({ store, makeNode, nodeSchemas }) {
 				if (!models[modelValue]) throw new Error(`Unknown model: ${modelValue}`);
 				node.data.model = modelValue;
 			}
-			validateData(node, data); node.data = { ...node.data, ...data }; graph.nodes.push(node); return graph;
+			const normalized = normalizeData(node, data); node.data = { ...node.data, ...normalized }; graph.nodes.push(node); return graph;
 		}); return { node: next.nodes.at(-1), graph: next }; },
-		update_node: ({ id, data } = {}) => mutate((graph) => { const node = findNode(graph, id); if (!node) throw new Error(`Unknown node: ${id}`); validateData(node, data); node.data = { ...node.data, ...data, ...(data.formValues ? data.formValues : {}) , ...(data.formValues ? { formValues: { ...(node.data.formValues || {}), ...data.formValues } } : {}) }; return graph; }),
+		update_node: ({ id, data } = {}) => mutate((graph) => { const node = findNode(graph, id); if (!node) throw new Error(`Unknown node: ${id}`); const normalized = normalizeData(node, data); node.data = { ...node.data, ...normalized, ...(normalized.formValues ? normalized.formValues : {}) , ...(normalized.formValues ? { formValues: { ...(node.data.formValues || {}), ...normalized.formValues } } : {}) }; return graph; }),
 		remove_node: ({ id } = {}) => mutate((graph) => { if (!findNode(graph, id)) throw new Error(`Unknown node: ${id}`); graph.nodes = graph.nodes.filter((node) => node.id !== id); graph.edges = graph.edges.filter((edge) => edge.source !== id && edge.target !== id); return graph; }),
 		connect: ({ source, target, sourceHandle, targetHandle = "input" } = {}) => { const next = mutate((graph) => { const from = findNode(graph, source); if (!from || !findNode(graph, target)) throw new Error("Unknown node"); const sources = from.type === "scene" ? ["render", "scene"] : ["output"]; if (sourceHandle === undefined) sourceHandle = sources[0]; if (!sources.includes(sourceHandle)) throw new Error("Invalid source handle"); if (targetHandle !== "input" && !String(targetHandle).startsWith("character:") && targetHandle !== "asset" && targetHandle !== "motion") throw new Error("Invalid target handle"); if (graph.edges.some((edge) => edge.source === source && edge.target === target && edge.targetHandle === targetHandle)) throw new Error("Nodes are already connected"); const edge = { id: `e-${source}-${target}-${Date.now()}`, source, target, sourceHandle, targetHandle, animated: true, style: { stroke: "#8994ff", strokeWidth: 2 } }; graph.edges.push(edge); return graph; }); return { edge: next.edges.at(-1), graph: next }; },
 		disconnect: ({ edgeId } = {}) => mutate((graph) => { if (!graph.edges.some((edge) => edge.id === edgeId)) throw new Error(`Unknown edge: ${edgeId}`); graph.edges = graph.edges.filter((edge) => edge.id !== edgeId); return graph; }),

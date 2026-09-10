@@ -110,3 +110,29 @@ console.log("PASS canvas commands: all nine dispatch handlers, model/schema vali
 	assert.equal(g.nodes.find((node) => node.id === image.id).data.resultUrl, "data:image/png;base64,AA==", "the runner's node data is what gets published");
 	console.log("PASS run_workflow publishes the runner's node data");
 }
+
+// Issue #216: the agent sometimes pads node data keys with stray whitespace
+// ("prompt "). The command layer trims keys before validating and merging,
+// keeps strict unknown-key rejection on the trimmed key, and refuses edits
+// where trimming would collide two keys into one.
+{
+	const node = await ok("add_node", { type: "text", model: "text-generation", data: { " prompt ": "created" } });
+	const nid = node.node.id;
+	const target = () => graph.nodes.find((entry) => entry.id === nid);
+	assert.equal(target().data.prompt, "created", "a padded valid key on add_node is stored under its trimmed key");
+	assert.ok(!("prompt " in target().data), "the padded key itself is never stored");
+	await ok("update_node", { id: nid, data: { " temperature ": 0.9 } });
+	assert.equal(target().data.temperature, 0.9, "a padded valid key on update_node is stored under its trimmed key");
+	assert.ok(!("temperature " in target().data), "the padded key itself is never stored after update");
+	await ok("update_node", { id: nid, data: { formValues: { " temperature ": 0.7 } } });
+	assert.equal(target().data.temperature, 0.7, "a padded formValues key is merged into the node data top level");
+	assert.equal(target().data.formValues.temperature, 0.7, "a padded formValues key is stored under its trimmed key");
+	assert.ok(!("temperature " in target().data) && !("temperature " in target().data.formValues), "padded keys are absent from node data and formValues");
+	await bad("update_node", { id: nid, data: { " unknown_key ": true } }, /Unknown.*key/);
+	await bad("update_node", { id: nid, data: { formValues: { " unknown_key ": true } } }, /Unknown.*key/);
+	await bad("update_node", { id: nid, data: { "   ": true } }, /Unknown.*key/);
+	await bad("update_node", { id: nid, data: { prompt: "kept", " prompt ": "collides" } }, /collid|conflict/i);
+	assert.equal(target().data.prompt, "created", "a collision rejection leaves the stored prompt untouched");
+	await bad("add_node", { type: "text", model: "text-generation", data: { prompt: "a", " prompt ": "b" } }, /collid|conflict/i);
+	console.log("PASS canvas commands tolerate padded node data keys: trimmed, rejected when unknown, refused on collision");
+}
