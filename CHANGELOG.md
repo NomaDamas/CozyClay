@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.8.1
+
+The Studio camera tutorial now starts where the landing page does and shows
+where to click.
+
+- Opening the tutorial (Settings ▾ → Camera tutorial or `/app/?tutorial=camera`)
+  loads the City Block starter scene with the walk take on its character, at
+  frame 0 in the free camera, so Shot / Rail / Play have something to frame.
+  A scene with unsaved changes is replaced only after a confirm.
+- Each step points at its control: a pulsing spotlight plus a numbered beacon
+  and caption pinned to `+ Add shot`, the shot block and `Draw rail`, the
+  top view, and the look-through button; the Look / Walk / Dolly / Orbit steps
+  show an animated mouse-and-keys cue in the viewport, with the walk keycaps
+  turning green as they are pressed. The hint card names the region ("↓
+  Timeline, Shots lane", "→ Viewport"). Overlays never take the pointer and go
+  static under `prefers-reduced-motion`.
+
 ## 1.8.0
 
 The Studio's chrome gets a research-backed cut: the same capabilities, a third
