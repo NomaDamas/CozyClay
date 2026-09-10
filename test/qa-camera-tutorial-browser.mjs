@@ -11,6 +11,10 @@
 // the Top-View, and the look-through button — and reads each step's data-done
 // back off the strip. Nothing here pokes React state: if a real gesture stops
 // announcing itself, this suite goes red. Screenshots land in QA_SHOT_DIR.
+//
+// It also proves the seeded set (#209): both entries must land on the
+// city-block starter with the shipped walk take on its character, and the
+// Settings entry must ask before replacing a scene with unsaved changes.
 // Evidence script; not part of the Node manifest.
 import { mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -89,6 +93,18 @@ const key = async (code, keyName, virtualKeyCode) => {
 	await send("Input.dispatchKeyEvent", { type: "keyDown", text: keyName, ...common });
 	await send("Input.dispatchKeyEvent", { type: "keyUp", ...common });
 };
+/** The shipped walk take's length on the production clock (24 fps): the
+ * transport counts 0 … 431 and the hierarchy says "432 frames". */
+const WALK_FRAMES = 432;
+const projectLabel = `document.querySelector('.hierarchy-project strong')?.textContent.trim()`;
+const propCount = `Number(document.querySelector('[data-node-id="props"] .hierarchy-badge')?.textContent ?? -1)`;
+/** window.confirm is a page-level dialog CDP would have to answer out of band;
+ * override it in the page instead, record every question, and answer `true`. */
+const armConfirm = (answer = true) => evaluate(`(() => {
+	window.__qaConfirms = [];
+	window.confirm = (message) => { window.__qaConfirms.push(String(message)); return ${answer ? "true" : "false"}; };
+	return true;
+})()`);
 const step = (kind) => `document.querySelector('[data-testid="camera-tutorial-step"][data-kind="${kind}"]')`;
 const doneFlag = (kind) => `${step(kind)}?.dataset.done === "1"`;
 const currentFlag = (kind) => `${step(kind)}?.dataset.current === "1"`;
@@ -106,6 +122,44 @@ expect("the studio comes up on ?tutorial=camera", await waitFor("!!document.quer
 expect("the editor camera is live", await waitFor("!!window.__cozyclay?.editorCam", 30000));
 expect("the tutorial mounts from the query", await waitFor('!!document.querySelector(\'[data-testid="camera-tutorial"]\')', 15000));
 
+/* ----------------------------------------- the set the steps run on (#209) */
+
+// The seven steps teach Shot / Rail / Play, so the tutorial has to open on a
+// set with somebody moving through it: the city-block starter plus the walk
+// take, whatever the local motion bridge is doing.
+const starterProps = await evaluate(`(async () => {
+	const project = await (await fetch('/scenes/city-block.cclayproject')).json();
+	return project.scenes.scenes[0].objects.length;
+})()`);
+expect("the starter scene ships with props to frame", starterProps > 0, String(starterProps));
+expect("the query entry went through startCameraTutorial", await waitFor(`window.__cozyclayTutorialSource === "query"`));
+expect("the tutorial opened the City Block project", await waitFor(`${projectLabel} === "City Block"`), await evaluate(projectLabel));
+expect(
+	"the hierarchy holds the starter's props",
+	await waitFor(`${propCount} === ${starterProps}`),
+	String(await evaluate(propCount)),
+);
+expect("the startup project chooser never appeared", await evaluate(`!document.querySelector('.project-startup')`));
+expect("a take is loaded on the character", await waitFor("!!window.__cozyclay?.motion", 40000));
+expect(
+	`the take is the ${WALK_FRAMES}-frame walk clip`,
+	await waitFor(`window.__cozyclay?.frameCount === ${WALK_FRAMES}`),
+	String(await evaluate("window.__cozyclay?.frameCount")),
+);
+expect(
+	"the hierarchy reports the clip length instead of Blocking",
+	await waitFor(`document.querySelector('.hierarchy-frame-status')?.textContent.trim() === "${WALK_FRAMES} frames"`),
+	await evaluate(`document.querySelector('.hierarchy-frame-status')?.textContent`),
+);
+expect("the Full-Body lane shows the clip", await waitFor("document.querySelectorAll('.tl-motion-clip').length === 1"));
+expect(
+	"the transport counts the whole take from frame 0",
+	await waitFor(`/^\\u2039\\u25b6\\u203a?0 \\/ ${WALK_FRAMES - 1} /.test(document.querySelector('.tl-transport')?.textContent ?? "")`),
+	await evaluate(`document.querySelector('.tl-transport')?.textContent`),
+);
+expect("the playhead sits on frame 0", await evaluate("window.__cozyclay?.tlFrame === 0"));
+expect("the pane is on the free camera, not the shot camera", await evaluate("window.__cozyclay?.lookThroughShot === false"));
+
 expect(
 	"the strip shows the seven steps in order",
 	await evaluate(`JSON.stringify([...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].map((li) => li.dataset.kind)) === '["fly","walk","dolly","orbit","shot","rail","play"]'`),
@@ -114,6 +168,7 @@ expect("nothing starts done", await evaluate(`[...document.querySelectorAll('[da
 expect("the first step is the current one", await evaluate(`${currentFlag("fly")} && ${step("walk")}.dataset.current === "0"`));
 expect("the card carries the first instruction", await evaluate(`/Right-drag/.test(document.querySelector('[data-testid="camera-tutorial-card"]').textContent)`));
 await screenshot("tutorial-step1");
+await screenshot("tutorial-city-block-step1");
 
 /* ------------------------------------------------------- the gestures --- */
 
@@ -156,6 +211,7 @@ expect("the Shots lane offers + Add shot", await waitFor(`!!document.querySelect
 expect("+ Add shot is clickable", await click(".tl-track-add.cut"));
 expect("adding a shot completes the Shot step", await waitFor(doneFlag("shot")));
 expect("the shot block appears in the lane", await waitFor("!!document.querySelector('.tl-shot-block')"));
+await screenshot("tutorial-city-block-shot");
 
 // 6. Rail — select the shot, arm Draw rail, then stroke across the Top-View.
 expect("the shot block can be selected", await click(".tl-shot-block"));
@@ -191,19 +247,67 @@ await screenshot("tutorial-done");
 expect("the close button is clickable", await click('[data-testid="camera-tutorial-close"]'));
 expect("× removes the tutorial from the DOM", await waitFor('!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
 
-/* ------------------------------------------- the entry points, plainly --- */
+/* ------------------------------- Settings ▾ on a scene of one's own (#209) */
 
+// Second scenario: a plain session on its own scene, modified by hand. The
+// Settings entry must ask before it replaces that scene, and then land on the
+// same seeded set the query entry lands on.
+await evaluate(`(() => {
+	localStorage.clear();
+	localStorage.setItem('cozyclay.locale', 'en');
+	localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'QA Scene', updatedAt: Date.now() }));
+	return true;
+})()`);
 await send("Page.navigate", { url: appUrl });
 expect("plain /app/ comes back up", await waitFor("!!document.querySelector('canvas')", 40000));
 expect("plain /app/ carries no tutorial", await evaluate('!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
+expect("it comes up on its own project, not the starter", await waitFor(`${projectLabel} === "QA Scene"`), await evaluate(projectLabel));
+expect("and with no take loaded", await evaluate("!window.__cozyclay?.motion"));
+
+// Modify the scene by hand: the hierarchy's "+ Add object" menu, one prop.
+const propsBefore = Math.max(await evaluate(propCount), 0);
+expect("the hierarchy offers + Add object", await waitFor("!!document.querySelector('.add-object-trigger')"));
+expect("the add-object menu opens", await click(".add-object-trigger") && await waitFor("!!document.querySelector('.add-object-item')"));
+expect("an object can be added", await click(".add-object-item"));
+expect(
+	"the object lands in the scene",
+	await waitFor(`${propCount} === ${propsBefore + 1}`),
+	String(await evaluate(propCount)),
+);
+expect("the project reads as unsaved", await waitFor("!!document.querySelector('.hierarchy-project .project-dirty-dot')"));
+
+// Open the tutorial from Settings ▾ with the confirm answered in the page.
+expect("window.confirm is armed for this scenario", await armConfirm(true));
 expect("the Settings trigger is present", await waitFor('!!document.querySelector(\'[data-testid="settings-menu-trigger"]\')'));
 expect("the Settings menu opens", await click('[data-testid="settings-menu-trigger"]') && await waitFor('!!document.querySelector(\'[data-testid="settings-camera-tutorial"]\')'));
 expect("the item is labelled Camera tutorial", await evaluate(`document.querySelector('[data-testid="settings-camera-tutorial"]').textContent.trim() === "Camera tutorial"`));
 await screenshot("tutorial-settings-menu");
 expect("the Settings item is clickable", await click('[data-testid="settings-camera-tutorial"]'));
+expect("replacing the modified scene is confirmed first", await waitFor("(window.__qaConfirms ?? []).length === 1"), JSON.stringify(await evaluate("window.__qaConfirms ?? null")));
+expect(
+	"the question names the starter scene it is about to open",
+	await evaluate(`/City Block starter scene and replaces the current scene/.test(window.__qaConfirms[0])`),
+	JSON.stringify(await evaluate("window.__qaConfirms?.[0] ?? null")),
+);
+expect("the Settings entry went through startCameraTutorial", await evaluate(`window.__cozyclayTutorialSource === "settings"`));
 expect("Settings ▾ mounts the tutorial", await waitFor('!!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
 expect("the menu closes behind it", await waitFor('!document.querySelector(\'[data-testid="settings-camera-tutorial"]\')'));
 expect("it opens at step one", await evaluate(`${currentFlag("fly")} && [...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].every((li) => li.dataset.done === "0")`));
+expect("the scene switched to City Block", await waitFor(`${projectLabel} === "City Block"`), await evaluate(projectLabel));
+expect(
+	"the hand-added object is gone, the starter's props are in",
+	await waitFor(`${propCount} === ${starterProps}`),
+	String(await evaluate(propCount)),
+);
+expect("the walk take is loaded here too", await waitFor("!!window.__cozyclay?.motion", 40000));
+expect(
+	`the same ${WALK_FRAMES}-frame clip is on the Full-Body lane`,
+	await waitFor(`window.__cozyclay?.frameCount === ${WALK_FRAMES} && document.querySelectorAll('.tl-motion-clip').length === 1`),
+	String(await evaluate("window.__cozyclay?.frameCount")),
+);
+expect("the playhead sits on frame 0", await evaluate("window.__cozyclay?.tlFrame === 0"));
+expect("the pane is on the free camera", await evaluate("window.__cozyclay?.lookThroughShot === false"));
+await screenshot("tutorial-settings-city-block");
 
 ws.close();
 if (failures > 0) { console.error(`${failures} FAILURES`); process.exit(1); }

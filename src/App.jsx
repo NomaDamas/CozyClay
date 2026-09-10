@@ -635,11 +635,38 @@ export default function App() {
 	const playgroundExportRef = useRef(null);
 	// The camera tutorial (#206): the landing page's seven steps, run against
 	// the real studio instead of the playground iframe. It opens from
-	// /app/?tutorial=camera or from Settings ▾; opening it changes nothing else
-	// about the session, and it is not offered inside an embed.
-	const [cameraTutorial, setCameraTutorial] = useState(() => !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera");
+	// /app/?tutorial=camera or from Settings ▾, and it is not offered inside an
+	// embed.
+	//
+	// Both doors go through startCameraTutorial (#209), which puts the studio in
+	// the state the landing page teaches these steps in — the city-block starter
+	// scene with the walk take on its character — so Shot / Rail / Play always
+	// have something to frame. That function is declared with the project
+	// actions further down; the listeners here reach it through a ref so they
+	// always call the current render's closure (the confirm reads projectDirty).
+	const cameraTutorialQuery = !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera";
+	const [cameraTutorial, setCameraTutorial] = useState(false);
+	const startCameraTutorialRef = useRef(null);
+	const cameraTutorialStarted = useRef(false);
+	// The starter scene the tutorial opened for itself: replacing it again is not
+	// work anyone can lose, so the confirm below stays out of the way.
+	const tutorialStarterRef = useRef(false);
+	// Armed once the starter is applied, consumed by the seed effect next to the
+	// hosted-demo seed as soon as the new character's rig exists.
+	const [tutorialSeedPending, setTutorialSeedPending] = useState(false);
 	useEffect(() => {
-		const onTutorial = (event) => setCameraTutorial(event.detail?.open !== false);
+		if (!cameraTutorialQuery || cameraTutorialStarted.current) return;
+		cameraTutorialStarted.current = true;
+		void startCameraTutorialRef.current?.({ source: "query" });
+	}, [cameraTutorialQuery]);
+	useEffect(() => {
+		const onTutorial = (event) => {
+			if (event.detail?.open === false) {
+				setCameraTutorial(false);
+				return;
+			}
+			void startCameraTutorialRef.current?.({ source: event.detail?.source ?? "settings" });
+		};
 		window.addEventListener("cozyclay:camera-tutorial", onTutorial);
 		return () => window.removeEventListener("cozyclay:camera-tutorial", onTutorial);
 	}, []);
@@ -3066,7 +3093,9 @@ export default function App() {
 	// A first-run author should choose a document (or explicitly start a named
 	// local draft). Keep this as a light startup sheet so the studio remains
 	// inspectable while the choice is pending; it never traps the topbar.
-	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !playgroundMode && !playgroundSceneUrl(globalThis.location?.search) && !loadProjectSession()?.name);
+	// ?tutorial=camera opens the starter scene itself (#209), so the chooser is
+	// suppressed the same way a ?scene= launch suppresses it.
+	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !playgroundMode && !cameraTutorialQuery && !playgroundSceneUrl(globalThis.location?.search) && !loadProjectSession()?.name);
 
 	// Dismissal mirrors the inspector-actions menu: only listen while open,
 	// ignore presses inside the wrap (the trigger's own click keeps toggling),
@@ -3289,6 +3318,9 @@ export default function App() {
 		setProjectName(project.name);
 		storeProjectSession(project.name);
 		setProjectStartupOpen(false);
+		// Whatever document this is, it is no longer the scene the tutorial opened
+		// for itself; startCameraTutorial re-arms the flag after its own open.
+		tutorialStarterRef.current = false;
 		track("project:opened", { age_bucket: bucketProjectAge(Date.now() - (project.savedAt ?? Date.now())) });
 	}
 
@@ -3307,6 +3339,44 @@ export default function App() {
 		track("scene:loaded", { scene_source: source });
 		return true;
 	}
+	/** The camera tutorial's single entry (#209), for both /app/?tutorial=camera
+	 * and the Settings ▾ item.
+	 *
+	 * The seven steps teach Shot / Rail / Play, which need a set and somebody
+	 * moving through it. On cozyclay.org they get both for free: the landing
+	 * playground opens the city-block starter and the hosted-demo seed below
+	 * loads the walk take because a statically served build has no motion
+	 * bridge. A local session HAS a bridge, so that seed is skipped and the
+	 * tutorial used to open on whatever was loaded — usually an empty room.
+	 * This puts the studio in the landing page's state explicitly. */
+	async function startCameraTutorial({ source = "settings" } = {}) {
+		// QA hook, same spirit as window.__cozyclayRenders: which door the tutorial
+		// came in by, so a headless run can prove both of them land here.
+		window.__cozyclayTutorialSource = source;
+		// Replacing the scene is the destructive part, so it asks the way New
+		// Project asks — unless the scene on screen is the starter this function
+		// opened, where there is nothing of the author's to lose.
+		if (projectDirty && !tutorialStarterRef.current && !window.confirm(ko(
+			"The camera tutorial opens the City Block starter scene and replaces the current scene. Continue?",
+			"카메라 튜토리얼은 City Block 시작 장면을 열고 현재 장면을 대체합니다. 계속할까요?",
+		))) return;
+		// A build without the starter file toasts "not in this build" from
+		// openStarterScene; the tutorial then runs on the scene already open,
+		// which still teaches the gestures.
+		const opened = await openStarterScene("city-block", "tutorial");
+		if (opened) {
+			tutorialStarterRef.current = true;
+			setTutorialSeedPending(true);
+		}
+		setProjectStartupOpen(false);
+		setCameraTutorial(true);
+		// Frame 0 of a free camera: the first step is looking around, and the
+		// shot camera does not exist yet.
+		exitPreview();
+		setTlFrame(0);
+	}
+	startCameraTutorialRef.current = startCameraTutorial;
+
 	const starterOpened = useRef(false);
 	useEffect(() => {
 		if (starterOpened.current || playgroundMode) return;
@@ -5895,6 +5965,22 @@ export default function App() {
 			/* the seed is a nicety, never a failure the visitor must act on */
 		});
 	}, [bridge, activeRig, motion, motionBusy]);
+
+	// The camera tutorial's seed (#209). The hosted-demo seed above is gated on
+	// a missing bridge, which is why the tutorial used to open on an empty room
+	// in a local session. startCameraTutorial arms tutorialSeedPending once the
+	// starter scene is applied, and the same clip goes on regardless of bridge
+	// state as soon as that scene's character has a parsed rig — a state
+	// condition, not a timer, exactly like the seed above.
+	useEffect(() => {
+		if (!tutorialSeedPending || !activeRig || motionBusy) return;
+		setTutorialSeedPending(false);
+		demoSeeded.current = true; // one seeded clip per session, whichever got here first
+		loadMotion(DEMO_MOTION_URL, DEMO_MOTION_PROMPT).catch(() => {
+			/* the take is the tutorial's set dressing, never an error to act on */
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [tutorialSeedPending, activeRig, motionBusy]);
 
 	/** Drop the ACTIVE character's take, its IK corrections and the stature the
 	 * take imposed. One Ctrl+Z entry brings all three back; nothing to clear
