@@ -14,7 +14,7 @@ import { Toaster, toast } from "react-hot-toast";
 import { loadWorkflowGraph, normalizeWorkflowGraph, storeWorkflowGraph, WORKFLOW_STORAGE_KEY } from "../project.js";
 import AgentPanel from "./AgentPanel.jsx";
 import CozySceneNode from "./CozySceneNode.jsx";
-import { normalizeCozySceneData, sceneConnectionAllowed, toCozySceneRunRequest } from "./cozy-scene-node.js";
+import { applyCozyScenePatch, normalizeCozySceneData, sceneConnectionAllowed, toCozySceneRunRequest } from "./cozy-scene-node.js";
 import { activeSceneCharacters, characterHandleId, characterIdFromHandle, normalizeMotionInputData, motionInputOutput } from "./motion-input.js";
 import { DEFAULT_NODE_SCHEMAS, defaultFormValues, schemaCategoryForType, schemaModelEntries, schemaProperties } from "./node-schema.js";
 import { executeLocalWorkflowGraph } from "./local-workflow.js";
@@ -249,7 +249,7 @@ function ShotPromptNodeType(props) {
 const NODE_TYPES = { text: TextNode, image: ImageNode, video: VideoNode, audio: AudioNode, api: ApiNode, "video-combiner": VideoCombinerNode, upload: UploadNode, concat: ConcatNode, "motion-input": MotionInputNode, "shot-prompt": ShotPromptNodeType };
 
 function SceneNodeType({ data, ...props }) {
-	return <CozySceneNode {...props} data={data} HandleComponent={Handle} onDataChange={data.onSceneChange} onRun={data.onSceneRun} onOpenScene={() => window.open("/app/", "_blank", "noopener,noreferrer")} />;
+	return <CozySceneNode {...props} data={data} HandleComponent={Handle} onDataChange={data.onSceneChange} onRun={data.onSceneRun} onVideo={data.onSceneVideo} onOpenScene={() => window.open("/app/", "_blank", "noopener,noreferrer")} />;
 }
 
 const FLOW_NODE_TYPES = { ...NODE_TYPES, scene: SceneNodeType };
@@ -271,12 +271,17 @@ export default function WorkflowBuilder() {
 	useEffect(() => { graphRef.current = graph; }, [graph]);
 
 	const updateNode = useCallback((id, patch) => setNodes((current) => current.map((node) => node.id === id ? { ...node, data: { ...node.data, ...patch } } : node)), [setNodes]);
-	const updateScene = useCallback(({ id, patch, data }) => {
-		// CozySceneNode already applies nested patches (camera/playing) against
-		// its normalized envelope. Store that complete envelope so a later control
-		// change cannot shallow-replace sibling controls and reset them.
-		updateNode(id, data || patch);
-	}, [updateNode]);
+	const updateScene = useCallback(({ id, patch }) => setNodes((current) => current.map((node) => {
+		if (node.id !== id) return node;
+		// The patch is applied here, against the node's freshest data, rather than
+		// stored as the envelope the caller normalized: the Scene node ticks its
+		// preview clock at 24fps from a render-old snapshot, and writing that whole
+		// snapshot threw away anything that landed in between — the take length the
+		// embed announces, for one (#218). Nested control/camera patches still
+		// merge, which is why the envelope was passed in the first place; keys the
+		// Scene envelope does not know (outputs, resultUrl) ride through untouched.
+		return { ...node, data: { ...node.data, ...patch, ...applyCozyScenePatch(node.data, patch) } };
+	})), [setNodes]);
 	const flowRef = useRef(null);
 	const addNode = useCallback((type, model = null, { position: at, data } = {}) => {
 		const id = `${type}-${Date.now()}`;
@@ -551,6 +556,16 @@ export default function WorkflowBuilder() {
 		try { const frame = await captureSceneFrame(id); updateScene({ id, patch: { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references: Array.isArray(frame.references) ? frame.references : [] }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl } }); toast.success("Scene frame captured"); }
 		catch (error) { updateScene({ id, patch: { status: "error", errorMsg: error.message, statusMessage: error.message } }); }
 	}, [updateScene]);
+	// The previs is a step, not a destination: this is the one click from the
+	// staged shot to the clip it is meant to become, wired render -> input so the
+	// next Run hands the captured frame straight to the video model.
+	const sendSceneToVideo = useCallback(({ id }) => {
+		const scene = nodes.find((entry) => entry.id === id);
+		const origin = scene?.position || { x: 0, y: 0 };
+		const videoId = addNode("video", { id: "video-generation", name: "Video generation" }, { position: { x: origin.x + 380, y: origin.y } });
+		setEdges((current) => addEdge({ id: `e-${id}-${videoId}`, source: id, target: videoId, sourceHandle: "render", targetHandle: "input", animated: true, style: { stroke: "#8994ff", strokeWidth: 2 } }, current));
+		toast.success("Video node connected to the Scene render");
+	}, [addNode, nodes, setEdges]);
 
 	const decoratedNodes = useMemo(() => nodes.map((node) => ({
 		...node,
@@ -562,11 +577,11 @@ export default function WorkflowBuilder() {
 			...(node.type === "scene" ? { characters: sceneCharacters, sceneId: sceneContext.id, sceneName: sceneContext.name } : {}),
 			onChange: updateNode,
 			onModelChange: changeModel,
-			...(node.type === "scene" ? { onSceneChange: updateScene, onSceneRun: runScene } : { onRun: runWorkflow }),
+			...(node.type === "scene" ? { onSceneChange: updateScene, onSceneRun: runScene, onSceneVideo: sendSceneToVideo } : { onRun: runWorkflow }),
 			...(node.type === "upload" ? { onUpload: uploadFile } : {}),
 			...(node.type === "image" ? { onUseAsReference: useVersionAsReference } : {}),
 		},
-	})), [changeModel, nodeSchemas, nodes, runScene, runWorkflow, sceneCharacters, sceneContext, updateNode, updateScene, uploadFile, useVersionAsReference]);
+	})), [changeModel, nodeSchemas, nodes, runScene, runWorkflow, sceneCharacters, sceneContext, sendSceneToVideo, updateNode, updateScene, uploadFile, useVersionAsReference]);
 
 	const exportGraph = useCallback(() => { const blob = new Blob([JSON.stringify(graph, null, 2)], { type: "application/json" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = "cozyclay-workflow.json"; anchor.click(); URL.revokeObjectURL(url); toast.success("Workflow exported"); }, [graph]);
 	const onConnect = useCallback((params) => {

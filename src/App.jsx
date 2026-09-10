@@ -3684,6 +3684,14 @@ export default function App() {
 			setTlPlaying(command.playing);
 		}
 	}), []);
+	// The Workflow Scene node's frame slider used to guess the take length, so
+	// its own preview clock ran on past the end of a shorter shot (#218). The
+	// embed announces the take it actually holds — on load and whenever the
+	// scene or its length changes — and the node follows it.
+	useEffect(() => {
+		if (!embedMode) return;
+		window.parent.postMessage({ type: "cozyclay:scene-timeline", activeSceneId, frameCount: tlFrameCount, fps: tlFps }, "*");
+	}, [embedMode, activeSceneId, tlFrameCount, tlFps]);
 
 	// Commands are a sequential transport boundary, while React commits on a
 	// later turn. Keep its read model current synchronously so the next frame
