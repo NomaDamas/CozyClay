@@ -81,6 +81,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		element.style.touchAction = "none";
 		let lockPending = false;
 		let lockAttempts = 0;
+		let suppressEscapeUntil = 0;
 
 		const isTyping = () => {
 			const el = document.activeElement;
@@ -147,14 +148,20 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		};
 		// Esc is the browser's unlock gesture. Do not preventDefault — that can
 		// keep the pointer locked — but stop it reaching App's look-through exit.
+		// Unlock can fire pointerlockchange before this keydown; the short
+		// suppress window covers that race so Esc does not also leave look-through.
 		const onEscapeCapture = (e) => {
 			if (e.key !== "Escape") return;
-			if (isLocked() || lockPending) e.stopPropagation();
+			if (isLocked() || lockPending || gesture.current || performance.now() < suppressEscapeUntil) e.stopPropagation();
 		};
 
 		const endGesture = (e) => {
 			const active = gesture.current;
 			if (!active) return;
+			// Mouse buttons share one pointerId. A left-up during a right-held
+			// fly must not end the look; blur/cancel have no button and always end.
+			if (e && typeof e.pointerId === "number" && e.pointerId !== active.pointerId) return;
+			if (e?.type === "pointerup" && e.button !== active.button) return;
 			if (e && active.pointerId !== undefined && element.hasPointerCapture(active.pointerId)) {
 				element.releasePointerCapture(active.pointerId);
 			}
@@ -187,6 +194,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 				return;
 			}
 			lockPending = false;
+			suppressEscapeUntil = performance.now() + 120;
 			if (gesture.current) endGesture();
 		};
 		const onPointerLockError = () => { lockPending = false; };
@@ -203,7 +211,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			e.stopPropagation();
 			const cam = camRef.current;
 			const pivot = kind === "orbit" && cam ? resolvePivot(cam) : null;
-			gesture.current = { kind, pointerId: e.pointerId, x: e.clientX, y: e.clientY, pivot, changed: false };
+			gesture.current = { kind, pointerId: e.pointerId, button: e.button, x: e.clientX, y: e.clientY, pivot, changed: false };
 			if (typeof window !== "undefined") window.__cozyclayCameraGesture = true;
 			element.setPointerCapture(e.pointerId);
 			element.focus();
@@ -230,8 +238,8 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 				requestNavLock();
 			}
 			const locked = isLocked();
-			const dx = locked ? e.movementX : e.clientX - active.x;
-			const dy = locked ? e.movementY : e.clientY - active.y;
+			const dx = locked ? (e.movementX ?? 0) : e.clientX - active.x;
+			const dy = locked ? (e.movementY ?? 0) : e.clientY - active.y;
 			if (!locked) {
 				active.x = e.clientX;
 				active.y = e.clientY;

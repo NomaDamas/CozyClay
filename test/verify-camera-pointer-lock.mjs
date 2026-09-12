@@ -24,7 +24,7 @@ expect("fly, pan and orbit all request pointer lock", controls.includes("request
 expect("lock is requested from the pointerdown user activation", /onPointerDown[\s\S]*requestNavLock\(\)/.test(controls));
 expect("a second attempt can retry on pointermove", /onPointerMove[\s\S]*requestNavLock\(\)/.test(controls));
 expect("touch and pen keep capture and do not request lock", controls.includes('e.pointerType !== "touch"') && controls.includes('e.pointerType !== "pen"'));
-expect("locked look uses movementX/movementY", controls.includes("locked ? e.movementX") && controls.includes("locked ? e.movementY"));
+expect("locked look uses movementX/movementY", controls.includes("e.movementX ?? 0") && controls.includes("e.movementY ?? 0"));
 expect("unlocked look still uses clientX/clientY", controls.includes("e.clientX - active.x") && controls.includes("e.clientY - active.y"));
 expect("release exits pointer lock", controls.includes("document.exitPointerLock()"));
 expect("the gesture is cleared before exitPointerLock", /gesture\.current = null;[\s\S]*?releaseNavLock\(\)/.test(controls));
@@ -40,12 +40,13 @@ const escapeFn = sliceBetween(controls, "const onEscapeCapture", "const endGestu
 expect("Esc during lock is a capture-phase stopPropagation", escapeFn.includes("e.stopPropagation()"));
 expect(
 	"Esc during lock does not preventDefault (that can keep the pointer locked)",
-	escapeFn.includes("if (isLocked() || lockPending) e.stopPropagation()") &&
+	escapeFn.includes("if (isLocked() || lockPending || gesture.current || performance.now() < suppressEscapeUntil) e.stopPropagation()") &&
 	!escapeFn.includes("preventDefault"),
 );
 expect("the capture listener is registered in the capture phase", controls.includes('addEventListener("keydown", onEscapeCapture, true)'));
 expect("the playground iframe allows pointer-lock", landing.includes('frame.allow = "fullscreen; pointer-lock"'));
 expect("pointerup on window still ends the gesture if capture was lost", controls.includes('window.addEventListener("pointerup", endGesture)'));
+expect("a pointerup for a different button does not end the hold", controls.includes('e?.type === "pointerup" && e.button !== active.button'));
 expect("this suite is in the node manifest", manifest.includes('"test/verify-camera-pointer-lock.mjs"'));
 expect("the browser QA is registered", manifest.includes('"test/qa-camera-pointer-lock-browser.mjs"'));
 
