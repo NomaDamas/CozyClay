@@ -42,8 +42,8 @@ expect("generation exports first/last key conditioning frames", app.includes("ca
 expect("the duration slider is gone — dots own timing", !app.includes("moveDurationS"));
 
 // #195: the Scene/PlayView tabs are gone. The framed player is the `preview`
-// state, entered from the shot PiP's look-through button, and the two
-// transitions are the whole contract.
+// state, entered from the Workflow embed and the playground rail. Studio
+// look-through flies the shot camera instead of opening that player.
 expect(
 	"entering preview restarts the piece from frame 0 and plays it when there is motion",
 	/function enterPreview\(\) \{[^}]*setPreview\(true\);[^}]*setLookThroughShot\(true\);[^}]*setTlFrame\(0\);[^}]*if \(motion\) setTlPlaying\(true\);/s.test(app),
@@ -52,7 +52,21 @@ expect(
 	"leaving preview restores the editor view and pauses",
 	/function exitPreview\(\) \{[^}]*setPreview\(false\);[^}]*setLookThroughShot\(false\);[^}]*setTlPlaying\(false\);/s.test(app),
 );
-expect("the look-through button is the way in, Escape the way out", app.includes("onClick={enterPreview}") && app.includes('if (event.key === "Escape") exitPreview();'));
+expect(
+	"look-through flies the shot camera instead of opening the player",
+	app.includes("function enterShotLook()") &&
+	app.includes("function toggleShotLook()") &&
+	app.includes("onClick={enterShotLook}") &&
+	app.includes("onClick={toggleShotLook}") &&
+	app.includes('if (event.key === "Escape") exitPreview();'),
+);
+expect(
+	"look-through keeps fly controls on the shot camera outside preview",
+	app.includes("camRef={ikMode ? poserCamRef : lookThroughShot ? shotCamRef : editorCamRef}") &&
+	app.includes("enabled={!posing && !playMode}") &&
+	app.includes("onCameraChange={lookThroughShot && !ikMode ? commitManualCameraFraming : undefined}"),
+);
+expect("the camera bar offers a labeled look-through toggle", app.includes('data-testid="shot-look-toggle"') && app.includes('ko("Look through", "샷 시점")'));
 expect("preview always rides the camera move", app.includes("preview || (moveFollow && !ikMode && !waypointMode && !posing)"));
 expect("the editor view keeps the authoring gates on Follow mode", app.includes("moveFollow && !ikMode && !waypointMode && !posing"));
 expect(

@@ -3,7 +3,7 @@
 ## 1.8.1
 
 The Studio camera tutorial now starts where the landing page does and shows
-where to click.
+where to click. Look-through flies the shot camera instead of opening the player.
 
 - Opening the tutorial (Settings ▾ → Camera tutorial or `/app/?tutorial=camera`)
   loads the City Block starter scene with the walk take on its character, at
@@ -16,6 +16,9 @@ where to click.
   turning green as they are pressed. The hint card names the region ("↓
   Timeline, Shots lane", "→ Viewport"). Overlays never take the pointer and go
   static under `prefers-reduced-motion`.
+- **Look through** on the Camera bar (and the Shot monitor's expand icon) hands
+  the viewport to the shot camera with the same fly bindings as the free camera.
+  Esc returns. The chrome-free player remains the Workflow embed.
 
 ## 1.8.0
 

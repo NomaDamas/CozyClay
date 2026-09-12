@@ -150,6 +150,7 @@ const NODE_FILES = [
 	"test/verify-theme.mjs",
 	"test/verify-telemetry-state.mjs",
 	"test/verify-timeline-camera.mjs",
+	"test/verify-shot-look.mjs",
 	"test/verify-timeline-shots.mjs",
 	"test/verify-tool-handlers.mjs",
 	"test/verify-trim.mjs",

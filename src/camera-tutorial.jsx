@@ -89,8 +89,8 @@ export const CAMERA_TUTORIAL_STEPS = [
 		label: ko("Play", "재생"),
 		where: ko("→ Viewport", "→ 뷰포트"),
 		how: () => ko(
-			<>Click the look-through button in the viewport to see the shot camera; <b>▶</b> rides the rail, <kbd>Esc</kbd> returns to the free camera.</>,
-			<>뷰포트의 시점 보기 버튼을 눌러 샷 카메라를 보세요. <b>▶</b>는 레일을 타고, <kbd>Esc</kbd>로 자유 카메라로 돌아옵니다.</>,
+			<>Click <b>Look through</b> (camera bar or the Shot monitor) to fly the shot camera; <b>▶</b> rides the rail, <kbd>Esc</kbd> returns to the free camera.</>,
+			<>뷰포트의 <b>샷 시점</b>을 눌러 샷 카메라를 조종하세요. <b>▶</b>는 레일을 타고, <kbd>Esc</kbd>로 자유 카메라로 돌아옵니다.</>,
 		),
 	},
 ];
@@ -122,7 +122,7 @@ export const TUTORIAL_BEACONS = {
 		{ role: "top-view", selector: ".vp-inset", requires: ".tl-rail-draw", label: () => ko("Drag a line here", "여기에 선을 그으세요") },
 	],
 	play: [
-		{ role: "look-through", selector: ".vp-look-through", label: () => ko("Click to look through the shot camera", "클릭해 샷 카메라로 보기") },
+		{ role: "look-through", selector: ".vp-look-through", label: () => ko("Click to fly the shot camera", "클릭해 샷 카메라를 조종") },
 	],
 };
 

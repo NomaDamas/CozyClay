@@ -1252,13 +1252,19 @@ select {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	padding: 2px;
+	gap: 4px;
+	padding: 2px 5px;
 	margin: -2px -2px -2px 0;
 	background: none;
 	border: none;
 	border-radius: 4px;
 	color: inherit;
-	opacity: .7;
+	opacity: .85;
+	font: inherit;
+	font-size: 9px;
+	font-weight: 700;
+	letter-spacing: .06em;
+	text-transform: uppercase;
 }
 .vp-look-through:hover {
 	opacity: 1;
@@ -7754,7 +7760,7 @@ input[type=range]::-moz-range-thumb {
 
 /* The pane's title strip: mode tabs on the left, scene tools filling the rest.
    The Scene/PlayView centre tabs that named this strip are gone (#195) — the
-   framed player is an internal state now, entered from the shot PiP. */
+   framed player is an internal state now, entered from the Workflow embed. */
 .viewport-titlebar {
 	position: absolute;
 	top: 0;
@@ -7817,6 +7823,7 @@ input[type=range]::-moz-range-thumb {
 .app[data-workflow-mode="motion"] .workflow-scene-context,
 .app[data-workflow-mode="motion"] .workflow-camera-context { display: none; }
 .app[data-workflow-mode="motion"] .workflow-toolbar-hint { display: inline-flex; }
+.app[data-workflow-mode="motion"] .shot-look-toggle { display: none; }
 .app[data-workflow-mode="motion"] .vp-inset,
 .app[data-workflow-mode="motion"] .vp-shot-preview { display: none !important; }
 
@@ -8826,6 +8833,10 @@ input[type=range] {
 .editor-toolbar.scene-tools > button:hover {
 	background: #363636;
 	color: #fff;
+}
+.editor-toolbar.scene-tools > button.shot-look-toggle[aria-pressed="true"] {
+	color: var(--accent);
+	background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 
 /* The studio's one Export menu (#165, moved to the topbar in #193). It reuses

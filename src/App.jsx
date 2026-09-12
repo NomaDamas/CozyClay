@@ -679,9 +679,9 @@ export default function App() {
 	useEffect(() => {
 		if (!embedMode) return undefined;
 		// The Workflow page's Scene node embeds the studio as its preview, so the
-		// embed enters the player through the same door the look-through button
-		// uses. The states are seeded from embedMode as well, so the first painted
-		// frame is already the shot view rather than a flash of editor chrome.
+		// embed enters the player through enterPreview(). The states are seeded
+		// from embedMode as well, so the first painted frame is already the shot
+		// view rather than a flash of editor chrome.
 		enterPreview();
 		const capture = () => {
 			try {
@@ -816,8 +816,9 @@ export default function App() {
 	const planIsMain = false;
 	// The framed output only — no editing chrome (gizmo, inset, fly navigation)
 	// reaches it. The Scene/PlayView centre tabs are gone (#195): this is an
-	// internal state with two entry points (the shot PiP's look-through button
-	// and the Workflow embed) and one exit (Esc / the exit pill).
+	// internal player with two entry points (the Workflow embed and the
+	// playground rail) and one exit (Esc / the exit pill). The shot PiP's
+	// look-through button flies the recording camera instead.
 	const [preview, setPreview] = useState(embedMode);
 	// The name stays `playMode`: window.__cozyclay QA hooks and the MCP live
 	// bridge read this global, and the render path is still PlayView's.
@@ -853,22 +854,38 @@ export default function App() {
 		return () => window.removeEventListener("keydown", onKey);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [lookThroughShot, embedMode]);
-	/** The one way in. The shot camera takes the whole pane (DualRender's
-	 * playMode branch), the piece restarts from frame 0, and auto-play only
-	 * exists once there is a motion to play. Look-through rides along so every
-	 * site that picks a camera keeps pointing at the shot camera. */
+	/** The chrome-free player. The shot camera takes the whole pane
+	 * (DualRender's playMode branch), the piece restarts from frame 0, and
+	 * auto-play only exists once there is a motion to play. Look-through rides
+	 * along so every site that picks a camera keeps pointing at the shot camera.
+	 * Studio look-through does NOT come through here — that is enterShotLook. */
 	function enterPreview() {
 		setPreview(true);
 		setLookThroughShot(true);
 		setTlFrame(0);
 		if (motion) setTlPlaying(true);
 	}
-	/** ...and the one way out: editing chrome back, playback paused, so leaving
-	 * the player never leaves the timeline running underneath it. */
+	/** ...and the one way out of both the player and shot-look: editing chrome
+	 * back, playback paused, so leaving never leaves the timeline running
+	 * underneath it. */
 	function exitPreview() {
 		setPreview(false);
 		setLookThroughShot(false);
 		setTlPlaying(false);
+	}
+	/** Fly the shot camera with the same bindings as the free camera. Preview
+	 * stays off so FlyControls stay live and framing commits stick. */
+	function enterShotLook() {
+		if (embedMode) return;
+		setPreview(false);
+		setTlPlaying(false);
+		setLookThroughShot(true);
+		setSelectedHierarchyId("camera");
+		setWorkflowMode("camera");
+	}
+	function toggleShotLook() {
+		if (lookThroughShot && !preview) exitPreview();
+		else enterShotLook();
 	}
 	const stageRef = useRef();
 	const mainPaneRef = useRef();
@@ -1272,9 +1289,10 @@ export default function App() {
 	const [workflowMode, setWorkflowMode] = useState("scene");
 	function selectWorkflowMode(next) {
 		setWorkflowMode(next);
-		// Picking a department is an editing act: it always lands in the editor
-		// view, never inside the player.
-		exitPreview();
+		// Picking a department leaves the chrome-free player. Shot-look is
+		// camera work, so it only yields when the operator leaves Camera.
+		if (preview) exitPreview();
+		else if (lookThroughShot && next !== "camera") exitPreview();
 		if (next === "camera") setSelectedHierarchyId("camera");
 		else if (next === "motion") {
 			// The active character's ROW, not the group: the placement gizmo only
@@ -10522,6 +10540,17 @@ function resizePromptClip(id, edge, rawFrame) {
 					))}
 				</div>
 				<div className="editor-toolbar scene-tools" aria-label={ko("Scene tools", "장면 도구")}>
+					<button
+						type="button"
+						className="shot-look-toggle"
+						data-testid="shot-look-toggle"
+						aria-pressed={lookThroughShot && !playMode}
+						aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
+						title={ko("Look through the shot camera — right-drag, WASD and orbit set the recording lens (Esc returns)", "샷 카메라 시점으로 보기 — 오른쪽 드래그, WASD, 궤도로 촬영 렌즈를 맞춥니다 (Esc로 복귀)")}
+						onClick={toggleShotLook}
+					>
+						{ko("Look through", "샷 시점")}
+					</button>
 					{workflowMode === "motion" && (
 						<span className="workflow-toolbar-hint" role="status">
 							{ko("Motion mode · edit the timeline below", "모션 모드 · 아래 타임라인에서 편집하세요")}
@@ -11282,8 +11311,9 @@ function resizePromptClip(id, edge, rawFrame) {
 								ikMode={ikMode}
 								planIsMain={planIsMain}
 								// Preview IS PlayView's render path: DualRender tests this branch
-								// first, so look-through lands in the letterboxed, chrome-free
-								// player rather than the editing draw that keeps the plan inset.
+								// first, so the embed and playground rail land in the letterboxed
+								// player. Studio look-through keeps playMode false and flies the
+								// shot camera in the editing draw instead.
 								playMode={preview}
 								lookThrough={lookThroughShot}
 								insetCollapsed={workspaceLayout.insetCollapsed || workflowMode === "motion"}
@@ -11395,8 +11425,8 @@ function resizePromptClip(id, edge, rawFrame) {
 									type="button"
 									className="vp-look-through"
 									aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
-									title={ko("Look through the shot camera — the framed player, no editing chrome (Esc returns)", "샷 카메라 시점으로 보기 — 편집 도구 없는 플레이어 (Esc로 복귀)")}
-									onClick={enterPreview}
+									title={ko("Look through the shot camera — right-drag, WASD and orbit set the recording lens (Esc returns)", "샷 카메라 시점으로 보기 — 오른쪽 드래그, WASD, 궤도로 촬영 렌즈를 맞춥니다 (Esc로 복귀)")}
+									onClick={enterShotLook}
 								>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
 										<path d="M15 3h6v6" />
@@ -11404,6 +11434,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										<path d="M9 21H3v-6" />
 										<path d="M3 21l8-8" />
 									</svg>
+									{ko("Look through", "샷 시점")}
 								</button>
 							</span>
 						</div>

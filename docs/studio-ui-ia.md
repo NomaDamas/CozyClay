@@ -74,7 +74,7 @@ e384d00에서 남은 초과분은 세 모드 모두 같은 세 컨트롤이었�
 | PlayView 바 OTIO | play 바 | 이동 | `Export ▾` "OTIO cut list" | R4 | — |
 | PlayView Export 메뉴(keyframe/depth/storyboard) | play 바 | 이동 | `Export ▾` 상단바(블록 그대로 리프트, `export-menu-trigger` id 유지) | R4 | — |
 | PlayView ● Record | play 바 | 삭제 | `Export ▾` Video | R1 | — |
-| PiP: 가이드 순환, look-through | PiP | 유지 | "Look through shot (Esc로 나가기)" = 크롬 없는 플레이어 진입 | — | qa-physics-review-browser:80 |
+| PiP: 가이드 순환, look-through | PiP | 유지 | "Look through" = 샷 카메라를 자유 카메라처럼 비행. 카메라 바에 같은 토글. 크롬 없는 플레이어는 embed | — | qa-preview-browser |
 
 ### 인스펙터
 | 컨트롤 | 현재 | 결정 | 새 위치 / 라벨 | 규칙 | 영향 테스트 |
@@ -132,7 +132,7 @@ PR4가 새 집을 먼저 세우고 PR5/6이 옛 집을 허문다(R9). 완료 후
 - 로드된 테이크에서 배치(Placement) 드래그가 clip.anchor가 아니라 entry.x/z만 바꾸는 기존 함정(App 4184-4214 vs 1045-1054) — #201에서 발견, 미수정.
 - `test/verify-object-gizmo.mjs` 스토리지 섹션이 레거시 키 `cozyclay.scene.v1`을 시드하는데 scenes.js는 9d7ea8e부터 `cozyclay.scenes.v4`를 쓴다 — observation 티어 스위트의 기존 실패, #202가 :356 셀렉터만 고침.
 - Full-Body 레인의 IK 키 `+`는 IK를 켠 채 Scene/Camera로 가면 여전히 렌더된다(#198에서 보고).
-- `.film-frame`과 "SUBJECT OUT OF FRAME" 캡션이 look-through-without-preview에 게이팅돼 있어 #204 이후 사용자가 도달할 수 없다 — 별도 이슈로.
+- `.film-frame`과 "SUBJECT OUT OF FRAME" 캡션은 look-through-without-preview에 게이팅돼 있으며, Look through는 그 경로로 들어간다.
 - 카메라 바 Follow 하위 필드(거리/시작점/스무딩/look-ahead) `Follow ▾` 접기 — 샷 선택 Camera 47이 문제로 판단될 때만.
 - 분석 계측: FEATURE_NAMES 누락 3건, featureNamesSeen 원샷 게이트(페이지 로드당 1회 도달 지표), 18개 UI 모듈 미계측 — 별도 이슈.
 - Carroll 1984 1차 논문·Blender 2.8 설계 문서·Jensen Harris 리본 강연 원문 미회수(archive.org 429). 본문 수치는 2차 출처 표기.

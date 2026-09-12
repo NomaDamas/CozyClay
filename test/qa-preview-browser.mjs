@@ -1,17 +1,13 @@
 #!/usr/bin/env node
-// Browser QA for the preview state machine (#195), over CDP through the QA
-// browser wrapper:
+// Browser QA for look-through vs the preview player.
 //
 //   QA_URL=http://127.0.0.1:5180/app/ node tools/qa-browser.mjs -- \
 //     node test/qa-preview-browser.mjs
 //
-// The Scene/PlayView centre tabs are gone. PlayView's render path survives as
-// an internal `preview` state with two entry points — the shot PiP's
-// look-through button and the Workflow embed (`?embed=playview`) — and one
-// exit (Escape). This drives the real studio with a character and a motion
-// loaded and pins the whole round trip: enter (shot camera owns the pane, no
-// gizmo handles, no inset, frame 0, playing) and leave (editor chrome back,
-// paused). Every wait is a state condition; nothing here sleeps.
+// Studio look-through flies the shot camera (same bindings as the free camera).
+// The chrome-free player remains an internal `preview` state entered from the
+// Workflow embed (`?embed=playview`). Every wait is a state condition; nothing
+// here sleeps.
 const port = Number(process.env.CDP_PORT || 9222);
 const baseUrl = process.env.QA_URL || "http://127.0.0.1:5180/app/";
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -57,13 +53,9 @@ const escape = async () => {
 	await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 	await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 };
-/** gizmo pick proxies live in the scene graph (src/gizmo-claim.js HANDLE_PROXY_FLAG) */
-const gizmoProxies = `(() => {
-	let node = window.__cozyclay.editorCam; while (node.parent) node = node.parent;
-	let count = 0;
-	node.traverse((child) => { if (child.userData?.gizmoHandleProxy) count += 1; });
-	return count;
-})()`;
+const mouse = async (type, extra) => {
+	await send("Input.dispatchMouseEvent", { type, ...extra });
+};
 /** an element counts as shown when it is in the box tree and not [hidden] */
 const shown = (selector) => `(() => {
 	const el = document.querySelector(${JSON.stringify(selector)});
@@ -86,43 +78,63 @@ expect("no centre tabs in the DOM", await evaluate("document.querySelectorAll('.
 expect("no PlayView toolbar in the DOM", await evaluate("document.querySelectorAll('.editor-toolbar.play-tools').length === 0"));
 expect("the scene tools own the title bar", await evaluate(shown(".editor-toolbar.scene-tools")));
 expect("the studio starts outside the player", await evaluate("globalThis.playMode === false"));
-expect("the shot PiP offers the way in", await evaluate(shown(".vp-look-through")));
+expect("the shot PiP offers look-through", await evaluate(shown(".vp-look-through")));
 
-// A character row mounts the transform gizmo: that is the editing chrome the
-// player has to drop, so it must be on the screen before the comparison.
-await evaluate("document.querySelector('[data-node-id=\"characterA\"] .hierarchy-row').click()");
-expect("the character row is selected", await waitFor("document.querySelector('[data-node-id=\"characterA\"]').getAttribute('aria-selected') === 'true'", 8000));
-expect("the gizmo is mounted in the editor view", await waitFor(`${gizmoProxies} > 0`, 10000));
-
-// Park the playhead near the end so the frame-0 restart is unmistakable —
-// playback would need seconds to reach this frame again.
+// Park the playhead near the end so a player-style restart to frame 0 would
+// be unmistakable — look-through must leave the playhead where it is.
 const parked = await evaluate("(() => { const f = window.__cozyclay.frameCount - 6; window.__cozyclay.scrub(f); return f; })()");
 expect("the playhead is parked near the end", await waitFor(`window.__cozyclay.tlFrame === ${parked}`, 8000));
 
-/* ------------------------------------------------------ enter the player -- */
+const editorBefore = await evaluate("(() => { const r = window.__cozyclay.editorCam.rotation; return { x: r.x, y: r.y, z: r.z }; })()");
+
+/* ------------------------------------------------------ fly the shot camera */
 
 await evaluate("document.querySelector('.vp-look-through').click()");
-expect("look-through enters preview", await waitFor("globalThis.playMode === true", 8000));
-expect("the QA hook agrees", await evaluate("window.__cozyclay.preview === true"));
-expect("the rig is still live in the player", await evaluate("!!window.__cozyclay.rigA"));
-expect("the pane renders through the shot camera", await evaluate("window.__cozyclay.activeCam === window.__cozyclay.shotCam"));
-expect("the gizmo layer is gone", await waitFor(`${gizmoProxies} === 0`, 8000));
-expect("no transform gizmo handles remain", await evaluate("typeof window.__gizmoHandles !== 'function' || window.__gizmoHandles().length === 0"));
-expect("the plan inset is gone", await evaluate(`!${shown(".vp-inset")}`));
+expect("look-through does not enter the player", await waitFor("globalThis.playMode === false", 8000));
+expect("the QA hook agrees", await evaluate("window.__cozyclay.preview === false && window.__cozyclay.lookThroughShot === true"));
+expect("the pane renders through the shot camera", await waitFor("window.__cozyclay.activeCam === window.__cozyclay.shotCam", 8000));
 expect("the shot PiP is gone", await evaluate(`!${shown(".vp-shot-preview")}`));
-expect("the player keeps one visible way out", await evaluate(shown(".vp-look-through-exit")));
-expect("the piece restarted from frame 0", await waitFor(`window.__cozyclay.tlFrame < ${parked}`, 8000));
-expect("and it is playing", await waitFor("window.__cozyclay.playing === true", 8000));
+expect("the way out is visible", await evaluate(shown(".vp-look-through-exit")));
+expect("the camera bar toggle is pressed", await waitFor(`${shown('[data-testid="shot-look-toggle"]')} && document.querySelector('[data-testid="shot-look-toggle"]').getAttribute("aria-pressed") === "true"`, 8000));
+expect("the playhead did not restart", await waitFor(`window.__cozyclay.tlFrame === ${parked}`, 8000));
+expect("playback did not start", await evaluate("window.__cozyclay.playing === false"));
 
-/* ------------------------------------------------------- leave the player -- */
+const shotBefore = await evaluate("(() => { const r = window.__cozyclay.shotCam.rotation; return { x: r.x, y: r.y, z: r.z }; })()");
+const canvas = await evaluate(`(() => {
+	const el = document.querySelector(".stage canvas");
+	if (!el) return null;
+	const r = el.getBoundingClientRect();
+	return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) };
+})()`);
+expect("the stage canvas is on screen", !!canvas, JSON.stringify(canvas));
+await mouse("mousePressed", { x: canvas.x, y: canvas.y, button: "right", buttons: 2, clickCount: 1 });
+await mouse("mouseMoved", { x: canvas.x + 80, y: canvas.y + 24, button: "right", buttons: 2 });
+await mouse("mouseMoved", { x: canvas.x + 140, y: canvas.y + 40, button: "right", buttons: 2 });
+await mouse("mouseReleased", { x: canvas.x + 140, y: canvas.y + 40, button: "right", buttons: 0, clickCount: 1 });
+expect(
+	"right-drag turned the shot camera",
+	await waitFor(`(() => {
+		const r = window.__cozyclay.shotCam.rotation;
+		const b = ${JSON.stringify(shotBefore)};
+		return Math.abs(r.x - b.x) > 0.01 || Math.abs(r.y - b.y) > 0.01 || Math.abs(r.z - b.z) > 0.01;
+	})()`, 8000),
+);
+const editorAfter = await evaluate("(() => { const r = window.__cozyclay.editorCam.rotation; return { x: r.x, y: r.y, z: r.z }; })()");
+expect(
+	"the free camera stayed put",
+	Math.abs(editorAfter.x - editorBefore.x) < 0.001 &&
+	Math.abs(editorAfter.y - editorBefore.y) < 0.001 &&
+	Math.abs(editorAfter.z - editorBefore.z) < 0.001,
+	JSON.stringify({ editorBefore, editorAfter }),
+);
+
+/* ------------------------------------------------------- leave look-through */
 
 await escape();
-expect("Escape leaves preview", await waitFor("globalThis.playMode === false", 8000));
-expect("no playback is left running underneath", await waitFor("window.__cozyclay.playing === false", 8000));
+expect("Escape leaves look-through", await waitFor("window.__cozyclay.lookThroughShot === false", 8000));
+expect("the pane is the editor camera again", await waitFor("window.__cozyclay.activeCam === window.__cozyclay.editorCam", 8000));
 expect("the scene tools are back", await evaluate(shown(".editor-toolbar.scene-tools")));
 expect("the shot PiP is back", await waitFor(shown(".vp-shot-preview"), 8000));
-expect("the plan inset is back", await waitFor(shown(".vp-inset"), 8000));
-expect("the gizmo comes back with the editor view", await waitFor(`${gizmoProxies} > 0`, 10000));
 expect("still no centre tabs to go back to", await evaluate("document.querySelectorAll('.pane-tabs').length === 0"));
 
 /* ------------------------------------------------ the Workflow embed path -- */
