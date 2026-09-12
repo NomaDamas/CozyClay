@@ -3,9 +3,10 @@
  *
  * A project is ONE file (`.cclayproject`, JSON) holding the full authoring
  * state: the scene document (scenes + cast + animation layers), the
- * workspace layout, and the custom pose library. Editor preferences
- * (theme, locale) deliberately stay OUT — they belong to the operator, not
- * the project.
+ * workspace layout, the custom pose library, the workflow graph, and the
+ * embedded resources (images + motions) the scenes point at. Editor
+ * preferences (theme, locale) deliberately stay OUT — they belong to the
+ * operator, not the project.
  *
  * Files are read/written with the File System Access API when available,
  * with a plain download/upload fallback. The last-used handle is kept in
@@ -14,15 +15,22 @@
  */
 
 import { SCENES_VERSION } from "./scenes.js";
-import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
+import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, isAssetId, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
 
-export const PROJECT_VERSION = 3;
+export const PROJECT_VERSION = 4;
 export const PROJECT_EXTENSION = ".cclayproject";
 export const WORKFLOW_VERSION = 1;
 export const WORKFLOW_STORAGE_KEY = "cozyclay.workflow.v1";
 const IDB_NAME = "cozyclay.project-handle.v1";
 const IDB_STORE = "kv";
 const IDB_KEY = "lastProjectHandle";
+
+// Embedded resources are bounded: the file is JSON, so every raw byte costs
+// 4/3 on disk and the whole file has to fit in one string on the way in.
+export const MOTION_MAX_BYTES = 192 * 1024 * 1024;
+export const PROJECT_MAX_RESOURCE_BYTES = 256 * 1024 * 1024;
+// A motion id is the SHA-256 of the raw NPZ bytes (see motion-resources.js).
+const MOTION_ID_PATTERN = /^[0-9a-f]{64}$/i;
 
 /* ---------------------------- workflow graph --------------------------- */
 
@@ -164,22 +172,45 @@ function bytesToBase64(bytes) {
 	return btoa(binary);
 }
 
-function base64ToBytes(value) {
-	if (typeof value !== "string" || value.length < 4 || value.length % 4 || value.length > Math.ceil(ASSET_MAX_SOURCE_BYTES / 3) * 4) return null;
-	for (let index = 0; index < value.length; index += 1) {
+/**
+ * Structural check of a base64 payload without decoding it: character set,
+ * padding, and the byte length the string implies. Returns `{ bytes }` or
+ * `{ code }` with a problem code.
+ */
+function base64Shape(value, limit) {
+	if (typeof value !== "string" || value.length < 4 || value.length % 4) return { code: "bad-base64" };
+	if (value.length > Math.ceil(limit / 3) * 4) return { code: "too-large" };
+	const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+	for (let index = 0; index < value.length - padding; index += 1) {
 		const code = value.charCodeAt(index);
 		const base64Character = (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || (code >= 48 && code <= 57) || code === 43 || code === 47;
-		if (!base64Character && code !== 61) return null;
-		if (code === 61 && index < value.length - 2) return null;
+		if (!base64Character) return { code: "bad-base64" };
 	}
+	const bytes = (value.length / 4) * 3 - padding;
+	return bytes > limit ? { code: "too-large" } : { bytes };
+}
+
+/** Decode a base64 payload. Returns `{ buffer }` or `{ code }`. */
+function base64ToBytes(value, limit) {
+	const shape = base64Shape(value, limit);
+	if (shape.code) return shape;
 	try {
 		const binary = atob(value);
 		const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-		if (bytes.byteLength > ASSET_MAX_SOURCE_BYTES || bytesToBase64(bytes) !== value) return null;
-		return bytes.buffer;
+		// Only the canonical encoding is accepted so a payload has one spelling.
+		if (bytesToBase64(bytes) !== value) return { code: "bad-base64" };
+		return { buffer: bytes.buffer };
 	} catch {
-		return null;
+		return { code: "bad-base64" };
 	}
+}
+
+function resourcesTooLarge(bytes, limit, what) {
+	const error = new Error(`${what} (${bytes} bytes) exceeds the ${limit}-byte limit.`);
+	error.code = "resources-too-large";
+	error.bytes = bytes;
+	error.limit = limit;
+	return error;
 }
 
 function embeddedAsset(record) {
@@ -188,7 +219,44 @@ function embeddedAsset(record) {
 	if (!asset || asset.bytes.byteLength > ASSET_MAX_SOURCE_BYTES) return null;
 	// Base64 keeps JSON's asset payload unambiguous; a data URL would duplicate
 	// MIME metadata already carried by `type` and force every reader to strip it.
-	return { ...asset, bytes: bytesToBase64(asset.bytes) };
+	return { record: { ...asset, bytes: bytesToBase64(asset.bytes) }, bytes: asset.bytes.byteLength };
+}
+
+/** The optional motion fields carried verbatim; frames/fps come from the
+ * encoder (motion-resources.js), never from decoding the NPZ here. */
+function motionDetails(record) {
+	return {
+		...(Number.isInteger(record.frames) && record.frames >= 0 ? { frames: record.frames } : {}),
+		...(Number.isFinite(record.fps) && record.fps > 0 ? { fps: record.fps } : {}),
+		...(typeof record.name === "string" && record.name.trim() ? { name: record.name } : {}),
+		...(plainRecord(record.meta) ? { meta: jsonValue(record.meta) } : {}),
+	};
+}
+
+function motionId(value) {
+	return typeof value === "string" && MOTION_ID_PATTERN.test(value) ? value.toLowerCase() : null;
+}
+
+/**
+ * Validate a motion record for embedding. Accepts the encoded shape
+ * (`encoding: "base64"`, `data`) and raw `bytes` (ArrayBuffer or view); the
+ * payload is encoded later, once the size budget is known to hold.
+ */
+function embeddedMotion(record) {
+	if (!record || typeof record !== "object") return null;
+	const id = motionId(record.motionId);
+	if (!id) return null;
+	const raw = asArrayBuffer(record.bytes);
+	if (raw) {
+		if (!raw.byteLength) return null;
+		if (raw.byteLength > MOTION_MAX_BYTES) throw resourcesTooLarge(raw.byteLength, MOTION_MAX_BYTES, `Motion ${id}`);
+		return { motionId: id, bytes: raw.byteLength, raw, details: motionDetails(record) };
+	}
+	if (record.encoding !== "base64") return null;
+	const shape = base64Shape(record.data, MOTION_MAX_BYTES);
+	if (shape.code === "too-large") throw resourcesTooLarge((record.data.length / 4) * 3, MOTION_MAX_BYTES, `Motion ${id}`);
+	if (shape.code || (record.bytes !== undefined && record.bytes !== shape.bytes)) return null;
+	return { motionId: id, bytes: shape.bytes, data: record.data, details: motionDetails(record) };
 }
 
 /** Verify that an embedded record still belongs at its content-addressed id. */
@@ -202,33 +270,117 @@ export async function verifyEmbeddedAsset(record, subtle) {
 	}
 }
 
-function readEmbeddedAssets(value) {
+const PROBLEM_DETAILS = {
+	"bad-id": "its id is not a content address",
+	duplicate: "the same id appears earlier in the file",
+	"bad-encoding": "its encoding is not base64",
+	"bad-base64": "its payload is not valid base64",
+	"length-mismatch": "its payload does not match the recorded byte length",
+	"too-large": "its payload exceeds the size limit",
+	"bad-record": "its metadata is incomplete",
+};
+
+function readEmbeddedAssets(value, report) {
 	const assets = [];
-	const warnings = [];
-	if (!Array.isArray(value)) return { assets, warnings };
+	if (!Array.isArray(value)) return assets;
+	const seen = new Set();
 	for (const entry of value) {
-		const bytes = base64ToBytes(entry?.bytes);
-		const asset = bytes && normalizeAsset({ ...entry, bytes });
-		if (!asset || asset.bytes.byteLength > ASSET_MAX_SOURCE_BYTES) {
-			warnings.push("Skipped an invalid embedded asset.");
+		const id = typeof entry?.id === "string" ? entry.id : null;
+		if (!isAssetId(id)) {
+			report("image", id, "bad-id");
 			continue;
 		}
+		if (seen.has(id)) {
+			report("image", id, "duplicate");
+			continue;
+		}
+		const decoded = base64ToBytes(entry.bytes, ASSET_MAX_SOURCE_BYTES);
+		if (decoded.code) {
+			report("image", id, decoded.code);
+			continue;
+		}
+		const asset = normalizeAsset({ ...entry, bytes: decoded.buffer });
+		if (!asset) {
+			report("image", id, "bad-record");
+			continue;
+		}
+		seen.add(id);
 		assets.push(asset);
 	}
-	return { assets, warnings };
+	return assets;
 }
 
-export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, savedAt, workflow }) {
+/** Motion records are returned in their encoded shape; decoding and hash
+ * verification belong to motion-resources.js. */
+function readEmbeddedMotions(value, report) {
+	const motions = [];
+	if (!Array.isArray(value)) return motions;
+	const seen = new Set();
+	for (const entry of value) {
+		const id = motionId(entry?.motionId);
+		if (!id) {
+			report("motion", typeof entry?.motionId === "string" ? entry.motionId : null, "bad-id");
+			continue;
+		}
+		if (seen.has(id)) {
+			report("motion", id, "duplicate");
+			continue;
+		}
+		if (entry.encoding !== "base64") {
+			report("motion", id, "bad-encoding");
+			continue;
+		}
+		const shape = base64Shape(entry.data, MOTION_MAX_BYTES);
+		if (shape.code) {
+			report("motion", id, shape.code);
+			continue;
+		}
+		if (entry.bytes !== shape.bytes) {
+			report("motion", id, "length-mismatch");
+			continue;
+		}
+		seen.add(id);
+		motions.push({ motionId: id, encoding: "base64", data: entry.data, bytes: shape.bytes, ...motionDetails(entry) });
+	}
+	return motions;
+}
+
+/**
+ * Build the v4 envelope. Images are embedded only when a scene references
+ * them; motions are embedded as given (deduped by motionId, first record
+ * wins) because the caller already knows which ones the scenes use. Throws
+ * `resources-too-large` when one motion or the whole manifest exceeds its
+ * budget.
+ */
+export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, motions, savedAt, workflow }) {
 	const assetRecords = new Map();
 	for (const record of Array.isArray(assets) ? assets : []) {
 		const asset = embeddedAsset(record);
-		if (asset) assetRecords.set(asset.id, asset);
+		if (asset) assetRecords.set(asset.record.id, asset);
 	}
 	const embeddedAssets = [];
+	let resourceBytes = 0;
 	for (const id of referencedAssetIds(scenesDocument?.scenes)) {
 		const asset = assetRecords.get(id);
-		if (asset) embeddedAssets.push(asset);
+		if (!asset) continue;
+		embeddedAssets.push(asset.record);
+		resourceBytes += asset.bytes;
 	}
+	const motionRecords = new Map();
+	for (const record of Array.isArray(motions) ? motions : []) {
+		const motion = embeddedMotion(record);
+		if (!motion || motionRecords.has(motion.motionId)) continue;
+		motionRecords.set(motion.motionId, motion);
+		resourceBytes += motion.bytes;
+	}
+	if (resourceBytes > PROJECT_MAX_RESOURCE_BYTES) throw resourcesTooLarge(resourceBytes, PROJECT_MAX_RESOURCE_BYTES, "Embedded resources");
+	const embeddedMotions = [...motionRecords.values()].map(({ motionId: id, bytes, raw, data, details }) => ({
+		motionId: id,
+		encoding: "base64",
+		data: data ?? bytesToBase64(raw),
+		bytes,
+		...details,
+	}));
 	return {
 		app: "cozyclay",
 		kind: "project",
@@ -238,12 +390,18 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
 		scenes: scenesDocument,
 		workspace: workspaceLayout ?? null,
 		poseLibrary: Array.isArray(customPoses) ? customPoses : [],
-		assets: embeddedAssets,
 		workflow: normalizeWorkflowGraph(workflow),
+		resources: { assets: embeddedAssets, motions: embeddedMotions },
 	};
 }
 
-/** Parse + validate a project file. Returns { ok, reason?, project? }. */
+/**
+ * Parse + validate a project file. Returns { ok, reason?, warnings?,
+ * problems?, project? }. Invalid embedded records are skipped, each one
+ * reported as a warning string and a `{ kind, id, code, message }` problem.
+ * v2/v3 files carry images at the top-level `assets`; v4 moves everything
+ * under `resources`. Older files are read as-is, never rewritten.
+ */
 export function readProjectDocument(raw) {
 	let parsed;
 	try {
@@ -259,11 +417,21 @@ export function readProjectDocument(raw) {
 	if (!scenes || typeof scenes !== "object" || scenes.version > SCENES_VERSION || !Array.isArray(scenes.scenes)) {
 		return { ok: false, reason: "scenes-invalid" };
 	}
-	const embedded = parsed.version >= 2 ? readEmbeddedAssets(parsed.assets) : { assets: [], warnings: [] };
+	const warnings = [];
+	const problems = [];
+	const report = (kind, id, code) => {
+		const message = `Skipped embedded ${kind} ${id ?? "(no id)"}: ${PROBLEM_DETAILS[code]}.`;
+		problems.push({ kind, id, code, message });
+		warnings.push(message);
+	};
+	const assetRecords = parsed.version >= 4 ? parsed.resources?.assets : parsed.version >= 2 ? parsed.assets : undefined;
+	const assets = readEmbeddedAssets(assetRecords, report);
+	const motions = parsed.version >= 4 ? readEmbeddedMotions(parsed.resources?.motions, report) : [];
 	const workflow = normalizeWorkflowGraph(parsed.workflow);
 	return {
 		ok: true,
-		warnings: embedded.warnings,
+		warnings,
+		problems,
 		project: {
 			name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Untitled",
 			savedAt: Number.isFinite(parsed.savedAt) && parsed.savedAt > 0 ? parsed.savedAt : null,
@@ -272,7 +440,8 @@ export function readProjectDocument(raw) {
 			customPoses: Array.isArray(parsed.poseLibrary)
 				? parsed.poseLibrary.filter((p) => p && typeof p === "object" && typeof p.id === "string" && p.bones && typeof p.bones === "object")
 				: [],
-			assets: embedded.assets,
+			assets,
+			motions,
 			workflow,
 		},
 	};
