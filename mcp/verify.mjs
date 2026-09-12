@@ -229,7 +229,6 @@ check("prompt carries both subjects", prompt.includes("detective") && prompt.inc
 const file = new URL("./.verify-project.cclayproject", import.meta.url).pathname;
 const symlink = new URL("./.verify-project-link.cclayproject", import.meta.url).pathname;
 const hardlink = new URL("./.verify-project-hardlink.cclayproject", import.meta.url).pathname;
-const outside = `/tmp/cozyclay-verify-outside-${process.pid}.cclayproject`;
 const fs = await import("node:fs/promises");
 await call("save_project", { path: file, name: "Verify" });
 check("save refuses implicit overwrite", (await call("save_project", { path: file })).startsWith("Could not write"), "overwrite unexpectedly succeeded");
@@ -241,17 +240,29 @@ await import("node:fs/promises").then((fs) => fs.unlink(file).catch(() => {}));
 
 check("outside project root is rejected", (await call("open_project", { path: "/tmp/nope.cclayproject" })).includes("direct children of configured project root"));
 check("wrong extension is rejected", (await call("open_project", { path: "/etc/hosts" })).includes("must end in .cclayproject"));
-await fs.writeFile(outside, "outside sentinel", { mode: 0o600 });
-await fs.symlink(outside, symlink);
-check("open refuses final symlink", (await call("open_project", { path: symlink })).startsWith("Could not read"), "symlink open unexpectedly succeeded");
-check("save refuses final symlink", (await call("save_project", { path: symlink, overwrite: true })).startsWith("Could not write"), "symlink overwrite unexpectedly succeeded");
-check("symlink target remains byte-identical", await fs.readFile(outside, "utf8") === "outside sentinel");
-await fs.unlink(symlink);
-await fs.link(outside, hardlink);
-check("open refuses external hard link", (await call("open_project", { path: hardlink })).startsWith("Could not read"), "hard-link open unexpectedly succeeded");
-check("save refuses external hard link", (await call("save_project", { path: hardlink, overwrite: true })).startsWith("Could not write"), "hard-link overwrite unexpectedly succeeded");
-check("hard-link target remains byte-identical", await fs.readFile(outside, "utf8") === "outside sentinel");
-await Promise.all([fs.unlink(hardlink).catch(() => {}), fs.unlink(outside).catch(() => {})]);
+// Stay outside the configured project root (mcp/), but on the clone's filesystem:
+// a system temp directory may be on another volume, where hard links fail with EXDEV.
+const outsideDir = await fs.mkdtemp(new URL("../.verify-outside-", import.meta.url));
+try {
+	const outside = `${outsideDir}/sentinel.cclayproject`;
+	await fs.writeFile(outside, "outside sentinel", { mode: 0o600 });
+	await fs.symlink(outside, symlink);
+	check("open refuses final symlink", (await call("open_project", { path: symlink })).startsWith("Could not read"), "symlink open unexpectedly succeeded");
+	check("save refuses final symlink", (await call("save_project", { path: symlink, overwrite: true })).startsWith("Could not write"), "symlink overwrite unexpectedly succeeded");
+	check("symlink target remains byte-identical", await fs.readFile(outside, "utf8") === "outside sentinel");
+	await fs.unlink(symlink);
+	await fs.link(outside, hardlink);
+	check("external hard-link fixture has two links", (await fs.stat(hardlink)).nlink === 2);
+	check("open refuses external hard link", (await call("open_project", { path: hardlink })).startsWith("Could not read"), "hard-link open unexpectedly succeeded");
+	check("save refuses external hard link", (await call("save_project", { path: hardlink, overwrite: true })).startsWith("Could not write"), "hard-link overwrite unexpectedly succeeded");
+	check("hard-link target remains byte-identical", await fs.readFile(outside, "utf8") === "outside sentinel");
+} finally {
+	await Promise.all([
+		fs.rm(symlink, { force: true }),
+		fs.rm(hardlink, { force: true }),
+		fs.rm(outsideDir, { recursive: true, force: true }),
+	]);
+}
 
 /* --------------------------------- result -------------------------------- */
 

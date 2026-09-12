@@ -22,6 +22,7 @@ __pycache__/
 
 # MCP server local install
 mcp/node_modules/
+/.verify-outside-*/
 .omo/ulw-loop/
 
 # agent scratch
