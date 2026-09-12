@@ -173,6 +173,8 @@ const NODE_FILES = [
 	"test/verify-speed-envelope.mjs",
 	"test/verify-motion-resources.mjs",
 	"test/verify-project-resources.mjs",
+	"test/verify-workflow-resources.mjs",
+	"test/verify-resource-status.mjs",
 ];
 
 const BROWSER_FILES = [
