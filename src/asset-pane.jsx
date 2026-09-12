@@ -6,6 +6,7 @@ import { displayObjectGroupName, displayObjectLabel } from "./object-catalog.jsx
 import { assetAspect } from "./scene-assets.js";
 import { assetKind, formatAssetBytes } from "./asset-shelf.js";
 import { assetRecord } from "./scene-asset-cache.js";
+import ResourceStatus from "./resource-status.jsx";
 
 /** Casting assets offered in the bottom Assets tab. `id` doubles as the FBX
  * file stem and the ARDY wire rig name (see scenes.js). */
@@ -290,9 +291,10 @@ function StorageManager({ unusedAssetIds, usedAssetIds, usageCounts, graphSignat
  * of SOURCE ids (see asset-shelf.js) — derived mattes and cut renders never
  * reach this component.
  */
-export default function AssetPane({ onAssetGrab, imageAssetIds, manageStorage, onManageStorageToggle, unusedAssetIds, usedAssetIds, usageCounts, graphSignature, trashCount, onDeleteUnusedAsset, onUndoDelete, deletingAssetId }) {
+export default function AssetPane({ onAssetGrab, imageAssetIds, manageStorage, onManageStorageToggle, unusedAssetIds, usedAssetIds, usageCounts, graphSignature, trashCount, onDeleteUnusedAsset, onUndoDelete, deletingAssetId, resourceManifest }) {
 	return (
 		<div className="assets-shelf">
+			{resourceManifest ? <ResourceStatus manifest={resourceManifest} compact /> : null}
 			<div className="assets-shelf-toolbar">
 				<button type="button" className="assets-manage-toggle" aria-pressed={manageStorage} onClick={onManageStorageToggle}>
 					{manageStorage ? ko("Back to assets", "에셋으로 돌아가기") : ko("Manage storage", "저장 공간 관리")}

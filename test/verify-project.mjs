@@ -122,6 +122,31 @@ assert.deepEqual(
 	})),
 	"embedded asset records round-trip byte-for-byte",
 );
+const workflowAssetDocument = createProjectDocument({
+	scenesDocument: createSceneDocument("WORKFLOW ONLY"),
+	workflow: {
+		version: 1,
+		nodes: [{
+			id: "scene-output",
+			type: "scene",
+			position: { x: 0, y: 0 },
+			data: { resultUrl: { assetRef: sourceAssetId } },
+		}],
+		edges: [],
+	},
+	assets: fakeAssets,
+});
+assert.deepEqual(
+	workflowAssetDocument.resources.assets.map((asset) => asset.id),
+	[sourceAssetId],
+	"workflow assetRefs are included even without a scene-object reference",
+);
+const workflowAssetRoundTrip = readProjectDocument(JSON.stringify(workflowAssetDocument));
+assert.deepEqual(
+	workflowAssetRoundTrip.project.assets.map((asset) => asset.id),
+	[sourceAssetId],
+	"workflow-only embedded assets round-trip through the project reader",
+);
 
 // --- embedded hash verification -------------------------------------------
 assert.equal(await verifyEmbeddedAsset(fakeAssets[0], webcrypto.subtle), true, "matching embedded bytes verify against their content address");
@@ -328,6 +353,15 @@ assert.match(appSource, /queryHandlePermission/, "auto-restore only with a grant
 assert.match(appSource, /referencedAssetIds/, "export finds the complete referenced asset closure");
 assert.match(appSource, /getAsset/, "export reads referenced asset records from IndexedDB");
 assert.match(appSource, /putAsset/, "open restores embedded asset records to IndexedDB");
+assert.match(appSource, /encodeMotionResource\(/, "project save encodes the loaded NPZ bytes");
+assert.match(appSource, /decodeMotionResource\(/, "project open decodes embedded motion resources");
+assert.match(appSource, /resolveMotionSource\(/, "motion restore uses the embedded-first resolver");
+assert.match(appSource, /internWorkflowOutputs\(/, "project save interns workflow image outputs");
+assert.match(appSource, /resolveWorkflowOutputs\(/, "project open restores runtime workflow output URLs");
+assert.match(appSource, /resourceManifest\(/, "App computes project resource status");
+assert.match(appSource, /<ResourceStatus\b/, "the project menu shows resource status");
+assert.match(appSource, /<SaveBlockedDialog\b/, "missing or oversized resources have a save-blocked dialog");
+assert.match(appSource, /__cozyclayProject/, "browser QA can exercise the production project export/open path");
 assert.match(appSource, /projectDirty/, "unsaved changes surface as a dirty marker");
 assert.ok(PROJECT_EXTENSION.length > 1, "project files carry an extension");
 

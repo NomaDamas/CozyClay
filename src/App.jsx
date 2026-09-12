@@ -227,6 +227,7 @@ import FirstSuccessGuide from "./first-success-guide.jsx";
 import { CameraTutorial } from "./camera-tutorial.jsx";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
+import ResourceStatus, { SaveBlockedDialog } from "./resource-status.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
 import ResultModal from "./result-modal.jsx";
 import SettingsMenu from "./settings-menu.jsx";
@@ -263,6 +264,9 @@ import {
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
 import { mergeProjectCustomPoses } from "./project-poses.js";
+import { encodeMotionResource, decodeMotionResource, resolveMotionSource } from "./motion-resources.js";
+import { resourceManifest } from "./project-resources.js";
+import { internWorkflowOutputs, resolveWorkflowOutputs, workflowOutputRefs } from "./workflow/workflow-resources.js";
 import {
 	MID_TRACKS,
 	createIkState,
@@ -3169,6 +3173,10 @@ export default function App() {
 	// opens on the stage, not on a chat column.
 	const [agentCollapsed, setAgentCollapsed] = useState(true);
 	const projectHandleRef = useRef(null);
+	const projectMotionsRef = useRef(new Map());
+	const restoreEpochRef = useRef(0);
+	const [projectManifest, setProjectManifest] = useState({ items: [], totals: { embedded: 0, external: 0, missing: 0, bytes: 0 }, missing: [] });
+	const [saveBlockedReasons, setSaveBlockedReasons] = useState(null);
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
 	projectStateRef.current = { workspaceLayout, customPoses, scenes, activeSceneId, sceneObjects };
@@ -3211,16 +3219,38 @@ export default function App() {
 		try {
 			const ids = [...referencedAssetIds(input.scenesDocument.scenes)];
 			const assets = await Promise.all(ids.map((id) => getAsset(db, id)));
-			// A referenced asset whose record vanished (swept elsewhere, another
-			// tab) would drop out of the export in silence — the user would
-			// learn on the machine they open it on. Say it here, at save time.
-			const missing = ids.filter((id, index) => !assets[index]);
-			if (missing.length) {
-				setToast(isKo
-					? `참조된 사진 ${missing.length}개를 찾지 못해보내기에서 빠졌어요`
-					: `${missing.length} referenced image${missing.length > 1 ? "s" : ""} missing — left out of the export`);
+			const workflowResult = await internWorkflowOutputs(input.workflow);
+			const referencedMotionIds = new Set(
+				input.scenesDocument.scenes.flatMap((scene) => (scene.stage?.characters ?? [])
+					.map((character) => character.motionRef?.motionId?.toLowerCase())
+					.filter(Boolean)),
+			);
+			const motions = [...projectMotionsRef.current.entries()]
+				.filter(([id]) => referencedMotionIds.has(id))
+				.map(([, record]) => record);
+			const motionCache = new Map();
+			for (const record of motions) motionCache.set(record.motionId.toLowerCase(), record);
+			for (const scene of input.scenesDocument.scenes) for (const character of scene.stage?.characters ?? []) {
+				const clip = motionFullRef.current.get(character.id);
+				if (!clip?.sourceBytes) continue;
+				const record = await encodeMotionResource(clip.sourceBytes, { prompt: character.motionRef?.prompt, sourceUrl: character.motionRef?.url });
+				const cached = motionCache.get(record.motionId) ?? record;
+				motionCache.set(record.motionId, cached);
+				if (!motions.includes(cached)) motions.push(cached);
+				projectMotionsRef.current.set(record.motionId.toLowerCase(), cached);
+				character.motionRef = { ...(character.motionRef || {}), motionId: cached.motionId };
 			}
-			return JSON.stringify(createProjectDocument({ ...input, assets, savedAt: Date.now() }), null, 2);
+			const allAssets = [...assets.filter(Boolean), ...workflowResult.assets];
+			const nextInput = { ...input, workflow: workflowResult.graph, assets: allAssets, motions };
+			const manifest = resourceManifest({ scenesDocument: nextInput.scenesDocument, workflow: nextInput.workflow, poseLibrary: nextInput.customPoses, assets: allAssets, motions, workflowOutputRefs });
+			setProjectManifest(manifest);
+			if (manifest.missing.length) {
+				const error = new Error("Project has missing resources");
+				error.code = "missing-resources";
+				error.items = manifest.missing;
+				throw error;
+			}
+			return JSON.stringify(createProjectDocument({ ...nextInput, savedAt: Date.now() }), null, 2);
 		} finally {
 			db.close();
 		}
@@ -3231,6 +3261,14 @@ export default function App() {
 		setProjectDirty(false);
 		setProjectName(name);
 		storeProjectSession(name);
+	}
+
+	function projectProblemsNotice(problems) {
+		if (!Array.isArray(problems) || !problems.length) return "";
+		const codes = [...new Set(problems.map((problem) => problem?.code).filter(Boolean))].join(", ");
+		return isKo
+			? ` · 포함된 자원 ${problems.length}개를 건너뛰었어요${codes ? ` (${codes})` : ""}`
+			: ` · skipped ${problems.length} embedded resource${problems.length === 1 ? "" : "s"}${codes ? ` (${codes})` : ""}`;
 	}
 
 	async function rehydrateProjectAssets(project, warnings = []) {
@@ -3283,6 +3321,7 @@ export default function App() {
 				await writeProjectFile(handle, serialized);
 			}
 			markProjectClean(name);
+			setSaveBlockedReasons(null);
 			setProjectSaveState("saved");
 			track("project:saved", {
 				object_count_bucket: bucketCount(projectStateRef.current.sceneObjects?.length ?? 0),
@@ -3295,11 +3334,14 @@ export default function App() {
 				return; // user closed the picker
 			}
 			setProjectSaveState("error");
-			setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
+			if (err?.code === "missing-resources") setSaveBlockedReasons([{ code: err.code, items: err.items }]);
+			else if (err?.code === "resources-too-large") setSaveBlockedReasons([err]);
+			else setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
 		}
 	}
 
 	function applyProject(project) {
+		projectMotionsRef.current = new Map((project.motions ?? []).map((record) => [record.motionId?.toLowerCase(), record]).filter(([id]) => id));
 		const source = project.scenesDocument;
 		// A project FILE carries its own scene document and never passes the
 		// storage reader, so the 20 fps → 24 fps clock migration is applied here
@@ -3312,7 +3354,8 @@ export default function App() {
 		setActiveSceneId(doc.activeSceneId);
 		if (project.workspaceLayout) setWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...project.workspaceLayout });
 		setCustomPoses(mergedCustomPoses);
-		storeWorkflowGraph(normalizeWorkflowGraph(project.workflow));
+		const resolvedWorkflow = resolveWorkflowOutputs(normalizeWorkflowGraph(project.workflow), new Map((project.assets ?? []).map((asset) => [asset.id, asset])));
+		storeWorkflowGraph(resolvedWorkflow);
 		saveCustomPoses(mergedCustomPoses);
 		persistScenes(doc.scenes, doc.activeSceneId);
 		openScene(doc.scenes[activeSceneIndex(doc.scenes, doc.activeSceneId)], doc.scenes);
@@ -3324,6 +3367,7 @@ export default function App() {
 		// Whatever document this is, it is no longer the scene the tutorial opened
 		// for itself; startCameraTutorial re-arms the flag after its own open.
 		tutorialStarterRef.current = false;
+		setProjectManifest(resourceManifest({ scenesDocument: doc, workflow: resolvedWorkflow, poseLibrary: mergedCustomPoses, assets: project.assets ?? [], motions: projectMotionsRef.current, workflowOutputRefs }));
 		track("project:opened", { age_bucket: bucketProjectAge(Date.now() - (project.savedAt ?? Date.now())) });
 	}
 
@@ -3412,7 +3456,7 @@ export default function App() {
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
 			setProjectStartupOpen(false);
-			setToast(isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`);
+			setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch (err) {
 			if (err?.name === "AbortError") return;
 			console.error("openProject failed", err);
@@ -3443,7 +3487,7 @@ export default function App() {
 			applyProject(result.project);
 		setProjectBrowserOpen(false);
 		setProjectStartupOpen(false);
-		setToast(isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`);
+		setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch (err) {
 			console.error("openProjectByHandle failed", err);
 			setToast(ko("Could not open the project", "프로젝트를 열지 못했어요"));
@@ -3495,7 +3539,7 @@ export default function App() {
 			projectHandleRef.current = record.handle;
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
-			setToast(isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`);
+			setToast(`${isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch {
 			/* missing or unreadable file: fall back to the session cache */
 		}
@@ -6791,6 +6835,27 @@ export default function App() {
 	// Reads live store state at call time; re-registered after every render.
 	useEffect(() => {
 		window.__sceneHistory = () => ({ ...store.depths(), settled: store.present() === store.objects });
+	});
+	// QA-only project-file seam: browser acceptance tests still exercise the
+	// production serializer/parser and apply path without depending on native
+	// file-picker UI, which headless Chrome does not expose consistently.
+	useEffect(() => {
+		window.__cozyclayProject = {
+			export: (name = "QA Project") => collectProjectSerialized(name),
+			open: async (text) => {
+				const result = readProjectDocument(text);
+				if (!result.ok) return result;
+				await rehydrateProjectAssets(result.project, result.warnings);
+				applyProject(result.project);
+				setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
+				return result;
+			},
+			manifest: () => projectManifest,
+			saveBlocked: () => saveBlockedReasons,
+		};
+		return () => {
+			if (window.__cozyclayProject?.export) delete window.__cozyclayProject;
+		};
 	});
 
 	// On clear, restore the exact pre-playback bone rotations. This runs in
@@ -10239,17 +10304,27 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * rebuild the session motions. The bridge may be gone — failures just
 	 * leave the character posed, never an error the user must act on. */
 	function restoreMotionRefs(list) {
+		const epoch = ++restoreEpochRef.current;
+		const motions = projectMotionsRef.current;
 		for (const entry of list) {
-			if (!entry.motionRef?.url) continue;
+			const source = resolveMotionSource(entry.motionRef, motions);
+			if (source.kind === "missing") {
+				setToast(isKo ? `저장된 모션이 누락되었습니다 (${entry.subject || entry.id})` : `Saved motion is missing for ${entry.subject || entry.id}`);
+				continue;
+			}
+			const load = source.kind === "embedded" ? decodeMotionResource(source.record) : loadMotionFromUrl(source.url);
+			load.then((raw) => {
+				if (epoch !== restoreEpochRef.current) return;
 			// Inbound boundary: a re-fetched clip is retimed exactly like a
 			// freshly generated one, so a reload cannot resurrect 20 fps frames.
-			loadMotionFromUrl(entry.motionRef.url).then((raw) => {
+			const sourceUrl = source.kind === "url" ? source.url : entry.motionRef?.url;
 				const retimed = retimeMotion(raw, TIMELINE_FPS);
 				const normalizedCalibration = normalizeMotionCalibration(entry.motionRef.calibration);
 				const decoded = applyMotionCalibration(retimed, { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 }).motion;
 				const clip = {
 					...decoded,
-					url: entry.motionRef.url,
+					url: sourceUrl,
+					sourceBytes: raw.sourceBytes,
 					prompt: entry.motionRef.prompt,
 					anchorX: entry.motionRef.anchorX,
 					anchorZ: entry.motionRef.anchorZ,
@@ -10273,14 +10348,28 @@ function resizePromptClip(id, edge, rawFrame) {
 					setTlFrameCount((count) => Math.max(count, decoded.frames));
 					setTlFps(decoded.fps);
 				}
-			}).catch(() => {
+			}).catch((error) => {
+				if (epoch !== restoreEpochRef.current) return;
+				setProjectManifest((current) => {
+					const id = entry.motionRef?.motionId?.toLowerCase();
+					if (!id || !current?.items?.some((item) => item.kind === "motion" && item.id === id)) return current;
+					const items = current.items.map((item) => item.kind === "motion" && item.id === id
+						? { ...item, status: "missing", url: undefined }
+						: item);
+					const totals = { embedded: 0, external: 0, missing: 0, bytes: 0 };
+					for (const item of items) {
+						totals[item.status] += 1;
+						if (Number.isFinite(item.bytes)) totals.bytes += item.bytes;
+					}
+					return { items, totals, missing: items.filter((item) => item.status === "missing") };
+				});
 				// A saved take that fails to refetch used to vanish silently — the
 				// user would find a merely posed character and assume their motion
 				// was lost. Name it and offer the reload path.
 				const subject = entry.subject || entry.id;
 				setToast(isKo
-					? `저장된 모션을 다시 불러오지 못했어요 (${subject}) — 새로고침하거나 모션을 다시 생성해 주세요`
-					: `Saved motion could not be restored for ${subject} — reload or generate it again`);
+					? `저장된 모션을 다시 불러오지 못했어요 (${subject}) [${error?.code || "decode"}]`
+					: `Saved motion could not be restored for ${subject} [${error?.code || "decode"}]`);
 			});
 		}
 	}
@@ -10324,6 +10413,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							<button type="button" role="menuitem" onClick={() => { setProjectStartupOpen(false); setProjectBrowserOpen(true); }}>{ko("Open Project…", "프로젝트 열기…")}</button>
 							<button type="button" role="menuitem" onClick={() => saveProject(false)}>{ko("Save Project", "프로젝트 저장")}</button>
 							<button type="button" role="menuitem" onClick={() => saveProject(true)}>{ko("Save Project As…", "다른 이름으로 저장…")}</button>
+							<ResourceStatus manifest={projectManifest} compact />
 						</div>
 					)}
 				</div>
@@ -13198,6 +13288,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						onDeleteUnusedAsset={deleteUnusedAsset}
 						onUndoDelete={undoDeletedAsset}
 						deletingAssetId={deletingAssetId}
+						resourceManifest={projectManifest}
 					/>
 				</div>
 				<div className="bottom-timeline" hidden={bottomTab !== "timeline"}>
@@ -13611,6 +13702,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				}}
 			/>
 			<FirstSuccessGuide open={firstSuccessGuideOpen} onDismiss={() => setFirstSuccessGuideOpen(false)} />
+			{saveBlockedReasons && <SaveBlockedDialog reasons={saveBlockedReasons} onClose={() => setSaveBlockedReasons(null)} />}
 			<Toast message={toast} onDone={() => setToast("")} />
 			{pwaUpdate && (
 				<div className="scene-delete-toast" role="status">

@@ -222,6 +222,21 @@ function embeddedAsset(record) {
 	return { record: { ...asset, bytes: bytesToBase64(asset.bytes) }, bytes: asset.bytes.byteLength };
 }
 
+function workflowAssetIds(workflow) {
+	const ids = new Set();
+	const visit = (value) => {
+		if (Array.isArray(value)) {
+			for (const entry of value) visit(entry);
+			return;
+		}
+		if (!plainRecord(value)) return;
+		if (isAssetId(value.assetRef)) ids.add(value.assetRef);
+		for (const entry of Object.values(value)) visit(entry);
+	};
+	visit(workflow);
+	return ids;
+}
+
 /** The optional motion fields carried verbatim; frames/fps come from the
  * encoder (motion-resources.js), never from decoding the NPZ here. */
 function motionDetails(record) {
@@ -346,11 +361,11 @@ function readEmbeddedMotions(value, report) {
 }
 
 /**
- * Build the v4 envelope. Images are embedded only when a scene references
- * them; motions are embedded as given (deduped by motionId, first record
- * wins) because the caller already knows which ones the scenes use. Throws
- * `resources-too-large` when one motion or the whole manifest exceeds its
- * budget.
+ * Build the v4 envelope. Images are embedded when a scene or workflow
+ * assetRef references them; motions are embedded as given (deduped by
+ * motionId, first record wins) because the caller already knows which ones
+ * the project uses. Throws `resources-too-large` when one motion or the whole
+ * manifest exceeds its budget.
  */
 export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, motions, savedAt, workflow }) {
 	const assetRecords = new Map();
@@ -360,7 +375,9 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
 	}
 	const embeddedAssets = [];
 	let resourceBytes = 0;
-	for (const id of referencedAssetIds(scenesDocument?.scenes)) {
+	const referencedIds = referencedAssetIds(scenesDocument?.scenes);
+	for (const id of workflowAssetIds(workflow)) referencedIds.add(id);
+	for (const id of referencedIds) {
 		const asset = assetRecords.get(id);
 		if (!asset) continue;
 		embeddedAssets.push(asset.record);
