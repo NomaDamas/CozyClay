@@ -68,7 +68,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 - Node.js 22.13 or newer
 - npm, or bun
 - A Chromium-based browser
-- An SSH-accessible NVIDIA machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the first setup downloads the Kimodo checkpoint and text-encoder stack. The same box runs GVHMR for video and photo mocap (`CCLAY_EXTRACT_BACKEND=gvhmr` is the default; there is no browser fallback).
+- A machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the installer detects the host and picks the best-supported backend (see the route table below), then downloads the matching checkpoint and text-encoder stack. An SSH-accessible NVIDIA box is the classic target; the same box runs GVHMR for video and photo mocap (`CCLAY_EXTRACT_BACKEND=gvhmr` is the default; there is no browser fallback).
 
 ## Quick start
 
@@ -82,17 +82,37 @@ That downloads the built studio and opens it at `http://127.0.0.1:5180/app/`. No
 
 A global install gives you `cclay`, the same command with less typing. Once a day the launcher checks npm for a newer release and prints a one-line notice after the studio is up; it stays quiet when you're current or offline. `cclay update` installs the latest release, and `--no-update-check` skips the check entirely.
 
-Motion generation uses Kimodo by default once you point it at an SSH-accessible NVIDIA machine:
+Motion generation uses Kimodo by default once you point it at a Kimodo host:
 
 ```bash
 CCLAY_KIMODO_HOST=user@your-gpu-box npx cozyclay
 ```
 
-Install the remote worker once:
+Install the worker once, on whichever machine should generate motion:
 
 ```bash
 CCLAY_KIMODO_HOST=user@your-gpu-box npm run kimodo:setup
+# or directly on the machine itself:
+bash tools/kimodo/setup-on-box.sh
 ```
+
+The installer is a router — it detects OS, architecture, RAM and CUDA, and installs the best-supported Kimodo variant for that host:
+
+| Host | Backend installed | Why |
+| --- | --- | --- |
+| macOS Apple Silicon, RAM > 32 GB | [kimodo-mlx](https://github.com/NomaDamas/kimodo-mlx) (MLX/Metal) | The 15 GB text encoder stays resident in unified memory: ~0.9 s warm generation vs ~37 s streaming on an M4 Max 64 GB |
+| macOS Apple Silicon, RAM ≤ 32 GB | [kimodo.cpp](https://github.com/localai-org/kimodo.cpp) + Metal (GGML) | Residency doesn't fit; streaming transformer layers from disk is the right trade |
+| Linux + working NVIDIA CUDA | [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) (PyTorch) | Full CUDA acceleration with the upstream stack |
+| Other Unix, no CUDA | kimodo.cpp CPU (Vulkan when available) | Local GGML execution without a GPU |
+
+Inspect the route without changing anything — and override it when you know better:
+
+```bash
+bash tools/kimodo/setup-on-box.sh --dry-run
+bash tools/kimodo/setup-on-box.sh --backend kimodo.cpp-metal   # or CCLAY_KIMODO_BACKEND=...
+```
+
+The RAM threshold between the two macOS routes defaults to 32 GB (`CCLAY_KIMODO_MLX_MIN_RAM_GB`).
 
 ## AI control (MCP)
 
