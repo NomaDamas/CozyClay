@@ -33,7 +33,7 @@ expect(
 	controls.includes('addEventListener("lostpointercapture", onLostCapture)') &&
 	controls.includes("if (gesture.current && (lockPending || isLocked())) return;"),
 );
-expect("unexpected unlock (Esc) ends the live gesture", /onPointerLockChange[\s\S]*if \(gesture\.current\) endGesture\(\)/.test(controls));
+expect("unexpected unlock (Esc) ends the live gesture", /onPointerLockChange[\s\S]*if \(gesture\.current\) \{[\s\S]*endGesture\(\)/.test(controls));
 expect("cleanup releases pointer lock", /return \(\) => \{[\s\S]*releaseNavLock\(\)/.test(controls));
 
 const escapeFn = sliceBetween(controls, "const onEscapeCapture", "const endGesture");

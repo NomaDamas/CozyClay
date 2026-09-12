@@ -194,8 +194,10 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 				return;
 			}
 			lockPending = false;
-			suppressEscapeUntil = performance.now() + 120;
-			if (gesture.current) endGesture();
+			if (gesture.current) {
+				suppressEscapeUntil = performance.now() + 120;
+				endGesture();
+			}
 		};
 		const onPointerLockError = () => { lockPending = false; };
 
