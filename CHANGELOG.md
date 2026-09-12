@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Camera fly, pan and orbit lock the pointer for the hold: the cursor hides,
+  the view can turn past the window edge, and release puts the cursor back
+  where the press started.
+
 ## 1.8.1
 
 The Studio camera tutorial now starts where the landing page does and shows
