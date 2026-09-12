@@ -593,5 +593,11 @@ export async function loadMotionFromUrl(url, { signal } = {}) {
 		throw new NpzError(`motion download is ${blob.size} bytes, over the ${MAX_ARCHIVE_BYTES} byte cap`);
 	}
 	const buffer = await blob.arrayBuffer();
-	return decodeMotionNpz(new Uint8Array(buffer));
+	const bytes = new Uint8Array(buffer);
+	const motion = await decodeMotionNpz(bytes);
+	// The validated archive rides along so a project save can embed the take
+	// (src/motion-resources.js) without a second download. Playback keeps
+	// reading the decoded arrays; nothing on that path looks at sourceBytes.
+	motion.sourceBytes = bytes;
+	return motion;
 }

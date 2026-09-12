@@ -168,15 +168,28 @@ export function createCharacterEntry(source = null, index = 0) {
 	};
 }
 
+const MOTION_ID_RE = /^[0-9a-f]{64}$/i;
+
+// A motionRef names its take by content (motionId: SHA-256 of the npz, kept
+// in the project's embedded motions) and/or by location (url: a bridge run,
+// which is what pre-motionId documents carry). Either one alone is a valid
+// ref; the restore path prefers the embedded bytes when both are present.
 function normalizeMotionRef(ref) {
-	if (!plainObject(ref) || typeof ref.url !== "string" || !ref.url) return null;
-	const normalized = {
-		url: ref.url,
+	if (!plainObject(ref)) return null;
+	const motionId = typeof ref.motionId === "string" && MOTION_ID_RE.test(ref.motionId) ? ref.motionId.toLowerCase() : null;
+	const url = typeof ref.url === "string" && ref.url ? ref.url : null;
+	if (!motionId && !url) return null;
+	const normalized = {};
+	// Field order matters only for byte-stable serialization; a url-only ref
+	// keeps the exact legacy shape (url first, no motionId key).
+	if (motionId) normalized.motionId = motionId;
+	if (url) normalized.url = url;
+	Object.assign(normalized, {
 		prompt: typeof ref.prompt === "string" ? ref.prompt : "",
 		rotationDeg: Number.isFinite(ref.rotationDeg) ? ref.rotationDeg : 0,
 		anchorX: Number.isFinite(ref.anchorX) ? ref.anchorX : 0,
 		anchorZ: Number.isFinite(ref.anchorZ) ? ref.anchorZ : 0,
-	};
+	});
 	// Scene calibration is deliberately metadata on the lightweight motionRef,
 	// never an NPZ member.  Keep it optional so old documents retain their exact
 	// shape, while preserving the calibration produced by the extraction/load
