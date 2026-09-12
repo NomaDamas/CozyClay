@@ -3215,13 +3215,28 @@ export default function App() {
 	playgroundExportRef.current = collectProjectSerialized;
 	async function collectProjectSerialized(name) {
 		const input = projectDocumentInput(name);
+		const scenesDocument = {
+			...input.scenesDocument,
+			scenes: input.scenesDocument.scenes.map((scene) => ({
+				...scene,
+				stage: scene.stage
+					? {
+						...scene.stage,
+						characters: (scene.stage.characters ?? []).map((character) => ({
+							...character,
+							motionRef: character.motionRef ? { ...character.motionRef } : character.motionRef,
+						})),
+					}
+					: scene.stage,
+			})),
+		};
 		const db = await openAssetDb();
 		try {
-			const ids = [...referencedAssetIds(input.scenesDocument.scenes)];
+			const ids = [...referencedAssetIds(scenesDocument.scenes)];
 			const assets = await Promise.all(ids.map((id) => getAsset(db, id)));
 			const workflowResult = await internWorkflowOutputs(input.workflow);
 			const referencedMotionIds = new Set(
-				input.scenesDocument.scenes.flatMap((scene) => (scene.stage?.characters ?? [])
+				scenesDocument.scenes.flatMap((scene) => (scene.stage?.characters ?? [])
 					.map((character) => character.motionRef?.motionId?.toLowerCase())
 					.filter(Boolean)),
 			);
@@ -3230,7 +3245,7 @@ export default function App() {
 				.map(([, record]) => record);
 			const motionCache = new Map();
 			for (const record of motions) motionCache.set(record.motionId.toLowerCase(), record);
-			for (const scene of input.scenesDocument.scenes) for (const character of scene.stage?.characters ?? []) {
+			for (const scene of scenesDocument.scenes) for (const character of scene.stage?.characters ?? []) {
 				const clip = motionFullRef.current.get(character.id);
 				if (!clip?.sourceBytes) continue;
 				const record = await encodeMotionResource(clip.sourceBytes, { prompt: character.motionRef?.prompt, sourceUrl: character.motionRef?.url });
@@ -3241,7 +3256,7 @@ export default function App() {
 				character.motionRef = { ...(character.motionRef || {}), motionId: cached.motionId };
 			}
 			const allAssets = [...assets.filter(Boolean), ...workflowResult.assets];
-			const nextInput = { ...input, workflow: workflowResult.graph, assets: allAssets, motions };
+			const nextInput = { ...input, scenesDocument, workflow: workflowResult.graph, assets: allAssets, motions };
 			const manifest = resourceManifest({ scenesDocument: nextInput.scenesDocument, workflow: nextInput.workflow, poseLibrary: nextInput.customPoses, assets: allAssets, motions, workflowOutputRefs });
 			setProjectManifest(manifest);
 			if (manifest.missing.length) {
