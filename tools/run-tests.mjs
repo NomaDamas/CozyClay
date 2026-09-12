@@ -172,6 +172,7 @@ const NODE_FILES = [
 	"test/verify-number-field-scrub.mjs",
 	"test/verify-speed-envelope.mjs",
 	"test/verify-motion-resources.mjs",
+	"test/verify-project-resources.mjs",
 ];
 
 const BROWSER_FILES = [
