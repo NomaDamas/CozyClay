@@ -22,13 +22,15 @@ export const PASS_KINDS = Object.freeze(["depth", "normal"]);
 // under it spread across the full range instead of collapsing to black.
 export const DEPTH_RANGE_M = 40;
 
-/** Return the shot-wide near/far range from per-frame depth samples. */
+/** Return the shot-wide near/far range from per-frame extrema. */
 export function depthRangeFromFrames(frames, fallbackNear = 0.1, fallbackFar = DEPTH_RANGE_M) {
-	const values = (frames ?? []).flatMap((frame) => Array.from(frame ?? []))
-		.filter((value) => Number.isFinite(value) && value > 0);
-	if (!values.length) return { near: fallbackNear, far: fallbackFar };
-	const near = Math.min(...values);
-	const far = Math.max(...values);
+	let near = Infinity;
+	let far = -Infinity;
+	for (const frame of frames ?? []) {
+		if (Number.isFinite(frame?.min) && frame.min > 0) near = Math.min(near, frame.min);
+		if (Number.isFinite(frame?.max) && frame.max > 0) far = Math.max(far, frame.max);
+	}
+	if (!Number.isFinite(near) || !Number.isFinite(far)) return { near: fallbackNear, far: fallbackFar };
 	return { near, far: Math.max(far, near + 0.0001) };
 }
 

@@ -5,7 +5,7 @@ import { normalizeFrameRange } from "../src/offscreen-export.js";
 
 assert.deepEqual(normalizeFrameRange(12, 21), { startFrame: 12, endFrame: 21, frameCount: 10 });
 assert.equal(passFileName("depth"), "blocking-frame-depth.png");
-assert.deepEqual(depthRangeFromFrames([[8, 3, 12], [5, 19]], 0.1, 40), { near: 3, far: 19 });
+assert.deepEqual(depthRangeFromFrames([{ min: 8, max: 12 }, { min: 3, max: 19 }, { min: 5, max: 11 }], 0.1, 40), { near: 3, far: 19 });
 assert.deepEqual(depthRangeFromFrames([], 0.2, 40), { near: 0.2, far: 40 });
 assert.ok(depthRangeFromFrames([[5, 5]]).far > 5, "equal shot depths retain a usable range");
 console.log("PASS depth video addresses an inclusive shot range and uses blocking-depth semantics");

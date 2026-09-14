@@ -4855,13 +4855,26 @@ export default function App() {
 		const cam = shotCamRef.current;
 		const snapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
 		try {
-			const samples = [];
-			for (let frame = startFrame; frame <= endFrame; frame += 1) {
-				applyExportFrame(frame);
-				const depth = renderPass(captureRef.current, captureRef.current.scene, cam, "depth");
-				if (depth) samples.push(Array.from(depth).filter((_, index) => index % 4 === 0).map((grey) => DEPTH_RANGE_M * (1 - grey / 255)));
+			let depthRange = null;
+			if (endFrame > startFrame) {
+				const samples = [];
+				for (let frame = startFrame; frame <= endFrame; frame += 1) {
+					applyExportFrame(frame);
+					const depth = renderPass(captureRef.current, captureRef.current.scene, cam, "depth");
+					if (depth) {
+						let minGrey = 255;
+						let maxGrey = 0;
+						for (let index = 0; index < depth.length; index += 256) {
+							const grey = depth[index];
+							if (grey < minGrey) minGrey = grey;
+							if (grey > maxGrey) maxGrey = grey;
+						}
+						samples.push({ min: DEPTH_RANGE_M * (1 - maxGrey / 255), max: DEPTH_RANGE_M * (1 - minGrey / 255) });
+					}
+					if ((frame - startFrame) % 4 === 3) await new Promise((resolve) => setTimeout(resolve, 0));
+				}
+				depthRange = depthRangeFromFrames(samples, cam.near, DEPTH_RANGE_M);
 			}
-			const depthRange = depthRangeFromFrames(samples, cam.near, DEPTH_RANGE_M);
 			await runShotExport({ startFrame, endFrame, passKind: "depth", depthRange, fileName: "blocking-depth.mp4" });
 			trackFeature("export_depth_video");
 		} catch (error) { if (error?.name !== "AbortError") setToast(error?.message || String(error)); }
