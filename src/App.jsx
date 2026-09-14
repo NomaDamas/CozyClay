@@ -265,6 +265,7 @@ import {
 } from "./posestudio.jsx";
 import { mergeProjectCustomPoses } from "./project-poses.js";
 import { encodeMotionResource, decodeMotionResource, resolveMotionSource } from "./motion-resources.js";
+import { openMotionDb, putMotion, getMotion, sweepMotions } from "./motion-store.js";
 import { resourceManifest } from "./project-resources.js";
 import { internWorkflowOutputs, resolveWorkflowOutputs, workflowOutputRefs } from "./workflow/workflow-resources.js";
 import {
@@ -3262,6 +3263,7 @@ export default function App() {
 				projectMotionsRef.current.set(record.motionId.toLowerCase(), cached);
 				character.motionRef = { ...(character.motionRef || {}), motionId: cached.motionId };
 			}
+			try { const motionDb = await openMotionDb(); await Promise.all(motions.map((record) => putMotion(motionDb, record))); motionDb.close(); } catch (error) { console.warn("[cozyclay] could not cache motions", error); }
 			const allAssets = [...assets.filter(Boolean), ...workflowResult.assets];
 			const nextInput = { ...input, scenesDocument, workflow: workflowResult.graph, assets: allAssets, motions };
 			const manifest = resourceManifest({ scenesDocument: nextInput.scenesDocument, workflow: nextInput.workflow, poseLibrary: nextInput.customPoses, assets: allAssets, motions, workflowOutputRefs });
@@ -3365,6 +3367,7 @@ export default function App() {
 	function applyProject(project) {
 		projectMotionsRef.current = new Map((project.motions ?? []).map((record) => [record.motionId?.toLowerCase(), record]).filter(([id]) => id));
 		const source = project.scenesDocument;
+		openMotionDb().then(async (db) => { try { await Promise.all([...projectMotionsRef.current.values()].map((record) => putMotion(db, record))); const ids = new Set((source?.scenes ?? []).flatMap((scene) => (scene.stage?.characters ?? []).map((character) => character.motionRef?.motionId?.toLowerCase()).filter(Boolean))); await sweepMotions(db, ids); } finally { db.close(); } }).catch(() => {});
 		// A project FILE carries its own scene document and never passes the
 		// storage reader, so the 20 fps → 24 fps clock migration is applied here
 		// too — otherwise an older .cozyclay would open a sixth too fast.
@@ -10369,9 +10372,10 @@ function resizePromptClip(id, edge, rawFrame) {
 	/** After a scene (re)load, re-fetch every persisted clip reference and
 	 * rebuild the session motions. The bridge may be gone — failures just
 	 * leave the character posed, never an error the user must act on. */
-	function restoreMotionRefs(list) {
+	async function restoreMotionRefs(list) {
 		const epoch = ++restoreEpochRef.current;
 		const motions = projectMotionsRef.current;
+		try { const db = await openMotionDb(); const ids = [...new Set(list.map((entry) => entry.motionRef?.motionId?.toLowerCase()).filter(Boolean))]; const cached = await Promise.all(ids.map((id) => getMotion(db, id))); cached.filter(Boolean).forEach((record) => motions.set(record.motionId.toLowerCase(), record)); db.close(); } catch (error) { console.warn("[cozyclay] could not restore motion cache", error); }
 		for (const entry of list) {
 			const source = resolveMotionSource(entry.motionRef, motions);
 			if (source.kind === "missing") {

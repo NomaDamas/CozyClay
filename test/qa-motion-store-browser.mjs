@@ -1,0 +1,23 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { mkdir, writeFile } from "node:fs/promises";
+const port = Number(process.env.CDP_PORT || 9238);
+const out = "/tmp/cozyclay-238-qa"; await mkdir(out, { recursive: true });
+const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
+const page = targets.find((t) => t.type === "page" && t.url.includes("/app/"));
+assert.ok(page, "app page is open");
+const ws = new WebSocket(page.webSocketDebuggerUrl); await new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
+let id = 0; const pending = new Map(); ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.id && pending.has(m.id)) { const p = pending.get(m.id); pending.delete(m.id); m.error ? p.reject(m.error) : p.resolve(m.result); } };
+const send = (method, params = {}) => new Promise((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); ws.send(JSON.stringify({ id: requestId, method, params })); });
+const evaluate = async (expression) => (await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true })).result?.value;
+await send("Page.enable"); await send("Storage.clearDataForOrigin", { origin: new URL(page.url).origin, storageTypes: "all" });
+const exported = await evaluate("window.__cozyclayProject?.export('issue-238')"); assert.equal(typeof exported, "string");
+const project = JSON.parse(exported); const character = project.scenes.scenes[0].stage.characters[0];
+assert.ok(character.motionRef?.motionId, "fixture project has embedded motion");
+await evaluate(`window.__cozyclayProject.open(${JSON.stringify(exported)})`);
+await new Promise((r) => setTimeout(r, 1000));
+assert.equal(await evaluate("window.__cozyclay?.motion?.motionId"), character.motionRef.motionId);
+await send("Page.reload"); await new Promise((r) => setTimeout(r, 1500));
+assert.equal(await evaluate("window.__cozyclay?.motion?.motionId"), character.motionRef.motionId);
+const shot = await send("Page.captureScreenshot", { format: "png" }); await writeFile(`${out}/reload-motion-playing.png`, Buffer.from(shot.data, "base64"));
+console.log(`PASS embedded motion reload playback; screenshot ${out}/reload-motion-playing.png`);

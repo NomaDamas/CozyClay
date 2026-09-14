@@ -174,6 +174,7 @@ const NODE_FILES = [
 	"test/verify-number-field-scrub.mjs",
 	"test/verify-speed-envelope.mjs",
 	"test/verify-motion-resources.mjs",
+	"test/verify-motion-store.mjs",
 	"test/verify-project-resources.mjs",
 	"test/verify-workflow-resources.mjs",
 	"test/verify-resource-status.mjs",

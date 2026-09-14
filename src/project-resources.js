@@ -146,7 +146,7 @@ function resolveImage(id, assetsById, storedIds) {
 
 function resolveMotion(motionId, url, motionsById) {
 	const record = motionId ? motionsById.get(motionId) : null;
-	if (record) return { status: "embedded", bytes: byteSize(record.bytes) ?? byteSize(record.data) };
+	if (record) return { status: "embedded", stored: record.stored === true, bytes: byteSize(record.bytes) ?? byteSize(record.data) };
 	if (url) return { status: "external", url };
 	return { status: "missing" };
 }
