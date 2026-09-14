@@ -256,10 +256,18 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	const contacts = supportIntervals(samples, fps, overrides, floorY);
 	timings.supportMs = performance.now() - started - timings.sourceMs;
 	const preserveFrames = [...new Set([...protectedFrames, ...grounding.flight])];
+	// Holden's lock is causal (it starts blending AT contact), which leaves the
+	// blend's first frames inside the span as measurable slide. Offline we know
+	// every span ahead of time, so start the lock one frame early. One frame is
+	// the measured sweet spot on the reference takes: it brings peak in-span
+	// slide under the origin baseline, while a 2-3 frame lead trips the knee
+	// acceleration gate on x-bot at the preceding foot's release.
+	const lockBlendTime = 0.1, lockLead = 1;
 	const toeTracks = Object.fromEntries(SUPPORT_SITES.filter((s) => s.kind === "foot").map((site) => {
-		const flags = samples.map((r, f) => contacts.masks[f].has(site.id));
-		const anchors = samples.map((r, f) => flags[f] ? contacts.masks[f].get(site.id).anchor.clone().setY(r.toes[site.id].y) : null);
-		return [site.id, footLockTrack(samples.map((r) => r.toes[site.id]), flags, { fps, blendTime: 0.2, anchors })];
+		const spanAt = (f) => contacts.masks[f].get(site.id) ?? contacts.spans.find((s) => s.site === site.id && f >= s.start - lockLead && f < s.start);
+		const leads = samples.map((r, f) => spanAt(f));
+		const anchors = leads.map((span, f) => span ? span.anchor.clone().setY(samples[f].toes[site.id].y) : null);
+		return [site.id, footLockTrack(samples.map((r) => r.toes[site.id]), leads.map(Boolean), { fps, blendTime: lockBlendTime, anchors })];
 	}));
 	const influenceAt = (f) => clamp(strength, 0, 1) * Math.min(1, ...preserveFrames.map((p) => smooth(Math.abs(f - p) / 4)));
 	const targets = samples.map((r, f) => {
@@ -327,7 +335,6 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 		}
 	}
 	await yieldFrame();
-	roots = relaxPhysicsRoot(samples, targets, roots, protectedFrames, PHYSICS_LIMITS.root);
 	roots = relaxPhysicsRoot(samples, targets, roots, protectedFrames, PHYSICS_LIMITS.root);
 	const solutions = [];
 	for (let f = 0; f < count; f += 1) {
@@ -484,7 +491,10 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 		if (!point) continue;
 		if (floorY - point.floor > PHYSICS_LIMITS.floor) unresolved.push({ frame: f, site: site.id, reason: "floor", error: floorY - point.floor });
 		if (span && point.floor - floorY > PHYSICS_LIMITS.float) unresolved.push({ frame: f, site: site.id, reason: "float", error: point.floor - floorY });
-		const drift = span ? Math.hypot(point.position.x - span.anchor.x, point.position.z - span.anchor.z) : 0;
+		// Anchors are TOE points for feet, so measure drift from the same point
+		// physicsMetrics uses; the ankle sits ~14 cm behind the toe anchor.
+		const drifted = sitePoint(after[f], site);
+		const drift = span ? Math.hypot(drifted.x - span.anchor.x, drifted.z - span.anchor.z) : 0;
 		if (drift > PHYSICS_LIMITS.slide) unresolved.push({ frame: f, site: site.id, reason: "slide", error: drift });
 	}
 	const warnings = reviewWarnings(beforeMetrics, afterMetrics, replayErrors);
