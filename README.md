@@ -107,7 +107,7 @@ The installer is a router — it detects OS, architecture, RAM and CUDA, and ins
 
 The installer supports all routes above, but Studio motion generation currently runs only through the Linux + NVIDIA CUDA route. On Apple Silicon Macs and CUDA-less Linux, Kimodo is installed for local use while the Studio MLX/kimodo.cpp integration is tracked in [#239](https://github.com/NomaDamas/CozyClay/issues/239).
 
-For the CUDA route, the installer places the checkout at `$HOME/.cozyclay/kimodo` and its virtual environment at `$HOME/.cozyclay/kimodo-venv`. The Studio runner currently looks for `$CCLAY_KIMODO_REPO/.venv`; the final installer log prints both paths so this configuration gap is visible until #239 is addressed.
+For the CUDA route, the installer places the checkout at `$HOME/.cozyclay/kimodo` and its virtual environment at `$HOME/.cozyclay/kimodo-venv`, then links the venv at `$CCLAY_KIMODO_REPO/.venv` where the Studio runner expects it.
 
 Inspect the route without changing anything — and override it when you know better:
 

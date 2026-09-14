@@ -168,9 +168,17 @@ print("model and encoder assets ready")
 PY
   fi
 
+  if [ "$VENV_DIR" != "$KIMODO_DIR/.venv" ]; then
+    if [ "$DRY_RUN" -eq 1 ]; then
+      log "would link $KIMODO_DIR/.venv -> $VENV_DIR"
+    else
+      ln -sfn "$VENV_DIR" "$KIMODO_DIR/.venv"
+    fi
+  fi
+
   log "export CCLAY_MOTION_BACKEND=kimodo"
   log "export CCLAY_KIMODO_HOST=<this host>"
-  log "export CCLAY_KIMODO_REPO=$KIMODO_DIR (runner expects $KIMODO_DIR/.venv; installed venv is $VENV_DIR)"
+  log "export CCLAY_KIMODO_REPO=$KIMODO_DIR (venv available at $KIMODO_DIR/.venv)"
   log "Kimodo model: $MODEL"
 }
 

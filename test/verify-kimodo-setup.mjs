@@ -15,7 +15,7 @@ assert.match(setup, /git clone --depth 1 https:\/\/github\.com\/nv-tlabs\/kimodo
 assert.match(setup, /if \[ ! -e "\$KIMODO_DIR\/.git" \]/);
 assert.match(setup, /snapshot_download\(repo_id=f\\?"nvidia\/\{model\}"\)/);
 assert.match(setup, /McGill-NLP\/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised/);
-assert.match(setup, /CCLAY_KIMODO_REPO=\$KIMODO_DIR.*runner expects \$KIMODO_DIR\/\.venv.*installed venv is \$VENV_DIR/);
+assert.match(setup, /ln -sfn "\$VENV_DIR" "\$KIMODO_DIR\/\.venv"/);
 assert.doesNotMatch(setup, /CCLAY_ARDY|\/ardy|ARDY/);
 assert.match(setup, /git -C "\$CPP_DIR" apply --check -R/);
 assert.match(setup, /Metal patch cannot be applied cleanly/);
@@ -78,6 +78,12 @@ r = dryRun(detect("Linux", "x86_64", 128, 1));
 assert.equal(r.status, 0, r.out);
 assert.match(r.out, /backend=nvidia-cuda/);
 assert.match(r.out, /nv-tlabs\/kimodo\.git/);
+assert.match(r.out, /would link .*\/kimodo\/\.venv -> .*\/kimodo-venv/);
+
+// A venv already at the runner's path must not be linked to itself.
+r = dryRun(detect("Linux", "x86_64", 128, 1), ["--venv", `${process.env.HOME}/.cozyclay/kimodo/.venv`]);
+assert.equal(r.status, 0, r.out);
+assert.doesNotMatch(r.out, /would link/);
 
 r = dryRun(detect("Linux", "x86_64", 128, 0));
 assert.equal(r.status, 0, r.out);
