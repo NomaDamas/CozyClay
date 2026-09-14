@@ -64,7 +64,7 @@ export function buildBackendCommand({ backend = "nvidia-cuda", repo, model, prom
   const entry = spec.entry.startsWith("$HOME/") ? spec.entry : `${root}/${spec.entry}`;
   const args = [];
   if (spec.mode === "mlx") args.push(spec.promptFlag, prompt, "--motion", motionWeights || process.env.CCLAY_KIMODO_MLX_MOTION || "$HOME/.cozyclay/kimodo-mlx/models/nvidia-soma-rp-v1.1", "--text", textBundle || process.env.CCLAY_KIMODO_MLX_TEXT || "$HOME/.cozyclay/kimodo-mlx/models/llm2vec-text-bundle", spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
-  else if (spec.mode === "cpp") args.push(motionWeights || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1-f32.gguf", textBundle || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || "$HOME/.cozyclay/kimodo.cpp/models/llm2vec-text-bundle", promptFile || "$HOME/.cozyclay/kimodo.cpp/prompt.txt", String(frames), String(steps), String(Number.isInteger(seed) ? seed : 42), outputDir || output);
+  else if (spec.mode === "cpp") args.push(motionWeights || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", textBundle || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", promptFile || "$HOME/.cozyclay/kimodo.cpp/prompt.txt", String(frames), String(steps), String(Number.isInteger(seed) ? seed : 42), outputDir || output);
   else args.push(prompt, spec.durationFlag, duration, "--diffusion_steps", String(steps), "--model", model);
   if (Number.isInteger(seed)) args.push("--seed", String(seed));
   if (spec.outputFlag) args.push(spec.outputFlag, output);

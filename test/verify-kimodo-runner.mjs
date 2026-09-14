@@ -170,7 +170,7 @@ const mlx = buildBackendCommand({ backend: "kimodo-mlx", repo: "/opt/mlx", promp
 assert.deepEqual(mlx.args, ["-m", "kimodo_mlx", "generate", "--prompt", "walk", "--motion", "$HOME/.cozyclay/kimodo-mlx/models/nvidia-soma-rp-v1.1", "--text", "$HOME/.cozyclay/kimodo-mlx/models/llm2vec-text-bundle", "--frames", "60", "--steps", "10"]);
 for (const backend of ["kimodo.cpp-metal", "kimodo.cpp-cpu"]) {
   const cpp = buildBackendCommand({ backend, repo: "/opt/cpp", prompt: "walk", frames: 60, steps: 10, output: "/tmp/take" });
-  assert.deepEqual(cpp.args, ["$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1-f32.gguf", "$HOME/.cozyclay/kimodo.cpp/models/llm2vec-text-bundle", "$HOME/.cozyclay/kimodo.cpp/prompt.txt", "60", "10", "42", "/tmp/take"]);
+  assert.deepEqual(cpp.args, ["$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", "$HOME/.cozyclay/kimodo.cpp/prompt.txt", "60", "10", "42", "/tmp/take"]);
 }
 pass("all installed Kimodo backends have exact command contracts");
 

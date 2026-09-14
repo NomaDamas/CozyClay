@@ -331,7 +331,7 @@ else
   if [ "$BACKEND" = "kimodo-mlx" ]; then
     printf '{"backend":"%s","model":"%s","motion":"%s/models/nvidia-soma-rp-v1.1","text":"%s/models/llm2vec-text-bundle"}\n' "$BACKEND" "$MODEL" "$MLX_DIR" "$MLX_DIR" > "$HOME/.cozyclay/kimodo-backend.json"
   elif [ "$BACKEND" = "kimodo.cpp-metal" ] || [ "$BACKEND" = "kimodo.cpp-cpu" ]; then
-    printf '{"backend":"%s","model":"%s","motion":"%s/models/kimodo-soma-rp-v1-f32.gguf","text":"%s/models/llm2vec-text-bundle"}\n' "$BACKEND" "$MODEL" "$CPP_DIR" "$CPP_DIR" > "$HOME/.cozyclay/kimodo-backend.json"
+    printf '{"backend":"%s","model":"%s","motion":"%s/models/kimodo-%s-f32.gguf","text":"%s/generated/llm2vec-text-bundle"}\n' "$BACKEND" "$MODEL" "$CPP_DIR" "$(printf '%s' "$MODEL" | sed 's/^Kimodo-//' | tr 'A-Z' 'a-z')" "$CPP_DIR" > "$HOME/.cozyclay/kimodo-backend.json"
   else
     printf '{"backend":"%s","model":"%s"}\n' "$BACKEND" "$MODEL" > "$HOME/.cozyclay/kimodo-backend.json"
   fi
