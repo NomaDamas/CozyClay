@@ -212,6 +212,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	if (!hips || !motion || !chains) throw new Error("A loaded motion and complete rig are required");
 	const count = motion.frames, fps = motion.fps || 24;
 	const sample = createSupportSampler(rig), dynamics = createDynamicsSampler(rig), groundAt = createGroundSampler(sceneObjects, { floorY }), source = { keys: copyPhysicsKeys(sourceKeys), tracked: new Set([...sourceKeys.values()].flatMap((e) => [...e.keys()])) };
+	const hasSceneGround = sceneObjects.length > 0;
 	let grounding = null;
 	const applyBase = (f) => { applyRaw(f); ikEvaluate(chains, source, f, fkJoints, 6); if (grounding?.shifts[f]) solveHipsTranslate(fkJoints.get("hips"), new THREE.Vector3(0, grounding.shifts[f], 0), hips.position.clone()); rig.updateMatrixWorld(true); };
 	let raw = [], base = [], samples = [];
@@ -271,7 +272,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	const toeTracks = Object.fromEntries(SUPPORT_SITES.filter((s) => s.kind === "foot").map((site) => {
 		const spanAt = (f) => contacts.masks[f].get(site.id) ?? contacts.spans.find((s) => s.site === site.id && f >= s.start - lockLead && f < s.start);
 		const leads = samples.map((r, f) => spanAt(f));
-		const anchors = leads.map((span) => span ? span.anchor.clone() : null);
+		const anchors = leads.map((span, f) => span ? span.anchor.clone().setY(samples[f].toes[site.id].y) : null);
 		return [site.id, footLockTrack(samples.map((r) => r.toes[site.id]), leads.map(Boolean), { fps, blendTime: lockBlendTime, anchors })];
 	}));
 	const influenceAt = (f) => clamp(strength, 0, 1) * Math.min(1, ...preserveFrames.map((p) => smooth(Math.abs(f - p) / 4)));
@@ -283,7 +284,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 			const planted = contacts.masks[f].get(site.id);
 			const explicitlyFree = overrides.some((o) => o.site === site.id && o.mode === "free" && f >= o.start && f <= o.end);
 			const span = planted ?? (!explicitlyFree && contacts.spans.find((s) => s.site === site.id && f >= s.start - 4 && f <= s.end + 4));
-			const localGround = r.ground?.[site.id] ?? floorY;
+			const localGround = hasSceneGround ? (r.ground?.[site.id] ?? floorY) : floorY;
 			if (!span && !supportOnly && point.floor >= localGround + 0.002) continue;
 			// Hold the actual support interval; ease in the neighbouring swing
 			// frames, not INSIDE the interval where easing is visible foot slip.
@@ -324,11 +325,11 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	for (const site of SUPPORT_SITES.filter((s) => s.kind === "foot")) {
 		const toeInput = samples.map((r) => r.toes[site.id]);
 		const inertialToeTrack = toeTracks[site.id];
-		const lowest = Math.min(...samples.map((r) => r.ground?.[site.id] ?? floorY));
-		const lowestFrame = samples.findIndex((r) => (r.ground?.[site.id] ?? floorY) === lowest);
+		const lowest = hasSceneGround ? Math.min(...samples.map((r) => r.ground?.[site.id] ?? floorY)) : Math.min(...samples.map((r) => r.support[site.id].floor));
+		const lowestFrame = hasSceneGround ? samples.findIndex((r) => (r.ground?.[site.id] ?? floorY) === lowest) : samples.findIndex((r) => r.support[site.id].floor === lowest);
 		const toeOffset = toeInput[lowestFrame].y - lowest;
 		const relaxed = relaxToePath(toeTracks[site.id], pelvisPath, samples.map((r, f) => contacts.masks[f].has(site.id)), {
-			iterations: 120, toeMinHeight: samples.map((r) => (r.ground?.[site.id] ?? floorY) + 0.002 - toeOffset),
+			iterations: 120, toeMinHeight: hasSceneGround ? samples.map((r) => (r.ground?.[site.id] ?? floorY) + 0.002 - toeOffset) : floorY + 0.002 - toeOffset,
 			restLengths: samples.map((r, f) => r.chains[site.chain].root.distanceTo(toeInput[f])), relaxPelvis: false,
 		});
 		toeTracks[site.id] = relaxed.toes;
