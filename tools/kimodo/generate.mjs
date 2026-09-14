@@ -538,20 +538,17 @@ export async function generateOnBox({
 		// One `kimodo_gen` invocation: the env assignment and every flag are one
 		// shell WORD list for that single command, so they join with spaces, while
 		// `cd` is a separate command and must be chained with `&&`.
-		const built = buildBackendCommand({ backend, repo, model, prompt, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take.npz` });
-		const extra = backend === "nvidia-cuda" ? [
-			`TEXT_ENCODER_DEVICE=${textEncoderDevice}`,
-			`--num_transition_frames ${transitionFrames}`,
-			constraints.length > 0 ? `--constraints ${remoteConstraints}` : "",
-			preservePlan ? `--base_motion ${remoteBase}` : "",
-			preservePlan ? `--preserve_start ${preservePlan.sigmaS}` : "",
-			preservePlan ? `--preserve_end ${preservePlan.sigmaE}` : "",
-			preservePlan ? `--preserve_mask ${remoteMask}` : "",
-		].filter(Boolean) : [];
-		const generateWords = [
-			`cd "${repo}"`,
-			[...extra, built.command, ...built.args].map((word) => JSON.stringify(word)).join(" "),
-		].join(" && ");
+		const built = buildBackendCommand({ backend, repo, model, prompt, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take` });
+		let commandWords = [built.command, ...built.args];
+		if (backend === "nvidia-cuda") {
+			commandWords = [
+				`TEXT_ENCODER_DEVICE=${textEncoderDevice}`, built.command, ...built.args,
+				"--num_transition_frames", String(transitionFrames),
+				...(constraints.length > 0 ? ["--constraints", remoteConstraints] : []),
+				...(preservePlan ? ["--base_motion", remoteBase, "--preserve_start", String(preservePlan.sigmaS), "--preserve_end", String(preservePlan.sigmaE), "--preserve_mask", remoteMask] : []),
+			];
+		}
+		const generateWords = [`cd "${repo}"`, commandWords.map((word, i) => i === 0 && backend === "nvidia-cuda" ? word : JSON.stringify(word)).join(" ")].join(" && ");
 		const remoteCmd = [`mkdir -p ${remoteStem}`, generateWords].join(" && ");
 
 		const generated = await run(["ssh", ...SSH_OPTS, host, remoteCmd], { onLine });

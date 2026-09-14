@@ -158,12 +158,16 @@ assert.throws(
 );
 pass("the Kimodo backend refuses to start without a configured box");
 
-// Every installer route has a deterministic command contract.
-for (const [backend, expected] of [["nvidia-cuda", "kimodo_gen"], ["kimodo-mlx", "kimodo_mlx"], ["kimodo.cpp-metal", "build-metal/kimodo-cli"], ["kimodo.cpp-cpu", "build-cpu/kimodo-cli"]]) {
-  const built = buildBackendCommand({ backend, repo: "/opt/kimodo", model: "m", prompt: "walk", duration: "2", frames: 60, steps: 10, output: "/tmp/take.npz" });
-  assert.match([built.command, ...built.args].join(" "), new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
-  assert.ok(built.args.includes("--output") && built.args.includes("/tmp/take.npz"));
+// Exact argv contracts for every installed route.
+const cuda = buildBackendCommand({ backend: "nvidia-cuda", repo: "/opt/kimodo", model: "m", prompt: "walk", duration: "2", frames: 60, steps: 10, seed: 7, output: "/tmp/take" });
+assert.equal(cuda.command, "/opt/kimodo/.venv/bin/kimodo_gen");
+assert.deepEqual(cuda.args, ["walk", "--duration", "2", "--diffusion_steps", "10", "--model", "m", "--seed", "7", "--output", "/tmp/take"]);
+const mlx = buildBackendCommand({ backend: "kimodo-mlx", repo: "/opt/mlx", prompt: "walk", frames: 60, steps: 10, output: "/tmp/take" });
+assert.deepEqual(mlx.args, ["-m", "kimodo_mlx", "generate", "--prompt", "walk", "--frames", "60", "--steps", "10", "--output", "/tmp/take"]);
+for (const backend of ["kimodo.cpp-metal", "kimodo.cpp-cpu"]) {
+  const cpp = buildBackendCommand({ backend, repo: "/opt/cpp", prompt: "walk", frames: 60, steps: 10, output: "/tmp/take" });
+  assert.deepEqual(cpp.args, ["--prompt", "walk", "--frames", "60", "--steps", "10", "--output", "/tmp/take"]);
 }
-pass("all installed Kimodo backends have covered command builders");
+pass("all installed Kimodo backends have exact command contracts");
 
 console.log("OK verify-kimodo-runner");

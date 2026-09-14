@@ -96,8 +96,8 @@ export function createKimodoRunner() {
 	const MODEL = process.env.CCLAY_KIMODO_MODEL || installed.model || "Kimodo-SOMA-RP-v1.1";
 	const TARGET_FPS = Number(process.env.CCLAY_KIMODO_TARGET_FPS || 24);
 
-	if (!HOST && BACKEND === "nvidia-cuda") {
-		throw new Error("CCLAY_KIMODO_HOST is required for the CUDA Kimodo backend (for example: user@gpu-box)");
+	if (!HOST) {
+		throw new Error("CCLAY_KIMODO_HOST is required for the Kimodo backend (for example: user@gpu-box)");
 	}
 
 	async function probeHealth() {
@@ -236,7 +236,7 @@ export function createKimodoRunner() {
 
 	return {
 		mode: "kimodo",
-		describe: () => `${HOST ? `box ${HOST}` : "local"} (${BACKEND}, repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
+		describe: () => `box ${HOST} (${BACKEND}, repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
 		probeHealth,
 		listBases,
 		baseMotionFor,
