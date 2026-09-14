@@ -41,6 +41,7 @@ const NODE_FILES = [
 	"test/demo/verify-demo-worker-loop.mjs",
 	"test/ik/verify-fix-collisions.mjs",
 	"test/ik/verify-foot-lock.mjs",
+	"test/ik/verify-ground.mjs",
 	"test/ik/verify-auto-physics.mjs",
 	"test/ik/verify-physics-review.mjs",
 	"test/ik/verify-physics-support.mjs",
