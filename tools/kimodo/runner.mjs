@@ -38,7 +38,7 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -89,14 +89,15 @@ function unsupported(feature) {
 
 export function createKimodoRunner() {
 	const HOST = process.env.CCLAY_KIMODO_HOST || "";
-	const REPO = process.env.CCLAY_KIMODO_REPO || "$HOME/kimodo";
-	const MODEL = process.env.CCLAY_KIMODO_MODEL || "Kimodo-SOMA-RP-v1.1";
+	let installed = {};
+	try { installed = JSON.parse(readFileSync(process.env.CCLAY_KIMODO_BACKEND_FILE || `${process.env.HOME || ""}/.cozyclay/kimodo-backend.json`, "utf8")); } catch {}
+	const BACKEND = process.env.CCLAY_KIMODO_BACKEND || installed.backend || "nvidia-cuda";
+	const REPO = process.env.CCLAY_KIMODO_REPO || (BACKEND === "kimodo-mlx" ? "$HOME/.cozyclay/kimodo-mlx" : BACKEND.startsWith("kimodo.cpp") ? "$HOME/.cozyclay/kimodo.cpp" : "$HOME/.cozyclay/kimodo");
+	const MODEL = process.env.CCLAY_KIMODO_MODEL || installed.model || "Kimodo-SOMA-RP-v1.1";
 	const TARGET_FPS = Number(process.env.CCLAY_KIMODO_TARGET_FPS || 24);
 
-	if (!HOST) {
-		throw new Error(
-			"CCLAY_KIMODO_HOST is required for the Kimodo backend (for example: user@gpu-box)"
-		);
+	if (!HOST && BACKEND === "nvidia-cuda") {
+		throw new Error("CCLAY_KIMODO_HOST is required for the CUDA Kimodo backend (for example: user@gpu-box)");
 	}
 
 	async function probeHealth() {
@@ -235,7 +236,7 @@ export function createKimodoRunner() {
 
 	return {
 		mode: "kimodo",
-		describe: () => `box ${HOST} (repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
+		describe: () => `${HOST ? `box ${HOST}` : "local"} (${BACKEND}, repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
 		probeHealth,
 		listBases,
 		baseMotionFor,

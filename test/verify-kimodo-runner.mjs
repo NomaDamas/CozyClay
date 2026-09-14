@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createRunner } from "../tools/ardy/runners/index.mjs";
 import { createKimodoRunner } from "../tools/kimodo/runner.mjs";
+import { buildBackendCommand } from "../tools/kimodo/generate.mjs";
 
 function pass(label) { console.log(`PASS ${label}`); }
 
@@ -156,5 +157,13 @@ assert.throws(
 	/CCLAY_KIMODO_HOST is required/
 );
 pass("the Kimodo backend refuses to start without a configured box");
+
+// Every installer route has a deterministic command contract.
+for (const [backend, expected] of [["nvidia-cuda", "kimodo_gen"], ["kimodo-mlx", "kimodo_mlx"], ["kimodo.cpp-metal", "build-metal/kimodo-cli"], ["kimodo.cpp-cpu", "build-cpu/kimodo-cli"]]) {
+  const built = buildBackendCommand({ backend, repo: "/opt/kimodo", model: "m", prompt: "walk", duration: "2", frames: 60, steps: 10, output: "/tmp/take.npz" });
+  assert.match([built.command, ...built.args].join(" "), new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  assert.ok(built.args.includes("--output") && built.args.includes("/tmp/take.npz"));
+}
+pass("all installed Kimodo backends have covered command builders");
 
 console.log("OK verify-kimodo-runner");

@@ -8,6 +8,8 @@ const runner = readFileSync(new URL("../tools/ardy/runners/index.mjs", import.me
 const edit = readFileSync(new URL("../tools/kimodo/run-edit-on-box.mjs", import.meta.url), "utf8");
 
 assert.match(setup, /set -euo pipefail/);
+assert.match(setup, /kimodo-backend\.json/);
+assert.match(setup, /"backend"/);
 assert.match(setup, /--dry-run/);
 assert.match(setup, /git clone --depth 1 https:\/\/github\.com\/nv-tlabs\/kimodo\.git/);
 assert.match(setup, /if \[ ! -e "\$KIMODO_DIR\/.git" \]/);

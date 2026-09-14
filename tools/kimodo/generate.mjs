@@ -49,6 +49,28 @@ const SSH_OPTS = [
 ];
 
 export const DEFAULT_MODEL = "Kimodo-SOMA-RP-v1.1";
+export const KIMODO_BACKENDS = {
+  "nvidia-cuda": { repo: "$HOME/.cozyclay/kimodo", entry: ".venv/bin/kimodo_gen", mode: "cuda", promptFlag: null, durationFlag: "--duration", stepsFlag: "--diffusion_steps", outputFlag: "--output" },
+  "kimodo-mlx": { repo: "$HOME/.cozyclay/kimodo-mlx", entry: "$HOME/.cozyclay/kimodo-mlx-venv/bin/python", mode: "mlx", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: "--output" },
+  "kimodo.cpp-metal": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-metal/kimodo-cli", mode: "cpp", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: "--output" },
+  "kimodo.cpp-cpu": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-cpu/kimodo-cli", mode: "cpp", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: "--output" },
+};
+
+/** Build argv for an installed Kimodo route without spawning it. */
+export function buildBackendCommand({ backend = "nvidia-cuda", repo, model, prompt, duration, frames, steps, seed, output }) {
+  const spec = KIMODO_BACKENDS[backend];
+  if (!spec) throw new Error(`unknown Kimodo backend: ${backend}`);
+  const root = repo || spec.repo;
+  const entry = spec.entry.startsWith("$HOME/") ? spec.entry : `${root}/${spec.entry}`;
+  const args = [];
+  if (spec.mode === "mlx" || spec.mode === "cpp") args.push(spec.promptFlag, prompt, spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
+  else args.push(prompt, spec.durationFlag, duration, "--diffusion_steps", String(steps), "--model", model);
+  if (Number.isInteger(seed)) args.push("--seed", String(seed));
+  args.push(spec.outputFlag, output);
+  if (spec.mode === "mlx") return { command: entry, args: ["-m", "kimodo_mlx", "generate", ...args], cwd: root, backend };
+  return { command: entry, args, cwd: root, backend };
+}
+
 
 function run(argv, { timeoutMs = 3_600_000, onLine } = {}) {
 	return new Promise((resolve) => {
@@ -290,7 +312,8 @@ export async function generateOnBox({
 	diffusionSteps = Number(process.env.CCLAY_KIMODO_DIFFUSION_STEPS || 100),
 	seed,
 	host = process.env.CCLAY_KIMODO_HOST || "",
-	repo = process.env.CCLAY_KIMODO_REPO || "$HOME/kimodo",
+	repo = process.env.CCLAY_KIMODO_REPO || "$HOME/.cozyclay/kimodo",
+	backend = process.env.CCLAY_KIMODO_BACKEND || "nvidia-cuda",
 	// Kimodo wants ~17 GB of VRAM with the text encoder resident; on anything
 	// smaller the encoder has to run on the CPU, which the upstream docs give
 	// as the supported way to fit under 3 GB.
@@ -515,27 +538,21 @@ export async function generateOnBox({
 		// One `kimodo_gen` invocation: the env assignment and every flag are one
 		// shell WORD list for that single command, so they join with spaces, while
 		// `cd` is a separate command and must be chained with `&&`.
-		const generateWords = [
+		const built = buildBackendCommand({ backend, repo, model, prompt, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take.npz` });
+		const extra = backend === "nvidia-cuda" ? [
 			`TEXT_ENCODER_DEVICE=${textEncoderDevice}`,
-			`.venv/bin/kimodo_gen ${JSON.stringify(prompt)}`,
-			`--model ${model}`,
-			`--duration ${JSON.stringify(duration)}`,
 			`--num_transition_frames ${transitionFrames}`,
-			`--diffusion_steps ${diffusionSteps}`,
-			seed === undefined ? "" : `--seed ${Number(seed)}`,
 			constraints.length > 0 ? `--constraints ${remoteConstraints}` : "",
-			// Contract C2. All four are omitted together when nothing is being
-			// preserved, which is what keeps a no-preserve run bit-identical to
-			// the pre-inpainting code path for a given seed.
 			preservePlan ? `--base_motion ${remoteBase}` : "",
 			preservePlan ? `--preserve_start ${preservePlan.sigmaS}` : "",
 			preservePlan ? `--preserve_end ${preservePlan.sigmaE}` : "",
 			preservePlan ? `--preserve_mask ${remoteMask}` : "",
-			`--output ${remoteStem}/take`,
-		]
-			.filter(Boolean)
-			.join(" ");
-		const remoteCmd = [`mkdir -p ${remoteStem}`, `cd "${repo}"`, generateWords].join(" && ");
+		].filter(Boolean) : [];
+		const generateWords = [
+			`cd "${repo}"`,
+			[...extra, built.command, ...built.args].map((word) => JSON.stringify(word)).join(" "),
+		].join(" && ");
+		const remoteCmd = [`mkdir -p ${remoteStem}`, generateWords].join(" && ");
 
 		const generated = await run(["ssh", ...SSH_OPTS, host, remoteCmd], { onLine });
 		if (generated.code !== 0) {

@@ -305,4 +305,11 @@ case "$BACKEND" in
   kimodo.cpp-cpu) install_kimodo_cpp cpu ;;
 esac
 
+# Tell the Studio runner exactly which installed route to use.
+if [ "$DRY_RUN" -eq 1 ]; then
+  log "would write $HOME/.cozyclay/kimodo-backend.json"
+else
+  mkdir -p "$HOME/.cozyclay"
+  printf '{"backend":"%s","model":"%s"}\n' "$BACKEND" "$MODEL" > "$HOME/.cozyclay/kimodo-backend.json"
+fi
 log "ready"
