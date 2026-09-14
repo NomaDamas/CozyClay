@@ -35,6 +35,14 @@ console.log("PASS hand/knee contact overrides, free intervals, and moving-foot d
 	assert(Math.abs(metrics.slide - .031) < 1e-9, "foot slide is measured from toe");
 	console.log("PASS foot contacts, wander, and slide use toe positions");
 }
+{
+	const boxRows = Array.from({ length: 12 }, () => ({ root: new THREE.Vector3(), support: { leftFoot: { floor: .2, position: new THREE.Vector3(0, .2, 0) } }, toes: { leftFoot: new THREE.Vector3(0, .2, 0) }, ground: { leftFoot: .2 }, knees: { leftFoot: 0, rightFoot: 0 } }));
+	const boxContacts = supportIntervals(boxRows, 30);
+	const boxSpan = boxContacts.spans.find((s) => s.site === "leftFoot");
+	assert(boxSpan && Math.abs(boxSpan.anchor.y - .2) < 1e-9, "box top is used for the foot span anchor");
+	assert.equal(physicsMetrics(boxRows, boxContacts.masks, 30).penetration, 0, "box contact has no penetration");
+	console.log("PASS a character standing on a box uses the box top anchor and has zero penetration");
+}
 const smooth = smoothPhysicsTrack(Array.from({ length: 20 }, (_, f) => [f < 10 ? 0 : .1]), 3, [12]);
 assert.equal(smooth[12][0], 0); assert(smooth[10][0] > 0 && smooth[10][0] < .1);
 console.log("PASS temporal correction eases into protected poses");
