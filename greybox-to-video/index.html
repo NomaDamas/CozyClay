@@ -132,6 +132,25 @@
       </section>
 
       <section>
+        <h2>What the models actually accept</h2>
+        <p>
+          Seedance 2.5's product page names this input: "Provides advanced capabilities such as white-model control
+          and green-screen editing, combined with professional camera movement and performance blocking." Its showcase
+          prompt directs the model to "Use the white-model reference video as the sole guide for camera movement,
+          pacing, framing, subject motion, and blocking." That white-model reference video is a plain RGB blockout
+          clip, which is exactly what the keyframe pack exports. MiniMax H3 reference-to-video, the Wan 3.0 hosted
+          <code>reference_video</code>, LTX Desktop's "3D Render to Photoreal" ("keeping the exact composition, camera
+          move and layout of the input") and fal render-to-real all consume the same clip.
+        </p>
+        <p>
+          The caveat is Kling Motion Control: "Avoid cuts, camera movement, etc.; otherwise, the video may be
+          trimmed." So send it a single character, one continuous take.
+        </p>
+        <p class="note">None of the top hosted APIs (Seedance, Kling, Veo 3.1, Runway Act-Two, MiniMax)
+        documents a depth or pose control-video input.</p>
+      </section>
+
+      <section>
         <h2>The block-then-generate loop</h2>
         <ol>
           <li><strong>Block the set.</strong> Boxes for the architecture, a plane for the ground, a stand-in for each character. Scale matters more than detail: doors at 2 m, a car at 4.5 m long.</li>
