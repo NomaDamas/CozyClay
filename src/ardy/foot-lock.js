@@ -199,7 +199,7 @@ export function relaxToePath(toes, pelvis, contacts, { iterations = 200, softFac
 				// Both frames planted: they belong at ONE spot, so pull both
 				// toward their midpoint dropped to the ground height.
 				target.copy(outToes[i]).add(outToes[i - 1]).multiplyScalar(0.5);
-				target.y = Math.max(target.y, Array.isArray(toeMinHeight) ? Math.max(toeMinHeight[i] ?? 0, toeMinHeight[i - 1] ?? 0) : toeMinHeight);
+				target.y = Array.isArray(toeMinHeight) ? Math.max(toeMinHeight[i] ?? 0, toeMinHeight[i - 1] ?? 0) : toeMinHeight;
 				largest = Math.max(largest, relaxPoint(outToes[i], target, hardFactor, null));
 				largest = Math.max(largest, relaxPoint(outToes[i - 1], target, hardFactor, null));
 			} else {

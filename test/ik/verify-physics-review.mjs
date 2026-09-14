@@ -71,6 +71,8 @@ const applyRaw = (f) => {
 const sourceKeys = new Map(), params = { rig, chains, fkJoints, sourceKeys, motion: { frames: 24, fps: 30 }, applyRaw };
 const stamp = physicsKeyStamp(sourceKeys);
 const result = await reviewAutoPhysics({ ...params, protectedFrames: [12] });
+const resultExplicitEmpty = await reviewAutoPhysics({ ...params, sceneObjects: [], protectedFrames: [12] });
+assert.deepEqual(result.evaluated, resultExplicitEmpty.evaluated, "omitted sceneObjects preserves evaluated output");
 assert.equal(physicsKeyStamp(sourceKeys), stamp, "review must not mutate keys");
 assert(result.changedFrames.length > 0);
 const footSpan = result.contacts.spans.find((s) => s.site === "leftFoot");
