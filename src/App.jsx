@@ -6633,7 +6633,7 @@ export default function App() {
 		setTlPlaying(false); setAutoPhysicsRunning(true); setPhysicsProgress(0); setPhysicsPreview(null);
 		try {
 			const result = await reviewAutoPhysics({ rig: activeRig, motion, chains: ikChains, fkJoints: ikFkJoints, sourceKeys,
-				applyRaw: (f) => poseMemberAtFrame(activeRig, motion, null, f), ...physicsOptions,
+				applyRaw: (f) => poseMemberAtFrame(activeRig, motion, null, f), sceneObjects, ...physicsOptions,
 				cache: physicsSourceCacheRef.current,
 				onProgress: setPhysicsProgress,
 				yieldFrame: async () => {

@@ -6,6 +6,7 @@ import { relaxPhysicsRoot } from "./physics-temporal.js";
 import { refinePhysicsCandidate } from "./physics-refine.js";
 import { createSurfaceSampler } from "./physics-surface.js";
 import { createDynamicsSampler, inferSupportAlignment, supportDiagnostics } from "./physics-support.js";
+import { createGroundSampler } from "./ground.js";
 
 // A reviewable correction pass. The source key map is never modified; preview,
 // strength, protected frames, and commit all use the same evaluated candidate.
@@ -43,7 +44,7 @@ export function sitePoint(row, site) {
 	return site.kind === "foot" ? (row.toes?.[site.id] ?? row.support[site.id]?.position) : row.support[site.id]?.position;
 }
 
-export function supportIntervals(samples, fps, overrides = [], floorY = 0) {
+export function supportIntervals(samples, fps, overrides = [], floorY = 0, groundAt = null) {
 	const spans = [], rejected = [], count = samples.length;
 	const masks = Array.from({ length: count }, () => new Map());
 	for (const site of SUPPORT_SITES) {
@@ -53,7 +54,8 @@ export function supportIntervals(samples, fps, overrides = [], floorY = 0) {
 			const pa = sitePoint(samples[Math.max(0, i - 2)], site), pb = sitePoint(samples[Math.min(count - 1, i + 2)], site);
 			if (!a || !b || !c || !pa || !pb) return false;
 			const dt = (Math.min(count - 1, i + 2) - Math.max(0, i - 2)) / fps || 1 / fps;
-			return c.floor < floorY + (site.kind === "foot" ? 0.15 : 0.07)
+			const localGround = r.ground?.[site.id] ?? (groundAt ? groundAt((sitePoint(r, site) ?? c.position).x, (sitePoint(r, site) ?? c.position).z, c.position.y + 0.001) : floorY);
+			return c.floor < localGround + (site.kind === "foot" ? 0.15 : 0.07)
 				&& c.floor < floor + 0.055 && Math.abs(b.position.y - a.position.y) / dt < 0.25
 				&& Math.hypot(pb.x - pa.x, pb.z - pa.z) / dt < 0.16;
 		});
@@ -73,7 +75,7 @@ export function supportIntervals(samples, fps, overrides = [], floorY = 0) {
 					const rows = samples.slice(start, f).map((r) => sitePoint(r, site));
 					const anchor = new THREE.Vector3(quantile(rows.map((r) => r.x), 0.5), 0, quantile(rows.map((r) => r.z), 0.5));
 					const wander = Math.max(...rows.map((r) => Math.hypot(r.x - anchor.x, r.z - anchor.z)));
-					if (site.kind === "foot") anchor.y = quantile(rows.map((r) => r.y), 0.5);
+					if (site.kind === "foot") anchor.y = groundAt ? groundAt(anchor.x, anchor.z, quantile(rows.map((r) => r.y), 0.5) + 0.001) : quantile(rows.map((r) => r.y), 0.5);
 					const span = { id: `${site.id}:${start}`, site: site.id, start, end: f - 1, anchor, manual, wander };
 					if (wander <= PHYSICS_LIMITS.pull || manual) {
 						spans.push(span);
@@ -153,20 +155,21 @@ function fitRoot(sample, targets, seed, preserveShape = true) {
 	return x;
 }
 
-export function physicsMetrics(samples, masks, fps, floorY = 0) {
+export function physicsMetrics(samples, masks, fps, floorY = 0, groundAt = null) {
 	const m = { penetration: 0, penetrationFrame: 0, float: 0, floatFrame: 0, slide: 0, slideFrame: 0, meanSlide: 0, kneeStep: 0, kneeStepFrame: 0, kneeAcceleration: 0, rootAcceleration: 0, count: 0, surfaceMeasured: samples.every((s) => SUPPORT_SITES.slice(0, 2).every((site) => s.support[site.id]?.vertices > 0)) };
 	for (let f = 0; f < samples.length; f += 1) {
-		for (const point of Object.values(samples[f].support)) if (point.vertices > 0 && floorY - point.floor > m.penetration) { m.penetration = floorY - point.floor; m.penetrationFrame = f; }
+		for (const [id, point] of Object.entries(samples[f].support)) if (point.vertices > 0) { const g = samples[f].ground?.[id] ?? floorY; if (g - point.floor > m.penetration) { m.penetration = g - point.floor; m.penetrationFrame = f; } }
 		for (const site of SUPPORT_SITES) {
 			const r = samples[f].support[site.id]; if (!r) continue;
-			const depth = Math.max(0, floorY - r.floor);
+			const ground = samples[f].ground?.[site.id] ?? floorY;
+			const depth = Math.max(0, ground - r.floor);
 			if (depth > m.penetration) { m.penetration = depth; m.penetrationFrame = f; }
 			const span = masks[f]?.get(site.id);
 			if (span) {
 				const point = sitePoint(samples[f], site);
 				const slide = Math.hypot(point.x - span.anchor.x, point.z - span.anchor.z);
 				if (slide > m.slide) { m.slide = slide; m.slideFrame = f; }
-				const gap = Math.max(0, r.floor - floorY);
+				const gap = Math.max(0, r.floor - ground);
 				if (gap > m.float) { m.float = gap; m.floatFrame = f; }
 				m.meanSlide += slide; m.count += 1;
 			}
@@ -202,24 +205,26 @@ function reviewWarnings(before, after, replayErrors = []) {
 	return warnings;
 }
 
-async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, applyRaw, overrides = [], protectedFrames = [], strength = 1, onProgress = () => {}, yieldFrame = () => Promise.resolve(), floorY = 0, cache = null, alignmentScale = 1 }) {
+async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, applyRaw, sceneObjects = [], overrides = [], protectedFrames = [], strength = 1, onProgress = () => {}, yieldFrame = () => Promise.resolve(), floorY = 0, cache = null, alignmentScale = 1 }) {
 	const started = performance.now(), timings = {};
 	const hips = fkJoints?.get("hips")?.bone;
 	const toeBones = { leftFoot: findBone(rig, "mixamorigLeftToeBase"), rightFoot: findBone(rig, "mixamorigRightToeBase") };
 	if (!hips || !motion || !chains) throw new Error("A loaded motion and complete rig are required");
 	const count = motion.frames, fps = motion.fps || 24;
-	const sample = createSupportSampler(rig), dynamics = createDynamicsSampler(rig), source = { keys: copyPhysicsKeys(sourceKeys), tracked: new Set([...sourceKeys.values()].flatMap((e) => [...e.keys()])) };
+	const sample = createSupportSampler(rig), dynamics = createDynamicsSampler(rig), groundAt = createGroundSampler(sceneObjects, { floorY }), source = { keys: copyPhysicsKeys(sourceKeys), tracked: new Set([...sourceKeys.values()].flatMap((e) => [...e.keys()])) };
 	let grounding = null;
 	const applyBase = (f) => { applyRaw(f); ikEvaluate(chains, source, f, fkJoints, 6); if (grounding?.shifts[f]) solveHipsTranslate(fkJoints.get("hips"), new THREE.Vector3(0, grounding.shifts[f], 0), hips.position.clone()); rig.updateMatrixWorld(true); };
 	let raw = [], base = [], samples = [];
 	const read = () => {
 		const support = sample();
-		return { support, toes: Object.fromEntries(Object.entries(toeBones).map(([id, bone]) => [id, (bone ?? chains.get(id).bones[2]).getWorldPosition(V())])), root: hips.getWorldPosition(V()), com: computeCenterOfMass(rig), dynamics: dynamics(), knees: Object.fromEntries(["leftFoot", "rightFoot"].map((id) => [id, kneeAngle(chains.get(id))])) };
+		const toes = Object.fromEntries(Object.entries(toeBones).map(([id, bone]) => [id, (bone ?? chains.get(id).bones[2]).getWorldPosition(V())]));
+		const ground = Object.fromEntries(SUPPORT_SITES.map((site) => { const p = sitePoint({ support, toes }, site) ?? support[site.id]?.position; return [site.id, p ? groundAt(p.x, p.z, support[site.id]?.position.y + 0.001) : floorY]; }));
+		return { support, toes, ground, root: hips.getWorldPosition(V()), com: computeCenterOfMass(rig), dynamics: dynamics(), knees: Object.fromEntries(["leftFoot", "rightFoot"].map((id) => [id, kneeAngle(chains.get(id))])) };
 	};
 	rig.updateMatrixWorld(true);
 	const stamp = physicsKeyStamp(sourceKeys), matrixStamp = rig.matrixWorld.elements.join(",");
 	const cached = cache?.value;
-	const cacheHit = cached?.schema === 3 && cached?.rig === rig && cached?.motion === motion && cached?.stamp === stamp && cached?.matrixStamp === matrixStamp;
+	const cacheHit = cached?.schema === 4 && cached?.rig === rig && cached?.motion === motion && cached?.stamp === stamp && cached?.matrixStamp === matrixStamp;
 	if (cacheHit) { raw = cached.raw; base = cached.base; samples = cached.samples; }
 	else {
 	for (let f = 0; f < count; f += 1) {
@@ -230,13 +235,13 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 		})); samples.push(row);
 		if (f % 12 === 0) { onProgress(Math.round(25 * f / count)); await yieldFrame(); }
 	}
-	if (cache) cache.value = { schema: 3, rig, motion, stamp, matrixStamp, raw, base, samples };
+	if (cache) cache.value = { schema: 4, rig, motion, stamp, matrixStamp, raw, base, samples };
 	}
 	timings.sourceMs = performance.now() - started;
 	const sourceSamples = samples;
 	if (strength <= 0) {
-		const contacts = supportIntervals(samples, fps, overrides, floorY);
-		const metrics = physicsMetrics(samples, contacts.masks, fps, floorY);
+		const contacts = supportIntervals(samples, fps, overrides, floorY, groundAt);
+		const metrics = physicsMetrics(samples, contacts.masks, fps, floorY, groundAt);
 		onProgress(100);
 		return { candidate: source, contacts, before: metrics, after: { ...metrics }, samples, evaluated: samples,
 			warnings: reviewWarnings(metrics, metrics), unresolved: [], changedFrames: [], skippedAir: [], replayErrors: [], flightFrames: [],
@@ -253,7 +258,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 			if (f % 12 === 0) { onProgress(25 + Math.round(5 * f / count)); await yieldFrame(); }
 		}
 	}
-	const contacts = supportIntervals(samples, fps, overrides, floorY);
+	const contacts = supportIntervals(samples, fps, overrides, floorY, groundAt);
 	timings.supportMs = performance.now() - started - timings.sourceMs;
 	const preserveFrames = [...new Set([...protectedFrames, ...grounding.flight])];
 	// Holden's lock is causal (it starts blending AT contact), which leaves the
@@ -266,7 +271,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	const toeTracks = Object.fromEntries(SUPPORT_SITES.filter((s) => s.kind === "foot").map((site) => {
 		const spanAt = (f) => contacts.masks[f].get(site.id) ?? contacts.spans.find((s) => s.site === site.id && f >= s.start - lockLead && f < s.start);
 		const leads = samples.map((r, f) => spanAt(f));
-		const anchors = leads.map((span, f) => span ? span.anchor.clone().setY(samples[f].toes[site.id].y) : null);
+		const anchors = leads.map((span) => span ? span.anchor.clone() : null);
 		return [site.id, footLockTrack(samples.map((r) => r.toes[site.id]), leads.map(Boolean), { fps, blendTime: lockBlendTime, anchors })];
 	}));
 	const influenceAt = (f) => clamp(strength, 0, 1) * Math.min(1, ...preserveFrames.map((p) => smooth(Math.abs(f - p) / 4)));
@@ -278,7 +283,8 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 			const planted = contacts.masks[f].get(site.id);
 			const explicitlyFree = overrides.some((o) => o.site === site.id && o.mode === "free" && f >= o.start && f <= o.end);
 			const span = planted ?? (!explicitlyFree && contacts.spans.find((s) => s.site === site.id && f >= s.start - 4 && f <= s.end + 4));
-			if (!span && !supportOnly && point.floor >= floorY + 0.002) continue;
+			const localGround = r.ground?.[site.id] ?? floorY;
+			if (!span && !supportOnly && point.floor >= localGround + 0.002) continue;
 			// Hold the actual support interval; ease in the neighbouring swing
 			// frames, not INSIDE the interval where easing is visible foot slip.
 			const edge = planted ? 1 : span ? smooth(1 - Math.max(span.start - f, f - span.end) / 5) : 0;
@@ -289,7 +295,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 				target.x += clamp(toeTarget.x - toe.x, -PHYSICS_LIMITS.pull, PHYSICS_LIMITS.pull) * (site.kind === "foot" ? 1 : edge);
 				target.z += clamp(toeTarget.z - toe.z, -PHYSICS_LIMITS.pull, PHYSICS_LIMITS.pull) * (site.kind === "foot" ? 1 : edge);
 			}
-			target.y += clamp(floorY + 0.002 - point.floor, -0.10, 0.15) * (planted || !span ? 1 : edge);
+			target.y += clamp(localGround + 0.002 - point.floor, -0.10, 0.15) * (planted || !span ? 1 : edge);
 			out.push({ site, target, edge, contact: !!planted, supportOnly, rotation: point.rotation });
 		}
 		return out;
@@ -318,11 +324,11 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	for (const site of SUPPORT_SITES.filter((s) => s.kind === "foot")) {
 		const toeInput = samples.map((r) => r.toes[site.id]);
 		const inertialToeTrack = toeTracks[site.id];
-		const lowest = Math.min(...samples.map((r) => r.support[site.id].floor));
-		const lowestFrame = samples.findIndex((r) => r.support[site.id].floor === lowest);
+		const lowest = Math.min(...samples.map((r) => r.ground?.[site.id] ?? floorY));
+		const lowestFrame = samples.findIndex((r) => (r.ground?.[site.id] ?? floorY) === lowest);
 		const toeOffset = toeInput[lowestFrame].y - lowest;
 		const relaxed = relaxToePath(toeTracks[site.id], pelvisPath, samples.map((r, f) => contacts.masks[f].has(site.id)), {
-			iterations: 120, toeMinHeight: floorY + 0.002 - toeOffset,
+			iterations: 120, toeMinHeight: samples.map((r) => (r.ground?.[site.id] ?? floorY) + 0.002 - toeOffset),
 			restLengths: samples.map((r, f) => r.chains[site.chain].root.distanceTo(toeInput[f])), relaxPelvis: false,
 		});
 		toeTracks[site.id] = relaxed.toes;
@@ -401,12 +407,13 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 					// The swing trajectory already contains its transition ramp.
 					// Project onto THAT height, not a second independently faded
 					// floor target which can disagree by centimetres at release.
-					const contactFloor = contact ? original.floor + contact.target.y - original.position.y : floorY + .002;
+					const localGround = samples[f].ground?.[site.id] ?? floorY;
+					const contactFloor = contact ? original.floor + contact.target.y - original.position.y : localGround + .002;
 					const wantedFloor = Math.max(
-						THREE.MathUtils.lerp(Math.min(original.floor, floorY + .002), floorY + .002, influence),
+						THREE.MathUtils.lerp(Math.min(original.floor, localGround + .002), localGround + .002, influence),
 						THREE.MathUtils.lerp(original.floor, contactFloor, influence),
 					);
-					if (!current || (!contact && current.floor >= Math.max(wantedFloor, floorY + 0.001))) return [];
+					if (!current || (!contact && current.floor >= Math.max(wantedFloor, localGround + 0.001))) return [];
 					const target = current.position.clone();
 					if (contact) { target.x = THREE.MathUtils.lerp(original.position.x, contact.target.x, influence); target.z = THREE.MathUtils.lerp(original.position.z, contact.target.z, influence); }
 					target.y += clamp(wantedFloor - current.floor, -PHYSICS_LIMITS.pull, PHYSICS_LIMITS.pull);
@@ -459,7 +466,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	// envelope clears small residual penetrations without a one-frame lift;
 	// it changes no joint angles or planted XZ position. Protected/flight
 	// frames remain source-exact and retain any unresolved warning.
-	const clearance = after.map((r) => Math.max(0, floorY + .001 - Math.min(...Object.values(r.support).filter((p) => p.vertices > 0).map((p) => p.floor))));
+	const clearance = after.map((r) => Math.max(0, Math.max(...Object.entries(r.support).filter(([, p]) => p.vertices > 0).map(([id, p]) => (r.ground?.[id] ?? floorY) + .001 - p.floor))));
 	const liftRadius = Math.max(3, Math.round(fps * .2));
 	for (let f = 0; f < count; f += 1) {
 		if (protectedSet.has(f)) continue;
@@ -481,16 +488,17 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	// stays in the support diagnostics instead of being declared a jump.
 	const air = { keyedFrames: [], skippedSpans: [] };
 	const beforeSupport = supportDiagnostics(sourceSamples, fps, floorY), afterSupport = supportDiagnostics(after, fps, floorY);
-	const beforeMetrics = { ...physicsMetrics(sourceSamples, contacts.masks, fps, floorY), unsupportedFrames: beforeSupport.unsupportedFrames, unsupportedGap: beforeSupport.unsupportedGap, forceResidual: beforeSupport.forceResidual, momentResidual: beforeSupport.momentResidual };
-	const afterMetrics = { ...physicsMetrics(after, contacts.masks, fps, floorY), unsupportedFrames: afterSupport.unsupportedFrames, unsupportedGap: afterSupport.unsupportedGap, forceResidual: afterSupport.forceResidual, momentResidual: afterSupport.momentResidual };
+	const beforeMetrics = { ...physicsMetrics(sourceSamples, contacts.masks, fps, floorY, groundAt), unsupportedFrames: beforeSupport.unsupportedFrames, unsupportedGap: beforeSupport.unsupportedGap, forceResidual: beforeSupport.forceResidual, momentResidual: beforeSupport.momentResidual };
+	const afterMetrics = { ...physicsMetrics(after, contacts.masks, fps, floorY, groundAt), unsupportedFrames: afterSupport.unsupportedFrames, unsupportedGap: afterSupport.unsupportedGap, forceResidual: afterSupport.forceResidual, momentResidual: afterSupport.momentResidual };
 	// Report the final evaluated surfaces, including protected or unreachable
 	// contacts, not the residual of an earlier solve that has since changed.
 	unresolved.length = 0;
 	for (let f = 0; f < count; f += 1) for (const site of SUPPORT_SITES) {
 		const point = after[f].support[site.id], span = contacts.masks[f].get(site.id);
 		if (!point) continue;
-		if (floorY - point.floor > PHYSICS_LIMITS.floor) unresolved.push({ frame: f, site: site.id, reason: "floor", error: floorY - point.floor });
-		if (span && point.floor - floorY > PHYSICS_LIMITS.float) unresolved.push({ frame: f, site: site.id, reason: "float", error: point.floor - floorY });
+		const localGround = after[f].ground?.[site.id] ?? floorY;
+		if (localGround - point.floor > PHYSICS_LIMITS.floor) unresolved.push({ frame: f, site: site.id, reason: "floor", error: localGround - point.floor });
+		if (span && point.floor - localGround > PHYSICS_LIMITS.float) unresolved.push({ frame: f, site: site.id, reason: "float", error: point.floor - localGround });
 		// Anchors are TOE points for feet, so measure drift from the same point
 		// physicsMetrics uses; the ankle sits ~14 cm behind the toe anchor.
 		const drifted = sitePoint(after[f], site);
