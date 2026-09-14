@@ -3174,6 +3174,9 @@ export default function App() {
 	const [agentCollapsed, setAgentCollapsed] = useState(true);
 	const projectHandleRef = useRef(null);
 	const projectMotionsRef = useRef(new Map());
+	// Loaded clips keep the same Uint8Array identity while they remain active.
+	// Reuse the expensive encoded record until a new byte buffer is supplied.
+	const motionEncodingCacheRef = useRef(new WeakMap());
 	const restoreEpochRef = useRef(0);
 	const [projectManifest, setProjectManifest] = useState({ items: [], totals: { embedded: 0, external: 0, missing: 0, bytes: 0 }, missing: [] });
 	const [saveBlockedReasons, setSaveBlockedReasons] = useState(null);
@@ -3248,7 +3251,11 @@ export default function App() {
 			for (const scene of scenesDocument.scenes) for (const character of scene.stage?.characters ?? []) {
 				const clip = motionFullRef.current.get(character.id);
 				if (!clip?.sourceBytes) continue;
-				const record = await encodeMotionResource(clip.sourceBytes, { prompt: character.motionRef?.prompt, sourceUrl: character.motionRef?.url });
+				let record = motionEncodingCacheRef.current.get(clip.sourceBytes);
+				if (!record) {
+					record = await encodeMotionResource(clip.sourceBytes, { prompt: character.motionRef?.prompt, sourceUrl: character.motionRef?.url });
+					motionEncodingCacheRef.current.set(clip.sourceBytes, record);
+				}
 				const cached = motionCache.get(record.motionId) ?? record;
 				motionCache.set(record.motionId, cached);
 				if (!motions.includes(cached)) motions.push(cached);

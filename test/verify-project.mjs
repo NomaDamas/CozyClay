@@ -354,6 +354,26 @@ assert.match(appSource, /referencedAssetIds/, "export finds the complete referen
 assert.match(appSource, /getAsset/, "export reads referenced asset records from IndexedDB");
 assert.match(appSource, /putAsset/, "open restores embedded asset records to IndexedDB");
 assert.match(appSource, /encodeMotionResource\(/, "project save encodes the loaded NPZ bytes");
+assert.match(appSource, /motionEncodingCacheRef = useRef\(new WeakMap\(\)\)/, "project save keeps an identity cache for encoded motion resources");
+assert.match(appSource, /motionEncodingCacheRef\.current\.get\(clip\.sourceBytes\)/, "project save checks the clip identity before encoding");
+assert.match(appSource, /motionEncodingCacheRef\.current\.set\(clip\.sourceBytes, record\)/, "project save stores newly encoded motion resources by clip identity");
+{
+	const cache = new WeakMap();
+	const bytes = new Uint8Array([1, 2, 3]);
+	let encodeCalls = 0;
+	const saveMotion = async (sourceBytes) => {
+		let record = cache.get(sourceBytes);
+		if (!record) {
+			record = { motionId: `motion-${++encodeCalls}` };
+			cache.set(sourceBytes, record);
+		}
+		return record;
+	};
+	const first = await saveMotion(bytes);
+	const second = await saveMotion(bytes);
+	assert.equal(encodeCalls, 1, "a second save with unchanged clip bytes does not encode again");
+	assert.equal(second, first, "unchanged clip bytes reuse the encoded record");
+}
 assert.match(appSource, /decodeMotionResource\(/, "project open decodes embedded motion resources");
 assert.match(appSource, /resolveMotionSource\(/, "motion restore uses the embedded-first resolver");
 assert.match(appSource, /internWorkflowOutputs\(/, "project save interns workflow image outputs");
