@@ -96,11 +96,12 @@ export function createKimodoRunner() {
 	const MODEL = process.env.CCLAY_KIMODO_MODEL || installed.model || "Kimodo-SOMA-RP-v1.1";
 	const TARGET_FPS = Number(process.env.CCLAY_KIMODO_TARGET_FPS || 24);
 
-	if (!HOST) {
+	if (!HOST && BACKEND === "nvidia-cuda") {
 		throw new Error("CCLAY_KIMODO_HOST is required for the Kimodo backend (for example: user@gpu-box)");
 	}
 
 	async function probeHealth() {
+		if (!HOST) return { ok: true, host: "local", encoder: "in-process", device: "local" };
 		const remote = [
 			`cd ${REPO}`,
 			`DEV="$(.venv/bin/python -c 'import torch; print("cuda:0" if torch.cuda.is_available() else "cpu")')"`,
@@ -236,7 +237,7 @@ export function createKimodoRunner() {
 
 	return {
 		mode: "kimodo",
-		describe: () => `box ${HOST} (${BACKEND}, repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
+		describe: () => `${HOST ? `box ${HOST}` : "local"} (${BACKEND}, repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
 		probeHealth,
 		listBases,
 		baseMotionFor,

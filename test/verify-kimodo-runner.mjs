@@ -156,14 +156,18 @@ assert.throws(
 	() => withEnv({ CCLAY_MOTION_BACKEND: "kimodo" }, () => createKimodoRunner()),
 	/CCLAY_KIMODO_HOST is required/
 );
-pass("the Kimodo backend refuses to start without a configured box");
+for (const backend of ["kimodo-mlx", "kimodo.cpp-metal", "kimodo.cpp-cpu"]) {
+	const local = withEnv({ CCLAY_MOTION_BACKEND: "kimodo", CCLAY_KIMODO_BACKEND: backend }, () => createKimodoRunner());
+	assert.match(local.describe(), /local/);
+}
+pass("CUDA requires a host while MLX/cpp runners are local and describe themselves as local");
 
 // Exact argv contracts for every installed route.
 const cuda = buildBackendCommand({ backend: "nvidia-cuda", repo: "/opt/kimodo", model: "m", prompt: "walk", duration: "2", frames: 60, steps: 10, seed: 7, output: "/tmp/take" });
 assert.equal(cuda.command, "/opt/kimodo/.venv/bin/kimodo_gen");
 assert.deepEqual(cuda.args, ["walk", "--duration", "2", "--diffusion_steps", "10", "--model", "m", "--seed", "7", "--output", "/tmp/take"]);
 const mlx = buildBackendCommand({ backend: "kimodo-mlx", repo: "/opt/mlx", prompt: "walk", frames: 60, steps: 10, output: "/tmp/take" });
-assert.deepEqual(mlx.args, ["-m", "kimodo_mlx", "generate", "--prompt", "walk", "--frames", "60", "--steps", "10", "--output", "/tmp/take"]);
+assert.deepEqual(mlx.args, ["-m", "kimodo_mlx", "generate", "--prompt", "walk", "--frames", "60", "--steps", "10", "--motion", "/tmp/take"]);
 for (const backend of ["kimodo.cpp-metal", "kimodo.cpp-cpu"]) {
   const cpp = buildBackendCommand({ backend, repo: "/opt/cpp", prompt: "walk", frames: 60, steps: 10, output: "/tmp/take" });
   assert.deepEqual(cpp.args, ["--prompt", "walk", "--frames", "60", "--steps", "10", "--output", "/tmp/take"]);
