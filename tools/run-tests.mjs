@@ -62,6 +62,7 @@ const NODE_FILES = [
 	"test/verify-part-colours.mjs",
 	"test/verify-asset-shelf.mjs",
 	"test/verify-blocking-depth.mjs",
+	"test/verify-render-passes-video.mjs",
 	"test/verify-burn-in.mjs",
 	"test/verify-bvh-cskel27.mjs",
 	"test/verify-camera-block.mjs",

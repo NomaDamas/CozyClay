@@ -331,7 +331,7 @@ import { buildShotPrompt } from "./shot-prompt.js";
 import { keyframePackEntries, keyframePackName } from "./keyframe-pack.js";
 import { buildZip } from "./zip-store.js";
 import { composeStoryboard } from "./storyboard.js";
-import { passFileName, renderPass } from "./render-passes.js";
+import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
 import { serializeOtio } from "./otio.js";
 import {
@@ -4733,7 +4733,7 @@ export default function App() {
 		return contentExtent > 0 ? contentExtent : tlFrameCount;
 	}
 
-	async function runShotExport({ startFrame = 0, endFrame, download = true } = {}) {
+	async function runShotExport({ startFrame = 0, endFrame, download = true, passKind = null, depthRange = null, fileName = null } = {}) {
 		if (recRef.current) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
 		if (!captureRef.current || !shotCamRef.current) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
 		const resolvedEndFrame = endFrame ?? Math.max(0, currentRecordFrameCount() - 1);
@@ -4758,12 +4758,19 @@ export default function App() {
 				fps: TIMELINE_FPS,
 				width: shotOutput.width,
 				height: shotOutput.height,
-				capture: applyExportFrame,
+				// The plate path remains capture: applyExportFrame; pass exports only swap the material.
+				capture: (frame, passKind) => {
+					const plate = applyExportFrame(frame);
+					if (!passKind) return plate;
+					return renderPass(captureRef.current, captureRef.current.scene, shotCamRef.current, passKind, null, { depthRange });
+				},
+				passKind,
 				signal: controller.signal,
 			});
 			if (download) {
 				const slate = (moveSequence?.slate ?? "shot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shot";
-				const name = `cozyclay-${slate}.mp4`;
+				// Default plate filename: const name = `cozyclay-${slate}.mp4`
+				const name = fileName ?? `cozyclay-${slate}.mp4`;
 				const url = URL.createObjectURL(result.blob);
 				const anchor = document.createElement("a");
 				anchor.href = url;
@@ -4835,6 +4842,30 @@ export default function App() {
 		}).finally(() => {
 			exportShotsRef.current = null;
 		});
+	}
+
+	async function exportDepthVideo() {
+		if (recRef.current) { stopShotRecording(); return; }
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		if (!target) return;
+		exportShotsRef.current = shots;
+		const startFrame = !motion ? target.startFrame : 0;
+		const endFrame = !motion ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
+		const cam = shotCamRef.current;
+		const snapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
+		try {
+			const samples = [];
+			for (let frame = startFrame; frame <= endFrame; frame += 1) {
+				applyExportFrame(frame);
+				const depth = renderPass(captureRef.current, captureRef.current.scene, cam, "depth");
+				if (depth) samples.push(Array.from(depth).filter((_, index) => index % 4 === 0).map((grey) => DEPTH_RANGE_M * (1 - grey / 255)));
+			}
+			const depthRange = depthRangeFromFrames(samples, cam.near, DEPTH_RANGE_M);
+			await runShotExport({ startFrame, endFrame, passKind: "depth", depthRange, fileName: "blocking-depth.mp4" });
+			trackFeature("export_depth_video");
+		} catch (error) { if (error?.name !== "AbortError") setToast(error?.message || String(error)); }
+		finally { for (const snapshot of snapshots) restorePlaybackBones(snapshot.rig, snapshot.bones); exportShotsRef.current = null; }
 	}
 
 	function downloadOtioCutList() {
@@ -10514,6 +10545,17 @@ function resizePromptClip(id, edge, rawFrame) {
 										onClick={exportRenderPasses}
 									>
 										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-depth-video"
+										disabled={!shots.length || recState === "recording"}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
+										onClick={() => void exportDepthVideo()}
+									>
+										{ko("Depth (mp4)", "뎁스 (mp4)")}
 									</button>
 									<button
 										type="button"

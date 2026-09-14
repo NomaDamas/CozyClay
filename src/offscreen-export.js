@@ -55,7 +55,7 @@ function abortError() {
 }
 
 /**
- * Address and encode every frame in an inclusive range. `capture(frame)` must
+ * Address and encode every frame in an inclusive range. `capture(frame, passKind)` must
  * synchronously apply that absolute frame and return bottom-up RGBA bytes from
  * the offscreen WebGL render target. No playback or animation clock is used.
  */
@@ -67,6 +67,7 @@ export async function exportOffscreenVideo({
 	height,
 	capture,
 	signal,
+	passKind = null,
 	onFrame,
 	VideoEncoderClass = globalThis.VideoEncoder,
 	VideoFrameClass = globalThis.VideoFrame,
@@ -107,7 +108,7 @@ export async function exportOffscreenVideo({
 		for (let index = 0; index < range.frameCount; index += 1) {
 			if (signal?.aborted) throw abortError();
 			const frame = range.startFrame + index;
-			const pixels = capture(frame);
+			const pixels = capture(frame, passKind);
 			if (!(pixels instanceof Uint8Array) || pixels.byteLength !== topDown.byteLength) {
 				throw new Error(`frame ${frame} returned ${pixels?.byteLength ?? 0} RGBA bytes; expected ${topDown.byteLength}`);
 			}
