@@ -170,6 +170,7 @@ PY
 
   log "export CCLAY_MOTION_BACKEND=kimodo"
   log "export CCLAY_KIMODO_HOST=<this host>"
+  log "export CCLAY_KIMODO_REPO=$KIMODO_DIR (runner expects $KIMODO_DIR/.venv; installed venv is $VENV_DIR)"
   log "Kimodo model: $MODEL"
 }
 

@@ -13,6 +13,7 @@ assert.match(setup, /git clone --depth 1 https:\/\/github\.com\/nv-tlabs\/kimodo
 assert.match(setup, /if \[ ! -e "\$KIMODO_DIR\/.git" \]/);
 assert.match(setup, /snapshot_download\(repo_id=f\\?"nvidia\/\{model\}"\)/);
 assert.match(setup, /McGill-NLP\/LLM2Vec-Meta-Llama-3-8B-Instruct-mntp-supervised/);
+assert.match(setup, /CCLAY_KIMODO_REPO=\$KIMODO_DIR.*runner expects \$KIMODO_DIR\/\.venv.*installed venv is \$VENV_DIR/);
 assert.doesNotMatch(setup, /CCLAY_ARDY|\/ardy|ARDY/);
 assert.match(wrapper, /CCLAY_KIMODO_HOST/);
 assert.match(wrapper, /ssh/);
