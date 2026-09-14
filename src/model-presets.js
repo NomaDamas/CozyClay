@@ -6,12 +6,14 @@ export const VIDEO_MODEL_PRESETS = [
 		id: "seedance-2.5",
 		name: "Seedance 2.5",
 		vendor: "ByteDance",
-		durationsSeconds: [5, 10],
+		durationsSeconds: [],
+		minSeconds: 2,
+		maxSeconds: 30,
 		fps: 24,
 		aspects: ["16:9", "9:16", "21:9", "1:1"],
 		maxWidth: 2560,
 		maxHeight: 1440,
-		notes: "Clips are exactly 5s or 10s; frame count must land on the grid.",
+		notes: "Reference video for Seedance 2.5 omni: each clip 2–30 s, total ≤ 30 s, MP4/MOV 24–60 fps (docs.byteplus.com ModelArk 1520757, 2026-09-09).",
 	},
 	{
 		id: "kling-2",
@@ -22,7 +24,7 @@ export const VIDEO_MODEL_PRESETS = [
 		aspects: ["16:9", "9:16", "1:1"],
 		maxWidth: 1920,
 		maxHeight: 1080,
-		notes: "Clips are exactly 5s or 10s at 30 fps; no 21:9 delivery.",
+		notes: "Clips are exactly 5s or 10s at 30 fps; no 21:9 delivery. Motion Control wants one character, one continuous take, no cuts and no camera movement — camera-driven shots may be trimmed (kling.ai 3.0 MC docs).",
 	},
 	{
 		id: "veo-3",
@@ -75,6 +77,9 @@ export function checkShotAgainstPreset(shot, preset) {
 		}
 	} else if (Number.isFinite(preset.maxSeconds) && seconds > preset.maxSeconds + ASPECT_TOLERANCE) {
 		warnings.push(`too long: ${secondsText(seconds)} exceeds the ${preset.maxSeconds}s limit for ${preset.name}`);
+	}
+	if (Number.isFinite(preset.minSeconds) && seconds < preset.minSeconds - ASPECT_TOLERANCE) {
+		warnings.push(`too short: ${secondsText(seconds)} is under the ${preset.minSeconds}s minimum for ${preset.name}`);
 	}
 
 	if (!preset.aspects.includes(shot.aspect)) {

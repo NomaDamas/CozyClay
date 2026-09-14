@@ -19,7 +19,9 @@ console.log("PASS every preset carries id/name/vendor, fps, aspects, max size, n
 
 // The four required models match the spec'd capability grids.
 const seedance = presetById("seedance-2.5");
-assert.deepEqual(seedance.durationsSeconds, [5, 10], "seedance-2.5 clips are 5s or 10s");
+assert.deepEqual(seedance.durationsSeconds, [], "seedance-2.5 takes any reference-video length, not fixed slots");
+assert.equal(seedance.minSeconds, 2, "seedance-2.5 reference clips are at least 2s");
+assert.equal(seedance.maxSeconds, 30, "seedance-2.5 reference clips cap at 30s");
 assert.equal(seedance.fps, 24, "seedance-2.5 runs at 24 fps");
 assert.deepEqual(seedance.aspects, ["16:9", "9:16", "21:9", "1:1"], "seedance-2.5 aspect set");
 
@@ -27,6 +29,7 @@ const kling = presetById("kling-2");
 assert.deepEqual(kling.durationsSeconds, [5, 10], "kling-2 clips are 5s or 10s");
 assert.equal(kling.fps, 30, "kling-2 runs at 30 fps");
 assert.deepEqual(kling.aspects, ["16:9", "9:16", "1:1"], "kling-2 aspect set");
+assert.ok(kling.notes.includes("Motion Control"), "kling-2 notes carry the Motion Control caveat");
 
 const veo = presetById("veo-3");
 assert.deepEqual(veo.durationsSeconds, [8], "veo-3 clips are fixed 8s");
@@ -44,18 +47,19 @@ console.log("PASS seedance-2.5, kling-2, veo-3 and minimax-h3-selfhosted match t
 
 // Shot validation: a clean shot passes with no warnings.
 assert.deepEqual(checkShotAgainstPreset({ frames: 240, fps: 24, aspect: "16:9" }, seedance), { ok: true, warnings: [] }, "10s 16:9 seedance shot fits");
-assert.deepEqual(checkShotAgainstPreset({ frames: 120, fps: 24, aspect: "9:16" }, seedance), { ok: true, warnings: [] }, "5s 9:16 seedance shot fits");
+assert.deepEqual(checkShotAgainstPreset({ frames: 72, fps: 24, aspect: "9:16" }, seedance), { ok: true, warnings: [] }, "3s 9:16 seedance shot fits");
 console.log("PASS shots inside a preset's grid validate clean");
 
 // Duration violations warn with the exact "too long" text.
-const tooLong = checkShotAgainstPreset({ frames: 300, fps: 24, aspect: "16:9" }, seedance);
-assert.equal(tooLong.ok, false, "a 12.5s seedance shot is rejected");
+const tooLong = checkShotAgainstPreset({ frames: 744, fps: 24, aspect: "16:9" }, seedance);
+assert.equal(tooLong.ok, false, "a 31s seedance shot is rejected");
 assert.equal(tooLong.warnings.length, 1, "one warning per violated limit");
-assert.equal(tooLong.warnings[0], "too long: 12.5s is not an allowed clip length for Seedance 2.5 (allowed: 5s or 10s)", "duration warning names the allowed grid");
+assert.equal(tooLong.warnings[0], "too long: 31s exceeds the 30s limit for Seedance 2.5", "duration warning names the 30s cap");
 
-const offGridShort = checkShotAgainstPreset({ frames: 192, fps: 24, aspect: "16:9" }, seedance);
-assert.equal(offGridShort.warnings.length, 1, "an 8s shot is off seedance's 5/10 grid");
-assert.match(offGridShort.warnings[0], /^too long: 8s is not an allowed clip length/, "off-grid durations warn with the too-long text");
+const tooShort = checkShotAgainstPreset({ frames: 24, fps: 24, aspect: "16:9" }, seedance);
+assert.equal(tooShort.ok, false, "a 1s seedance shot is rejected");
+assert.equal(tooShort.warnings.length, 1, "one warning per violated limit");
+assert.equal(tooShort.warnings[0], "too short: 1s is under the 2s minimum for Seedance 2.5", "short clip warning names the 2s minimum");
 
 const veoLong = checkShotAgainstPreset({ frames: 240, fps: 24, aspect: "16:9" }, veo);
 assert.equal(veoLong.warnings.length, 1, "10s exceeds veo's fixed 8s clip");
@@ -63,7 +67,7 @@ assert.match(veoLong.warnings[0], /^too long: 10s is not an allowed clip length 
 
 const klingFps = checkShotAgainstPreset({ frames: 300, fps: 30, aspect: "16:9" }, kling);
 assert.deepEqual(klingFps, { ok: true, warnings: [] }, "kling durations are judged at the shot's own 30 fps");
-console.log("PASS off-grid durations produce the exact too-long warning");
+console.log("PASS seedance reference-video limits and veo duration warnings");
 
 // Continuous-grid presets only reject clips past maxSeconds.
 const minimaxAtLimit = checkShotAgainstPreset({ frames: 240, fps: 24, aspect: "12:7" }, minimax);
@@ -82,7 +86,7 @@ assert.equal(badAspect.ok, false, "4:3 is not a seedance aspect");
 assert.equal(badAspect.warnings.length, 1, "aspect alone yields one warning");
 assert.equal(badAspect.warnings[0], "aspect 4:3 is not supported by Seedance 2.5 (allowed: 16:9, 9:16, 21:9, 1:1)", "aspect warning text");
 
-const both = checkShotAgainstPreset({ frames: 300, fps: 24, aspect: "4:3" }, seedance);
+const both = checkShotAgainstPreset({ frames: 744, fps: 24, aspect: "4:3" }, seedance);
 assert.equal(both.warnings.length, 2, "one warning per violated limit, both together");
 assert.match(both.warnings[0], /^too long:/, "duration warning comes first");
 assert.match(both.warnings[1], /^aspect 4:3 is not supported/, "aspect warning comes second");
