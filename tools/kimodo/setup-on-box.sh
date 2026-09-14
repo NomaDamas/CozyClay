@@ -328,6 +328,12 @@ if [ "$DRY_RUN" -eq 1 ]; then
   log "would write $HOME/.cozyclay/kimodo-backend.json"
 else
   mkdir -p "$HOME/.cozyclay"
-  printf '{"backend":"%s","model":"%s"}\n' "$BACKEND" "$MODEL" > "$HOME/.cozyclay/kimodo-backend.json"
+  if [ "$BACKEND" = "kimodo-mlx" ]; then
+    printf '{"backend":"%s","model":"%s","motion":"%s/models/nvidia-soma-rp-v1.1","text":"%s/models/llm2vec-text-bundle"}\n' "$BACKEND" "$MODEL" "$MLX_DIR" "$MLX_DIR" > "$HOME/.cozyclay/kimodo-backend.json"
+  elif [ "$BACKEND" = "kimodo.cpp-metal" ] || [ "$BACKEND" = "kimodo.cpp-cpu" ]; then
+    printf '{"backend":"%s","model":"%s","motion":"%s/models/kimodo-soma-rp-v1-f32.gguf","text":"%s/models/llm2vec-text-bundle"}\n' "$BACKEND" "$MODEL" "$CPP_DIR" "$CPP_DIR" > "$HOME/.cozyclay/kimodo-backend.json"
+  else
+    printf '{"backend":"%s","model":"%s"}\n' "$BACKEND" "$MODEL" > "$HOME/.cozyclay/kimodo-backend.json"
+  fi
 fi
 log "ready"

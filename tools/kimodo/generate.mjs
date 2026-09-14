@@ -51,22 +51,23 @@ const SSH_OPTS = [
 export const DEFAULT_MODEL = "Kimodo-SOMA-RP-v1.1";
 export const KIMODO_BACKENDS = {
   "nvidia-cuda": { repo: "$HOME/.cozyclay/kimodo", entry: ".venv/bin/kimodo_gen", mode: "cuda", promptFlag: null, durationFlag: "--duration", stepsFlag: "--diffusion_steps", outputFlag: "--output" },
-  "kimodo-mlx": { repo: "$HOME/.cozyclay/kimodo-mlx", entry: "$HOME/.cozyclay/kimodo-mlx-venv/bin/python", mode: "mlx", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: "--motion" },
-  "kimodo.cpp-metal": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-metal/kmd-generate", mode: "cpp", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: "--output" },
-  "kimodo.cpp-cpu": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-cpu/kmd-generate", mode: "cpp", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: "--output" },
+  "kimodo-mlx": { repo: "$HOME/.cozyclay/kimodo-mlx", entry: "$HOME/.cozyclay/kimodo-mlx-venv/bin/python", mode: "mlx", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: null },
+  "kimodo.cpp-metal": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-metal/kmd-generate", mode: "cpp", outputFlag: null },
+  "kimodo.cpp-cpu": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-cpu/kmd-generate", mode: "cpp", outputFlag: null },
 };
 
 /** Build argv for an installed Kimodo route without spawning it. */
-export function buildBackendCommand({ backend = "nvidia-cuda", repo, model, prompt, duration, frames, steps, seed, output }) {
+export function buildBackendCommand({ backend = "nvidia-cuda", repo, model, prompt, duration, frames, steps, seed, output, promptFile, motionWeights, textBundle, outputDir }) {
   const spec = KIMODO_BACKENDS[backend];
   if (!spec) throw new Error(`unknown Kimodo backend: ${backend}`);
   const root = repo || spec.repo;
   const entry = spec.entry.startsWith("$HOME/") ? spec.entry : `${root}/${spec.entry}`;
   const args = [];
-  if (spec.mode === "mlx" || spec.mode === "cpp") args.push(spec.promptFlag, prompt, spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
+  if (spec.mode === "mlx") args.push(spec.promptFlag, prompt, "--motion", motionWeights || process.env.CCLAY_KIMODO_MLX_MOTION || "$HOME/.cozyclay/kimodo-mlx/models/nvidia-soma-rp-v1.1", "--text", textBundle || process.env.CCLAY_KIMODO_MLX_TEXT || "$HOME/.cozyclay/kimodo-mlx/models/llm2vec-text-bundle", spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
+  else if (spec.mode === "cpp") args.push(motionWeights || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1-f32.gguf", textBundle || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || "$HOME/.cozyclay/kimodo.cpp/models/llm2vec-text-bundle", promptFile || "$HOME/.cozyclay/kimodo.cpp/prompt.txt", String(frames), String(steps), String(Number.isInteger(seed) ? seed : 42), outputDir || output);
   else args.push(prompt, spec.durationFlag, duration, "--diffusion_steps", String(steps), "--model", model);
   if (Number.isInteger(seed)) args.push("--seed", String(seed));
-  args.push(spec.outputFlag, output);
+  if (spec.outputFlag) args.push(spec.outputFlag, output);
   if (spec.mode === "mlx") return { command: entry, args: ["-m", "kimodo_mlx", "generate", ...args], cwd: root, backend };
   return { command: entry, args, cwd: root, backend };
 }
@@ -539,7 +540,13 @@ export async function generateOnBox({
 		// One `kimodo_gen` invocation: the env assignment and every flag are one
 		// shell WORD list for that single command, so they join with spaces, while
 		// `cd` is a separate command and must be chained with `&&`.
-		const built = buildBackendCommand({ backend, repo, model, prompt, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take` });
+		if (!host && backend === "kimodo-mlx") throw new Error("kimodo-mlx CLI has no output flag yet; local NPZ output is tracked in https://github.com/NomaDamas/CozyClay/issues/267");
+		if (!host && backend.startsWith("kimodo.cpp")) throw new Error("kimodo.cpp local .f32 output conversion is not implemented yet; tracked in https://github.com/NomaDamas/CozyClay/issues/267");
+		const promptFile = `${remoteStem}/prompt.txt`;
+		const localPrompt = join(localDir, "prompt.txt");
+		await writeFile(localPrompt, `${prompt}\n`);
+		await push(localPrompt, promptFile, "prompt");
+		const built = buildBackendCommand({ backend, repo, model, prompt, promptFile, motionWeights: backend === "kimodo-mlx" ? process.env.CCLAY_KIMODO_MLX_MOTION : process.env.CCLAY_KIMODO_CPP_MOTION_GGUF, textBundle: backend === "kimodo-mlx" ? process.env.CCLAY_KIMODO_MLX_TEXT : process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take`, outputDir: remoteStem });
 		let commandWords = [built.command, ...built.args];
 		if (backend === "nvidia-cuda") {
 			commandWords = [
