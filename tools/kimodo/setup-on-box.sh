@@ -244,8 +244,10 @@ install_kimodo_cpp() {
     else
       if git -C "$CPP_DIR" apply --check "$MLX_DIR/patches/0001-kimodo-ggml-metal.patch" 2>/dev/null; then
         git -C "$CPP_DIR" apply "$MLX_DIR/patches/0001-kimodo-ggml-metal.patch"
+      elif git -C "$CPP_DIR" apply --check -R "$MLX_DIR/patches/0001-kimodo-ggml-metal.patch" 2>/dev/null; then
+        log "Metal patch already applied; continuing"
       else
-        log "Metal patch already applied (or checkout dirty); continuing"
+        die "Metal patch cannot be applied cleanly; see $CPP_DIR and $MLX_DIR/patches/0001-kimodo-ggml-metal.patch"
       fi
     fi
     run cmake -S "$CPP_DIR" -B "$build_dir" \
@@ -264,6 +266,22 @@ install_kimodo_cpp() {
       -DKIMODO_ENABLE_VULKAN="$vulkan" -DKIMODO_BUILD_TESTS=OFF
   fi
   run cmake --build "$build_dir" --parallel
+
+  if [ "$accel" = "metal" ] && [ "$DRY_RUN" -ne 1 ]; then
+    local metal_enabled=0
+    if [ -f "$build_dir/CMakeCache.txt" ] && grep -Eq '^KIMODO_ENABLE_METAL(:BOOL)?=ON$' "$build_dir/CMakeCache.txt"; then
+      metal_enabled=1
+    else
+      while IFS= read -r -d '' binary; do
+        if command -v nm >/dev/null 2>&1 && nm "$binary" 2>/dev/null | grep -Eiq 'metal|ggml_metal'; then
+          metal_enabled=1
+          break
+        fi
+      done < <(find "$build_dir" -type f -perm -111 -print0 2>/dev/null)
+    fi
+    [ "$metal_enabled" -eq 1 ] || die "Metal build verification failed; KIMODO_ENABLE_METAL is not enabled"
+    log "verified Metal build: KIMODO_ENABLE_METAL=ON"
+  fi
 
   # GGUF weights come from the LocalAI-io org through the upstream script,
   # which needs the hf CLI; keep it in a small dedicated venv.
