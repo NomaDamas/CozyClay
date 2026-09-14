@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { resolveIkRig, ikEvaluate } from "../../src/ardy/ik.js";
-import { SUPPORT_SITES, copyPhysicsKeys, physicsKeyStamp, supportIntervals, smoothPhysicsTrack, reviewAutoPhysics } from "../../src/ardy/physics-review.js";
+import { SUPPORT_SITES, copyPhysicsKeys, physicsKeyStamp, supportIntervals, physicsMetrics, smoothPhysicsTrack, reviewAutoPhysics } from "../../src/ardy/physics-review.js";
 import { relaxPhysicsRoot } from "../../src/ardy/physics-temporal.js";
 
 function makeRig() {
@@ -24,6 +24,17 @@ assert.equal(contacts.masks[0].has("leftFoot"), false);
 assert(contacts.masks[16].has("leftHand")); assert(contacts.masks[11].has("leftKnee"));
 assert(!contacts.masks[20].has("rightFoot"), "moving low feet are not contacts");
 console.log("PASS hand/knee contact overrides, free intervals, and moving-foot detection");
+{
+	const toeRows = (toeAt, ankleAt = () => 0) => Array.from({ length: 60 }, (_, f) => ({ root: new THREE.Vector3(), support: { leftFoot: { floor: 0, position: new THREE.Vector3(ankleAt(f), .05, 0) } }, toes: { leftFoot: new THREE.Vector3(toeAt(f), .05, 0) }, knees: { leftFoot: 0, rightFoot: 0 } }));
+	const moving = supportIntervals(toeRows((f) => f * .005), 30);
+	assert(moving.rejected.some((s) => s.site === "leftFoot" && s.reason === "moving-contact"));
+	const ankleDrift = supportIntervals(toeRows(() => 0, (f) => f * .005), 30);
+	assert(ankleDrift.spans.some((s) => s.site === "leftFoot"));
+	const mask = Array.from({ length: 60 }, () => new Map([["leftFoot", ankleDrift.spans[0]]]));;
+	const metrics = physicsMetrics(toeRows(() => .031), mask, 30);
+	assert(Math.abs(metrics.slide - .031) < 1e-9, "foot slide is measured from toe");
+	console.log("PASS foot contacts, wander, and slide use toe positions");
+}
 const smooth = smoothPhysicsTrack(Array.from({ length: 20 }, (_, f) => [f < 10 ? 0 : .1]), 3, [12]);
 assert.equal(smooth[12][0], 0); assert(smooth[10][0] > 0 && smooth[10][0] < .1);
 console.log("PASS temporal correction eases into protected poses");
@@ -54,6 +65,12 @@ const stamp = physicsKeyStamp(sourceKeys);
 const result = await reviewAutoPhysics({ ...params, protectedFrames: [12] });
 assert.equal(physicsKeyStamp(sourceKeys), stamp, "review must not mutate keys");
 assert(result.changedFrames.length > 0);
+const footSpan = result.contacts.spans.find((s) => s.site === "leftFoot");
+if (footSpan) {
+	const toeMedian = [...result.samples.slice(footSpan.start, footSpan.end + 1)].map((r) => r.toes.leftFoot.x).sort((a, b) => a - b)[Math.floor((footSpan.end - footSpan.start) * .5)];
+	assert(Math.abs(footSpan.anchor.x - toeMedian) < 1e-6, "foot span anchor is the source toe median");
+}
+assert(result.samples.every((r) => r.toes?.leftFoot && r.toes?.rightFoot), "review samples toes");
 assert(result.after.penetration < result.before.penetration);
 assert.equal(result.after.surfaceMeasured, false, "bone fallback must not claim mesh measurements");
 applyRaw(12); const protectedPose = rest.map(([b]) => [...b.position.toArray(), ...b.quaternion.toArray()]);
