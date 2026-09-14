@@ -514,8 +514,13 @@ export function resolveIkChains(rig) {
  * a dragged limb keeps its own side and never mirror-flips when the target
  * crosses the bone line. Only a perfectly straight chain (no offset to
  * continue) falls back to the character-local pole hint.
+ *
+ * `maxExtension` (tuned by `softening`, default 0.01) optionally caps the
+ * root→effector reach with a soft clamp: past the cap the effector approaches
+ * it asymptotically and never exceeds it, so a locked foot cannot straighten
+ * the leg past the extension the source pose actually had.
  */
-export function solveIk(chain, targetWorld) {
+export function solveIk(chain, targetWorld, { maxExtension = null, softening = 0.01 } = {}) {
 	restoreChainPositions(chain);
 	const { bones, lengths, poleLocal, rig } = chain;
 	const [b0, b1, b2] = bones;
@@ -543,6 +548,25 @@ export function solveIk(chain, targetWorld) {
 	} else if (d < minD) {
 		d = minD;
 		t.copy(p0).addScaledVector(dir, d);
+	}
+
+	// Soft maximum-extension clamp (Holden's TwoBoneInverseKinematics): IK is a
+	// minimal modification of the source pose, so a foot locked against floor
+	// sliding must not be allowed to straighten the leg PAST the extension that
+	// pose had — clamping hard instead of softly would snap the reach at the
+	// cap frame-over-frame, where the exponential saturation eases toward it.
+	if (Number.isFinite(maxExtension) && maxExtension > 0) {
+		const cap = Math.min(maxD, maxExtension);
+		if (cap - softening < minD) {
+			// No room for the soft curve inside the annulus: fall back to a hard
+			// clamp rather than feed the law of cosines a d below minD.
+			d = Math.min(d, cap);
+			t.copy(p0).addScaledVector(dir, d);
+		} else if (d > cap - softening) {
+			const saturation = 1 - Math.exp(-Math.max(d - cap + softening, 0) / softening);
+			d = cap - softening + softening * saturation;
+			t.copy(p0).addScaledVector(dir, d);
+		}
 	}
 
 	// Law of cosines: the elbow sits at p0 + dir·proj + bend·off.
