@@ -21,6 +21,23 @@ export function allowAgentOrigin(req, port) {
 
 // Two 1920x1080 PNG data URLs (frame + reference) fit comfortably in this.
 const IMAGE_BODY_LIMIT = 24 * 1024 * 1024;
+// Keep the packaged sidecar self-contained: npm distribution intentionally omits src/.
+const studioUuid = (value) => typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const studioProtocolError = (code, message, details) => Object.assign(new Error(message), { name: "StudioProtocolError", code, details, toJSON() { return { code, message: this.message, ...(this.details ? { details: this.details } : {}) }; } });
+const validateStudioTurnEnvelope = (value) => {
+	if (value?.surface !== "studio") return null;
+	if (!studioUuid(value.turn_id)) throw studioProtocolError("INVALID_TURN_ID", "Studio turn_id must be a UUID");
+	if (!studioUuid(value.sessionId)) throw studioProtocolError("INVALID_SESSION_ID", "Studio sessionId must be a UUID");
+	const context = value.context;
+	if (!context || context.schema !== "studio-context-v1") throw studioProtocolError("INVALID_CONTEXT", "schema must be studio-context-v1");
+	const host = context.host;
+	if (!host || ["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"].some((key) => typeof host[key] !== "string" || !host[key])) throw studioProtocolError("INVALID_IDENTITY", "context host identity is incomplete");
+	const scene = context.scene;
+	if (!scene || !Number.isInteger(scene.frameCount) || scene.frameCount <= 0) throw studioProtocolError("INVALID_CONTEXT", "scene.frameCount must be positive");
+	const bytes = Buffer.byteLength(JSON.stringify(context), "utf8");
+	if (bytes > 16 * 1024) throw studioProtocolError("CONTEXT_TOO_LARGE", "Studio context exceeds 16 KiB", { bytes, maxBytes: 16 * 1024 });
+	return value;
+};
 
 // Attached scene references (#167): identity sheets and the environment
 // reference. Capped because every one of them is another full image the
@@ -241,12 +258,16 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		let value;
 		try {
 			value = await readBody(req);
-			if (!value || typeof value.sessionId !== "string" || !value.sessionId
+			if (value?.surface === "studio") validateStudioTurnEnvelope(value);
+			else if (!value || typeof value.sessionId !== "string" || !value.sessionId
 				|| (path === "/agent/turn" && (typeof value.text !== "string"
 					|| (value.attachFrame !== undefined && typeof value.attachFrame !== "boolean")
 					|| (value.model !== undefined && typeof value.model !== "string")
 					|| (value.effort !== undefined && !REASONING_EFFORTS.includes(value.effort))))) throw new Error("Invalid request.");
-		} catch { json(res, 400, { error: "invalid request" }); return true; }
+		} catch (error) {
+			const detail = error?.name === "StudioProtocolError" ? error.toJSON() : { code: "INVALID_REQUEST", message: "invalid request" };
+			json(res, 400, { error: detail }); return true;
+		}
 		if (path === "/agent/stop") {
 			sessions.get(value.sessionId)?.controller?.abort();
 			json(res, 200, { ok: true }); return true;
