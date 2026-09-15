@@ -65,7 +65,7 @@ async function characterize() {
 
 async function run() {
   const args = process.argv.slice(2);
-  if (args.length && !(args.length === 2 && args[0] === '--case' && ['characterization', 'relative-basis-and-batch'].includes(args[1]))) throw new Error('Unknown test arguments');
+  if (args.length && !(args.length === 2 && args[0] === '--case' && ['characterization', 'relative-basis-and-batch', 'measured-character-floor'].includes(args[1]))) throw new Error('Unknown test arguments');
   if (args[1] === 'characterization') return characterize();
   await characterize();
   const f = fixture();
@@ -73,6 +73,7 @@ async function run() {
   // registration. RED is an assertion on its actual rejection, not an import error.
   const moduleUrl = new URL('../src/studio-agent-commands.js', import.meta.url);
   const mod = existsSync(moduleUrl) ? await import(moduleUrl) : null;
+  if (args[1] === 'measured-character-floor') return measuredCharacterFloor(mod);
   const commands = mod?.createStudioCommands(f.ports);
   const handlers = commands ? { arrange_objects: request => commands.execute(request) } : {};
   const response = await dispatchLiveFrame(JSON.stringify({ type: 'cmd', id: 'relative', name: 'arrange_objects', args: f.envelope('arrange_objects', { ops: [chair('shot_camera')] }) }), handlers);
@@ -83,7 +84,93 @@ async function run() {
   assert.equal(f.stores.objects.depths().past, 1);
   f.stores.objects.undo(); assert.deepEqual(f.state.objects, []);
   console.log('PASS relative-basis-and-batch: camera-left -1.05m, actual receipt/state and one Undo');
+  await measuredCharacterFloor(mod);
   await boundaries(mod);
+}
+
+async function measuredCharacterFloor(mod) {
+  // Frozen same-frame skin measurement of the shipped upright y-bot-tpose,
+  // y=0, scale=1, no motion/pose. The browser QA also uses the actual loaded rig.
+  const measured = { min: { x: -0.25069919668017837, y: -0.00010230400198583725, z: -0.22550816444218705 },
+    max: { x: 0.25061193225927636, y: 1.8046321105951333, z: 0.20375764888362347 } };
+  const bounds = ({ entity }) => Object.fromEntries(['min', 'max'].map(edge => [edge,
+    Object.fromEntries(['x', 'y', 'z'].map(axis => [axis, entity[axis] + measured[edge][axis] * entity.scale]))]));
+  const create = { op: 'create', name: 'B', position: { relativeTo: 'alex', basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } };
+  for (const scale of [1, 2]) {
+    const f = fixture(); f.ports.bounds = bounds;
+    const commands = mod.createStudioCommands(f.ports);
+    const cube = commands.execute(f.envelope('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' },
+      position: { ...create.position, side: 'left', gapM: 1 } }] }));
+    assert.equal(cube.ok, true, JSON.stringify(cube)); near(cube.checks.actualGapM, 1);
+    const before = structuredClone(f.state), castBefore = f.state.characters;
+    let commits = 0, measurements = 0;
+    const commit = f.ports.commit;
+    f.ports.commit = payload => { commits++; return commit(payload); };
+    f.ports.bounds = input => {
+      if (!commits) {
+        assert.deepEqual(f.state, before, 'bounds preparation must not publish intermediate character transforms');
+        assert.equal(f.stores.cast.depths().past, 0);
+      }
+      measurements++;
+      return bounds(input);
+    };
+    const request = f.envelope('arrange_characters', { ops: [{ ...create, scale }] });
+    const response = await dispatchLiveFrame(JSON.stringify({ type: 'cmd', id: 'measured-floor', name: request.name, args: request }),
+      { arrange_characters: input => commands.execute(input) });
+    assert.equal(response.ok, true, response.error);
+    const receipt = validateReceipt(response.value);
+    assert.equal(receipt.ok, true, `ordinary measured upright character must be placeable: ${JSON.stringify(receipt)}`);
+    const second = f.state.characters[1], grounded = bounds({ entity: second });
+    near(second.y, -measured.min.y * scale); near(grounded.min.y, 0);
+    near(grounded.min.x - bounds({ entity: f.state.characters[0] }).max.x, 2);
+    near(receipt.checks.actualGapM, 2); near(receipt.checks.baseY, 0);
+    assert.equal(receipt.checks.support, 'floor'); assert.equal(receipt.undo.entries, 1);
+    assert.equal(receipt.delta[0].after.position.y, second.y);
+    assert.equal(f.state.revision, before.revision + 1); assert.equal(commits, 1); assert(measurements > 1);
+    assert.equal(f.stores.cast.depths().past, 1); assert.equal(f.stores.objects.depths().past, 1);
+    assert.deepEqual(f.state.objects, before.objects); assert.equal(f.state.activeCharacterId, 'alex');
+    assert.deepEqual(commands.execute(request), receipt); assert.equal(commits, 1);
+    f.stores.cast.undo(); assert.strictEqual(f.state.characters, castBefore);
+    assert.deepEqual(f.state.objects, before.objects); assert.equal(f.stores.cast.depths().past, 0);
+  }
+  console.log('PASS measured-character-floor: measured default rig and scale=2, grounded skin, exact 2m gap, private draft, one domain history entry, replay and Undo');
+
+  for (const scenario of ['tilted-support', 'unavailable', 'unavailable-after-lift', 'clamped', 'unresponsive-bounds', 'batch-failure', 'revision-race', 'frame-race', 'gesture-race']) {
+    const f = fixture(); f.ports.bounds = bounds;
+    let ops = [create], name = 'arrange_characters', code = 'TARGET_NOT_READY';
+    if (scenario === 'tilted-support') {
+      f.stores.objects.applyAtomic(() => [{ ...createSceneObject('chair'), rotX: 10 }]);
+      ops = [{ ...create, position: { onObject: 'chair' } }];
+    }
+    if (scenario === 'unavailable') f.ports.bounds = () => null;
+    if (scenario === 'unavailable-after-lift') f.ports.bounds = input => input.entity.id !== 'alex' && input.entity.y > 0 ? null : bounds(input);
+    if (scenario === 'clamped') f.ports.bounds = input => { const box = bounds(input); box.min.y = input.entity.y + 0.1; return box; };
+    if (scenario === 'unresponsive-bounds') f.ports.bounds = input => { const box = bounds(input); box.min.y = measured.min.y; return box; };
+    if (scenario === 'batch-failure') { ops = [create, { ...create, name: 'Alex' }]; code = 'DUPLICATE_NAME'; }
+    if (scenario.endsWith('-race')) {
+      code = scenario === 'gesture-race' ? 'TARGET_BUSY' : 'STALE_SCENE';
+      let changed = false;
+      f.ports.bounds = input => {
+        if (!changed) {
+          changed = true;
+          if (scenario === 'revision-race') f.state.revision++;
+          else if (scenario === 'frame-race') f.state.frame++;
+          else f.state.busy = true;
+        }
+        return bounds(input);
+      };
+    }
+    const before = structuredClone(f.state), depths = Object.fromEntries(Object.entries(f.stores).map(([k, s]) => [k, s.depths()]));
+    const commands = mod.createStudioCommands(f.ports);
+    f.ports.commit = () => assert.fail('refused placement must never publish');
+    const receipt = validateReceipt(commands.execute(f.envelope(name, { ops })));
+    assert.equal(receipt.ok, false, scenario); assert.equal(receipt.code, code, `${scenario}: ${JSON.stringify(receipt)}`);
+    assert.equal(receipt.mutated, false); assert.deepEqual(f.state.characters, before.characters); assert.deepEqual(f.state.objects, before.objects);
+    if (!scenario.endsWith('-race')) assert.deepEqual(f.state, before);
+    assert.deepEqual(Object.fromEntries(Object.entries(f.stores).map(([k, s]) => [k, s.depths()])), depths);
+    assert.equal(commands.reconcile_studio_command({ commandId: receipt.commandId }).status, 'not_applied');
+  }
+  console.log('PASS measured-character-floor refusals: tilted object/support, missing/changed/unresponsive bounds, domain floor clamp, batch atomicity and revision/frame/gesture races');
 }
 
 async function boundaries(mod) {
