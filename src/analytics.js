@@ -26,6 +26,11 @@ const EVENT_PROPERTIES = Object.freeze({
 	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code"],
 	"export:blocking_frame_succeeded": ["format"],
 	"export:video_succeeded": ["format"],
+	"export:keyframe_pack": ["entries", "source"],
+	"export:attempt_started": ["attempt_id", "export_kind", "format", "surface"],
+	"export:attempt_succeeded": ["attempt_id", "export_kind", "format", "surface", "duration_bucket"],
+	"export:attempt_failed": ["attempt_id", "export_kind", "format", "surface", "duration_bucket", "failure_code"],
+	"export:attempt_cancelled": ["attempt_id", "export_kind", "format", "surface", "duration_bucket", "failure_code"],
 	"sample:played": ["from"],
 	"playground:opened": [],
 	"playground:first_action": ["action_kind"],
@@ -38,6 +43,14 @@ const FEATURE_NAMES = new Set([
 ]);
 const HEARD_FROM_VALUES = new Set(["x", "hn", "reddit", "github", "friend", "other"]);
 const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "url", "path", "file"]);
+const EXPORT_FAILURE_CODES = new Set(["unsupported_codec", "encode_failed", "render_failed", "aborted", "unknown"]);
+const EXPORT_PROPERTY_VALUES = Object.freeze({
+	export_kind: new Set(["video", "depth_video", "frame", "keyframe_pack"]),
+	format: new Set(["mp4", "png", "zip"]),
+	surface: new Set(["studio", "workflow", "embed"]),
+	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+	failure_code: EXPORT_FAILURE_CODES,
+});
 
 let posthog = null;
 let initialized = false;
@@ -109,6 +122,15 @@ export function sanitizeProps(event, props) {
 		if (DENIED_PROPERTY_KEYS.has(key) || !Object.hasOwn(props, key)) continue;
 		if (event === "feature:used" && (key !== "name" || !FEATURE_NAMES.has(props[key]))) continue;
 		if (event === "install:first_launch" && (key !== "heard_from" || !HEARD_FROM_VALUES.has(props[key]))) continue;
+		if (event.startsWith("export:attempt_")) {
+			if (key === "attempt_id") {
+				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
+			} else if (!EXPORT_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		}
+		if (event === "export:keyframe_pack") {
+			if (key === "source" && props[key] !== "workflow") continue;
+			if (key === "entries" && (!Number.isFinite(props[key]) || props[key] < 0)) continue;
+		}
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;
@@ -180,6 +202,74 @@ export function bucketMs(ms) {
 	if (ms < 10000) return "3-10s";
 	if (ms < 30000) return "10-30s";
 	return "gte30s";
+}
+
+/** Only structured error codes cross the analytics boundary, never messages. */
+export function exportFailureCode(error, fallbackCode = "unknown") {
+	try {
+		if (error?.name === "AbortError") return "aborted";
+		if (EXPORT_FAILURE_CODES.has(error?.exportFailureCode)) return error.exportFailureCode;
+	} catch {
+		// Error objects can cross realms or expose throwing getters.
+	}
+	return EXPORT_FAILURE_CODES.has(fallbackCode) ? fallbackCode : "unknown";
+}
+
+/**
+ * One user-initiated export, ending at pipeline completion/download handoff.
+ * Optional { now, capture } dependencies keep fixtures deterministic. Telemetry
+ * failures (including unavailable randomness) must not change export behavior.
+ */
+export function startExportAttempt(metadata, dependencies = {}) {
+	let terminal = false;
+	let props = null;
+	let startedAt = NaN;
+	let now = () => performance.now();
+	let capture = track;
+	const readClock = () => {
+		try { return now(); } catch { return NaN; }
+	};
+	const emit = (event, payload) => {
+		try {
+			Promise.resolve(capture(event, sanitizeProps(event, payload))).catch(() => {
+				// A rejected transport is as non-fatal as a synchronous failure.
+			});
+		} catch {
+			// Analytics must never affect the export or its error handling.
+		}
+	};
+	try {
+		now = dependencies.now ?? now;
+		capture = dependencies.capture ?? capture;
+		const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+		const attempt_id = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		props = { ...sanitizeProps("export:attempt_started", metadata), attempt_id };
+		startedAt = readClock();
+		emit("export:attempt_started", props);
+	} catch {
+		// Without a secure random ID, omit the attempt rather than inventing
+		// a persistent/content-derived identifier or blocking the export.
+		props = null;
+	}
+	const finish = (result, error, fallbackCode) => {
+		if (terminal) return;
+		terminal = true;
+		if (!props) return;
+		try {
+			const payload = { ...props, duration_bucket: bucketMs(readClock() - startedAt) };
+			if (result === "failed") {
+				payload.failure_code = exportFailureCode(error, fallbackCode);
+				if (payload.failure_code === "aborted") result = "cancelled";
+			}
+			emit(`export:attempt_${result}`, payload);
+		} catch {
+			// Clock/payload failures are isolated from the actual export too.
+		}
+	};
+	return {
+		succeed() { finish("succeeded"); },
+		fail(error, fallbackCode = "unknown") { finish("failed", error, fallbackCode); },
+	};
 }
 
 const URL_PROPERTY_KEYS = [

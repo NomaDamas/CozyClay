@@ -62,6 +62,8 @@ cclay telemetry on</code></pre>
               <tr><td>project:saved, project:opened</td><td>Whether people keep their work (object counts and ages are bucketed; never names or paths)</td></tr>
               <tr><td>motion:backend_state, motion:generate_blocked, motion:job_started, motion:job_succeeded, motion:job_failed</td><td>Motion generation reliability</td></tr>
               <tr><td>export:blocking_frame_succeeded, export:video_succeeded</td><td>Export reliability</td></tr>
+              <tr><td>export:attempt_started, export:attempt_succeeded, export:attempt_failed, export:attempt_cancelled</td><td>Export attempts and outcomes, paired by an ephemeral random attempt_id; export_kind (video, depth_video, frame or keyframe_pack), format (mp4, png or zip) and initiating surface (studio, workflow or embed). Terminal events include a bucketed duration_bucket; failures and real cancellations include only a normalized failure_code (unsupported_codec, encode_failed, render_failed, aborted or unknown), never raw error messages, filenames, URLs, paths, prompts or scene content. Success means pipeline completion or download handoff, not confirmation that the OS saved a file.</td></tr>
+              <tr><td>export:keyframe_pack</td><td>Legacy Workflow pack handoffs, with numeric entries count and source=workflow; not an additional export attempt</td></tr>
               <tr><td>playground:opened, playground:first_action</td><td>Whether the home-page playground gets used</td></tr>
               <tr><td>hosted:composer_viewed, hosted:login_started, hosted:ticket_created, hosted:result_opened, hosted:opened_in_studio</td><td>Hosted demo funnel</td></tr>
             </tbody>

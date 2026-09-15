@@ -29,8 +29,22 @@ function flipRows(source, destination, width, height) {
 	}
 }
 
-async function supportedEncoderConfig(width, height, fps, VideoEncoderClass) {
+function withExportFailureCode(error, code) {
+	try {
+		Object.defineProperty(error, "exportFailureCode", {
+			value: error?.name === "AbortError" ? "aborted" : code,
+			configurable: true,
+		});
+	} catch {
+		// Preserve the original thrown value even if a foreign/frozen error
+		// cannot carry metadata. Classification must not replace the error.
+	}
+	return error;
+}
+
+async function supportedEncoderConfig(width, height, fps, VideoEncoderClass, signal) {
 	for (const candidate of CODECS) {
+		if (signal?.aborted) throw abortError();
 		const config = {
 			...candidate,
 			width,
@@ -42,12 +56,14 @@ async function supportedEncoderConfig(width, height, fps, VideoEncoderClass) {
 		try {
 			const support = await VideoEncoderClass.isConfigSupported(config);
 			if (support.supported) return support.config;
-		} catch {
+		} catch (error) {
+			if (error?.name === "AbortError") throw error;
 			// Try the next H.264 profile. A browser can expose WebCodecs while a
 			// particular hardware/software encoder profile is unavailable.
 		}
 	}
-	throw new Error("This browser has no H.264 WebCodecs encoder for MP4 export");
+	if (signal?.aborted) throw abortError();
+	throw withExportFailureCode(new Error("This browser has no H.264 WebCodecs encoder for MP4 export"), "unsupported_codec");
 }
 
 function abortError() {
@@ -72,42 +88,50 @@ export async function exportOffscreenVideo({
 	VideoEncoderClass = globalThis.VideoEncoder,
 	VideoFrameClass = globalThis.VideoFrame,
 }) {
+	if (signal?.aborted) throw abortError();
 	const range = normalizeFrameRange(startFrame, endFrame);
 	if (!Number.isFinite(fps) || fps <= 0) throw new RangeError("export fps must be positive");
 	if (!Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1) throw new RangeError("invalid export dimensions");
 	if (typeof capture !== "function") throw new TypeError("export capture must be a function");
-	if (!VideoEncoderClass || !VideoFrameClass) throw new Error("This browser does not support WebCodecs video export");
+	if (!VideoEncoderClass || !VideoFrameClass) throw withExportFailureCode(new Error("This browser does not support WebCodecs video export"), "unsupported_codec");
 
-	const config = await supportedEncoderConfig(width, height, fps, VideoEncoderClass);
+	const config = await supportedEncoderConfig(width, height, fps, VideoEncoderClass, signal);
+	if (signal?.aborted) throw abortError();
 	const chunks = [];
 	let decoderConfig = null;
 	const hashes = [];
 	let encoderError = null;
-	const encoder = new VideoEncoderClass({
-		output(chunk, metadata) {
-			const data = new Uint8Array(chunk.byteLength);
-			chunk.copyTo(data);
-			chunks.push({
-				timestamp: chunk.timestamp,
-				duration: chunk.duration ?? Math.round(1_000_000 / fps),
-				type: chunk.type,
-				data,
-			});
-			if (!decoderConfig && metadata?.decoderConfig) decoderConfig = metadata.decoderConfig;
-		},
-		error(error) {
-			encoderError = error;
-		},
-	});
-	const topDown = new Uint8ClampedArray(width * height * 4);
-	const frameDurationUs = 1_000_000 / fps;
-	const keyInterval = Math.max(1, Math.round(fps * 2));
-
+	let encoder = null;
+	let failureCode = "encode_failed";
 	try {
+		encoder = new VideoEncoderClass({
+			output(chunk, metadata) {
+				try {
+					const data = new Uint8Array(chunk.byteLength);
+					chunk.copyTo(data);
+					chunks.push({
+						timestamp: chunk.timestamp,
+						duration: chunk.duration ?? Math.round(1_000_000 / fps),
+						type: chunk.type,
+						data,
+					});
+					if (!decoderConfig && metadata?.decoderConfig) decoderConfig = metadata.decoderConfig;
+				} catch (error) {
+					encoderError = error;
+				}
+			},
+			error(error) {
+				encoderError = error;
+			},
+		});
+		const topDown = new Uint8ClampedArray(width * height * 4);
+		const frameDurationUs = 1_000_000 / fps;
+		const keyInterval = Math.max(1, Math.round(fps * 2));
 		encoder.configure(config);
 		for (let index = 0; index < range.frameCount; index += 1) {
 			if (signal?.aborted) throw abortError();
 			const frame = range.startFrame + index;
+			failureCode = "render_failed";
 			const pixels = capture(frame, passKind);
 			if (!(pixels instanceof Uint8Array) || pixels.byteLength !== topDown.byteLength) {
 				throw new Error(`frame ${frame} returned ${pixels?.byteLength ?? 0} RGBA bytes; expected ${topDown.byteLength}`);
@@ -115,6 +139,8 @@ export async function exportOffscreenVideo({
 			const hash = await pixelHash(pixels);
 			hashes.push(hash);
 			flipRows(pixels, topDown, width, height);
+			failureCode = "encode_failed";
+			if (signal?.aborted) throw abortError();
 			const videoFrame = new VideoFrameClass(topDown, {
 				format: "RGBA",
 				codedWidth: width,
@@ -133,35 +159,40 @@ export async function exportOffscreenVideo({
 			onFrame?.({ frame, index, frameCount: range.frameCount, hash });
 		}
 		await encoder.flush();
+		if (signal?.aborted) throw abortError();
 		if (encoderError) throw encoderError;
-	} catch (error) {
-		if (encoder.state !== "closed") encoder.close();
-		throw error;
-	}
-	encoder.close();
+		encoder.close();
 
-	if (chunks.length !== range.frameCount) {
-		throw new Error(`WebCodecs emitted ${chunks.length} frames for ${range.frameCount} inputs`);
-	}
-	const blob = await muxMP4({
-		chunks,
-		codec: config.codec,
-		decoderConfig: decoderConfig ?? {
+		if (chunks.length !== range.frameCount) {
+			throw new Error(`WebCodecs emitted ${chunks.length} frames for ${range.frameCount} inputs`);
+		}
+		const blob = await muxMP4({
+			chunks,
 			codec: config.codec,
-			codedWidth: width,
-			codedHeight: height,
-		},
-		signal,
-	});
-	return {
-		...range,
-		fps,
-		width,
-		height,
-		codec: config.codec,
-		mimeType: blob.type,
-		encodedFrameCount: chunks.length,
-		hashes,
-		blob,
-	};
+			decoderConfig: decoderConfig ?? {
+				codec: config.codec,
+				codedWidth: width,
+				codedHeight: height,
+			},
+			signal,
+		});
+		return {
+			...range,
+			fps,
+			width,
+			height,
+			codec: config.codec,
+			mimeType: blob.type,
+			encodedFrameCount: chunks.length,
+			hashes,
+			blob,
+		};
+	} catch (error) {
+		try {
+			if (encoder && encoder.state !== "closed") encoder.close();
+		} catch {
+			// A cleanup failure must not replace the original export failure.
+		}
+		throw withExportFailureCode(error, failureCode);
+	}
 }

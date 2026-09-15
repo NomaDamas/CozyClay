@@ -75,6 +75,24 @@ const options = (context, extra = {}) => ({
 	console.log("PASS requestKeyframePack rejects with the Studio's error message");
 }
 
+/* --- failures keep their safe classification across the iframe boundary ----- */
+for (const failureCode of ["unsupported_codec", "encode_failed", "render_failed", "aborted", "private/path"]) {
+	const context = harness();
+	const promise = requestKeyframePack(context.frame, options(context, { surface: "workflow" }));
+	assert.deepEqual(context.posted[0].message, { type: KEYFRAME_PACK_REQUEST, surface: "workflow" });
+	context.deliver({
+		source: context.frame,
+		data: { type: KEYFRAME_PACK_RESULT, error: "private renderer details", failure_code: failureCode },
+	});
+	await assert.rejects(promise, (error) => {
+		assert.equal(error.exportFailureCode, failureCode === "private/path" ? "unknown" : failureCode);
+		assert.equal(error.name, failureCode === "aborted" ? "AbortError" : "Error");
+		return true;
+	});
+	assert.equal(context.listeners.length, 0);
+	console.log(`PASS Workflow receives normalized ${failureCode === "private/path" ? "unknown" : failureCode} without losing cancellation`);
+}
+
 /* --- the Studio never answers ---------------------------------------------- */
 {
 	const context = harness();

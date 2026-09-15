@@ -7,6 +7,7 @@
  * so the request can be tested without a DOM: the caller injects the target
  * window and the listener pair.
  */
+import { exportFailureCode } from "../analytics.js";
 
 export const KEYFRAME_PACK_REQUEST = "cozyclay:export-keyframe-pack";
 export const KEYFRAME_PACK_RESULT = "cozyclay:export-keyframe-pack-result";
@@ -20,6 +21,7 @@ export const KEYFRAME_PACK_RESULT = "cozyclay:export-keyframe-pack-result";
  */
 export function requestKeyframePack(iframeWindow, {
 	shotId = null,
+	surface = null,
 	timeoutMs = 120000,
 	addListener = typeof window === "undefined" ? null : window.addEventListener.bind(window),
 	removeListener = typeof window === "undefined" ? null : window.removeEventListener.bind(window),
@@ -41,12 +43,24 @@ export function requestKeyframePack(iframeWindow, {
 			// Only this frame's reply counts: a Workflow page can hold several
 			// Scene nodes, each with its own embedded Studio.
 			if (event?.source !== iframeWindow || event?.data?.type !== KEYFRAME_PACK_RESULT) return;
-			if (event.data.error) { finish(new Error(event.data.error)); return; }
+			if (event.data.error) {
+				const error = new Error(event.data.error);
+				error.exportFailureCode = exportFailureCode({ exportFailureCode: event.data.failure_code });
+				if (error.exportFailureCode === "aborted") error.name = "AbortError";
+				finish(error);
+				return;
+			}
 			finish(null, { name: event.data.name, bytes: event.data.bytes, entries: Array.isArray(event.data.entries) ? event.data.entries : [] });
 		};
 		addListener?.("message", onMessage);
 		if (timeoutMs > 0) timer = setTimer?.(() => finish(new Error("The keyframe pack timed out.")), timeoutMs) ?? null;
-		iframeWindow.postMessage({ type: KEYFRAME_PACK_REQUEST, ...(shotId ? { shotId } : {}) }, "*");
+		iframeWindow.postMessage({
+			type: KEYFRAME_PACK_REQUEST,
+			...(shotId ? { shotId } : {}),
+			// Workflow owns the attempt through download handoff. The embed must
+			// not count its internal pack/video work as a second user attempt.
+			...(surface === "workflow" ? { surface } : {}),
+		}, "*");
 	});
 }
 

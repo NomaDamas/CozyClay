@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { track } from "../analytics.js";
+import { startExportAttempt, track } from "../analytics.js";
 import { downloadPack, requestKeyframePack } from "./keyframe-pack-request.js";
 import {
 	applyCozyScenePatch,
@@ -51,13 +51,15 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 	const [pack, setPack] = useState({ pending: false, message: "", error: "" });
 
 	const sendToAi = async () => {
+		const attempt = startExportAttempt({ export_kind: "keyframe_pack", format: "zip", surface: "workflow" });
 		setPack({ pending: true, message: "", error: "" });
 		try {
 			const frame = document.querySelector(`[data-node-id="${id}"] iframe`)?.contentWindow;
 			// No shotId: the Scene node tracks a scene, not a shot, so the embed
 			// packs the shot under its own playhead — the one being previewed.
-			const result = await requestKeyframePack(frame);
+			const result = await requestKeyframePack(frame, { surface: "workflow" });
 			downloadPack(result);
+			attempt.succeed();
 			track("export:keyframe_pack", { entries: result.entries.length, source: "workflow" });
 			// QA hook, mirroring window.__cozyclay in the Studio: the analytics
 			// module is a no-op outside production, so a headless run has nothing
@@ -67,6 +69,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 			}
 			setPack({ pending: false, message: `Pack ready: ${result.name} (${result.entries.length} files)`, error: "" });
 		} catch (error) {
+			attempt.fail(error);
 			setPack({ pending: false, message: "", error: error?.message || String(error) });
 		}
 	};
