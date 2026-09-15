@@ -55,9 +55,7 @@ expect(
 expect(
 	"look-through flies the shot camera instead of opening the player",
 	app.includes("function enterShotLook()") &&
-	app.includes("function toggleShotLook()") &&
 	app.includes("onClick={enterShotLook}") &&
-	app.includes("onClick={toggleShotLook}") &&
 	app.includes('if (event.key === "Escape") exitPreview();'),
 );
 expect(
@@ -66,7 +64,6 @@ expect(
 	app.includes("enabled={!posing && !playMode}") &&
 	app.includes("onCameraChange={lookThroughShot && !ikMode ? commitManualCameraFraming : undefined}"),
 );
-expect("the camera bar offers a labeled look-through toggle", app.includes('data-testid="shot-look-toggle"') && app.includes('ko("Look through", "샷 시점")'));
 expect("preview always rides the camera move", app.includes("preview || (moveFollow && !ikMode && !waypointMode && !posing)"));
 expect("the editor view keeps the authoring gates on Follow mode", app.includes("moveFollow && !ikMode && !waypointMode && !posing"));
 expect(

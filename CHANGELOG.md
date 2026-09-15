@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Look through has one entry in the Shot monitor; the on-screen Shot camera
+  indicator and Esc return to the free camera without a duplicate toolbar toggle.
+
 - Camera fly, pan and orbit lock the pointer for the hold: the cursor hides,
   the view can turn past the window edge, and release puts the cursor back
   where the press started.

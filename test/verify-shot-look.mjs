@@ -18,7 +18,7 @@ expect(
 	/function enterShotLook\(\) \{[^}]*setPreview\(false\);[^}]*setLookThroughShot\(true\);/s.test(app) &&
 	!/function enterShotLook\(\) \{[^}]*setPreview\(true\);/s.test(app),
 );
-expect("the camera-bar toggle and the PiP expand share that door", app.includes("onClick={toggleShotLook}") && app.includes("onClick={enterShotLook}"));
+expect("the PiP expand enters shot-look", app.includes("onClick={enterShotLook}"));
 expect("the PiP no longer opens the player", !app.includes("onClick={enterPreview}"));
 expect(
 	"FlyControls stay enabled outside preview and bind to the shot camera while looking through",
@@ -42,7 +42,6 @@ expect(
 	app.includes("else if (lookThroughShot && next !== \"camera\") exitPreview();") &&
 	!app.includes("Picking a department is an editing act: it always lands in the editor"),
 );
-expect("the look-through toggle sits on the scene tools bar, not only in Camera chrome", app.includes('className="shot-look-toggle"') && !/className="workflow-camera-context"[\s\S]{0,200}data-testid="shot-look-toggle"/.test(app));
 
 if (failures > 0) {
 	console.error(`${failures} FAILURES`);

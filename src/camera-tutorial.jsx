@@ -89,7 +89,7 @@ export const CAMERA_TUTORIAL_STEPS = [
 		label: ko("Play", "재생"),
 		where: ko("→ Viewport", "→ 뷰포트"),
 		how: () => ko(
-			<>Click <b>Look through</b> (camera bar or the Shot monitor) to fly the shot camera; <b>▶</b> rides the rail, <kbd>Esc</kbd> returns to the free camera.</>,
+			<>Click <b>Look through</b> in the Shot monitor to fly the shot camera; <b>▶</b> rides the rail, <kbd>Esc</kbd> returns to the free camera.</>,
 			<>뷰포트의 <b>샷 시점</b>을 눌러 샷 카메라를 조종하세요. <b>▶</b>는 레일을 타고, <kbd>Esc</kbd>로 자유 카메라로 돌아옵니다.</>,
 		),
 	},

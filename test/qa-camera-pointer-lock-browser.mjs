@@ -23,7 +23,7 @@ try {
 	assert.equal(await b.evaluate("window.__cozyclay.lookThroughShot"), false);
 	console.log("PASS free-camera right-drag acquires real pointer lock, turns the view, and releases without changing the shot");
 
-	await b.change("window.__cozyclay.lookThroughShot === true", () => b.click('[data-testid="shot-look-toggle"]'));
+	await b.change("window.__cozyclay.lookThroughShot === true", () => b.click(".vp-look-through"));
 	const shotPoint = await b.centre(".stage canvas");
 	await b.mouse("mouseMoved", { ...shotPoint });
 	await b.change("document.pointerLockElement === document.querySelector('.stage canvas')", () =>

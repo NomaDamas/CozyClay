@@ -37,7 +37,7 @@ try {
 	assert.equal(await b.evaluate("window.__cozyclay.playing"), false);
 	assert.equal(await b.evaluate("window.__cozyclay.tlFrame"), 12);
 	assert.equal(await b.evaluate("window.__cozyclay.activeCam === window.__cozyclay.shotCam"), true);
-	assert.equal(await b.evaluate("document.querySelector('[data-testid=shot-look-toggle]').getAttribute('aria-pressed')"), "true");
+	assert.equal(await b.evaluate(shown(".vp-look-through-exit")), true);
 	assert.equal(await b.evaluate(shown(".vp-shot-preview")), false);
 	assert.equal(await b.evaluate(shown(".vp-inset")), true);
 	console.log("PASS Studio look-through is editable shot view, not the player; playhead and playback stay parked");
@@ -64,6 +64,11 @@ try {
 	assertPose(await b.pose("editorCam"), editor, "neither shot edit moves the free camera");
 	console.log("PASS Shot A saved -> Shot B edited and saved -> Shot A framing preserved in data and the live camera");
 
+	await b.change("window.__cozyclay.lookThroughShot === false", () => b.click(".vp-look-through-exit"));
+	assert.equal(await b.evaluate("window.__cozyclay.activeCam === window.__cozyclay.editorCam"), true);
+	assert.equal(await b.evaluate(shown(".vp-shot-preview")), true);
+	console.log("PASS the on-screen Shot camera indicator returns to the free camera and restores the monitor");
+	await b.change("window.__cozyclay.lookThroughShot === true", () => b.click(".vp-look-through"));
 	await b.change("window.__cozyclay.lookThroughShot === false", () => b.escape());
 	assert.equal(await b.evaluate("document.pointerLockElement"), null);
 	assert.equal(await b.evaluate("window.__cozyclay.activeCam === window.__cozyclay.editorCam"), true);

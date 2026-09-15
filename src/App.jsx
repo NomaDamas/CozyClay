@@ -888,10 +888,6 @@ export default function App() {
 		setSelectedHierarchyId("camera");
 		setWorkflowMode("camera");
 	}
-	function toggleShotLook() {
-		if (lookThroughShot && !preview) exitPreview();
-		else enterShotLook();
-	}
 	const stageRef = useRef();
 	const mainPaneRef = useRef();
 	const insetPaneRef = useRef();
@@ -10719,17 +10715,6 @@ function resizePromptClip(id, edge, rawFrame) {
 					))}
 				</div>
 				<div className="editor-toolbar scene-tools" aria-label={ko("Scene tools", "장면 도구")}>
-					<button
-						type="button"
-						className="shot-look-toggle"
-						data-testid="shot-look-toggle"
-						aria-pressed={lookThroughShot && !playMode}
-						aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
-						title={ko("Look through the shot camera — right-drag, WASD and orbit set the recording lens (Esc returns)", "샷 카메라 시점으로 보기 — 오른쪽 드래그, WASD, 궤도로 촬영 렌즈를 맞춥니다 (Esc로 복귀)")}
-						onClick={toggleShotLook}
-					>
-						{ko("Look through", "샷 시점")}
-					</button>
 					{workflowMode === "motion" && (
 						<span className="workflow-toolbar-hint" role="status">
 							{ko("Motion mode · edit the timeline below", "모션 모드 · 아래 타임라인에서 편집하세요")}

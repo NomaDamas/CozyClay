@@ -74,7 +74,7 @@ e384d00에서 남은 초과분은 세 모드 모두 같은 세 컨트롤이었�
 | PlayView 바 OTIO | play 바 | 이동 | `Export ▾` "OTIO cut list" | R4 | — |
 | PlayView Export 메뉴(keyframe/depth/storyboard) | play 바 | 이동 | `Export ▾` 상단바(블록 그대로 리프트, `export-menu-trigger` id 유지) | R4 | — |
 | PlayView ● Record | play 바 | 삭제 | `Export ▾` Video | R1 | — |
-| PiP: 가이드 순환, look-through | PiP | 유지 | "Look through" = 샷 카메라를 자유 카메라처럼 비행. 카메라 바에 같은 토글. 크롬 없는 플레이어는 embed | — | qa-preview-browser |
+| PiP: 가이드 순환, look-through | PiP | 유지 | "Look through"로 샷 카메라 비행에 진입. 화면 위 "Shot camera" 표시나 Esc로 복귀. 상단 바에 중복 토글 없음. 크롬 없는 플레이어는 embed | — | qa-preview-browser |
 
 ### 인스펙터
 | 컨트롤 | 현재 | 결정 | 새 위치 / 라벨 | 규칙 | 영향 테스트 |

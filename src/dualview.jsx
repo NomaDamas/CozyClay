@@ -422,7 +422,7 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 			}
 		} else {
 			// Shot camera in the main pane WITH the editing chrome. Look-through
-			// (the camera-bar toggle and the PiP expand) lands here so the operator
+			// (the PiP expand) lands here so the operator
 			// can fly the recording lens with the same bindings as the free camera.
 			// The QA hook (`window.__cozyclay.setLookThrough`) draws the same path.
 			draw(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
