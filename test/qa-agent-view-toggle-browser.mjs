@@ -42,15 +42,14 @@ const evaluate = async (expression) => {
 	if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "evaluate failed");
 	return result.result.value;
 };
-/** poll a page condition — every wait in this file is a state condition, never a delay */
-const waitFor = async (expression, timeoutMs = 15000) => {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (await evaluate(expression).catch(() => false)) return true;
-		await new Promise((resolve) => setTimeout(resolve, 60));
-	}
-	return false;
-};
+/** Observe actual DOM changes, with a bounded failure deadline and no polling. */
+const waitFor = (expression, timeoutMs = 15000) => evaluate(`new Promise((resolve, reject) => {
+  const finish = (value) => { observer.disconnect(); clearTimeout(timer); resolve(value); };
+  const check = () => { try { if (${expression}) finish(true); } catch (error) { observer.disconnect(); clearTimeout(timer); reject(error); } };
+  const observer = new MutationObserver(check);
+  const timer = setTimeout(() => finish(false), ${timeoutMs});
+  observer.observe(document, { subtree:true, childList:true, attributes:true, characterData:true }); check();
+})`);
 let failures = 0;
 const expect = (name, condition, detail = "") => {
 	console.log(`${condition ? "PASS" : "FAIL"} ${name}${condition ? "" : ` — ${detail}`}`);
@@ -70,7 +69,12 @@ await waitFor("location.href.startsWith('http')", 30000);
 await evaluate("localStorage.setItem('cozyclay.locale', 'en')");
 await send("Page.enable");
 await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 950, deviceScaleFactor: 1, mobile: false });
+const loaded = new Promise(resolve => {
+	const listener = event => { if (JSON.parse(event.data).method === 'Page.loadEventFired') { ws.removeEventListener('message', listener); resolve(); } };
+	ws.addEventListener('message', listener);
+});
 await send("Page.reload", { ignoreCache: false });
+await loaded;
 expect("the studio comes back up", await waitFor("!!document.querySelector('.add-object-trigger')", 40000));
 expect("the hierarchy has rendered", await waitFor("document.querySelectorAll('.hierarchy-row-wrap').length > 0", 15000));
 
@@ -78,7 +82,7 @@ const trigger = "document.querySelector('.view-menu-trigger')";
 const menu = "document.querySelector('.view-menu')";
 const item = "document.querySelector('.view-menu .agent-panel-toggle')";
 const panel = "document.querySelector('.agent-panel')";
-const collapsedFlag = `document.querySelector('.studio-agent-inspector')?.hidden ? 'true' : 'false'`;
+const collapsedFlag = `(document.querySelector('.studio-agent-inspector')?.hidden ? 'true' : 'false')`;
 const openMenu = async () => {
 	if (!(await evaluate(`!!${menu}`))) await evaluate(`${trigger}.click()`);
 	return waitFor(`!!${menu}`, 8000);
@@ -114,7 +118,7 @@ expect("the checkmark slot is empty", await evaluate(`${item}.querySelector('.vi
 await shot("view-menu-agent-item");
 
 await evaluate(`${item}.click()`);
-expect("clicking it expands the panel", await waitFor(`!${collapsedFlag}`, 8000));
+expect("clicking it expands the panel", await waitFor(`${collapsedFlag} === 'false'`, 8000));
 expect("the expanded panel is the Inspector column", await waitFor(`${item}.getAttribute('aria-checked') === 'true' && document.querySelectorAll('.inspector-sidebar').length === 1`, 8000));
 expect("the menu stays open — this is a toggle, not a command", await evaluate(`!!${menu}`));
 expect("the item now reports checked", await waitFor(`${item}.getAttribute('aria-checked') === 'true' && ${item}.getAttribute('aria-pressed') === 'true'`, 8000));
@@ -139,7 +143,7 @@ await evaluate(`${trigger}.click()`);
 await waitFor(`!${menu}`, 8000);
 
 await pressToggleShortcut();
-expect("the shortcut expands it again", await waitFor(`!${collapsedFlag}`, 8000));
+expect("the shortcut expands it again", await waitFor(`${collapsedFlag} === 'false'`, 8000));
 expect("and the item checks itself back on", await openMenu() && await waitFor(`${item}.getAttribute('aria-checked') === 'true'`, 8000));
 await evaluate(`${item}.click()`);
 expect("the item collapses the panel exactly like the shortcut", await waitFor(`${collapsedFlag} === 'true'`, 8000));

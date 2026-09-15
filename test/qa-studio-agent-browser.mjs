@@ -1,180 +1,239 @@
 #!/usr/bin/env node
-/*
- * Studio Agent slice acceptance. This intentionally drives the embedded panel,
- * not a mock bridge: each intent must produce a new user turn and a terminal
- * receipt/state transition before the case can pass.
- * Run through tools/qa-browser.mjs with a real Studio surface and, when Kimodo
- * is unavailable, the deterministic fixture backend from studio-agent-motion.mjs.
+/** Real panel -> HTTP/SSE -> job -> LiveHub -> editor -> native Undo acceptance.
+ * Requires Playwright (PLAYWRIGHT_MODULE may point to an installed index.mjs).
+ * Fixture-only requires recorded real-service probes; no model/GPU/semantic claim.
  */
-import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
-
-const CASES = ["binding", "intent", "framing", "motion", "resilience", "responsive"];
+import assert from 'node:assert/strict';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { once } from 'node:events';
+import { startFixtureStudio, bounded, released, sceneDocument } from './fixtures/studio-agent-motion.mjs';
+const cases = ['binding','intent','framing','motion','resilience','responsive'];
 const args = process.argv.slice(2);
-if (args.length && (args.length !== 2 || args[0] !== "--case" || !CASES.includes(args[1]))) {
-  console.error(`Unknown case. Use --case ${CASES.join(" | ")}`);
-  process.exitCode = 2;
-  process.exit();
+if (args.length && (args.length !== 2 || args[0] !== '--case' || !cases.includes(args[1]))) { console.error(`Unknown case; expected ${cases.join(', ')}`); process.exit(2); }
+const selected = args.length ? [args[1]] : cases;
+const evidence = process.env.QA_SHOT_DIR || '.omo/ulw-execute/task-8/evidence/fixed-trunk/browser';
+mkdirSync(evidence, { recursive: true });
+const probes = JSON.parse(readFileSync(process.env.QA_PROBES || '.omo/ulw-execute/task-8/evidence/fixed-trunk/backend-probes.json'));
+assert(probes.probes.some(p => p.path === '/oauth/status') && probes.probes.some(p => p.path === '/ardy/health'));
+assert(probes.probes.some(p => p.path === '/ardy/health' && (p.status !== 200 || !p.body.ok)), 'Healthy real backend: run live acceptance, do not substitute fixtures');
+console.log(`MODE ${process.env.QA_REAL_MODEL === '1' ? 'real-model-fixture-generator' : 'scripted-model-fixture-generator'}; real generator unavailable`, JSON.stringify(probes));
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
+const port = Number(process.env.QA_PORT || 5276), cdp = Number(process.env.CDP_PORT || 9476);
+await released(cdp);
+const fixture = await startFixtureStudio({ port, evidence });
+let browser, page;
+const log = [], results = [];
+const save = (name, value) => writeFileSync(`${evidence}/${name}.json`, JSON.stringify(value, null, 2));
+const state = async () => {
+  const r = await fixture.read();
+  return { objects: r.objects, characters: r.characters, shots: r.shots, camera: r.camera, takes: r.context.entities.filter(e => e.kind === 'character').map(e => ({ id: e.id, ...e.motion })).sort((a,b)=>a.id.localeCompare(b.id)) };
+};
+const shot = async name => { await page.screenshot({ path: `${evidence}/${name}.png` }); console.log('SCREENSHOT', `${evidence}/${name}.png`); };
+// Register in-page event listeners BEFORE the triggering action. No timer polling.
+async function gate(predicate, trigger = async () => {}) {
+  await page.evaluate(({ predicate, origin }) => {
+    window.__qaGate = new Promise((resolve, reject) => {
+      let active = true;
+      const cleanup = () => { active = false; clearTimeout(timer); observer.disconnect(); window.removeEventListener('qa:render', check); };
+      const check = async () => {
+        try {
+          const current = predicate.startsWith('STATE:') ? await (await fetch(origin+'/qa/read')).json() : null;
+          const expression = predicate.replace(/^STATE:/, '');
+          if (active && Function('current', `return (${expression})`)(current)) { cleanup(); resolve(true); }
+        } catch (error) { cleanup(); reject(error); }
+      };
+      const observer = new MutationObserver(check), timer = setTimeout(() => { cleanup(); reject(Error('Event gate deadline: '+predicate)); }, 45000);
+      observer.observe(document, { subtree: true, childList: true, attributes: true, characterData: true }); window.addEventListener('qa:render', check); check();
+    });
+    window.__qaGate.catch(() => {}); // Awaited explicitly below; prevent browser unhandled-rejection noise.
+  }, { predicate, origin: fixture.origin });
+  await trigger(); await page.evaluate(() => window.__qaGate);
 }
-const selected = args.length ? [args[1]] : CASES;
-const cdpPort = Number(process.env.CDP_PORT || 9222);
-const shotDir = process.env.QA_SHOT_DIR || ".omo/evidence/studio-agent-slice1/browser";
-mkdirSync(shotDir, { recursive: true });
-const pages = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json();
-const page = pages.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl);
-if (!page) throw new Error(`no browser page on CDP ${cdpPort}`);
-const ws = new WebSocket(page.webSocketDebuggerUrl);
-await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-let nextId = 0;
-const pending = new Map();
-const networkEvents = [];
-ws.onmessage = ({ data }) => {
-  const message = JSON.parse(data);
-  if (!message.id) { networkEvents.push(message); return; }
-  if (!pending.has(message.id)) return;
-  const task = pending.get(message.id); pending.delete(message.id);
-  message.error ? task.reject(new Error(JSON.stringify(message.error))) : task.resolve(message.result);
-};
-const send = (method, params = {}) => new Promise((resolve, reject) => {
-  const id = ++nextId; pending.set(id, { resolve, reject });
-  ws.send(JSON.stringify({ id, method, params }));
-});
-const evaluate = async (expression) => {
-  const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "browser evaluation failed");
-  return result.result?.value;
-};
-// The gate is installed before the trigger. It resolves on the DOM/state event,
-// rather than sleeping or polling for an expected response.
-const gate = (predicate, timeout = 30000) => evaluate(`new Promise((resolve, reject) => {
-  const done = () => { try { if (${predicate}) { observer.disconnect(); resolve(true); return true; } } catch {} return false; };
-  const observer = new MutationObserver(done);
-  observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
-  if (done()) return;
-  setTimeout(() => { observer.disconnect(); reject(new Error("event gate timed out: ${predicate.replaceAll('"', '\\"')}")); }, ${timeout});
-})`);
-const screenshot = async (name) => {
-  const { data } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
-  const file = `${shotDir}/${name}.png`; writeFileSync(file, Buffer.from(data, "base64"));
-  console.log(`SCREENSHOT ${file}`); return file;
-};
-const waitNetwork = (predicate, timeout = 30000) => new Promise((resolve, reject) => {
-  const found = networkEvents.find(predicate);
-  if (found) { resolve(found); return; }
-  const started = Date.now();
-  const timer = setInterval(() => {
-    const event = networkEvents.find(predicate);
-    if (event) { clearInterval(timer); resolve(event); }
-    else if (Date.now() - started >= timeout) { clearInterval(timer); reject(new Error("network event gate timed out")); }
-  }, 25);
-});
-const fixtureRead = async () => {
-  if (!process.env.QA_FIXTURE_PORT) return null;
-  const response = await fetch(`http://127.0.0.1:${process.env.QA_FIXTURE_PORT}/qa/read`);
-  if (!response.ok) throw new Error(`fixture read failed: ${response.status}`);
-  return response.json();
-};
-const actionLog = [];
-const check = (name, value) => { assert.ok(value, name); console.log(`PASS ${name}`); };
-const count = () => evaluate(`(() => ({
-  messages: [...document.querySelectorAll('[data-agent-message], .agent-message, .agent-transcript [role="article"]')].length,
-  receipts: [...document.querySelectorAll('[data-agent-receipt], .agent-receipt, [data-agent-card="receipt"]')].length,
-  jobs: [...document.querySelectorAll('[data-agent-card="job"], .agent-job')].length,
-  text: document.querySelector('.studio-agent-inspector')?.innerText || ''
-}))()`);
-const openAgent = async () => {
-  check("Studio entry and Inspector footprint rendered", await evaluate("!!document.querySelector('.view-menu-trigger') && !!document.querySelector('.inspector-sidebar')"));
-  await evaluate("document.querySelector('.view-menu-trigger').click()");
-  await gate("!!document.querySelector('.view-menu .agent-panel-toggle')");
-  await evaluate("document.querySelector('.view-menu .agent-panel-toggle').click()");
-  await gate("document.querySelector('.studio-agent-inspector')?.hidden === false && !!document.querySelector('[aria-label=\"Message the agent\"]')");
-  check("Agent is visible in the Inspector footprint", await evaluate("(() => { const i=document.querySelector('.inspector-sidebar')?.getBoundingClientRect(), a=document.querySelector('.studio-agent-inspector')?.getBoundingClientRect(); return Boolean(i && a && a.width > 0 && a.left >= i.left && a.right <= i.right + 1); })()"));
-};
-const sendTurn = async (intent) => {
-  const before = await count();
-  const fixtureBefore = await fixtureRead();
-  // Register the DOM gate and browser network gate before the user trigger.
-  const eventGate = gate(`(() => { const c=${JSON.stringify(before)}; const n=[...document.querySelectorAll('[data-agent-message], .agent-message, .agent-transcript [role="article"]')].length; const r=[...document.querySelectorAll('[data-agent-receipt], .agent-receipt, [data-agent-card="receipt"]')].length; const j=[...document.querySelectorAll('[data-agent-card="job"], .agent-job')].length; return n > c.messages || r > c.receipts || j > c.jobs; })()`);
-  const httpGate = waitNetwork(event => event.method === "Network.requestWillBeSent" && event.params?.request?.url?.includes("/agent/turn"));
-  await evaluate(`(() => { const input=document.querySelector('[aria-label="Message the agent"]'); if (!input) throw new Error('Agent composer is not mounted'); const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(input, ${JSON.stringify(intent)}); input.dispatchEvent(new Event('input',{bubbles:true})); input.focus(); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true})); })()`);
-  const [, requestEvent] = await Promise.all([eventGate, httpGate]);
-  actionLog.push({ event: "HTTP /agent/turn", requestId: requestEvent.params.requestId });
-  await gate("!document.querySelector('.agent-send.stop') && (!!document.querySelector('[data-agent-receipt], .agent-receipt, [data-agent-card=\"receipt\"]') || /applied|installed|refused|reconciled|undone/i.test(document.querySelector('.studio-agent-inspector')?.innerText || ''))");
-  const fixtureAfter = await fixtureRead();
-  const delta = fixtureAfter && fixtureBefore ? fixtureAfter.actions.slice(fixtureBefore.actions.length) : [];
-  actionLog.push({ intent, before, after: await count(), fixtureCommands: delta.map(({ name, args, result }) => ({ name, args, result })) });
-  return { before, after: await count(), fixtureBefore, fixtureAfter, delta };
-};
-const nativeUndo = async () => {
-  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "z", code: "KeyZ", modifiers: 2 });
-  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "z", code: "KeyZ", modifiers: 2 });
-  await gate("/undone|Undo|reverted|restored/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')");
-};
-
-await send("Page.enable");
-await send("Network.enable");
-await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 950, deviceScaleFactor: 1, mobile: false });
-await gate("!!document.querySelector('.view-menu-trigger') && !!document.querySelector('.inspector-sidebar')", 40000);
-await evaluate("localStorage.setItem('cozyclay.locale','en')");
-
-async function binding() {
-  await openAgent();
-  const footprint = await evaluate("document.querySelector('.studio-agent-inspector').getBoundingClientRect().width");
-  const draft = "retained acceptance draft";
-  await evaluate(`(() => { const i=document.querySelector('[aria-label="Message the agent"]'); const s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; s.call(i,${JSON.stringify(draft)}); i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
-  await screenshot("binding-agent-open-desktop");
-  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'b',code:'KeyB',ctrlKey:true,bubbles:true,cancelable:true}))");
-  await gate("document.querySelector('.studio-agent-inspector')?.hidden === true");
-  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'b',code:'KeyB',ctrlKey:true,bubbles:true,cancelable:true}))");
-  await gate("document.querySelector('.studio-agent-inspector')?.hidden === false");
-  check("same Inspector footprint reopens", await evaluate(`document.querySelector('.studio-agent-inspector').getBoundingClientRect().width === ${footprint}`));
-  check("draft is retained", await evaluate(`document.querySelector('[aria-label="Message the agent"]')?.value === ${JSON.stringify(draft)}`));
-  check("Workflow remains singular", await evaluate("document.querySelectorAll('.workflow-mode-switch').length <= 1"));
-}
-async function intent() {
-  await openAgent();
-  const result = await sendTurn("Put a cube on the floor one metre to camera-left of the selected character. Add a second character two metres to camera-right.");
-  check("arrangement sent both real commands", result.delta.some(entry => entry.name === "arrange_objects") && result.delta.some(entry => entry.name === "arrange_characters"));
-  check("arrangement produced a receipt/history signal", await evaluate("/arrange|character|cube|applied|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
-  await screenshot("intent-arrangement-desktop"); await nativeUndo(); await screenshot("intent-arrangement-undo-desktop");
-}
-async function framing() {
-  await openAgent();
-  const result = await sendTurn("Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.");
-  check("frame_shot was sent through the fixture/editor transport", result.delta.some(entry => entry.name === "frame_shot"));
-  check("framing produced a camera/key receipt", await evaluate("/frame|camera|shot|key|applied|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
-  await screenshot("framing-shot-desktop"); await nativeUndo();
-}
-async function motion() {
-  await openAgent();
-  const health = process.env.MOTION_MODE || "fixture-only";
-  console.log(`MOTION_MODE ${health}`);
-  const result = await sendTurn("Make the selected character walk forward, wave, then return to the starting pose over the current shot range. Verify the full take and install it.");
-  check("motion traversed generation through install", ["generate_motion", "prepare_motion_install", "verify_motion_candidate", "commit_motion_candidate"].every(name => result.delta.some(entry => entry.name === name)));
-  check("motion has queued/progress/verification/install evidence", await evaluate("/generat|queued|progress|verif|install|take|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
-  await screenshot("motion-installed-desktop"); await nativeUndo();
-}
-async function resilience() {
-  await openAgent();
-  await sendTurn("Inspect the selected character and keep the current scene unchanged.");
-  const before = await count();
-  check("Stop control is unique", await evaluate("document.querySelectorAll('.agent-stop, .agent-send.stop').length <= 1"));
-  await evaluate(`(() => { const i=document.querySelector('[aria-label="Message the agent"]'); const s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; s.call(i,'stale target reconcile test'); i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
-  check("retained draft remains reachable", await evaluate("document.querySelector('[aria-label=\"Message the agent\"]')?.value === 'stale target reconcile test'"));
-  check("no duplicate receipt before a new trigger", (await count()).receipts === before.receipts);
-  await screenshot("resilience-retained-draft-desktop");
-}
-async function responsive() {
-  await openAgent();
-  for (const width of [375, 390, 768, 1040, 1100, 1600]) {
-    await send("Emulation.setDeviceMetricsOverride", { width, height: width < 500 ? 844 : 950, deviceScaleFactor: 1, mobile: width < 500 });
-    check(`${width}px has no horizontal overflow`, await evaluate(`document.documentElement.scrollWidth <= ${width} && document.body.scrollWidth <= ${width}`));
-    check(`${width}px composer is reachable`, await evaluate("!!document.querySelector('[aria-label=\"Message the agent\"]') && document.querySelector('[aria-label=\"Message the agent\"]').getBoundingClientRect().bottom <= innerHeight"));
-    await screenshot(`responsive-${width}`);
+async function open() {
+  if (await page.locator('.studio-agent-inspector').getAttribute('hidden') !== null) {
+    await page.locator('.view-menu-trigger').click();
+    await gate("!document.querySelector('.studio-agent-inspector').hidden", () => page.locator('.view-menu .agent-panel-toggle').click());
+    await page.locator('.view-menu-trigger').click();
   }
+  await gate("!!document.querySelector('[aria-label=\"Message the agent\"]') && !document.querySelector('[aria-label=\"Message the agent\"]').disabled");
+  const layout = await page.evaluate(() => {
+    const i = document.querySelector('.inspector-sidebar').getBoundingClientRect(), a = document.querySelector('.studio-agent-inspector').getBoundingClientRect();
+    return { width: a.width, left: a.left, right: a.right, inspectorLeft: i.left, inspectorRight: i.right };
+  });
+  assert(layout.width > 0 && layout.left >= layout.inspectorLeft && layout.right <= layout.inspectorRight+1);
 }
-
-const impl = { binding, intent, framing, motion, resilience, responsive };
-for (const name of selected) { console.log(`CASE ${name}`); await impl[name](); }
-console.log(`qa-studio-agent-browser: ${selected.length} case(s) passed`);
-ws.close();
+async function turn(text, interleave, stopped = false) {
+  const before = fixture.actions.length;
+  const response = page.waitForResponse(r => r.url().endsWith('/agent/turn') && r.request().method() === 'POST');
+  await page.getByLabel('Message the agent', { exact: true }).fill(text); await page.getByLabel('Message the agent', { exact: true }).press('Enter');
+  const http = await response; assert.equal(http.status(), 200);
+  if (interleave) await interleave();
+  const request = http.request().postDataJSON();
+  // Stop deliberately aborts the original browser fetch; read its retained route events.
+  const body = stopped ? await page.evaluate(async id => { const r=await fetch(`/agent/turn/${id}/events?after=0`); if(!r.ok) throw Error(`Replay HTTP ${r.status}`); return r.text(); }, request.turnId) : await bounded(http.text(), 'SSE terminal');
+  const stream = body.split('\n').filter(l => l.startsWith('data: ')).map(l => JSON.parse(l.slice(6)));
+  assert(stream.some(e => e.type === 'done'), 'terminal SSE required');
+  await gate("!document.querySelector('.agent-send.stop')");
+  const value = { stream, commands: fixture.actions.slice(before) }; log.push({ action: 'panel-turn', ...value }); return { ...value, request };
+}
+const arrangement = 'Put a cube on the floor one metre to camera-left of the selected character. Add a second character two metres to camera-right.';
+const motionIntent = 'Make the selected character walk forward, wave, then return to the starting pose over the current shot range. Verify the full take and install it.';
+async function undo(before, count = 1) {
+  for (let i = 0; i < count; i++) {
+    const revision = (await fixture.context()).revision.scene;
+    await page.evaluate(() => document.activeElement?.blur());
+    await gate(`STATE:current.context.revision.scene > ${revision}`, () => page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'));
+  }
+  const restored = await state(); log.push({ action: 'native-undo', count, before, restored }); assert.deepEqual(restored, before, 'native Undo restores exact authored state and take');
+}
+async function installed(result) {
+  const outcome = result.stream.find(e => e.type === 'tool.done')?.result;
+  if (outcome?.status === 'review_required') {
+    await gate("!!document.querySelector('.agent-job-accept')"); await shot('motion-review-required');
+    const accepted = page.waitForResponse(r => r.url().endsWith('/accept'));
+    await page.locator('.agent-job-accept').last().click(); const response = await accepted; assert.equal(response.status(),200);
+    const { receipt } = await response.json(); log.push({ action: 'explicit-accept', receipt }); return receipt;
+  }
+  const receipt = result.stream.find(e => e.type === 'receipt')?.receipt; assert(receipt, JSON.stringify(outcome)); return receipt;
+}
+const implementations = {
+  async binding() {
+    await open(); await page.getByLabel('Message the agent', { exact: true }).fill('retained draft'); await shot('binding-desktop');
+    await page.evaluate(() => document.activeElement.blur());
+    await gate("document.querySelector('.studio-agent-inspector').hidden", () => page.keyboard.press('Control+b'));
+    await gate("!document.querySelector('.studio-agent-inspector').hidden", () => page.keyboard.press('Control+b'));
+    assert.equal(await page.getByLabel('Message the agent', { exact: true }).inputValue(), 'retained draft'); await shot('binding-reopened');
+  },
+  async intent() {
+    await open(); const before = await state(); const c = await fixture.context(); const target = c.activeCharacterId;
+    const bounds = await page.evaluate(async () => { const THREE=await import('/node_modules/three/build/three.module.js'); const rig=window.__cozyclay.rigA; rig.updateWorldMatrix(true,true); const box=new THREE.Box3().setFromObject(rig,true); return { model:window.__cozyclay.characterModel,character:window.__cozyclay.charA,min:box.min.toArray(),max:box.max.toArray(),motionFrames:window.__cozyclay.motion?.frames??null }; });
+    log.push({action:'initial-real-rig-bounds',bounds}); console.log('INITIAL RIG BOUNDS',JSON.stringify(bounds));
+    const result = await turn(arrangement), authored = result.commands.filter(e => ['arrange_objects','arrange_characters'].includes(e.name));
+    const after = await state(); log.push({ action:'arrangement-state',before,after }); await shot('intent-desktop');
+    await undo(before,authored.filter(row=>row.result.ok && row.result.authored).length); await shot('intent-native-undo');
+    assert.equal(authored.length,2); for (const row of authored) { assert.equal(row.result.ok,true,JSON.stringify(row.result)); assert(row.result.receiptId); assert.equal(row.result.revision.after,row.result.revision.before+1); }
+    assert.equal(authored[1].expectedRevision,authored[0].result.revision.after);
+    const actor = after.characters.find(e => e.id === target), object = after.objects.find(e => !before.objects.some(b => b.id === e.id)), second = after.characters.find(e => !before.characters.some(b => b.id === e.id));
+    assert(object.x < actor.x && second.x > actor.x); assert.equal(object.y,0); assert.equal(second.y,0);
+    assert(Math.abs(authored[0].result.checks.actualGapM-1)<1e-6); assert(Math.abs(authored[1].result.checks.actualGapM-2)<1e-6);
+  },
+  async framing() {
+    await open(); const before = await state(); const result = await turn('Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.');
+    const receipt = result.commands.find(e => e.name === 'frame_shot')?.result; assert.equal(receipt?.ok,true,JSON.stringify(receipt));
+    const after = await state(), shotId = receipt.delta[0].after.shotId, currentShot = after.shots.find(s => s.id === shotId);
+    assert(currentShot.cameraKeys.some(k => k.frame === 0)); assert.notDeepEqual(after.camera,before.camera);
+    log.push({ action:'framing-state',before,after,receipt }); await shot('framing-desktop'); await undo(before); await shot('framing-native-undo');
+  },
+  async motion() {
+    await open(); const before = await state();
+    const bones = () => page.evaluate(() => { const rows=[]; window.__cozyclay.rigA.traverse(n=>{if(n.isBone) rows.push([...n.position.toArray(),...n.quaternion.toArray()]);}); return rows; });
+    const beforeBones = await bones(); const result = await turn(motionIntent), receipt = await installed(result);
+    const names = result.commands.map(e => e.name); for (const name of ['prepare_motion_install','verify_motion_candidate','repair_motion_candidate']) assert(names.includes(name),name);
+    assert(result.stream.some(e => e.type === 'job.progress' && e.progress === .25));
+    for (const s of ['queued','generating','preparing','verifying','repairing']) assert(result.stream.some(e => e.state === s),s);
+    assert.equal(receipt.status,'installed'); assert.equal(receipt.installed.frameCount,48); assert(receipt.undo.historyEntryId);
+    const after = await state(), take = after.takes.find(e => e.id === receipt.installed.characterId);
+    assert.equal(take.takeId,receipt.installed.takeId); assert.equal(take.frames,48); assert.equal(receipt.verification.status,'verified'); assert.equal(receipt.verification.evaluatedFrames,48);
+    assert.equal(receipt.repairs.autoPhysicsInvocations,1); assert.equal(receipt.explicitUnverifiedAcceptance,false);
+    await gate("!!document.querySelector('[data-receipt-status=\"installed\"]')"); assert((await page.locator('[data-receipt-status="installed"]').innerText()).includes('verified over 48 frames'));
+    log.push({ action:'motion-state',before,after,receipt }); await shot('motion-installed-desktop');
+    for (const [angle,frame,position] of [['front',16,{x:0,y:1.5,z:5}],['side',32,{x:5,y:1.5,z:0}],['shot',47,null]]) {
+      const rendered = await page.evaluate(({position,frame,angle})=>new Promise((resolve,reject)=>{
+        const qa=window.__cozyclay, camera=position?qa.editorCam:qa.shotCam, meshes=[];
+        qa.rigA.traverse(node=>{if(node.isSkinnedMesh) meshes.push(node);});
+        const evidence={angle,frame,sourceCamera:camera.uuid,debugEditorCameraExists:!!qa.editorCam,originalChosenMesh:meshes.at(-1)?.uuid,before:camera.matrixWorld.toArray(),meshes:meshes.map(m=>({id:m.uuid,visible:m.visible,parentVisible:m.parent.visible,frustumCulled:m.frustumCulled})),calls:[]};
+        window.__qaCameraEvidence=evidence; const originals=meshes.map(m=>m.onAfterRender); let finishing=false;
+        const cleanup=()=>{clearTimeout(timer);meshes.forEach((m,i)=>{m.onAfterRender=originals[i];});};
+        const timer=setTimeout(()=>{cleanup();reject(Error('Camera render deadline '+JSON.stringify(evidence)));},10000);
+        meshes.forEach((mesh,index)=>{mesh.onAfterRender=function(...args){
+          originals[index].apply(this,args);const actual=args[2];
+          if(evidence.calls.length<16)evidence.calls.push({mesh:mesh.uuid,camera:actual.uuid,position:actual.position.toArray(),matrix:actual.matrixWorld.toArray(),projection:actual.projectionMatrix.toArray(),sameCamera:actual===camera});
+          if(!finishing && actual===camera && (position || window.__cozyclay.lookThroughShot)){finishing=true;queueMicrotask(()=>{cleanup();resolve(evidence);});}
+        };});
+        if(position)qa.frameEditorCam(position,{x:0,y:1,z:0});else qa.setLookThrough(true);
+        // Direct camera refs do not invalidate a demand canvas. Scrub AFTER the
+        // camera change so the real editor state transition requests the draw.
+        evidence.positionAfterTrigger=camera.position.toArray();
+        qa.scrub(frame);
+      }),{position,frame,angle});
+      log.push({action:'camera-render',...rendered}); assert(rendered.calls.some(call=>call.sameCamera));
+      await gate(`window.__cozyclay.tlFrame === ${frame}`); await shot(`motion-${angle}`);
+    }
+    await gate('!window.__cozyclay.lookThroughShot',()=>page.evaluate(()=>window.__cozyclay.setLookThrough(false)));
+    await undo(before); const restoredBones=await bones(); log.push({action:'renderer-native-undo',beforeBones,restoredBones}); assert.deepEqual(restoredBones,beforeBones); await shot('motion-native-undo');
+  },
+  async resilience() {
+    await open(); const failures = []; const c = await fixture.context(), a = c.activeCharacterId;
+    const created = await fixture.dispatch('arrange_characters',{ ops:[{ op:'create',name:'Fixture B',position:{ world:{ x:4,y:0,z:0 } } }] }); assert.equal(created.ok,true); const b = created.affectedIds[0];
+    const before = await state(); fixture.controls.hold = Promise.withResolvers(); fixture.controls.lostAck = true; const generating = once(fixture.events,'generating');
+    const selection = await turn(motionIntent+' Keep the admitted target.', async () => {
+      await bounded(generating,'generation admission'); await fixture.dispatch('operate_studio',{ selection:{kind:'character',id:b} }); await shot('resilience-select-b'); fixture.controls.hold.resolve();
+    }); fixture.controls.hold = null;
+    const receipt = await installed(selection); assert.equal(receipt.installed.characterId,a); assert.equal((await fixture.context()).activeCharacterId,b);
+    assert(selection.stream.some(e=>e.state==='reconciling')); const commitCount=fixture.actions.filter(e=>e.name==='commit_motion_candidate').length;
+    const replay = await page.evaluate(async request=>{const r=await fetch('/agent/turn',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(request)});return r.text();},selection.request);
+    const acknowledgement=replay.split('\n').filter(l=>l.startsWith('data: ')).map(l=>JSON.parse(l.slice(6))).find(e=>e.type==='receipt'); assert.deepEqual(acknowledgement.receipt,receipt); assert.equal(fixture.actions.filter(e=>e.name==='commit_motion_candidate').length,commitCount);
+    log.push({action:'lost-ack-reconciled-and-turn-replayed',receipt,commitCount}); await shot('resilience-reconciled');
+    await undo(before); await fixture.dispatch('operate_studio',{ selection:{kind:'character',id:a} });
+    for (const scenario of ['stale','invalid','stop']) {
+      const original = await state(); fixture.controls.hold = Promise.withResolvers(); fixture.controls.invalid = scenario === 'invalid'; const entered = once(fixture.events,'generating'); let expected = original;
+      const result = await turn(motionIntent+` Scenario ${scenario}.`, async () => {
+        await bounded(entered,'generation before interleaving');
+        if (scenario === 'stale') { const edit = await fixture.dispatch('arrange_characters',{ops:[{op:'update',characterId:a,position:{world:{x:.4,y:0,z:0}}}]}); assert.equal(edit.ok,true); expected = await state(); }
+        if (scenario === 'stop') { const stopped = page.waitForResponse(r => r.url().endsWith('/agent/stop')); await page.locator('.agent-job-stop').last().click(); await stopped; }
+        fixture.controls.hold.resolve();
+      }, scenario === 'stop'); fixture.controls.hold = null; fixture.controls.invalid = false;
+      const outcome = result.stream.find(e => e.type === 'tool.done')?.result; assert.equal(outcome?.code,{stale:'STALE_TARGET',invalid:'VERIFICATION_FAILED',stop:'CANCELLED'}[scenario],JSON.stringify(outcome)); assert.equal(outcome.mutated,false);
+      assert.deepEqual(await state(),expected); await shot(`resilience-${scenario}`); log.push({action:scenario,outcome,preserved:expected});
+      if (scenario === 'stop') { const cancellation = await fixture.hub.command('reconcile_studio_command',{commandId:outcome.commandId,host:outcome.host},(await fixture.context()).host.workspaceHandle); log.push({action:'stop-reconcile',cancellation}); if(cancellation.status!=='not_applied') { const error=Error(`Stop journal expected not_applied, observed ${cancellation.status}`); console.error('FAIL SUBCASE stop',error.message); failures.push(error); } }
+      if (scenario === 'stale') await undo(original);
+    }
+    const baseline = await state(), arranged = await turn(arrangement); fixture.controls.receiptId = arranged.commands.find(e => e.name === 'arrange_objects').result.receiptId;
+    await turn('Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.');
+    const conflictBefore = await state(), conflict = await turn('Undo the earlier cube receipt without undoing newer edits.'); assert.equal(conflict.commands.find(e => e.name === 'undo_edit').result.code,'UNDO_CONFLICT'); assert.deepEqual(await state(),conflictBefore); await shot('resilience-undo-conflict');
+    const command = arranged.commands.find(e => e.name === 'arrange_objects'); const reconciled = await fixture.hub.command('reconcile_studio_command',{commandId:command.commandId,host:command.result.host},(await fixture.context()).host.workspaceHandle); assert.deepEqual(reconciled.receipt,command.result); assert.equal(reconciled.status,'applied');
+    const repeated = await fixture.hub.command('reconcile_studio_command',{commandId:command.commandId,host:command.result.host},(await fixture.context()).host.workspaceHandle); assert.deepEqual(repeated,reconciled); assert.deepEqual(await state(),conflictBefore); log.push({action:'reconcile-duplicate-ack',reconciled,repeated}); await undo(baseline,1+arranged.commands.filter(e=>e.result?.authored).length);
+    fixture.controls.rateLimit = true; const limited = await turn('Inspect the current selection without changes.'); assert(limited.stream.some(e => e.type === 'error' && e.code === 'rate_limit')); assert.deepEqual(await state(),baseline); await shot('resilience-rate-limit');
+    if (failures.length) throw new AggregateError(failures,'V7 has recorded production blockers');
+  },
+  async responsive() {
+    await open(); const widths = [];
+    for (const width of [375,390,768,1040,1100,1600]) {
+      await page.setViewportSize({width,height:width<500?844:950});
+      await page.getByLabel('Message the agent',{exact:true}).scrollIntoViewIfNeeded();
+      const layout = await page.evaluate(() => { const a=document.querySelector('.studio-agent-inspector'), r=document.querySelector('[aria-label="Message the agent"]').getBoundingClientRect(); return { width:innerWidth,scrollWidth:document.documentElement.scrollWidth,bodyWidth:document.body.scrollWidth,hidden:a.hidden,inspector:document.querySelectorAll('.inspector-sidebar').length,agents:document.querySelectorAll('.agent-panel').length,composer:{x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height},height:innerHeight }; });
+      log.push({action:'layout',...layout}); assert.equal(layout.hidden,false); assert.equal(layout.inspector,1); assert.equal(layout.agents,1); assert(layout.scrollWidth<=width && layout.bodyWidth<=width); assert(layout.composer.width>0 && layout.composer.x>=0 && layout.composer.right<=width && layout.composer.bottom<=layout.height);
+      await page.getByLabel('Message the agent',{exact:true}).fill('responsive composer'); assert.equal(await page.getByLabel('Message the agent',{exact:true}).inputValue(),'responsive composer'); await shot(`responsive-${width}`); widths.push(width);
+    }
+    save('widths',widths);
+    await page.goto(`http://127.0.0.1:${port}/workflow/?agent=mock&state=ready`); await gate("!!document.querySelector('.workflow-main > .agent-panel .agent-input')");
+    assert.equal(await page.locator('.workflow-main > .agent-panel').count(),1); assert.equal(await page.locator('.studio-agent-inspector').count(),0); await shot('workflow-dock');
+  },
+};
+try {
+  browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: process.env.QA_HEADLESS === '1', args:[`--remote-debugging-port=${cdp}`] });
+  for (const name of selected) {
+    const context = await browser.newContext({viewport:{width:1600,height:950}}); page = await context.newPage();
+    const document = structuredClone(sceneDocument);
+    // Layout starts with an actually restorable take; motion Undo restores these
+    // real prior bytes. Intent retains the untouched default pose/bounds repro.
+    if (['motion','responsive'].includes(name)) document.scenes[0].stage.characters[0].motionRef = {url:fixture.origin+'/ardy/motions/123455-abcdef',prompt:'Fixture baseline',rotationDeg:0,anchorX:0,anchorZ:0};
+    await page.addInitScript(document => {
+      localStorage.setItem('cozyclay.scenes.v4',JSON.stringify(document));
+      localStorage.setItem('cozyclay.locale','en'); localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'QA',updatedAt:1}));
+      let history; Object.defineProperty(window,'__sceneHistory',{configurable:true,get:()=>history,set:value=>{history=value;window.dispatchEvent(new Event('qa:render'));}});
+    }, document);
+    try {
+      await page.goto(`http://127.0.0.1:${port}/app/`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
+      if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }
+      const c = await fixture.context(); assert.equal(c.capabilities.tools.length,8);
+      await fixture.command('set_camera',{x:0,y:1.6,z:5,lookAtX:0,lookAtY:1,lookAtZ:0,focalMm:35},c.host.workspaceHandle);
+      await implementations[name](); results.push({name,status:'PASS'}); console.log(`PASS CASE ${name}`);
+    } catch (error) { results.push({name,status:'FAIL',error:error.stack}); console.error(`FAIL CASE ${name}`,error); await shot(`${name}-failure`); }
+    finally { save('actions',log); save('results',results); await context.close(); }
+  }
+} finally {
+  await browser?.close(); await released(cdp); await fixture.close(); console.log('CLEANUP owned Chrome/profile and CDP port released',cdp);
+}
+console.log(`qa-studio-agent-browser: ${results.filter(r=>r.status==='PASS').length}/${selected.length} cases PASS`);
+if (results.some(r=>r.status!=='PASS')) process.exitCode=1;
