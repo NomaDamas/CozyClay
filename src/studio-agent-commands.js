@@ -106,7 +106,14 @@ function place(entity, op, state, ports) {
     if (Math.hypot(result.x - previous.x, result.z - previous.z, result.rot - previous.rot) < EPS) { converged = true; break; }
   }
   if (!converged) fail('AMBIGUOUS_BASIS', 'Facing and placement cannot satisfy the requested relation.');
-  const points = geometry(result, state, ports);
+  let points = geometry(result, state, ports);
+  if (!result.renderer) {
+    const lift = surface.y - Math.min(...points.map(p => p.y));
+    if (Number.isFinite(lift) && Math.abs(lift) > EPS) {
+      result = patchEntity(result, { y: result.y + lift });
+      points = geometry(result, state, ports);
+    }
+  }
   if (Math.abs(Math.min(...points.map(p => p.y)) - surface.y) > EPS) fail('TARGET_NOT_READY', 'Tilted or offset bounds cannot rest on the requested support.');
   let actualGapM;
   if (axis) {
