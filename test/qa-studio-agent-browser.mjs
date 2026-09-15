@@ -27,9 +27,11 @@ const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
 let nextId = 0;
 const pending = new Map();
+const networkEvents = [];
 ws.onmessage = ({ data }) => {
   const message = JSON.parse(data);
-  if (!message.id || !pending.has(message.id)) return;
+  if (!message.id) { networkEvents.push(message); return; }
+  if (!pending.has(message.id)) return;
   const task = pending.get(message.id); pending.delete(message.id);
   message.error ? task.reject(new Error(JSON.stringify(message.error))) : task.resolve(message.result);
 };
@@ -56,6 +58,23 @@ const screenshot = async (name) => {
   const file = `${shotDir}/${name}.png`; writeFileSync(file, Buffer.from(data, "base64"));
   console.log(`SCREENSHOT ${file}`); return file;
 };
+const waitNetwork = (predicate, timeout = 30000) => new Promise((resolve, reject) => {
+  const found = networkEvents.find(predicate);
+  if (found) { resolve(found); return; }
+  const started = Date.now();
+  const timer = setInterval(() => {
+    const event = networkEvents.find(predicate);
+    if (event) { clearInterval(timer); resolve(event); }
+    else if (Date.now() - started >= timeout) { clearInterval(timer); reject(new Error("network event gate timed out")); }
+  }, 25);
+});
+const fixtureRead = async () => {
+  if (!process.env.QA_FIXTURE_PORT) return null;
+  const response = await fetch(`http://127.0.0.1:${process.env.QA_FIXTURE_PORT}/qa/read`);
+  if (!response.ok) throw new Error(`fixture read failed: ${response.status}`);
+  return response.json();
+};
+const actionLog = [];
 const check = (name, value) => { assert.ok(value, name); console.log(`PASS ${name}`); };
 const count = () => evaluate(`(() => ({
   messages: [...document.querySelectorAll('[data-agent-message], .agent-message, .agent-transcript [role="article"]')].length,
@@ -73,11 +92,18 @@ const openAgent = async () => {
 };
 const sendTurn = async (intent) => {
   const before = await count();
+  const fixtureBefore = await fixtureRead();
+  // Register the DOM gate and browser network gate before the user trigger.
   const eventGate = gate(`(() => { const c=${JSON.stringify(before)}; const n=[...document.querySelectorAll('[data-agent-message], .agent-message, .agent-transcript [role="article"]')].length; const r=[...document.querySelectorAll('[data-agent-receipt], .agent-receipt, [data-agent-card="receipt"]')].length; const j=[...document.querySelectorAll('[data-agent-card="job"], .agent-job')].length; return n > c.messages || r > c.receipts || j > c.jobs; })()`);
+  const httpGate = waitNetwork(event => event.method === "Network.requestWillBeSent" && event.params?.request?.url?.includes("/agent/turn"));
   await evaluate(`(() => { const input=document.querySelector('[aria-label="Message the agent"]'); if (!input) throw new Error('Agent composer is not mounted'); const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(input, ${JSON.stringify(intent)}); input.dispatchEvent(new Event('input',{bubbles:true})); input.focus(); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true})); })()`);
-  await eventGate;
+  const [, requestEvent] = await Promise.all([eventGate, httpGate]);
+  actionLog.push({ event: "HTTP /agent/turn", requestId: requestEvent.params.requestId });
   await gate("!document.querySelector('.agent-send.stop') && (!!document.querySelector('[data-agent-receipt], .agent-receipt, [data-agent-card=\"receipt\"]') || /applied|installed|refused|reconciled|undone/i.test(document.querySelector('.studio-agent-inspector')?.innerText || ''))");
-  return { before, after: await count() };
+  const fixtureAfter = await fixtureRead();
+  const delta = fixtureAfter && fixtureBefore ? fixtureAfter.actions.slice(fixtureBefore.actions.length) : [];
+  actionLog.push({ intent, before, after: await count(), fixtureCommands: delta.map(({ name, args, result }) => ({ name, args, result })) });
+  return { before, after: await count(), fixtureBefore, fixtureAfter, delta };
 };
 const nativeUndo = async () => {
   await send("Input.dispatchKeyEvent", { type: "keyDown", key: "z", code: "KeyZ", modifiers: 2 });
@@ -86,6 +112,7 @@ const nativeUndo = async () => {
 };
 
 await send("Page.enable");
+await send("Network.enable");
 await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 950, deviceScaleFactor: 1, mobile: false });
 await gate("!!document.querySelector('.view-menu-trigger') && !!document.querySelector('.inspector-sidebar')", 40000);
 await evaluate("localStorage.setItem('cozyclay.locale','en')");
@@ -106,13 +133,15 @@ async function binding() {
 }
 async function intent() {
   await openAgent();
-  await sendTurn("Put a cube on the floor one metre to camera-left of the selected character. Add a second character two metres to camera-right.");
+  const result = await sendTurn("Put a cube on the floor one metre to camera-left of the selected character. Add a second character two metres to camera-right.");
+  check("arrangement sent both real commands", result.delta.some(entry => entry.name === "arrange_objects") && result.delta.some(entry => entry.name === "arrange_characters"));
   check("arrangement produced a receipt/history signal", await evaluate("/arrange|character|cube|applied|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
   await screenshot("intent-arrangement-desktop"); await nativeUndo(); await screenshot("intent-arrangement-undo-desktop");
 }
 async function framing() {
   await openAgent();
-  await sendTurn("Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.");
+  const result = await sendTurn("Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.");
+  check("frame_shot was sent through the fixture/editor transport", result.delta.some(entry => entry.name === "frame_shot"));
   check("framing produced a camera/key receipt", await evaluate("/frame|camera|shot|key|applied|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
   await screenshot("framing-shot-desktop"); await nativeUndo();
 }
@@ -120,7 +149,8 @@ async function motion() {
   await openAgent();
   const health = process.env.MOTION_MODE || "fixture-only";
   console.log(`MOTION_MODE ${health}`);
-  await sendTurn("Make the selected character walk forward, wave, then return to the starting pose over the current shot range. Verify the full take and install it.");
+  const result = await sendTurn("Make the selected character walk forward, wave, then return to the starting pose over the current shot range. Verify the full take and install it.");
+  check("motion traversed generation through install", ["generate_motion", "prepare_motion_install", "verify_motion_candidate", "commit_motion_candidate"].every(name => result.delta.some(entry => entry.name === name)));
   check("motion has queued/progress/verification/install evidence", await evaluate("/generat|queued|progress|verif|install|take|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
   await screenshot("motion-installed-desktop"); await nativeUndo();
 }
