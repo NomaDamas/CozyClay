@@ -95,7 +95,9 @@ async function changeAndWait(expression, action, label) {
 	await evaluate("window.__qaExport.pendingState");
 }
 async function exportMenu(testId, modifiers = 0) {
-	await changeAndWait("!!document.querySelector('.export-menu')", () => click("#export-menu-trigger"), "Export menu open");
+	if (!await evaluate("!!document.querySelector('.export-menu')")) {
+		await changeAndWait("!!document.querySelector('.export-menu')", () => click("#export-menu-trigger"), "Export menu open");
+	}
 	await click(`[data-testid='${testId}']`, modifiers);
 }
 async function screenshot(name) {
@@ -307,8 +309,8 @@ try {
 		await runAttempt("encode-failure", { kind: "video", format: "mp4", terminal: "failed", failure: "encode_failed" }, () => exportMenu("export-video"));
 	} finally { await evaluate("VideoEncoder.prototype.encode = window.__qaEncode; true"); }
 
-	// Suspend the exact support-check promise. Abort through the existing Video
-	// action while recRef is owned, then release the check; no timing race/sleep.
+	// Suspend the exact support-check promise. Abort through the explicit Cancel
+	// action while recRef is owned; duplicate Video clicks are guarded (#276).
 	await evaluate(`(() => {
 		window.__qaExport.encoderEntered = new Promise(resolve => {
 			VideoEncoder.isConfigSupported = config => new Promise((resume, reject) => {
@@ -321,7 +323,7 @@ try {
 		await runAttempt("cancelled-video", { kind: "video", format: "mp4", terminal: "cancelled", failure: "aborted" }, async () => {
 			await exportMenu("export-video");
 			await evaluate("window.__qaExport.encoderEntered");
-			await evaluate("window.__cozyclay.exportShotVideo()");
+			await exportMenu("export-cancel");
 			await evaluate("VideoEncoder.isConfigSupported = window.__qaEncoderSupport; window.__qaExport.releaseEncoder(); true");
 		});
 	} finally { await evaluate("VideoEncoder.isConfigSupported = window.__qaEncoderSupport; true"); }

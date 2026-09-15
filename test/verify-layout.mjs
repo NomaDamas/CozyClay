@@ -127,11 +127,13 @@ expect("new sessions start without prompt blocks", app.includes("const DEFAULT_P
 expect("new sessions start with an empty motion prompt", app.includes('const [ardyPrompt, setArdyPrompt] = useState("");'));
 expect(
 	"recording captures the clean render without a frame stamp",
-	app.includes("capture: applyExportFrame") &&
+	app.includes("capture: (frame, kind) => withExportFrame(frame, kind") &&
+		app.includes("const plate = applyExportFrame(frame);") &&
 		!app.includes("burnInCapture") &&
-		// #193: the preflight can commit a framing key the render closure has not
-		// seen yet, so the export samples the list the ref carries when set.
-		app.includes("sampleAt(playbackScene, shotAtFrame(exportShotsRef.current ?? shots, frame), frame)"),
+		// #276 retains #193's preflight shot list in the immutable request.
+		// The executable export-recovery tests verify selection and retry.
+		app.includes("structuredClone({ shots: exportShots, playbackScene") &&
+		app.includes("sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame)"),
 );
 expect(
 	"recording uses current motion content instead of a stale timeline tail",

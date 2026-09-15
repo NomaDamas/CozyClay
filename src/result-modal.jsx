@@ -1,6 +1,6 @@
 import { ko, isKo } from "./locale.js";
 
-export default function ResultModal({ result, copied, recordedVideoName, onClose, onCopy, onDownload }) {
+export default function ResultModal({ result, copied, recordedVideoName, onClose, onCopy, onDownload, downloadDisabled = false, exportFeedback = null }) {
 	const isVideo = result.mode === "video";
 	const modelLabel = result.modelLabel ?? (isVideo ? ko("your AI video tool", "AI 영상 도구") : ko("your selected image model", "선택한 이미지 모델"));
 	const hasFrame = Boolean(result.frame);
@@ -72,12 +72,13 @@ export default function ResultModal({ result, copied, recordedVideoName, onClose
 						{copied ? ko("Copied ✓", "복사됨 ✓") : ko("Copy prompt", "프롬프트 복사")}
 					</button>
 					{result.frame && (
-						<button type="button" className="btn" onClick={onDownload}>
-							{result.frameB ? ko("Download start and end frames", "시작·끝 프레임 다운로드") : ko("Download frame", "프레임 다운로드")}
+						<button type="button" className="btn" onClick={onDownload} disabled={downloadDisabled}>
+							{result.downloaded ? ko("Download requested", "다운로드 요청됨") : result.frameB ? ko("Download start and end frames", "시작·끝 프레임 다운로드") : ko("Download frame", "프레임 다운로드")}
 						</button>
 					)}
 				</div>
 
+				{exportFeedback}
 				<section className="result-next" aria-labelledby="result-next-title">
 					<span className="result-next-kicker">{ko(`Next · ${modelLabel}`, `다음 · ${modelLabel}`)}</span>
 					<h4 id="result-next-title">{ko("Handing off to your AI", "AI에 넣는 순서")}</h4>

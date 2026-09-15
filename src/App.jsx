@@ -4731,40 +4731,187 @@ export default function App() {
 	const recRef = useRef(null);
 	const tlFrameRef = useRef(0);
 	tlFrameRef.current = tlFrame;
-	// The cut an export samples. A preflight that materializes a framing key
-	// (see exportShotVideo) commits it through setShots, but this render's
-	// applyExportFrame closure still holds the pre-commit list — the export runs
-	// before React re-renders. The ref carries the list the export must read.
-	const exportShotsRef = useRef(null);
+	const [exportStatus, setExportStatus] = useState(null);
+	const retryExportRef = useRef(null);
+	const frameExportRef = useRef(null);
+
+	// Snapshot authored inputs once, not when Retry is pressed. Runtime render
+	// resources are acquired per attempt; they are never part of the snapshot.
+	function exportRequest(kind, run, { exportShots = shots, external = false, download = true } = {}) {
+		// IK's cached chains contain live Three bones/functions, not cloneable
+		// authored data. Retain that binding and copy only the evaluated keys.
+		const copyIk = (state) => state ? { ...state, keys: snapshotIkKeys(state), tracked: new Set(state.tracked) } : state;
+		const context = kind === "frame" ? null : {
+			...structuredClone({ shots: exportShots, playbackScene, characters, activeId: activeChar.id, motion,
+				framing: captureCurrentFraming(), output: shotOutput }),
+			ikState: copyIk(ikStateRef.current),
+			ikStates: new Map([...ikStatesRef.current].map(([id, state]) => [id, copyIk(state)])),
+			rigStates: Object.values(rigs).filter(Boolean).map(snapshotExportRig),
+		};
+		return Object.freeze({ kind, format: kind === "frame" ? "png" : kind === "keyframe_pack" ? "zip" : "mp4",
+			context, run, external, download, handedOff: new Set() });
+	}
+
+	function exportRecovery(code) {
+		switch (code) {
+			case "unsupported_codec": return ko("MP4 encoding is unavailable. Use a current browser with H.264 WebCodecs support (such as Chrome or Edge), enable hardware acceleration, then retry.", "MP4 인코딩을 사용할 수 없어요. H.264 WebCodecs를 지원하는 최신 Chrome·Edge 등에서 하드웨어 가속을 켠 뒤 다시 시도하세요.");
+			case "encode_failed": return ko("Video encoding failed. Retry the same request. If resources are tight, shorten the shot range or lower output resolution before starting a new export.", "영상 인코딩에 실패했어요. 같은 요청을 다시 시도하세요. 리소스가 부족하면 샷 범위를 줄이거나 출력 해상도를 낮춘 뒤 새로 내보내세요.");
+			case "render_failed": return ko("Frame rendering failed. Let the scene finish loading, then retry. If it repeats, shorten the range or reduce output resolution for a new export.", "프레임 렌더링에 실패했어요. 장면 로딩이 끝난 뒤 다시 시도하세요. 반복되면 범위나 출력 해상도를 줄여 새로 내보내세요.");
+			case "aborted": return ko("Export cancelled. No further downloads will be requested.", "내보내기를 취소했어요. 추가 다운로드는 요청하지 않아요.");
+			default: return ko("Export could not finish. Retry the same request. For memory or resource problems, close other heavy tabs or use a shorter range / lower output resolution in a new export.", "내보내기를 완료하지 못했어요. 같은 요청을 다시 시도하세요. 메모리·리소스 문제라면 무거운 탭을 닫거나 범위·출력 해상도를 줄여 새로 내보내세요.");
+		}
+	}
+
+	function updateExportStatus(job, phase, details = {}) {
+		if (recRef.current !== job) return;
+		job.cancellable = details.cancellable ?? false;
+		setExportStatus({ kind: job.request.kind, phase, label: job.label, ...details });
+	}
+
+	// Yield to input between real work units, not a progress timer. This also
+	// lets the preparing state render before synchronous PNG/ZIP work begins.
+	function exportBoundary(job) {
+		job.controller.signal.throwIfAborted();
+		return new Promise((resolve) => {
+			const channel = new MessageChannel();
+			channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
+			channel.port2.postMessage(null);
+		}).then(() => job.controller.signal.throwIfAborted());
+	}
+
+	async function executeExportRequest(request) {
+		// A synchronous ref, shared by ALL four kinds and retry, is authoritative.
+		// React's busy state alone cannot guard two calls in the same event turn.
+		if (recRef.current) {
+			if (request.external) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
+			return null;
+		}
+		const job = { request, controller: new AbortController(), capture: null, cancellable: false };
+		recRef.current = job;
+		retryExportRef.current = request;
+		setRecState("recording");
+		const attempt = request.external ? null : startExportAttempt({ export_kind: request.kind, format: request.format, surface: embedMode ? "embed" : "studio" });
+		updateExportStatus(job, "preparing", { cancellable: request.kind !== "frame" });
+		try {
+			await exportBoundary(job);
+			if (request.context) {
+				if (!captureRef.current || !shotCamRef.current) throw Object.assign(new Error("The shot renderer is not ready"), { exportFailureCode: "render_failed" });
+				job.capture = captureRef.current.createExportCapture(request.context.output);
+			}
+			const output = await request.run(job);
+			job.controller.signal.throwIfAborted();
+			attempt?.succeed();
+			updateExportStatus(job, "completed", { message: request.download
+				? ko("Export completed. Download requested; check your browser's downloads. The OS save is not confirmed.", "내보내기를 완료하고 다운로드를 요청했어요. 브라우저 다운로드를 확인하세요. OS 저장 완료는 확인할 수 없어요.")
+				: ko("Export pipeline completed. The requesting tool handles the file handoff.", "내보내기 처리를 완료했어요. 요청한 도구에서 파일 전달을 처리합니다.") });
+			if (!request.external) {
+				if (request.kind === "video") { track("export:video_succeeded", { format: "mp4" }); trackFeature("export_video"); }
+				if (request.kind === "depth_video") trackFeature("export_depth_video");
+				if (request.kind === "keyframe_pack") trackFeature("export_keyframe_pack");
+				if (request.kind === "frame") {
+					track("export:blocking_frame_succeeded", { format: "png" });
+					trackFeature("export_frame"); trackActivation("export");
+				}
+			}
+			return output;
+		} catch (error) {
+			const code = exportFailureCode(error, request.kind === "depth_video" ? "render_failed" : "unknown");
+			attempt?.fail(error, code);
+			const message = exportRecovery(code);
+			updateExportStatus(job, code === "aborted" ? "cancelled" : "failed", {
+				code, message, retryable: !request.external, handedOff: request.handedOff.size,
+			});
+			setToast(message);
+			if (request.external) throw error;
+			return null;
+		} finally {
+			try { job.capture?.dispose(); }
+			finally { if (recRef.current === job) recRef.current = null; setRecState("idle"); }
+		}
+	}
+
+	function retryExport() {
+		if (recRef.current || !retryExportRef.current || retryExportRef.current.external) return;
+		return executeExportRequest(retryExportRef.current);
+	}
 
 	function applyExportFrame(frame) {
 		// Props on a travel path read this ref inside their own useFrame, so a
 		// recorded frame shows the same placement the preview would.
 		propFrameRef.current = frame;
-		for (const entry of characters) {
-			const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
-			// Every cast member's OWN IK corrections ride its export frames (#77)
-			// — the active one from the live state, the rest from their stored
-			// layer states, exactly as the viewport applies them.
-			const state = entry.id === activeChar.id ? ikStateRef.current : ikStatesRef.current.get(entry.id);
+		const context = recRef.current?.request.context;
+		for (const entry of context?.characters ?? characters) {
+			const activeId = context?.activeId ?? activeChar.id;
+			const clip = entry.id === activeId ? (context ? context.motion : motion) : entry.sessionMotion;
+			const state = context
+				? (entry.id === activeId ? context.ikState : context.ikStates.get(entry.id))
+				: (entry.id === activeChar.id ? ikStateRef.current : ikStatesRef.current.get(entry.id));
 			poseMemberAtFrame(rigs[entry.id], clip, state, frame, IK_CORRECTION_BLEND_FRAMES);
 		}
 		// The bones for this frame are now written, so a carried prop can take
 		// its place on them. gl.render() never runs the r3f frame loop, so this
 		// pass is the recorder's stand-in for the useFrame the preview gets.
 		propSyncRef.current?.();
-		const sampled = sampleAt(playbackScene, shotAtFrame(exportShotsRef.current ?? shots, frame), frame);
+		const sampled = sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame);
+		const framing = sampled.camera ?? context?.framing;
 		const cam = shotCamRef.current;
-		if (cam && sampled.camera) {
-			cam.position.set(sampled.camera.pos.x, sampled.camera.pos.y, sampled.camera.pos.z);
+		if (cam && framing) {
+			cam.position.set(framing.pos.x, framing.pos.y, framing.pos.z);
 			cam.rotation.order = "YXZ";
-			cam.rotation.set(sampled.camera.pitch, sampled.camera.yaw, 0);
-			look.current.yaw = sampled.camera.yaw;
-			look.current.pitch = sampled.camera.pitch;
-			cam.fov = sampled.camera.fovDeg;
+			cam.rotation.set(framing.pitch, framing.yaw, 0);
+			look.current.yaw = framing.yaw;
+			look.current.pitch = framing.pitch;
+			cam.fov = framing.fovDeg;
 			cam.updateProjectionMatrix();
 		}
-		return captureRef.current?.render() ?? null;
+		return (recRef.current?.capture ?? captureRef.current)?.render() ?? null;
+	}
+
+	function snapshotExportRig(rig) {
+		return { rig, bones: snapshotPlaybackBones(rig), scale: rig.scale.clone(),
+			parent: rig.parent ? { node: rig.parent, position: rig.parent.position.clone(), quaternion: rig.parent.quaternion.clone() } : null };
+	}
+
+	function restoreExportRig(snapshot) {
+		snapshot.rig.scale.copy(snapshot.scale);
+		if (snapshot.parent) {
+			snapshot.parent.node.position.copy(snapshot.parent.position);
+			snapshot.parent.node.quaternion.copy(snapshot.parent.quaternion);
+			snapshot.parent.node.updateMatrixWorld(true);
+		}
+		restorePlaybackBones(snapshot.rig, snapshot.bones);
+	}
+
+	// Restore at each synchronous capture boundary, including the depth
+	// prepass, rather than holding an export pose across a hash/codec await.
+	function withExportFrame(frame, render = null) {
+		const cam = shotCamRef.current;
+		if (!cam) throw Object.assign(new Error("The shot renderer is not ready"), { exportFailureCode: "render_failed" });
+		const cameraSnapshot = { position: cam.position.clone(), quaternion: cam.quaternion.clone(),
+			rotationOrder: cam.rotation.order, fov: cam.fov, yaw: look.current.yaw, pitch: look.current.pitch };
+		const rigSnapshots = Object.values(rigs).filter(Boolean).map(snapshotExportRig);
+		const propFrame = propFrameRef.current;
+		try {
+			// Character stature lives on the rig and placement/yaw on its parent,
+			// not in playback bones. Retry temporarily restores both, plus the
+			// original held pose, then puts the CURRENT editor transforms back.
+			for (const snapshot of recRef.current?.request.context?.rigStates ?? []) restoreExportRig(snapshot);
+			const plate = applyExportFrame(frame);
+			return render ? render() : plate;
+		} catch (error) {
+			throw Object.assign(new Error(error?.message || String(error), { cause: error }), { exportFailureCode: exportFailureCode(error, "render_failed") });
+		} finally {
+			for (const snapshot of rigSnapshots) restoreExportRig(snapshot);
+			cam.position.copy(cameraSnapshot.position);
+			cam.rotation.order = cameraSnapshot.rotationOrder;
+			cam.quaternion.copy(cameraSnapshot.quaternion);
+			cam.fov = cameraSnapshot.fov;
+			cam.updateProjectionMatrix();
+			look.current.yaw = cameraSnapshot.yaw;
+			look.current.pitch = cameraSnapshot.pitch;
+			propFrameRef.current = propFrame;
+			propSyncRef.current?.();
+		}
 	}
 
 	function currentRecordFrameCount() {
@@ -4781,74 +4928,48 @@ export default function App() {
 		return contentExtent > 0 ? contentExtent : tlFrameCount;
 	}
 
-	async function runShotExport({ startFrame = 0, endFrame, download = true, passKind = null, depthRange = null, fileName = null } = {}) {
-		if (recRef.current) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
-		if (!captureRef.current || !shotCamRef.current) throw Object.assign(new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요")), { exportFailureCode: "render_failed" });
+	async function runShotExport({ startFrame = 0, endFrame, download = true, passKind = null, depthRange = null, fileName = null } = {}, job = null) {
 		const resolvedEndFrame = endFrame ?? Math.max(0, currentRecordFrameCount() - 1);
-		const controller = new AbortController();
-		const rec = { controller };
-		recRef.current = rec;
-		setRecState("recording");
-		const cam = shotCamRef.current;
-		const cameraSnapshot = {
-			position: cam.position.clone(),
-			quaternion: cam.quaternion.clone(),
-			rotationOrder: cam.rotation.order,
-			fov: cam.fov,
-			yaw: look.current.yaw,
-			pitch: look.current.pitch,
-		};
-		const rigSnapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
-		try {
-			const result = await exportOffscreenVideo({
-				startFrame,
-				endFrame: resolvedEndFrame,
-				fps: TIMELINE_FPS,
-				width: shotOutput.width,
-				height: shotOutput.height,
-				// The plate path remains capture: applyExportFrame; pass exports only swap the material.
-				capture: (frame, passKind) => {
-					const plate = applyExportFrame(frame);
-					if (!passKind) return plate;
-					return renderPass(captureRef.current, captureRef.current.scene, shotCamRef.current, passKind, null, { depthRange });
-				},
-				passKind,
-				signal: controller.signal,
-			});
-			if (download) {
-				const slate = (moveSequence?.slate ?? "shot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shot";
-				// Default plate filename: const name = `cozyclay-${slate}.mp4`
-				const name = fileName ?? `cozyclay-${slate}.mp4`;
-				const url = URL.createObjectURL(result.blob);
-				const anchor = document.createElement("a");
-				anchor.href = url;
-				anchor.download = name;
-				anchor.click();
-				setTimeout(() => URL.revokeObjectURL(url), 10_000);
-				setRecordedVideoName(name);
-				setToast(isKo ? `${name} 저장됨 · ${result.frameCount}프레임` : `Saved ${name} · ${result.frameCount} frames`);
-			}
-			return result;
-		} finally {
-			for (const snapshot of rigSnapshots) restorePlaybackBones(snapshot.rig, snapshot.bones);
-			cam.position.copy(cameraSnapshot.position);
-			cam.rotation.order = cameraSnapshot.rotationOrder;
-			cam.quaternion.copy(cameraSnapshot.quaternion);
-			cam.fov = cameraSnapshot.fov;
-			cam.updateProjectionMatrix();
-			look.current.yaw = cameraSnapshot.yaw;
-			look.current.pitch = cameraSnapshot.pitch;
-			if (recRef.current === rec) recRef.current = null;
-			setRecState("idle");
+		// Preserve the download-free browser seam, without a nested lifecycle.
+		if (!job) return executeExportRequest(exportRequest(passKind === "depth" ? "depth_video" : "video",
+			(ownedJob) => runShotExport({ startFrame, endFrame: resolvedEndFrame, download, passKind, depthRange, fileName }, ownedJob),
+			{ external: true, download }));
+		job.controller.signal.throwIfAborted();
+		const output = job.request.context.output;
+		const result = await exportOffscreenVideo({
+			startFrame, endFrame: resolvedEndFrame, fps: TIMELINE_FPS,
+			width: output.width, height: output.height,
+			capture: (frame, kind) => withExportFrame(frame, kind
+				? () => renderPass(job.capture, job.capture.scene, shotCamRef.current, kind, null, { depthRange }) : null),
+			passKind, signal: job.controller.signal,
+			onFrame: ({ index, frameCount }) => updateExportStatus(job, "encoding", {
+				completedFrames: index + 1, frameCount, cancellable: true,
+			}),
+			onPhase: ({ phase, stage, cancellable }) => updateExportStatus(job, phase, { stage, cancellable }),
+		});
+		job.controller.signal.throwIfAborted();
+		if (download) {
+			const slate = (moveSequence?.slate ?? "shot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shot";
+			// Default plate filename: const name = `cozyclay-${slate}.mp4`
+			const name = fileName ?? `cozyclay-${slate}.mp4`;
+			const url = URL.createObjectURL(result.blob);
+			try { saveDownload(url, name); }
+			finally { setTimeout(() => URL.revokeObjectURL(url), 10_000); }
+			setRecordedVideoName(name);
+			setToast(isKo ? `${name} 다운로드 요청 · ${result.frameCount}프레임` : `Download requested: ${name} · ${result.frameCount} frames`);
 		}
+		return result;
 	}
 
 	function stopShotRecording() {
-		recRef.current?.controller.abort();
+		const job = recRef.current;
+		if (!job?.cancellable) return;
+		job.controller.abort();
+		updateExportStatus(job, "preparing", { message: ko("Cancelling at the current work boundary…", "현재 작업 경계에서 취소 중…") });
 	}
 
-	/** Export the shot under the playhead (else the first one) as an MP4, or
-	 *  stop the export that is already running.
+	/** Export the shot under the playhead (else the first one) as an MP4.
+	 *  Repeated clicks never cancel an in-flight attempt.
 	 *
 	 *  Two preflights (#193) stand between the menu item and runShotExport:
 	 *  a shot with no camera keys has nothing for cameraMoveAt to interpolate,
@@ -4859,84 +4980,89 @@ export default function App() {
 	 *  production duration, so a 40-frame static shot must record its own
 	 *  [startFrame, endFrame] range instead of 360 frames of held pose. */
 	async function exportShotVideo({ download = true } = {}) {
-		if (recRef.current) {
-			stopShotRecording();
-			return null;
+		if (recRef.current) return null;
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		let exportShots = shots;
+		if (target && target.cameraKeys.length === 0) {
+			const framing = captureCurrentFraming();
+			exportShots = updateStableItem(shots, target.id,
+				(entry) => ({ ...entry, cameraKeys: [{ id: createStableItemId("camera-key"), frame: entry.startFrame, framing }] }), "shots");
+			// Keep #193's initial static-shot preflight, but never repeat this
+			// authoring action when retrying the immutable request below.
+			recordShotUndo();
+			setShots(exportShots);
 		}
-		const attempt = startExportAttempt({ export_kind: "video", format: "mp4", surface: embedMode ? "embed" : "studio" });
-		try {
-			const atPlayhead = shotIndexAtFrame(shots, tlFrame);
-			const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
-			let exportShots = shots;
-			if (target && target.cameraKeys.length === 0) {
-				const framing = captureCurrentFraming();
-				exportShots = updateStableItem(
-					shots,
-					target.id,
-					(shot) => ({ ...shot, cameraKeys: [{ id: createStableItemId("camera-key"), frame: shot.startFrame, framing }] }),
-					"shots",
-				);
-				recordShotUndo();
-				setShots(exportShots);
-				setToast(ko("Framing keyed at the shot's first frame", "샷 첫 프레임에 현재 프레이밍을 저장했습니다"));
-			}
-			exportShotsRef.current = exportShots;
-			const range = target && !motion ? { startFrame: target.startFrame, endFrame: target.endFrame } : {};
-			const result = await runShotExport({ ...range, download });
-			attempt.succeed();
-			track("export:video_succeeded", { format: "mp4" });
-			trackFeature("export_video");
-			return result;
-		} catch (error) {
-			attempt.fail(error);
-			if (error?.name !== "AbortError") setToast(error?.message || String(error));
-			return null;
-		} finally {
-			exportShotsRef.current = null;
-		}
+		const range = target && !motion
+			? { startFrame: target.startFrame, endFrame: target.endFrame }
+			: { startFrame: 0, endFrame: Math.max(0, currentRecordFrameCount() - 1) };
+		return executeExportRequest(exportRequest("video", (job) => runShotExport({ ...range, download }, job), { exportShots, download }));
 	}
 
 	async function exportDepthVideo() {
-		if (recRef.current) { stopShotRecording(); return; }
-		const attempt = startExportAttempt({ export_kind: "depth_video", format: "mp4", surface: embedMode ? "embed" : "studio" });
-		const snapshots = [];
-		try {
-			const atPlayhead = shotIndexAtFrame(shots, tlFrame);
-			const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
-			if (!target) {
-				attempt.fail(null, "render_failed");
-				return;
-			}
-			exportShotsRef.current = shots;
-			const startFrame = !motion ? target.startFrame : 0;
-			const endFrame = !motion ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
-			const cam = shotCamRef.current;
-			for (const rig of Object.values(rigs).filter(Boolean)) snapshots.push({ rig, bones: snapshotPlaybackBones(rig) });
+		if (recRef.current) return null;
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		const startFrame = target && !motion ? target.startFrame : 0;
+		const endFrame = target && !motion ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
+		return executeExportRequest(exportRequest("depth_video", async (job) => {
+			if (!target) throw Object.assign(new Error("Add a shot before exporting depth video"), { exportFailureCode: "render_failed" });
 			let depthRange = null;
 			if (endFrame > startFrame) {
 				const samples = [];
 				for (let frame = startFrame; frame <= endFrame; frame += 1) {
-					applyExportFrame(frame);
-					const depth = renderPass(captureRef.current, captureRef.current.scene, cam, "depth");
-					if (depth) {
-						let minGrey = 255;
-						let maxGrey = 0;
-						for (let index = 0; index < depth.length; index += 256) {
-							const grey = depth[index];
-							if (grey < minGrey) minGrey = grey;
-							if (grey > maxGrey) maxGrey = grey;
-						}
-						samples.push({ min: DEPTH_RANGE_M * (1 - maxGrey / 255), max: DEPTH_RANGE_M * (1 - minGrey / 255) });
+					job.controller.signal.throwIfAborted();
+					const depth = withExportFrame(frame, () => renderPass(job.capture, job.capture.scene, shotCamRef.current, "depth"));
+					if (!depth) throw Object.assign(new Error("Depth capture failed"), { exportFailureCode: "render_failed" });
+					let minGrey = 255;
+					let maxGrey = 0;
+					for (let index = 0; index < depth.length; index += 256) {
+						minGrey = Math.min(minGrey, depth[index]);
+						maxGrey = Math.max(maxGrey, depth[index]);
 					}
-					if ((frame - startFrame) % 4 === 3) await new Promise((resolve) => setTimeout(resolve, 0));
+					samples.push({ min: DEPTH_RANGE_M * (1 - maxGrey / 255), max: DEPTH_RANGE_M * (1 - minGrey / 255) });
+					updateExportStatus(job, "preparing", { stage: "depth", completedFrames: frame - startFrame + 1,
+						frameCount: endFrame - startFrame + 1, cancellable: true });
+					await exportBoundary(job);
 				}
-				depthRange = depthRangeFromFrames(samples, cam.near, DEPTH_RANGE_M);
+				depthRange = depthRangeFromFrames(samples, shotCamRef.current.near, DEPTH_RANGE_M);
 			}
-			await runShotExport({ startFrame, endFrame, passKind: "depth", depthRange, fileName: "blocking-depth.mp4" });
-			attempt.succeed();
-			trackFeature("export_depth_video");
-		} catch (error) { attempt.fail(error, "render_failed"); if (error?.name !== "AbortError") setToast(error?.message || String(error)); }
-		finally { for (const snapshot of snapshots) restorePlaybackBones(snapshot.rig, snapshot.bones); exportShotsRef.current = null; }
+			return runShotExport({ startFrame, endFrame, passKind: "depth", depthRange, fileName: "blocking-depth.mp4" }, job);
+		}));
+	}
+
+	function exportPhaseLabel(phase) {
+		return ({ preparing: ko("Preparing", "준비 중"), encoding: ko("Encoding", "인코딩 중"),
+			finalizing: ko("Finalizing", "마무리 중"), completed: ko("Completed", "완료"),
+			failed: ko("Failed", "실패"), cancelled: ko("Cancelled", "취소됨") })[phase] ?? "";
+	}
+
+	function exportFeedback() {
+		if (!exportStatus) return null;
+		const { phase, kind, message, completedFrames, frameCount, stage, cancellable, retryable, handedOff, label } = exportStatus;
+		const busy = ["preparing", "encoding", "finalizing"].includes(phase);
+		return (
+			<section className="export-status" data-testid="export-status" data-phase={phase} data-kind={kind} role="status" aria-live="polite" aria-atomic="true">
+				<strong>{exportPhaseLabel(phase)}{label ? ` · ${label}` : ""}</strong>
+				{busy && <progress aria-label={exportPhaseLabel(phase)} max={frameCount} value={completedFrames} />}
+				{frameCount && <p>{stage === "depth" ? ko("Depth range sampled", "뎁스 범위 샘플링") : ko("Frames submitted to encoder", "인코더에 전달한 프레임")}: {completedFrames} / {frameCount}</p>}
+				{message && <p>{message}</p>}
+				{busy && !message && <p>{stage === "mux"
+					? ko("Finalizing MP4. Progress is indeterminate; this stage cannot be interrupted.", "MP4 마무리 중이에요. 진행률은 알 수 없으며 이 단계는 중단할 수 없어요.")
+					: stage === "flush" ? ko("Finishing encoder output. Progress is indeterminate.", "인코더 출력을 마무리하고 있어요. 진행률은 알 수 없어요.")
+					: kind === "frame" ? ko("Handing off existing PNGs. Synchronous downloads cannot be cancelled.", "기존 PNG를 전달하고 있어요. 동기 다운로드는 취소할 수 없어요.")
+					: stage === "archive" ? ko("Building the ZIP. Cancel takes effect after the current work unit, before download.", "ZIP을 만드는 중이에요. 취소는 현재 작업이 끝난 뒤 다운로드 전에 적용돼요.")
+					: stage === "depth" || stage === "frames" ? ko("Cancel stops at the next frame boundary, before download.", "취소하면 다운로드 전 다음 프레임 경계에서 멈춰요.")
+					: phase === "preparing" ? ko("Preparing the renderer and checking MP4 support…", "렌더러를 준비하고 MP4 지원을 확인하고 있어요…")
+					: ko("Encoding the requested frames, not yet a completed file.", "요청한 프레임을 인코딩 중이에요. 아직 파일이 완성되지 않았어요.")}</p>}
+				{retryable && <p>{ko("Retry keeps the original shot, camera, range and settings; it does not change your edits.", "다시 시도하면 원래 샷·카메라·범위·설정을 사용하며 편집 내용은 바꾸지 않아요.")}</p>}
+				{handedOff > 0 && <p>{ko(`${handedOff} file(s) already handed off. Retry skips those downloads; check browser downloads because OS saves cannot be confirmed.`, `파일 ${handedOff}개는 이미 전달했어요. 다시 시도할 때 해당 다운로드는 건너뛰어요. OS 저장은 확인할 수 없으니 브라우저 다운로드를 확인하세요.`)}</p>}
+				<div className="export-status-actions">
+					{busy && cancellable && <button type="button" data-testid="export-cancel" onClick={stopShotRecording}>{ko("Cancel export", "내보내기 취소")}</button>}
+					{retryable && <button type="button" data-testid="export-retry" disabled={recState === "recording"} onClick={() => void retryExport()}>{ko("Retry same export", "같은 내보내기 재시도")}</button>}
+				</div>
+			</section>
+		);
 	}
 
 	function downloadOtioCutList() {
@@ -5016,38 +5142,18 @@ export default function App() {
 	// frame, exactly as the MP4 pass does. Bones and camera are put back
 	// afterwards, so a pack built mid-session leaves the viewport untouched.
 	function captureShotFramePng(frame) {
-		if (!captureRef.current || !shotCamRef.current) throw Object.assign(new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요")), { exportFailureCode: "render_failed" });
-		const cam = shotCamRef.current;
-		const cameraSnapshot = {
-			position: cam.position.clone(),
-			quaternion: cam.quaternion.clone(),
-			rotationOrder: cam.rotation.order,
-			fov: cam.fov,
-			yaw: look.current.yaw,
-			pitch: look.current.pitch,
-		};
-		const rigSnapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
-		try {
-			const buffer = applyExportFrame(frame);
-			return buffer ? bufferToPng(buffer) : null;
-		} catch (error) {
+		const buffer = withExportFrame(frame);
+		try { return buffer ? bufferToPng(buffer) : null; }
+		catch (error) {
 			throw Object.assign(new Error(error?.message || String(error), { cause: error }), { exportFailureCode: exportFailureCode(error, "render_failed") });
-		} finally {
-			for (const snapshot of rigSnapshots) restorePlaybackBones(snapshot.rig, snapshot.bones);
-			cam.position.copy(cameraSnapshot.position);
-			cam.rotation.order = cameraSnapshot.rotationOrder;
-			cam.quaternion.copy(cameraSnapshot.quaternion);
-			cam.fov = cameraSnapshot.fov;
-			cam.updateProjectionMatrix();
-			look.current.yaw = cameraSnapshot.yaw;
-			look.current.pitch = cameraSnapshot.pitch;
 		}
 	}
 
 	// The framing the shot camera stands in at a frame, in the same shape the
 	// camera keys use — camera.json carries it so a tool can rebuild the pull.
 	function shotFramingAtFrame(entry, frame) {
-		const sampled = sampleAt(playbackScene, entry, frame).camera;
+		const context = recRef.current?.request.context;
+		const sampled = sampleAt(context?.playbackScene ?? playbackScene, entry, frame).camera ?? context?.framing;
 		if (!sampled) return null;
 		return { pos: { x: sampled.pos.x, y: sampled.pos.y, z: sampled.pos.z }, yaw: sampled.yaw, pitch: sampled.pitch, fovDeg: sampled.fovDeg };
 	}
@@ -5071,15 +5177,29 @@ export default function App() {
 	// Build one shot's pack: both endpoint frames, the clip between them, the
 	// camera state and the prompt. Returns the archive bytes plus the entry
 	// names, so the download path, the embed message and QA all share it.
-	async function buildShotKeyframePack(entry, index, onProgress = null) {
+	async function buildShotKeyframePack(entry, index, onProgress = null, job = null) {
+		// Embed/Workflow and the public QA API already own their lifecycle. The
+		// shared lock still covers their endpoint captures and archive stages.
+		if (!job) {
+			const snapshot = structuredClone(entry);
+			return executeExportRequest(exportRequest("keyframe_pack",
+				(ownedJob) => buildShotKeyframePack(snapshot, index, onProgress, ownedJob), { external: true, download: false }));
+		}
+		updateExportStatus(job, "preparing", { stage: "frames", cancellable: true });
+		await exportBoundary(job);
 		const packShot = { title: entry.name, index: index + 1, startFrame: entry.startFrame, endFrame: entry.endFrame };
 		onProgress?.(ko(`Rendering frames for "${entry.name}"`, `"${entry.name}" 프레임 렌더링 중`));
 		const firstUrl = captureShotFramePng(entry.startFrame);
 		if (!firstUrl) throw Object.assign(new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요")), { exportFailureCode: "render_failed" });
+		await exportBoundary(job);
 		const lastUrl = entry.endFrame > entry.startFrame ? captureShotFramePng(entry.endFrame) : null;
+		await exportBoundary(job);
 		onProgress?.(ko(`Recording the clip for "${entry.name}"`, `"${entry.name}" 클립 녹화 중`));
-		const recorded = await runShotExport({ startFrame: entry.startFrame, endFrame: entry.endFrame, download: false });
+		const recorded = await runShotExport({ startFrame: entry.startFrame, endFrame: entry.endFrame, download: false }, job);
+		updateExportStatus(job, "finalizing", { stage: "archive", cancellable: true });
+		await exportBoundary(job);
 		const clipBytes = new Uint8Array(await recorded.blob.arrayBuffer());
+		job.controller.signal.throwIfAborted();
 		const meta = packMetaForShot(entry, index);
 		const entries = keyframePackEntries({
 			shot: packShot,
@@ -5096,7 +5216,11 @@ export default function App() {
 			},
 			prompt: buildShotPrompt(meta, { target: "video" }),
 		});
-		return { name: keyframePackName(packShot), entries, bytes: buildZip(entries) };
+		const bytes = buildZip(entries);
+		// ZIP construction is synchronous: cancellation takes effect after that
+		// work unit, before any file is handed off or the next shot is started.
+		await exportBoundary(job);
+		return { name: keyframePackName(packShot), entries, bytes };
 	}
 
 	// The shot a pack is built for: an explicit id, else the one under the
@@ -5114,27 +5238,24 @@ export default function App() {
 
 	/** Download the keyframe pack for one shot, or (Shift) for every shot. */
 	async function exportKeyframePacks(everyShot = false) {
-		const attempt = startExportAttempt({ export_kind: "keyframe_pack", format: "zip", surface: embedMode ? "embed" : "studio" });
-		try {
-			// shotIndexForPack runs either way: it is what rejects an empty cut.
-			const current = shotIndexForPack();
-			const targets = everyShot ? shots.map((_, index) => index) : [current];
+		if (recRef.current) return null;
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const current = atPlayhead >= 0 ? atPlayhead : 0;
+		const targets = everyShot ? shots.map((_, index) => index) : [current];
+		return executeExportRequest(exportRequest("keyframe_pack", async (job) => {
+			if (!job.request.context.shots.length) throw new Error(ko("Add at least one Shot before exporting a keyframe pack", "키프레임 팩을 내보내려면 샷을 하나 이상 추가하세요"));
 			for (const [order, index] of targets.entries()) {
-				const label = targets.length > 1 ? ` (${order + 1}/${targets.length})` : "";
-				const pack = await buildShotKeyframePack(shots[index], index, (message) => setToast(message + label));
+				if (job.request.handedOff.has(index)) continue;
+				job.label = ko(`Shot ${order + 1} of ${targets.length}`, `샷 ${order + 1} / ${targets.length}`);
+				const pack = await buildShotKeyframePack(job.request.context.shots[index], index, null, job);
+				job.controller.signal.throwIfAborted();
 				const url = URL.createObjectURL(new Blob([pack.bytes], { type: "application/zip" }));
-				saveDownload(url, pack.name);
-				setTimeout(() => URL.revokeObjectURL(url), 10_000);
-				setToast(isKo
-					? `${pack.name} 저장됨 · 파일 ${pack.entries.length}개${label}`
-					: `Saved ${pack.name} · ${pack.entries.length} files${label}`);
+				try { saveDownload(url, pack.name); job.request.handedOff.add(index); }
+				finally { setTimeout(() => URL.revokeObjectURL(url), 10_000); }
+				setToast(isKo ? `${pack.name} 다운로드 요청 · 파일 ${pack.entries.length}개` : `Download requested: ${pack.name} · ${pack.entries.length} files`);
+				await exportBoundary(job);
 			}
-			attempt.succeed();
-			trackFeature("export_keyframe_pack");
-		} catch (error) {
-			attempt.fail(error);
-			if (error?.name !== "AbortError") setToast(error?.message || String(error));
-		}
+		}));
 	}
 
 	/** Depth and normal conditioning passes of the framing on screen now. */
@@ -7459,47 +7580,37 @@ export default function App() {
 	}
 
 	function download() {
-		const attempt = startExportAttempt({ export_kind: "frame", format: "png", surface: embedMode ? "embed" : "studio" });
-		const save = (href, name) => {
-			const a = document.createElement("a");
-			a.href = href;
-			a.download = name;
-			document.body.appendChild(a);
-			a.click();
-			a.remove();
-		};
-		try {
-			if (!result?.frame) throw Object.assign(new Error("The captured frame is not ready"), { exportFailureCode: "render_failed" });
-			// A small sidecar keeps downloaded key frames tied to their palette.
-			if (result.partColours) {
-				const blob = new Blob([JSON.stringify({ partColours: result.partColours }, null, 2)], { type: "application/json" });
-				const url = URL.createObjectURL(blob);
-				save(url, "blocking-frame-palette.json");
-				setTimeout(() => URL.revokeObjectURL(url), 1000);
-			}
-			if (result.frameB) {
-				// named for the seat they take in a first/last-frame video request
-				save(result.frame, "blocking-frame-A-start.png");
-				save(result.frameB, "blocking-frame-B-end.png");
-				setToast(ko("Start & end frames downloaded", "시작·끝 프레임 다운로드됨"));
-				setResult((current) => current ? { ...current, downloaded: true } : current);
-				attempt.succeed();
-				track("export:blocking_frame_succeeded", { format: "png" });
-				trackFeature("export_frame");
-				trackActivation("export");
-				return;
-			}
-			save(result.frame, "blocking-frame.png");
-			setToast(ko("Frame downloaded", "프레임 다운로드됨"));
-			setResult((current) => current ? { ...current, downloaded: true } : current);
-			attempt.succeed();
-			track("export:blocking_frame_succeeded", { format: "png" });
-			trackFeature("export_frame");
-			trackActivation("export");
-		} catch (error) {
-			attempt.fail(error);
-			setToast(error?.message || String(error));
+		if (recRef.current || result?.downloaded) return null;
+		if (frameExportRef.current?.source === result) {
+			if (frameExportRef.current.done) return null;
+			return executeExportRequest(frameExportRef.current.request);
 		}
+		const snapshot = structuredClone(result);
+		const frameJob = { source: result, done: false, request: null };
+		frameJob.request = exportRequest("frame", (job) => {
+			if (!snapshot?.frame) throw Object.assign(new Error("The captured frame is not ready"), { exportFailureCode: "render_failed" });
+			updateExportStatus(job, "finalizing", { stage: "download", cancellable: false });
+			const save = (href, name) => {
+				if (job.request.handedOff.has(name)) return;
+				saveDownload(href, name);
+				job.request.handedOff.add(name);
+			};
+			if (snapshot.partColours && !job.request.handedOff.has("blocking-frame-palette.json")) {
+				const blob = new Blob([JSON.stringify({ partColours: snapshot.partColours }, null, 2)], { type: "application/json" });
+				const url = URL.createObjectURL(blob);
+				try { save(url, "blocking-frame-palette.json"); }
+				finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+			}
+			if (snapshot.frameB) {
+				save(snapshot.frame, "blocking-frame-A-start.png");
+				save(snapshot.frameB, "blocking-frame-B-end.png");
+			} else save(snapshot.frame, "blocking-frame.png");
+			frameJob.done = true;
+			setResult((current) => current === frameJob.source ? { ...current, downloaded: true } : current);
+			setToast(ko("Frame download requested. Check your browser's downloads.", "프레임 다운로드를 요청했어요. 브라우저 다운로드를 확인하세요."));
+		});
+		frameExportRef.current = frameJob;
+		return executeExportRequest(frameJob.request);
 	}
 	function downloadArdyPose() {
 		const rig = posedRig();
@@ -10594,11 +10705,16 @@ function resizePromptClip(id, edge, rawFrame) {
 									// popover geometry for the studio's export menu wherever
 									// its trigger lives.
 									const box = event.currentTarget.getBoundingClientRect();
-									setExportMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+									const menuWidth = Math.min(340, window.innerWidth - 16);
+									setExportMenuAnchor({
+										top: box.bottom + 6,
+										right: Math.min(Math.max(8, window.innerWidth - box.right), Math.max(8, window.innerWidth - menuWidth - 8)),
+									});
 									setExportMenuOpen((open) => !open);
 								}}
 							>
-								{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("Export", "내보내기")}
+								{ko("Export", "내보내기")}
+								{exportStatus && <span className="export-trigger-state" data-phase={exportStatus.phase}>{exportPhaseLabel(exportStatus.phase)}</span>}
 								<span className="caret">▾</span>
 							</button>
 							{exportMenuOpen && (
@@ -10606,8 +10722,8 @@ function resizePromptClip(id, edge, rawFrame) {
 									className="project-menu export-menu"
 									role="menu"
 									style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
-									onClick={() => setExportMenuOpen(false)}
 								>
+									{!(resultOpen && exportStatus?.kind === "frame") && exportFeedback()}
 									<button
 										type="button"
 										role="menuitem"
@@ -10628,16 +10744,18 @@ function resizePromptClip(id, edge, rawFrame) {
 											type="button"
 											role="menuitem"
 											data-testid="export-video"
+											disabled={recState === "recording"}
 											title={ko("Render the shot to an MP4 — camera move and character motion, no editor chrome", "샷을 MP4로 렌더링합니다 — 카메라 움직임과 캐릭터 모션만, 편집 UI는 제외")}
 											onClick={() => void exportShotVideo()}
 										>
-											{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("Video (mp4)", "영상 (mp4)")}
+											{ko("Video (mp4)", "영상 (mp4)")}
 										</button>
 									)}
 									<button
 										type="button"
 										role="menuitem"
 										data-testid="export-render-passes"
+										disabled={recState === "recording"}
 										title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
 										onClick={exportRenderPasses}
 									>
@@ -10658,7 +10776,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										type="button"
 										role="menuitem"
 										data-testid="export-storyboard"
-										disabled={!shots.length}
+										disabled={!shots.length || recState === "recording"}
 										data-disabled-reason={shots.length ? undefined : "no-shots"}
 										title={shots.length
 											? ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")
@@ -13823,6 +13941,8 @@ function resizePromptClip(id, edge, rawFrame) {
 					onClose={() => setResultOpen(false)}
 					onCopy={() => copyPrompt(result.prompt)}
 					onDownload={download}
+					downloadDisabled={recState === "recording" || Boolean(result.downloaded)}
+					exportFeedback={exportStatus?.kind === "frame" ? exportFeedback() : null}
 				/>
 			)}
 

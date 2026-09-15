@@ -8862,7 +8862,68 @@ input[type=range] {
 	position: fixed;
 	left: auto;
 	min-width: 240px;
+	width: min(340px, calc(100vw - 16px));
+	max-height: calc(100dvh - 90px);
+	overflow-y: auto;
 	z-index: 80;
+}
+
+.export-trigger-state {
+	font-size: 10px;
+	color: var(--muted2);
+}
+
+.export-trigger-state[data-phase="failed"] {
+	color: var(--fg);
+}
+
+.export-status {
+	padding: 10px;
+	margin-bottom: 6px;
+	border-bottom: 1px solid var(--line);
+	color: var(--fg);
+	font-size: 12px;
+	line-height: 1.5;
+	overflow-wrap: anywhere;
+}
+
+.export-status strong {
+	display: block;
+	color: var(--cyan);
+}
+
+.export-status p {
+	margin: 6px 0;
+	color: var(--muted);
+}
+
+.export-status progress {
+	display: block;
+	width: 100%;
+	height: 6px;
+	margin-top: 8px;
+	accent-color: var(--cyan);
+}
+
+.export-status-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.export-status-actions button {
+	min-height: 36px;
+	padding: 7px 10px;
+	border: 1px solid var(--line);
+	border-radius: 6px;
+	background: var(--panel);
+	color: var(--fg);
+	font: inherit;
+	cursor: pointer;
+}
+
+.result-modal .export-status {
+	margin-top: 12px;
 }
 
 .export-menu button {

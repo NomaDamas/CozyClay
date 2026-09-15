@@ -42,6 +42,23 @@ function withExportFailureCode(error, code) {
 	return error;
 }
 
+// Native codec probes/flushes are not guaranteed to settle after cancellation.
+// Race them against the signal while observing late rejections and removing
+// the listener on every outcome. The encoder itself is closed by its owner.
+function abortable(promise, signal) {
+	if (!signal) return promise;
+	return new Promise((resolve, reject) => {
+		const abort = () => { cleanup(); reject(abortError()); };
+		const cleanup = () => signal.removeEventListener("abort", abort);
+		if (signal.aborted) abort();
+		else signal.addEventListener("abort", abort, { once: true });
+		Promise.resolve(promise).then(
+			(value) => { cleanup(); resolve(value); },
+			(error) => { cleanup(); reject(error); },
+		);
+	});
+}
+
 async function supportedEncoderConfig(width, height, fps, VideoEncoderClass, signal) {
 	for (const candidate of CODECS) {
 		if (signal?.aborted) throw abortError();
@@ -54,7 +71,7 @@ async function supportedEncoderConfig(width, height, fps, VideoEncoderClass, sig
 			latencyMode: "quality",
 		};
 		try {
-			const support = await VideoEncoderClass.isConfigSupported(config);
+			const support = await abortable(VideoEncoderClass.isConfigSupported(config), signal);
 			if (support.supported) return support.config;
 		} catch (error) {
 			if (error?.name === "AbortError") throw error;
@@ -85,6 +102,7 @@ export async function exportOffscreenVideo({
 	signal,
 	passKind = null,
 	onFrame,
+	onPhase,
 	VideoEncoderClass = globalThis.VideoEncoder,
 	VideoFrameClass = globalThis.VideoFrame,
 }) {
@@ -103,6 +121,13 @@ export async function exportOffscreenVideo({
 	let encoderError = null;
 	let encoder = null;
 	let failureCode = "encode_failed";
+	const closeEncoder = () => {
+		try {
+			if (encoder && encoder.state !== "closed") encoder.close();
+		} catch {
+			// Cleanup must not replace the original failure or cancellation.
+		}
+	};
 	try {
 		encoder = new VideoEncoderClass({
 			output(chunk, metadata) {
@@ -124,6 +149,10 @@ export async function exportOffscreenVideo({
 				encoderError = error;
 			},
 		});
+		signal?.addEventListener("abort", closeEncoder, { once: true });
+		if (signal?.aborted) throw abortError();
+		onPhase?.({ phase: "encoding", cancellable: true });
+		if (signal?.aborted) throw abortError();
 		const topDown = new Uint8ClampedArray(width * height * 4);
 		const frameDurationUs = 1_000_000 / fps;
 		const keyInterval = Math.max(1, Math.round(fps * 2));
@@ -136,7 +165,7 @@ export async function exportOffscreenVideo({
 			if (!(pixels instanceof Uint8Array) || pixels.byteLength !== topDown.byteLength) {
 				throw new Error(`frame ${frame} returned ${pixels?.byteLength ?? 0} RGBA bytes; expected ${topDown.byteLength}`);
 			}
-			const hash = await pixelHash(pixels);
+			const hash = await abortable(pixelHash(pixels), signal);
 			hashes.push(hash);
 			flipRows(pixels, topDown, width, height);
 			failureCode = "encode_failed";
@@ -155,10 +184,13 @@ export async function exportOffscreenVideo({
 			}
 			if (encoderError) throw encoderError;
 			// Encoder-paced flush boundaries may change file bytes; determinism covers addressed pixels and their hashes only.
-			if (encoder.encodeQueueSize > 4) await encoder.flush();
+			if (encoder.encodeQueueSize > 4) await abortable(encoder.flush(), signal);
 			onFrame?.({ frame, index, frameCount: range.frameCount, hash });
 		}
-		await encoder.flush();
+		if (signal?.aborted) throw abortError();
+		onPhase?.({ phase: "finalizing", stage: "flush", cancellable: true });
+		if (signal?.aborted) throw abortError();
+		await abortable(encoder.flush(), signal);
 		if (signal?.aborted) throw abortError();
 		if (encoderError) throw encoderError;
 		encoder.close();
@@ -166,6 +198,9 @@ export async function exportOffscreenVideo({
 		if (chunks.length !== range.frameCount) {
 			throw new Error(`WebCodecs emitted ${chunks.length} frames for ${range.frameCount} inputs`);
 		}
+		// Mux finalization cannot be interrupted internally; disclose that stage
+		// and wait for it to settle before releasing the shared export lock.
+		onPhase?.({ phase: "finalizing", stage: "mux", cancellable: false });
 		const blob = await muxMP4({
 			chunks,
 			codec: config.codec,
@@ -176,6 +211,7 @@ export async function exportOffscreenVideo({
 			},
 			signal,
 		});
+		if (signal?.aborted) throw abortError();
 		return {
 			...range,
 			fps,
@@ -188,11 +224,9 @@ export async function exportOffscreenVideo({
 			blob,
 		};
 	} catch (error) {
-		try {
-			if (encoder && encoder.state !== "closed") encoder.close();
-		} catch {
-			// A cleanup failure must not replace the original export failure.
-		}
 		throw withExportFailureCode(error, failureCode);
+	} finally {
+		signal?.removeEventListener("abort", closeEncoder);
+		closeEncoder();
 	}
 }

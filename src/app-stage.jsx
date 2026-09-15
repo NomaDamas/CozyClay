@@ -2334,53 +2334,59 @@ export const CAPTURE_FOG_FAR = 95;
 export function CaptureRig({ apiRef, camRef, width = CAPTURE_W, height = CAPTURE_H }) {
 	const { gl, scene } = useThree();
 	useEffect(() => {
-		const target = new THREE.WebGLRenderTarget(width, height, {
-			colorSpace: THREE.SRGBColorSpace,
-			samples: 4,
-		});
-		const buffer = new Uint8Array(width * height * 4);
-		const api = {
-			scene,
-			render() {
-				const source = camRef.current;
-				if (!source) return null;
-				const cam = source.clone();
-				// the transform gizmo is UI: it never reaches an exported frame
-				cam.layers.disable(GIZMO_LAYER);
-				// QA hook: the layer mask the export camera actually renders
-				// with — the browser suite asserts GIZMO_LAYER (the gizmo AND
-				// the selection cage) is never in it.
-				window.__captureCameraMask = cam.layers.mask;
-				cam.aspect = width / height;
-				cam.updateProjectionMatrix();
-				const previous = gl.getRenderTarget();
-				// The viewport's fog dissolves the deck into the background by ~54 m
-				// so the working view has no horizon to distract from blocking. An
-				// exported frame wants the opposite: the horizon IS the vanishing
-				// point, and without it the floor has no far edge to read depth
-				// against. Push the falloff back for this draw only, then restore
-				// it so the viewport is untouched.
-				const fog = scene.fog;
-				const fogNear = fog?.near;
-				const fogFar = fog?.far;
-				if (fog) {
-					fog.near = CAPTURE_FOG_NEAR;
-					fog.far = CAPTURE_FOG_FAR;
-				}
-				try {
-					gl.setRenderTarget(target);
-					gl.render(scene, cam);
-					gl.readRenderTargetPixels(target, 0, 0, width, height, buffer);
-				} finally {
-					gl.setRenderTarget(previous);
+		// Each attempt owns its target independently of the live output size.
+		// Resizing the editor cannot dispose an in-flight export's resources.
+		function createExportCapture({ width, height }) {
+			const target = new THREE.WebGLRenderTarget(width, height, {
+				colorSpace: THREE.SRGBColorSpace,
+				samples: 4,
+			});
+			const buffer = new Uint8Array(width * height * 4);
+			return {
+				scene,
+				dispose: () => target.dispose(),
+				render() {
+					const source = camRef.current;
+					if (!source) return null;
+					const cam = source.clone();
+					// the transform gizmo is UI: it never reaches an exported frame
+					cam.layers.disable(GIZMO_LAYER);
+					// QA hook: the layer mask the export camera actually renders
+					// with — the browser suite asserts GIZMO_LAYER (the gizmo AND
+					// the selection cage) is never in it.
+					window.__captureCameraMask = cam.layers.mask;
+					cam.aspect = width / height;
+					cam.updateProjectionMatrix();
+					const previous = gl.getRenderTarget();
+					// The viewport's fog dissolves the deck into the background by ~54 m
+					// so the working view has no horizon to distract from blocking. An
+					// exported frame wants the opposite: the horizon IS the vanishing
+					// point, and without it the floor has no far edge to read depth
+					// against. Push the falloff back for this draw only, then restore
+					// it so the viewport is untouched.
+					const fog = scene.fog;
+					const fogNear = fog?.near;
+					const fogFar = fog?.far;
 					if (fog) {
-						fog.near = fogNear;
-						fog.far = fogFar;
+						fog.near = CAPTURE_FOG_NEAR;
+						fog.far = CAPTURE_FOG_FAR;
 					}
-				}
-				return buffer;
-			},
-		};
+					try {
+						gl.setRenderTarget(target);
+						gl.render(scene, cam);
+						gl.readRenderTargetPixels(target, 0, 0, width, height, buffer);
+					} finally {
+						gl.setRenderTarget(previous);
+						if (fog) {
+							fog.near = fogNear;
+							fog.far = fogFar;
+						}
+					}
+					return buffer;
+				},
+			};
+		}
+		const api = { ...createExportCapture({ width, height }), createExportCapture };
 		apiRef.current = api;
 		if (width === MCP_CAPTURE_W && height === MCP_CAPTURE_H) {
 			window.__cozyclayMcpCaptureReady = true;
@@ -2406,7 +2412,7 @@ export function CaptureRig({ apiRef, camRef, width = CAPTURE_W, height = CAPTURE
 		return () => {
 			if (apiRef.current === api) apiRef.current = null;
 			if (width === MCP_CAPTURE_W && height === MCP_CAPTURE_H) window.__cozyclayMcpCaptureReady = false;
-			target.dispose();
+			api.dispose();
 		};
 	}, [gl, scene, camRef, apiRef, width, height]);
 	return null;
