@@ -143,6 +143,7 @@ expect("there is no hover-reveal for the collapsed rail", !/\.agent-panel\.colla
 expect("the panel takes an embedded host mode and a hidden flag", panel.includes("embedded = false") && panel.includes("hidden = false"));
 expect("the dock still owns its own width", panel.includes("style={embedded ? undefined : { width: `${width}px` }}"));
 expect("an embedded host owns the width", /\.agent-panel\.embedded\s*\{[^}]*width:\s*100%/.test(css));
+expect("an embedded panel never escapes its host as a drawer", /\.agent-panel:not\(\.collapsed\):not\(\.embedded\)\s*\{[^}]*position:\s*fixed/.test(css) && /\.agent-panel\.collapsed:not\(\.embedded\)\s*\{[^}]*position:\s*fixed/.test(css));
 expect("the resize handle is dock-only", panel.includes("{!embedded && <div") && panel.includes('className="agent-resize"'));
 expect("the collapse control is dock-only", panel.includes('{!embedded && <button type="button" className="agent-icon-button agent-collapse"'));
 expect("the collapsed rail is dock-only", panel.includes("if (collapsed && !embedded)"));

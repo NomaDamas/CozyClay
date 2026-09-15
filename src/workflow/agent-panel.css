@@ -80,6 +80,16 @@
 	display: none;
 }
 
+/* The panel is now embedded into hosts it does not control, so it carries its
+ * own border-box rule instead of relying on the host's global reset: without
+ * it the composer is width:100% PLUS padding and spills out of the host box. */
+.agent-panel,
+.agent-panel *,
+.agent-panel *::before,
+.agent-panel *::after {
+	box-sizing: border-box;
+}
+
 /* An embedded host (the studio Inspector column) owns the width, the
  * visibility and the shortcut. The panel then fills whatever box it is given
  * and keeps no border of its own against the host's chrome. */
@@ -841,8 +851,11 @@
 
 /* --- overlay drawer under 1100px --------------------------------------- */
 
+/* The drawer is the DOCK's narrow-screen arrangement. An embedded panel must
+ * stay inside the box its host gave it at every width: escaping to a fixed
+ * overlay would cover the host's own chrome. */
 @media (max-width: 1100px) {
-	.agent-panel:not(.collapsed) {
+	.agent-panel:not(.collapsed):not(.embedded) {
 		position: fixed;
 		top: var(--agent-drawer-top);
 		right: 0;
@@ -851,7 +864,7 @@
 		box-shadow: var(--agent-shadow);
 	}
 
-	.agent-panel.collapsed {
+	.agent-panel.collapsed:not(.embedded) {
 		position: fixed;
 		top: var(--agent-drawer-top);
 		right: 0;
