@@ -5,6 +5,7 @@ import { WebSocket, WebSocketServer } from "ws";
 export const DEFAULT_COMMAND_TIMEOUT_MS = 5_000;
 export const RUN_WORKFLOW_TIMEOUT_MS = 180_000;
 export const LOAD_MOTION_TIMEOUT_MS = 30_000;
+export const CAPTURE_FRAME_TIMEOUT_MS = 30_000;
 export const MOTION_JOB_TTL_MS = 10 * 60_000;
 export const MOTION_JOB_POLL_INTERVAL_MS = 0;
 export const MAX_ACTIVE_MOTION_JOBS = 2;
@@ -151,6 +152,9 @@ export class LiveHub {
 
 	static commandTimeoutMs(name) {
 		if (name === "load_motion") return LOAD_MOTION_TIMEOUT_MS;
+		// Close two-person shots (OTS) raycast two skinned rigs over a full-frame
+		// AABB; 5 s is not enough. The PNG itself is cheap; the rays are not.
+		if (name === "capture_frame") return CAPTURE_FRAME_TIMEOUT_MS;
 		// A workflow run captures a frame and may generate an image upstream.
 		if (name === "run_workflow") return RUN_WORKFLOW_TIMEOUT_MS;
 		return DEFAULT_COMMAND_TIMEOUT_MS;
