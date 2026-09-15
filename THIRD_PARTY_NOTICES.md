@@ -34,6 +34,27 @@ ARDY is not bundled with CozyClay. Users must obtain, install, and operate ARDY 
 
 ARDY model checkpoints and other model assets may be governed by separate terms, including the NVIDIA Open Model License identified by the ARDY project. Users are responsible for reviewing and complying with those terms before downloading or using the models.
 
+## NVIDIA Kimodo
+
+CozyClay provides an optional bridge and data-conversion workflow for externally installed [Kimodo](https://github.com/nv-tlabs/kimodo), a human-motion generation project from NVIDIA Research, and [kimodo.cpp](https://github.com/localai-org/kimodo.cpp).
+
+Kimodo runtimes and model weights are not bundled with CozyClay. Users must obtain, install, and operate them separately under NVIDIA's terms and the applicable runtime licenses.
+
+- Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES (Kimodo skeleton data)
+- Kimodo source license: Apache License 2.0
+- Source: https://github.com/nv-tlabs/kimodo
+- Source license: https://github.com/nv-tlabs/kimodo/blob/main/LICENSE
+- kimodo.cpp source license: Apache License 2.0
+- Source: https://github.com/localai-org/kimodo.cpp
+- Source license: https://github.com/localai-org/kimodo.cpp/blob/main/LICENSE
+
+`tools/kimodo/local-output.mjs` embeds skeleton constants extracted from the `nv-tlabs/kimodo` SOMA77 definitions and `kimodo/assets/skeletons/somaskel77/` assets at commit `1aece8c124d73d255ceff5086d983b844c9f4e94`: the joint hierarchy, neutral-pose offsets, and relaxed-hand rotation matrices. The source assets are pinned by SHA256:
+
+- `joints.p`: `dc5fd8e39e0ff312f5d0f536a87ac22ac58445e13443fcb8ab54e6817cb97ce7`
+- `relaxed_hands_rest_pose.npy`: `64a3828e0d1ef1f1de8228c74eba8040c0810d898169f1892d8997a213b2b64c`
+
+Kimodo model checkpoints and other model assets may be governed by separate terms, including the NVIDIA Open Model License identified by the Kimodo project. Users are responsible for reviewing and complying with those terms before downloading or using the models.
+
 ## Meta Llama 3
 
 ARDY's text encoder is based on Meta Llama 3 (`Meta-Llama-3-8B-Instruct`).
