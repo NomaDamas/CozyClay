@@ -56,6 +56,8 @@ import { createLiveControl } from "./live-control.js";
 import { createFirstEditTracker } from "./semantic-edit.js";
 import { useSemanticState } from "./use-semantic-state.js";
 import AgentPanel from "./workflow/AgentPanel.jsx";
+import { buildStudioContext } from "./studio-agent-context.js";
+import { STUDIO_TOOL_FAMILIES } from "./studio-agent-protocol.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
 import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor, saveAutoColor } from "./auto-color.js";
@@ -3243,6 +3245,51 @@ export default function App() {
 	// View ▾ item can render a checkmark. It boots collapsed here: the studio
 	// opens on the stage, not on a chat column.
 	const [agentCollapsed, setAgentCollapsed] = useState(true);
+	// Studio Agent is an Inspector peer, not an additional dock. Keeping this
+	// host-owned flag separate from the Workflow dock preserves the latter's
+	// session and layout while Cmd/Ctrl+B switches the existing Inspector row.
+	const [studioAgentMode, setStudioAgentMode] = useState(false);
+	const studioDocumentEpochRef = useRef(`document:${activeSceneId}`);
+	const studioSceneEpochRef = useRef(`scene:${activeSceneId}`);
+	const studioRevisionRef = useRef({ scene: 0, physics: 0, view: 0 });
+	const buildStudioAgentContext = () => {
+		const scene = scenes.find((entry) => entry.id === activeSceneId) ?? scenes[0];
+		const entities = [
+			...characters.filter((entry) => !entry.hidden).map((entry) => ({
+				id: entry.id, kind: "character", token: `character:${entry.id}`,
+				name: entry.subject || entry.id, position: { x: entry.x, y: entry.y ?? 0, z: entry.z },
+				yawDeg: entry.rot ?? 0, scale: entry.scale ?? 1,
+				motion: { takeId: entry.motion?.id ?? null, frames: tlFrameCount, ikKeyCount: 0, promptBlockCount: entry.layer?.promptClips?.length ?? 0 },
+				capabilities: { rigReady: Boolean(rigs[entry.id]), ik: Boolean(rigs[entry.id]), measuredFeet: false },
+			})),
+			...sceneObjects.map((entry) => ({
+				id: entry.id, kind: "object", token: `object:${entry.id}`, name: entry.name || entry.id,
+				position: { x: entry.x, y: entry.y ?? 0, z: entry.z }, yawDeg: entry.rot ?? 0,
+				scale: { x: entry.scaleX ?? 1, y: entry.scaleY ?? 1, z: entry.scaleZ ?? 1 },
+				renderer: entry.renderer || "box", parentId: entry.parentId ?? null,
+				attachment: entry.attach ? { characterId: entry.attach.characterId, bone: entry.attach.bone ?? null } : null,
+				pathPointCount: entry.path?.points?.length ?? 0,
+				capabilities: { rigReady: false, ik: false, measuredFeet: false },
+			})),
+		];
+		return buildStudioContext({
+			schema: "studio-context-v1", host: { surface: "studio", workspaceId: "cozyclay-local", workspaceHandle: null, documentEpoch: studioDocumentEpochRef.current, sceneId: scene.id, sceneEpoch: studioSceneEpochRef.current },
+			revision: studioRevisionRef.current, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
+			scene: { name: scene.name, aspect: scene.aspect ?? "16:9", floorY: 0, frameCount: tlFrameCount, objectCount: sceneObjects.length, characterCount: characters.length },
+			selection: selectedHierarchyId ? { kind: selectedSceneObject ? "object" : isCameraSelection ? "camera" : isCharacterSelection ? "character" : "scene", id: selectedSceneObject?.id ?? selectedHierarchyId, hierarchyId: selectedHierarchyId } : null,
+			activeCharacterId: activeChar?.id ?? null, view: { mode: workflowMode === "motion" ? "motion" : workflowMode === "camera" ? "camera" : "scene", frame: tlFrame, playing: tlPlaying, lookThrough: lookThroughShot, grid: true, autoColor },
+			shot: activeShot ? { id: activeShot.id, name: activeShot.name, range: { startFrame: activeShot.startFrame ?? 0, endFrameExclusive: activeShot.endFrameExclusive ?? tlFrameCount }, mode: activeShot.mode ?? "keys", subjectIds: activeShot.subjectIds ?? [] } : null,
+			camera: shot ? { position: { x: shot.x ?? 0, y: shot.y ?? 0, z: shot.z ?? 0 }, lookAt: { x: 0, y: 1, z: 0 }, focalMm: shot.focalMm ?? 50, sensorId: "filmback:default", slate: activeShot?.name ?? "Camera" } : null,
+			entities, entityPage: { returned: entities.length, total: entities.length, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [],
+			capabilities: { profile: "studio-slice-1", tools: STUDIO_TOOL_FAMILIES, rigReady: Boolean(activeRig), cameraReady: Boolean(shot), bridgeReady: false },
+		});
+	};
+	useEffect(() => {
+		const onKey = (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") { event.preventDefault(); setStudioAgentMode((value) => !value); } };
+		const onToggle = () => setStudioAgentMode((value) => !value);
+		window.addEventListener("keydown", onKey); window.addEventListener("cozyclay:agent-panel-toggle", onToggle);
+		return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("cozyclay:agent-panel-toggle", onToggle); };
+	}, []);
 	const projectHandleRef = useRef(null);
 	const projectMotionsRef = useRef(new Map());
 	// Loaded clips keep the same Uint8Array identity while they remain active.
@@ -11257,13 +11304,13 @@ function resizePromptClip(id, edge, rawFrame) {
 											<button
 												type="button"
 												role="menuitemcheckbox"
-												className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
-												aria-checked={!agentCollapsed}
-												aria-pressed={!agentCollapsed}
+												className={"view-menu-item agent-panel-toggle" + (studioAgentMode ? " active" : "")}
+												aria-checked={studioAgentMode}
+												aria-pressed={studioAgentMode}
 												title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
 												onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
 											>
-												<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
+												<span className="view-menu-mark" aria-hidden="true">{studioAgentMode ? "✓" : ""}</span>
 												{ko("Agent panel", "에이전트 패널")}
 											</button>
 										</div>
@@ -11983,9 +12030,14 @@ function resizePromptClip(id, edge, rawFrame) {
 							{sceneSaveError}
 						</p>
 					)}
-					<section className="inspector-pane">
+					<div className="studio-agent-inspector" hidden={!studioAgentMode}>
+						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
+						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")} buildContext={buildStudioAgentContext} />
+					</div>
+					<section className="inspector-pane" hidden={studioAgentMode}>
 					<div className="inspector-heading">
 						<strong>{ko("Inspector", "속성")}</strong>
+						<button type="button" className="inspector-agent-switch" aria-pressed={studioAgentMode} onClick={() => setStudioAgentMode(true)}>{ko("Agent", "에이전트")}</button>
 						<span className="inspector-heading-selection">{selectedSceneObject ? sceneObjectNameDisplayKo(selectedSceneObject.name) : HIERARCHY_INSPECTOR_TITLES[rigSelection?.token ?? selectedHierarchyId] ?? ko("Selection", "선택 항목")}</span>
 						{selectedSceneObject && (
 							<div className="inspector-actions-wrap">
@@ -13660,6 +13712,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					<AgentPanel
 						sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
 						defaultCollapsed
+						hidden={studioAgentMode}
 						onCollapsedChange={setAgentCollapsed}
 					/>
 				)}
