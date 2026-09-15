@@ -29,6 +29,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { LiveMutationUncertainError } from "./live-hub.mjs";
+import { motionPreflightReason, startMotionRequest } from "../src/analytics.js";
 import { BLOCK_MAX_SECONDS, PROMPT_GUIDE, normalizePhases, splitLongBeat, tileClipFrames } from "./ardy-prompts.mjs";
 
 import {
@@ -1331,17 +1332,24 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 						: "";
 
 				if (!liveHub?.connected) return text(noLiveEditor("generate_motion requires a connected CozyClay editor so completion can be delivered over its live socket."));
+				const workspaceHandle = liveWorkspace.getStore() ?? liveHub.resolveWorkspace("generate_motion");
+				const workspaceId = liveHub.workspaceId(workspaceHandle);
+				// Reusing an existing take is installation, not generation demand. The
+				// shared lifecycle sanitizes before the targeted live transport sees it;
+				// disconnected events are omitted, never reconstructed on reconnect.
+				const motionRequest = motion_url ? null : startMotionRequest({ surface: "mcp", input_mode: "prompt" }, {
+					capture: (event, props) => liveHub?.sendEvent(workspaceId, "motion_telemetry", { event, props }),
+				});
 				try {
 					await refreshLiveDescription();
 				} catch (error) {
 					return liveError(error);
 				}
-				const workspaceHandle = liveWorkspace.getStore() ?? liveHub.resolveWorkspace("generate_motion");
-				const workspaceId = liveHub.workspaceId(workspaceHandle);
 				const targetCharacterId = stage().characters.find((character) => character.id === state.focus)?.id ?? stage().characters[0]?.id ?? null;
 				let job;
 				try {
 					job = motionJobs.create(workspaceId);
+					job.motionRequest = motionRequest;
 				} catch (error) {
 					return liveError(error);
 				}
@@ -1359,12 +1367,35 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 					const controller = new AbortController();
 					const deadline = setTimeout(() => controller.abort(new Error("Motion generation exceeded the 5 minute deadline.")), 5 * 60_000);
 					deadline.unref?.();
-					job.cancel = () => controller.abort();
-					if (job.status === "cancelled") return;
-					motionJobs.transition(job, "running");
+					job.cancel = () => {
+						controller.abort();
+						motionRequest?.fail(null, "aborted");
+					};
 					try {
 						let motionUrl = motion_url;
 						if (!motionUrl) {
+							let health;
+							try {
+								const response = await fetch(`${bridge}/ardy/health`, {
+									signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
+								});
+								const payload = await response.json();
+								health = { ...payload, ok: response.ok && payload?.ok !== false };
+							} catch (error) {
+								if (controller.signal.aborted) throw error;
+								health = { ok: false };
+							}
+							if (job.status === "cancelled") return;
+							// Readiness controls execution independently of best-effort telemetry.
+							const reason = motionPreflightReason(health, { body });
+							motionRequest?.preflight(health, { body });
+							if (reason) {
+								motionJobs.transition(job, "failed", { message: `Motion generation preflight blocked: ${reason}.` });
+								await publishMotionJob(job);
+								return;
+							}
+							motionJobs.transition(job, "running");
+							motionRequest?.start();
 							const res = await fetch(`${bridge}/ardy/generate`, {
 								method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal,
 							});
@@ -1394,15 +1425,18 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 						if (job.status === "cancelled") return;
 						if (typeof motionUrl !== "string") throw new Error("Generation ended without a motion.");
 						if (!motionUrlPattern.test(motionUrl)) throw new Error("Generator returned an invalid motion URL.");
+						motionRequest?.succeed();
 						motionJobs.transition(job, "completed", {
 							motionUrl, prompt: prompts.join(" "), blocks: segments, drop, targetCharacterId,
 							summary: `${clipSeconds.toFixed(1)}s / ${clipFrames} frames${promptNote}`,
 						});
 						await publishMotionJob(job);
 					} catch (error) {
-						if (job.status === "cancelled" || error?.name === "AbortError") {
+						if (job.status === "cancelled" || controller.signal.aborted || error?.name === "AbortError") {
+							motionRequest?.fail(error, "aborted");
 							if (job.status !== "cancelled") motionJobs.transition(job, "cancelled", { message: "Generation cancelled before editor delivery." });
 						} else {
+							motionRequest?.fail(error);
 							motionJobs.transition(job, "failed", { message: error instanceof Error ? error.message : "Motion generation failed." });
 						}
 						await publishMotionJob(job);

@@ -287,16 +287,26 @@ Events collected:
 | `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 1`) |
 | `playground:first_edit` | First meaningful Playground edit, separate from the Studio funnel |
 | `motion:backend_state` | Motion capability at session start (`none`, `local_kimodo`, or `hosted`) |
-| `motion:generate_blocked` | Generate intent when no motion backend is available |
-| `motion:job_started` | Motion reliability |
-| `motion:job_succeeded` | Motion reliability |
-| `motion:job_failed` | Motion reliability |
+| `motion:generate_requested` | Explicit Generate request, never prompt-block authoring |
+| `motion:preflight_blocked`, `motion:preflight_passed` | Request readiness outcome before execution |
+| `motion:job_started` | Correlated generation execution starts |
+| `motion:job_succeeded`, `motion:job_failed` | Generation result, with normalized failure/cancellation codes |
+| `motion:result_applied` | Generated result applied to its requesting character, separately from job success |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |
 | `activation:completed` | Funnel and drop-off analysis |
 | `hosted:composer_viewed`, `hosted:login_started`, `hosted:ticket_created` | Hosted demo funnel |
 | `hosted:result_opened`, `hosted:opened_in_studio` | Hosted result funnel |
 
 Geo data comes from ingest-time GeoIP country lookup only — no precise location is collected. Prompt text, asset names, file names, project content, local paths, and any user-entered text are never collected.
+
+Motion requests use one ephemeral random `request_id` across intent, preflight,
+job outcome and application. The September 15, 2026 issue #273 contract stops
+emitting the ambiguous `motion:generate_blocked`; old data is not relabeled or
+included in the new demand metric. The exact properties, entry-point mapping
+and deduplicated funnel query are in
+[`docs/analytics-queries.md`](docs/analytics-queries.md#motion-generation-intent).
+Browser regression QA:
+`QA_URL=http://127.0.0.1:5254/app/ CDP_PORT=9493 node tools/qa-browser.mjs -- node test/qa-motion-intent-browser.mjs`.
 
 The official npm package also measures anonymous first launches, sessions, and
 the same in-app funnel on its `127.0.0.1` studio. It stores one random

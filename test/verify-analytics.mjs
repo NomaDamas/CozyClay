@@ -61,7 +61,7 @@ assert.deepEqual(
 		input_mode: true,
 		error_code: 503,
 	}),
-	{ backend: "local_kimodo", duration_bucket: "gte30s", input_mode: true, error_code: 503 },
+	{ backend: "local_kimodo", duration_bucket: "gte30s" },
 );
 assert.deepEqual(sanitizeProps("motion:job_failed", { error_code: Number.POSITIVE_INFINITY }), {});
 assert.deepEqual(motionBackendState(null), { backend: "none", host_configured: false });
@@ -72,13 +72,203 @@ assert.deepEqual(
 	sanitizeProps("motion:backend_state", { backend: "hosted", host_configured: true, host: "user@gpu-box" }),
 	{ backend: "hosted", host_configured: true },
 );
-assert.deepEqual(sanitizeProps("motion:generate_blocked", { surface: "timeline", prompt: "private" }), { surface: "timeline" });
+assert.deepEqual(sanitizeProps("motion:generate_blocked", { surface: "timeline", prompt: "private" }), {});
 
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
-assert.match(appSource, /motion:job_started.*backend/);
-assert.match(appSource, /motion:job_succeeded[\s\S]*?duration_bucket/);
-assert.match(appSource, /motion:job_failed[\s\S]*?duration_bucket/);
+const appFunction = (name) => {
+	const start = appSource.indexOf(`function ${name}(`);
+	assert.notEqual(start, -1, `${name} exists`);
+	return appSource.slice(start, appSource.indexOf("\n\t}\n", start) + 3);
+};
+for (const name of ["addPromptClip", "changePromptClip", "runLinePreview"]) {
+	assert.doesNotMatch(appFunction(name), /trackGenerateBlocked|startMotionRequest|requestMotionGeneration|motion:generate_/, `${name} authors without explicit demand`);
+}
+assert.doesNotMatch(appSource, /trackGenerateBlocked|motion:generate_blocked/);
+for (const name of ["runArdy", "runLineEdit", "runTrailRegeneration"]) {
+	assert.match(appFunction(name), /requestMotionGeneration\(/, `${name} owns explicit intent for all callers`);
+}
+assert.match(appFunction("executeMotionJob"), /request\.start\(\)/);
+assert.match(appFunction("executeMotionJob"), /request\.succeed\(\)/);
+assert.match(appFunction("executeMotionJob"), /await deliverMotion[\s\S]*?request\.apply\(\)/);
+assert.match(appFunction("executeMotionJob"), /request\.fail\(/);
+
+const motionId = "0123456789abcdef0123456789abcdef";
+assert.deepEqual(sanitizeProps("motion:generate_requested", {
+	surface: "timeline", input_mode: "prompt", request_id: motionId, prompt: "private", host: "user@private",
+}), { surface: "timeline", input_mode: "prompt", request_id: motionId });
+for (const event of ["motion:generate_requested", "motion:preflight_blocked", "motion:preflight_passed", "motion:job_started", "motion:job_succeeded", "motion:job_failed", "motion:result_applied", "motion:backend_state"]) {
+	assert.deepEqual(sanitizeProps(event, { surface: "private", input_mode: true, backend: "user@private", reason: "private", error_code: "PrivateError", duration_bucket: 503, host_configured: "yes", request_id: motionId.toUpperCase() }), {}, `${event} accepts only normalized values`);
+}
+const remoteHealth = { ok: true, host: "private@gpu", device: "cuda:0" };
+const localHealth = { ok: true, host: "local", device: "local" };
+const { motionPreflightReason, motionFailureCode, startMotionRequest } = analytics;
+assert.equal(typeof startMotionRequest, "function");
+assert.equal(motionPreflightReason(null), "unconfigured");
+assert.equal(motionPreflightReason({ ok: false, host_configured: false }), "unconfigured");
+assert.equal(motionPreflightReason({ ok: false, reason: "unconfigured" }), "unconfigured", "checkBridge retains normalized server reason but drops extra fields");
+assert.equal(motionPreflightReason({ ok: false, reason: "private raw failure" }), "unreachable");
+assert.equal(motionPreflightReason(remoteHealth, { body: { lineEdit: {} }, lineEditSupported: false }), "unsupported_route");
+assert.equal(motionPreflightReason(remoteHealth, { body: { lineEdit: {} }, lineEditSupported: true }), null);
+assert.equal(motionPreflightReason(remoteHealth, { body: { replay: [{}] }, lineEditSupported: false }), "unsupported_route");
+assert.equal(motionPreflightReason(localHealth, { body: { prompt: "private" } }), null, "#267 supports a local unconstrained prompt");
+for (const body of [{ segments: [{}, {}] }, { posePin: true }, { waypoints: [{}] }, { motionEdit: {} }, { preserve: {} }]) {
+	assert.equal(motionPreflightReason(localHealth, { body }), "unsupported_route");
+}
+assert.equal(motionPreflightReason(remoteHealth, { body: { motionEdit: {} } }), null);
+assert.equal(motionFailureCode(new DOMException("private", "AbortError")), "aborted");
+assert.equal(motionFailureCode(new Error("private")), "generation_failed");
+assert.equal(motionFailureCode({ name: "private" }), "unknown");
+
+const motionEvents = [];
+let motionNow = 0;
+const newMotionRequest = () => startMotionRequest({ surface: "timeline", input_mode: "prompt" }, {
+	capture: (event, props) => motionEvents.push({ event, props }), now: () => motionNow,
+});
+for (const [health, options, reason] of [
+	[null, {}, "unconfigured"],
+	[{ ok: false }, {}, "unreachable"],
+	[remoteHealth, { body: { lineEdit: {} } }, "unsupported_route"],
+]) {
+	motionEvents.length = 0;
+	const request = newMotionRequest();
+	request.preflight(health, options);
+	request.preflight(remoteHealth);
+	request.start(); request.succeed(); request.fail(new Error("private")); request.apply();
+	assert.deepEqual(motionEvents.map(({ event }) => event), ["motion:generate_requested", "motion:preflight_blocked"]);
+	assert.equal(motionEvents[1].props.reason, reason);
+	assert.match(motionEvents[0].props.request_id, /^[a-f0-9]{32}$/);
+	assert.equal(motionEvents[0].props.request_id, motionEvents[1].props.request_id);
+}
+motionEvents.length = 0;
+const successfulMotion = newMotionRequest();
+successfulMotion.apply(); successfulMotion.succeed();
+successfulMotion.preflight(remoteHealth); successfulMotion.preflight(remoteHealth);
+successfulMotion.start(); successfulMotion.start();
+motionNow = 1500;
+successfulMotion.succeed(); successfulMotion.succeed();
+successfulMotion.fail(new Error("decode failed after generation"));
+assert.equal(motionEvents.at(-1).event, "motion:job_succeeded", "application failure cannot rewrite job success");
+successfulMotion.apply(); successfulMotion.apply();
+assert.deepEqual(motionEvents.map(({ event }) => event), ["motion:generate_requested", "motion:preflight_passed", "motion:job_started", "motion:job_succeeded", "motion:result_applied"]);
+assert.equal(new Set(motionEvents.map(({ props }) => props.request_id)).size, 1);
+assert.equal(motionEvents[3].props.duration_bucket, "1-3s");
+const priorMotionId = motionEvents[0].props.request_id;
+for (const error of [new Error("private"), new DOMException("private", "AbortError")]) {
+	motionEvents.length = 0;
+	const request = newMotionRequest();
+	request.preflight(remoteHealth); request.start(); request.fail(error); request.fail(error); request.succeed(); request.apply();
+	assert.deepEqual(motionEvents.map(({ event }) => event), ["motion:generate_requested", "motion:preflight_passed", "motion:job_started", "motion:job_failed"]);
+	assert.equal(motionEvents.at(-1).props.error_code, error.name === "AbortError" ? "aborted" : "generation_failed");
+	assert.notEqual(motionEvents[0].props.request_id, priorMotionId);
+}
+for (const capture of [() => { throw new Error("transport"); }, () => Promise.reject(new Error("transport"))]) {
+	const request = startMotionRequest({ surface: "trail", input_mode: "edit" }, { capture, now: () => { throw new Error("clock"); } });
+	assert.doesNotThrow(() => { request.preflight(remoteHealth); request.start(); request.succeed(); request.apply(); });
+}
+const motionCryptoDescriptor = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+try {
+	Object.defineProperty(globalThis, "crypto", { configurable: true, value: { getRandomValues() { throw new Error("randomness unavailable"); } } });
+	motionEvents.length = 0;
+	const request = newMotionRequest();
+	assert.doesNotThrow(() => { request.preflight(remoteHealth); request.start(); request.succeed(); request.apply(); });
+	assert.deepEqual(motionEvents, [], "no weak or content-derived fallback ID");
+} finally {
+	Object.defineProperty(globalThis, "crypto", motionCryptoDescriptor);
+}
 assert.doesNotMatch(appSource, /latency_bucket/);
+// Run the real queue boundary, not only the telemetry state machine: a blocked
+// request must not reach generation while being absent from job counts.
+for (const [health, body] of [
+	[{ ok: false, reason: "unconfigured" }, {}],
+	[{ ok: false }, {}],
+	[localHealth, { posePin: true }],
+	[remoteHealth, {}],
+]) {
+	const queued = [];
+	const request = startMotionRequest({ surface: "timeline", input_mode: "prompt" }, { capture() {} });
+	const context = {
+		bridge: health, lineEditBackend: false, motionPreflightReason,
+		genJobSeq: { current: 0 },
+		setGenQueue(update) { queued.push(...update([])); },
+		setToast() {}, isKo: false,
+	};
+	const enqueue = new Function(...Object.keys(context), `return ${appFunction("enqueueMotionJob")};`)(...Object.values(context));
+	enqueue({ request, body, charIndex: 0 });
+	assert.equal(queued.length, health === remoteHealth ? 1 : 0, "preflight refusal does not enqueue an unmeasured job");
+}
+// Execute the actual App job function: transport and decoded-motion delivery
+// are boundaries, while its real cancellation, callback and lifecycle wiring runs.
+async function boundedMotionSignal(promise) {
+	let timer;
+	try {
+		return await Promise.race([promise, new Promise((_resolve, reject) => {
+			timer = setTimeout(() => reject(new Error("motion fixture did not settle")), 1000);
+		})]);
+	} finally {
+		clearTimeout(timer);
+	}
+}
+function motionJobFixture({ generate, deliver = async () => {}, capture } = {}) {
+	const events = [];
+	const request = startMotionRequest({ surface: "timeline", input_mode: "prompt" }, {
+		capture: capture ?? ((event, props) => events.push({ event, props })), now: () => 0,
+	});
+	request.preflight(remoteHealth);
+	const ardyAbortRef = { current: null };
+	const charactersRef = { current: [{ id: "requesting-character" }] };
+	const context = {
+		ardyAbortRef, charactersRef, setArdyRunning() {}, reportArdyStatus() {}, setArdyReport() {}, setArdyOutcome() {}, setReplayNotices() {},
+		ko: (en) => en, isKo: false, setToast() {}, trackActivation() {}, isLineEditUnsupported: () => false,
+		ardyGenerate: generate ?? (async (_body, onEvent) => {
+			onEvent({ event: "done" }); onEvent({ event: "done" });
+			return { motionUrl: "/ardy/motions/fixture" };
+		}),
+		deliverMotion: deliver, commitTakeRecipe() {},
+	};
+	const execute = new Function(...Object.keys(context), `return async ${appFunction("executeMotionJob")};`)(...Object.values(context));
+	return { events, ardyAbortRef, charactersRef, run: () => boundedMotionSignal(execute({ request, body: {}, hasBlockEdits: false, charIndex: 0, charId: "requesting-character" })) };
+}
+const deliveredJob = motionJobFixture();
+await deliveredJob.run();
+assert.deepEqual(deliveredJob.events.map(({ event }) => event), ["motion:generate_requested", "motion:preflight_passed", "motion:job_started", "motion:job_succeeded", "motion:result_applied"]);
+assert.equal(new Set(deliveredJob.events.map(({ props }) => props.request_id)).size, 1);
+assert.equal(deliveredJob.ardyAbortRef.current, null);
+const failedJob = motionJobFixture({ generate: async () => { throw new Error("private generation failure"); } });
+await assert.rejects(failedJob.run(), /private generation failure/);
+assert.equal(failedJob.events.at(-1).props.error_code, "generation_failed");
+assert.equal(failedJob.events.filter(({ event }) => event === "motion:job_failed").length, 1);
+const decodeFailedJob = motionJobFixture({ deliver: async () => { throw new Error("private decode failure"); } });
+await assert.rejects(decodeFailedJob.run(), /private decode failure/);
+assert.equal(decodeFailedJob.events.at(-1).event, "motion:job_succeeded");
+const removedTarget = motionJobFixture();
+removedTarget.charactersRef.current = [];
+await removedTarget.run();
+assert.equal(removedTarget.events.at(-1).event, "motion:job_succeeded", "delivery to a removed character is not an application");
+const cancelledJob = motionJobFixture({ generate: (_body, _onEvent, { signal }) => new Promise((_resolve, reject) => {
+	// Subscribed before cancellation; no sleeps or polling can make this pass.
+	signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+}) });
+const cancelledRun = cancelledJob.run();
+const cancellation = assert.rejects(cancelledRun, { name: "AbortError" });
+cancelledJob.ardyAbortRef.current.abort();
+await cancellation;
+assert.deepEqual(cancelledJob.events.map(({ event }) => event), ["motion:generate_requested", "motion:preflight_passed", "motion:job_started", "motion:job_failed"]);
+assert.equal(cancelledJob.events.at(-1).props.error_code, "aborted");
+// A cancellation after job success cannot manufacture a second job terminal
+// or claim application when the asynchronous delivery finishes later.
+const deliveryEntered = Promise.withResolvers();
+const releaseDelivery = Promise.withResolvers();
+const cancelledDelivery = motionJobFixture({ deliver: async () => { deliveryEntered.resolve(); await releaseDelivery.promise; } });
+const deliveringRun = cancelledDelivery.run();
+await boundedMotionSignal(deliveryEntered.promise);
+cancelledDelivery.ardyAbortRef.current.abort();
+releaseDelivery.resolve();
+await deliveringRun;
+assert.equal(cancelledDelivery.events.at(-1).event, "motion:job_succeeded");
+for (const capture of [() => { throw new Error("transport"); }, () => Promise.reject(new Error("transport"))]) {
+	await motionJobFixture({ capture }).run();
+}
+console.log("PASS motion request/preflight/job/application, actual App success/failure/cancel wiring and authoring exclusion");
 assert.deepEqual(sanitizeProps("feature:used", { name: "pose_edit", prompt: "secret" }), { name: "pose_edit" });
 assert.deepEqual(sanitizeProps("feature:used", { name: "private-feature" }), {});
 assert.deepEqual(sanitizeProps("install:first_launch", { heard_from: "github" }), { heard_from: "github" });
@@ -330,6 +520,42 @@ assert.deepEqual(sanitizeProps("export:video_succeeded", { format: "mp4", ...all
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 
 const privacyHtml = readFileSync(new URL("../tools/dev/pages/privacy.html", import.meta.url), "utf8");
+const motionDisclosure = new Map();
+for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
+	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
+	for (const event of cells[0]?.match(/\bmotion:[a-z_]+\b/g) ?? []) {
+		motionDisclosure.set(event, new Set(cells[1]?.match(/\b[a-z][a-z0-9_]*\b/g) ?? []));
+	}
+}
+const motionSchemas = {
+	"motion:backend_state": ["backend", "host_configured"],
+	"motion:generate_requested": ["surface", "input_mode", "request_id"],
+	"motion:preflight_blocked": ["reason", "surface", "request_id"],
+	"motion:preflight_passed": ["backend", "surface", "request_id"],
+	"motion:job_started": ["backend", "input_mode", "request_id"],
+	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode", "request_id"],
+	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code", "request_id"],
+	"motion:result_applied": ["request_id", "backend"],
+};
+assert.deepEqual([...motionDisclosure.keys()].sort(), Object.keys(motionSchemas).sort());
+const motionProps = { backend: "local_kimodo", host_configured: true, surface: "timeline", input_mode: "prompt", reason: "unconfigured", request_id: motionId, duration_bucket: "lt1s", error_code: "aborted" };
+for (const [event, properties] of Object.entries(motionSchemas)) {
+	assert.deepEqual(Object.keys(sanitizeProps(event, motionProps)).sort(), [...properties].sort());
+	for (const property of properties) assert.ok(motionDisclosure.get(event).has(property), `${event} discloses ${property}`);
+}
+for (const [event, property, values] of [
+	["motion:generate_requested", "surface", ["timeline", "line_edit", "trail", "mcp"]],
+	["motion:generate_requested", "input_mode", ["prompt", "pose", "edit"]],
+	["motion:backend_state", "backend", ["none", "local_kimodo", "hosted"]],
+	["motion:preflight_blocked", "reason", ["unconfigured", "unreachable", "unsupported_route"]],
+	["motion:job_failed", "error_code", ["aborted", "unsupported_route", "generation_failed", "unknown"]],
+]) {
+	for (const value of values) {
+		assert.deepEqual(sanitizeProps(event, { [property]: value }), { [property]: value });
+		assert.ok(motionDisclosure.get(event).has(value), `${event} discloses enum ${value}`);
+	}
+}
+console.log("PASS motion allowlists, normalized enums and disclosure schema tokens");
 const exportDisclosure = new Map();
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));

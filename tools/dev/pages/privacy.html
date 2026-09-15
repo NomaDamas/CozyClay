@@ -62,7 +62,14 @@ cclay telemetry on</code></pre>
               <tr><td>craft:first_edit</td><td>First successful Studio authoring change per editor mount; only a fixed edit-kind label and definition version 1 (not camera navigation, playback, loading, restore, or undo/redo)</td></tr>
               <tr><td>playground:first_edit</td><td>The same versioned first-edit definition for Playground, counted separately from Studio; no prompts or scene contents</td></tr>
               <tr><td>project:saved, project:opened</td><td>Whether people keep their work (object counts and ages are bucketed; never names or paths)</td></tr>
-              <tr><td>motion:backend_state, motion:generate_blocked, motion:job_started, motion:job_succeeded, motion:job_failed</td><td>Motion generation reliability</td></tr>
+              <tr><td>motion:backend_state</td><td>Session capability baseline: backend (none, local_kimodo or hosted) and boolean host_configured, never a host address</td></tr>
+              <tr><td>motion:generate_requested</td><td>Explicit generation intent, not prompt-block editing: initiating surface (timeline, line_edit, trail or mcp), input_mode (prompt, pose or edit) and an ephemeral random request_id</td></tr>
+              <tr><td>motion:preflight_blocked</td><td>Request readiness refusal: request_id, surface and normalized reason (unconfigured, unreachable or unsupported_route)</td></tr>
+              <tr><td>motion:preflight_passed</td><td>Request readiness accepted, before job start: request_id, surface and backend (none, local_kimodo or hosted)</td></tr>
+              <tr><td>motion:job_started</td><td>Generation execution started: request_id, backend and input_mode</td></tr>
+              <tr><td>motion:job_succeeded</td><td>Generation completed before result application: request_id, backend, input_mode and bucketed duration_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s)</td></tr>
+              <tr><td>motion:job_failed</td><td>Generation failure or real cancellation: request_id, backend, input_mode, duration_bucket and normalized error_code (aborted, unsupported_route, generation_failed or unknown), never raw error messages</td></tr>
+              <tr><td>motion:result_applied</td><td>A generated result was applied to its requesting character: request_id and backend. Job success alone does not prove application.</td></tr>
               <tr><td>export:blocking_frame_succeeded, export:video_succeeded</td><td>Export reliability</td></tr>
               <tr><td>export:attempt_started, export:attempt_succeeded, export:attempt_failed, export:attempt_cancelled</td><td>Export attempts and outcomes, paired by an ephemeral random attempt_id; export_kind (video, depth_video, frame or keyframe_pack), format (mp4, png or zip) and initiating surface (studio, workflow or embed). Terminal events include a bucketed duration_bucket; failures and real cancellations include only a normalized failure_code (unsupported_codec, encode_failed, render_failed, aborted or unknown), never raw error messages, filenames, URLs, paths, prompts or scene content. Success means pipeline completion or download handoff, not confirmation that the OS saved a file.</td></tr>
               <tr><td>export:keyframe_pack</td><td>Legacy Workflow pack handoffs, with numeric entries count and source=workflow; not an additional export attempt</td></tr>
@@ -71,6 +78,7 @@ cclay telemetry on</code></pre>
             </tbody>
           </table>
         </div>
+        <p class="note">Motion request_id values are fresh random 32-character hexadecimal values, held only for one request; they are not persisted or derived from prompts, hosts, credentials, project content or other identifiers. The ambiguous motion:generate_blocked event stopped being emitted in the September 15, 2026 issue #273 contract. Historical events are not relabeled and are excluded from the new explicit-demand metric. Automatic line previews and prompt-block edits are not explicit Generate requests.</p>
         <p class="note">Each event carries an origin kind (local or hosted), a coarse operating-system label and, for npm sessions, whether the install was npx or global. PostHog's free plan retains events for one year.</p>
       </section>
 

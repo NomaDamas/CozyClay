@@ -122,6 +122,9 @@ const publishMotionJob = async (job) => {
 		return;
 	}
 	job.installationStates.set(job.workspaceId, "installed");
+	// Generation already succeeded. Application is a separate, acknowledged
+	// editor mutation; rejected or uncertain installation never reaches here.
+	job.motionRequest?.apply();
 	sendMotionJobEvent(job);
 };
 

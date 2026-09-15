@@ -241,7 +241,7 @@ import {
 	strokeToPathPoints,
 	MAX_PATH_POINTS,
 } from "./object-path.js";
-import { bucketCount, bucketMs, bucketProjectAge, exportFailureCode, motionBackendState, startExportAttempt, track, trackActivation, trackFeature } from "./analytics.js";
+import { bucketCount, bucketProjectAge, exportFailureCode, motionPreflightReason, startMotionRequest, startExportAttempt, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import { fetchSceneProject, isPlaygroundEmbed, playgroundSceneUrl } from "./playground.js";
 import { STARTER_SCENES } from "./starter-scenes.js";
@@ -6814,6 +6814,7 @@ export default function App() {
 	// (tools/ardy/visual-qa.mjs). Harmless in normal use.
 	useEffect(() => {
 	window.__cozyclay = {
+			runArdy: (options) => liveStateRef.current.runArdy(options),
 			rigA: activeRig, motion, tlFrame, frameCount: tlFrameCount, playing: tlPlaying, ikMode, ikChains, ikFocus, contactRadii: ikChains?.values().next().value?.contactRadii ?? null, ik: ikStateRef.current,
 			committedIkEdits, waypoints,
 			// the camera the main view renders through (poser in IK mode) — QA
@@ -7561,14 +7562,20 @@ export default function App() {
 		};
 	}, []);
 
-	function trackGenerateBlocked(surface = "timeline") {
-		if (motionBackendState(bridge).backend === "none") {
-			track("motion:generate_blocked", { surface });
-		}
+	// QA/programmatic requests must use the current render's same generation path.
+	liveStateRef.current.runArdy = runArdy;
+	function requestMotionGeneration(surface, inputMode, body = {}) {
+		const request = startMotionRequest({ surface, input_mode: inputMode });
+		const options = { body, lineEditSupported: lineEditBackend };
+		// Record known readiness refusals even if existing input validation returns
+		// early. A pass waits for the fully packaged payload at the queue boundary.
+		// The queue independently checks readiness; telemetry failure cannot
+		// enable or disable generation.
+		if (motionPreflightReason(bridge, options)) request.preflight(bridge, options);
+		return request;
 	}
 
 	function addPromptClip(frame, surface = "timeline") {
-		trackGenerateBlocked(surface);
 		const snapped = Math.max(0, Math.round(frame / ARDY_PROMPT_HORIZON_FRAMES) * ARDY_PROMPT_HORIZON_FRAMES);
 		// Add at the playhead when the spot is free; only fall through to
 		// after-the-last-block when the playhead slot is taken. The old
@@ -9438,7 +9445,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * curve as the last preview; only `preview: true` is absent, which is what
 	 * buys the full step count. */
 	function runLineEdit() {
-		trackGenerateBlocked("timeline");
+		const generationRequest = requestMotionGeneration("line_edit", "edit", { lineEdit: true });
 		if (ardyRunning) return;
 		if (!takeSourceUrl) {
 			setToast(ko("The current take has no bridge source — generate it once before editing a path", "현재 테이크에 브리지 원본이 없어요 — 궤적을 편집하기 전에 한 번 생성하세요"));
@@ -9471,6 +9478,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// is a picture and must never become anyone's lineage.
 		const source = linePreviewSource;
 		enqueueMotionJob({
+			request: generationRequest,
 			charId: source?.charId ?? activeChar.id,
 			charIndex: activeCharIndex,
 			prompt: body.prompt,
@@ -9532,7 +9540,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// the current take's lineage and carries both.
 		fresh = false,
 	} = {}) {
-		trackGenerateBlocked("timeline");
+		const request = requestMotionGeneration("timeline", motion?.url && ikFrames.length ? "edit" : ardyStartFromPose ? "pose" : "prompt");
 		// A line-edit draft is not a take, and every source this function reads
 		// (preserve, motionEdit, the recipe) is about THE take. Refusing here is
 		// the last line of defence behind sceneDisabledReason, which already
@@ -9880,6 +9888,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// delivered to THIS character even if the selection moves on while
 		// the box is still working.
 		enqueueMotionJob({
+			request,
 			charId: activeChar.id,
 			charIndex: activeCharIndex,
 			prompt,
@@ -9969,7 +9978,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * keys inside the window ride as hard constraints (their tracks), and the
 	 * deformed line contributes the grab-frame pose as a root guide. */
 	function runTrailRegeneration() {
-		trackGenerateBlocked("timeline");
+		const request = requestMotionGeneration("trail", "edit", { motionEdit: true });
 		if (!trailEdit || ardyRunning) return;
 		// Same rule as runArdy: motionEdit rewrites a span of THE take, and a
 		// draft on the viewport is not it.
@@ -10036,6 +10045,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		if (seed === null) return;
 		body.seed = seed;
 		enqueueMotionJob({
+			request,
 			charId: activeChar.id,
 			charIndex: activeCharIndex,
 			prompt,
@@ -10063,6 +10073,9 @@ function resizePromptClip(id, edge, rawFrame) {
 	const genRunningRef = useRef(false);
 	const genJobSeq = useRef(0);
 	function enqueueMotionJob(spec) {
+		const options = { body: spec.body, lineEditSupported: lineEditBackend };
+		spec.request.preflight(bridge, options);
+		if (motionPreflightReason(bridge, options)) return;
 		const id = `gen-${++genJobSeq.current}`;
 		setGenQueue((queue) => [...queue, { id, status: "queued", ...spec }]);
 		setToast(isKo ? `인물 ${spec.charIndex + 1} 모션 생성을 대기열에 넣었어요` : `Queued motion generation for Subject ${spec.charIndex + 1}`);
@@ -10095,10 +10108,9 @@ function resizePromptClip(id, edge, rawFrame) {
 		setArdyOutcome(null);
 		// Replay notices belong to ONE run; the next run re-earns them.
 		setReplayNotices([]);
-		const inputMode = job.hasBlockEdits ? "edit" : job.body.posePin ? "pose" : "prompt";
-		const backend = motionBackendState(bridge).backend;
-		const startedAt = Date.now();
-		track("motion:job_started", { backend, input_mode: inputMode });
+		const request = job.request;
+		request.start();
+		controller.signal.addEventListener("abort", () => request.fail(new DOMException("", "AbortError")), { once: true });
 		let editCommitReport = null;
 		try {
 			const done = await ardyGenerate(
@@ -10133,13 +10145,14 @@ function resizePromptClip(id, edge, rawFrame) {
 				throw new Error(ko("ARDY returned motion without verified authored IK keys", "ARDY가 검증된 수동 IK 키 없이 모션을 반환했어요"));
 			}
 			setArdyOutcome({ ok: true, output: done.output, bytes: done.bytes, motionUrl: done.motionUrl, rotationDeg: job.rootRotationDeg });
-			track("motion:job_succeeded", { backend, duration_bucket: bucketMs(Date.now() - startedAt), input_mode: inputMode });
+			request.succeed();
 			trackActivation("motion");
 			// Fetch and decode the real npz right away; decode errors are shown
 			// in the card, playback is never faked. The clip lands on the
 			// REQUESTING character, not whoever is selected now.
 			if (done.motionUrl) {
 				await deliverMotion(job, done.motionUrl);
+				if (!controller.signal.aborted && charactersRef.current.some((entry) => entry.id === job.charId)) request.apply();
 				commitTakeRecipe(job, done.motionUrl);
 			}
 			if (job.hasBlockEdits && job.ikState) {
@@ -10169,12 +10182,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				ok: false,
 				message: err?.name === "AbortError" ? ko("Cancelled", "취소됨") : err?.message || String(err),
 			});
-			track("motion:job_failed", {
-				backend,
-				duration_bucket: bucketMs(Date.now() - startedAt),
-				input_mode: inputMode,
-				error_code: err?.name === "AbortError" ? "aborted" : (err?.name || "error"),
-			});
+			request.fail(err, job.body.lineEdit && isLineEditUnsupported(err?.message) ? "unsupported_route" : undefined);
 			throw err;
 		} finally {
 			setArdyRunning(false);

@@ -23,10 +23,13 @@ const EVENT_PROPERTIES = Object.freeze({
 	"craft:first_action": ["action_kind"],
 	"craft:first_edit": ["edit_kind", "definition_version"],
 	"motion:backend_state": ["backend", "host_configured"],
-	"motion:generate_blocked": ["surface"],
-	"motion:job_started": ["backend", "input_mode", "duration_bucket"],
-	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode"],
-	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code"],
+	"motion:generate_requested": ["surface", "input_mode", "request_id"],
+	"motion:preflight_blocked": ["reason", "surface", "request_id"],
+	"motion:preflight_passed": ["backend", "surface", "request_id"],
+	"motion:job_started": ["backend", "input_mode", "request_id"],
+	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode", "request_id"],
+	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code", "request_id"],
+	"motion:result_applied": ["request_id", "backend"],
 	"export:blocking_frame_succeeded": ["format"],
 	"export:video_succeeded": ["format"],
 	"export:keyframe_pack": ["entries", "source"],
@@ -47,6 +50,16 @@ const FEATURE_NAMES = new Set([
 ]);
 const HEARD_FROM_VALUES = new Set(["x", "hn", "reddit", "github", "friend", "other"]);
 const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "url", "path", "file"]);
+const MOTION_ERROR_CODES = new Set(["aborted", "unsupported_route", "generation_failed", "unknown"]);
+const MOTION_PROPERTY_VALUES = Object.freeze({
+	backend: new Set(["none", "local_kimodo", "hosted"]),
+	host_configured: new Set([true, false]),
+	surface: new Set(["timeline", "line_edit", "trail", "mcp"]),
+	input_mode: new Set(["prompt", "pose", "edit"]),
+	reason: new Set(["unconfigured", "unreachable", "unsupported_route"]),
+	error_code: MOTION_ERROR_CODES,
+	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+});
 const EXPORT_FAILURE_CODES = new Set(["unsupported_codec", "encode_failed", "render_failed", "aborted", "unknown"]);
 const EXPORT_PROPERTY_VALUES = Object.freeze({
 	export_kind: new Set(["video", "depth_video", "frame", "keyframe_pack"]),
@@ -139,6 +152,11 @@ export function sanitizeProps(event, props) {
 			if (key === "edit_kind" && !FIRST_EDIT_KINDS.includes(props[key])) continue;
 			if (key === "definition_version" && props[key] !== FIRST_EDIT_VERSION) continue;
 		}
+		if (event.startsWith("motion:")) {
+			if (key === "request_id") {
+				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
+			} else if (!MOTION_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		}
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;
@@ -165,6 +183,98 @@ export function motionBackendState(health) {
 		// opt into the explicit `backend: "hosted"` field above.
 		backend: "local_kimodo",
 		host_configured: Boolean(host),
+	};
+}
+
+/** Read only structured readiness; raw health/error prose never classifies intent. */
+export function motionPreflightReason(health, { body = {}, lineEditSupported = false } = {}) {
+	if (!health || health.backend === "none" || (health.ok !== true && (health.host_configured === false || health.reason === "unconfigured"))) return "unconfigured";
+	if (health.ok !== true) return "unreachable";
+	if ((body.lineEdit || body.replay?.length) && !lineEditSupported) return "unsupported_route";
+	// The #267 local MLX/cpp route supports a single unconstrained prompt.
+	// ProjFlow line edits have their own capability/runner, even on a local bridge.
+	if (!body.lineEdit && health.host === "local" && health.device === "local" && (
+		body.segments?.length > 1 || body.posePin || body.waypoints?.length || body.motionEdit || body.preserve
+	)) return "unsupported_route";
+	return null;
+}
+
+export function motionFailureCode(error, fallbackCode) {
+	try {
+		if (error?.name === "AbortError") return "aborted";
+		if (MOTION_ERROR_CODES.has(fallbackCode)) return fallbackCode;
+		if (error instanceof Error) return "generation_failed";
+	} catch {
+		// Cross-realm error objects may have throwing getters.
+	}
+	return "unknown";
+}
+
+/** One explicit request, not an authoring draft. All methods are telemetry-only:
+ * no return value may decide whether generation runs. Duplicate/out-of-order
+ * callbacks cannot advance the funnel, and application is separate from success.
+ */
+export function startMotionRequest(metadata, dependencies = {}) {
+	let phase = "requested";
+	let props = null;
+	let startedAt = NaN;
+	let now = () => performance.now();
+	let capture = track;
+	const clock = () => { try { return now(); } catch { return NaN; } };
+	const emit = (event, extra = {}) => {
+		if (!props) return;
+		try {
+			Promise.resolve(capture(event, sanitizeProps(event, { ...props, ...extra }))).catch(() => {
+				// A rejected transport must not change generation.
+			});
+		} catch {
+			// Telemetry is best effort, including capture/payload failures.
+		}
+	};
+	try {
+		now = dependencies.now ?? now;
+		capture = dependencies.capture ?? capture;
+		const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+		const request_id = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		props = { ...sanitizeProps("motion:generate_requested", metadata), request_id };
+		emit("motion:generate_requested");
+	} catch {
+		// Omit telemetry without secure randomness; never derive an ID from content.
+		props = null;
+	}
+	return {
+		preflight(health, options) {
+			if (phase !== "requested") return;
+			try {
+				const reason = motionPreflightReason(health, options);
+				phase = reason ? "blocked" : "passed";
+				if (props) props.backend = motionBackendState(health).backend;
+				emit(reason ? "motion:preflight_blocked" : "motion:preflight_passed", reason ? { reason } : {});
+			} catch {
+				// A malformed telemetry input cannot stop the real request.
+			}
+		},
+		start() {
+			if (phase !== "passed") return;
+			phase = "started";
+			startedAt = clock();
+			emit("motion:job_started");
+		},
+		succeed() {
+			if (phase !== "started") return;
+			phase = "succeeded";
+			emit("motion:job_succeeded", { duration_bucket: bucketMs(clock() - startedAt) });
+		},
+		fail(error, fallbackCode) {
+			if (phase !== "started") return;
+			phase = "failed";
+			emit("motion:job_failed", { duration_bucket: bucketMs(clock() - startedAt), error_code: motionFailureCode(error, fallbackCode) });
+		},
+		apply() {
+			if (phase !== "succeeded") return;
+			phase = "applied";
+			emit("motion:result_applied");
+		},
 	};
 }
 
