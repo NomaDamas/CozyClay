@@ -1,6 +1,7 @@
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
 
 const OPT_OUT_KEY = "cozyclay.analyticsOptOut";
+const INTERNAL_QA_KEY = "cozyclay.internalQa";
 const ACTIVATION_KEY = "cozyclay.analyticsActivation";
 const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 	"https://cozyclay.org",
@@ -84,6 +85,7 @@ const TUTORIAL_PROPERTY_VALUES = Object.freeze({
 let posthog = null;
 let initialized = false;
 let enabled = false;
+let optOutPending = false;
 let initPromise = null;
 let activationFired = false;
 let disabledLogged = false;
@@ -476,6 +478,7 @@ export function shouldFireActivation(state) {
 }
 
 export function getAnalyticsOptOut() {
+	if (optOutPending) return true;
 	return runtimeConfig()?.distribution === "npm"
 		? runtimeConfig()?.telemetryEnabled !== true
 		: readStorage(OPT_OUT_KEY) === "1";
@@ -516,7 +519,9 @@ async function syncPackageTelemetry(enabled) {
 export async function setAnalyticsOptOut(optOut) {
 	const requestedOptOut = optOut === true;
 	const packageRuntime = runtimeConfig()?.distribution === "npm";
+	optOutPending = requestedOptOut;
 	const syncResult = await syncPackageTelemetry(!requestedOptOut);
+	optOutPending = false;
 	if (!syncResult.ok) return getAnalyticsOptOut();
 	const telemetryEnabled = syncResult.enabled;
 	const value = !telemetryEnabled;
@@ -574,17 +579,22 @@ export function resolveAnalyticsRuntime({
 		if (typeof runtime.apiKey !== "string" || runtime.apiKey.length === 0) {
 			return { kind: "disabled", reason: "no key" };
 		}
+		if (typeof runtime.installationId !== "string"
+			|| !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runtime.installationId)) {
+			return { kind: "disabled", reason: "invalid anonymous identity" };
+		}
 		return {
 			kind: "enabled",
 			distribution: "npm",
 			apiKey: runtime.apiKey,
 			apiHost: runtime.apiHost || "https://t.cozyclay.org",
 			appVersion: runtime.appVersion || null,
-			installationId: runtime.installationId || null,
+			installationId: runtime.installationId,
 			firstLaunch: runtime.firstLaunch === true,
 			firstLaunchHeardFrom: HEARD_FROM_VALUES.has(runtime.firstLaunchHeardFrom) ? runtime.firstLaunchHeardFrom : null,
 			installKind: ["npx", "global", "clone"].includes(runtime.installKind) ? runtime.installKind : "npx",
 			originKind: "local",
+			internalQa: runtime.internalQa === true,
 		};
 	}
 	if (!env.VITE_POSTHOG_KEY) return { kind: "disabled", reason: "no key" };
@@ -602,6 +612,18 @@ export function resolveAnalyticsRuntime({
 		firstLaunchHeardFrom: null,
 		installKind: null,
 		originKind: "hosted",
+		internalQa: readStorage(INTERNAL_QA_KEY) === "1",
+	};
+}
+
+function analyticsGlobalProperties(resolved) {
+	return {
+		distribution: resolved.distribution,
+		...(resolved.appVersion ? { app_version: resolved.appVersion } : {}),
+		origin_kind: resolved.originKind,
+		os: detectOs(),
+		...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
+		internal_qa: resolved.internalQa,
 	};
 }
 
@@ -612,6 +634,14 @@ function disabledReason(env) {
 
 export async function initAnalytics() {
 	if (initialized || initPromise) return initPromise;
+	// Explicit hosted opt-in only. This flag never changes consent or build
+	// policy; npm installations use the CLI-owned state instead.
+	if (runtimeConfig()?.distribution !== "npm") {
+		const values = new URLSearchParams(globalThis.location?.search ?? "").getAll("internal_qa");
+		if (values.length === 1 && (values[0] === "1" || values[0] === "0")) {
+			writeStorage(INTERNAL_QA_KEY, values[0]);
+		}
+	}
 	const env = environment();
 	const reason = disabledReason(env);
 	if (reason) {
@@ -661,19 +691,14 @@ export async function initAnalytics() {
 			});
 			initialized = true;
 			enabled = true;
-			posthog.register({
-				distribution: resolved.distribution,
-				...(resolved.appVersion ? { app_version: resolved.appVersion } : {}),
-				origin_kind: resolved.originKind,
-				os: detectOs(),
-				...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
-			});
+			const globalProperties = analyticsGlobalProperties(resolved);
+			posthog.register(globalProperties);
 			// Test hook, mirroring the window.__cozyclay convention: lets QA
 			// drivers inspect the live SDK without shipping a real global API.
 			globalThis.__cozyclayAnalytics = { instance: posthog };
 			posthog.capture("$pageview");
 			sessionStartedAt = Date.now();
-			installSessionEndListeners(resolved);
+			installSessionEndListeners(resolved, globalProperties);
 			if (resolved.distribution === "npm") {
 				track("app:session_started");
 				// This follows the session marker so the two events form one
@@ -709,6 +734,7 @@ async function recordMotionBackendState() {
 export function track(event, props = {}) {
 	if (!initialized || !enabled || !posthog) return;
 	try {
+		if (getAnalyticsOptOut()) return;
 		const sanitized = sanitizeProps(event, props);
 		if (event !== "app:session_started" && event !== "app:session_ended" && event !== "install:first_launch") {
 			sessionActionCount += 1;
@@ -727,26 +753,27 @@ export function trackFeature(name) {
 	return true;
 }
 
-function installSessionEndListeners(resolved) {
+function installSessionEndListeners(resolved, globalProperties) {
 	if (sessionEndListenersInstalled || typeof window === "undefined") return;
 	sessionEndListenersInstalled = true;
 	const finish = () => {
 		if (sessionEnded || !sessionStartedAt) return;
 		sessionEnded = true;
-		const payload = {
-			api_key: resolved.apiKey,
-			event: "app:session_ended",
-			properties: {
-				distinct_id: posthog?.get_distinct_id?.(),
-				duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
-				action_count_bucket: bucketCount(sessionActionCount),
-				scenes_touched: Math.min(20, sessionScenesTouched),
-				origin_kind: resolved.originKind,
-				os: detectOs(),
-				...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
-			},
-		};
 		try {
+			// This transport bypasses the SDK, so explicitly apply the same
+			// current opt-out and browser DNT policy before serializing an ID.
+			if (!enabled || !posthog || getAnalyticsOptOut() || posthog.has_opted_out_capturing()) return;
+			const payload = {
+				api_key: resolved.apiKey,
+				event: "app:session_ended",
+				properties: {
+					...globalProperties,
+					distinct_id: posthog.get_distinct_id(),
+					duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
+					action_count_bucket: bucketCount(sessionActionCount),
+					scenes_touched: Math.min(20, sessionScenesTouched),
+				},
+			};
 			const body = JSON.stringify(payload);
 			const endpoint = `${resolved.apiHost.replace(/\/$/, "")}/e/`;
 			if (typeof globalThis.navigator?.sendBeacon === "function") {

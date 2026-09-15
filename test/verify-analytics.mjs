@@ -351,6 +351,7 @@ assert.deepEqual(
 		firstLaunchHeardFrom: null,
 		installKind: null,
 		originKind: "hosted",
+		internalQa: false,
 	},
 );
 assert.deepEqual(
@@ -378,6 +379,7 @@ assert.deepEqual(
 		firstLaunchHeardFrom: null,
 		installKind: "npx",
 		originKind: "local",
+		internalQa: false,
 	},
 	"the official package can enable localhost with its injected runtime contract",
 );
@@ -556,6 +558,8 @@ for (const [event, property, values] of [
 	}
 }
 console.log("PASS motion allowlists, normalized enums and disclosure schema tokens");
+const shippedPrivacyHtml = readFileSync(new URL("../privacy/index.html", import.meta.url), "utf8");
+assert.ok(shippedPrivacyHtml.includes(privacyHtml.split("\n---\n")[1].trimEnd()), "the shipped privacy body matches its source disclosure");
 const exportDisclosure = new Map();
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
@@ -825,5 +829,174 @@ assert.deepEqual([...tutorialDisclosure.keys()].sort(), Object.keys(tutorialSche
 assert.deepEqual(sanitizeProps("tutorial:started", { surface: "embed", start_source: "resume" }), {});
 assert.deepEqual(sanitizeProps("tutorial:step_completed", { surface: "workflow", step_kind: "look" }), {});
 console.log("PASS tutorial event/property/enumeration allowlists and disclosure tokens");
+
+// Run the real init/capture/unload path with only the build environment and
+// SDK transport replaced. Each module load is a fresh browser/CLI restart.
+const runtimeSource = readFileSync(new URL("../src/analytics.js", import.meta.url), "utf8");
+const runtimeGlobals = ["localStorage", "location", "navigator", "window", "fetch", "__COZYCLAY_RUNTIME__", "__cozyclayAnalytics", "__analyticsSdkFixture"];
+const savedGlobals = runtimeGlobals.map((key) => [key, Object.getOwnPropertyDescriptor(globalThis, key)]);
+let runtimeFixtureId = 0;
+async function runtimeFixture({
+	runtime = { distribution: "npm", telemetryEnabled: true, installationId, appVersion: "1.8.1", apiKey: "test", apiHost: "https://telemetry.invalid", internalQa: false, installKind: "npx" },
+	origin = "http://127.0.0.1:5180", search = "", store = new Map(),
+	env = { PROD: true, VITE_POSTHOG_KEY: "test", VITE_APP_VERSION: "1.8.1" },
+	dnt = false, beacon = true, sync,
+} = {}) {
+	const records = [], beacons = [], requests = [];
+	const listeners = new Map();
+	let options, globals = {}, optedOut = false, distinctId;
+	const sdk = {
+		init(_key, config) { options = config; distinctId = config.bootstrap?.distinctID ?? `hosted-${runtimeFixtureId}`; },
+		register(props) { globals = { ...globals, ...props }; },
+		capture(event, props = {}) {
+			if (this.has_opted_out_capturing()) return;
+			const payload = options.before_send({ event, properties: { ...globals, ...props, distinct_id: distinctId } });
+			if (payload) records.push(payload);
+		},
+		get_distinct_id() { return distinctId; },
+		has_opted_out_capturing() { return optedOut || dnt; },
+		opt_out_capturing() { optedOut = true; },
+		opt_in_capturing() { optedOut = false; },
+	};
+	const values = {
+		localStorage: {
+			getItem: (key) => store.get(key) ?? null,
+			setItem: (key, value) => store.set(key, value),
+			removeItem: (key) => store.delete(key),
+			key: (i) => [...store.keys()][i],
+			get length() { return store.size; },
+		},
+		location: { origin, search, reload() {} },
+		navigator: { platform: "MacIntel", doNotTrack: dnt ? "1" : "0",
+			...(beacon ? { sendBeacon(url, body) { beacons.push({ url, body }); return true; } } : {}),
+		},
+		window: { addEventListener(name, handler) { listeners.set(name, handler); } },
+		fetch: async (url, init) => {
+			requests.push({ url, init });
+			if (url === "/__cozyclay/telemetry") {
+				if (sync) return sync(url, init);
+				const telemetryEnabled = JSON.parse(init.body).enabled;
+				return { ok: true, json: async () => ({ ...runtime, telemetryEnabled, installationId: telemetryEnabled ? runtime.installationId : null }) };
+			}
+			return { ok: false };
+		},
+		__COZYCLAY_RUNTIME__: runtime, __analyticsSdkFixture: sdk,
+	};
+	for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
+	const source = runtimeSource
+		.replace('"./semantic-edit.js"', JSON.stringify(new URL("../src/semantic-edit.js", import.meta.url).href))
+		.replace("import.meta.env", JSON.stringify(env))
+		.replace('import("posthog-js")', "Promise.resolve({ default: globalThis.__analyticsSdkFixture })");
+	const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${++runtimeFixtureId}`);
+	await module.initAnalytics();
+	await Promise.resolve(); // settle the resolved health probe, never a timing wait
+	return {
+		module, records, beacons, requests, store, sdk, options,
+		async unload() {
+			listeners.get("pagehide")?.();
+			listeners.get("beforeunload")?.();
+			return Promise.all(beacons.map(async ({ body }) => JSON.parse(await body.text())));
+		},
+	};
+}
+try {
+	const globalKeys = ["distribution", "origin_kind", "install_kind", "app_version", "internal_qa", "os"];
+	const cohortFixtures = [];
+	for (const internalQa of [false, true]) {
+		for (const distribution of ["npm", "hosted"]) {
+			const run = await runtimeFixture({
+				...(distribution === "hosted" ? { runtime: null, origin: "https://cozyclay.org", search: internalQa ? "?internal_qa=1" : "" }
+					: { runtime: { distribution, telemetryEnabled: true, installationId, apiKey: "test", appVersion: "1.8.1", apiHost: "https://telemetry.invalid", installKind: "global", internalQa } }),
+			});
+			run.module.track("scene:loaded", { scene_source: "library", internal_qa: !internalQa, distribution: "forged", prompt: "private" });
+			const [ended] = await run.unload();
+			assert.equal(run.beacons.length, 1, "pagehide plus beforeunload sends exactly once");
+			for (const record of run.records) {
+				assert.equal(record.properties.internal_qa, internalQa, "every capture carries the declared marker, never event-supplied overrides");
+				for (const key of globalKeys) assert.equal(ended.properties[key], record.properties[key], `${distribution} beacon/capture parity: ${key}`);
+				assert.equal(ended.properties.distinct_id, record.properties.distinct_id);
+				assert.equal(Object.hasOwn(record.properties, "prompt"), false);
+			}
+			assert.equal(run.options.bootstrap?.isIdentifiedID, distribution === "npm" ? false : undefined);
+			cohortFixtures.push(...run.records);
+		}
+	}
+	const external = cohortFixtures.filter((row) => row.properties.internal_qa !== true);
+	assert.equal(external.some((row) => row.properties.internal_qa === true), false);
+	assert.ok(external.some((row) => row.properties.origin_kind === "local"), "unmarked localhost remains external");
+	assert.ok(external.some((row) => row.properties.origin_kind === "hosted"));
+	const firstPort = await runtimeFixture();
+	const secondPort = await runtimeFixture({ origin: "http://127.0.0.1:5250" });
+	assert.equal(firstPort.records[0].properties.distinct_id, secondPort.records[0].properties.distinct_id, "fresh SDK + another port retains the CLI anonymous ID");
+	assert.equal(new Set([...firstPort.records, ...secondPort.records].map((row) => row.properties.distinct_id)).size, 1, "cohorts dedupe sessions and ports by distinct ID");
+	const other = await runtimeFixture({ runtime: { distribution: "npm", telemetryEnabled: true, installationId: "018f0d66-3a4b-7c2d-8e9f-abcdefabcdef", apiKey: "test" } });
+	assert.notEqual(other.records[0].properties.distinct_id, firstPort.records[0].properties.distinct_id, "unrelated installations are not merged");
+	const hosted = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org", search: "?internal_qa=1&prompt=private" });
+	assert.equal(hosted.store.get("cozyclay.internalQa"), "1");
+	const hostedRestart = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org", store: hosted.store });
+	assert.equal(hostedRestart.records[0].properties.internal_qa, true, "explicit hosted marker persists across reloads");
+	const hostedOff = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org", store: hosted.store, search: "?internal_qa=0" });
+	assert.equal(hostedOff.records[0].properties.internal_qa, false);
+	for (const search of ["?internal_qa=private", "?internal_qa=true", "?internal_qa=1&internal_qa=0"]) {
+		const run = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org", search });
+		assert.equal(run.records[0].properties.internal_qa, false, "only an unambiguous explicit 1/0 can set the flag");
+	}
+	for (const input of [
+		{ env: { PROD: false, VITE_POSTHOG_KEY: "test" } },
+		{ runtime: null, origin: "https://unapproved.invalid" },
+		{ runtime: null, origin: "https://cozyclay.org", env: { PROD: true } },
+		{ runtime: null, origin: "https://cozyclay.org", store: new Map([["cozyclay.analyticsOptOut", "1"]]) },
+		{ runtime: { distribution: "npm", telemetryEnabled: false, internalQa: true, installationId, apiKey: "test" } },
+		{ dnt: true },
+	]) {
+		const run = await runtimeFixture({ ...input, search: "?internal_qa=1" });
+		run.module.track("scene:created");
+		await run.unload();
+		assert.deepEqual(run.records, [], "internal marking cannot enable disabled telemetry");
+		assert.deepEqual(run.beacons, [], "disabled telemetry never sends an end beacon, including SDK DNT");
+	}
+	for (const beacon of [true, false]) {
+		const run = await runtimeFixture({ beacon });
+		const initialCount = run.records.length;
+		assert.equal(await run.module.setAnalyticsOptOut(true), true);
+		run.module.track("scene:created");
+		await run.unload();
+		assert.equal(run.records.length, initialCount, "opt-out suppresses later captures");
+		assert.equal(run.beacons.length, 0, "opt-out suppresses the direct end beacon");
+		assert.equal(run.requests.filter(({ init }) => init?.keepalive).length, 0, "opt-out suppresses fallback fetch too");
+	}
+	{
+		let finishSync;
+		const syncResponse = new Promise((resolve) => { finishSync = resolve; });
+		const run = await runtimeFixture({ sync: () => syncResponse });
+		const initialCount = run.records.length;
+		const disabling = run.module.setAnalyticsOptOut(true);
+		run.module.track("scene:created");
+		await run.unload();
+		assert.equal(run.records.length, initialCount, "consent revocation applies while the CLI response is pending");
+		assert.equal(run.beacons.length, 0, "closing during opt-out cannot leak a last beacon");
+		finishSync({ ok: true, json: async () => ({ distribution: "npm", telemetryEnabled: false, installationId: null }) });
+		assert.equal(await disabling, true);
+	}
+	for (const internalQa of ["true", 1, "private@example.com", {}]) {
+		const run = await runtimeFixture({ runtime: { distribution: "npm", telemetryEnabled: true, installationId, apiKey: "test", internalQa } });
+		assert.equal(run.records[0].properties.internal_qa, false, "runtime internal marker accepts only boolean true");
+	}
+	for (const invalidId of [null, "private@example.com", "not-a-random-id"]) {
+		const run = await runtimeFixture({ runtime: { distribution: "npm", telemetryEnabled: true, installationId: invalidId, apiKey: "test" } });
+		assert.deepEqual(run.records, [], "invalid CLI identity must not leak or silently fork into a per-session ID");
+	}
+	const fallback = await runtimeFixture({ beacon: false });
+	await fallback.unload();
+	const keepalive = fallback.requests.filter(({ init }) => init?.keepalive);
+	assert.equal(keepalive.length, 1);
+	assert.equal(JSON.parse(keepalive[0].init.body).properties.distribution, "npm");
+	console.log("PASS internal/external fixtures, restart identity, capture/beacon parity, opt-out and build policy");
+} finally {
+	for (const [key, descriptor] of savedGlobals) {
+		if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+		else delete globalThis[key];
+	}
+}
 
 console.log("all analytics checks PASS");

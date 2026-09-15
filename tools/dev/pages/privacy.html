@@ -35,7 +35,11 @@
         <p>
           The official npm package measures anonymous first launches, sessions and an in-app usage funnel on
           its local studio. It stores one random installation identifier in <code>~/.config/cozyclay/state.json</code>
-          so returning use can be counted across ports and browser storage resets. Prompt text, asset names,
+          (or <code>$XDG_CONFIG_HOME/cozyclay/state.json</code>) so returning use can be counted across normal
+          CLI restarts, ports and browser storage resets. The browser's memory-only SDK starts with this
+          anonymous ID on each launch. Independent state files receive independent random IDs, without
+          fingerprinting, account linking or cross-device matching; do not copy the state file between users.
+          Prompt text, asset names,
           file names, project content, local paths and any user-entered text are never collected. Session
           duration and action counts are bucketed. Source checkouts, forks, development servers, CI and tests
           send nothing.
@@ -47,6 +51,29 @@ cclay telemetry on</code></pre>
         <p>
           <code>COZYCLAY_TELEMETRY=0</code> or <code>DO_NOT_TRACK=1</code> disable collection for a launch. The
           topbar toggle inside the studio changes the same setting and removes the installation identifier.
+          Enabling collection later creates a new, unlinked ID; the original first-launch receipt remains,
+          so this does not create another new-install event. Environment overrides only suspend collection
+          and do not erase the stored ID. Opting out also suppresses the session-end beacon.
+        </p>
+      </section>
+
+      <section>
+        <h2>Explicit internal and QA marking</h2>
+        <p>
+          Internal marking is optional and never enables telemetry. Use
+          <code>cclay telemetry internal on</code> or <code>cclay telemetry internal off</code> to store
+          the boolean <code>internalQa</code> in the npm CLI state file, then reload open studio tabs.
+          For the hosted app, open <code>https://cozyclay.org/app/?internal_qa=1</code> to mark that browser
+          or <code>?internal_qa=0</code> to clear it. A single explicit 1 or 0 persists as
+          <code>cozyclay.internalQa</code> in localStorage for that origin. The npm app uses only its CLI
+          setting, not this URL parameter.
+        </p>
+        <p>
+          All app events and end beacons carry boolean <code>internal_qa</code>, false by default.
+          External usage queries exclude only explicitly marked events; localhost, ports, country and
+          source checkouts are never used to infer internal people. Unmarked local-app users remain
+          included. Opt-out, Do-Not-Track, CI, origin restrictions and disabled builds still win.
+          Historical unmarked QA cannot be retroactively distinguished.
         </p>
       </section>
 
@@ -83,7 +110,7 @@ cclay telemetry on</code></pre>
           </table>
         </div>
         <p class="note">Motion request_id values are fresh random 32-character hexadecimal values, held only for one request; they are not persisted or derived from prompts, hosts, credentials, project content or other identifiers. The ambiguous motion:generate_blocked event stopped being emitted in the September 15, 2026 issue #273 contract. Historical events are not relabeled and are excluded from the new explicit-demand metric. Automatic line previews and prompt-block edits are not explicit Generate requests.</p>
-        <p class="note">Each event carries an origin kind (local or hosted), a coarse operating-system label and, for npm sessions, whether the install was npx or global. PostHog's free plan retains events for one year.</p>
+        <p class="note">Every regular app event and session-end beacon carries the same distribution (npm or hosted), app_version when available, origin_kind (local or hosted), internal_qa boolean, coarse operating-system label and, for npm sessions, install_kind (npx or global). PostHog's free plan retains events for one year.</p>
       </section>
 
       <section>

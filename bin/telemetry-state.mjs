@@ -9,6 +9,7 @@ export const POSTHOG_API_HOST = "https://t.cozyclay.org";
 const DEFAULT_STATE = Object.freeze({
 	installationId: null,
 	telemetryEnabled: true,
+	internalQa: false,
 	firstLaunchedAt: null,
 	noticeVersion: 0,
 	firstLaunchHeardFrom: null,
@@ -30,6 +31,7 @@ function normalizedState(value) {
 			? value.installationId
 			: null,
 		telemetryEnabled: value.telemetryEnabled !== false,
+		internalQa: value.internalQa === true,
 		firstLaunchedAt: typeof value.telemetryFirstLaunchedAt === "string"
 			? value.telemetryFirstLaunchedAt
 			: null,
@@ -44,6 +46,7 @@ function normalizedState(value) {
 
 function writeState(stateFile, patch) {
 	const next = { ...rawState(stateFile), ...patch };
+	if (typeof next.internalQa !== "boolean") next.internalQa = false;
 	mkdirSync(dirname(stateFile), { recursive: true });
 	const temporary = `${stateFile}.${process.pid}.tmp`;
 	writeFileSync(temporary, JSON.stringify(next, null, "\t"), { mode: 0o600 });
@@ -62,6 +65,11 @@ export function readTelemetryState(stateFile) {
 
 export function effectiveTelemetryEnabled(state, env = process.env) {
 	return state.telemetryEnabled && !envDisablesTelemetry(env);
+}
+
+export function setTelemetryInternalQa(stateFile, enabled) {
+	writeState(stateFile, { internalQa: enabled === true });
+	return readTelemetryState(stateFile);
 }
 
 export function setTelemetryEnabled(stateFile, enabled) {
@@ -100,6 +108,7 @@ export function takeRuntimeTelemetryConfig(
 ) {
 	const existing = readTelemetryState(stateFile);
 	const telemetryEnabled = officialPackage && effectiveTelemetryEnabled(existing, env);
+	const internalQa = telemetryEnabled && existing.internalQa === true;
 	let installationId = existing.installationId;
 	const firstLaunch = telemetryEnabled && !existing.firstLaunchedAt;
 	const patch = {};
@@ -113,6 +122,7 @@ export function takeRuntimeTelemetryConfig(
 	return {
 		distribution: "npm",
 		telemetryEnabled,
+		internalQa,
 		installationId: telemetryEnabled ? installationId : null,
 		appVersion,
 		apiKey: POSTHOG_PROJECT_TOKEN,

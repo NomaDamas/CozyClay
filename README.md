@@ -311,18 +311,55 @@ Browser regression QA:
 The official npm package also measures anonymous first launches, sessions, and
 the same in-app funnel on its `127.0.0.1` studio. It stores one random
 installation identifier in `~/.config/cozyclay/state.json` so returning use can
-be counted across ports and browser storage resets. Source checkouts, forks,
+be counted across normal CLI restarts, ports and browser storage resets
+(`$XDG_CONFIG_HOME/cozyclay/state.json` when configured). The browser SDK uses
+memory-only storage bootstrapped from that identifier; it does not generate a
+new install identity on each launch. Different state files get independent
+random IDs, with no fingerprinting, account linking or cross-device matching.
+Do not copy this state file between users. Source checkouts, forks,
 development servers, CI, and tests do not send analytics. Official npm
 artifacts carry a signature checked by the launcher, so copying or repackaging
 the source does not enable telemetry.
 
-Each event is registered with `origin_kind` (`local` or `hosted`), a coarse
+Every regular event and the session-end beacon use the same `distribution`
+(`npm` or `hosted`), `app_version` (when available),
+`origin_kind` (`local` or `hosted`), a coarse
 operating-system label, and (for npm sessions) `install_kind` (`npx` or
 `global`). Source checkouts are classified as `clone` and remain telemetry-off.
 The first npm launch may optionally answer a one-line channel question
 (`x`, `hn`, `reddit`, `github`, `friend`, `other`, or `skip`); `skip` sends no
 acquisition value. Session duration and action counts are buckets, and project
 events never include names, paths, prompts, or timestamps.
+
+### Explicit internal / QA traffic
+
+Internal marking is opt-in and independent of telemetry consent:
+
+```bash
+cclay telemetry internal on
+cclay telemetry internal off
+```
+
+The CLI stores the boolean `internalQa` in the same state file and applies it
+on the next launch/reload. On the hosted Studio or Playground, open
+`https://cozyclay.org/app/?internal_qa=1` to mark that browser, or use
+`?internal_qa=0` to clear the marker. Only an explicit single `1` or `0` is
+accepted; the choice persists in `cozyclay.internalQa` localStorage for that
+origin. The URL parameter is read by the app, not by a second landing snippet.
+The npm app ignores this parameter and uses the CLI choice.
+
+All app captures, including `$pageview` and the end beacon, carry boolean
+`internal_qa` (`false` by default). Queries exclude only explicitly marked
+events. Localhost, ports, country and source checkout do not identify internal
+people; unmarked official local-app traffic stays in the external cohort.
+Marking never enables collection on a disabled build, unapproved origin,
+source checkout, CI, Do-Not-Track or opted-out session. Existing open tabs must
+be reloaded after CLI changes. Historical unmarked QA cannot be inferred or
+retroactively removed.
+
+See [the external cohort queries and baseline procedure](docs/analytics-queries.md#external-cohort-baseline-issue-270)
+for complete KST weeks, distinct-ID denominators, retention maturity and
+coverage limits.
 
 ### First-edit definition (version 1)
 
@@ -368,6 +405,11 @@ cclay telemetry on
 The in-app toggle under **Settings ▾ → Privacy** changes the same npm-package
 setting and removes its anonymous installation identifier. Hosted-site visitors can opt out with that
 toggle, browser Do-Not-Track, or a content blocker.
+Disabling npm telemetry deletes the stored ID; enabling it later creates an
+unlinked new ID. The old first-launch receipt is retained, so re-enabling
+does not manufacture another new-install event. Environment overrides only
+suspend collection and do not erase the stored ID. Neither opt-out path sends
+a session-end beacon after collection has been disabled.
 
 PostHog's free plan retains events for 1 year.
 

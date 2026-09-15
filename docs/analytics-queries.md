@@ -695,3 +695,561 @@ Apply issue #270's explicit internal-QA exclusion consistently once its
 contract is available. Never infer internal traffic from scene names, URLs
 or camera gestures. These queries are documented SQL, not results claimed
 from a production PostHog run.
+
+# External cohort baseline (issue #270)
+
+This section is the definitive **external-cohort baseline** for #270. The #272
+export contract and #269 first-edit/frame example above remain historical
+references; use the fixed-boundary queries below, not their rolling `now()`
+windows, for this baseline. These are read-only HogQL `SELECT` queries for
+PostHog SQL insights. They do not change dashboards, settings, people or events.
+No production PostHog query was executed to establish this document.
+
+## Population, identity and time contract
+
+- Exclude an **event** only when `properties.internal_qa` is JSON boolean
+  `true`. Explicit boolean `false` and absent markers stay included, including
+  localhost traffic. This is not a retrospective person-level blacklist:
+  unmarked events before a user enables the marker remain eligible. Unexpected
+  marker types stay included and are visible in query D; string `"true"` is not
+  the declared boolean marker. Runtime #270 declares boolean `internal_qa` on
+  every regular event and session-end beacon, defaulting to `false`. CLI
+  `internalQa` is enabled only by explicit true state. Hosted
+  `/app/?internal_qa=1` or `0` persists `cozyclay.internalQa` for that origin;
+  npm ignores this URL control. None of these controls overrides consent,
+  opt-out, DNT or build/distribution policy.
+- All queries use `JSONExtractRaw(properties, 'internal_qa') != 'true'` for that
+  type-exact exclusion. JSON extraction returns the unquoted token `true` for
+  boolean true, `false` for false, and an empty string for an absent key.
+  Likewise, `JSONExtractRaw(properties, 'definition_version') = '1'` means
+  **numeric** `definition_version = 1`; the string `"1"` has raw JSON `"1"`
+  and is not accepted. Do not replace this with a string-property comparison,
+  `toInt`, or another coercion that turns malformed string versions into v1.
+- External local app means declared `distribution = 'npm'` **and**
+  `origin_kind = 'local'`. Hosted means declared `distribution = 'hosted'`
+  **and** `origin_kind = 'hosted'`. Missing or contradictory classifications
+  are coverage gaps, not inferred local or hosted users. `install_kind` and
+  `app_version` are coverage dimensions, not identity keys or exclusion rules.
+  Never infer internal status from hostname, country, port or `clone`.
+- A "user" here is one exact event `distinct_id`, not a person. The CLI's
+  `takeRuntimeTelemetryConfig` already persists a random `installationId` in
+  the CLI state file; npm's memory-only PostHog SDK is bootstrapped with that
+  ID and `isIdentifiedID: false`. This predates #270; #270 verifies and locks
+  that identity contract rather than inventing a second ID. Normal restarts
+  and different ports sharing that state file therefore deduplicate by
+  `DISTINCT distinct_id`. Do not
+  concatenate a port/session into the key, use person IDs, call `identify`, or
+  merge unrelated IDs using browser, device, IP, geography or other inference.
+  Separate state files/devices and hosted browser IDs stay separate. Clearing
+  state resets identity. CLI telemetry off clears the ID but retains the
+  first-launch receipt: re-enabling creates a new ID **without** another
+  `install:first_launch`. That ID can enter A/C but lacks B's denominator.
+  State-file copying is unsupported, not cross-device matching; shared/copied
+  state cannot distinguish different humans.
+- Every block is independently runnable. **Edit its UTC constants before use**;
+  the dates below are illustrative, not actual deployment dates or baseline
+  results. `observation_start_utc` is the available observation lower bound;
+  `observation_end_utc` is the fixed exclusive event-time cutoff, never `now()`.
+  `runtime_deployed_utc` is the applicable #270 marker/schema release boundary;
+  `edit_v1_deployed_utc` and `export_deployed_utc` are the #269/#272 contract
+  rollout boundaries. Where hosted/npm rollouts differ, use the latest
+  applicable boundary across the populations reported in that run and record
+  both releases. This deliberately chooses a common fully deployed window.
+  A rollout timestamp does not upgrade events from older clients; query D must
+  accompany rates.
+- `cohort_start_utc` and `cohort_end_utc` bound **whole cohort weeks**. Set them
+  to Monday 00:00 KST (Sunday 15:00 UTC), with an exclusive end. KST is
+  `Asia/Seoul`, UTC+09:00, with no daylight-saving changes. The queries derive
+  Monday using `toStartOfWeek(toTimeZone(timestamp, 'Asia/Seoul'), 1)` and
+  convert that date to an explicit KST midnight instant. They require the
+  entire week to fall after observation/deployment starts and before the
+  observation cutoff; a midweek deployment never contributes a partial week.
+  `week_start_kst` is Monday; the included Sunday is six calendar days later.
+- All event windows are `[start, end)`. Funnel steps use strictly increasing
+  timestamps; equal timestamps cannot establish order and do not convert.
+  Query B observes each launch for seven elapsed days and excludes whole
+  launch weeks until every member's seven-day horizon is observable. Query C
+  excludes a cohort until the **whole next KST week** is observable. An absent
+  row is no eligible cohort, not zero conversion; a zero denominator yields
+  SQL `NULL`, not 0%. No `LEFT JOIN`/nullable right-side counts are used: HogQL's
+  ClickHouse joins may supply default zero/empty values for unmatched rows.
+
+## Why sample loading is not own-project retention
+
+The actual call paths do not provide an own-project-reopen event contract:
+
+- `src/App.jsx::applyProject` calls `openScene` and unconditionally emits
+  `project:opened {age_bucket}`. `openProject` (file picker),
+  `openProjectByHandle` (recents/folder), and `restoreStoredProject` (automatic
+  stored-handle restore when permission is granted, or an explicit restore
+  offer) all call it. A file open is not proof of ownership or of a prior save
+  by this anonymous ID; no project identifier links those events.
+- `openStarterScene` **also** calls `applyProject`, replacing `savedAt` with
+  `null`, then emits `scene:loaded` with `scene_source` `starter`, `launch`, or
+  `tutorial`. The launch effect handles `?scene=...`; `startCameraTutorial`
+  opens the bundled City Block through the same path. Thus automatic/sample
+  loading can emit `project:opened`; its age falls back to the current time.
+  Neither a young nor an old `age_bucket` proves an own-project reopen.
+- `openScene` emits `scene:loaded {scene_source: 'local'}` even for a starter
+  passed through `applyProject`. Scene selection, creation, duplication and
+  replacement can also use it. A starter can produce **two** scene-loaded
+  events (`local`, then its starter/launch/tutorial source); do not subtract
+  or pair them by loose timestamps to infer ownership.
+- Hosted Playground startup is different: `src/main.jsx::boot` fetches and
+  stashes its bundled preset before mounting; `src/app-stage.jsx::loadSceneStartup`
+  consumes it without reading saved local scenes and without `applyProject`.
+  Its automatic initial preset is not a project reopen. Normal cached scene
+  startup likewise need not emit `project:opened`.
+- `src/semantic-edit.js::createFirstEditTracker` emits numeric version 1 once
+  per App mount per surface, only for a successful authored before/after
+  change. Passive load, restore, seeding, navigation, no-ops and history replay
+  are excluded. Scene/project switches do not reset the tracker.
+
+Accordingly, C measures **return to an observed v1 edit**, not own-project
+reopen. A continuously mounted editor that already emitted its first edit can
+edit on another day/week without a new event: these edit-based counts are a
+lower-bound proxy for all editing, not comprehensive edit-day telemetry.
+An own-project-reopen retention metric is unavailable from the current schema.
+
+## A. Weekly external local-app vs hosted users and 2+-active-day users
+
+An active day is a KST day containing `app:session_started` for npm/local or
+`$pageview` for hosted. This is an observed launch/visit day, **not an edit day**.
+It deliberately excludes session-end beacons (a midnight unload alone must not
+create a second active day), automatic scene events and passive background
+signals. Hosted pageviews include instrumented hosted surfaces, not just
+Playground; do not describe them as installations or Playground editors.
+
+For each population/week, `active_users` is the denominator: distinct IDs with
+at least one active day. `two_plus_active_day_users / active_users` is the
+2+-day rate. Multiple sessions/ports on one day are still one day, and one ID
+is still one user. Populations are reported separately, never identity-merged.
+
+```sql
+WITH
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS observation_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS observation_end_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS runtime_deployed_utc,
+    toDateTime64('2026-08-02 15:00:00', 3, 'UTC') AS cohort_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS cohort_end_utc,
+    activity AS (
+        SELECT
+            distinct_id,
+            if(properties.distribution = 'npm', 'local_app', 'hosted') AS population,
+            toStartOfDay(timestamp, 'Asia/Seoul') AS active_day_kst,
+            toStartOfWeek(toTimeZone(timestamp, 'Asia/Seoul'), 1) AS week_start_kst
+        FROM events
+        WHERE timestamp >= observation_start_utc
+          AND timestamp < observation_end_utc
+          AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+          AND (
+              (event = 'app:session_started'
+               AND properties.distribution = 'npm' AND properties.origin_kind = 'local')
+              OR (event = '$pageview'
+                  AND properties.distribution = 'hosted' AND properties.origin_kind = 'hosted')
+          )
+    ), dated AS (
+        SELECT *, toDateTime64(toString(week_start_kst), 3, 'Asia/Seoul') AS week_at
+        FROM activity
+    ), per_user_week AS (
+        SELECT d.population, d.week_start_kst, d.distinct_id,
+               uniqExact(d.active_day_kst) AS active_days
+        FROM dated AS d
+        WHERE d.week_at >= observation_start_utc
+          AND d.week_at >= runtime_deployed_utc
+          AND d.week_at >= cohort_start_utc
+          AND d.week_at + INTERVAL 7 DAY <= cohort_end_utc
+          AND d.week_at + INTERVAL 7 DAY <= observation_end_utc
+        GROUP BY d.population, d.week_start_kst, d.distinct_id
+    )
+SELECT
+    population, week_start_kst,
+    count() AS active_users,
+    countIf(active_days >= 2) AS two_plus_active_day_users,
+    round(100.0 * countIf(active_days >= 2) / nullIf(count(), 0), 2) AS two_day_rate_pct
+FROM per_user_week
+GROUP BY population, week_start_kst
+ORDER BY week_start_kst, population
+```
+
+## B. First launch -> first edit v1 -> successful video within seven days
+
+The denominator is npm/local distinct IDs whose **earliest observed eligible
+`install:first_launch` in all retained history** belongs to a mature cohort
+week. The history minimum is taken **before** cohort/rollout filtering, so an
+old installation with a later duplicated first-launch event cannot become a
+new installation. Retention truncation can hide an earlier launch: record the
+retained-history floor in the baseline and label this "first observed launch",
+not lifetime first install. Users without a first-launch event are not silently
+added from their first edit or first session.
+
+The ordered steps are launch < numeric-v1 `craft:first_edit` < video attempt
+start < successful terminal, all later steps before launch + 7 days. Starts
+and terminals match exact `(distinct_id, attempt_id, surface)`, and both sides
+require `export_kind = 'video'` and `format = 'mp4'`. Repeated deliveries reduce
+to their earliest timestamp in retained history, before ordering is checked.
+A terminal with no matching start, a success before its start, and an attempt
+with any failed/cancelled terminal through the observation cutoff do not count
+as success. `success_deliveries > 0` guards `minIf`'s default timestamp.
+
+This is a **user conversion funnel**, not the #272 attempt-level reliability
+rate. Success means pipeline completion/download handoff, not an OS save.
+`depth_video`, frames, packs, their internal clips, and all legacy export
+successes are excluded. Nothing unions `export:video_succeeded` or
+`export:blocking_frame_succeeded` into the numerator.
+
+```sql
+WITH
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS observation_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS observation_end_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS runtime_deployed_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS edit_v1_deployed_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS export_deployed_utc,
+    toDateTime64('2026-08-02 15:00:00', 3, 'UTC') AS cohort_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS cohort_end_utc,
+    local_history AS (
+        SELECT distinct_id, timestamp, event, properties
+        FROM events
+        WHERE timestamp < observation_end_utc
+          AND properties.distribution = 'npm'
+          AND properties.origin_kind = 'local'
+          AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+          AND event IN (
+              'install:first_launch', 'craft:first_edit',
+              'export:attempt_started', 'export:attempt_succeeded',
+              'export:attempt_failed', 'export:attempt_cancelled'
+          )
+    ), first_launch_history AS (
+        SELECT distinct_id, min(timestamp) AS launched_at
+        FROM local_history
+        WHERE event = 'install:first_launch'
+        GROUP BY distinct_id
+    ), launch_weeks AS (
+        SELECT *, toStartOfWeek(toTimeZone(launched_at, 'Asia/Seoul'), 1) AS week_start_kst
+        FROM first_launch_history
+    ), dated_launches AS (
+        SELECT *, toDateTime64(toString(week_start_kst), 3, 'Asia/Seoul') AS week_at
+        FROM launch_weeks
+    ), launches AS (
+        SELECT distinct_id, launched_at, week_start_kst
+        FROM dated_launches
+        WHERE week_at >= observation_start_utc
+          AND week_at >= runtime_deployed_utc
+          AND week_at >= edit_v1_deployed_utc
+          AND week_at >= export_deployed_utc
+          AND week_at >= cohort_start_utc
+          AND week_at + INTERVAL 7 DAY <= cohort_end_utc
+          AND week_at + INTERVAL 14 DAY <= observation_end_utc
+    ), edits AS (
+        SELECT l.distinct_id, l.launched_at, l.week_start_kst,
+               min(e.timestamp) AS edited_at
+        FROM launches AS l
+        INNER JOIN local_history AS e ON e.distinct_id = l.distinct_id
+        WHERE e.event = 'craft:first_edit'
+          AND JSONExtractRaw(e.properties, 'definition_version') = '1'
+          AND e.timestamp > l.launched_at
+          AND e.timestamp < l.launched_at + INTERVAL 7 DAY
+        GROUP BY l.distinct_id, l.launched_at, l.week_start_kst
+    ), starts AS (
+        SELECT distinct_id, properties.attempt_id AS attempt_id,
+               properties.surface AS surface, min(timestamp) AS started_at
+        FROM local_history
+        WHERE event = 'export:attempt_started'
+          AND properties.export_kind = 'video' AND properties.format = 'mp4'
+          AND match(properties.attempt_id, '^[0-9a-f]{32}$')
+          AND properties.surface IN ('studio', 'workflow', 'embed')
+        GROUP BY distinct_id, properties.attempt_id, properties.surface
+    ), terminals AS (
+        SELECT distinct_id, properties.attempt_id AS attempt_id,
+               properties.surface AS surface,
+               minIf(timestamp, event = 'export:attempt_succeeded') AS succeeded_at,
+               countIf(event = 'export:attempt_succeeded') AS success_deliveries,
+               countIf(event IN ('export:attempt_failed', 'export:attempt_cancelled')) AS other_terminals
+        FROM local_history
+        WHERE event IN ('export:attempt_succeeded', 'export:attempt_failed', 'export:attempt_cancelled')
+          AND properties.export_kind = 'video' AND properties.format = 'mp4'
+          AND match(properties.attempt_id, '^[0-9a-f]{32}$')
+          AND properties.surface IN ('studio', 'workflow', 'embed')
+        GROUP BY distinct_id, properties.attempt_id, properties.surface
+    ), after_edit_starts AS (
+        SELECT d.distinct_id, d.week_start_kst, d.launched_at,
+               s.attempt_id, s.surface, s.started_at
+        FROM edits AS d
+        INNER JOIN starts AS s ON s.distinct_id = d.distinct_id
+        WHERE s.started_at > d.edited_at
+          AND s.started_at < d.launched_at + INTERVAL 7 DAY
+    ), video_users AS (
+        SELECT DISTINCT s.distinct_id, s.week_start_kst
+        FROM after_edit_starts AS s
+        INNER JOIN terminals AS t ON t.distinct_id = s.distinct_id
+            AND t.attempt_id = s.attempt_id AND t.surface = s.surface
+        WHERE t.success_deliveries > 0 AND t.other_terminals = 0
+          AND t.succeeded_at > s.started_at
+          AND t.succeeded_at < s.launched_at + INTERVAL 7 DAY
+    ), stage_users AS (
+        SELECT distinct_id, week_start_kst, 'launch' AS stage FROM launches
+        UNION ALL
+        SELECT distinct_id, week_start_kst, 'edit_v1' AS stage FROM edits
+        UNION ALL
+        SELECT DISTINCT distinct_id, week_start_kst, 'video_start' AS stage FROM after_edit_starts
+        UNION ALL
+        SELECT distinct_id, week_start_kst, 'video_success' AS stage FROM video_users
+    )
+SELECT
+    week_start_kst,
+    countIf(stage = 'launch') AS first_launch_users,
+    countIf(stage = 'edit_v1') AS first_edit_v1_users,
+    countIf(stage = 'video_start') AS video_started_after_edit_users,
+    countIf(stage = 'video_success') AS video_succeeded_after_edit_users,
+    round(100.0 * countIf(stage = 'edit_v1')
+        / nullIf(countIf(stage = 'launch'), 0), 2) AS launch_to_edit_pct,
+    round(100.0 * countIf(stage = 'video_success')
+        / nullIf(countIf(stage = 'launch'), 0), 2) AS launch_to_video_pct,
+    round(100.0 * countIf(stage = 'video_success')
+        / nullIf(countIf(stage = 'edit_v1'), 0), 2) AS edit_to_video_pct,
+    round(100.0 * countIf(stage = 'video_success')
+        / nullIf(countIf(stage = 'video_start'), 0), 2) AS started_user_to_video_pct
+FROM stage_users
+GROUP BY week_start_kst
+ORDER BY week_start_kst
+```
+
+Hosted has no npm `install:first_launch` contract: B has **no hosted denominator
+or hosted launch-conversion estimate**. A provides hosted visit users; D reports
+`playground:opened`, `playground:first_edit` and hosted `craft:first_edit`
+separately with definition coverage. Those marginal counts are not an ordered
+hosted conversion rate. Playground and Studio first edits must never be pooled
+into B. An attempt started before the first edit remains outside B even when
+its success is after the edit; an unedited sample export does not activate it.
+Unresolved/failed attempts remain in the started-user denominator; repeated
+attempts by one ID do not inflate any user stage.
+
+## C. Next-week return to an observed edit v1
+
+For each complete week W and surface/population, the denominator is distinct
+IDs with at least one numeric-v1 first-edit event in W, whether new or existing.
+The numerator is those same IDs with such an event in the immediately following
+KST week W+1. W+2 alone is not a next-week return. The whole interval
+`[W, W + 14 days)` must be observable after the relevant rollouts. Right-edge
+immature cohorts are **omitted from both numerator and denominator**, not
+reported as nonreturners. A user can enter several weekly cohorts; do not sum
+weekly denominators and call the sum unique people.
+
+Local Studio, hosted Studio and hosted Playground are separate rows. Matching
+requires the same population/surface and exact ID; there is no hosted-to-local
+or Playground-to-Studio identity bridge. Week ordering makes the return
+strictly later than the cohort edit. The metric remains mount-limited as
+explained above, even when the same person keeps editing a sample.
+
+```sql
+WITH
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS observation_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS observation_end_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS runtime_deployed_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS edit_v1_deployed_utc,
+    toDateTime64('2026-08-02 15:00:00', 3, 'UTC') AS cohort_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS cohort_end_utc,
+    edit_events AS (
+        SELECT distinct_id,
+            if(properties.distribution = 'npm', 'local_studio',
+                if(event = 'craft:first_edit', 'hosted_studio', 'hosted_playground')) AS population,
+            toStartOfWeek(toTimeZone(timestamp, 'Asia/Seoul'), 1) AS week_start_kst
+        FROM events
+        WHERE timestamp >= observation_start_utc
+          AND timestamp < observation_end_utc
+          AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+          AND JSONExtractRaw(properties, 'definition_version') = '1'
+          AND (
+              (event = 'craft:first_edit' AND properties.distribution = 'npm'
+               AND properties.origin_kind = 'local')
+              OR (event IN ('craft:first_edit', 'playground:first_edit')
+                  AND properties.distribution = 'hosted' AND properties.origin_kind = 'hosted')
+          )
+    ), edit_weeks AS (
+        SELECT DISTINCT population, distinct_id, week_start_kst,
+            toDateTime64(toString(week_start_kst), 3, 'Asia/Seoul') AS week_at
+        FROM edit_events
+    ), cohort AS (
+        SELECT * FROM edit_weeks
+        WHERE week_at >= observation_start_utc
+          AND week_at >= runtime_deployed_utc
+          AND week_at >= edit_v1_deployed_utc
+          AND week_at >= cohort_start_utc
+          AND week_at + INTERVAL 7 DAY <= cohort_end_utc
+          AND week_at + INTERVAL 14 DAY <= observation_end_utc
+    ), returners AS (
+        SELECT DISTINCT c.population, c.distinct_id, c.week_start_kst
+        FROM cohort AS c
+        INNER JOIN edit_weeks AS n ON n.distinct_id = c.distinct_id
+            AND n.population = c.population
+        WHERE n.week_at = c.week_at + INTERVAL 7 DAY
+    ), stages AS (
+        SELECT population, distinct_id, week_start_kst, 'cohort' AS stage FROM cohort
+        UNION ALL
+        SELECT population, distinct_id, week_start_kst, 'return' AS stage FROM returners
+    )
+SELECT
+    population, week_start_kst,
+    countIf(stage = 'cohort') AS eligible_edit_v1_users,
+    countIf(stage = 'return') AS next_week_edit_v1_users,
+    round(100.0 * countIf(stage = 'return')
+        / nullIf(countIf(stage = 'cohort'), 0), 2) AS next_week_return_to_edit_pct
+FROM stages
+GROUP BY population, week_start_kst
+ORDER BY week_start_kst, population
+```
+
+## D. Coverage, explicit exclusions and definition/deployment versions
+
+Run D over the **same observation bounds**, including partial/deployment weeks
+and immature weeks: it diagnoses coverage, not conversion. Unlike A-C it keeps
+internal-marked rows to show their excluded sample size;
+`qa_marker_json = 'true'` identifies the excluded rows. Empty raw JSON means
+that the key is missing; `null` is explicit JSON null; quoted `"1"` is a string
+version and unquoted `1` is numeric v1. Raw values are
+kept separate so an alias or cast cannot merge missing/invalid/versioned data.
+`event_deliveries` includes repeated deliveries, whereas `distinct_ids` is exact
+within the displayed cell. **Do not sum cell-level distinct counts** to obtain
+a cross-version/week/event user count; A-C perform their own deduplication.
+
+```sql
+WITH
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS observation_start_utc,
+    toDateTime64('2026-09-13 15:00:00', 3, 'UTC') AS observation_end_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS runtime_deployed_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS edit_v1_deployed_utc,
+    toDateTime64('2026-08-01 00:00:00', 3, 'UTC') AS export_deployed_utc,
+    coverage_events AS (
+        SELECT distinct_id, event,
+            toStartOfWeek(toTimeZone(timestamp, 'Asia/Seoul'), 1) AS week_start_kst,
+            if(timestamp < runtime_deployed_utc, 'pre_runtime', 'post_runtime') AS runtime_era,
+            if(timestamp < edit_v1_deployed_utc, 'pre_edit_v1', 'post_edit_v1') AS edit_era,
+            if(timestamp < export_deployed_utc, 'pre_export', 'post_export') AS export_era,
+            JSONExtractRaw(properties, 'distribution') AS distribution_json,
+            JSONExtractRaw(properties, 'origin_kind') AS origin_kind_json,
+            JSONExtractRaw(properties, 'install_kind') AS install_kind_json,
+            JSONExtractRaw(properties, 'app_version') AS app_version_json,
+            JSONExtractRaw(properties, 'internal_qa') AS qa_marker_json,
+            JSONExtractRaw(properties, 'definition_version') AS definition_version_json,
+            JSONExtractRaw(properties, 'export_kind') AS export_kind_json,
+            JSONExtractRaw(properties, 'format') AS format_json,
+            JSONExtractRaw(properties, 'surface') AS surface_json,
+            if(match(properties.attempt_id, '^[0-9a-f]{32}$'), 'valid', 'missing_or_invalid') AS attempt_id_coverage
+        FROM events
+        WHERE timestamp >= observation_start_utc
+          AND timestamp < observation_end_utc
+          AND event IN (
+              '$pageview', 'app:session_started', 'app:session_ended', 'install:first_launch',
+              'project:opened', 'scene:loaded', 'playground:opened',
+              'craft:first_edit', 'playground:first_edit',
+              'craft:first_action', 'playground:first_action',
+              'export:attempt_started', 'export:attempt_succeeded',
+              'export:attempt_failed', 'export:attempt_cancelled',
+              'export:video_succeeded', 'export:blocking_frame_succeeded', 'export:keyframe_pack'
+          )
+    )
+SELECT
+    c.week_start_kst, c.event, c.runtime_era, c.edit_era, c.export_era,
+    c.distribution_json, c.origin_kind_json, c.install_kind_json, c.app_version_json,
+    c.qa_marker_json, c.definition_version_json, c.export_kind_json,
+    c.format_json, c.surface_json, c.attempt_id_coverage,
+    count() AS event_deliveries, uniqExact(c.distinct_id) AS distinct_ids
+FROM coverage_events AS c
+GROUP BY
+    c.week_start_kst, c.event, c.runtime_era, c.edit_era, c.export_era,
+    c.distribution_json, c.origin_kind_json, c.install_kind_json, c.app_version_json,
+    c.qa_marker_json, c.definition_version_json, c.export_kind_json,
+    c.format_json, c.surface_json, c.attempt_id_coverage
+ORDER BY c.week_start_kst, c.event, c.app_version_json, c.qa_marker_json
+```
+
+Inspect these gaps before comparing weeks:
+
+- Runtime dimensions on regular events vs `app:session_ended`; older beacons
+  may lack `distribution`/`app_version`. Missing `install_kind` is expected for
+  hosted, but a local schema gap. A does not use beacons to repair missing starts.
+- Numeric v1 vs missing, quoted-string or other versions on **each** first-edit
+  surface. Definition absence on a pageview/export is expected, not a failed
+  first-edit contract. Never substitute legacy first-action events for edits.
+- Lifecycle presence by `app_version`, kind, format, surface and valid attempt
+  ID. Legacy-only success coverage is missing lifecycle coverage, not extra
+  success. Missing terminals, mismatched IDs/metadata and terminal conflicts
+  need separate delivery investigation using #272's diagnostic approach with
+  the same external filter and fixed bounds; B's funnel alone is not a count
+  of all orphan/conflicting attempts.
+- Absent QA markers are **included**, but their historical internal-vs-external
+  composition is unknowable. A missing marker is not proof of an external human.
+  Hosted `$pageview`, `playground:opened`, hosted Studio edits and Playground
+  edits have different scopes; native PostHog sessions and App mounts differ.
+- First-launch marking occurs when the CLI serves the first app HTML; delivery
+  can still be blocked or the tab closed before capture. Older IDs, opt-out,
+  DNT, SDK initialization races and lost events can make first-launch or edit
+  coverage incomplete. The marker never enables disabled telemetry. Entirely
+  unobserved users cannot be estimated from these queries.
+
+## Rerunnable baseline procedure
+
+1. Record the PostHog project/environment and execution UTC timestamp, query
+   definition `issue270-cohorts-v1`, and the repository commit containing this
+   document. Record exact observation/cohort bounds in UTC **and** their KST
+   dates. The illustrative observation cutoff is `2026-09-13 15:00:00 UTC` =
+   `2026-09-14 00:00:00 KST`; it is not a measured baseline.
+2. Replace every block's constants with the same actual observation boundaries
+   and the applicable deployment timestamps. Record npm/hosted release versions,
+   deployment commit SHAs and rollout times for runtime #270, first edit #269
+   (numeric definition 1), and export lifecycle #272 (event contract, no invented
+   `definition_version` on export events). Query B begins after **all three**
+   boundaries; A after runtime; C after runtime and first edit. Record the data
+   retention/history floor because B scans first launches and attempt history
+   before `observation_start_utc`. Do not bound that history scan to the cohort
+   for speed: doing so relabels old users/attempts as new.
+3. Run D read-only and retain its result with A-C. Report included false/missing
+   marker deliveries and distinct-ID cells separately from excluded boolean-true
+   cells, runtime dimension gaps, observed `app_version` values, first-edit
+   version coverage, and lifecycle/legacy-only coverage. Distinguish "not
+   applicable", "no eligible denominator", "not instrumented/not observed" and
+   an observed zero. If a metric lacks coverage, publish that gap rather than a
+   synthetic rate. Release timestamps alone do not demonstrate client coverage.
+4. Run A, B and C unchanged except for the documented constants. Preserve SQL
+   text and result CSVs in the analysis record (not new production dashboards).
+   For **every reported rate**, publish its integer numerator and denominator,
+   KST cohort Monday/Sunday, observation cutoff, definition and deployment
+   versions. A: active IDs and 2+-day IDs; B: launch, edit, after-edit-start and
+   after-edit-success IDs; C: eligible edit IDs and next-week edit IDs. Report
+   hosted coverage separately; no hosted install denominator exists. List weeks
+   omitted for deployment/partial observation or immature conversion/retention.
+5. State whether queries were actually executed, the sample sizes returned, and
+   any query/result limit or truncation. This change supplies definitions only:
+   **production baseline dates, deployment versions and sample sizes are not
+   measured here**. Use `not run`/`unavailable`, never fabricated zeros. No
+   production credentials or dashboard mutation is necessary to review the SQL.
+6. Re-run the saved SQL at the same event-time cutoff to reproduce the analysis;
+   record ingestion lag/backfills, retention deletion and changed source data
+   that can alter results despite fixed event-time boundaries. Freeze exported
+   results for exact historical comparisons; the event store is not an immutable
+   snapshot. Compare equivalent complete, mature weeks only, and carry small
+   sample sizes and coverage caveats into any product decision.
+
+## Representative fixture expectations (not production results)
+
+These scenarios specify query behavior for the executable fixture owned by the
+analytics change; this document does not claim that prose is an executed test.
+
+| Scenario | Expected result |
+| --- | --- |
+| Boolean `internal_qa: true` on otherwise qualifying local or hosted events | Excluded from every A-C step; visible as excluded coverage in D. |
+| Boolean false or missing marker on `http://localhost:5250` / `127.0.0.1` events with npm/local dimensions | Included; hostname, country, clone label and port cannot turn them into internal traffic. |
+| One stable ID on two ports, with repeated deliveries and several sessions on one KST day | One A user and one active day; each B stage counts the ID at most once. A second observed active day makes exactly one 2+-day user. |
+| Two unrelated IDs with identical browser/device/IP characteristics | Two users, no identity merge. A hosted ID is not joined to a local ID. |
+| `2026-08-02 14:59:59 UTC` then `2026-08-02 15:00:00 UTC` | Sunday Aug 2 KST then Monday Aug 3 KST: different weeks/days. The latter starts the example cohort. An event exactly at the observation cutoff is excluded. |
+| A rollout midweek, or an observation cutoff midweek | The partial week is coverage-only, not an A-C cohort. |
+| With the example cutoff, an edit in the KST week beginning Sep 7 | Its Sep 14-20 return week is unobserved, so no C denominator. The Aug 31 cohort is mature; an edit during Sep 7-13 is its next-week return. Sep 7 launch weeks are also immature in B. |
+| An old launch before the cohort plus a duplicate launch inside it | Not a new B user; the history minimum remains before the cohort. |
+| CLI telemetry off, then on, after a recorded first launch | New anonymous ID can count in A/C, but the retained receipt prevents another `install:first_launch`; it is absent from B's launch denominator. |
+| A numeric-v1 edit before launch, followed by a numeric-v1 edit after launch | B selects the first **eligible after-launch** edit. A prelaunch-only edit cannot convert. String `"1"`, missing version, v2 and legacy first actions never count as v1. |
+| Success without a start, equal/reversed timestamps, wrong ID/surface/kind/format, or legacy-only video success | No B video conversion. A start before edit stays outside the funnel even if success follows edit. |
+| One paired video attempt after edit succeeds, alongside duplicate deliveries/another successful attempt | One video-success user, not multiple successes. A failed/cancelled terminal on the same matched attempt makes that attempt ineligible; another clean ordered attempt may still convert the user. |
+| A failed, cancelled or unresolved video attempt after edit, with no clean success | In B's started-user denominator, not its successful-user numerator. |
+| Automatic starter/tutorial or hosted sample load; project/scene switch; stored-handle restore with no authored edit | No B first-edit conversion or C return-to-edit; neither `project:opened` nor `scene:loaded` proves own-project reopen. A genuine launch/pageview may still count as A presence. |
+| A cohort edit, followed only by a sample reload next week and an actual edit in W+2 | Not a next-week return. Only a numeric-v1 edit from the same exact ID and surface in W+1 qualifies. |
+| Continued editing across midnight/week boundaries without a fresh App mount | May produce no new first-edit event: explicitly documented edit-retention coverage limit, not inferred nonuse. |

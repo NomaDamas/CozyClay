@@ -35,6 +35,7 @@ import {
 	effectiveTelemetryEnabled,
 	readTelemetryState,
 	setTelemetryEnabled,
+	setTelemetryInternalQa,
 	takeRuntimeTelemetryConfig,
 	TELEMETRY_NOTICE_VERSION,
 } from "./telemetry-state.mjs";
@@ -153,6 +154,8 @@ const HELP = `cozyclay - browser-based 3D staging studio
   cclay telemetry status   show anonymous telemetry status
   cclay telemetry off      disable anonymous telemetry
   cclay telemetry on       enable anonymous telemetry
+  cclay telemetry internal on|off
+                            mark or unmark this installation as internal QA
 
 cclay is the same command, shorter: a global install gives you both.
 
@@ -278,12 +281,17 @@ if (argv[0] === "mcp") {
 	runUpdate();
 } else if (argv[0] === "telemetry") {
 	const action = argv[1] ?? "status";
-	if (argv.length > 2 || !["status", "on", "off"].includes(action)) {
-		console.error("cozyclay: telemetry accepts status, on, or off");
+	const internalAction = action === "internal" ? argv[2] : null;
+	if (
+		(action === "internal" && (argv.length !== 3 || !["on", "off"].includes(internalAction)))
+		|| (action !== "internal" && (argv.length > 2 || !["status", "on", "off"].includes(action)))
+	) {
+		console.error("cozyclay: telemetry accepts status, on, off, or internal on|off");
 		process.exit(1);
 	}
 	if (action === "on") setTelemetryEnabled(STATE_FILE, true);
 	if (action === "off") setTelemetryEnabled(STATE_FILE, false);
+	if (action === "internal") setTelemetryInternalQa(STATE_FILE, internalAction === "on");
 	const state = readTelemetryState(STATE_FILE);
 	const effective = OFFICIAL_PACKAGE && effectiveTelemetryEnabled(state);
 	const reason = !OFFICIAL_PACKAGE
@@ -292,6 +300,7 @@ if (argv[0] === "mcp") {
 			? " (environment override)"
 			: "";
 	console.log(`Telemetry: ${effective ? "on" : "off"}${reason}`);
+	console.log(`Internal QA: ${state.internalQa ? "on" : "off"}`);
 	if (action !== "status") console.log("Reload any open CozyClay studio tab to apply this setting.");
 } else {
 
