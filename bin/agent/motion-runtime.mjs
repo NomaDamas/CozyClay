@@ -8,12 +8,12 @@ import { motionPreflightReason } from "../../src/analytics.js";
 const precommit = ["queued", "generating", "preparing", "verifying", "repairing"];
 const rejected = ["failed", "cancelled", "stale_target", "stale_environment"];
 export const MOTION_TRANSITIONS = freezeStudioData({
-	queued: ["generating", ...rejected], generating: ["preparing", ...rejected],
-	preparing: ["verifying", ...rejected], verifying: ["repairing", "committing", "review_required", ...rejected],
-	repairing: ["verifying", ...rejected], committing: ["installed", "reconciling", ...rejected.filter(s => s !== "cancelled")],
+	queued: ["generating", "reconciling", ...rejected], generating: ["preparing", "reconciling", ...rejected],
+	preparing: ["verifying", "reconciling", ...rejected], verifying: ["repairing", "committing", "review_required", "reconciling", ...rejected],
+	repairing: ["verifying", "reconciling", ...rejected], committing: ["installed", "reconciling", ...rejected.filter(s => s !== "cancelled")],
 	reconciling: ["installed", "proved-not-applied"], installed: [], "proved-not-applied": [],
 	// Only the explicit trusted accept action may leave review_required for a new verification.
-	review_required: ["verifying", "cancelled", "stale_target", "stale_environment", "failed"],
+	review_required: ["verifying", "reconciling", "cancelled", "stale_target", "stale_environment", "failed"],
 	failed: [], cancelled: [], stale_target: [], stale_environment: [],
 });
 export const MOTION_STATES = Object.freeze(Object.keys(MOTION_TRANSITIONS));
@@ -132,6 +132,17 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 		}
 		return remember(job, failure(job, "UNCERTAIN_APPLY", "unknown"));
 	};
+	const settleCancellation = async job => {
+		const value = await job.cancellation;
+		if (rejected.includes(job.state) || job.state === "proved-not-applied") return job.outcome;
+		if (job.state === "reconciling") return reconcile(job);
+		if (value?.status === "not_applied" && value.evidence) {
+			transition(job, "cancelled"); return remember(job, failure(job, "CANCELLED"));
+		}
+		// Aborting generation is not editor-side proof. Lost cancellation acks
+		// retain ownership/uncertainty until the same command can be reconciled.
+		transition(job, "reconciling"); return reconcile(job);
+	};
 	const commit = async (job, explicitUnverifiedAcceptance = false) => {
 		fence(job); transition(job, "committing");
 		try {
@@ -182,9 +193,10 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 			return await commit(job);
 		} catch (e) {
 			if (job.state === "committing" || job.state === "reconciling") { if (job.state === "committing") transition(job, "reconciling"); return reconcile(job); }
-			const code = job.cancelRequested ? "CANCELLED" : e.code ?? "BACKEND_UNAVAILABLE";
+			if (job.cancelRequested) { job.motionRequest?.fail(e, "aborted"); return await settleCancellation(job); }
+			const code = e.code ?? "BACKEND_UNAVAILABLE";
 			if (!rejected.includes(job.state)) transition(job, code === "CANCELLED" ? "cancelled" : code === "STALE_TARGET" ? "stale_target" : ["STALE_ENVIRONMENT", "STALE_SCENE"].includes(code) ? "stale_environment" : "failed");
-			job.motionRequest?.fail(e, job.cancelRequested ? "aborted" : undefined);
+			job.motionRequest?.fail(e);
 			return remember(job, failure(job, code));
 		} finally { clearTimeout(timer); if (job.state !== "review_required") await discard(job); }
 	}
@@ -238,6 +250,7 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 		async stop(id) {
 			const job = getJob(id);
 			if (job.state === "installed") return { status: "already_applied", receipt: job.outcome };
+			if (job.stopPromise) return job.stopPromise;
 			if (job.state === "committing" || job.state === "reconciling") {
 				try { await command(job, "cancel_motion_install"); }
 				catch (e) { job.reconcileError = e.message; /* Reconciliation below preserves unknown, never cancellation proof. */ }
@@ -246,10 +259,16 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 				return outcome?.status === "installed" ? { status: "already_applied", receipt: outcome } : outcome;
 			}
 			if (rejected.includes(job.state) || job.state === "proved-not-applied") return job.outcome;
-			job.cancelRequested = true; job.controller.abort(error("CANCELLED", "User stopped motion job"));
-			if (job.promise && active(job.state)) await job.promise;
-			else { transition(job, "cancelled"); remember(job, failure(job, "CANCELLED")); await discard(job); }
-			return { status: "cancelled", ...job.outcome };
+			job.cancelRequested = true;
+			job.cancellation = command(job, "cancel_motion_install").catch(e => { job.reconcileError = e.message; return null; });
+			job.controller.abort(error("CANCELLED", "User stopped motion job"));
+			job.stopPromise = Promise.resolve().then(async () => {
+				if (job.promise && active(job.state)) await job.promise;
+				else await settleCancellation(job);
+				await discard(job);
+				return job.state === "cancelled" ? { status: "cancelled", ...job.outcome } : job.outcome;
+			}).finally(() => { job.stopPromise = null; });
+			return job.stopPromise;
 		},
 		async reconcile(id) { return reconcile(getJob(id)); },
 		async accept(id) {
