@@ -4,6 +4,8 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
+import { readFile } from "node:fs/promises";
+import { runInNewContext } from "node:vm";
 import * as motion from "../bin/agent/motion-runtime.mjs";
 import { startLiveHub, MotionJobRegistry, LiveHub } from "../mcp/live-hub.mjs";
 import { createToolHandlers, setLiveHub } from "../mcp/tool-handlers.mjs";
@@ -33,6 +35,7 @@ async function fixture(work) {
 		const done = JSON.stringify({ event: "done", motionUrl: "/ardy/motions/123456-abcdef" });
 		if (mode === "malformed") res.end('{"event":');
 		else if (mode === "incomplete") res.end('{"event":"progress","progress":17}\n');
+		else if (mode === "single-final") res.end(done);
 		else if (mode === "trailing-malformed") res.end(done + '\n{bad');
 		else if (mode === "invalid-url") res.end('{"event":"done","motionUrl":"http://evil/artifact"}');
 		else res.end('{"event":"progress","progress":17}\n' + done + '\n' + done);
@@ -121,6 +124,7 @@ check("shared parser consumes EOF, requires done, rejects malformed tails", asyn
 	for (const text of ['{"event":', '{"event":"progress"}\n', '{"event":"done","motionUrl":"/ardy/motions/123456-abcdef"}\n{bad', '{"event":"done","motionUrl":"http://other/take"}']) await assert.rejects(read(text));
 });
 check("MCP current handler final non-newline artifact and immediate acknowledgement", () => fixture(async f => {
+	f.setMode("single-final"); // No earlier newline-terminated done record may hide the legacy EOF bug.
 	const old = process.env.COZYCLAY_BRIDGE_ORIGIN; process.env.COZYCLAY_BRIDGE_ORIGIN = f.origin;
 	setLiveHub(f.hub); const published = deferred(); const registry = new MotionJobRegistry(); const gate = f.setGate();
 	try {
@@ -221,6 +225,31 @@ check("review acceptance cannot bypass workspace capacity or candidate expiry", 
 	const other = runtime.admit(f.input()); await assert.rejects(runtime.accept(job.jobId), e => e.code === "TARGET_BUSY"); await runtime.stop(other.jobId);
 	now = 11; await assert.rejects(runtime.accept(job.jobId), e => e.code === "STALE_TARGET"); assert.equal(f.state.undo, 0);
 }));
+for (const launcher of ["bin/cozyclay.mjs", "tools/dev-full.mjs"]) {
+	check(`${launcher} passes the owned getter into the parent handler`, () => fixture(async f => {
+		const source = await readFile(new URL("../" + launcher, import.meta.url), "utf8");
+		const getterStart = source.indexOf("const getBridgeOrigin =");
+		const handlerStart = source.indexOf("const agentHandler = createAgentHandler(");
+		assert.ok(handlerStart >= 0, "launcher must construct the parent Agent handler");
+		const end = source.indexOf(";", handlerStart) + 1;
+		const child = { exitCode: null, signalCode: null };
+		let parentOptions;
+		// Execute the actual producer expression; the consumer is the task-6 port,
+		// not an invented environment getter or a prose/source-string assertion.
+		runInNewContext(source.slice(getterStart < 0 ? handlerStart : getterStart, end), {
+			bridge: child, bridgePort: Number(new URL(f.origin).port), opts: { port: 5271 }, mainPort: 5271,
+			createAgentHandler: options => { parentOptions = options; return () => {}; },
+		});
+		assert.equal(typeof parentOptions.getBridgeOrigin, "function", "parent Agent handler did not receive getBridgeOrigin");
+		assert.equal(parentOptions.getBridgeOrigin(), f.origin);
+		const runtime = runtimeFor(f, { getBridgeOrigin: parentOptions.getBridgeOrigin });
+		const { result } = begin(runtime, f.input());
+		assert.equal((await bounded(result)).status, "installed"); assert.equal(f.generations, 1);
+		child.exitCode = 1; assert.equal(parentOptions.getBridgeOrigin(), null, "exited child cannot supply an owned origin");
+		child.exitCode = null; child.signalCode = "SIGTERM"; assert.equal(parentOptions.getBridgeOrigin(), null);
+		console.log("PARENT HANDOFF", JSON.stringify({ launcher, origin: f.origin, requests: f.requests, generations: f.generations, commits: f.state.undo }));
+	}));
+}
 let failures = 0;
 for (const [name, work] of checks) { try { await work(); console.log("PASS", name); } catch (error) { failures++; console.error("FAIL", name, error.stack); } }
 console.log(`Studio jobs: ${checks.length - failures}/${checks.length} passed`); process.exitCode = failures ? 1 : 0;
