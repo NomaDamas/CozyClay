@@ -56,6 +56,7 @@ const NODE_FILES = [
 	"test/verify-agent-panel.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-studio-agent-protocol.mjs",
+	"test/verify-studio-agent-jobs.mjs",
 	"test/verify-agent-execution.mjs",
 	"test/verify-workflow-execution.mjs",
 	"test/verify-execution-shared-hooks.mjs",

@@ -1233,7 +1233,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 				const phases = rawPhases.map((p) => (typeof p === "string" ? p : p.text));
 				const phaseSeconds = rawPhases.map((p) => (typeof p === "string" ? null : p.seconds));
 				const timed = phaseSeconds.some((s) => s !== null);
-				const bridge = process.env.COZYCLAY_BRIDGE ?? "http://127.0.0.1:5181";
+				const bridge = (process.env.COZYCLAY_BRIDGE_ORIGIN ?? process.env.COZYCLAY_BRIDGE ?? "http://127.0.0.1:5181").replace(/\/$/, "");
 
 				// Every phase is rewritten into ARDY's own sentence shape before it is ever
 				// sent. One input beat stays one phase: the caller's phase list is the

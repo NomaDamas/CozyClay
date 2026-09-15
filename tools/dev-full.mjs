@@ -113,7 +113,7 @@ const vite = spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", ...v
 			// Left as it came in when no bridge runs: Vite's /ardy proxy then
 			// falls back the same way `dev:ui` does, and the probe fails
 			// gracefully instead of pointing at a port nothing owns.
-			...(bridgePort === undefined ? {} : { COZYCLAY_BRIDGE_PORT: String(bridgePort) }),
+			...(bridgePort === undefined ? {} : { COZYCLAY_BRIDGE_PORT: String(bridgePort), COZYCLAY_BRIDGE_ORIGIN: `http://127.0.0.1:${bridgePort}` }),
 			COZYCLAY_LIVE_PORT: livePort,
 			COZYCLAY_OAUTH_PORT: String(actualOAuthPort),
 		},
