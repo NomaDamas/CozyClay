@@ -228,6 +228,7 @@ import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
 import FirstSuccessGuide from "./first-success-guide.jsx";
 import { CameraTutorial } from "./camera-tutorial.jsx";
 import { createTutorialAnalytics } from "./tutorial-analytics.js";
+import { cameraTutorialSuppressed, createFirstShotHandoff, rememberCameraTutorialTerminal } from "./first-shot-handoff.js";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
 import ResourceStatus, { SaveBlockedDialog } from "./resource-status.jsx";
@@ -653,18 +654,26 @@ export default function App() {
 	// have something to frame. That function is declared with the project
 	// actions further down; the listeners here reach it through a ref so they
 	// always call the current render's closure (the confirm reads projectDirty).
-	const cameraTutorialQuery = !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera";
+	const [cameraTutorialQuery] = useState(() => !embedMode && !playgroundMode
+		&& new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera"
+		&& !cameraTutorialSuppressed());
 	const [cameraTutorial, setCameraTutorial] = useState(false);
 	const cameraTutorialAnalytics = useRef(null);
 	const [cameraTutorialAttempt, setCameraTutorialAttempt] = useState(0);
+	const [cameraTutorialHandoff, setCameraTutorialHandoff] = useState(null);
+	const cameraTutorialCompletedRef = useRef(false);
+	const exportMenuTriggerRef = useRef(null);
+	const exportShotIdRef = useRef(null);
 	// The step the tutorial is on, published on the .app root so styles.css can
 	// spotlight the one control that step needs (#211).
 	const [cameraTutorialStep, setCameraTutorialStep] = useState(null);
 	const startCameraTutorialRef = useRef(null);
 	const cameraTutorialStarted = useRef(false);
-	// The starter scene the tutorial opened for itself: replacing it again is not
-	// work anyone can lose, so the confirm below stays out of the way.
+	// A tutorial restart never reloads the starter over the user's edits.
 	const tutorialStarterRef = useRef(false);
+	const tutorialLoadingRef = useRef(false);
+	const tutorialProjectEpochRef = useRef(0);
+	const tutorialSeedEpochRef = useRef(null);
 	// Armed once the starter is applied, consumed by the seed effect next to the
 	// hosted-demo seed as soon as the new character's rig exists.
 	const [tutorialSeedPending, setTutorialSeedPending] = useState(false);
@@ -678,6 +687,10 @@ export default function App() {
 			if (event.detail?.open === false) {
 				setCameraTutorial(false);
 				cameraTutorialAnalytics.current?.dismiss();
+				rememberCameraTutorialTerminal(cameraTutorialCompletedRef.current ? "completed" : "dismissed");
+				tutorialProjectEpochRef.current += 1;
+				setTutorialSeedPending(false);
+				setCameraTutorialHandoff(null);
 				return;
 			}
 			void startCameraTutorialRef.current?.({ source: event.detail?.source ?? "settings" });
@@ -748,7 +761,11 @@ export default function App() {
 	if (!firstEditRef.current) firstEditRef.current = createFirstEditTracker(track);
 	// One semantic hook for authored UI and programmatic mutations. Passive
 	// setters intentionally bypass it (navigation, load, seed, restore, history).
-	const markSemanticEdit = (domain, before, after) => firstEditRef.current(playgroundMode ? "playground" : "craft", domain, before, after);
+	const markSemanticEdit = (domain, before, after) => {
+		tutorialProjectEpochRef.current += 1;
+		if (tutorialSeedEpochRef.current !== null) setTutorialSeedPending(false);
+		return firstEditRef.current(playgroundMode ? "playground" : "craft", domain, before, after);
+	};
 	const craftActionTrackedRef = useRef(false);
 	const markCraftAction = (actionKind) => {
 		if (craftActionTrackedRef.current) return;
@@ -769,6 +786,7 @@ export default function App() {
 		const onSignal = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
 		window.addEventListener("cozyclay:playground-signal", onSignal);
 		const onHint = (event) => {
+			if (event.source !== window.parent || event.origin !== window.location.origin) return;
 			if (event.data?.type === "cozyclay:playground-hint") setPlaygroundHint(typeof event.data.kind === "string" ? event.data.kind : null);
 			if (event.data?.type === "cozyclay:playground-export") {
 				// The visitor keeps what they made: the landing page turns this
@@ -3175,12 +3193,18 @@ export default function App() {
 	const [exportMenuAnchor, setExportMenuAnchor] = useState({ top: 0, right: 0 });
 	useEffect(() => {
 		if (!exportMenuOpen) return undefined;
+		if (exportShotIdRef.current) document.querySelector('[data-testid="export-video"]')?.focus();
 		const onPointerDown = (event) => {
 			if (event.target instanceof Element && event.target.closest(".export-menu-wrap")) return;
+			exportShotIdRef.current = null;
 			setExportMenuOpen(false);
 		};
 		const onKeyDown = (event) => {
-			if (event.key === "Escape") setExportMenuOpen(false);
+			if (event.key === "Escape") {
+				exportShotIdRef.current = null;
+				setExportMenuOpen(false);
+				exportMenuTriggerRef.current?.focus();
+			}
 		};
 		document.addEventListener("pointerdown", onPointerDown);
 		window.addEventListener("keydown", onKeyDown);
@@ -3261,6 +3285,8 @@ export default function App() {
 	function collectProjectSnapshot(name) {
 		return JSON.stringify(createProjectDocument(projectDocumentInput(name)));
 	}
+	const tutorialInitialSnapshotRef = useRef(null);
+	if (tutorialInitialSnapshotRef.current === null) tutorialInitialSnapshotRef.current = collectProjectSnapshot("Tutorial");
 
 	playgroundExportRef.current = collectProjectSerialized;
 	async function collectProjectSerialized(name) {
@@ -3411,6 +3437,11 @@ export default function App() {
 	}
 
 	function applyProject(project) {
+		tutorialProjectEpochRef.current += 1;
+		tutorialSeedEpochRef.current = null;
+		setTutorialSeedPending(false);
+		setCameraTutorialHandoff(null);
+		exportShotIdRef.current = null;
 		projectMotionsRef.current = new Map((project.motions ?? []).map((record) => [record.motionId?.toLowerCase(), record]).filter(([id]) => id));
 		const source = project.scenesDocument;
 		openMotionDb().then(async (db) => { try { await Promise.all([...projectMotionsRef.current.values()].map((record) => putMotion(db, record))); const ids = new Set((source?.scenes ?? []).flatMap((scene) => (scene.stage?.characters ?? []).map((character) => character.motionRef?.motionId?.toLowerCase()).filter(Boolean))); await sweepMotions(db, ids); } finally { db.close(); } }).catch(() => {});
@@ -3446,8 +3477,13 @@ export default function App() {
 	 * first-run dialog and by `npx cozyclay --scene <id>` (`?scene=`), which is
 	 * how the landing-page tutorial hands people into the local studio. */
 	async function openStarterScene(id, source = "starter") {
+		const before = source === "tutorial" ? collectProjectSnapshot("Tutorial") : null;
+		const epoch = tutorialProjectEpochRef.current;
 		const url = playgroundSceneUrl(`?scene=${encodeURIComponent(id)}`);
 		const project = url ? await fetchSceneProject(url) : null;
+		// A pending tutorial fetch has no authority over work authored/opened
+		// while it was loading, including an unnamed project.
+		if (source === "tutorial" && (epoch !== tutorialProjectEpochRef.current || before !== collectProjectSnapshot("Tutorial"))) return false;
 		if (!project) {
 			setToast(ko("That starter scene is not in this build", "이 빌드에는 그 시작 장면이 없어요"));
 			return false;
@@ -3457,6 +3493,39 @@ export default function App() {
 		track("scene:loaded", { scene_source: source });
 		return true;
 	}
+
+	function closeCameraTutorial(reason = null) {
+		const terminal = reason ?? (cameraTutorialCompletedRef.current ? "completed" : "dismissed");
+		rememberCameraTutorialTerminal(terminal);
+		tutorialProjectEpochRef.current += 1;
+		setTutorialSeedPending(false);
+		cameraTutorialHandoff?.dismiss();
+		setCameraTutorialHandoff(null);
+		cameraTutorialAnalytics.current?.dismiss();
+		cameraTutorialAnalytics.current = null;
+		cameraTutorialCompletedRef.current = false;
+		setCameraTutorial(false);
+		setCameraTutorialStep(null);
+	}
+
+	function openExportMenuForShot(shotId) {
+		const target = shots.find((entry) => entry.id === shotId);
+		if (!target) return;
+		exportShotIdRef.current = target.id;
+		const trigger = exportMenuTriggerRef.current;
+		if (trigger) {
+			const box = trigger.getBoundingClientRect();
+			const menuWidth = Math.min(340, window.innerWidth - 16);
+			setExportMenuAnchor({
+				top: box.bottom + 6,
+				right: Math.min(Math.max(8, window.innerWidth - box.right), Math.max(8, window.innerWidth - menuWidth - 8)),
+			});
+		}
+		setExportMenuOpen(true);
+		cameraTutorialHandoff?.dismiss();
+		setCameraTutorialHandoff(null);
+	}
+
 	/** The camera tutorial's single entry (#209), for both /app/?tutorial=camera
 	 * and the Settings ▾ item.
 	 *
@@ -3468,34 +3537,40 @@ export default function App() {
 	 * tutorial used to open on whatever was loaded — usually an empty room.
 	 * This puts the studio in the landing page's state explicitly. */
 	async function startCameraTutorial({ source = "settings" } = {}) {
+		if (embedMode || playgroundMode || tutorialLoadingRef.current) return;
 		// QA hook, same spirit as window.__cozyclayRenders: which door the tutorial
 		// came in by, so a headless run can prove both of them land here.
 		window.__cozyclayTutorialSource = source;
-		// Replacing the scene is the destructive part, so it asks the way New
-		// Project asks — unless the scene on screen is the starter this function
-		// opened, where there is nothing of the author's to lose.
-		if (projectDirty && !tutorialStarterRef.current && !window.confirm(ko(
-			"The camera tutorial opens the City Block starter scene and replaces the current scene. Continue?",
-			"카메라 튜토리얼은 City Block 시작 장면을 열고 현재 장면을 대체합니다. 계속할까요?",
-		))) return;
-		// A build without the starter file toasts "not in this build" from
-		// openStarterScene; the tutorial then runs on the scene already open,
-		// which still teaches the gestures.
-		const opened = await openStarterScene("city-block", "tutorial");
-		if (opened) {
-			tutorialStarterRef.current = true;
-			setTutorialSeedPending(true);
+		// Only a pristine, newly created document receives the sample. An
+		// existing project (even unnamed), or a restart, keeps all current work.
+		const seed = !tutorialStarterRef.current && startupCreatedScene && projectName === null
+			&& !projectDirty && !cameraTutorialSuppressed()
+			&& tutorialInitialSnapshotRef.current === collectProjectSnapshot("Tutorial");
+		if (seed) {
+			tutorialLoadingRef.current = true;
+			demoSeeded.current = true;
+			try {
+				const opened = await openStarterScene("city-block", "tutorial");
+				if (opened) {
+					tutorialStarterRef.current = true;
+					tutorialSeedEpochRef.current = tutorialProjectEpochRef.current;
+					setTutorialSeedPending(true);
+					exitPreview();
+					setTlFrame(0);
+				}
+			} finally {
+				tutorialLoadingRef.current = false;
+			}
 		}
 		setProjectStartupOpen(false);
+		setFirstSuccessGuideOpen(false);
+		setCameraTutorialHandoff(createFirstShotHandoff());
 		// Explicit start, including while already open, resets the existing
 		// done/walked component state. Passive renders never create an attempt.
 		cameraTutorialAnalytics.current = createTutorialAnalytics({ surface: "studio", startSource: source });
 		setCameraTutorialAttempt((attempt) => attempt + 1);
 		setCameraTutorial(true);
-		// Frame 0 of a free camera: the first step is looking around, and the
-		// shot camera does not exist yet.
-		exitPreview();
-		setTlFrame(0);
+		cameraTutorialCompletedRef.current = false;
 	}
 	startCameraTutorialRef.current = startCameraTutorial;
 
@@ -3647,6 +3722,12 @@ export default function App() {
 	}
 
 	function openScene(scene, nextScenes) {
+		tutorialProjectEpochRef.current += 1;
+		tutorialSeedEpochRef.current = null;
+		setTutorialSeedPending(false);
+		setCameraTutorial(false);
+		setCameraTutorialHandoff(null);
+		exportShotIdRef.current = null;
 		const shotState = restoredShotState(scene);
 		const stage = createSceneStage(scene.stage);
 		const objects = Array.isArray(scene.objects) ? scene.objects : [];
@@ -4993,12 +5074,13 @@ export default function App() {
 	 *  motion the timeline extent ignores shots and falls back to the whole
 	 *  production duration, so a 40-frame static shot must record its own
 	 *  [startFrame, endFrame] range instead of 360 frames of held pose. */
-	async function exportShotVideo({ download = true } = {}) {
+	async function exportShotVideo({ download = true, shotId = null } = {}) {
 		if (recRef.current) return null;
 		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
-		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		const target = shotId ? shots.find((entry) => entry.id === shotId) : shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		if (shotId && !target) return null;
 		let exportShots = shots;
-		if (target && target.cameraKeys.length === 0) {
+		if (target && target.cameraKeys.length === 0 && !shotId) {
 			const framing = captureCurrentFraming();
 			exportShots = updateStableItem(shots, target.id,
 				(entry) => ({ ...entry, cameraKeys: [{ id: createStableItemId("camera-key"), frame: entry.startFrame, framing }] }), "shots");
@@ -5007,18 +5089,19 @@ export default function App() {
 			recordShotUndo();
 			setShots(exportShots);
 		}
-		const range = target && !motion
+		const range = target && (shotId || !motion)
 			? { startFrame: target.startFrame, endFrame: target.endFrame }
 			: { startFrame: 0, endFrame: Math.max(0, currentRecordFrameCount() - 1) };
 		return executeExportRequest(exportRequest("video", (job) => runShotExport({ ...range, download }, job), { exportShots, download }));
 	}
 
-	async function exportDepthVideo() {
+	async function exportDepthVideo(shotId = null) {
 		if (recRef.current) return null;
 		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
-		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
-		const startFrame = target && !motion ? target.startFrame : 0;
-		const endFrame = target && !motion ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
+		const target = shotId ? shots.find((entry) => entry.id === shotId) : shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		if (shotId && !target) return null;
+		const startFrame = target && (shotId || !motion) ? target.startFrame : 0;
+		const endFrame = target && (shotId || !motion) ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
 		return executeExportRequest(exportRequest("depth_video", async (job) => {
 			if (!target) throw Object.assign(new Error("Add a shot before exporting depth video"), { exportFailureCode: "render_failed" });
 			let depthRange = null;
@@ -5078,6 +5161,16 @@ export default function App() {
 			</section>
 		);
 	}
+
+	// Observe the existing export UI boundary, independently of telemetry.
+	// The first transition covers ordinary menu exports and fast failures too;
+	// progress updates do not write storage on every encoded frame.
+	const hasExportAttempt = exportStatus !== null;
+	useEffect(() => {
+		if (!hasExportAttempt) return;
+		rememberCameraTutorialTerminal("export_started");
+		setCameraTutorialHandoff(null);
+	}, [hasExportAttempt]);
 
 	function downloadOtioCutList() {
 		if (!shots.length) {
@@ -5251,10 +5344,11 @@ export default function App() {
 	}
 
 	/** Download the keyframe pack for one shot, or (Shift) for every shot. */
-	async function exportKeyframePacks(everyShot = false) {
+	async function exportKeyframePacks(everyShot = false, shotId = null) {
 		if (recRef.current) return null;
 		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
-		const current = atPlayhead >= 0 ? atPlayhead : 0;
+		const current = shotId ? shots.findIndex((entry) => entry.id === shotId) : atPlayhead >= 0 ? atPlayhead : 0;
+		if (shotId && current < 0) return null;
 		const targets = everyShot ? shots.map((_, index) => index) : [current];
 		return executeExportRequest(exportRequest("keyframe_pack", async (job) => {
 			if (!job.request.context.shots.length) throw new Error(ko("Add at least one Shot before exporting a keyframe pack", "키프레임 팩을 내보내려면 샷을 하나 이상 추가하세요"));
@@ -6088,7 +6182,7 @@ export default function App() {
 		// load toast, the auto-drop toast, clearing the IK keys, snapping the
 		// playhead back to 0 — is an announcement about a take CHANGING. A
 		// preview is the same take seen a second time, so it makes none of them.
-		{ preview = false, calibration = null } = {},
+		{ preview = false, calibration = null, tutorialEpoch = null } = {},
 	) {
 		setMotionBusy(true);
 		setMotionError("");
@@ -6099,6 +6193,7 @@ export default function App() {
 			// A drop is staging applied to the clip itself, so it happens at
 			// the same boundary — trims and IK then see the dropped take.
 			const retimed = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			if (tutorialEpoch !== null && tutorialEpoch !== tutorialProjectEpochRef.current) return null;
 			const normalizedCalibration = normalizeMotionCalibration(calibration);
 			// Scene yaw/XY translation belong to the character's scene transform.
 			// Applying them to both the arrays and the Character group would rotate
@@ -6119,6 +6214,7 @@ export default function App() {
 			const sceneAnchorZ = targetCharacter.z + normalizedCalibration.offsetZ;
 			const sceneRotationDeg = rotationDeg + normalizedCalibration.yawDeg;
 			const rig = rigs[targetCharacter.id] ?? await waitForRig(targetCharacter.id);
+			if (tutorialEpoch !== null && tutorialEpoch !== tutorialProjectEpochRef.current) return null;
 			// No explicit drop staged: a character standing on a raised object
 			// whose take walks off the edge falls on its own — ARDY motion is
 			// flat-ground, so the stage supplies the gravity.
@@ -6226,6 +6322,7 @@ export default function App() {
 			// (and cannot derive a different one).
 			return scale;
 		} catch (err) {
+			if (tutorialEpoch !== null && tutorialEpoch !== tutorialProjectEpochRef.current) return null;
 			if (targetCharacterId === loadedLayerCharRef.current) setMotion(null);
 			setMotionError(err?.message || String(err));
 			throw err;
@@ -6286,9 +6383,16 @@ export default function App() {
 	// condition, not a timer, exactly like the seed above.
 	useEffect(() => {
 		if (!tutorialSeedPending || !activeRig || motionBusy) return;
+		const seedEpoch = tutorialSeedEpochRef.current;
+		if (seedEpoch === null || seedEpoch !== tutorialProjectEpochRef.current) {
+			tutorialSeedEpochRef.current = null;
+			setTutorialSeedPending(false);
+			return;
+		}
+		tutorialSeedEpochRef.current = null;
 		setTutorialSeedPending(false);
 		demoSeeded.current = true; // one seeded clip per session, whichever got here first
-		loadMotion(DEMO_MOTION_URL, DEMO_MOTION_PROMPT).catch(() => {
+		loadMotion(DEMO_MOTION_URL, DEMO_MOTION_PROMPT, undefined, null, activeChar.id, null, { tutorialEpoch: seedEpoch }).catch(() => {
 			/* the take is the tutorial's set dressing, never an error to act on */
 		});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -10721,10 +10825,12 @@ function resizePromptClip(id, edge, rawFrame) {
 								className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
 								data-testid="topbar-export"
 								id="export-menu-trigger"
+								ref={exportMenuTriggerRef}
 								aria-expanded={exportMenuOpen}
 								aria-haspopup="menu"
 								title={ko("Exports: keyframe pack, video, passes, storyboard, cut list", "내보내기: 키프레임 팩·영상·패스·스토리보드·컷 목록")}
 								onClick={(event) => {
+									exportShotIdRef.current = null;
 									// The panel is fixed to the viewport and anchored to this
 									// trigger in JS, the way it was in the PlayView bar: one
 									// popover geometry for the studio's export menu wherever
@@ -10759,7 +10865,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										title={shots.length
 											? ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")
 											: ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다")}
-										onClick={(event) => void exportKeyframePacks(event.shiftKey)}
+										onClick={(event) => void exportKeyframePacks(event.shiftKey, exportShotIdRef.current)}
 									>
 										{ko("Keyframe pack (zip)", "키프레임 팩 (zip)")}
 										<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
@@ -10771,7 +10877,7 @@ function resizePromptClip(id, edge, rawFrame) {
 											data-testid="export-video"
 											disabled={recState === "recording"}
 											title={ko("Render the shot to an MP4 — camera move and character motion, no editor chrome", "샷을 MP4로 렌더링합니다 — 카메라 움직임과 캐릭터 모션만, 편집 UI는 제외")}
-											onClick={() => void exportShotVideo()}
+											onClick={() => void exportShotVideo({ shotId: exportShotIdRef.current })}
 										>
 											{ko("Video (mp4)", "영상 (mp4)")}
 										</button>
@@ -10793,7 +10899,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										disabled={!shots.length || recState === "recording"}
 										data-disabled-reason={shots.length ? undefined : "no-shots"}
 										title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
-										onClick={() => void exportDepthVideo()}
+										onClick={() => void exportDepthVideo(exportShotIdRef.current)}
 									>
 										{ko("Depth (mp4)", "뎁스 (mp4)")}
 									</button>
@@ -11172,7 +11278,18 @@ function resizePromptClip(id, edge, rawFrame) {
 					    stage it is teaching. The overlay itself never takes the pointer
 					    (styles.css) — every step is completed in the studio underneath. */}
 					{cameraTutorial && !embedMode && (
-						<CameraTutorial key={cameraTutorialAttempt} analytics={cameraTutorialAnalytics.current} previewing={lookThroughShot} onStepChange={setCameraTutorialStep} onClose={() => setCameraTutorial(false)} />
+						<CameraTutorial
+							key={cameraTutorialAttempt}
+							analytics={cameraTutorialAnalytics.current}
+							previewing={lookThroughShot}
+							onStepChange={setCameraTutorialStep}
+							onComplete={() => { cameraTutorialCompletedRef.current = true; cameraTutorialHandoff?.complete(); }}
+							onClose={() => closeCameraTutorial()}
+							handoff={cameraTutorialHandoff}
+							shotId={activeShot?.id ?? null}
+							onOpenExport={openExportMenuForShot}
+							onContinue={() => closeCameraTutorial()}
+						/>
 					)}
 					<div className="stage" id="stage" ref={stageRef} data-render-loop={renderActive ? "always" : "demand"}>
 						{/* Shadows were off, so every castShadow in props.jsx was inert and

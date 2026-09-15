@@ -693,6 +693,40 @@ select {
 	line-height: 1.5;
 }
 
+.camera-tutorial-handoff {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	pointer-events: auto;
+	padding-top: 8px;
+}
+
+.camera-tutorial-handoff strong,
+.camera-tutorial-handoff p {
+	flex-basis: 100%;
+	margin: 0;
+}
+
+.camera-tutorial-handoff .btn,
+.camera-tutorial-handoff-dismiss {
+	font: inherit;
+	font-size: 11px;
+	padding: 6px 10px;
+	cursor: pointer;
+}
+
+.camera-tutorial-handoff-dismiss {
+	border: 1px solid var(--line2);
+	background: transparent;
+	color: var(--fg);
+}
+
+.camera-tutorial-handoff button:focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
 @media (max-width: 700px) {
 	.first-success-guide {
 		right: 10px;

@@ -6,6 +6,7 @@
 // single mount site and its guard, and the Settings entry point.
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
+import { createFirstShotHandoff } from "../src/first-shot-handoff.js";
 
 const tutorial = readFileSync(new URL("../src/camera-tutorial.jsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
@@ -73,7 +74,7 @@ expect("the close button is labelled in both locales", tutorial.includes('ko("Cl
 expect("App imports the component", app.includes('import { CameraTutorial } from "./camera-tutorial.jsx"'));
 expect(
 	"the query string requests it, and never inside an embed",
-	app.includes('const cameraTutorialQuery = !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera"'),
+	/const \[cameraTutorialQuery\] = useState\(\(\) => !embedMode && !playgroundMode[\s\S]*?get\("tutorial"\) === "camera"[\s\S]*?!cameraTutorialSuppressed\(\)/.test(app),
 );
 expect("Settings can open it through a window event", app.includes('window.addEventListener("cozyclay:camera-tutorial", onTutorial)'));
 expect("the same event still closes it", /event\.detail\?\.open === false\)? \{\s*setCameraTutorial\(false\)/.test(app));
@@ -86,7 +87,7 @@ expect(
 expect("there is exactly one mount site", (app.match(/<CameraTutorial/g) ?? []).length === 1);
 expect(
 	"it is mounted only while the tutorial is on and outside embeds",
-	/\{cameraTutorial && !embedMode && \(\s*<CameraTutorial key=\{cameraTutorialAttempt\} analytics=\{cameraTutorialAnalytics\.current\} previewing=\{lookThroughShot\} onStepChange=\{setCameraTutorialStep\} onClose=\{\(\) => setCameraTutorial\(false\)\} \/>/.test(app),
+	/\{cameraTutorial && !embedMode && \(\s*<CameraTutorial\s+key=\{cameraTutorialAttempt\}\s+analytics=\{cameraTutorialAnalytics\.current\}\s+previewing=\{lookThroughShot\}/.test(app),
 );
 expect(
 	"the mount sits inside the viewport pane, above the stage",
@@ -125,13 +126,38 @@ expect(
 	/const opened = await openStarterScene\("city-block", "tutorial"\);[\s\S]*?setCameraTutorial\(true\)/.test(start)
 		&& app.includes('setToast(ko("That starter scene is not in this build", "이 빌드에는 그 시작 장면이 없어요"))'),
 );
-expect(
-	"unsaved changes are confirmed first, in both locales",
-	start.includes("projectDirty && !tutorialStarterRef.current && !window.confirm(ko(")
-		&& start.includes('"The camera tutorial opens the City Block starter scene and replaces the current scene. Continue?"')
-		&& start.includes('"카메라 튜토리얼은 City Block 시작 장면을 열고 현재 장면을 대체합니다. 계속할까요?"'),
-);
-expect("cancelling does nothing at all", /window\.confirm\(ko\([\s\S]*?\)\)\) return;/.test(start));
+// #275 strengthens replacement confirmation into preservation: existing work
+// runs the same steps in place and never enters the sample-loading path.
+for (const scenario of [
+	{ name: "pristine new document", seeded: true },
+	{ name: "dirty named document", projectName: "My work", projectDirty: true },
+	{ name: "clean named document", projectName: "My work" },
+	{ name: "unnamed authored document", snapshot: "authored" },
+	{ name: "cached document", startupCreatedScene: false },
+	{ name: "tutorial restart", tutorialStarter: true },
+	{ name: "previously completed user", suppressed: true },
+]) {
+	const effects = [];
+	const runtime = {
+		window: {}, embedMode: false, playgroundMode: false,
+		tutorialLoadingRef: { current: false }, tutorialStarterRef: { current: scenario.tutorialStarter ?? false },
+		startupCreatedScene: scenario.startupCreatedScene ?? true, projectName: scenario.projectName ?? null,
+		projectDirty: scenario.projectDirty ?? false, cameraTutorialSuppressed: () => scenario.suppressed ?? false,
+		tutorialInitialSnapshotRef: { current: "initial" }, collectProjectSnapshot: () => scenario.snapshot ?? "initial",
+		openStarterScene: async () => { effects.push("seed"); return true; },
+		setTutorialSeedPending: () => effects.push("motion"), exitPreview: () => effects.push("camera"),
+		setTlFrame: () => effects.push("frame"), setProjectStartupOpen() {}, setFirstSuccessGuideOpen() {},
+		setCameraTutorialHandoff() {}, createFirstShotHandoff: () => ({}),
+		cameraTutorialAnalytics: { current: null }, createTutorialAnalytics: () => ({}),
+		setCameraTutorialAttempt() {}, setCameraTutorial: () => effects.push("opened"),
+		cameraTutorialCompletedRef: { current: false },
+		tutorialProjectEpochRef: { current: 2 }, tutorialSeedEpochRef: { current: null },
+		demoSeeded: { current: false },
+	};
+	await runInNewContext(`(${start})()`, runtime);
+	expect(`${scenario.name}: only a fresh sample may change scene, motion, camera or frame`,
+		effects.join() === (scenario.seeded ? "seed,motion,camera,frame,opened" : "opened"), effects.join());
+}
 expect("the tutorial's own starter is not re-confirmed", app.includes("tutorialStarterRef.current = true;") && /tutorialStarterRef\.current = false;/.test(app));
 expect("it opens on frame 0 with the free camera", start.includes("exitPreview()") && start.includes("setTlFrame(0)"));
 expect("it leaves the project chooser closed", start.includes("setProjectStartupOpen(false)"));
@@ -147,7 +173,7 @@ expect(
 	"it waits on the new character's rig, never on a timer",
 	seed.includes("if (!tutorialSeedPending || !activeRig || motionBusy) return;") && !/setTimeout|requestAnimationFrame/.test(seed),
 );
-expect("it loads the shipped walk take", seed.includes("loadMotion(DEMO_MOTION_URL, DEMO_MOTION_PROMPT)"));
+expect("it loads the shipped walk take", seed.includes("loadMotion(DEMO_MOTION_URL, DEMO_MOTION_PROMPT,"));
 expect("it fires regardless of bridge state", !/if \([^)]*bridge/.test(seed));
 expect("it consumes the flag once", seed.includes("setTutorialSeedPending(false)") && seed.includes("demoSeeded.current = true"));
 expect(
@@ -412,9 +438,10 @@ try {
 		};
 		const script = landing.match(/<script(?: type="module")?>\s*([\s\S]*?const box = document\.getElementById\("playground"\)[\s\S]*?)<\/script>/)?.[1];
 		if (!script) throw new Error("landing tutorial script missing");
-		runInNewContext(script.replace(/import \{ createTutorialAnalytics \} from [^;]+;/, ""), {
+		runInNewContext(script.replace(/import \{ (?:createTutorialAnalytics|createFirstShotHandoff) \} from [^;]+;/g, ""), {
 			window, document: { getElementById: get, createElement: element, querySelectorAll: () => [] },
 			matchMedia: () => ({ matches: true }), setTimeout: () => 1, clearTimeout() {},
+			createFirstShotHandoff,
 			createTutorialAnalytics(metadata) {
 				expect("landing supplies its own safe surface/source", metadata.surface === "playground" && metadata.startSource === "landing");
 				const attempt = f.start(); attempts.push(attempt); return attempt;

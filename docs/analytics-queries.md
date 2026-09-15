@@ -1427,3 +1427,325 @@ This query applies #270's type-exact internal-QA exclusion to every source event
 Do not infer traffic or channel use from prompts, responses, arguments, labels,
 paths or graph contents. Browser QA intercepts the SDK locally; these are
 documented HogQL queries, not claimed live PostHog results.
+
+# First-shot play to export attempt cohort comparison
+
+Issue #275 reuses ordinary `export:attempt_started`; there is no handoff-click,
+handoff-exposure or tutorial-attributed export event. This read-only HogQL
+comparison measures **first observed numeric-v1 tutorial play -> an ordinary
+export start within seven elapsed days**, not export success, completed video
+viewing, lifetime first shot, or the causal effect of the new prompt. The
+existing Studio look-through-after-rail and Playground playback milestones
+remain different. No production query, sample size or significance result is
+claimed here; production results are **not run / unavailable**, not zero.
+
+## Comparison population and boundaries
+
+- Apply #270's population, identity and time contract above to every source
+  event: exclude only raw JSON boolean `internal_qa: true`; include false,
+  missing and unexpected marker types. Never infer internal traffic from
+  localhost, ports, geography, names or gestures. Numeric version 1 is
+  `JSONExtractRaw(..., 'tutorial_version') = '1'`, and the optional first-edit
+  check uses the same type-exact rule for `definition_version`.
+- Report **Studio / npm-local** and **Playground / hosted** independently.
+  Match export surfaces `studio` and `embed`, respectively; exclude Workflow
+  and hosted Studio from this comparison. A user is one exact `distinct_id`
+  within that population/surface, not a person, tab, session or attempt.
+  CLI-state resets, separate devices/state files and hosted browser identities
+  remain separate. There is no hosted-to-npm identity bridge, even if someone
+  downloads a project and later opens it locally.
+- Take each ID/surface's first eligible v1 play over **all retained external
+  history before the cutoff**, before filtering to the observation, release
+  or before/after windows. A repeated play/restart in the after period cannot
+  re-enroll a before-period ID. Record the retained-history floor: truncated
+  history and earlier unmarked/undelivered activity prevent lifetime claims.
+  This is a cohort of observed players, not all new users or tutorial starters;
+  navigation-only users outside it are not evidence of inactivity.
+- Replace every illustrative UTC constant below with recorded release and
+  observation boundaries. Before/after bounds are Monday 00:00 KST (Sunday
+  15:00 UTC), exclusive at the right edge, with equal numbers of complete
+  weeks. Runtime #270, tutorial #271, first-edit #269 and export #272 must all
+  cover both periods; use the latest applicable schema rollout across these
+  two populations. If no comparable pre-handoff telemetry exists, report
+  **no measurable before cohort**, not a reconstructed baseline.
+- `handoff_rollout_start_utc` is the earliest #275 deployment on either
+  surface; `handoff_rollout_end_utc` is the latest completed rollout. Before
+  weeks' entire seven-day follow-up must end by the former; after weeks must
+  begin at or after the latter. This drops the transition and crossover weeks.
+  Require each whole cohort week plus seven days to fit before the fixed
+  observation cutoff. This is elapsed-time maturity, not proof of delivery.
+  An old npm client is not upgraded by a calendar boundary: inspect version
+  coverage and record the actual releases before interpreting calendar eras.
+
+## Ordered user cohort query
+
+The full player denominator retains IDs whose first play lacks usable SDK
+context. `linkable_play_users` reports the subset with nonempty session/window
+IDs and only one context at that earliest timestamp; ambiguous simultaneous
+first plays are excluded from linking, not replaced by a later convenient
+play. Studio joins require the same ID, session **and window**, keeping other
+tabs out. Playground uses the same exact hosted ID/session but cannot require
+the host's window ID on its iframe's edit/export events. Its explicitly named
+`same_session_cross_window` result is a session association, potentially across
+tabs, **not** a proven host/iframe pair. Do not pool it with Studio or infer
+missing IDs. The schema has no parent-window or tutorial-attempt join key.
+
+The primary numerator does not require a first-edit event: it answers play to
+start directly. Separate columns show numeric-v1 edit evidence strictly before
+play in that same context and conversion among that subset. The edit may
+precede tutorial start; a mount emits it only once. Neither missing evidence
+nor sample seeding is relabeled as an edit. No tutorial attempt is inferred:
+restarts in a session can contribute to the association, and a start may be
+missing. Use #271's step/attempt diagnostics for that different denominator.
+
+Repeated start deliveries reduce to the earliest start in retained history
+per `(population, distinct_id, attempt_id, export_surface)`. Inconsistent
+session/window/kind/format metadata excludes that attempt from linking.
+All four ordinary lifecycle kinds are eligible with their declared formats;
+there is no special handoff kind. Starts must be strictly later than play and
+strictly before play + seven days. Failed, cancelled and unresolved attempts
+still count as starts. Terminal-only and legacy-success events do not count.
+
+```sql
+WITH
+    toDateTime64('2026-07-01 00:00:00', 3, 'UTC') AS observation_start_utc,
+    toDateTime64('2026-09-06 15:00:00', 3, 'UTC') AS observation_end_utc,
+    toDateTime64('2026-07-01 00:00:00', 3, 'UTC') AS runtime_deployed_utc,
+    toDateTime64('2026-07-01 00:00:00', 3, 'UTC') AS tutorial_v1_deployed_utc,
+    toDateTime64('2026-07-01 00:00:00', 3, 'UTC') AS edit_v1_deployed_utc,
+    toDateTime64('2026-07-01 00:00:00', 3, 'UTC') AS export_deployed_utc,
+    toDateTime64('2026-08-20 00:00:00', 3, 'UTC') AS handoff_rollout_start_utc,
+    toDateTime64('2026-08-21 00:00:00', 3, 'UTC') AS handoff_rollout_end_utc,
+    toDateTime64('2026-08-02 15:00:00', 3, 'UTC') AS before_start_utc,
+    toDateTime64('2026-08-09 15:00:00', 3, 'UTC') AS before_end_utc,
+    toDateTime64('2026-08-23 15:00:00', 3, 'UTC') AS after_start_utc,
+    toDateTime64('2026-08-30 15:00:00', 3, 'UTC') AS after_end_utc,
+    external_history AS (
+        SELECT distinct_id, timestamp, event, properties,
+            if(properties.distribution = 'npm', 'npm_local', 'hosted') AS population
+        FROM events
+        WHERE timestamp < observation_end_utc
+          AND notEmpty(distinct_id)
+          AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+          AND ((properties.distribution = 'npm' AND properties.origin_kind = 'local')
+            OR (properties.distribution = 'hosted' AND properties.origin_kind = 'hosted'))
+          AND event IN ('tutorial:step_completed', 'craft:first_edit',
+              'playground:first_edit', 'export:attempt_started')
+    ), play_events AS (
+        SELECT distinct_id, population, timestamp,
+            properties.surface AS tutorial_surface,
+            properties.$session_id AS session_id,
+            properties.$window_id AS window_id
+        FROM external_history
+        WHERE event = 'tutorial:step_completed' AND properties.step_kind = 'play'
+          AND JSONExtractRaw(properties, 'tutorial_version') = '1'
+          AND ((population = 'npm_local' AND properties.surface = 'studio')
+            OR (population = 'hosted' AND properties.surface = 'playground'))
+    ), first_play_history AS (
+        SELECT distinct_id, population, tutorial_surface, min(timestamp) AS played_at
+        FROM play_events
+        GROUP BY distinct_id, population, tutorial_surface
+    ), first_plays AS (
+        SELECT p.distinct_id, p.population, p.tutorial_surface, p.played_at,
+            min(e.session_id) AS session_id, min(e.window_id) AS window_id,
+            uniqExact(tuple(e.session_id, e.window_id)) AS first_play_contexts,
+            toStartOfWeek(toTimeZone(p.played_at, 'Asia/Seoul'), 1) AS week_start_kst
+        FROM first_play_history AS p
+        INNER JOIN play_events AS e ON e.distinct_id = p.distinct_id
+            AND e.population = p.population AND e.tutorial_surface = p.tutorial_surface
+            AND e.timestamp = p.played_at
+        GROUP BY p.distinct_id, p.population, p.tutorial_surface, p.played_at
+    ), dated AS (
+        SELECT *, toDateTime64(toString(week_start_kst), 3, 'Asia/Seoul') AS week_at
+        FROM first_plays
+    ), cohort AS (
+        SELECT *, if(week_at < before_end_utc, 'before', 'after') AS period
+        FROM dated
+        WHERE week_at >= greatest(observation_start_utc, runtime_deployed_utc,
+                tutorial_v1_deployed_utc, edit_v1_deployed_utc, export_deployed_utc)
+          AND week_at + INTERVAL 14 DAY <= observation_end_utc
+          AND (
+              (week_at >= before_start_utc AND week_at + INTERVAL 7 DAY <= before_end_utc
+               AND week_at + INTERVAL 14 DAY <= handoff_rollout_start_utc)
+              OR (week_at >= after_start_utc AND week_at + INTERVAL 7 DAY <= after_end_utc
+                  AND week_at >= handoff_rollout_end_utc)
+          )
+    ), linkable AS (
+        SELECT * FROM cohort
+        WHERE first_play_contexts = 1 AND notEmpty(session_id) AND notEmpty(window_id)
+    ), edited AS (
+        SELECT DISTINCT p.distinct_id, p.population, p.tutorial_surface, p.period
+        FROM linkable AS p
+        INNER JOIN external_history AS e ON e.distinct_id = p.distinct_id
+            AND e.population = p.population AND e.properties.$session_id = p.session_id
+        WHERE JSONExtractRaw(e.properties, 'definition_version') = '1'
+          AND e.timestamp >= greatest(observation_start_utc, edit_v1_deployed_utc,
+                runtime_deployed_utc)
+          AND e.timestamp < p.played_at
+          AND ((p.tutorial_surface = 'studio' AND e.event = 'craft:first_edit'
+                AND e.properties.$window_id = p.window_id)
+            OR (p.tutorial_surface = 'playground' AND e.event = 'playground:first_edit'
+                AND notEmpty(e.properties.$window_id)))
+    ), start_history AS (
+        SELECT distinct_id, population, properties.attempt_id AS attempt_id,
+            properties.surface AS export_surface, min(timestamp) AS started_at,
+            min(properties.$session_id) AS session_id,
+            min(properties.$window_id) AS window_id,
+            min(properties.export_kind) AS export_kind,
+            min(properties.format) AS format,
+            uniqExact(tuple(properties.$session_id, properties.$window_id,
+                properties.export_kind, properties.format)) AS metadata_variants
+        FROM external_history
+        WHERE event = 'export:attempt_started'
+          AND match(properties.attempt_id, '^[0-9a-f]{32}$')
+          AND ((population = 'npm_local' AND properties.surface = 'studio')
+            OR (population = 'hosted' AND properties.surface = 'embed'))
+        GROUP BY distinct_id, population, properties.attempt_id, properties.surface
+    ), starts AS (
+        SELECT * FROM start_history
+        WHERE metadata_variants = 1 AND notEmpty(session_id) AND notEmpty(window_id)
+          AND ((export_kind IN ('video', 'depth_video') AND format = 'mp4')
+            OR (export_kind = 'frame' AND format = 'png')
+            OR (export_kind = 'keyframe_pack' AND format = 'zip'))
+    ), converted AS (
+        SELECT DISTINCT p.distinct_id, p.population, p.tutorial_surface, p.period
+        FROM linkable AS p
+        INNER JOIN starts AS s ON s.distinct_id = p.distinct_id
+            AND s.population = p.population AND s.session_id = p.session_id
+        WHERE s.started_at > p.played_at
+          AND s.started_at < p.played_at + INTERVAL 7 DAY
+          AND ((p.tutorial_surface = 'studio' AND s.export_surface = 'studio'
+                AND s.window_id = p.window_id)
+            OR (p.tutorial_surface = 'playground' AND s.export_surface = 'embed'))
+    ), edited_converted AS (
+        SELECT c.distinct_id, c.population, c.tutorial_surface, c.period
+        FROM converted AS c
+        INNER JOIN edited AS d ON d.distinct_id = c.distinct_id
+            AND d.population = c.population AND d.tutorial_surface = c.tutorial_surface
+            AND d.period = c.period
+    ), stages AS (
+        SELECT distinct_id, population, tutorial_surface, period, 'play' AS stage FROM cohort
+        UNION ALL
+        SELECT distinct_id, population, tutorial_surface, period, 'linkable' AS stage FROM linkable
+        UNION ALL
+        SELECT distinct_id, population, tutorial_surface, period, 'edit_v1' AS stage FROM edited
+        UNION ALL
+        SELECT distinct_id, population, tutorial_surface, period, 'export_start' AS stage FROM converted
+        UNION ALL
+        SELECT distinct_id, population, tutorial_surface, period, 'edited_export_start' AS stage FROM edited_converted
+    )
+SELECT
+    population, tutorial_surface, period,
+    if(tutorial_surface = 'studio', 'same_session_same_window',
+        'same_session_cross_window') AS association_scope,
+    if(period = 'before', before_start_utc, after_start_utc) AS cohort_start_utc,
+    if(period = 'before', before_end_utc, after_end_utc) AS cohort_end_utc,
+    observation_end_utc AS observed_until_utc,
+    countIf(stage = 'play') AS first_observed_play_users,
+    countIf(stage = 'linkable') AS linkable_play_users,
+    countIf(stage = 'play') - countIf(stage = 'linkable') AS unlinked_context_play_users,
+    countIf(stage = 'edit_v1') AS observed_edit_v1_before_play_users,
+    countIf(stage = 'export_start') AS export_started_after_play_users,
+    countIf(stage = 'edited_export_start') AS export_started_after_edit_and_play_users,
+    round(100.0 * countIf(stage = 'export_start')
+        / nullIf(countIf(stage = 'play'), 0), 2) AS observed_play_to_start_pct,
+    round(100.0 * countIf(stage = 'export_start')
+        / nullIf(countIf(stage = 'linkable'), 0), 2) AS linkable_play_to_start_pct,
+    round(100.0 * countIf(stage = 'edited_export_start')
+        / nullIf(countIf(stage = 'edit_v1'), 0), 2) AS edit_evidenced_play_to_start_pct
+FROM stages
+GROUP BY population, tutorial_surface, period
+ORDER BY population, tutorial_surface, period
+```
+
+All stage rows are unique ID/population/surface rows, so retries, duplicate
+deliveries and several matching exports cannot inflate the sample sizes.
+Only `INNER JOIN` and explicit stage unions are used: unmatched ClickHouse
+default rows cannot become conversions. There are no unguarded `minIf` dates
+or nullable-right-side counts. The full-denominator rate is observed linked
+conversion, not an estimate that unlinked users did not export. The
+linkable-only rate is coverage-selected; publish both denominators, not just
+the more favorable rate. No eligible player row means no denominator; do not
+fill absent before/after rows with synthetic zeros. Publish omitted partial,
+transition, pre-schema and immature weeks alongside the selected KST weeks.
+
+## Coverage companion and reporting limits
+
+Run this independent coverage query with the same observation constants.
+Unlike the funnel, it retains internal-marked, unclassified and malformed
+events to reveal exclusions. Use #270 query D as well for legacy/runtime
+coverage. Raw JSON values distinguish booleans and numeric versions from
+strings or absence. Missing session/window IDs are shown, never synthesized.
+Cell-level unique IDs are not additive across events, versions or weeks.
+
+```sql
+WITH
+    toDateTime64('2026-07-01 00:00:00', 3, 'UTC') AS observation_start_utc,
+    toDateTime64('2026-09-06 15:00:00', 3, 'UTC') AS observation_end_utc
+SELECT
+    toStartOfWeek(toTimeZone(timestamp, 'Asia/Seoul'), 1) AS week_start_kst,
+    event,
+    JSONExtractRaw(properties, 'distribution') AS distribution_json,
+    JSONExtractRaw(properties, 'origin_kind') AS origin_kind_json,
+    JSONExtractRaw(properties, 'app_version') AS app_version_json,
+    JSONExtractRaw(properties, 'internal_qa') AS qa_marker_json,
+    JSONExtractRaw(properties, 'surface') AS surface_json,
+    JSONExtractRaw(properties, 'step_kind') AS step_kind_json,
+    JSONExtractRaw(properties, 'tutorial_version') AS tutorial_version_json,
+    JSONExtractRaw(properties, 'definition_version') AS definition_version_json,
+    JSONExtractRaw(properties, 'export_kind') AS export_kind_json,
+    JSONExtractRaw(properties, 'format') AS format_json,
+    if(notEmpty(distinct_id), 'present', 'missing') AS distinct_id_coverage,
+    if(notEmpty(properties.$session_id), 'present', 'missing') AS session_coverage,
+    if(notEmpty(properties.$window_id), 'present', 'missing') AS window_coverage,
+    if(event = 'export:attempt_started',
+        if(match(properties.attempt_id, '^[0-9a-f]{32}$'), 'valid', 'missing_or_invalid'),
+        'not_applicable') AS attempt_id_coverage,
+    count() AS event_deliveries, uniqExact(distinct_id) AS distinct_ids
+FROM events
+WHERE timestamp >= observation_start_utc AND timestamp < observation_end_utc
+  AND event IN ('tutorial:started', 'tutorial:step_completed',
+      'craft:first_edit', 'playground:first_edit', 'export:attempt_started',
+      'landing:playground_scene_downloaded')
+GROUP BY week_start_kst, event, distribution_json, origin_kind_json,
+    app_version_json, qa_marker_json, surface_json, step_kind_json,
+    tutorial_version_json, definition_version_json, export_kind_json, format_json,
+    distinct_id_coverage, session_coverage, window_coverage, attempt_id_coverage
+ORDER BY week_start_kst, event, app_version_json, qa_marker_json
+```
+
+- **Project handoff is a separate outcome.** Playground's take-it-with-you
+  `.cclayproject` download uses `cozyclay:playground-export` / its result and
+  the existing landing event `landing:playground_scene_downloaded`. It is
+  **not covered by the export lifecycle**: it has no lifecycle `attempt_id`
+  or start, and does not prove local import, video encoding or OS save.
+  The exact landing event appears in the coverage query only as a
+  supplementary marginal delivery/ID count, never in any conversion stage.
+  Its separate `window.posthog` capture must have its own runtime/QA/identity
+  coverage checked; missing dimensions do not inherit those of the editor.
+  Where hosted video export is unavailable, lifecycle starts do not measure
+  the intended project handoff. Report that capability/schema gap rather
+  than treating a missing hosted lifecycle numerator as failed handoffs.
+- The seven-day horizon is capped by the same observed SDK session (and
+  Studio window). A later-session export is outside this metric even within
+  seven days. Sessions may span mounts/tabs, and first edits are mount-scoped.
+  Duplicate starts, session rotation, equal timestamps, missing context,
+  retention, opt-out, DNT, blocking and late SDK capture limit ordered joins.
+  A delayed tutorial flush can place play after an actual export or collapse
+  timestamps; no client bucket repairs event-time ordering. Entirely unseen
+  users and lost events have no estimable denominator here.
+- There is no shot/project ID in these events. Even a same-window export
+  cannot prove it exported the played shot, preserved its camera/range, or
+  came from the contextual prompt rather than the ordinary menu. The query
+  does not reproduce UI eligibility for previously exported projects,
+  previously completed tutorials or dismissed attempts. User-visible QA
+  supplies those behavioral checks, not invented analytics attribution.
+- Save query text, project/environment, execution UTC time, repository commit,
+  definition `issue275-play-to-start-v1`, actual npm/hosted versions and rollout
+  times, retained-history floor, UTC bounds/KST Mondays and Sundays, cutoff,
+  result CSVs and any truncation/ingestion lag. For each surface and era report
+  every integer sample-size column with its rates and coverage exclusions.
+  Preserve fixed-cutoff exports because backfills/deletion can change reruns.
+  Compare equal complete mature periods descriptively; traffic mix, rollout
+  adoption, small samples and observability can explain a change. This is not
+  a randomized A/B test and supplies no significance or causal-lift claim.

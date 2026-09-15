@@ -211,6 +211,10 @@
       .related a small { display: block; color: var(--muted); margin-top: 4px; font-weight: 400; }
       .related a:hover { border-color: var(--muted); }
       .tutorial-done[hidden] { display: none; }
+      .tutorial-steps[hidden] { display: none; }
+      .tutorial-done p { flex-basis: 100%; margin: 0; }
+      #playground-download-status, #playground-download-error { flex-basis: 100%; margin: 0; }
+      .playground-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
       button.copy {
         background: var(--panel); border: 1px solid var(--line); color: var(--ink);
         border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
@@ -345,13 +349,14 @@
           </div>
         </div>
         <div class="playground-bar">
-          <p class="tutorial-done" id="tutorial-done">
-            You just flew the camera, cut a shot and laid its dolly. That is exactly what gets handed to the video model.
-            Keep going on your machine with the same set:
-            <button type="button" class="copy" data-copy="npx cozyclay --scene city-block">Copy <code>npx cozyclay --scene city-block</code></button>
-            <button type="button" id="playground-download" class="copy">Download my scene</button>
-            <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
-          </p>
+          <div class="tutorial-done" id="tutorial-done" hidden>
+            <p>Take your shot with you. Video export is not offered in this embedded Playground.</p>
+            <p>Download your edited project, run <code>npx cozyclay</code>, and open the downloaded <code>.cclayproject</code> in the local Studio. Use its existing Export menu for video.</p>
+            <button type="button" id="playground-download" class="copy">Download my project</button>
+            <button type="button" id="playground-handoff-dismiss">Continue editing</button>
+          </div>
+          <p id="playground-download-status" role="status" hidden></p>
+          <p id="playground-download-error" role="alert" hidden></p>
           <span class="spacer"></span>
           <button type="button" id="playground-full">Fullscreen</button>
           <a href="/app/" target="_blank" rel="noopener">Open studio ↗</a>
@@ -359,6 +364,7 @@
         </div>
         <script type="module">
           import { createTutorialAnalytics } from "/src/tutorial-analytics.js";
+          import { createFirstShotHandoff } from "/src/first-shot-handoff.js";
 
           (() => {
             const box = document.getElementById("playground");
@@ -371,6 +377,10 @@
             const start = document.getElementById("playground-start");
             const full = document.getElementById("playground-full");
             const close = document.getElementById("playground-close");
+            const download = document.getElementById("playground-download");
+            const downloadStatus = document.getElementById("playground-download-status");
+            const downloadError = document.getElementById("playground-download-error");
+            const continueEditing = document.getElementById("playground-handoff-dismiss");
             const SRC = "/app/?embed=playground&scene=/scenes/city-block.cclayproject";
             const canPlay = () => matchMedia("(min-width: 721px) and (hover: hover)").matches;
             const WALK_KEYS = ["w", "a", "s", "d", "q", "e"];
@@ -388,16 +398,22 @@
             const done = new Set();
             let frame = null;
             let tutorialAnalytics = null;
+            let handoff = null;
+            let tutorialHidden = false;
+            let downloadPending = false;
+            let handoffStarted = false;
             let cancelReady = () => {};
             const renderTutorial = () => {
               const live = box.dataset.state === "live";
               const current = live ? STEPS.find((s) => !done.has(s.kind)) : null;
               if (live) tutorialAnalytics?.observe(done, current?.kind ?? null);
               stepsEl.innerHTML = STEPS.map((s, i) => `<li data-done="${done.has(s.kind) ? 1 : 0}" data-current="${current === s ? 1 : 0}">${i + 1} ${s.label}</li>`).join("");
-              card.hidden = !current;
+              card.hidden = !current || tutorialHidden;
+              stepsEl.hidden = tutorialHidden;
               if (current) { cardStep.textContent = `${STEPS.indexOf(current) + 1} / ${STEPS.length}`; nowEl.innerHTML = current.how(); }
-              doneEl.hidden = !(live && !current);
-              frame?.contentWindow?.postMessage({ type: "cozyclay:playground-hint", kind: current?.kind ?? null }, "*");
+              doneEl.hidden = !(live && !tutorialHidden && (handoff?.canShow(done) || handoffStarted));
+              if (live && !current) handoff?.complete();
+              frame?.contentWindow?.postMessage({ type: "cozyclay:playground-hint", kind: tutorialHidden ? null : current?.kind ?? null }, "*");
               if (live && !current && !renderTutorial.reported) { renderTutorial.reported = true; if (window.posthog?.capture) window.posthog.capture("landing:playground_tutorial_done"); }
             };
             window.addEventListener("message", (event) => {
@@ -416,6 +432,13 @@
             });
             const stop = ({ dismiss = true } = {}) => {
               if (dismiss) tutorialAnalytics?.dismiss();
+              if (dismiss && frame) handoff?.dismiss();
+              handoff = null;
+              downloadPending = false;
+              handoffStarted = false;
+              download.disabled = false;
+              downloadError.hidden = true;
+              downloadStatus.hidden = true;
               tutorialAnalytics = null;
               cancelReady();
               if (frame) frame.remove();
@@ -430,6 +453,8 @@
             start.addEventListener("click", () => {
               if (!canPlay()) return;
               if (frame) stop({ dismiss: false });
+              handoff = createFirstShotHandoff();
+              tutorialHidden = false;
               tutorialAnalytics = createTutorialAnalytics({ surface: "playground", startSource: "landing" });
               frame = document.createElement("iframe");
               frame.src = SRC;
@@ -453,16 +478,36 @@
               if (window.posthog?.capture) window.posthog.capture("landing:playground_started");
             });
             full.addEventListener("click", () => { if (frame?.requestFullscreen) frame.requestFullscreen(); });
-            const download = document.getElementById("playground-download");
+            continueEditing.addEventListener("click", () => {
+              handoff?.dismiss();
+              tutorialAnalytics?.dismiss();
+              tutorialHidden = true;
+              handoffStarted = false;
+              downloadError.hidden = true;
+              renderTutorial();
+            });
             download.addEventListener("click", () => {
-              if (!frame) return;
+              if (!frame || downloadPending) return;
+              handoff?.exportStarted();
+              downloadPending = true;
+              handoffStarted = true;
               download.disabled = true;
+              downloadError.hidden = true;
+              downloadStatus.hidden = false;
+              downloadStatus.textContent = "Preparing your edited project…";
               frame.contentWindow.postMessage({ type: "cozyclay:playground-export" }, "*");
             });
             window.addEventListener("message", (event) => {
               if (event.data?.type !== "cozyclay:playground-export-result") return;
+              if (!downloadPending || !frame || event.source !== frame.contentWindow || event.origin !== window.location.origin) return;
+              downloadPending = false;
               download.disabled = false;
-              if (!event.data.serialized) return;
+              if (typeof event.data.serialized !== "string" || !event.data.serialized) {
+                downloadStatus.hidden = true;
+                downloadError.hidden = false;
+                downloadError.textContent = "The project could not be prepared. Your edits are still here; try Download my project again.";
+                return;
+              }
               const blob = new Blob([event.data.serialized], { type: "application/json" });
               const url = URL.createObjectURL(blob);
               const a = document.createElement("a");
@@ -471,6 +516,9 @@
               a.click();
               setTimeout(() => URL.revokeObjectURL(url), 1000);
               download.dataset.state = "copied";
+              handoffStarted = false;
+              downloadStatus.textContent = "Project download requested. Open city-block.cclayproject in your local Studio, then use Export.";
+              renderTutorial();
               setTimeout(() => { download.dataset.state = ""; }, 1400);
               if (window.posthog?.capture) window.posthog.capture("landing:playground_scene_downloaded");
             });

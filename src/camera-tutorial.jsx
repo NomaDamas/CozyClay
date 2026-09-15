@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ko } from "./locale.js";
 
@@ -327,10 +327,11 @@ export function GestureCue({ kind, walked, leaving = false, onLeft }) {
  * Top-View inset, and never takes the pointer except on its own close button
  * — every step is completed by working the studio underneath it.
  */
-export function CameraTutorial({ previewing = false, analytics, onStepChange, onClose }) {
+export function CameraTutorial({ previewing = false, analytics, onStepChange, onClose, onComplete, handoff = null, shotId = null, onOpenExport, onContinue }) {
 	const [done, setDone] = useState(() => new Set());
 	const [walked, setWalked] = useState(() => new Set());
 	const [cue, setCue] = useState(null);
+	const completionReported = useRef(false);
 
 	useEffect(() => {
 		const complete = (kind) => setDone((current) => (current.has(kind) ? current : new Set(current).add(kind)));
@@ -373,6 +374,12 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 	const current = useMemo(() => CAMERA_TUTORIAL_STEPS.find((step) => !done.has(step.kind)) ?? null, [done]);
 	const complete = current === null;
 	const currentKind = current?.kind ?? null;
+	const showHandoff = !!shotId && (handoff?.canShow(done) ?? false);
+	useEffect(() => {
+		if (!complete || completionReported.current) return;
+		completionReported.current = true;
+		onComplete?.();
+	}, [complete, onComplete]);
 
 	// Observe committed progression, outside state updaters (which StrictMode
 	// may replay). The attempt belongs to App and survives effect cleanup/resume.
@@ -409,6 +416,7 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 			data-testid="camera-tutorial"
 			data-state={complete ? "done" : "active"}
 			data-previewing={previewing ? 1 : 0}
+			data-handoff={showHandoff ? 1 : undefined}
 			aria-label={ko("Camera tutorial", "카메라 튜토리얼")}
 		>
 			<ol className="camera-tutorial-steps">
@@ -444,6 +452,17 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 					</>
 				)}
 			</div>
+			{showHandoff && (
+				<div className="camera-tutorial-handoff" data-testid="camera-tutorial-handoff">
+					<p>{ko("Take this shot with you. Its camera and range stay yours.", "이 샷을 가져가세요. 설정한 카메라와 범위가 그대로 유지됩니다.")}</p>
+					<button type="button" className="btn primary" data-testid="camera-tutorial-handoff-export" onClick={() => onOpenExport?.(shotId)}>
+						{ko("Open Export", "내보내기 열기")}
+					</button>
+					<button type="button" className="camera-tutorial-handoff-dismiss" data-testid="camera-tutorial-handoff-dismiss" onClick={() => onContinue?.()}>
+						{ko("Continue editing", "편집 계속하기")}
+					</button>
+				</div>
+			)}
 			<button
 				type="button"
 				className="camera-tutorial-close"
