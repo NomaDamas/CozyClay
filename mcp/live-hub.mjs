@@ -109,6 +109,8 @@ const mutationCommands = new Set([
 	"set_prompt_blocks",
 	"load_motion",
 	"load_scenes",
+	"operate_studio", "arrange_objects", "arrange_characters", "frame_shot", "undo_edit",
+	"commit_motion_candidate", "import_asset",
 ]);
 
 export class LiveMutationUncertainError extends Error {}
@@ -169,7 +171,8 @@ export class LiveHub {
 	}
 
 	static commandTimeoutMs(name) {
-		if (name === "load_motion") return LOAD_MOTION_TIMEOUT_MS;
+		if (name === "load_motion" || name === "prepare_motion_install") return LOAD_MOTION_TIMEOUT_MS;
+		if (name === "verify_motion_candidate" || name === "repair_motion_candidate") return 60_000;
 		// Close two-person shots (OTS) raycast two skinned rigs over a full-frame
 		// AABB; 5 s is not enough. The PNG itself is cheap; the rays are not.
 		if (name === "capture_frame") return CAPTURE_FRAME_TIMEOUT_MS;

@@ -29,6 +29,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { LiveMutationUncertainError } from "./live-hub.mjs";
+import { readMotionStream } from "../bin/agent/motion-runtime.mjs";
 import { motionPreflightReason, startMotionRequest } from "../src/analytics.js";
 import { BLOCK_MAX_SECONDS, PROMPT_GUIDE, normalizePhases, splitLongBeat, tileClipFrames } from "./ardy-prompts.mjs";
 
@@ -1399,28 +1400,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 							const res = await fetch(`${bridge}/ardy/generate`, {
 								method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal,
 							});
-							if (!res.ok) throw new Error(`Generation refused (HTTP ${res.status}): ${await res.text()}`);
-							const reader = res.body?.getReader();
-							if (!reader) throw new Error("Generation response has no body stream.");
-							const decoder = new TextDecoder();
-							let buffer = "";
-							for (;;) {
-								const chunk = await reader.read();
-								if (chunk.done) break;
-								buffer += decoder.decode(chunk.value, { stream: true });
-								let newline = buffer.indexOf("\n");
-								while (newline !== -1) {
-									const line = buffer.slice(0, newline).trim();
-									buffer = buffer.slice(newline + 1);
-									if (line) {
-										const event = JSON.parse(line);
-										if (event.event === "error") throw new Error(event.message ?? "Generator error.");
-										if (event.event === "done") motionUrl = event.motionUrl;
-									}
-									newline = buffer.indexOf("\n");
-								}
-								if (motionUrl) break;
-							}
+							motionUrl = await readMotionStream(res);
 						}
 						if (job.status === "cancelled") return;
 						if (typeof motionUrl !== "string") throw new Error("Generation ended without a motion.");

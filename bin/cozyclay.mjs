@@ -412,7 +412,11 @@ if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 	}
 }
 
-const agentHandler = createAgentHandler({ port: () => opts.port });
+// Task 6 consumes this getter when constructing the Studio runtime. Never
+// substitute an environment/default port for a sidecar this launcher owns.
+const getBridgeOrigin = () => bridge && bridgePort !== null && bridge.exitCode === null && bridge.signalCode === null
+	? `http://127.0.0.1:${bridgePort}` : null;
+const agentHandler = createAgentHandler({ port: () => opts.port, getBridgeOrigin });
 server = createServer((req, res) => {
 	const url = new URL(req.url ?? "/", "http://127.0.0.1");
 	if (/^\/oauth\/(start|status|logout)$/.test(url.pathname)) {

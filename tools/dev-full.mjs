@@ -90,7 +90,10 @@ if (kimodoHost) {
 	);
 }
 
-const agentHandler = createAgentHandler({ port: mainPort });
+// Resolved once per Studio admission by task 6, not from the historical port.
+const getBridgeOrigin = () => bridge && bridgePort !== undefined && bridge.exitCode === null && bridge.signalCode === null
+	? `http://127.0.0.1:${bridgePort}` : null;
+const agentHandler = createAgentHandler({ port: mainPort, getBridgeOrigin });
 const oauthServer = createServer((req, res) => {
 	const path = (req.url || "").split("?")[0];
 	const hosts = new Set([`127.0.0.1:${mainPort}`, `localhost:${mainPort}`]);
