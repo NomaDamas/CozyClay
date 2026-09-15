@@ -3254,6 +3254,9 @@ export default function App() {
 	const studioRevisionRef = useRef({ scene: 0, physics: 0, view: 0 });
 	const buildStudioAgentContext = () => {
 		const scene = scenes.find((entry) => entry.id === activeSceneId) ?? scenes[0];
+		const selectedCharacterId = charIdFromHierarchyId(selectedHierarchyId) ?? (parseRigNodeId(selectedHierarchyId)?.rowId ? charIdFromHierarchyId(parseRigNodeId(selectedHierarchyId).rowId) : null);
+		const selectedEntityId = selectedSceneObject?.id ?? selectedCharacterId ?? (isCharacterSelection ? activeChar?.id : null);
+		const selectedEntityKind = selectedSceneObject ? "object" : selectedEntityId ? "character" : "scene";
 		const entities = [
 			...characters.filter((entry) => !entry.hidden).map((entry) => ({
 				id: entry.id, kind: "character", token: `character:${entry.id}`,
@@ -3276,7 +3279,7 @@ export default function App() {
 			schema: "studio-context-v1", host: { surface: "studio", workspaceId: "cozyclay-local", workspaceHandle: null, documentEpoch: studioDocumentEpochRef.current, sceneId: scene.id, sceneEpoch: studioSceneEpochRef.current },
 			revision: studioRevisionRef.current, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
 			scene: { name: scene.name, aspect: scene.aspect ?? "16:9", floorY: 0, frameCount: tlFrameCount, objectCount: sceneObjects.length, characterCount: characters.length },
-			selection: selectedHierarchyId ? { kind: selectedSceneObject ? "object" : isCameraSelection ? "camera" : isCharacterSelection ? "character" : "scene", id: selectedSceneObject?.id ?? selectedHierarchyId, hierarchyId: selectedHierarchyId } : null,
+			selection: { kind: selectedEntityKind, id: selectedEntityId ?? scene.id, hierarchyId: selectedHierarchyId },
 			activeCharacterId: activeChar?.id ?? null, view: { mode: workflowMode === "motion" ? "motion" : workflowMode === "camera" ? "camera" : "scene", frame: tlFrame, playing: tlPlaying, lookThrough: lookThroughShot, grid: true, autoColor },
 			shot: activeShot ? { id: activeShot.id, name: activeShot.name, range: { startFrame: activeShot.startFrame ?? 0, endFrameExclusive: activeShot.endFrameExclusive ?? tlFrameCount }, mode: activeShot.mode ?? "keys", subjectIds: activeShot.subjectIds ?? [] } : null,
 			camera: shot ? { position: { x: shot.x ?? 0, y: shot.y ?? 0, z: shot.z ?? 0 }, lookAt: { x: 0, y: 1, z: 0 }, focalMm: shot.focalMm ?? 50, sensorId: "filmback:default", slate: activeShot?.name ?? "Camera" } : null,
