@@ -11349,4 +11349,11 @@ input[type=range] {
 }
 
 /* Studio Agent shares the Inspector footprint. */
-.inspector-agent-switch{margin-left:auto;border:1px solid var(--line2);border-radius:4px;background:var(--card2);color:var(--fg);padding:3px 8px;font-size:11px;cursor:pointer}.inspector-agent-switch:hover,.inspector-agent-switch[aria-pressed="true"]{border-color:var(--accent);color:var(--on-accent);background:var(--accent-2)}.studio-agent-inspector{display:flex;flex-direction:column;min-height:0;height:100%}.studio-agent-inspector>.agent-panel{flex:1 1 auto;min-height:0;width:100%}
+.inspector-agent-switch { margin-left: auto; border: 1px solid var(--line2); border-radius: 4px; background: var(--card2); color: var(--fg); padding: 3px 8px; font-size: 11px; cursor: pointer; }
+.inspector-agent-switch:hover, .inspector-agent-switch[aria-pressed="true"] { border-color: var(--accent); color: var(--on-accent); background: var(--accent-2); }
+.studio-agent-inspector { display: flex; flex-direction: column; min-height: 0; height: 100%; }
+.studio-agent-inspector > .agent-panel { flex: 1 1 auto; min-height: 0; width: 100%; }
+.studio-agent-inspector[hidden], .inspector-sidebar .inspector-pane[hidden] { display: none; }
+@media (max-width: 700px) {
+	.studio-agent-inspector { min-height: 540px; max-height: 80vh; }
+}

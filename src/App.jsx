@@ -56,8 +56,12 @@ import { createLiveControl } from "./live-control.js";
 import { createFirstEditTracker } from "./semantic-edit.js";
 import { useSemanticState } from "./use-semantic-state.js";
 import AgentPanel from "./workflow/AgentPanel.jsx";
-import { buildStudioContext } from "./studio-agent-context.js";
-import { STUDIO_TOOL_FAMILIES } from "./studio-agent-protocol.js";
+import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
+import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt } from "./studio-agent-protocol.js";
+import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
+import { createStudioMotionCandidates } from "./studio-agent-motion.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { requestHostImageAction } from "./workflow/agent-client.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
 import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor, saveAutoColor } from "./auto-color.js";
@@ -638,6 +642,275 @@ export async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_
 	}
 }
 
+// App-owned adapter: the merged command/candidate modules remain the only
+// planners and validators. Ports below publish through the native editor stores.
+export function createStudioAppBinding(ports) {
+	const fail = (code, message) => { throw new StudioProtocolError(code, message); };
+	const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+	const identities = new WeakMap(); let identitySequence = 0, tokenSequence = 0;
+	const identityOf = value => {
+		if (!value || typeof value !== "object") return 0;
+		if (!identities.has(value)) identities.set(value, ++identitySequence);
+		return identities.get(value);
+	};
+	const tokens = new Map(), receipts = new Map(), jobs = new Map(), images = new Map();
+	let owner = null, commands = null, motion = null, journal = null;
+	let authoredKey, physicsKey, viewKey, observedSceneRevision = ports.revision.current;
+	let physicsRevision = 0, viewRevision = 0;
+	function refresh() {
+		const raw = ports.read();
+		const host = validateStudioIdentity(raw.host);
+		if (!same(owner, host)) {
+			motion?.dispose(); owner = host; tokens.clear(); receipts.clear(); jobs.clear(); images.clear();
+			authoredKey = physicsKey = viewKey = undefined;
+			journal = createStudioCommandJournal({ host, isRetained: receipt => ports.isRetained(receipt) });
+			commands = createStudioCommands({ read: readCommand, guard, bounds: ports.bounds, commit: ports.commit, journal });
+			motion = createStudioMotionCandidates({ readTarget, readEnvironment, journal,
+				commit: commitMotion, loadArtifact: ports.loadArtifact, poseCast: ports.poseCast });
+		}
+		const characters = raw.characters.map(character => {
+			const target = raw.targets.get(character.id);
+			return { ...character, sessionMotion: identityOf(target?.motion),
+				ik: physicsKeyStamp(target?.ikState?.keys ?? new Map()), rig: target?.rig?.uuid ?? null };
+		});
+		const authored = JSON.stringify([raw.objects, characters, raw.shots, raw.frameCount]);
+		if (authoredKey !== undefined && authoredKey !== authored && observedSceneRevision === ports.revision.current) ports.revision.current++;
+		authoredKey = authored; observedSceneRevision = ports.revision.current;
+		const liveIds = new Set([...raw.objects, ...raw.characters, ...raw.shots].map(row => row.id));
+		for (const id of tokens.keys()) if (!liveIds.has(id)) tokens.delete(id);
+		for (const entry of [...raw.objects, ...characters, ...raw.shots]) {
+			// Display-only name/tint changes never revoke a motion target.
+			const { name, subject, tint, identityImage, ...content } = entry;
+			const key = JSON.stringify(content), previous = tokens.get(entry.id);
+			if (!previous || previous.key !== key) tokens.set(entry.id, { key, token: `target-${++tokenSequence}`, incarnation: previous?.incarnation ?? crypto.randomUUID() });
+		}
+		const physical = physicsFingerprintInput({ floor: { model: "flat", y: 0 }, frameCount: raw.frameCount,
+			objects: raw.objects.map(o => ({ id: o.id, renderer: o.renderer,
+				position: { x: o.x, y: o.y ?? 0, z: o.z }, rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 },
+				scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ }, footprint: o.footprint, height: o.height,
+				supportY: supportHeightForObject(o), parentId: o.parent ?? null, attachment: o.attach ?? null, path: o.path ?? null })),
+			characters: raw.characters.map(c => {
+				const t = raw.targets.get(c.id), summary = characters.find(row => row.id === c.id);
+				return { id: c.id, incarnation: tokens.get(c.id).incarnation, modelId: c.model ?? null,
+					rigId: t?.rig?.uuid ?? null, rigReady: Boolean(t?.rig), hidden: Boolean(c.hidden),
+					position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1,
+					takeId: t?.motion?.studioTakeId ?? null, sessionMotionId: t?.motion ? `motion-${identityOf(t.motion)}` : null,
+					motionRevision: identityOf(t?.motion), calibrationRevision: identityOf(t?.motion?.sceneCalibration),
+					ikRevision: ports.ikRevision(c.id, summary.ik),
+					waypoints: (c.layer?.waypoints ?? []).map(p => ({ frame: p.frame, position: { x: p.x, y: p.y ?? 0, z: p.z } })) };
+			}) });
+		const physicalKey = JSON.stringify(physical);
+		if (physicsKey !== undefined && physicsKey !== physicalKey) physicsRevision++;
+		physicsKey = physicalKey;
+		const nextViewKey = JSON.stringify([raw.selection, raw.activeCharacterId, raw.selectedShotId, raw.view, raw.camera]);
+		if (viewKey !== undefined && viewKey !== nextViewKey) viewRevision++;
+		viewKey = nextViewKey;
+		return { ...raw, host, revision: ports.revision.current, physicsRevision, viewRevision };
+	}
+	function guard(id) {
+		const raw = refresh(), token = tokens.get(id)?.token;
+		if (!token) fail("STALE_TARGET", "The exact target no longer exists.");
+		return { ...raw.host, targetId: id, token };
+	}
+	function readCommand() {
+		const s = refresh();
+		return { host: s.host, revision: s.revision, frame: s.view.frame, frameCount: s.frameCount,
+			objects: s.objects, characters: s.characters, activeCharacterId: s.activeCharacterId,
+			selectedShotId: s.selectedShotId, shotDocument: { shots: s.shots }, camera: s.camera,
+			filmback: s.filmback, manual: s.manual, floorY: 0, busy: s.busy };
+	}
+	function context() {
+		const s = refresh();
+		const entities = [...s.characters.map(c => {
+			const t = s.targets.get(c.id);
+			return { id: c.id, kind: "character", token: tokens.get(c.id).token, name: c.subject || c.id,
+				position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1,
+				motion: { takeId: t?.motion?.studioTakeId ?? null, frames: t?.motion?.frames ?? 0,
+					ikKeyCount: t?.ikState?.keys.size ?? 0, promptBlockCount: c.layer?.promptClips?.length ?? 0 },
+				capabilities: { rigReady: Boolean(t?.rig), ik: Boolean(t?.rig?.userData?.poseBind), measuredFeet: false } };
+		}), ...s.objects.map(o => ({ id: o.id, kind: "object", token: tokens.get(o.id).token, name: o.name || o.id,
+			position: { x: o.x, y: o.y ?? 0, z: o.z }, yawDeg: o.rot ?? 0,
+			rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 }, scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ },
+			renderer: o.renderer, parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
+		const shot = s.shots.find(row => row.id === s.selectedShotId) ?? shotAtFrame(s.shots, s.view.frame);
+		const range = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
+		return buildStudioContext({ schema: "studio-context-v1", host: { surface: "studio", ...s.host, workspaceHandle: s.workspaceHandle },
+			revision: { scene: s.revision, physics: s.physicsRevision, view: s.viewRevision },
+			units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
+			scene: { name: s.sceneName, aspect: s.aspect, floorY: 0, frameCount: s.frameCount, objectCount: s.objects.length, characterCount: s.characters.length },
+			selection: s.selection, activeCharacterId: s.activeCharacterId, view: s.view,
+			shot: shot ? { id: shot.id, name: shot.name, range: range(shot), mode: shot.camera?.mode ?? "keys" } : null, camera: s.camera,
+			entities, entityPage: { returned: Math.min(24, entities.length), total: entities.length, truncated: entities.length > 24, nextCursor: entities.length > 24 ? "pending" : null },
+			shots: s.shots.map(row => ({ id: row.id, name: row.name, range: range(row), keyCount: row.cameraKeys.length })), shotsTruncated: false,
+			assets: [], recentReceipts: [...receipts.values()].filter(r => r.ok).reverse().slice(0, 3).map(r => ({ id: r.receiptId, summary: r.status, canUndoDirect: ports.canUndo(r) })),
+			jobs: [...jobs.values()].slice(-8), capabilities: { profile: "studio-slice-1", tools: STUDIO_TOOL_FAMILIES,
+				rigReady: Boolean(s.targets.get(s.activeCharacterId)?.rig), cameraReady: Boolean(s.camera), bridgeReady: s.bridgeReady } });
+	}
+	function readTarget(binding) {
+		const s = refresh(), target = s.targets.get(binding.characterId);
+		return target ? { ...target, character: s.characters.find(c => c.id === binding.characterId), guard: guard(binding.characterId), busy: s.busy,
+			preserveAuthoredMotion: Boolean(target.preserveAuthoredMotion), protectedFrames: target.protectedFrames ?? [] } : null;
+	}
+	function readEnvironment() {
+		const s = refresh();
+		return { host: s.host, physicsRevision: s.physicsRevision, floor: { model: "flat", y: 0 }, objects: s.objects, frameCount: s.frameCount,
+			cast: s.characters.map(character => ({ character, ...s.targets.get(character.id) })) };
+	}
+	function remember(receipt) { if (receipt?.receiptId) receipts.set(receipt.receiptId, receipt); return receipt; }
+	function commitMotion(payload) {
+		const s = refresh(), beforeTake = s.targets.get(payload.binding.characterId)?.motion;
+		const takeId = crypto.randomUUID(), historyEntryId = crypto.randomUUID();
+		// Validate the complete correlated receipt BEFORE the one synchronous publish.
+		const receipt = validateReceipt({ ok: true, status: "installed", authored: true,
+			commandId: payload.commandId, receiptId: crypto.randomUUID(), host: s.host, jobId: payload.jobId, artifactId: payload.artifactId,
+			revision: { before: s.revision, after: s.revision + 1 }, affectedIds: [payload.binding.characterId],
+			delta: [{ id: payload.binding.characterId, after: { takeId } }], checks: { coverage: "studio-motion-v1" },
+			undo: { historyEntryId, entries: 1, canUndoDirect: true }, warnings: payload.verification.status === "unverified" ? [{ code: "UNVERIFIED_MOTION" }] : [],
+			installed: { characterId: payload.binding.characterId, beforeTakeId: beforeTake?.studioTakeId ?? null, takeId,
+				targetToken: `target-${tokenSequence + 1}`, frameCount: payload.schedule.frameCount, fps: 24, durationSeconds: payload.schedule.durationSeconds,
+				blocks: payload.schedule.blocks.map(({ sourceBeat, startFrame, endFrameExclusive }) => ({ sourceBeat, startFrame, endFrameExclusive })), selectionChanged: false },
+			verification: payload.verification, repairs: payload.repairs, explicitUnverifiedAcceptance: payload.explicitUnverifiedAcceptance === true });
+		ports.commitMotion({ ...payload, takeId, historyEntryId });
+		const actual = { ...receipt, installed: { ...receipt.installed, targetToken: guard(payload.binding.characterId).token } };
+		return remember(journal.record(validateReceipt(actual)));
+	}
+	function rejection(request, error, phase = "admission") {
+		return validateReceipt({ ok: false, commandId: request.commandId, host: request.host ?? request.binding?.host,
+			code: error.code ?? "INVALID_ARGUMENT", phase, affectedIds: [], expectedTargets: [], currentTargets: [], mutated: false,
+			preserved: { authoredState: "unchanged" }, recovery: { action: "inspect", retryAllowed: false } });
+	}
+	function admit(request) {
+		const s = refresh();
+		if (!same(validateStudioIdentity(request.host), s.host)) fail("STALE_SCENE", "The live document changed.");
+		if (request.expectedRevision !== s.revision) fail("STALE_SCENE", "Authored state changed; obtain fresh intent.");
+		if (s.busy) fail("TARGET_BUSY", "Finish the current editor gesture first.");
+		return s;
+	}
+	function execute(request) {
+		refresh();
+		if (["arrange_objects", "arrange_characters", "frame_shot"].includes(request.name)) {
+			// The server carries entity guards; shots are fenced by the exact scene
+			// revision, then resolved to their current local guard before planning.
+			let admitted = request;
+			if (request.name === "frame_shot") {
+				try { const s = admit(request); const shot = request.args.shotId ?? shotAtFrame(s.shots, s.view.frame)?.id ?? s.selectedShotId;
+					admitted = { ...request, expectedTargets: [...(request.expectedTargets ?? []), ...(shot ? [guard(shot)] : [])] };
+				} catch (error) { return rejection(request, error); }
+			}
+			return remember(commands.execute(admitted));
+		}
+		const signature = JSON.stringify(request);
+		if (!same(request.host, owner)) return rejection(request, new StudioProtocolError("STALE_SCENE", "Document changed."));
+		try {
+			if (!journal.begin(request.commandId, signature)) return journal.get(request.commandId);
+			const { args } = validateStudioCommand({ name: request.name, args: request.args }), s = admit(request);
+			if (request.name === "operate_studio") {
+				ports.operate(args, s); const after = refresh();
+				return journal.record(validateReceipt({ ok: true, status: "transient", authored: false, commandId: request.commandId,
+					receiptId: crypto.randomUUID(), host: s.host, revision: { before: s.revision, after: s.revision },
+					view: { before: s.viewRevision, after: after.viewRevision }, affectedIds: [s.host.sceneId],
+					delta: [{ id: s.host.sceneId, after: { selection: after.selection, activeCharacterId: after.activeCharacterId, shotId: after.selectedShotId, view: after.view } }],
+					checks: { coverage: "editor-view-state" }, undo: null, warnings: [] }));
+			}
+			if (request.name === "undo_edit") {
+				const previous = receipts.get(args.receiptId);
+				if (!previous || !ports.canUndo(previous)) fail("UNDO_CONFLICT", "A newer edit owns native Undo.");
+				ports.undo(); const after = refresh();
+				const ids = previous.affectedIds;
+				// Removed creations have no live guard; their retired incarnation is
+				// still identified by a fresh restoration token in the undo receipt.
+				const restoredTargets = ids.map(id => ({ ...s.host, targetId: id, token: tokens.get(id)?.token ?? `removed-${++tokenSequence}` }));
+				const result = validateReceipt({ ok: true, status: "undone", authored: true, commandId: request.commandId, receiptId: crypto.randomUUID(), host: s.host,
+					revision: { before: s.revision, after: after.revision }, affectedIds: ids,
+					delta: ids.slice(0, 8).map(id => ({ id, after: { token: restoredTargets.find(t => t.targetId === id).token } })),
+					checks: { coverage: "native-history-restoration" }, undo: { historyEntryId: previous.undo.historyEntryId, entries: 1, canUndoDirect: false },
+					warnings: [], undoneReceiptId: previous.receiptId, restoredTargets, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
+				return remember(journal.record(result));
+			}
+			if (request.name === "verify_result") {
+				const receipt = args.receiptId ? receipts.get(args.receiptId) : null;
+				if (args.receiptId && !receipt) fail("STALE_TARGET", "Receipt is not retained in this document.");
+				if (receipt && receipt.revision.after !== s.revision) fail("STALE_SCENE", "Receipt evidence is no longer current.");
+				for (const id of args.targets ?? []) guard(id);
+				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, checks: receipt?.checks ?? { coverage: "unavailable" },
+					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [],
+					unsupportedChecks: args.checks.filter(check => check === "motion" ? !receipt?.verification : !receipt?.checks) };
+				if (args.visual !== "none") {
+					if (args.visual === "contact_sheet") result.unsupportedChecks.push("contact_sheet");
+					else { const capture = ports.capture(); const imageId = crypto.randomUUID(); images.set(imageId, { ...capture, revision: s.revision, receiptId: result.receiptId }); result.visualRefs.push({ imageId }); }
+				}
+				return result;
+			}
+			fail("CAPABILITY_MISSING", "Generation is owned by the server runtime.");
+		} catch (error) { const receipt = rejection(request, error); return journal.record(receipt); }
+	}
+	const handlers = {
+		read_studio_context(request) { const c = context(); if (!same(validateStudioIdentity(request.host), owner)) fail("STALE_SCENE", "This is not the requested document."); return c; },
+		inspect_studio(args) {
+			const command = validateStudioCommand({ name: "inspect_studio", args }); const c = context();
+			if (command.args.scope === "catalogue") return studioObjectCatalogue();
+			// Build each page from the same complete authoritative projection; never
+			// page by slicing an already-truncated Send context.
+			const s = refresh(), all = [...s.characters.map(row => ({ id: row.id, kind: "character", name: row.subject, token: guard(row.id).token })),
+				...s.objects.map(row => ({ id: row.id, kind: "object", name: row.name, token: guard(row.id).token }))];
+			const filtered = all.filter(row => (!args.ids || args.ids.includes(row.id)) && (!args.query || row.name?.includes(args.query)));
+			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
+			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,
+				nextCursor: offset + limit < filtered.length ? studioEntityCursor(c, offset + limit) : null };
+		},
+		operate_studio: request => execute({ ...request, name: "operate_studio" }),
+		arrange_objects: request => execute({ ...request, name: "arrange_objects" }),
+		arrange_characters: request => execute({ ...request, name: "arrange_characters" }),
+		frame_shot: request => execute({ ...request, name: "frame_shot" }),
+		generate_motion: () => fail("CAPABILITY_MISSING", "Use the server-owned Studio generation route."),
+		verify_result: request => execute({ ...request, name: "verify_result" }),
+		undo_edit: request => execute({ ...request, name: "undo_edit" }),
+		resolve_studio_image(request) {
+			refresh(); const image = images.get(request.imageId);
+			if (!image || (request.receiptId && request.receiptId !== image.receiptId) || (request.revision !== undefined && request.revision !== image.revision)) fail("STALE_TARGET", "Image observation does not belong to this receipt.");
+			return image;
+		},
+		reconcile_studio_command(request) { refresh(); const value = journal.reconcile({ commandId: request.commandId, host: request.host ?? request.binding?.host }); return value.status === "not_applied" ? { ...value, evidence: value.receipt } : value; },
+	};
+	for (const name of ["prepare_motion_install", "verify_motion_candidate", "repair_motion_candidate", "commit_motion_candidate", "discard_motion_candidate", "cancel_motion_install"]) {
+		handlers[name] = request => {
+			refresh(); const currentMotion = motion, currentJournal = journal;
+			const run = () => currentMotion[name](request);
+			const finish = result => {
+				if (name === "prepare_motion_install" && result?.candidateId) jobs.set(request.commandId, { id: request.jobId, characterId: request.binding.characterId, state: "preparing" });
+				if (result?.ok === false || ["commit_motion_candidate", "discard_motion_candidate", "cancel_motion_install"].includes(name)) jobs.delete(request.commandId);
+				return remember(result);
+			};
+			const reject = error => {
+				const receipt = rejection(request, error, "prepare");
+				if (!currentJournal.get(request.commandId)) { currentJournal.begin(request.commandId, JSON.stringify(request)); currentJournal.record(receipt); }
+				return finish(receipt);
+			};
+			try { const result = run(); return result?.then ? result.then(finish, reject) : finish(result); } catch (error) { return reject(error); }
+		};
+	}
+	function invalidate(domain, before, after) {
+		if (before === after) return;
+		if (domain === "pose") {
+			const id = ports.read().activeCharacterId, previous = tokens.get(id);
+			if (previous) tokens.set(id, { ...previous, key: null });
+			return;
+		}
+		if (!["characters", "objects"].includes(domain) || !Array.isArray(before) || !Array.isArray(after)) return;
+		const content = row => {
+			if (!row) return null;
+			const { subject, name, tint, identityImage, sessionMotion, ...rest } = row;
+			return { ...rest, motionIdentity: identityOf(sessionMotion) };
+		};
+		for (const row of before) {
+			const next = after.find(c => c.id === row.id), previous = tokens.get(row.id);
+			if (!next) tokens.delete(row.id);
+			else if (previous && !same(content(row), content(next))) tokens.set(row.id, { ...previous, key: null });
+		}
+	}
+	return { handlers, context, guard, refresh, invalidate, dispose: () => motion?.dispose() };
+}
+
 export default function App() {
 	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
 	// The landing page's try-it iframe: full studio interaction on a preset
@@ -759,8 +1032,20 @@ export default function App() {
 	// QA-only render counter (same spirit as window.__cozyclay): headless perf
 	// probes read renders/second to find re-render storms. Negligible cost.
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
+	const sceneRevisionRef = useRef(0);
+	const studioBindingRef = useRef(null);
 	const firstEditRef = useRef(null);
-	if (!firstEditRef.current) firstEditRef.current = createFirstEditTracker(track);
+	if (!firstEditRef.current) {
+		const firstEdit = createFirstEditTracker(track);
+		// Observe the existing semantic boundary once, even after its telemetry
+		// gate is satisfied. The tutorial/semantic hook itself stays unchanged.
+		firstEditRef.current = (surface, domain, before, after) => {
+			if (before !== after) sceneRevisionRef.current += 1;
+			studioBindingRef.current?.invalidate(domain, before, after);
+			studioBindingRef.current?.publishSemantic(domain, after);
+			return firstEdit(surface, domain, before, after);
+		};
+	}
 	// One semantic hook for authored UI and programmatic mutations. Passive
 	// setters intentionally bypass it (navigation, load, seed, restore, history).
 	const markSemanticEdit = (domain, before, after) => {
@@ -2032,6 +2317,7 @@ export default function App() {
 
 	// props so the inspector cannot show a ghost.
 	function undoScene() {
+		if (studioBindingRef.current?.stepHistory(false)) return;
 		const charTop = charHistoryRef.current.past[charHistoryRef.current.past.length - 1];
 		if (charTop && charTop.tick > lastObjectOpRef.current) {
 			charHistoryRef.current.future.push({ tick: charTop.tick, snapshot: snapshotCast(Boolean(charTop.snapshot.shots)) });
@@ -2068,6 +2354,7 @@ export default function App() {
 	}
 
 	function redoScene() {
+		if (studioBindingRef.current?.stepHistory(true)) return;
 		const charTop = charHistoryRef.current.future[charHistoryRef.current.future.length - 1];
 		if (charTop && charTop.tick > lastObjectOpRef.current) {
 			charHistoryRef.current.past.push({ tick: charTop.tick, snapshot: snapshotCast(Boolean(charTop.snapshot.shots)) });
@@ -2280,6 +2567,7 @@ export default function App() {
 	const liveStateRef = useRef(null);
 	const liveHandlersRef = useRef(null);
 	const [liveWorkspaceHandle, setLiveWorkspaceHandle] = useState(null);
+	const liveWorkspaceHandleRef = useRef(null);
 	const liveWorkspaceIdRef = useRef(crypto.randomUUID());
 	const [result, setResult] = useState(null);
 	const [resultOpen, setResultOpen] = useState(false);
@@ -3248,45 +3536,32 @@ export default function App() {
 	// Studio Agent is an Inspector peer, not an additional dock. Keeping this
 	// host-owned flag separate from the Workflow dock preserves the latter's
 	// session and layout while Cmd/Ctrl+B switches the existing Inspector row.
-	const [studioAgentMode, setStudioAgentMode] = useState(false);
-	const studioDocumentEpochRef = useRef(`document:${activeSceneId}`);
-	const studioSceneEpochRef = useRef(`scene:${activeSceneId}`);
-	const studioRevisionRef = useRef({ scene: 0, physics: 0, view: 0 });
+	const studioAgentMode = !agentCollapsed;
+	const setStudioAgentMode = (enabled) => setAgentCollapsed(!enabled);
+	const studioDocumentEpochRef = useRef(crypto.randomUUID());
+	const studioSceneEpochRef = useRef(crypto.randomUUID());
+	const studioPortsRef = useRef(null);
+	const studioHistoryRef = useRef(new Map());
+	const studioIkStampsRef = useRef(new Map());
+	const [studioAgentError, setStudioAgentError] = useState(null);
 	const buildStudioAgentContext = () => {
-		const scene = scenes.find((entry) => entry.id === activeSceneId) ?? scenes[0];
-		const selectedCharacterId = charIdFromHierarchyId(selectedHierarchyId) ?? (parseRigNodeId(selectedHierarchyId)?.rowId ? charIdFromHierarchyId(parseRigNodeId(selectedHierarchyId).rowId) : null);
-		const selectedEntityId = selectedSceneObject?.id ?? selectedCharacterId ?? (isCharacterSelection ? activeChar?.id : null);
-		const selectedEntityKind = selectedSceneObject ? "object" : selectedEntityId ? "character" : "scene";
-		const entities = [
-			...characters.filter((entry) => !entry.hidden).map((entry) => ({
-				id: entry.id, kind: "character", token: `character:${entry.id}`,
-				name: entry.subject || entry.id, position: { x: entry.x, y: entry.y ?? 0, z: entry.z },
-				yawDeg: entry.rot ?? 0, scale: entry.scale ?? 1,
-				motion: { takeId: entry.motion?.id ?? null, frames: tlFrameCount, ikKeyCount: 0, promptBlockCount: entry.layer?.promptClips?.length ?? 0 },
-				capabilities: { rigReady: Boolean(rigs[entry.id]), ik: Boolean(rigs[entry.id]), measuredFeet: false },
-			})),
-			...sceneObjects.map((entry) => ({
-				id: entry.id, kind: "object", token: `object:${entry.id}`, name: entry.name || entry.id,
-				position: { x: entry.x, y: entry.y ?? 0, z: entry.z }, yawDeg: entry.rot ?? 0,
-				scale: { x: entry.scaleX ?? 1, y: entry.scaleY ?? 1, z: entry.scaleZ ?? 1 },
-				renderer: entry.renderer || "box", parentId: entry.parentId ?? null,
-				attachment: entry.attach ? { characterId: entry.attach.characterId, bone: entry.attach.bone ?? null } : null,
-				pathPointCount: entry.path?.points?.length ?? 0,
-				capabilities: { rigReady: false, ik: false, measuredFeet: false },
-			})),
-		];
-		return buildStudioContext({
-			schema: "studio-context-v1", host: { surface: "studio", workspaceId: "cozyclay-local", workspaceHandle: null, documentEpoch: studioDocumentEpochRef.current, sceneId: scene.id, sceneEpoch: studioSceneEpochRef.current },
-			revision: studioRevisionRef.current, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
-			scene: { name: scene.name, aspect: scene.aspect ?? "16:9", floorY: 0, frameCount: tlFrameCount, objectCount: sceneObjects.length, characterCount: characters.length },
-			selection: { kind: selectedEntityKind, id: selectedEntityId ?? scene.id, hierarchyId: selectedHierarchyId },
-			activeCharacterId: activeChar?.id ?? null, view: { mode: workflowMode === "motion" ? "motion" : workflowMode === "camera" ? "camera" : "scene", frame: tlFrame, playing: tlPlaying, lookThrough: lookThroughShot, grid: true, autoColor },
-			shot: activeShot ? { id: activeShot.id, name: activeShot.name, range: { startFrame: activeShot.startFrame ?? 0, endFrameExclusive: activeShot.endFrameExclusive ?? tlFrameCount }, mode: activeShot.mode ?? "keys", subjectIds: activeShot.subjectIds ?? [] } : null,
-			camera: shot ? { position: { x: shot.x ?? 0, y: shot.y ?? 0, z: shot.z ?? 0 }, lookAt: { x: 0, y: 1, z: 0 }, focalMm: shot.focalMm ?? 50, sensorId: "filmback:default", slate: activeShot?.name ?? "Camera" } : null,
-			entities, entityPage: { returned: entities.length, total: entities.length, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [],
-			capabilities: { profile: "studio-slice-1", tools: STUDIO_TOOL_FAMILIES, rigReady: Boolean(activeRig), cameraReady: Boolean(shot), bridgeReady: false },
-		});
+		if (!liveWorkspaceHandleRef.current) {
+			setStudioAgentError(ko("The live editor is disconnected. Reconnect before sending.", "라이브 편집기가 연결되지 않았어요. 연결 후 보내 주세요."));
+			return null;
+		}
+		try { const value = studioBindingRef.current.context(); setStudioAgentError(null); return value; }
+		catch (error) { setStudioAgentError(`${error.code ?? "INVALID_CONTEXT"}: ${error.message}`); return null; }
 	};
+	useEffect(() => {
+		if (embedMode) return;
+		const toggle = () => setAgentCollapsed(value => !value);
+		const key = event => {
+			if ((event.metaKey || event.ctrlKey) && event.code === "KeyB") { event.preventDefault(); toggle(); }
+		};
+		window.addEventListener("cozyclay:agent-panel-toggle", toggle);
+		window.addEventListener("keydown", key);
+		return () => { window.removeEventListener("cozyclay:agent-panel-toggle", toggle); window.removeEventListener("keydown", key); };
+	}, [embedMode]);
 	const projectHandleRef = useRef(null);
 	const projectMotionsRef = useRef(new Map());
 	// Loaded clips keep the same Uint8Array identity while they remain active.
@@ -3481,6 +3756,7 @@ export default function App() {
 	}
 
 	function applyProject(project) {
+		studioDocumentEpochRef.current = crypto.randomUUID();
 		tutorialProjectEpochRef.current += 1;
 		tutorialSeedEpochRef.current = null;
 		setTutorialSeedPending(false);
@@ -3772,6 +4048,8 @@ export default function App() {
 		setCameraTutorial(false);
 		setCameraTutorialHandoff(null);
 		exportShotIdRef.current = null;
+		studioSceneEpochRef.current = crypto.randomUUID();
+		studioHistoryRef.current.clear();
 		const shotState = restoredShotState(scene);
 		const stage = createSceneStage(scene.stage);
 		const objects = Array.isArray(scene.objects) ? scene.objects : [];
@@ -4539,7 +4817,21 @@ export default function App() {
 						// different set; the agent picks a workspace that has what it needs.
 						commands: Object.keys(liveHandlersRef.current ?? {}),
 					},
-					onWorkspace: setLiveWorkspaceHandle,
+					// The shared client intentionally has no disconnect UI callback.
+					// Observe only this owned socket; a stale handle must never be sent.
+					WebSocketImpl: class extends WebSocket {
+						constructor(url) {
+							super(url);
+							this.addEventListener("close", () => {
+								liveWorkspaceHandleRef.current = null;
+								setLiveWorkspaceHandle(null);
+							});
+						}
+					},
+					onWorkspace: (handle) => {
+						liveWorkspaceHandleRef.current = handle;
+						setLiveWorkspaceHandle(handle);
+					},
 					onEvent: (name, payload) => {
 						if (name !== "motion_job" || typeof payload.taskId !== "string") return;
 						if (["failed", "cancelled", "expired"].includes(payload.status)) {
@@ -4553,6 +4845,7 @@ export default function App() {
 			clearTimeout(timer);
 			liveControlRef.current?.close();
 			liveControlRef.current = null;
+			liveWorkspaceHandleRef.current = null;
 			setLiveWorkspaceHandle(null);
 		};
 	}, []);
@@ -10805,6 +11098,270 @@ function resizePromptClip(id, edge, rawFrame) {
 		ardyAbortRef.current?.abort();
 	}
 
+	// Studio native ports. Kept together so the binding test executes these exact
+	// publication/history functions, not a substitute editor or parallel journal.
+	function readStudioCamera() {
+		const live = liveStateRef.current, camera = shotCamRef.current;
+		if (!camera) return null;
+		const position = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+		const direction = forwardFrom(look.current.yaw, look.current.pitch);
+		return { position, lookAt: { x: position.x + direction.x, y: position.y + direction.y, z: position.z + direction.z },
+			focalMm: fovToFocalMm(camera.fov * Math.PI / 180, live.filmback.sensorId, live.filmback.aspectRatio),
+			sensorId: live.filmback.sensorId, slate: "Shot camera" };
+	}
+	function readStudioState() {
+		const live = liveStateRef.current;
+		const list = charactersRef.current.map(c => c.id === loadedLayerCharRef.current ? {
+			...c, layer: { ...c.layer, waypoints: bufferRef.current.waypoints, promptClips: bufferRef.current.promptClips }, sessionMotion: bufferRef.current.motion,
+		} : c);
+		const targets = new Map(list.map(c => [c.id, { rig: live.rigs[c.id], motion: c.sessionMotion ?? null,
+			ikState: c.id === loadedLayerCharRef.current ? ikStateRef.current : ikStatesRef.current.get(c.id),
+			calibration: c.sessionMotion?.sceneCalibration, protectedFrames: c.id === loadedLayerCharRef.current ? physicsOptions.protectedFrames : [],
+			preserveAuthoredMotion: Boolean(c.layer?.waypoints?.length) }]));
+		return { host: { workspaceId: liveWorkspaceIdRef.current, documentEpoch: studioDocumentEpochRef.current,
+				sceneId: activeSceneIdRef.current, sceneEpoch: studioSceneEpochRef.current }, workspaceHandle: liveWorkspaceHandleRef.current,
+			sceneName: live.scenes.find(s => s.id === activeSceneIdRef.current)?.name ?? "Untitled Scene", aspect: live.stage.shotAspect,
+			objects: storeRef.current.objects, characters: list, targets, shots: live.shots, frameCount: live.timeline.frameCount,
+			selection: live.studioSelection, activeCharacterId: live.activeCharacterId, selectedShotId: live.studioShotId,
+			view: live.studioView, camera: live.studioCamera ?? readStudioCamera(), filmback: live.filmback, manual: manualCameraOverrideRef.current,
+			bridgeReady: Boolean(bridge?.ok), busy: storeRef.current.present() !== storeRef.current.objects || Boolean(studioGestureRef.current ||
+				ikBodyDragRef.current || lineDragRef.current || lineDrawRef.current || linePinDragRef.current || live.studioPhysicsRunning || recRef.current) };
+	}
+	function publishStudioCamera(camera, manual) {
+		const angles = aimAt(camera.position, camera.lookAt), live = liveStateRef.current;
+		const fov = focalMmToFov(camera.focalMm, live.filmback.sensorId, live.filmback.aspectRatio) * 180 / Math.PI;
+		Object.assign(look.current, angles); shotCameraPosRef.current = { ...camera.position };
+		if (shotCamRef.current) {
+			shotCamRef.current.position.copy(camera.position); shotCamRef.current.rotation.order = "YXZ";
+			shotCamRef.current.rotation.set(angles.pitch, angles.yaw, 0); shotCamRef.current.fov = fov; shotCamRef.current.updateProjectionMatrix();
+		}
+		manualCameraOverrideRef.current = manual; live.camera = camera.position; live.fovDeg = fov; live.studioCamera = camera;
+		setCameraPos(camera.position); setFovDeg(fov); setCameraPresetId(null);
+	}
+	function snapshotStudioDomain(domain, targetId) {
+		const state = readStudioState();
+		if (domain === "shot") return { shots: state.shots, camera: state.camera, manual: state.manual };
+		if (domain === "cast") return { characters: state.characters };
+		const target = state.targets.get(targetId);
+		return { character: state.characters.find(c => c.id === targetId), fullMotion: motionFullRef.current.get(targetId),
+			ikState: { ...createIkState(), keys: copyPhysicsKeys(target?.ikState?.keys ?? new Map()), tracked: new Set(target?.ikState?.tracked ?? []) },
+			frameCount: state.frameCount, committedIkEdits: targetId === loadedLayerCharRef.current ? committedIkEdits : [],
+			renderer: target?.rig ? snapshotExportRig(target.rig) : null };
+	}
+	function publishStudioCharacters(next, authored = false) {
+		charactersRef.current = next; liveStateRef.current.characters = next;
+		(authored ? editCharacters : setCharacters)(next);
+	}
+	function recordStudioHistory(domain, targetId, historyEntryId) {
+		const tick = ++opClockRef.current;
+		charHistoryRef.current.past.push({ tick, snapshot: snapshotCast(domain === "shot"),
+			studio: { domain, targetId, historyEntryId, state: snapshotStudioDomain(domain, targetId) } });
+		charHistoryRef.current.future = [];
+		studioHistoryRef.current.set(historyEntryId, { tick, domain });
+	}
+	function publishStudioMotion(targetId, state) {
+		const current = readStudioState();
+		publishStudioCharacters(current.characters.map(c => c.id === targetId ? state.character : c));
+		if (state.fullMotion) motionFullRef.current.set(targetId, state.fullMotion); else motionFullRef.current.delete(targetId);
+		const layer = { ...createIkState(), keys: copyPhysicsKeys(state.ikState.keys), tracked: new Set(state.ikState.tracked) };
+		ikStatesRef.current.set(targetId, layer);
+		if (loadedLayerCharRef.current === targetId) {
+			ikStateRef.current = layer;
+			bufferRef.current = { waypoints: state.character.layer?.waypoints ?? [], promptClips: state.character.layer?.promptClips ?? [], motion: state.character.sessionMotion ?? null, ik: layer };
+			setWaypoints(bufferRef.current.waypoints); setPromptClips(bufferRef.current.promptClips); setMotion(bufferRef.current.motion);
+			setCommittedIkEdits(state.committedIkEdits); setIkTick(n => n + 1);
+		}
+		liveStateRef.current.timeline.frameCount = state.frameCount; frameCountRef.current = state.frameCount; setTlFrameCount(state.frameCount);
+		if (state.renderer) restoreExportRig(state.renderer);
+	}
+	function stepStudioHistory(redo) {
+		const history = charHistoryRef.current, from = redo ? history.future : history.past, to = redo ? history.past : history.future;
+		const top = from.at(-1);
+		if (!top?.studio || top.tick <= lastObjectOpRef.current) return false;
+		const entry = top.studio;
+		to.push({ ...top, studio: { ...entry, state: snapshotStudioDomain(entry.domain, entry.targetId) } }); from.pop();
+		if (entry.domain === "shot") {
+			liveStateRef.current.shots = entry.state.shots; setShots(entry.state.shots); publishStudioCamera(entry.state.camera, entry.state.manual);
+		} else if (entry.domain === "cast") publishStudioCharacters(entry.state.characters);
+		else publishStudioMotion(entry.targetId, entry.state);
+		sceneRevisionRef.current++; ++opClockRef.current;
+		setToast(redo ? ko("Redone", "다시 실행됨") : ko("Undone", "실행 취소됨")); return true;
+	}
+	function commitStudioDraft(payload) {
+		const historyEntryId = crypto.randomUUID();
+		if (payload.domain === "objects") {
+			storeRef.current.applyAtomic(() => payload.draft);
+			liveStateRef.current.objects = storeRef.current.objects;
+			studioHistoryRef.current.set(historyEntryId, { domain: "objects", tick: lastObjectOpRef.current, depth: storeRef.current.depths().past });
+		} else {
+			recordStudioHistory(payload.domain, null, historyEntryId);
+			if (payload.domain === "cast") publishStudioCharacters(payload.draft, true);
+			else { liveStateRef.current.shots = payload.draft.shotDocument.shots; editShots(payload.draft.shotDocument.shots); publishStudioCamera(payload.draft.camera, payload.draft.manual); }
+		}
+		return { historyEntryId };
+	}
+	function commitStudioMotion(payload) {
+		const id = payload.binding.characterId, before = readStudioState(), target = before.targets.get(id);
+		const character = before.characters.find(c => c.id === id);
+		const clips = payload.schedule.blocks.map((block, index) => ({ id: `${payload.takeId}-beat-${index}`, startFrame: block.startFrame, endFrame: block.endFrameExclusive, text: block.text }));
+		const take = { ...payload.motion, studioTakeId: payload.takeId, prompt: "", sceneCalibration: payload.calibration };
+		const next = { ...character, scale: payload.scale, sessionMotion: take, motionRef: null, layer: { ...character.layer, promptClips: clips } };
+		recordStudioHistory("motion", id, payload.historyEntryId);
+		const renderer = target?.rig ? snapshotExportRig(target.rig) : null;
+		publishStudioMotion(id, { character: next, fullMotion: payload.sourceMotion, ikState: payload.ikState,
+			frameCount: id === loadedLayerCharRef.current ? Math.max(payload.schedule.frameCount, before.view.frame + 1, ...before.shots.map(s => s.endFrame + 1)) : before.frameCount,
+			committedIkEdits: [], renderer: null });
+		if (target?.rig) {
+			if (id === loadedLayerCharRef.current) beginPlaybackOn(target.rig);
+			const resolved = resolveIkRig(target.rig), layer = ikStatesRef.current.get(id);
+			if (resolved) Object.assign(layer, resolved, { rig: target.rig });
+			poseMemberAtFrame(target.rig, take, layer, before.view.frame, IK_CORRECTION_BLEND_FRAMES);
+			target.rig.updateMatrixWorld(true);
+		}
+		// Preimage bones live on the native entry, not on the installed candidate.
+		charHistoryRef.current.past.at(-1).studio.state.renderer = renderer;
+		markSemanticEdit("characters", before.characters, charactersRef.current);
+	}
+	function studioBounds({ entity, frame, state }) {
+		if (entity.renderer) {
+			if (entity.attach) throw new StudioProtocolError("TARGET_NOT_READY", "Attached bounds require an evaluated attachment frame.");
+			const at = objectTransformAt(entity, frame, { frameCount: state.frameCount, fps: 24 });
+			const object = at ? { ...entity, ...at } : entity;
+			const matrix = new THREE.Matrix4().compose(new THREE.Vector3(object.x, object.y ?? 0, object.z),
+				new THREE.Quaternion().setFromEuler(new THREE.Euler((object.rotX ?? 0) * Math.PI / 180, (object.rot ?? 0) * Math.PI / 180, (object.rotZ ?? 0) * Math.PI / 180)),
+				new THREE.Vector3(object.scaleX, object.scaleY, object.scaleZ));
+			const box = new THREE.Box3(new THREE.Vector3(-object.footprint.width / 2, 0, -object.footprint.depth / 2), new THREE.Vector3(object.footprint.width / 2, object.height, object.footprint.depth / 2));
+			box.applyMatrix4(matrix); return { min: { ...box.min }, max: { ...box.max } };
+		}
+		const raw = readStudioState();
+		const original = raw.characters.find(c => c.id === entity.id) ?? raw.characters.find(c => c.model === entity.model);
+		const target = original && raw.targets.get(original.id);
+		if (!target?.rig) throw new StudioProtocolError("TARGET_NOT_READY", "Character bounds require its loaded rig.");
+		const rig = cloneSkeleton(target.rig), parent = new THREE.Group();
+		const originals = [], copies = [];
+		target.rig.traverse(node => originals.push(node)); rig.traverse(node => copies.push(node));
+		rig.userData.poseBind = new Map(originals.flatMap((node, index) => {
+			const bind = target.rig.userData.poseBind?.get(node);
+			return bind ? [[copies[index], structuredClone(bind)]] : [];
+		}));
+		parent.matrixAutoUpdate = false; parent.matrix.copy(target.rig.parent?.matrixWorld ?? new THREE.Matrix4()); parent.add(rig);
+		try {
+			if (target.motion) applyMotionFrame(rig, target.motion, sampleAt({ frameCount: target.motion.frames, motion: target.motion }, null, frame).motionFrame);
+			const resolved = resolveIkRig(rig);
+			if (resolved && target.ikState?.keys.size) ikEvaluate(resolved.chains, target.ikState, frame, resolved.fkJoints, target.motion ? IK_CORRECTION_BLEND_FRAMES : 0);
+			parent.updateMatrixWorld(true);
+			const transform = c => new THREE.Matrix4().compose(new THREE.Vector3(c.x, c.y ?? 0, c.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (c.rot ?? 0) * Math.PI / 180), new THREE.Vector3().setScalar(c.scale ?? 1));
+			const delta = transform(entity).multiply(transform(original).invert());
+			const box = new THREE.Box3().setFromObject(rig, true).applyMatrix4(delta);
+			return { min: { ...box.min }, max: { ...box.max } };
+		} finally {
+			const skeletons = new Set(); rig.traverse(n => { if (n.isSkinnedMesh) skeletons.add(n.skeleton); });
+			for (const skeleton of skeletons) skeleton.dispose(); parent.remove(rig);
+		}
+	}
+	function operateStudio(args, state) {
+		let selection = args.selection === undefined ? state.selection : args.selection;
+		if (selection) {
+			const found = selection.kind === "scene" ? selection.id === state.host.sceneId : selection.kind === "camera" ? selection.id === "camera" :
+				(selection.kind === "object" ? state.objects : state.characters).some(row => row.id === selection.id);
+			if (!found) throw new StudioProtocolError("STALE_TARGET", "Selection is not present in this document.");
+		}
+		const shot = args.shotId === undefined ? null : state.shots.find(s => s.id === args.shotId);
+		if (args.shotId !== undefined && !shot) throw new StudioProtocolError("STALE_TARGET", "Shot is not present in this document.");
+		const frame = args.frame ?? shot?.startFrame ?? state.view.frame;
+		if (frame >= state.frameCount) throw new StudioProtocolError("INVALID_RANGE", "Frame is outside the timeline.");
+		const view = { ...state.view, ...args.view, frame, mode: args.mode ?? state.view.mode, playing: args.playing ?? state.view.playing };
+		const live = liveStateRef.current; live.studioSelection = selection; live.studioView = view;
+		live.studioShotId = args.shotId ?? shotAtFrame(state.shots, frame)?.id ?? null;
+		live.timeline.currentFrame = frame; tlFrameRef.current = frame;
+		if (selection && ["character", "rig"].includes(selection.kind)) { live.activeCharacterId = selection.id; setActiveCharacterId(selection.id); }
+		setSelectedHierarchyId(selection ? selection.kind === "object" ? `object:${selection.id}` : ["character", "rig"].includes(selection.kind) ? `character:${selection.id}` : selection.kind === "camera" ? "camera" : "shot" : "");
+		setTlFrame(frame); setWorkflowMode(view.mode); setLookThroughShot(view.lookThrough); setGridView(view.grid); setAutoColor(view.autoColor); setTlPlaying(view.playing);
+	}
+	const studioGestureRef = useRef(false);
+	const studioImageActionsRef = useRef(new Map());
+	const studioPlacedImagesRef = useRef(new Map());
+	useEffect(() => {
+		if (embedMode) return;
+		const down = event => { if (event.target.closest?.("canvas, .inspector-scroll, .tl-body, .plan-board")) studioGestureRef.current = true; };
+		const up = () => { studioGestureRef.current = false; };
+		window.addEventListener("pointerdown", down, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
+		const image = event => {
+			event.preventDefault(); const request = event.detail;
+			if (studioImageActionsRef.current.has(request.requestId)) return;
+			const host = readStudioState().host;
+			const work = async () => {
+				if (request.action === "remove") {
+					const placed = studioPlacedImagesRef.current.get(request.imageId);
+					if (!placed || JSON.stringify(placed.host) !== JSON.stringify(host)) throw new Error("The placed image belongs to another document.");
+					if (readStudioState().busy) throw new Error("Finish the current editor gesture first.");
+					storeRef.current.applyAtomic(objects => removeSceneObject(objects, placed.objectId));
+					liveStateRef.current.objects = storeRef.current.objects; studioPlacedImagesRef.current.delete(request.imageId);
+					return { ok: true, receiptId: request.requestId };
+				}
+				if (request.action !== "place") throw new Error("Unsupported image action.");
+				if (readStudioState().busy) throw new Error("Finish the current editor gesture first.");
+				if (typeof request.dataUrl !== "string" || !request.dataUrl.startsWith("data:image/")) throw new Error("Image data is unavailable.");
+				const bytes = await (await fetch(request.dataUrl)).arrayBuffer();
+				const asset = await rememberAsset(await importImageFile(new File([bytes], "Agent image", { type: request.dataUrl.slice(5, request.dataUrl.indexOf(";")) })));
+				const current = readStudioState();
+				if (JSON.stringify(current.host) !== JSON.stringify(host)) throw new Error("The image's document is no longer open.");
+				if (current.busy) throw new Error("Finish the current editor gesture first.");
+				const object = createCutoutObject({ assetId: asset.id, aspect: assetAspect(asset) ?? 1, height: CUTOUT_DEFAULT_HEIGHT, name: "Agent image" }, current.objects);
+				if (!object) throw new Error("Image could not be placed.");
+				storeRef.current.applyAtomic(objects => [...objects, object]); liveStateRef.current.objects = storeRef.current.objects;
+				studioPlacedImagesRef.current.set(request.imageId, { host, objectId: object.id });
+				return { ok: true, receiptId: request.requestId };
+			};
+			const promise = work().catch(error => ({ ok: false, error: error.message })); studioImageActionsRef.current.set(request.requestId, promise);
+			promise.then(result => window.dispatchEvent(new CustomEvent("cozyclay:agent-image-result", { detail: { requestId: request.requestId, ...result } })));
+		};
+		window.addEventListener("cozyclay:agent-image", image);
+		return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); window.removeEventListener("cozyclay:agent-image", image); };
+	}, [embedMode]);
+	const selectedStudioChar = charIdFromHierarchyId(parseRigNodeId(selectedHierarchyId)?.rowId ?? selectedHierarchyId);
+	Object.assign(liveStateRef.current, {
+		studioSelection: selectedSceneObjectId ? { kind: "object", id: selectedSceneObjectId, hierarchyId: selectedHierarchyId } :
+			selectedStudioChar ? { kind: "character", id: selectedStudioChar, hierarchyId: selectedHierarchyId } : selectedHierarchyId === "camera" ? { kind: "camera", id: "camera" } : { kind: "scene", id: activeSceneId },
+		studioShotId: activeShot?.id ?? null,
+		studioPhysicsRunning: autoPhysicsRunning,
+		studioView: { mode: workflowMode, frame: tlFrame, playing: tlPlaying, lookThrough: lookThroughShot, grid: gridView, autoColor },
+	});
+	studioPortsRef.current = {
+		read: readStudioState, revision: sceneRevisionRef, bounds: studioBounds, commit: commitStudioDraft, commitMotion: commitStudioMotion,
+		operate: operateStudio, undo: undoScene, stepHistory: stepStudioHistory, capture: () => liveHandlersRef.current.capture_framing_png({}),
+		loadArtifact: (artifact, options) => {
+			// Keep the server-pinned URL. Stripping the origin would silently fetch
+			// from a different bridge after a reconnect. The bridge owner must allow
+			// CORS or supply a pinned same-origin artifact proxy; never use load_motion.
+			return loadMotionFromUrl(artifact.url, options);
+		},
+		ikRevision: (id, stamp) => {
+			const prior = studioIkStampsRef.current.get(id);
+			if (!prior || prior.stamp !== stamp) studioIkStampsRef.current.set(id, { stamp, revision: (prior?.revision ?? 0) + 1 });
+			return studioIkStampsRef.current.get(id).revision;
+		},
+		isRetained: receipt => Boolean(receipt?.undo && studioHistoryRef.current.has(receipt.undo.historyEntryId)),
+		canUndo: receipt => {
+			const entry = receipt?.undo && studioHistoryRef.current.get(receipt.undo.historyEntryId);
+			if (!entry || receipt.revision.after !== sceneRevisionRef.current) return false;
+			return entry.domain === "objects" ? entry.tick === lastObjectOpRef.current && entry.tick >= (charHistoryRef.current.past.at(-1)?.tick ?? 0) && entry.depth === storeRef.current.depths().past :
+				entry.tick === charHistoryRef.current.past.at(-1)?.tick && entry.tick > lastObjectOpRef.current;
+		},
+	};
+	if (!studioBindingRef.current) {
+		const delegates = Object.fromEntries(Object.keys(studioPortsRef.current).filter(key => key !== "revision").map(key => [key, (...args) => studioPortsRef.current[key](...args)]));
+		studioBindingRef.current = createStudioAppBinding({ ...delegates, revision: sceneRevisionRef });
+		studioBindingRef.current.stepHistory = redo => studioPortsRef.current.stepHistory(redo);
+		studioBindingRef.current.publishSemantic = (domain, after) => {
+			if (domain === "characters" && Array.isArray(after)) { charactersRef.current = after; liveStateRef.current.characters = after; }
+			if (domain === "shots") liveStateRef.current.shots = after;
+			if (domain === "promptClips") bufferRef.current.promptClips = after;
+		};
+		Object.assign(liveHandlersRef.current, studioBindingRef.current.handlers);
+	}
+	useEffect(() => () => studioBindingRef.current?.dispose(), []);
+
 	const projectStatus = projectSaveState === "saving"
 		? ko("Saving…", "저장 중…")
 		: projectSaveState === "error"
@@ -12027,9 +12584,12 @@ function resizePromptClip(id, edge, rawFrame) {
 							{sceneSaveError}
 						</p>
 					)}
-					{studioAgentMode && <div className="studio-agent-inspector">
+					{studioAgentError && <p className="scene-save-error" role="alert">{studioAgentError}</p>}
+					{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
 						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
-						<AgentPanel embedded surface="studio" sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")} buildContext={buildStudioAgentContext} />
+						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
+							sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
+							buildContext={buildStudioAgentContext} onImageAction={requestHostImageAction} />
 					</div>}
 					<section className="inspector-pane" hidden={studioAgentMode}>
 					<div className="inspector-heading">
@@ -13705,13 +14265,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						/>
 					)}
 				</aside>
-				{!embedMode && !studioAgentMode && (
-					<AgentPanel
-						sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
-						defaultCollapsed
-						onCollapsedChange={setAgentCollapsed}
-					/>
-				)}
+
 			</div>
 
 			<div
