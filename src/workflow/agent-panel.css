@@ -57,6 +57,13 @@
 	--agent-dot: 6px;
 	--agent-shadow: 0 12px 34px #0006;
 	--agent-motion: 140ms ease;
+
+	/* Job progress + acceptance surfaces reuse the palette above. */
+	--agent-track: #242836;
+	--agent-warn-edge: #6a5a34;
+	--agent-warn-bg: #241f16;
+	--agent-warn-text: #f0dcb4;
+	--agent-ok-deep: #16302a;
 }
 
 /* The studio top bar is 48px where the workflow one is 58px, so the drawer
@@ -70,6 +77,20 @@
  * mode's visible controls (docs/studio-ui-ia.md R6) on chrome nobody asked
  * for. View ▾ (and Cmd/Ctrl+B) is the way in, like every other panel. */
 .app .agent-panel.collapsed {
+	display: none;
+}
+
+/* An embedded host (the studio Inspector column) owns the width, the
+ * visibility and the shortcut. The panel then fills whatever box it is given
+ * and keeps no border of its own against the host's chrome. */
+.agent-panel.embedded {
+	width: 100%;
+	flex: 1;
+	min-height: 0;
+	border-left: 0;
+}
+
+.agent-panel[hidden] {
 	display: none;
 }
 
@@ -468,6 +489,139 @@
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-lg);
 	box-shadow: var(--agent-shadow);
+}
+
+/* --- motion jobs and receipts ------------------------------------------ */
+
+.agent-job-card,
+.agent-receipt-card,
+.agent-failure-card {
+	display: flex;
+	flex-direction: column;
+	gap: var(--agent-space-2);
+	padding: var(--agent-space-3) var(--agent-space-4);
+	font-size: var(--agent-font-md);
+}
+
+.agent-job-head,
+.agent-receipt-head,
+.agent-failure-head {
+	display: flex;
+	align-items: center;
+	gap: var(--agent-space-2);
+	color: #ccd1e2;
+}
+
+.agent-job-label { font-weight: 600; }
+
+.agent-job-badge {
+	flex: none;
+	padding: 1px var(--agent-space-2);
+	border: 1px solid var(--agent-warn-edge);
+	border-radius: var(--agent-radius-pill);
+	background: var(--agent-warn-bg);
+	color: var(--agent-warn);
+	font-size: var(--agent-font-xs);
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.agent-job-progress {
+	margin-left: auto;
+	flex: none;
+	color: var(--agent-text-dim);
+	font: var(--agent-font-sm) ui-monospace, monospace;
+}
+
+.agent-job-phase,
+.agent-failure-message,
+.agent-failure-recovery {
+	margin: 0;
+	color: var(--agent-text-muted);
+	line-height: 1.5;
+	word-break: break-word;
+}
+
+.agent-job-bar {
+	height: var(--agent-space-1);
+	border-radius: var(--agent-radius-pill);
+	background: var(--agent-track);
+	overflow: hidden;
+}
+
+.agent-job-bar-fill {
+	display: block;
+	width: 100%;
+	height: 100%;
+	border-radius: inherit;
+	background: var(--agent-accent);
+	transform-origin: left center;
+	transition: transform var(--agent-motion);
+}
+
+.agent-job-limits,
+.agent-receipt-notes {
+	margin: 0;
+	padding-left: var(--agent-space-5);
+	color: var(--agent-text-dim);
+	font-size: var(--agent-font-sm);
+	line-height: 1.5;
+}
+
+.agent-job-actions {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: var(--agent-space-2);
+}
+
+.agent-job-actions:empty { display: none; }
+
+.agent-job-accept {
+	border-color: var(--agent-warn-edge);
+	background: var(--agent-warn-bg);
+	color: var(--agent-warn-text);
+}
+
+.agent-job-accept:hover {
+	border-color: var(--agent-warn);
+	background: #33291a;
+	color: var(--agent-warn-text);
+}
+
+.agent-job-note {
+	display: inline-flex;
+	align-items: center;
+	gap: var(--agent-space-1);
+	color: var(--agent-text-dim);
+	font-size: var(--agent-font-sm);
+}
+
+.agent-job-note.alert { color: var(--agent-alert); }
+
+.agent-job-card[data-job-state="installed"] { border-color: #2f5a4b; background: var(--agent-ok-deep); }
+.agent-job-card[data-job-state="review_required"] { border-color: var(--agent-warn-edge); background: var(--agent-warn-bg); }
+.agent-job-card[data-job-state="failed"],
+.agent-job-card[data-job-state="stale_target"],
+.agent-job-card[data-job-state="stale_environment"] { border-color: #6d3a52; }
+
+.agent-receipt-summary { line-height: 1.5; word-break: break-word; }
+
+.agent-failure-card { border-color: #6d3a52; background: #2a1c26; }
+.agent-failure-code {
+	color: var(--agent-alert);
+	font: var(--agent-font-sm) ui-monospace, monospace;
+	letter-spacing: 0.04em;
+}
+
+.agent-image-error {
+	margin: 0;
+	padding: var(--agent-space-3);
+	border-top: 1px solid #6d3a52;
+	background: #2a1c26;
+	color: #f3c7d8;
+	font-size: var(--agent-font-md);
+	line-height: 1.45;
 }
 
 /* --- state cards ------------------------------------------------------- */

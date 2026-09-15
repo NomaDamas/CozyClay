@@ -14,9 +14,16 @@
 //   POST /agent/turn    -> SSE, lines of `data: {json}`
 //   POST /agent/stop    -> { ok }
 //   GET  /agent/models  -> { models: [{ id, label }] }
+//
+// Studio hosts add the frozen task-1 contracts on the same routes:
+//   POST /agent/turn                        -> { surface, sessionId, turnId, text, context, ... }
+//   GET  /agent/turn/<turnId>/events?after=N -> replay after a dropped stream
+//   POST /agent/stop                        -> { surface, sessionId, turnId, jobId? }
+//   POST /agent/jobs/<jobId>/accept          -> explicit "Apply with warnings"
 
 import { bucketMs, track } from "../analytics.js";
 import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
+import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
 
 export const AGENT_PANEL_WIDTH_KEY = "cozyclay.workflow.agentPanel.width";
 export const AGENT_PANEL_WIDTH_DEFAULT = 360;
@@ -36,6 +43,60 @@ export const AGENT_STATES = [
 	"rate-limited",
 	"error",
 ];
+
+/** Studio identities are UUIDs (task 1 `StudioTurn`/`StudioStop`), never the
+ * panel's old counter ids and never an analytics identifier. */
+export function createStudioSessionId(random = globalThis.crypto) {
+	const uuid = random?.randomUUID?.();
+	if (typeof uuid === "string") return uuid;
+	const bytes = new Uint8Array(16);
+	random.getRandomValues(bytes);
+	bytes[6] = (bytes[6] & 0x0f) | 0x40;
+	bytes[8] = (bytes[8] & 0x3f) | 0x80;
+	const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+/** Motion job presentation. The state names are task 1's `jobStates`; nothing
+ * here invents a percentage the runtime did not report. */
+export const JOB_STATE_COPY = {
+	queued: "Queued",
+	generating: "Generating",
+	preparing: "Preparing",
+	verifying: "Verifying",
+	repairing: "Repairing",
+	committing: "Installing",
+	reconciling: "Reconciling",
+	installed: "Installed",
+	review_required: "Needs review",
+	failed: "Failed",
+	cancelled: "Stopped",
+	stale_target: "Target changed",
+	stale_environment: "Scene changed",
+};
+const JOB_TERMINAL_STATES = new Set(["installed", "failed", "cancelled", "stale_target", "stale_environment"]);
+export const isTerminalJobState = (state) => JOB_TERMINAL_STATES.has(state);
+export const jobStateTone = (state) => state === "installed" ? "ok"
+	: state === "review_required" ? "warn"
+	: isTerminalJobState(state) ? "alert"
+	: "busy";
+/** Progress is shown only when the runtime actually reported one. */
+export const formatJobProgress = (progress) => Number.isFinite(progress) ? `${Math.round(progress * 100)}%` : "";
+
+/** One line of plain product copy for a validated receipt. */
+export function receiptSummary(receipt) {
+	if (receipt?.status === "installed") {
+		const { installed, verification } = receipt;
+		const coverage = verification.status === "verified"
+			? `verified over ${verification.evaluatedFrames} frames`
+			: "installed unverified";
+		return `Installed ${installed.durationSeconds}s of motion on ${installed.characterId} — ${coverage}`;
+	}
+	if (receipt?.status === "undone") return `Undid ${receipt.undoneReceiptId}`;
+	if (receipt?.status === "noop") return "Nothing to change";
+	if (receipt?.status === "transient") return "Changed the view only";
+	return `Applied to ${receipt?.affectedIds?.join(", ") || "the scene"}`;
+}
 
 /** Effort options for a model entry from /agent/models; the backend default comes first. */
 export function effortOptions(entry) {
@@ -242,6 +303,8 @@ function startAgentTurn({ surface, capture, now }) {
 	};
 }
 
+const RESUME_ATTEMPTS = 3;
+
 export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalThis), surface, capture = track, now = () => performance.now() } = {}) {
 	const activeTurns = new Map();
 	const request = async (path, init) => {
@@ -282,9 +345,21 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const result = await request("/agent/models");
 			return Array.isArray(result?.models) && result.models.length ? result.models : DEFAULT_MODELS;
 		},
-		async stop(sessionId) {
-			activeTurns.get(sessionId)?.cancel();
-			return request("/agent/stop", { method: "POST", body: JSON.stringify({ sessionId }) });
+		// Legacy callers pass a session id; a Studio host passes the frozen stop
+		// envelope so the sidecar can cancel one turn and one owned job.
+		async stop(target) {
+			const envelope = typeof target === "string" || !target
+				? { sessionId: target }
+				: { surface: "studio", sessionId: target.sessionId, turnId: target.turnId, ...(target.jobId ? { jobId: target.jobId } : {}) };
+			activeTurns.get(envelope.sessionId)?.cancel();
+			return request("/agent/stop", { method: "POST", body: JSON.stringify(envelope) });
+		},
+		/** Trusted "Apply with warnings": a user action, never a model bypass. */
+		async acceptJob({ jobId, sessionId, turnId }) {
+			return request(`/agent/jobs/${encodeURIComponent(jobId)}/accept`, {
+				method: "POST",
+				body: JSON.stringify({ surface: "studio", sessionId, turnId, explicitUnverifiedAcceptance: true }),
+			});
 		},
 		// `references` are the scene's identity / environment slots (#167): extra
 		// attached pictures with a role, passed through untouched so the sidecar
@@ -299,24 +374,65 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			return request("/agent/video/providers");
 		},
 		/** Streams sidecar events to `onEvent`. Resolves when the turn ends. */
-		async turn({ sessionId, text, attachFrame, model, effort }, onEvent, signal) {
+		async turn(turnRequest, onEvent, signal) {
+			const { sessionId, text, attachFrame, model, effort } = turnRequest;
+			const studio = turnRequest.surface === "studio";
+			const turnId = studio ? turnRequest.turnId : null;
 			const telemetry = startAgentTurn({ surface, capture, now });
 			activeTurns.set(sessionId, telemetry);
 			const onAbort = () => { if (signal.reason === "agent-stop") telemetry.cancel(); };
 			signal?.addEventListener("abort", onAbort, { once: true });
 			if (signal?.aborted) onAbort();
-			let reader;
+			let opened = false;
 			let failureCode;
+			// Studio events are sequenced so a reconnect can replay without applying
+			// anything twice. A replayed event is dropped here, before the UI sees it.
+			let cursor = 0;
+			let terminal = false;
 			const receive = (event) => {
 				if (event?.type === "execution_telemetry" || event?.type === "execution_tool_started") { telemetry.frame(event); return; }
+				if (studio && Number.isFinite(event?.eventSeq)) {
+					if (event.eventSeq <= cursor) return;
+					cursor = event.eventSeq;
+				}
 				if (event?.type === "error") failureCode = transportFailureCode(event);
+				if (event?.type === "done") terminal = true;
 				onEvent(event);
 			};
+			const readStream = async (response) => {
+				const reader = response.body.getReader();
+				opened = true;
+				try {
+					const decoder = new TextDecoder();
+					let buffer = "";
+					while (true) {
+						const { value, done } = await reader.read();
+						if (done) break;
+						buffer += decoder.decode(value, { stream: true });
+						const parsed = parseSseChunk(buffer);
+						buffer = parsed.tail;
+						for (const event of parsed.events) receive(event);
+					}
+					// Preserve legacy UI tail delivery, but never complete a telemetry
+					// frame synthetically. Bare done/EOF is not completion evidence.
+					for (const event of parseSseChunk(`${buffer}\n`).events) {
+						if (event?.type !== "execution_telemetry" && event?.type !== "execution_tool_started") receive(event);
+					}
+				} finally {
+					reader.releaseLock();
+				}
+			};
+			const body = studio
+				? JSON.stringify({
+					surface: "studio", sessionId, turnId, text, context: turnRequest.context,
+					...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(attachFrame === undefined ? {} : { attachFrame: Boolean(attachFrame) }),
+				})
+				: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) });
 			try {
 				const response = await fetchImpl(sidecarUrl("/agent/turn"), {
 					method: "POST",
 					headers: { "content-type": "application/json", accept: "text/event-stream" },
-					body: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) }),
+					body,
 					signal,
 				});
 				if (!response.ok || !response.body) {
@@ -325,31 +441,31 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 					onEvent({ type: "done" });
 					return;
 				}
-				reader = response.body.getReader();
-				const decoder = new TextDecoder();
-				let buffer = "";
-				while (true) {
-					const { value, done } = await reader.read();
-					if (done) break;
-					buffer += decoder.decode(value, { stream: true });
-					const parsed = parseSseChunk(buffer);
-					buffer = parsed.tail;
-					for (const event of parsed.events) receive(event);
+				let streamError = null;
+				try { await readStream(response); } catch (error) { streamError = error; }
+				// A lost observer is not a lost turn: resume from the cursor instead of
+				// re-sending the turn, which would authorize a second generation.
+				for (let attempt = 0; studio && turnId && !terminal && !signal?.aborted && attempt < RESUME_ATTEMPTS; attempt += 1) {
+					let resumed;
+					try {
+						resumed = await fetchImpl(sidecarUrl(`/agent/turn/${encodeURIComponent(turnId)}/events?after=${cursor}`), {
+							headers: { accept: "text/event-stream" },
+							signal,
+						});
+					} catch { break; }
+					if (!resumed?.ok || !resumed.body) break;
+					streamError = null;
+					try { await readStream(resumed); } catch (error) { streamError = error; }
 				}
-				// Preserve legacy UI tail delivery, but never complete a telemetry
-				// frame synthetically. Bare done/EOF is not completion evidence.
-				for (const event of parseSseChunk(`${buffer}\n`).events) {
-					if (event?.type !== "execution_telemetry" && event?.type !== "execution_tool_started") receive(event);
-				}
+				if (streamError) throw streamError;
 				if (failureCode) telemetry.fail(failureCode);
 			} catch (error) {
 				// Refusal before the stream opens is a known failed request. Losing
 				// an open stream without an outcome leaves execution unobserved.
-				if (!signal?.aborted && (!reader || failureCode)) telemetry.fail(failureCode || transportFailureCode(error));
+				if (!signal?.aborted && (!opened || failureCode)) telemetry.fail(failureCode || transportFailureCode(error));
 				throw error;
 			} finally {
 				signal?.removeEventListener("abort", onAbort);
-				reader?.releaseLock();
 				if (activeTurns.get(sessionId) === telemetry) activeTurns.delete(sessionId);
 			}
 		},
@@ -427,6 +543,14 @@ export function createMockTransport(config = { state: "ready" }) {
 		async stop() {
 			return { ok: true };
 		},
+		async acceptJob() {
+			return { ok: true };
+		},
+		// In mock mode the scripted transport also stands in for the host that
+		// would accept an image, so ?agent=mock keeps showing the placed state.
+		async applyImage({ requestId }) {
+			return { ok: true, receiptId: `mock-${requestId}` };
+		},
 		async turn(_request, onEvent, signal) {
 			if (state === "rate-limited") {
 				onEvent({ type: "text.delta", text: "Framing a wide two-shot from the current blocking." });
@@ -462,4 +586,279 @@ export function createMockTransport(config = { state: "ready" }) {
 export function createAgentTransport(options = {}) {
 	const config = options.mockConfig !== undefined ? options.mockConfig : mockConfigFromSearch();
 	return config ? createMockTransport(config) : createHttpTransport(options);
+}
+
+// --- chat store (framework-free) -------------------------------------------
+//
+// One conversation: session identity, transcript, motion jobs, receipts and
+// acknowledged image actions. It lives here rather than inside the component so
+// the dock, an embedded Studio host and the test runner drive the SAME state
+// machine over the SAME transport events. It is not a second analytics emitter:
+// telemetry stays in the transport, unchanged.
+
+/** A host claims a placement by calling preventDefault() on the dispatched
+ * event, then answers with `cozyclay:agent-image-result`. An unclaimed action
+ * fails immediately: nothing applied it. */
+export function requestHostImageAction(request) {
+	return new Promise((resolve) => {
+		const onResult = (event) => {
+			if (event.detail?.requestId !== request.requestId) return;
+			globalThis.removeEventListener("cozyclay:agent-image-result", onResult);
+			resolve({ ok: Boolean(event.detail.ok), error: event.detail.error, receiptId: event.detail.receiptId });
+		};
+		globalThis.addEventListener?.("cozyclay:agent-image-result", onResult);
+		const claimed = globalThis.dispatchEvent
+			? !globalThis.dispatchEvent(new CustomEvent("cozyclay:agent-image", { cancelable: true, detail: request }))
+			: false;
+		if (claimed) return;
+		globalThis.removeEventListener?.("cozyclay:agent-image-result", onResult);
+		resolve({ ok: false, error: "No editor accepted the image. Open the scene that should receive it." });
+	});
+}
+
+export function createAgentChatStore({
+	transport,
+	surface = "workflow",
+	buildContext = null,
+	requestImageAction = null,
+	onAuthLost = null,
+	newId = createStudioSessionId,
+} = {}) {
+	const studio = surface === "studio";
+	const listeners = new Set();
+	const seenReceipts = new Set();
+	const settledActions = new Set();
+	let controller = null;
+	let state = {
+		sessionId: newId(),
+		turnId: null,
+		draft: "",
+		items: [],
+		streaming: false,
+		quota: null,
+		rateLimit: null,
+		lastPrompt: "",
+	};
+	const set = (patch) => {
+		state = { ...state, ...patch };
+		for (const listener of [...listeners]) listener(state);
+	};
+	const setItems = (update) => set({ items: update(state.items) });
+	const patchItem = (predicate, patch) => setItems((items) => items.map((item) => predicate(item) ? { ...item, ...patch } : item));
+	const findJob = (jobId) => state.items.find((item) => item.kind === "job" && item.jobId === jobId);
+
+	function applyJobEvent(event) {
+		if (!event?.jobId || !STUDIO_VARIANTS.jobStates.includes(event.state)) return;
+		const reported = typeof event.progress === "number" && Number.isFinite(event.progress)
+			? Math.min(1, Math.max(0, event.progress))
+			: null;
+		setItems((items) => {
+			const existing = items.find((item) => item.kind === "job" && item.jobId === event.jobId);
+			const next = {
+				kind: "job",
+				id: existing?.id ?? `job:${event.jobId}`,
+				jobId: event.jobId,
+				commandId: event.commandId ?? existing?.commandId ?? null,
+				state: event.state,
+				phase: typeof event.phase === "string" ? event.phase : existing?.phase ?? null,
+				progress: reported ?? existing?.progress ?? null,
+				verification: existing?.verification ?? null,
+				receiptId: existing?.receiptId ?? null,
+				acceptance: event.state === "review_required" ? existing?.acceptance ?? { status: "required" } : existing?.acceptance ?? null,
+			};
+			return existing ? items.map((item) => item === existing ? next : item) : [...items, next];
+		});
+	}
+
+	function applyReceiptEvent(raw) {
+		let receipt;
+		try {
+			receipt = validateReceipt(raw);
+		} catch (error) {
+			// An unreadable receipt is never rendered as a success.
+			setItems((items) => [...items, { kind: "failure", id: newId(), failure: { code: error?.code || "INVALID_RECEIPT", message: error?.message || "The host returned an unreadable receipt.", preserved: { authoredState: "unknown" }, recovery: { action: "inspect" } } }]);
+			return;
+		}
+		if (receipt.ok === false) {
+			const key = `failure:${receipt.commandId}:${receipt.code}`;
+			if (seenReceipts.has(key)) return;
+			seenReceipts.add(key);
+			setItems((items) => [
+				...items.map((item) => item.kind === "job" && item.commandId === receipt.commandId && !isTerminalJobState(item.state)
+					? { ...item, state: "failed", phase: receipt.phase, acceptance: null }
+					: item),
+				{ kind: "failure", id: key, failure: receipt },
+			]);
+			return;
+		}
+		if (seenReceipts.has(receipt.receiptId)) return;
+		seenReceipts.add(receipt.receiptId);
+		setItems((items) => [
+			...items.map((item) => item.kind === "job" && item.jobId === receipt.jobId
+				? {
+					...item,
+					state: receipt.status === "installed" ? "installed" : item.state,
+					verification: receipt.verification ?? null,
+					receiptId: receipt.receiptId,
+					acceptance: receipt.explicitUnverifiedAcceptance ? { status: "accepted" } : null,
+				}
+				: item),
+			{ kind: "receipt", id: `receipt:${receipt.receiptId}`, receiptId: receipt.receiptId, receipt, summary: receiptSummary(receipt) },
+		]);
+	}
+
+	function applyEvent(event) {
+		if (event?.type === "text.delta") {
+			setItems((items) => {
+				const last = items[items.length - 1];
+				if (last?.kind === "assistant") return [...items.slice(0, -1), { ...last, text: last.text + event.text }];
+				return [...items, { kind: "assistant", id: newId(), text: event.text }];
+			});
+			return;
+		}
+		if (event?.type === "tool.start") {
+			setItems((items) => [...items, { kind: "tool", id: event.callId || newId(), callId: event.callId, name: event.name, label: event.label, args: event.args, status: "running" }]);
+			return;
+		}
+		if (event?.type === "tool.done") {
+			patchItem((item) => item.kind === "tool" && item.callId === event.callId, { status: event.ok ? "done" : "failed", elapsedMs: event.elapsedMs, result: event.result, error: event.error });
+			return;
+		}
+		if (event?.type === "image") {
+			setItems((items) => [...items, { kind: "image", id: event.imageId || newId(), imageId: event.imageId, dataUrl: event.dataUrl, width: event.width, height: event.height, prompt: event.prompt, placed: false, apply: null }]);
+			return;
+		}
+		if (event?.type === "job.state" || event?.type === "job.progress") { applyJobEvent(event); return; }
+		if (event?.type === "receipt") { applyReceiptEvent(event.receipt); return; }
+		if (event?.type === "quota") {
+			set({ quota: { plan: event.plan, usedPercent: event.primary?.usedPercent, windowMinutes: event.primary?.windowMinutes, resetAt: event.primary?.resetAt, credits: event.credits } });
+			return;
+		}
+		if (event?.type !== "error") return;
+		if (event.code === "rate_limit") { set({ rateLimit: { resetAt: event.resetAt || null, message: event.message || ERROR_COPY.rate_limit } }); return; }
+		if (event.code === "auth") { onAuthLost?.(); return; }
+		setItems((items) => {
+			const index = [...items].reverse().findIndex((item) => item.kind === "tool" && item.status === "failed");
+			if (index === -1) return [...items, { kind: "tool", id: newId(), callId: newId(), name: "agent_turn", label: "Run turn", status: "failed", failure: { code: event.code, message: event.message } }];
+			const position = items.length - 1 - index;
+			return items.map((item, at) => at === position ? { ...item, failure: { code: event.code, message: event.message } } : item);
+		});
+	}
+
+	function settleImageAction(requestId, result, intent) {
+		// One acknowledgement per request: a duplicate receipt cannot place an
+		// image twice, and a late answer cannot flip a settled card.
+		if (!requestId || settledActions.has(requestId)) return;
+		settledActions.add(requestId);
+		const ok = Boolean(result?.ok);
+		const patch = { apply: { requestId, status: ok ? "settled" : "failed", error: ok ? null : result?.error || "The editor did not apply the image.", receiptId: result?.receiptId ?? null } };
+		// Only an acknowledged action changes what the card claims happened.
+		if (ok) patch.placed = intent === "place";
+		patchItem((item) => item.kind === "image" && item.apply?.requestId === requestId, patch);
+	}
+
+	async function runImageAction(itemId, intent) {
+		const item = state.items.find((entry) => entry.kind === "image" && entry.id === itemId);
+		if (!item || item.apply?.status === "applying") return;
+		if (intent === "place" ? item.placed : !item.placed) return;
+		const requestId = newId();
+		patchItem((entry) => entry.kind === "image" && entry.id === itemId, { apply: { requestId, status: "applying", error: null, receiptId: null } });
+		const request = { action: intent, requestId, imageId: item.imageId, dataUrl: item.dataUrl, width: item.width, height: item.height, prompt: item.prompt };
+		try {
+			const result = await (requestImageAction ?? requestHostImageAction)(request);
+			settleImageAction(requestId, result, intent);
+		} catch (error) {
+			settleImageAction(requestId, { ok: false, error: String(error?.message || error) }, intent);
+		}
+	}
+
+	const resetSession = () => {
+		seenReceipts.clear();
+		settledActions.clear();
+		// Clearing the transcript also retires the server session: a cleared chat
+		// the model still remembers is the divergence this replaces.
+		set({ sessionId: newId(), turnId: null, items: [], rateLimit: null, lastPrompt: "" });
+	};
+
+	return {
+		getState: () => state,
+		subscribe(listener) {
+			listeners.add(listener);
+			return () => listeners.delete(listener);
+		},
+		setDraft: (draft) => set({ draft: String(draft ?? "") }),
+		async send(text, options = {}) {
+			const trimmed = String(text ?? "").trim();
+			if (!trimmed || state.streaming) return;
+			const turnId = newId();
+			// Context is read at Send, from the host's current authoritative refs.
+			const context = studio ? buildContext?.() ?? null : null;
+			if (studio && !context) {
+				applyEvent({ type: "error", code: "upstream", message: "The editor is not ready to describe the scene yet." });
+				return;
+			}
+			set({
+				lastPrompt: trimmed,
+				rateLimit: null,
+				turnId,
+				streaming: true,
+				draft: "",
+				items: [...state.items, { kind: "user", id: newId(), text: trimmed, attachFrame: Boolean(options.attachFrame) }],
+			});
+			controller = new AbortController();
+			const signal = controller.signal;
+			try {
+				await transport.turn({
+					...(studio ? { surface: "studio", turnId, context } : {}),
+					sessionId: state.sessionId,
+					text: trimmed,
+					attachFrame: Boolean(options.attachFrame),
+					model: options.model,
+					effort: options.effort ?? undefined,
+				}, applyEvent, signal);
+			} catch (error) {
+				if (!signal.aborted) applyEvent({ type: "error", code: "upstream", message: String(error?.message || error) });
+			} finally {
+				if (controller?.signal === signal) controller = null;
+				set({ streaming: false });
+			}
+		},
+		stop() {
+			const running = [...state.items].reverse().find((item) => item.kind === "job" && !isTerminalJobState(item.state));
+			controller?.abort("agent-stop");
+			controller = null;
+			const target = studio
+				? { sessionId: state.sessionId, turnId: state.turnId, ...(running ? { jobId: running.jobId } : {}) }
+				: state.sessionId;
+			Promise.resolve(transport.stop?.(target))
+				.then(() => {
+					// Only an acknowledged Stop marks the job stopped; an aborted stream
+					// on its own proves nothing about the runtime.
+					if (running) patchItem((item) => item.kind === "job" && item.jobId === running.jobId && !isTerminalJobState(item.state), { state: "cancelled", acceptance: null });
+				})
+				.catch(() => {});
+			set({ streaming: false });
+		},
+		async acceptJob(jobId) {
+			const job = findJob(jobId);
+			if (!job || job.acceptance?.status !== "required") return;
+			patchItem((item) => item.kind === "job" && item.jobId === jobId, { acceptance: { status: "accepting" } });
+			try {
+				const result = await transport.acceptJob?.({ jobId, sessionId: state.sessionId, turnId: state.turnId });
+				if (result?.receipt) applyReceiptEvent(result.receipt);
+				else patchItem((item) => item.kind === "job" && item.jobId === jobId, { acceptance: { status: "required", error: "The host did not acknowledge the acceptance." } });
+			} catch (error) {
+				patchItem((item) => item.kind === "job" && item.jobId === jobId, { acceptance: { status: "required", error: String(error?.message || error) } });
+			}
+		},
+		applyImage: (itemId) => runImageAction(itemId, "place"),
+		undoImage: (itemId) => runImageAction(itemId, "remove"),
+		acknowledgeImageAction: ({ requestId, ok, error, receiptId }) => {
+			const item = state.items.find((entry) => entry.kind === "image" && entry.apply?.requestId === requestId);
+			settleImageAction(requestId, { ok, error, receiptId }, item?.placed ? "remove" : "place");
+		},
+		clearRateLimit: () => set({ rateLimit: null }),
+		clearContext: resetSession,
+		newSession: resetSession,
+	};
 }

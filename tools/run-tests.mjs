@@ -54,6 +54,7 @@ const NODE_FILES = [
 	"test/process/verify-package-telemetry.mjs",
 	"test/verify-agent-image-references.mjs",
 	"test/verify-agent-panel.mjs",
+	"test/verify-agent-host.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-studio-agent-protocol.mjs",
 	"test/verify-agent-execution.mjs",

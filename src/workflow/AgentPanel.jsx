@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { FiChevronRight, FiClock, FiDownload, FiImage, FiMoreHorizontal, FiPaperclip, FiPlus, FiRotateCw } from "react-icons/fi";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { FiAlertTriangle, FiCheck, FiChevronRight, FiClock, FiDownload, FiImage, FiMoreHorizontal, FiPaperclip, FiPlus, FiRotateCw } from "react-icons/fi";
 import {
 	AGENT_PANEL_OVERLAY_BREAKPOINT,
 	AGENT_PANEL_RAIL_WIDTH,
@@ -7,12 +7,18 @@ import {
 	AGENT_PANEL_WIDTH_MIN,
 	AGENT_STATES,
 	DEFAULT_MODELS,
+	JOB_STATE_COPY,
+	createAgentChatStore,
 	effortOptions,
 	ERROR_COPY,
+	formatJobProgress,
 	IMAGE_COST_HINT,
+	isTerminalJobState,
+	jobStateTone,
 	SUGGESTION_CHIPS,
 	clampPanelWidth,
 	createAgentTransport,
+	requestHostImageAction,
 	formatElapsed,
 	formatResetIn,
 	readStoredPanelWidth,
@@ -20,9 +26,6 @@ import {
 	toolCallLabel,
 } from "./agent-client.js";
 import "./agent-panel.css";
-
-let turnSeed = 0;
-const nextId = (prefix) => `${prefix}-${(turnSeed += 1)}`;
 
 function StatusDot({ tone, title }) {
 	return <span className={`agent-status-dot ${tone}`} title={title} aria-hidden="true" />;
@@ -68,17 +71,22 @@ function ToolCallCard({ call, onRetry }) {
 }
 
 function ImageResultCard({ image, onUse, onUndo, onRegenerate, onOpen }) {
-	return <div className="agent-card agent-image-card" data-image-id={image.imageId} data-placed={image.placed ? "true" : "false"}>
+	const applying = image.apply?.status === "applying";
+	const failed = image.apply?.status === "failed";
+	return <div className="agent-card agent-image-card" data-image-id={image.imageId} data-placed={image.placed ? "true" : "false"} data-apply-status={image.apply?.status || "idle"}>
 		<figure>
 			<img src={image.dataUrl} width={image.width} height={image.height} alt={image.prompt || "Generated image"} onClick={() => onOpen(image)} />
 		</figure>
 		{image.placed
-			? <div className="agent-placed"><StatusDot tone="ok" />Placed<button type="button" className="agent-image-undo" onClick={() => onUndo(image)}>Undo</button></div>
+			? <div className="agent-placed"><StatusDot tone="ok" />Placed<button type="button" className="agent-image-undo" disabled={applying} onClick={() => onUndo(image)}>{applying ? "Removing…" : "Undo"}</button></div>
 			: <div className="agent-image-actions">
-				<button type="button" className="primary agent-image-use" onClick={() => onUse(image)}><FiImage size={11} /> Use in scene</button>
+				<button type="button" className="primary agent-image-use" disabled={applying} onClick={() => onUse(image)}><FiImage size={11} /> {applying ? "Applying…" : "Use in scene"}</button>
 				<a className="agent-image-download" role="button" href={image.dataUrl} download={`${image.imageId || "agent-image"}.png`}><FiDownload size={11} /> Download</a>
 				<button type="button" className="agent-image-regenerate" onClick={() => onRegenerate(image)}><FiRotateCw size={11} /> Regenerate</button>
 			</div>}
+		{/* The card states what the editor actually did: an unacknowledged or
+		    refused action is never drawn as a placement. */}
+		{failed && <p className="agent-image-error" role="alert">{image.apply.error}</p>}
 	</div>;
 }
 
@@ -101,11 +109,93 @@ function PausedCard({ resetAt, onRetry, onSwitchModel }) {
 	</div>;
 }
 
+// A generation is a server-owned job. The card shows the state the runtime
+// reported, the phase it named and only a progress value it actually sent.
+function JobCard({ job, onStop, onAccept }) {
+	const running = !isTerminalJobState(job.state);
+	// A finished job never keeps showing the percentage or the phase it was in
+	// when it finished; the terminal state and its receipt are the truth.
+	const percent = running && Number.isFinite(job.progress) ? Math.round(job.progress * 100) : null;
+	const phase = job.state === "installed" ? null : job.phase;
+	const unverified = job.state === "review_required" || job.verification?.status === "unverified";
+	const limitations = job.verification?.limitations ?? [];
+	return <div className="agent-card agent-job-card" data-job-id={job.jobId} data-job-state={job.state}>
+		<div className="agent-job-head">
+			<StatusDot tone={jobStateTone(job.state)} title={job.state} />
+			<span className="agent-job-label">{JOB_STATE_COPY[job.state] || job.state}</span>
+			{unverified && <span className="agent-job-badge">Unverified</span>}
+			{percent !== null && <span className="agent-job-progress">{formatJobProgress(job.progress)}</span>}
+		</div>
+		{phase && <p className="agent-job-phase">{phase}</p>}
+		{percent !== null && <div className="agent-job-bar" role="progressbar" aria-label="Generation progress" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+			<span className="agent-job-bar-fill" style={{ transform: `scaleX(${job.progress})` }} />
+		</div>}
+		{limitations.length > 0 && <ul className="agent-job-limits">{limitations.map((limit) => <li key={limit}>{limit}</li>)}</ul>}
+		<div className="agent-job-actions">
+			{running && job.state !== "review_required" && <button type="button" className="agent-ghost-button agent-job-stop" onClick={() => onStop(job)}>Stop</button>}
+			{job.acceptance?.status === "required" && <button type="button" className="agent-ghost-button agent-job-accept" onClick={() => onAccept(job)}><FiAlertTriangle size={11} /> Apply with warnings</button>}
+			{job.acceptance?.status === "accepting" && <span className="agent-job-note">Applying…</span>}
+			{job.acceptance?.status === "accepted" && <span className="agent-job-note"><FiCheck size={11} /> Applied at your request</span>}
+			{job.acceptance?.error && <span className="agent-job-note alert" role="alert">{job.acceptance.error}</span>}
+		</div>
+	</div>;
+}
+
+function ReceiptCard({ item }) {
+	const { receipt, summary } = item;
+	const unverified = receipt.verification?.status === "unverified";
+	const limitations = receipt.verification?.limitations ?? [];
+	return <div className="agent-card agent-receipt-card" data-receipt-id={item.receiptId} data-receipt-status={receipt.status}>
+		<div className="agent-receipt-head">
+			<StatusDot tone={unverified ? "warn" : "ok"} title={receipt.status} />
+			<span className="agent-receipt-summary">{summary}</span>
+		</div>
+		{(receipt.warnings.length > 0 || limitations.length > 0) && <ul className="agent-receipt-notes">
+			{receipt.warnings.map((warning) => <li key={warning.code}>{warning.message || warning.code}</li>)}
+			{limitations.map((limit) => <li key={limit}>{limit}</li>)}
+		</ul>}
+	</div>;
+}
+
+const RECOVERY_COPY = {
+	none: "No recovery is available for this command.",
+	inspect: "Ask the agent to inspect the target before trying again.",
+	retry: "The same command can be retried.",
+	new_intent: "Tell the agent what to do with the changed target.",
+	reconcile: "The result is unknown; reconcile before changing this target.",
+	sign_in: "Sign in again to continue.",
+};
+
+function FailureCard({ failure, onRetry }) {
+	return <div className="agent-card agent-failure-card" data-failure-code={failure.code} role="alert">
+		<div className="agent-failure-head"><FiAlertTriangle size={12} aria-hidden="true" /><span className="agent-failure-code">{failure.code}</span></div>
+		<p className="agent-failure-message">{failure.message || "The command did not complete."}</p>
+		<p className="agent-failure-recovery">{RECOVERY_COPY[failure.recovery?.action] || RECOVERY_COPY.none}{failure.preserved?.authoredState === "unchanged" ? " Nothing in the scene changed." : failure.preserved?.authoredState === "unknown" ? " Whether the scene changed is unknown." : ""}</p>
+		{failure.recovery?.retryAllowed && <div className="agent-error-actions"><button type="button" className="agent-ghost-button agent-error-retry" onClick={onRetry}>Retry</button></div>}
+	</div>;
+}
+
 // `defaultCollapsed` + `onCollapsedChange` let a host mirror the panel's
 // visibility in its own chrome (the studio's View ▾ menu) without taking the
 // flag away from the panel: the rail button, Cmd/Ctrl+B and the toggle event
 // all still flip it here, and the host is told after every flip.
-export default function AgentPanel({ transport: injectedTransport = null, sceneName = "CozyClay Scene", defaultCollapsed = false, onCollapsedChange = null }) {
+//
+// `embedded` is the other arrangement: a host (the Studio Inspector column)
+// owns the width, the visibility and the global shortcut, and passes `hidden`.
+// The panel then stays mounted with its draft, session and transcript intact,
+// renders no rail, no resize handle and no collapse control, and never binds a
+// window shortcut that would fire twice.
+export default function AgentPanel({
+	transport: injectedTransport = null,
+	sceneName = "CozyClay Scene",
+	defaultCollapsed = false,
+	onCollapsedChange = null,
+	embedded = false,
+	hidden = false,
+	surface = "workflow",
+	buildContext = null,
+	onImageAction = null,
+}) {
 	const transport = useMemo(() => injectedTransport || createAgentTransport(), [injectedTransport]);
 	const mockState = transport.mock ? transport.state : null;
 
@@ -121,22 +211,44 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	const [effort, setEffort] = useState(null);
 	const efforts = useMemo(() => effortOptions(models.find((entry) => entry.id === model)), [models, model]);
 	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); }, []);
-	const [draft, setDraft] = useState("");
 	const [attachFrame, setAttachFrame] = useState(false);
-	const [items, setItems] = useState([]);
-	const [streaming, setStreaming] = useState(false);
-	const [quota, setQuota] = useState(null);
-	const [rateLimit, setRateLimit] = useState(null);
 	const [lightbox, setLightbox] = useState(null);
-	const [overlay, setOverlay] = useState(() => (globalThis.innerWidth || 1440) < AGENT_PANEL_OVERLAY_BREAKPOINT);
+	const [overlay, setOverlay] = useState(() => !embedded && (globalThis.innerWidth || 1440) < AGENT_PANEL_OVERLAY_BREAKPOINT);
 
 	const composerRef = useRef(null);
 	const transcriptRef = useRef(null);
-	const abortRef = useRef(null);
-	const lastPromptRef = useRef("");
-	const sessionRef = useRef(nextId("session"));
+
+	// The host's context builder and image-action handler are read through refs
+	// so a re-rendered host never rebuilds the conversation.
+	const buildContextRef = useRef(buildContext);
+	buildContextRef.current = buildContext;
+	const imageActionRef = useRef(onImageAction);
+	imageActionRef.current = onImageAction;
+
+	const store = useMemo(() => createAgentChatStore({
+		transport,
+		surface,
+		buildContext: () => buildContextRef.current?.() ?? null,
+		// Host prop first, then the scripted mock host, then the live editor event.
+		requestImageAction: (request) => (imageActionRef.current ?? transport.applyImage?.bind(transport) ?? requestHostImageAction)(request),
+		onAuthLost: () => setAuthState("signed-out"),
+	}), [surface, transport]);
+	const chat = useSyncExternalStore(store.subscribe, store.getState, store.getState);
+	const { draft, items, quota, rateLimit, streaming } = chat;
 
 	// --- session bootstrap -------------------------------------------------
+	const readAccount = useCallback(async () => {
+		try {
+			const status = await transport.status();
+			setAccount(status);
+			setAuthState(status?.signedIn ? (status?.entitlements?.image === false ? "no-entitlement" : "ready") : status?.pending ? "signing-in" : "signed-out");
+			return status;
+		} catch {
+			setAuthState("signed-out");
+			return null;
+		}
+	}, [transport]);
+
 	useEffect(() => {
 		let cancelled = false;
 		(async () => {
@@ -160,25 +272,44 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 		return () => { cancelled = true; };
 	}, [transport]);
 
+	// Sign-in finishes in another window. The panel picks the session up when
+	// this document is looked at again, or when the host announces the return —
+	// never on a fixed timer.
+	useEffect(() => {
+		if (authState !== "signing-in") return;
+		const onReturn = () => { if (document.visibilityState !== "hidden") readAccount(); };
+		window.addEventListener("focus", onReturn);
+		window.addEventListener("cozyclay:agent-auth-return", onReturn);
+		document.addEventListener("visibilitychange", onReturn);
+		return () => {
+			window.removeEventListener("focus", onReturn);
+			window.removeEventListener("cozyclay:agent-auth-return", onReturn);
+			document.removeEventListener("visibilitychange", onReturn);
+		};
+	}, [authState, readAccount]);
+
 	// Mock states that only exist as a rendered result (a finished streaming
 	// turn, a paused card, a failed tool call) are driven by replaying the
 	// scripted turn once, so QA screenshots the same code path a live turn uses.
-	const runTurnRef = useRef(null);
 	useEffect(() => {
 		if (!mockState || authState !== "ready") return;
 		if (!["streaming", "rate-limited", "error"].includes(mockState)) return;
 		if (items.length) return;
-		runTurnRef.current?.("Give me a wide two-shot of this scene");
-	}, [authState, items.length, mockState]);
+		store.send("Give me a wide two-shot of this scene", { attachFrame: false, model });
+	}, [authState, items.length, mockState, model, store]);
 
 	// --- layout ------------------------------------------------------------
 	useEffect(() => {
+		if (embedded) return;
 		const onResize = () => setOverlay((globalThis.innerWidth || 1440) < AGENT_PANEL_OVERLAY_BREAKPOINT);
 		window.addEventListener("resize", onResize);
 		return () => window.removeEventListener("resize", onResize);
-	}, []);
+	}, [embedded]);
 
 	useEffect(() => {
+		// An embedded host owns the shortcut; binding it here too would toggle
+		// the panel twice per press.
+		if (embedded) return;
 		const onKey = (event) => {
 			if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
 				event.preventDefault();
@@ -187,24 +318,33 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, []);
+	}, [embedded]);
 
 	useEffect(() => {
+		if (embedded) return;
 		const onToggle = () => setCollapsed((value) => !value);
 		window.addEventListener("cozyclay:agent-panel-toggle", onToggle);
 		return () => window.removeEventListener("cozyclay:agent-panel-toggle", onToggle);
-	}, []);
+	}, [embedded]);
 
 	useEffect(() => {
+		if (embedded) return;
 		onCollapsedChange?.(collapsed);
-	}, [collapsed, onCollapsedChange]);
+	}, [collapsed, embedded, onCollapsedChange]);
 
 	// Focus moves to the composer whenever the panel opens. The composer only
 	// mounts once the session resolves, so authState is a dependency too:
-	// otherwise this fires against a composer that does not exist yet.
+	// otherwise this fires against a composer that does not exist yet. A hidden
+	// embedded panel never pulls focus out of the host's own surface.
 	useEffect(() => {
+		if (hidden) {
+			// Chrome blurs a hidden focused field only on its next lifecycle step;
+			// until then the caret is still inside chrome the author cannot see.
+			if (composerRef.current && composerRef.current === document.activeElement) composerRef.current.blur();
+			return;
+		}
 		if (!collapsed) composerRef.current?.focus();
-	}, [authState, collapsed]);
+	}, [authState, collapsed, hidden]);
 
 	useEffect(() => {
 		const node = transcriptRef.current;
@@ -236,124 +376,46 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	}, []);
 
 	// --- turn --------------------------------------------------------------
-	const applyEvent = useCallback((event) => {
-		if (event?.type === "text.delta") {
-			setItems((current) => {
-				const last = current[current.length - 1];
-				if (last?.kind === "assistant") return [...current.slice(0, -1), { ...last, text: last.text + event.text }];
-				return [...current, { kind: "assistant", id: nextId("assistant"), text: event.text }];
-			});
-			return;
-		}
-		if (event?.type === "tool.start") {
-			setItems((current) => [...current, { kind: "tool", id: event.callId || nextId("call"), callId: event.callId, name: event.name, label: event.label, args: event.args, status: "running" }]);
-			return;
-		}
-		if (event?.type === "tool.done") {
-			setItems((current) => current.map((item) => item.kind === "tool" && item.callId === event.callId
-				? { ...item, status: event.ok ? "done" : "failed", elapsedMs: event.elapsedMs, result: event.result, error: event.error }
-				: item));
-			return;
-		}
-		if (event?.type === "image") {
-			setItems((current) => [...current, { kind: "image", id: event.imageId || nextId("image"), imageId: event.imageId, dataUrl: event.dataUrl, width: event.width, height: event.height, prompt: event.prompt, placed: false }]);
-			return;
-		}
-		if (event?.type === "quota") {
-			setQuota({ plan: event.plan, usedPercent: event.primary?.usedPercent, windowMinutes: event.primary?.windowMinutes, resetAt: event.primary?.resetAt, credits: event.credits });
-			return;
-		}
-		if (event?.type === "error") {
-			if (event.code === "rate_limit") {
-				setRateLimit({ resetAt: event.resetAt || null, message: event.message || ERROR_COPY.rate_limit });
-				return;
-			}
-			if (event.code === "auth") {
-				setAuthState("signed-out");
-				return;
-			}
-			setItems((current) => {
-				const index = [...current].reverse().findIndex((item) => item.kind === "tool" && item.status === "failed");
-				if (index === -1) return [...current, { kind: "tool", id: nextId("call"), callId: nextId("call"), name: "agent_turn", label: "Run turn", status: "failed", failure: { code: event.code, message: event.message } }];
-				const position = current.length - 1 - index;
-				return current.map((item, at) => at === position ? { ...item, failure: { code: event.code, message: event.message } } : item);
-			});
-		}
-	}, []);
-
-	const runTurn = useCallback(async (text) => {
-		const trimmed = String(text || "").trim();
-		if (!trimmed || streaming) return;
-		lastPromptRef.current = trimmed;
-		setRateLimit(null);
-		setItems((current) => [...current, { kind: "user", id: nextId("user"), text: trimmed, attachFrame }]);
-		setDraft("");
-		setStreaming(true);
-		const controller = new AbortController();
-		abortRef.current = controller;
-		try {
-			await transport.turn({ sessionId: sessionRef.current, text: trimmed, attachFrame, model, effort: effort ?? undefined }, applyEvent, controller.signal);
-		} catch (error) {
-			if (!controller.signal.aborted) applyEvent({ type: "error", code: "upstream", message: String(error?.message || error) });
-		} finally {
-			abortRef.current = null;
-			setStreaming(false);
-		}
-	}, [applyEvent, attachFrame, effort, model, streaming, transport]);
-	runTurnRef.current = runTurn;
-
-	const stopTurn = useCallback(() => {
-		abortRef.current?.abort("agent-stop");
-		abortRef.current = null;
-		transport.stop?.(sessionRef.current);
-		setStreaming(false);
-	}, [transport]);
+	const runTurn = useCallback((text) => store.send(text, { attachFrame, model, effort: effort ?? undefined }), [attachFrame, effort, model, store]);
+	const stopTurn = useCallback(() => store.stop(), [store]);
 
 	const signIn = useCallback(async () => {
 		setAuthState("signing-in");
 		try {
 			await transport.signIn();
-			const status = await transport.status();
-			setAccount(status);
-			if (status?.signedIn) setAuthState(status?.entitlements?.image === false ? "no-entitlement" : "ready");
+			await readAccount();
 		} catch {
 			setAuthState("signed-out");
 		}
-	}, [transport]);
+	}, [readAccount, transport]);
 
 	const signOut = useCallback(async () => {
 		setMenuOpen(false);
 		await transport.signOut().catch(() => {});
 		setAccount(null);
 		setAuthState("signed-out");
-		setItems([]);
-	}, [transport]);
+		store.newSession();
+	}, [store, transport]);
 
 	const newSession = useCallback(() => {
-		sessionRef.current = nextId("session");
-		setItems([]);
-		setRateLimit(null);
+		store.newSession();
 		setMenuOpen(false);
 		composerRef.current?.focus();
-	}, []);
+	}, [store]);
 
-	const useInScene = useCallback((image) => {
-		// Mock mode only flips the card; the live panel hands the image to the
-		// scene through the same event the workflow canvas already listens for.
-		if (!transport.mock) window.dispatchEvent(new CustomEvent("cozyclay:agent-image", { detail: { imageId: image.imageId, dataUrl: image.dataUrl } }));
-		setItems((current) => current.map((item) => item.kind === "image" && item.id === image.id ? { ...item, placed: true } : item));
-	}, [transport.mock]);
-
-	const undoPlacement = useCallback((image) => {
-		setItems((current) => current.map((item) => item.kind === "image" && item.id === image.id ? { ...item, placed: false } : item));
-	}, []);
+	// Clearing the transcript also retires the session, so what the author sees
+	// and what the model remembers cannot diverge.
+	const clearContext = useCallback(() => {
+		store.clearContext();
+		setMenuOpen(false);
+	}, [store]);
 
 	const switchModel = useCallback(() => {
 		const index = models.findIndex((entry) => entry.id === model);
 		const next = models[(index + 1) % models.length];
 		if (next) chooseModel(next.id);
-		setRateLimit(null);
-	}, [chooseModel, model, models]);
+		store.clearRateLimit();
+	}, [chooseModel, model, models, store]);
 
 	const onComposerKeyDown = useCallback((event) => {
 		if (event.key === "Escape" && streaming) {
@@ -370,7 +432,7 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	const panelState = rateLimit ? "rate-limited"
 		: authState !== "ready" ? authState
 		: streaming ? "streaming"
-		: items.some((item) => item.kind === "tool" && item.status === "failed") ? "error"
+		: items.some((item) => (item.kind === "tool" && item.status === "failed") || item.kind === "failure") ? "error"
 		: "ready";
 	const statusTone = { "signed-out": "", "signing-in": "busy", "no-entitlement": "warn", ready: "ok", streaming: "busy", "rate-limited": "warn", error: "alert" }[panelState] || "";
 	const resetLabel = formatResetIn(rateLimit?.resetAt || quota?.resetAt);
@@ -379,7 +441,7 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	const authenticated = authState === "ready" || authState === "no-entitlement";
 	const composerDisabled = panelState === "rate-limited";
 
-	if (collapsed) {
+	if (collapsed && !embedded) {
 		return <aside className="agent-panel collapsed" data-agent-state={panelState} data-agent-collapsed="true" aria-label="Agent panel, collapsed">
 			<button type="button" className="agent-rail-toggle" onClick={() => setCollapsed(false)} aria-label="Expand agent panel" title="Expand agent panel (Cmd/Ctrl+B)"><FiChevronRight size={13} style={{ transform: "rotate(180deg)" }} /></button>
 			<StatusDot tone={statusTone} title={panelState} />
@@ -388,14 +450,16 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	}
 
 	return <aside
-		className={`agent-panel${resizing ? " resizing" : ""}${overlay ? " overlay" : ""}`}
-		style={{ width: `${width}px` }}
+		className={`agent-panel${resizing ? " resizing" : ""}${overlay && !embedded ? " overlay" : ""}${embedded ? " embedded" : ""}`}
+		style={embedded ? undefined : { width: `${width}px` }}
+		hidden={embedded && hidden}
 		data-agent-state={panelState}
-		data-agent-width={width}
-		data-agent-overlay={overlay ? "true" : "false"}
+		data-agent-width={embedded ? undefined : width}
+		data-agent-overlay={overlay && !embedded ? "true" : "false"}
+		data-agent-embedded={embedded ? "true" : "false"}
 		aria-label="Agent"
 	>
-		<div
+		{!embedded && <div
 			role="separator"
 			aria-label="Resize agent panel"
 			aria-orientation="vertical"
@@ -409,7 +473,7 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 				if (event.key === "ArrowLeft") { event.preventDefault(); nudgeWidth(16); }
 				if (event.key === "ArrowRight") { event.preventDefault(); nudgeWidth(-16); }
 			}}
-		/>
+		/>}
 
 		<header className="agent-header">
 			<StatusDot tone={statusTone} title={panelState} />
@@ -420,11 +484,11 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 			<span className="agent-overflow">
 				<button type="button" className="agent-icon-button agent-overflow-toggle" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More agent actions" onClick={() => setMenuOpen((value) => !value)}><FiMoreHorizontal size={13} /></button>
 				{menuOpen && <div className="agent-menu" role="menu">
-					<button type="button" role="menuitem" onClick={() => { setItems([]); setMenuOpen(false); }}>Clear context</button>
+					<button type="button" role="menuitem" onClick={clearContext}>Clear context</button>
 					<button type="button" role="menuitem" onClick={signOut}>Sign out</button>
 				</div>}
 			</span>
-			<button type="button" className="agent-icon-button agent-collapse" onClick={() => setCollapsed(true)} aria-label="Collapse agent panel" title="Collapse agent panel (Cmd/Ctrl+B)"><FiChevronRight size={13} /></button>
+			{!embedded && <button type="button" className="agent-icon-button agent-collapse" onClick={() => setCollapsed(true)} aria-label="Collapse agent panel" title="Collapse agent panel (Cmd/Ctrl+B)"><FiChevronRight size={13} /></button>}
 		</header>
 
 		{account?.signedIn && <div className="agent-account">
@@ -443,7 +507,7 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 			{authState === "signing-in" && <div className="agent-state-card" data-agent-card="signing-in">
 				<span className="agent-spinner" aria-hidden="true" />
 				<h3>Waiting for your browser…</h3>
-				<p>Finish the ChatGPT sign-in in the tab that just opened. This panel picks up the session automatically.</p>
+				<p>Finish the ChatGPT sign-in in the tab that just opened. This panel picks up the session when you come back.</p>
 			</div>}
 
 			{authState === "no-entitlement" && <div className="agent-state-card" data-agent-card="no-entitlement">
@@ -456,18 +520,21 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 				<h3>Direct the scene</h3>
 				<p>Ask for blocking, a camera move, or a rendered frame from “{sceneName}”.</p>
 				<div className="agent-suggestions">
-					{SUGGESTION_CHIPS.map((chip) => <button type="button" key={chip} className="agent-chip" onClick={() => { setDraft(chip); composerRef.current?.focus(); }}>{chip}</button>)}
+					{SUGGESTION_CHIPS.map((chip) => <button type="button" key={chip} className="agent-chip" onClick={() => { store.setDraft(chip); composerRef.current?.focus(); }}>{chip}</button>)}
 				</div>
 			</div>}
 
 			{items.map((item) => {
 				if (item.kind === "user") return <div className="agent-row user" key={item.id}><div className="agent-bubble">{item.text}</div></div>;
 				if (item.kind === "assistant") return <div className="agent-row assistant" key={item.id}><div className="agent-assistant-text">{item.text}{streaming && <span className="agent-caret">▌</span>}</div></div>;
-				if (item.kind === "tool") return <div className="agent-row" key={item.id}><ToolCallCard call={item} onRetry={() => runTurn(lastPromptRef.current)} /></div>;
-				return <div className="agent-row" key={item.id}><ImageResultCard image={item} onUse={useInScene} onUndo={undoPlacement} onRegenerate={() => runTurn(lastPromptRef.current)} onOpen={setLightbox} /></div>;
+				if (item.kind === "tool") return <div className="agent-row" key={item.id}><ToolCallCard call={item} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
+				if (item.kind === "job") return <div className="agent-row" key={item.id}><JobCard job={item} onStop={stopTurn} onAccept={(job) => store.acceptJob(job.jobId)} /></div>;
+				if (item.kind === "receipt") return <div className="agent-row" key={item.id}><ReceiptCard item={item} /></div>;
+				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
+				return <div className="agent-row" key={item.id}><ImageResultCard image={item} onUse={(image) => store.applyImage(image.id)} onUndo={(image) => store.undoImage(image.id)} onRegenerate={() => runTurn(chat.lastPrompt)} onOpen={setLightbox} /></div>;
 			})}
 
-			{rateLimit && <PausedCard resetAt={rateLimit.resetAt} onRetry={() => { setRateLimit(null); runTurn(lastPromptRef.current); }} onSwitchModel={switchModel} />}
+			{rateLimit && <PausedCard resetAt={rateLimit.resetAt} onRetry={() => { store.clearRateLimit(); runTurn(chat.lastPrompt); }} onSwitchModel={switchModel} />}
 		</div>
 
 		{authenticated && <div className="agent-composer">
@@ -478,7 +545,7 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 				placeholder={composerDisabled ? "Composer is paused" : "Ask the agent to block, frame or render…"}
 				value={draft}
 				disabled={composerDisabled}
-				onChange={(event) => setDraft(event.target.value)}
+				onChange={(event) => store.setDraft(event.target.value)}
 				onKeyDown={onComposerKeyDown}
 			/>
 			<div className="agent-composer-controls agent-composer-picks">

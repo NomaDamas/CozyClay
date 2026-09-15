@@ -88,7 +88,10 @@ for (const state of ["signed-out", "signing-in", "no-entitlement", "ready", "str
 for (const type of ["text.delta", "tool.start", "tool.done", "image", "quota", "error", "done"]) {
 	expect(`the panel or client handles the "${type}" event`, client.includes(`"${type}"`) || panel.includes(`"${type}"`));
 }
-expect("explicit Stop identifies user cancellation before aborting SSE", panel.includes('abortRef.current?.abort("agent-stop")'));
+// The turn now lives in the shared chat store, so cancellation identity is
+// asserted where it is implemented.
+expect("explicit Stop identifies user cancellation before aborting SSE", client.includes('controller?.abort("agent-stop")'));
+expect("a Studio Stop names the turn and the running job", /surface: "studio", sessionId: target\.sessionId, turnId: target\.turnId, \.\.\.\(target\.jobId/.test(client));
 for (const code of ["auth", "entitlement", "rate_limit", "upstream"]) {
 	expect(`error code "${code}" has copy`, client.includes(code));
 }
@@ -133,6 +136,48 @@ expect("focus moves to the composer on open", panel.includes("composerRef.curren
 expect("the footer hint states the image cost", client.includes("Image generation uses about 3-5x a normal turn") && panel.includes("IMAGE_COST_HINT"));
 expect("there is no hover-reveal for the collapsed rail", !/\.agent-panel\.collapsed:hover\s*\{[^}]*width/.test(css));
 // (the chip count is asserted from the imported module below)
+
+// --- embedded host mode (#292) -------------------------------------------
+// The dock keeps every default; an embedded host takes over the chrome the
+// studio sidebar already owns.
+expect("the panel takes an embedded host mode and a hidden flag", panel.includes("embedded = false") && panel.includes("hidden = false"));
+expect("the dock still owns its own width", panel.includes("style={embedded ? undefined : { width: `${width}px` }}"));
+expect("an embedded host owns the width", /\.agent-panel\.embedded\s*\{[^}]*width:\s*100%/.test(css));
+expect("the resize handle is dock-only", panel.includes("{!embedded && <div") && panel.includes('className="agent-resize"'));
+expect("the collapse control is dock-only", panel.includes('{!embedded && <button type="button" className="agent-icon-button agent-collapse"'));
+expect("the collapsed rail is dock-only", panel.includes("if (collapsed && !embedded)"));
+expect("the global shortcut and toggle event are dock-only", (panel.match(/if \(embedded\) return;/g) || []).length >= 3);
+expect("a hidden embedded panel keeps its chat mounted", panel.includes("hidden={embedded && hidden}") && !panel.includes("if (hidden) return null"));
+expect("a hidden panel is removed from layout and focus order", /\.agent-panel\[hidden\]\s*\{[^}]*display:\s*none/.test(css));
+expect("focus never moves into a hidden panel", /if \(hidden\) \{[\s\S]{0,320}composerRef\.current\.blur\(\);[\s\S]{0,40}return;\s*\}\s*\n\s*if \(!collapsed\) composerRef\.current\?\.focus\(\)/.test(panel));
+expect("the host is told about dock collapse only", panel.includes("if (embedded) return;\n\t\tonCollapsedChange?.(collapsed);"));
+
+// --- Studio session, jobs and receipts ------------------------------------
+expect("Studio identities are UUIDs", client.includes("export function createStudioSessionId") && client.includes("randomUUID"));
+expect("the Studio turn body is the frozen envelope", /surface: "studio", sessionId, turnId, text, context: turnRequest\.context/.test(client));
+expect("the legacy Workflow body and its turn_id telemetry are unchanged", client.includes('JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) })'));
+expect("a dropped Studio stream resumes from an event cursor", client.includes("/agent/turn/${encodeURIComponent(turnId)}/events?after=${cursor}") && client.includes("if (event.eventSeq <= cursor) return;"));
+expect("Clear context and New share one session reset", panel.includes("store.clearContext()") && client.includes("clearContext: resetSession") && client.includes("newSession: resetSession"));
+expect("the panel renders job progress", panel.includes("function JobCard") && panel.includes("agent-job-card") && panel.includes("agent-job-stop"));
+expect("progress is shown only when the runtime reported one", client.includes("export const formatJobProgress") && panel.includes('aria-valuenow={percent}'));
+expect("an unverified candidate needs an explicit acceptance", panel.includes("agent-job-accept") && panel.includes("Apply with warnings") && client.includes("explicitUnverifiedAcceptance: true"));
+expect("an unverified installation keeps its label", panel.includes('<span className="agent-job-badge">Unverified</span>'));
+expect("receipts and structured failures have their own cards", panel.includes("function ReceiptCard") && panel.includes("function FailureCard") && panel.includes("RECOVERY_COPY"));
+expect("receipts are validated before they are rendered as success", client.includes("validateReceipt") && client.includes('kind: "failure", id: newId()'));
+expect("image actions are acknowledged by the host, never assumed", client.includes("export function requestHostImageAction") && client.includes("cozyclay:agent-image-result") && panel.includes("store.applyImage(image.id)"));
+expect("an unclaimed image action fails instead of claiming a placement", client.includes("No editor accepted the image."));
+expect("one acknowledgement settles one action", client.includes("if (!requestId || settledActions.has(requestId)) return;"));
+expect("auth refresh is event-driven on return from sign-in", panel.includes('window.addEventListener("focus", onReturn)') && panel.includes('document.addEventListener("visibilitychange", onReturn)') && !/setTimeout/.test(panel));
+expect("the chat state has one owner, not a second emitter", panel.includes("useSyncExternalStore(store.subscribe") && !panel.includes("setItems("));
+
+// new surfaces stay on the token system
+for (const [name, rule] of [
+	["job card", /\.agent-job-card,[\s\S]*?padding: var\(--agent-space-3\) var\(--agent-space-4\)/],
+	["progress track", /\.agent-job-bar\s*\{[^}]*background: var\(--agent-track\)/],
+	["progress fill", /\.agent-job-bar-fill\s*\{[^}]*background: var\(--agent-accent\)/],
+	["acceptance action", /\.agent-job-accept\s*\{[^}]*background: var\(--agent-warn-bg\)/],
+]) expect(`the ${name} is token-driven`, rule.test(css));
+expect("progress animates on the compositor only", /\.agent-job-bar-fill\s*\{[^}]*transition: transform var\(--agent-motion\)/.test(css));
 
 // --- mock transport ------------------------------------------------------
 expect("mock mode is gated on ?agent=mock", client.includes('params.get("agent") !== "mock"'));
