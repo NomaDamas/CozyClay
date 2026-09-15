@@ -7,6 +7,7 @@ import {
 	normalizeCozySceneData,
 	nextSceneFrame,
 	sceneInputSpecs,
+	sceneTimelinePatch,
 } from "./cozy-scene-node.js";
 import { publishScenePlayback } from "./scene-asset-sync.js";
 import "./cozy-scene-node.css";
@@ -35,7 +36,7 @@ function callbackFrom(data, prop) {
 	return typeof prop === "function" ? prop : typeof data[prop] === "function" ? data[prop] : null;
 }
 
-export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, selected = false, HandleComponent = null, onDataChange = null, onRun = null, onOpenScene = null }) {
+export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, selected = false, HandleComponent = null, onDataChange = null, onRun = null, onOpenScene = null, onVideo = null }) {
 	const data = useMemo(() => normalizeCozySceneData(rawData), [rawData]);
 	const Handle = HandleComponent || rawData.Handle || BridgeHandle;
 	// Explicit component callbacks win over generic node data callbacks. This
@@ -44,6 +45,7 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 	const change = onDataChange || callbackFrom(rawData, "onDataChange");
 	const run = onRun || callbackFrom(rawData, "onRun");
 	const openScene = onOpenScene || callbackFrom(rawData, "onOpenScene");
+	const sendToVideo = onVideo || callbackFrom(rawData, "onVideo");
 	// The pack export is a one-shot side trip, not graph state: it never has to
 	// survive a reload or reach the workflow runner, so it stays on the node.
 	const [pack, setPack] = useState({ pending: false, message: "", error: "" });
@@ -88,6 +90,19 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 		return () => window.clearTimeout(timer);
 	}, [data.controls.playing, data.frame, data.frameCount]);
 
+	// The take length belongs to the scene, not to this node: the embed says how
+	// long it is, so the slider and the local clock stop where the previs does.
+	useEffect(() => {
+		const onMessage = (event) => {
+			const frame = document.querySelector(`[data-node-id="${CSS.escape(id)}"] iframe`);
+			if (!frame || event.source !== frame.contentWindow) return;
+			const patch = sceneTimelinePatch(data, event.data);
+			if (patch) emit(patch, { syncPlayback: false });
+		};
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [id, data]);
+
 	const handleProps = (spec, type, position) => ({
 		 type,
 		 position,
@@ -110,8 +125,12 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 			</header>
 
 			<section className="cozy-scene-preview" aria-label="3D scene preview">
-				{data.preview === "render" && data.lastOutput?.renderUrl ? <img className="cozy-scene-render" src={data.lastOutput.renderUrl} alt="Captured scene frame" /> : <SceneViewport />}
-			{data.preview === "render" && <div className="cozy-scene-preview-copy"><strong>Rendered frame</strong><span>{data.statusMessage || "Open Studio to edit the scene"}</span></div>}
+				{/* The live previs is never swapped out for the capture: a render is a
+				    still, and replacing the frame with it left Play ticking a counter
+				    over a dead picture (#218). The capture rides along as a thumbnail. */}
+				<SceneViewport />
+				{data.preview === "render" && data.lastOutput?.renderUrl && <figure className="cozy-scene-render-thumb"><img src={data.lastOutput.renderUrl} alt="Captured scene frame" /><figcaption>Last render</figcaption></figure>}
+				{data.preview === "render" && <div className="cozy-scene-preview-copy"><strong>Live previs</strong><span>{data.statusMessage || "Open Studio to edit the scene"}</span></div>}
 			</section>
 
 			<section className="cozy-scene-controls" aria-label="Scene controls">
@@ -126,6 +145,10 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 					<button type="button" onClick={() => emit({ controls: { camera: { yaw: data.controls.camera.yaw - 15 } } })} aria-label="Orbit camera left">◀</button>
 					<span>Camera {Math.round(data.controls.camera.yaw)}° / {Math.round(data.controls.camera.pitch)}°</span>
 					<button type="button" onClick={() => emit({ controls: { camera: { yaw: data.controls.camera.yaw + 15 } } })} aria-label="Orbit camera right">▶</button>
+				</div>
+				<div className="cozy-scene-handoff">
+					<button type="button" className="cozy-scene-video" onClick={() => sendToVideo?.({ id, data })} title="Add a Video node fed by this scene's render">→ Video</button>
+					<p className="cozy-scene-hint">Play to check the previs, then send render → Video to generate a clip.</p>
 				</div>
 			</section>
 

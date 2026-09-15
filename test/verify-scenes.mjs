@@ -23,6 +23,7 @@ import {
 	serializeSceneDocument,
 	takeAnchor,
 } from "../src/scenes.js";
+import { resolveMotionSource } from "../src/motion-resources.js";
 
 let scenes = [];
 scenes = addScene(scenes);
@@ -255,6 +256,43 @@ assert.equal(calibratedEntry.motionRef.calibration.offsetX, 0.4, "mutating the s
 const clampedCalibration = createCharacterEntry({ motionRef: { url: "/ardy/motions/clamped.npz", calibration: { scale: 99, yawDeg: 540, offsetX: 101 } } }).motionRef.calibration;
 assert.deepEqual(clampedCalibration, { scale: 10, yawDeg: -180, offsetX: 100, offsetY: 0, offsetZ: 0 }, "persisted calibration uses the bounded scene envelope");
 assert.equal(createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz" } }).motionRef.calibration, undefined, "legacy motion refs remain free of calibration fields");
+
+// A motionRef names its take by content (motionId, embedded in the project)
+// and/or by location (url, a bridge run). Either alone is enough; a legacy
+// url-only ref keeps its exact shape so v4 documents stay byte-stable.
+const motionId = "a3f1".repeat(16);
+const legacyRef = createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz", prompt: "walks", rotationDeg: 90, anchorX: 1, anchorZ: -2 } }).motionRef;
+assert.deepEqual(legacyRef, { url: "/ardy/motions/legacy.npz", prompt: "walks", rotationDeg: 90, anchorX: 1, anchorZ: -2 }, "url-only motionRef normalizes without a motionId key");
+assert.deepEqual(Object.keys(legacyRef), ["url", "prompt", "rotationDeg", "anchorX", "anchorZ"], "legacy motionRef key order is untouched");
+const embeddedRef = createCharacterEntry({ motionRef: { motionId, prompt: "walks" } }).motionRef;
+assert.deepEqual(embeddedRef, { motionId, prompt: "walks", rotationDeg: 0, anchorX: 0, anchorZ: 0 }, "motionId-only motionRef is valid without a url");
+const bothRef = createCharacterEntry({ motionRef: { motionId: motionId.toUpperCase(), url: "/ardy/motions/both.npz", calibration: { scale: 1.1 } } }).motionRef;
+assert.equal(bothRef.motionId, motionId, "motionId normalizes to lowercase");
+assert.equal(bothRef.url, "/ardy/motions/both.npz", "url is kept next to motionId");
+assert.deepEqual(Object.keys(bothRef), ["motionId", "url", "prompt", "rotationDeg", "anchorX", "anchorZ", "calibration"], "motionId leads when both are present");
+assert.equal(createCharacterEntry({ motionRef: { prompt: "walks" } }).motionRef, null, "neither motionId nor url is not a motionRef");
+assert.equal(createCharacterEntry({ motionRef: { motionId: "not-a-hash" } }).motionRef, null, "a malformed motionId alone is not a motionRef");
+assert.equal(createCharacterEntry({ motionRef: { motionId: motionId.slice(0, 63) } }).motionRef, null, "a short motionId alone is not a motionRef");
+assert.deepEqual(createCharacterEntry({ motionRef: { motionId: "not-a-hash", url: "/ardy/motions/x.npz" } }).motionRef, { url: "/ardy/motions/x.npz", prompt: "", rotationDeg: 0, anchorX: 0, anchorZ: 0 }, "a malformed motionId is dropped, the url survives");
+const refRoundTrip = readSceneDocument(serializeSceneDocument({
+	version: SCENES_VERSION,
+	activeSceneId: "s-ref",
+	scenes: [{ id: "s-ref", name: "Ref", objects: [], shotDocument: null, stage: createSceneStage({ characters: [{ id: "char-a", motionRef: { motionId } }, { id: "char-b", motionRef: { url: "/ardy/motions/b.npz" } }] }) }],
+}));
+assert.equal(refRoundTrip.status, "valid", "motionId refs do not bump SCENES_VERSION");
+const refStage = createSceneStage(refRoundTrip.document.scenes[0].stage);
+assert.equal(refStage.characters[0].motionRef.motionId, motionId, "motionId survives save and reload");
+assert.equal(refStage.characters[1].motionRef.url, "/ardy/motions/b.npz", "url refs survive save and reload");
+
+// Restore priority: embedded bytes win over a bridge url, and a ref that
+// resolves to neither is reported as missing rather than guessed.
+const embeddedRecord = { motionId, encoding: "base64", data: "", bytes: 0, frames: 1, fps: 24 };
+const motionsById = new Map([[motionId, embeddedRecord]]);
+assert.deepEqual(resolveMotionSource(bothRef, motionsById), { kind: "embedded", record: embeddedRecord }, "embedded beats url");
+assert.deepEqual(resolveMotionSource(bothRef, new Map()), { kind: "url", url: "/ardy/motions/both.npz" }, "url when the motion is not embedded");
+assert.deepEqual(resolveMotionSource(legacyRef, motionsById), { kind: "url", url: "/ardy/motions/legacy.npz" }, "legacy url-only ref resolves to url");
+assert.deepEqual(resolveMotionSource(embeddedRef, new Map()), { kind: "missing" }, "motionId without embedded bytes or url is missing");
+assert.deepEqual(resolveMotionSource(null, motionsById), { kind: "missing" }, "no ref is missing");
 const staturedStage = createSceneStage({ characters: [{ id: "char-a", scale: 1.18 }, { id: "char-b" }] });
 assert.equal(staturedStage.characters[0].scale, 1.18, "a stored stature survives the stage envelope");
 assert.equal(staturedStage.characters[1].scale, 1, "a cast member without a take stays canonical");

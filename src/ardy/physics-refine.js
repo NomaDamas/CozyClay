@@ -36,7 +36,7 @@ export async function refinePhysicsCandidate({ rig, chains, fkJoints, samples, a
 			if (knee) {
 				aim(chain.bones[0], chain.bones[1], knee.target);
 				aim(chain.bones[1], chain.bones[2], endTarget.target);
-			} else solveIk({ ...chain, bindPositions: base[f].chains.get(id).map((b) => b.p), lengths: samples[f].chains[id].lengths }, endTarget.target);
+			} else solveIk({ ...chain, bindPositions: base[f].chains.get(id).map((b) => b.p), lengths: samples[f].chains[id].lengths }, endTarget.target, endTarget.site.kind === "foot" ? { maxExtension: samples[f].chains[id].distance + 0.01, softening: 0.01 } : undefined);
 			const end = chain.bones[2]; rig.updateMatrixWorld(true);
 			end.quaternion.copy(end.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(prior[f].support[id].rotation));
 			rig.updateMatrixWorld(true);

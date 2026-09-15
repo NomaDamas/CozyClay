@@ -81,7 +81,6 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		element.style.touchAction = "none";
 		let lockPending = false;
 		let lockAttempts = 0;
-		let suppressEscapeUntil = 0;
 
 		const isTyping = () => {
 			const el = document.activeElement;
@@ -146,13 +145,15 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			const key = KEY_BY_CODE[e.code];
 			if (key) keys.current.delete(key);
 		};
-		// Esc is the browser's unlock gesture. Do not preventDefault — that can
-		// keep the pointer locked — but stop it reaching App's look-through exit.
-		// Unlock can fire pointerlockchange before this keydown; the short
-		// suppress window covers that race so Esc does not also leave look-through.
+		// During a live hold Esc releases navigation first. Never prevent the
+		// browser's unlock default, and never suppress a later Escape by time:
+		// once pointerlockchange or pointerup ended the hold, App owns Esc again.
 		const onEscapeCapture = (e) => {
 			if (e.key !== "Escape") return;
-			if (isLocked() || lockPending || gesture.current || performance.now() < suppressEscapeUntil) e.stopPropagation();
+			if (isLocked() || lockPending || gesture.current) {
+				e.stopPropagation();
+				endGesture();
+			}
 		};
 
 		const endGesture = (e) => {
@@ -194,10 +195,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 				return;
 			}
 			lockPending = false;
-			if (gesture.current) {
-				suppressEscapeUntil = performance.now() + 120;
-				endGesture();
-			}
+			if (gesture.current) endGesture();
 		};
 		const onPointerLockError = () => { lockPending = false; };
 

@@ -227,6 +227,7 @@ import FirstSuccessGuide from "./first-success-guide.jsx";
 import { CameraTutorial } from "./camera-tutorial.jsx";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
+import ResourceStatus, { SaveBlockedDialog } from "./resource-status.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
 import ResultModal from "./result-modal.jsx";
 import SettingsMenu from "./settings-menu.jsx";
@@ -263,6 +264,10 @@ import {
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
 import { mergeProjectCustomPoses } from "./project-poses.js";
+import { encodeMotionResource, decodeMotionResource, resolveMotionSource } from "./motion-resources.js";
+import { openMotionDb, putMotion, getMotion, sweepMotions } from "./motion-store.js";
+import { resourceManifest } from "./project-resources.js";
+import { internWorkflowOutputs, resolveWorkflowOutputs, workflowOutputRefs } from "./workflow/workflow-resources.js";
 import {
 	MID_TRACKS,
 	createIkState,
@@ -327,7 +332,7 @@ import { buildShotPrompt } from "./shot-prompt.js";
 import { keyframePackEntries, keyframePackName } from "./keyframe-pack.js";
 import { buildZip } from "./zip-store.js";
 import { composeStoryboard } from "./storyboard.js";
-import { passFileName, renderPass } from "./render-passes.js";
+import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
 import { serializeOtio } from "./otio.js";
 import {
@@ -3187,6 +3192,13 @@ export default function App() {
 	// opens on the stage, not on a chat column.
 	const [agentCollapsed, setAgentCollapsed] = useState(true);
 	const projectHandleRef = useRef(null);
+	const projectMotionsRef = useRef(new Map());
+	// Loaded clips keep the same Uint8Array identity while they remain active.
+	// Reuse the expensive encoded record until a new byte buffer is supplied.
+	const motionEncodingCacheRef = useRef(new WeakMap());
+	const restoreEpochRef = useRef(0);
+	const [projectManifest, setProjectManifest] = useState({ items: [], totals: { embedded: 0, external: 0, missing: 0, bytes: 0 }, missing: [] });
+	const [saveBlockedReasons, setSaveBlockedReasons] = useState(null);
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
 	projectStateRef.current = { workspaceLayout, customPoses, scenes, activeSceneId, sceneObjects };
@@ -3225,20 +3237,62 @@ export default function App() {
 	playgroundExportRef.current = collectProjectSerialized;
 	async function collectProjectSerialized(name) {
 		const input = projectDocumentInput(name);
+		const scenesDocument = {
+			...input.scenesDocument,
+			scenes: input.scenesDocument.scenes.map((scene) => ({
+				...scene,
+				stage: scene.stage
+					? {
+						...scene.stage,
+						characters: (scene.stage.characters ?? []).map((character) => ({
+							...character,
+							motionRef: character.motionRef ? { ...character.motionRef } : character.motionRef,
+						})),
+					}
+					: scene.stage,
+			})),
+		};
 		const db = await openAssetDb();
 		try {
-			const ids = [...referencedAssetIds(input.scenesDocument.scenes)];
+			const ids = [...referencedAssetIds(scenesDocument.scenes)];
 			const assets = await Promise.all(ids.map((id) => getAsset(db, id)));
-			// A referenced asset whose record vanished (swept elsewhere, another
-			// tab) would drop out of the export in silence — the user would
-			// learn on the machine they open it on. Say it here, at save time.
-			const missing = ids.filter((id, index) => !assets[index]);
-			if (missing.length) {
-				setToast(isKo
-					? `참조된 사진 ${missing.length}개를 찾지 못해보내기에서 빠졌어요`
-					: `${missing.length} referenced image${missing.length > 1 ? "s" : ""} missing — left out of the export`);
+			const workflowResult = await internWorkflowOutputs(input.workflow);
+			const referencedMotionIds = new Set(
+				scenesDocument.scenes.flatMap((scene) => (scene.stage?.characters ?? [])
+					.map((character) => character.motionRef?.motionId?.toLowerCase())
+					.filter(Boolean)),
+			);
+			const motions = [...projectMotionsRef.current.entries()]
+				.filter(([id]) => referencedMotionIds.has(id))
+				.map(([, record]) => record);
+			const motionCache = new Map();
+			for (const record of motions) motionCache.set(record.motionId.toLowerCase(), record);
+			for (const scene of scenesDocument.scenes) for (const character of scene.stage?.characters ?? []) {
+				const clip = motionFullRef.current.get(character.id);
+				if (!clip?.sourceBytes) continue;
+				let record = motionEncodingCacheRef.current.get(clip.sourceBytes);
+				if (!record) {
+					record = await encodeMotionResource(clip.sourceBytes, { prompt: character.motionRef?.prompt, sourceUrl: character.motionRef?.url });
+					motionEncodingCacheRef.current.set(clip.sourceBytes, record);
+				}
+				const cached = motionCache.get(record.motionId) ?? record;
+				motionCache.set(record.motionId, cached);
+				if (!motions.includes(cached)) motions.push(cached);
+				projectMotionsRef.current.set(record.motionId.toLowerCase(), cached);
+				character.motionRef = { ...(character.motionRef || {}), motionId: cached.motionId };
 			}
-			return JSON.stringify(createProjectDocument({ ...input, assets, savedAt: Date.now() }), null, 2);
+			try { const motionDb = await openMotionDb(); await Promise.all(motions.map((record) => putMotion(motionDb, record))); motionDb.close(); } catch (error) { console.warn("[cozyclay] could not cache motions", error); }
+			const allAssets = [...assets.filter(Boolean), ...workflowResult.assets];
+			const nextInput = { ...input, scenesDocument, workflow: workflowResult.graph, assets: allAssets, motions };
+			const manifest = resourceManifest({ scenesDocument: nextInput.scenesDocument, workflow: nextInput.workflow, poseLibrary: nextInput.customPoses, assets: allAssets, motions, workflowOutputRefs });
+			setProjectManifest(manifest);
+			if (manifest.missing.length) {
+				const error = new Error("Project has missing resources");
+				error.code = "missing-resources";
+				error.items = manifest.missing;
+				throw error;
+			}
+			return JSON.stringify(createProjectDocument({ ...nextInput, savedAt: Date.now() }), null, 2);
 		} finally {
 			db.close();
 		}
@@ -3249,6 +3303,14 @@ export default function App() {
 		setProjectDirty(false);
 		setProjectName(name);
 		storeProjectSession(name);
+	}
+
+	function projectProblemsNotice(problems) {
+		if (!Array.isArray(problems) || !problems.length) return "";
+		const codes = [...new Set(problems.map((problem) => problem?.code).filter(Boolean))].join(", ");
+		return isKo
+			? ` · 포함된 자원 ${problems.length}개를 건너뛰었어요${codes ? ` (${codes})` : ""}`
+			: ` · skipped ${problems.length} embedded resource${problems.length === 1 ? "" : "s"}${codes ? ` (${codes})` : ""}`;
 	}
 
 	async function rehydrateProjectAssets(project, warnings = []) {
@@ -3301,6 +3363,7 @@ export default function App() {
 				await writeProjectFile(handle, serialized);
 			}
 			markProjectClean(name);
+			setSaveBlockedReasons(null);
 			setProjectSaveState("saved");
 			track("project:saved", {
 				object_count_bucket: bucketCount(projectStateRef.current.sceneObjects?.length ?? 0),
@@ -3313,12 +3376,16 @@ export default function App() {
 				return; // user closed the picker
 			}
 			setProjectSaveState("error");
-			setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
+			if (err?.code === "missing-resources") setSaveBlockedReasons([{ code: err.code, items: err.items }]);
+			else if (err?.code === "resources-too-large") setSaveBlockedReasons([err]);
+			else setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
 		}
 	}
 
 	function applyProject(project) {
+		projectMotionsRef.current = new Map((project.motions ?? []).map((record) => [record.motionId?.toLowerCase(), record]).filter(([id]) => id));
 		const source = project.scenesDocument;
+		openMotionDb().then(async (db) => { try { await Promise.all([...projectMotionsRef.current.values()].map((record) => putMotion(db, record))); const ids = new Set((source?.scenes ?? []).flatMap((scene) => (scene.stage?.characters ?? []).map((character) => character.motionRef?.motionId?.toLowerCase()).filter(Boolean))); await sweepMotions(db, ids); } finally { db.close(); } }).catch(() => {});
 		// A project FILE carries its own scene document and never passes the
 		// storage reader, so the 20 fps → 24 fps clock migration is applied here
 		// too — otherwise an older .cozyclay would open a sixth too fast.
@@ -3330,7 +3397,8 @@ export default function App() {
 		setActiveSceneId(doc.activeSceneId);
 		if (project.workspaceLayout) setWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...project.workspaceLayout });
 		setCustomPoses(mergedCustomPoses);
-		storeWorkflowGraph(normalizeWorkflowGraph(project.workflow));
+		const resolvedWorkflow = resolveWorkflowOutputs(normalizeWorkflowGraph(project.workflow), new Map((project.assets ?? []).map((asset) => [asset.id, asset])));
+		storeWorkflowGraph(resolvedWorkflow);
 		saveCustomPoses(mergedCustomPoses);
 		persistScenes(doc.scenes, doc.activeSceneId);
 		openScene(doc.scenes[activeSceneIndex(doc.scenes, doc.activeSceneId)], doc.scenes);
@@ -3342,6 +3410,7 @@ export default function App() {
 		// Whatever document this is, it is no longer the scene the tutorial opened
 		// for itself; startCameraTutorial re-arms the flag after its own open.
 		tutorialStarterRef.current = false;
+		setProjectManifest(resourceManifest({ scenesDocument: doc, workflow: resolvedWorkflow, poseLibrary: mergedCustomPoses, assets: project.assets ?? [], motions: projectMotionsRef.current, workflowOutputRefs }));
 		track("project:opened", { age_bucket: bucketProjectAge(Date.now() - (project.savedAt ?? Date.now())) });
 	}
 
@@ -3430,7 +3499,7 @@ export default function App() {
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
 			setProjectStartupOpen(false);
-			setToast(isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`);
+			setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch (err) {
 			if (err?.name === "AbortError") return;
 			console.error("openProject failed", err);
@@ -3461,7 +3530,7 @@ export default function App() {
 			applyProject(result.project);
 		setProjectBrowserOpen(false);
 		setProjectStartupOpen(false);
-		setToast(isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`);
+		setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch (err) {
 			console.error("openProjectByHandle failed", err);
 			setToast(ko("Could not open the project", "프로젝트를 열지 못했어요"));
@@ -3513,7 +3582,7 @@ export default function App() {
 			projectHandleRef.current = record.handle;
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
-			setToast(isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`);
+			setToast(`${isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch {
 			/* missing or unreadable file: fall back to the session cache */
 		}
@@ -3702,6 +3771,14 @@ export default function App() {
 			setTlPlaying(command.playing);
 		}
 	}), []);
+	// The Workflow Scene node's frame slider used to guess the take length, so
+	// its own preview clock ran on past the end of a shorter shot (#218). The
+	// embed announces the take it actually holds — on load and whenever the
+	// scene or its length changes — and the node follows it.
+	useEffect(() => {
+		if (!embedMode) return;
+		window.parent.postMessage({ type: "cozyclay:scene-timeline", activeSceneId, frameCount: tlFrameCount, fps: tlFps }, "*");
+	}, [embedMode, activeSceneId, tlFrameCount, tlFps]);
 
 	// Commands are a sequential transport boundary, while React commits on a
 	// later turn. Keep its read model current synchronously so the next frame
@@ -4684,7 +4761,7 @@ export default function App() {
 		return contentExtent > 0 ? contentExtent : tlFrameCount;
 	}
 
-	async function runShotExport({ startFrame = 0, endFrame, download = true } = {}) {
+	async function runShotExport({ startFrame = 0, endFrame, download = true, passKind = null, depthRange = null, fileName = null } = {}) {
 		if (recRef.current) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
 		if (!captureRef.current || !shotCamRef.current) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
 		const resolvedEndFrame = endFrame ?? Math.max(0, currentRecordFrameCount() - 1);
@@ -4709,12 +4786,19 @@ export default function App() {
 				fps: TIMELINE_FPS,
 				width: shotOutput.width,
 				height: shotOutput.height,
-				capture: applyExportFrame,
+				// The plate path remains capture: applyExportFrame; pass exports only swap the material.
+				capture: (frame, passKind) => {
+					const plate = applyExportFrame(frame);
+					if (!passKind) return plate;
+					return renderPass(captureRef.current, captureRef.current.scene, shotCamRef.current, passKind, null, { depthRange });
+				},
+				passKind,
 				signal: controller.signal,
 			});
 			if (download) {
 				const slate = (moveSequence?.slate ?? "shot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shot";
-				const name = `cozyclay-${slate}.mp4`;
+				// Default plate filename: const name = `cozyclay-${slate}.mp4`
+				const name = fileName ?? `cozyclay-${slate}.mp4`;
 				const url = URL.createObjectURL(result.blob);
 				const anchor = document.createElement("a");
 				anchor.href = url;
@@ -4786,6 +4870,43 @@ export default function App() {
 		}).finally(() => {
 			exportShotsRef.current = null;
 		});
+	}
+
+	async function exportDepthVideo() {
+		if (recRef.current) { stopShotRecording(); return; }
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		if (!target) return;
+		exportShotsRef.current = shots;
+		const startFrame = !motion ? target.startFrame : 0;
+		const endFrame = !motion ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
+		const cam = shotCamRef.current;
+		const snapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
+		try {
+			let depthRange = null;
+			if (endFrame > startFrame) {
+				const samples = [];
+				for (let frame = startFrame; frame <= endFrame; frame += 1) {
+					applyExportFrame(frame);
+					const depth = renderPass(captureRef.current, captureRef.current.scene, cam, "depth");
+					if (depth) {
+						let minGrey = 255;
+						let maxGrey = 0;
+						for (let index = 0; index < depth.length; index += 256) {
+							const grey = depth[index];
+							if (grey < minGrey) minGrey = grey;
+							if (grey > maxGrey) maxGrey = grey;
+						}
+						samples.push({ min: DEPTH_RANGE_M * (1 - maxGrey / 255), max: DEPTH_RANGE_M * (1 - minGrey / 255) });
+					}
+					if ((frame - startFrame) % 4 === 3) await new Promise((resolve) => setTimeout(resolve, 0));
+				}
+				depthRange = depthRangeFromFrames(samples, cam.near, DEPTH_RANGE_M);
+			}
+			await runShotExport({ startFrame, endFrame, passKind: "depth", depthRange, fileName: "blocking-depth.mp4" });
+			trackFeature("export_depth_video");
+		} catch (error) { if (error?.name !== "AbortError") setToast(error?.message || String(error)); }
+		finally { for (const snapshot of snapshots) restorePlaybackBones(snapshot.rig, snapshot.bones); exportShotsRef.current = null; }
 	}
 
 	function downloadOtioCutList() {
@@ -6540,7 +6661,7 @@ export default function App() {
 		setTlPlaying(false); setAutoPhysicsRunning(true); setPhysicsProgress(0); setPhysicsPreview(null);
 		try {
 			const result = await reviewAutoPhysics({ rig: activeRig, motion, chains: ikChains, fkJoints: ikFkJoints, sourceKeys,
-				applyRaw: (f) => poseMemberAtFrame(activeRig, motion, null, f), ...physicsOptions,
+				applyRaw: (f) => poseMemberAtFrame(activeRig, motion, null, f), sceneObjects, ...physicsOptions,
 				cache: physicsSourceCacheRef.current,
 				onProgress: setPhysicsProgress,
 				yieldFrame: async () => {
@@ -6801,6 +6922,27 @@ export default function App() {
 	// Reads live store state at call time; re-registered after every render.
 	useEffect(() => {
 		window.__sceneHistory = () => ({ ...store.depths(), settled: store.present() === store.objects });
+	});
+	// QA-only project-file seam: browser acceptance tests still exercise the
+	// production serializer/parser and apply path without depending on native
+	// file-picker UI, which headless Chrome does not expose consistently.
+	useEffect(() => {
+		window.__cozyclayProject = {
+			export: (name = "QA Project") => collectProjectSerialized(name),
+			open: async (text) => {
+				const result = readProjectDocument(text);
+				if (!result.ok) return result;
+				await rehydrateProjectAssets(result.project, result.warnings);
+				applyProject(result.project);
+				setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
+				return result;
+			},
+			manifest: () => projectManifest,
+			saveBlocked: () => saveBlockedReasons,
+		};
+		return () => {
+			if (window.__cozyclayProject?.export) delete window.__cozyclayProject;
+		};
 	});
 
 	// On clear, restore the exact pre-playback bone rotations. This runs in
@@ -10248,18 +10390,29 @@ function resizePromptClip(id, edge, rawFrame) {
 	/** After a scene (re)load, re-fetch every persisted clip reference and
 	 * rebuild the session motions. The bridge may be gone — failures just
 	 * leave the character posed, never an error the user must act on. */
-	function restoreMotionRefs(list) {
+	async function restoreMotionRefs(list) {
+		const epoch = ++restoreEpochRef.current;
+		const motions = projectMotionsRef.current;
+		try { const db = await openMotionDb(); const ids = [...new Set(list.map((entry) => entry.motionRef?.motionId?.toLowerCase()).filter(Boolean))]; const cached = await Promise.all(ids.map((id) => getMotion(db, id))); cached.filter(Boolean).forEach((record) => motions.set(record.motionId.toLowerCase(), record)); db.close(); } catch (error) { console.warn("[cozyclay] could not restore motion cache", error); }
 		for (const entry of list) {
-			if (!entry.motionRef?.url) continue;
+			const source = resolveMotionSource(entry.motionRef, motions);
+			if (source.kind === "missing") {
+				setToast(isKo ? `저장된 모션이 누락되었습니다 (${entry.subject || entry.id})` : `Saved motion is missing for ${entry.subject || entry.id}`);
+				continue;
+			}
+			const load = source.kind === "embedded" ? decodeMotionResource(source.record) : loadMotionFromUrl(source.url);
+			load.then((raw) => {
+				if (epoch !== restoreEpochRef.current) return;
 			// Inbound boundary: a re-fetched clip is retimed exactly like a
 			// freshly generated one, so a reload cannot resurrect 20 fps frames.
-			loadMotionFromUrl(entry.motionRef.url).then((raw) => {
+			const sourceUrl = source.kind === "url" ? source.url : entry.motionRef?.url;
 				const retimed = retimeMotion(raw, TIMELINE_FPS);
 				const normalizedCalibration = normalizeMotionCalibration(entry.motionRef.calibration);
 				const decoded = applyMotionCalibration(retimed, { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 }).motion;
 				const clip = {
 					...decoded,
-					url: entry.motionRef.url,
+					url: sourceUrl,
+					sourceBytes: raw.sourceBytes,
 					prompt: entry.motionRef.prompt,
 					anchorX: entry.motionRef.anchorX,
 					anchorZ: entry.motionRef.anchorZ,
@@ -10283,14 +10436,28 @@ function resizePromptClip(id, edge, rawFrame) {
 					setTlFrameCount((count) => Math.max(count, decoded.frames));
 					setTlFps(decoded.fps);
 				}
-			}).catch(() => {
+			}).catch((error) => {
+				if (epoch !== restoreEpochRef.current) return;
+				setProjectManifest((current) => {
+					const id = entry.motionRef?.motionId?.toLowerCase();
+					if (!id || !current?.items?.some((item) => item.kind === "motion" && item.id === id)) return current;
+					const items = current.items.map((item) => item.kind === "motion" && item.id === id
+						? { ...item, status: "missing", url: undefined }
+						: item);
+					const totals = { embedded: 0, external: 0, missing: 0, bytes: 0 };
+					for (const item of items) {
+						totals[item.status] += 1;
+						if (Number.isFinite(item.bytes)) totals.bytes += item.bytes;
+					}
+					return { items, totals, missing: items.filter((item) => item.status === "missing") };
+				});
 				// A saved take that fails to refetch used to vanish silently — the
 				// user would find a merely posed character and assume their motion
 				// was lost. Name it and offer the reload path.
 				const subject = entry.subject || entry.id;
 				setToast(isKo
-					? `저장된 모션을 다시 불러오지 못했어요 (${subject}) — 새로고침하거나 모션을 다시 생성해 주세요`
-					: `Saved motion could not be restored for ${subject} — reload or generate it again`);
+					? `저장된 모션을 다시 불러오지 못했어요 (${subject}) [${error?.code || "decode"}]`
+					: `Saved motion could not be restored for ${subject} [${error?.code || "decode"}]`);
 			});
 		}
 	}
@@ -10334,6 +10501,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							<button type="button" role="menuitem" onClick={() => { setProjectStartupOpen(false); setProjectBrowserOpen(true); }}>{ko("Open Project…", "프로젝트 열기…")}</button>
 							<button type="button" role="menuitem" onClick={() => saveProject(false)}>{ko("Save Project", "프로젝트 저장")}</button>
 							<button type="button" role="menuitem" onClick={() => saveProject(true)}>{ko("Save Project As…", "다른 이름으로 저장…")}</button>
+							<ResourceStatus manifest={projectManifest} compact />
 						</div>
 					)}
 				</div>
@@ -10419,6 +10587,17 @@ function resizePromptClip(id, edge, rawFrame) {
 										onClick={exportRenderPasses}
 									>
 										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-depth-video"
+										disabled={!shots.length || recState === "recording"}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
+										onClick={() => void exportDepthVideo()}
+									>
+										{ko("Depth (mp4)", "뎁스 (mp4)")}
 									</button>
 									<button
 										type="button"
@@ -13221,6 +13400,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						onDeleteUnusedAsset={deleteUnusedAsset}
 						onUndoDelete={undoDeletedAsset}
 						deletingAssetId={deletingAssetId}
+						resourceManifest={projectManifest}
 					/>
 				</div>
 				<div className="bottom-timeline" hidden={bottomTab !== "timeline"}>
@@ -13634,6 +13814,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				}}
 			/>
 			<FirstSuccessGuide open={firstSuccessGuideOpen} onDismiss={() => setFirstSuccessGuideOpen(false)} />
+			{saveBlockedReasons && <SaveBlockedDialog reasons={saveBlockedReasons} onClose={() => setSaveBlockedReasons(null)} />}
 			<Toast message={toast} onDone={() => setToast("")} />
 			{pwaUpdate && (
 				<div className="scene-delete-toast" role="status">

@@ -14,6 +14,8 @@ import {
 	sceneInputSpecs,
 	sceneInputsFromEdges,
 	sceneConnectionAllowed,
+	sceneTimelinePatch,
+	SCENE_TIMELINE_MESSAGE,
 	toCozySceneRunRequest,
 } from "../src/workflow/cozy-scene-node.js";
 
@@ -25,6 +27,19 @@ assert.match(componentSource, /publishScenePlayback/);
 assert.match(componentSource, /window\.setTimeout/);
 assert.match(previewStyle, /cozy-scene-live-frame/);
 assert.doesNotMatch(componentSource, /<boxGeometry/);
+// #218: a finished render is a thumbnail beside the live previs, never a still
+// image in place of it — Play has to have something left to move.
+assert.doesNotMatch(componentSource, /className="cozy-scene-render"/);
+assert.match(componentSource, /cozy-scene-render-thumb/);
+assert.match(previewStyle, /\.cozy-scene-render-thumb/);
+assert.match(componentSource, /sceneTimelinePatch/);
+assert.match(componentSource, /className="cozy-scene-video"/);
+assert.match(componentSource, /cozy-scene-hint/);
+{
+	const builder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
+	assert.match(builder, /onSceneVideo: sendSceneToVideo/, "the Scene node reaches the builder's Video action through decorated data");
+	assert.match(builder, /sourceHandle: "render", targetHandle: "input"/, "the added Video node is fed by the Scene render output");
+}
 
 const defaults = normalizeCozySceneData({ sceneName: 42, frame: "bad", controls: { camera: { yaw: "35" } } });
 assert.equal(defaults.type, COZY_SCENE_NODE_TYPE);
@@ -48,6 +63,16 @@ assert.deepEqual(sceneInputsFromEdges([
 	assetInputs: ["image-1"],
 	motionInputs: [{ source: "motion-1", handle: "character:char-a", characterId: "char-a" }],
 });
+
+// The take length comes from the embedded Studio, so the slider and the node's
+// own preview clock stop where the previs does (#218).
+assert.equal(SCENE_TIMELINE_MESSAGE, "cozyclay:scene-timeline");
+assert.deepEqual(sceneTimelinePatch({ frameCount: 120, frame: 110 }, { type: SCENE_TIMELINE_MESSAGE, frameCount: 96 }), { frameCount: 96, frame: 95 });
+assert.deepEqual(sceneTimelinePatch({ frameCount: 120, frame: 10 }, { type: SCENE_TIMELINE_MESSAGE, frameCount: 240 }), { frameCount: 240, frame: 10 });
+assert.equal(sceneTimelinePatch({ frameCount: 96 }, { type: SCENE_TIMELINE_MESSAGE, frameCount: 96 }), null, "an unchanged length writes no state");
+assert.equal(sceneTimelinePatch({ frameCount: 96 }, { type: "cozyclay:capture-framing-result", frameCount: 12 }), null, "other frame messages are ignored");
+assert.equal(sceneTimelinePatch({ frameCount: 96 }, { type: SCENE_TIMELINE_MESSAGE, frameCount: 0 }), null, "an empty take is not a length");
+assert.equal(sceneTimelinePatch({ frameCount: 96 }, null), null);
 
 const changed = applyCozyScenePatch(defaults, { frame: 14, controls: { playing: true, camera: { pitch: -8 } }, assetInputs: ["asset-1"] });
 assert.equal(changed.frame, 14);
@@ -80,5 +105,6 @@ console.log("cozy scene node adapter checks passed");
 	const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 	assert.match(app, /useState\(embedMode\)/, "lookThroughShot defaults to the embed mode");
 	assert.match(app, /if \(!lookThroughShot \|\| embedMode\) return undefined;/, "Escape does not leave the shot view inside the embed");
+	assert.match(app, /type: "cozyclay:scene-timeline", activeSceneId, frameCount: tlFrameCount/, "the embed announces the take length the Scene node reads");
 	console.log("PASS embedded Studio previews through the shot camera");
 }

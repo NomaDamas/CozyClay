@@ -78,6 +78,28 @@ export function sceneInputsFromEdges(edges, sceneNodeId) {
 	return { assetInputs, motionInputs };
 }
 
+/** The embedded Studio announces the take it holds under this message type. */
+export const SCENE_TIMELINE_MESSAGE = "cozyclay:scene-timeline";
+
+/**
+ * Turn an embed timeline announcement into the patch it implies for a node.
+ *
+ * Returns null when the message is not one of ours, carries no usable length,
+ * or already matches the node: the caller can then skip the state write, which
+ * keeps a chatty embed from re-rendering the canvas on every frame.
+ */
+export function sceneTimelinePatch(data, message) {
+	if (!message || typeof message !== "object" || message.type !== SCENE_TIMELINE_MESSAGE) return null;
+	const announced = Number(message.frameCount);
+	if (!Number.isFinite(announced) || announced < 1) return null;
+	const current = normalizeCozySceneData(data);
+	const frameCount = Math.round(announced);
+	if (frameCount === current.frameCount) return null;
+	// A shorter take must also pull the playhead back inside it, or the slider
+	// would report a frame the previs cannot show.
+	return { frameCount, frame: Math.min(current.frame, frameCount - 1) };
+}
+
 export const COZY_SCENE_OUTPUTS = Object.freeze([
 	{ id: "render", label: "Render", kind: "render" },
 	{ id: "scene", label: "Scene", kind: "scene" },

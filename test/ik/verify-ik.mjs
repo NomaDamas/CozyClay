@@ -155,6 +155,64 @@ const reachDir = far.clone().sub(shoulder).normalize();
 const fullReach = shoulder.clone().addScaledVector(reachDir, 0.6 - 1e-6);
 check("unreachable target stretches to full length, no NaN", Number.isFinite(eff.x) && eff.distanceTo(fullReach) < 0.02, `err=${eff.distanceTo(fullReach).toFixed(4)}`);
 
+/* --- soft maximum-extension clamp (Holden's TwoBoneInverseKinematics) ----- */
+// A capped far target must land inside [cap − softening, cap]: the exponential
+// saturation approaches the cap asymptotically and never crosses it, so a
+// locked foot cannot straighten the leg past the cap. The three-bone arm is
+// the same chain the reach checks above use; lengths are 0.3 + 0.3 m.
+const softening = 0.01;
+const l0l1 = arm.lengths[0] + arm.lengths[1];
+const maxExtension = 0.8 * l0l1;
+solveIk(arm, far, { maxExtension });
+arm.bones[2].getWorldPosition(eff);
+const cappedReach = shoulder.distanceTo(eff);
+check(
+	"maxExtension softly caps the far reach",
+	cappedReach <= maxExtension + 1e-6 && cappedReach >= maxExtension - softening - 1e-6,
+	`reach=${cappedReach.toFixed(5)} cap=${maxExtension.toFixed(3)}`,
+);
+check(
+	"without maxExtension the far reach is the old full-length reach",
+	(() => {
+		solveIk(arm, far);
+		arm.bones[2].getWorldPosition(eff);
+		return Math.abs(shoulder.distanceTo(eff) - l0l1) < 1e-5;
+	})(),
+	`reach=${shoulder.distanceTo(eff).toFixed(6)} l0+l1=${l0l1}`,
+);
+// A target well inside the soft zone must be reached exactly — the clamp is
+// invisible for ordinary reachable targets, only saturating past the cap.
+const inner = shoulder.clone().addScaledVector(new THREE.Vector3(0.2, 0.5, -0.3).normalize(), 0.5 * maxExtension);
+solveIk(arm, inner, { maxExtension });
+arm.bones[2].getWorldPosition(eff);
+check("maxExtension is inactive inside the soft zone", eff.distanceTo(inner) < 1e-6, `err=${eff.distanceTo(inner).toExponential(2)}`);
+// Monotonicity: a farther over-cap target never pulls the effector BACK
+// toward the root — saturation is non-decreasing in d and both stay ≤ cap.
+// Each solve starts from a STRAIGHT chain (bind rotations): continuing a bent
+// elbow whose offset is nearly parallel to the new target line degrades the
+// one-step aim by up to ~1 cm of pre-existing slop, which would measure the
+// solver, not the clamp.
+const straighten = () => {
+	arm.bones[0].quaternion.identity();
+	arm.bones[1].quaternion.identity();
+	rig.updateMatrixWorld(true);
+};
+straighten();
+const monoA = shoulder.clone().addScaledVector(reachDir, maxExtension + 0.05);
+solveIk(arm, monoA, { maxExtension });
+arm.bones[2].getWorldPosition(eff);
+const reachA = shoulder.distanceTo(eff);
+straighten();
+const monoB = shoulder.clone().addScaledVector(reachDir, maxExtension + 0.30);
+solveIk(arm, monoB, { maxExtension });
+arm.bones[2].getWorldPosition(eff);
+const reachB = shoulder.distanceTo(eff);
+check(
+	"maxExtension clamp is monotone in target distance",
+	reachB >= reachA && reachA <= maxExtension && reachB <= maxExtension,
+	`reachA=${reachA.toFixed(5)} reachB=${reachB.toFixed(5)} cap=${maxExtension.toFixed(3)}`,
+);
+
 /* --- continuity: drag across the bone line, elbow keeps its side --------- */
 // reset to bind, bend once (pole → elbow backward), then sweep the target
 // across the bone line; the elbow must NOT mirror-flip (z stays negative)

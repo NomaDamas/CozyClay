@@ -30,7 +30,7 @@
 
 ---
 
-CozyClay is a browser-based previs studio built with Three.js and React Three Fiber. Block a scene, pose the cast, cut the camera on a timeline, then hand the same shot to an AI video model (Seedance, Kling, Veo, or your own) as a first frame, a reference clip, or a prompt — all from one local workspace.
+CozyClay is a browser-based previs studio built with Three.js and React Three Fiber. Block a scene, pose the cast, cut the camera on a timeline, then hand the same shot to an AI video model (Seedance, Kling, Veo, or your own) as a first frame, a reference clip, or a prompt — all from one local workspace. The keyframe pack's greybox clip is the input Seedance 2.5 documents as white-model control: "Use the white-model reference video as the sole guide for camera movement, pacing, framing, subject motion, and blocking" (seed.bytedance.com/en/seedance2_5). MiniMax H3, Wan 3.0, LTX Desktop and fal render-to-real take the same plain RGB clip.
 
 ```bash
 npx cozyclay
@@ -57,7 +57,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 | **Stage a scene** | Create primitives and set pieces, then move, rotate and scale them with the transform strip's gizmo. Grid snapping is a preference, not a law — hold `Ctrl` mid-drag to invert it. A bird's-eye Top-View drives 2D root waypoints for character paths. **View ▾** on the viewport bar holds the reference grid and Auto Color — Blender's random viewport color, so twenty grey blockout boxes stay tellable apart without touching the colors you authored (captures include the display colors while it is on). |
 | **Fly the camera** | Right-drag flies (WASD walks, Q/E cranes), middle-drag pans, Alt+drag orbits the selection, click selects, `F` frames — the muscle memory you already have from a 3D editor. Selecting the camera switches to Camera mode. **Look through** (camera bar, or the Shot monitor's expand icon) puts you behind the shot camera with the same bindings; `Esc` returns to the free camera. |
 | **Cut and move the camera** | Add shots on the timeline, draw a dolly rail on the Top-View, set speed, height and crane, and preview the move through the shot camera. Each shot carries a **Target model** (Seedance 2.5, Kling 2, Veo 3, self-hosted MiniMax-H3) and is flagged when the cut runs past that model's limits. |
-| **Export for AI video** | One **Export ▾** menu: a keyframe pack (first/last frame, clip, camera JSON, prompt, README) as a zip, an mp4 of the shot, depth + normal conditioning passes, a storyboard contact sheet, and an OTIO cut list. The **Shot Prompt** turns the framing into a structured prompt for the model you picked. |
+| **Export for AI video** | One **Export ▾** menu: a keyframe pack (first/last frame, clip, camera JSON, prompt, README) as a zip, an mp4 of the shot, depth + normal conditioning passes, a storyboard contact sheet, and an OTIO cut list. Seedance 2.5 reads the pack's greybox clip as its white-model reference video, and MiniMax H3, Wan 3.0, LTX Desktop and fal render-to-real accept the same clip. The **Shot Prompt** turns the framing into a structured prompt for the model you picked. |
 | **Undo anything** | Every scene mutation goes through one history store: a drag, a scrub, an inspector edit is exactly one undo entry. `Esc` cancels an in-flight drag and restores the pre-drag transform. |
 | **Generate motion** | Pose characters and export poses, sequence multi-phase motion as Prompt Blocks on a resizable timeline, send them to Kimodo, then play the result back with sparse IK correction where the generated motion needs fixing. Draw over a joint's trail to reshape a take, keep most of it and regenerate a window, and step back through its history. |
 | **Capture motion from video or a photo** | Drop a clip or a still: the GPU box runs [GVHMR](https://github.com/zju3dv/GVHMR) and the result is retargeted onto the character with stabilisation, contact correction and a quality gate. |
@@ -68,7 +68,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 - Node.js 22.13 or newer
 - npm, or bun
 - A Chromium-based browser
-- An SSH-accessible NVIDIA machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the first setup downloads the Kimodo checkpoint and text-encoder stack. The same box runs GVHMR for video and photo mocap (`CCLAY_EXTRACT_BACKEND=gvhmr` is the default; there is no browser fallback).
+- A machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the installer detects the host and picks the best-supported backend (see the route table below), then downloads the matching checkpoint and text-encoder stack. An SSH-accessible NVIDIA box is the classic target; the same box runs GVHMR for video and photo mocap (`CCLAY_EXTRACT_BACKEND=gvhmr` is the default; there is no browser fallback).
 
 ## Quick start
 
@@ -82,17 +82,41 @@ That downloads the built studio and opens it at `http://127.0.0.1:5180/app/`. No
 
 A global install gives you `cclay`, the same command with less typing. Once a day the launcher checks npm for a newer release and prints a one-line notice after the studio is up; it stays quiet when you're current or offline. `cclay update` installs the latest release, and `--no-update-check` skips the check entirely.
 
-Motion generation uses Kimodo by default once you point it at an SSH-accessible NVIDIA machine:
+Motion generation uses Kimodo by default once you point it at a Kimodo host:
 
 ```bash
 CCLAY_KIMODO_HOST=user@your-gpu-box npx cozyclay
 ```
 
-Install the remote worker once:
+Install the worker once, on whichever machine should generate motion:
 
 ```bash
 CCLAY_KIMODO_HOST=user@your-gpu-box npm run kimodo:setup
+# or directly on the machine itself:
+bash tools/kimodo/setup-on-box.sh
 ```
+
+The installer is a router — it detects OS, architecture, RAM and CUDA, and installs the best-supported Kimodo variant for that host:
+
+| Host | Backend installed | Why |
+| --- | --- | --- |
+| macOS Apple Silicon, RAM > 32 GB | [kimodo-mlx](https://github.com/NomaDamas/kimodo-mlx) (MLX/Metal) | The 15 GB text encoder stays resident in unified memory: ~0.9 s warm generation vs ~37 s streaming on an M4 Max 64 GB |
+| macOS Apple Silicon, RAM ≤ 32 GB | [kimodo.cpp](https://github.com/localai-org/kimodo.cpp) + Metal (GGML) | Residency doesn't fit; streaming transformer layers from disk is the right trade |
+| Linux + working NVIDIA CUDA | [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) (PyTorch) | Full CUDA acceleration with the upstream stack |
+| Other Unix, no CUDA | kimodo.cpp CPU (Vulkan when available) | Local GGML execution without a GPU |
+
+The installer supports all routes above. CUDA motion generation works over SSH; MLX and kimodo.cpp are launched locally, while their output conversion to the Studio NPZ format is tracked in [#267](https://github.com/NomaDamas/CozyClay/issues/267). The local integration originated in [#239](https://github.com/NomaDamas/CozyClay/issues/239).
+
+For the CUDA route, the installer places the checkout at `$HOME/.cozyclay/kimodo` and its virtual environment at `$HOME/.cozyclay/kimodo-venv`, then links the venv at `$CCLAY_KIMODO_REPO/.venv` where the Studio runner expects it.
+
+Inspect the route without changing anything — and override it when you know better:
+
+```bash
+bash tools/kimodo/setup-on-box.sh --dry-run
+bash tools/kimodo/setup-on-box.sh --backend kimodo.cpp-metal   # or CCLAY_KIMODO_BACKEND=...
+```
+
+The RAM threshold between the two macOS routes defaults to 32 GB (`CCLAY_KIMODO_MLX_MIN_RAM_GB`).
 
 ## AI control (MCP)
 

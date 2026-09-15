@@ -22,6 +22,18 @@ export const PASS_KINDS = Object.freeze(["depth", "normal"]);
 // under it spread across the full range instead of collapsing to black.
 export const DEPTH_RANGE_M = 40;
 
+/** Return the shot-wide near/far range from per-frame extrema. */
+export function depthRangeFromFrames(frames, fallbackNear = 0.1, fallbackFar = DEPTH_RANGE_M) {
+	let near = Infinity;
+	let far = -Infinity;
+	for (const frame of frames ?? []) {
+		if (Number.isFinite(frame?.min) && frame.min > 0) near = Math.min(near, frame.min);
+		if (Number.isFinite(frame?.max) && frame.max > 0) far = Math.max(far, frame.max);
+	}
+	if (!Number.isFinite(near) || !Number.isFinite(far)) return { near: fallbackNear, far: fallbackFar };
+	return { near, far: Math.max(far, near + 0.0001) };
+}
+
 /** File name for a downloaded pass: `blocking-frame-depth.png`. */
 export function passFileName(kind) {
 	if (!PASS_KINDS.includes(kind)) throw new Error(`Unknown render pass: ${kind}`);
@@ -58,14 +70,14 @@ void main() {
 const BACKGROUND_FAR = new THREE.Color(0x000000);
 
 /** Build the override material for a pass. */
-function passMaterial(kind, camera) {
+function passMaterial(kind, camera, depthRange = null) {
 	if (kind === "depth") {
 		return new THREE.ShaderMaterial({
 			vertexShader: DEPTH_VERTEX,
 			fragmentShader: DEPTH_FRAGMENT,
 			uniforms: {
-				uNear: { value: Number.isFinite(camera?.near) ? camera.near : 0.1 },
-				uRange: { value: DEPTH_RANGE_M },
+				uNear: { value: Number.isFinite(depthRange?.near) ? depthRange.near : (Number.isFinite(camera?.near) ? camera.near : 0.1) },
+				uRange: { value: Number.isFinite(depthRange?.far) ? depthRange.far : DEPTH_RANGE_M },
 			},
 			// The stage's fog is a viewport look, not geometry: a depth plate that
 			// faded into the fog colour would report the horizon as near.
@@ -88,9 +100,9 @@ function passMaterial(kind, camera) {
  *   read-back into a PNG data URL; omitted, the raw buffer comes back
  * @returns {string|Uint8Array|null} the PNG data URL (or the raw buffer)
  */
-export function renderPass(capture, scene, camera, kind, toDataUrl = null) {
+export function renderPass(capture, scene, camera, kind, toDataUrl = null, options = {}) {
 	if (!capture || !scene || !camera) return null;
-	const material = passMaterial(kind, camera);
+	const material = passMaterial(kind, camera, options.depthRange);
 	const previousMaterial = scene.overrideMaterial;
 	const previousBackground = scene.background;
 	let buffer = null;

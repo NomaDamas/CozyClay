@@ -55,6 +55,7 @@ function readmeText({ shot, fps, hasLast, hasClip, ext }) {
 	lines.push(
 		"- camera.json: camera reference. The recorded camera move, fps, and",
 		"  frame range to reproduce the framing over time.",
+		"- blocking-depth.mp4: shot-wide normalised depth video; lighter pixels are closer.",
 		"- prompt.txt: the text prompt describing the intended action.",
 	);
 	return lines.join("\n") + "\n";
