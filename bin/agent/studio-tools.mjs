@@ -6,9 +6,13 @@ const text = value => typeof value === "string" ? value : JSON.stringify(value);
 
 export function createStudioTools({ liveHub, workspaceHandle, session, resolveImage } = {}) {
   if (!liveHub?.command || !workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "An exact Studio workspace is required.");
+  const mutationNames = new Set(["operate_studio", "arrange_objects", "arrange_characters", "frame_shot", "verify_result", "undo_edit"]);
   const invoke = async (name, args) => {
     const command = validateStudioCommand({ name, args });
-    const result = await liveHub.command(name, command.args, workspaceHandle);
+    const payload = mutationNames.has(name) && session?.admission
+      ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision, expectedTargets: session.admission.targets }
+      : command.args;
+    const result = await liveHub.command(name, payload, workspaceHandle);
     if (result?.ok === false) throw Object.assign(new Error(result.error?.message || "Studio command failed"), { code: result.error?.code });
     return result;
   };
