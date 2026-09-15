@@ -3,6 +3,9 @@ import { randomBytes } from "node:crypto";
 import * as defaultAuth from "../codex-auth.mjs";
 import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
+import { createStudioTools, studioToolSchemas } from "./studio-tools.mjs";
+import { STUDIO_SYSTEM_PROMPT, studioHistoryItem } from "./studio-prompt.mjs";
+import { encodeStudioContext } from "../../src/studio-agent-context.js";
 import { createVideoAdapters } from "./video-adapters.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
@@ -169,6 +172,16 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		} catch { return ""; }
 	};
 	const sessions = new Map();
+	const studioSessions = new Map();
+	const studioEvents = new Map();
+	const emitStudioEvent = (turnId, event) => {
+		const record = studioEvents.get(turnId) || { next: 0, events: [], listeners: new Set(), terminal: false };
+		const value = event.eventSeq ? event : { ...event, eventSeq: ++record.next };
+		record.next = Math.max(record.next, value.eventSeq || 0); record.events.push(value);
+		if (record.events.length > 256) record.events.splice(0, record.events.length - 256);
+		if (["done", "error", "receipt"].includes(value.type)) record.terminal = true;
+		studioEvents.set(turnId, record); for (const listener of [...record.listeners]) listener(value);
+	};
 	const unsubscribe = auth.onAuthChange?.(() => {
 		for (const session of sessions.values()) session.controller?.abort();
 		sessions.clear();
@@ -178,6 +191,17 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		if (!path.startsWith("/agent/")) return false;
 		if (port !== undefined && !allowAgentOrigin(req, typeof port === "function" ? port() : port)) {
 			json(res, 403, { error: "forbidden origin" }); return true;
+		}
+		if (path.startsWith("/agent/turn/") && path.endsWith("/events") && req.method === "GET") {
+			const turnId = decodeURIComponent(path.slice("/agent/turn/".length, -"/events".length));
+			const record = studioEvents.get(turnId); if (!record) { json(res, 404, { error: "turn unavailable" }); return true; }
+			const after = Number(new URL(req.url, "http://127.0.0.1").searchParams.get("after") || 0);
+			if (!Number.isSafeInteger(after) || after < 0) { json(res, 400, { error: "invalid cursor" }); return true; }
+			res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" }); res.flushHeaders();
+			let cursor = after; const send = event => { if (event.eventSeq > cursor && !res.destroyed) { cursor = event.eventSeq; res.write(`data: ${JSON.stringify(event)}\\n\\n`); } };
+			const listener = event => send(event); record.listeners.add(listener); for (const event of record.events) send(event);
+			if (record.terminal) { record.listeners.delete(listener); res.end(); return true; }
+			const close = () => record.listeners.delete(listener); res.once("close", close); return true;
 		}
 		if (path === "/agent/models" && req.method === "GET") {
 			try {
@@ -256,25 +280,39 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			json(res, 400, { error: error?.name === "StudioProtocolError" ? error.toJSON() : "invalid request" }); return true;
 		}
 		if (value.surface === "studio") {
-			// Task 6 supplies the Studio executor. Never leak a validated Studio
-			// request into the legacy Workflow profile while it is unavailable.
 			const { StudioProtocolError, validateStudioContextFreshness } = await import("../../src/studio-agent-protocol.js");
 			try {
 				if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "AUTH_REQUIRED", message: "Sign in with ChatGPT." } }); return true; }
-				if (path === "/agent/turn" && !value.context.host.workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "A connected editor handle is required.");
-				if (!studioRuntime) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio execution is not installed.");
+				if (!value.context.host.workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "A connected editor handle is required.");
 				if (path === "/agent/stop") {
-					if (!studioRuntime.handleStop) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio cancellation is not installed.");
-					await studioRuntime.handleStop(value, req, res);
-				} else {
-					const current = await studioRuntime.readContext(value.context.host);
-					validateStudioContextFreshness(value.context, current);
-					await studioRuntime.handleTurn(value, req, res);
+					if (studioRuntime?.handleStop) await studioRuntime.handleStop(value, req, res);
+					else { studioSessions.get(value.turnId)?.controller.abort(); json(res, 200, { ok: true }); }
+					return true;
 				}
-			} catch (error) {
-				if (!(error instanceof StudioProtocolError)) throw error;
-				json(res, 409, { error: error.toJSON() });
-			}
+				const current = studioRuntime?.readContext ? await studioRuntime.readContext(value.context.host) : value.context;
+				validateStudioContextFreshness(value.context, current);
+				if (studioRuntime?.handleTurn) { await studioRuntime.handleTurn(value, req, res); return true; }
+				const record = studioEvents.get(value.turnId) || { next: 0, events: [], listeners: new Set(), terminal: false }; studioEvents.set(value.turnId, record);
+				res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" }); res.flushHeaders();
+				const send = event => { emitStudioEvent(value.turnId, event); if (!res.destroyed) res.write(`data: ${JSON.stringify(event)}\\n\\n`); };
+				const controller = new AbortController(); studioSessions.set(value.turnId, { controller }); res.once("close", () => { /* disconnect detaches only */ });
+				const tools = createStudioTools({ liveHub, workspaceHandle: value.context.host.workspaceHandle, session: { signal: controller.signal }, resolveImage: async (id, correlation) => liveHub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
+				const history = [studioHistoryItem(value.context, value.text, encodeStudioContext)];
+				while (true) {
+					const stream = codex.streamResponses({ input: history, tools: studioToolSchemas(), instructions: STUDIO_SYSTEM_PROMPT, model: value.model, effort: value.effort, signal: controller.signal });
+					const items = []; for await (const event of stream) { if (event.type === "response.output_text.delta") send({ type: "text.delta", text: event.delta }); if (event.type === "response.output_item.done") items.push(event.item); }
+					let called = false; for (const item of items) { history.push(item); if (item.type !== "function_call") continue; called = true; const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments; send({ type: "tool.start", callId: item.call_id, name: item.name }); let result; try { const tool = tools.find(t => t.name === item.name); if (!tool) throw new StudioProtocolError("UNKNOWN_TOOL", "Unsupported Studio tool."); result = await tool.handler(args);
+						if (result && Array.isArray(result.visualRefs) && result.visualRefs.length) {
+							const ref = result.visualRefs.find(value => value?.imageId || value?.id);
+							if (ref) { const visual = await tools.resolveImage(ref.imageId || ref.id, { receiptId: result.receiptId, revision: result.revision }); result = { ...result, visualStatus: visual.visualStatus, ...(visual.dataUrl ? { dataUrl: visual.dataUrl } : {}) }; }
+						}
+						send({ type: "tool.done", callId: item.call_id, ok: true, result }); } catch (error) { send({ type: "tool.done", callId: item.call_id, ok: false, error: error.message }); result = { ok: false, error: { code: error.code || "BACKEND_UNAVAILABLE", message: error.message } }; } history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(result) });
+						if (result?.visualStatus === "attached" && result.dataUrl && codex.appendImageObservation) codex.appendImageObservation(history, { callId: item.call_id, dataUrl: result.dataUrl });
+					}
+					if (!called) break;
+				}
+				send({ type: "done" }); res.end();
+			} catch (error) { if (error instanceof StudioProtocolError) json(res, 409, { error: error.toJSON() }); else throw error; }
 			return true;
 		}
 		if (path === "/agent/stop") {

@@ -291,5 +291,15 @@ export function createCodexClient({
 		};
 	}
 
-	return { streamResponses, runAgentTurn, editImage, generateImage, listModels, parseQuotaHeaders };
+	/** Attach actual editor image bytes as a multimodal observation. IDs and URLs stay
+	 * in server metadata; the provider receives bytes only after the correlated
+	 * function result, never as a model-authored explanation. */
+	function appendImageObservation(history, { callId, dataUrl, label = "Studio visual observation" } = {}) {
+		if (typeof callId !== "string" || typeof dataUrl !== "string" || !dataUrl.startsWith("data:image/")) return history;
+		history.push({ type: "function_call_output", call_id: callId, output: JSON.stringify({ visualStatus: "attached", label }) });
+		history.push({ role: "user", content: [{ type: "input_text", text: label }, { type: "input_image", image_url: dataUrl }] });
+		return history;
+	}
+
+	return { streamResponses, runAgentTurn, editImage, generateImage, listModels, parseQuotaHeaders, appendImageObservation };
 }
