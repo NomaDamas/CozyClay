@@ -99,8 +99,20 @@ try {
 		resolveEditorHello = resolve;
 	});
 	const editorResultWaiters = [];
+	const executionEvents = [];
+	const assertExecution = (offset, outcome, applied) => {
+		const request = executionEvents.slice(offset).find(({ event }) => event === "mcp:tool_requested");
+		assert.equal(request?.event, "mcp:tool_requested");
+		const events = executionEvents.slice(offset).filter(({ props }) => props.request_id === request.props.request_id);
+		assert.deepEqual(events.map(({ event }) => event), ["mcp:tool_requested", "mcp:tool_executed", ...(applied ? ["mcp:result_applied"] : [])]);
+		assert.equal(events[1].props.outcome, outcome);
+	};
 	socket.addEventListener("message", (event) => {
 		const frame = JSON.parse(event.data);
+		if (frame.method === "Network.webSocketFrameReceived") {
+			const editorFrame = JSON.parse(frame.params.response.payloadData);
+			if (editorFrame.type === "event" && editorFrame.name === "telemetry") executionEvents.push(editorFrame.payload);
+		}
 		if (frame.method === "Network.webSocketFrameSent") {
 			try {
 				const editorFrame = JSON.parse(frame.params.response.payloadData);
@@ -193,6 +205,14 @@ try {
 	assert.equal(afterUpdate.x, 4);
 	assert.equal(afterUpdate.color, "#ff0000");
 	assert.equal(afterUpdate.name, "Lifecycle Crate B");
+	const noOpOffset = executionEvents.length;
+	await call("update_object", { id: placedId, x: 4, color: "#ff0000", name: "Lifecycle Crate B" });
+	await description(); // Ordered live-protocol barrier, including telemetry.
+	assertExecution(noOpOffset, "succeeded", false);
+	const noOpBatchOffset = executionEvents.length;
+	await call("apply_batch", { ops: [{ name: "update_object", args: { id: placedId, x: 4 } }] });
+	await description();
+	assertExecution(noOpBatchOffset, "succeeded", false);
 	const removed = await call("remove_object", { id: placedId });
 	assert.equal(removed.isError, undefined, JSON.stringify(removed));
 	assert.ok(
@@ -205,6 +225,7 @@ try {
 	// Then all mutations land and one Undo returns the complete pre-batch document.
 	const beforeHappy = await description();
 	const happyDepth = await history();
+	const happyOffset = executionEvents.length;
 	const happy = await call("apply_batch", {
 		label: "Block street furniture",
 		atomic: false,
@@ -218,6 +239,7 @@ try {
 	assert.equal(happy.isError, undefined, JSON.stringify(happy));
 	assert.match(happy.content[0].text, /Applied 3 operation\(s\)/);
 	const afterHappy = await description();
+	assertExecution(happyOffset, "succeeded", true);
 	const happyAfterDepth = await history();
 	assert.equal(JSON.parse(afterHappy).objects.length, JSON.parse(beforeHappy).objects.length + 3);
 	assert.equal(happyAfterDepth.past - happyDepth.past, 1);
@@ -232,6 +254,7 @@ try {
 	await call("set_camera", { x: 2, y: 1.6, z: 4.5, focal_mm: 35 });
 	const beforeAtomicFailure = await description();
 	const atomicDepth = await history();
+	const atomicOffset = executionEvents.length;
 	const atomicFailure = await call("apply_batch", {
 		label: "Rollback malformed block",
 		atomic: true,
@@ -245,6 +268,7 @@ try {
 	assert.equal(atomicFailure.isError, undefined, JSON.stringify(atomicFailure));
 	assert.match(atomicFailure.content[0].text, /rolled back/i);
 	const afterAtomicFailure = await description();
+	assertExecution(atomicOffset, "failed", false);
 	assertSceneEquivalent(afterAtomicFailure, beforeAtomicFailure);
 	const atomicRollbackDepthDelta = (await history()).past - atomicDepth.past;
 	assert.equal(atomicRollbackDepthDelta, 0);
@@ -253,6 +277,7 @@ try {
 	// When the first operation has already applied
 	// Then that first operation remains and the report names the applied index.
 	const partialDepth = await history();
+	const partialOffset = executionEvents.length;
 	const partial = await call("apply_batch", {
 		label: "Keep completed work",
 		atomic: false,
@@ -267,6 +292,7 @@ try {
 	assert.match(partial.content[0].text, /Applied 1 operation\(s\).*Failure at operation 2/i);
 	assert.equal((await history()).past - partialDepth.past, 1);
 	assert.equal(JSON.parse(await description()).objects.length, JSON.parse(beforeHappy).objects.length + 1);
+	assertExecution(partialOffset, "failed", true);
 	await evaluate('window.dispatchEvent(new KeyboardEvent("keydown", { code: "KeyZ", ctrlKey: true, bubbles: true, cancelable: true }))');
 
 	// Given stopOnError is disabled
@@ -323,6 +349,8 @@ try {
 		},
 		adjacentUndoDepthDeltas: { singleShot: 1, humanPointerDrag: 1 },
 		mixedObjectCharacterBatches: "restricted-v1",
+		mcpExecutionTelemetry: "PASS: object and batch no-op, successful batch, atomic rollback, retained partial failure",
+
 	}));
 } finally {
 	socket?.close();

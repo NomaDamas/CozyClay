@@ -1,4 +1,8 @@
-import { randomUUID } from "node:crypto";
+import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+import { bucketMs, sanitizeProps } from "../src/analytics.js";
+import { mcpToolCategory } from "../src/execution-telemetry.js";
 
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -109,6 +113,20 @@ const mutationCommands = new Set([
 
 export class LiveMutationUncertainError extends Error {}
 
+// Only the MCP registration wrapper opts in. Agent commands and motion's own
+// lifecycle continue through their existing hooks, without parallel events.
+const executionObserver = new AsyncLocalStorage();
+const safely = (work) => {
+	try { return work(); } catch { return undefined; }
+};
+const mutationState = (name, description) => {
+	if (!description || typeof description !== "object") return undefined;
+	if (name === "set_camera") return description.camera;
+	if (["add_character", "update_character", "remove_character", "set_prompt_blocks"].includes(name)) return description.characters;
+	if (name === "load_scenes") return description.document;
+	return description.objects;
+};
+
 /**
  * Transport-only implementation of LIVE-PROTOCOL.md. Scene semantics remain
  * with the editor and the server's existing CozyClay imports.
@@ -195,6 +213,93 @@ export class LiveHub {
 		});
 	}
 
+	/** Observe one already-targeted MCP execution. IDs and state evidence are
+	 * ephemeral; only enums, buckets and the fresh ID reach the editor relay. */
+	async observeExecution(name, handle, work, { randomId = () => randomBytes(16).toString("hex"), now = () => performance.now() } = {}) {
+		const socket = this.editors.get(handle);
+		if (socket?.readyState !== WebSocket.OPEN) return work();
+		const requestId = safely(randomId);
+		const startedAt = safely(now);
+		if (typeof requestId !== "string" || !/^[a-f0-9]{32}$/.test(requestId) || !Number.isFinite(startedAt)) return work();
+		const workspaceId = this.workspaceId(handle);
+		const category = mcpToolCategory(name);
+		const emit = (event, props) => safely(() => {
+			// Do not reconstruct this lifecycle on a replacement connection.
+			if (this.editors.get(handle) !== socket || socket.readyState !== WebSocket.OPEN) return;
+			Promise.resolve(this.sendEvent(workspaceId, "telemetry", { event, props: sanitizeProps(event, props) })).catch(() => {});
+		});
+		let terminal = false;
+		let applied = false;
+		let appliedEmitted = false;
+		let failure = null;
+		let description;
+		let mutation;
+		let acknowledgedMutation = false;
+		const emitApplied = () => {
+			if (!applied || !terminal || appliedEmitted) return;
+			appliedEmitted = true;
+			emit("mcp:result_applied", { request_id: requestId });
+		};
+		const observer = {
+			hub: this, handle,
+			before(command) {
+				if (!LiveHub.commandMayMutate(command) || command === "load_motion") return false;
+				mutation = { name: command, before: mutationState(command, description), acknowledged: false };
+				description = undefined;
+				return mutation.before === undefined;
+			},
+			baseline(value) { if (mutation) mutation.before = mutationState(mutation.name, value); },
+			receipt(command, value) {
+				if (command === "describe") {
+					if (mutation?.acknowledged && !mutation.rolledBack) {
+						const after = mutationState(mutation.name, value);
+						if (mutation.before !== undefined && after !== undefined && !isDeepStrictEqual(mutation.before, after)) applied = true;
+					}
+					description = value;
+					mutation = null;
+				} else if (LiveHub.commandMayMutate(command)) {
+					acknowledgedMutation = true;
+					if (mutation) mutation.acknowledged = true;
+					if (command === "apply_batch") {
+						if (mutation) mutation.rolledBack = value?.rolledBack === true;
+						if (value?.rolledBack === true || value?.failed?.length > 0) failure = "failed";
+					}
+					// The load acknowledgement is the existing installation receipt,
+					// including generation jobs whose MCP control response was queued.
+					if (command === "load_motion" && value?.loaded === true) applied = true;
+				}
+				emitApplied();
+			},
+			error(command, error) {
+				if (error instanceof LiveMutationUncertainError || (command === "describe" && mutation?.acknowledged)) failure = "uncertain";
+				else if (failure !== "uncertain") failure = error?.name === "AbortError" || error?.code === "ABORT_ERR" ? "cancelled" : "failed";
+			},
+		};
+		const finish = (value, error) => safely(() => {
+			if (terminal) return;
+			if (error) observer.error(null, error);
+			if (value?.isError === true && !failure) failure = acknowledgedMutation ? "uncertain" : "failed";
+			terminal = true;
+			const endedAt = safely(now);
+			if (Number.isFinite(endedAt)) emit("mcp:tool_executed", { request_id: requestId, tool_category: category, outcome: failure ?? "succeeded", duration_bucket: bucketMs(endedAt - startedAt) });
+			emitApplied();
+			// Never retain scene data with an asynchronous motion job.
+			description = undefined;
+			mutation = null;
+		});
+		emit("mcp:tool_requested", { request_id: requestId, tool_category: category });
+		return executionObserver.run(observer, async () => {
+			try {
+				const value = await work();
+				finish(value);
+				return value;
+			} catch (error) {
+				finish(null, error);
+				throw error;
+			}
+		});
+	}
+
 	sendEvent(workspaceId, name, payload) {
 		let delivered = 0;
 		for (const [handle, socket] of this.editors) {
@@ -207,6 +312,28 @@ export class LiveHub {
 
 	async command(name, args, workspaceHandle) {
 		const handle = this.resolveWorkspace(name, workspaceHandle);
+		const current = executionObserver.getStore();
+		const observer = current?.hub === this && current.handle === handle ? current : null;
+		if (observer && safely(() => observer.before(name))) {
+			// Existing acknowledgements do not distinguish same-value updates.
+			// Only when the handler has not already described the scene, take one
+			// best-effort read before mutation. It never controls tool execution.
+			try {
+				const baseline = await this.sendCommand("describe", {}, handle);
+				safely(() => observer.baseline(baseline));
+			} catch { /* Missing evidence omits application, not the real command. */ }
+		}
+		try {
+			const value = await this.sendCommand(name, args, handle);
+			safely(() => observer?.receipt(name, value));
+			return value;
+		} catch (error) {
+			safely(() => observer?.error(name, error));
+			throw error;
+		}
+	}
+
+	async sendCommand(name, args, handle) {
 		const socket = this.editors.get(handle);
 		if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error(`Unknown or stale live workspace handle "${handle}".`);
 
@@ -215,11 +342,10 @@ export class LiveHub {
 			const timer = setTimeout(() => {
 				this.pending.delete(id);
 				const message = `Live editor timed out running ${name}.`;
-				reject(
-					LiveHub.commandMayMutate(name)
-						? new LiveMutationUncertainError(`${message} The mutation may have been applied. Do not retry it; describe the scene before choosing a recovery action.`)
-						: new Error(message),
-				);
+				const error = LiveHub.commandMayMutate(name)
+					? new LiveMutationUncertainError(`${message} The mutation may have been applied. Do not retry it; describe the scene before choosing a recovery action.`)
+					: new Error(message);
+				reject(error);
 			}, LiveHub.commandTimeoutMs(name));
 			this.pending.set(id, { name, socket, resolve, reject, timer });
 			try {
@@ -287,8 +413,12 @@ export class LiveHub {
 			if (!pending || pending.socket !== socket) return;
 			clearTimeout(pending.timer);
 			this.pending.delete(frame.id);
-			if (frame.ok === true) pending.resolve(frame.value);
-			else pending.reject(new Error(typeof frame.error === "string" ? frame.error : "Live editor rejected the command."));
+			if (frame.ok === true) {
+				pending.resolve(frame.value);
+			} else {
+				const error = new Error(typeof frame.error === "string" ? frame.error : "Live editor rejected the command.");
+				pending.reject(error);
+			}
 		});
 		socket.on("close", () => this.disconnect(socket));
 		socket.on("error", () => this.disconnect(socket));
@@ -308,11 +438,10 @@ export class LiveHub {
 			clearTimeout(pending.timer);
 			this.pending.delete(id);
 			const message = "Live editor disconnected while a command was running.";
-			pending.reject(
-				LiveHub.commandMayMutate(pending.name)
-					? new LiveMutationUncertainError(`${message} The mutation may have been applied. Do not retry it; describe the scene before choosing a recovery action.`)
-					: new Error(message),
-			);
+			const error = LiveHub.commandMayMutate(pending.name)
+				? new LiveMutationUncertainError(`${message} The mutation may have been applied. Do not retry it; describe the scene before choosing a recovery action.`)
+				: new Error(message);
+			pending.reject(error);
 		}
 	}
 }

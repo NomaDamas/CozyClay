@@ -1,4 +1,5 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { randomBytes } from "node:crypto";
 import * as defaultAuth from "../codex-auth.mjs";
 import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
@@ -25,6 +26,34 @@ const IMAGE_BODY_LIMIT = 24 * 1024 * 1024;
 // reference. Capped because every one of them is another full image the
 // backend has to read, and a shot with seven of them is a prompt nobody wrote.
 const IMAGE_REFERENCES_MAX = 6;
+// Keep this local relay self-contained: minimal sidecar installs omit src/.
+const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
+const telemetryId = () => advisory(() => randomBytes(16).toString("hex"), null);
+const telemetryNow = () => advisory(() => { const value = performance.now(); return Number.isFinite(value) ? value : NaN; }, NaN);
+const bucketMs = (ms) => !Number.isFinite(ms) || ms < 1000 ? "lt1s" : ms < 3000 ? "1-3s" : ms < 10000 ? "3-10s" : ms < 30000 ? "10-30s" : "gte30s";
+const agentToolCategory = (name) => {
+	if (name === "run_workflow") return "workflow_run";
+	if (name === "describe_workflow" || name === "focus_workflow_node") return "workflow_read";
+	if (["add_workflow_node", "update_workflow_node", "remove_workflow_node", "connect_workflow_nodes", "disconnect_workflow_nodes", "set_workflow_node_output"].includes(name)) return "workflow_write";
+	if (name === "capture_blocking_frame") return "frame_capture";
+	if (name === "render_from_frame") return "image_generate";
+	if (name === "place_image_in_scene" || name === "add_reference_node") return "scene_write";
+	return "other";
+};
+const agentFailureCode = (error, signal, tool = false) => advisory(() => {
+	if (signal.aborted || error?.name === "AbortError") return "aborted";
+	if (error?.status === 401 || error?.code === "unauthorized") return "auth";
+	if (error?.status === 429) return "rate_limited";
+	return tool ? "tool_failed" : "upstream";
+}, tool ? "tool_failed" : "upstream");
+// These existing canvas commands only return a node/edge after publishing a
+// new insertion. Read/focus, generic accepted responses, update no-ops and run
+// outputs (which can echo old values) are deliberately not application proof.
+const appliedCanvasResult = (name, result) => {
+	if (name === "add_workflow_node" || name === "add_reference_node") return typeof result?.node?.id === "string" && result.node.id.length > 0;
+	if (name === "connect_workflow_nodes") return typeof result?.edge?.id === "string" && result.edge.id.length > 0;
+	return false;
+};
 
 /** Reject anything that is not a list of {role, name?, dataUrl} inline images. */
 function validReferences(references) {
@@ -237,6 +266,18 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		Object.assign(session, { running: true, controller, signal });
 		const disconnect = () => controller.abort();
 		res.once("close", disconnect);
+		// The initiating browser owns the turn ID and requested/terminal capture.
+		// Legacy/local callers without an ID retain behavior but are unobserved.
+		const turnId = typeof value.turn_id === "string" && /^[a-f0-9]{32}$/.test(value.turn_id) ? value.turn_id : null;
+		const turnStartedAt = telemetryNow();
+		let turnOutcome = "succeeded";
+		let turnFailureCode = null;
+		let toolFailed = false;
+		let streamsCompleted = true;
+		let resultApplied = false;
+		const emitTelemetry = (event, props, toolId) => advisory(() => {
+			if (turnId) send({ type: "execution_telemetry", event, props, ...(toolId ? { telemetry_id: toolId } : {}) });
+		});
 		let quota;
 		const observeHeaders = (headers) => {
 			const next = quotaEvent(codex, headers);
@@ -271,20 +312,37 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			const tools = createAgentTools({ ...dependencies, session, emit: send });
 			const executeTool = async (item, override) => {
 				signal.throwIfAborted();
-				const tool = override ?? tools.find((entry) => entry.name === item.name);
-				if (!tool) throw new Error("Unknown tool.");
-				const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments;
-				send({ type: "tool.start", callId: item.call_id, name: item.name, label: item.name.replaceAll("_", " "), args });
-				const started = performance.now();
+				const started = telemetryNow();
+				const toolId = telemetryId();
+				const category = advisory(() => agentToolCategory(item.name), "other");
+				advisory(() => { if (turnId && toolId) send({ type: "execution_tool_started", turn_id: turnId, telemetry_id: toolId, tool_category: category }); });
+				const executed = (outcome) => {
+					if (toolId) emitTelemetry("agent:tool_executed", { turn_id: turnId, tool_category: category, outcome, duration_bucket: bucketMs(telemetryNow() - started) }, toolId);
+				};
+				let cardStarted = false;
 				try {
+					const tool = override ?? tools.find((entry) => entry.name === item.name);
+					if (!tool) throw new Error("Unknown tool.");
+					const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments;
+					send({ type: "tool.start", callId: item.call_id, name: item.name, label: item.name.replaceAll("_", " "), args });
+					cardStarted = true;
 					if (dependencies.error) throw dependencies.error;
 					const result = await tool.handler(args);
+					advisory(() => {
+						if (!resultApplied && appliedCanvasResult(item.name, result)) {
+							resultApplied = true;
+							emitTelemetry("agent:result_applied", { turn_id: turnId });
+						}
+					});
 					signal.throwIfAborted();
-					send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: Math.round(performance.now() - started), result });
+					send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: Math.round(telemetryNow() - started), result });
+					executed("succeeded");
 					return result;
 				} catch (error) {
+					toolFailed = true;
 					if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message);
-					send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: Math.round(performance.now() - started), error: errorInfo(error).message });
+					if (cardStarted) send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: Math.round(telemetryNow() - started), error: errorInfo(error).message });
+					executed(signal.aborted ? "cancelled" : "failed");
 					throw error;
 				}
 			};
@@ -302,11 +360,13 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 					const stream = codex.streamResponses({ input: history, tools: agentToolSchemas(tools), instructions: SYSTEM_PROMPT, model: value.model, effort: value.effort, signal });
 					const headers = stream.headers.then(observeHeaders, () => {});
 					const items = [];
+					let completed = false;
 					try {
 						for await (const event of stream) {
 							signal.throwIfAborted();
 							if (event.type === "response.output_text.delta") send({ type: "text.delta", text: event.delta });
 							if (event.type === "response.output_item.done") items.push(event.item);
+							if (event.type === "response.completed" && (!event.response?.status || event.response.status === "completed")) completed = true;
 							if (event.type === "error" || event.type === "response.failed") {
 								if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] model event:", JSON.stringify(event).slice(0, 600));
 								const code = event.error?.code ?? event.response?.error?.code;
@@ -314,6 +374,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 							}
 						}
 						await headers;
+						streamsCompleted &&= completed;
 						return items;
 					} finally { await headers; }
 				}));
@@ -330,12 +391,22 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		};
 		try { await requestContext.run(observeHeaders, turn); }
 		catch (error) {
+			turnOutcome = signal.aborted ? "cancelled" : "failed";
+			turnFailureCode = signal.aborted ? "aborted" : agentFailureCode(error, signal, toolFailed);
 			if (!signal.aborted) {
 				if (error.headers) observeHeaders(error.headers);
 				if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.body ?? "").slice(0, 300));
 				send({ type: "error", ...errorInfo(error, quota) });
 			}
 		} finally {
+			if (signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
+			// Stream EOF is not completion evidence. Preserve the agent's existing
+			// UI/loop behavior, but leave truncated model turns unresolved.
+			if (turnOutcome !== "succeeded" || streamsCompleted) emitTelemetry(`agent:turn_${turnOutcome}`, {
+				turn_id: turnId,
+				duration_bucket: bucketMs(telemetryNow() - turnStartedAt),
+				...(turnOutcome !== "succeeded" ? { failure_code: turnFailureCode } : {}),
+			});
 			session.running = false; send({ type: "done" }); res.end(); res.off("close", disconnect);
 		}
 		return true;

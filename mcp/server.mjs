@@ -185,7 +185,7 @@ const registerTool = ({ name, title, description, inputSchema, annotations, live
 			}
 			if (!liveHub?.connected) return liveWorkspace.run(workspaceHandle, () => handler(args));
 			return liveHub.runExclusive(name, workspaceHandle, (resolvedHandle) =>
-				liveWorkspace.run(resolvedHandle, () => handler(args)),
+				liveHub.observeExecution(name, resolvedHandle, () => liveWorkspace.run(resolvedHandle, () => handler(args))),
 			);
 		},
 	);

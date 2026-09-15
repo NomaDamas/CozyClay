@@ -15,6 +15,9 @@
 //   POST /agent/stop    -> { ok }
 //   GET  /agent/models  -> { models: [{ id, label }] }
 
+import { bucketMs, track } from "../analytics.js";
+import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
+
 export const AGENT_PANEL_WIDTH_KEY = "cozyclay.workflow.agentPanel.width";
 export const AGENT_PANEL_WIDTH_DEFAULT = 360;
 export const AGENT_PANEL_WIDTH_MIN = 300;
@@ -155,7 +158,92 @@ function sidecarUrl(path) {
 	return `${SIDECAR_ORIGIN}${path}`;
 }
 
-export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalThis) } = {}) {
+const validTelemetryId = (value) => typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
+const AGENT_FAILURE_CODES = new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]);
+const exactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
+	&& Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
+const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
+const transportFailureCode = (error) => advisory(() => error?.status === 401 || error?.code === "auth" ? "auth"
+	: error?.status === 429 || error?.code === "rate_limit" ? "rate_limited" : "upstream", "upstream");
+
+// The real browser request owns the attempt, including HTTP refusal and Stop.
+// These IDs never use panel session IDs, model call IDs or authored content.
+function startAgentTurn({ surface, capture, now }) {
+	const turnId = advisory(() => {
+		const bytes = new Uint8Array(16);
+		globalThis.crypto.getRandomValues(bytes);
+		return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+	}, null);
+	const clock = () => advisory(() => { const value = now(); return Number.isFinite(value) ? value : NaN; }, NaN);
+	const startedAt = clock();
+	const hostSurface = advisory(() => ["studio", "workflow"].includes(surface) ? surface
+		: /^\/workflow(?:\/|$)/.test(globalThis.location?.pathname || "") ? "workflow" : "studio", "studio");
+	let terminal = false;
+	let applied = false;
+	const tools = new Map();
+	const seenTools = new Set();
+	const emit = (event, props) => {
+		if (!turnId) return;
+		try { Promise.resolve(capture(event, props)).catch(() => {}); } catch { /* telemetry is advisory */ }
+	};
+	const finish = (outcome, failureCode) => {
+		if (terminal) return;
+		terminal = true;
+		if (outcome === "cancelled") {
+			for (const [id, tool] of tools) {
+				if (!seenTools.has(id)) emit("agent:tool_executed", { turn_id: turnId, tool_category: tool.category, outcome: "cancelled", duration_bucket: bucketMs(clock() - tool.startedAt) });
+			}
+		}
+		tools.clear();
+		emit(`agent:turn_${outcome}`, { turn_id: turnId, duration_bucket: bucketMs(clock() - startedAt), ...(outcome !== "succeeded" ? { failure_code: failureCode } : {}) });
+	};
+	emit("agent:turn_requested", { surface: hostSurface, turn_id: turnId });
+	return {
+		turnId,
+		cancel: () => finish("cancelled", "aborted"),
+		fail: (code) => finish("failed", AGENT_FAILURE_CODES.has(code) ? code : "upstream"),
+		frame(frame) {
+			// Local sidecar frames are still an untrusted boundary. Reject the whole
+			// frame, including extra fields, before dedupe or analytics capture.
+			try {
+				if (!turnId || terminal) return;
+				if (frame.type === "execution_tool_started") {
+					if (!exactKeys(frame, ["type", "turn_id", "telemetry_id", "tool_category"]) || frame.turn_id !== turnId
+						|| !validTelemetryId(frame.telemetry_id) || !AGENT_TOOL_CATEGORIES.includes(frame.tool_category)) return;
+					if (!tools.has(frame.telemetry_id) && !seenTools.has(frame.telemetry_id)) tools.set(frame.telemetry_id, { category: frame.tool_category, startedAt: clock() });
+					return;
+				}
+				const { event, props } = frame;
+				if (props?.turn_id !== turnId) return;
+				if (event === "agent:tool_executed") {
+					if (!exactKeys(frame, ["type", "event", "props", "telemetry_id"]) || !validTelemetryId(frame.telemetry_id)
+						|| !exactKeys(props, ["turn_id", "tool_category", "outcome", "duration_bucket"])
+						|| !AGENT_TOOL_CATEGORIES.includes(props.tool_category) || !["succeeded", "failed", "cancelled"].includes(props.outcome)
+						|| !EXECUTION_TELEMETRY_VALUES.duration_bucket.has(props.duration_bucket) || seenTools.has(frame.telemetry_id)) return;
+					seenTools.add(frame.telemetry_id);
+					tools.delete(frame.telemetry_id);
+					emit(event, { turn_id: turnId, tool_category: props.tool_category, outcome: props.outcome, duration_bucket: props.duration_bucket });
+					return;
+				}
+				if (!exactKeys(frame, ["type", "event", "props"])) return;
+				if (event === "agent:result_applied") {
+					if (!applied && exactKeys(props, ["turn_id"])) { applied = true; emit(event, { turn_id: turnId }); }
+					return;
+				}
+				if (!["agent:turn_succeeded", "agent:turn_failed", "agent:turn_cancelled"].includes(event)) return;
+				const outcome = event.slice("agent:turn_".length);
+				const hasFailure = Object.hasOwn(props, "failure_code");
+				if (!exactKeys(props, ["turn_id", "duration_bucket", ...(hasFailure ? ["failure_code"] : [])])
+					|| !EXECUTION_TELEMETRY_VALUES.duration_bucket.has(props.duration_bucket)
+					|| (hasFailure && (outcome === "succeeded" || !AGENT_FAILURE_CODES.has(props.failure_code)))) return;
+				finish(outcome, outcome === "cancelled" ? "aborted" : props.failure_code || "unknown");
+			} catch { /* foreign getters and malformed telemetry cannot affect a turn */ }
+		},
+	};
+}
+
+export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalThis), surface, capture = track, now = () => performance.now() } = {}) {
+	const activeTurns = new Map();
 	const request = async (path, init) => {
 		const response = await fetchImpl(sidecarUrl(path), {
 			headers: { "content-type": "application/json" },
@@ -195,6 +283,7 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			return Array.isArray(result?.models) && result.models.length ? result.models : DEFAULT_MODELS;
 		},
 		async stop(sessionId) {
+			activeTurns.get(sessionId)?.cancel();
 			return request("/agent/stop", { method: "POST", body: JSON.stringify({ sessionId }) });
 		},
 		// `references` are the scene's identity / environment slots (#167): extra
@@ -211,30 +300,58 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		},
 		/** Streams sidecar events to `onEvent`. Resolves when the turn ends. */
 		async turn({ sessionId, text, attachFrame, model, effort }, onEvent, signal) {
-			const response = await fetchImpl(sidecarUrl("/agent/turn"), {
-				method: "POST",
-				headers: { "content-type": "application/json", accept: "text/event-stream" },
-				body: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}) }),
-				signal,
-			});
-			if (!response.ok || !response.body) {
-				onEvent({ type: "error", code: "upstream", message: `turn responded ${response.status}` });
-				onEvent({ type: "done" });
-				return;
+			const telemetry = startAgentTurn({ surface, capture, now });
+			activeTurns.set(sessionId, telemetry);
+			const onAbort = () => { if (signal.reason === "agent-stop") telemetry.cancel(); };
+			signal?.addEventListener("abort", onAbort, { once: true });
+			if (signal?.aborted) onAbort();
+			let reader;
+			let failureCode;
+			const receive = (event) => {
+				if (event?.type === "execution_telemetry" || event?.type === "execution_tool_started") { telemetry.frame(event); return; }
+				if (event?.type === "error") failureCode = transportFailureCode(event);
+				onEvent(event);
+			};
+			try {
+				const response = await fetchImpl(sidecarUrl("/agent/turn"), {
+					method: "POST",
+					headers: { "content-type": "application/json", accept: "text/event-stream" },
+					body: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) }),
+					signal,
+				});
+				if (!response.ok || !response.body) {
+					telemetry.fail(transportFailureCode(response));
+					onEvent({ type: "error", code: "upstream", message: `turn responded ${response.status}` });
+					onEvent({ type: "done" });
+					return;
+				}
+				reader = response.body.getReader();
+				const decoder = new TextDecoder();
+				let buffer = "";
+				while (true) {
+					const { value, done } = await reader.read();
+					if (done) break;
+					buffer += decoder.decode(value, { stream: true });
+					const parsed = parseSseChunk(buffer);
+					buffer = parsed.tail;
+					for (const event of parsed.events) receive(event);
+				}
+				// Preserve legacy UI tail delivery, but never complete a telemetry
+				// frame synthetically. Bare done/EOF is not completion evidence.
+				for (const event of parseSseChunk(`${buffer}\n`).events) {
+					if (event?.type !== "execution_telemetry" && event?.type !== "execution_tool_started") receive(event);
+				}
+				if (failureCode) telemetry.fail(failureCode);
+			} catch (error) {
+				// Refusal before the stream opens is a known failed request. Losing
+				// an open stream without an outcome leaves execution unobserved.
+				if (!signal?.aborted && (!reader || failureCode)) telemetry.fail(failureCode || transportFailureCode(error));
+				throw error;
+			} finally {
+				signal?.removeEventListener("abort", onAbort);
+				reader?.releaseLock();
+				if (activeTurns.get(sessionId) === telemetry) activeTurns.delete(sessionId);
 			}
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = "";
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) break;
-				buffer += decoder.decode(value, { stream: true });
-				const parsed = parseSseChunk(buffer);
-				buffer = parsed.tail;
-				for (const event of parsed.events) onEvent(event);
-			}
-			const parsed = parseSseChunk(`${buffer}\n`);
-			for (const event of parsed.events) onEvent(event);
 		},
 	};
 }

@@ -2,11 +2,13 @@
 // module has no browser-only dependencies, so its frame dispatcher is directly
 // testable in Node with a fake WebSocket.
 import { sanitizeProps, track } from "./analytics.js";
+import { EXECUTION_TELEMETRY_EVENTS, EXECUTION_TELEMETRY_PROPERTY_KEYS } from "./execution-telemetry.js";
 
 const MOTION_TELEMETRY_EVENTS = new Set([
 	"motion:generate_requested", "motion:preflight_blocked", "motion:preflight_passed",
 	"motion:job_started", "motion:job_succeeded", "motion:job_failed", "motion:result_applied",
 ]);
+const LIVE_TELEMETRY_EVENTS = new Set([...MOTION_TELEMETRY_EVENTS, ...EXECUTION_TELEMETRY_EVENTS.filter((event) => event.startsWith("mcp:"))]);
 
 export const LIVE_CONTROL_PORT = import.meta.env?.VITE_COZYCLAY_LIVE_PORT ?? "5184";
 export const liveControlUrl = (port = LIVE_CONTROL_PORT) => `ws://127.0.0.1:${port}/live`;
@@ -59,6 +61,7 @@ export function createLiveControl({
 	onWorkspace = () => {},
 	onEvent = () => {},
 	captureMotionTelemetry = track,
+	captureTelemetry = track,
 	workspaceId = "",
 	// Optional identity for the hub's live_status listing (scene/project names).
 	meta = null,
@@ -70,17 +73,21 @@ export function createLiveControl({
 	let socket = null;
 	let retry = null;
 	let stopped = false;
-	const capturedMotionStages = new Set();
-	const receiveMotionTelemetry = (payload) => {
-		if (!MOTION_TELEMETRY_EVENTS.has(payload.event)) return;
+	const capturedStages = new Set();
+	const receiveTelemetry = (payload) => {
+		if (!LIVE_TELEMETRY_EVENTS.has(payload.event)) return;
 		const props = sanitizeProps(payload.event, payload.props);
-		if (!props.request_id) return;
+		const correlationId = props.request_id;
+		if (!correlationId) return;
+		if (EXECUTION_TELEMETRY_EVENTS.includes(payload.event)
+			&& EXECUTION_TELEMETRY_PROPERTY_KEYS[payload.event]?.some((key) => !Object.hasOwn(props, key))) return;
 		if ((payload.event === "motion:generate_requested" || payload.event.startsWith("motion:preflight_")) && props.surface !== "mcp") return;
-		const key = `${props.request_id}:${payload.event}`;
-		if (capturedMotionStages.has(key)) return;
-		capturedMotionStages.add(key);
+		const key = `${correlationId}:${payload.event}`;
+		if (capturedStages.has(key)) return;
+		capturedStages.add(key);
+		const capture = payload.event.startsWith("motion:") ? captureMotionTelemetry : captureTelemetry;
 		try {
-			Promise.resolve(captureMotionTelemetry(payload.event, props)).catch(() => {
+			Promise.resolve(capture(payload.event, props)).catch(() => {
 				// SDK failures must not affect command dispatch or generation.
 			});
 		} catch {
@@ -130,6 +137,7 @@ export function createLiveControl({
 			});
 		};
 		connected.onmessage = async (event) => {
+			if (socket !== connected || stopped) return;
 			if (typeof event?.data === "string") {
 				try {
 					const frame = JSON.parse(event.data);
@@ -138,8 +146,8 @@ export function createLiveControl({
 						return;
 					}
 					if (frame?.type === "event" && typeof frame.name === "string" && frame.payload && typeof frame.payload === "object") {
-						if (frame.name === "motion_telemetry") {
-							receiveMotionTelemetry(frame.payload);
+						if (frame.name === "motion_telemetry" || frame.name === "telemetry") {
+							receiveTelemetry(frame.payload);
 							return;
 						}
 						onEvent(frame.name, frame.payload);

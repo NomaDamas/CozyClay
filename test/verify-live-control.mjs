@@ -75,4 +75,45 @@ socket.receive({ type: "cmd", id: "wire-2", name: "unknown", args: {} });
 await new Promise((resolve) => queueMicrotask(resolve));
 assert.deepEqual(frames.shift(), { type: "result", id: "wire-2", ok: false, error: "Unknown command: unknown" });
 client.close();
+const executionEvents = [];
+const executionClient = createLiveControl({
+	WebSocketImpl: FakeWebSocket,
+	handlers,
+	captureTelemetry: (event, props) => executionEvents.push({ event, props }),
+	reconnectMs: 60_000,
+});
+const executionSocket = FakeWebSocket.instances[2];
+executionSocket.open();
+const requestId = "a".repeat(32);
+executionSocket.receive({
+	type: "event",
+	name: "telemetry",
+	payload: {
+		event: "mcp:tool_executed",
+		props: { request_id: requestId, tool_category: "read", outcome: "succeeded", duration_bucket: "lt1s", prompt: "private" },
+	},
+});
+executionSocket.receive({
+	type: "event",
+	name: "telemetry",
+	payload: {
+		event: "mcp:tool_executed",
+		props: { request_id: requestId, tool_category: "read", outcome: "succeeded", duration_bucket: "lt1s" },
+	},
+});
+executionSocket.receive({
+	type: "event",
+	name: "telemetry",
+	payload: { event: "mcp:result_applied", props: { request_id: requestId } },
+});
+executionSocket.receive({
+	type: "event",
+	name: "telemetry",
+	payload: { event: "mcp:tool_executed", props: { request_id: requestId, tool_category: "private", outcome: "succeeded", duration_bucket: "lt1s" } },
+});
+assert.deepEqual(executionEvents, [
+	{ event: "mcp:tool_executed", props: { request_id: requestId, tool_category: "read", outcome: "succeeded", duration_bucket: "lt1s" } },
+	{ event: "mcp:result_applied", props: { request_id: requestId } },
+]);
+executionClient.close();
 console.log("all live control checks PASS");

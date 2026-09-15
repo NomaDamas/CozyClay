@@ -1000,3 +1000,142 @@ try {
 }
 
 console.log("all analytics checks PASS");
+
+// Issue #274: execution contracts (existing analytics sections above retained).
+const { startWorkflowExecution } = await import("../src/execution-telemetry.js");
+const executionId = "0123456789abcdef0123456789abcdef";
+assert.deepEqual(
+	sanitizeProps("workflow:run_requested", {
+		surface: "workflow", run_id: executionId, node_count_bucket: "1-3",
+		prompt: "private", graph: "private",
+	}),
+	{ surface: "workflow", run_id: executionId, node_count_bucket: "1-3" },
+);
+assert.deepEqual(
+	sanitizeProps("agent:tool_executed", {
+		turn_id: executionId, tool_category: "workflow_run", outcome: "succeeded", duration_bucket: "1-3s",
+		name: "private_tool", args: "private",
+	}),
+	{ turn_id: executionId, tool_category: "workflow_run", outcome: "succeeded", duration_bucket: "1-3s" },
+);
+assert.deepEqual(
+	sanitizeProps("mcp:tool_executed", {
+		request_id: executionId, tool_category: "motion_generate", outcome: "uncertain", duration_bucket: "gte30s",
+		path: "/private",
+	}),
+	{ request_id: executionId, tool_category: "motion_generate", outcome: "uncertain", duration_bucket: "gte30s" },
+);
+assert.deepEqual(sanitizeProps("mcp:tool_executed", { request_id: executionId, tool_category: "workflow_run", outcome: "succeeded" }), { request_id: executionId, outcome: "succeeded" });
+assert.deepEqual(sanitizeProps("workflow:run_failed", { run_id: executionId, duration_bucket: "1-3s", failure_code: "generation_failed" }), {
+	run_id: executionId, duration_bucket: "1-3s", failure_code: "generation_failed",
+});
+assert.deepEqual(sanitizeProps("agent:turn_failed", { turn_id: executionId, duration_bucket: "1-3s", failure_code: "private" }), {
+	turn_id: executionId, duration_bucket: "1-3s",
+});
+assert.deepEqual(sanitizeProps("mcp:result_applied", { request_id: executionId, prompt: "private" }), { request_id: executionId });
+{
+	const events = [];
+	let now = 100;
+	const run = startWorkflowExecution(
+		{ node_count_bucket: "1-3" },
+		{ capture: (event, props) => events.push({ event, props }), now: () => now, durationBucket: bucketMs },
+	);
+	assert.match(run.runId, /^[a-f0-9]{32}$/);
+	now += 3500;
+	run.succeed();
+	run.fail(new Error("late failure"));
+	assert.deepEqual(events.map(({ event }) => event), ["workflow:run_requested", "workflow:run_succeeded"]);
+	assert.equal(events[1].props.duration_bucket, "3-10s");
+}
+
+const executionDisclosure = new Map();
+for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
+	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
+	for (const event of cells[0]?.match(/\b(?:workflow|agent|mcp):[a-z_]+\b/g) ?? []) {
+		executionDisclosure.set(event, new Set(cells[1]?.match(/\b[a-z][a-z0-9_]*\b/g) ?? []));
+	}
+}
+const executionSchemas = {
+	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
+	"workflow:run_succeeded": ["run_id", "duration_bucket"],
+	"workflow:run_failed": ["run_id", "duration_bucket", "failure_code"],
+	"workflow:run_cancelled": ["run_id", "duration_bucket", "failure_code"],
+	"workflow:result_applied": ["run_id"],
+	"agent:turn_requested": ["surface", "turn_id"],
+	"agent:tool_executed": ["turn_id", "tool_category", "outcome", "duration_bucket"],
+	"agent:turn_succeeded": ["turn_id", "duration_bucket"],
+	"agent:turn_failed": ["turn_id", "duration_bucket", "failure_code"],
+	"agent:turn_cancelled": ["turn_id", "duration_bucket", "failure_code"],
+	"agent:result_applied": ["turn_id"],
+	"mcp:tool_requested": ["tool_category", "request_id"],
+	"mcp:tool_executed": ["tool_category", "outcome", "duration_bucket", "request_id"],
+	"mcp:result_applied": ["request_id"],
+};
+assert.deepEqual([...executionDisclosure.keys()].sort(), Object.keys(executionSchemas).sort());
+const executionProps = {
+	surface: "workflow", run_id: executionId, turn_id: executionId, request_id: executionId,
+	node_count_bucket: "1-3", tool_category: "other", outcome: "succeeded",
+	duration_bucket: "1-3s", failure_code: "unknown",
+};
+for (const [event, properties] of Object.entries(executionSchemas)) {
+	assert.deepEqual(Object.keys(sanitizeProps(event, executionProps)).sort(), [...properties].sort(), `${event}: exact property contract`);
+	for (const property of properties) assert.ok(executionDisclosure.get(event).has(property), `${event} discloses ${property}`);
+}
+for (const event of Object.keys(executionSchemas)) {
+	assert.deepEqual(sanitizeProps(event, { ...executionProps, prompt: "private", text: "private", path: "/private", url: "https://private" }), sanitizeProps(event, executionProps));
+	for (const key of executionSchemas[event]) {
+		for (const value of ["private", "private text", "https://private", "/private", 42, true, null, {}, [], Infinity, NaN]) {
+			assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects unsafe ${key}`);
+		}
+	}
+	for (const id of ["run_id", "turn_id", "request_id"].filter((key) => executionSchemas[event].includes(key))) {
+		for (const value of [executionId.toUpperCase(), executionId.slice(1), `${executionId}0`]) {
+			assert.deepEqual(sanitizeProps(event, { [id]: value }), {});
+		}
+	}
+}
+const executionEnums = [
+	["workflow:run_requested", "surface", ["workflow"]],
+	["agent:turn_requested", "surface", ["studio", "workflow"]],
+	["workflow:run_requested", "node_count_bucket", ["0", "1-3", "4-10", "gte11"]],
+	["workflow:run_failed", "failure_code", ["aborted", "capture_failed", "generation_failed", "unknown"]],
+	["agent:turn_failed", "failure_code", ["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]],
+	["agent:tool_executed", "tool_category", ["workflow_read", "workflow_write", "workflow_run", "frame_capture", "image_generate", "scene_write", "other"]],
+	["mcp:tool_executed", "tool_category", ["read", "camera", "scene_write", "prompt_authoring", "frame_capture", "motion_generate", "motion_apply", "project_io", "other"]],
+	["agent:tool_executed", "outcome", ["succeeded", "failed", "cancelled"]],
+	["mcp:tool_executed", "outcome", ["succeeded", "failed", "uncertain", "cancelled"]],
+];
+for (const [event, key, values] of executionEnums) {
+	const row = [...privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].find(([row]) => row.includes(event))?.[0] ?? "";
+	const tokens = new Set(row.match(/[a-z0-9][a-z0-9_-]*/g) ?? []);
+	for (const value of values) {
+		assert.deepEqual(sanitizeProps(event, { [key]: value }), { [key]: value });
+		assert.ok(tokens.has(value), `${event} discloses enum token ${value}`);
+	}
+}
+for (const event of Object.keys(executionSchemas).filter((event) => executionSchemas[event].includes("duration_bucket"))) {
+	for (const duration_bucket of ["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]) {
+		assert.deepEqual(sanitizeProps(event, { duration_bucket }), { duration_bucket });
+	}
+}
+assert.deepEqual(sanitizeProps("workflow:run_requested", { surface: "studio" }), {});
+assert.deepEqual(sanitizeProps("agent:tool_executed", { outcome: "uncertain" }), {});
+for (const capture of [() => { throw new Error("transport"); }, () => Promise.reject(new Error("transport"))]) {
+	const run = startWorkflowExecution({ node_count_bucket: "0", prompt: "private" }, { capture, now() { throw new Error("clock"); }, durationBucket: bucketMs });
+	assert.doesNotThrow(() => { run.apply(); run.succeed(); run.fail(new Error("late")); });
+}
+const executionCrypto = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+try {
+	Object.defineProperty(globalThis, "crypto", { configurable: true, value: {} });
+	const events = [];
+	const run = startWorkflowExecution({ node_count_bucket: "0" }, { capture: (...args) => events.push(args), durationBucket: bucketMs });
+	run.succeed(); run.apply();
+	assert.deepEqual(events, [], "missing randomness omits telemetry rather than issuing a weak ID");
+} finally {
+	Object.defineProperty(globalThis, "crypto", executionCrypto);
+}
+await Promise.resolve();
+const publishedPrivacy = readFileSync(new URL("../privacy/index.html", import.meta.url), "utf8");
+const executionRows = (html) => [...html.matchAll(/<tr><td>(?:workflow|agent|mcp):[\s\S]*?<\/tr>/g)].map(([row]) => row);
+assert.deepEqual(executionRows(publishedPrivacy), executionRows(privacyHtml), "shipped execution disclosure equals its source");
+console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure schema tokens");

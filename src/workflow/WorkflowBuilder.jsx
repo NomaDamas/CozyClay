@@ -19,6 +19,8 @@ import { activeSceneCharacters, characterHandleId, characterIdFromHandle, normal
 import { DEFAULT_NODE_SCHEMAS, defaultFormValues, schemaCategoryForType, schemaModelEntries, schemaProperties } from "./node-schema.js";
 import { executeLocalWorkflowGraph } from "./local-workflow.js";
 import { createLiveControl } from "../live-control.js";
+import { bucketCount, bucketMs, track } from "../analytics.js";
+import { startWorkflowExecution } from "../execution-telemetry.js";
 import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 import { createHttpTransport } from "./agent-client.js";
@@ -429,110 +431,139 @@ export default function WorkflowBuilder() {
 
 	const runWorkflowRef = useRef(null);
 	const runWorkflow = useCallback(async (nodeId = null, input = graph) => {
-		if (!input.nodes.length) {
-			setRunState("complete");
-			toast.success("Local CozyClay scene is ready");
-			return { graph: input, outputs: [] };
-		}
-		setRunState("running");
-		const graph = input;
-		const result = executeLocalWorkflowGraph(graph, { runId: `local-${Date.now()}` });
-		setNodes(result.nodes);
-		const runId = `local-${Date.now()}`;
-		const values = new Map();
-		const sceneMeta = new Map();
-		// Everything runWorkflow writes to a node also lands in the graph it
-		// returns, so a caller that republishes that graph keeps the results.
-		const patches = new Map();
-		// This run's captured references per Scene node, for the Image nodes fed
-		// by it — same precedence as sceneMeta: a fresh capture wins.
-		const sceneReferences = new Map();
-		const patchNode = (id, patch) => { patches.set(id, { ...(patches.get(id) || {}), ...patch }); updateNode(id, patch); };
-		for (const id of result.order) {
-			const current = result.nodes.find((node) => node.id === id);
-			if (!current) continue;
-			if (current.type === "scene") {
-				try {
-					const frame = await captureSceneFrame(id);
-					values.set(id, frame.dataUrl);
-					// The capture metadata rides along on lastOutput so a downstream
-					// Shot Prompt node can describe the shot without re-capturing, and
-					// the identity/environment references (#167) ride with it so an
-					// Image node downstream can attach them.
-					const references = Array.isArray(frame.references) ? frame.references : [];
-					patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
-					sceneMeta.set(id, frame.meta ?? current.data?.lastOutput?.meta ?? null);
-					sceneReferences.set(id, references);
-				} catch (error) { patchNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message }); }
-			} else if (current.type === "shot-prompt") {
-				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => result.nodes.find((node) => node.id === edge.source)).filter(Boolean);
-				const scene = incoming.find((node) => node.type === "scene");
-				// This run's capture wins; the stored one keeps the node useful when
-				// the Scene was captured in an earlier run.
-				const meta = (scene && sceneMeta.get(scene.id)) || scene?.data?.lastOutput?.meta || null;
-				const intent = incoming.filter((node) => node.type === "text").map((node) => node.data?.prompt ?? values.get(node.id)).find((value) => typeof value === "string" && value.trim());
-				const { prompt, error } = shotPromptFromInputs({ meta, intent, target: current.data?.target, referenceOwnsCamera: current.data?.referenceOwnsCamera });
-				if (error) { patchNode(id, { status: "error", errorMsg: error, prompt: "", outputs: [], resultUrl: null }); continue; }
-				values.set(id, prompt);
-				patchNode(id, { status: "complete", errorMsg: null, prompt, outputs: [{ value: prompt }], resultUrl: null });
-			} else if (current.type === "video" && current.data?.model === "video-generation") {
-				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
-				const imageInputs = incoming.filter((entry) => typeof entry.value === "string" && entry.value.startsWith("data:image/"));
-				const frame = imageInputs[0]?.value;
-				const lastFrameDataUrl = imageInputs[1]?.value;
-				if (!frame) { patchNode(id, { status: "error", errorMsg: "Connect a Scene frame or an image before generating." }); continue; }
-				const form = current.data.formValues || {};
-				// A Shot Prompt node upstream is an explicit prompt: it wins over an
-				// empty motion prompt on the node itself.
-				const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
-				const motionPrompt = String(form.prompt ?? current.data.prompt ?? "").trim() || upstreamPrompt || "";
-				// Remove the previous take while a new one is being verified. Keeping it
-				// visible during a failed H3 run makes an old, valid clip look like the
-				// newly requested result.
-				values.delete(id);
-				patchNode(id, { isLoading: true, status: "running", errorMsg: null, videoUrl: null, resultUrl: null, outputs: [], preservation: null });
-				try { const output = await createHttpTransport().video({ provider: form.provider || current.data.provider || "comfy", prompt: motionPrompt, imageDataUrl: frame, ...(lastFrameDataUrl ? { lastFrameDataUrl } : {}), durationSeconds: Number(form.duration_seconds ?? current.data.duration_seconds ?? 5), aspect: form.aspect || current.data.aspect || "16:9", ...(current.data.model ? { model: current.data.model } : {}) }); const videoUrl = output.dataUrl || output.url; values.set(id, videoUrl); patchNode(id, { isLoading: false, status: "complete", videoUrl, resultUrl: videoUrl, outputs: [{ value: videoUrl }], preservation: output.preservation || null, errorMsg: null }); }
-				catch (error) { values.delete(id); patchNode(id, { isLoading: false, status: "error", errorMsg: error.message, statusMessage: error.message, videoUrl: null, resultUrl: null, outputs: [], preservation: error?.preservation || null }); }
-			} else if (current.type === "image" && current.data?.model === "image-generation") {
-				const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
-				const frame = incoming.find((entry) => entry.node?.type === "scene" && entry.value)?.value;
-				const upstreamReference = incoming.find((entry) => entry.node?.type !== "scene" && typeof entry.value === "string" && entry.value.startsWith("data:image/"))?.value;
-				const upstreamSource = frame || incoming.map((entry) => entry.value).find(Boolean) || current.data.image_url;
-				// Pinned references keep the frame and reference of the shown version,
-				// so a prompt tweak is the only thing that changes between takes.
-				const { source, reference } = pinnedInputs(current.data, { source: upstreamSource, reference: upstreamReference });
-				if (!source) { patchNode(id, { status: "error", errorMsg: "Connect a Scene frame before generating." }); continue; }
-				// Same precedence as the Video node: the node's own prompt if it has
-				// one, otherwise the structured prompt from an upstream Shot Prompt.
-				const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
-				const prompt = String(current.data.prompt || "").trim() || upstreamPrompt || "";
-				// Identity sheets and the environment reference come from whichever
-				// Scene node feeds this one: this run's capture first, else the one
-				// stored on the node from an earlier run.
-				const sceneNode = incoming.find((entry) => entry.node?.type === "scene")?.node;
-				const references = (sceneNode && sceneReferences.get(sceneNode.id)) || (Array.isArray(sceneNode?.data?.lastOutput?.references) ? sceneNode.data.lastOutput.references : []);
-				patchNode(id, { isLoading: true, errorMsg: null });
-				try { const output = await createHttpTransport().image({ prompt, imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), ...(references.length ? { references } : {}), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", errorMsg: null, ...appendVersion(current.data, { dataUrl: output.dataUrl, prompt, referenceDataUrl: reference || null, frameDataUrl: source, at: Date.now() }) }); }
-				catch (error) { patchNode(id, { isLoading: false, status: "error", errorMsg: error.message }); }
-			} else values.set(id, current.data?.outputs?.[0]?.value);
-		}
-		const resultById = new Map(result.nodes.map((node) => [node.id, node]));
-		for (const scene of result.nodes.filter((node) => node.type === "scene")) {
-			for (const assignment of Array.isArray(scene.data?.characterInputs) ? scene.data.characterInputs : []) {
-				const source = resultById.get(assignment.source);
-				if (source?.type !== "motion-input" || !assignment.characterId) continue;
-				const motion = motionInputOutput(source.data);
-				if (motion.url) applyMotionToActiveScene(assignment.characterId, motion);
+		const execution = startWorkflowExecution(
+			{ node_count_bucket: bucketCount(input.nodes.length) },
+			{ capture: track, durationBucket: bucketMs },
+		);
+		try {
+			if (!input.nodes.length) {
+				setRunState("complete");
+				execution.succeed();
+				toast.success("Local CozyClay scene is ready");
+				return { graph: input, outputs: [] };
 			}
+			setRunState("running");
+			const graph = input;
+			const result = executeLocalWorkflowGraph(graph, { runId: `local-${Date.now()}` });
+			setNodes(result.nodes);
+			const values = new Map();
+			const sceneMeta = new Map();
+			// Everything runWorkflow writes to a node also lands in the graph it
+			// returns, so a caller that republishes that graph keeps the results.
+			const patches = new Map();
+			// This run's captured references per Scene node, for the Image nodes fed
+			// by it — same precedence as sceneMeta: a fresh capture wins.
+			const sceneReferences = new Map();
+			let runFailure = null;
+			const patchNode = (id, patch) => { patches.set(id, { ...(patches.get(id) || {}), ...patch }); updateNode(id, patch); };
+			for (const id of result.order) {
+				const current = result.nodes.find((node) => node.id === id);
+				if (!current) continue;
+				if (current.type === "scene") {
+					try {
+						const frame = await captureSceneFrame(id);
+						values.set(id, frame.dataUrl);
+						// The capture metadata rides along on lastOutput so a downstream
+						// Shot Prompt node can describe the shot without re-capturing, and
+						// the identity/environment references (#167) ride with it so an
+						// Image node downstream can attach them.
+						const references = Array.isArray(frame.references) ? frame.references : [];
+						patchNode(id, { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl });
+						execution.apply();
+						sceneMeta.set(id, frame.meta ?? current.data?.lastOutput?.meta ?? null);
+						sceneReferences.set(id, references);
+					} catch (error) {
+						runFailure ||= { error, code: "capture_failed" };
+						patchNode(id, { status: "error", errorMsg: error.message, statusMessage: error.message });
+					}
+				} else if (current.type === "shot-prompt") {
+					const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => result.nodes.find((node) => node.id === edge.source)).filter(Boolean);
+					const scene = incoming.find((node) => node.type === "scene");
+					// This run's capture wins; the stored one keeps the node useful when
+					// the Scene was captured in an earlier run.
+					const meta = (scene && sceneMeta.get(scene.id)) || scene?.data?.lastOutput?.meta || null;
+					const intent = incoming.filter((node) => node.type === "text").map((node) => node.data?.prompt ?? values.get(node.id)).find((value) => typeof value === "string" && value.trim());
+					const { prompt, error } = shotPromptFromInputs({ meta, intent, target: current.data?.target, referenceOwnsCamera: current.data?.referenceOwnsCamera });
+					if (error) {
+						runFailure ||= { code: "unknown" };
+						patchNode(id, { status: "error", errorMsg: error, prompt: "", outputs: [], resultUrl: null });
+						continue;
+					}
+					values.set(id, prompt);
+					patchNode(id, { status: "complete", errorMsg: null, prompt, outputs: [{ value: prompt }], resultUrl: null });
+				} else if (current.type === "video" && current.data?.model === "video-generation") {
+					const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
+					const imageInputs = incoming.filter((entry) => typeof entry.value === "string" && entry.value.startsWith("data:image/"));
+					const frame = imageInputs[0]?.value;
+					const lastFrameDataUrl = imageInputs[1]?.value;
+					if (!frame) { runFailure ||= { code: "unknown" }; patchNode(id, { status: "error", errorMsg: "Connect a Scene frame or an image before generating." }); continue; }
+					const form = current.data.formValues || {};
+					// A Shot Prompt node upstream is an explicit prompt: it wins over an
+					// empty motion prompt on the node itself.
+					const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
+					const motionPrompt = String(form.prompt ?? current.data.prompt ?? "").trim() || upstreamPrompt || "";
+					// Remove the previous take while a new one is being verified. Keeping it
+					// visible during a failed H3 run makes an old, valid clip look like the
+					// newly requested result.
+					values.delete(id);
+					patchNode(id, { isLoading: true, status: "running", errorMsg: null, videoUrl: null, resultUrl: null, outputs: [], preservation: null });
+					try { const output = await createHttpTransport().video({ provider: form.provider || current.data.provider || "comfy", prompt: motionPrompt, imageDataUrl: frame, ...(lastFrameDataUrl ? { lastFrameDataUrl } : {}), durationSeconds: Number(form.duration_seconds ?? current.data.duration_seconds ?? 5), aspect: form.aspect || current.data.aspect || "16:9", ...(current.data.model ? { model: current.data.model } : {}) }); const videoUrl = output.dataUrl || output.url; values.set(id, videoUrl); patchNode(id, { isLoading: false, status: "complete", videoUrl, resultUrl: videoUrl, outputs: [{ value: videoUrl }], preservation: output.preservation || null, errorMsg: null }); if (videoUrl) execution.apply(); }
+					catch (error) {
+						runFailure ||= { error, code: "generation_failed" };
+						values.delete(id);
+						patchNode(id, { isLoading: false, status: "error", errorMsg: error.message, statusMessage: error.message, videoUrl: null, resultUrl: null, outputs: [], preservation: error?.preservation || null });
+					}
+				} else if (current.type === "image" && current.data?.model === "image-generation") {
+					const incoming = (graph.edges || []).filter((edge) => edge.target === id).map((edge) => ({ edge, value: values.get(edge.source), node: result.nodes.find((node) => node.id === edge.source) }));
+					const frame = incoming.find((entry) => entry.node?.type === "scene" && entry.value)?.value;
+					const upstreamReference = incoming.find((entry) => entry.node?.type !== "scene" && typeof entry.value === "string" && entry.value.startsWith("data:image/"))?.value;
+					const upstreamSource = frame || incoming.map((entry) => entry.value).find(Boolean) || current.data.image_url;
+					// Pinned references keep the frame and reference of the shown version,
+					// so a prompt tweak is the only thing that changes between takes.
+					const { source, reference } = pinnedInputs(current.data, { source: upstreamSource, reference: upstreamReference });
+					if (!source) { runFailure ||= { code: "unknown" }; patchNode(id, { status: "error", errorMsg: "Connect a Scene frame before generating." }); continue; }
+					// Same precedence as the Video node: the node's own prompt if it has
+					// one, otherwise the structured prompt from an upstream Shot Prompt.
+					const upstreamPrompt = incoming.map((entry) => entry.node?.type === "shot-prompt" ? entry.value : null).find((value) => typeof value === "string" && value.trim());
+					const prompt = String(current.data.prompt || "").trim() || upstreamPrompt || "";
+					// Identity sheets and the environment reference come from whichever
+					// Scene node feeds this one: this run's capture first, else the one
+					// stored on the node from an earlier run.
+					const sceneNode = incoming.find((entry) => entry.node?.type === "scene")?.node;
+					const references = (sceneNode && sceneReferences.get(sceneNode.id)) || (Array.isArray(sceneNode?.data?.lastOutput?.references) ? sceneNode.data.lastOutput.references : []);
+					patchNode(id, { isLoading: true, errorMsg: null });
+					try { const output = await createHttpTransport().image({ prompt, imageDataUrl: source, referenceDataUrl: reference || (typeof current.data.image_url === "string" && current.data.image_url.startsWith("data:image/") ? current.data.image_url : undefined), ...(references.length ? { references } : {}), quality: "auto" }); values.set(id, output.dataUrl); patchNode(id, { isLoading: false, status: "complete", errorMsg: null, ...appendVersion(current.data, { dataUrl: output.dataUrl, prompt, referenceDataUrl: reference || null, frameDataUrl: source, at: Date.now() }) }); if (output.dataUrl) execution.apply(); }
+					catch (error) {
+						runFailure ||= { error, code: "generation_failed" };
+						patchNode(id, { isLoading: false, status: "error", errorMsg: error.message });
+					}
+				} else values.set(id, current.data?.outputs?.[0]?.value);
+			}
+			const resultById = new Map(result.nodes.map((node) => [node.id, node]));
+			for (const scene of result.nodes.filter((node) => node.type === "scene")) {
+				for (const assignment of Array.isArray(scene.data?.characterInputs) ? scene.data.characterInputs : []) {
+					const source = resultById.get(assignment.source);
+					if (source?.type !== "motion-input" || !assignment.characterId) continue;
+					const motion = motionInputOutput(source.data);
+					if (motion.url) applyMotionToActiveScene(assignment.characterId, motion);
+				}
+			}
+			setRunState("complete");
+			toast.success(nodeId ? "Node evaluated locally" : "Workflow evaluated locally");
+			const outputs = result.nodes.map((node) => {
+				const patch = patches.get(node.id);
+				const hasPatchedOutputs = patch && Object.prototype.hasOwnProperty.call(patch, "outputs");
+				return { id: node.id, outputs: values.has(node.id) && values.get(node.id) !== undefined ? [{ value: values.get(node.id) }] : hasPatchedOutputs ? patch.outputs : node.data?.outputs || [] };
+			});
+			const completed = { graph: serializableGraph(result.nodes.map((node) => ({ ...node, data: { ...node.data, ...(patches.get(node.id) || {}), outputs: outputs.find((entry) => entry.id === node.id).outputs } })), graph.edges), outputs };
+			if (runFailure) execution.fail(runFailure.error, runFailure.code);
+			else execution.succeed();
+			return completed;
+		} catch (error) {
+			execution.fail(error);
+			setRunState("complete");
+			throw error;
 		}
-		setRunState("complete");
-		toast.success(nodeId ? "Node evaluated locally" : "Workflow evaluated locally");
-		const outputs = result.nodes.map((node) => {
-			const patch = patches.get(node.id);
-			const hasPatchedOutputs = patch && Object.prototype.hasOwnProperty.call(patch, "outputs");
-			return { id: node.id, outputs: values.has(node.id) && values.get(node.id) !== undefined ? [{ value: values.get(node.id) }] : hasPatchedOutputs ? patch.outputs : node.data?.outputs || [] };
-		});
-		return { graph: serializableGraph(result.nodes.map((node) => ({ ...node, data: { ...node.data, ...(patches.get(node.id) || {}), outputs: outputs.find((entry) => entry.id === node.id).outputs } })), graph.edges), outputs };
 	}, [graph, setNodes]);
 
 	useEffect(() => { runWorkflowRef.current = runWorkflow; }, [runWorkflow]);
@@ -545,16 +576,23 @@ export default function WorkflowBuilder() {
 			run: (input = graphRef.current) => runWorkflowRef.current(null, input),
 			focus: (id) => { document.querySelector(`.react-flow__node[data-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "center", inline: "center" }); },
 		};
+		window.__cozyclayWorkflow = store;
 		commandsRef.current = createCanvasCommands({ store, makeNode, nodeSchemas });
 		const control = createLiveControl({ handlers: commandsRef.current.handlers, meta: { kind: "workflow", commands: Object.keys(commandsRef.current.handlers) } });
 		const onKeyDown = (event) => { const target = event.target; const editing = target instanceof HTMLElement && (target.matches("input,textarea,select,[contenteditable=true]") || target.isContentEditable); if (!editing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "z") { event.preventDefault(); commandsRef.current.undo(); } };
 		window.addEventListener("keydown", onKeyDown);
-		return () => { window.removeEventListener("keydown", onKeyDown); control.close(); commandsRef.current = null; };
+		return () => {
+			window.removeEventListener("keydown", onKeyDown);
+			control.close();
+			commandsRef.current = null;
+			if (window.__cozyclayWorkflow === store) delete window.__cozyclayWorkflow;
+		};
 	}, [nodeSchemas, setEdges, setNodes]);
 	const runScene = useCallback(async ({ id, data }) => {
+		const execution = startWorkflowExecution({ node_count_bucket: "1-3" }, { capture: track, durationBucket: bucketMs });
 		updateScene({ id, patch: { status: "running", statusMessage: "Capturing framing PNG" } });
-		try { const frame = await captureSceneFrame(id); updateScene({ id, patch: { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references: Array.isArray(frame.references) ? frame.references : [] }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl } }); toast.success("Scene frame captured"); }
-		catch (error) { updateScene({ id, patch: { status: "error", errorMsg: error.message, statusMessage: error.message } }); }
+		try { const frame = await captureSceneFrame(id); updateScene({ id, patch: { status: "complete", statusMessage: "Captured framing PNG", preview: "render", lastOutput: { renderUrl: frame.dataUrl, sceneUrl: "/app/", jobId: null, meta: frame.meta ?? null, references: Array.isArray(frame.references) ? frame.references : [] }, outputs: [{ value: frame.dataUrl }], resultUrl: frame.dataUrl } }); execution.apply(); execution.succeed(); toast.success("Scene frame captured"); }
+		catch (error) { execution.fail(error, "capture_failed"); updateScene({ id, patch: { status: "error", errorMsg: error.message, statusMessage: error.message } }); }
 	}, [updateScene]);
 	// The previs is a step, not a destination: this is the one click from the
 	// staged shot to the clip it is meant to become, wired render -> input so the

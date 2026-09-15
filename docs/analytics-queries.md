@@ -1253,3 +1253,177 @@ analytics change; this document does not claim that prose is an executed test.
 | Automatic starter/tutorial or hosted sample load; project/scene switch; stored-handle restore with no authored edit | No B first-edit conversion or C return-to-edit; neither `project:opened` nor `scene:loaded` proves own-project reopen. A genuine launch/pageview may still count as A presence. |
 | A cohort edit, followed only by a sample reload next week and an actual edit in W+2 | Not a next-week return. Only a numeric-v1 edit from the same exact ID and surface in W+1 qualifies. |
 | Continued editing across midnight/week boundaries without a fresh App mount | May produce no new first-edit event: explicitly documented edit-retention coverage limit, not inferred nonuse. |
+
+# Workflow, Agent and MCP execution outcomes
+
+Issue #274 separates requested execution, control-plane completion and observed
+application. The cut-over is the first deployed build containing this contract.
+Historical `feature:used(mcp_connected)` is a connection signal, not work.
+
+## Execution event contract
+
+| Event | Exact properties |
+| --- | --- |
+| `workflow:run_requested` | `surface`, `run_id`, `node_count_bucket` |
+| `workflow:run_succeeded` | `run_id`, `duration_bucket` |
+| `workflow:run_failed`, `workflow:run_cancelled` | `run_id`, `duration_bucket`, `failure_code` |
+| `workflow:result_applied` | `run_id` |
+| `agent:turn_requested` | `surface`, `turn_id` |
+| `agent:tool_executed` | `turn_id`, `tool_category`, `outcome`, `duration_bucket` |
+| `agent:turn_succeeded` | `turn_id`, `duration_bucket` |
+| `agent:turn_failed`, `agent:turn_cancelled` | `turn_id`, `duration_bucket`, `failure_code` |
+| `agent:result_applied` | `turn_id` |
+| `mcp:tool_requested` | `request_id`, `tool_category` |
+| `mcp:tool_executed` | `request_id`, `tool_category`, `outcome`, `duration_bucket` |
+| `mcp:result_applied` | `request_id` |
+
+- IDs are fresh 128-bit secure random values, encoded as 32 lowercase hex
+  characters. They are held only for the execution, never persisted in scene,
+  graph history or localStorage, and never derived from content or installation,
+  session, model call, task or live command IDs. Missing randomness omits telemetry.
+- Workflow `surface`: `workflow`. Agent `surface`: `studio` or `workflow`.
+- `node_count_bucket`: `0`, `1-3`, `4-10`, `gte11`, for the evaluated graph.
+- `duration_bucket`: `lt1s`, `1-3s`, `3-10s`, `10-30s`, `gte30s`, using the
+  existing `bucketMs` boundaries. Runs/turns measure from request, tools from
+  execution start. No raw duration reaches analytics.
+- Workflow `failure_code`: `aborted`, `capture_failed`, `generation_failed`,
+  `unknown` (including missing node input). Agent: `aborted`, `auth`,
+  `rate_limited`, `tool_failed`, `upstream`, `unknown`. Never raw error prose.
+- Agent `tool_category`: `workflow_read`, `workflow_write`, `workflow_run`,
+  `frame_capture`, `image_generate`, `scene_write`, `other`.
+- MCP `tool_category`: `read`, `camera`, `scene_write`, `prompt_authoring`,
+  `frame_capture`, `motion_generate`, `motion_apply`, `project_io`, `other`.
+- Agent tool `outcome`: `succeeded`, `failed`, `cancelled`. MCP also permits
+  `uncertain` when editor acknowledgement/verification cannot establish an
+  outcome. Uncertainty is not an ordinary failure or confirmed application.
+
+The Run button, node run callbacks and Agent canvas run share the Workflow
+runner. Scene-only capture uses its own single-node run. Captured frames and
+generated images/videos written to canvas nodes emit at most one
+`workflow:result_applied` per run. Empty or text-only evaluation does not claim
+image/video application. Passive Motion Input document synchronization is not
+proof that a Studio decoder applied motion. A partial output can be applied
+before a later node fails. Overlapping runs do not cancel earlier work; only an
+actual abort is classified as cancellation. No new cancel UI is added.
+
+Agent requests are owned by the browser turn boundary so HTTP refusal and an
+explicit Stop are observable. A stream ending without a confirmed terminal is
+not success. Model retries within the same turn keep that turn; a user retry
+starts a new ID. Applied output needs an acknowledged editor change, not a
+successful read, focus or text response. Several applied tools contribute at
+most one application per turn.
+The current Agent application receipt covers inserted canvas/reference nodes and
+new connections. Summarized update/removal responses and potentially stale
+`run_workflow` outputs do not establish a new application; those paths remain
+unobserved by the Agent application counter. Workflow's own output receipt is
+separate and must not be copied into the Agent count.
+
+MCP reports only into the selected connected editor through sanitized live
+frames; the browser revalidates, deduplicates and calls the existing analytics
+and opt-out gate. There is no server analytics client. Memory-only sessions,
+ambiguous/stale workspace routing and disconnected stages are unobserved, not
+zero use. Reconnecting never replays execution telemetry. `generate_motion`
+can complete by queuing work: its shared `motion:*` events still describe
+generation, and application requires a later acknowledged installation.
+Same-value mutations and rolled-back batches do not count as applied. A
+partially applied failed batch can have a failed execution and an application.
+State comparisons stay inside the local hub; if a handler has no prior
+description, one best-effort baseline read supplies no-op evidence. A missing
+baseline omits application instead of blocking the real mutation.
+
+Semantic edit, export and motion lifecycle hooks remain the owners of those
+signals. Execution adapters never emit parallel first-edit, export or generation
+events. One Agent turn can call a Workflow run: those are nested execution units,
+not two independent user intentions. Do not sum channels or add their applied
+observations to first-edit/export/motion counts.
+
+## Seven-day requested, completed and applied execution by channel
+
+This HogQL query creates one row per channel and correlation ID, deduplicates
+stage deliveries and requires ordered stages. Applications are independent of
+completion: a failed run may have partial output. A channel without an observed
+request has no demand denominator.
+
+```sql
+WITH stages AS (
+    SELECT
+        multiIf(startsWith(event, 'workflow:'), 'workflow',
+            startsWith(event, 'agent:'), 'agent', 'mcp') AS channel,
+        multiIf(startsWith(event, 'workflow:'), toString(properties.run_id),
+            startsWith(event, 'agent:'), toString(properties.turn_id),
+            toString(properties.request_id)) AS execution_id,
+        timestamp,
+        event IN ('workflow:run_requested', 'agent:turn_requested',
+            'mcp:tool_requested') AS requested,
+        event IN ('workflow:run_succeeded', 'agent:turn_succeeded')
+            OR (event = 'mcp:tool_executed' AND properties.outcome = 'succeeded') AS succeeded,
+        event IN ('workflow:run_failed', 'agent:turn_failed')
+            OR (event = 'mcp:tool_executed' AND properties.outcome = 'failed') AS failed,
+        event IN ('workflow:run_cancelled', 'agent:turn_cancelled')
+            OR (event = 'mcp:tool_executed' AND properties.outcome = 'cancelled') AS cancelled,
+        event = 'mcp:tool_executed' AND properties.outcome = 'uncertain' AS uncertain,
+        event IN ('workflow:result_applied', 'agent:result_applied',
+            'mcp:result_applied') AS applied
+    FROM events
+    WHERE timestamp >= now() - INTERVAL 7 DAY AND timestamp < now()
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND event IN (
+          'workflow:run_requested', 'workflow:run_succeeded',
+          'workflow:run_failed', 'workflow:run_cancelled', 'workflow:result_applied',
+          'agent:turn_requested', 'agent:turn_succeeded',
+          'agent:turn_failed', 'agent:turn_cancelled', 'agent:result_applied',
+          'mcp:tool_requested', 'mcp:tool_executed', 'mcp:result_applied'
+      )
+), per_execution AS (
+    SELECT channel, execution_id,
+        countIf(requested) AS requests,
+        minIf(timestamp, requested) AS requested_at,
+        max(succeeded) AS succeeded, max(failed) AS failed,
+        max(cancelled) AS cancelled, max(uncertain) AS uncertain,
+        minIf(timestamp, succeeded OR failed OR cancelled OR uncertain) AS terminal_at,
+        max(applied) AS applied, minIf(timestamp, applied) AS applied_at
+    FROM stages
+    WHERE match(execution_id, '^[a-f0-9]{32}$')
+    GROUP BY channel, execution_id
+), outcomes AS (
+    SELECT *, succeeded + failed + cancelled + uncertain AS terminal_kinds
+    FROM per_execution
+)
+SELECT channel,
+    countIf(requests > 0) AS attempted_executions,
+    countIf(requests > 0 AND terminal_kinds = 1 AND terminal_at >= requested_at) AS completed_executions,
+    countIf(requests > 0 AND terminal_kinds = 0) AS unresolved_executions,
+    countIf(requests > 0 AND terminal_kinds = 1 AND succeeded = 1 AND terminal_at >= requested_at) AS succeeded_executions,
+    countIf(requests > 0 AND terminal_kinds = 1 AND failed = 1 AND terminal_at >= requested_at) AS failed_executions,
+    countIf(requests > 0 AND terminal_kinds = 1 AND cancelled = 1 AND terminal_at >= requested_at) AS cancelled_executions,
+    countIf(requests > 0 AND terminal_kinds = 1 AND uncertain = 1 AND terminal_at >= requested_at) AS uncertain_executions,
+    countIf(requests > 0 AND applied = 1 AND applied_at >= requested_at) AS executions_with_applied_output,
+    countIf(requests > 0 AND succeeded = 1 AND terminal_kinds = 1 AND applied = 0) AS succeeded_without_observed_application,
+    countIf(requests = 0) AS orphan_executions,
+    countIf(terminal_kinds > 1) AS conflicting_outcomes,
+    countIf(requests > 0 AND ((terminal_kinds > 0 AND terminal_at < requested_at)
+        OR (applied = 1 AND applied_at < requested_at))) AS out_of_order
+FROM outcomes
+GROUP BY channel
+ORDER BY channel
+```
+
+Use a fixed request interval ending before observation time for settled cohorts,
+retaining subsequent stages through that observation time. Missing terminals or
+applications include opt-out, interruption, tab closure and unsupported
+observation paths, never an inferred failed mutation. Orphans can have starts
+before the query window. Conflicting and out-of-order groups are telemetry-quality
+diagnostics, not additional successes.
+
+For Agent tool reliability, group `agent:tool_executed` by `tool_category` and
+`outcome`, counting event UUIDs rather than distinct turn IDs: one turn may
+execute several tools in the same category. Browser wire deduplication suppresses
+repeat frames without collapsing separate tool invocations. Tool counts are not
+Agent turn demand. For MCP category reliability, include requested `tool_category`
+in `per_execution`; retain the request-ID cohort so missing terminal frames are
+not silently excluded from the denominator.
+
+This query applies #270's type-exact internal-QA exclusion to every source event.
+Do not infer traffic or channel use from prompts, responses, arguments, labels,
+paths or graph contents. Browser QA intercepts the SDK locally; these are
+documented HogQL queries, not claimed live PostHog results.

@@ -303,7 +303,7 @@ export default function AgentPanel({ transport: injectedTransport = null, sceneN
 	runTurnRef.current = runTurn;
 
 	const stopTurn = useCallback(() => {
-		abortRef.current?.abort();
+		abortRef.current?.abort("agent-stop");
 		abortRef.current = null;
 		transport.stop?.(sessionRef.current);
 		setStreaming(false);

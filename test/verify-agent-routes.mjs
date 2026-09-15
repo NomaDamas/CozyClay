@@ -22,6 +22,7 @@ const fakeCodex = {
     return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
       if (calls.length !== 2) yield { type: "response.output_text.delta", delta: calls.length === 1 ? "hello" : " done" };
       for (const item of items) yield { type: "response.output_item.done", item };
+      yield { type: "response.completed", response: { status: "completed" } };
     } };
   },
 };
@@ -31,10 +32,21 @@ server = createServer((req, res) => handler(req, res).catch((error) => { res.wri
 server.listen(0, "127.0.0.1");
 await once(server, "listening");
 const { port } = server.address();
-const response = await fetch(`http://127.0.0.1:${port}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` }, body: JSON.stringify({ sessionId: "s", text: "hi", attachFrame: false }) });
+const turnId = "a".repeat(32);
+const response = await fetch(`http://127.0.0.1:${port}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` }, body: JSON.stringify({ sessionId: "s", text: "hi", attachFrame: false, turn_id: turnId }) });
 const text = await response.text();
 const events = [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
-assert.deepEqual(events.map((event) => event.type), ["quota", "text.delta", "tool.start", "tool.done", "tool.start", "tool.done", "text.delta", "tool.start", "tool.done", "text.delta", "done"]);
+assert.deepEqual(events.filter((event) => !["execution_telemetry", "execution_tool_started"].includes(event.type)).map((event) => event.type), ["quota", "text.delta", "tool.start", "tool.done", "tool.start", "tool.done", "text.delta", "tool.start", "tool.done", "text.delta", "done"]);
+const executionTelemetry = events.filter((event) => event.type === "execution_telemetry");
+assert.deepEqual(executionTelemetry.map((event) => event.event), [
+	"agent:tool_executed", "agent:tool_executed", "agent:tool_executed", "agent:turn_succeeded",
+]);
+assert.equal(executionTelemetry[0].props.turn_id, turnId, "browser correlation ID survives the local relay");
+assert.ok(executionTelemetry.every((event) => event.props.turn_id === turnId));
+assert.ok(executionTelemetry.every((event) => !Object.hasOwn(event.props, "args") && !Object.hasOwn(event.props, "result")));
+assert.ok(executionTelemetry.slice(0, 3).every((event) => event.props.outcome === "succeeded"));
+assert.equal(new Set(executionTelemetry.slice(0, 3).map((event) => event.telemetry_id)).size, 3, "every execution gets its own local-only wire dedupe ID");
+assert.ok(executionTelemetry.slice(0, 3).every((event) => /^[a-f0-9]{32}$/.test(event.telemetry_id)));
 const toolEvents = events.filter((event) => event.type === "tool.start" || event.type === "tool.done");
 assert.deepEqual(toolEvents.map((event) => event.callId), ["c1", "c1", "c2", "c2", "c3", "c3"], "every tool.start is paired with its tool.done");
 assert.ok(toolEvents.every((event) => event.type !== "tool.done" || event.ok), "every scripted tool call succeeds");

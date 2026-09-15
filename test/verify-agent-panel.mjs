@@ -88,6 +88,7 @@ for (const state of ["signed-out", "signing-in", "no-entitlement", "ready", "str
 for (const type of ["text.delta", "tool.start", "tool.done", "image", "quota", "error", "done"]) {
 	expect(`the panel or client handles the "${type}" event`, client.includes(`"${type}"`) || panel.includes(`"${type}"`));
 }
+expect("explicit Stop identifies user cancellation before aborting SSE", panel.includes('abortRef.current?.abort("agent-stop")'));
 for (const code of ["auth", "entitlement", "rate_limit", "upstream"]) {
 	expect(`error code "${code}" has copy`, client.includes(code));
 }

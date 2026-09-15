@@ -1,4 +1,66 @@
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
+export const MCP_TOOL_CATEGORIES = Object.freeze([
+	"read",
+	"camera",
+	"scene_write",
+	"prompt_authoring",
+	"frame_capture",
+	"motion_generate",
+	"motion_apply",
+	"project_io",
+	"other",
+]);
+export const AGENT_TOOL_CATEGORIES = Object.freeze([
+	"workflow_read",
+	"workflow_write",
+	"workflow_run",
+	"frame_capture",
+	"image_generate",
+	"scene_write",
+	"other",
+]);
+
+export const EXECUTION_TELEMETRY_EVENTS = Object.freeze([
+	"workflow:run_requested",
+	"workflow:run_succeeded",
+	"workflow:run_failed",
+	"workflow:run_cancelled",
+	"workflow:result_applied",
+	"agent:turn_requested",
+	"agent:tool_executed",
+	"agent:turn_succeeded",
+	"agent:turn_failed",
+	"agent:turn_cancelled",
+	"agent:result_applied",
+	"mcp:tool_requested",
+	"mcp:tool_executed",
+	"mcp:result_applied",
+]);
+
+export const EXECUTION_TELEMETRY_PROPERTY_KEYS = Object.freeze({
+	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
+	"workflow:run_succeeded": ["run_id", "duration_bucket"],
+	"workflow:run_failed": ["run_id", "duration_bucket", "failure_code"],
+	"workflow:run_cancelled": ["run_id", "duration_bucket", "failure_code"],
+	"workflow:result_applied": ["run_id"],
+	"agent:turn_requested": ["surface", "turn_id"],
+	"agent:tool_executed": ["turn_id", "tool_category", "outcome", "duration_bucket"],
+	"agent:turn_succeeded": ["turn_id", "duration_bucket"],
+	"agent:turn_failed": ["turn_id", "duration_bucket", "failure_code"],
+	"agent:turn_cancelled": ["turn_id", "duration_bucket", "failure_code"],
+	"agent:result_applied": ["turn_id"],
+	"mcp:tool_requested": ["tool_category", "request_id"],
+	"mcp:tool_executed": ["tool_category", "outcome", "duration_bucket", "request_id"],
+	"mcp:result_applied": ["request_id"],
+});
+
+export const EXECUTION_TELEMETRY_VALUES = Object.freeze({
+	surface: new Set(["studio", "workflow"]),
+	node_count_bucket: new Set(["0", "1-3", "4-10", "gte11"]),
+	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+	tool_category: new Set([...MCP_TOOL_CATEGORIES, ...AGENT_TOOL_CATEGORIES]),
+	outcome: new Set(["succeeded", "failed", "uncertain", "cancelled"]),
+});
 
 const OPT_OUT_KEY = "cozyclay.analyticsOptOut";
 const INTERNAL_QA_KEY = "cozyclay.internalQa";
@@ -48,6 +110,7 @@ const EVENT_PROPERTIES = Object.freeze({
 	"tutorial:step_completed": ["surface", "tutorial_version", "step_kind", "elapsed_bucket"],
 	"tutorial:completed": ["surface", "tutorial_version", "elapsed_bucket"],
 	"tutorial:dismissed": ["surface", "tutorial_version", "step_kind"],
+	...EXECUTION_TELEMETRY_PROPERTY_KEYS,
 });
 const FEATURE_NAMES = new Set([
 	"pose_edit", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
@@ -80,6 +143,10 @@ const TUTORIAL_PROPERTY_VALUES = Object.freeze({
 	start_source: new Set(["query", "settings", "landing"]),
 	step_kind: new Set(["fly", "walk", "dolly", "orbit", "shot", "rail", "play"]),
 	elapsed_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+});
+const EXECUTION_FAILURE_CODES = Object.freeze({
+	workflow: new Set(["aborted", "capture_failed", "generation_failed", "unknown"]),
+	agent: new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]),
 });
 
 let posthog = null;
@@ -172,6 +239,25 @@ export function sanitizeProps(event, props) {
 			} else if (!MOTION_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		}
 		if (event.startsWith("tutorial:") && !TUTORIAL_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		if (event.startsWith("workflow:") || event.startsWith("agent:") || event.startsWith("mcp:")) {
+			if (key === "run_id" || key === "turn_id" || key === "request_id") {
+				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
+			} else if (key === "surface") {
+				if (!EXECUTION_TELEMETRY_VALUES.surface.has(props[key]) || (event.startsWith("workflow:") && props[key] !== "workflow")) continue;
+			}
+			else if (key === "node_count_bucket" && !EXECUTION_TELEMETRY_VALUES.node_count_bucket.has(props[key])) continue;
+			else if (key === "duration_bucket" && !EXECUTION_TELEMETRY_VALUES.duration_bucket.has(props[key])) continue;
+			else if (key === "tool_category") {
+				const categories = event.startsWith("agent:") ? AGENT_TOOL_CATEGORIES : MCP_TOOL_CATEGORIES;
+				if (!categories.includes(props[key])) continue;
+			} else if (key === "outcome") {
+				const outcomes = event === "mcp:tool_executed" ? ["succeeded", "failed", "uncertain", "cancelled"] : ["succeeded", "failed", "cancelled"];
+				if (!outcomes.includes(props[key])) continue;
+			} else if (key === "failure_code") {
+				const channel = event.startsWith("agent:") ? "agent" : "workflow";
+				if (!EXECUTION_FAILURE_CODES[channel].has(props[key])) continue;
+			}
+		}
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;
