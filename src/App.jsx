@@ -3284,12 +3284,6 @@ export default function App() {
 			capabilities: { profile: "studio-slice-1", tools: STUDIO_TOOL_FAMILIES, rigReady: Boolean(activeRig), cameraReady: Boolean(shot), bridgeReady: false },
 		});
 	};
-	useEffect(() => {
-		const onKey = (event) => { if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") { event.preventDefault(); setStudioAgentMode((value) => !value); } };
-		const onToggle = () => setStudioAgentMode((value) => !value);
-		window.addEventListener("keydown", onKey); window.addEventListener("cozyclay:agent-panel-toggle", onToggle);
-		return () => { window.removeEventListener("keydown", onKey); window.removeEventListener("cozyclay:agent-panel-toggle", onToggle); };
-	}, []);
 	const projectHandleRef = useRef(null);
 	const projectMotionsRef = useRef(new Map());
 	// Loaded clips keep the same Uint8Array identity while they remain active.
@@ -11304,13 +11298,13 @@ function resizePromptClip(id, edge, rawFrame) {
 											<button
 												type="button"
 												role="menuitemcheckbox"
-												className={"view-menu-item agent-panel-toggle" + (studioAgentMode ? " active" : "")}
-												aria-checked={studioAgentMode}
-												aria-pressed={studioAgentMode}
+												className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
+												aria-checked={!agentCollapsed}
+												aria-pressed={!agentCollapsed}
 												title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
 												onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
 											>
-												<span className="view-menu-mark" aria-hidden="true">{studioAgentMode ? "✓" : ""}</span>
+												<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
 												{ko("Agent panel", "에이전트 패널")}
 											</button>
 										</div>
@@ -12030,10 +12024,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							{sceneSaveError}
 						</p>
 					)}
-					<div className="studio-agent-inspector" hidden={!studioAgentMode}>
+					{studioAgentMode && <div className="studio-agent-inspector">
 						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
-						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")} buildContext={buildStudioAgentContext} />
-					</div>
+						<AgentPanel embedded surface="studio" sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")} buildContext={buildStudioAgentContext} />
+					</div>}
 					<section className="inspector-pane" hidden={studioAgentMode}>
 					<div className="inspector-heading">
 						<strong>{ko("Inspector", "속성")}</strong>
@@ -13708,11 +13702,10 @@ function resizePromptClip(id, edge, rawFrame) {
 						/>
 					)}
 				</aside>
-				{!embedMode && (
+				{!embedMode && !studioAgentMode && (
 					<AgentPanel
 						sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
 						defaultCollapsed
-						hidden={studioAgentMode}
 						onCollapsedChange={setAgentCollapsed}
 					/>
 				)}
