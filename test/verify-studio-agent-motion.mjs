@@ -145,7 +145,10 @@ async function candidateTests(mod) {
     const dispatch = async (name, extra = {}) => {
       calls.push(name);
       const response = await dispatchLiveFrame(JSON.stringify({ type: 'cmd', id: `dispatch-${calls.length}`, name, args: { commandId: request.commandId, binding: request.binding, ...extra } }), api);
-      assert.equal(response.ok, true, response.error); return response.value;
+      assert.equal(response.ok, true, response.error);
+      assert(response.value && typeof response.value === 'object' && Object.keys(response.value).length > 0,
+        `${name} settled without a result: ${JSON.stringify(response)}`);
+      return response.value;
     };
     const prepare = () => dispatch('prepare_motion_install', request);
     const verify = c => dispatch('verify_motion_candidate', { candidateId: c.candidateId, candidateRevision: c.candidateRevision, profile: 'studio-motion-v1' });
