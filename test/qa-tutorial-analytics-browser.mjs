@@ -213,11 +213,6 @@ function installFixture(timeout) {
 listeners.set("Fetch.requestPaused", new Set([(request) => {
 	void (async () => {
 		const url = new URL(request.request.url);
-		if (url.hostname === "telemetry.invalid") {
-			report.blockedQaTelemetry.push({ method: request.request.method, path: url.pathname });
-			await send("Fetch.fulfillRequest", { requestId: request.requestId, responseCode: 204 });
-			return;
-		}
 		if (url.pathname === "/ardy/health") {
 			// The hosted product has no optional local motion bridge. A 503 is
 			// the real demo-seed branch; the bundled scene/walk assets stay real.
@@ -239,13 +234,15 @@ listeners.set("Fetch.requestPaused", new Set([(request) => {
 			responseHeaders: [{ name: "Content-Type", value: "text/javascript" }, { name: "Cache-Control", value: "no-store" }], body: Buffer.from(source).toString("base64") });
 		report.routedModules += 1;
 	})().catch(async (error) => {
-		report.routeErrors.push(error.stack);
+		report.routeErrors.push(`${request.request.url}\n${error.stack}`);
 		try { await send("Fetch.failRequest", { requestId: request.requestId, errorReason: "Failed" }); }
 		catch (failure) { report.routeErrors.push(failure.stack); }
 	});
 }]));
 listeners.set("Network.requestWillBeSent", new Set([({ request }) => {
-	const hostname = new URL(request.url).hostname;
+	const url = new URL(request.url);
+	const hostname = url.hostname;
+	if (hostname === "telemetry.invalid") report.blockedQaTelemetry.push({ method: request.method, path: url.pathname });
 	if (hostname === "t.cozyclay.org" || /(^|\.)posthog\.com$/.test(hostname)) report.productionTelemetry.push(request.url);
 }]));
 
@@ -521,9 +518,12 @@ async function lateRun() {
 	let p;
 	await stepWait("fly", async () => { p = await beginFly(); }); await releaseFly(p);
 	assert.deepEqual(tutorial(), [], "SDK import gate is genuinely unresolved during initial UI progress");
-	await change("window.__qaTutorial.events.some(({event,properties}) => event === 'tutorial:step_entered' && properties.step_kind === 'walk')", async () => {
+	// The SDK also starts a health request. Wait for its actual capture before
+	// the next scenario destroys this document or the hosted iframe.
+	await change("window.__qaTutorial.events.some(({event,properties}) => event === 'tutorial:step_entered' && properties.step_kind === 'walk') && window.__qaTutorial.events.some(({event}) => event === 'motion:backend_state')", async () => {
 		await evaluate("window.__qaTutorial.releaseSdk()");
-		if (surface === "playground") await evaluate("window.__qaTutorial.releaseSdk()", true);
+		if (surface === "playground") await change("window.__qaTutorial.events.some(({event}) => event === 'motion:backend_state')",
+			() => evaluate("window.__qaTutorial.releaseSdk()", true), true);
 	});
 	expectAttempt({ completed: ["fly"] });
 	await closeTutorial();
@@ -535,12 +535,14 @@ let failures = 0;
 try {
 	await send("Runtime.enable"); await send("Page.enable"); await send("Network.enable");
 	await send("Network.setCacheDisabled", { cacheDisabled: true });
-	await send("Network.setBlockedURLs", { urls: ["*://t.cozyclay.org/*", "*://*.posthog.com/*", "*://posthog.com/*"] });
+	// Unload beacons can outlive an iframe's interception IDs. Block the
+	// disposable QA endpoint at the network layer instead of racing a response
+	// against frame destruction; SDK-boundary event observation stays intact.
+	await send("Network.setBlockedURLs", { urls: ["https://telemetry.invalid/*", "*://t.cozyclay.org/*", "*://*.posthog.com/*", "*://posthog.com/*"] });
 	await send("Runtime.addBinding", { name: "__qaTutorialRecord" });
 	await send("Fetch.enable", { patterns: [
 		{ urlPattern: `${origin}/src/analytics.js*`, requestStage: "Response" },
 		{ urlPattern: `${origin}/ardy/health*`, requestStage: "Request" },
-		{ urlPattern: "https://telemetry.invalid/*", requestStage: "Request" },
 	] });
 	await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installFixture.toString()})(${deadline});` });
 	await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1100, deviceScaleFactor: 1, mobile: false });
