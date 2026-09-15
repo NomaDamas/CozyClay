@@ -1,0 +1,12 @@
+{
+  "schema": "studio-agent-qa-scene-v1",
+  "fps": 24,
+  "frameCount": 48,
+  "scene": {"id":"qa-scene","name":"Studio Agent acceptance fixture","floorY":0},
+  "characters": [
+    {"id":"qa-character-a","name":"A","model":"y-bot-tpose","position":{"x":0,"y":0,"z":0},"yawDeg":0},
+    {"id":"qa-character-b","name":"B","model":"y-bot-tpose","position":{"x":2,"y":0,"z":0},"yawDeg":0}
+  ],
+  "objects": [{"id":"qa-cube","kind":"cube","position":{"x":1,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1}}],
+  "shots": [{"id":"qa-shot","name":"Acceptance shot","range":{"startFrame":0,"endFrameExclusive":48}}]
+}
