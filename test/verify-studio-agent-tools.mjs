@@ -10,7 +10,7 @@ import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
 import { createRequire } from "node:module";
 const { WebSocket } = createRequire(new URL("../mcp/package.json", import.meta.url))("ws");
 
-const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect"]);
+const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -18,8 +18,8 @@ const shouldRun = name => !selected || selected === name;
 const uuid = () => randomUUID();
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const host = (handle = "handle-12", workspaceId = "tab-7") => ({ surface: "studio", workspaceId, workspaceHandle: handle, documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" });
-function context(binding = host()) {
-  return { schema: "studio-context-v1", host: binding, revision: { scene: 1, physics: 1, view: 1 }, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" }, scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 48, objectCount: 0, characterCount: 1 }, selection: { kind: "character", id: "char-alex" }, activeCharacterId: "char-alex", view: { mode: "scene", frame: 0, playing: false, lookThrough: false, grid: false, autoColor: false }, shot: null, camera: null, entities: [{ id: "char-alex", kind: "character", token: "ct-11", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1, bounds: null, motion: { takeId: null, frames: 48, ikKeyCount: 0, promptBlockCount: 0 }, capabilities: { rigReady: true, ik: true, measuredFeet: true } }], entityPage: { returned: 1, total: 1, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [], capabilities: { profile: "studio-slice-1", tools: [...STUDIO_TOOL_FAMILIES], rigReady: true, cameraReady: false, bridgeReady: true } };
+function context(binding = host(), sceneRevision = 1) {
+  return { schema: "studio-context-v1", host: binding, revision: { scene: sceneRevision, physics: 1, view: 1 }, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" }, scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 48, objectCount: 0, characterCount: 1 }, selection: { kind: "character", id: "char-alex" }, activeCharacterId: "char-alex", view: { mode: "scene", frame: 0, playing: false, lookThrough: false, grid: false, autoColor: false }, shot: null, camera: null, entities: [{ id: "char-alex", kind: "character", token: "ct-11", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1, bounds: null, motion: { takeId: null, frames: 48, ikKeyCount: 0, promptBlockCount: 0 }, capabilities: { rigReady: true, ik: true, measuredFeet: true } }], entityPage: { returned: 1, total: 1, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [], capabilities: { profile: "studio-slice-1", tools: [...STUDIO_TOOL_FAMILIES], rigReady: true, cameraReady: false, bridgeReady: true } };
 }
 const envelope = (binding = host(), text = "inspect") => ({ surface: "studio", sessionId: uuid(), turnId: uuid(), text, context: context(binding) });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -66,6 +66,25 @@ if (shouldRun("stale-host-and-post-install-rate-limit")) {
   const firstTurn = envelope(host(live.handle), "explain this"); const firstResult = await liveHttp.post(firstTurn); heartbeat?.(); assert.equal(firstResult.response.status, 200); assert.match(firstResult.text, /: heartbeat\n\n/); assert.ok(clockTicks > 0); assert.match(firstResult.text, /rate_limit/); assert.equal(calls.length, 2); assert.ok(calls[1].some(item => item.type === "function_call_output" && item.output.includes("installed"))); const stopResponse = await fetch(`${liveHttp.origin}/agent/stop`, { method: "POST", headers: { origin: liveHttp.origin, cookie: firstResult.cookie, "content-type": "application/json" }, body: JSON.stringify({ surface: "studio", sessionId: firstTurn.sessionId, turnId: firstTurn.turnId }) }); assert.equal(stopResponse.status, 200);
   const retry = envelope(host(live.handle), "explain this"); const retryResult = await liveHttp.post(retry, firstResult.cookie); assert.equal(retryResult.response.status, 200); assert.equal(calls.length, 3); assert.ok(!retryResult.text.includes("tool.start"));
   await liveHttp.close(); await live.close(); console.log("PASS mismatched handle refusal and rate-limit retry retains completed output without regeneration");
+}
+
+if (shouldRun("sequential-mutations-revision-chain") || shouldRun("external-revision-bump-refuses")) {
+  const revisionScenarios = selected ? [selected === "external-revision-bump-refuses"] : [false, true];
+  for (const externalBump of revisionScenarios) {
+    let sceneRevision = 1; let applies = 0; const commands = [];
+  const live = await liveFixture({ command: async (name, args) => {
+    commands.push({ name, args });
+    if (name === "read_studio_context") return { context: context(host(live.handle), sceneRevision) };
+    if (externalBump && applies === 1) sceneRevision++;
+    if (args.expectedRevision !== sceneRevision) return { ok: false, error: { code: "STALE_SCENE", message: "Authored scene revision changed." } };
+    applies++; const before = sceneRevision++; return { ok: true, commandId: args.commandId, receiptId: `receipt-${applies}`, host: host(live.handle), status: "applied", authored: true, revision: { before, after: sceneRevision }, affectedIds: [args.name === "arrange_objects" ? "cube" : "char-alex"], delta: [], checks: { coverage: "fixture" }, undo: { historyEntryId: `history-${applies}`, entries: 1, canUndoDirect: true }, warnings: [] };
+  } });
+  let callNumber = 0; const inputs = []; const codex = { streamResponses: ({ input }) => { inputs.push(input); callNumber++; if (callNumber === 1) return streamOf([{ type: "function_call", call_id: "mutation-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "cube" }] }) }]); if (callNumber === 2) return streamOf([{ type: "function_call", call_id: "mutation-2", name: "arrange_characters", arguments: JSON.stringify({ ops: [{ op: "remove", characterId: "char-alex" }] }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); } };
+  const liveHttp = await httpFixture({ codex, live }); const result = await liveHttp.post(envelope(host(live.handle), "apply both")).then(value => ({ ...value, calls: commands.filter(command => command.name !== "read_studio_context") }));
+  assert.equal(result.response.status, 200); assert.equal(result.calls.length, 2); assert.equal(result.calls[0].args.expectedRevision, 1); assert.equal(result.calls[1].args.expectedRevision, 2); assert.equal(applies, externalBump ? 1 : 2);
+  if (externalBump) { assert.ok(inputs[2].some(item => item.type === "function_call_output" && item.output.includes("STALE_SCENE"))); assert.equal(result.calls[1].args.expectedRevision, 2); } else { assert.ok(!result.text.includes("STALE_SCENE")); }
+    await liveHttp.close(); await live.close(); console.log(`PASS ${externalBump ? "external revision bump refuses second mutation" : "sequential mutations chain receipt revision"}`);
+  }
 }
 
 if (shouldRun("sse-disconnect-reconnect")) {

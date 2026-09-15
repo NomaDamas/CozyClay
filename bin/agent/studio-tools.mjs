@@ -14,6 +14,10 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
       : command.args;
     const result = await liveHub.command(name, payload, workspaceHandle);
     if (result?.ok === false) throw Object.assign(new Error(result.error?.message || "Studio command failed"), { code: result.error?.code });
+    if (mutationNames.has(name)) {
+      if (Number.isSafeInteger(result?.revision?.after)) session.admission.revision = result.revision.after;
+      else await session.admission.refresh();
+    }
     return result;
   };
   const tools = STUDIO_TOOL_FAMILIES.map(name => ({ ...schema(name), handler: args => invoke(name, args) }));

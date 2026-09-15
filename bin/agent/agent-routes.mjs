@@ -269,6 +269,10 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		const admission = {
 			commandId: () => randomUUID(), host: studioIdentity(value.context.host), revision: value.context.revision.scene,
 			targets: value.context.entities.map(entity => ({ ...studioIdentity(value.context.host), targetId: entity.id, token: entity.token })),
+			refresh: async () => {
+				const refreshed = studioRuntime?.readContext ? await studioRuntime.readContext(value.context.host) : await authoritativeStudioContext(value, hub);
+				admission.revision = refreshed.revision.scene;
+			},
 		};
 		const runtimeForJob = await studioRuntimeFor(hub);
 		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, session: { signal: controller.signal, admission }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
