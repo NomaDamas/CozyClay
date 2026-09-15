@@ -219,7 +219,10 @@ const caseFlag = process.argv.indexOf("--case");
 if (caseFlag !== -1) {
 	assert.equal(process.argv[caseFlag + 1], "execution-observation");
 } else {
-const vitePort = await reservePort(); const livePort = await reservePort(); const cdpPort = await reservePort();
+const vitePort = Number(process.env.QA_VITE_PORT) || await reservePort();
+const livePort = Number(process.env.COZYCLAY_LIVE_PORT) || await reservePort();
+const cdpPort = Number(process.env.CDP_PORT) || await reservePort();
+console.log(JSON.stringify({ surface: "real-Chrome-live-batch", vitePort, livePort, cdpPort }));
 const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
 	cwd: root,
 	env: { ...process.env, COZYCLAY_LIVE_PORT: String(livePort) },
