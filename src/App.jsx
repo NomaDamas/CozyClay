@@ -53,6 +53,8 @@ import Timeline from "./ardy/timeline.jsx";
 import { alignArdyPath, judgeAuthoredPath, judgeNextWaypoint } from "./ardy/waypoints.js";
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
 import { createLiveControl } from "./live-control.js";
+import { createFirstEditTracker } from "./semantic-edit.js";
+import { useSemanticState } from "./use-semantic-state.js";
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import HierarchyPanel from "./hierarchy-panel.jsx";
 import { PlanBoard } from "./planview.jsx";
@@ -737,6 +739,11 @@ export default function App() {
 	// QA-only render counter (same spirit as window.__cozyclay): headless perf
 	// probes read renders/second to find re-render storms. Negligible cost.
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
+	const firstEditRef = useRef(null);
+	if (!firstEditRef.current) firstEditRef.current = createFirstEditTracker(track);
+	// One semantic hook for authored UI and programmatic mutations. Passive
+	// setters intentionally bypass it (navigation, load, seed, restore, history).
+	const markSemanticEdit = (domain, before, after) => firstEditRef.current(playgroundMode ? "playground" : "craft", domain, before, after);
 	const craftActionTrackedRef = useRef(false);
 	const markCraftAction = (actionKind) => {
 		if (craftActionTrackedRef.current) return;
@@ -1107,7 +1114,7 @@ export default function App() {
 	// subject line) lives in `characters`, and the legacy A/B view of the
 	// world is derived below so the rest of the studio keeps working while
 	// spawned extras ride the same rails.
-	const [characters, setCharacters] = useState(startupStage.characters);
+	const [characters, setCharacters, editCharacters] = useSemanticState(startupStage.characters, markSemanticEdit, "characters");
 	// The cast as of this render, for async handlers: an extraction that
 	// started three renders ago must place its takes against the CURRENT cast,
 	// not the one its closure captured.
@@ -1142,7 +1149,7 @@ export default function App() {
 	const rigB = (characters[1] ? rigs[charB.id] : null) ?? null;
 
 	function updateCharacterAt(index, next) {
-		setCharacters((list) => list.map((entry, i) => {
+		editCharacters((list) => list.map((entry, i) => {
 			if (i !== index) return entry;
 			const resolved = typeof next === "function" ? next(entry) : next;
 			return { ...entry, ...resolved };
@@ -1158,7 +1165,7 @@ export default function App() {
 	const setSubject2 = (value) => updateCharacterAt(1, (entry) => ({ subject: typeof value === "function" ? value(entry.subject) : value }));
 	function setShowB(next) {
 		recordCharacterUndo();
-		setCharacters((list) => {
+		editCharacters((list) => {
 			const anyVisibleExtra = list.some((entry, i) => i > 0 && !entry.hidden);
 			const on = typeof next === "function" ? next(anyVisibleExtra) : next;
 			if (on) {
@@ -1171,7 +1178,7 @@ export default function App() {
 		});
 	}
 	function moveCharacter(charId, next) {
-		setCharacters((list) => list.map((entry) => {
+		editCharacters((list) => list.map((entry) => {
 			if (entry.id !== charId) return entry;
 			const resolved = typeof next === "function" ? next(entry) : next;
 			return { ...entry, ...resolved };
@@ -1183,7 +1190,7 @@ export default function App() {
 		recordCharacterUndo();
 		const nextCharacters = list.filter((entry) => entry.id !== charId);
 		charactersRef.current = nextCharacters;
-		setCharacters(nextCharacters);
+		editCharacters(nextCharacters);
 		// The deleted layer's untrimmed take goes with it: a recycled id must
 		// never inherit a stranger's take, and its stature left with the entry.
 		motionFullRef.current.delete(charId);
@@ -1224,7 +1231,7 @@ export default function App() {
 	const spawnCharacter = (model, x, z) => {
 		recordCharacterUndo();
 		const id = nextCharacterId(characters);
-		setCharacters((list) => [...list, createCharacterEntry({ id, model, x, z, pose: DEFAULT_POSE, subject: "a person" }, list.length)]);
+		editCharacters((list) => [...list, createCharacterEntry({ id, model, x, z, pose: DEFAULT_POSE, subject: "a person" }, list.length)]);
 		setSelectedHierarchyId(`character:${id}`);
 		setToast(ko("Character added to the scene", "인물을 씬에 추가했어요"));
 	};
@@ -1425,6 +1432,7 @@ export default function App() {
 	const storeRef = useRef(null);
 	if (!storeRef.current) {
 		storeRef.current = createSceneHistoryStore(sceneObjects, {
+		onCommit: (before, after) => markSemanticEdit("objects", before, after),
 		onObjects: (objects) => {
 			// Object-side ops join the shared undo clock here; undo/redo of the
 			// object store bumps the clock explicitly in undoScene/redoScene.
@@ -1913,6 +1921,12 @@ export default function App() {
 	function snapshotIkKeys(ikState) {
 		return copyPhysicsKeys(ikState?.keys ?? new Map());
 	}
+	function editIkKeys(mutate) {
+		const before = snapshotIkKeys(ikStateRef.current);
+		const result = mutate();
+		markSemanticEdit("pose", before, ikStateRef.current.keys);
+		return result;
+	}
 	function recordCharacterUndo() {
 		charHistoryRef.current.past.push({ tick: ++opClockRef.current, snapshot: snapshotCast() });
 		charHistoryRef.current.future = [];
@@ -2202,7 +2216,7 @@ export default function App() {
 	const startupShotState = nestedShotStartup.state ?? shotStartup.state;
 	// Each editorial strip owns its camera keys. The playhead chooses the
 	// active strip; there is no shared key list that could blend through a cut.
-	const [shots, setShots] = useState(() => startupShotState?.shots ?? initialShots(startupShotState?.frameCount ?? DEFAULT_DURATION_S * TIMELINE_FPS));
+	const [shots, setShots, editShots] = useSemanticState(() => startupShotState?.shots ?? initialShots(startupShotState?.frameCount ?? DEFAULT_DURATION_S * TIMELINE_FPS), markSemanticEdit, "shots");
 	const [movePlaying, setMovePlaying] = useState(false);
 	useEffect(() => {
 		if (playgroundMode && movePlaying) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "play" }, "*");
@@ -2682,7 +2696,7 @@ export default function App() {
 	const cameraRail = activeCamera.cameraRail;
 	const activeShotDuration = activeShot ? activeShot.endFrame - activeShot.startFrame + 1 : 0;
 	const hasCameraKeys = shots.some((shot) => shot.cameraKeys.length > 0);
-	function changeActiveCamera(patch, shotId = activeShot?.id) {
+	function changeActiveCamera(patch, shotId = activeShot?.id, authored = true) {
 		// Every camera-block commit (mode switch, rail draw, rail delete, lens
 		// patch) funnels through here, so this is where the shot snapshot goes.
 		// No shot resolved means the setShots below is a no-op — record nothing.
@@ -2692,7 +2706,7 @@ export default function App() {
 		// joins that entry instead of pushing a second one for one click.
 		if (framingSessionOpen(shotId)) framingSessionRef.current = null;
 		else recordShotUndo();
-		setShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, camera: updateCameraBlock(shot.camera, patch) }), "shots"));
+		(authored ? editShots : setShots)((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, camera: updateCameraBlock(shot.camera, patch) }), "shots"));
 	}
 	/** Which video model this shot is being cut FOR. A label, never a
 	 * constraint: nothing re-times or re-crops the shot, the timeline simply
@@ -2701,7 +2715,7 @@ export default function App() {
 	function changeShotTargetModel(targetModel, shotId = activeShot?.id) {
 		if (!shots.some((entry) => entry.id === shotId)) return;
 		recordShotUndo();
-		setShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, targetModel: targetModel || null }), "shots"));
+		editShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, targetModel: targetModel || null }), "shots"));
 	}
 	function addActiveCranePoint(requestedT = null, shotId = activeShot?.id) {
 		const shot = shots.find((entry) => entry.id === shotId);
@@ -2741,6 +2755,8 @@ export default function App() {
 		changeActiveCamera({ craneHeight: { points: points.filter((_, index) => index !== craneSelectedIndex) } });
 		setCraneSelectedIndex(null);
 	}
+	// Navigation (including look-through / MCP set_camera) can persist framing,
+	// but is not a semantic edit. Keep this on the passive shot setter.
 	function syncActiveCameraFraming() {
 		const cam = shotCamRef.current;
 		if (!cam || !activeShot || ikMode || playMode) return;
@@ -2820,7 +2836,7 @@ export default function App() {
 			changeActiveCamera({
 				mode: "rail",
 				railFollow: activeCamera.railFollow?.mode === "off" ? defaultRailRange(activeShotDuration) : activeCamera.railFollow,
-			});
+			}, activeShot.id, false); // tool preparation; accepted rail geometry is the edit
 		}
 		const next = !railDraw;
 		trackFeature("dolly_rail");
@@ -3621,6 +3637,7 @@ export default function App() {
 		const stage = createSceneStage(scene.stage);
 		const objects = Array.isArray(scene.objects) ? scene.objects : [];
 		storeRef.current = createSceneHistoryStore(objects, {
+			onCommit: (before, after) => markSemanticEdit("objects", before, after),
 			onObjects: (next) => {
 				if (!suppressObjectClockRef.current) lastObjectOpRef.current = ++opClockRef.current;
 				setSceneObjects(next);
@@ -3898,7 +3915,7 @@ export default function App() {
 		const replaceCharacters = (next) => {
 			charactersRef.current = next;
 			liveStateRef.current.characters = next;
-			setCharacters(next);
+			editCharacters(next);
 		};
 		const syncObjects = () => {
 			liveStateRef.current.objects = storeRef.current.objects;
@@ -4272,7 +4289,7 @@ export default function App() {
 				const live = liveStateRef.current;
 				live.recordCharacterUndo();
 				live.promptClips = clips;
-				live.setPromptClips(clips);
+				live.editPromptClips(clips);
 				if (clips.length) {
 					live.setTlFrameCount((count) => Math.max(count, clips[clips.length - 1].endFrame));
 				}
@@ -4421,10 +4438,10 @@ export default function App() {
 			flushScenes();
 		};
 	}, []);
-	const [promptClips, setPromptClips] = useState(() => (startupStage.characters?.[0]?.layer?.promptClips ?? DEFAULT_PROMPT_CLIPS).map((clip) => ({ ...clip })));
+	const [promptClips, setPromptClips, editPromptClips] = useSemanticState(() => (startupStage.characters?.[0]?.layer?.promptClips ?? DEFAULT_PROMPT_CLIPS).map((clip) => ({ ...clip })), markSemanticEdit, "promptClips");
 	// These hooks are declared after the liveStateRef assignment above runs, so
 	// they join the live read model here — same render, no TDZ.
-	Object.assign(liveStateRef.current, { promptClips, setPromptClips, setTlFrameCount });
+	Object.assign(liveStateRef.current, { promptClips, setPromptClips, editPromptClips, setTlFrameCount });
 
 	// Dirty tracking: any divergence from the last saved file lights the dot.
 	useEffect(() => {
@@ -5253,7 +5270,7 @@ export default function App() {
 		if (lands) {
 			markCraftAction("camera_key");
 			recordShotUndo();
-			setShots((current) => updateStableItem(current, shotId, (shot) => {
+			editShots((current) => updateStableItem(current, shotId, (shot) => {
 				if (target < shot.startFrame || target > shot.endFrame) return shot;
 				const replaced = shot.cameraKeys.filter((key) => key.frame !== target);
 				return { ...shot, cameraKeys: [...replaced, { id: createStableItemId("camera-key"), frame: target, framing }].sort((a, b) => a.frame - b.frame) };
@@ -5269,7 +5286,7 @@ export default function App() {
 		if (!shot) throw new Error(`Unknown shots ID: ${shotId}`);
 		const target = Math.max(shot.startFrame, Math.min(Math.round(to), shot.endFrame));
 		if (target === from) return;
-		setShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, cameraKeys: moveCameraKey(entry.cameraKeys, keyId, target) }), "shots"));
+		editShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, cameraKeys: moveCameraKey(entry.cameraKeys, keyId, target) }), "shots"));
 	}
 
 	function removeCameraKeyframe(shotId, keyId) {
@@ -5277,14 +5294,14 @@ export default function App() {
 		if (!owner) throw new Error(`Unknown shots ID: ${shotId}`);
 		if (!owner.cameraKeys.some((key) => key.id === keyId)) return;
 		recordShotUndo();
-		setShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, cameraKeys: removeCameraKey(shot.cameraKeys, keyId) }), "shots"));
+		editShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, cameraKeys: removeCameraKey(shot.cameraKeys, keyId) }), "shots"));
 	}
 
 	function clearMove() {
 		setMovePlaying(false);
 		if (!activeShot || activeShot.cameraKeys.length === 0) return;
 		recordShotUndo();
-		setShots((current) => updateStableItem(current, activeShot?.id, (shot) => ({ ...shot, cameraKeys: [] }), "shots"));
+		editShots((current) => updateStableItem(current, activeShot?.id, (shot) => ({ ...shot, cameraKeys: [] }), "shots"));
 	}
 
 	function addTimelineShot() {
@@ -5292,7 +5309,7 @@ export default function App() {
 		const next = addShotAtFrame(shots, tlFrame, tlFrameCount, captureCurrentFraming());
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
 		trackFeature("shot_add");
 		window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "shot" } }));
 	}
@@ -5305,7 +5322,7 @@ export default function App() {
 		const next = cutAtFrame(shots, shotId, tlFrame, captureCurrentFraming());
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
 		trackFeature("shot_cut");
 	}
 
@@ -5321,7 +5338,7 @@ export default function App() {
 	function duplicateTimelineShot(shotId) {
 		const next = duplicateShot(shots, shotId, tlFrameCount);
 		if (next !== shots) recordShotUndo();
-		setShots(next);
+		editShots(next);
 		if (next !== shots) {
 			const duplicate = next.find((shot) => shot.id !== shotId && !shots.some((existing) => existing.id === shot.id));
 			if (duplicate) setTlFrame(duplicate.startFrame);
@@ -5332,14 +5349,14 @@ export default function App() {
 		const next = reorderShot(shots, shotId, targetFrame, tlFrameCount);
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
 	}
 
 	function removeTimelineShot(shotId) {
 		const next = removeShot(shots, shotId);
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
 	}
 
 	// The library is the user's own material: poses read from photographs and
@@ -6482,7 +6499,7 @@ export default function App() {
 			// One entry per drag: the pointermoves only moved bones, the keys map is
 			// untouched until this bake — recording here captures the pre-drag keys.
 			if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-			ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
+			editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints));
 		}
 		setIkTick((n) => n + 1);
 	}
@@ -6493,7 +6510,7 @@ export default function App() {
 		// A bake only writes TRACKED parts: with nothing dragged yet there is no
 		// key to undo, so no entry is pushed and Ctrl+Z never goes dead.
 		if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
+		editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints));
 		setIkTick((n) => n + 1);
 		setToast(isKo ? `${tlFrame}프레임에 전신 IK 키를 추가했어요` : `Full-body IK key at frame ${tlFrame}`);
 	}
@@ -6552,7 +6569,7 @@ export default function App() {
 			return;
 		}
 		if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints, result.touched, null, result.baseQuats);
+		editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints, result.touched, null, result.baseQuats));
 		setIkTick((n) => n + 1);
 		setToast(result.residual > 1e-4
 			? ko(`Collisions reduced (residual ${(result.residual * 100).toFixed(1)} cm)`, `관통을 줄였어요 (잔여 ${(result.residual * 100).toFixed(1)} cm)`)
@@ -6593,7 +6610,7 @@ export default function App() {
 		let keyed = [];
 		let unresolved = [];
 		try {
-			const walked = fixCollisionsRange({
+			const walked = editIkKeys(() => fixCollisionsRange({
 				rig: activeRig,
 				chains: ikChains,
 				ikState: ikStateRef.current,
@@ -6602,7 +6619,7 @@ export default function App() {
 				endFrame: motion.frames - 1,
 				applyFrame,
 				blockersAt,
-			});
+			}));
 			// The frames the walk keyed. `unresolved` — the frames whose residual
 			// survived every pass — is ADDITIVE: read it defensively off either
 			// shape so this keeps working before and after the driver grows it.
@@ -6660,7 +6677,7 @@ export default function App() {
 	function applyPhysicsPreview() {
 		if (!physicsPreview || physicsPreview.sourceStamp !== physicsKeyStamp(ikStateRef.current.keys)) return;
 		recordCharacterUndo();
-		ikStateRef.current.keys = copyPhysicsKeys(physicsPreview.candidate.keys);
+		editIkKeys(() => { ikStateRef.current.keys = copyPhysicsKeys(physicsPreview.candidate.keys); });
 		ikStateRef.current.tracked = new Set(physicsPreview.candidate.tracked);
 		autoPhysicsRunRef.current = { motion, rig: activeRig, stamp: physicsKeyStamp(ikStateRef.current.keys) };
 		setPhysicsPreview(null); setIkTick((n) => n + 1);
@@ -6716,7 +6733,7 @@ export default function App() {
 	function ikDeleteKeyframe(frame) {
 		if (!ikStateRef.current.keys.has(frame)) return;
 		recordCharacterUndo();
-		ikRemoveKeyframe(ikStateRef.current, frame);
+		editIkKeys(() => ikRemoveKeyframe(ikStateRef.current, frame));
 		setIkTick((n) => n + 1);
 	}
 
@@ -6744,7 +6761,7 @@ export default function App() {
 		// untracked chain would silently keep the clip's limb.
 		for (const id of ikChains.keys()) ikTouch(ikStateRef.current, id);
 		if (ikFkJoints) for (const id of ikFkJoints.keys()) ikTouch(ikStateRef.current, id);
-		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
+		editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints));
 		// Handles re-seat on the posed effectors, ready to drag into a refinement.
 		ikSeedTargets(ikChains, ikStateRef.current);
 		setIkTick((n) => n + 1);
@@ -7562,7 +7579,7 @@ export default function App() {
 			: snapped;
 		const clip = { id: createStableItemId("prompt-clip"), startFrame, endFrame: startFrame + ARDY_PROMPT_HORIZON_FRAMES, text: "" };
 		recordCharacterUndo();
-		setPromptClips((prev) => [...prev, clip]);
+		editPromptClips((prev) => [...prev, clip]);
 		setSelectedPromptId(clip.id);
 		setTlFrameCount((count) => Math.max(count, clip.endFrame));
 		setArdyDuration(Math.max(ARDY_DURATION_MIN, clip.endFrame / TIMELINE_FPS));
@@ -7578,7 +7595,7 @@ export default function App() {
 		// session keeps writing into that same entry. Reached from the inspector
 		// field and from the timeline chip alike.
 		recordSessionUndo(promptTextSessionRef, `prompt-text:${id}`);
-		setPromptClips((prev) => updateStableItem(prev, id, (clip) => ({ ...clip, text }), "promptClips"));
+		editPromptClips((prev) => updateStableItem(prev, id, (clip) => ({ ...clip, text }), "promptClips"));
 		if (id === selectedPromptId) setArdyPrompt(text);
 	}
 
@@ -7591,7 +7608,7 @@ export default function App() {
 const PROMPT_BLOCK_MAX_FRAMES = 5 * TIMELINE_FPS;
 
 function resizePromptClip(id, edge, rawFrame) {
-		setPromptClips((prev) => {
+		editPromptClips((prev) => {
 			const candidate = updateStableItem(prev, id, (clip) => {
 				const snapped = Math.max(0, Math.round(rawFrame / ARDY_PROMPT_HORIZON_FRAMES) * ARDY_PROMPT_HORIZON_FRAMES);
 				return edge === "start"
@@ -7614,7 +7631,7 @@ function resizePromptClip(id, edge, rawFrame) {
 
 	function movePromptClip(id, rawStartFrame) {
 		if (!promptClips.some((clip) => clip.id === id)) throw new Error(`Unknown promptClips ID: ${id}`);
-		setPromptClips((prev) => {
+		editPromptClips((prev) => {
 			const next = movePromptClipFrames(prev, id, rawStartFrame, ARDY_PROMPT_HORIZON_FRAMES);
 			if (next === prev) return prev;
 			const end = next.reduce((max, clip) => Math.max(max, clip.endFrame), ARDY_PROMPT_HORIZON_FRAMES);
@@ -7627,7 +7644,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	function removePromptClip(id) {
 		if (!promptClips.some((clip) => clip.id === id)) throw new Error(`Unknown promptClips ID: ${id}`);
 		recordCharacterUndo();
-		setPromptClips((prev) => removeStableItem(prev, id, "promptClips"));
+		editPromptClips((prev) => removeStableItem(prev, id, "promptClips"));
 		if (selectedPromptId === id) setSelectedPromptId(null);
 	}
 
@@ -9944,6 +9961,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		}
 		// The one and only React commit of the whole drag.
 		setMotion(deformed);
+		markSemanticEdit("pose", base.rootPos, deformed.rootPos);
 		setTrailEdit({ track, grabFrame, radiusFrames: trailFalloffFrames, clipDelta: trailClipDelta(base, delta) });
 	}
 	/** Send the pending trail edit through the existing motionEdit pipeline:
@@ -11247,7 +11265,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							<PoseHandles
 								root={posedRig()}
 								enabled={!!posing && !planIsMain && !playMode}
-								onChange={() => setPoseTick((n) => n + 1)}
+								onChange={(before, after) => {
+									markSemanticEdit("pose", before, after);
+									setPoseTick((n) => n + 1);
+								}}
 							/>
 							<IkHandles
 								chains={ikChains}
@@ -11346,7 +11367,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										const speed = Math.max(0.2, activeCamera.followCam?.maxDollySpeed ?? 4);
 										const travel = Math.ceil((curve.length / speed) * tlFps) + Math.round(tlFps * 0.5);
 										const endFrame = Math.min(tlFrameCount - 1, activeShot.startFrame + Math.max(travel, activeShot.endFrame - activeShot.startFrame));
-										setShots((current) => resizeShot(current, activeShot.id, "end", endFrame, tlFrameCount));
+										editShots((current) => resizeShot(current, activeShot.id, "end", endFrame, tlFrameCount));
 										enterPreview();
 										setTlFrame(activeShot.startFrame);
 										setToast(isKo ? "레일 완성 — 샷 카메라 시점으로 전환했습니다. ▶ 로 재생, Esc 로 복귀" : "Rail drawn — you are looking through the shot camera. Press ▶ to ride it; Esc goes back to flying.");
@@ -11442,7 +11463,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										changeActiveCamera({ craneHeight: { points } });
 										return;
 									}
-									setShots((current) =>
+									editShots((current) =>
 										updateStableItem(
 											current,
 											activeShot.id,
@@ -11456,7 +11477,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										changeActiveCamera({ cameraRail: points });
 										return;
 									}
-									setShots((current) =>
+									editShots((current) =>
 										updateStableItem(
 											current,
 											activeShot.id,
@@ -13764,7 +13785,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					onCameraRailDrawToggle={toggleCameraRailDraw}
 					onCameraRailDelete={deleteCameraRail}
 				onShotSelect={selectTimelineShot}
-				onShotBoundaryMove={(shotId, edge, frame) => setShots((current) => resizeShot(current, shotId, edge, frame, tlFrameCount))}
+				onShotBoundaryMove={(shotId, edge, frame) => editShots((current) => resizeShot(current, shotId, edge, frame, tlFrameCount))}
 				onShotRename={(shotId, name) => {
 					const shot = shots.find((entry) => entry.id === shotId);
 					if (!shot) throw new Error(`Unknown shots ID: ${shotId}`);
@@ -13773,7 +13794,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					// name is no edit at all: it neither writes nor records.
 					if (typeof name !== "string" || !name.trim() || shot.name === name.trim()) return;
 					recordShotUndo();
-					setShots((current) => renameShot(current, shotId, name));
+					editShots((current) => renameShot(current, shotId, name));
 				}}
 				onShotRemove={removeTimelineShot}
 				onShotDuplicate={duplicateTimelineShot}

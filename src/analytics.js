@@ -1,3 +1,5 @@
+import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
+
 const OPT_OUT_KEY = "cozyclay.analyticsOptOut";
 const ACTIVATION_KEY = "cozyclay.analyticsActivation";
 const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
@@ -19,6 +21,7 @@ const EVENT_PROPERTIES = Object.freeze({
 	"project:saved": ["object_count_bucket", "shot_count_bucket"],
 	"project:opened": ["age_bucket"],
 	"craft:first_action": ["action_kind"],
+	"craft:first_edit": ["edit_kind", "definition_version"],
 	"motion:backend_state": ["backend", "host_configured"],
 	"motion:generate_blocked": ["surface"],
 	"motion:job_started": ["backend", "input_mode", "duration_bucket"],
@@ -34,6 +37,7 @@ const EVENT_PROPERTIES = Object.freeze({
 	"sample:played": ["from"],
 	"playground:opened": [],
 	"playground:first_action": ["action_kind"],
+	"playground:first_edit": ["edit_kind", "definition_version"],
 	"activation:completed": ["activation_path"],
 });
 const FEATURE_NAMES = new Set([
@@ -130,6 +134,10 @@ export function sanitizeProps(event, props) {
 		if (event === "export:keyframe_pack") {
 			if (key === "source" && props[key] !== "workflow") continue;
 			if (key === "entries" && (!Number.isFinite(props[key]) || props[key] < 0)) continue;
+		}
+		if (event === "craft:first_edit" || event === "playground:first_edit") {
+			if (key === "edit_kind" && !FIRST_EDIT_KINDS.includes(props[key])) continue;
+			if (key === "definition_version" && props[key] !== FIRST_EDIT_VERSION) continue;
 		}
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}

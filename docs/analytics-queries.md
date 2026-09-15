@@ -133,3 +133,76 @@ Apply the explicitly marked internal-QA exclusion from issue #270 consistently
 to the source events when that contract is available. Do not infer QA traffic
 from names, paths, browser strings or these ephemeral attempt IDs. Source
 development and the browser QA script do not send production telemetry.
+
+# First-edit funnel
+
+## First launch -> first edit -> exported frame
+
+This PostHog SQL/HogQL query measures official npm installations, not editor
+sessions. It deduplicates the session-scoped `craft:first_edit` event by
+`distinct_id` and accepts only numeric `definition_version = 1`.
+`playground:first_edit` and the legacy `*:first_action` events are excluded.
+
+Set `cohort_start` to the actual version 1 rollout timestamp in UTC before
+running the query. The timestamp below is an example, not a claimed release
+time. Only complete seven-day cohorts enter the denominator. Each later
+step must occur strictly after the preceding step and within seven days of
+the first launch. Counts are unique installations; no install is counted
+twice because it edited in several tabs or sessions.
+
+```sql
+WITH
+    toDateTime('2026-09-15 00:00:00') AS cohort_start,
+    launches AS (
+        SELECT distinct_id, min(timestamp) AS launched_at
+        FROM events
+        WHERE event = 'install:first_launch'
+          AND properties.distribution = 'npm'
+          AND properties.origin_kind = 'local'
+        GROUP BY distinct_id
+        HAVING launched_at >= cohort_start
+           AND launched_at < now() - INTERVAL 7 DAY
+    ),
+    edits AS (
+        SELECT l.distinct_id, min(e.timestamp) AS edited_at
+        FROM launches AS l
+        INNER JOIN events AS e ON e.distinct_id = l.distinct_id
+        WHERE e.event = 'craft:first_edit'
+          AND e.properties.definition_version = 1
+          AND e.properties.distribution = 'npm'
+          AND e.properties.origin_kind = 'local'
+          AND e.timestamp > l.launched_at
+          AND e.timestamp < l.launched_at + INTERVAL 7 DAY
+        GROUP BY l.distinct_id
+    ),
+    exports AS (
+        SELECT l.distinct_id, min(e.timestamp) AS exported_at
+        FROM launches AS l
+        INNER JOIN edits AS d ON d.distinct_id = l.distinct_id
+        INNER JOIN events AS e ON e.distinct_id = l.distinct_id
+        WHERE e.event = 'export:blocking_frame_succeeded'
+          AND e.properties.distribution = 'npm'
+          AND e.properties.origin_kind = 'local'
+          AND e.timestamp > d.edited_at
+          AND e.timestamp < l.launched_at + INTERVAL 7 DAY
+        GROUP BY l.distinct_id
+    )
+SELECT
+    (SELECT count() FROM launches) AS first_launches,
+    (SELECT count() FROM edits) AS first_edits_v1,
+    (SELECT count() FROM exports) AS exported_after_edit_v1
+```
+
+The last step intentionally uses the existing successful-frame event; it
+does not infer export success from an attempt or from activation. Compare
+`first_edits_v1 / first_launches` only when the denominator is nonzero.
+This is a first-week activation cohort, not lifetime adoption or a
+measurement of all camera use. Older installations without a new
+`install:first_launch` are deliberately outside this query.
+
+For Playground analysis, start a separate ordered funnel at
+`playground:opened`, then `playground:first_edit` filtered to
+`definition_version = 1`, with PostHog's same-session restriction.
+Do not use npm first launches as the denominator for hosted Playground
+activity. The application's first-edit boundary is an App mount, whereas
+PostHog's native session boundary may span multiple mounts.

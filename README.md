@@ -284,6 +284,8 @@ Events collected:
 | `project:saved` | User-owned project persistence |
 | `project:opened` | Return to a saved project (age bucket) |
 | `craft:first_action` | Funnel and drop-off analysis |
+| `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 1`) |
+| `playground:first_edit` | First meaningful Playground edit, separate from the Studio funnel |
 | `motion:backend_state` | Motion capability at session start (`none`, `local_kimodo`, or `hosted`) |
 | `motion:generate_blocked` | Generate intent when no motion backend is available |
 | `motion:job_started` | Motion reliability |
@@ -311,6 +313,37 @@ The first npm launch may optionally answer a one-line channel question
 (`x`, `hn`, `reddit`, `github`, `friend`, `other`, or `skip`); `skip` sends no
 acquisition value. Session duration and action counts are buckets, and project
 events never include names, paths, prompts, or timestamps.
+
+### First-edit definition (version 1)
+
+`craft:first_edit` and `playground:first_edit` carry only `edit_kind` and the
+numeric `definition_version: 1`. The closed edit-kind set is `pose_edit`,
+`object_insert`, `cutout_insert`, `object_transform`, `shot_add`, `shot_edit`,
+`camera_key_record`, `rail_edit`, `prompt_block_add`, and `prompt_block_edit`.
+An event requires an actual, successful authoring change through the shared
+semantic hook, whether the change came from the UI, `window.__cozyclay`, or
+MCP live control. Prompt text and scene values are never event properties.
+
+Deduplication is **per editor session (one App mount), not per install**.
+Repeated pointer callbacks, React effects, later edits, undo, and redo cannot
+emit another first edit in that mount. A reload or a fresh editor mount starts
+a new boundary. Studio and Playground use separate event names and never
+contribute to each other's first-edit funnel.
+
+Camera navigation (including look-through fly, orbit, and wheel dolly),
+playback/scrubbing, passive scene or project loading, initialization,
+restoration, tutorial auto-seeding, failed/no-op commands, and undo/redo do
+not qualify. Explicitly recording a camera key or authoring a shot or rail
+does qualify; moving a viewing camera alone does not.
+
+The legacy `craft:first_action` / `playground:first_action` streams retain
+their existing insertion/camera-key triggers and deduplication unchanged
+during migration. Their historical first-launch conversion is not the
+percentage of people who edited or used the app. Do not combine those
+events with version 1 first-edit events in a conversion numerator.
+
+See [the version-filtered ordered funnel query](docs/analytics-queries.md)
+for a new-install cohort with explicit event ordering and a conversion window.
 
 The npm package prints this disclosure once on first launch. Control it at any
 time:

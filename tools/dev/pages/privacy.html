@@ -59,6 +59,8 @@ cclay telemetry on</code></pre>
               <tr><td>install:first_launch, app:session_started, app:session_ended</td><td>Counting installs and sessions; duration and action counts are bucketed</td></tr>
               <tr><td>feature:used</td><td>One signal per feature per session</td></tr>
               <tr><td>$pageview, scene:created, scene:loaded, craft:first_action, activation:completed</td><td>Funnel and drop-off analysis</td></tr>
+              <tr><td>craft:first_edit</td><td>First successful Studio authoring change per editor mount; only a fixed edit-kind label and definition version 1 (not camera navigation, playback, loading, restore, or undo/redo)</td></tr>
+              <tr><td>playground:first_edit</td><td>The same versioned first-edit definition for Playground, counted separately from Studio; no prompts or scene contents</td></tr>
               <tr><td>project:saved, project:opened</td><td>Whether people keep their work (object counts and ages are bucketed; never names or paths)</td></tr>
               <tr><td>motion:backend_state, motion:generate_blocked, motion:job_started, motion:job_succeeded, motion:job_failed</td><td>Motion generation reliability</td></tr>
               <tr><td>export:blocking_frame_succeeded, export:video_succeeded</td><td>Export reliability</td></tr>

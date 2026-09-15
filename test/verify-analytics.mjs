@@ -399,4 +399,151 @@ await Promise.resolve();
 console.log("PASS export lifecycle pairing, async failure/cancellation, durations and duplicate suppression");
 console.log("PASS export allowlists, legacy payloads and analytics failure noninterference");
 console.log("PASS disclosure event/schema tokens and global clock/random failure noninterference");
+
+// First-edit version 1 is a closed vocabulary, never a free-text payload.
+const disclosedEvents = new Set([...privacyHtml.matchAll(/<td>([a-z_]+:[a-z_]+)<\/td>/g)].map((match) => match[1]));
+const editKinds = ["pose_edit", "object_insert", "cutout_insert", "object_transform", "shot_add", "shot_edit", "camera_key_record", "rail_edit", "prompt_block_add", "prompt_block_edit"];
+for (const event of ["craft:first_edit", "playground:first_edit"]) {
+	assert.ok(disclosedEvents.has(event), `${event} has a telemetry disclosure row`);
+	for (const edit_kind of editKinds) assert.deepEqual(sanitizeProps(event, { edit_kind, definition_version: 1, prompt: "private" }), { edit_kind, definition_version: 1 });
+	for (const edit_kind of ["private-name", "path/to/file", 1, true, null]) assert.deepEqual(sanitizeProps(event, { edit_kind }), {});
+	for (const definition_version of ["1", 2, 0, true, "private", null]) assert.deepEqual(sanitizeProps(event, { definition_version }), {});
+}
+
+const { createFirstEditTracker, createSemanticState, semanticEditKind } = await import("../src/semantic-edit.js");
+const { createSceneObject, createCutoutObject, updateSceneObject } = await import("../src/scene-objects.js");
+const { createSceneHistoryStore } = await import("../src/scene-history.js");
+const { createCameraBlock, updateCameraBlock } = await import("../src/camera-block.js");
+const { dispatchLiveFrame } = await import("../src/live-control.js");
+const { addShotAtFrame, resizeShot, renameShot, moveCameraKey } = await import("../src/cuts.js");
+const { createIkState, ikBakeKeyframe, ikTouch } = await import("../src/ardy/ik.js");
+const { copyPhysicsKeys } = await import("../src/ardy/physics-review.js");
+const { Bone } = await import("three");
+const framing = { pos: { x: 0, y: 2, z: 3 }, yaw: 0, pitch: 0, fovDeg: 40 };
+const shot = { id: "shot-1", name: "private shot", startFrame: 0, endFrame: 95, camera: createCameraBlock(), cameraKeys: [] };
+const block = { id: "block-1", startFrame: 0, endFrame: 48, text: "private prompt" };
+const actor = { id: "actor-1", x: 0, pose: { bones: { Head: [0, 0, 0] }, rootY: 0 } };
+const object = createSceneObject("chair", []);
+assert.ok(object);
+const matrix = [
+	["pose_edit", "characters", [actor], (items) => items.map((entry) => ({ ...entry, pose: { ...entry.pose, bones: { Head: [0, 20, 0] } } }))],
+	["object_insert", "objects", [], (items) => [...items, object]],
+	["cutout_insert", "objects", [], (items) => [...items, createCutoutObject({ assetId: "a".repeat(64), aspect: 1, height: 2 }, items)]],
+	["object_transform", "objects", [object], (items) => updateSceneObject(items, object.id, { x: object.x + 1 })],
+	["shot_add", "shots", [], (items) => addShotAtFrame(items, 0, 96, framing)],
+	["shot_edit", "shots", [shot], (items) => resizeShot(items, shot.id, "end", 80, 96)],
+	["camera_key_record", "shots", [shot], (items) => items.map((entry) => ({ ...entry, cameraKeys: [{ id: "key-1", frame: 0, framing }] }))],
+	["rail_edit", "shots", [shot], (items) => items.map((entry) => ({ ...entry, camera: updateCameraBlock(entry.camera, { cameraRail: [{ x: 0, z: 0 }, { x: 2, z: 3 }], mode: "rail" }) }))],
+	["prompt_block_add", "promptClips", [], () => [block]],
+	["prompt_block_edit", "promptClips", [block], (items) => items.map((entry) => ({ ...entry, text: "changed private prompt" }))],
+];
+for (const surface of ["craft", "playground"]) {
+	for (const [kind, domain, before, mutate] of matrix) {
+		const events = [];
+		const observe = createFirstEditTracker((event, props) => events.push({ event, props }));
+		const state = createSemanticState(before, () => {}, (domain, before, after) => observe(surface, domain, before, after), domain);
+		state.edit((value) => structuredClone(value));
+		assert.equal(events.length, 0, `${kind}: unchanged value`);
+		state.edit(mutate);
+		state.edit((value) => structuredClone(value)); // repeated callback / React echo
+		state.edit(mutate); // another actual edit still dedupes at the mount boundary
+		assert.deepEqual(events, [{ event: `${surface}:first_edit`, props: { edit_kind: kind, definition_version: 1 } }], `${surface}: ${kind}`);
+	}
+}
+// Passive writes still advance the before-state. A subsequent edit is measured
+// against the restored document, not an initialization snapshot or old closure.
+for (const excluded of ["initialization", "load", "restore", "tutorial_seed", "undo", "redo", "look_through", "orbit", "fly", "dolly", "playback", "scrub"]) {
+	const events = [];
+	const observe = createFirstEditTracker((...event) => events.push(event));
+	const state = createSemanticState([shot], () => {}, (domain, a, b) => observe("craft", domain, a, b), "shots");
+	const next = [{ ...shot, camera: updateCameraBlock(shot.camera, { followCam: { distance: 8 } }) }];
+	state.set(next);
+	state.edit(() => structuredClone(next));
+	assert.equal(events.length, 0, excluded);
+	state.edit((shots) => renameShot(shots, shot.id, "authored name"));
+	assert.equal(events.length, 1, `${excluded}: subsequent edit`);
+}
+{
+	const events = [];
+	const observe = createFirstEditTracker((...event) => events.push(event));
+	const state = createSemanticState([object], () => {}, (domain, a, b) => observe("craft", domain, a, b), "objects");
+	state.edit((items) => updateSceneObject(items, "missing", { x: 9 }));
+	state.edit((items) => updateSceneObject(items, object.id, { x: object.x }));
+	assert.throws(() => state.edit(() => { throw new Error("rejected"); }), /rejected/);
+	assert.equal(events.length, 0, "failed and no-op reducers cannot emit");
+	// Exercise the actual MCP dispatcher through the same authored state boundary.
+	const reply = await dispatchLiveFrame(JSON.stringify({ type: "cmd", id: "1", name: "update_object", args: {} }), {
+		update_object: () => state.edit((items) => updateSceneObject(items, object.id, { x: object.x + 2 })),
+	});
+	assert.equal(reply.ok, true);
+	assert.equal(events.length, 1);
+	observe("playground", "objects", [], [object]);
+	assert.deepEqual(events.map(([name]) => name), ["craft:first_edit", "playground:first_edit"]);
+	createFirstEditTracker((...event) => events.push(event))("craft", "objects", [], [object]);
+	assert.equal(events.length, 3, "a new App mount starts a new dedupe boundary");
+}
+// Store commits, not pointer previews or undo notifications, are authoring.
+for (const commit of [false, true]) {
+	const events = [];
+	const observe = createFirstEditTracker((...event) => events.push(event));
+	const store = createSceneHistoryStore([object], { onObjects() {}, onCommit: (a, b) => observe("craft", "objects", a, b) });
+	const token = store.begin("MCP batch / pointer drag", () => {});
+	store.applyIn(token, (items) => updateSceneObject(items, object.id, { x: object.x + 1 }));
+	assert.equal(events.length, 0, "uncommitted preview");
+	store.end(token, { commit });
+	assert.equal(events.length, commit ? 1 : 0, "rollback vs commit");
+	store.undo(); store.redo(); store.end(token, { commit: true });
+	assert.equal(events.length, commit ? 1 : 0, "history and duplicate end callbacks");
+}
+{
+	const events = [];
+	const observe = createFirstEditTracker((...event) => events.push(event));
+	// UUID churn does not turn an identical camera key or prompt into an edit.
+	observe("craft", "shots", [{ ...shot, cameraKeys: [{ id: "old", frame: 0, framing }] }], [{ ...shot, cameraKeys: [{ id: "new", frame: 0, framing }] }]);
+	observe("craft", "promptClips", [block], [{ ...block, id: "new-id" }]);
+	observe("craft", "characters", [actor], [{ ...actor, pose: { ...actor.pose, id: "new-library-id", label: "private" } }]);
+	observe("craft", "pose", { Head: [0, 0, 0] }, { Head: [0, 0, 0] });
+	assert.equal(events.length, 0);
+	observe("craft", "pose", { Head: [0, 0, 0] }, { Head: [0, 1, 0] });
+	assert.equal(events[0][1].edit_kind, "pose_edit", "direct FK / IK mutations");
+}
+// A history-only session can have entries predating telemetry (restored state
+// or a navigation gesture). Replaying them must not become the first edit.
+for (const inFlight of [false, true]) {
+	const events = [];
+	const observe = createFirstEditTracker((...event) => events.push(event));
+	let listening = false;
+	const store = createSceneHistoryStore([object], { onObjects() {}, onCommit: (a, b) => { if (listening) observe("craft", "objects", a, b); } });
+	if (inFlight) {
+		const token = store.begin("drag", () => {});
+		store.applyIn(token, (items) => updateSceneObject(items, object.id, { x: object.x + 1 }));
+	} else store.applyAtomic((items) => updateSceneObject(items, object.id, { x: object.x + 1 }));
+	listening = true;
+	store.undo(); store.redo();
+	assert.equal(events.length, 0, "undo/redo alone, including settling an in-flight gesture");
+}
+{
+	const state = createIkState();
+	const bone = new Bone();
+	const joints = new Map([["head", { bone }]]);
+	const bake = () => ikBakeKeyframe(new Map(), state, 0, joints);
+	let before = copyPhysicsKeys(state.keys);
+	bake();
+	assert.equal(semanticEditKind("pose", before, state.keys), null, "untracked IK bake is a no-op");
+	ikTouch(state, "head");
+	bone.rotation.y = 0.2;
+	bake();
+	assert.equal(semanticEditKind("pose", before, state.keys), "pose_edit", "real bone quaternion -> IK key mutation");
+	before = copyPhysicsKeys(state.keys);
+	bake();
+	assert.equal(semanticEditKind("pose", before, state.keys), null, "repeated IK bake / callback echo");
+	const keyed = { ...shot, cameraKeys: [{ id: "key", frame: 0, framing }] };
+	const retimed = { ...keyed, cameraKeys: moveCameraKey(keyed.cameraKeys, "key", 10) };
+	assert.equal(semanticEditKind("shots", [keyed], [retimed]), "shot_edit", "key retiming is not a new record");
+	const crane = updateCameraBlock(shot.camera, { craneHeight: { points: [{ t: 0, height: 1 }, { t: 1, height: 2 }] } });
+	assert.equal(semanticEditKind("shots", [shot], [{ ...shot, camera: crane }]), "rail_edit", "crane authoring");
+	assert.equal(semanticEditKind("shots", [shot], resizeShot([shot], shot.id, "end", 95, 96)), null, "clamped shot boundary is a no-op");
+}
+console.log("first-edit semantic matrix PASS (10 kinds x 2 surfaces; passive/no-op/history/rollback/duplicates)");
+
 console.log("all analytics checks PASS");
