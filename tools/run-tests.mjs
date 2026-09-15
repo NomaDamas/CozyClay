@@ -148,6 +148,7 @@ const NODE_FILES = [
 	"test/verify-scene-assets.mjs",
 	"test/verify-scene-objects.mjs",
 	"test/verify-studio-agent-geometry.mjs",
+	"test/verify-studio-agent-motion.mjs",
 	"test/verify-reference-slots.mjs",
 	"test/verify-scenes.mjs",
 	"test/verify-cozy-scene-node.mjs",

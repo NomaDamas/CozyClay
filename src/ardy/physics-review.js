@@ -224,8 +224,9 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 	};
 	rig.updateMatrixWorld(true);
 	const stamp = physicsKeyStamp(sourceKeys), matrixStamp = rig.matrixWorld.elements.join(",");
+	const environmentKey = JSON.stringify({ floorY, sceneObjects: sceneObjects.map((o) => ({ id: o.id, x: o.x, y: o.y, z: o.z, rot: o.rot, rotX: o.rotX, rotZ: o.rotZ, scaleX: o.scaleX, scaleY: o.scaleY, scaleZ: o.scaleZ, path: o.path ?? null })) });
 	const cached = cache?.value;
-	const cacheHit = cached?.schema === 4 && cached?.rig === rig && cached?.motion === motion && cached?.stamp === stamp && cached?.matrixStamp === matrixStamp;
+	const cacheHit = cached?.schema === 5 && cached?.rig === rig && cached?.motion === motion && cached?.stamp === stamp && cached?.matrixStamp === matrixStamp && cached?.environmentKey === environmentKey;
 	if (cacheHit) { raw = cached.raw; base = cached.base; samples = cached.samples; }
 	else {
 	for (let f = 0; f < count; f += 1) {
@@ -236,7 +237,7 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 		})); samples.push(row);
 		if (f % 12 === 0) { onProgress(Math.round(25 * f / count)); await yieldFrame(); }
 	}
-	if (cache) cache.value = { schema: 4, rig, motion, stamp, matrixStamp, raw, base, samples };
+	if (cache) cache.value = { schema: 5, rig, motion, stamp, matrixStamp, environmentKey, raw, base, samples };
 	}
 	timings.sourceMs = performance.now() - started;
 	const sourceSamples = samples;
@@ -244,8 +245,14 @@ async function reviewCandidate({ rig, motion, chains, fkJoints, sourceKeys, appl
 		const contacts = supportIntervals(samples, fps, overrides, floorY, groundAt);
 		const metrics = physicsMetrics(samples, contacts.masks, fps, floorY, groundAt);
 		onProgress(100);
-		return { candidate: source, contacts, before: metrics, after: { ...metrics }, samples, evaluated: samples,
-			warnings: reviewWarnings(metrics, metrics), unresolved: [], changedFrames: [], skippedAir: [], replayErrors: [], flightFrames: [],
+		const support = supportDiagnostics(samples, fps, floorY);
+		metrics.unsupportedFrames = support.unsupportedFrames; metrics.unsupportedGap = support.unsupportedGap;
+		metrics.forceResidual = support.forceResidual; metrics.momentResidual = support.momentResidual;
+		const warnings = reviewWarnings(metrics, metrics);
+		if (!support.frames.some((row) => row.measured) && samples.length) warnings.push({ frame: 0, reason: "support-unmeasured", value: 0 });
+		if (support.unsupportedFrames) warnings.push({ frame: support.frames.find((row) => row.measured && !row.flight && row.clearance > .025 && row.forceResidual > .22)?.frame ?? 0, reason: "unsupported", value: support.unsupportedGap });
+		return { candidate: source, contacts, before: metrics, after: { ...metrics }, samples, evaluated: samples, support: { before: support, after: support },
+			warnings, unresolved: support.unresolved.map(row => ({ frame: row.frame, reason: "support-force", error: row.residual })), changedFrames: [], skippedAir: [], replayErrors: [], flightFrames: [],
 			protectedFrames: [...protectedFrames], strength: 0, sourceStamp: stamp, motion, rig, performance: { ...timings, totalMs: performance.now() - started, cacheHit, ...sample.stats } };
 	}
 	grounding = inferSupportAlignment(samples, fps, { floorY, overrides, protectedFrames, strength: strength * alignmentScale });
