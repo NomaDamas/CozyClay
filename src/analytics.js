@@ -42,6 +42,11 @@ const EVENT_PROPERTIES = Object.freeze({
 	"playground:first_action": ["action_kind"],
 	"playground:first_edit": ["edit_kind", "definition_version"],
 	"activation:completed": ["activation_path"],
+	"tutorial:started": ["surface", "tutorial_version", "start_source"],
+	"tutorial:step_entered": ["surface", "tutorial_version", "step_kind"],
+	"tutorial:step_completed": ["surface", "tutorial_version", "step_kind", "elapsed_bucket"],
+	"tutorial:completed": ["surface", "tutorial_version", "elapsed_bucket"],
+	"tutorial:dismissed": ["surface", "tutorial_version", "step_kind"],
 });
 const FEATURE_NAMES = new Set([
 	"pose_edit", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
@@ -67,6 +72,13 @@ const EXPORT_PROPERTY_VALUES = Object.freeze({
 	surface: new Set(["studio", "workflow", "embed"]),
 	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
 	failure_code: EXPORT_FAILURE_CODES,
+});
+const TUTORIAL_PROPERTY_VALUES = Object.freeze({
+	surface: new Set(["studio", "playground"]),
+	tutorial_version: new Set([1]),
+	start_source: new Set(["query", "settings", "landing"]),
+	step_kind: new Set(["fly", "walk", "dolly", "orbit", "shot", "rail", "play"]),
+	elapsed_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
 });
 
 let posthog = null;
@@ -157,6 +169,7 @@ export function sanitizeProps(event, props) {
 				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
 			} else if (!MOTION_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		}
+		if (event.startsWith("tutorial:") && !TUTORIAL_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;

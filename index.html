@@ -357,7 +357,9 @@
           <a href="/app/" target="_blank" rel="noopener">Open studio ↗</a>
           <button type="button" id="playground-close">Close</button>
         </div>
-        <script>
+        <script type="module">
+          import { createTutorialAnalytics } from "/src/tutorial-analytics.js";
+
           (() => {
             const box = document.getElementById("playground");
             const section = document.getElementById("try");
@@ -385,9 +387,12 @@
             ];
             const done = new Set();
             let frame = null;
+            let tutorialAnalytics = null;
+            let cancelReady = () => {};
             const renderTutorial = () => {
               const live = box.dataset.state === "live";
               const current = live ? STEPS.find((s) => !done.has(s.kind)) : null;
+              if (live) tutorialAnalytics?.observe(done, current?.kind ?? null);
               stepsEl.innerHTML = STEPS.map((s, i) => `<li data-done="${done.has(s.kind) ? 1 : 0}" data-current="${current === s ? 1 : 0}">${i + 1} ${s.label}</li>`).join("");
               card.hidden = !current;
               if (current) { cardStep.textContent = `${STEPS.indexOf(current) + 1} / ${STEPS.length}`; nowEl.innerHTML = current.how(); }
@@ -397,16 +402,22 @@
             };
             window.addEventListener("message", (event) => {
               if (event.data?.type !== "cozyclay:playground-nav") return;
+              if (!frame || event.source !== frame.contentWindow || event.origin !== window.location.origin) return;
               const kind = event.data.kind;
               if (!STEPS.some((s) => s.kind === kind) || done.has(kind)) return;
               if (kind === "walk") {
                 if (typeof event.data.key === "string") walked.add(event.data.key);
                 if (!WALK_KEYS.every((k) => walked.has(k))) { renderTutorial(); return; }
               }
+              // v1 preserves the existing play signal (transport starts), even
+              // before rail or the other steps; it does not mean playback ended.
               done.add(kind);
               renderTutorial();
             });
-            const stop = () => {
+            const stop = ({ dismiss = true } = {}) => {
+              if (dismiss) tutorialAnalytics?.dismiss();
+              tutorialAnalytics = null;
+              cancelReady();
               if (frame) frame.remove();
               frame = null;
               box.dataset.state = "";
@@ -417,7 +428,9 @@
               renderTutorial();
             };
             start.addEventListener("click", () => {
-              if (!canPlay() || frame) return;
+              if (!canPlay()) return;
+              if (frame) stop({ dismiss: false });
+              tutorialAnalytics = createTutorialAnalytics({ surface: "playground", startSource: "landing" });
               frame = document.createElement("iframe");
               frame.src = SRC;
               frame.title = "CozyClay playground";
@@ -428,13 +441,15 @@
               start.hidden = true;
               const ready = () => {
                 if (box.dataset.state !== "loading") return;
+                cancelReady();
                 box.dataset.state = "live";
                 section.classList.add("playground-live");
                 renderTutorial();
               };
-              const onReady = (event) => { if (event.data?.type === "cozyclay:playground-ready") { ready(); window.removeEventListener("message", onReady); } };
+              const onReady = (event) => { if (event.data?.type === "cozyclay:playground-ready" && event.source === frame?.contentWindow && event.origin === window.location.origin) ready(); };
               window.addEventListener("message", onReady);
-              setTimeout(ready, 15000);
+              const readyTimeout = setTimeout(ready, 15000);
+              cancelReady = () => { clearTimeout(readyTimeout); window.removeEventListener("message", onReady); };
               if (window.posthog?.capture) window.posthog.capture("landing:playground_started");
             });
             full.addEventListener("click", () => { if (frame?.requestFullscreen) frame.requestFullscreen(); });

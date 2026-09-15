@@ -227,6 +227,7 @@ import {
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
 import FirstSuccessGuide from "./first-success-guide.jsx";
 import { CameraTutorial } from "./camera-tutorial.jsx";
+import { createTutorialAnalytics } from "./tutorial-analytics.js";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
 import ResourceStatus, { SaveBlockedDialog } from "./resource-status.jsx";
@@ -653,6 +654,8 @@ export default function App() {
 	// always call the current render's closure (the confirm reads projectDirty).
 	const cameraTutorialQuery = !embedMode && new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera";
 	const [cameraTutorial, setCameraTutorial] = useState(false);
+	const cameraTutorialAnalytics = useRef(null);
+	const [cameraTutorialAttempt, setCameraTutorialAttempt] = useState(0);
 	// The step the tutorial is on, published on the .app root so styles.css can
 	// spotlight the one control that step needs (#211).
 	const [cameraTutorialStep, setCameraTutorialStep] = useState(null);
@@ -673,6 +676,7 @@ export default function App() {
 		const onTutorial = (event) => {
 			if (event.detail?.open === false) {
 				setCameraTutorial(false);
+				cameraTutorialAnalytics.current?.dismiss();
 				return;
 			}
 			void startCameraTutorialRef.current?.({ source: event.detail?.source ?? "settings" });
@@ -3477,6 +3481,10 @@ export default function App() {
 			setTutorialSeedPending(true);
 		}
 		setProjectStartupOpen(false);
+		// Explicit start, including while already open, resets the existing
+		// done/walked component state. Passive renders never create an attempt.
+		cameraTutorialAnalytics.current = createTutorialAnalytics({ surface: "studio", startSource: source });
+		setCameraTutorialAttempt((attempt) => attempt + 1);
 		setCameraTutorial(true);
 		// Frame 0 of a free camera: the first step is looking around, and the
 		// shot camera does not exist yet.
@@ -11152,7 +11160,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					    stage it is teaching. The overlay itself never takes the pointer
 					    (styles.css) — every step is completed in the studio underneath. */}
 					{cameraTutorial && !embedMode && (
-						<CameraTutorial previewing={lookThroughShot} onStepChange={setCameraTutorialStep} onClose={() => setCameraTutorial(false)} />
+						<CameraTutorial key={cameraTutorialAttempt} analytics={cameraTutorialAnalytics.current} previewing={lookThroughShot} onStepChange={setCameraTutorialStep} onClose={() => setCameraTutorial(false)} />
 					)}
 					<div className="stage" id="stage" ref={stageRef} data-render-loop={renderActive ? "always" : "demand"}>
 						{/* Shadows were off, so every castShadow in props.jsx was inert and

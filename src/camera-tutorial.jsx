@@ -327,7 +327,7 @@ export function GestureCue({ kind, walked, leaving = false, onLeft }) {
  * Top-View inset, and never takes the pointer except on its own close button
  * — every step is completed by working the studio underneath it.
  */
-export function CameraTutorial({ previewing = false, onStepChange, onClose }) {
+export function CameraTutorial({ previewing = false, analytics, onStepChange, onClose }) {
 	const [done, setDone] = useState(() => new Set());
 	const [walked, setWalked] = useState(() => new Set());
 	const [cue, setCue] = useState(null);
@@ -363,7 +363,8 @@ export function CameraTutorial({ previewing = false, onStepChange, onClose }) {
 
 	// The player is the last step, and only once there is a rail to ride:
 	// look-through before the dolly exists shows a still frame, which teaches
-	// nothing about the move.
+	// nothing about the move. Analytics v1 observes this existing look-through
+	// boundary, not transport playback or reaching the end of a shot.
 	useEffect(() => {
 		if (!previewing) return;
 		setDone((current) => (!current.has("rail") || current.has("play") ? current : new Set(current).add("play")));
@@ -372,6 +373,12 @@ export function CameraTutorial({ previewing = false, onStepChange, onClose }) {
 	const current = useMemo(() => CAMERA_TUTORIAL_STEPS.find((step) => !done.has(step.kind)) ?? null, [done]);
 	const complete = current === null;
 	const currentKind = current?.kind ?? null;
+
+	// Observe committed progression, outside state updaters (which StrictMode
+	// may replay). The attempt belongs to App and survives effect cleanup/resume.
+	useEffect(() => {
+		analytics?.observe(done, currentKind);
+	}, [analytics, done, currentKind]);
 
 	// The step the operator is on is the studio's business too: App puts it on
 	// the .app root as data-tutorial-step, and styles.css spotlights whichever
@@ -443,7 +450,7 @@ export function CameraTutorial({ previewing = false, onStepChange, onClose }) {
 				data-testid="camera-tutorial-close"
 				aria-label={ko("Close tutorial", "튜토리얼 닫기")}
 				title={ko("Close tutorial", "튜토리얼 닫기")}
-				onClick={() => onClose?.()}
+				onClick={() => { analytics?.dismiss(); onClose?.(); }}
 			>
 				×
 			</button>

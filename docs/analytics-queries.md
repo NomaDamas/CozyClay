@@ -382,3 +382,316 @@ the real sanitizer/capture boundary. It sends no production telemetry and
 does not prove production ingestion. With no backend the existing UI may
 disable Generate; QA reports that limitation and exercises the supported
 programmatic Generate path instead of enabling a disabled button.
+
+# Camera tutorial steps and time to first shot
+
+Issue #271 instruments the existing seven-step tutorials, not a new editing
+definition. Keep Studio and the hosted landing-page Playground separate.
+`feature:used {name: "camera_tutorial"}` remains a legacy feature counter;
+do not add it to the attempt count.
+
+## Version 1 event contract
+
+| Event | Exact properties |
+| --- | --- |
+| `tutorial:started` | `surface`, `tutorial_version`, `start_source` |
+| `tutorial:step_entered` | `surface`, `tutorial_version`, `step_kind` |
+| `tutorial:step_completed` | `surface`, `tutorial_version`, `step_kind`, `elapsed_bucket` |
+| `tutorial:completed` | `surface`, `tutorial_version`, `elapsed_bucket` |
+| `tutorial:dismissed` | `surface`, `tutorial_version`, `step_kind` |
+
+- `surface`: `studio` or `playground`. Playground means the actual landing
+  host and its embedded editor, not a Workflow embed.
+- `tutorial_version`: numeric `1`, never the string `"1"`.
+- `start_source`: `query` (Studio's `?tutorial=camera` entry), `settings`
+  (Studio's Settings/window-event entry), or `landing` (Playground's Start
+  button). Unknown Studio event sources normalize to `settings`.
+- `step_kind`: `fly`, `walk`, `dolly`, `orbit`, `shot`, `rail`, `play`.
+- `elapsed_bucket`: `bucketMs` values `lt1s` (<1 s), `1-3s` ([1, 3) s),
+  `3-10s` ([3, 10) s), `10-30s` ([10, 30) s), `gte30s` (>=30 s).
+  Step completion measures from that step's entry; tutorial completion
+  measures from attempt start. No raw elapsed duration is sent.
+
+Each explicit start creates a new in-memory attempt, including a restart
+while Studio's tutorial is already open. Rerenders and resuming the same
+mounted page keep the attempt and its deduplication state. Closing an
+unfinished tutorial emits one explicit dismissal at its current step;
+closing a completed tutorial does not. Reload starts fresh when the tutorial
+is opened again. No attempt identifier or progress is persisted or sent.
+Leaving a page, a reload, or losing delivery does not fabricate dismissal.
+
+Completion follows each surface's existing rules. Studio's `play` step
+completes when look-through is entered after a rail exists. Playground's
+`play` step uses the editor's existing playback signal; a rail stroke can
+automatically enter preview and start that playback before a separate Play
+click. Neither proves that the viewer watched a whole shot or that an export
+succeeded. In this section
+**first shot** means this existing `play` milestone, not merely adding a shot.
+The two surfaces must not be pooled as if their playback boundaries matched.
+
+Repeated gestures, held keys, rail callbacks and render effects cannot emit
+a second completion for a kind in the same attempt. Existing out-of-order
+interaction is retained: a kind completed before it becomes the current hint
+gets an entry immediately before its completion, so its duration can be
+`lt1s`. It does not imply the visitor read that hint. Analytics initialization
+may finish after interaction; pending tutorial events retain their order and
+client-computed buckets. Opted-out activity is not backfilled.
+
+## Entered, completed, missing completion and elapsed buckets
+
+Run in PostHog SQL/HogQL. Attempt numbers below are **query-local**, inferred
+from `tutorial:started` within the SDK's existing identity/session/window
+boundaries; they are not an extra collected property. An attempt with no
+observed start is excluded instead of joined to a previous visit.
+
+```sql
+WITH numbered AS (
+    SELECT
+        distinct_id,
+        properties.$session_id AS session_id,
+        properties.$window_id AS window_id,
+        properties.surface AS surface,
+        properties.tutorial_version AS tutorial_version,
+        properties.step_kind AS step_kind,
+        properties.elapsed_bucket AS elapsed_bucket,
+        event,
+        timestamp,
+        sum(if(event = 'tutorial:started', 1, 0)) OVER (
+            PARTITION BY distinct_id, properties.$session_id,
+                properties.$window_id, properties.surface,
+                properties.tutorial_version
+            ORDER BY timestamp, if(event = 'tutorial:started', 0, 1), uuid
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS attempt_number
+    FROM events
+    WHERE timestamp >= now() - INTERVAL 7 DAY
+      AND timestamp < now()
+      AND properties.tutorial_version = 1
+      AND properties.surface IN ('studio', 'playground')
+      AND notEmpty(properties.$session_id)
+      AND notEmpty(properties.$window_id)
+      AND event IN (
+          'tutorial:started', 'tutorial:step_entered',
+          'tutorial:step_completed', 'tutorial:completed',
+          'tutorial:dismissed'
+      )
+), per_step AS (
+    SELECT
+        distinct_id, session_id, window_id, surface, tutorial_version,
+        attempt_number, step_kind,
+        max(event = 'tutorial:step_entered') AS entered,
+        max(event = 'tutorial:step_completed') AS completed,
+        argMinIf(elapsed_bucket, timestamp,
+            event = 'tutorial:step_completed') AS completion_bucket
+    FROM numbered
+    WHERE attempt_number > 0
+      AND event IN ('tutorial:step_entered', 'tutorial:step_completed')
+    GROUP BY distinct_id, session_id, window_id, surface,
+        tutorial_version, attempt_number, step_kind
+)
+SELECT
+    surface, tutorial_version, step_kind,
+    countIf(entered = 1) AS entered_attempts,
+    countIf(entered = 1 AND completed = 1) AS completed_attempts,
+    countIf(entered = 1 AND completed = 0) AS entered_without_completion,
+    countIf(entered = 0 AND completed = 1) AS orphan_completions,
+    countIf(completed = 1 AND completion_bucket = 'lt1s') AS elapsed_lt1s,
+    countIf(completed = 1 AND completion_bucket = '1-3s') AS elapsed_1_3s,
+    countIf(completed = 1 AND completion_bucket = '3-10s') AS elapsed_3_10s,
+    countIf(completed = 1 AND completion_bucket = '10-30s') AS elapsed_10_30s,
+    countIf(completed = 1 AND completion_bucket = 'gte30s') AS elapsed_gte30s
+FROM per_step
+GROUP BY surface, tutorial_version, step_kind
+ORDER BY surface, tutorial_version,
+    indexOf(['fly', 'walk', 'dolly', 'orbit', 'shot', 'rail', 'play'], step_kind)
+```
+
+`entered_without_completion` is the abandonment diagnostic, not a guaranteed
+browser-close count. It includes in-progress attempts, opt-out and lost
+telemetry. For settled cohorts, use fixed start bounds ending before the
+observation time and retain later completion events through that observation
+time. A completion that entered out of order is still a completed step.
+
+Window IDs keep separate tabs apart. Missing SDK IDs, session rotation,
+duplicate delivery of a start, or multiple restarts at the same timestamp
+limit inferred pairing; report these as telemetry-quality exclusions rather
+than inventing a stable user or attempt identifier. Do not replace missing
+window IDs with one shared empty bucket. SDK event timestamps order events,
+not the bucket boundaries.
+
+## Time to first shot
+
+Use the same `numbered` CTE from the preceding query and replace `per_step`
+and its final `SELECT` with the following. This measures observed
+start-to-`play` completion per attempt, including out-of-order completion;
+attempts that never reach `play` remain in the denominator.
+
+```sql
+, per_attempt AS (
+    SELECT
+        distinct_id, session_id, window_id, surface, tutorial_version,
+        attempt_number,
+        minIf(timestamp, event = 'tutorial:started') AS started_at,
+        countIf(event = 'tutorial:started') AS starts,
+        minIf(timestamp, event = 'tutorial:step_completed'
+            AND step_kind = 'play') AS first_shot_at,
+        countIf(event = 'tutorial:step_completed'
+            AND step_kind = 'play') AS first_shots,
+        max(event = 'tutorial:completed') AS all_steps_completed,
+        argMinIf(elapsed_bucket, timestamp,
+            event = 'tutorial:completed') AS total_client_bucket
+    FROM numbered
+    WHERE attempt_number > 0
+    GROUP BY distinct_id, session_id, window_id, surface,
+        tutorial_version, attempt_number
+), timed AS (
+    SELECT *,
+        if(first_shots = 0, 'not_reached',
+            multiIf(
+                dateDiff('millisecond', started_at, first_shot_at) < 1000, 'lt1s',
+                dateDiff('millisecond', started_at, first_shot_at) < 3000, '1-3s',
+                dateDiff('millisecond', started_at, first_shot_at) < 10000, '3-10s',
+                dateDiff('millisecond', started_at, first_shot_at) < 30000, '10-30s',
+                'gte30s'
+            )) AS observed_time_to_first_shot
+    FROM per_attempt
+    WHERE starts = 1
+)
+SELECT
+    surface, tutorial_version, observed_time_to_first_shot,
+    count() AS attempts,
+    countIf(all_steps_completed = 1) AS completed_tutorials,
+    groupArrayIf(total_client_bucket,
+        all_steps_completed = 1) AS completed_tutorial_client_buckets
+FROM timed
+GROUP BY surface, tutorial_version, observed_time_to_first_shot
+ORDER BY surface, tutorial_version, observed_time_to_first_shot
+```
+
+This is timestamp-based observed latency. A delayed SDK initialization can
+compress the time between captured events; inspect the client-computed
+`tutorial:completed.elapsed_bucket` alongside it. That total bucket measures
+the complete attempt even when initialization was late, but equals time to
+first shot only when `play` was the final completed step. Do not use
+`step_completed(play).elapsed_bucket` as start-to-shot time: it measures only
+time spent on the play step. Neither query turns a bucket into a precise
+duration or claims live PostHog delivery.
+
+## Relating playback to first edit and export
+
+Use a separate same-session analysis rather than emitting first-edit or
+export events from the tutorial:
+
+1. Cohort on `tutorial:started`, `tutorial_version = 1`, with `surface`
+   split and `start_source` as the entry breakdown.
+2. Identify `tutorial:step_completed {step_kind: "play"}` for the observed
+   first-shot milestone above.
+3. Join the session's existing `craft:first_edit` (Studio) or
+   `playground:first_edit` (Playground), filtered to numeric
+   `definition_version = 1`. The first edit may precede playback: Add shot
+   or authoring a rail is editing, but looking around and the seeded City
+   Block/walk take are not. Do not require playback before the first edit.
+4. Count existing `export:attempt_succeeded` after both first edit and the
+   play milestone, using the export section's `attempt_id` deduplication.
+   Match Studio to export `surface = 'studio'`; any direct embedded export
+   has `surface = 'embed'`, not `playground`. Playground's project-download
+   button is not a frame/video/keyframe-pack export lifecycle success.
+   Do not sum legacy export success events with lifecycle successes.
+
+The following executable query counts **sessions**, not attempts: restarts
+within a session share its earliest tutorial start and first play milestone.
+First edit must occur after that first start, but may precede playback.
+`start_source` is the first tutorial entry in the session. Keep the
+attempt-level queries above for restart and step-abandonment analysis.
+
+```sql
+WITH tutorial_sessions AS (
+    SELECT
+        distinct_id,
+        properties.$session_id AS session_id,
+        properties.surface AS surface,
+        properties.tutorial_version AS tutorial_version,
+        minIf(timestamp, event = 'tutorial:started') AS started_at,
+        argMinIf(properties.start_source, timestamp,
+            event = 'tutorial:started') AS start_source,
+        minIf(timestamp, event = 'tutorial:step_completed'
+            AND properties.step_kind = 'play') AS first_shot_at,
+        countIf(event = 'tutorial:step_completed'
+            AND properties.step_kind = 'play') AS first_shots
+    FROM events
+    WHERE timestamp >= now() - INTERVAL 7 DAY
+      AND timestamp < now()
+      AND properties.tutorial_version = 1
+      AND properties.surface IN ('studio', 'playground')
+      AND notEmpty(properties.$session_id)
+      AND event IN ('tutorial:started', 'tutorial:step_completed')
+    GROUP BY distinct_id, session_id, surface, tutorial_version
+    HAVING countIf(event = 'tutorial:started') > 0
+), edited_sessions AS (
+    SELECT
+        t.distinct_id, t.session_id, t.surface, t.tutorial_version,
+        min(e.timestamp) AS edited_at,
+        1 AS has_edit
+    FROM tutorial_sessions AS t
+    INNER JOIN events AS e
+        ON e.distinct_id = t.distinct_id
+       AND e.properties.$session_id = t.session_id
+    WHERE e.properties.definition_version = 1
+      AND ((t.surface = 'studio' AND e.event = 'craft:first_edit')
+        OR (t.surface = 'playground' AND e.event = 'playground:first_edit'))
+      AND e.timestamp >= t.started_at
+      AND e.timestamp < now()
+    GROUP BY t.distinct_id, t.session_id, t.surface, t.tutorial_version
+), exported_sessions AS (
+    SELECT
+        t.distinct_id, t.session_id, t.surface, t.tutorial_version,
+        uniqExact(e.properties.attempt_id) AS successful_exports
+    FROM tutorial_sessions AS t
+    INNER JOIN edited_sessions AS d
+        ON d.distinct_id = t.distinct_id AND d.session_id = t.session_id
+       AND d.surface = t.surface AND d.tutorial_version = t.tutorial_version
+    INNER JOIN events AS e
+        ON e.distinct_id = t.distinct_id
+       AND e.properties.$session_id = t.session_id
+    WHERE t.first_shots > 0 AND t.first_shot_at >= t.started_at
+      AND e.event = 'export:attempt_succeeded'
+      AND notEmpty(e.properties.attempt_id)
+      AND ((t.surface = 'studio' AND e.properties.surface = 'studio')
+        OR (t.surface = 'playground' AND e.properties.surface = 'embed'))
+      AND e.timestamp >= t.first_shot_at
+      AND e.timestamp >= d.edited_at
+      AND e.timestamp < now()
+    GROUP BY t.distinct_id, t.session_id, t.surface, t.tutorial_version
+)
+SELECT
+    t.surface, t.tutorial_version, t.start_source,
+    count() AS tutorial_sessions,
+    countIf(t.first_shots > 0 AND t.first_shot_at >= t.started_at) AS played_sessions,
+    countIf(d.has_edit = 1) AS edited_sessions_v1,
+    countIf(d.has_edit = 1 AND t.first_shots > 0
+        AND t.first_shot_at >= t.started_at) AS edited_and_played_sessions,
+    countIf(x.successful_exports > 0) AS exported_after_edit_and_play_sessions
+FROM tutorial_sessions AS t
+LEFT JOIN edited_sessions AS d
+    ON d.distinct_id = t.distinct_id AND d.session_id = t.session_id
+   AND d.surface = t.surface AND d.tutorial_version = t.tutorial_version
+LEFT JOIN exported_sessions AS x
+    ON x.distinct_id = t.distinct_id AND x.session_id = t.session_id
+   AND x.surface = t.surface AND x.tutorial_version = t.tutorial_version
+GROUP BY t.surface, t.tutorial_version, t.start_source
+ORDER BY t.surface, t.tutorial_version, t.start_source
+```
+
+The landing host and its editor iframe have different window IDs, so this
+join uses the SDK's existing `distinct_id` and `$session_id`, not the host's
+window ID. Same-session association is not proof of causality or a cross-tab
+authoring link. A session without the required versioned edit or successful
+export stays unmatched; loading a sample never fills the gap. An editor that
+already emitted its mount-scoped first edit before the tutorial started is
+not a new first-edit conversion here. Do not interpret that exclusion as
+evidence that the editor made no later changes.
+
+Apply issue #270's explicit internal-QA exclusion consistently once its
+contract is available. Never infer internal traffic from scene names, URLs
+or camera gestures. These queries are documented SQL, not results claimed
+from a production PostHog run.

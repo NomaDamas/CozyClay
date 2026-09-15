@@ -75,6 +75,10 @@ cclay telemetry on</code></pre>
               <tr><td>export:keyframe_pack</td><td>Legacy Workflow pack handoffs, with numeric entries count and source=workflow; not an additional export attempt</td></tr>
               <tr><td>playground:opened, playground:first_action</td><td>Whether the home-page playground gets used</td></tr>
               <tr><td>hosted:composer_viewed, hosted:login_started, hosted:ticket_created, hosted:result_opened, hosted:opened_in_studio</td><td>Hosted demo funnel</td></tr>
+              <tr><td>tutorial:started</td><td>Camera tutorial attempts on surface (studio or playground), with numeric tutorial_version 1 and start_source (query, settings or landing). Restarting starts a new attempt; no tutorial attempt identifier or user text is sent.</td></tr>
+              <tr><td>tutorial:step_entered, tutorial:dismissed</td><td>Entered steps and explicit dismissal of an unfinished tutorial; surface (studio or playground), numeric tutorial_version 1 and step_kind (fly, walk, dolly, orbit, shot, rail or play). Missing completion can indicate abandonment or missing telemetry; browser close does not promise a dismissal event.</td></tr>
+              <tr><td>tutorial:step_completed</td><td>One completion per step per attempt; surface (studio or playground), numeric tutorial_version 1, step_kind (fly, walk, dolly, orbit, shot, rail or play) and elapsed_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s) since entering that step. No raw timing, prompts, scene contents, names or paths.</td></tr>
+              <tr><td>tutorial:completed</td><td>All seven steps completed; surface (studio or playground), numeric tutorial_version 1 and elapsed_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s) since tutorial start. Sample loading and camera playback do not count as a user edit.</td></tr>
             </tbody>
           </table>
         </div>

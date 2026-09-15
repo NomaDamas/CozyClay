@@ -5,6 +5,7 @@
 // without any test going red: the step table, the signals it listens to, the
 // single mount site and its guard, and the Settings entry point.
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 
 const tutorial = readFileSync(new URL("../src/camera-tutorial.jsx", import.meta.url), "utf8");
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
@@ -85,7 +86,7 @@ expect(
 expect("there is exactly one mount site", (app.match(/<CameraTutorial/g) ?? []).length === 1);
 expect(
 	"it is mounted only while the tutorial is on and outside embeds",
-	/\{cameraTutorial && !embedMode && \(\s*<CameraTutorial previewing=\{lookThroughShot\} onStepChange=\{setCameraTutorialStep\} onClose=\{\(\) => setCameraTutorial\(false\)\} \/>/.test(app),
+	/\{cameraTutorial && !embedMode && \(\s*<CameraTutorial key=\{cameraTutorialAttempt\} analytics=\{cameraTutorialAnalytics\.current\} previewing=\{lookThroughShot\} onStepChange=\{setCameraTutorialStep\} onClose=\{\(\) => setCameraTutorial\(false\)\} \/>/.test(app),
 );
 expect(
 	"the mount sits inside the viewport pane, above the stage",
@@ -275,6 +276,213 @@ expect(
 
 expect("the browser suite is registered", manifest.includes('"test/qa-camera-tutorial-browser.mjs"'));
 expect("and it is in the inventory sweep", manifest.slice(manifest.indexOf("const EXTRA_INVENTORY")).includes("test/qa-camera-tutorial-browser.mjs"));
+
+/* -------------------------------------- executable analytics lifecycle --- */
+
+expect("Studio observes committed done/current state rather than driving gestures", tutorial.includes("analytics?.observe(done, currentKind)") && tutorial.includes("[analytics, done, currentKind]"));
+expect("Studio's close button reports explicit dismissal", tutorial.includes("analytics?.dismiss(); onClose?.();"));
+expect("the window close entry also reports dismissal", /setCameraTutorial\(false\);\s*cameraTutorialAnalytics\.current\?\.dismiss\(\)/.test(app));
+expect("each explicit Studio start creates fresh analytics and resets the mounted progression", start.includes('createTutorialAnalytics({ surface: "studio", startSource: source })') && start.includes("setCameraTutorialAttempt((attempt) => attempt + 1)"));
+expect("tutorial sample seeding still bypasses semantic editing", !/markSemanticEdit|first_edit/.test(seed) && !/markSemanticEdit|first_edit/.test(start));
+
+// Explicit clocks and a manually resolved initialization promise: no gesture,
+// StrictMode replay, or SDK race is allowed to depend on scheduling luck.
+try {
+	const { createTutorialAnalytics } = await import("../src/tutorial-analytics.js");
+	const fixture = (surface = "studio", startSource = "query") => {
+		let clock = 0;
+		let optedOut = false;
+		let initialize;
+		const initialized = new Promise((resolve) => { initialize = resolve; });
+		const events = [];
+		const start = () => createTutorialAnalytics({ surface, startSource }, {
+			now: () => clock,
+			initialize: () => initialized,
+			capture: (event, props) => events.push({ event, props }),
+			optedOut: () => optedOut,
+		});
+		return { events, start, initialize, time: (value) => { clock = value; }, optOut: (value) => { optedOut = value; } };
+	};
+	const named = (fixture, name) => fixture.events.filter(({ event }) => event === `tutorial:${name}`);
+	const hasNoOrphans = (events) => {
+		const entered = new Set();
+		return events.every(({ event, props }) => {
+			if (event === "tutorial:started") entered.clear();
+			if (event === "tutorial:step_entered") entered.add(props.step_kind);
+			return event !== "tutorial:step_completed" || entered.has(props.step_kind);
+		});
+	};
+	for (const surface of ["studio", "playground"]) {
+		const f = fixture(surface, surface === "studio" ? "query" : "landing");
+		const attempt = f.start();
+		const done = new Set();
+		attempt.observe(done, "fly");
+		attempt.observe(done, "fly"); // mount effect replay
+		expect(`${surface}: SDK initialization buffers started and entered`, f.events.length === 0);
+		f.initialize();
+		await attempt.ready;
+		expect(`${surface}: started precedes the first entered exactly once`, f.events.map(({ event }) => event).join() === "tutorial:started,tutorial:step_entered");
+		for (const [index, kind] of kinds.entries()) {
+			f.time((index + 1) * 2000);
+			done.add(kind);
+			attempt.observe(done, kinds[index + 1] ?? null);
+			attempt.observe(done, kinds[index + 1] ?? null); // held keys/repeated rail strokes
+		}
+		expect(`${surface}: all seven completions occur once`, named(f, "step_completed").map(({ props }) => props.step_kind).join() === kinds.join());
+		expect(`${surface}: all seven entered markers occur once`, named(f, "step_entered").map(({ props }) => props.step_kind).join() === kinds.join());
+		expect(`${surface}: elapsed step buckets use first entry time`, named(f, "step_completed").every(({ props }) => props.elapsed_bucket === "1-3s"));
+		expect(`${surface}: completion is once with attempt elapsed`, named(f, "completed").length === 1 && named(f, "completed")[0].props.elapsed_bucket === "10-30s");
+		attempt.dismiss();
+		attempt.dismiss();
+		expect(`${surface}: closing a finished tutorial is not dismissal`, named(f, "dismissed").length === 0);
+		expect(`${surface}: every completed kind has an earlier entry`, hasNoOrphans(f.events));
+		expect(`${surface}: metadata contains only closed fields, never attempt IDs or content`, f.events.every(({ props }) => props.surface === surface && props.tutorial_version === 1 && Object.keys(props).every((key) => ["surface", "tutorial_version", "start_source", "step_kind", "elapsed_bucket"].includes(key))));
+	}
+	{
+		const f = fixture();
+		const attempt = f.start();
+		attempt.observe(new Set(), "fly");
+		f.time(4000);
+		attempt.observe(new Set(["rail"]), "fly");
+		attempt.dismiss();
+		attempt.dismiss();
+		attempt.observe(new Set(kinds), null);
+		f.initialize();
+		await attempt.ready;
+		expect("out-of-order completion inserts entry without advancing navigation", named(f, "step_entered").map(({ props }) => props.step_kind).join() === "fly,rail" && named(f, "step_completed").length === 1 && hasNoOrphans(f.events));
+		expect("explicit unfinished close emits one dismissal for the actual current step", named(f, "dismissed").length === 1 && named(f, "dismissed")[0].props.step_kind === "fly");
+		expect("post-dismiss callbacks cannot complete an attempt", named(f, "completed").length === 0);
+	}
+	{
+		const f = fixture("studio", "private path or arbitrary event source");
+		let attempt = f.start();
+		attempt.observe(new Set(["fly"]), "walk");
+		f.time(6000);
+		attempt = f.start(); // explicit restart, including while still open
+		attempt.observe(new Set(), "fly");
+		f.time(8000);
+		attempt.observe(new Set(["fly"]), "walk");
+		f.initialize();
+		await attempt.ready;
+		expect("restart creates a fresh started boundary and resets completion dedupe/timing", named(f, "started").length === 2 && named(f, "step_completed").length === 2 && named(f, "step_completed")[1].props.elapsed_bucket === "1-3s" && hasNoOrphans(f.events));
+		expect("untrusted start sources normalize to settings", named(f, "started").every(({ props }) => props.start_source === "settings"));
+		expect("restart does not invent a close event", named(f, "dismissed").length === 0);
+	}
+	{
+		const f = fixture();
+		const attempt = f.start();
+		attempt.observe(new Set(["fly"]), "walk");
+		f.initialize();
+		await attempt.ready;
+		const beforeLeave = f.events.length;
+		f.time(45000); // no invocation on visibility/pagehide/unmount
+		expect("leaving mid-step produces no synthetic dismissal or completion", f.events.length === beforeLeave && named(f, "dismissed").length === 0 && named(f, "completed").length === 0);
+		attempt.observe(new Set(["fly"]), "walk"); // same-mounted BFCache resume
+		attempt.observe(new Set(["fly", "walk"]), "dolly");
+		expect("same-mounted resume retains dedupe and the original step timer", named(f, "started").length === 1 && named(f, "step_completed").length === 2 && named(f, "step_completed")[1].props.elapsed_bucket === "gte30s");
+		const reload = f.start(); // a new document has no persisted attempt
+		reload.observe(new Set(), "fly");
+		await reload.ready;
+		expect("reload starts fresh without an invented close event", named(f, "started").length === 2 && named(f, "dismissed").length === 0);
+	}
+	// Execute the real landing tutorial script, not a reimplementation of its
+	// done/walked progression. Readiness is a message, never its timeout fallback.
+	{
+		const f = fixture("playground", "landing");
+		const attempts = [];
+		const listeners = new Map();
+		const element = () => ({
+			dataset: {}, classList: { add() {}, remove() {} },
+			addEventListener(name, listener) { this[name] = listener; },
+			appendChild(child) { this.child = child; }, remove() {},
+			contentWindow: { postMessage() {} },
+		});
+		const elements = new Map();
+		const get = (id) => {
+			if (!elements.has(id)) elements.set(id, element());
+			return elements.get(id);
+		};
+		const window = {
+			location: { origin: "https://cozyclay.org" },
+			addEventListener(name, listener) {
+				if (!listeners.has(name)) listeners.set(name, new Set());
+				listeners.get(name).add(listener);
+			},
+			removeEventListener(name, listener) { listeners.get(name)?.delete(listener); },
+		};
+		const script = landing.match(/<script(?: type="module")?>\s*([\s\S]*?const box = document\.getElementById\("playground"\)[\s\S]*?)<\/script>/)?.[1];
+		if (!script) throw new Error("landing tutorial script missing");
+		runInNewContext(script.replace(/import \{ createTutorialAnalytics \} from [^;]+;/, ""), {
+			window, document: { getElementById: get, createElement: element, querySelectorAll: () => [] },
+			matchMedia: () => ({ matches: true }), setTimeout: () => 1, clearTimeout() {},
+			createTutorialAnalytics(metadata) {
+				expect("landing supplies its own safe surface/source", metadata.surface === "playground" && metadata.startSource === "landing");
+				const attempt = f.start(); attempts.push(attempt); return attempt;
+			},
+		});
+		const message = (data, source = get("playground").child?.contentWindow, origin = window.location.origin) => {
+			for (const listener of [...(listeners.get("message") ?? [])]) listener({ data, source, origin });
+		};
+		const nav = (kind, key) => message({ type: "cozyclay:playground-nav", kind, key });
+		get("playground-start").click();
+		message({ type: "cozyclay:playground-ready" });
+		f.initialize();
+		await attempts[0]?.ready;
+		message({ type: "cozyclay:playground-nav", kind: "fly" }, {});
+		message({ type: "cozyclay:playground-nav", kind: "fly" }, get("playground").child.contentWindow, "https://other.example");
+		expect("landing ignores signals from another window or origin", named(f, "step_completed").length === 0);
+		for (const kind of kinds) {
+			if (kind === "walk") {
+				for (const key of ["w", "a", "s", "d", "q"]) { nav(kind, key); nav(kind, key); }
+				expect("landing walk waits for the sixth distinct key", !named(f, "step_completed").some(({ props }) => props.step_kind === "walk"));
+				nav(kind, "e");
+			} else nav(kind);
+			nav(kind);
+		}
+		expect("real landing handlers complete all seven once", named(f, "step_completed").map(({ props }) => props.step_kind).join() === kinds.join() && named(f, "completed").length === 1);
+		get("playground-close").click();
+		expect("landing completed close is not a dismissal", named(f, "dismissed").length === 0);
+		get("playground-start").click();
+		message({ type: "cozyclay:playground-ready" });
+		nav("fly");
+		get("playground-close").click();
+		get("playground-close").click();
+		await attempts[1]?.ready;
+		expect("landing reopen resets progression and explicit close dedupes", named(f, "started").length === 2 && named(f, "step_completed").length === 8 && named(f, "dismissed").length === 1 && named(f, "dismissed")[0].props.step_kind === "walk");
+		get("playground-start").click();
+		message({ type: "cozyclay:playground-ready" });
+		nav("fly");
+		const oldFrame = get("playground").child.contentWindow;
+		get("playground-start").click(); // explicit restart while unfinished/open
+		message({ type: "cozyclay:playground-ready" }, oldFrame);
+		expect("landing restart rejects readiness from the replaced iframe", get("playground").dataset.state === "loading");
+		message({ type: "cozyclay:playground-ready" });
+		message({ type: "cozyclay:playground-nav", kind: "rail" }, oldFrame);
+		nav("fly");
+		await attempts[2]?.ready;
+		await attempts[3]?.ready;
+		expect("real unfinished landing restart creates a new attempt without synthetic dismissal", named(f, "started").length === 4 && named(f, "dismissed").length === 1);
+		expect("real unfinished landing restart resets done and ignores replaced-frame gestures", named(f, "step_completed").length === 10 && named(f, "step_completed").filter(({ props }) => props.step_kind === "fly").length === 4 && hasNoOrphans(f.events));
+	}
+	for (const optOutAt of ["start", "during-init", "after-init"]) {
+		const f = fixture();
+		if (optOutAt === "start") f.optOut(true);
+		const attempt = f.start();
+		attempt.observe(new Set(), "fly");
+		if (optOutAt === "during-init") f.optOut(true);
+		f.initialize();
+		await attempt.ready;
+		if (optOutAt === "after-init") f.optOut(true);
+		const before = f.events.length;
+		attempt.observe(new Set(["fly"]), "walk");
+		f.optOut(false);
+		attempt.observe(new Set(kinds), null);
+		attempt.dismiss();
+		expect(`opt-out ${optOutAt} drops pending/future events without opt-in replay`, f.events.length === before && (optOutAt === "after-init" || before === 0));
+	}
+} catch (error) {
+	expect("executable tutorial analytics lifecycle fixtures", false, error.stack);
+}
 
 if (failures) {
 	console.error(`${failures} FAILURES`);

@@ -772,4 +772,58 @@ for (const inFlight of [false, true]) {
 }
 console.log("first-edit semantic matrix PASS (10 kinds x 2 surfaces; passive/no-op/history/rollback/duplicates)");
 
+// Tutorial version 1 permits only closed enums and existing elapsed buckets.
+const tutorialSchemas = {
+	"tutorial:started": ["surface", "tutorial_version", "start_source"],
+	"tutorial:step_entered": ["surface", "tutorial_version", "step_kind"],
+	"tutorial:step_completed": ["surface", "tutorial_version", "step_kind", "elapsed_bucket"],
+	"tutorial:completed": ["surface", "tutorial_version", "elapsed_bucket"],
+	"tutorial:dismissed": ["surface", "tutorial_version", "step_kind"],
+};
+const tutorialValues = {
+	surface: ["studio", "playground"],
+	tutorial_version: [1],
+	start_source: ["query", "settings", "landing"],
+	step_kind: ["fly", "walk", "dolly", "orbit", "shot", "rail", "play"],
+	elapsed_bucket: ["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"],
+};
+const tutorialPayload = {
+	surface: "studio", tutorial_version: 1, start_source: "query",
+	step_kind: "fly", elapsed_bucket: "1-3s",
+	attempt_id: "a".repeat(32), prompt: "secret", text: "secret",
+	name: "private", path: "/private", url: "https://private", file: "private",
+	elapsed_ms: 1234, definition_version: 1,
+};
+const tutorialDisclosure = new Map();
+for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
+	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)]
+		.map((cell) => cell[1].replace(/<[^>]*>/g, " "));
+	for (const event of cells[0]?.match(/\btutorial:[a-z_]+\b/g) ?? []) {
+		tutorialDisclosure.set(event, cells[1] ?? "");
+	}
+}
+for (const [event, keys] of Object.entries(tutorialSchemas)) {
+	const expected = Object.fromEntries(keys.map((key) => [key, tutorialPayload[key]]));
+	assert.deepEqual(sanitizeProps(event, tutorialPayload), expected, `${event}: exact property contract`);
+	for (const key of keys) {
+		for (const value of tutorialValues[key]) {
+			assert.deepEqual(sanitizeProps(event, { [key]: value }), { [key]: value }, `${event}: valid ${key}`);
+		}
+		for (const value of ["private", "path/to/file", "private text", 0, 2, "1", true, null, {}, [], NaN, Infinity]) {
+			assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event}: rejects unlisted ${key}`);
+		}
+		const disclosed = new Set(tutorialDisclosure.get(event)?.match(/[a-z0-9][a-z0-9_-]*/g) ?? []);
+		assert.ok(disclosed.has(key), `${event}: discloses property token ${key}`);
+		for (const value of tutorialValues[key]) {
+			assert.ok(disclosed.has(String(value)), `${event}: discloses enum token ${value}`);
+		}
+	}
+	assert.deepEqual(sanitizeProps(event, null), {});
+	assert.deepEqual(sanitizeProps(event, []), {});
+}
+assert.deepEqual([...tutorialDisclosure.keys()].sort(), Object.keys(tutorialSchemas).sort());
+assert.deepEqual(sanitizeProps("tutorial:started", { surface: "embed", start_source: "resume" }), {});
+assert.deepEqual(sanitizeProps("tutorial:step_completed", { surface: "workflow", step_kind: "look" }), {});
+console.log("PASS tutorial event/property/enumeration allowlists and disclosure tokens");
+
 console.log("all analytics checks PASS");
