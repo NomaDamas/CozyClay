@@ -111,6 +111,8 @@ const NODE_FILES = [
 	"test/verify-mp4-duration.mjs",
 	"test/verify-mcp-invariants.mjs",
 	"test/verify-motion-edit.mjs",
+	"test/verify-motion-readiness.mjs",
+	"test/verify-motion-readiness-ui.mjs",
 	"test/verify-multimodel-ingest.mjs",
 	"test/verify-offscreen-export.mjs",
 	"test/verify-export-capture.mjs",
@@ -187,6 +189,7 @@ const NODE_FILES = [
 ];
 
 const BROWSER_FILES = [
+	"test/qa-motion-readiness-browser.mjs",
 	"test/qa-export-recovery-browser.mjs",
 	"test/verify-camera-mode-browser.mjs",
 	"test/verify-camera-rail-browser.mjs",
@@ -220,7 +223,7 @@ const BROWSER_FILES = [
 // The inventory sweep only picks up `verify*.mjs`; a browser suite named for
 // the QA runner it needs is listed here so it still shows up in the manifest
 // (as an EXCLUDE with its reason) instead of going unmentioned.
-const EXTRA_INVENTORY = ["test/qa-export-recovery-browser.mjs", "test/qa-agent-view-toggle-browser.mjs", "test/qa-camera-tutorial-browser.mjs", "test/qa-tutorial-analytics-browser.mjs", "test/qa-camera-pointer-lock-browser.mjs", "test/qa-first-edit-browser.mjs", "test/qa-ia-tail-browser.mjs", "test/qa-keyframe-pack-browser.mjs", "test/qa-preview-browser.mjs", "test/qa-project-resources-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-playback-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs", "test/qa-view-menu-browser.mjs"];
+const EXTRA_INVENTORY = ["test/qa-motion-readiness-browser.mjs", "test/qa-export-recovery-browser.mjs", "test/qa-agent-view-toggle-browser.mjs", "test/qa-camera-tutorial-browser.mjs", "test/qa-tutorial-analytics-browser.mjs", "test/qa-camera-pointer-lock-browser.mjs", "test/qa-first-edit-browser.mjs", "test/qa-ia-tail-browser.mjs", "test/qa-keyframe-pack-browser.mjs", "test/qa-preview-browser.mjs", "test/qa-project-resources-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-playback-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs", "test/qa-view-menu-browser.mjs"];
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })

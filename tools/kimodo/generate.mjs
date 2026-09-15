@@ -53,9 +53,9 @@ const SSH_OPTS = [
 export const DEFAULT_MODEL = "Kimodo-SOMA-RP-v1.1";
 export const KIMODO_BACKENDS = {
   "nvidia-cuda": { repo: "$HOME/.cozyclay/kimodo", entry: ".venv/bin/kimodo_gen", mode: "cuda", promptFlag: null, durationFlag: "--duration", stepsFlag: "--diffusion_steps", outputFlag: "--output" },
-  "kimodo-mlx": { repo: "$HOME/.cozyclay/kimodo-mlx", entry: "$HOME/.cozyclay/kimodo-mlx-venv/bin/python", mode: "mlx", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: null },
-  "kimodo.cpp-metal": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-metal/kmd-generate", mode: "cpp", outputFlag: null },
-  "kimodo.cpp-cpu": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-cpu/kmd-generate", mode: "cpp", outputFlag: null },
+  "kimodo-mlx": { repo: "$HOME/.cozyclay/kimodo-mlx", entry: "$HOME/.cozyclay/kimodo-mlx-venv/bin/python", motion: "$HOME/.cozyclay/kimodo-mlx/models/nvidia-soma-rp-v1.1", text: "$HOME/.cozyclay/kimodo-mlx/models/llm2vec-text-bundle", mode: "mlx", promptFlag: "--prompt", framesFlag: "--frames", stepsFlag: "--steps", outputFlag: null },
+  "kimodo.cpp-metal": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-metal/kmd-generate", motion: "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", text: "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", mode: "cpp", outputFlag: null },
+  "kimodo.cpp-cpu": { repo: "$HOME/.cozyclay/kimodo.cpp", entry: "build-cpu/kmd-generate", motion: "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", text: "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", mode: "cpp", outputFlag: null },
 };
 
 /** Build argv for an installed Kimodo route without spawning it. */
@@ -65,8 +65,8 @@ export function buildBackendCommand({ backend = "nvidia-cuda", repo, model, prom
   const root = repo || spec.repo;
   const entry = spec.entry.startsWith("$HOME/") ? spec.entry : `${root}/${spec.entry}`;
   const args = [];
-  if (spec.mode === "mlx") args.push(spec.promptFlag, prompt, "--motion", motionWeights || process.env.CCLAY_KIMODO_MLX_MOTION || "$HOME/.cozyclay/kimodo-mlx/models/nvidia-soma-rp-v1.1", "--text", textBundle || process.env.CCLAY_KIMODO_MLX_TEXT || "$HOME/.cozyclay/kimodo-mlx/models/llm2vec-text-bundle", spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
-  else if (spec.mode === "cpp") args.push(motionWeights || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", textBundle || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", promptFile || "$HOME/.cozyclay/kimodo.cpp/prompt.txt", String(frames), String(steps), String(Number.isInteger(seed) ? seed : 42), outputDir || output);
+  if (spec.mode === "mlx") args.push(spec.promptFlag, prompt, "--motion", motionWeights || process.env.CCLAY_KIMODO_MLX_MOTION || spec.motion, "--text", textBundle || process.env.CCLAY_KIMODO_MLX_TEXT || spec.text, spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
+  else if (spec.mode === "cpp") args.push(motionWeights || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || spec.motion, textBundle || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || spec.text, promptFile || "$HOME/.cozyclay/kimodo.cpp/prompt.txt", String(frames), String(steps), String(Number.isInteger(seed) ? seed : 42), outputDir || output);
   else args.push(prompt, spec.durationFlag, duration, "--diffusion_steps", String(steps), "--model", model);
   if (spec.mode !== "cpp" && Number.isInteger(seed)) args.push("--seed", String(seed));
   if (spec.outputFlag) args.push(spec.outputFlag, output);

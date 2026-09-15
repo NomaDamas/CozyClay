@@ -239,15 +239,19 @@ expect(
 expect(
 	"ARDY bridge health recovers after the sidecar starts late",
 	app.includes("const BRIDGE_RECHECK_MS = 3000;") &&
-	app.includes("const refreshBridge = () => checkBridge().then") &&
+	app.includes("if (inflight) return inflight;") &&
+	app.includes("inflight = checkBridge().then") &&
 	app.includes("const id = window.setInterval(refreshBridge, BRIDGE_RECHECK_MS);") &&
-	app.includes("return () => {") &&
+	app.includes('window.addEventListener("focus", refreshBridge);') &&
+	app.includes('window.removeEventListener("focus", refreshBridge);') &&
 	app.includes("window.clearInterval(id);"),
 );
 expect(
-	"disabled Prompt Block generation explains the exact missing prerequisite",
-	app.includes('ko("Waiting for the ARDY bridge — it reconnects automatically"') &&
-	app.includes('ko("Add a prompt block and describe its motion first"'),
+	"Prompt Block generation has request-specific readiness and a nearby recovery path",
+	app.includes("motionReadinessMessage(readinessState)") &&
+	app.includes("<MotionReadiness state={readinessState}") &&
+	app.includes("onSetup={openMotionSetup} onRetry={recheckMotionHealth}") &&
+	app.includes("!promptClips.some((clip) => clip.text.trim())"),
 );
 expect("generated motion anchors frame zero at the target character", app.includes("anchorX: targetCharacter.x") && app.includes("anchorZ: targetCharacter.z") && app.includes("anchorFrame: 0"));
 expect("returned playback has no CozyClay root coordinate warp", !app.includes("warpMotionRootToPath"));

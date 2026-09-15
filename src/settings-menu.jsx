@@ -15,10 +15,23 @@ const LANGUAGES = [
 	{ id: "ko", label: "한국어", action: "한국어로 전환" },
 ];
 
-export default function SettingsMenu() {
+export default function SettingsMenu({ motionSetup, motionSetupReveal = 0 }) {
 	const [open, setOpen] = useState(false);
+	const [setupOpen, setSetupOpen] = useState(false);
 	const [optedOut, setOptedOut] = useState(getAnalyticsOptOut);
 	const triggerRef = useRef(null);
+	const setupRef = useRef(null);
+
+	// Generation setup is an app setting, never a document edit. The same
+	// popover is revealed by the contextual action beside Generate.
+	useEffect(() => {
+		if (!motionSetupReveal) return;
+		setOpen(true);
+		setSetupOpen(true);
+	}, [motionSetupReveal]);
+	useEffect(() => {
+		if (open && setupOpen) setupRef.current?.focus();
+	}, [open, setupOpen, motionSetupReveal]);
 
 	// Dismissal mirrors the project menu: listen only while open, ignore
 	// presses inside the wrap so the trigger keeps toggling, close on Escape
@@ -65,6 +78,21 @@ export default function SettingsMenu() {
 			</button>
 			{open && (
 				<div className="project-menu settings-menu" role="group" aria-label={ko("Settings", "설정")}>
+					{/* Motion readiness setup (#277): separate from privacy controls. */}
+					{motionSetup && (
+						<>
+							<button
+								type="button"
+								data-testid="settings-motion-setup"
+								aria-expanded={setupOpen}
+								ref={setupRef}
+								onClick={() => setSetupOpen((value) => !value)}
+							>
+								{ko("Motion generation", "모션 생성")}
+							</button>
+							{setupOpen && motionSetup}
+						</>
+					)}
 					<h4>{ko("Language", "언어")}</h4>
 					{LANGUAGES.map((language) => (
 						<button

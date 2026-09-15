@@ -1601,7 +1601,14 @@ const server = createServer((req, res) => {
 				log(200);
 			})
 			.catch((err) => {
-				sendJson(res, 503, { ok: false, reason: err.message });
+				// The selected Kimodo route is configured even when its probe fails;
+				// expose only the safe backend bucket and boolean configuration state.
+				sendJson(res, 503, {
+					ok: false,
+					backend: "local_kimodo",
+					host_configured: Boolean(process.env.CCLAY_KIMODO_HOST?.trim()),
+					reason: err.message,
+				});
 				log(503);
 			});
 		return;

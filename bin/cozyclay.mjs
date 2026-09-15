@@ -177,11 +177,15 @@ function serveFile(res, path) {
 
 // Forward /ardy to the sidecar. Same contract as the Vite dev proxy, so the
 // browser code needs no build-time knowledge of how it was launched.
-function proxyToBridge(req, res) {
+function proxyToBridge(req, res, configured) {
 	if (!bridge || bridgePort === null || bridge.exitCode !== null || bridge.signalCode !== null) {
 		req.resume();
 		res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
-		res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		if (req.url.split("?")[0] === "/ardy/health") {
+			res.end(JSON.stringify({ ok: false, backend: configured ? "local_kimodo" : "none", host_configured: configured, reason: configured ? "unreachable" : "unconfigured", capabilities: { lineEdit: false }, error: "motion sidecar is not running" }));
+		} else {
+			res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		}
 		return;
 	}
 	const upstream = httpRequest(
@@ -194,8 +198,12 @@ function proxyToBridge(req, res) {
 	upstream.on("error", () => {
 		// An absent sidecar is an expected state, not a crash: the app treats a
 		// failed probe as "generation unavailable" and carries on.
-		res.writeHead(503, { "content-type": "application/json" });
-		res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+		if (req.url.split("?")[0] === "/ardy/health") {
+			res.end(JSON.stringify({ ok: false, backend: configured ? "local_kimodo" : "none", host_configured: configured, reason: configured ? "unreachable" : "unconfigured", capabilities: { lineEdit: false }, error: "motion sidecar is not running" }));
+		} else {
+			res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		}
 	});
 	req.pipe(upstream);
 }
@@ -464,7 +472,7 @@ server = createServer((req, res) => {
 	// directory (cskel27-rest.json), and those files live in dist/, not behind
 	// the sidecar. Same rule as the Vite dev proxy bypass.
 	if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(url.pathname)) {
-		proxyToBridge(req, res);
+		proxyToBridge(req, res, opts.motion && Boolean(kimodoHost));
 		return;
 	}
 	let rel;

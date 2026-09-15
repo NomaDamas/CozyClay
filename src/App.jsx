@@ -234,6 +234,8 @@ import ResourceStatus, { SaveBlockedDialog } from "./resource-status.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
 import ResultModal from "./result-modal.jsx";
 import SettingsMenu from "./settings-menu.jsx";
+import { hasLineEditCapability, motionReadiness } from "./motion-readiness.js";
+import { MotionReadiness, MotionSetup, motionReadinessMessage } from "./motion-readiness-ui.jsx";
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
@@ -386,7 +388,6 @@ import {
 	GIZMO_HOTKEYS,
 	HIERARCHY_INSPECTOR_TITLES,
 	KeyLightPuck,
-	LINE_CAPABILITY_RETRY_MS,
 	LINE_CURVE_MARKER_STRIDE,
 	LINE_CURVE_REFUSALS,
 	LINE_EDIT_DEFAULT_TRACK,
@@ -2274,6 +2275,11 @@ export default function App() {
 	}, []);
 	const [glContextLost, setGlContextLost] = useState(false);
 	const [bridge, setBridge] = useState(null);
+	const bridgeRefreshRef = useRef(null);
+	const [bridgeChecking, setBridgeChecking] = useState(false);
+	const [motionSetupReveal, setMotionSetupReveal] = useState(0);
+	const [motionSetupKind, setMotionSetupKind] = useState("prompt");
+	const generationPendingRef = useRef(false);
 	const [ardyPrompt, setArdyPrompt] = useState("");
 	const [ardyDuration, setArdyDuration] = useState(4); // default clip length in seconds; aligned with the recommended 3-5 s block range
 	// Optional native-ARDY seed: empty string = omit from the request (the
@@ -7654,32 +7660,36 @@ export default function App() {
 	// second; a one-shot failed probe left Generate disabled until reload.
 	useEffect(() => {
 		let alive = true;
+		let inflight = null;
 		// The poll answer is almost always identical to the last one; keeping the
 		// previous object identity skips a full App re-render per poll. Each of
 		// those renders costs ~80ms of main thread on this tree, which read as a
 		// periodic hitch while orbiting/flying the camera.
-		const refreshBridge = () => checkBridge().then((state) => {
-			if (!alive) return;
-			if (state.ok) trackFeature("mcp_connected");
-			setBridge((previous) => (
-				previous &&
-				previous.ok === state.ok &&
-				previous.host === state.host &&
-				previous.encoder === state.encoder &&
-				previous.device === state.device &&
-				previous.extractionBackend === state.extractionBackend &&
-				previous.reason === state.reason
-					? previous
-					: state
-			));
-		});
+		const refreshBridge = () => {
+			if (inflight) return inflight;
+			inflight = checkBridge().then((state) => {
+				if (!alive) return;
+				if (state.ok) trackFeature("mcp_connected");
+				setBridge((previous) => JSON.stringify(previous) === JSON.stringify(state) ? previous : state);
+				setLineEditBackend(hasLineEditCapability(state));
+			}).finally(() => { inflight = null; });
+			return inflight;
+		};
+		bridgeRefreshRef.current = refreshBridge;
 		refreshBridge();
 		const id = window.setInterval(refreshBridge, BRIDGE_RECHECK_MS);
+		window.addEventListener("focus", refreshBridge);
 		return () => {
 			alive = false;
 			window.clearInterval(id);
+			window.removeEventListener("focus", refreshBridge);
 		};
 	}, []);
+
+	function recheckMotionHealth() {
+		setBridgeChecking(true);
+		return bridgeRefreshRef.current().finally(() => setBridgeChecking(false));
+	}
 
 	// QA/programmatic requests must use the current render's same generation path.
 	liveStateRef.current.runArdy = runArdy;
@@ -7690,7 +7700,10 @@ export default function App() {
 		// early. A pass waits for the fully packaged payload at the queue boundary.
 		// The queue independently checks readiness; telemetry failure cannot
 		// enable or disable generation.
-		if (motionPreflightReason(bridge, options)) request.preflight(bridge, options);
+		if (motionPreflightReason(bridge, options)) {
+			request.preflight(bridge, options);
+			setToast(motionReadinessMessage(motionReadiness(bridge, options)));
+		}
 		return request;
 	}
 
@@ -9494,67 +9507,11 @@ function resizePromptClip(id, edge, rawFrame) {
 		// move fx/fy, which the comparison sees on its own.
 	}, [lineEditMode, lineCurve, lookThroughShot, preview, ikMode]);
 
-	// Wave-2 capability preflight. `checkBridge` reports health only, so the
-	// line-edit route is probed here: today's bridge IGNORES unknown request
-	// fields, which means an ungated POST would come back as a plausible but
-	// completely unrelated fresh take. Absence of the capability is a refusal,
-	// never an attempt. Both the object and array spellings are accepted so
-	// M4's health payload can choose either.
-	//
-	// SELF-HEALING, because the answer is allowed to arrive late. The bridge
-	// derives the flag from a lazy ssh probe of the ProjFlow box (~3 s cold,
-	// cached for 5 s), so ONE fetch at the moment the bridge came up could catch
-	// a cold cache, a box still waking or a transient ssh failure and latch
-	// `false` for the whole session — the panel then says "not connected yet"
-	// forever and no pull ever previews, which is exactly the reported bug. So:
-	// while the bridge is up and the capability is still false, ask again every
-	// LINE_CAPABILITY_RETRY_MS, and ask IMMEDIATELY when the artist enters the
-	// mode (lineEditMode is a dependency for that reason — entering is the one
-	// moment the answer is about to matter). A confirmed capability stops the
-	// polling: the effect re-runs when the flag flips and returns early.
-	//
-	// What does NOT change is the gate itself. Retrying is a way to learn the
-	// truth sooner, never a reason to proceed without it — nothing here ever
-	// sets the flag on anything weaker than a health payload that positively
-	// says lineEdit.
+	// Use the same bounded, coalesced probe as generation. Capabilities can
+	// disappear under a live bridge too; every health result refreshes them.
 	useEffect(() => {
-		if (!bridge?.ok) {
-			setLineEditBackend(false);
-			return undefined;
-		}
-		// Already confirmed. The capability does not go away under a live bridge,
-		// and re-asking would be a request every 4 s for the rest of the session.
-		if (lineEditBackend) return undefined;
-		let alive = true;
-		let timer = 0;
-		const again = () => {
-			if (!alive) return;
-			timer = window.setTimeout(probe, LINE_CAPABILITY_RETRY_MS);
-		};
-		const probe = () => {
-			timer = 0;
-			fetch("/ardy/health")
-				.then((res) => (res.ok ? res.json() : null))
-				.then((payload) => {
-					if (!alive) return;
-					const caps = payload?.capabilities ?? payload?.features;
-					const capable = Array.isArray(caps) ? caps.includes("lineEdit") : caps?.lineEdit === true;
-					setLineEditBackend(capable);
-					// A `false` is not an answer, it is "not yet" — keep asking.
-					if (!capable) again();
-				})
-				.catch(() => {
-					if (!alive) return;
-					setLineEditBackend(false);
-					again();
-				});
-		};
-		probe();
-		return () => {
-			alive = false;
-			if (timer) window.clearTimeout(timer);
-		};
-	}, [bridge?.ok, lineEditBackend, lineEditMode]);
+		if (lineEditMode) bridgeRefreshRef.current();
+	}, [lineEditMode]);
 
 	/** CONFIRM the pull: the full-quality run of exactly what the preview has
 	 * been showing. Its own run mode — the body carries lineEdit and NOTHING
@@ -9564,8 +9521,8 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * curve as the last preview; only `preview: true` is absent, which is what
 	 * buys the full step count. */
 	function runLineEdit() {
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
 		const generationRequest = requestMotionGeneration("line_edit", "edit", { lineEdit: true });
-		if (ardyRunning) return;
 		if (!takeSourceUrl) {
 			setToast(ko("The current take has no bridge source — generate it once before editing a path", "현재 테이크에 브리지 원본이 없어요 — 궤적을 편집하기 전에 한 번 생성하세요"));
 			return;
@@ -9596,7 +9553,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// The take being edited, not the draft that may be on screen: a preview
 		// is a picture and must never become anyone's lineage.
 		const source = linePreviewSource;
-		enqueueMotionJob({
+		const queued = enqueueMotionJob({
 			request: generationRequest,
 			charId: source?.charId ?? activeChar.id,
 			charIndex: activeCharIndex,
@@ -9616,6 +9573,8 @@ function resizePromptClip(id, edge, rawFrame) {
 			recipeLineEdit: stripSourceMotion({ ...lineEdit, sourceMotion: undefined, seed }),
 			recipeLabel: isKo ? `다듬기 · ${lineTrackLabel(lineTrack)}` : `Refine · ${lineTrackLabel(lineTrack)}`,
 		});
+		if (!queued) return;
+		generationPendingRef.current = true;
 		// The pull has left the building. The curve stays (it is the reference
 		// the next edit starts from) but its deformation is released, so the
 		// Generate button goes back to needing a fresh pull instead of inviting
@@ -9631,6 +9590,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	}
 
 	function runAllPromptBlocks() {
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
 		const clips = promptClips
 			.filter((clip) => clip.text.trim())
 			.sort((a, b) => a.startFrame - b.startFrame);
@@ -9659,6 +9619,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// the current take's lineage and carries both.
 		fresh = false,
 	} = {}) {
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
 		const request = requestMotionGeneration("timeline", motion?.url && ikFrames.length ? "edit" : ardyStartFromPose ? "pose" : "prompt");
 		// A line-edit draft is not a take, and every source this function reads
 		// (preserve, motionEdit, the recipe) is about THE take. Refusing here is
@@ -10006,7 +9967,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// live layer — the queue only needs the frozen payload. Results are
 		// delivered to THIS character even if the selection moves on while
 		// the box is still working.
-		enqueueMotionJob({
+		generationPendingRef.current = enqueueMotionJob({
 			request,
 			charId: activeChar.id,
 			charIndex: activeCharIndex,
@@ -10033,7 +9994,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						: motion?.url
 							? ko("Again", "다시 뽑기")
 							: ko("Generate", "생성"),
-		});
+		}) === true;
 	}
 
 	/* --------------------- trail drag -> preview -> regen -------------------- */
@@ -10097,8 +10058,9 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * keys inside the window ride as hard constraints (their tracks), and the
 	 * deformed line contributes the grab-frame pose as a root guide. */
 	function runTrailRegeneration() {
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
 		const request = requestMotionGeneration("trail", "edit", { motionEdit: true });
-		if (!trailEdit || ardyRunning) return;
+		if (!trailEdit) return;
 		// Same rule as runArdy: motionEdit rewrites a span of THE take, and a
 		// draft on the viewport is not it.
 		if (linePreviewUrl) {
@@ -10163,7 +10125,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		const seed = takeSeed();
 		if (seed === null) return;
 		body.seed = seed;
-		enqueueMotionJob({
+		const queued = enqueueMotionJob({
 			request,
 			charId: activeChar.id,
 			charIndex: activeCharIndex,
@@ -10181,11 +10143,14 @@ function resizePromptClip(id, edge, rawFrame) {
 			recipeSeed: seed,
 			recipeLabel: ko("Trail fix", "궤적 수정"),
 		});
+		if (!queued) return;
+		generationPendingRef.current = true;
 		setTrailEdit(null);
 	}
 
 	/* ------------------------- motion job queue ---------------------------
-	 * One box, one job at a time: Generate never blocks, it enqueues. The
+	 * One box, one job at a time: explicit entry points suppress duplicate
+	 * requests through queueing and execution. The
 	 * payload is frozen at enqueue time; completion delivers the clip to the
 	 * REQUESTING character's layer, not whoever happens to be selected then. */
 	const [genQueue, setGenQueue] = useState([]);
@@ -10198,6 +10163,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		const id = `gen-${++genJobSeq.current}`;
 		setGenQueue((queue) => [...queue, { id, status: "queued", ...spec }]);
 		setToast(isKo ? `인물 ${spec.charIndex + 1} 모션 생성을 대기열에 넣었어요` : `Queued motion generation for Subject ${spec.charIndex + 1}`);
+		return true;
 	}
 	useEffect(() => {
 		if (genRunningRef.current) return;
@@ -10214,6 +10180,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				setGenQueue((queue) => queue.map((job) => (job.id === next.id ? { ...job, status: "error", error: message } : job)));
 			} finally {
 				genRunningRef.current = false;
+				generationPendingRef.current = false;
 			}
 		})();
 	}, [genQueue]);
@@ -10442,15 +10409,57 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * leaves the button looking identical to the ones that work. Each reason
 	 * below is rendered as a line under its entry AND as data-disabled-reason,
 	 * which is also what the CDP surface gate reads. */
+	function selectedMotionReadiness({ fresh = false, clips = promptClips } = {}) {
+		const authored = clips.filter((clip) => clip.text.trim()).sort((a, b) => a.startFrame - b.startFrame);
+		const prompt = authored[0]?.text.trim() || ardyPrompt.trim();
+		const duration = motion && ikFrames.length > 0 ? motion.frames / motion.fps
+			: authored.length ? Math.max(ARDY_DURATION_MIN, Math.ceil(Math.max(...authored.map((clip) => clip.endFrame)) / TIMELINE_FPS))
+				: Math.round(Number(ardyDuration)) || ARDY_DURATION_MIN;
+		const clipFrames = duration * TIMELINE_FPS;
+		const segments = buildPromptSchedule(authored, clipFrames, prompt);
+		const hasPromptSchedule = segments.length > 1;
+		const editedSegments = motion?.url && hasPromptSchedule
+			? segments.filter((segment) => ikFrames.some((frame) => frame >= segment.startFrame && frame < segment.endFrame))
+			: [];
+		const hasBlockEdits = editedSegments.length > 0;
+		const pinPlan = planPosePin({
+			startFromPose: ardyStartFromPose,
+			poseFrame: posePlacementFrame(ardyPosePlacement, clipFrames, tlFrame),
+			hasPromptSchedule, hasBlockEdits, waypointMode, ikFrames, clipFrames, segments, editedSegments,
+		});
+		// Only the capability-bearing fields are needed here; the queue still
+		// preflights the actual frozen request before any generation HTTP call.
+		const body = { prompt, duration, posePin: pinPlan.pin };
+		if (hasBlockEdits) body.motionEdit = {};
+		else if (hasPromptSchedule) body.segments = toArdySegments(segments);
+		if (waypointMode) body.waypoints = [{}];
+		const recipe = takeRecipeRef.current;
+		if (!fresh && !hasBlockEdits && Number.isInteger(recipe?.seed)) body.replay = replayPayload(recipe);
+		if (!fresh && !hasBlockEdits && !hasPromptSchedule && motion?.url && preserveStrength > 0
+			&& Math.abs(motion.frames / TIMELINE_FPS - duration) <= 1 / ARDY_FPS + 1e-9) {
+			const blocks = blocksFromRequest(body, ARDY_FPS);
+			if (recipe?.blocks?.length === blocks.length
+				&& recipe.blocks.every((block, index) => block.prompt.trim() === blocks[index].prompt.trim())) body.preserve = {};
+		}
+		return motionReadiness(bridge, { body, lineEditSupported: lineEditBackend });
+	}
+	const generationBusy = ardyRunning || genQueue.some((job) => job.status === "queued" || job.status === "running");
+	const readinessState = selectedMotionReadiness();
+	const lineReadinessState = motionReadiness(bridge, { body: { lineEdit: true }, lineEditSupported: lineEditBackend });
+	const trailReadinessState = motionReadiness(bridge, { body: { motionEdit: true } });
+	function openMotionSetup(kind = "prompt") {
+		setMotionSetupKind(kind);
+		setMotionSetupReveal((value) => value + 1);
+	}
+
 	function refineDisabledReason() {
 		if (!motion) return ko("No take yet — block a scene first", "아직 테이크가 없어요 — 먼저 장면을 만들어 주세요");
 		if (!motion.url) return ko("This take has no bridge source — generate it once before refining", "이 테이크에는 브리지 원본이 없어요 — 한 번 생성해야 다듬을 수 있어요");
 		return "";
 	}
 	function sceneDisabledReason() {
-		if (bridge === null) return ko("Checking for the ARDY bridge…", "ARDY 브리지를 확인하는 중…");
-		if (!bridge.ok) return ko("The ARDY bridge is not connected — it reconnects on its own", "ARDY 브리지가 연결되지 않았어요 — 자동으로 다시 연결됩니다");
-		if (ardyRunning) return ko("A generation is already running", "이미 생성이 돌고 있어요");
+		if (bridge === null || bridgeChecking) return motionReadinessMessage("loading");
+		if (generationBusy) return ko("A generation is already running", "이미 생성이 돌고 있어요");
 		// NOT a line-edit preview, deliberately. Every other reason here is a
 		// standing capability the entry should be greyed for; a draft on the
 		// viewport lasts a second and a half, and a reason line appearing and
@@ -10836,7 +10845,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
 						</span>
 					)}
-					<SettingsMenu />
+					<SettingsMenu
+						motionSetupReveal={motionSetupReveal}
+						motionSetup={<MotionSetup state={motionSetupKind === "trail" ? trailReadinessState : motionSetupKind === "line" ? lineReadinessState : readinessState} checking={bridgeChecking} onRetry={recheckMotionHealth} />}
+					/>
 				</div>
 			</header>
 
@@ -12730,30 +12742,22 @@ function resizePromptClip(id, edge, rawFrame) {
 										<button
 											type="button"
 											className="btn primary full generate"
-											disabled={!bridge?.ok || !lineCurveDirty || ardyRunning}
-											title={!bridge?.ok
-												? ko("Waiting for the ARDY bridge — it reconnects automatically", "ARDY 브리지를 기다리는 중 — 자동으로 다시 연결됩니다")
+											disabled={!lineCurveDirty || generationBusy || bridgeChecking || bridge === null}
+											title={generationBusy ? ko("A generation is already running", "이미 생성이 돌고 있어요")
 												: !lineCurveDirty
 													? ko("Pull the path on the viewport first", "먼저 뷰포트에서 궤적을 잡아당겨 주세요")
-													: ""}
+													: motionReadinessMessage(lineReadinessState)}
 											onClick={runLineEdit}
 										>
 											{ko("Generate the line edit", "라인 편집 생성")}
 										</button>
+										<MotionReadiness state={lineReadinessState} checking={bridgeChecking} onSetup={() => openMotionSetup("line")} onRetry={recheckMotionHealth} />
 										<button type="button" className="btn ghost full" disabled={!lineCurveDirty} onClick={resetLineCurve}>
 											{ko("Reset the curve", "원래대로")}
 										</button>
 										<button type="button" className="btn ghost full" onClick={exitLineEditMode}>
 											{ko("Exit line editing (Esc)", "라인 편집 끝내기 (Esc)")}
 										</button>
-										{!lineEditBackend && (
-											<p className="inspector-hint line-edit-pending">
-												{ko(
-													"The line-editing backend is not connected yet — pulling and drawing work, and this keeps retrying until it answers.",
-													"라인 편집 백엔드가 아직 연결 전이에요 — 끌기와 그리기는 되고, 연결될 때까지 계속 다시 확인합니다.",
-												)}
-											</p>
-										)}
 									</div>
 								)}
 							</Field>
@@ -12766,16 +12770,15 @@ function resizePromptClip(id, edge, rawFrame) {
 						<button
 							type="button"
 							className="btn primary full generate prompt-block-generate"
-							disabled={!bridge?.ok || !promptClips.some((clip) => clip.text.trim())}
-							title={!bridge?.ok
-								? ko("Waiting for the ARDY bridge — it reconnects automatically", "ARDY 브리지를 기다리는 중 — 자동으로 다시 연결됩니다")
+							disabled={generationBusy || bridgeChecking || bridge === null || !promptClips.some((clip) => clip.text.trim())}
+							title={generationBusy ? ko("A generation is already running", "이미 생성이 돌고 있어요")
 								: !promptClips.some((clip) => clip.text.trim())
 									? ko("Add a prompt block and describe its motion first", "프롬프트 블록을 추가하고 동작을 먼저 적어 주세요")
-									: ""}
+									: motionReadinessMessage(readinessState)}
 							onClick={runAllPromptBlocks}
 						>
-							{ardyRunning || genQueue.some((job) => job.status === "queued")
-								? ko("Queue block generation", "블록 생성 대기열에 추가")
+							{generationBusy
+								? ko("Generating motion…", "모션 생성 중…")
 								: isKo
 									? `${promptClips.length}개 블록 모두 생성`
 									: `Generate all ${promptClips.length} blocks`}
@@ -12786,8 +12789,10 @@ function resizePromptClip(id, edge, rawFrame) {
 								{ko("Cancel run", "실행 취소")}
 							</button>
 						)}
-					{!bridge?.ok && <p className="ardy-hint">{ko("Start the ARDY bridge to enable generation.", "생성을 사용하려면 ARDY 브리지를 시작하세요.")}</p>}
-						{ardyStatus && <p className="ardy-status">{ardyStatus}</p>}
+						{!lineEditMode && <MotionReadiness state={readinessState} checking={bridgeChecking} onSetup={openMotionSetup} onRetry={recheckMotionHealth} />}
+						{ardyRunning && ardyStatus && <p className="ardy-status" role="status">{ardyStatus}</p>}
+						{!ardyRunning && ardyOutcome?.ok === false && <p className="ardy-status" role="alert">{ardyOutcome.message}</p>}
+						{!ardyRunning && ardyOutcome?.ok === true && <p className="ardy-status" role="status">{ko("Motion generation complete", "모션 생성 완료")}</p>}
 						<button type="button" className="btn ghost full" onClick={() => addPromptClip(tlFrame)}>
 						{isKo ? `프레임 ${tlFrame}에 블록 추가` : `Add block at frame ${tlFrame}`}
 						</button>
@@ -12888,7 +12893,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								<button
 									type="button"
 									className="btn primary full trail-regenerate"
-									disabled={!trailEdit || !motion?.url || !bridge?.ok || ardyRunning}
+									disabled={!trailEdit || !motion?.url || generationBusy || bridgeChecking || bridge === null}
 									title={!trailEdit
 										? ko("Drag the trajectory line in the viewport first", "먼저 뷰포트에서 궤적선을 끌어 수정하세요")
 										: !motion?.url
@@ -12898,6 +12903,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								>
 									{ko("Regenerate from trail edit", "궤적 수정으로 재생성")}
 								</button>
+								<MotionReadiness state={trailReadinessState} checking={bridgeChecking} onSetup={() => openMotionSetup("trail")} onRetry={recheckMotionHealth} />
 								<p className="inspector-hint">
 									{ko(
 										"Grab any point of the trajectory line to bend the motion; nearby frames follow within the falloff range. Confirm to regenerate that span with Kimodo — explicit IK keys stay pinned exactly.",
@@ -13643,6 +13649,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					</div>
 					{sceneMenuOpen && (
 						<div className="take-scene-menu">
+							<MotionReadiness state={readinessState} checking={bridgeChecking} onSetup={openMotionSetup} onRetry={recheckMotionHealth} />
 							{[
 								{ id: "new", label: ko("Start over", "새로 만들기"), reason: sceneGenerateDisabledReason(), onClick: () => runArdy({ fresh: true }) },
 								{ id: "again", label: ko("Take it again", "다시 뽑기"), reason: sceneAgainDisabledReason(), onClick: runSceneAgain },

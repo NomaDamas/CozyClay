@@ -67,3 +67,14 @@ technical, and close to the timeline state they change.
 - `.tl-crane-editor`: card-local time/height graph; the whole graph is a
   click target for insertion, points have enlarged pointer targets, and
   vertical drags edit height without moving the Shot block.
+- `.motion-readiness`: compact, text-labelled generation status beside the
+  existing generation controls. It distinguishes checking, ready, not configured,
+  unavailable, and unsupported request routes without gating authoring.
+  It inherits `--fg`, `--muted`, `--cyan`, `--panel`, `--line2`, `--radius`,
+  the 11 px inspector type scale, and 4/8 px spacing. State is never colour-only.
+- `.motion-setup`: an explicitly opened region in the existing Settings popover,
+  not a modal or another topbar control. Setup documentation opens separately;
+  Retry only probes health. Both preserve the scene and prompt blocks.
+  The popover scrolls within the viewport, commands wrap, and controls remain
+  reachable at 390 px. Status updates use polite announcements, visible keyboard
+  focus, and immediate state changes without decorative animation.

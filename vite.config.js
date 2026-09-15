@@ -91,7 +91,11 @@ export default defineConfig({
 					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
-						res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
+						if (path === "/ardy/health") {
+							res.end(JSON.stringify({ ok: false, backend: "none", host_configured: false, reason: "unconfigured", capabilities: { lineEdit: false }, error: "motion sidecar is not configured" }));
+						} else {
+							res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
+						}
 						return;
 					}
 					// The lying clip is a browser-regression fixture. Serve it only from
@@ -140,6 +144,13 @@ export default defineConfig({
 							// hand those static files to the bridge, which 404s them.
 							"/ardy": {
 								target: motionBridgeUrl,
+								configure(proxy) {
+									proxy.on("error", (_error, req, res) => {
+										if ((req.url || "").split("?")[0] !== "/ardy/health" || res.headersSent) return;
+										res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+										res.end(JSON.stringify({ ok: false, backend: "local_kimodo", host_configured: true, reason: "unreachable", capabilities: { lineEdit: false } }));
+									});
+								},
 								bypass(req) {
 									const path = (req.url || "").split("?")[0];
 									if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;

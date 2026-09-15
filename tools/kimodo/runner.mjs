@@ -40,6 +40,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { KIMODO_BACKENDS } from "./generate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUN_SEQUENCE = join(HERE, "run-sequence-on-box.mjs");
@@ -102,8 +103,39 @@ export function createKimodoRunner() {
 		throw new Error("CCLAY_KIMODO_HOST is required for the Kimodo backend (for example: user@gpu-box)");
 	}
 
+	function expandHome(path) {
+		return path?.startsWith("$HOME/") ? join(process.env.HOME || "", path.slice(6)) : path;
+	}
+
+	function localArtifactReady(path) {
+		return Boolean(path && existsSync(expandHome(path)));
+	}
+
+	function localRuntimeReady() {
+		const spec = KIMODO_BACKENDS[BACKEND];
+		if (!spec || spec.mode === "cuda") return false;
+		const entry = spec.entry.startsWith("$HOME/") ? spec.entry : `${REPO}/${spec.entry}`;
+		return existsSync(expandHome(entry));
+	}
+
 	async function probeHealth() {
-		if (!HOST) return { ok: true, host: "local", encoder: "in-process", device: "local" };
+		if (!HOST) {
+			// A selected local route is not end-to-end ready merely because its
+			// wrapper is installed. Generation also needs both model artifacts.
+			const defaults = KIMODO_BACKENDS[BACKEND];
+			const artifactsReady = localRuntimeReady()
+				&& localArtifactReady(MOTION || defaults.motion)
+				&& localArtifactReady(TEXT || defaults.text);
+			return {
+				ok: artifactsReady,
+				backend: "local_kimodo",
+				host: "local",
+				host_configured: true,
+				encoder: "in-process",
+				device: "local",
+				...(artifactsReady ? {} : { capabilities: { lineEdit: false } }),
+			};
+		}
 		const remote = [
 			`cd ${REPO}`,
 			`DEV="$(.venv/bin/python -c 'import torch; print("cuda:0" if torch.cuda.is_available() else "cpu")')"`,

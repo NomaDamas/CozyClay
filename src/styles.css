@@ -9032,6 +9032,72 @@ input[type=range] {
 	color: var(--cyan);
 }
 
+/* Motion readiness (#277) reuses the inspector hint and Settings surfaces. */
+.motion-readiness {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 4px 8px;
+	min-width: 0;
+	margin: 4px 0;
+	color: var(--muted);
+	font-size: 11px;
+	line-height: 1.45;
+	word-break: keep-all;
+	overflow-wrap: anywhere;
+}
+
+.motion-readiness[data-state="ready"] {
+	color: var(--cyan);
+}
+
+.motion-readiness .btn {
+	flex: none;
+	margin: 0;
+	white-space: normal;
+}
+
+.settings-menu:has(.motion-setup) {
+	width: min(360px, calc(100vw - 16px));
+	min-width: 0;
+	max-height: calc(100dvh - 64px);
+	overflow-y: auto;
+}
+
+.motion-setup {
+	display: grid;
+	gap: 8px;
+	padding: 8px;
+	border-block: 1px solid var(--line2);
+	color: var(--fg);
+	font-size: 11px;
+	line-height: 1.5;
+}
+
+.motion-setup p {
+	margin: 0;
+}
+
+.motion-setup code {
+	display: block;
+	padding: 8px;
+	background: var(--panel);
+	border-radius: var(--radius);
+	font-family: var(--mono);
+	white-space: normal;
+	overflow-wrap: anywhere;
+}
+
+.motion-setup a {
+	color: var(--cyan);
+}
+
+.motion-readiness button:focus-visible,
+.motion-setup :is(button, a):focus-visible {
+	outline: 2px solid var(--accent);
+	outline-offset: 2px;
+}
+
 .view-menu-trigger {
 	position: relative;
 	flex: none;

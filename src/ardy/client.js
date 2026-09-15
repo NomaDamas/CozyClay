@@ -31,6 +31,15 @@ async function reasonOf(res, fallback) {
 	return fallback;
 }
 
+async function healthPayload(res) {
+	try {
+		const payload = await res.json();
+		return payload && typeof payload === "object" && !Array.isArray(payload) ? payload : {};
+	} catch {
+		return {};
+	}
+}
+
 /**
  * Probe the sidecar once. Resolves to { ok:true, host, encoder, device,
  * extractionBackend } on a
@@ -40,17 +49,18 @@ async function reasonOf(res, fallback) {
 export async function checkBridge() {
 	try {
 		const res = await fetch("/ardy/health", { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) });
+		const payload = await healthPayload(res);
 		if (!res.ok) {
-			return { ok: false, reason: await reasonOf(res, isKo ? `브리지 상태가 좋지 않아요(HTTP ${res.status})` : `bridge unhealthy (HTTP ${res.status})`) };
+			return {
+				...payload,
+				ok: false,
+				reason: payload.reason || (isKo ? `브리지 상태가 좋지 않아요(HTTP ${res.status})` : `bridge unhealthy (HTTP ${res.status})`),
+			};
 		}
-		const payload = await res.json();
-		return {
-			ok: true,
-			host: payload.host,
-			encoder: payload.encoder,
-			device: payload.device,
-			extractionBackend: payload.extractionBackend,
-		};
+		// Health responses are authoritative. A successful HTTP status without an
+		// explicit boolean health result is malformed, never a ready bridge.
+		if (typeof payload.ok !== "boolean") return { ...payload, ok: false, reason: "invalid health response" };
+		return payload;
 	} catch (err) {
 		return { ok: false, reason: err?.message || ko("bridge unreachable", "브리지에 연결할 수 없어요") };
 	}
