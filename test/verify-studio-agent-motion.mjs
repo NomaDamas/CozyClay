@@ -81,6 +81,22 @@ if (evidence) writeFileSync(`${evidence}/motion-fixture-metrics.json`, JSON.stri
 console.log('Studio motion: all cases PASS');
 
 async function candidateTests(mod) {
+  {
+    const host = { workspaceId: 'cancel-workspace', documentEpoch: 'cancel-document', sceneId: 'cancel-scene', sceneEpoch: 'cancel-epoch' };
+    const journal = createStudioCommandJournal({ host });
+    const binding = { host, characterId: 'cancel-character', targetToken: 'cancel-token' };
+    const api = mod.createStudioMotionCandidates({ journal,
+      readTarget: () => ({ guard: binding }),
+      readEnvironment: () => ({ host, physicsRevision: 0, floor: { model: 'flat', y: 0 }, objects: [], cast: [], frameCount: 48 }),
+    });
+    const first = api.cancel_motion_install({ commandId: 'cancel-before-prepare', binding });
+    assert.equal(first.status, 'not_applied');
+    assert.equal(first.evidence?.ok, false);
+    assert.equal(first.evidence?.code, 'CANCELLED');
+    assert.equal(journal.reconcile({ commandId: 'cancel-before-prepare', host }).status, 'not_applied');
+    assert.deepEqual(api.cancel_motion_install({ commandId: 'cancel-before-prepare', binding }), first);
+    console.log('PASS pre-prepare cancellation reserves journal and returns structured not_applied evidence');
+  }
   mkdirSync('.omo/ulw-execute/task-7', { recursive: true });
   const scratch = mkdtempSync('.omo/ulw-execute/task-7/fixture-');
   const archives = new Map(); let generated = 0;

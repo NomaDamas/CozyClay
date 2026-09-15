@@ -408,6 +408,16 @@ export function createStudioMotionCandidates(ports) {
       if (outcome.status === 'applied') return { status: 'already_applied', receipt: outcome.receipt };
       for (const c of candidates.values()) if (c.request.commandId === request.commandId && equal(c.request.binding, request.binding)) { c.cancelled = true; c.controller.abort(); if (!c.busy) release(c); }
       const receipt = rejection(request, new StudioProtocolError('CANCELLED', 'Installation permission revoked.'), 'commit');
+      // Stop may arrive before admission/prepare has reserved the command.
+      // Reserve that terminal rejection in the same journal so cancellation is
+      // structured evidence rather than an INVALID_ARGUMENT from record().
+      try { ports.journal.begin(request.commandId, JSON.stringify(request)); }
+      catch (error) {
+        // A prepare reservation already owns this command signature; Stop is
+        // still allowed to settle that same command and must not overwrite an
+        // applied outcome.
+        if (error?.code !== 'INVALID_ARGUMENT' || ports.journal.reconcile({ commandId: request.commandId, host: request.binding.host }).status !== 'unknown') throw error;
+      }
       ports.journal.record(receipt); return { status: 'not_applied', evidence: receipt };
     },
     reconcile_studio_command(request) {
