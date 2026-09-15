@@ -78,16 +78,15 @@ const trigger = "document.querySelector('.view-menu-trigger')";
 const menu = "document.querySelector('.view-menu')";
 const item = "document.querySelector('.view-menu .agent-panel-toggle')";
 const panel = "document.querySelector('.agent-panel')";
-const collapsedFlag = `${panel}?.getAttribute('data-agent-collapsed')`;
+const collapsedFlag = `document.querySelector('.studio-agent-inspector')?.hidden ? 'true' : 'false'`;
 const openMenu = async () => {
 	if (!(await evaluate(`!!${menu}`))) await evaluate(`${trigger}.click()`);
 	return waitFor(`!!${menu}`, 8000);
 };
 const pressToggleShortcut = async () => {
-	// Ctrl+B: the panel's own shortcut listener accepts either modifier.
-	const key = { key: "b", code: "KeyB", windowsVirtualKeyCode: 66, nativeVirtualKeyCode: 66, modifiers: 2 };
-	await send("Input.dispatchKeyEvent", { type: "keyDown", ...key });
-	await send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+	// Dispatch through the page so the embedded Agent host receives ctrlKey;
+	// this is the same browser event a user shortcut produces.
+	await evaluate("window.dispatchEvent(new KeyboardEvent('keydown', { key:'b', code:'KeyB', ctrlKey:true, bubbles:true, cancelable:true }))");
 };
 
 /* ------------------------------------------------------ R4: no button ---- */
@@ -116,16 +115,14 @@ await shot("view-menu-agent-item");
 
 await evaluate(`${item}.click()`);
 expect("clicking it expands the panel", await waitFor(`!${collapsedFlag}`, 8000));
-expect("the expanded panel is the full column", await evaluate(`${panel}.getBoundingClientRect().width > 200`));
+expect("the expanded panel is the Inspector column", await waitFor(`${item}.getAttribute('aria-checked') === 'true' && document.querySelectorAll('.inspector-sidebar').length === 1`, 8000));
 expect("the menu stays open — this is a toggle, not a command", await evaluate(`!!${menu}`));
 expect("the item now reports checked", await waitFor(`${item}.getAttribute('aria-checked') === 'true' && ${item}.getAttribute('aria-pressed') === 'true'`, 8000));
 expect("the checkmark is drawn", await evaluate(`${item}.querySelector('.view-menu-mark').textContent.trim() === '✓'`));
-expect("it sits beside the inspector, not over it", await evaluate(`(() => {
+expect("it uses the Inspector footprint, not a duplicate dock", await evaluate(`(() => {
 	const inspector = document.querySelector('.inspector-sidebar');
-	if (!inspector) return false;
-	const a = inspector.getBoundingClientRect();
-	const b = ${panel}.getBoundingClientRect();
-	return b.left >= a.right - 1;
+	const agent = document.querySelector('.studio-agent-inspector');
+	return Boolean(inspector && agent && agent.getBoundingClientRect().right <= inspector.getBoundingClientRect().right + 1);
 })()`));
 
 // Close the menu so the screenshot shows the panel itself.
