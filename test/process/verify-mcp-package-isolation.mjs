@@ -106,6 +106,7 @@ try {
 	assert.equal(sha256(rootManifest), manifestHashBefore, "MCP install must preserve the published root manifest hash");
 	assert.equal(existsSync(rootLock), false, "MCP install must not create a root lockfile");
 	assert.match(first.stderr, /installing MCP server dependencies/, first.stderr);
+	assert.equal(existsSync(join(runtimeHome, ".cache", "cozyclay", "mcp-runtime", "1.8.1", "bin", "agent", "motion-runtime.mjs")), true, "isolated MCP runtime must include the motion runtime import");
 
 	const second = await runMcp(process.execPath, ["bin/cozyclay.mjs", "mcp"], {
 		cwd: packageRoot,

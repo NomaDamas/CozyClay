@@ -41,6 +41,8 @@ function installMcpRuntime() {
 		copyFileSync(join(MCP_RUNTIME_SOURCE, "package.json"), join(staging, "package.json"));
 		copyFileSync(join(MCP_RUNTIME_SOURCE, "package-lock.json"), join(staging, "package-lock.json"));
 		cpSync(join(PKG_ROOT, "mcp"), join(staging, "mcp"), { recursive: true });
+		mkdirSync(join(staging, "bin", "agent"), { recursive: true });
+		copyFileSync(join(PKG_ROOT, "bin", "agent", "motion-runtime.mjs"), join(staging, "bin", "agent", "motion-runtime.mjs"));
 		cpSync(join(PKG_ROOT, "src"), join(staging, "src"), { recursive: true });
 
 		const npm = process.platform === "win32" ? "npm.cmd" : "npm";
