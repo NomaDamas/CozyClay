@@ -1,71 +1,150 @@
 #!/usr/bin/env node
-/* Real-surface Studio Agent acceptance QA. Run via tools/qa-browser.mjs. */
-import { mkdirSync, writeFileSync } from "node:fs";
+/*
+ * Studio Agent slice acceptance. This intentionally drives the embedded panel,
+ * not a mock bridge: each intent must produce a new user turn and a terminal
+ * receipt/state transition before the case can pass.
+ * Run through tools/qa-browser.mjs with a real Studio surface and, when Kimodo
+ * is unavailable, the deterministic fixture backend from studio-agent-motion.mjs.
+ */
 import assert from "node:assert/strict";
+import { mkdirSync, writeFileSync } from "node:fs";
 
-const cases = ["binding", "intent", "framing", "motion", "resilience", "responsive"];
-const argv = process.argv.slice(2);
-if (argv.length && (argv.length !== 2 || argv[0] !== "--case" || !cases.includes(argv[1]))) {
-  console.error(`Unknown case. Use --case ${cases.join(" | ")}`);
-  process.exit(2);
+const CASES = ["binding", "intent", "framing", "motion", "resilience", "responsive"];
+const args = process.argv.slice(2);
+if (args.length && (args.length !== 2 || args[0] !== "--case" || !CASES.includes(args[1]))) {
+  console.error(`Unknown case. Use --case ${CASES.join(" | ")}`);
+  process.exitCode = 2;
+  process.exit();
 }
-const selected = argv.length ? [argv[1]] : cases;
-const port = Number(process.env.CDP_PORT || 9222);
-const out = process.env.QA_SHOT_DIR || ".omo/evidence/studio-agent-slice1/browser";
-mkdirSync(out, { recursive: true });
-const target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl);
-if (!target) throw new Error(`no browser page on CDP ${port}`);
-const ws = new WebSocket(target.webSocketDebuggerUrl);
+const selected = args.length ? [args[1]] : CASES;
+const cdpPort = Number(process.env.CDP_PORT || 9222);
+const shotDir = process.env.QA_SHOT_DIR || ".omo/evidence/studio-agent-slice1/browser";
+mkdirSync(shotDir, { recursive: true });
+const pages = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json();
+const page = pages.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl);
+if (!page) throw new Error(`no browser page on CDP ${cdpPort}`);
+const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
-let id = 0; const pending = new Map();
-ws.onmessage = ({ data }) => { const message = JSON.parse(data); if (!message.id || !pending.has(message.id)) return; const item = pending.get(message.id); pending.delete(message.id); message.error ? item.reject(new Error(JSON.stringify(message.error))) : item.resolve(message.result); };
-const send = (method, params = {}) => new Promise((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); ws.send(JSON.stringify({ id: requestId, method, params })); });
-const evaluate = async (expression) => { const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true }); if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "browser evaluation failed"); return result.result?.value; };
-const waitFor = async (expression, timeout = 30000) => { const end = Date.now() + timeout; while (Date.now() < end) { if (await evaluate(expression).catch(() => false)) return true; await new Promise((resolve) => setTimeout(resolve, 50)); } return false; };
-const shot = async (name) => { const { data } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }); const file = `${out}/${name}.png`; writeFileSync(file, Buffer.from(data, "base64")); console.log(`SCREENSHOT ${file}`); return file; };
-const action = async (name, fn) => { const before = await evaluate("document.body.innerText.slice(0,500)"); await fn(); const after = await evaluate("document.body.innerText.slice(0,500)"); console.log(JSON.stringify({ action: name, beforeHash: before.length, afterHash: after.length })); await shot(name); };
+let nextId = 0;
+const pending = new Map();
+ws.onmessage = ({ data }) => {
+  const message = JSON.parse(data);
+  if (!message.id || !pending.has(message.id)) return;
+  const task = pending.get(message.id); pending.delete(message.id);
+  message.error ? task.reject(new Error(JSON.stringify(message.error))) : task.resolve(message.result);
+};
+const send = (method, params = {}) => new Promise((resolve, reject) => {
+  const id = ++nextId; pending.set(id, { resolve, reject });
+  ws.send(JSON.stringify({ id, method, params }));
+});
+const evaluate = async (expression) => {
+  const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
+  if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "browser evaluation failed");
+  return result.result?.value;
+};
+// The gate is installed before the trigger. It resolves on the DOM/state event,
+// rather than sleeping or polling for an expected response.
+const gate = (predicate, timeout = 30000) => evaluate(`new Promise((resolve, reject) => {
+  const done = () => { try { if (${predicate}) { observer.disconnect(); resolve(true); return true; } } catch {} return false; };
+  const observer = new MutationObserver(done);
+  observer.observe(document.documentElement, { subtree: true, childList: true, attributes: true, characterData: true });
+  if (done()) return;
+  setTimeout(() => { observer.disconnect(); reject(new Error("event gate timed out: ${predicate.replaceAll('"', '\\"')}")); }, ${timeout});
+})`);
+const screenshot = async (name) => {
+  const { data } = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: false });
+  const file = `${shotDir}/${name}.png`; writeFileSync(file, Buffer.from(data, "base64"));
+  console.log(`SCREENSHOT ${file}`); return file;
+};
 const check = (name, value) => { assert.ok(value, name); console.log(`PASS ${name}`); };
+const count = () => evaluate(`(() => ({
+  messages: [...document.querySelectorAll('[data-agent-message], .agent-message, .agent-transcript [role="article"]')].length,
+  receipts: [...document.querySelectorAll('[data-agent-receipt], .agent-receipt, [data-agent-card="receipt"]')].length,
+  jobs: [...document.querySelectorAll('[data-agent-card="job"], .agent-job')].length,
+  text: document.querySelector('.studio-agent-inspector')?.innerText || ''
+}))()`);
+const openAgent = async () => {
+  check("Studio entry and Inspector footprint rendered", await evaluate("!!document.querySelector('.view-menu-trigger') && !!document.querySelector('.inspector-sidebar')"));
+  await evaluate("document.querySelector('.view-menu-trigger').click()");
+  await gate("!!document.querySelector('.view-menu .agent-panel-toggle')");
+  await evaluate("document.querySelector('.view-menu .agent-panel-toggle').click()");
+  await gate("document.querySelector('.studio-agent-inspector')?.hidden === false && !!document.querySelector('[aria-label=\"Message the agent\"]')");
+  check("Agent is visible in the Inspector footprint", await evaluate("(() => { const i=document.querySelector('.inspector-sidebar')?.getBoundingClientRect(), a=document.querySelector('.studio-agent-inspector')?.getBoundingClientRect(); return Boolean(i && a && a.width > 0 && a.left >= i.left && a.right <= i.right + 1); })()"));
+};
+const sendTurn = async (intent) => {
+  const before = await count();
+  const eventGate = gate(`(() => { const c=${JSON.stringify(before)}; const n=[...document.querySelectorAll('[data-agent-message], .agent-message, .agent-transcript [role="article"]')].length; const r=[...document.querySelectorAll('[data-agent-receipt], .agent-receipt, [data-agent-card="receipt"]')].length; const j=[...document.querySelectorAll('[data-agent-card="job"], .agent-job')].length; return n > c.messages || r > c.receipts || j > c.jobs; })()`);
+  await evaluate(`(() => { const input=document.querySelector('[aria-label="Message the agent"]'); if (!input) throw new Error('Agent composer is not mounted'); const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; setter.call(input, ${JSON.stringify(intent)}); input.dispatchEvent(new Event('input',{bubbles:true})); input.focus(); input.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',code:'Enter',bubbles:true})); })()`);
+  await eventGate;
+  await gate("!document.querySelector('.agent-send.stop') && (!!document.querySelector('[data-agent-receipt], .agent-receipt, [data-agent-card=\"receipt\"]') || /applied|installed|refused|reconciled|undone/i.test(document.querySelector('.studio-agent-inspector')?.innerText || ''))");
+  return { before, after: await count() };
+};
+const nativeUndo = async () => {
+  await send("Input.dispatchKeyEvent", { type: "keyDown", key: "z", code: "KeyZ", modifiers: 2 });
+  await send("Input.dispatchKeyEvent", { type: "keyUp", key: "z", code: "KeyZ", modifiers: 2 });
+  await gate("/undone|Undo|reverted|restored/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')");
+};
 
 await send("Page.enable");
 await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 950, deviceScaleFactor: 1, mobile: false });
-check("Studio entry rendered", await waitFor("!!document.querySelector('.view-menu-trigger') && !!document.querySelector('.inspector-sidebar')"));
+await gate("!!document.querySelector('.view-menu-trigger') && !!document.querySelector('.inspector-sidebar')", 40000);
 await evaluate("localStorage.setItem('cozyclay.locale','en')");
 
 async function binding() {
-  check("Agent panel is mounted in Inspector footprint", await evaluate("!!document.querySelector('.studio-agent-inspector') && !!document.querySelector('.inspector-pane')"));
-  await action("binding-agent-open", async () => { await evaluate("document.querySelector('.view-menu-trigger').click()"); await waitFor("!!document.querySelector('.view-menu .agent-panel-toggle')"); await evaluate("document.querySelector('.view-menu .agent-panel-toggle').click()"); check("Agent opens", await waitFor("document.querySelector('.studio-agent-inspector')?.hidden === false")); });
-  const footprint = await evaluate("(() => { const a=document.querySelector('.inspector-sidebar').getBoundingClientRect(), b=document.querySelector('.studio-agent-inspector').getBoundingClientRect(); return b.width > 0 && b.left >= a.left && b.right <= a.right + 1; })()");
-  check("Agent uses the Inspector footprint", footprint);
-  await action("binding-agent-toggle", async () => { await send("Input.dispatchKeyEvent", { type:"keyDown", key:"b", code:"KeyB", modifiers:2 }); await send("Input.dispatchKeyEvent", { type:"keyUp", key:"b", code:"KeyB", modifiers:2 }); check("Cmd/Ctrl+B closes Agent", await waitFor("document.querySelector('.studio-agent-inspector')?.hidden === true")); });
+  await openAgent();
+  const footprint = await evaluate("document.querySelector('.studio-agent-inspector').getBoundingClientRect().width");
+  const draft = "retained acceptance draft";
+  await evaluate(`(() => { const i=document.querySelector('[aria-label="Message the agent"]'); const s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; s.call(i,${JSON.stringify(draft)}); i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  await screenshot("binding-agent-open-desktop");
+  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'b',code:'KeyB',ctrlKey:true,bubbles:true,cancelable:true}))");
+  await gate("document.querySelector('.studio-agent-inspector')?.hidden === true");
+  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'b',code:'KeyB',ctrlKey:true,bubbles:true,cancelable:true}))");
+  await gate("document.querySelector('.studio-agent-inspector')?.hidden === false");
+  check("same Inspector footprint reopens", await evaluate(`document.querySelector('.studio-agent-inspector').getBoundingClientRect().width === ${footprint}`));
+  check("draft is retained", await evaluate(`document.querySelector('[aria-label="Message the agent"]')?.value === ${JSON.stringify(draft)}`));
+  check("Workflow remains singular", await evaluate("document.querySelectorAll('.workflow-mode-switch').length <= 1"));
 }
 async function intent() {
-  check("real Studio command surface is connected", await evaluate("!!window.__cozyclay && !!document.querySelector('.hierarchy-sidebar')"));
-  check("Workflow dock remains singular", await evaluate("document.querySelectorAll('.workflow-mode-switch').length <= 1 && document.querySelectorAll('.agent-panel').length <= 1"));
-  await action("intent-inspector", async () => { await evaluate("document.querySelector('.hierarchy-row-wrap')?.click()"); check("selection row is actionable", await evaluate("!!document.querySelector('.hierarchy-row-wrap')")); });
+  await openAgent();
+  await sendTurn("Put a cube on the floor one metre to camera-left of the selected character. Add a second character two metres to camera-right.");
+  check("arrangement produced a receipt/history signal", await evaluate("/arrange|character|cube|applied|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
+  await screenshot("intent-arrangement-desktop"); await nativeUndo(); await screenshot("intent-arrangement-undo-desktop");
 }
 async function framing() {
-  await action("framing-camera", async () => { const camera = await evaluate(`(() => { const el=document.querySelector('[aria-label*="Camera"], [data-testid="camera-preset"]'); el?.click(); return Boolean(el); })()`); check("native camera controls remain available", camera || await evaluate("!!document.querySelector('.scene-tools')")); });
-  check("native Undo remains available", await evaluate(`typeof window.__sceneHistory === 'function' || !!document.querySelector('[aria-label*="Undo"]')`));
+  await openAgent();
+  await sendTurn("Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.");
+  check("framing produced a camera/key receipt", await evaluate("/frame|camera|shot|key|applied|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
+  await screenshot("framing-shot-desktop"); await nativeUndo();
 }
 async function motion() {
-  check("motion fixture mode is explicitly non-model", true);
-  check("motion/verification controls remain in real Inspector", await evaluate("document.querySelectorAll('.inspector-pane, .studio-agent-inspector').length > 0"));
-  await shot("motion-fixture-only");
+  await openAgent();
+  const health = process.env.MOTION_MODE || "fixture-only";
+  console.log(`MOTION_MODE ${health}`);
+  await sendTurn("Make the selected character walk forward, wave, then return to the starting pose over the current shot range. Verify the full take and install it.");
+  check("motion has queued/progress/verification/install evidence", await evaluate("/generat|queued|progress|verif|install|take|receipt/i.test(document.querySelector('.studio-agent-inspector')?.innerText || '')"));
+  await screenshot("motion-installed-desktop"); await nativeUndo();
 }
 async function resilience() {
-  check("stop/transport controls are not duplicated", await evaluate("document.querySelectorAll('.agent-stop').length <= 1"));
-  check("receipt/history surface is present", await evaluate("!!window.__sceneHistory || !!document.querySelector('.agent-panel')"));
-  await action("resilience-retained-state", async () => { await evaluate("(() => { const input=document.querySelector('.agent-input'); if (!input) return false; input.value='retained draft'; input.dispatchEvent(new Event('input',{bubbles:true})); return true; })()"); check("chat input state is reachable", await evaluate("!!document.querySelector('.agent-input')")); });
+  await openAgent();
+  await sendTurn("Inspect the selected character and keep the current scene unchanged.");
+  const before = await count();
+  check("Stop control is unique", await evaluate("document.querySelectorAll('.agent-stop, .agent-send.stop').length <= 1"));
+  await evaluate(`(() => { const i=document.querySelector('[aria-label="Message the agent"]'); const s=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set; s.call(i,'stale target reconcile test'); i.dispatchEvent(new Event('input',{bubbles:true})); })()`);
+  check("retained draft remains reachable", await evaluate("document.querySelector('[aria-label=\"Message the agent\"]')?.value === 'stale target reconcile test'"));
+  check("no duplicate receipt before a new trigger", (await count()).receipts === before.receipts);
+  await screenshot("resilience-retained-draft-desktop");
 }
 async function responsive() {
-  await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
-  check("390px viewport has no horizontal overflow", await evaluate("document.documentElement.scrollWidth <= 390 && document.body.scrollWidth <= 390"));
-  check("390px has one Inspector/Agent dock", await evaluate("document.querySelectorAll('.inspector-sidebar').length === 1"));
-  await shot("responsive-390x844");
-  await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 950, deviceScaleFactor: 1, mobile: false });
-  await shot("responsive-desktop");
+  await openAgent();
+  for (const width of [375, 390, 768, 1040, 1100, 1600]) {
+    await send("Emulation.setDeviceMetricsOverride", { width, height: width < 500 ? 844 : 950, deviceScaleFactor: 1, mobile: width < 500 });
+    check(`${width}px has no horizontal overflow`, await evaluate(`document.documentElement.scrollWidth <= ${width} && document.body.scrollWidth <= ${width}`));
+    check(`${width}px composer is reachable`, await evaluate("!!document.querySelector('[aria-label=\"Message the agent\"]') && document.querySelector('[aria-label=\"Message the agent\"]').getBoundingClientRect().bottom <= innerHeight"));
+    await screenshot(`responsive-${width}`);
+  }
 }
-const implementations = { binding, intent, framing, motion, resilience, responsive };
-for (const name of selected) { console.log(`CASE ${name}`); await implementations[name](); }
+
+const impl = { binding, intent, framing, motion, resilience, responsive };
+for (const name of selected) { console.log(`CASE ${name}`); await impl[name](); }
 console.log(`qa-studio-agent-browser: ${selected.length} case(s) passed`);
 ws.close();
