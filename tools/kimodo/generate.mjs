@@ -2,11 +2,11 @@
  * generate.mjs — drive Kimodo's own `kimodo_gen` CLI on the configured box and
  * bring the result back as cskel27 motion arrays.
  *
- * There is deliberately NO python of our own here. The ARDY path needs ~2000
- * lines of cclay_*.py because it drives ARDY's model API directly to place
- * constraints; Kimodo ships a CLI that already covers multi-prompt sequencing
+ * The CUDA route uses Kimodo's CLI directly for multi-prompt sequencing
  * (`--duration "3.0 2.0"`) and constraint files, so the whole backend is: run
- * the CLI, copy the npz back, convert somaskel77 → cskel27.
+ * the CLI, copy the npz back, convert somaskel77 → cskel27. Local MLX uses
+ * mlx-generate.py to retain the runtime arrays; it and cpp share the native
+ * SOMA77 output converter before entering the same NPZ path.
  *
  * PROMPT SEGMENTATION IS BY PERIOD. `kimodo_gen "A. B." --duration "3 2"`
  * splits the prompt on sentence boundaries and pairs them with the durations
@@ -34,12 +34,14 @@ import { spawn } from "node:child_process";
 import { copyFile, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { buildRoot2dConstraints } from "./constraints.mjs";
 import { buildEffectorConstraints } from "./effector-constraints.mjs";
 import { buildFullBodyConstraints } from "./pose-constraints.mjs";
 import { buildPreserveMask, preserveMaskStats, rootFreeMask, PRESERVE_MASK_VERSION_V2 } from "./preserve-mask.mjs";
 import { readKimodoMotion } from "./read-npz.mjs";
 import { soma77ToCskel27Motion } from "./soma77-to-cskel27.mjs";
+import { writeLocalKimodoNpz } from "./local-output.mjs";
 
 const SSH_OPTS = [
 	"-o", "BatchMode=yes",
@@ -66,9 +68,15 @@ export function buildBackendCommand({ backend = "nvidia-cuda", repo, model, prom
   if (spec.mode === "mlx") args.push(spec.promptFlag, prompt, "--motion", motionWeights || process.env.CCLAY_KIMODO_MLX_MOTION || "$HOME/.cozyclay/kimodo-mlx/models/nvidia-soma-rp-v1.1", "--text", textBundle || process.env.CCLAY_KIMODO_MLX_TEXT || "$HOME/.cozyclay/kimodo-mlx/models/llm2vec-text-bundle", spec.framesFlag, String(frames), spec.stepsFlag, String(steps));
   else if (spec.mode === "cpp") args.push(motionWeights || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || "$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", textBundle || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", promptFile || "$HOME/.cozyclay/kimodo.cpp/prompt.txt", String(frames), String(steps), String(Number.isInteger(seed) ? seed : 42), outputDir || output);
   else args.push(prompt, spec.durationFlag, duration, "--diffusion_steps", String(steps), "--model", model);
-  if (Number.isInteger(seed)) args.push("--seed", String(seed));
+  if (spec.mode !== "cpp" && Number.isInteger(seed)) args.push("--seed", String(seed));
   if (spec.outputFlag) args.push(spec.outputFlag, output);
-  if (spec.mode === "mlx") return { command: entry, args: ["-m", "kimodo_mlx", "generate", ...args], cwd: root, backend };
+  if (spec.mode === "mlx") return {
+    command: entry,
+    args: outputDir
+      ? [fileURLToPath(new URL("./mlx-generate.py", import.meta.url)), ...args, "--output-dir", outputDir]
+      : ["-m", "kimodo_mlx", "generate", ...args],
+    cwd: root, backend,
+  };
   return { command: entry, args, cwd: root, backend };
 }
 
@@ -331,12 +339,16 @@ export async function generateOnBox({
 	onLine,
 } = {}) {
 	if (!host && backend === "nvidia-cuda") throw new Error("generateOnBox: CCLAY_KIMODO_HOST is required for nvidia-cuda");
+	if (!host && (segments?.length !== 1 || waypoints?.length || poses?.length || preserve)) {
+		throw new Error(`${backend} local output supports a single unconstrained prompt only; sequencing, waypoints, poses and preserve require CUDA/SSH`);
+	}
 	const { prompt, duration } = joinPrompts(segments);
 
 	// Kimodo's own generation rate decides the constraint frame indices, and the
 	// clip length it will produce follows from the requested seconds. Both are
 	// known before the call, so the path can be translated up front.
 	const genFps = Number(process.env.CCLAY_KIMODO_GEN_FPS || 30);
+	if (!host && genFps !== 30) throw new Error(`${backend} local SOMA output requires CCLAY_KIMODO_GEN_FPS=30`);
 	const requestedS = segments.reduce((total, segment) => total + Number(segment.duration), 0);
 	const genFrames = Math.max(1, Math.round(requestedS * genFps));
 	// Where each prompt segment begins, in GENERATION frames. Kimodo owns the
@@ -540,13 +552,11 @@ export async function generateOnBox({
 		// One `kimodo_gen` invocation: the env assignment and every flag are one
 		// shell WORD list for that single command, so they join with spaces, while
 		// `cd` is a separate command and must be chained with `&&`.
-		if (!host && backend === "kimodo-mlx") throw new Error("kimodo-mlx CLI has no output flag yet; local NPZ output is tracked in https://github.com/NomaDamas/CozyClay/issues/267");
-		if (!host && backend.startsWith("kimodo.cpp")) throw new Error("kimodo.cpp local .f32 output conversion is not implemented yet; tracked in https://github.com/NomaDamas/CozyClay/issues/267");
 		const promptFile = `${remoteStem}/prompt.txt`;
 		const localPrompt = join(localDir, "prompt.txt");
 		await writeFile(localPrompt, `${prompt}\n`);
 		await push(localPrompt, promptFile, "prompt");
-		const built = buildBackendCommand({ backend, repo, model, prompt, promptFile, motionWeights: backend === "kimodo-mlx" ? process.env.CCLAY_KIMODO_MLX_MOTION : process.env.CCLAY_KIMODO_CPP_MOTION_GGUF, textBundle: backend === "kimodo-mlx" ? process.env.CCLAY_KIMODO_MLX_TEXT : process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take`, outputDir: remoteStem });
+		const built = buildBackendCommand({ backend, repo, model, prompt, promptFile, motionWeights: backend === "kimodo-mlx" ? process.env.CCLAY_KIMODO_MLX_MOTION : process.env.CCLAY_KIMODO_CPP_MOTION_GGUF, textBundle: backend === "kimodo-mlx" ? process.env.CCLAY_KIMODO_MLX_TEXT : process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE, duration, frames: genFrames, steps: diffusionSteps, seed, output: `${remoteStem}/take`, outputDir: host && backend === "kimodo-mlx" ? undefined : remoteStem });
 		let commandWords = [built.command, ...built.args];
 		if (backend === "nvidia-cuda") {
 			commandWords = [
@@ -567,10 +577,11 @@ export async function generateOnBox({
 			const localCommand = expandHome(built.command);
 			const localArgs = built.args.map(expandHome);
 			const child = spawnImpl(localCommand, localArgs, { cwd: expandHome(built.cwd), env: { ...process.env } });
-			generated = await new Promise((resolve) => {
+			generated = await new Promise((resolve, reject) => {
 				let stdout = ""; let stderr = "";
 				child.stdout?.on("data", (chunk) => { stdout += chunk; if (onLine) for (const line of String(chunk).split("\n")) if (line.trim()) onLine(line); });
 				child.stderr?.on("data", (chunk) => { stderr += chunk; if (onLine) for (const line of String(chunk).split("\n")) if (line.trim()) onLine(line); });
+				child.once("error", reject);
 				child.on("close", (code) => resolve({ code, stdout, stderr }));
 			});
 		}
@@ -584,7 +595,9 @@ export async function generateOnBox({
 		if (host) {
 			const copied = await run(["scp", ...SSH_OPTS, `${host}:${remoteStem}/take.npz`, localNpz]);
 			if (copied.code !== 0) throw new Error(`scp of the generated npz failed (exit ${copied.code}): ${copied.stderr.trim()}`);
-		} else if (localNpz !== `${remoteStem}/take.npz`) await copyFile(`${remoteStem}/take.npz`, localNpz);
+		} else {
+			await writeLocalKimodoNpz(remoteStem, localNpz, { expectedFrames: genFrames });
+		}
 		// A later run can only preserve THIS take if Kimodo's own npz survives:
 		// --base_motion reads that format and the cskel27 file the caller writes
 		// is a lossy conversion of it. Best-effort on purpose — a failed local

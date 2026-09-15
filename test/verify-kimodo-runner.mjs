@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRunner } from "../tools/ardy/runners/index.mjs";
 import { createKimodoRunner } from "../tools/kimodo/runner.mjs";
-import { buildBackendCommand } from "../tools/kimodo/generate.mjs";
+import { buildBackendCommand, generateOnBox } from "../tools/kimodo/generate.mjs";
+import { readKimodoMotion, readNpz } from "../tools/kimodo/read-npz.mjs";
+import { motionArraysToNpzMembers, writeNpz } from "../tools/ardy/npz.mjs";
 
 function pass(label) { console.log(`PASS ${label}`); }
 
@@ -14,7 +21,7 @@ function withEnv(env, body) {
 	try {
 		return body();
 	} finally {
-		for (const key of ["CCLAY_MOTION_BACKEND", "CCLAY_KIMODO_HOST"]) {
+		for (const key of ["CCLAY_MOTION_BACKEND", "CCLAY_KIMODO_HOST", ...Object.keys(env)]) {
 			delete process.env[key];
 		}
 		Object.assign(process.env, SAVED);
@@ -171,7 +178,129 @@ assert.deepEqual(mlx.args, ["-m", "kimodo_mlx", "generate", "--prompt", "walk", 
 for (const backend of ["kimodo.cpp-metal", "kimodo.cpp-cpu"]) {
   const cpp = buildBackendCommand({ backend, repo: "/opt/cpp", prompt: "walk", frames: 60, steps: 10, output: "/tmp/take" });
   assert.deepEqual(cpp.args, ["$HOME/.cozyclay/kimodo.cpp/models/kimodo-soma-rp-v1.1-f32.gguf", "$HOME/.cozyclay/kimodo.cpp/generated/llm2vec-text-bundle", "$HOME/.cozyclay/kimodo.cpp/prompt.txt", "60", "10", "42", "/tmp/take"]);
+  const seeded = buildBackendCommand({ backend, repo: "/opt/cpp", frames: 2, steps: 1, seed: 7, motionWeights: "/motion.gguf", textBundle: "/text", promptFile: "/prompt.txt", outputDir: "/output" });
+  assert.deepEqual(seeded.args, ["/motion.gguf", "/text", "/prompt.txt", "2", "1", "7", "/output"]);
 }
 pass("all installed Kimodo backends have exact command contracts");
+
+// Given: real little-endian local files, with identity and a 90-degree root yaw.
+// Only the external generator is faked; both NPZ formats and retargeting are real.
+const localFixture = mkdtempSync(join(tmpdir(), "kimodo-runner-test-"));
+try {
+	for (const backend of ["kimodo.cpp-metal", "kimodo.cpp-cpu", "kimodo-mlx"]) {
+		let outputDir;
+		const nativeOut = join(localFixture, `${backend}.kimodo.npz`);
+		const lines = [];
+		const spawnImpl = (command, args, options) => {
+			assert.equal(options.cwd, "/fixture repo");
+			if (backend === "kimodo-mlx") {
+				assert.equal(command, `${process.env.HOME}/.cozyclay/kimodo-mlx-venv/bin/python`);
+				assert.equal(args[0], fileURLToPath(new URL("../tools/kimodo/mlx-generate.py", import.meta.url)));
+				assert.equal(args[args.indexOf("--prompt") + 1], "A person walks.");
+				assert.equal(args[args.indexOf("--frames") + 1], "2");
+				assert.equal(args[args.indexOf("--steps") + 1], "1");
+				assert.equal(args[args.indexOf("--seed") + 1], "7");
+				assert.ok(args.includes("--output-dir"));
+				outputDir = args[args.indexOf("--output-dir") + 1];
+			} else {
+				assert.equal(command, `/fixture repo/${backend.endsWith("metal") ? "build-metal" : "build-cpu"}/kmd-generate`);
+				assert.equal(args.length, 7, "cpp accepts only positional arguments");
+				assert.equal(args[3], "2");
+				assert.equal(args[4], "1");
+				assert.equal(args[5], "7");
+				assert.equal(readFileSync(args[2], "utf8"), "A person walks.\n");
+				outputDir = args[6];
+			}
+			const roots = Buffer.alloc(2 * 3 * 4);
+			[0, 1, 0, 0.25, 1, -0.5].forEach((value, index) => roots.writeFloatLE(value, index * 4));
+			const rotations = Buffer.alloc(2 * 30 * 4 * 4);
+			for (let joint = 0; joint < 2 * 30; joint += 1) rotations.writeFloatLE(1, (joint * 4 + 3) * 4);
+			rotations.writeFloatLE(Math.SQRT1_2, (30 * 4 + 1) * 4);
+			rotations.writeFloatLE(Math.SQRT1_2, (30 * 4 + 3) * 4);
+			writeFileSync(join(outputDir, "root_positions.f32"), roots);
+			writeFileSync(join(outputDir, "local_rotations_xyzw.f32"), rotations);
+			const child = new EventEmitter();
+			child.stdout = new EventEmitter();
+			child.stderr = new EventEmitter();
+			queueMicrotask(() => {
+				child.stdout.emit("data", Buffer.from("generated 2 frames with 30 joints\n"));
+				child.emit("close", 0);
+			});
+			return child;
+		};
+		// When: the local route runs through the existing Studio conversion.
+		const result = await generateOnBox({
+			backend, host: "", repo: "/fixture repo", segments: [{ prompt: "A person walks", duration: 2 / 30 }],
+			diffusionSteps: 1, seed: 7, preserve: null, nativeOut, spawnImpl, onLine: (line) => lines.push(line),
+		});
+		// Then: the saved native take and the final Studio file contain real motion.
+		assert.deepEqual(result.raw, { frames: 2, joints: 77, fps: 30 });
+		assert.equal(result.nativeNpz, nativeOut);
+		assert.ok(result.npzBytes > 0);
+		assert.deepEqual(lines, ["generated 2 frames with 30 joints"]);
+		assert.equal(existsSync(outputDir), false, "temporary runtime outputs are cleaned");
+		const native = readKimodoMotion(nativeOut);
+		assert.deepEqual(Array.from(native.posedJoints.slice(77 * 3, 77 * 3 + 3)), [0.25, 1, -0.5]);
+		const yaw = [0, 0, 1, 0, 1, 0, -1, 0, 0];
+		for (let i = 0; i < 9; i += 1) {
+			assert.ok(Math.abs(native.globalRotMats[77 * 9 + i] - yaw[i]) < 1e-6);
+			assert.ok(Math.abs(result.motion.rotMats[27 * 9 + i] - yaw[i]) < 1e-6);
+		}
+		const studioOut = join(localFixture, `${backend}.npz`);
+		writeNpz(studioOut, motionArraysToNpzMembers(result.motion));
+		const studio = readNpz(studioOut);
+		assert.deepEqual(studio.posed_joints.shape, [2, 27, 3]);
+		assert.deepEqual(studio.local_rot_mats.shape, [2, 27, 3, 3]);
+		assert.ok(studio.posed_joints.data.every(Number.isFinite));
+		assert.ok(result.motion.rootPos[3] > result.motion.rootPos[0]);
+		pass(`${backend} f32 outputs reach native SOMA77 and Studio cskel27 NPZ`);
+	}
+	const localRequest = {
+		backend: "kimodo.cpp-cpu", host: "", repo: "/fixture repo",
+		segments: [{ prompt: "walk", duration: 1 }], preserve: null, nativeOut: "",
+	};
+	for (const extra of [
+		{ segments: [{ prompt: "walk", duration: 1 }, { prompt: "run", duration: 1 }] },
+		{ waypoints: [{ frame: 0, x: 0, z: 0 }, { frame: 24, x: 1, z: 1 }] },
+		{ poses: [{ frame: 0 }] },
+		{ preserve: { basePath: "/base.npz", sigmaS: 900, sigmaE: 100 } },
+	]) {
+		await assert.rejects(generateOnBox({
+			...localRequest, ...extra,
+			spawnImpl: () => assert.fail("unsupported local conditioning must not spawn"),
+		}), /local.*single.*unconstrained/i);
+	}
+	pass("local routes refuse unsupported conditioning instead of ignoring it");
+
+	const spawnError = Object.assign(new Error("fixture executable missing"), { code: "ENOENT" });
+	await assert.rejects(generateOnBox({
+		...localRequest,
+		spawnImpl: () => {
+			const child = new EventEmitter();
+			queueMicrotask(() => child.emit("error", spawnError));
+			return child;
+		},
+	}), (error) => error === spawnError);
+	pass("local spawn errors reject the request");
+
+	let failedDir;
+	await assert.rejects(generateOnBox({
+		...localRequest,
+		spawnImpl: (_command, args) => {
+			failedDir = args[6];
+			const child = new EventEmitter();
+			child.stderr = new EventEmitter();
+			queueMicrotask(() => {
+				child.stderr.emit("data", "fixture generator failed\n");
+				child.emit("close", 9);
+			});
+			return child;
+		},
+	}), /exit 9/);
+	assert.equal(existsSync(failedDir), false);
+	pass("failed local generation is reported and its output directory cleaned");
+} finally {
+	rmSync(localFixture, { recursive: true, force: true });
+}
 
 console.log("OK verify-kimodo-runner");

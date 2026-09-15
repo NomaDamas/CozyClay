@@ -105,7 +105,7 @@ The installer is a router — it detects OS, architecture, RAM and CUDA, and ins
 | Linux + working NVIDIA CUDA | [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) (PyTorch) | Full CUDA acceleration with the upstream stack |
 | Other Unix, no CUDA | kimodo.cpp CPU (Vulkan when available) | Local GGML execution without a GPU |
 
-The installer supports all routes above. CUDA motion generation works over SSH; MLX and kimodo.cpp are launched locally, while their output conversion to the Studio NPZ format is tracked in [#267](https://github.com/NomaDamas/CozyClay/issues/267). The local integration originated in [#239](https://github.com/NomaDamas/CozyClay/issues/239).
+The installer supports all routes above. CUDA motion generation works over SSH. For local generation, set `CCLAY_KIMODO_BACKEND` to `kimodo-mlx`, `kimodo.cpp-metal`, or `kimodo.cpp-cpu` and leave `CCLAY_KIMODO_HOST` unset: single unconstrained SOMA30 prompts at 30 fps now convert to the Studio NPZ format. The MLX wrapper retains runtime arrays that the upstream CLI's JSON omits; both local routes expand the 30-joint output using NVIDIA's canonical SOMA77 hierarchy and relaxed-hand rest pose, then run forward kinematics before retargeting to cskel27. Sequencing, waypoints, pinned poses, and preserve still require CUDA/SSH and are explicitly refused locally. Local conversion is tested with synthetic outputs; model inference requires the installed runtime and weights. The local integration originated in [#239](https://github.com/NomaDamas/CozyClay/issues/239).
 
 For the CUDA route, the installer places the checkout at `$HOME/.cozyclay/kimodo` and its virtual environment at `$HOME/.cozyclay/kimodo-venv`, then links the venv at `$CCLAY_KIMODO_REPO/.venv` where the Studio runner expects it.
 
