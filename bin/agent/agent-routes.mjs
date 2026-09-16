@@ -1,6 +1,8 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
+import { basename } from "node:path";
 import * as defaultAuth from "../codex-auth.mjs";
+import { publishLiveEndpoint, removeLiveEndpoint } from "../live-endpoint.mjs";
 import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
 
@@ -164,11 +166,18 @@ function defaultClient(auth, requestContext) {
 	});
 }
 
+// The launcher and the dev runner both own a hub of their own; the endpoint
+// file names which one a controller has reached.
+const liveHubOwner = () => process.env.COZYCLAY_LIVE_OWNER
+	|| (basename(process.argv[1] ?? "") === "dev-full.mjs" ? "dev-full" : "cozyclay");
+
 /** Start the optional registry/live dependencies without making signed-out
  * startup depend on an MCP dependency install. Failures remain visible on use. */
 function liveToolsRuntime() {
 	return Promise.all([import("../../mcp/tool-handlers.mjs"), import("../../mcp/live-hub.mjs")]).then(async ([registry, { startLiveHub }]) => {
-		const liveHub = await startLiveHub(Number(process.env.COZYCLAY_LIVE_PORT ?? 5184));
+		const owner = liveHubOwner();
+		const token = randomBytes(32).toString("hex");
+		const liveHub = await startLiveHub(Number(process.env.COZYCLAY_LIVE_PORT ?? 5184), { token, owner });
 		registry.setLiveHub(liveHub);
 		const handlers = registry.createToolHandlers().map((tool) => ({
 			...tool,
@@ -178,6 +187,17 @@ function liveToolsRuntime() {
 				return liveHub?.connected ? liveHub.runExclusive(tool.name, workspaceHandle, run) : run(workspaceHandle);
 			},
 		}));
+		if (liveHub) {
+			// A controller runs the same per-workspace wrapper the panel's own tools
+			// run, so registry state stays serialized across both surfaces.
+			liveHub.serveTool = (name, args, workspaceHandle) => {
+				const tool = handlers.find((entry) => entry.name === name);
+				if (!tool) throw Object.assign(new Error(`Unknown live tool "${name}".`), { code: "UNKNOWN_TOOL" });
+				return tool.handler(args ?? {}, { workspaceHandle });
+			};
+			publishLiveEndpoint({ port: liveHub.port, token, owner });
+			liveHub.server?.once("close", () => removeLiveEndpoint(liveHub.port));
+		}
 		return { liveHub, handlers };
 	}).catch((error) => ({ error }));
 }

@@ -17,13 +17,24 @@ editor -> server, once after connect:
 
 server -> editor, once after `hello`:
 
-    { "type": "workspace", "handle": "<opaque workspace handle>" }
+    { "type": "workspace", "handle": "<workspace handle>", "heartbeatMs": 15000 }
 
-The handle is newly issued for this socket connection. The editor surfaces it to
-its operator. A disconnect invalidates it; a reconnect receives a fresh handle.
-The editor also sends its stable per-tab `workspaceId` in `hello`; it is not an
-MCP tool argument and lets the hub route retained terminal motion outcomes to
-the same editor after that fresh handle is issued.
+The editor sends its stable per-tab `workspaceId` in `hello`, and that id **is**
+the handle the hub issues: the same tab resumes the same handle after any
+reconnect, which is what lets retained terminal motion outcomes and a terminal
+controller's `--workspace` argument survive a reload or a hub restart. A hello
+without an id still gets a random handle for that socket only. The handle is
+valid exactly while its editor is connected: during the gap every command for it
+fails `STALE_HANDLE`, and a second live socket claiming an id that is already
+connected is closed 1008. The editor surfaces the handle to its operator.
+
+`heartbeatMs` is the hub's ping interval (additive to v1; an older editor
+ignores it). The hub pings every socket on that interval and drops any socket
+that did not answer the previous ping, so a dead page never holds a workspace
+id. An editor may also probe the hub at the application level:
+
+    editor -> server:  { "type": "ping" }
+    server -> editor:  { "type": "pong" }
 
 server -> editor, one per command:
 
@@ -52,6 +63,51 @@ ARDY NPZ had nearest-rank p50 29.96 ms, p95 547.29 ms, and p99 547.29 ms;
 30 s remains appropriate for materially larger cold-cache production takes. A timeout or disconnect during
 a mutation is ambiguous: it may already have applied, so callers MUST NOT retry
 blindly and should `describe` before recovering.
+
+## Controller role
+
+A controller is a local process (a terminal client), not a page. It connects to
+the same socket and greets:
+
+    { "type": "hello", "role": "controller", "version": 1, "token": "<hub token>" }
+
+The token is the one in the hub's endpoint file,
+`$XDG_CONFIG_HOME/cozyclay/live/<port>.json` (mode 0600, written by whichever
+owner started the hub and removed when it closes). A hello without the right
+token is closed 1008, and so is one that arrives with **any** `Origin` header:
+a browser page can hold a loopback origin but can never read that file, so the
+controller role stays with local processes. The hub answers an accepted hello:
+
+    { "type": "ready", "role": "controller", "heartbeatMs": 15000, "server": { "port", "owner", "pid" } }
+
+controller -> server:
+
+    { "type": "cmd",    "id", "name", "args", "workspaceHandle"?, "timeoutMs"? }
+    { "type": "tool",   "id", "name", "args", "workspaceHandle"? }
+    { "type": "status", "id" }
+
+`cmd` runs one protocol command through the same workspace resolution every
+other transport uses (below). `timeoutMs` overrides that command's editor
+timeout and is capped at 300 s. `tool` runs one registry tool — the same tool an
+MCP client would call, with the same argument validation and the same
+per-workspace exclusion — and is available only from an owner that has a tool
+registry. `status` reports the hub itself:
+
+    { "server": { "port", "owner", "pid" },
+      "editors": [ { "handle", "workspaceId", "meta", "connectedAt", "lastSeenMs", "inFlight" } ] }
+
+server -> controller, one per request, echoing `id`:
+
+    { "type": "result", "id", "ok": true,  "value": { ... } }
+    { "type": "result", "id", "ok": false, "error": { "code", "message", "recovery"?, "details"? } }
+
+Every failure carries a stable `code`, so a client branches on the code and
+never on the wording of the message: `TIMEOUT`, `UNCERTAIN_APPLY`, `NO_EDITOR`,
+`AMBIGUOUS_WORKSPACE` (with `details.candidates`), `STALE_HANDLE`,
+`EDITOR_ERROR`. Controllers also receive editor lifecycle events, so a client
+can wait for an editor instead of polling:
+
+    { "type": "event", "name": "editor_connected" | "editor_disconnected", "payload": { "handle", "workspaceId", "meta" } }
 
 ## Motion jobs
 
@@ -122,8 +178,16 @@ handle. Every MCP tool that reads or mutates a live editor accepts `workspace_ha
 When exactly one editor is connected, omitting it selects that editor. With two
 or more editors, omitting it fails before dispatch and enumerates every candidate
 handle. An unknown or disconnected handle fails as unknown or stale and is never
-routed to another editor. The hub owns this resolution rule for every transport;
-there is no last-active, heartbeat, focus, or recency fallback.
+routed to another editor. The hub owns this resolution rule for every transport —
+MCP tools, agent commands and terminal controllers alike; there is no
+last-active, heartbeat, focus, or recency fallback. The heartbeat only decides
+whether a socket is still alive; it never decides which workspace a command
+reaches.
+
+A handle is the editor's own stable workspace id, so a handle a client learned
+before a reload still names the same tab afterwards. That is a naming contract,
+not a routing one: while the tab is away its handle resolves to nothing and
+fails `STALE_HANDLE`, and the id is never reassigned to a different editor.
 
 ## Hard rules for the server side
 

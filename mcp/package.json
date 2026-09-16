@@ -12,7 +12,7 @@
 		"verify": "node verify.mjs && node verify-protocol-version.mjs && node verify-http-origin.mjs",
 		"verify:annotations": "node verify-tool-annotations.mjs",
 		"verify:prompts": "node verify-prompts.mjs",
-		"verify:live": "node verify-live.mjs && node verify-live-p0.mjs && node verify-live-routing.mjs && node verify-live-scene-parity.mjs && node verify-live-batch.mjs && node verify-live-editor-model.mjs && node verify-live-port.mjs",
+		"verify:live": "node verify-live.mjs && node verify-live-p0.mjs && node verify-live-routing.mjs && node verify-live-controller.mjs && node verify-live-scene-parity.mjs && node verify-live-batch.mjs && node verify-live-editor-model.mjs && node verify-live-port.mjs",
 		"verify:capture": "node verify-live-capture.mjs",
 		"verify:motion-job": "node verify-live-motion-job.mjs"
 	},

@@ -36,8 +36,10 @@ import { realpath } from "node:fs/promises";
 import { resolve } from "node:path";
 
 import { createServer } from "node:http";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+
+import { publishLiveEndpoint, removeLiveEndpoint } from "../bin/live-endpoint.mjs";
 
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -161,10 +163,29 @@ server.server.setRequestHandler(InitializeRequestSchema, async (request) => {
 	return server.server._oninitialize(request);
 });
 
+/** name -> the schema and the exact closure an MCP client's call would run, so
+ * a controller on the live hub executes the same tool with the same workspace
+ * routing instead of a parallel implementation. */
+const toolRuntime = new Map();
+
 const registerTool = ({ name, title, description, inputSchema, annotations, live, handler }) => {
 	registeredTools += 1;
 	if (!annotations) throw new Error(`Missing explicit safety annotations for ${name}.`);
-	if (!live) return server.registerTool(name, { title, description, inputSchema, annotations }, handler);
+	if (!live) {
+		toolRuntime.set(name, { inputSchema, run: handler });
+		return server.registerTool(name, { title, description, inputSchema, annotations }, handler);
+	}
+	const run = async (args) => {
+		const workspaceHandle = args.workspace_handle;
+		if (workspaceHandle !== undefined && !liveHub?.connected) {
+			throw new Error(`Unknown or stale live workspace handle \"${workspaceHandle}\".`);
+		}
+		if (!liveHub?.connected) return liveWorkspace.run(workspaceHandle, () => handler(args));
+		return liveHub.runExclusive(name, workspaceHandle, (resolvedHandle) =>
+			liveHub.observeExecution(name, resolvedHandle, () => liveWorkspace.run(resolvedHandle, () => handler(args))),
+		);
+	};
+	toolRuntime.set(name, { inputSchema, run });
 	return server.registerTool(
 		name,
 		{
@@ -178,17 +199,16 @@ const registerTool = ({ name, title, description, inputSchema, annotations, live
 				workspace_handle: z.string().optional().describe("live workspace handle from live_status; required when multiple editors are connected"),
 			},
 		},
-		async (args) => {
-			const workspaceHandle = args.workspace_handle;
-			if (workspaceHandle !== undefined && !liveHub?.connected) {
-				throw new Error(`Unknown or stale live workspace handle \"${workspaceHandle}\".`);
-			}
-			if (!liveHub?.connected) return liveWorkspace.run(workspaceHandle, () => handler(args));
-			return liveHub.runExclusive(name, workspaceHandle, (resolvedHandle) =>
-				liveHub.observeExecution(name, resolvedHandle, () => liveWorkspace.run(resolvedHandle, () => handler(args))),
-			);
-		},
+		run,
 	);
+};
+
+/** The hub's `tool` frame: same registry, same validation an MCP client gets. */
+const serveRegistryTool = (name, args, workspaceHandle) => {
+	const tool = toolRuntime.get(name);
+	if (!tool) throw Object.assign(new Error(`Unknown live tool "${name}".`), { code: "UNKNOWN_TOOL" });
+	const parsed = Object.fromEntries(Object.entries(tool.inputSchema).map(([key, schema]) => [key, schema.parse(args?.[key])]));
+	return tool.run(workspaceHandle === undefined ? parsed : { ...parsed, workspace_handle: workspaceHandle });
 };
 
 // The tools themselves live in tool-handlers.mjs so an in-process agent can run
@@ -213,8 +233,13 @@ const livePort = Number(
 );
 if (!Number.isInteger(livePort) || livePort < 1 || livePort > 65535) throw new Error("--live-port must be a valid TCP port.");
 
-const configureLiveHub = (hub) => {
+const configureLiveHub = (hub, token) => {
 	if (!hub) return;
+	hub.serveTool = serveRegistryTool;
+	// Terminal controllers find this hub through the endpoint file, which is the
+	// only place its token exists.
+	publishLiveEndpoint({ port: hub.port, token, owner: "mcp" });
+	hub.server?.once("close", () => removeLiveEndpoint(hub.port));
 	hub.onEvent = ({ workspaceId, name, payload }) => {
 		if (name === "motion_job_cancel") cancelMotionJob({ workspaceId, payload });
 	};
@@ -224,10 +249,11 @@ const configureLiveHub = (hub) => {
 };
 
 if (httpFlag === -1) {
-	const hub = await startLiveHub(livePort);
+	const liveToken = randomBytes(32).toString("hex");
+	const hub = await startLiveHub(livePort, { token: liveToken, owner: "mcp" });
 	setLivePortInfo(livePort, hub === null);
 	setLiveHub(hub);
-	configureLiveHub(hub);
+	configureLiveHub(hub, liveToken);
 	await server.connect(new StdioServerTransport());
 } else {
 	// Tools execute in the stdio children, not this HTTP front. Each child tries

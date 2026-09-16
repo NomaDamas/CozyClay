@@ -185,6 +185,7 @@ const NODE_FILES = [
 	"mcp/verify-live-motion-job.mjs",
 	"mcp/verify-live-p0.mjs",
 	"mcp/verify-live-port.mjs",
+	"mcp/verify-live-controller.mjs",
 	"mcp/verify-live-routing.mjs",
 	"mcp/verify-prompts.mjs",
 	"mcp/verify-protocol-version.mjs",
