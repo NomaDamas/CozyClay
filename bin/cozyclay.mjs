@@ -141,6 +141,8 @@ const HELP = `cozyclay - browser-based 3D staging studio
 
   npx cozyclay              start the studio and open it
   npx cozyclay mcp          run the MCP server (for Claude, Cursor, any MCP client)
+  cclay live status         drive a running studio from the terminal
+                            (cclay live --help lists every verb)
   cclay update              install the latest cozyclay globally (npm install -g)
   npx cozyclay --port 5200  serve on another port
   npx cozyclay --no-motion  skip the optional motion-generation sidecar
@@ -279,6 +281,11 @@ function readVersion() {
 const argv = process.argv.slice(2);
 if (argv[0] === "mcp") {
 	await runMcp(argv.slice(1));
+} else if (argv[0] === "live") {
+	// Loaded on demand: the terminal controller is JSON over one socket and has
+	// no business being parsed on every `npx cozyclay` launch.
+	const { runLiveCli } = await import("./live/cli.mjs");
+	process.exit(await runLiveCli(argv.slice(1)));
 } else if (argv[0] === "update") {
 	// This branch bypasses parseArgs, so anything trailing would be swallowed
 	// and `cclay update --help` would perform an unrequested global install.

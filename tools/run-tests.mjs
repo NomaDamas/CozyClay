@@ -112,6 +112,7 @@ const NODE_FILES = [
 	"test/verify-line-edit-draw.mjs",
 	"test/verify-line-edit-pins.mjs",
 	"test/verify-live-agent-commands.mjs",
+	"test/verify-live-cli.mjs",
 	"test/verify-live-control.mjs",
 	"test/verify-matte-editor.mjs",
 	"test/verify-matte.mjs",
