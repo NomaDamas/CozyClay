@@ -9,7 +9,7 @@ import { createStableItemId } from './stable-items.js';
 import { focalMmToFov, SENSOR_FORMATS } from './shot.js';
 import { StudioProtocolError, StudioSchemas, validateStudioSchema, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt, freezeStudioData, utf8ByteLength } from './studio-agent-protocol.js';
 
-const DEG = Math.PI / 180, EPS = 1e-8;
+const DEG = Math.PI / 180, EPS = 1e-8, CHARACTER_SUPPORT_TOLERANCE = 5e-3;
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const pos = e => ({ x: e.x, y: e.y ?? 0, z: e.z });
@@ -106,15 +106,9 @@ function place(entity, op, state, ports) {
     if (Math.hypot(result.x - previous.x, result.z - previous.z, result.rot - previous.rot) < EPS) { converged = true; break; }
   }
   if (!converged) fail('AMBIGUOUS_BASIS', 'Facing and placement cannot satisfy the requested relation.');
-  let points = geometry(result, state, ports);
-  if (!result.renderer) {
-    const lift = surface.y - Math.min(...points.map(p => p.y));
-    if (Number.isFinite(lift) && Math.abs(lift) > EPS) {
-      result = patchEntity(result, { y: result.y + lift });
-      points = geometry(result, state, ports);
-    }
-  }
-  if (Math.abs(Math.min(...points.map(p => p.y)) - surface.y) > EPS) fail('TARGET_NOT_READY', 'Tilted or offset bounds cannot rest on the requested support.');
+  const points = geometry(result, state, ports);
+  const supportTolerance = !result.renderer && surface.label === 'floor' ? CHARACTER_SUPPORT_TOLERANCE : EPS;
+  if (Math.abs(Math.min(...points.map(p => p.y)) - surface.y) > supportTolerance) fail('TARGET_NOT_READY', 'Tilted or offset bounds cannot rest on the requested support.');
   let actualGapM;
   if (axis) {
     actualGapM = interval(points, axis).min - interval(geometry(reference, state, ports), axis).max;

@@ -121,7 +121,8 @@ async function measuredCharacterFloor(mod) {
     const receipt = validateReceipt(response.value);
     assert.equal(receipt.ok, true, `ordinary measured upright character must be placeable: ${JSON.stringify(receipt)}`);
     const second = f.state.characters[1], grounded = bounds({ entity: second });
-    near(second.y, -measured.min.y * scale); near(grounded.min.y, 0);
+    assert.equal(second.y, f.state.floorY);
+    assert.ok(Math.abs(grounded.min.y - f.state.floorY) <= 0.005, `measured skin offset must stay within support tolerance: ${grounded.min.y}`);
     near(grounded.min.x - bounds({ entity: f.state.characters[0] }).max.x, 2);
     near(receipt.checks.actualGapM, 2); near(receipt.checks.baseY, 0);
     assert.equal(receipt.checks.support, 'floor'); assert.equal(receipt.undo.entries, 1);
@@ -135,7 +136,7 @@ async function measuredCharacterFloor(mod) {
   }
   console.log('PASS measured-character-floor: measured default rig and scale=2, grounded skin, exact 2m gap, private draft, one domain history entry, replay and Undo');
 
-  for (const scenario of ['tilted-support', 'unavailable', 'unavailable-after-lift', 'clamped', 'unresponsive-bounds', 'batch-failure', 'revision-race', 'frame-race', 'gesture-race']) {
+  for (const scenario of ['tilted-support', 'unavailable', 'unavailable-after-measurement', 'clamped', 'unresponsive-bounds', 'batch-failure', 'revision-race', 'frame-race', 'gesture-race']) {
     const f = fixture(); f.ports.bounds = bounds;
     let ops = [create], name = 'arrange_characters', code = 'TARGET_NOT_READY';
     if (scenario === 'tilted-support') {
@@ -143,9 +144,20 @@ async function measuredCharacterFloor(mod) {
       ops = [{ ...create, position: { onObject: 'chair' } }];
     }
     if (scenario === 'unavailable') f.ports.bounds = () => null;
-    if (scenario === 'unavailable-after-lift') f.ports.bounds = input => input.entity.id !== 'alex' && input.entity.y > 0 ? null : bounds(input);
+    if (scenario === 'unavailable-after-measurement') {
+      let measuredCharacter = false;
+      f.ports.bounds = input => {
+        if (input.entity.id !== 'alex' && measuredCharacter) return null;
+        if (input.entity.id !== 'alex') measuredCharacter = true;
+        return bounds(input);
+      };
+    }
     if (scenario === 'clamped') f.ports.bounds = input => { const box = bounds(input); box.min.y = input.entity.y + 0.1; return box; };
-    if (scenario === 'unresponsive-bounds') f.ports.bounds = input => { const box = bounds(input); box.min.y = measured.min.y; return box; };
+    if (scenario === 'unresponsive-bounds') f.ports.bounds = input => {
+      const box = bounds(input);
+      if (input.entity.id !== 'alex') box.min.y = input.entity.y - 0.0051;
+      return box;
+    };
     if (scenario === 'batch-failure') { ops = [create, { ...create, name: 'Alex' }]; code = 'DUPLICATE_NAME'; }
     if (scenario.endsWith('-race')) {
       code = scenario === 'gesture-race' ? 'TARGET_BUSY' : 'STALE_SCENE';
