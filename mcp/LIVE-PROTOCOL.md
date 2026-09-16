@@ -4,10 +4,13 @@ The MCP JSON-RPC endpoint deliberately negotiates only protocol version
 `2025-11-25`. Older and draft tracks are rejected during `initialize`.
 
 One WebSocket, JSON text frames. The **MCP server hosts** the socket
-(`ws://127.0.0.1:5184/live`); the **editor is the client** and reconnects
-every 3 s while the page is open. Either side may be absent: the editor works
-exactly as before when nothing is listening, and the MCP server falls back to
-its in-memory scene when no editor is connected.
+(`ws://127.0.0.1:5184/live`); the **editor is the client** and retries a lost
+connection on capped exponential backoff while the page is open (1 s doubling
+to a 15 s cap, +/-25 % jitter, reset by the `workspace` frame), and connects
+immediately instead of waiting out that backoff when its tab or its network
+comes back. Either side may be absent: the editor works exactly as before when
+nothing is listening, and the MCP server falls back to its in-memory scene when
+no editor is connected.
 
 ## Frames
 
@@ -169,6 +172,11 @@ scene document already uses.
 - The socket client MUST be a no-op in production builds unless explicitly
   enabled; in dev it may always try. A failed connection must never surface
   an error to the user - silence and retry.
+- An editor that sees `heartbeatMs` in its `workspace` frame sends `ping` every
+  20 s and drops the socket when no `pong` arrives within 10 s; it decides on
+  elapsed time, never on timer order, so a stalled main thread (a 30 s
+  `capture_frame`) is not mistaken for a dead hub. A hub that advertises no
+  `heartbeatMs` gets no application-level pings.
 
 ## Workspace routing
 

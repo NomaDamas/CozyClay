@@ -52,7 +52,7 @@ import { movePromptClipFrames } from "./ardy/prompt-clips.js";
 import Timeline from "./ardy/timeline.jsx";
 import { alignArdyPath, judgeAuthoredPath, judgeNextWaypoint } from "./ardy/waypoints.js";
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
-import { createLiveControl } from "./live-control.js";
+import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
 import { createFirstEditTracker } from "./semantic-edit.js";
 import { useSemanticState } from "./use-semantic-state.js";
 import AgentPanel from "./workflow/AgentPanel.jsx";
@@ -2568,7 +2568,10 @@ export default function App() {
 	const liveHandlersRef = useRef(null);
 	const [liveWorkspaceHandle, setLiveWorkspaceHandle] = useState(null);
 	const liveWorkspaceHandleRef = useRef(null);
-	const liveWorkspaceIdRef = useRef(crypto.randomUUID());
+	// One identity per tab, kept in sessionStorage so a reload reconnects as the
+	// same workspace instead of orphaning the hub's retained motion outcomes.
+	const liveWorkspaceIdRef = useRef("");
+	if (!liveWorkspaceIdRef.current) liveWorkspaceIdRef.current = loadLiveWorkspaceId();
 	const [result, setResult] = useState(null);
 	const [resultOpen, setResultOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
@@ -4831,6 +4834,13 @@ export default function App() {
 					onWorkspace: (handle) => {
 						liveWorkspaceHandleRef.current = handle;
 						setLiveWorkspaceHandle(handle);
+					},
+					// Duplicating a tab copies its sessionStorage, so both tabs claim one
+					// id and the hub refuses the second. Take a fresh id for this tab.
+					onDuplicate: () => {
+						const minted = mintLiveWorkspaceId();
+						liveWorkspaceIdRef.current = minted;
+						return minted;
 					},
 					onEvent: (name, payload) => {
 						if (name !== "motion_job" || typeof payload.taskId !== "string") return;

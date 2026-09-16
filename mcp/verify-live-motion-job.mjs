@@ -136,7 +136,6 @@ const connectEditor = async (workspaceId) => {
 	const control = createLiveControl({
 		workspaceId,
 		url: `ws://127.0.0.1:${livePort}/live`,
-		reconnectMs: 60_000,
 		WebSocketImpl: class extends WebSocket {
 			constructor(url) { super(url); socket = this; }
 		},
