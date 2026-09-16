@@ -284,3 +284,58 @@ console.log("agent routes verified");
 	assert.equal(session.workflowHandle, "canvas");
 	console.log("PASS canvas agent tools: kind isolation, schemas, one-to-one routing, add_reference_node, independent handles");
 }
+
+{
+	// Regression for #320: /agent/stop must forward the motion runtime's outcome.
+	// The panel decides whether it may say "scene unchanged" from this body alone,
+	// so a route that answers a bare {ok:true,status:"stopped"} silently turns
+	// "nobody could check" into "nothing was applied".
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const stopReplies = [
+		{ status: "cancelled", code: "CANCELLED", mutated: false },
+		{ ok: false, code: "UNCERTAIN_APPLY", mutated: "unknown" },
+	];
+	const seenJobIds = [];
+	const stopRuntime = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: "job-stop-1", commandId: "cmd-stop-1", state: "queued" }),
+		subscribe: () => () => {},
+		start: async () => ({ ok: false, code: "CANCELLED", mutated: false }),
+		stop: async (jobId) => { seenJobIds.push(jobId); return stopReplies.shift(); },
+	};
+	let stopTurns = 0;
+	const stopCodex = {
+		...fakeCodex,
+		streamResponses: () => { const first = stopTurns++ === 0; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
+			if (first) yield { type: "response.output_item.done", item: { type: "function_call", call_id: "m1", name: "generate_motion", arguments: JSON.stringify({ characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk forward" }], durationSeconds: 2 } }) } };
+			else yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
+			yield { type: "response.completed", response: { status: "completed" } };
+		} }; },
+	};
+	let stopServer;
+	const stopHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
+	const stopHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: stopCodex, liveHub: stopHub, studioRuntime: stopRuntime, port: () => stopServer.address().port });
+	stopServer = createServer((req, res) => stopHandler(req, res).catch((error) => { console.error("stop-route fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	stopServer.listen(0, "127.0.0.1");
+	await once(stopServer, "listening");
+	const stopPort = stopServer.address().port;
+	const origin = `http://127.0.0.1:${stopPort}`;
+	const envelope = envelopeFixture();
+	const turnResponse = await fetch(`${origin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(envelope) });
+	await turnResponse.text();
+	const cookie = (turnResponse.headers.getSetCookie?.() ?? [turnResponse.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
+	assert.match(cookie, /studio_owner=/, "the turn hands the owning UI its stop credential");
+	const stop = async () => {
+		const response = await fetch(`${origin}/agent/stop`, { method: "POST", headers: { "content-type": "application/json", origin, cookie }, body: JSON.stringify({ surface: "studio", sessionId: envelope.sessionId, turnId: envelope.turnId, jobId: "job-stop-1" }) });
+		return { status: response.status, body: await response.json() };
+	};
+	const proved = await stop();
+	assert.equal(proved.status, 200, JSON.stringify(proved.body));
+	assert.deepEqual(proved.body.outcome, { status: "cancelled", code: "CANCELLED", mutated: false }, "a proven cancellation reaches the panel intact");
+	const unproven = await stop();
+	assert.equal(unproven.body.outcome.mutated, "unknown", "an uncertain runtime outcome is forwarded as uncertain, not dropped");
+	assert.equal(unproven.body.outcome.code, "UNCERTAIN_APPLY");
+	assert.deepEqual(seenJobIds, ["job-stop-1", "job-stop-1"]);
+	stopServer.close();
+	console.log("PASS /agent/stop forwards the runtime outcome instead of asserting success");
+}

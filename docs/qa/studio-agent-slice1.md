@@ -130,32 +130,47 @@ returned to its 359-frame range.
 | Take playing on the timeline | `computer-use/14-motion-playing-desktop.png` | `computer-use/34-motion-playing-390.png` |
 | Native Undo removes the take | `computer-use/15-motion-undo-desktop.png` | `computer-use/35-motion-undo-390.png` |
 
-### 5. Stop in flight — PASS, and it is honest about what it does not know
+### 5. Stop in flight — PASS
 
-Stopping a held generation by clicking the panel's Stop control leaves the scene
-untouched and says exactly what was established:
+Clicking the panel's Stop control on a held generation reports not-applied and
+leaves the scene untouched:
 
-- the job card reads `Reconciling` with `Stopped, but the result is unknown —
-  reconcile before editing this target.`;
-- the generation tool row settles to `result unknown` in the alert tone rather than
+- the job card reads `Stopped` with `Not applied — scene unchanged.`;
+- the generation tool row settles to `not applied` in the alert tone rather than
   staying open on `running…`;
-- the timeline keeps its pre-generation range and the character keeps its pose.
+- the timeline stays at its pre-generation `0 / 359` range with empty Prompts,
+  Full-Body and 2D Root lanes and `No shots yet`, and the character keeps its pose.
 
-This is the honest answer for that scenario, and it is what the fix below changed.
-The held bridge means the runtime cannot obtain editor-journal proof, so it ends in
-`reconciling` with `mutated: "unknown"`. Before the fix the panel showed
-`Not applied — scene unchanged.` here — a claim nothing had established.
+The editor supplies the proof. The recorded answer to `cancel_motion_install` for
+that command is `status: "not_applied"` with evidence `code: "CANCELLED"`,
+`mutated: false`, `preserved.authoredState: "unchanged"` — the same answer the
+objective `resilience` case records in `automated/transport.json`. This was
+reproduced four times by hand on the final build: on a clean scene, after an
+install-then-undo, with two Studio editors connected to the same live hub, and on
+the capture above.
 
-The *proven* not-applied path is covered by the objective suite's `resilience` case,
-where `cancel_motion_install` and the follow-up `reconcile_studio_command` both
-answer `status: not_applied`, `mutated: false`,
-`preserved.authoredState: "unchanged"` (`automated/transport.json`). In that case the
-panel reads `Stopped` with `Not applied — scene unchanged.`
+**Why an earlier pass of this step reported `unknown`.** An intermediate run showed
+`Reconciling` / `Stopped, but the result is unknown`. That was not a product gap and
+not the QA hold: it was a stale server process in the QA session. The fixture
+imports `createAgentHandler` from `bin/agent/agent-routes.mjs` at module load, and
+Node does not hot-reload, while Vite's HMR only covers `src/`. The route fix landed
+at 11:50 but that fixture process had started at 11:13, so those captures were taken
+against a **pre-fix server** that still answered a bare `{ok: true, status:
+"stopped"}` with no outcome. The client then did exactly what it should with a reply
+carrying no proof — it refused to claim the scene was unchanged and said so. Started
+fresh, the same build reports not-applied every time.
+
+That episode did expose a real coverage hole: nothing asserted the *route* half, so
+a revert of that one line would silently put every Stop back to `unknown` with no
+test failing. `test/verify-agent-routes.mjs` now drives a Studio turn through the
+real handler and asserts `/agent/stop` forwards the runtime's outcome — both a
+proven cancellation and an uncertain one. It was confirmed red against the
+outcome-dropping route.
 
 | | Desktop (1920) | Narrow (390) |
 | --- | --- | --- |
 | Generation running, Stop offered | `computer-use/16-cancellation-running-desktop.png` | `computer-use/32-motion-progress-390.png` |
-| Stopped, outcome reported | `computer-use/cancellation-fixed.png` | `computer-use/36-cancellation-390.png` |
+| Stopped, reported not-applied | `computer-use/cancellation-fixed.png` | `computer-use/36-cancellation-390.png` |
 
 ### 6. Narrow layout — PASS
 
@@ -202,11 +217,19 @@ now forwards the runtime's `status` / `code` / `mutated`, and the panel claims a
 unchanged scene only when the runtime actually reported not-applied; anything else is
 shown as unknown with a reconcile instruction, and the job stays non-terminal.
 
-`test/verify-agent-panel.mjs` covers both: a proven Stop, an acknowledged Stop whose
-runtime outcome is unknown, a host that answers with no outcome at all, tool-card
-settlement, abort propagation, and late-frame survival. It drives the real chat store
-against a stub transport and awaits the abort signal — no sleeps, no polling. Every
-assertion was confirmed red before its fix and green after.
+`test/verify-agent-panel.mjs` covers the client half: a proven Stop, an acknowledged
+Stop whose runtime outcome is unknown, a host that answers with no outcome at all,
+tool-card settlement, abort propagation, and late-frame survival. It drives the real
+chat store against a stub transport and awaits the abort signal — no sleeps, no
+polling.
+
+`test/verify-agent-routes.mjs` covers the server half: it drives a Studio turn
+through the real handler, then asserts `/agent/stop` forwards the runtime's outcome
+for both a proven cancellation and an uncertain one. Without it, dropping that one
+line puts every Stop back to `unknown` with no test failing — which is exactly the
+symptom a stale server produced during this run.
+
+Every assertion was confirmed red before its fix and green after.
 
 ## Verification commands
 
