@@ -17,29 +17,34 @@ you the shot.
 
 ## Setup
 
-Three things must be running, in this order:
+One process owns the hub; everything else just connects to it:
 
-1. **The live hub** — any process hosting `ws://127.0.0.1:<port>/live`. From a
-   source checkout that is the MCP server; from the installed package it is
-   `cclay mcp`. The hub publishes its address and token in a mode-0600 endpoint
-   file under your config home, which is how `cclay live` finds it:
-
-   ```sh
-   COZYCLAY_LIVE_PORT=5629 node mcp/server.mjs   # source checkout (cd mcp && npm install first)
-   cclay mcp                                     # installed package, default port 5184
-   ```
-
-2. **The Studio** — `npm run dev` from the checkout, or `cclay`. It must be
-   started with the same `COZYCLAY_LIVE_PORT` so the page connects to *your*
-   hub, not somebody else's on the default 5184:
+1. **Start the Studio** — `npm run dev` from the checkout, or `cclay` from
+   the installed package. The dev runner and the launcher already host the
+   live hub through their agent sidecar, so this one process is both the
+   Studio *and* the hub owner. Set `COZYCLAY_LIVE_PORT` so the hub is *yours*,
+   not somebody else's on the default 5184; the hub publishes its address and
+   token in a mode-0600 endpoint file under your config home, which is how
+   `cclay live` finds it:
 
    ```sh
-   COZYCLAY_LIVE_PORT=5629 npm run dev -- --port 5209
+   COZYCLAY_LIVE_PORT=5629 npm run dev -- --port 5209   # source checkout, hub owner "dev-full"
+   cclay                                                # installed package, hub owner "cozyclay"
    ```
 
-3. **A browser tab** open at the Studio URL (`http://127.0.0.1:5209/app/`).
+2. **Open a browser tab** at the Studio URL (`http://127.0.0.1:5209/app/`).
    A headless Chromium with remote debugging is fine — the editor is the page,
    not the window.
+
+3. **Gate on an editor** with `status --wait` (below).
+
+The rule is **one hub owner per port, never both**: if you also start
+`node mcp/server.mjs` (or `cclay mcp`) on the same `COZYCLAY_LIVE_PORT`, the
+second binder silently loses the port — the Studio's sidecar is then left
+without its hub, so the Agent panel is dead while `cclay live` still answers
+through the MCP-owned one. Run the MCP server as the hub owner *only* for
+MCP-client sessions, and then do not start `npm run dev` / `cclay` on the
+same port.
 
 Then wait until an editor is actually attached, which is what `--wait` is
 for. Without an editor every mutation verb fails `NO_EDITOR`, so a script
@@ -49,7 +54,7 @@ should always begin with this gate:
 cclay live status --wait
 ```
 ```json
-{"server":{"port":5629,"owner":"mcp","pid":71700},"editors":[{"handle":"880f6a61-4263-49f8-b17d-cb7d6c54d280","project":"Untitled","scene":"SCENE 01","cast":1,"embed":false,"connectedAt":1789546094406,"lastSeenMs":2039,"inFlight":0}],"selected":"880f6a61-4263-49f8-b17d-cb7d6c54d280"}
+{"server":{"port":5629,"owner":"dev-full","pid":95307},"editors":[{"handle":"8306b693-6d28-4391-a37d-9a90bdf61fa4","project":"QA","scene":"SCENE 01","cast":1,"embed":false,"connectedAt":1789548461809,"lastSeenMs":44,"inFlight":0}],"selected":"8306b693-6d28-4391-a37d-9a90bdf61fa4"}
 ```
 
 The `handle` is the tab's stable identity: it survives reloads and hub
@@ -93,7 +98,7 @@ ids and the layout:
 cclay live inspect --scope entities
 ```
 ```json
-{"context":{"schema":"studio-context-v1","host":{…},"revision":{"scene":0,"physics":0,"view":0},"units":{"distance":"m","angle":"deg","up":"+Y","yawZero":"+Z","yawPositiveToward":"+X","fps":24,"rangeEnd":"exclusive"},"scene":{"name":"SCENE 01","aspect":"16:9","floorY":0,"frameCount":432,"objectCount":0,"characterCount":1},"selection":{"kind":"character","id":"char-a","hierarchyId":"characterA"},"activeCharacterId":"char-a","view":{…},"shot":{…},"camera":{…},"entities":[{"id":"char-a","kind":"character","token":"target-1","name":"a young woman in a tan coat",…}],"entityPage":{…},"shots":[…],"recentReceipts":[],"jobs":[],"capabilities":{…}},"entities":[{"id":"char-a","kind":"character","name":"a young woman in a tan coat","token":"target-1"}],"total":1,"nextCursor":null}
+{"context":{"schema":"studio-context-v1","host":{…},"revision":{"scene":3,"physics":3,"view":1},"units":{"distance":"m","angle":"deg","up":"+Y","yawZero":"+Z","yawPositiveToward":"+X","fps":24,"rangeEnd":"exclusive"},"scene":{"name":"SCENE 01","aspect":"16:9","floorY":0,"frameCount":432,"objectCount":0,"characterCount":1},"selection":{"kind":"character","id":"char-a","hierarchyId":"characterA"},"activeCharacterId":"char-a","view":{…},"shot":null,"camera":{…},"entities":[{"id":"char-a","kind":"character","token":"target-2","name":"a young woman in a tan coat",…}],"entityPage":{…},"shots":[],…,"recentReceipts":[…],"jobs":[],"capabilities":{…}},"entities":[{"id":"char-a","kind":"character","name":"a young woman in a tan coat","token":"target-2"}],"total":1,"nextCursor":null}
 ```
 
 Place a chair next to her — `relativeTo` positions it in the subject's own
@@ -104,7 +109,7 @@ compute a `y`:
 cclay live arrange-objects --op '{"op":"create","source":{"kind":"chair"},"name":"Side chair","position":{"relativeTo":"char-a","basis":"subject","side":"left","gapM":1.4,"support":"floor"}}'
 ```
 ```json
-{"ok":true,"commandId":"0ca48a94-d269-4c39-8fb9-fec803ff9060","receiptId":"receipt-mu3tekny-1","host":{…},"status":"applied","authored":true,"revision":{"before":0,"after":1},"affectedIds":["chair"],"delta":[{"id":"chair","after":{"position":{"x":2.0380938133472153,"y":0,"z":0},"yawDeg":0,"rotationDeg":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1},"name":"Side chair","color":"#b9855d","renderer":"chair","parentId":null}}],"checks":{"coverage":"same-frame-world-AABB-proxies","relationSatisfied":true,"overlapIds":[],"actualGapM":1.4000000000000001,"requestedGapM":1.4,"maximumFootprintOverlapM":0,"basis":"subject","support":"floor","baseY":0},"undo":{"historyEntryId":"b6f16f0e-f592-436a-974d-0fff54fa7803","entries":1,"canUndoDirect":true},"warnings":[],"detailCursor":"0ca48a94-d269-4c39-8fb9-fec803ff9060"}
+{"ok":true,"commandId":"5aaf07d8-5b11-4cbc-8c7b-a23d6901cb7e","receiptId":"receipt-mu3uybgp-2","host":{…},"status":"applied","authored":true,"revision":{"before":3,"after":4},"affectedIds":["chair"],"delta":[{"id":"chair","after":{"position":{"x":2.0380938133472153,"y":0,"z":0},"yawDeg":0,"rotationDeg":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1},"name":"Side chair","color":"#b9855d","renderer":"chair","parentId":null}}],"checks":{"coverage":"same-frame-world-AABB-proxies","relationSatisfied":true,"overlapIds":[],"actualGapM":1.4000000000000001,"requestedGapM":1.4,"maximumFootprintOverlapM":0,"basis":"subject","support":"floor","baseY":0},"undo":{"historyEntryId":"376e2467-5660-40ac-ad11-4e8821021066","entries":1,"canUndoDirect":true},"warnings":[],"detailCursor":"5aaf07d8-5b11-4cbc-8c7b-a23d6901cb7e"}
 ```
 
 The receipt is the verification contract: the gap asked for (1.4 m) and the
@@ -112,10 +117,10 @@ gap measured (`actualGapM`) match, nothing overlaps, and one undo entry exists.
 `verify` re-runs that evidence and adds a picture of the current state:
 
 ```sh
-cclay live verify --receipt receipt-mu3tekny-1 --checks placement --visual frame --out /tmp/329-doc/shots/f-a-place-check.png
+cclay live verify --receipt receipt-mu3uybgp-2 --checks placement --visual frame --out /tmp/329-doc/shots/f-a-place-check.png
 ```
 ```json
-{"receiptId":"receipt-mu3tekny-1","revision":1,"checks":{"coverage":"same-frame-world-AABB-proxies","relationSatisfied":true,"overlapIds":[],"actualGapM":1.4000000000000001,"requestedGapM":1.4,"maximumFootprintOverlapM":0,"basis":"subject","support":"floor","baseY":0},"verification":null,"semanticStatus":"unavailable","visualRefs":[{"imageId":"b4e00048-242d-4af4-8594-220e766202e1"}],"unsupportedChecks":[],"visual":[{"imageId":"b4e00048-242d-4af4-8594-220e766202e1","path":"/tmp/329-doc/shots/f-a-place-check.png","width":1920,"height":1080,"bytes":684177}]}
+{"receiptId":"receipt-mu3uybgp-2","revision":4,"checks":{"coverage":"same-frame-world-AABB-proxies","relationSatisfied":true,"overlapIds":[],"actualGapM":1.4000000000000001,"requestedGapM":1.4,"maximumFootprintOverlapM":0,"basis":"subject","support":"floor","baseY":0},"verification":null,"semanticStatus":"unavailable","visualRefs":[{"imageId":"ffdcee4e-bf4b-432c-82be-8b7b92c419b3"}],"unsupportedChecks":[],"visual":[{"imageId":"ffdcee4e-bf4b-432c-82be-8b7b92c419b3","path":"/tmp/329-doc/shots/f-a-place-check.png","width":1920,"height":1080,"bytes":684177}]}
 ```
 
 Now frame the shot — camera vocabulary, not coordinates. This scene has no
@@ -125,7 +130,7 @@ shots yet, so the first `frame-shot` creates one spanning the timeline:
 cclay live frame-shot --subject char-a --size "wide shot" --view front --level hip
 ```
 ```json
-{"ok":true,"commandId":"440213de-2b48-4c2d-9231-7034e120531e","receiptId":"receipt-mu3tel0s-2","host":{…},"status":"applied","authored":true,"revision":{"before":1,"after":2},"affectedIds":["shot-mu3t98t8-2"],"delta":[{"id":"shot-mu3t98t8-2","after":{"range":{"startFrame":0,"endFrameExclusive":432},"camera":{"position":{"x":-0.011522021105043662,"y":1.0621432515131122,"z":5.077024270710456},"lookAt":{…},"focalMm":24.44391231902759,"sensorId":"fullFrame","slate":"wide shot"},"subjectIds":["char-a"],"shotId":"shot-mu3t98t8-2"}}],"checks":{"coverage":"same-frame-subject-bounds-projection","clipped":false,"behindCamera":false,"screenFraction":0.44729099405708983,"derivedSize":"wide shot"},"undo":{"historyEntryId":"e4c60fec-4dc2-458b-9516-953328c28e67","entries":1,"canUndoDirect":true},"warnings":[{"code":"OCCLUSION_UNMEASURED"}],"detailCursor":"440213de-2b48-4c2d-9231-7034e120531e"}
+{"ok":true,"commandId":"c836cddc-9861-4ec0-87e3-fec764666ed7","receiptId":"receipt-mu3uybub-4","host":{…},"status":"applied","authored":true,"revision":{"before":4,"after":5},"affectedIds":["shot-mu3uybub-3"],"delta":[{"id":"shot-mu3uybub-3","after":{"range":{"startFrame":0,"endFrameExclusive":432},"camera":{"position":{"x":-0.011522021105043662,"y":1.0621432515131122,"z":5.077024270710456},"lookAt":{…},"focalMm":24.44391231902759,"sensorId":"fullFrame","slate":"wide shot"},"subjectIds":["char-a"],"shotId":"shot-mu3uybub-3"}}],"checks":{"coverage":"same-frame-subject-bounds-projection","clipped":false,"behindCamera":false,"screenFraction":0.44729099405708983,"derivedSize":"wide shot"},"undo":{"historyEntryId":"be5d9c6f-0bb7-4e5c-be4d-3b1fe7dc887c","entries":1,"canUndoDirect":true},"warnings":[{"code":"OCCLUSION_UNMEASURED"}],"detailCursor":"c836cddc-9861-4ec0-87e3-fec764666ed7"}
 ```
 
 `derivedSize` is what the lens actually produced, measured by projection:
@@ -156,7 +161,7 @@ full admission envelope — which you build from one `inspect`:
 cclay live inspect --scope shot
 ```
 ```json
-{"context":{"schema":"studio-context-v1","host":{"surface":"studio","workspaceId":"880f6a61-…-cb7d6c54d280","documentEpoch":"c93ec820-…-bb0959c1f337","sceneId":"scene-mu3t3dzd-1","sceneEpoch":"bde4a40b-…-bc4b81b96b2b","workspaceHandle":"880f6a61-…-cb7d6c54d280"},"revision":{"scene":2,"physics":1,"view":2},"units":{…},"scene":{"name":"SCENE 01","aspect":"16:9","floorY":0,"frameCount":432,"objectCount":1,"characterCount":1},"selection":{"kind":"character","id":"char-a","hierarchyId":"characterA"},"activeCharacterId":"char-a","view":{…},"shot":{"id":"shot-mu3t98t8-2","name":"Shot 1","range":{"startFrame":0,"endFrameExclusive":432},"mode":"keys"},"camera":{…},"entities":[{"id":"char-a","kind":"character","token":"target-1",…},{"id":"chair","kind":"object","token":"target-3",…}],"entityPage":{"returned":2,"total":2,"truncated":false,"nextCursor":null},"shots":[{"id":"shot-mu3t98t8-2","name":"Shot 1","range":{"startFrame":0,"endFrameExclusive":432},"keyCount":0}],"shotsTruncated":false,"assets":[],"recentReceipts":[{"id":"receipt-mu3tel0s-2","summary":"applied","canUndoDirect":true},{"id":"receipt-mu3tekny-1","summary":"applied","canUndoDirect":false}],"jobs":[],"capabilities":{…}},"entities":[{"id":"char-a","kind":"character","name":"a young woman in a tan coat","token":"target-1"},{"id":"chair","kind":"object","name":"Side chair","token":"target-3"}],"total":2,"nextCursor":null}
+{"context":{"schema":"studio-context-v1","host":{"surface":"studio","workspaceId":"8306b693-…","documentEpoch":"9110399f-…","sceneId":"scene-mu3uy6d6-1","sceneEpoch":"69c39cf9-…","workspaceHandle":"8306b693-…"},"revision":{"scene":5,"physics":4,"view":3},"units":{…},"scene":{"name":"SCENE 01","aspect":"16:9","floorY":0,"frameCount":432,"objectCount":1,"characterCount":1},"selection":{"kind":"character","id":"char-a","hierarchyId":"characterA"},"activeCharacterId":"char-a","view":{…},"shot":{"id":"shot-mu3uybub-3","name":"Shot 1","range":{"startFrame":0,"endFrameExclusive":432},"mode":"keys"},"camera":{…},"entities":[{"id":"char-a","kind":"character","token":"target-2",…},{"id":"chair","kind":"object","token":"target-5",…}],"entityPage":{"returned":2,"total":2,"truncated":false,"nextCursor":null},"shots":[{"id":"shot-mu3uybub-3","name":"Shot 1","range":{"startFrame":0,"endFrameExclusive":432},"keyCount":0}],"shotsTruncated":false,"assets":[],"recentReceipts":[{"id":"receipt-mu3uybub-4","summary":"applied","canUndoDirect":true},{"id":"receipt-mu3uybgp-2","summary":"applied","canUndoDirect":false},…],"jobs":[],"capabilities":{…}},"entities":[{"id":"char-a","kind":"character","name":"a young woman in a tan coat","token":"target-2"},{"id":"chair","kind":"object","name":"Side chair","token":"target-5"}],"total":2,"nextCursor":null}
 ```
 
 Build the envelope from that context — the four host identity fields, the
@@ -165,6 +170,7 @@ every entity the command may touch. Mint your own `commandId`; the editor
 journals it, which is what makes the command reconcilable later:
 
 ```sh
+cclay live inspect --scope shot > /tmp/329-doc/f-b-inspect.json
 node -e '
 const c = require("/tmp/329-doc/f-b-inspect.json").context;
 const host = (({workspaceId, documentEpoch, sceneId, sceneEpoch}) => ({workspaceId, documentEpoch, sceneId, sceneEpoch}))(c.host);
@@ -191,11 +197,11 @@ Send it as one raw command:
 cclay live cmd frame_shot --args "$(cat /tmp/329-doc/f-b-envelope.json)"
 ```
 ```json
-{"ok":true,"commandId":"d996bf1c-6b3e-4b97-857e-4526c8e5634c","receiptId":"receipt-mu3telek-4","host":{…},"status":"applied","authored":true,"revision":{"before":2,"after":3},"affectedIds":["shot-mu3t98t8-2","camera-key-mu3telek-3"],"delta":[{"id":"shot-mu3t98t8-2","after":{"range":{"startFrame":0,"endFrameExclusive":432},"camera":{"position":{"x":-0.011522021105043662,"y":1.5894328518973564,"z":2.109947017309772},"lookAt":{…},"focalMm":24.44391231902759,"sensorId":"fullFrame","slate":"medium shot"},"subjectIds":["char-a"],"shotId":"shot-mu3t98t8-2"}},{"id":"camera-key-mu3telek-3","after":{…,"keyId":"camera-key-mu3telek-3","frame":0,…}}],"checks":{"coverage":"same-frame-subject-bounds-projection","clipped":true,"behindCamera":false,"screenFraction":1.1027891282716213,"derivedSize":"medium shot"},"undo":{"historyEntryId":"fa3ea27b-5a89-4e33-b110-b21206932243","entries":1,"canUndoDirect":true},"warnings":[{"code":"OCCLUSION_UNMEASURED"}],"detailCursor":"d996bf1c-6b3e-4b97-857e-4526c8e5634c"}
+{"ok":true,"commandId":"e94748b1-5df7-4859-a1f3-baf9cb20067a","receiptId":"receipt-mu3uyc8d-6","host":{…},"status":"applied","authored":true,"revision":{"before":5,"after":6},"affectedIds":["shot-mu3uybub-3","camera-key-mu3uyc8d-5"],"delta":[{"id":"shot-mu3uybub-3","after":{"range":{"startFrame":0,"endFrameExclusive":432},"camera":{"position":{"x":-0.011522021105043662,"y":1.5894328518973564,"z":2.109947017309772},"lookAt":{…},"focalMm":24.44391231902759,"sensorId":"fullFrame","slate":"medium shot"},"subjectIds":["char-a"],"shotId":"shot-mu3uybub-3"}},{"id":"camera-key-mu3uyc8d-5","after":{…,"keyId":"camera-key-mu3uyc8d-5","frame":0,…}}],"checks":{"coverage":"same-frame-subject-bounds-projection","clipped":true,"behindCamera":false,"screenFraction":1.1027891282716213,"derivedSize":"medium shot"},"undo":{"historyEntryId":"47bcf6d7-2a8e-44bb-b40e-25a3180e7d57","entries":1,"canUndoDirect":true},"warnings":[{"code":"OCCLUSION_UNMEASURED"}],"detailCursor":"e94748b1-5df7-4859-a1f3-baf9cb20067a"}
 ```
 
 Two affected ids this time: the shot *and* the new camera key
-(`camera-key-mu3telek-3`). The camera rose from y 1.06 to y 1.59 — eye level
+(`camera-key-mu3uyc8d-5`). The camera rose from y 1.06 to y 1.59 — eye level
 for this character — and the derived size tightened to "medium shot"
 (`clipped: true` honestly reports the feet crossing the bottom edge; a medium
 shot on a 24 mm lens does crop). Look at it:
@@ -212,10 +218,10 @@ operator dislikes it, the receipt's undo entry takes the whole thing —
 reframe *and* key — back in one command:
 
 ```sh
-cclay live undo --receipt receipt-mu3telek-4
+cclay live undo --receipt receipt-mu3uyc8d-6
 ```
 ```json
-{"ok":true,"commandId":"4196c12d-9ed3-4e08-951f-f7d4c8cd9728","receiptId":"310e72d4-a561-4123-b7bd-f276bad0cb30","host":{…},"status":"undone","authored":true,"revision":{"before":3,"after":4},"affectedIds":["shot-mu3t98t8-2","camera-key-mu3telek-3"],"delta":[{"id":"shot-mu3t98t8-2","after":{"token":"target-5"}},{"id":"camera-key-mu3telek-3","after":{"token":"removed-6"}}],"checks":{"coverage":"native-history-restoration"},"undo":{"historyEntryId":"fa3ea27b-5a89-4e33-b110-b21206932243","entries":1,"canUndoDirect":false},"warnings":[],"undoneReceiptId":"receipt-mu3telek-4","restoredTargets":[{…,"targetId":"shot-mu3t98t8-2","token":"target-5"},{…,"targetId":"camera-key-mu3telek-3","token":"removed-6"}]}
+{"ok":true,"commandId":"0de3e0ee-b32b-41ef-84e9-d4000813036e","receiptId":"e7ab0f0e-b86f-4d89-8ab5-6e4765c3b26f","host":{…},"status":"undone","authored":true,"revision":{"before":6,"after":7},"affectedIds":["shot-mu3uybub-3","camera-key-mu3uyc8d-5"],"delta":[{"id":"shot-mu3uybub-3","after":{"token":"target-8"}},{"id":"camera-key-mu3uyc8d-5","after":{"token":"removed-9"}}],"checks":{"coverage":"native-history-restoration"},"undo":{"historyEntryId":"47bcf6d7-2a8e-44bb-b40e-25a3180e7d57","entries":1,"canUndoDirect":false},"warnings":[],"undoneReceiptId":"receipt-mu3uyc8d-6","restoredTargets":[{…,"targetId":"shot-mu3uybub-3","token":"target-8"},{…,"targetId":"camera-key-mu3uyc8d-5","token":"removed-9"}]}
 ```
 
 `status: "undone"` with `undoneReceiptId` naming the reframe, and
@@ -240,7 +246,7 @@ cclay live arrange-objects --timeout 200 --op '{"op":"update","id":"chair","name
 exit=5
 ```
 ```json
-{"ok":false,"error":{"code":"UNCERTAIN_APPLY","message":"Live editor timed out running arrange_objects. The mutation may have been applied. Do not retry it; describe the scene before choosing a recovery action.","recovery":{"action":"reconcile","hint":"Do not retry the mutation; describe the scene first and choose a recovery action from what it reports."},"details":{"commandId":"7de7907b-304f-4a92-b035-4e15444295cd","reconcile":{"status":"applied","receipt":{"ok":true,"commandId":"7de7907b-304f-4a92-b035-4e15444295cd","receiptId":"receipt-mu3thvme-10","host":{…},"status":"applied","authored":true,"revision":{"before":8,"after":9},"affectedIds":["chair"],"delta":[{…,"name":"Stand-in chair",…}],"checks":{…},"undo":{…},"warnings":[],"detailCursor":"7de7907b-304f-4a92-b035-4e15444295cd"}}}}}
+{"ok":false,"error":{"code":"UNCERTAIN_APPLY","message":"Live editor timed out running arrange_objects. The mutation may have been applied. Do not retry it; describe the scene before choosing a recovery action.","recovery":{"action":"reconcile","hint":"Do not retry the mutation; describe the scene first and choose a recovery action from what it reports."},"details":{"commandId":"951b6678-2a44-45fd-8783-36c94dc0ccdc","reconcile":{"status":"applied","receipt":{"ok":true,"commandId":"951b6678-2a44-45fd-8783-36c94dc0ccdc","receiptId":"receipt-mu3vbw54-3","host":{…},"status":"applied","authored":true,"revision":{"before":4,"after":5},"affectedIds":["chair"],"delta":[{…,"name":"Stand-in chair",…}],"checks":{…},"undo":{…},"warnings":[],"detailCursor":"951b6678-2a44-45fd-8783-36c94dc0ccdc"}}}}}
 ```
 
 `error.details.reconcile.status: "applied"` settles it: the edit landed, the
@@ -269,11 +275,11 @@ process), and gate on the editor reconnecting — the tab retries on its own
 backoff, `--wait` catches it:
 
 ```sh
-COZYCLAY_LIVE_PORT=5629 node mcp/server.mjs &      # hub restart
+COZYCLAY_LIVE_PORT=5629 npm run dev -- --port 5209 &   # hub restart
 cclay live status --wait
 ```
 ```json
-{"server":{"port":5629,"owner":"mcp","pid":71700},"editors":[{"handle":"880f6a61-4263-49f8-b17d-cb7d6c54d280","project":"Untitled","scene":"SCENE 01","cast":1,"embed":false,"connectedAt":1789546094406,"lastSeenMs":3832,"inFlight":0}],"selected":"880f6a61-4263-49f8-b17d-cb7d6c54d280"}
+{"server":{"port":5629,"owner":"dev-full","pid":4315},"editors":[{"handle":"a881c22c-233b-4953-81ab-84fd0ab6a5b1","project":"QA","scene":"SCENE 01","cast":1,"embed":false,"connectedAt":1789549104568,"lastSeenMs":1,"inFlight":0}],"selected":"a881c22c-233b-4953-81ab-84fd0ab6a5b1"}
 ```
 
 Same handle, new server pid — the editor's identity survived the restart. Now
@@ -286,24 +292,52 @@ console.log(JSON.stringify({ commandId: e.commandId, host: e.host }));
 ')"
 ```
 ```json
-{"status":"applied","receipt":{"ok":true,"commandId":"2a7eda44-7aae-4f0b-b004-a45832447da8","receiptId":"receipt-mu3tj9mg-12","host":{…},"status":"applied","authored":true,"revision":{"before":9,"after":10},"affectedIds":["chair"],"delta":[{"id":"chair","after":{…,"color":"#7a4a2b",…}}],"checks":{"coverage":"same-frame-world-AABB-proxies","overlapIds":[],"maximumFootprintOverlapM":0},"undo":{"historyEntryId":"655fb9ad-bb98-4ce2-8824-e04ba709eea7","entries":1,"canUndoDirect":true},"warnings":[],"detailCursor":"2a7eda44-7aae-4f0b-b004-a45832447da8"}}
+{"status":"unknown"}
 ```
 
-`"status":"applied"` — the colour change went through before the hub died.
-`reconcile` answers `applied`, `not_applied` or `unknown`; only `not_applied`
-makes a re-issue correct, and only after a fresh `inspect` (the revision moved
-either way). Here the edit stands, so either keep it or undo it by receipt:
+`unknown` here is honest, and it is the answer to expect in this setup: the
+journal lives *in the editor page*, and killing the dev runner took the web
+server with it, so the tab reloaded and the journal went with it (the timeout
+case above reconciles `applied` because there the page never reloaded).
+`reconcile` answers `applied`, `not_applied` or `unknown`; `unknown` and
+`not_applied` both mean the same next step — a fresh `inspect`, then choose:
 
 ```sh
-cclay live undo --receipt receipt-mu3tj9mg-12
+cclay live inspect --scope selection
 ```
 ```json
-{"ok":true,"commandId":"e628e2f7-5afb-420f-9e35-aa9848a01889","receiptId":"6bae7c59-ad0e-4a97-83d6-8b9d2c003ca2","host":{…},"status":"undone","authored":true,"revision":{"before":10,"after":11},"affectedIds":["chair"],"delta":[{"id":"chair","after":{"token":"target-9"}}],"checks":{"coverage":"native-history-restoration"},"undo":{"historyEntryId":"655fb9ad-bb98-4ce2-8824-e04ba709eea7","entries":1,"canUndoDirect":false},"warnings":[],"undoneReceiptId":"receipt-mu3tj9mg-12","restoredTargets":[{…,"targetId":"chair","token":"target-9"}]}
+{"context":{"schema":"studio-context-v1","host":{…},"revision":{"scene":3,"physics":3,"view":1},"units":{…},"scene":{"name":"SCENE 01","aspect":"16:9","floorY":0,"frameCount":432,"objectCount":1,"characterCount":1},"selection":{…},"activeCharacterId":"char-a","view":{…},"shot":null,"camera":{…},"entities":[{…},{"id":"chair","kind":"object","token":"target-1","name":"Stand-in chair",…}],"entityPage":{…},"shots":[],…,"recentReceipts":[…],"jobs":[],"capabilities":{…}},"entities":[{"id":"char-a","kind":"character","name":"a young woman in a tan coat","token":"target-3"},{"id":"chair","kind":"object","name":"Stand-in chair","token":"target-1"}],"total":2,"nextCursor":null}
 ```
 
-The editor's journal is what makes this safe: because every admitted command
-is journaled under its `commandId` *on the editor*, the truth about a mutation
-outlives the hub that relayed it.
+The reload reopened the same project and the chair is still there, renamed
+`Stand-in chair` — the timeout edit above had landed. Whatever the killed
+command did, the state you just read is the truth now, so close the loop on
+it: issue a fresh admitted command built from that inspect's revision and
+tokens (here a new colour; if it had re-issued the identical colour, the
+editor would have answered `noop` — also fine, just nothing to undo):
+
+```sh
+node -e '
+const c = require("/tmp/329-doc/f-c-inspect2.json").context;
+const host = (({workspaceId, documentEpoch, sceneId, sceneEpoch}) => ({workspaceId, documentEpoch, sceneId, sceneEpoch}))(c.host);
+const envelope = {
+  name: "arrange_objects",
+  args: { ops: [{ op: "update", id: "chair", color: "#3d5a80" }] },
+  commandId: crypto.randomUUID(),
+  host,
+  expectedRevision: c.revision.scene,
+  expectedTargets: c.entities.map((e) => ({ ...host, targetId: e.id, token: e.token })),
+};
+require("node:fs").writeFileSync("/tmp/329-doc/f-c-envelope2.json", JSON.stringify(envelope));
+'
+cclay live cmd arrange_objects --args "$(cat /tmp/329-doc/f-c-envelope2.json)"
+```
+```json
+{"ok":true,"commandId":"53f3bb46-b939-4d57-811d-04701ba0bebf","receiptId":"receipt-mu3vc2ed-2","host":{…},"status":"applied","authored":true,"revision":{"before":3,"after":4},"affectedIds":["chair"],"delta":[{"id":"chair","after":{"position":{"x":2.0380938133472153,"y":0,"z":0},"yawDeg":0,"rotationDeg":{"x":0,"y":0,"z":0},"scale":{"x":1,"y":1,"z":1},"name":"Stand-in chair","color":"#3d5a80","renderer":"chair","parentId":null}}],"checks":{"coverage":"same-frame-world-AABB-proxies","overlapIds":[],"maximumFootprintOverlapM":0},"undo":{"historyEntryId":"7ada6c36-2b26-460d-874f-c70ef47a698c","entries":1,"canUndoDirect":true},"warnings":[],"detailCursor":"53f3bb46-b939-4d57-811d-04701ba0bebf"}
+```
+
+`status: "applied"` with a receipt, rev 3→4 — the loop is closed on live
+state, never on a guess about what the dead hub saw.
 
 ## Reference
 
