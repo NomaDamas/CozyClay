@@ -314,9 +314,12 @@ export async function refusalEvent(response) {
 		const body = await response.clone().json();
 		detail = typeof body?.error === "string" ? { message: body.error } : body?.error && typeof body.error === "object" ? body.error : null;
 	} catch { /* a refusal with no JSON body is still a reportable status */ }
-	const message = typeof detail?.message === "string" && detail.message.trim()
-		? `${status ?? "Upstream"} — ${detail.message.trim()}`
-		: `The turn was refused with HTTP ${status ?? "error"}.`;
+	const reported = typeof detail?.message === "string" ? detail.message.trim() : "";
+	// The sidecar already leads with the status on every route that answers JSON;
+	// repeating it ("502 — 502 — …") reads as a bug in the panel.
+	const message = !reported ? `The turn was refused with HTTP ${status ?? "error"}.`
+		: status !== null && reported.startsWith(`${status} `) ? reported
+			: `${status ?? "Upstream"} — ${reported}`;
 	return {
 		code: UI_ERROR_CODES.has(detail?.code) ? detail.code : status === 429 ? "rate_limit" : status === 401 ? "auth" : "upstream",
 		message,

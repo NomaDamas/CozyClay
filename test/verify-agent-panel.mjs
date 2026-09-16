@@ -387,6 +387,8 @@ expect("the settled turn keeps the stopped outcome", stopStore.getState().lastTu
 const refusal = await module_.refusalEvent({ status: 400, clone: () => ({ json: async () => ({ error: { code: "upstream", message: "The requested model is not supported for this account." } }) }) });
 expect("a refused turn forwards the status and the sanitized detail", refusal.code === "upstream" && refusal.status === 400
 	&& refusal.message === "400 — The requested model is not supported for this account.", refusal.message);
+const prefixed = await module_.refusalEvent({ status: 502, clone: () => ({ json: async () => ({ error: { code: "upstream", message: "502 — The model service failed to answer." } }) }) });
+expect("the status the sidecar already stated is not repeated", prefixed.message === "502 — The model service failed to answer.", prefixed.message);
 const bodiless = await module_.refusalEvent({ status: 502, clone: () => { throw new Error("no body"); } });
 expect("a refusal with no readable body still reports its status", bodiless.code === "upstream" && bodiless.message === "The turn was refused with HTTP 502.", bodiless.message);
 expect("a 429 refusal routes to the paused state", (await module_.refusalEvent({ status: 429, clone: () => ({ json: async () => ({}) }) })).code === "rate_limit");
