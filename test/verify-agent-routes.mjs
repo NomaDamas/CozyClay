@@ -339,3 +339,36 @@ console.log("agent routes verified");
 	stopServer.close();
 	console.log("PASS /agent/stop forwards the runtime outcome instead of asserting success");
 }
+
+{
+	// Regression for #335/#336: a Studio turn whose model stream fails on every
+	// attempt must surface a real error frame (never a bare "done") and the
+	// sidecar must have retried the transient failure before giving up.
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	let failTurns = 0;
+	const failRuntime = { readContext: async () => contextFixture() };
+	const failCodex = {
+		...fakeCodex,
+		streamResponses: () => { failTurns += 1; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
+			yield { type: "error", error: { code: "server_error", message: "boom" } };
+		} }; },
+	};
+	let failServer;
+	const failHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-8", resolveWorkspace: () => "handle-13", handleForWorkspaceId: () => "handle-13", connected: true, workspaceHandles: ["handle-13"] };
+	const failHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: failCodex, liveHub: failHub, studioRuntime: failRuntime, retryDelayMs: 1, port: () => failServer.address().port });
+	failServer = createServer((req, res) => failHandler(req, res).catch((error) => { console.error("studio-stream-error fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	failServer.listen(0, "127.0.0.1");
+	await once(failServer, "listening");
+	const failOrigin = `http://127.0.0.1:${failServer.address().port}`;
+	const failText = await fetch(`${failOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: failOrigin }, body: JSON.stringify(envelopeFixture()) }).then((r) => r.text());
+	const failEvents = [...failText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+	const failTypes = failEvents.map((event) => event.type);
+	const errorIndex = failTypes.indexOf("error");
+	const doneIndex = failTypes.indexOf("done");
+	assert.ok(errorIndex !== -1, "a persistently failing model stream produces an error frame");
+	assert.ok(doneIndex !== -1 && errorIndex < doneIndex, "the error frame precedes done, never a bare done alone");
+	assert.match(failEvents[errorIndex].message, /Model response failed/);
+	assert.equal(failTurns, 3, "a transient server_error is retried twice before the turn is reported failed");
+	failServer.close();
+	console.log("PASS Studio turn model stream errors are retried and surfaced as a real error frame");
+}

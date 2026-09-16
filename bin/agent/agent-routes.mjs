@@ -349,10 +349,30 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			if (!captured?.dataUrl?.startsWith("data:image/")) throw new StudioProtocolError("TARGET_NOT_READY", "The current frame has no image bytes.");
 			history.push({ role: "user", content: [{ type: "input_text", text: `Studio frame observation revision ${JSON.stringify(captured.revision ?? null)} receipt ${captured.receiptId ?? "unavailable"}` }, { type: "input_image", image_url: captured.dataUrl }] });
 		}
+		const retryStudioStream = async (operation, attempts = 2) => {
+			for (let attempt = 0; ; attempt += 1) {
+				try { return await operation(); } catch (error) {
+					if (!["overloaded", "server_error"].includes(error.code) || attempt >= attempts || controller.signal.aborted) throw error;
+					await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+				}
+			}
+		};
 		try {
 			while (true) {
-				const stream = codex.streamResponses({ input: history, tools: studioToolSchemas(), instructions: STUDIO_SYSTEM_PROMPT, model: value.model, effort: value.effort, signal: controller.signal });
-				const items = []; for await (const event of stream) { if (event.type === "response.output_text.delta") send({ type: "text.delta", text: event.delta }); if (event.type === "response.output_item.done") items.push(event.item); }
+				const items = await retryStudioStream(async () => {
+					const stream = codex.streamResponses({ input: history, tools: studioToolSchemas(), instructions: STUDIO_SYSTEM_PROMPT, model: value.model, effort: value.effort, signal: controller.signal });
+					const collected = [];
+					for await (const event of stream) {
+						if (event.type === "response.output_text.delta") send({ type: "text.delta", text: event.delta });
+						if (event.type === "response.output_item.done") collected.push(event.item);
+						if (event.type === "error" || event.type === "response.failed") {
+							if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] model event:", JSON.stringify(event).slice(0, 600));
+							const code = event.error?.code ?? event.response?.error?.code;
+							throw Object.assign(new Error("Model response failed."), code === "server_is_overloaded" ? { code: "overloaded" } : code === "server_error" ? { code: "server_error" } : {});
+						}
+					}
+					return collected;
+				});
 				let called = false;
 				for (const item of items) {
 					history.push(item); called ||= item.type === "function_call";
@@ -365,7 +385,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 						}
 						const publicResult = result && typeof result === "object" ? Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl")) : result; send({ type: "tool.done", callId: item.call_id, ok: true, result: publicResult }); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(publicResult) }); session.history = history.slice();
 						if (result?.dataUrl && codex.appendImageObservation) { codex.appendImageObservation(history, { callId: item.call_id, dataUrl: result.dataUrl, label: `Studio image ${result.imageId} revision ${JSON.stringify(result.revision)} receipt ${result.receiptId ?? "unavailable"}` }); session.history = history.slice(); }
-					} catch (error) { const failure = { ok: false, error: { code: error.code || "BACKEND_UNAVAILABLE", message: error.message } }; send({ type: "tool.done", callId: item.call_id, ok: false, error: error.message }); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(failure) }); session.history = history.slice(); }
+					} catch (error) { if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message); const failure = { ok: false, error: { code: error.code || "BACKEND_UNAVAILABLE", message: error.message } }; send({ type: "tool.done", callId: item.call_id, ok: false, error: error.message }); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(failure) }); session.history = history.slice(); }
 				}
 				if (!called) break;
 			}
@@ -373,6 +393,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			// A backend refusal reaches the Studio panel with its status and sanitized
 			// detail; a Studio protocol error already says what it means.
 			const info = errorInfo(error);
+			if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.detail ?? error?.body ?? "").slice(0, 300));
 			send({ type: "error", code: error.status === 429 ? "rate_limit" : error.code || "upstream", message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
 			session.history = history.slice();
 		}
