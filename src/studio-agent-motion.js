@@ -28,7 +28,7 @@ const copyLayer = state => ({ ...createIkState(), keys: copyPhysicsKeys(state?.k
 const poseOf = rig => { const result = []; rig.traverse(n => { if (n.isBone) result.push({ bone: n, p: n.position.clone(), q: n.quaternion.clone(), s: n.scale.clone() }); }); return result; };
 const restore = pose => { for (const { bone, p, q, s } of pose) { bone.position.copy(p); bone.quaternion.copy(q); bone.scale.copy(s); } };
 const poseValues = pose => pose.map(({ bone }) => [...bone.position.toArray(), ...bone.quaternion.toArray(), ...bone.scale.toArray()]);
-const environmentKey = env => JSON.stringify([validateStudioIdentity(env.host), env.physicsRevision, env.floor]);
+const environmentKey = env => JSON.stringify([validateStudioIdentity(env.host), env.physicsRevision, { model: env.floor.model, y: env.floor.y }]);
 const BASE_LIMITATIONS = ['discrete-integer-24fps-frames', 'calibrated-capsule-and-upright-box-proxies', 'external-torso-head-and-other-cast-fingers-excluded', 'rest-overlap-calibration-and-4mm-actionable-depth', 'centroidal-support-not-biomechanical-certification', 'semantic-and-visual-review-unavailable'];
 
 function isolatedRig(source) {

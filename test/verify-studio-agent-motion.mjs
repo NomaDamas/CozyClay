@@ -173,6 +173,23 @@ async function candidateTests(mod) {
       const restored = f.domain.history.pop(); Object.assign(f.domain, restored); f.preserved();
     }
     {
+      const f = fixture({ clip: { hover: .08 } }), c = await f.prepare(), first = await f.verify(c); ok(first);
+      assert.equal(first.repairable, true);
+      const readEnvironment = f.ports.readEnvironment;
+      let unstable = false, reads = 0;
+      f.ports.readEnvironment = () => {
+        const environment = readEnvironment();
+        if (unstable && reads % 3 === 1) environment.floor = { y: environment.floor.y, model: environment.floor.model };
+        reads++;
+        return environment;
+      };
+      f.state.floor = { y: 0, model: 'flat' }; unstable = true; reads = 0;
+      const v = await f.verify(c); ok(v);
+      assert.equal(v.physicsRevision, 1);
+      assert.equal(v.repairable, true);
+      console.log('PASS environment fingerprint ignores equivalent floor key order during verification');
+    }
+    {
       const f = fixture({ clip: { hover: .4 } }), c = await f.prepare(), v = await f.verify(c); ok(v); checked('hovering-no-contact', v);
       assert.equal(v.status, 'unverified'); assert.equal(v.metrics.unsupportedFrames, 48); assert.equal(v.coverage.contactSpans, 0); assert.equal(v.coverage.measuredSupportFrames, 48); f.preserved();
       assert.equal((await f.commit(c, v)).code, 'VERIFICATION_FAILED'); assert.equal(f.api.size, 0); f.preserved();
