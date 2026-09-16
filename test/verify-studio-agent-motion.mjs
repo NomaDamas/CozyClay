@@ -93,8 +93,10 @@ if (!selectedCase) {
     await candidateTests(mod, selectedCase);
   }
 }
-if (!selectedCase && evidence) writeFileSync(`${evidence}/motion-fixture-metrics.json`, JSON.stringify(metrics, null, 2) + '\n');
-console.log('Studio motion: all cases PASS');
+// Metrics only exist in the child that actually ran a case, so each child
+// writes its own slice; the parent has nothing to report but the roll-up.
+if (selectedCase && evidence) writeFileSync(`${evidence}/motion-fixture-metrics-${selectedCase}.json`, JSON.stringify(metrics, null, 2) + '\n');
+console.log(selectedCase ? `Studio motion: PASS --case ${selectedCase}` : `Studio motion: all ${CASES.length} cases PASS`);
 
 async function candidateTests(mod, selectedCase) {
   const selected = name => !selectedCase || selectedCase === name;
@@ -251,22 +253,12 @@ async function candidateTests(mod, selectedCase) {
       assert.notEqual(trace.blockers[0][0].az, trace.blockers[47][0].az); assert.deepEqual(boneSnapshot(other), before); f.preserved();
     }
     if (selected('ground-cache-invalidation')) {
-      const f = fixture(), diagnostic = stage => {
-        if (!process.env.CI && !process.env.MOTION_CI_DIAGNOSTIC) return;
-        const environment = f.ports.readEnvironment(), target = f.ports.readTarget(f.request.binding);
-        console.error('MOTION_CI_DIAGNOSTIC', JSON.stringify({ stage, targetGuard: target?.guard ?? null,
-          physicsFingerprintInput: { physicsRevision: environment.physicsRevision, floor: environment.floor, objects: environment.objects, cast: environment.cast.map(member => member.character?.id ?? null), frameCount: environment.frameCount },
-          environmentKey: JSON.stringify([environment.host, environment.physicsRevision, { model: environment.floor.model, y: environment.floor.y }]) }));
-      };
-      diagnostic('ground-before-prepare');
-      const c = await f.prepare();
-      if (process.env.CI || process.env.MOTION_CI_DIAGNOSTIC) console.error('MOTION_CI_DIAGNOSTIC', JSON.stringify({ stage: 'ground-after-prepare', prepareResult: c }));
-      diagnostic('ground-before-verify-1'); const first = await f.verify(c); ok(first);
+      const f = fixture(), c = await f.prepare(), first = await f.verify(c); ok(first);
       f.state.floor.y = .3; f.state.physicsRevision++;
-      diagnostic('ground-before-verify-2'); const v = await f.verify(c); ok(v); checked('ground-cache-invalidation', v);
+      const v = await f.verify(c); ok(v); checked('ground-cache-invalidation', v);
       assert.equal(v.physicsRevision, 2); const trace = f.api.readEvidence(c.candidateId);
       assert.equal(trace.before.rows[0].ground.leftFoot, .3); assert.equal(trace.after.rows[0].ground.leftFoot, .3); assert(v.metrics.maxFloorPenetrationM > .2); assert.equal(v.repairable, false);
-      f.state.physicsRevision++; diagnostic('ground-before-verify-3'); assert.equal((await f.verify(c)).code, 'STALE_ENVIRONMENT'); assert.equal(f.api.size, 0); f.preserved();
+      f.state.physicsRevision++; assert.equal((await f.verify(c)).code, 'STALE_ENVIRONMENT'); assert.equal(f.api.size, 0); f.preserved();
     }
     if (selected('decode-failure')) {
       const f = fixture({ decodeFailure: true }); const result = await f.prepare(); assert.equal(result.code, 'VERIFICATION_FAILED'); assert.equal(result.mutated, false); assert.equal(f.api.size, 0); f.preserved();
@@ -293,8 +285,11 @@ async function candidateTests(mod, selectedCase) {
         // REAL ikEvaluate blend changes its evaluated pose.
         const keys = new Map([[23, new Map([['hips', { p: new THREE.Vector3(0, 160, 0), q: [new THREE.Quaternion()] }]])]]);
         assert(!keys.has(24)); return { candidate: { keys, tracked: new Set(['hips']) } };
-      } } }); const c = await f.prepare(); const initial = await f.verify(c);
-      assert.equal(initial.status, 'unverified', `protected-regression fixture must remain repairable before repair: ${JSON.stringify({ status: initial.status, repairable: initial.repairable, metrics: initial.metrics })}`);
+      } } }); const c = await f.prepare(); ok(c); const initial = await f.verify(c);
+      // A rejection receipt carries no `status`, so assert the whole object
+      // first: otherwise the failure prints as `{}` and hides its real code.
+      ok(initial);
+      assert.equal(initial.status, 'unverified', `protected-regression fixture must remain repairable before repair: ${JSON.stringify(initial)}`);
       assert.equal(initial.repairable, true, `protected-regression fixture lost repair permission during verification: ${JSON.stringify(initial)}`);
       const result = await f.repair(c, 'auto_physics');
       assert.equal(result.code, 'REPAIR_REGRESSED', JSON.stringify(result)); assert.equal(f.api.size, 0); f.preserved(); console.log('PASS evaluated protected pose/blend regression rejected, not key-map equality');

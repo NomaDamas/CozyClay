@@ -149,9 +149,7 @@ export function createStudioMotionCandidates(ports) {
         if (candidate.busy) fail('TARGET_BUSY', 'Candidate evaluation is already in progress.');
         candidate.busy = true;
       }
-      const value = await work(candidate);
-      if (!value || typeof value !== 'object' || Array.isArray(value) || !Object.keys(value).length) fail('VERIFICATION_FAILED', 'Candidate operation returned no result.');
-      return value;
+      return await work(candidate);
     } catch (error) {
       candidate ??= [...candidates.values()].find(c => c.request.commandId === request.commandId);
       // Foreign requests and concurrent calls must not dispose another owner.
