@@ -111,7 +111,9 @@ async function candidateTests(mod) {
   let sequence = 0;
   const host = { workspaceId: 'motion-workspace', documentEpoch: 'motion-document', sceneId: 'motion-scene', sceneEpoch: 'motion-epoch' };
   const owners = [];
+  let previousFixture = null;
   function fixture(options = {}) {
+    previousFixture?.dispose();
     const number = ++sequence, rig = rigFixture(), oldMotion = clipFixture(), ikState = createIkState();
     const character = { id: 'char-b', x: 0, y: 0, z: 0, rot: 0, scale: 1, layer: { promptClips: [{ id: 'old-beat' }] }, ...options.character };
     rig.position.set(character.x, character.y, character.z); rig.rotation.y = character.rot * Math.PI / 180; rig.scale.setScalar(.01 * character.scale); rig.updateMatrixWorld(true);
@@ -156,7 +158,10 @@ async function candidateTests(mod) {
     const commit = (c, v, extra = {}) => dispatch('commit_motion_candidate', { candidateId: c.candidateId, candidateRevision: c.candidateRevision, jobId: request.jobId, artifactId: request.artifactId,
       verificationId: v.verificationId, expectedTargetToken: request.binding.targetToken, expectedPhysicsRevision: v.physicsRevision, ...extra });
     const preserved = () => assert.deepEqual(preimage(), initial, 'visible bones, prior take/full source, authored IK, prompts, history and view stay unchanged');
-    return { api, ports, state, domain, rig, character, request, motion, calls, dispatch, prepare, verify, repair, commit, preserved, preimage, setClock: n => { clock = n; }, get payload() { return committedPayload; } };
+    const dispose = () => { api.dispose(); assert.equal(api.size, 0); };
+    const current = { api, ports, state, domain, rig, character, request, motion, calls, dispatch, prepare, verify, repair, commit, preserved, preimage, dispose, setClock: n => { clock = n; }, get payload() { return committedPayload; } };
+    previousFixture = current;
+    return current;
   }
   const ok = value => assert.notEqual(value.ok, false, JSON.stringify(value));
   const checked = (label, v) => { metrics[label] = v; console.log('PASS', label, JSON.stringify({ status: v.status, coverage: v.coverage, metrics: v.metrics })); };
@@ -229,12 +234,19 @@ async function candidateTests(mod) {
       assert.notEqual(trace.blockers[0][0].az, trace.blockers[47][0].az); assert.deepEqual(boneSnapshot(other), before); f.preserved();
     }
     {
-      const f = fixture(), c = await f.prepare(), first = await f.verify(c); ok(first);
+      const f = fixture(), diagnostic = stage => {
+        if (!process.env.MOTION_CI_DIAGNOSTIC) return;
+        const environment = f.ports.readEnvironment(), target = f.ports.readTarget(f.request.binding);
+        console.error('MOTION_CI_DIAGNOSTIC', JSON.stringify({ stage, targetGuard: target?.guard ?? null,
+          physicsFingerprintInput: { physicsRevision: environment.physicsRevision, floor: environment.floor, objects: environment.objects, cast: environment.cast.map(member => member.character?.id ?? null), frameCount: environment.frameCount },
+          environmentKey: JSON.stringify([environment.host, environment.physicsRevision, { model: environment.floor.model, y: environment.floor.y }]) }));
+      }, c = await f.prepare();
+      diagnostic('ground-before-verify-1'); const first = await f.verify(c); ok(first);
       f.state.floor.y = .3; f.state.physicsRevision++;
-      const v = await f.verify(c); ok(v); checked('ground-cache-invalidation', v);
+      diagnostic('ground-before-verify-2'); const v = await f.verify(c); ok(v); checked('ground-cache-invalidation', v);
       assert.equal(v.physicsRevision, 2); const trace = f.api.readEvidence(c.candidateId);
       assert.equal(trace.before.rows[0].ground.leftFoot, .3); assert.equal(trace.after.rows[0].ground.leftFoot, .3); assert(v.metrics.maxFloorPenetrationM > .2); assert.equal(v.repairable, false);
-      f.state.physicsRevision++; assert.equal((await f.verify(c)).code, 'STALE_ENVIRONMENT'); assert.equal(f.api.size, 0); f.preserved();
+      f.state.physicsRevision++; diagnostic('ground-before-verify-3'); assert.equal((await f.verify(c)).code, 'STALE_ENVIRONMENT'); assert.equal(f.api.size, 0); f.preserved();
     }
     {
       const f = fixture({ decodeFailure: true }); const result = await f.prepare(); assert.equal(result.code, 'VERIFICATION_FAILED'); assert.equal(result.mutated, false); assert.equal(f.api.size, 0); f.preserved();
