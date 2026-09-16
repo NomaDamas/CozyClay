@@ -291,6 +291,114 @@ const { store: silentStore } = await driveStop({ ok: true, status: "stopped" });
 expect("a Stop with no runtime outcome stays unknown", silentStore.getState().items.find((item) => item.kind === "job")?.outcome?.status === "unknown");
 expect("a late job frame cannot erase the not-applied outcome", lateJob?.outcome?.status === "not_applied" && lateJob.outcome.mutated === false);
 
+// --- activity line and explicit turn outcomes (#324) ----------------------
+// The panel must never look idle while it is working, and never look idle
+// after a turn died. Source shape first, then the exact words per phase.
+expect("the panel renders one activity line", panel.includes('className="agent-activity"') && panel.includes("data-agent-activity={activity.phase}"));
+expect("the activity line is announced politely", /className="agent-activity"[^>]*role="status" aria-live="polite"/.test(panel));
+expect("the activity line sits between the transcript and the composer", (() => {
+	const transcript = panel.indexOf('className="agent-transcript"');
+	const line = panel.indexOf('className="agent-activity"');
+	const composer = panel.indexOf('className="agent-composer"');
+	return transcript !== -1 && line > transcript && composer > line;
+})());
+expect("the activity line carries an animated indicator", panel.includes("agent-activity-indicator")
+	&& /\.agent-activity-indicator\.busy\s*\{[^}]*animation: agent-pulse/.test(css) && /@keyframes agent-pulse/.test(css));
+expect("the activity line is token-driven", /\.agent-activity\s*\{[^}]*padding: var\(--agent-space-2\) var\(--agent-space-4\)/.test(css));
+expect("the elapsed clock ticks on an interval, never a timeout", panel.includes("setInterval(() => setActivityNow(Date.now()), 500)"));
+
+const activityState = (patch) => ({ items: [], streaming: false, turnStartedAt: null, lastTurn: null, ...patch });
+const phase = (patch, now = 4000) => module_.describeActivity(activityState(patch), { now });
+const prompt = { kind: "user", id: "u1", text: "frame a two-shot" };
+
+const sending = phase({ streaming: true, turnStartedAt: 1000, items: [prompt] });
+expect('a request in flight reads "Sending… · 3 s"', sending.phase === "sending" && sending.text === "Sending… · 3 s" && sending.ticking, sending.text);
+const thinking = phase({ streaming: true, turnStartedAt: 1000, items: [prompt, { kind: "assistant", id: "a1", text: "Framing" }] });
+expect('a streaming model reads "Thinking… · 3 s"', thinking.phase === "thinking" && thinking.text === "Thinking… · 3 s", thinking.text);
+const runningTool = phase({ streaming: true, turnStartedAt: 1000, items: [prompt, { kind: "tool", id: "t1", name: "capture_blocking_frame", status: "running" }] });
+expect('an open tool call names the tool it is running', runningTool.phase === "tool" && runningTool.text === "Running Capture blocking frame… · 3 s", runningTool.text);
+const generating = phase({ streaming: true, turnStartedAt: 1000, items: [prompt, { kind: "tool", id: "t1", name: "generate_motion", status: "running" }, { kind: "job", id: "j1", jobId: "job-1", state: "generating", progress: 0.25 }] });
+expect('job frames read "Generating motion 25% · 3 s"', generating.phase === "job" && generating.text === "Generating motion 25% · 3 s", generating.text);
+const waiting = phase({ items: [{ kind: "image", id: "i1", apply: { status: "applying", startedAt: 1000 } }] });
+expect('a dispatched editor action reads "Waiting for the editor… · 3 s"', waiting.phase === "editor" && waiting.text === "Waiting for the editor… · 3 s", waiting.text);
+
+const doneTurn = phase({ lastTurn: { status: "done", endedAt: 3500, durationMs: 12000, failure: null } });
+expect('a finished turn reads "Done · 12 s"', doneTurn.kind === "terminal" && doneTurn.phase === "done" && doneTurn.text === "Done · 12 s", doneTurn.text);
+const stoppedTurn = phase({ lastTurn: { status: "stopped", endedAt: 3500, durationMs: 4000, failure: null } });
+expect("a stopped turn says so", stoppedTurn.kind === "terminal" && stoppedTurn.text === "Stopped", stoppedTurn.text);
+const failedTurn = phase({ lastTurn: { status: "failed", endedAt: 3500, durationMs: 900, failure: { code: "upstream", status: 400, message: "400 — The requested model is not supported" } } });
+expect("a failed turn names the reason the transport reported", failedTurn.text === "Failed: 400 — The requested model is not supported", failedTurn.text);
+const limitedTurn = phase({ lastTurn: { status: "failed", endedAt: 3500, durationMs: 900, failure: { code: "rate_limit", message: module_.ERROR_COPY.rate_limit } } });
+expect("a usage limit is stated in a few words", limitedTurn.text === "Failed: usage limit reached", limitedTurn.text);
+const settled = phase({ lastTurn: { status: "done", endedAt: 3500, durationMs: 12000, failure: null } }, 3500 + module_.ACTIVITY_TERMINAL_MS);
+expect("the terminal state gives way to a quiet Ready", settled.kind === "idle" && settled.text === "Ready" && !settled.ticking, settled.text);
+expect("an idle panel says Ready", phase({}).text === "Ready" && phase({}).phase === "idle");
+expect("the clock stays readable past a minute", module_.formatTurnClock(65000) === "1 m 05 s" && module_.formatTurnClock(-5) === "0 s");
+
+// A turn is driven through the real store with an injected clock, so the
+// outcome it records is the one the panel reads.
+let fakeNow = 0;
+const driveTurn = async (turn) => {
+	fakeNow = 1000;
+	const store = module_.createAgentChatStore({ transport: { turn: (_request, onEvent, signal) => turn(onEvent, signal) }, clock: () => fakeNow });
+	const sent = store.send("do something");
+	fakeNow = 3500;
+	await sent;
+	return store.getState();
+};
+
+const silent = await driveTurn(async () => {});
+const silentCard = silent.items.find((item) => item.kind === "failure");
+expect("a turn that ends with no output renders a failure card", silentCard?.failure.code === "no_output" && silentCard.failure.recovery.retryAllowed === true);
+expect("that turn is reported as failed, not finished", silent.lastTurn?.status === "failed" && silent.lastTurn.durationMs === 2500);
+expect("the activity line states the silent failure", module_.describeActivity(silent, { now: 3500 }).text === "Failed: no response");
+
+const refused = await driveTurn(async (onEvent) => { onEvent({ type: "error", code: "upstream", status: 429, message: "429 — usage limit, resets in 42m" }); onEvent({ type: "done" }); });
+const refusedCard = refused.items.find((item) => item.kind === "failure");
+expect("an upstream refusal renders a failure card with the reported detail", refusedCard?.failure.code === "upstream" && refusedCard.failure.message === "429 — usage limit, resets in 42m" && refusedCard.failure.status === 429);
+expect("the failure card offers a retry", refusedCard.failure.recovery.retryAllowed === true);
+expect("a refused turn ends as failed", refused.lastTurn?.status === "failed");
+
+const attached = await driveTurn(async (onEvent) => {
+	onEvent({ type: "tool.start", callId: "c1", name: "capture_blocking_frame" });
+	onEvent({ type: "tool.done", callId: "c1", ok: false, error: "Viewport is not ready" });
+	onEvent({ type: "error", code: "upstream", message: "The model service failed to answer." });
+	onEvent({ type: "done" });
+});
+expect("a failure inside a turn stays on that turn's tool card", !attached.items.some((item) => item.kind === "failure")
+	&& attached.items.find((item) => item.kind === "tool")?.failure?.code === "upstream");
+
+fakeNow = 1000;
+const stopStore = module_.createAgentChatStore({
+	transport: {
+		turn: (_request, onEvent, signal) => { onEvent({ type: "text.delta", text: "Framing" }); return new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })); },
+		stop: async () => ({ ok: true }),
+	},
+	clock: () => fakeNow,
+});
+const stopping = stopStore.send("go");
+fakeNow = 6000;
+stopStore.stop();
+expect("Stop is reported the moment it is asked for", stopStore.getState().lastTurn?.status === "stopped" && module_.describeActivity(stopStore.getState(), { now: 6000 }).text === "Stopped");
+await stopping;
+expect("the settled turn keeps the stopped outcome", stopStore.getState().lastTurn?.status === "stopped");
+
+// --- a refused turn explains itself (#324 control finding 1) --------------
+const refusal = await module_.refusalEvent({ status: 400, clone: () => ({ json: async () => ({ error: { code: "upstream", message: "The requested model is not supported for this account." } }) }) });
+expect("a refused turn forwards the status and the sanitized detail", refusal.code === "upstream" && refusal.status === 400
+	&& refusal.message === "400 — The requested model is not supported for this account.", refusal.message);
+const bodiless = await module_.refusalEvent({ status: 502, clone: () => { throw new Error("no body"); } });
+expect("a refusal with no readable body still reports its status", bodiless.code === "upstream" && bodiless.message === "The turn was refused with HTTP 502.", bodiless.message);
+expect("a 429 refusal routes to the paused state", (await module_.refusalEvent({ status: 429, clone: () => ({ json: async () => ({}) }) })).code === "rate_limit");
+expect("the panel stops inventing a generic refusal message", !panel.includes("turn responded") && client.includes("refusalEvent(response)"));
+
+// --- no stale model id is ever sent (#324 control finding 2) --------------
+expect("the client hardcodes no model list", !client.includes("DEFAULT_MODELS") && !/gpt-[\d.]/.test(client));
+expect("the panel starts with no model and takes the advertised list", panel.includes('const [model, setModel] = useState("")') && panel.includes('setModelsState("ready")'));
+expect("the composer stays disabled until a model is advertised", panel.includes('const composerDisabled = panelState === "rate-limited" || !model;'));
+expect("the wait for the model list is visible, not silent", panel.includes("Loading models…") && panel.includes("No model available"));
+expect("an unanswered model list is a state, not a guess", client.includes("return Array.isArray(result?.models) ? result.models : [];"));
+
 if (failures) {
 	console.error(`${failures} FAILURES`);
 	process.exitCode = 1;

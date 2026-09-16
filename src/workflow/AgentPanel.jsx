@@ -6,7 +6,7 @@ import {
 	AGENT_PANEL_WIDTH_MAX,
 	AGENT_PANEL_WIDTH_MIN,
 	AGENT_STATES,
-	DEFAULT_MODELS,
+	describeActivity,
 	JOB_STATE_COPY,
 	createAgentChatStore,
 	effortOptions,
@@ -46,6 +46,11 @@ const CANVAS_TOOL_LABELS = {
 	add_reference_node: "Add reference image",
 };
 
+/** The one label a tool call is known by, in a card and in the activity line. */
+function resolveToolLabel(call) {
+	return Object.hasOwn(CANVAS_TOOL_LABELS, call.name) ? CANVAS_TOOL_LABELS[call.name] : toolCallLabel(call);
+}
+
 function ToolCallCard({ call, onRetry }) {
 	const tone = call.status === "running" ? "busy" : ["failed", "cancelled"].includes(call.status) ? "alert" : "ok";
 	const canvasTool = Object.hasOwn(CANVAS_TOOL_LABELS, call.name);
@@ -54,7 +59,7 @@ function ToolCallCard({ call, onRetry }) {
 		<details>
 			<summary>
 				<StatusDot tone={tone} title={call.status} />
-				<span className="agent-tool-label">{canvasTool ? CANVAS_TOOL_LABELS[call.name] : toolCallLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
+				<span className="agent-tool-label">{resolveToolLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
 				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : call.status === "cancelled" ? (call.result?.status === "not_applied" ? "not applied" : "result unknown") : formatElapsed(call.elapsedMs)}</span>
 				<FiChevronRight size={12} aria-hidden="true" />
 			</summary>
@@ -209,8 +214,11 @@ export default function AgentPanel({
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [account, setAccount] = useState(null);
 	const [authState, setAuthState] = useState("loading");
-	const [models, setModels] = useState(DEFAULT_MODELS);
-	const [model, setModel] = useState(DEFAULT_MODELS[0].id);
+	// No model is assumed. Sending a guessed id is how a turn fails upstream with
+	// nothing the panel can explain, so the composer waits for /agent/models.
+	const [models, setModels] = useState([]);
+	const [model, setModel] = useState("");
+	const [modelsState, setModelsState] = useState("loading");
 	// null = the model's backend default; picking a model resets it.
 	const [effort, setEffort] = useState(null);
 	const efforts = useMemo(() => effortOptions(models.find((entry) => entry.id === model)), [models, model]);
@@ -240,6 +248,21 @@ export default function AgentPanel({
 	const chat = useSyncExternalStore(store.subscribe, store.getState, store.getState);
 	const { draft, items, quota, rateLimit, streaming } = chat;
 
+	// --- activity line -----------------------------------------------------
+	// One line that always states what the panel is doing, ticking while a turn
+	// is live and holding the turn's outcome for a few seconds after it ends.
+	const [activityNow, setActivityNow] = useState(() => Date.now());
+	const activity = model
+		? describeActivity(chat, { now: activityNow, toolLabel: resolveToolLabel })
+		: modelsState === "failed"
+			? { phase: "no-model", kind: "terminal", tone: "alert", text: "No model available — the agent service did not answer with one", ticking: false }
+			: { phase: "models", kind: "live", tone: "busy", text: "Loading models…", ticking: false };
+	useEffect(() => {
+		if (!activity.ticking) return;
+		const timer = setInterval(() => setActivityNow(Date.now()), 500);
+		return () => clearInterval(timer);
+	}, [activity.ticking]);
+
 	// --- session bootstrap -------------------------------------------------
 	const readAccount = useCallback(async () => {
 		try {
@@ -266,11 +289,14 @@ export default function AgentPanel({
 			}
 			try {
 				const list = await transport.models();
-				if (cancelled || !Array.isArray(list) || !list.length) return;
+				if (cancelled) return;
+				if (!Array.isArray(list) || !list.length) { setModelsState("failed"); return; }
 				setModels(list);
 				setModel(list[0].id);
+				setModelsState("ready");
 			} catch {
-				// Model list is advisory; the default list stays usable offline.
+				// An unanswered model list is a visible state, not a silent guess.
+				if (!cancelled) setModelsState("failed");
 			}
 		})();
 		return () => { cancelled = true; };
@@ -296,7 +322,7 @@ export default function AgentPanel({
 	// turn, a paused card, a failed tool call) are driven by replaying the
 	// scripted turn once, so QA screenshots the same code path a live turn uses.
 	useEffect(() => {
-		if (!mockState || authState !== "ready") return;
+		if (!mockState || authState !== "ready" || !model) return;
 		if (!["streaming", "rate-limited", "error"].includes(mockState)) return;
 		if (items.length) return;
 		store.send("Give me a wide two-shot of this scene", { attachFrame: false, model });
@@ -443,7 +469,7 @@ export default function AgentPanel({
 	// A disabled composer under the sign-in card is dead weight: the composer
 	// only exists once there is a session to talk to.
 	const authenticated = authState === "ready" || authState === "no-entitlement";
-	const composerDisabled = panelState === "rate-limited";
+	const composerDisabled = panelState === "rate-limited" || !model;
 
 	if (collapsed && !embedded) {
 		return <aside className="agent-panel collapsed" data-agent-state={panelState} data-agent-collapsed="true" aria-label="Agent panel, collapsed">
@@ -541,20 +567,27 @@ export default function AgentPanel({
 			{rateLimit && <PausedCard resetAt={rateLimit.resetAt} onRetry={() => { store.clearRateLimit(); runTurn(chat.lastPrompt); }} onSwitchModel={switchModel} />}
 		</div>
 
+		{/* Never a blank panel: busy states name the phase and tick, a finished
+		    turn states how it ended, and idle says so in as many words. */}
+		{authenticated && <div className="agent-activity" data-agent-activity={activity.phase} data-agent-activity-kind={activity.kind} role="status" aria-live="polite">
+			<span className={`agent-activity-indicator ${activity.tone}`} aria-hidden="true" />
+			<span className="agent-activity-text">{activity.text}</span>
+		</div>}
+
 		{authenticated && <div className="agent-composer">
 			<textarea
 				ref={composerRef}
 				className="agent-input"
 				aria-label="Message the agent"
-				placeholder={composerDisabled ? "Composer is paused" : "Ask the agent to block, frame or render…"}
+				placeholder={panelState === "rate-limited" ? "Composer is paused" : model ? "Ask the agent to block, frame or render…" : "Waiting for the model list…"}
 				value={draft}
 				disabled={composerDisabled}
 				onChange={(event) => store.setDraft(event.target.value)}
 				onKeyDown={onComposerKeyDown}
 			/>
 			<div className="agent-composer-controls agent-composer-picks">
-				<select className="agent-model-select" aria-label="Model" value={model} onChange={(event) => chooseModel(event.target.value)}>
-					{models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)}
+				<select className="agent-model-select" aria-label="Model" value={model} disabled={!models.length} onChange={(event) => chooseModel(event.target.value)}>
+					{models.length ? models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>) : <option value="">{modelsState === "failed" ? "No model available" : "Loading models…"}</option>}
 				</select>
 				{efforts.length > 0 && (
 					<select className="agent-model-select agent-effort-select" aria-label="Reasoning effort" title="Reasoning effort" value={effort ?? efforts[0]} onChange={(event) => setEffort(event.target.value)}>

@@ -106,11 +106,9 @@ export function effortOptions(entry) {
 	return [fallback, ...efforts.filter((effort) => effort !== fallback)];
 }
 
-export const DEFAULT_MODELS = [
-	{ id: "gpt-5.1-codex", label: "Codex (default)" },
-	{ id: "gpt-5.1", label: "GPT-5.1" },
-	{ id: "gpt-5.1-mini", label: "GPT-5.1 mini" },
-];
+// There is deliberately no hardcoded model list. A stale fallback id is sent
+// silently and every turn then fails upstream with an opaque message; the panel
+// waits for /agent/models instead and says so while it waits.
 
 export const SUGGESTION_CHIPS = [
 	"Block a two-shot conversation in this scene",
@@ -191,6 +189,83 @@ export const ERROR_COPY = {
 	overloaded: "The model service is overloaded right now. Try again in a moment.",
 };
 
+// --- activity line ---------------------------------------------------------
+//
+// Silence is the failure mode this replaces: a live turn says what it is doing
+// and a finished turn says how it ended, in the same line, so "nothing on
+// screen" can never mean "nobody knows".
+
+/** How long a finished turn keeps explaining itself before the line goes quiet. */
+export const ACTIVITY_TERMINAL_MS = 6000;
+const ACTIVITY_IDLE_TEXT = "Ready";
+
+/** Short, line-sized reasons; a transport message ("turn responded 429") is
+ * already short enough and is preferred over inventing copy for it. */
+const FAILURE_REASON = {
+	auth: "session expired",
+	entitlement: "not on this plan",
+	rate_limit: "usage limit reached",
+	rate_limited: "usage limit reached",
+	overloaded: "service overloaded",
+	no_output: "no response",
+};
+
+function shortFailureReason(failure) {
+	if (!failure) return "unknown error";
+	const known = FAILURE_REASON[failure.code];
+	if (known) return known;
+	const message = String(failure.message ?? "").trim();
+	if (!message) return String(failure.code || "unknown error");
+	return message.length > 64 ? `${message.slice(0, 63)}…` : message;
+}
+
+/** Elapsed clock for the activity line: "3 s", "1 m 05 s". */
+export function formatTurnClock(ms) {
+	const total = Number.isFinite(ms) && ms > 0 ? Math.floor(ms / 1000) : 0;
+	if (total < 60) return `${total} s`;
+	return `${Math.floor(total / 60)} m ${String(total % 60).padStart(2, "0")} s`;
+}
+
+const liveActivity = (phase, label, elapsedMs) => ({
+	phase,
+	kind: "live",
+	tone: "busy",
+	text: `${label} · ${formatTurnClock(elapsedMs)}`,
+	ticking: true,
+});
+
+/** What the panel says it is doing, in plain words. Pure: the component only
+ * supplies the clock, so every phase and every terminal state is testable. */
+export function describeActivity(state, { now = Date.now(), toolLabel = toolCallLabel } = {}) {
+	const items = state?.items ?? [];
+	// A dispatched editor action outlives the turn that produced the image, so it
+	// is the most specific thing the panel can be waiting for.
+	const dispatched = items.find((item) => item.kind === "image" && item.apply?.status === "applying");
+	if (dispatched) return liveActivity("editor", "Waiting for the editor…", now - (dispatched.apply.startedAt ?? now));
+	if (state?.streaming) {
+		const elapsed = now - (state.turnStartedAt ?? now);
+		const job = items.findLast((item) => item.kind === "job" && !isTerminalJobState(item.state));
+		if (job) {
+			const percent = formatJobProgress(job.progress);
+			return liveActivity("job", `${JOB_STATE_COPY[job.state] || job.state} motion${percent ? ` ${percent}` : ""}`, elapsed);
+		}
+		const tool = items.findLast((item) => item.kind === "tool" && item.status === "running");
+		if (tool) return liveActivity("tool", `Running ${toolLabel(tool)}…`, elapsed);
+		// Nothing has come back yet: the request itself is the only thing happening.
+		const prompt = items.findLastIndex((item) => item.kind === "user");
+		return prompt === items.length - 1
+			? liveActivity("sending", "Sending…", elapsed)
+			: liveActivity("thinking", "Thinking…", elapsed);
+	}
+	const last = state?.lastTurn;
+	if (last && now - last.endedAt < ACTIVITY_TERMINAL_MS) {
+		if (last.status === "stopped") return { phase: "stopped", kind: "terminal", tone: "warn", text: "Stopped", ticking: true };
+		if (last.status === "failed") return { phase: "failed", kind: "terminal", tone: "alert", text: `Failed: ${shortFailureReason(last.failure)}`, ticking: true };
+		return { phase: "done", kind: "terminal", tone: "ok", text: `Done · ${formatTurnClock(last.durationMs)}`, ticking: true };
+	}
+	return { phase: "idle", kind: "idle", tone: "", text: ACTIVITY_IDLE_TEXT, ticking: false };
+}
+
 /** Split an SSE body into `data:` payload objects. Exported so the reader can
  * be unit-tested without a socket. */
 export function parseSseChunk(buffer) {
@@ -226,6 +301,29 @@ const exactKeys = (value, keys) => value && typeof value === "object" && !Array.
 const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
 const transportFailureCode = (error) => advisory(() => error?.status === 401 || error?.code === "auth" ? "auth"
 	: error?.status === 429 || error?.code === "rate_limit" ? "rate_limited" : "upstream", "upstream");
+
+const UI_ERROR_CODES = new Set(["auth", "entitlement", "rate_limit", "overloaded", "upstream"]);
+
+/** The UI error for a refused turn. The sidecar answers `{ error: { code,
+ * message, status } }` with an already-sanitized message; a refusal without a
+ * readable body still reports its HTTP status rather than a blank panel. */
+export async function refusalEvent(response) {
+	const status = Number.isFinite(response?.status) ? response.status : null;
+	let detail = null;
+	try {
+		const body = await response.clone().json();
+		detail = typeof body?.error === "string" ? { message: body.error } : body?.error && typeof body.error === "object" ? body.error : null;
+	} catch { /* a refusal with no JSON body is still a reportable status */ }
+	const message = typeof detail?.message === "string" && detail.message.trim()
+		? `${status ?? "Upstream"} — ${detail.message.trim()}`
+		: `The turn was refused with HTTP ${status ?? "error"}.`;
+	return {
+		code: UI_ERROR_CODES.has(detail?.code) ? detail.code : status === 429 ? "rate_limit" : status === 401 ? "auth" : "upstream",
+		message,
+		...(status === null ? {} : { status }),
+		...(detail?.resetAt ? { resetAt: detail.resetAt } : {}),
+	};
+}
 
 // The real browser request owns the attempt, including HTTP refusal and Stop.
 // These IDs never use panel session IDs, model call IDs or authored content.
@@ -343,7 +441,7 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		},
 		async models() {
 			const result = await request("/agent/models");
-			return Array.isArray(result?.models) && result.models.length ? result.models : DEFAULT_MODELS;
+			return Array.isArray(result?.models) ? result.models : [];
 		},
 		// Legacy callers pass a session id; a Studio host passes the frozen stop
 		// envelope so the sidecar can cancel one turn and one owned job.
@@ -437,7 +535,10 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 				});
 				if (!response.ok || !response.body) {
 					telemetry.fail(transportFailureCode(response));
-					onEvent({ type: "error", code: "upstream", message: `turn responded ${response.status}` });
+					// A refused turn carries the only explanation there is. Forward the
+					// status and whatever short detail the sidecar sanitized for us
+					// instead of the panel inventing "something went wrong".
+					onEvent({ type: "error", ...(await refusalEvent(response)) });
 					onEvent({ type: "done" });
 					return;
 				}
@@ -538,7 +639,7 @@ export function createMockTransport(config = { state: "ready" }) {
 			return { ok: true };
 		},
 		async models() {
-			return DEFAULT_MODELS;
+			return [{ id: "mock-model", label: "Mock model" }];
 		},
 		async stop() {
 			return { ok: true };
@@ -634,12 +735,16 @@ export function createAgentChatStore({
 	requestImageAction = null,
 	onAuthLost = null,
 	newId = createStudioSessionId,
+	clock = () => Date.now(),
 } = {}) {
 	const studio = surface === "studio";
 	const listeners = new Set();
 	const seenReceipts = new Set();
 	const settledActions = new Set();
 	let controller = null;
+	// What the running turn has actually produced, so a turn that ends with
+	// nothing on screen can be reported as the failure it is.
+	let activeTurn = null;
 	let state = {
 		sessionId: newId(),
 		turnId: null,
@@ -649,6 +754,8 @@ export function createAgentChatStore({
 		quota: null,
 		rateLimit: null,
 		lastPrompt: "",
+		turnStartedAt: null,
+		lastTurn: null,
 	};
 	const set = (patch) => {
 		state = { ...state, ...patch };
@@ -723,6 +830,7 @@ export function createAgentChatStore({
 	}
 
 	function applyEvent(event) {
+		if (activeTurn && event?.type !== "quota") activeTurn.produced = true;
 		if (event?.type === "text.delta") {
 			setItems((items) => {
 				const last = items[items.length - 1];
@@ -750,13 +858,17 @@ export function createAgentChatStore({
 			return;
 		}
 		if (event?.type !== "error") return;
+		const failure = { code: event.code || "upstream", message: event.message || ERROR_COPY[event.code] || "The turn failed.", ...(Number.isFinite(event.status) ? { status: event.status } : {}) };
+		if (activeTurn) activeTurn.failure = failure;
 		if (event.code === "rate_limit") { set({ rateLimit: { resetAt: event.resetAt || null, message: event.message || ERROR_COPY.rate_limit } }); return; }
 		if (event.code === "auth") { onAuthLost?.(); return; }
 		setItems((items) => {
-			const index = [...items].reverse().findIndex((item) => item.kind === "tool" && item.status === "failed");
-			if (index === -1) return [...items, { kind: "tool", id: newId(), callId: newId(), name: "agent_turn", label: "Run turn", status: "failed", failure: { code: event.code, message: event.message } }];
-			const position = items.length - 1 - index;
-			return items.map((item, at) => at === position ? { ...item, failure: { code: event.code, message: event.message } } : item);
+			// Only THIS turn's failed tool call can carry the failure. Attaching it to
+			// an older card would hide the new failure inside finished history.
+			const prompt = items.findLastIndex((item) => item.kind === "user");
+			const position = items.findLastIndex((item, at) => at > prompt && item.kind === "tool" && item.status === "failed");
+			if (position === -1) return [...items, { kind: "failure", id: newId(), failure: { ...failure, recovery: { action: "retry", retryAllowed: true } } }];
+			return items.map((item, at) => at === position ? { ...item, failure } : item);
 		});
 	}
 
@@ -777,7 +889,7 @@ export function createAgentChatStore({
 		if (!item || item.apply?.status === "applying") return;
 		if (intent === "place" ? item.placed : !item.placed) return;
 		const requestId = newId();
-		patchItem((entry) => entry.kind === "image" && entry.id === itemId, { apply: { requestId, status: "applying", error: null, receiptId: null } });
+		patchItem((entry) => entry.kind === "image" && entry.id === itemId, { apply: { requestId, status: "applying", error: null, receiptId: null, startedAt: clock() } });
 		const request = { action: intent, requestId, imageId: item.imageId, dataUrl: item.dataUrl, width: item.width, height: item.height, prompt: item.prompt };
 		try {
 			const result = await (requestImageAction ?? requestHostImageAction)(request);
@@ -792,7 +904,7 @@ export function createAgentChatStore({
 		settledActions.clear();
 		// Clearing the transcript also retires the server session: a cleared chat
 		// the model still remembers is the divergence this replaces.
-		set({ sessionId: newId(), turnId: null, items: [], rateLimit: null, lastPrompt: "" });
+		set({ sessionId: newId(), turnId: null, items: [], rateLimit: null, lastPrompt: "", turnStartedAt: null, lastTurn: null });
 	};
 
 	return {
@@ -812,12 +924,17 @@ export function createAgentChatStore({
 				applyEvent({ type: "error", code: "upstream", message: "The editor is not ready to describe the scene yet." });
 				return;
 			}
+			const startedAt = clock();
+			const turn = { produced: false, failure: null };
+			activeTurn = turn;
 			set({
 				lastPrompt: trimmed,
 				rateLimit: null,
 				turnId,
 				streaming: true,
 				draft: "",
+				turnStartedAt: startedAt,
+				lastTurn: null,
 				items: [...state.items, { kind: "user", id: newId(), text: trimmed, attachFrame: Boolean(options.attachFrame) }],
 			});
 			controller = new AbortController();
@@ -835,7 +952,26 @@ export function createAgentChatStore({
 				if (!signal.aborted) applyEvent({ type: "error", code: "upstream", message: String(error?.message || error) });
 			} finally {
 				if (controller?.signal === signal) controller = null;
-				set({ streaming: false });
+				// A turn the author already replaced owns none of this state.
+				if (activeTurn === turn) {
+					// Ending with nothing on screen is a failure, not a result.
+					if (!turn.produced && !turn.failure && !signal.aborted) {
+						turn.failure = { code: "no_output", message: "The turn ended without a response.", recovery: { action: "retry", retryAllowed: true } };
+						setItems((items) => [...items, { kind: "failure", id: newId(), failure: turn.failure }]);
+					}
+					const endedAt = clock();
+					activeTurn = null;
+					set({
+						streaming: false,
+						turnStartedAt: null,
+						lastTurn: {
+							status: signal.aborted ? "stopped" : turn.failure ? "failed" : "done",
+							endedAt,
+							durationMs: endedAt - startedAt,
+							failure: turn.failure,
+						},
+					});
+				}
 			}
 		},
 		stop() {
@@ -867,7 +1003,15 @@ export function createAgentChatStore({
 					});
 				})
 				.catch(() => {});
-			set({ streaming: false });
+			// Stop is an answer too: the line says "Stopped" now, not when the aborted
+			// request finally settles.
+			if (!state.streaming) { set({ streaming: false }); return; }
+			const endedAt = clock();
+			set({
+				streaming: false,
+				turnStartedAt: null,
+				lastTurn: { status: "stopped", endedAt, durationMs: endedAt - (state.turnStartedAt ?? endedAt), failure: null },
+			});
 		},
 		async acceptJob(jobId) {
 			const job = findJob(jobId);

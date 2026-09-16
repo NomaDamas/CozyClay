@@ -742,6 +742,61 @@
 
 .agent-chip:hover { border-color: #606b9a; background: #2b3040; color: #f5f7ff; }
 
+/* --- activity line ------------------------------------------------------ */
+
+/* The one place the panel says what it is doing. It is always present for a
+ * signed-in author, so an empty panel can never be mistaken for a panel with
+ * nothing happening in it. */
+.agent-activity {
+	display: flex;
+	align-items: center;
+	gap: var(--agent-space-2);
+	flex: none;
+	min-height: 28px;
+	padding: var(--agent-space-2) var(--agent-space-4);
+	border-top: 1px solid var(--agent-border);
+	background: var(--agent-bg-raised);
+	color: var(--agent-text-muted);
+	font-size: var(--agent-font-md);
+}
+
+/* The line and the composer are one block; two rules would read as a seam. */
+.agent-activity + .agent-composer { border-top: 0; }
+
+.agent-activity-text {
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+}
+
+.agent-activity-indicator {
+	width: var(--agent-dot);
+	height: var(--agent-dot);
+	flex: none;
+	border-radius: var(--agent-radius-pill);
+	background: var(--agent-text-dim);
+}
+
+.agent-activity-indicator.busy {
+	background: var(--agent-accent);
+	box-shadow: 0 0 8px var(--agent-accent);
+	animation: agent-pulse 1100ms ease-in-out infinite;
+}
+
+.agent-activity-indicator.ok { background: var(--agent-ok); }
+.agent-activity-indicator.warn { background: var(--agent-warn); }
+.agent-activity-indicator.alert { background: var(--agent-alert); }
+
+.agent-activity[data-agent-activity-kind="idle"] { color: var(--agent-text-dim); }
+.agent-activity[data-agent-activity="done"] { color: var(--agent-ok); }
+.agent-activity[data-agent-activity="failed"],
+.agent-activity[data-agent-activity="no-model"] { color: var(--agent-alert); }
+
+@keyframes agent-pulse {
+	0%, 100% { opacity: 1; transform: scale(1); }
+	50% { opacity: 0.35; transform: scale(0.65); }
+}
+
 /* --- composer ---------------------------------------------------------- */
 
 .agent-composer {

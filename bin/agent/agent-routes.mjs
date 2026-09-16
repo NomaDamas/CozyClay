@@ -107,14 +107,43 @@ function quotaEvent(codex, headers) {
 	};
 }
 
+// Backend errors may echo credentials or image inputs, so their bodies are
+// never forwarded. Only a structured message survives, redacted and clipped to
+// one line — without it neither the log nor the panel can say why a turn died.
+const UPSTREAM_DETAIL_MAX = 200;
+export function sanitizeUpstreamDetail(body) {
+	let message = null;
+	try {
+		const parsed = JSON.parse(body);
+		const candidate = parsed?.error?.message ?? parsed?.error ?? parsed?.message ?? parsed?.detail;
+		message = typeof candidate === "string" ? candidate : null;
+	} catch { return null; }
+	if (!message) return null;
+	const cleaned = message
+		.replace(/data:[^\s"']+/gi, "[image]")
+		.replace(/\b(?:Bearer\s+|sk-|eyJ)[\w.\-+/=]+/gi, "[redacted]")
+		.replace(/\s+/g, " ")
+		.trim();
+	if (!cleaned) return null;
+	return cleaned.length > UPSTREAM_DETAIL_MAX ? `${cleaned.slice(0, UPSTREAM_DETAIL_MAX - 1)}\u2026` : cleaned;
+}
+
 function errorInfo(error, quota) {
-	if (error?.status === 401 || error?.code === "unauthorized") return { code: "auth", message: "Authentication required. Sign in again." };
-	if (error?.status === 429) return { code: "rate_limit", message: "Rate limit exceeded.", resetAt: quota?.primary.resetAt ?? null };
-	if (error?.code === "entitlement") return { code: "entitlement", message: "This account cannot generate images." };
-	if (error?.code === "overloaded") return { code: "overloaded", message: "The model service is overloaded right now. Try again in a moment." };
-	if (error?.code === "server_error") return { code: "overloaded", message: "The model service hit an internal error. Try again in a moment." };
-	// Backend errors may echo credentials or image inputs. Never forward their bodies.
-	return { code: "upstream", message: "The model or live editor could not complete this turn." };
+	const status = Number.isInteger(error?.status) ? error.status : null;
+	const detail = typeof error?.detail === "string" && error.detail ? error.detail : null;
+	// The status and the backend's own sanitized words are the only things that
+	// can tell an author WHY the turn died; a generic sentence cannot.
+	const explain = (message) => ({
+		message: status === null ? message : `${status} \u2014 ${detail || message}`,
+		...(status === null ? {} : { status }),
+		...(detail ? { detail } : {}),
+	});
+	if (error?.status === 401 || error?.code === "unauthorized") return { code: "auth", ...explain("Authentication required. Sign in again.") };
+	if (error?.status === 429) return { code: "rate_limit", ...explain("Rate limit exceeded."), resetAt: quota?.primary.resetAt ?? null };
+	if (error?.code === "entitlement") return { code: "entitlement", ...explain("This account cannot generate images.") };
+	if (error?.code === "overloaded") return { code: "overloaded", ...explain("The model service is overloaded right now. Try again in a moment.") };
+	if (error?.code === "server_error") return { code: "overloaded", ...explain("The model service hit an internal error. Try again in a moment.") };
+	return { code: "upstream", ...explain("The model or live editor could not complete this turn.") };
 }
 
 /** Use the existing client and its request queue, retaining failure headers that
@@ -128,7 +157,7 @@ function defaultClient(auth, requestContext) {
 			requestContext.getStore()?.(response.headers);
 			if (response.ok) return response;
 			const detail = await response.text();
-			const error = Object.assign(new Error("Codex backend request failed."), { status: response.status, headers: response.headers });
+			const error = Object.assign(new Error("Codex backend request failed."), { status: response.status, headers: response.headers, detail: sanitizeUpstreamDetail(detail) });
 			if (url.includes("/images/") && /entitlement|plan/i.test(detail)) error.code = "entitlement";
 			throw error;
 		},
@@ -320,7 +349,13 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 				}
 				if (!called) break;
 			}
-		} catch (error) { send({ type: "error", code: error.status === 429 ? "rate_limit" : error.code || "upstream", message: error.message }); session.history = history.slice(); }
+		} catch (error) {
+			// A backend refusal reaches the Studio panel with its status and sanitized
+			// detail; a Studio protocol error already says what it means.
+			const info = errorInfo(error);
+			send({ type: "error", code: error.status === 429 ? "rate_limit" : error.code || "upstream", message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
+			session.history = history.slice();
+		}
 		session.history = history.slice();
 		send({ type: "done" }); record.terminal = true;
 		close(); if (!res.writableEnded) res.end(); session.controller = null; return true;
@@ -575,7 +610,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			turnFailureCode = signal.aborted ? "aborted" : agentFailureCode(error, signal, toolFailed);
 			if (!signal.aborted) {
 				if (error.headers) observeHeaders(error.headers);
-				if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.body ?? "").slice(0, 300));
+				if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.detail ?? error?.body ?? "").slice(0, 300));
 				send({ type: "error", ...errorInfo(error, quota) });
 			}
 		} finally {
