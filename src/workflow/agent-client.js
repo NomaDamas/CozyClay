@@ -664,6 +664,10 @@ export function createAgentChatStore({
 				progress: reported ?? existing?.progress ?? null,
 				verification: existing?.verification ?? null,
 				receiptId: existing?.receiptId ?? null,
+				// A settled outcome survives later frames, exactly like a receipt: a
+				// buffered event arriving after an acknowledged Stop must not quietly
+				// erase the panel's "nothing was applied" claim.
+				outcome: existing?.outcome ?? null,
 				acceptance: event.state === "review_required" ? existing?.acceptance ?? { status: "required" } : existing?.acceptance ?? null,
 			};
 			return existing ? items.map((item) => item === existing ? next : item) : [...items, next];
@@ -834,7 +838,20 @@ export function createAgentChatStore({
 				.then(() => {
 					// Only an acknowledged Stop marks the job stopped; an aborted stream
 					// on its own proves nothing about the runtime.
-					if (running) patchItem((item) => item.kind === "job" && item.jobId === running.jobId && !isTerminalJobState(item.state), { state: "cancelled", acceptance: null });
+					if (running) {
+						const outcome = { status: "not_applied", code: "CANCELLED", mutated: false };
+						patchItem((item) => item.kind === "job" && item.jobId === running.jobId && !isTerminalJobState(item.state), {
+							state: "cancelled",
+							phase: null,
+							outcome,
+							acceptance: null,
+						});
+						patchItem((item) => item.kind === "tool" && item.status === "running", {
+							status: "cancelled",
+							result: outcome,
+							elapsedMs: null,
+						});
+					}
 				})
 				.catch(() => {});
 			set({ streaming: false });

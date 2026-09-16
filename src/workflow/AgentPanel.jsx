@@ -47,7 +47,7 @@ const CANVAS_TOOL_LABELS = {
 };
 
 function ToolCallCard({ call, onRetry }) {
-	const tone = call.status === "running" ? "busy" : call.status === "failed" ? "alert" : "ok";
+	const tone = call.status === "running" ? "busy" : ["failed", "cancelled"].includes(call.status) ? "alert" : "ok";
 	const canvasTool = Object.hasOwn(CANVAS_TOOL_LABELS, call.name);
 	const detail = call.error ? `error: ${call.error}` : JSON.stringify(call.result ?? call.args ?? {}, null, 2);
 	return <div className={`agent-card agent-tool-card${call.status === "failed" ? " failed" : ""}`} data-tool-status={call.status} data-tool-name={call.name}>
@@ -55,7 +55,7 @@ function ToolCallCard({ call, onRetry }) {
 			<summary>
 				<StatusDot tone={tone} title={call.status} />
 				<span className="agent-tool-label">{canvasTool ? CANVAS_TOOL_LABELS[call.name] : toolCallLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
-				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : formatElapsed(call.elapsedMs)}</span>
+				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : call.status === "cancelled" ? "not applied" : formatElapsed(call.elapsedMs)}</span>
 				<FiChevronRight size={12} aria-hidden="true" />
 			</summary>
 			<pre className="agent-tool-detail">{detail}</pre>
@@ -127,6 +127,8 @@ function JobCard({ job, onStop, onAccept }) {
 			{percent !== null && <span className="agent-job-progress">{formatJobProgress(job.progress)}</span>}
 		</div>
 		{phase && <p className="agent-job-phase">{phase}</p>}
+		{/* An acknowledged Stop states what happened to the scene; the state label alone does not. */}
+		{job.outcome?.status === "not_applied" && <p className="agent-job-outcome">Not applied — scene unchanged.</p>}
 		{percent !== null && <div className="agent-job-bar" role="progressbar" aria-label="Generation progress" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
 			<span className="agent-job-bar-fill" style={{ transform: `scaleX(${job.progress})` }} />
 		</div>}

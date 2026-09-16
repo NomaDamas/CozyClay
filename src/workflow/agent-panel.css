@@ -544,6 +544,7 @@
 }
 
 .agent-job-phase,
+.agent-job-outcome,
 .agent-failure-message,
 .agent-failure-recovery {
 	margin: 0;

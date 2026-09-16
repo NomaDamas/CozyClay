@@ -239,6 +239,40 @@ const failed = [];
 await module_.createMockTransport({ state: "error" }).turn({}, (event) => failed.push(event));
 expect("the error mock fails a tool call", failed.some((event) => event.type === "tool.done" && event.ok === false));
 
+const cancellationEvents = [];
+let deliverFrame = null;
+const cancellationTransport = {
+	async status() { return { signedIn: true }; },
+	async models() { return [{ id: "fixture-only" }]; },
+	async turn(_request, onEvent, signal) {
+		deliverFrame = onEvent;
+		onEvent({ type: "tool.start", callId: "cancel-call", name: "generate_motion" });
+		onEvent({ type: "job.state", jobId: "cancel-job", commandId: "cancel-command", state: "generating", phase: "generating" });
+		await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+		cancellationEvents.push("turn-aborted");
+	},
+	async stop() { return { ok: true, status: "stopped" }; },
+};
+const cancellationStore = module_.createAgentChatStore({
+	transport: cancellationTransport,
+	surface: "studio",
+	buildContext: () => ({ host: {}, revision: {}, entities: [] }),
+});
+const cancellationTurn = cancellationStore.send("cancel this generation");
+await Promise.resolve();
+cancellationStore.stop();
+await cancellationTurn;
+const cancelledJob = cancellationStore.getState().items.find((item) => item.kind === "job");
+const cancelledTool = cancellationStore.getState().items.find((item) => item.kind === "tool");
+expect("stopping a Studio job marks it not-applied", cancelledJob?.state === "cancelled" && cancelledJob.outcome?.status === "not_applied" && cancelledJob.outcome.mutated === false);
+expect("stopping a Studio job settles its tool card", cancelledTool?.status === "cancelled" && cancelledTool.result?.status === "not_applied");
+expect("stopping a Studio job aborts its turn", cancellationEvents.includes("turn-aborted"));
+// A frame buffered before the abort can still reach the store after the stop is
+// acknowledged; it must not erase the outcome the panel is showing.
+deliverFrame({ type: "job.state", jobId: "cancel-job", commandId: "cancel-command", state: "generating", phase: "generating" });
+const lateJob = cancellationStore.getState().items.find((item) => item.kind === "job");
+expect("a late job frame cannot erase the not-applied outcome", lateJob?.outcome?.status === "not_applied" && lateJob.outcome.mutated === false);
+
 if (failures) {
 	console.error(`${failures} FAILURES`);
 	process.exitCode = 1;
