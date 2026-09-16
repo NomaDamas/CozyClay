@@ -16,185 +16,197 @@ Both real services were probed before any QA was run. Raw results are in
 | Probe | Result | Consequence |
 | --- | --- | --- |
 | `GET /oauth/status` | HTTP 200, signed in, `pro` plan | The real signed-in session works. |
-| `GET /ardy/health` | HTTP 503, `local_kimodo` unreachable | No real motion generation was possible. |
+| `GET /ardy/health` | HTTP 503, motion backend unavailable | No real motion generation was possible. |
 
-The 503 is an environment fault, not a product fault: the bridge starts, but its
-configured remote Kimodo box (`yun@ubuntu-baremetal`) fails its SSH probe, so the
-sidecar correctly reports itself unavailable rather than pretending to generate.
+The 503 is an environment fault, not a product fault: the bridge starts, but the
+configured remote motion host fails its SSH probe, so the sidecar correctly reports
+itself unavailable rather than pretending to generate.
 
-Because of that, **every motion step below used the CPU-only scripted fixture
-generator** in `test/fixtures/studio-agent-motion.mjs`. The fixture replaces the
-*transport and the model only*. It still drives the production Agent route, Studio
-motion runtime, LiveHub, editor command journal, candidate verifier, repairer,
-installer, timeline and native Undo. Every non-motion step (panel admission,
-placement, framing, camera keys, Undo, layout) exercised the real code end to end.
+Because of that, every step below ran against the CPU-only fixture transport in
+`test/fixtures/studio-agent-motion.mjs`. Be precise about what that replaces:
 
-No claim is made here about semantic motion quality, model vision, or GPU
-generation. The panel itself says so: every installed take in the captures carries
-the `FIXTURE-ONLY` badge and the runtime's own
-`semantic-and-visual-review-unavailable` limitation line.
+- **Replaced:** the motion generator, and the model. The fixture supplies a scripted
+  `codex` client, so the tool calls chosen for *every* turn — placement, framing and
+  motion alike — are scripted rather than decided by a live model.
+- **Not replaced:** the production Agent HTTP route and SSE stream, the Studio tool
+  schemas and argument validation, the Studio motion runtime, LiveHub, the editor
+  command journal, the candidate verifier and repairer, the installer, the timeline
+  and native Undo. Those all executed for real, and they are what authored every
+  change recorded here.
+
+So this run verifies the Studio's execution path end to end. It does **not** verify
+model behaviour, semantic motion quality, model vision, or GPU generation. The panel
+says so itself: every installed take carries the `FIXTURE-ONLY` badge and the
+runtime's own `semantic-and-visual-review-unavailable` limitation line.
+
+## How the computer-use pass was driven
+
+Every step was performed by hand in a computer-use browser session against the
+running app: opening the `View ▾` menu and picking `Agent panel`, pressing
+`Cmd/Ctrl+B`, clicking the Inspector ↔ Agent header switch, typing each request into
+the composer and sending it, watching the result, and pressing `Cmd/Ctrl+Z`.
+
+That session renders every tab at a fixed 1920 px logical viewport and exposes no
+viewport control (no resize API, OS window resizing does not reach the web viewport,
+popup size hints are ignored, and its debug port is authenticated). To reach the
+required narrow width without leaving the session, the app was hosted in a
+same-origin `390 x 844` frame and driven by hand there. The frame reports
+`innerWidth 390`, `innerHeight 844`, so the app's own media queries and layout run at
+exactly 390 px.
+
+Screenshots are QA artifacts and are deliberately not committed. Paths below are
+relative to `.omo/evidence/slice1-verified/`.
 
 ## What was verified
 
-Two independent surfaces were used:
-
-- **Computer use** — the Studio was opened in Aside Browser and driven through its
-  visible controls (menus, header switch, composer, Stop button, keyboard chords).
-- **Objective harness** — `test/qa-studio-agent-browser.mjs`, which asserts
-  authoritative editor state rather than pixels, and saves a capture per step.
-
-The harness passed **6/6 cases** (`binding`, `intent`, `framing`, `motion`,
-`resilience`, `responsive`) against the final build, after the fix below.
-
 ### 1. Panel admission and switching — PASS
 
-Opened `View ▾`, enabled `Agent panel`, and switched Inspector ↔ Agent with the
-header control. `Cmd/Ctrl+B` collapsed and reopened the panel, and the View item's
-checkmark followed the shortcut both ways. The composer draft survived a
-collapse/reopen cycle.
+`View ▾ › Agent panel` (`aria-checked` false → true) revealed the panel;
+`Cmd/Ctrl+B` collapsed and reopened it; the header switch moved between Inspector
+and Agent. The composer draft (`retained draft` / `narrow composer reachable`)
+survived both the shortcut round trip and the header switch.
 
-Evidence: `view-toggle/view-menu-agent-item.png`,
-`view-toggle/agent-panel-expanded.png`, `automated/binding-desktop.png`,
-`automated/binding-reopened.png`.
+| | Desktop (1920) | Narrow (390) |
+| --- | --- | --- |
+| View menu open, item unchecked | `computer-use/01-view-menu-desktop.png` | `computer-use/21-view-menu-390.png` |
+| Panel enabled from the menu | `computer-use/02-agent-enabled-desktop.png` | `computer-use/22-agent-open-390.png` |
+| `Cmd/Ctrl+B` collapsed | `computer-use/03-shortcut-collapsed-desktop.png` | `computer-use/24-shortcut-collapsed-390.png` |
+| `Cmd/Ctrl+B` reopened, draft intact | `computer-use/04-shortcut-reopened-desktop.png` | `computer-use/25-shortcut-reopened-390.png` |
+| Header switch → Inspector | `computer-use/05-header-inspector-desktop.png` | `computer-use/26-header-inspector-390.png` |
+| Header switch → Agent | `computer-use/06-header-agent-desktop.png` | `computer-use/27-header-agent-390.png` |
 
 ### 2. Placement by chat, then Undo — PASS
 
-Typed the placement request into the visible composer. The agent authored a cube one
-metre to camera-left of the selected character and a second character two metres to
-camera-right. Both appeared in the Hierarchy and the Inspector's subject list, and
-the harness independently asserted the authored offsets (`actualGapM` 1 and 2, both
-grounded at `y = 0`, cube left of the actor, second character right of it) and that
-the two commands chained revisions. `Cmd/Ctrl+Z` per authored command restored the
-exact prior state.
+Typed: *"Put a cube on the floor one metre to camera-left of the selected character.
+Add a second character two metres to camera-right."*
 
-Evidence: `automated/intent-desktop.png`, `automated/intent-native-undo.png`.
+On the desktop pass the scene went from 0 objects / 1 character to 1 object / 2
+characters. With the actor at `x = 0`, the cube landed at `x = -1.75` (camera-left)
+and the second character at `x = +2.50` (camera-right), both grounded at `y = 0` —
+the requested 1 m and 2 m clearances measured edge to edge. The Inspector then listed
+`Subject 1` and `Subject 2`. Two `Cmd/Ctrl+Z` presses restored 0 objects / 1
+character. The narrow pass showed the same through the Hierarchy, which gained
+`Character 2` and `Props 1` and lost both again on Undo.
+
+| | Desktop (1920) | Narrow (390) |
+| --- | --- | --- |
+| Cube + second character placed | `computer-use/07-placement-desktop.png` | `computer-use/28-placement-390.png` |
+| Inspector lists both subjects | `computer-use/08-placement-inspector-desktop.png` | `computer-use/26-header-inspector-390.png` |
+| Native Undo restores the scene | `computer-use/09-placement-undo-desktop.png` | `computer-use/29-placement-undo-390.png` |
 
 ### 3. Framing and camera key by chat, then Undo — PASS
 
-Asked for a medium shot at eye level, front, with a key at the current frame. The
-shot gained a camera key at frame 0 and the camera pose changed. `Cmd/Ctrl+Z`
-restored both. The two captures differ exactly where it matters: `LOCKED KEYS 1`
-before Undo, `FREE KEYS 0` after.
+Typed: *"Frame the selected character in a medium shot from the front at eye level
+and save a camera key at the current frame."*
 
-Evidence: `automated/framing-desktop.png`, `automated/framing-native-undo.png`.
+From a clean project the camera moved from `(0.969, 1.622, 2.397)` to
+`(-0.000, 1.654, 2.196)` — centred on the character at eye level — and a new shot
+appeared carrying a camera key at frame 0. `Cmd/Ctrl+Z` restored the camera to
+exactly `(0.968641594183757, 1.621774004495899, 2.39747207543642)` and removed the
+shot. The narrow pass showed the timeline going `No shots yet` → `Shot 1` → `No
+shots yet`.
+
+| | Desktop (1920) | Narrow (390) |
+| --- | --- | --- |
+| Framed, shot keyed at frame 0 | `computer-use/10-framing-desktop.png` | `computer-use/30-framing-390.png` |
+| Native Undo restores camera and shot | `computer-use/11-framing-undo-desktop.png` | `computer-use/31-framing-undo-390.png` |
 
 ### 4. Generate, install, play, then Undo — PASS (fixture generator)
 
-The job card reported the runtime's own states — queued, generating, preparing,
-verifying, repairing — including the 25% progress event, then installed. The receipt
-read `Installed 2s of motion on char-a — verified over 48 frames`, and the panel
-showed the verified label rather than the unverified one. The installed 48-frame
-take appeared on the timeline with its three prompt blocks and was played from the
-real transport controls. `Cmd/Ctrl+Z` removed it and restored the prior bone pose
-exactly (the harness compares every bone's position and quaternion).
+Typed: *"Make the selected character walk forward, wave, then return to the starting
+pose over the current shot range. Verify the full take and install it."*
 
-Evidence: `automated/motion-installed-desktop.png`, `automated/motion-front.png`,
-`automated/motion-side.png`, `automated/motion-shot.png`,
-`automated/motion-native-undo.png`.
+The job card reported `Generating 25%` with a live progress bar while the generator
+was held, then installed. The receipt read `Installed 2s of motion on char-a —
+verified over 48 frames`, and the character carried a 48-frame take with 3 prompt
+blocks. Pressing play advanced the timeline (frame 43 of 47 on desktop, 21 of 47 on
+narrow). `Cmd/Ctrl+Z` removed the take — `takeId: null`, 0 frames — and the timeline
+returned to its 359-frame range.
 
-Reading `motion-native-undo.png`: the green `1 · 1x` Full-Body clip still visible is
-the harness's pre-seeded baseline take, which is what Undo is supposed to restore.
-The discriminator is the now-empty `Prompts` lane.
+| | Desktop (1920) | Narrow (390) |
+| --- | --- | --- |
+| Job progress while generating | `computer-use/12-motion-progress-desktop.png` | `computer-use/32-motion-progress-390.png` |
+| Installed take, verified label | `computer-use/13-motion-installed-desktop.png` | `computer-use/33-motion-installed-390.png` |
+| Take playing on the timeline | `computer-use/14-motion-playing-desktop.png` | `computer-use/34-motion-playing-390.png` |
+| Native Undo removes the take | `computer-use/15-motion-undo-desktop.png` | `computer-use/35-motion-undo-390.png` |
 
-### 5. Stop in flight — PASS (after a fix)
+### 5. Stop in flight — PASS, and it is honest about what it does not know
 
-Held a generation at the bridge, then clicked the visible Stop control. The panel
-reports the outcome explicitly and the scene is untouched:
+Stopping a held generation by clicking the panel's Stop control leaves the scene
+untouched and says exactly what was established:
 
-- the job card reads `Stopped` with an alert dot, and beneath it
-  `Not applied — scene unchanged.`;
-- the generation tool row settles to `not applied` with an alert dot instead of
-  staying open;
-- the timeline keeps its empty Full-Body and Prompts lanes and the character keeps
-  its rest pose.
+- the job card reads `Reconciling` with `Stopped, but the result is unknown —
+  reconcile before editing this target.`;
+- the generation tool row settles to `result unknown` in the alert tone rather than
+  staying open on `running…`;
+- the timeline keeps its pre-generation range and the character keeps its pose.
 
-The authoritative proof is in `automated/transport.json`: `cancel_motion_install`
-answered `status: not_applied`, `code: CANCELLED`, `mutated: false`,
-`preserved.authoredState: "unchanged"`, and the follow-up
-`reconcile_studio_command` agreed.
+This is the honest answer for that scenario, and it is what the fix below changed.
+The held bridge means the runtime cannot obtain editor-journal proof, so it ends in
+`reconciling` with `mutated: "unknown"`. Before the fix the panel showed
+`Not applied — scene unchanged.` here — a claim nothing had established.
 
-Evidence: `aside-cancellation-fixed.png` (computer use),
-`automated/resilience-stop.png` (harness).
+The *proven* not-applied path is covered by the objective suite's `resilience` case,
+where `cancel_motion_install` and the follow-up `reconcile_studio_command` both
+answer `status: not_applied`, `mutated: false`,
+`preserved.authoredState: "unchanged"` (`automated/transport.json`). In that case the
+panel reads `Stopped` with `Not applied — scene unchanged.`
+
+| | Desktop (1920) | Narrow (390) |
+| --- | --- | --- |
+| Generation running, Stop offered | `computer-use/16-cancellation-running-desktop.png` | `computer-use/32-motion-progress-390.png` |
+| Stopped, outcome reported | `computer-use/cancellation-fixed.png` | `computer-use/36-cancellation-390.png` |
 
 ### 6. Narrow layout — PASS
 
-The harness drove 375, 390, 768, 1040, 1100 and 1600 CSS px with the panel open. At
-every width the panel was visible, exactly one Inspector column and one Agent panel
-were mounted, `documentElement.scrollWidth` and `body.scrollWidth` stayed within the
-viewport, and the composer stayed inside the viewport and accepted typed text.
+At exactly 390 px with the panel open: `innerWidth 390`, `innerHeight 844`,
+`documentElement.scrollWidth 382` and `body.scrollWidth 382` — both inside the
+viewport, so there is no horizontal overflow. Exactly one Inspector column and one
+Agent panel are mounted. The composer sits below the fold; scrolling to it brings it
+fully into view (`top 410`, `bottom 478` within 844), it takes focus, it accepts
+typed text, and Send enables. Horizontally it spans `x 11 → 371`, comfortably inside
+390.
 
-At the required **390 px** the panel fills the width with its tab strip, empty-state
-card, three suggestion chips, composer, both selects, the attach control and an
-enabled Send — no horizontal overflow and no clipped panel content.
+Evidence: `computer-use/20-boot-390.png` (boot at 390),
+`computer-use/22-agent-open-390.png` (panel open), `computer-use/23-composer-390.png`
+(composer focused, filled, Send enabled).
 
-Evidence: `automated/responsive-390.png`, plus `responsive-375.png`,
-`responsive-768.png`, `responsive-1040.png`, `responsive-1100.png`,
-`responsive-1600.png`.
+The objective suite additionally swept 375, 768, 1040, 1100 and 1600 px
+(`automated/responsive-*.png`).
 
-One caveat is recorded under known limitations: `responsive-1100.png` shows a broken
-Studio **top bar**, unrelated to the Agent panel.
+## Objective harness
 
-## Capture list
-
-All paths are relative to `.omo/evidence/slice1-verified/` (screenshots are QA
-artifacts and are deliberately not committed).
-
-| Capture | Caption |
-| --- | --- |
-| `aside-cancellation-fixed.png` | Computer use: a stopped generation reads `Stopped` / `Not applied — scene unchanged.`, timeline empty. |
-| `view-toggle/view-menu-agent-item.png` | `View ▾` open with the unchecked `Agent panel` item, panel still collapsed. |
-| `view-toggle/agent-panel-expanded.png` | Panel expanded into the Inspector column, no extra top-bar button. |
-| `automated/binding-desktop.png` | Agent panel open with a typed draft before collapsing. |
-| `automated/binding-reopened.png` | Same draft intact after `Cmd/Ctrl+B` collapse and reopen. |
-| `automated/intent-desktop.png` | Cube camera-left and a second character camera-right, both authored by chat. |
-| `automated/intent-native-undo.png` | Both removed again by native Undo. |
-| `automated/framing-desktop.png` | Medium shot keyed at the current frame — `LOCKED KEYS 1`. |
-| `automated/framing-native-undo.png` | Camera and key reverted — `FREE KEYS 0`. |
-| `automated/motion-installed-desktop.png` | Installed take with the verified-over-48-frames receipt. |
-| `automated/motion-front.png` | Installed take at frame 16 from the front. |
-| `automated/motion-side.png` | Installed take at frame 32 from the side. |
-| `automated/motion-shot.png` | Installed take at frame 47 through the shot camera. |
-| `automated/motion-native-undo.png` | Take removed by native Undo; Prompts lane empty again. |
-| `automated/resilience-stop.png` | Harness stop-in-flight: scene preserved, nothing applied. |
-| `automated/resilience-stale.png` | Target edited mid-generation — `STALE_TARGET`, nothing mutated. |
-| `automated/resilience-invalid.png` | Unusable artifact — `VERIFICATION_FAILED`, nothing mutated. |
-| `automated/resilience-reconciled.png` | Lost acknowledgement reconciled without a second install. |
-| `automated/resilience-select-b.png` | Selection changed mid-job; the admitted target is kept. |
-| `automated/resilience-undo-conflict.png` | Out-of-order agent undo refused with `UNDO_CONFLICT`. |
-| `automated/resilience-rate-limit.png` | 429 surfaced as the paused card; scene untouched. |
-| `automated/responsive-375.png` … `responsive-1600.png` | Panel at 375 / 390 / 768 / 1040 / 1100 / 1600 px. |
-| `automated/workflow-dock.png` | The same panel in its Workflow dock, proving one shared component. |
+`test/qa-studio-agent-browser.mjs` passed **6/6 cases** (binding, intent, framing,
+motion, resilience, responsive) against this build, with its own captures under
+`automated/`. It is not a substitute for the computer-use pass above; it is the
+machine-checked complement that asserts authoritative editor state rather than
+pixels.
 
 ## Fixes made
 
-**Stopping a generation did not say what happened to the scene.** The first
-computer-use pass found that after Stop the job card flipped to `Stopped` while the
-`Generate motion` tool row stayed open reading `running…`, and nothing told the
-author whether the scene had been modified. The runtime already knew the answer —
-it had editor-journal proof of `not_applied` — but the panel never showed it.
+Two defects were found by driving the app, and both are fixed here with regressions.
 
-The fix, in `src/workflow/agent-client.js` and `src/workflow/AgentPanel.jsx`:
+**1. Stopping a generation did not say what happened to the scene.** After Stop the
+job card flipped to `Stopped` while the `Generate motion` tool row stayed open on
+`running…`, and nothing told the author whether the scene had been modified. The
+runtime knew; the panel never surfaced it. An acknowledged Stop now records a
+structured outcome, settles the running tool card in the alert tone, and states the
+result on the card. A settled outcome also survives later job frames the way a
+receipt already did, so a frame buffered before the abort cannot erase it.
 
-- an acknowledged Stop records a structured `outcome` of `not_applied` /
-  `mutated: false` on the job, and clears the stale in-flight phase;
-- the running generation tool card is settled to a `cancelled` status carrying that
-  same outcome, instead of being left spinning;
-- `cancelled` renders with the alert tone and reads `not applied`, so a cancelled
-  call can never be mistaken for a successful one;
-- the job card states `Not applied — scene unchanged.` outright;
-- a settled outcome now survives later job frames the way a receipt already did, so
-  an event buffered before the abort cannot land afterwards and silently erase the
-  panel's "nothing was applied" claim.
+**2. An unproven Stop was rendered as a safe one.** The Studio stop route discarded
+the motion runtime's outcome and always answered `{ok: true, status: "stopped"}`, so
+the panel treated any HTTP 200 as proof and claimed `Not applied — scene unchanged.`
+even when the runtime had ended in `reconciling` with `mutated: "unknown"`. The route
+now forwards the runtime's `status` / `code` / `mutated`, and the panel claims an
+unchanged scene only when the runtime actually reported not-applied; anything else is
+shown as unknown with a reconcile instruction, and the job stays non-terminal.
 
-Only an acknowledged `transport.stop()` does this. An aborted stream on its own
-still proves nothing and still changes no label — that rule was already correct and
-is preserved.
-
-`test/verify-agent-panel.mjs` gained a deterministic regression covering all four
-(job outcome, tool-card settlement, abort propagation, late-frame survival). It
-drives the real chat store against a stub transport and awaits the abort signal —
-no sleeps, no polling. Each assertion was confirmed red before its fix and green
-after; the late-frame one was re-checked by reverting just that line.
+`test/verify-agent-panel.mjs` covers both: a proven Stop, an acknowledged Stop whose
+runtime outcome is unknown, a host that answers with no outcome at all, tool-card
+settlement, abort propagation, and late-frame survival. It drives the real chat store
+against a stub transport and awaits the abort signal — no sleeps, no polling. Every
+assertion was confirmed red before its fix and green after.
 
 ## Verification commands
 
@@ -205,61 +217,45 @@ npm install --no-save playwright-core   # the browser harness needs it; no manif
 
 node test/verify-agent-panel.mjs
 node test/verify-studio-agent-jobs.mjs --case precommit-stop-journal
+node test/verify-agent-routes.mjs
 
 QA_PROBES=.omo/evidence/slice1-verified/backend-probes.json \
 QA_SHOT_DIR=.omo/evidence/slice1-verified/automated \
 QA_PORT=5291 CDP_PORT=9492 QA_HEADLESS=1 \
   node test/qa-studio-agent-browser.mjs
-
-QA_URL=http://127.0.0.1:5287/app/ \
-QA_SHOT_DIR=.omo/evidence/slice1-verified/view-toggle CDP_PORT=9493 \
-  node tools/qa-browser.mjs -- node test/qa-agent-view-toggle-browser.mjs
 ```
 
-Results: agent panel checks all PASS (including the four new cancellation
-assertions); `precommit-stop-journal` PASS; `qa-studio-agent-browser: 6/6 cases
-PASS`; `qa-agent-view-toggle-browser: all checks passed`.
-
-`npm test` (build + `tools/run-tests.mjs`) also passes in full: `PASS 193 Node
-verification files`, exit 0.
+Results: agent panel checks all PASS; `precommit-stop-journal` PASS; agent routes
+PASS; `qa-studio-agent-browser: 6/6 cases PASS`. `npm test` (build +
+`tools/run-tests.mjs`) passes in full.
 
 ## Known limitations
 
 - **No real motion model.** `/ardy/health` was 503 for this entire run, so semantic
-  motion quality, model vision and GPU generation are unverified. Re-run these same
-  captures against a healthy bridge before accepting any claim about them.
-- **Top bar breaks at 1100 px.** `responsive-1100.png` shows the `Live workspace
-  <uuid>` label wrapping to four lines and colliding with `Settings` and the
-  Inspector/Agent switch. This is pre-existing Studio chrome — the
-  `.live-workspace-handle` span has no CSS rule — not the Agent panel, which lays
-  out correctly at that width. Filed as
-  [#321](https://github.com/NomaDamas/CozyClay/issues/321) and deliberately not
-  fixed here to keep this branch to the Agent slice.
+  motion quality, model vision and GPU generation are unverified.
+- **No real model decisions.** Tool selection for every turn came from the fixture's
+  scripted client, so this run proves the execution path, not the model's judgement.
+- **Top bar breaks at 1100 px.** `automated/responsive-1100.png` shows the
+  `Live workspace <uuid>` label wrapping to four lines and colliding with `Settings`
+  and the Inspector/Agent switch. Pre-existing Studio chrome — the
+  `.live-workspace-handle` span has no CSS rule — not the Agent panel, which lays out
+  correctly at that width. Filed as
+  [#321](https://github.com/NomaDamas/CozyClay/issues/321) and deliberately not fixed
+  here to keep this branch to the Agent slice.
 - **The responsive assertions cannot see overlap.** They check scroll width and
-  composer bounds, which colliding grid-placed chrome does not violate. That is why
-  #321 survived the suite; a fix for it should add an overlap assertion.
-- **Job phases still show raw enum tokens.** `resilience-stale.png` reads `Target
-  changed` / `stale_target` and `resilience-invalid.png` reads `Failed` / `failed`.
-  Pre-existing, cosmetic, and now inconsistent with the cancelled path, which shows
-  product copy instead.
-- **The Agent panel is English-only.** It contains no `ko()` calls at all, so in
-  Korean mode its copy — including the new `Not applied — scene unchanged.` — sits
-  beside translated Studio chrome. Pre-existing for the whole panel.
-- **No CJK capture of the panel exists.** Panel wrapping with long Korean strings in
-  a ~350 px dock is untested; it becomes relevant if the panel is ever localised.
-- **An unrelated suite flake was seen once.** An earlier `npm test` run failed
-  `test/process/verify-bridge-launch.mjs` on `dev skips occupied main + 1`
-  (`60894 !== 60893`), an ephemeral-port race under full-suite load. It passed 3/3
-  standalone afterwards and the full suite passed clean on rerun. It shares no code
-  with this branch's changes, but it can bite CI.
+  composer bounds, which colliding grid-placed chrome does not violate; that is why
+  #321 survived the suite. A fix for it should add an overlap assertion.
+- **Job phases still show raw enum tokens.** `automated/resilience-stale.png` reads
+  `Target changed` / `stale_target`. Pre-existing and cosmetic.
+- **The Agent panel is English-only.** It contains no `ko()` calls, so in Korean mode
+  its copy sits beside translated Studio chrome. Pre-existing for the whole panel,
+  and it means the narrow captures do not exercise CJK wrapping in the panel.
 
 ## Follow-ups
 
 - [#321](https://github.com/NomaDamas/CozyClay/issues/321) — top bar collision at
   1100 px, with an overlap assertion so the suite can catch it.
-- [#313](https://github.com/NomaDamas/CozyClay/issues/313) — existing
-  `verify-studio-agent-motion` CI flake; untouched by this verification.
-- Re-run this document's commands against a working `/ardy/health` to close the
-  real-model gap.
-- Decide whether the Agent panel should be localised; if so, add a CJK capture to
-  this evidence set.
+- Re-run this document's commands against a working `/ardy/health` and a real model
+  session to close the model and motion-quality gaps.
+- Decide whether the Agent panel should be localised; if so, add a CJK capture at
+  390 px, where wrapping pressure is highest.
