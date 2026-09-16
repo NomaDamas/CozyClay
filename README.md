@@ -148,6 +148,15 @@ it, so those dependencies are fetched only when you actually want the server.
 
 Tools, transports and the live-control protocol are documented in [`mcp/README.md`](mcp/README.md).
 
+### Drive the Studio from a terminal
+
+The same hub also speaks to a terminal: `cclay live` is a small CLI that reads the scene,
+places and moves things, frames and keys shots, verifies the result with a capture PNG, and
+undoes by receipt — one JSON object per command, stable error codes, no browser of your own
+required (only the studio tab itself). It is the intended surface for a terminal agent that
+has to manage a running Studio. The full guide, with three worked sessions against a real
+editor, is in [`docs/agent-cli.md`](docs/agent-cli.md).
+
 ### From a clone
 
 ```bash

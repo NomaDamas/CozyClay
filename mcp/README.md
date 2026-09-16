@@ -105,6 +105,14 @@ intentionally run memory-only.
 The wire protocol — one WebSocket, sixteen commands, editor-side rules — is specified in
 [`LIVE-PROTOCOL.md`](LIVE-PROTOCOL.md).
 
+The same socket also admits a second role: a **controller** is a local terminal process
+(`cclay live`) that authenticates with the token from the hub's endpoint file — a browser page
+can never read it, so the role stays with local processes. Controllers drive the very same
+commands and tools through the very same workspace routing as an MCP client does; the CLI is a
+thin terminal front end over this hub, not a parallel surface, so anything true of the tools
+above (admission envelopes, receipts, per-workspace exclusion) is true of it too. The
+terminal-agent guide for it is [`../docs/agent-cli.md`](../docs/agent-cli.md).
+
 ## Motion generation
 
 `generate_motion` takes plain-language beats and a length:

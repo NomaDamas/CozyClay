@@ -40,6 +40,7 @@
 
 - 테스트 전체: `npm test` (build 포함). 목록: `npm run test:manifest`. 단일: `node test/verify-<이름>.mjs`.
 - 개발 서버: `npm run dev -- --port <포트>` (본체 5180, 워커는 5180 + 이슈번호).
+- 라이브 허브를 쓰는 작업이면 워커는 `COZYCLAY_LIVE_PORT=<5300+이슈번호>` 를 허브와 개발 서버 양쪽에 붙인다 (예: 이슈 329 → 5629). 기본 5184 허브를 여러 워크트리가 공유하지 않도록 한다.
 - 브라우저 QA: `tools/qa-browser.mjs` (`QA_URL`, `CDP_PORT` 환경변수로 대상 지정).
 - 컴퓨터 사용 QA: 에디터를 실제로 열고 클릭해서 확인. 스크린샷을 PR 본문에 첨부.
 - PR 열기: `gh pr create --base main --title "<type>: <요약> (#n)"`.
