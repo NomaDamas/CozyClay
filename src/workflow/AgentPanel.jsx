@@ -55,7 +55,7 @@ function ToolCallCard({ call, onRetry }) {
 			<summary>
 				<StatusDot tone={tone} title={call.status} />
 				<span className="agent-tool-label">{canvasTool ? CANVAS_TOOL_LABELS[call.name] : toolCallLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
-				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : call.status === "cancelled" ? "not applied" : formatElapsed(call.elapsedMs)}</span>
+				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : call.status === "cancelled" ? (call.result?.status === "not_applied" ? "not applied" : "result unknown") : formatElapsed(call.elapsedMs)}</span>
 				<FiChevronRight size={12} aria-hidden="true" />
 			</summary>
 			<pre className="agent-tool-detail">{detail}</pre>
@@ -127,8 +127,10 @@ function JobCard({ job, onStop, onAccept }) {
 			{percent !== null && <span className="agent-job-progress">{formatJobProgress(job.progress)}</span>}
 		</div>
 		{phase && <p className="agent-job-phase">{phase}</p>}
-		{/* An acknowledged Stop states what happened to the scene; the state label alone does not. */}
+		{/* An acknowledged Stop states what happened to the scene; the state label
+		    alone does not. Uncertainty is reported as uncertainty, never as safety. */}
 		{job.outcome?.status === "not_applied" && <p className="agent-job-outcome">Not applied — scene unchanged.</p>}
+		{job.outcome?.status === "unknown" && <p className="agent-job-outcome">Stopped, but the result is unknown — reconcile before editing this target.</p>}
 		{percent !== null && <div className="agent-job-bar" role="progressbar" aria-label="Generation progress" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
 			<span className="agent-job-bar-fill" style={{ transform: `scaleX(${job.progress})` }} />
 		</div>}

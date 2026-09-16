@@ -244,8 +244,12 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			if (!session || session.owner !== parseCookies(req).studio_owner || !session.turns.has(value.turnId)) throw new StudioProtocolError("AUTH_REQUIRED", "Studio stop is not owned by this session.");
 			const jobId = value.jobId ?? session.activeJobId;
 			if (value.jobId && value.jobId !== session.activeJobId) throw new StudioProtocolError("STALE_TARGET", "Stop does not own that motion job.");
-			if (jobId && ownedStudioRuntime?.stop) await ownedStudioRuntime.stop(jobId); else session.controller?.abort();
-			json(res, 200, { ok: true, status: jobId ? "stopped" : "detached" }); return true;
+			// The runtime is the only thing that knows whether the job was applied.
+			// Forwarding its outcome keeps the panel from turning "I could not find
+			// out" into "nothing was applied"; a discarded outcome reads as proof.
+			let outcome = null;
+			if (jobId && ownedStudioRuntime?.stop) outcome = await ownedStudioRuntime.stop(jobId); else session.controller?.abort();
+			json(res, 200, { ok: true, status: jobId ? "stopped" : "detached", ...(outcome ? { outcome: { status: outcome.status ?? null, code: outcome.code ?? null, mutated: outcome.mutated ?? null } } : {}) }); return true;
 		}
 		if (!studioRuntime && (!hub?.command || !hub?.workspaceId)) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio execution is not installed.");
 		if (!value.context.host.workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "A connected editor handle is required.");

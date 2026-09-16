@@ -596,6 +596,17 @@ export function createAgentTransport(options = {}) {
 // machine over the SAME transport events. It is not a second analytics emitter:
 // telemetry stays in the transport, unchanged.
 
+/** What an acknowledged Stop actually established. An installation the runtime
+ * already committed belongs to its receipt, not here; anything short of an
+ * explicit not-applied answer stays unknown, because the alternative is telling
+ * an author the scene is clean when nobody checked. */
+export function stopOutcome(result) {
+	const outcome = result?.outcome;
+	if (outcome?.status === "already_applied") return null;
+	if (outcome && outcome.mutated === false) return { status: "not_applied", code: outcome.code ?? "CANCELLED", mutated: false };
+	return { status: "unknown", code: outcome?.code ?? null, mutated: "unknown" };
+}
+
 /** A host claims a placement by calling preventDefault() on the dispatched
  * event, then answers with `cozyclay:agent-image-result`. An unclaimed action
  * fails immediately: nothing applied it. */
@@ -835,23 +846,25 @@ export function createAgentChatStore({
 				? { sessionId: state.sessionId, turnId: state.turnId, ...(running ? { jobId: running.jobId } : {}) }
 				: state.sessionId;
 			Promise.resolve(transport.stop?.(target))
-				.then(() => {
+				.then((result) => {
 					// Only an acknowledged Stop marks the job stopped; an aborted stream
-					// on its own proves nothing about the runtime.
-					if (running) {
-						const outcome = { status: "not_applied", code: "CANCELLED", mutated: false };
-						patchItem((item) => item.kind === "job" && item.jobId === running.jobId && !isTerminalJobState(item.state), {
-							state: "cancelled",
-							phase: null,
-							outcome,
-							acceptance: null,
-						});
-						patchItem((item) => item.kind === "tool" && item.status === "running", {
-							status: "cancelled",
-							result: outcome,
-							elapsedMs: null,
-						});
-					}
+					// on its own proves nothing about the runtime. Nor does a 200: the
+					// host answers every owned Stop, so "scene unchanged" may only be
+					// claimed when the runtime actually reported it was not applied.
+					if (!running) return;
+					const outcome = stopOutcome(result);
+					if (!outcome) return;
+					patchItem((item) => item.kind === "job" && item.jobId === running.jobId && !isTerminalJobState(item.state), {
+						state: outcome.status === "not_applied" ? "cancelled" : "reconciling",
+						phase: null,
+						outcome,
+						acceptance: null,
+					});
+					patchItem((item) => item.kind === "tool" && item.status === "running", {
+						status: "cancelled",
+						result: outcome,
+						elapsedMs: null,
+					});
 				})
 				.catch(() => {});
 			set({ streaming: false });

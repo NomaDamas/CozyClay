@@ -239,29 +239,37 @@ const failed = [];
 await module_.createMockTransport({ state: "error" }).turn({}, (event) => failed.push(event));
 expect("the error mock fails a tool call", failed.some((event) => event.type === "tool.done" && event.ok === false));
 
+// Two Stop scenarios share one driver: the host answers 200 either way, so the
+// only thing that may justify an "unchanged" claim is the runtime's own outcome.
 const cancellationEvents = [];
-let deliverFrame = null;
-const cancellationTransport = {
-	async status() { return { signedIn: true }; },
-	async models() { return [{ id: "fixture-only" }]; },
-	async turn(_request, onEvent, signal) {
-		deliverFrame = onEvent;
-		onEvent({ type: "tool.start", callId: "cancel-call", name: "generate_motion" });
-		onEvent({ type: "job.state", jobId: "cancel-job", commandId: "cancel-command", state: "generating", phase: "generating" });
-		await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
-		cancellationEvents.push("turn-aborted");
-	},
-	async stop() { return { ok: true, status: "stopped" }; },
-};
-const cancellationStore = module_.createAgentChatStore({
-	transport: cancellationTransport,
-	surface: "studio",
-	buildContext: () => ({ host: {}, revision: {}, entities: [] }),
-});
-const cancellationTurn = cancellationStore.send("cancel this generation");
-await Promise.resolve();
-cancellationStore.stop();
-await cancellationTurn;
+async function driveStop(stopResponse) {
+	let deliver = null;
+	const transport = {
+		async status() { return { signedIn: true }; },
+		async models() { return [{ id: "fixture-only" }]; },
+		async turn(_request, onEvent, signal) {
+			deliver = onEvent;
+			onEvent({ type: "tool.start", callId: "cancel-call", name: "generate_motion" });
+			onEvent({ type: "job.state", jobId: "cancel-job", commandId: "cancel-command", state: "generating", phase: "generating" });
+			await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+			cancellationEvents.push("turn-aborted");
+		},
+		async stop() { return stopResponse; },
+	};
+	const store = module_.createAgentChatStore({
+		transport,
+		surface: "studio",
+		buildContext: () => ({ host: {}, revision: {}, entities: [] }),
+	});
+	const turn = store.send("cancel this generation");
+	await Promise.resolve();
+	store.stop();
+	await turn;
+	return { store, deliver };
+}
+
+// Proven not-applied: the runtime reported an explicit unmutated cancellation.
+const { store: cancellationStore, deliver: deliverFrame } = await driveStop({ ok: true, status: "stopped", outcome: { status: "cancelled", code: "CANCELLED", mutated: false } });
 const cancelledJob = cancellationStore.getState().items.find((item) => item.kind === "job");
 const cancelledTool = cancellationStore.getState().items.find((item) => item.kind === "tool");
 expect("stopping a Studio job marks it not-applied", cancelledJob?.state === "cancelled" && cancelledJob.outcome?.status === "not_applied" && cancelledJob.outcome.mutated === false);
@@ -271,6 +279,16 @@ expect("stopping a Studio job aborts its turn", cancellationEvents.includes("tur
 // acknowledged; it must not erase the outcome the panel is showing.
 deliverFrame({ type: "job.state", jobId: "cancel-job", commandId: "cancel-command", state: "generating", phase: "generating" });
 const lateJob = cancellationStore.getState().items.find((item) => item.kind === "job");
+// Same acknowledged 200, but the runtime could not establish what happened. The
+// panel must report uncertainty, never borrow the unchanged-scene claim.
+const { store: unknownStore } = await driveStop({ ok: true, status: "stopped", outcome: { status: null, code: "UNCERTAIN_APPLY", mutated: "unknown" } });
+const unknownJob = unknownStore.getState().items.find((item) => item.kind === "job");
+const unknownTool = unknownStore.getState().items.find((item) => item.kind === "tool");
+expect("an unproven Stop never claims the scene is unchanged", unknownJob?.outcome?.status === "unknown" && unknownJob.outcome.mutated === "unknown" && unknownJob.state !== "cancelled");
+expect("an unproven Stop settles its tool card without claiming not-applied", unknownTool?.status === "cancelled" && unknownTool.result?.status === "unknown");
+// A host that answers 200 with no runtime outcome at all is equally unproven.
+const { store: silentStore } = await driveStop({ ok: true, status: "stopped" });
+expect("a Stop with no runtime outcome stays unknown", silentStore.getState().items.find((item) => item.kind === "job")?.outcome?.status === "unknown");
 expect("a late job frame cannot erase the not-applied outcome", lateJob?.outcome?.status === "not_applied" && lateJob.outcome.mutated === false);
 
 if (failures) {
