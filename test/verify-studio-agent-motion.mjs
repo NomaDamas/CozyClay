@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
@@ -21,7 +23,11 @@ import { createSceneObject } from '../src/scene-objects.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 
 const args = process.argv.slice(2);
-assert(!args.length || (args.length === 2 && args[0] === '--case' && ['characterization', 'candidate-preservation-and-coverage'].includes(args[1])), 'Unknown test arguments');
+const CASES = ['characterization', 'pre-prepare-cancellation', 'grounded-full-range', 'floor-key-order', 'hovering-no-contact', 'no-measured-skin', 'platform-unsupported',
+  'inactive-target-yaw-and-retime', 'off-playhead-path-prop', 'same-frame-other-cast', 'ground-cache-invalidation', 'decode-failure', 'bounded-real-auto-physics',
+  'repair-throw', 'protected-regression', 'commit-fences', 'cancellation-checkpoint', 'expiry', 'explicit-unverified-acceptance', 'runtime-http'];
+assert(!args.length || (args.length === 2 && args[0] === '--case' && CASES.includes(args[1])), 'Unknown test arguments');
+const selectedCase = args[1] ?? null;
 const evidence = process.env.MOTION_EVIDENCE_DIR;
 const metrics = {};
 function rigFixture() {
@@ -64,24 +70,35 @@ async function characterize() {
   console.log('CHARACTERIZATION', JSON.stringify(metrics.characterization));
   return { first, support, changedGround };
 }
-const baseline = await characterize();
-if (args[1] !== 'characterization') {
+async function runCase(name) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), '--case', name], { stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('exit', code => code === 0 ? resolve() : reject(new Error(`${name} failed with exit code ${code}`)));
+  });
+}
+if (!selectedCase) {
+  for (const name of CASES) await runCase(name);
+} else if (selectedCase === 'characterization') {
+  await characterize();
+} else {
   const moduleUrl = new URL('../src/studio-agent-motion.js', import.meta.url);
   if (!existsSync(moduleUrl)) {
     // Exercise the actual existing physics seam before asserting the missing
     // install contract. This is not an import/syntax/dependency failure.
-    assert.equal(baseline.first.support?.after.unsupportedFrames, 48,
+    assert.equal((await characterize()).first.support?.after.unsupportedFrames, 48,
       'A measured hovering clip with zero inferred contacts must report independent unsupported frames before it can be verified');
   } else {
     const mod = await import(moduleUrl);
-    await candidateTests(mod);
+    await candidateTests(mod, selectedCase);
   }
 }
-if (evidence) writeFileSync(`${evidence}/motion-fixture-metrics.json`, JSON.stringify(metrics, null, 2) + '\n');
+if (!selectedCase && evidence) writeFileSync(`${evidence}/motion-fixture-metrics.json`, JSON.stringify(metrics, null, 2) + '\n');
 console.log('Studio motion: all cases PASS');
 
-async function candidateTests(mod) {
-  {
+async function candidateTests(mod, selectedCase) {
+  const selected = name => !selectedCase || selectedCase === name;
+  if (selected('pre-prepare-cancellation')) {
     const host = { workspaceId: 'cancel-workspace', documentEpoch: 'cancel-document', sceneId: 'cancel-scene', sceneEpoch: 'cancel-epoch' };
     const journal = createStudioCommandJournal({ host });
     const binding = { host, characterId: 'cancel-character', targetToken: 'cancel-token' };
@@ -166,7 +183,7 @@ async function candidateTests(mod) {
   const ok = value => assert.notEqual(value.ok, false, JSON.stringify(value));
   const checked = (label, v) => { metrics[label] = v; console.log('PASS', label, JSON.stringify({ status: v.status, coverage: v.coverage, metrics: v.metrics })); };
   try {
-    {
+    if (selected('grounded-full-range')) {
       const f = fixture(), c = await f.prepare(); ok(c); assert.deepEqual(await f.prepare(), c); assert.equal(f.api.size, 1);
       const v = await f.verify(c); ok(v); checked('grounded-full-range', v);
       assert.equal(v.status, 'verified'); assert.equal(v.evaluatedFrames, 48); assert.equal(v.coverage.sourceFrames, 48); assert.equal(v.coverage.measuredSupportFrames, 48);
@@ -177,7 +194,7 @@ async function candidateTests(mod) {
       assert.equal(f.state.activeId, 'char-a'); assert.equal(f.domain.bufferOwner, 'char-a'); assert.equal(f.domain.ikState.keys.size, 0);
       const restored = f.domain.history.pop(); Object.assign(f.domain, restored); f.preserved();
     }
-    {
+    if (selected('floor-key-order')) {
       const f = fixture({ clip: { hover: .08 } }), c = await f.prepare(), first = await f.verify(c); ok(first);
       assert.equal(first.repairable, true);
       const readEnvironment = f.ports.readEnvironment;
@@ -194,29 +211,29 @@ async function candidateTests(mod) {
       assert.equal(v.repairable, true);
       console.log('PASS environment fingerprint ignores equivalent floor key order during verification');
     }
-    {
+    if (selected('hovering-no-contact')) {
       const f = fixture({ clip: { hover: .4 } }), c = await f.prepare(), v = await f.verify(c); ok(v); checked('hovering-no-contact', v);
       assert.equal(v.status, 'unverified'); assert.equal(v.metrics.unsupportedFrames, 48); assert.equal(v.coverage.contactSpans, 0); assert.equal(v.coverage.measuredSupportFrames, 48); f.preserved();
       assert.equal((await f.commit(c, v)).code, 'VERIFICATION_FAILED'); assert.equal(f.api.size, 0); f.preserved();
     }
-    {
+    if (selected('no-measured-skin')) {
       const f = fixture(); const meshes = []; f.rig.traverse(n => { if (n.isSkinnedMesh) meshes.push(n); }); for (const mesh of meshes) mesh.removeFromParent();
       const c = await f.prepare(), v = await f.verify(c); ok(v); checked('no-measured-skin', v);
       assert.equal(v.status, 'unverified'); assert.equal(v.metrics.surfaceMeasured, false); assert.equal(v.coverage.measuredSupportFrames, 0); assert.equal(v.repairable, false); f.preserved();
     }
-    {
+    if (selected('platform-unsupported')) {
       const f = fixture({ character: { y: .5 } }); f.state.objects = [{ ...createSceneObject('cube'), scaleX: 3, scaleY: .5, scaleZ: 3 }];
       const c = await f.prepare(), v = await f.verify(c); ok(v); checked('platform-unsupported', v);
       assert.equal(v.status, 'unverified'); assert.equal(v.repairable, false); assert(v.coverage.elevatedFrames.length > 0); f.preserved();
     }
-    {
+    if (selected('inactive-target-yaw-and-retime')) {
       const f = fixture({ clip: { frames: 40, fps: 20 }, character: { x: 4, z: -2, rot: 93, scale: 1.2 } }), c = await f.prepare(); ok(c);
       assert.equal(c.plannedDelta.yawDeg, 93); assert.equal(c.plannedDelta.scale, 1.2); assert.equal(c.plannedDelta.frameCount, 48);
       const v = await f.verify(c); ok(v); checked('inactive-target-yaw-and-retime', v); f.preserved();
       const rows = f.api.readEvidence(c.candidateId).after.rows; assert(Math.abs(rows[0].root.x - 4) < .1); assert(Math.abs(rows[0].root.z + 2) < .1);
       const receipt = await f.commit(c, v, { explicitUnverifiedAcceptance: true }); ok(receipt); assert.equal(f.payload.motion.rotationDeg, 93); assert.equal(f.payload.motion.anchorX, 4); assert.equal(f.payload.motion.anchorZ, -2); assert.equal(f.payload.scale, 1.2);
     }
-    {
+    if (selected('off-playhead-path-prop')) {
       const f = fixture(), prop = { ...createSceneObject('cube'), scaleX: .2, scaleY: .3, scaleZ: .2, y: 1.45,
         path: { points: [{ x: -.8, y: 1.45, z: -2 }, { x: -.8, y: 1.45, z: 2 }], speed: 0, faceTravel: false, loop: false, extend: false, timing: null } };
       f.state.objects = [prop]; const c = await f.prepare(), v = await f.verify(c); ok(v); checked('off-playhead-path-prop', v);
@@ -224,7 +241,7 @@ async function candidateTests(mod) {
       assert.equal(trace.collisions[0].length, 0); assert(trace.collisions.slice(15, 33).some(p => p.some(hit => hit.b === 'obj:cube')));
       assert.equal(trace.blockers[0][0].cz, -2); assert.equal(trace.blockers[47][0].cz, 2); assert.equal(v.status, 'unverified'); assert(v.metrics.supportedCollisionFrames > 0); f.preserved();
     }
-    {
+    if (selected('same-frame-other-cast')) {
       const f = fixture(), other = rigFixture(); other.position.z = -2; other.updateMatrixWorld(true);
       const before = boneSnapshot(other);
       f.state.cast = [{ character: { id: 'char-c', hidden: false }, rig: other, motion: clipFixture({ travel: 4 }), ikState: createIkState() }];
@@ -233,14 +250,17 @@ async function candidateTests(mod) {
       assert.equal(trace.collisions[0].length, 0); assert(trace.collisions.slice(15, 33).some(p => p.some(hit => hit.b.startsWith('char:char-c:'))));
       assert.notEqual(trace.blockers[0][0].az, trace.blockers[47][0].az); assert.deepEqual(boneSnapshot(other), before); f.preserved();
     }
-    {
+    if (selected('ground-cache-invalidation')) {
       const f = fixture(), diagnostic = stage => {
-        if (!process.env.MOTION_CI_DIAGNOSTIC) return;
+        if (!process.env.CI && !process.env.MOTION_CI_DIAGNOSTIC) return;
         const environment = f.ports.readEnvironment(), target = f.ports.readTarget(f.request.binding);
         console.error('MOTION_CI_DIAGNOSTIC', JSON.stringify({ stage, targetGuard: target?.guard ?? null,
           physicsFingerprintInput: { physicsRevision: environment.physicsRevision, floor: environment.floor, objects: environment.objects, cast: environment.cast.map(member => member.character?.id ?? null), frameCount: environment.frameCount },
           environmentKey: JSON.stringify([environment.host, environment.physicsRevision, { model: environment.floor.model, y: environment.floor.y }]) }));
-      }, c = await f.prepare();
+      };
+      diagnostic('ground-before-prepare');
+      const c = await f.prepare();
+      if (process.env.CI || process.env.MOTION_CI_DIAGNOSTIC) console.error('MOTION_CI_DIAGNOSTIC', JSON.stringify({ stage: 'ground-after-prepare', prepareResult: c }));
       diagnostic('ground-before-verify-1'); const first = await f.verify(c); ok(first);
       f.state.floor.y = .3; f.state.physicsRevision++;
       diagnostic('ground-before-verify-2'); const v = await f.verify(c); ok(v); checked('ground-cache-invalidation', v);
@@ -248,18 +268,18 @@ async function candidateTests(mod) {
       assert.equal(trace.before.rows[0].ground.leftFoot, .3); assert.equal(trace.after.rows[0].ground.leftFoot, .3); assert(v.metrics.maxFloorPenetrationM > .2); assert.equal(v.repairable, false);
       f.state.physicsRevision++; diagnostic('ground-before-verify-3'); assert.equal((await f.verify(c)).code, 'STALE_ENVIRONMENT'); assert.equal(f.api.size, 0); f.preserved();
     }
-    {
+    if (selected('decode-failure')) {
       const f = fixture({ decodeFailure: true }); const result = await f.prepare(); assert.equal(result.code, 'VERIFICATION_FAILED'); assert.equal(result.mutated, false); assert.equal(f.api.size, 0); f.preserved();
       assert.equal((await f.dispatch('reconcile_studio_command')).status, 'not_applied');
       console.log('PASS real HTTP/NPZ decode failure preserves full authored preimage');
     }
-    {
+    if (selected('bounded-real-auto-physics')) {
       const f = fixture({ clip: { hover: .08 } }), c = await f.prepare(), v = await f.verify(c); ok(v); assert.equal(v.repairable, true);
       const repaired = await f.repair(c, 'auto_physics'); ok(repaired); const final = await f.verify(repaired); ok(final); checked('bounded-real-auto-physics', final);
       assert.equal(final.repairs.autoPhysicsInvocations, 1); assert.equal(final.repairs.fixCollisionsInvocations, 0); f.preserved();
       assert.notEqual((await f.repair(repaired, 'auto_physics')).ok, true); f.preserved();
     }
-    {
+    if (selected('repair-throw')) {
       const f = fixture({ clip: { hover: .4 }, ports: { reviewAutoPhysics: async options => {
         options.sourceKeys.set(20, new Map([['hips', { p: new THREE.Vector3(100, 0, 0), q: [new THREE.Quaternion()] }]]));
         throw new Error('injected solver failure after private key mutation');
@@ -267,7 +287,7 @@ async function candidateTests(mod) {
       const result = await f.repair(c, 'auto_physics'); assert.equal(result.code, 'VERIFICATION_FAILED'); assert.equal(f.api.size, 0); f.preserved();
       console.log('PASS private repair throw releases candidate without partial authored mutation');
     }
-    {
+    if (selected('protected-regression')) {
       const f = fixture({ clip: { hover: .08 }, floorY: .05, protectedFrames: [24], ports: { reviewAutoPhysics: async options => {
         // The protected frame's key remains absent, but a neighbouring key's
         // REAL ikEvaluate blend changes its evaluated pose.
@@ -279,36 +299,38 @@ async function candidateTests(mod) {
       const result = await f.repair(c, 'auto_physics');
       assert.equal(result.code, 'REPAIR_REGRESSED', JSON.stringify(result)); assert.equal(f.api.size, 0); f.preserved(); console.log('PASS evaluated protected pose/blend regression rejected, not key-map equality');
     }
-    for (const kind of ['target', 'document', 'gesture', 'physics', 'cancel']) {
-      const f = fixture(), c = await f.prepare(), v = await f.verify(c); ok(v);
-      if (kind === 'target') f.state.token = 'edited-target';
-      if (kind === 'document') f.state.host.documentEpoch = 'replacement';
-      if (kind === 'gesture') f.state.busy = true;
-      if (kind === 'physics') f.state.physicsRevision++;
-      if (kind === 'cancel') await f.dispatch('cancel_motion_install');
-      const result = await f.commit(c, v);
-      if (kind === 'cancel') assert.equal(result.status, 'not_applied');
-      else { assert.equal(result.ok, false); assert.equal(result.mutated, false); }
-      assert.equal(f.domain.history.length, 0); f.preserved();
+    if (selected('commit-fences')) {
+      for (const kind of ['target', 'document', 'gesture', 'physics', 'cancel']) {
+        const f = fixture(), c = await f.prepare(), v = await f.verify(c); ok(v);
+        if (kind === 'target') f.state.token = 'edited-target';
+        if (kind === 'document') f.state.host.documentEpoch = 'replacement';
+        if (kind === 'gesture') f.state.busy = true;
+        if (kind === 'physics') f.state.physicsRevision++;
+        if (kind === 'cancel') await f.dispatch('cancel_motion_install');
+        const result = await f.commit(c, v);
+        if (kind === 'cancel') assert.equal(result.status, 'not_applied');
+        else { assert.equal(result.ok, false); assert.equal(result.mutated, false); }
+        assert.equal(f.domain.history.length, 0); f.preserved();
+      }
+      console.log('PASS synchronous commit target/document/gesture/physics/cancel fences');
     }
-    console.log('PASS synchronous commit target/document/gesture/physics/cancel fences');
-    {
+    if (selected('cancellation-checkpoint')) {
       const entered = Promise.withResolvers(), release = Promise.withResolvers(); let held = false;
       const f = fixture({ ports: { yieldTask: async () => { if (!held) { held = true; entered.resolve(); await release.promise; } } } });
       const c = await f.prepare(); const result = f.verify(c); await entered.promise;
       await f.dispatch('cancel_motion_install'); release.resolve(); assert.equal((await result).code, 'CANCELLED'); assert.equal(f.api.size, 0); f.preserved();
       console.log('PASS cancellation at subscribed evaluation checkpoint disposes private resources');
     }
-    {
+    if (selected('expiry')) {
       const f = fixture(), c = await f.prepare(); f.setClock(600001); f.api.cleanup(); assert.equal(f.api.size, 0); f.preserved();
       assert.equal((await f.verify(c)).ok, false); console.log('PASS injected-clock candidate expiry');
     }
-    {
+    if (selected('explicit-unverified-acceptance')) {
       const f = fixture({ clip: { hover: .4 } }), c = await f.prepare(), v = await f.verify(c); ok(v);
       const receipt = await f.commit(c, v, { explicitUnverifiedAcceptance: true }); ok(receipt); assert.equal(receipt.verification.status, 'unverified'); assert.equal(receipt.explicitUnverifiedAcceptance, true); assert.equal(f.domain.history.length, 1);
       console.log('PASS explicit warning acceptance retains unverified coverage in one receipt');
     }
-    {
+    if (selected('runtime-http')) {
       const f = fixture(); archives.set('/ardy/motions/123456-abcdef', archives.get(new URL(f.request.artifact.url).pathname));
       const liveHub = { handleForWorkspaceId: () => 'fixture-handle', resolveWorkspace: () => 'fixture-handle', workspaceId: () => host.workspaceId,
         command: (name, request) => { f.request.commandId = request.commandId; f.request.jobId = request.jobId ?? f.request.jobId; f.request.artifactId = request.artifactId ?? f.request.artifactId; return f.dispatch(name, request); } };
