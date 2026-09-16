@@ -353,6 +353,12 @@ expect("a turn that ends with no output renders a failure card", silentCard?.fai
 expect("that turn is reported as failed, not finished", silent.lastTurn?.status === "failed" && silent.lastTurn.durationMs === 2500);
 expect("the activity line states the silent failure", module_.describeActivity(silent, { now: 3500 }).text === "Failed: no response");
 
+const doneOnly = await driveTurn(async (onEvent) => { onEvent({ type: "done" }); });
+const doneOnlyCard = doneOnly.items.find((item) => item.kind === "failure");
+expect("a turn whose only frame is done still renders a no_output failure card", doneOnlyCard?.failure.code === "no_output");
+expect("that done-only turn is reported as failed", doneOnly.lastTurn?.status === "failed");
+expect("the activity line states the done-only failure", module_.describeActivity(doneOnly, { now: 3500 }).text === "Failed: no response");
+
 const refused = await driveTurn(async (onEvent) => { onEvent({ type: "error", code: "upstream", status: 429, message: "429 — usage limit, resets in 42m" }); onEvent({ type: "done" }); });
 const refusedCard = refused.items.find((item) => item.kind === "failure");
 expect("an upstream refusal renders a failure card with the reported detail", refusedCard?.failure.code === "upstream" && refusedCard.failure.message === "429 — usage limit, resets in 42m" && refusedCard.failure.status === 429);

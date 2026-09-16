@@ -833,7 +833,7 @@ export function createAgentChatStore({
 	}
 
 	function applyEvent(event) {
-		if (activeTurn && event?.type !== "quota") activeTurn.produced = true;
+		if (activeTurn && ["text.delta", "tool.start", "tool.done", "image", "job.state", "job.progress", "receipt", "error"].includes(event?.type)) activeTurn.produced = true;
 		if (event?.type === "text.delta") {
 			setItems((items) => {
 				const last = items[items.length - 1];
