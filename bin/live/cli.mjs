@@ -21,6 +21,9 @@ const USAGE = `cclay live - drive a running CozyClay studio from a terminal
   cclay live capture --out frame.png [--framing]
   cclay live arrange-objects --op '<json>' | -f ops.json
   cclay live arrange-characters --op '<json>' | -f ops.json
+  cclay live patch --target <kind>[:<id>] --set '<json>'
+                                         kind: character|object|shot|stage; paths from
+                                         'cclay live inspect --scope catalogue'
   cclay live frame-shot --subject <id> --size "medium shot" --view front --level eye
                                          [--side left] [--focal 50]
   cclay live frame-shot --subject <id> --exact px,py,pz,lx,ly,lz,focal
@@ -52,6 +55,7 @@ const VERBS = new Map([
 	["capture", { flags: ["--out", "--framing"] }],
 	["arrange-objects", { flags: ["--op", "-f", "--file"], command: "arrange_objects" }],
 	["arrange-characters", { flags: ["--op", "-f", "--file"], command: "arrange_characters" }],
+	["patch", { flags: ["--target", "--set"], command: "patch_elements" }],
 	["frame-shot", { flags: ["--subject", "--size", "--view", "--level", "--side", "--focal", "--exact"] }],
 	["operate", { flags: ["--select", "--frame", "--mode", "--play", "--pause"] }],
 	["verify", { flags: ["--receipt", "--checks", "--visual", "--out"] }],
@@ -229,6 +233,19 @@ function operationArguments(flags, verb) {
 	throw new UsageError(`${verb} expects one operation object, an array of them, or { "ops": [ … ] }`);
 }
 
+/** `--target kind[:id]` names one entity, `--set '<json>'` carries declared
+ * element paths. One patch is one target kind, so one commit domain. */
+function patchArguments(flags, verb) {
+	const raw = String(required(flags, "--target", verb));
+	const colon = raw.indexOf(":");
+	if (colon === 0 || colon === raw.length - 1) throw new UsageError("--target takes kind or kind:id, for example character:char-a");
+	const target = colon < 0 ? { kind: raw } : { kind: raw.slice(0, colon), id: raw.slice(colon + 1) };
+	required(flags, "--set", verb);
+	const set = jsonFlag(flags, "--set");
+	if (set === null || typeof set !== "object" || Array.isArray(set)) throw new UsageError(`${verb} expects --set '{"path": value}'`);
+	return { ops: [{ target, set }] };
+}
+
 function framingArguments(flags, verb) {
 	const args = { subjectIds: [required(flags, "--subject", verb)] };
 	if (flags.has("--exact")) {
@@ -382,6 +399,8 @@ async function runVerb({ client, verb, spec, name, flags }) {
 	}
 
 	if (verb === "arrange-objects" || verb === "arrange-characters") return admitted(spec.command, operationArguments(flags, verb));
+
+	if (verb === "patch") return admitted(spec.command, patchArguments(flags, verb));
 
 	if (verb === "frame-shot") return admitted("frame_shot", framingArguments(flags, verb));
 

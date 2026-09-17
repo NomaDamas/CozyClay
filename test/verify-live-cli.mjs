@@ -29,7 +29,7 @@ const PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8
 const PNG_MAGIC = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 const IDENTITY = { workspaceId: "cli-tab", documentEpoch: "doc-1", sceneId: "scene-1", sceneEpoch: "epoch-1" };
 const EDITOR_COMMANDS = [
-	"describe", "inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "frame_shot",
+	"describe", "inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot",
 	"verify_result", "undo_edit", "resolve_studio_image", "reconcile_studio_command",
 	"capture_frame", "capture_framing_png", "place_object",
 ];
@@ -125,6 +125,18 @@ const connectEditor = async (url, workspaceId, meta, controls = { silent: new Se
 			case "frame_shot": {
 				if (controls.failWith) return failureReceipt(payload.commandId, controls.failWith);
 				state.lastReceipt = appliedReceipt(payload.commandId, ["cube-1"]);
+				return state.lastReceipt;
+			}
+			case "patch_elements": {
+				if (controls.failWith) return failureReceipt(payload.commandId, controls.failWith);
+				const op = args.ops[0];
+				const id = op.target.kind === "stage" ? IDENTITY.sceneId : op.target.id;
+				state.lastReceipt = {
+					...appliedReceipt(payload.commandId, [id]),
+					delta: [{ id, after: { patched: Object.keys(op.set).map((key) => ({ path: `${op.target.kind}.${key}`, number: Number(op.set[key]) })) } }],
+					checks: { coverage: "declared-element-readback" },
+					ops: [{ index: 0, status: "applied" }],
+				};
 				return state.lastReceipt;
 			}
 			case "operate_studio": {
@@ -370,6 +382,25 @@ try {
 	const cast = ok(await run(["arrange-characters", "--op", JSON.stringify({ op: "update", characterId: "char-a", name: "Lead" })]));
 	assert.equal(cast.status, "applied");
 	assert.equal(alpha.received.at(-1).name, "arrange_characters");
+
+	// One declared element path, one receipt, one undo entry — admitted exactly
+	// like an arrangement, with the target kind and optional id on --target.
+	const patched = ok(await run(["patch", "--target", "stage", "--set", JSON.stringify({ "keyLight.intensity": 2.5 })]));
+	assert.equal(patched.status, "applied");
+	assert.equal(patched.revision.after, patched.revision.before + 1);
+	assert.deepEqual(patched.ops, [{ index: 0, status: "applied" }]);
+	assert.deepEqual(patched.delta[0].after.patched, [{ path: "stage.keyLight.intensity", number: 2.5 }]);
+	const patchEnvelope = alpha.received.at(-1).args;
+	assert.equal(alpha.received.at(-1).name, "patch_elements");
+	assert.deepEqual(patchEnvelope.args, { ops: [{ target: { kind: "stage" }, set: { "keyLight.intensity": 2.5 } }] });
+	assert.equal(patchEnvelope.expectedRevision, patched.revision.before);
+	assert.deepEqual(patchEnvelope.host, IDENTITY);
+	ok(await run(["patch", "--target", "character:char-a", "--set", JSON.stringify({ scale: 1.5 })]));
+	assert.deepEqual(alpha.received.at(-1).args.args.ops[0].target, { kind: "character", id: "char-a" });
+	const patchUsage = await run(["patch", "--target", "stage"]);
+	assert.equal(patchUsage.code, 2, `${patchUsage.stdout}${patchUsage.stderr}`);
+	assert.equal(only(patchUsage).error.code, "USAGE");
+	evidence.patch = { printed: patched, envelope: patchEnvelope };
 
 	const framed = ok(await run(["frame-shot", "--subject", "char-a", "--size", "medium shot", "--view", "front", "--level", "eye", "--side", "left", "--focal", "50"]));
 	assert.equal(framed.status, "applied");

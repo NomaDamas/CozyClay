@@ -10,7 +10,7 @@ import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
 import { createRequire } from "node:module";
 const { WebSocket } = createRequire(new URL("../mcp/package.json", import.meta.url))("ws");
 
-const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason"]);
+const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -44,6 +44,25 @@ async function httpFixture({ codex, live, getBridgeOrigin = () => null, clock = 
   return { handler, server, origin, post, async close() { await handler.close(); await new Promise(resolve => server.close(resolve)); } };
 }
 function streamOf(items) { return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() { for (const item of items) yield { type: "response.output_item.done", item }; yield { type: "response.completed", response: { status: "completed" } }; } }; }
+
+if (shouldRun("studio-tool-catalogue")) {
+  const { createStudioTools, studioToolSchemas } = await import("../bin/agent/studio-tools.mjs");
+  const families = ["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit"];
+  assert.deepEqual([...STUDIO_TOOL_FAMILIES], families, "the Studio panel sees exactly these nine families");
+  assert.deepEqual(studioToolSchemas().map(tool => tool.name), families);
+  const sent = [];
+  const tools = createStudioTools({ liveHub: { command: async (name, payload) => { sent.push({ name, payload }); return { ok: true, commandId: payload.commandId, receiptId: "receipt-1", status: "applied", revision: { before: 1, after: 2 } }; } }, workspaceHandle: "handle-1",
+    session: { admission: { commandId: () => "cmd-1", host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, revision: 1, refresh: async () => {} } } });
+  assert.deepEqual(tools.map(tool => tool.name), families);
+  assert.ok(tools.every(tool => tool.parameters?.type === "object"));
+  await tools.find(tool => tool.name === "patch_elements").handler({ ops: [{ target: { kind: "stage" }, set: { "keyLight.intensity": 2 } }] });
+  // A mutation family carries the admission envelope, or a timeout would lose
+  // its UNCERTAIN_APPLY meaning downstream.
+  assert.equal(sent[0].name, "patch_elements");
+  assert.equal(sent[0].payload.commandId, "cmd-1");
+  assert.equal(sent[0].payload.expectedRevision, 1);
+  console.log("PASS the Studio tool list is exactly the nine families and patch_elements is admitted");
+}
 
 if (shouldRun("surface-context-and-images")) {
   const commands = []; let failImage = false;

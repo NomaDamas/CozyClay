@@ -113,7 +113,7 @@ const mutationCommands = new Set([
 	"set_prompt_blocks",
 	"load_motion",
 	"load_scenes",
-	"operate_studio", "arrange_objects", "arrange_characters", "frame_shot", "undo_edit",
+	"operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "undo_edit",
 	"commit_motion_candidate", "import_asset",
 ]);
 

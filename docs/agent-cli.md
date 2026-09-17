@@ -73,7 +73,7 @@ status → inspect → act (a receipt verb) → capture / verify → undo
 - **inspect** — the scene context: ids, entity tokens, the current shot,
   revisions. Never act on remembered state; read it first.
 - **act** — a verb that produces a *receipt* (`arrange-objects`,
-  `arrange-characters`, `frame-shot`, `operate`, `undo`). The receipt is the
+  `arrange-characters`, `patch`, `frame-shot`, `operate`, `undo`). The receipt is the
   ground truth of what changed: affected ids, revision before/after, undo
   entry, warnings.
 - **capture / verify** — `capture --framing` writes the PNG of the shot
@@ -349,12 +349,34 @@ state, never on a guess about what the dead hub saw.
 | `capture --out frame.png [--framing]` | the editor's 640×360 viewport PNG, or with `--framing` the full-resolution shot-camera PNG | no |
 | `arrange-objects --op '<json>'` \| `-f ops.json` | create / update / remove / group / ungroup set pieces, up to 100 ops, with relative placement and collision policy | yes |
 | `arrange-characters --op '<json>'` \| `-f ops.json` | create / update / remove cast, up to 8 ops | yes |
+| `patch --target <kind>[:<id>] --set '<json>'` | set declared authored fields by path on one `character` / `object` / `shot` / `stage` target; `inspect --scope catalogue` lists the patchable paths | yes |
 | `frame-shot --subject <id> --size … --view … --level … [--side] [--focal]` or `--exact px,py,pz,lx,ly,lz,focal` | move the shot camera by film vocabulary or to an exact pose; `keyAtFrame` (via `cmd`) also authors a camera key | yes |
 | `operate [--select object:<id>] [--frame N] [--mode scene\|camera\|motion] [--play\|--pause]` | transient editor state — selection, playhead, mode; nothing authored | yes (transient) |
 | `verify --receipt <id> --checks placement,framing [--visual frame --out check.png]` | re-run a receipt's evidence, optionally writing its visual proof | no |
 | `undo --receipt <id>` | restore the document through the editor's native history, one entry | yes |
 | `cmd <name> --args '<json>'` | any live-protocol command, raw (no admission, no auto-receipt) | per command |
 | `tool <name> --args '<json>'` | any registry tool the hub serves, e.g. `describe_shot` | no |
+
+`patch` carries one target kind per command — its commit domain — because one
+receipt is one revision step and one undo entry; a `character` patch and a
+`stage` patch are two commands. `--target` is `kind` (`stage`, or `shot` for
+the current shot) or `kind:id` (`character:char-a`, `object:chair`,
+`shot:shot-1`). `--set` is a JSON object keyed by the element path inside that
+kind, e.g. `{"keyLight.intensity": 2.4}` for `stage.keyLight.intensity`. A
+value the editor's own persistence normalizer refuses to keep is reported, not
+assumed: the receipt's `ops[]` names it in `droppedPaths` and the receipt
+status becomes `partial`.
+
+```sh
+cclay live inspect --scope catalogue | jq '.patchable.stage'
+cclay live patch --target stage --set '{"keyLight.intensity":2.4,"keyLight.warmth":0.2}'
+```
+```json
+{"ok":true,"commandId":"0f0f6f3e-…","receiptId":"receipt-mu9p1c2-7","host":{…},"status":"applied","authored":true,"revision":{"before":6,"after":7},"affectedIds":["scene-mu3uy6d6-1"],"delta":[{"id":"scene-mu3uy6d6-1","after":{"patched":[{"path":"stage.keyLight.intensity","number":2.4},{"path":"stage.keyLight.warmth","number":0.2}]}}],"checks":{"coverage":"declared-element-readback"},"undo":{"historyEntryId":"8f2c…","entries":1,"canUndoDirect":true},"warnings":[],"ops":[{"index":0,"status":"applied"}],"detailCursor":"0f0f6f3e-…"}
+```
+
+That one receipt is one Cmd+Z in the editor: `undo --receipt receipt-mu9p1c2-7`
+and the key light goes back exactly where it was.
 
 The op JSON for `arrange-*` is one operation, an array of them, or
 `{"ops":[…], "collisionPolicy":"report"|"avoid"}`. Placement is `world`
