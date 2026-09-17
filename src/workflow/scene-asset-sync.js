@@ -12,7 +12,7 @@ import {
 	ASSET_MAX_DIMENSION,
 	assetAspect,
 	importImageFile,
-	isAssetId,
+	isImageAssetId,
 } from "../scene-assets.js";
 import { rememberAsset } from "../scene-asset-cache.js";
 import { CUTOUT_DEFAULT_HEIGHT, createCutoutObject } from "../scene-objects.js";
@@ -53,7 +53,7 @@ export function appendAssetCutout(document, asset, {
 	placement = {},
 	name = asset?.name,
 } = {}) {
-	if (!asset || !isAssetId(asset.id)) return { document, object: null, changed: false, reason: "invalid-asset" };
+	if (!asset || !isImageAssetId(asset.id)) return { document, object: null, changed: false, reason: "invalid-asset" };
 	const source = document && typeof document === "object" ? document : createSceneDocument();
 	const scenes = Array.isArray(source.scenes) ? source.scenes : [];
 	const index = activeSceneIndex(scenes, source.activeSceneId);

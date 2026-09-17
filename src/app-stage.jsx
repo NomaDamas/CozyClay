@@ -34,8 +34,9 @@ import {
 	validateLineEdit,
 } from "./line-edit.js";
 import { craneHeightAt, railPoint } from "./camera-follow.js";
-import { CUTOUT_KIND, DEFAULT_SCENE_OBJECTS, SCENE_ATTACH_BONES, updateSceneObject } from "./scene-objects.js";
+import { CUTOUT_KIND, DEFAULT_SCENE_OBJECTS, MESH_KIND, SCENE_ATTACH_BONES, updateSceneObject } from "./scene-objects.js";
 import { imageFilesFrom } from "./scene-assets.js";
+import { splitDroppedFiles } from "./scene-mesh.js";
 import {
 	SCENES_QUARANTINE_KEY,
 	createSceneDocument,
@@ -355,6 +356,7 @@ export const SCENE_RENDERER_LABELS_KO = new Map([
 	["car", ko("car", "자동차")],
 	["aircraft", ko("aircraft", "비행기")],
 	[CUTOUT_KIND, ko("cutout", "컷아웃")],
+	[MESH_KIND, ko("Mesh", "모델")],
 ]);
 
 export const SCENE_OBJECT_NAME_LABELS_KO = new Map([
@@ -367,6 +369,8 @@ export const SCENE_OBJECT_NAME_LABELS_KO = new Map([
 	["Chair", ko("Chair", "의자")],
 	["Car", ko("Car", "자동차")],
 	["Plane (aircraft)", ko("Plane (aircraft)", "비행기")],
+	["Mesh", ko("Mesh", "모델")],
+	["Model", ko("Model", "모델")],
 ]);
 
 export function poseLabelKo(pose) {
@@ -2572,6 +2576,57 @@ export function useImageDrop(onFiles, onRejected) {
 				event.preventDefault();
 				event.stopPropagation();
 				onFiles(files);
+			},
+		},
+	};
+}
+
+/**
+ * Inspector, hierarchy and viewport drop: pictures AND .glb files in one
+ * gesture. A GLB must not go through `useImageDrop`, or it toasts as an
+ * unsupported image even though the set can now stand it up as a mesh.
+ *
+ * `onRejected` fires only when the drop carried files and none of them were
+ * a picture or a GLB — a mixed PNG+GLB drop imports both, and leftover
+ * HEICs in that mix stay silent rather than blocking the good files.
+ */
+export function useStageFilesDrop({ onImages, onMeshes, onRejected } = {}) {
+	const [over, setOver] = useState(false);
+	const depth = useRef(0);
+	const carriesFiles = (event) => !!event.dataTransfer?.types?.includes?.("Files");
+	return {
+		over,
+		handlers: {
+			onDragEnter: (event) => {
+				if (!carriesFiles(event)) return;
+				event.preventDefault();
+				depth.current += 1;
+				setOver(true);
+			},
+			onDragOver: (event) => {
+				if (!carriesFiles(event)) return;
+				event.preventDefault();
+				event.dataTransfer.dropEffect = "copy";
+			},
+			onDragLeave: () => {
+				depth.current = Math.max(0, depth.current - 1);
+				if (!depth.current) setOver(false);
+			},
+			onDrop: (event) => {
+				const { images = [], meshes = [] } = splitDroppedFiles(event.dataTransfer);
+				depth.current = 0;
+				setOver(false);
+				if (!images.length && !meshes.length) {
+					const dropped = event.dataTransfer?.files?.length ?? 0;
+					if (dropped > 0) onRejected?.(dropped);
+					return;
+				}
+				event.preventDefault();
+				event.stopPropagation();
+				void (async () => {
+					if (images.length) await onImages?.(images);
+					if (meshes.length) await onMeshes?.(meshes);
+				})();
 			},
 		},
 	};

@@ -3,7 +3,7 @@ import { ko } from "./locale.js";
 import { CHARACTER_MODEL_IDS } from "./scenes.js";
 import { OBJECT_LIBRARY } from "./scene-objects.js";
 import { displayObjectGroupName, displayObjectLabel } from "./object-catalog.jsx";
-import { assetAspect } from "./scene-assets.js";
+import { assetAspect, isMeshAssetId, isSupportedMeshType } from "./scene-assets.js";
 import { assetKind, formatAssetBytes } from "./asset-shelf.js";
 import { assetRecord } from "./scene-asset-cache.js";
 import ResourceStatus from "./resource-status.jsx";
@@ -94,6 +94,21 @@ function ObjectPreview({ kind, color }) {
 	return <svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true">{shape}</svg>;
 }
 
+/** Generic isometric cube: a GLB has no cheap thumbnail, and inventing one
+ * would mean running GLTFLoader on the shelf. The catalogue cube already
+ * reads as "a 3D thing", so the shelf reuses that silhouette. */
+function MeshPreview() {
+	const fill = "#b8bec3";
+	const common = { fill, stroke: "#d7dde0", strokeWidth: 1.2, strokeLinejoin: "round" };
+	return (
+		<svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true">
+			<path {...common} d="m9 16 15-8 15 8-15 8Z" />
+			<path {...common} d="m9 16 15 8v16L9 31Z" opacity=".82" />
+			<path {...common} d="m39 16-15 8v16l15-9Z" opacity=".62" />
+		</svg>
+	);
+}
+
 /** Shelf thumbnail edge: enough pixels for a 108 px card on a 2x display. */
 const THUMB_WIDTH = 96;
 
@@ -113,6 +128,17 @@ function loadThumb(id) {
 			// card hides. A present record whose bytes fail below resolves null
 			// instead, and the card stays visible so it can be deleted.
 			if (!record) return undefined;
+			if (isMeshAssetId(record.id) || isSupportedMeshType(record.type)) {
+				// A GLB is not a picture. Decoding it as one would mark every
+				// model "unreadable" in Manage storage — show a generic cube
+				// instead, using the same card preview the catalogue already has.
+				return {
+					name: record.name,
+					bytesLabel: formatAssetBytes(record.bytes.byteLength),
+					kind: "mesh",
+					mesh: true,
+				};
+			}
 			const bitmap = await createImageBitmap(new Blob([record.bytes], { type: record.type }), {
 				resizeWidth: THUMB_WIDTH,
 				resizeQuality: "high",
@@ -187,6 +213,40 @@ function ImageAssetCard({ id, onAssetGrab }) {
 	);
 }
 
+function MeshAssetCard({ id, onAssetGrab }) {
+	const [thumb, setThumb] = useState(null);
+	useEffect(() => {
+		let alive = true;
+		loadThumb(id).then((result) => {
+			if (alive) setThumb(result ?? undefined);
+		});
+		return () => {
+			alive = false;
+		};
+	}, [id]);
+	if (thumb === undefined) return null;
+	const label = thumb?.name?.replace(/\.[^.]+$/, "") || ko("Model", "모델");
+	const failed = thumb === null;
+	return (
+		<button
+			type="button"
+			className={"asset-card" + (failed ? " asset-card-failed" : "")}
+			title={failed
+				? ko(`${label} — could not read; delete it from Manage storage`, `${label} — 불러오지 못했어요. 저장소 관리에서 삭제할 수 있어요`)
+				: ko(`Drag ${label} into the scene`, `${label}을(를) 씬에 드래그하세요`)}
+			{...(failed ? {} : grabProps(onAssetGrab, { kind: "mesh", assetId: id, label }))}
+		>
+			{failed ? (
+				<span className="asset-card-thumb asset-card-thumb-skeleton" aria-hidden="true" />
+			) : (
+				<MeshPreview />
+			)}
+			<span className="asset-card-label">{label}</span>
+			<span className="asset-card-kind">{failed ? ko("Unreadable", "읽을 수 없음") : ko("Model", "모델")}</span>
+		</button>
+	);
+}
+
 function StorageAssetRow({ id, onDelete, deleting, usageCount = 0, graphSignature }) {
 	const [thumb, setThumb] = useState(null);
 	// Capture the graph observed when the explicit confirmation opens. A render
@@ -206,16 +266,24 @@ function StorageAssetRow({ id, onDelete, deleting, usageCount = 0, graphSignatur
 	// one screen whose job is deleting broken assets can actually reach it.
 	if (thumb === undefined) return null;
 	const failed = thumb === null;
-	const name = thumb?.name || (failed ? ko("(unreadable image)", "(읽을 수 없는 이미지)") : ko("Untitled image", "이름 없는 이미지"));
+	const mesh = Boolean(thumb?.mesh);
+	const name = thumb?.name || (failed ? ko("(unreadable image)", "(읽을 수 없는 이미지)") : mesh ? ko("Untitled model", "이름 없는 모델") : ko("Untitled image", "이름 없는 이미지"));
 	const usageLabel = ko(`Used by ${usageCount} scene object${usageCount === 1 ? "" : "s"}`, `${usageCount}개 씬 오브젝트에서 사용 중`);
 	const deleteLabel = ko(`Delete ${name} from storage`, `${name}을(를) 저장소에서 삭제`);
 	const confirmationId = `asset-storage-warning-${id}`;
+	const kindLabel = thumb?.kind === "mesh" ? ko("Model", "모델") : thumb?.kind === "matte" ? ko("Matte", "매트") : ko("Image", "이미지");
 	return (
 		<li className="asset-storage-row">
-			{thumb ? <img className="asset-storage-thumb" src={thumb.url} alt="" /> : <span className="asset-storage-thumb asset-card-thumb-skeleton" aria-hidden="true" />}
+			{mesh ? (
+				<span className="asset-storage-thumb" aria-hidden="true"><MeshPreview /></span>
+			) : thumb?.url ? (
+				<img className="asset-storage-thumb" src={thumb.url} alt="" />
+			) : (
+				<span className="asset-storage-thumb asset-card-thumb-skeleton" aria-hidden="true" />
+			)}
 			<div className="asset-storage-details">
 				<strong title={name}>{name}</strong>
-				<span>{thumb ? `${thumb.kind === "matte" ? ko("Matte", "매트") : ko("Image", "이미지")} · ${thumb.bytesLabel}` : ko("Loading details…", "세부 정보 불러오는 중…")}</span>
+				<span>{thumb ? `${kindLabel} · ${thumb.bytesLabel}` : ko("Loading details…", "세부 정보 불러오는 중…")}</span>
 				{inUse && <span className="asset-storage-usage">{usageLabel}</span>}
 			</div>
 			{confirmation ? (
@@ -287,11 +355,11 @@ function StorageManager({ unusedAssetIds, usedAssetIds, usageCounts, graphSignat
  * heading. The drag itself is owned by App (ghost overlay + ground raycast on
  * drop); the pane only reports the grab with a discriminated payload.
  *
- * `imageAssetIds` is null while App's asset scan is in flight, then the list
- * of SOURCE ids (see asset-shelf.js) — derived mattes and cut renders never
- * reach this component.
+ * `imageAssetIds` / `meshAssetIds` are null while App's asset scan is in
+ * flight, then the SOURCE ids (see asset-shelf.js) — derived mattes and cut
+ * renders never reach this component. Mesh ids are the imported GLBs.
  */
-export default function AssetPane({ onAssetGrab, imageAssetIds, manageStorage, onManageStorageToggle, unusedAssetIds, usedAssetIds, usageCounts, graphSignature, trashCount, onDeleteUnusedAsset, onUndoDelete, deletingAssetId, resourceManifest }) {
+export default function AssetPane({ onAssetGrab, imageAssetIds, meshAssetIds = null, manageStorage, onManageStorageToggle, unusedAssetIds, usedAssetIds, usageCounts, graphSignature, trashCount, onDeleteUnusedAsset, onUndoDelete, deletingAssetId, resourceManifest }) {
 	return (
 		<div className="assets-shelf">
 			{resourceManifest ? <ResourceStatus manifest={resourceManifest} compact /> : null}
@@ -358,6 +426,25 @@ export default function AssetPane({ onAssetGrab, imageAssetIds, manageStorage, o
 					) : (
 						<div className="assets-grid">
 							{imageAssetIds.map((id) => <ImageAssetCard key={id} id={id} onAssetGrab={onAssetGrab} />)}
+						</div>
+					)}
+				</section>
+				<section className="assets-section">
+					<h3 className="assets-section-title">{ko("My models", "내 모델")}</h3>
+					{meshAssetIds === null ? (
+						<div className="assets-grid" aria-busy="true">
+							{[0, 1, 2].map((n) => <span className="asset-card asset-card-skeleton" key={n} aria-hidden="true" />)}
+						</div>
+					) : meshAssetIds.length === 0 ? (
+						<p className="assets-empty">
+							{ko(
+								"No imported models yet. Use \u201cImport 3D object\u201d in the Props inspector, or drop a .glb, .obj or .fbx into the studio.",
+								"아직 가져온 모델이 없어요. 소품 인스펙터의 \u201c3D 오브젝트 가져오기\u201d를 사용하거나, .glb, .obj 또는 .fbx 파일을 스튜디오에 끌어다 놓으세요.",
+							)}
+						</p>
+					) : (
+						<div className="assets-grid">
+							{meshAssetIds.map((id) => <MeshAssetCard key={id} id={id} onAssetGrab={onAssetGrab} />)}
 						</div>
 					)}
 				</section>

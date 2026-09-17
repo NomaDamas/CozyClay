@@ -19,8 +19,8 @@
  * (test/verify-asset-shelf.mjs) can pin the rule without a browser.
  */
 
-import { isAssetId } from "./scene-assets.js";
-import { CUTOUT_KIND } from "./scene-objects.js";
+import { isAssetId, isMeshAssetId, isSupportedMeshType } from "./scene-assets.js";
+import { CUTOUT_KIND, MESH_KIND } from "./scene-objects.js";
 
 /** A compact, locale-neutral byte label for the storage manager. */
 export function formatAssetBytes(value) {
@@ -32,8 +32,11 @@ export function formatAssetBytes(value) {
 	return `${amount >= 10 ? Math.round(amount) : Number(amount.toFixed(1))} ${units[exponent - 1]}`;
 }
 
-/** Some stored derivatives name themselves; leave unmarked records as images. */
+/** Some stored derivatives name themselves; leave unmarked records as images.
+ * Meshes are identified by id or MIME so a GLB never appears as a picture in
+ * the storage manager, even when its filename looks like a matte. */
 export function assetKind(asset) {
+	if (isMeshAssetId(asset?.id) || isSupportedMeshType(asset?.type)) return "mesh";
 	return /\bmatte$/i.test(String(asset?.name ?? "").trim()) ? "matte" : "image";
 }
 
@@ -44,6 +47,10 @@ function classifyLineage(scenes) {
 	const derived = new Set();
 	for (const scene of Array.isArray(scenes) ? scenes : []) {
 		for (const object of Array.isArray(scene?.objects) ? scene.objects : []) {
+			if (object?.renderer === MESH_KIND) {
+				if (isAssetId(object.assetId)) sources.add(object.assetId);
+				continue;
+			}
 			if (object?.renderer !== CUTOUT_KIND) continue;
 			const { assetId, sourceAssetId, matteAssetId } = object;
 			if (isAssetId(sourceAssetId)) sources.add(sourceAssetId);

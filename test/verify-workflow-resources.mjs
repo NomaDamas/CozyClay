@@ -89,6 +89,7 @@ assert.equal(outputKind(""), null);
 assert.equal(outputKind(42), null);
 assert.ok(isAssetRef({ assetRef: "img-0123456789abcdef0123456789abcdef" }));
 assert.equal(isAssetRef("img-0123456789abcdef0123456789abcdef"), false, "a bare id string is not a ref");
+assert.equal(isAssetRef({ assetRef: "mesh-0123456789abcdef0123456789abcdef" }), false, "a mesh id is not a workflow image ref");
 console.log("PASS workflow resources: output values classify as data-url / http / blob / asset-ref / other");
 
 /* ------------------------------------------------- workflowOutputRefs ---- */

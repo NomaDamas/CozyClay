@@ -16,7 +16,7 @@ import {
 	PROJECT_MAX_RESOURCE_BYTES,
 } from "../src/project.js";
 import { createSceneDocument, createSceneStage, SCENES_VERSION } from "../src/scenes.js";
-import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, referencedAssetIds } from "../src/scene-assets.js";
+import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, meshIdForBytes, referencedAssetIds } from "../src/scene-assets.js";
 
 // The studio source spans App.jsx and app-stage.jsx (module-level extraction); pin against both.
 const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")
@@ -156,6 +156,78 @@ assert.deepEqual(
 	[renderedAssetId, sourceAssetId, matteAssetId].sort(),
 	"the referenced closure excludes unrelated embedded ids",
 );
+
+// --- embedded mesh assets --------------------------------------------------
+// A GLB shares the resources.assets bag with pictures but lives under mesh-
+// ids. verifyEmbeddedAsset has to hash with meshIdForBytes or a round-trip
+// would look like a mismatched image id.
+const meshSourceBytes = new Uint8Array(readFileSync(new URL("./fixtures/unit-cube.glb", import.meta.url)));
+const meshAssetId = await meshIdForBytes(meshSourceBytes, webcrypto.subtle);
+const meshAssetRecord = {
+	id: meshAssetId,
+	type: "model/gltf-binary",
+	name: "unit-cube.glb",
+	bytes: meshSourceBytes,
+};
+assert.equal(await verifyEmbeddedAsset(meshAssetRecord, webcrypto.subtle), true, "matching embedded mesh bytes verify against their mesh- content address");
+const objSourceBytes = new Uint8Array(readFileSync(new URL("./fixtures/unit-cube.obj", import.meta.url)));
+const objAssetId = await meshIdForBytes(objSourceBytes, webcrypto.subtle);
+const objAssetRecord = {
+	id: objAssetId,
+	type: "model/obj",
+	name: "unit-cube.obj",
+	bytes: objSourceBytes,
+};
+assert.equal(await verifyEmbeddedAsset(objAssetRecord, webcrypto.subtle), true, "matching embedded OBJ bytes verify against their mesh- content address");
+const fbxSourceBytes = new Uint8Array(readFileSync(new URL("./fixtures/unit-cube.fbx", import.meta.url)));
+const fbxAssetId = await meshIdForBytes(fbxSourceBytes, webcrypto.subtle);
+const fbxAssetRecord = {
+	id: fbxAssetId,
+	type: "model/fbx",
+	name: "unit-cube.fbx",
+	bytes: fbxSourceBytes,
+};
+assert.equal(await verifyEmbeddedAsset(fbxAssetRecord, webcrypto.subtle), true, "matching embedded FBX bytes verify against their mesh- content address");
+assert.ok(assetDocument.resources.assets.every((asset) => asset.id.startsWith("img-")), "a picture-only project still embeds only image ids");
+
+const meshScenesDocument = createSceneDocument("MESH");
+meshScenesDocument.scenes[0].objects = [{
+	id: "cooker",
+	renderer: "mesh",
+	assetId: meshAssetId,
+	height: 1,
+	footprint: { width: 1, depth: 1 },
+	clay: false,
+}];
+const meshDocument = createProjectDocument({ scenesDocument: meshScenesDocument, assets: [meshAssetRecord] });
+assert.deepEqual(meshDocument.resources.assets.map((asset) => asset.id), [meshAssetId], "a referenced mesh blob is embedded");
+assert.equal(meshDocument.resources.assets[0].type, "model/gltf-binary");
+assert.ok(typeof meshDocument.resources.assets[0].bytes === "string" && !meshDocument.resources.assets[0].bytes.startsWith("data:"), "mesh bytes are bare base64 like pictures");
+const parsedMesh = readProjectDocument(JSON.stringify(meshDocument));
+assert.equal(parsedMesh.ok, true);
+assert.deepEqual(parsedMesh.problems, [], "a clean mesh document reports no resource problems");
+const roundTrippedMesh = parsedMesh.project.assets.find((asset) => asset.id === meshAssetId);
+assert.ok(roundTrippedMesh, "the mesh id survives a project round-trip");
+assert.deepEqual([...new Uint8Array(roundTrippedMesh.bytes)], [...meshSourceBytes], "embedded mesh bytes round-trip byte-for-byte");
+
+const mixedScenesDocument = createSceneDocument("MIXED");
+mixedScenesDocument.scenes[0].objects = [
+	{ id: "cooker", renderer: "mesh", assetId: meshAssetId, height: 1, footprint: { width: 1, depth: 1 } },
+	{ id: "card", renderer: "cutout", assetId: sourceAssetId, sourceAssetId, matteAssetId: "" },
+];
+const mixedDocument = createProjectDocument({
+	scenesDocument: mixedScenesDocument,
+	assets: [meshAssetRecord, ...fakeAssets],
+});
+assert.deepEqual(
+	mixedDocument.resources.assets.map((asset) => asset.id).sort(),
+	[meshAssetId, sourceAssetId].sort(),
+	"mesh- and img- ids may sit together in resources.assets",
+);
+const parsedMixed = readProjectDocument(JSON.stringify(mixedDocument));
+assert.equal(parsedMixed.ok, true);
+assert.equal(parsedMixed.project.assets.some((asset) => asset.id === meshAssetId), true);
+assert.equal(parsedMixed.project.assets.some((asset) => asset.id === sourceAssetId), true);
 
 // --- validation boundaries ------------------------------------------------
 assert.equal(readProjectDocument("{broken").ok, false, "corrupt JSON rejected");
@@ -353,6 +425,16 @@ assert.match(appSource, /queryHandlePermission/, "auto-restore only with a grant
 assert.match(appSource, /referencedAssetIds/, "export finds the complete referenced asset closure");
 assert.match(appSource, /getAsset/, "export reads referenced asset records from IndexedDB");
 assert.match(appSource, /putAsset/, "open restores embedded asset records to IndexedDB");
+assert.match(appSource, /verifyEmbeddedAsset\(asset\)/, "project open verifies mesh blobs with mesh- ids, not as img-");
+assert.match(appSource, /meshBoundsFromAsset\(/, "shelf spawn measures OBJ, FBX and GLB through one helper, not parseGlbBounds alone");
+assert.doesNotMatch(appSource, /type:\s*mimeOk\s*\?\s*mime\s*:\s*"model\/gltf-binary"/, "MCP mesh File type is not coerced onto glTF-binary");
+assert.match(appSource, /data:model\/fbx/, "MCP mesh import accepts a model/fbx data URL");
+assert.match(appSource, /nameLower\.endsWith\("\.fbx"\)/, "MCP mesh import accepts text/plain ASCII FBX by filename");
+assert.doesNotMatch(
+	appSource,
+	/placeAs === "mesh"[\s\S]{0,400}add_character|placeAs === "mesh"[\s\S]{0,400}createCharacterEntry/,
+	"MCP mesh import does not stand the file up as a character",
+);
 assert.match(appSource, /encodeMotionResource\(/, "project save encodes the loaded NPZ bytes");
 assert.match(appSource, /motionEncodingCacheRef = useRef\(new WeakMap\(\)\)/, "project save keeps an identity cache for encoded motion resources");
 assert.match(appSource, /motionEncodingCacheRef\.current\.get\(clip\.sourceBytes\)/, "project save checks the clip identity before encoding");

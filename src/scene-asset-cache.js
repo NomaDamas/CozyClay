@@ -12,7 +12,16 @@
  */
 
 import * as THREE from "three";
-import { getAsset, openAssetDb, putAsset } from "./scene-assets.js";
+import { getAsset, isMeshAssetId, isSupportedMeshType, openAssetDb, putAsset } from "./scene-assets.js";
+
+/** Mesh blobs live in the same store as pictures. They must never reach
+ * `createImageBitmap`: a GLB is not an image, and decoding one would throw
+ * (or worse, hang) on every mistaken load. */
+function isMeshRecord(asset) {
+	if (!asset) return false;
+	if (typeof asset.id === "string" && isMeshAssetId(asset.id)) return true;
+	return isSupportedMeshType(asset.type);
+}
 
 /** Build a cache with injectable browser seams for deterministic race tests. */
 export function createAssetTextureCache({
@@ -45,6 +54,7 @@ export function createAssetTextureCache({
 	/** A texture from asset bytes. ImageBitmap ignores Texture.flipY, so the
 	 * flip is asked of the decoder instead. */
 	async function textureFromAsset(asset) {
+		if (isMeshRecord(asset)) return null;
 		const bitmap = await createBitmap(new Blob([asset.bytes], { type: asset.type }), { imageOrientation: "flipY" });
 		const texture = makeTexture(bitmap);
 		texture.flipY = false;
@@ -61,6 +71,9 @@ export function createAssetTextureCache({
 	/** The texture for this id, decoded once and shared. */
 	function loadAssetTexture(id) {
 		if (typeof id !== "string" || !id) return Promise.resolve(null);
+		// Mesh ids share the asset store. A mistaken subscribe must not decode
+		// GLB bytes as a bitmap — that is the mesh cache's job.
+		if (isMeshAssetId(id)) return Promise.resolve(null);
 		const entry = entryFor(id);
 		if (entry.evicted) return Promise.resolve(null);
 		if (entry.texture) return Promise.resolve(entry.texture);
@@ -69,6 +82,7 @@ export function createAssetTextureCache({
 			entry.promise = (async () => {
 				const asset = entry.record ?? (await getRecord(id));
 				if (!asset || entry.evicted || entry.generation !== generation) return null;
+				if (isMeshRecord(asset)) return null;
 				entry.record = asset;
 				const texture = await textureFromAsset(asset);
 				if (entry.evicted || entry.generation !== generation) {
@@ -112,8 +126,11 @@ export function createAssetTextureCache({
 		entry.texture = null;
 		entry.record = stored;
 		entry.promise = null;
+		// A GLB in this function would always hit createImageBitmap. Mesh import
+		// stores bytes with putAsset and leaves textures alone.
+		if (isMeshRecord(stored) || isMeshAssetId(stored.id)) return stored;
 		const texture = await textureFromAsset(stored);
-		if (entry.generation !== generation) {
+		if (!texture || entry.generation !== generation) {
 			dispose(texture);
 			return stored;
 		}

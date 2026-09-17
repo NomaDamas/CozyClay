@@ -49,7 +49,7 @@ export function mcpToolCategory(name) {
 	if (name === "set_prompt_blocks") return "prompt_authoring";
 	if (name === "save_project" || name === "open_project") return "project_io";
 	if (name === "describe_scene" || name === "describe_shot" || name === "render_prompt" || name === "live_status") return "read";
-	if (name === "add_character" || name === "place_character" || name === "remove_character" || name === "focus_character" || name === "place_object" || name === "group_objects" || name === "update_object" || name === "remove_object" || name === "apply_batch" || name === "add_scene" || name === "switch_scene") return "scene_write";
+	if (name === "add_character" || name === "place_character" || name === "remove_character" || name === "focus_character" || name === "place_object" || name === "import_mesh" || name === "group_objects" || name === "update_object" || name === "remove_object" || name === "apply_batch" || name === "add_scene" || name === "switch_scene") return "scene_write";
 	return "other";
 }
 

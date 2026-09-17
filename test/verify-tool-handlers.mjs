@@ -9,7 +9,7 @@
  *   1. importing it costs nothing — no port, no chdir, no signal handler, no
  *      live hub. Those belong to the process that owns the server, so a plain
  *      import must leave this process exactly as it found it.
- *   2. the registry still describes the same 25 tools, in the same order, each
+ *   2. the registry still describes the same 26 tools, in the same order, each
  *      carrying the safety annotations tools/list publishes, and a handler that
  *      can be called directly.
  *
@@ -24,7 +24,7 @@ import { strict as assert } from "node:assert";
 const EXPECTED_TOOLS = [
 	"describe_scene", "live_status", "describe_shot", "capture_frame", "set_camera",
 	"frame_shot", "add_character", "place_character", "remove_character", "focus_character",
-	"place_object", "group_objects", "set_prompt_blocks", "load_motion", "generate_motion",
+	"place_object", "import_mesh", "group_objects", "set_prompt_blocks", "load_motion", "generate_motion",
 	"update_object", "remove_object", "apply_batch", "render_prompt", "mark_camera_move",
 	"describe_camera_move", "add_scene", "switch_scene", "open_project", "save_project",
 ];

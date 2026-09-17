@@ -143,11 +143,14 @@ import { SetProps } from "./props.jsx";
 import {
 	CUTOUT_DEFAULT_HEIGHT,
 	CUTOUT_KIND,
+	MESH_KIND,
 	OBJECT_COLORS,
 	OBJECT_LIBRARY,
 	createCutoutObject,
+	createMeshObject,
 	createSceneObject,
 	duplicateCutoutOptions,
+	duplicateMeshOptions,
 	dropToSurfacePatch,
 	normalizeObjectColor,
 	objectSize,
@@ -167,7 +170,6 @@ import {
 	ASSET_IMAGE_TYPES,
 	assetAspect,
 	assetGraphSignature,
-	assetIdForBytes,
 	assetUsageCounts,
 	deleteAsset,
 	deleteAssetWithGraphGuard,
@@ -175,6 +177,9 @@ import {
 	getAsset,
 	imageFilesFromClipboard,
 	importImageFile,
+	isImageAssetId,
+	isMeshAssetId,
+	isSupportedMeshType,
 	listAssetIds,
 	openAssetDb,
 	putAsset,
@@ -183,6 +188,8 @@ import {
 } from "./scene-assets.js";
 import { derivedAssetIds, sourceAssetIds } from "./asset-shelf.js";
 import { assetRecord, evictAssetTexture, rememberAsset } from "./scene-asset-cache.js";
+import { evictMeshScene } from "./scene-mesh-cache.js";
+import { compressedGlbReason, fitMeshBounds, importMeshFile, MESH_HEIGHT_MIN, meshBoundsFromAsset } from "./scene-mesh.js";
 import { subscribeToSceneDocuments, subscribeToScenePlayback } from "./workflow/scene-asset-sync.js";
 import { cutOutBackground, decodeMask, maskAsset } from "./matte.js";
 import { createMatteEditor } from "./matte-editor.js";
@@ -219,6 +226,7 @@ import {
 	queryHandlePermission,
 	requestHandlePermission,
 	readProjectDocument,
+	verifyEmbeddedAsset,
 	loadWorkflowGraph,
 	readProjectFile,
 	rememberRecentProject,
@@ -449,7 +457,7 @@ import {
 	toArdyFrame,
 	toArdyFrameEntries,
 	toArdySegments,
-	useImageDrop,
+	useStageFilesDrop,
 } from "./app-stage.jsx";
 
 /**
@@ -1535,7 +1543,7 @@ export default function App() {
 
 	// A grabbed asset card follows the pointer as a DOM ghost; dropping over
 	// the shot pane raycasts to the floor and spawns the payload there. The
-	// payload is discriminated — {kind:'character'|'object'|'image'} — so one
+	// payload is discriminated — {kind:'character'|'object'|'image'|'mesh'} — so one
 	// drag seam serves the whole shelf.
 	const [assetDrag, setAssetDrag] = useState(null);
 	const spawnCharacter = (model, x, z) => {
@@ -1567,16 +1575,18 @@ export default function App() {
 			raycaster.setFromCamera(pointer, cam);
 			const hit = new THREE.Vector3();
 			if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return;
-			// Dispatch on the payload kind: same ray, three spawners. Characters
+			// Dispatch on the payload kind: same ray, four spawners. Characters
 			// keep their tighter stage clamp (the rig walks, a prop does not);
-			// objects and cutouts take the same ROOM_LIMIT clamp their creators
-			// already apply.
+			// objects, cutouts and meshes take the same ROOM_LIMIT clamp their
+			// creators already apply.
 			if (payload.kind === "character") {
 				spawnCharacter(payload.id, THREE.MathUtils.clamp(hit.x, -4, 4), THREE.MathUtils.clamp(hit.z, -4, 4));
 			} else if (payload.kind === "object") {
 				addSceneObject(payload.objectKind, { x: hit.x, z: hit.z });
 			} else if (payload.kind === "image") {
 				spawnCutoutAt(payload.assetId, { x: hit.x, z: hit.z });
+			} else if (payload.kind === "mesh") {
+				spawnMeshAt(payload.assetId, { x: hit.x, z: hit.z });
 			}
 		};
 		window.addEventListener("pointermove", onMove);
@@ -1883,8 +1893,9 @@ export default function App() {
 		setToast(isKo ? `${sceneObjectNameDisplayKo(object.name)}을 표면 위에 내려놓았어요` : `${object.name} dropped to surface`);
 	}
 
-	/** The hidden file input behind "Import image as cutout". */
+	/** The hidden file inputs behind the Props import buttons. */
 	const cutoutInputRef = useRef(null);
+	const meshInputRef = useRef(null);
 	// One drop zone shared by every surface that accepts a picture: the Props
 	// branch of the hierarchy, the Props inspector, and the shot view itself.
 	// One per surface, so only the thing under the cursor lights up.
@@ -1916,13 +1927,17 @@ export default function App() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const rejectImageDrop = (count) => setToast(ko(
-		`${count} file${count > 1 ? "s" : ""} not supported — use PNG, JPG, WebP or GIF (iPhone HEIC photos need converting first)`,
-		`지원하지 않는 파일 ${count}개 — PNG, JPG, WebP, GIF만 가능해요 (아이폰 HEIC 사진은 먼저 변환해 주세요)`,
+	const rejectUnsupportedDrop = (count) => setToast(ko(
+		`${count} file${count > 1 ? "s" : ""} not supported — use PNG, JPG, WebP, GIF or a .glb / .obj / .fbx (iPhone HEIC photos need converting first)`,
+		`지원하지 않는 파일 ${count}개 — PNG, JPG, WebP, GIF 또는 .glb / .obj / .fbx만 가능해요 (아이폰 HEIC 사진은 먼저 변환해 주세요)`,
 	));
-	const propsDrop = useImageDrop((files) => importCutouts(files), rejectImageDrop);
-	const inspectorDrop = useImageDrop((files) => importCutouts(files), rejectImageDrop);
-	const viewportDrop = useImageDrop((files) => importCutouts(files));
+	const stageDrop = {
+		onImages: (files) => importCutouts(files),
+		onMeshes: (files) => importMeshes(files),
+	};
+	const propsDrop = useStageFilesDrop({ ...stageDrop, onRejected: rejectUnsupportedDrop });
+	const inspectorDrop = useStageFilesDrop({ ...stageDrop, onRejected: rejectUnsupportedDrop });
+	const viewportDrop = useStageFilesDrop({ ...stageDrop, onRejected: rejectUnsupportedDrop });
 	// How much of the wall counts as the wall, and how wide the brush that
 	// argues with the answer is.
 	const [matteTolerance, setMatteTolerance] = useState(0.18);
@@ -2076,6 +2091,105 @@ export default function App() {
 		);
 	}
 
+	function meshNameFromFile(fileName) {
+		const base = String(fileName ?? "").replace(/\.[^.]+$/, "").trim();
+		return base || ko("Model", "모델");
+	}
+
+	async function persistMeshAsset(asset) {
+		const db = await openAssetDb();
+		try {
+			return await putAsset(db, asset);
+		} finally {
+			db.close?.();
+		}
+	}
+
+	function placementInFrontOfShot() {
+		const camera = (lookThroughShot ? shotCamRef : editorCamRef).current;
+		return camera
+			? placementInFront({ x: camera.position.x, z: camera.position.z }, (lookThroughShot ? look : editorLook).current.yaw)
+			: {};
+	}
+
+	/**
+	 * Import one GLB and stand it on the floor. Bytes go through putAsset —
+	 * never rememberAsset — because the texture cache would decode them as a
+	 * bitmap. Height and footprint come from the import heuristic once;
+	 * later instances reuse those stored metres.
+	 */
+	async function importMesh(file) {
+		if (!file) return;
+		try {
+			const { asset, height, footprint } = await importMeshFile(file);
+			await persistMeshAsset(asset);
+			const object = createMeshObject(
+				{ assetId: asset.id, height, footprint, name: meshNameFromFile(asset.name) },
+				store.objects,
+				placementInFrontOfShot(),
+			);
+			if (!object) return;
+			store.applyAtomic((objects) => [...objects, object]);
+			setSelectedHierarchyId(`object:${object.id}`);
+			setGizmoMode("move");
+			setToast(
+				isKo
+					? `${object.name} 추가됨 — 실제 높이(m)를 입력하면 크기가 맞습니다`
+					: `${object.name} added — type its real height in metres to set the scale`,
+			);
+		} catch (error) {
+			setToast(isKo ? `모델을 가져오지 못했어요 — ${error.message}` : `Could not import that model — ${error.message}`);
+		}
+	}
+
+	async function importMeshes(files) {
+		for (const file of files) await importMesh(file);
+	}
+
+	/**
+	 * Stand an already-stored GLB up as a fresh instance. The shelf drop does
+	 * not keep a previous object's size: it re-reads the blob and fits once,
+	 * the same as a first import, because there is no prior record to copy.
+	 */
+	async function spawnMeshAt(assetId, placement) {
+		markCraftAction("object");
+		const record = await assetRecord(assetId);
+		if (!record) {
+			setToast(ko("That model is no longer stored", "그 모델은 더 이상 저장되어 있지 않아요"));
+			return;
+		}
+		const compressed = compressedGlbReason(record.bytes);
+		if (compressed) {
+			setToast(isKo ? `모델을 가져오지 못했어요 — ${compressed}` : `Could not import that model — ${compressed}`);
+			return;
+		}
+		const bounds = meshBoundsFromAsset(record);
+		const fitted = bounds ? fitMeshBounds(bounds) : null;
+		if (!fitted) {
+			setToast(ko("That model has no measurable geometry", "그 모델은 측정할 수 있는 형태가 없어요"));
+			return;
+		}
+		const object = createMeshObject(
+			{
+				assetId: record.id,
+				height: fitted.height,
+				footprint: fitted.footprint,
+				name: meshNameFromFile(record.name),
+			},
+			store.objects,
+			placement,
+		);
+		if (!object) return;
+		store.applyAtomic((objects) => [...objects, object]);
+		setSelectedHierarchyId(`object:${object.id}`);
+		setGizmoMode("move");
+		setToast(
+			isKo
+				? `${object.name} 추가됨 — 실제 높이(m)를 입력하면 크기가 맞습니다`
+				: `${object.name} added — type its real height in metres to set the scale`,
+		);
+	}
+
 	/**
 	 * Apply what the background editor is showing.
 	 *
@@ -2140,7 +2254,9 @@ export default function App() {
 		// door and shares the asset rather than importing it twice.
 		const copy = object.renderer === CUTOUT_KIND
 			? createCutoutObject(duplicateCutoutOptions(object), sceneObjects, placement)
-			: createSceneObject(object.renderer, sceneObjects, placement);
+			: object.renderer === MESH_KIND
+				? createMeshObject(duplicateMeshOptions(object), sceneObjects, placement)
+				: createSceneObject(object.renderer, sceneObjects, placement);
 		if (!copy) return;
 		// Unity drops the duplicate exactly on top of the original; for blocking,
 		// one grid step to the side means you can see that it worked.
@@ -2646,6 +2762,7 @@ export default function App() {
 	// re-run when a cutout's lineage changes — not on every transform tick, so
 	// a gizmo drag never hammers IndexedDB.
 	const [shelfImageIds, setShelfImageIds] = useState(null);
+	const [shelfMeshIds, setShelfMeshIds] = useState(null);
 	const [manageAssetStorage, setManageAssetStorage] = useState(false);
 	// A separate scan preserves the source-only placement shelf while the
 	// manager exposes every unreachable stored record, including matte and cut
@@ -2670,6 +2787,10 @@ export default function App() {
 	const [deletingAssetId, setDeletingAssetId] = useState(null);
 	const cutoutLineage = useMemo(
 		() => JSON.stringify(sceneObjects.flatMap((object) => (object.renderer === CUTOUT_KIND ? [[object.assetId, object.sourceAssetId, object.matteAssetId]] : []))),
+		[sceneObjects],
+	);
+	const meshLineage = useMemo(
+		() => JSON.stringify(sceneObjects.flatMap((object) => (object.renderer === MESH_KIND ? [object.assetId] : []))),
 		[sceneObjects],
 	);
 	const projectCutoutLineage = useMemo(() => {
@@ -2728,7 +2849,9 @@ export default function App() {
 			const latestUsageCounts = assetUsageCounts(allScenes);
 			const latestUsedAssetIds = stored.filter((id) => latestUsageCounts.has(id));
 			if (!current()) return;
-			setShelfImageIds(sourceAssetIds(stored, allScenes, derivedIds));
+			const sourceIds = sourceAssetIds(stored, allScenes, derivedIds);
+			setShelfImageIds(sourceIds.filter(isImageAssetId));
+			setShelfMeshIds(sourceIds.filter(isMeshAssetId));
 			setUnusedAssetIds(unreachableAssetIds(stored, allScenes));
 			setUsedAssetIds(latestUsedAssetIds);
 			setUsageCounts(latestUsageCounts);
@@ -2737,6 +2860,7 @@ export default function App() {
 			// empty rather than presenting an unverifiable deletion target.
 			if (current()) {
 				setShelfImageIds([]);
+				setShelfMeshIds([]);
 				setUnusedAssetIds([]);
 				setUsedAssetIds([]);
 				setUsageCounts(new Map());
@@ -2753,7 +2877,7 @@ export default function App() {
 			alive = false;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [bottomTab, scenes, activeSceneId, cutoutLineage]);
+	}, [bottomTab, scenes, activeSceneId, cutoutLineage, meshLineage]);
 
 	async function deleteUnusedAsset(id, expectedUsageCount, expectedGraphSignature) {
 		if (deletingAssetId) return false;
@@ -2808,6 +2932,7 @@ export default function App() {
 				return false;
 			}
 			evictAssetTexture(id);
+			evictMeshScene(id);
 			setAssetTrash((current) => [...current.filter((asset) => asset.id !== record.id), record]);
 			setAssetUndoOffered(true);
 			deleted = true;
@@ -2828,7 +2953,11 @@ export default function App() {
 		setDeletingAssetId(record.id);
 		let restored = false;
 		try {
-			await rememberAsset(record);
+			if (isMeshAssetId(record.id) || isSupportedMeshType(record.type)) {
+				await persistMeshAsset(record);
+			} else {
+				await rememberAsset(record);
+			}
 			setAssetTrash((current) => current.filter((asset) => asset.id !== record.id));
 			setAssetUndoOffered(false);
 			restored = true;
@@ -2877,13 +3006,15 @@ export default function App() {
 	// Auto color: Blender's viewport "Random" mode. A DISPLAY-ONLY marker rides
 	// each non-cutout object into the renderers; the authored `color`, the scene
 	// document, undo history and the MCP view never change — toggling OFF makes
-	// this list the animated list again, byte for byte.
+	// this list the animated list again, byte for byte. Meshes take the same
+	// override as a cube: the renderer tints the visible material (file or clay).
 	const [autoColor, setAutoColor] = useState(loadAutoColor);
 	const displaySceneObjects = useMemo(() => {
 		if (!autoColor) return animatedSceneObjects;
-		return animatedSceneObjects.map((object) =>
-			object.renderer === CUTOUT_KIND ? object : { ...object, autoColor: autoColorHex(object.id) },
-		);
+		return animatedSceneObjects.map((object) => {
+			if (object.renderer === CUTOUT_KIND) return object;
+			return { ...object, autoColor: autoColorHex(object.id) };
+		});
 	}, [animatedSceneObjects, autoColor]);
 
 	/* ------------------------ carried props (attachment) ------------------- */
@@ -3701,7 +3832,7 @@ export default function App() {
 						console.warn(`[cozyclay] skipped embedded asset outside the project closure: ${asset.id}`);
 						return;
 					}
-					if ((await assetIdForBytes(asset.bytes)) !== asset.id) {
+					if (!(await verifyEmbeddedAsset(asset))) {
 						console.warn(`[cozyclay] skipped embedded asset with mismatched content address: ${asset.id}`);
 						return;
 					}
@@ -4517,7 +4648,68 @@ export default function App() {
 			// the document without touching undo; this must not repeat that.
 			import_asset: async (args) => {
 				if (typeof args.name !== "string" || !args.name.trim()) throw new Error("Invalid name");
-				if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout" or "backdrop"');
+				if (args.placeAs === "mesh") {
+					const dataUrl = args.dataUrl;
+					if (typeof dataUrl !== "string") throw new Error("dataUrl must be a 3D model data URL");
+					const nameLower = String(args.name).toLowerCase();
+					const headerMime = dataUrl.slice(5, dataUrl.search(/[;,]/)).toLowerCase();
+					const mime = (typeof args.mimeType === "string" && args.mimeType
+						? args.mimeType
+						: headerMime).toLowerCase();
+					const objPlain = mime === "text/plain" && nameLower.endsWith(".obj");
+					const fbxPlain = mime === "text/plain" && nameLower.endsWith(".fbx");
+					const headerOk = dataUrl.startsWith("data:model/gltf-binary")
+						|| dataUrl.startsWith("data:application/octet-stream")
+						|| dataUrl.startsWith("data:model/obj")
+						|| dataUrl.startsWith("data:model/fbx")
+						|| (dataUrl.startsWith("data:text/plain") && (nameLower.endsWith(".obj") || nameLower.endsWith(".fbx")));
+					const mimeOk = mime === "model/gltf-binary" || mime === "application/octet-stream"
+						|| mime === "model/obj" || mime === "model/fbx" || objPlain || fbxPlain;
+					if (!headerOk && !mimeOk) throw new Error("dataUrl must be a 3D model data URL");
+					const bytes = await (await fetch(dataUrl)).arrayBuffer();
+					const fileType = mime || headerMime || "application/octet-stream";
+					const file = new File([bytes], args.name, { type: fileType });
+					const { asset, height, footprint } = await importMeshFile(file);
+					const db = await openAssetDb();
+					try {
+						await putAsset(db, asset);
+					} finally {
+						db.close?.();
+					}
+					const live = liveStateRef.current;
+					const camera = shotCamRef.current;
+					const hasFloor = Number.isFinite(args.x) || Number.isFinite(args.z);
+					const placement = hasFloor
+						? {
+							x: Number.isFinite(args.x) ? args.x : 0,
+							z: Number.isFinite(args.z) ? args.z : 0,
+						}
+						: camera
+							? placementInFront({ x: camera.position.x, z: camera.position.z }, look.current.yaw)
+							: {};
+					if (Number.isFinite(args.rot)) placement.rot = args.rot;
+					let object = createMeshObject(
+						{
+							assetId: asset.id,
+							height,
+							footprint,
+							name: args.name,
+							clay: args.clay === true,
+						},
+						live.objects,
+						placement,
+					);
+					if (!object) throw new Error("Could not create the mesh object");
+					// Inspector height edits scale the stored footprint. Do the same
+					// here so a 50 cm import is a smaller cube, not a squat 1×1×0.5 box.
+					if (Number.isFinite(args.height) && args.height > 0) {
+						object = updateSceneObject([object], object.id, { height: args.height })[0];
+					}
+					if (Number.isFinite(args.y)) object.y = args.y;
+					applyObjectMutation((objects) => [...objects, object]);
+					return { assetId: asset.id, objectId: object.id };
+				}
+				if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout", "backdrop" or "mesh"');
 				if (typeof args.dataUrl !== "string" || !args.dataUrl.startsWith("data:image/")) throw new Error("dataUrl must be an image data URL");
 				const mime = typeof args.mimeType === "string" && args.mimeType
 					? args.mimeType
@@ -4582,6 +4774,8 @@ export default function App() {
 					if (args.path !== null && createObjectPath(args.path) === null) throw new Error("Invalid path: needs two or more distinct points");
 					patch.path = args.path;
 				}
+				if (Number.isFinite(args.height)) patch.height = args.height;
+				if (typeof args.clay === "boolean") patch.clay = args.clay;
 				applyObjectMutation((objects) => updateSceneObject(objects, args.id, patch));
 				return { id: args.id };
 			},
@@ -7437,6 +7631,7 @@ export default function App() {
 				return true;
 			},
 			captureWithReferences: () => liveHandlersRef.current.capture_framing_png({}),
+			importAsset: (args) => liveHandlersRef.current.import_asset(args),
 			// QA-only reference exports (#165): the production builders without the
 			// download, so a headless run can unzip a real pack and diff the passes
 			// instead of driving a file dialog. Same liveStateRef reasoning as
@@ -13682,7 +13877,7 @@ function resizePromptClip(id, edge, rawFrame) {
 
 				<Foldout hidden={selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
 					<div className="props-drop" data-drop={inspectorDrop.over ? "over" : "target"} {...inspectorDrop.handlers}>
-					<p className="inspector-hint">{ko("Everything you add to the set lives here. Pick one to edit it, or click it in the shot view. Drop a picture anywhere here — or on the shot view — to stand it up as a cutout.", "세트에 추가한 모든 소품이 여기에 모입니다. 편집하려면 하나를 고르거나 샷 뷰에서 클릭하세요. 사진을 이 영역이나 샷 뷰에 끌어다 놓으면 컷아웃으로 세워집니다.")}</p>
+					<p className="inspector-hint">{ko("Everything you add to the set lives here. Pick one to edit it, or click it in the shot view. Drop a picture anywhere here — or on the shot view — to stand it up as a cutout. You can also drop a .glb, .obj or .fbx to import a 3D object.", "세트에 추가한 모든 소품이 여기에 모입니다. 편집하려면 하나를 고르거나 샷 뷰에서 클릭하세요. 사진을 이 영역이나 샷 뷰에 끌어다 놓으면 컷아웃으로 세워집니다. .glb, .obj 또는 .fbx 파일을 놓으면 3D 오브젝트로 가져옵니다.")}</p>
 					<AddObjectMenu onAdd={addSceneObject} label={ko("Add object to the set", "세트에 오브젝트 추가")} />
 					<button
 						type="button"
@@ -13691,6 +13886,14 @@ function resizePromptClip(id, edge, rawFrame) {
 						title={ko("A photo of the real thing, standing in the set as a card", "실제 사진을 판때기로 세워 세트에 배치합니다")}
 					>
 						{ko("Import image as cutout", "이미지를 컷아웃으로 가져오기")}
+					</button>
+					<button
+						type="button"
+						className="btn ghost full"
+						onClick={() => meshInputRef.current?.click()}
+						title={ko("A GLB, OBJ or FBX model standing in the set", "GLB, OBJ 또는 FBX 모델을 세트에 배치합니다")}
+					>
+						{ko("Import 3D object", "3D 오브젝트 가져오기")}
 					</button>
 					<input
 						ref={cutoutInputRef}
@@ -13704,6 +13907,17 @@ function resizePromptClip(id, edge, rawFrame) {
 							// still holds it.
 							event.target.value = "";
 							importCutout(file);
+						}}
+					/>
+					<input
+						ref={meshInputRef}
+						type="file"
+						hidden
+						accept=".glb,.obj,.fbx,model/gltf-binary,model/obj,model/fbx"
+						onChange={(event) => {
+							const [file] = event.target.files ?? [];
+							event.target.value = "";
+							importMesh(file);
 						}}
 					/>
 						<div className="inspector-list compact">
@@ -13813,6 +14027,29 @@ function resizePromptClip(id, edge, rawFrame) {
 										{ axis: "Z", value: selectedSceneObject.scaleZ ?? 1, step: 0.05, precision: 2, scrubRange: 4, onChange: (scaleZ, token) => changeSceneObject(selectedSceneObject.id, { scaleZ }, token), onScrubStart: beginSceneTransaction, onScrubEnd: endSceneTransaction },
 									]}
 								/>
+								{selectedSceneObject.renderer === MESH_KIND && (
+									<>
+										<Field label={ko("Height (m)", "높이 (m)")}>
+											<input
+												type="number"
+												data-field="mesh-height"
+												min={MESH_HEIGHT_MIN}
+												step="0.05"
+												value={selectedSceneObject.height ?? 1}
+												onChange={(event) => changeSceneObject(selectedSceneObject.id, { height: Number(event.target.value) })}
+											/>
+										</Field>
+										<label className="check">
+											<input
+												type="checkbox"
+												data-field="mesh-clay"
+												checked={selectedSceneObject.clay === true}
+												onChange={(event) => changeSceneObject(selectedSceneObject.id, { clay: event.target.checked })}
+											/>
+											<span>{ko("Clay", "클레이")}</span>
+										</label>
+									</>
+								)}
 								{selectedSceneObject.renderer === CUTOUT_KIND && (
 									<>
 										<Field label={ko("Card height (m)", "판 높이 (m)")}>
@@ -14105,7 +14342,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										</p>
 									</>
 								)}
-								{selectedSceneObject.renderer !== CUTOUT_KIND && (
+								{selectedSceneObject.renderer !== CUTOUT_KIND && (selectedSceneObject.renderer !== MESH_KIND || selectedSceneObject.clay) && (
 									// One swatch shows the colour; the row opens only when you want
 									// to change it, instead of six chips sitting there all day.
 									<details className="object-colors-pop">
@@ -14307,6 +14544,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					<AssetPane
 						onAssetGrab={beginAssetDrag}
 						imageAssetIds={shelfImageIds}
+						meshAssetIds={shelfMeshIds}
 						manageStorage={manageAssetStorage}
 						onManageStorageToggle={() => setManageAssetStorage((current) => !current)}
 						unusedAssetIds={unusedAssetIds}

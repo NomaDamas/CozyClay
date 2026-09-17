@@ -86,6 +86,25 @@ expect(
 	itemOf(resourceManifest({ scenesDocument, assets: [{ ...asset(RENDER_ID, 0), bytes: "AAAA" }] }), "image", RENDER_ID)?.bytes === 3,
 );
 
+const MESH_ID = `mesh-${hex32("m")}`;
+const meshOnlyDocument = createSceneDocument();
+meshOnlyDocument.scenes[0].objects = [{
+	id: "cooker",
+	renderer: "mesh",
+	assetId: MESH_ID,
+	height: 1,
+	footprint: { width: 1, depth: 1 },
+}];
+const meshManifest = resourceManifest({
+	scenesDocument: meshOnlyDocument,
+	assets: [{ id: MESH_ID, type: "model/gltf-binary", name: "cooker.glb", bytes: new ArrayBuffer(8) }],
+});
+expect(
+	"a mesh object's assetId is not an image lineage item — otherwise the save dialog would treat a GLB as a missing picture",
+	!meshManifest.items.some((item) => item.kind === "image" && item.id === MESH_ID),
+	JSON.stringify(meshManifest.items),
+);
+
 /* --------------------------------------------------------- motions ---- */
 
 const motionStage = createSceneStage({
@@ -277,7 +296,7 @@ for (const [index, input] of hostile.entries()) {
 	}
 	const shaped = result && Array.isArray(result.items) && Array.isArray(result.missing) && result.totals
 		&& ["embedded", "external", "missing", "bytes"].every((key) => Number.isInteger(result.totals[key]) && result.totals[key] >= 0)
-		&& result.items.every((item) => ["image", "motion", "pose", "workflow-output"].includes(item.kind) && typeof item.id === "string" && ["embedded", "external", "missing"].includes(item.status) && Array.isArray(item.refs));
+		&& result.items.every((item) => ["image", "mesh", "motion", "pose", "workflow-output"].includes(item.kind) && typeof item.id === "string" && ["embedded", "external", "missing"].includes(item.status) && Array.isArray(item.refs));
 	expect(`hostile input #${index} yields a well-formed manifest`, !error && shaped, error ? String(error.stack ?? error) : JSON.stringify(result));
 }
 expect("nothing at all is an empty manifest", JSON.stringify(resourceManifest()) === JSON.stringify(empty), JSON.stringify(resourceManifest()));

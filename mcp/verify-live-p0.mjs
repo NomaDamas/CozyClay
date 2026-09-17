@@ -261,6 +261,7 @@ try {
 	// Then it receives the dedicated processing timeout, not the generic command timeout.
 	assert.equal(LiveHub.commandTimeoutMs("load_motion"), 30_000);
 	assert.equal(LiveHub.commandTimeoutMs("capture_frame"), 30_000);
+	assert.equal(LiveHub.commandTimeoutMs("import_asset"), 30_000);
 	assert.equal(LiveHub.commandTimeoutMs("describe"), 5_000);
 
 	console.log(JSON.stringify({

@@ -35,6 +35,10 @@ expect("asset patch keeps the input immutable", document.scenes[0].objects.lengt
 const duplicate = appendAssetCutout(added.document, asset);
 expect("the same asset is not duplicated", !duplicate.changed && duplicate.reason === "already-in-scene" && added.document.scenes[0].objects.length === 1);
 expect("invalid assets are rejected", appendAssetCutout(document, { id: "foreign" }).reason === "invalid-asset");
+expect(
+	"a mesh id cannot become a cutout — workflow image sync is pictures only",
+	appendAssetCutout(document, { id: `mesh-${"a".repeat(32)}` }).reason === "invalid-asset",
+);
 const motionDocument = createSceneDocument();
 const motionPatch = applyMotionToCharacter(motionDocument, "char-1", { url: "/ardy/motions/take.npz" });
 expect("motion patch rejects a missing character", !motionPatch.changed && motionPatch.reason === "character-not-found");

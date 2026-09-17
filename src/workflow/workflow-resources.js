@@ -18,7 +18,7 @@
  * Node, so the intern -> resolve round trip is verifiable under Node.
  */
 
-import { ASSET_IMAGE_TYPES, ASSET_MAX_SOURCE_BYTES, assetIdForBytes as defaultAssetIdForBytes, isAssetId } from "../scene-assets.js";
+import { ASSET_IMAGE_TYPES, ASSET_MAX_SOURCE_BYTES, assetIdForBytes as defaultAssetIdForBytes, isImageAssetId } from "../scene-assets.js";
 
 /** The node-data fields a generated output can land in. `[]` marks an array. */
 export const WORKFLOW_OUTPUT_FIELDS = Object.freeze([
@@ -39,7 +39,7 @@ function plainRecord(value) {
 
 /** A value already swapped for an embedded asset: `{ assetRef: "img-…" }`. */
 export function isAssetRef(value) {
-	return plainRecord(value) && isAssetId(value.assetRef);
+	return plainRecord(value) && isImageAssetId(value.assetRef);
 }
 
 /** Classify one output value; null for values that are not an output at all. */

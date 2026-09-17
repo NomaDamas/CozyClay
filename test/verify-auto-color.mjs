@@ -52,7 +52,8 @@ expect(
 );
 expect(
 	"cutouts are excluded from the mode",
-	app.includes("object.renderer === CUTOUT_KIND ? object : { ...object, autoColor:"),
+	app.includes("if (object.renderer === CUTOUT_KIND) return object;") &&
+		app.includes("autoColor: autoColorHex(object.id)"),
 );
 expect("the toggle persists under its own key", app.includes("saveAutoColor(") && AUTO_COLOR_KEY === "cozyclay.auto-color.v1");
 // The toggle lives in the viewport bar's View menu (#194); it kept its class

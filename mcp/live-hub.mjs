@@ -13,6 +13,7 @@ export const MAX_COMMAND_TIMEOUT_MS = 300_000;
 export const DEFAULT_HEARTBEAT_MS = 15_000;
 export const RUN_WORKFLOW_TIMEOUT_MS = 180_000;
 export const LOAD_MOTION_TIMEOUT_MS = 30_000;
+export const IMPORT_ASSET_TIMEOUT_MS = 30_000;
 export const CAPTURE_FRAME_TIMEOUT_MS = 30_000;
 export const MOTION_JOB_TTL_MS = 10 * 60_000;
 export const MOTION_JOB_POLL_INTERVAL_MS = 0;
@@ -218,6 +219,8 @@ export class LiveHub {
 	static commandTimeoutMs(name) {
 		if (name === "load_motion" || name === "prepare_motion_install") return LOAD_MOTION_TIMEOUT_MS;
 		if (name === "verify_motion_candidate" || name === "repair_motion_candidate") return 60_000;
+		// A 32 MiB mesh as a data URL will not decode, store and stand in 5 s.
+		if (name === "import_asset") return IMPORT_ASSET_TIMEOUT_MS;
 		// Close two-person shots (OTS) raycast two skinned rigs over a full-frame
 		// AABB; 5 s is not enough. The PNG itself is cheap; the rays are not.
 		if (name === "capture_frame") return CAPTURE_FRAME_TIMEOUT_MS;

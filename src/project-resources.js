@@ -19,7 +19,7 @@
  * Inputs are never trusted: a scene document mid-migration, a half-written
  * library entry or a garbage id produce fewer items, never a throw.
  */
-import { isAssetId } from "./scene-assets.js";
+import { isImageAssetId, isMeshAssetId } from "./scene-assets.js";
 
 /** Lineage fields on a scene object, in `assetUsageCounts` order: the card's
  * rendered picture, the photograph it was cut from, and the selection mask. */
@@ -180,6 +180,7 @@ export function resourceManifest(options) {
 	const scenes = scenesOf(scenesDocument);
 
 	const images = collector("image");
+	const meshes = collector("mesh");
 	const motionItems = collector("motion");
 	const poses = collector("pose");
 	const outputs = collector("workflow-output");
@@ -192,8 +193,11 @@ export function resourceManifest(options) {
 			const objectId = nonEmptyString(object.id) ?? undefined;
 			for (const field of IMAGE_LINEAGE_FIELDS) {
 				const id = object[field];
-				if (!isAssetId(id)) continue;
+				if (!isImageAssetId(id)) continue;
 				images.note(id, resolveImage(id, assetsById, storedIds), { sceneId, objectId, field });
+			}
+			if (object.renderer === "mesh" && isMeshAssetId(object.assetId)) {
+				meshes.note(object.assetId, resolveImage(object.assetId, assetsById, storedIds), { sceneId, objectId, field: "assetId" });
 			}
 		}
 	}
@@ -252,8 +256,14 @@ export function resourceManifest(options) {
 		} else if (ref.kind === "asset-ref") {
 			// An interned output IS an image: the picture item gains the node as
 			// a ref, and the output mirrors its status without recounting bytes.
+			// Mesh ids must not appear as kind image — they share the store but
+			// not the lineage walk.
 			const assetId = typeof value === "string" ? value : value?.assetRef;
-			if (isAssetId(assetId)) {
+			if (isMeshAssetId(assetId)) {
+				const resolution = resolveImage(assetId, assetsById, storedIds);
+				meshes.note(assetId, resolution, location);
+				outputs.note(id, { status: resolution.status, stored: resolution.stored }, location);
+			} else if (isImageAssetId(assetId)) {
 				const resolution = resolveImage(assetId, assetsById, storedIds);
 				images.note(assetId, resolution, location);
 				outputs.note(id, { status: resolution.status, stored: resolution.stored }, location);
@@ -266,7 +276,7 @@ export function resourceManifest(options) {
 		}
 	}
 
-	const items = [...images.items.values(), ...motionItems.items.values(), ...poses.items.values(), ...outputs.items.values()];
+	const items = [...images.items.values(), ...meshes.items.values(), ...motionItems.items.values(), ...poses.items.values(), ...outputs.items.values()];
 	const totals = { embedded: 0, external: 0, missing: 0, bytes: 0 };
 	for (const item of items) {
 		totals[item.status] += 1;

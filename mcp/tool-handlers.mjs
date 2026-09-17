@@ -1,7 +1,7 @@
 /**
  * The CozyClay authoring tools, as data.
  *
- * server.mjs used to own the 25 tool registrations inline, which meant the only
+ * server.mjs used to own the 26 tool registrations inline, which meant the only
  * way to run one was to speak MCP to a running server. Every tool here is the
  * same handler that server.mjs registers — name, description, input schema,
  * safety annotations and live routing flag travel with it — so an in-process
@@ -29,6 +29,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { LiveMutationUncertainError } from "./live-hub.mjs";
+import { readMeshFromPath } from "./mesh-file.mjs";
 import { readMotionStream } from "../bin/agent/motion-runtime.mjs";
 import { motionPreflightReason, startMotionRequest } from "../src/analytics.js";
 import { BLOCK_MAX_SECONDS, PROMPT_GUIDE, normalizePhases, splitLongBeat, tileClipFrames } from "./ardy-prompts.mjs";
@@ -96,7 +97,7 @@ export const liveWorkspace = new AsyncLocalStorage();
 const liveWorkspaceTools = new Set([
 	"describe_scene", "describe_shot", "render_prompt", "mark_camera_move", "describe_camera_move", "save_project",
 	"set_camera", "frame_shot", "add_character", "place_character", "remove_character",
-	"focus_character", "place_object", "group_objects", "set_prompt_blocks", "generate_motion", "update_object",
+	"focus_character", "place_object", "import_mesh", "group_objects", "set_prompt_blocks", "generate_motion", "update_object",
 	"remove_object", "apply_batch", "add_scene", "switch_scene", "open_project", "capture_frame", "load_motion",
 ]);
 const MAX_CAPTURE_BYTES = 1_000_000;
@@ -150,6 +151,7 @@ const TOOL_ANNOTATIONS = Object.freeze({
 	remove_character: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
 	focus_character: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 	place_object: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+	import_mesh: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 	group_objects: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 	set_prompt_blocks: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 	load_motion: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -981,7 +983,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 			{
 				title: "Place an object in the set",
 				description:
-					`Unlike update_object, place_object adds a new prop instead of changing an existing one. Available kinds: ${OBJECT_LIBRARY.map((o) => o.kind).join(", ")}. ` +
+					`Unlike update_object and import_mesh, place_object adds a catalog prop instead of changing an existing one or loading a GLB, OBJ or FBX from disk. Available kinds: ${OBJECT_LIBRARY.map((o) => o.kind).join(", ")}. ` +
 					"It returns the object id, which update_object and remove_object take.",
 				inputSchema: {
 					kind: z
@@ -1027,6 +1029,63 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 			},
 		),
 
+		tool(
+			"import_mesh",
+			{
+				title: "Import a GLB, OBJ or FBX as a mesh prop",
+				description:
+					"Unlike place_object, import_mesh loads a local GLB, OBJ or FBX from a filesystem path as a mesh prop. " +
+					"Give it the path of a file this machine can read — optional file:// or a leading ~/ — not the bytes. " +
+					"A connected CozyClay editor is required; the mesh cannot live in memory-only MCP. " +
+					"Optional x and z are floor metres: if you set one, the omitted axis is 0. Omit both to stand the model in front of the shot camera. " +
+					"facing is yaw in degrees (omitted is 0, like the Import button). height is standing height in metres. y lifts the model off the floor. " +
+					"clay: true replaces file materials with matte clay. name labels the prop and defaults to the file name. " +
+					"After import, use update_object for tilt, roll, scale or parenting.",
+				inputSchema: {
+					path: z.string().min(1).describe("filesystem path to a GLB, OBJ or FBX this machine can read"),
+					clay: z.boolean().optional().describe("true replaces file materials with matte clay"),
+					name: z.string().min(1).optional().describe("display name; defaults to the file name"),
+					x: z.number().optional().describe("floor x in metres; if x or z is set, the omitted axis is 0"),
+					z: z.number().optional().describe("floor z in metres"),
+					y: z.number().optional().describe("height above the floor in metres"),
+					facing: z.number().optional().describe("yaw in degrees; omitted is 0"),
+					height: z.number().positive().optional().describe("standing height in metres; omitted uses the fitted size"),
+				},
+			},
+			async ({ path, clay, name, x, z: zPos, y, facing, height }) => {
+				if (!liveHub?.connected) {
+					return liveError(new Error(noLiveEditor("import_mesh requires a connected CozyClay editor.")));
+				}
+				let mesh;
+				try {
+					mesh = await readMeshFromPath(path);
+				} catch (error) {
+					return { content: [{ type: "text", text: error.message }], isError: true };
+				}
+				const liveArgs = {
+					name: typeof name === "string" && name.trim() ? name.trim() : mesh.name,
+					mimeType: mesh.mimeType,
+					dataUrl: `data:${mesh.mimeType};base64,${Buffer.from(mesh.bytes).toString("base64")}`,
+					placeAs: "mesh",
+				};
+				if (clay === true) liveArgs.clay = true;
+				if (x !== undefined || zPos !== undefined) {
+					liveArgs.x = x ?? 0;
+					liveArgs.z = zPos ?? 0;
+				}
+				if (y !== undefined) liveArgs.y = y;
+				if (facing !== undefined) liveArgs.rot = facing;
+				if (height !== undefined) liveArgs.height = height;
+				try {
+					const result = await appliedLiveMutation("import_asset", liveArgs);
+					return text(
+						`Placed ${liveArgs.name} as ${result?.objectId ?? "unknown"} (${result?.assetId ?? "unknown"}).\n\n${sceneReport()}`,
+					);
+				} catch (error) {
+					return liveError(error);
+				}
+			},
+		),
 
 		tool(
 			"group_objects",
@@ -1469,9 +1528,11 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 						.nullable()
 						.optional()
 						.describe("travel path; null clears it and the object stands still again"),
+					height: z.number().positive().optional().describe("cutout or mesh height in metres"),
+					clay: z.boolean().optional().describe("mesh only: replace file materials with matte clay"),
 				},
 			},
-			async ({ id, x, y, z: zPos, facing, tilt, roll, scale, scale_x, scale_y, scale_z, color, name, path }) => {
+			async ({ id, x, y, z: zPos, facing, tilt, roll, scale, scale_x, scale_y, scale_z, color, name, path, height, clay }) => {
 				const travelPath = path === null
 					? null
 					: path
@@ -1483,6 +1544,8 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 							id, x, y, z: zPos, rot: facing, rotX: tilt, rotZ: roll,
 							scale, scaleX: scale_x, scaleY: scale_y, scaleZ: scale_z, color, name,
 							...(travelPath !== undefined ? { path: travelPath } : {}),
+							...(height !== undefined ? { height } : {}),
+							...(clay !== undefined ? { clay } : {}),
 						});
 						return text(`Updated ${id}.\n\n${sceneReport()}`);
 					} catch (error) {
@@ -1510,6 +1573,8 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 				if (scale_z !== undefined) patch.scaleZ = scale_z;
 				if (color !== undefined) patch.color = color;
 				if (name !== undefined) patch.name = name;
+				if (height !== undefined) patch.height = height;
+				if (clay !== undefined) patch.clay = clay;
 				sc.objects = updateSceneObject(sc.objects, id, patch);
 				return text(`Updated ${id}.\n\n${sceneReport()}`);
 			},

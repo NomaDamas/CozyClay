@@ -59,8 +59,9 @@ editor -> server, one per command, echoing `id`:
     { "type": "result", "id": "<same id>", "ok": false, "error": "<human message>" }
 
 Unknown `name` MUST answer `ok:false`, never silence. The server times a
-command out after 5 s and treats it as failed, except `load_motion`, which
-retains its dedicated 30 s editor decode and installation bound. Measurement
+command out after 5 s and treats it as failed, except `load_motion` and
+`import_asset`, which retain a dedicated 30 s editor bound (decode and stand a
+mesh, or install a take). Measurement
 justifies the existing headroom: 12 real editor installs of one 94,672-byte
 ARDY NPZ had nearest-rank p50 29.96 ms, p95 547.29 ms, and p99 547.29 ms;
 30 s remains appropriate for materially larger cold-cache production takes. A timeout or disconnect during
@@ -151,8 +152,8 @@ scene document already uses.
 | `update_character` | `{ ref, x?, y?, z?, rot?, subject?, hidden? }` | `{ id }` | `ref` = id, letter (`"A"`) or 1-based slot |
 | `remove_character` | `{ ref }` | `{ id }` | must refuse to empty the cast |
 | `place_object` | `{ kind, x?, z?, y?, rot?, name?, parent? }` | `{ id }` | `kind` from OBJECT_LIBRARY; optional `name` labels the object and optional `parent` attaches it under another object |
-| `import_asset` | `{ name, mimeType, dataUrl, placeAs }` | `{ assetId, objectId }` | decode `dataUrl` (PNG, WebP, JPEG or GIF; `mimeType` optional when the data URL carries it), store the bytes in the content-addressed asset store under `assetId`, and stand the picture up through the Studio's own import pipeline. `placeAs: "cutout"` is a 1.8 m standee 2.6 m in front of the shot camera; `placeAs: "backdrop"` is the same card as a 5 m background plate 12 m down the shot camera's view ray, turned to face the lens. Exactly ONE undo entry: a single Ctrl+Z removes the placed object (the asset bytes stay, being content-addressed). This deliberately does NOT reuse the Workflow-tab scene sync, which writes the document without touching undo. |
-| `update_object` | `{ id, x?, y?, z?, rot?, rotX?, rotZ?, scale?, scaleX?, scaleY?, scaleZ?, color?, name? }` | `{ id }` | `scale` sets all three axes; per-axis values override it; `name` renames the object |
+| `import_asset` | `{ name, mimeType, dataUrl, placeAs, clay?, x?, y?, z?, rot?, height? }` | `{ assetId, objectId }` | decode `dataUrl` and store the bytes in the content-addressed asset store under `assetId`, then stand the result up through the Studio's own import pipeline. `placeAs: "cutout"` is a 1.8 m standee 2.6 m in front of the shot camera; `placeAs: "backdrop"` is the same card as a 5 m background plate 12 m down the shot camera's view ray, turned to face the lens (PNG, WebP, JPEG or GIF; `dataUrl` must be `data:image/…`; `mimeType` optional when the data URL carries it). `placeAs: "mesh"` imports a GLB, a Wavefront OBJ or an FBX (`data:model/gltf-binary`, `data:model/obj`, `data:model/fbx`, `data:text/plain` when `name` ends in `.obj` or `.fbx`, or `data:application/octet-stream`, and those same types as `mimeType`), fits height/footprint once, and stands the model on the floor. Omit both `x` and `z` to place it in front of the shot camera; if either is present, those are world metres and the missing axis is 0. Optional `rot` is yaw in degrees (omitted is 0, like the Import button). Optional `height` overrides the fitted standing size. Optional `y` is lift off the floor, applied after mint (`createMeshObject` always writes `y: 0`). Optional `clay: true` replaces file materials with matte clay. Bytes decide the format (glTF magic first, then FBX magic/`FBXVersion:`, then OBJ vertices). Exactly ONE undo entry: a single Ctrl+Z removes the placed object (the asset bytes stay, being content-addressed). This deliberately does NOT reuse the Workflow-tab scene sync, which writes the document without touching undo. |
+| `update_object` | `{ id, x?, y?, z?, rot?, rotX?, rotZ?, scale?, scaleX?, scaleY?, scaleZ?, color?, name?, height?, clay? }` | `{ id }` | `scale` sets all three axes; per-axis values override it; `name` renames the object. `height` is metres (cutout card height, or a mesh's fitted box height). `clay` is a boolean on mesh objects (file materials when false, matte clay when true). |
 | `remove_object` | `{ id }` | `{ id }` | |
 | `group_objects` | `{ parent, children }` | `{ parent, children }` | attach every child under parent |
 | `ungroup_objects` | `{ children }` | `{ children }` | detach every child |

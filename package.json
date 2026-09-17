@@ -15,6 +15,8 @@
     "test:history": "node test/verify-history.mjs",
     "test:scene-objects": "node test/verify-scene-objects.mjs",
     "test:scene-assets": "node test/verify-scene-assets.mjs",
+    "test:scene-mesh": "node test/verify-scene-mesh.mjs",
+    "test:mesh-browser": "node tools/qa-browser.mjs -- node test/verify-mesh-browser.mjs",
     "test:asset-shelf": "node test/verify-asset-shelf.mjs",
     "test:matte": "node test/verify-matte.mjs",
     "test:matte-editor": "node test/verify-matte-editor.mjs",

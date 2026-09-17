@@ -14,8 +14,10 @@ import { useFrame } from "@react-three/fiber";
 import { objectTransformAt } from "./object-path.js";
 import * as THREE from "three";
 import { GIZMO_LAYER } from "./dualview.jsx";
-import { CUTOUT_KIND } from "./scene-objects.js";
+import { CUTOUT_KIND, MESH_KIND } from "./scene-objects.js";
 import { subscribeToAssetTexture } from "./scene-asset-cache.js";
+import { subscribeToMeshScene } from "./scene-mesh-cache.js";
+import { cloneMeshGraph } from "./mesh-graph-clone.js";
 
 const CLAY_CAR = "#d98770";
 const CLAY_CAR_TOP = "#e49a84";
@@ -280,6 +282,99 @@ function useAssetTexture(assetId) {
  * missing): blockout grey, because that is exactly what it is again. */
 const MISSING_CUTOUT = "#c2c6c8";
 
+/** The parsed GLB for an `assetId`, or null while it loads (or forever, if
+ * the blob is gone). The cached graph is the FILE's own pivot and materials;
+ * each instance clones, then fits to the stored height. */
+function useMeshScene(assetId) {
+	const [scene, setScene] = useState(null);
+	useEffect(() => {
+		setScene(null);
+		if (!assetId) return undefined;
+		return subscribeToMeshScene(assetId, setScene);
+	}, [assetId]);
+	return scene;
+}
+
+function disposeOwnedMaterials(root) {
+	if (!root) return;
+	root.traverse((node) => {
+		if (!node.isMesh || !(node.userData?.clayOwned || node.userData?.instanceOwned)) return;
+		const materials = Array.isArray(node.material) ? node.material : [node.material];
+		for (const material of materials) material?.dispose?.();
+	});
+}
+
+/**
+ * Clone the cached graph, scale so its bbox height equals the stored
+ * `object.height`, and sit the underside on y = 0. The import heuristic
+ * already wrote that height — this pass must not re-guess it.
+ *
+ * Skinned graphs go through `cloneMeshGraph` so a Mixamo-as-statue keeps
+ * its bind pose. Clay replaces materials on THIS clone only, so a second
+ * instance of the same file can keep the textures from the disk. Auto-color
+ * also clones: the cached graph is shared, and a viewport tint must not leak.
+ */
+function instantiateMesh(source, object) {
+	const root = cloneMeshGraph(source);
+	root.updateMatrixWorld(true);
+	const box = new THREE.Box3().setFromObject(root);
+	const size = box.getSize(new THREE.Vector3());
+	const targetHeight = Number(object.height);
+	if (Number.isFinite(targetHeight) && targetHeight > 0 && size.y > 1e-8) {
+		root.scale.multiplyScalar(targetHeight / size.y);
+		root.updateMatrixWorld(true);
+		box.setFromObject(root);
+	}
+	if (Number.isFinite(box.min.y)) root.position.y -= box.min.y;
+	const clay = object.clay === true;
+	const clayColor = object.autoColor ?? object.color ?? "#c4b8a8";
+	root.traverse((node) => {
+		if (node.isLight || node.isCamera) {
+			node.visible = false;
+			return;
+		}
+		if (!node.isMesh) return;
+		node.castShadow = true;
+		node.receiveShadow = true;
+		if (clay) {
+			const make = () => new THREE.MeshStandardMaterial({ color: clayColor, roughness: 0.9, metalness: 0 });
+			node.material = Array.isArray(node.material) ? node.material.map(() => make()) : make();
+			node.userData.clayOwned = true;
+			return;
+		}
+		if (!object.autoColor || !node.material) return;
+		const tint = (material) => {
+			const next = material.clone();
+			if (next.color) next.color.set(object.autoColor);
+			return next;
+		};
+		node.material = Array.isArray(node.material) ? node.material.map(tint) : tint(node.material);
+		node.userData.instanceOwned = true;
+	});
+	return root;
+}
+
+function ImportedMesh({ object }) {
+	const source = useMeshScene(object.assetId);
+	const root = useMemo(
+		() => (source ? instantiateMesh(source, object) : null),
+		[source, object.height, object.clay, object.autoColor, object.color],
+	);
+	useEffect(() => () => disposeOwnedMaterials(root), [root]);
+	if (!root) {
+		const width = object.footprint?.width ?? 1;
+		const depth = object.footprint?.depth ?? 1;
+		const height = object.height ?? 1;
+		return (
+			<mesh position={[0, height / 2, 0]} castShadow receiveShadow>
+				<boxGeometry args={[width, height, depth]} />
+				<meshStandardMaterial color={MISSING_CUTOUT} roughness={0.92} metalness={0} />
+			</mesh>
+		);
+	}
+	return <primitive object={root} />;
+}
+
 /**
  * A cutout: an imported picture standing on a card, the standee a blockout
  * gets instead of a modelled prop.
@@ -331,9 +426,11 @@ function SceneObjectContent({ object }) {
 	// `autoColor` is the viewport-only display color the auto-color mode stamps
 	// onto the DISPLAYED object (App's displaySceneObjects); the authored
 	// `color` is untouched underneath. Cutouts stay out: tinting a photo
-	// standee destroys the one thing it is for.
+	// standee destroys the one thing it is for. Imported meshes take the same
+	// override as a cube — file materials are cloned and tinted per instance.
 	const { renderer, color, autoColor } = object;
 	if (renderer === CUTOUT_KIND) return <Cutout object={object} />;
+	if (renderer === MESH_KIND) return <ImportedMesh object={object} />;
 	if (renderer === "car") return <Car color={autoColor ?? color} autoColor={autoColor} />;
 	if (renderer === "small-plane") return <SmallPlane autoColor={autoColor} />;
 	if (renderer === "chair") return <Chair autoColor={autoColor} />;

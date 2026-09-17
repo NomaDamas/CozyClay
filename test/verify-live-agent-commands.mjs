@@ -4,6 +4,7 @@
  * contract from src/live-control.js. Asserts the command names round-trip
  * unchanged and the result frames carry the documented shapes. */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
@@ -35,6 +36,20 @@ const withTimeout = (promise, label, milliseconds = 10_000) => {
 // One transparent 1x1 PNG; the canned capture answer only has to survive the
 // round trip intact — the browser QA parses real IHDR bytes from the editor.
 const CANNED_PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+const UNIT_CUBE_BYTES = readFileSync(new URL("./fixtures/unit-cube.glb", import.meta.url));
+const UNIT_CUBE_B64 = Buffer.from(UNIT_CUBE_BYTES).toString("base64");
+const CANNED_GLB_DATA_URL = `data:model/gltf-binary;base64,${UNIT_CUBE_B64}`;
+const CANNED_OCTET_GLB_DATA_URL = `data:application/octet-stream;base64,${UNIT_CUBE_B64}`;
+const UNIT_OBJ_BYTES = readFileSync(new URL("./fixtures/unit-cube.obj", import.meta.url));
+const UNIT_OBJ_B64 = Buffer.from(UNIT_OBJ_BYTES).toString("base64");
+const CANNED_OBJ_DATA_URL = `data:model/obj;base64,${UNIT_OBJ_B64}`;
+const CANNED_PLAIN_OBJ_DATA_URL = `data:text/plain;base64,${UNIT_OBJ_B64}`;
+const CANNED_OCTET_OBJ_DATA_URL = `data:application/octet-stream;base64,${UNIT_OBJ_B64}`;
+const UNIT_FBX_BYTES = readFileSync(new URL("./fixtures/unit-cube.fbx", import.meta.url));
+const UNIT_FBX_B64 = Buffer.from(UNIT_FBX_BYTES).toString("base64");
+const CANNED_FBX_DATA_URL = `data:model/fbx;base64,${UNIT_FBX_B64}`;
+const CANNED_PLAIN_FBX_DATA_URL = `data:text/plain;base64,${UNIT_FBX_B64}`;
+const CANNED_OCTET_FBX_DATA_URL = `data:application/octet-stream;base64,${UNIT_FBX_B64}`;
 
 const port = await reservePort();
 const hub = await startLiveHub(port);
@@ -73,7 +88,14 @@ socket.on("message", (raw) => {
 			reply(false, "The shot renderer is not ready");
 			return;
 		}
-		reply(true, { assetId: `img-${"a".repeat(32)}`, objectId: "cutout" });
+		const mesh = frame.args?.placeAs === "mesh";
+		reply(true, {
+			assetId: `${mesh ? "mesh" : "img"}-${"a".repeat(32)}`,
+			objectId: mesh ? "mesh" : "cutout",
+		});
+	}
+	if (frame.name === "update_object") {
+		reply(true, { id: frame.args?.id });
 	}
 });
 let workspaceReady;
@@ -124,14 +146,116 @@ await assert.rejects(
 );
 assert.equal(received.length, 4, "the rejected command still reached the editor");
 
-// 5. The editor half of the same contract: dispatchLiveFrame must answer both
+// 5. Mesh placement is the same command with a GLB data URL — wallpaper stays
+// rejected. clay: true has to arrive untouched so the editor can pass it to
+// createMeshObject without a second round-trip.
+assert.ok(CANNED_GLB_DATA_URL.startsWith("data:model/gltf-binary;base64,"));
+const meshImportArgs = {
+	name: "unit-cube.glb",
+	mimeType: "model/gltf-binary",
+	dataUrl: CANNED_GLB_DATA_URL,
+	placeAs: "mesh",
+	clay: true,
+};
+const meshPlaced = await withTimeout(hub.command("import_asset", meshImportArgs, handle));
+assert.equal(received.length, 5);
+assert.equal(received[4].name, "import_asset");
+assert.deepEqual(received[4].args, meshImportArgs, "mesh import_asset arguments must round-trip unchanged, including clay");
+assert.deepEqual(Object.keys(meshPlaced).sort(), ["assetId", "objectId"]);
+assert.equal(meshPlaced.assetId, `mesh-${"a".repeat(32)}`);
+assert.equal(meshPlaced.objectId, "mesh");
+
+const octetImportArgs = {
+	name: "cooker.glb",
+	mimeType: "application/octet-stream",
+	dataUrl: CANNED_OCTET_GLB_DATA_URL,
+	placeAs: "mesh",
+};
+const octetPlaced = await withTimeout(hub.command("import_asset", octetImportArgs, handle));
+assert.deepEqual(received[5].args, octetImportArgs, "octet-stream GLB dataUrls round-trip as mesh imports");
+assert.deepEqual(Object.keys(octetPlaced).sort(), ["assetId", "objectId"]);
+
+const objImportArgs = {
+	name: "unit-cube.obj",
+	mimeType: "model/obj",
+	dataUrl: CANNED_OBJ_DATA_URL,
+	placeAs: "mesh",
+};
+const objPlaced = await withTimeout(hub.command("import_asset", objImportArgs, handle));
+assert.deepEqual(received[6].args, objImportArgs, "model/obj dataUrls round-trip as mesh imports");
+assert.equal(objPlaced.assetId, `mesh-${"a".repeat(32)}`);
+
+const plainObjImportArgs = {
+	name: "unit-cube.obj",
+	mimeType: "text/plain",
+	dataUrl: CANNED_PLAIN_OBJ_DATA_URL,
+	placeAs: "mesh",
+};
+assert.deepEqual((await withTimeout(hub.command("import_asset", plainObjImportArgs, handle))) && received[7].args, plainObjImportArgs, "text/plain OBJ dataUrls round-trip as mesh imports");
+
+const octetObjImportArgs = {
+	name: "unit-cube.obj",
+	mimeType: "application/octet-stream",
+	dataUrl: CANNED_OCTET_OBJ_DATA_URL,
+	placeAs: "mesh",
+};
+assert.deepEqual((await withTimeout(hub.command("import_asset", octetObjImportArgs, handle))) && received[8].args, octetObjImportArgs, "octet-stream OBJ dataUrls round-trip as mesh imports");
+
+const fbxImportArgs = {
+	name: "unit-cube.fbx",
+	mimeType: "model/fbx",
+	dataUrl: CANNED_FBX_DATA_URL,
+	placeAs: "mesh",
+};
+assert.deepEqual((await withTimeout(hub.command("import_asset", fbxImportArgs, handle))) && received[9].args, fbxImportArgs, "model/fbx dataUrls round-trip as mesh imports");
+
+const octetFbxImportArgs = {
+	name: "unit-cube.fbx",
+	mimeType: "application/octet-stream",
+	dataUrl: CANNED_OCTET_FBX_DATA_URL,
+	placeAs: "mesh",
+};
+assert.deepEqual((await withTimeout(hub.command("import_asset", octetFbxImportArgs, handle))) && received[10].args, octetFbxImportArgs, "octet-stream FBX dataUrls round-trip as mesh imports");
+
+const plainFbxImportArgs = {
+	name: "unit-cube.fbx",
+	mimeType: "text/plain",
+	dataUrl: CANNED_PLAIN_FBX_DATA_URL,
+	placeAs: "mesh",
+};
+assert.deepEqual((await withTimeout(hub.command("import_asset", plainFbxImportArgs, handle))) && received[11].args, plainFbxImportArgs, "text/plain FBX dataUrls round-trip as mesh imports");
+
+const posedMeshArgs = {
+	name: "unit-cube.glb",
+	mimeType: "model/gltf-binary",
+	dataUrl: CANNED_GLB_DATA_URL,
+	placeAs: "mesh",
+	x: 2,
+	z: -1,
+	y: 0.1,
+	rot: 30,
+	height: 0.5,
+};
+assert.deepEqual((await withTimeout(hub.command("import_asset", posedMeshArgs, handle))) && received[12].args, posedMeshArgs, "optional mesh pose fields round-trip on import_asset");
+
+const updateArgs = { id: "mesh", height: 0.5, clay: true };
+const updated = await withTimeout(hub.command("update_object", updateArgs, handle));
+assert.equal(received[13].name, "update_object");
+assert.deepEqual(received[13].args, updateArgs, "update_object height and clay must round-trip unchanged");
+assert.deepEqual(updated, { id: "mesh" });
+
+// 6. The editor half of the same contract: dispatchLiveFrame must answer both
 // names with the documented result frames, success and failure alike.
 const editorHandlers = {
 	capture_framing_png: () => ({ dataUrl: CANNED_PNG_DATA_URL, width: 1920, height: 1080, frame: 0, shotId: null }),
 	import_asset: async (args) => {
-		if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout" or "backdrop"');
+		if (args.placeAs !== "cutout" && args.placeAs !== "backdrop" && args.placeAs !== "mesh") {
+			throw new Error('placeAs must be "cutout", "backdrop" or "mesh"');
+		}
+		if (args.placeAs === "mesh") return { assetId: `mesh-${"b".repeat(32)}`, objectId: "mesh" };
 		return { assetId: `img-${"b".repeat(32)}`, objectId: "cutout-2" };
 	},
+	update_object: async (args) => ({ id: args.id }),
 };
 const okCapture = await dispatchLiveFrame(
 	JSON.stringify({ type: "cmd", id: "c1", name: "capture_framing_png", args: {} }),
@@ -153,7 +277,64 @@ const badImport = await dispatchLiveFrame(
 	JSON.stringify({ type: "cmd", id: "c3", name: "import_asset", args: { name: "x.png", dataUrl: CANNED_PNG_DATA_URL, placeAs: "wallpaper" } }),
 	editorHandlers,
 );
-assert.deepEqual(badImport, { type: "result", id: "c3", ok: false, error: 'placeAs must be "cutout" or "backdrop"' });
+assert.deepEqual(badImport, { type: "result", id: "c3", ok: false, error: 'placeAs must be "cutout", "backdrop" or "mesh"' });
+const okMesh = await dispatchLiveFrame(
+	JSON.stringify({
+		type: "cmd",
+		id: "c4",
+		name: "import_asset",
+		args: { name: "unit-cube.glb", mimeType: "model/gltf-binary", dataUrl: CANNED_GLB_DATA_URL, placeAs: "mesh", clay: true },
+	}),
+	editorHandlers,
+);
+assert.deepEqual(okMesh, {
+	type: "result", id: "c4", ok: true,
+	value: { assetId: `mesh-${"b".repeat(32)}`, objectId: "mesh" },
+});
+const okOctet = await dispatchLiveFrame(
+	JSON.stringify({
+		type: "cmd",
+		id: "c5",
+		name: "import_asset",
+		args: { name: "cooker.glb", mimeType: "application/octet-stream", dataUrl: CANNED_OCTET_GLB_DATA_URL, placeAs: "mesh" },
+	}),
+	editorHandlers,
+);
+assert.deepEqual(okOctet, {
+	type: "result", id: "c5", ok: true,
+	value: { assetId: `mesh-${"b".repeat(32)}`, objectId: "mesh" },
+});
+const okObj = await dispatchLiveFrame(
+	JSON.stringify({
+		type: "cmd",
+		id: "c5b",
+		name: "import_asset",
+		args: { name: "unit-cube.obj", mimeType: "model/obj", dataUrl: CANNED_OBJ_DATA_URL, placeAs: "mesh" },
+	}),
+	editorHandlers,
+);
+assert.deepEqual(okObj, {
+	type: "result", id: "c5b", ok: true,
+	value: { assetId: `mesh-${"b".repeat(32)}`, objectId: "mesh" },
+});
+const okFbx = await dispatchLiveFrame(
+	JSON.stringify({
+		type: "cmd",
+		id: "c5c",
+		name: "import_asset",
+		args: { name: "unit-cube.fbx", mimeType: "model/fbx", dataUrl: CANNED_FBX_DATA_URL, placeAs: "mesh" },
+	}),
+	editorHandlers,
+);
+assert.deepEqual(okFbx, {
+	type: "result", id: "c5c", ok: true,
+	value: { assetId: `mesh-${"b".repeat(32)}`, objectId: "mesh" },
+});
+const okUpdate = await dispatchLiveFrame(
+	JSON.stringify({ type: "cmd", id: "c6", name: "update_object", args: { id: "mesh", height: 0.5, clay: true } }),
+	editorHandlers,
+);
+assert.deepEqual(okUpdate, { type: "result", id: "c6", ok: true, value: { id: "mesh" } });
 
 // Tear the client down hard before the server: on Linux the WebSocketServer
 // never emits "close" while a client is still draining its close handshake,
@@ -164,4 +345,10 @@ await withTimeout(socketClosed, "fake editor socket close");
 for (const client of hub.server.clients) client.terminate();
 await withTimeout(new Promise((resolve) => hub.server.close(() => resolve())), "hub close");
 
-console.log("PASS verify-live-agent-commands: capture_framing_png + import_asset round-trip, shapes, rejection path, editor dispatch");
+const protocol = readFileSync(new URL("../mcp/LIVE-PROTOCOL.md", import.meta.url), "utf8");
+assert.match(protocol, /data:model\/fbx/, "LIVE-PROTOCOL documents FBX mesh data URLs");
+assert.match(protocol, /glTF magic first, then FBX/, "LIVE-PROTOCOL documents sniff order glTF then FBX then OBJ");
+assert.match(protocol, /x\?, y\?, z\?, rot\?, height\?/, "LIVE-PROTOCOL documents optional mesh pose on import_asset");
+assert.match(protocol, /missing axis is 0/, "LIVE-PROTOCOL documents partial floor pose");
+
+console.log("PASS verify-live-agent-commands: capture_framing_png + import_asset (cutout/backdrop/mesh) round-trip, shapes, rejection path, editor dispatch");

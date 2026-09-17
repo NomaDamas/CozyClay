@@ -84,6 +84,31 @@ expect("hostile scenes yield an empty backfill set", derivedAssetIds(null).size 
 const legacy = sourceAssetIds([PLAIN], [{ objects: [{ renderer: "cutout", assetId: PLAIN }] }]);
 expect("a cutout without lineage fields counts as unmatted", legacy.includes(PLAIN));
 
+// A mesh prop's GLB is something the user imported, never a matte-pipeline
+// output. classifyLineage used to skip everything but cutouts, which would
+// hide a mesh only if it were mistakenly marked derived.
+const MESH = `mesh-${hex("f")}`;
+const meshScenes = [
+	{
+		id: "scene-1",
+		objects: [
+			{ id: "cooker", renderer: "mesh", assetId: MESH },
+			{ id: "cutout", renderer: "cutout", assetId: RENDERED, sourceAssetId: SOURCE, matteAssetId: MATTE },
+		],
+	},
+];
+const meshShown = sourceAssetIds([MESH, SOURCE, RENDERED, MATTE], meshScenes);
+expect("a mesh object's assetId is a source, shown on the shelf", meshShown.includes(MESH), meshShown.join(", "));
+expect("a mesh id is never derived from cutout lineage", !derivedAssetIds(meshScenes).has(MESH));
+expect("cutout mattes stay hidden next to a mesh", !meshShown.includes(MATTE) && !meshShown.includes(RENDERED), meshShown.join(", "));
+expect("mesh records expose their kind", assetKind({ id: MESH, type: "model/gltf-binary", name: "stove.glb" }) === "mesh");
+expect("OBJ mesh records expose their kind too", assetKind({ id: MESH, type: "model/obj", name: "stove.obj" }) === "mesh");
+expect("FBX mesh records expose their kind too", assetKind({ id: MESH, type: "model/fbx", name: "stove.fbx" }) === "mesh");
+expect("a type-only OBJ record without a mesh- prefix is still a mesh", assetKind({ type: "model/obj", name: "stove.obj" }) === "mesh");
+expect("a type-only FBX record without a mesh- prefix is still a mesh", assetKind({ type: "model/fbx", name: "stove.fbx" }) === "mesh");
+expect("ordinary records still expose image kind", assetKind({ name: "sofa.png" }) === "image");
+expect("matte records still expose their derivable kind next to meshes", assetKind({ name: "sofa matte" }) === "matte");
+
 // Garbage in, calm out: the selector never throws on hostile shapes.
 expect(
 	"nonsense scenes and ids are tolerated",

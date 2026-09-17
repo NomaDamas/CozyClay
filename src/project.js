@@ -15,7 +15,7 @@
  */
 
 import { SCENES_VERSION } from "./scenes.js";
-import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, isAssetId, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
+import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, isAssetId, isImageAssetId, isMeshAssetId, meshIdForBytes, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
 
 export const PROJECT_VERSION = 4;
 export const PROJECT_EXTENSION = ".cclayproject";
@@ -230,7 +230,7 @@ function workflowAssetIds(workflow) {
 			return;
 		}
 		if (!plainRecord(value)) return;
-		if (isAssetId(value.assetRef)) ids.add(value.assetRef);
+		if (isImageAssetId(value.assetRef)) ids.add(value.assetRef);
 		for (const entry of Object.values(value)) visit(entry);
 	};
 	visit(workflow);
@@ -279,7 +279,8 @@ export async function verifyEmbeddedAsset(record, subtle) {
 	const bytes = asArrayBuffer(record?.bytes);
 	if (!bytes) return false;
 	try {
-		return (await assetIdForBytes(bytes, subtle)) === record.id;
+		const expected = isMeshAssetId(record.id) ? await meshIdForBytes(bytes, subtle) : await assetIdForBytes(bytes, subtle);
+		return expected === record.id;
 	} catch {
 		return false;
 	}

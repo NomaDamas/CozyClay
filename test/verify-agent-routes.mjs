@@ -120,9 +120,10 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	console.log("PASS overloaded model streams are retried, then reported");
 }
 {
-	const { LiveHub, RUN_WORKFLOW_TIMEOUT_MS, CAPTURE_FRAME_TIMEOUT_MS, DEFAULT_COMMAND_TIMEOUT_MS } = await import("../mcp/live-hub.mjs");
+	const { LiveHub, RUN_WORKFLOW_TIMEOUT_MS, CAPTURE_FRAME_TIMEOUT_MS, IMPORT_ASSET_TIMEOUT_MS, DEFAULT_COMMAND_TIMEOUT_MS } = await import("../mcp/live-hub.mjs");
 	assert.equal(LiveHub.commandTimeoutMs("run_workflow"), RUN_WORKFLOW_TIMEOUT_MS, "run_workflow waits for capture + generation");
 	assert.equal(LiveHub.commandTimeoutMs("capture_frame"), CAPTURE_FRAME_TIMEOUT_MS, "capture_frame waits for skinned-rig occlusion rays");
+	assert.equal(LiveHub.commandTimeoutMs("import_asset"), IMPORT_ASSET_TIMEOUT_MS, "import_asset waits for a large mesh data URL");
 	assert.equal(LiveHub.commandTimeoutMs("add_node"), DEFAULT_COMMAND_TIMEOUT_MS);
 	console.log("PASS run_workflow and capture_frame get long live command timeouts");
 }

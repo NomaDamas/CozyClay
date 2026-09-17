@@ -20,6 +20,9 @@ import {
 	cutoutFootprint,
 	CUTOUT_KIND,
 	CUTOUT_THICKNESS,
+	MESH_KIND,
+	createMeshObject,
+	duplicateMeshOptions,
 	dropToSurfacePatch,
 	placementInFront,
 	objectSize,
@@ -654,6 +657,139 @@ expect(
 	JSON.stringify(plainDup),
 );
 
+/* ------------------------------------------------------------ meshes --- */
+// A mesh prop is the 3D cousin of a cutout: imported, not in the Add-object
+// catalogue, sized per instance from the fitted GLB box, clay optional.
+
+expect(
+	"a mesh without a picture (asset id) is refused",
+	createMeshObject({ assetId: "" }) === null && createMeshObject({}) === null && createMeshObject() === null,
+);
+expect("meshes are not creatable from the catalogue", createSceneObject("mesh", []) === null && createSceneObject(MESH_KIND, []) === null);
+expect(
+	"auto-color tints file-material meshes the same way it tints a cube",
+	!/MESH_KIND && !object\.clay/.test(readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")),
+);
+expect(
+	"the catalogue menu does not offer meshes",
+	!OBJECT_LIBRARY.some((entry) => entry.kind === MESH_KIND) && MESH_KIND === "mesh",
+);
+
+const cooker = createMeshObject({
+	assetId: "mesh-asset-cooker",
+	height: 1,
+	footprint: { width: 1, depth: 0.5 },
+	name: "Cooker",
+});
+expect(
+	"a mesh keeps the fitted height and footprint it was given",
+	cooker !== null &&
+		cooker.renderer === MESH_KIND &&
+		cooker.assetId === "mesh-asset-cooker" &&
+		cooker.height === 1 &&
+		cooker.footprint.width === 1 &&
+		cooker.footprint.depth === 0.5 &&
+		cooker.y === 0 &&
+		cooker.clay === false,
+	JSON.stringify(cooker),
+);
+expect("a mesh footprint is its own copy", cooker.footprint !== undefined && cooker.footprint.width === 1);
+
+const cooker2 = createMeshObject({
+	assetId: "mesh-asset-cooker",
+	height: 1,
+	footprint: { width: 1, depth: 0.5 },
+	name: "Cooker",
+}, [cooker]);
+expect(
+	"repeat mesh creation gets a unique id and a numbered name",
+	cooker.id === "mesh" && cooker2.id === "mesh-2" && cooker2.name === "Cooker 2",
+	JSON.stringify({ first: cooker.id, second: cooker2?.id, name: cooker2?.name }),
+);
+expect(
+	"an explicit clay flag sticks on create",
+	createMeshObject({ assetId: "mesh-asset-cooker", height: 1, footprint: { width: 1, depth: 1 }, clay: true }).clay === true,
+);
+
+const revivedMesh = normalizeSceneObject({
+	id: "mesh",
+	renderer: "mesh",
+	assetId: "mesh-asset-cooker",
+	height: 3,
+	footprint: { width: 2, depth: 0.5 },
+	name: "Cooker",
+});
+expect(
+	"a stored mesh keeps per-instance footprint and height, and missing clay reads as false",
+	revivedMesh !== null &&
+		revivedMesh.assetId === "mesh-asset-cooker" &&
+		revivedMesh.height === 3 &&
+		revivedMesh.footprint.width === 2 &&
+		revivedMesh.footprint.depth === 0.5 &&
+		revivedMesh.clay === false,
+	JSON.stringify(revivedMesh),
+);
+expect(
+	"a mesh record with no asset id is dropped like an unknown renderer",
+	normalizeSceneObject({ id: "mesh", renderer: "mesh", height: 1, footprint: { width: 1, depth: 1 } }) === null,
+);
+expect(
+	"a deliberately 12 m mesh is not refitted on load — the 0.05–10 m heuristic is import-only",
+	normalizeSceneObject({
+		id: "truck",
+		renderer: "mesh",
+		assetId: "mesh-asset-truck",
+		height: 12,
+		footprint: { width: 3, depth: 8 },
+	})?.height === 12,
+);
+expect("a ghost renderer is still dropped", normalizeSceneObject({ id: "ghost", renderer: "ghost" }) === null);
+
+const grownMesh = updateSceneObject([cooker], cooker.id, { height: 2 })[0];
+expect(
+	"raising a mesh's height scales its footprint uniformly so the import box's ratio survives",
+	grownMesh.height === 2 && grownMesh.footprint.width === 2 && grownMesh.footprint.depth === 1,
+	JSON.stringify(grownMesh),
+);
+const shrunkMesh = updateSceneObject([cooker], cooker.id, { height: 0.5 })[0];
+expect(
+	"lowering a mesh's height scales its footprint uniformly",
+	shrunkMesh.height === 0.5 && Math.abs(shrunkMesh.footprint.width - 0.5) < 1e-9 && Math.abs(shrunkMesh.footprint.depth - 0.25) < 1e-9,
+	JSON.stringify(shrunkMesh.footprint),
+);
+const clayed = updateSceneObject([grownMesh], cooker.id, { clay: true })[0];
+expect("clay true sticks on a mesh", clayed.clay === true);
+expect("clay false is writable too", updateSceneObject([clayed], cooker.id, { clay: false })[0].clay === false);
+
+const meshDup = createMeshObject(duplicateMeshOptions(clayed), [clayed]);
+expect(
+	"duplicating a mesh copies assetId, clay, height and footprint onto a new record",
+	meshDup !== null &&
+		meshDup.id !== clayed.id &&
+		meshDup.assetId === clayed.assetId &&
+		meshDup.clay === clayed.clay &&
+		meshDup.height === clayed.height &&
+		meshDup.footprint.width === clayed.footprint.width &&
+		meshDup.footprint.depth === clayed.footprint.depth,
+	JSON.stringify(meshDup),
+);
+
+const meshParent = createSceneObject("cube", []);
+const meshChild = createMeshObject({ assetId: "mesh-asset-cooker", height: 1, footprint: { width: 1, depth: 1 } }, [meshParent]);
+const meshedGroup = setSceneObjectParent([meshParent, meshChild], meshChild.id, meshParent.id);
+expect(
+	"a mesh can parent under a cube like any other prop",
+	meshedGroup.find((object) => object.id === meshChild.id).parent === meshParent.id,
+);
+const meshedAttach = setSceneObjectAttach(meshedGroup, meshChild.id, { characterId: "characterA", bone: "rightHand" });
+expect(
+	"a mesh can attach to a character bone, which drops the group parent",
+	meshedAttach.find((object) => object.id === meshChild.id).attach.bone === "rightHand" &&
+		meshedAttach.find((object) => object.id === meshChild.id).parent === null,
+	JSON.stringify(meshedAttach.find((object) => object.id === meshChild.id)),
+);
+const meshedPath = updateSceneObject([cooker], cooker.id, { path: { points: [{ x: 0, z: 0 }, { x: 1, z: 1 }] } })[0];
+expect("a mesh can wear a travel path like a cube", Array.isArray(meshedPath.path?.points) && meshedPath.path.points.length >= 2);
 
 /* --- the delete-undo toast is an offer, not a permanent banner ------------- */
 // It sat on screen forever because nothing ever cleared it: only pressing Undo

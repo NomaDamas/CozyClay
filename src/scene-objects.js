@@ -19,6 +19,7 @@
 
 import { Euler, Quaternion } from "three";
 import { createObjectPath, translateObjectPath } from "./object-path.js";
+import { MESH_DEFAULT_HEIGHT, MESH_HEIGHT_MIN } from "./scene-mesh.js";
 
 export const DEFAULT_SCENE_OBJECTS = [];
 /** The persistence contract (plan §8.1): the version lives in the key AND in
@@ -196,11 +197,29 @@ const CUTOUT_ENTRY = {
 	color: CUTOUT_TINT,
 };
 
+/**
+ * A mesh is an imported GLB standing on the floor. Its size is NOT library
+ * data — the box is measured (and outlier-fitted) at import — so the record
+ * carries `assetId`, `footprint` and `height`. Clay is per-instance: two
+ * clones of the same file can disagree about looking like a maquette.
+ */
+export const MESH_KIND = "mesh";
+const MESH_ENTRY = {
+	kind: MESH_KIND,
+	label: "Model",
+	group: "Models",
+	footprint: { width: 1, depth: 1 },
+	height: MESH_DEFAULT_HEIGHT,
+	color: "#c49a6c",
+};
+
 /** Every kind that can exist in a scene: the catalogue you can create from,
  * plus the kinds that arrive by import and so are deliberately absent from the
- * "Add object" menu (a cutout without an image has nothing to draw). */
-function objectLibraryEntry(kind) {
+ * "Add object" menu (a cutout without an image, a mesh without a GLB, has
+ * nothing to draw). */
+export function objectLibraryEntry(kind) {
 	if (kind === CUTOUT_KIND) return CUTOUT_ENTRY;
+	if (kind === MESH_KIND) return MESH_ENTRY;
 	return OBJECT_LIBRARY.find((entry) => entry.kind === kind) ?? null;
 }
 
@@ -315,9 +334,9 @@ export function sceneObjectIdFromHierarchy(hierarchyId) {
  * camera); everything else starts neutral so the first drag is predictable.
  */
 export function createSceneObject(kind, existing = [], placement = {}) {
-	// Cutouts come from an import, never from the catalogue: without an asset
-	// id the record has nothing to draw. `createCutoutObject` is their door.
-	if (kind === CUTOUT_KIND) return null;
+	// Cutouts and meshes come from an import, never from the catalogue:
+	// without an asset id the record has nothing to draw.
+	if (kind === CUTOUT_KIND || kind === MESH_KIND) return null;
 	const entry = objectLibraryEntry(kind);
 	if (!entry) return null;
 	const names = new Set(existing.map((object) => object.name));
@@ -435,6 +454,61 @@ export function duplicateCutoutOptions(object) {
 		matteScale: object.matteScale,
 		stretch: object.stretch,
 	};
+}
+
+/**
+ * A fresh mesh for an imported GLB. `assetId` addresses the bytes in the
+ * asset store — the record never carries them — and `footprint`/`height` are
+ * the fitted standing size from import. Unlike a cutout, the footprint is
+ * stored (not derived): the GLB's width/depth ratio is independent of height,
+ * and a later height edit scales that stored rectangle uniformly.
+ */
+export function createMeshObject({ assetId, height = MESH_DEFAULT_HEIGHT, footprint, name = "", clay = false } = {}, existing = [], placement = {}) {
+	if (typeof assetId !== "string" || !assetId) return null;
+	const meshHeight = Math.max(MESH_HEIGHT_MIN, Number(height));
+	if (!Number.isFinite(meshHeight)) return null;
+	const width = Number(footprint?.width);
+	const depth = Number(footprint?.depth);
+	const meshFootprint =
+		Number.isFinite(width) && width > 0 && Number.isFinite(depth) && depth > 0
+			? { width, depth }
+			: { width: meshHeight, depth: meshHeight };
+	const base = typeof name === "string" && name.trim() ? name.trim() : MESH_ENTRY.label;
+	const names = new Set(existing.map((object) => object.name));
+	let displayName = base;
+	for (let n = 2; names.has(displayName); n += 1) displayName = `${base} ${n}`;
+	const ids = new Set(existing.map((object) => object.id));
+	let id = MESH_KIND;
+	for (let n = 2; ids.has(id); n += 1) id = `${MESH_KIND}-${n}`;
+	return {
+		id,
+		name: displayName,
+		renderer: MESH_KIND,
+		x: clamp(Number(placement.x) || 0, -ROOM_LIMIT, ROOM_LIMIT),
+		y: 0,
+		z: clamp(Number(placement.z) || 0, -ROOM_LIMIT, ROOM_LIMIT),
+		rot: wrapAngle(Number(placement.rot) || 0),
+		rotX: 0,
+		rotZ: 0,
+		scaleX: 1,
+		scaleY: 1,
+		scaleZ: 1,
+		path: null,
+		color: MESH_ENTRY.color,
+		parent: null,
+		attach: null,
+		assetId,
+		clay: clay === true,
+		footprint: meshFootprint,
+		height: meshHeight,
+	};
+}
+
+/** The option bundle a mesh duplicate hands to `createMeshObject`. A copy
+ * is minted through the same door an import is, so it must carry the model
+ * it renders, the standing size, and whether it is wearing clay. */
+export function duplicateMeshOptions(object) {
+	return { assetId: object.assetId, height: object.height, footprint: object.footprint, name: object.name, clay: object.clay === true };
 }
 
 /** Every writable transform channel and the rule that keeps it in the room. */
@@ -584,6 +658,22 @@ export function updateSceneObject(objects, id, patch) {
 				update.footprint = cutoutFootprint(height, aspect, patchedStretch);
 			}
 		}
+		if (object.renderer === MESH_KIND) {
+			if (typeof patch.clay === "boolean" && patch.clay !== (object.clay === true)) update.clay = patch.clay;
+			if (typeof patch.assetId === "string" && patch.assetId && patch.assetId !== object.assetId) update.assetId = patch.assetId;
+			const patchedHeight = patch.height === undefined ? NaN : Math.max(MESH_HEIGHT_MIN, Number(patch.height));
+			if (Number.isFinite(patchedHeight) && patchedHeight !== object.height) {
+				update.height = patchedHeight;
+				const prevHeight = Number(object.height);
+				if (prevHeight > 0) {
+					const factor = patchedHeight / prevHeight;
+					update.footprint = {
+						width: Number(object.footprint?.width) * factor,
+						depth: Number(object.footprint?.depth) * factor,
+					};
+				}
+			}
+		}
 		if (!Object.keys(update).length) return object;
 		changed = true;
 		return { ...object, ...update };
@@ -687,7 +777,9 @@ export function normalizeSceneObject(record) {
 	// draw, so it is dropped rather than restored as a blank card — the same
 	// rule an unknown renderer already gets.
 	const isCutout = entry.kind === CUTOUT_KIND;
+	const isMesh = entry.kind === MESH_KIND;
 	if (isCutout && (typeof record.assetId !== "string" || !record.assetId)) return null;
+	if (isMesh && (typeof record.assetId !== "string" || !record.assetId)) return null;
 	// Defensive import fallback, not a migration: hand-authored or external
 	// payloads may carry one `scale` (the pre-split record shape). It fans
 	// out to all three axes only when no axis is present — an explicit
@@ -699,6 +791,12 @@ export function normalizeSceneObject(record) {
 		const n = value === undefined ? fallback : Number(value);
 		return Number.isFinite(n) ? n : fallback;
 	};
+	const meshWidth = Number(record.footprint?.width);
+	const meshDepth = Number(record.footprint?.depth);
+	const meshFootprint =
+		Number.isFinite(meshWidth) && meshWidth > 0 && Number.isFinite(meshDepth) && meshDepth > 0
+			? { width: meshWidth, depth: meshDepth }
+			: { ...entry.footprint };
 	return {
 		id: record.id,
 		name: typeof record.name === "string" && record.name ? record.name : entry.label,
@@ -727,9 +825,10 @@ export function normalizeSceneObject(record) {
 		// all, and null is exactly what it meant: world-anchored.
 		attach: normalizeSceneAttach(record.attach) ?? null,
 		// Library kinds take their size from the library — a stored footprint is
-		// stale data, not a fact. A cutout is the exception: its size IS
-		// per-instance, so height and aspect are repaired from the record and
-		// the footprint is rebuilt from the pair.
+		// stale data, not a fact. Cutouts and meshes are the exceptions: their
+		// size IS per-instance. A cutout rebuilds the footprint from height and
+		// aspect; a mesh keeps the stored box (the import heuristic is not
+		// re-run, or a deliberately 12 m truck would shrink on reload).
 		...(isCutout
 			? {
 					assetId: record.assetId,
@@ -750,7 +849,17 @@ export function normalizeSceneObject(record) {
 					),
 					height: cutoutHeight(pick(record.height, CUTOUT_DEFAULT_HEIGHT)),
 				}
-			: { footprint: { ...entry.footprint }, height: entry.height, supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height }),
+			: isMesh
+				? {
+						assetId: record.assetId,
+						clay: record.clay === true,
+						// Stored box is the truth: the 0.05–10 m import heuristic is
+						// NOT re-run here, or a deliberately 12 m truck would shrink
+						// back to 1 m on reload.
+						footprint: meshFootprint,
+						height: Math.max(MESH_HEIGHT_MIN, pick(record.height, entry.height)),
+					}
+				: { footprint: { ...entry.footprint }, height: entry.height, supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height }),
 	};
 }
 

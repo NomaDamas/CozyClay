@@ -9,8 +9,8 @@ Works two ways, with one tool catalog:
 - **Editor open** — tool calls drive the visible viewport live: camera, cast, set, motion,
   prompt blocks on the timeline.
 - **No editor** — scene, camera, prompt and project-file tools run in memory with no browser,
-  GPU or build step. `capture_frame`, `set_prompt_blocks`, `generate_motion`, and
-  `apply_batch` explicitly require a live editor.
+  GPU or build step. `capture_frame`, `set_prompt_blocks`, `generate_motion`, `apply_batch`,
+  and `import_mesh` explicitly require a live editor.
 
 ## Run it locally
 
@@ -35,7 +35,7 @@ Then point a client at it. For Claude Desktop, in `claude_desktop_config.json`:
 }
 ```
 
-Restart the client; 24 tools appear.
+Restart the client; 26 tools appear.
 
 Prefer a long-lived endpoint? `node server.mjs --http 5183` serves Streamable HTTP at
 `http://127.0.0.1:5183/mcp` (one isolated session per client), with a plain status page at `/`.
@@ -71,6 +71,7 @@ generated frame matches the blocking instead of drifting off into a generic shot
 | `add_character` / `place_character` / `remove_character` | the cast |
 | `focus_character` | choose who the camera frames |
 | `place_object` / `update_object` / `remove_object` | the set — `place_object` also accepts `name` and `parent`, so multi-part assets like "Building A" land as one named assembly |
+| `import_mesh` | load a local GLB, OBJ or FBX from a filesystem path as a mesh prop (live editor required); optional floor position, yaw, standing height, clay |
 | `group_objects` | attach children to a parent so they move as one; pass `parent: null` to detach |
 | `apply_batch` | execute up to 100 object mutations as one user-visible undo transaction |
 | `render_prompt` | the shot as an AI image or video prompt |
