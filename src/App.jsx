@@ -11245,6 +11245,15 @@ function resizePromptClip(id, edge, rawFrame) {
 		charactersRef.current = next; liveStateRef.current.characters = next;
 		(authored ? editCharacters : setCharacters)(next);
 	}
+	/** The active character's layer lives in the editing buffer, and the read
+	 * model folds that buffer back over the cast. A published or restored prompt
+	 * schedule has to reach it in the same tick, or the next read would revert it. */
+	function syncStudioLayerBuffer(rows) {
+		const clips = rows.find(entry => entry.id === loadedLayerCharRef.current)?.layer?.promptClips;
+		if (!clips || JSON.stringify(clips) === JSON.stringify(bufferRef.current.promptClips)) return;
+		bufferRef.current = { ...bufferRef.current, promptClips: clips };
+		setPromptClips(clips);
+	}
 	function recordStudioHistory(domain, targetId, historyEntryId) {
 		const tick = ++opClockRef.current;
 		charHistoryRef.current.past.push({ tick, snapshot: snapshotCast(domain === "shot"),
@@ -11279,7 +11288,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		if (entry.domain === "shot") {
 			liveStateRef.current.shots = entry.state.shots; setShots(entry.state.shots); publishStudioCamera(entry.state.camera, entry.state.manual);
 		} else if (entry.domain === "stage") publishStudioStage(entry.state.stage);
-		else if (entry.domain === "cast") publishStudioCharacters(entry.state.characters);
+		else if (entry.domain === "cast") { publishStudioCharacters(entry.state.characters); syncStudioLayerBuffer(entry.state.characters); }
 		else publishStudioMotion(entry.targetId, entry.state);
 		sceneRevisionRef.current++; ++opClockRef.current;
 		setToast(redo ? ko("Redone", "다시 실행됨") : ko("Undone", "실행 취소됨")); return true;
@@ -11293,17 +11302,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		} else {
 			recordStudioHistory(payload.domain, null, historyEntryId);
 			if (payload.domain === "stage") publishStudioStage(payload.draft);
-			else if (payload.domain === "cast") {
-				publishStudioCharacters(payload.draft, true);
-				// The active character's layer lives in the editing buffer, which the
-				// read model folds back over the cast. A published prompt schedule has
-				// to reach it in the same tick, or the next read would revert it.
-				const loaded = payload.draft.find(entry => entry.id === loadedLayerCharRef.current);
-				const clips = loaded?.layer?.promptClips ?? null;
-				if (clips && JSON.stringify(clips) !== JSON.stringify(bufferRef.current.promptClips)) {
-					bufferRef.current = { ...bufferRef.current, promptClips: clips }; setPromptClips(clips);
-				}
-			} else { liveStateRef.current.shots = payload.draft.shotDocument.shots; editShots(payload.draft.shotDocument.shots); publishStudioCamera(payload.draft.camera, payload.draft.manual); }
+			else if (payload.domain === "cast") { publishStudioCharacters(payload.draft, true); syncStudioLayerBuffer(payload.draft); }
+			else { liveStateRef.current.shots = payload.draft.shotDocument.shots; editShots(payload.draft.shotDocument.shots); publishStudioCamera(payload.draft.camera, payload.draft.manual); }
 		}
 		return { historyEntryId };
 	}

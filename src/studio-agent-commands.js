@@ -302,13 +302,15 @@ const PATH_READERS = {
 /** Measured readback for one path: one typed member, never the payload. A
  * picture is reported by its size and a schedule by its length. */
 function patchedValue(path, value) {
+  // A cleared, removed or refused field has no measurement but its own absence.
+  if (value === null || value === undefined) return { path, text: null };
   const type = elementByPath(path)?.type;
-  if (type === 'image') return { path, bytes: typeof value === 'string' ? utf8ByteLength(value) : null };
-  if (type === 'array') return { path, count: Array.isArray(value) ? value.length : value?.points?.length ?? 0 };
+  if (type === 'image') return { path, bytes: utf8ByteLength(value) };
+  if (type === 'array') return { path, count: Array.isArray(value) ? value.length : value.points?.length ?? 0 };
   if (type === 'vec3') return { path, vec: { x: value.x, y: value.y, z: value.z } };
   if (typeof value === 'number') return { path, number: value };
   if (typeof value === 'boolean') return { path, flag: value };
-  return { path, text: typeof value === 'string' ? [...value].slice(0, 512).join('') : null };
+  return { path, text: [...String(value)].slice(0, 512).join('') };
 }
 function patchCharacters(command, before, ports) {
   let rows = before.characters;

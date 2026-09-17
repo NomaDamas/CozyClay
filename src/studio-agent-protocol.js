@@ -196,7 +196,9 @@ const verification = object({ id, status: choices(["verified", "unverified"]), p
 // One measured value per patched element path. Exactly one typed member is
 // carried, so a picture is reported by its measured size and a schedule by its
 // length instead of turning the receipt into a document transport.
-const patchedValue = object({ path: text(120) }, { number: number(), text: text(512), flag: bool, vec: vec3, count: integer(), bytes: integer() });
+// A cleared or refused field reports `text: null`: absence is a measurement,
+// not a missing member.
+const patchedValue = object({ path: text(120) }, { number: number(), text: nullable(text(512)), flag: bool, vec: vec3, count: integer(), bytes: integer() });
 const readback = object({}, { position: vec3, yawDeg: number(), rotationDeg: vec3, scale: union(positive, positiveVec3), name, color: text(32), hidden: bool, modelId: id, renderer: id,
 	parentId: nullable(id), childIds: ids(100, 0), removed: bool, range, camera, keyId: id, frame: integer(), subjectIds: ids(24, 0), selection, activeCharacterId: nullable(id), shotId: nullable(id), view, token: id, takeId: nullable(id), statureM: positive,
 	patched: array(patchedValue, 32, 1) });
