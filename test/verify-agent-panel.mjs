@@ -77,6 +77,17 @@ for (const [name, source] of [["agent-client.js", client], ["AgentPanel.jsx", pa
 	expect(`${name} never sets an Authorization header`, !/authorization/i.test(source));
 }
 expect("the client only reads a session description over loopback", ["/oauth/status", "/oauth/start", "/oauth/logout", "/agent/turn", "/agent/stop", "/agent/models"].every((route) => client.includes(route)));
+// Without a sidecar the dev server must answer EVERY agent route the panel
+// calls with its 503, including the Studio replay and acceptance routes. The
+// SPA fallback would hand back index.html, which the panel cannot parse.
+expect("the dev 503 gate covers every route the panel calls", (() => {
+	const vite = readFileSync(new URL("../vite.config.js", import.meta.url), "utf8");
+	const source = vite.match(/agentUrl && (\/\^\\\/agent[^\n]*?)\.test\(path\)/)?.[1];
+	if (!source) return false;
+	const gate = new RegExp(source.slice(1, source.lastIndexOf("/")));
+	return ["/agent/turn", "/agent/stop", "/agent/models", "/agent/turn/8b1f/events", "/agent/jobs/job-1/accept"].every((route) => gate.test(route))
+		&& !["/agent/image", "/agent/turn/8b1f/events/extra"].some((route) => gate.test(route));
+})());
 
 // --- every state name exists --------------------------------------------
 for (const state of ["signed-out", "signing-in", "no-entitlement", "ready", "streaming", "rate-limited", "error"]) {
