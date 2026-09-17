@@ -5,6 +5,7 @@ import { createRequire } from "node:module";
 import { join, relative } from "node:path";
 
 const NODE_FILES = [
+	"test/verify-studio-elements.mjs",
 	"test/ardy/verify-base-free.mjs",
 	"test/ardy/verify-browser-motion.mjs",
 	"test/ardy/verify-collision-blockers.mjs",
