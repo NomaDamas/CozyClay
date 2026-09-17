@@ -372,3 +372,49 @@ console.log("agent routes verified");
 	failServer.close();
 	console.log("PASS Studio turn model stream errors are retried and surfaced as a real error frame");
 }
+
+{
+	// Regression for #342: a Studio rejection receipt carries code/message at the
+	// top level, never under `error`. The tool.done event and the model's
+	// function_call_output must show that code, message and recovery hint — never
+	// the generic BACKEND_UNAVAILABLE / "Studio command failed".
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const rejection = { ok: false, commandId: "cmd-rej", host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, code: "STALE_TARGET", phase: "admission", message: "Target incarnation changed; re-read the scene.", affectedIds: [], expectedTargets: [], currentTargets: [{ workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4", targetId: "char-alex", token: "ct-99" }], mutated: false, preserved: { authoredState: "unchanged" }, recovery: { action: "inspect", retryAllowed: false } };
+	let rejTurns = 0;
+	const rejInputs = [];
+	const rejCodex = {
+		...fakeCodex,
+		streamResponses: ({ input }) => { rejInputs.push(input); const first = rejTurns++ === 0; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
+			if (first) yield { type: "response.output_item.done", item: { type: "function_call", call_id: "rej-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "char-alex" }] }) } };
+			else yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
+			yield { type: "response.completed", response: { status: "completed" } };
+		} }; },
+	};
+	let rejServer;
+	const rejHub = { command: async (name) => name === "arrange_objects" ? rejection : { ok: true }, workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
+	const rejRuntime = { readContext: async () => contextFixture() };
+	const rejHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: rejCodex, liveHub: rejHub, studioRuntime: rejRuntime, port: () => rejServer.address().port });
+	rejServer = createServer((req, res) => rejHandler(req, res).catch((error) => { console.error("studio-rejection fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	rejServer.listen(0, "127.0.0.1");
+	await once(rejServer, "listening");
+	const rejOrigin = `http://127.0.0.1:${rejServer.address().port}`;
+	const rejText = await fetch(`${rejOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: rejOrigin }, body: JSON.stringify(envelopeFixture()) }).then((r) => r.text());
+	const rejEvents = [...rejText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+	const toolDone = rejEvents.find((event) => event.type === "tool.done" && event.callId === "rej-1");
+	assert.ok(toolDone, "the rejected tool call ends with a tool.done");
+	assert.equal(toolDone.ok, false);
+	assert.match(toolDone.error, /STALE_TARGET/, "the card shows the receipt's code, not a generic backend failure");
+	assert.match(toolDone.error, /Target incarnation changed/, "the card shows the receipt's message");
+	assert.ok(!/BACKEND_UNAVAILABLE|Studio command failed/.test(toolDone.error), "the generic failure strings are gone");
+	const output = rejInputs[1]?.find((item) => item.type === "function_call_output" && item.call_id === "rej-1");
+	assert.ok(output, "the model receives a function_call_output for the rejected call");
+	const parsed = JSON.parse(output.output);
+	assert.equal(parsed.ok, false);
+	assert.equal(parsed.error.code, "STALE_TARGET");
+	assert.equal(parsed.error.message, "Target incarnation changed; re-read the scene.");
+	assert.deepEqual(parsed.error.recovery, { action: "inspect", retryAllowed: false }, "the model sees the recovery hint");
+	assert.equal(parsed.error.phase, "admission");
+	assert.equal(rejEvents.some((event) => event.type === "error"), false, "a rejected tool call does not fail the turn; the model continues");
+	rejServer.close();
+	console.log("PASS Studio tool rejections surface the receipt's code, message and recovery");
+}

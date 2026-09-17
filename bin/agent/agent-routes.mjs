@@ -385,7 +385,15 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 						}
 						const publicResult = result && typeof result === "object" ? Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl")) : result; send({ type: "tool.done", callId: item.call_id, ok: true, result: publicResult }); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(publicResult) }); session.history = history.slice();
 						if (result?.dataUrl && codex.appendImageObservation) { codex.appendImageObservation(history, { callId: item.call_id, dataUrl: result.dataUrl, label: `Studio image ${result.imageId} revision ${JSON.stringify(result.revision)} receipt ${result.receiptId ?? "unavailable"}` }); session.history = history.slice(); }
-					} catch (error) { if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message); const failure = { ok: false, error: { code: error.code || "BACKEND_UNAVAILABLE", message: error.message } }; send({ type: "tool.done", callId: item.call_id, ok: false, error: error.message }); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(failure) }); session.history = history.slice(); }
+					} catch (error) {
+						if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message, error?.receipt ? JSON.stringify(error.receipt).slice(0, 400) : "");
+						const receipt = error?.receipt && typeof error.receipt === "object" ? error.receipt : null;
+						const code = error.code || "BACKEND_UNAVAILABLE";
+						const failure = { ok: false, error: { code, message: error.message, ...(receipt ? { phase: receipt.phase ?? null, recovery: receipt.recovery ?? null, expectedTargets: receipt.expectedTargets ?? [], currentTargets: receipt.currentTargets ?? [] } : {}) } };
+						const recoveryHint = receipt?.recovery?.action && receipt.recovery.action !== "none" ? ` (${receipt.recovery.action}${receipt.recovery.retryAllowed === false ? ", do not retry" : ", retry allowed"})` : "";
+						send({ type: "tool.done", callId: item.call_id, ok: false, error: `${code}: ${error.message}${recoveryHint}` });
+						history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(failure) }); session.history = history.slice();
+					}
 				}
 				if (!called) break;
 			}

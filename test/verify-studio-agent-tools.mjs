@@ -10,7 +10,7 @@ import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
 import { createRequire } from "node:module";
 const { WebSocket } = createRequire(new URL("../mcp/package.json", import.meta.url))("ws");
 
-const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses"]);
+const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "rejection-receipt-surfaces-reason"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -96,4 +96,29 @@ if (shouldRun("sse-disconnect-reconnect")) {
   const clientFetch = async (url, init = {}) => { const target = new URL(url, liveHttp.origin).href; fetches.push(target); const headers = { ...(init.headers || {}), origin: liveHttp.origin, ...(cookie ? { cookie } : {}) }; const response = await fetch(target, { ...init, headers }); cookie ||= response.headers.get("set-cookie")?.split(";")[0] ?? null; if (firstObserver && target.endsWith("/agent/turn")) { firstObserver = false; const reader = response.body.getReader(); let dropped = false; const body = new ReadableStream({ async pull(controller) { const part = await reader.read(); if (part.done) { controller.close(); return; } controller.enqueue(part.value); if (!dropped && new TextDecoder().decode(part.value).includes('"state":"generating"')) { dropped = true; await reader.cancel(); controller.error(new Error("observer disconnected")); } } }); return new Response(body, { status: response.status, headers: response.headers }); } return response; };
   const transport = createHttpTransport({ fetchImpl: clientFetch, surface: "studio", capture: () => {} }); const seen = []; const turnPromise = transport.turn(turn, event => { seen.push(event); if (event.type === "job.state" && event.state === "generating") { arrived.promise.then(() => release.resolve()); } }); await bounded(arrived.promise); release.resolve(); await bounded(turnPromise); assert.equal(generations, 1); assert.equal(seen.filter(event => event.type === "receipt").length, 1); assert.ok(seen.some(event => event.type === "done")); assert.ok(fetches.some(url => /events\?after=[1-9]/.test(url))); assert.ok(commands.some(command => command.name === "prepare_motion_install")); assert.equal(calls.length, 2);
   await liveHttp.close(); await live.close(); console.log("PASS pending-generation disconnect/reconnect uses landed HTTP client, real live hub/bridge, one generation and receipt");
+}
+
+if (shouldRun("rejection-receipt-surfaces-reason")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  const receipt = { ok: false, commandId: "cmd-9", code: "INVALID_ARGUMENT", phase: "admission", message: "Expected exactly one supported variant.", recovery: { action: "inspect", retryAllowed: false }, expectedTargets: [], currentTargets: [], mutated: false, preserved: { authoredState: "unchanged" } };
+  const rejecting = { command: async () => receipt };
+  const tools = createStudioTools({ liveHub: rejecting, workspaceHandle: "handle-1", session: { signal: new AbortController().signal } });
+  const invoke = tools.internal.invoke;
+  await assert.rejects(invoke("inspect_studio", { scope: "scene" }), (error) => {
+    assert.equal(error.code, "INVALID_ARGUMENT", "the receipt's top-level code wins");
+    assert.equal(error.message, "Expected exactly one supported variant.", "the receipt's top-level message wins");
+    assert.deepEqual(error.receipt, receipt, "the whole receipt is attached for the route to forward");
+    return true;
+  });
+  // Nested `error` still works, and top level beats it when both exist.
+  const nested = { command: async () => ({ ok: false, code: "STALE_SCENE", message: "top-level wins", error: { code: "TARGET_BUSY", message: "nested" } }) };
+  await assert.rejects(createStudioTools({ liveHub: nested, workspaceHandle: "h", session: { signal: new AbortController().signal } }).internal.invoke("inspect_studio", { scope: "scene" }), (error) => {
+    assert.equal(error.code, "STALE_SCENE"); assert.equal(error.message, "top-level wins"); return true;
+  });
+  // The generic string survives only when the receipt has neither code nor message.
+  const bare = { command: async () => ({ ok: false }) };
+  await assert.rejects(createStudioTools({ liveHub: bare, workspaceHandle: "h", session: { signal: new AbortController().signal } }).internal.invoke("inspect_studio", { scope: "scene" }), (error) => {
+    assert.equal(error.code, undefined); assert.equal(error.message, "Studio command failed"); return true;
+  });
+  console.log("PASS rejection receipts surface their code, message and recovery to the route");
 }

@@ -13,7 +13,13 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
       ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision, expectedTargets: session.admission.targets }
       : command.args;
     const result = await liveHub.command(name, payload, workspaceHandle);
-    if (result?.ok === false) throw Object.assign(new Error(result.error?.message || "Studio command failed"), { code: result.error?.code });
+    if (result?.ok === false) {
+      // Rejection receipts carry code/message at the top level, not under `error`;
+      // the receipt itself holds phase, recovery and target evidence the model needs.
+      const code = result.code ?? result.error?.code;
+      const message = result.message ?? result.error?.message ?? "Studio command failed";
+      throw Object.assign(new Error(message), { code, receipt: result });
+    }
     if (mutationNames.has(name)) {
       if (Number.isSafeInteger(result?.revision?.after)) session.admission.revision = result.revision.after;
       else await session.admission.refresh();
