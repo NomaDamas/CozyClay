@@ -61,7 +61,6 @@ import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, valid
 import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { createStudioMotionCandidates } from "./studio-agent-motion.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import { requestHostImageAction } from "./workflow/agent-client.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
 import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor, saveAutoColor } from "./auto-color.js";
@@ -484,6 +483,12 @@ function ShotGuideOverlay({ mode, aspect, className = "" }) {
 // the photograph rather than guessed at it. Same number the fit diagnostics are
 // scaled on (0..1 visibility), so it reads as "less than half seen".
 const PHOTO_POSE_LOW_CONFIDENCE = 0.5;
+
+// How long an agent receipt keeps its targets lit in the hierarchy. Long
+// enough to find the row after reading the chat line, short enough that it is
+// never mistaken for selection. Paired with --agent-touch in styles.css, which
+// fades the same highlight out over the same two seconds.
+const AGENT_RECEIPT_HIGHLIGHT_MS = 2000;
 
 // The storyboard contact sheet is drawn on a bare 2d canvas, which has no
 // stylesheet to inherit from: it gets the studio's own type stack explicitly
@@ -11386,45 +11391,15 @@ function resizePromptClip(id, edge, rawFrame) {
 		setTlFrame(frame); setWorkflowMode(view.mode); setLookThroughShot(view.lookThrough); setGridView(view.grid); setAutoColor(view.autoColor); setTlPlaying(view.playing);
 	}
 	const studioGestureRef = useRef(false);
-	const studioImageActionsRef = useRef(new Map());
-	const studioPlacedImagesRef = useRef(new Map());
+	// The Studio turn authors the scene through its own families and never
+	// returns an image, so there is no image action for this host to accept.
+	// The Workflow dock keeps its half of that contract.
 	useEffect(() => {
 		if (embedMode) return;
 		const down = event => { if (event.target.closest?.("canvas, .inspector-scroll, .tl-body, .plan-board")) studioGestureRef.current = true; };
 		const up = () => { studioGestureRef.current = false; };
 		window.addEventListener("pointerdown", down, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
-		const image = event => {
-			event.preventDefault(); const request = event.detail;
-			if (studioImageActionsRef.current.has(request.requestId)) return;
-			const host = readStudioState().host;
-			const work = async () => {
-				if (request.action === "remove") {
-					const placed = studioPlacedImagesRef.current.get(request.imageId);
-					if (!placed || JSON.stringify(placed.host) !== JSON.stringify(host)) throw new Error("The placed image belongs to another document.");
-					if (readStudioState().busy) throw new Error("Finish the current editor gesture first.");
-					storeRef.current.applyAtomic(objects => removeSceneObject(objects, placed.objectId));
-					liveStateRef.current.objects = storeRef.current.objects; studioPlacedImagesRef.current.delete(request.imageId);
-					return { ok: true, receiptId: request.requestId };
-				}
-				if (request.action !== "place") throw new Error("Unsupported image action.");
-				if (readStudioState().busy) throw new Error("Finish the current editor gesture first.");
-				if (typeof request.dataUrl !== "string" || !request.dataUrl.startsWith("data:image/")) throw new Error("Image data is unavailable.");
-				const bytes = await (await fetch(request.dataUrl)).arrayBuffer();
-				const asset = await rememberAsset(await importImageFile(new File([bytes], "Agent image", { type: request.dataUrl.slice(5, request.dataUrl.indexOf(";")) })));
-				const current = readStudioState();
-				if (JSON.stringify(current.host) !== JSON.stringify(host)) throw new Error("The image's document is no longer open.");
-				if (current.busy) throw new Error("Finish the current editor gesture first.");
-				const object = createCutoutObject({ assetId: asset.id, aspect: assetAspect(asset) ?? 1, height: CUTOUT_DEFAULT_HEIGHT, name: "Agent image" }, current.objects);
-				if (!object) throw new Error("Image could not be placed.");
-				storeRef.current.applyAtomic(objects => [...objects, object]); liveStateRef.current.objects = storeRef.current.objects;
-				studioPlacedImagesRef.current.set(request.imageId, { host, objectId: object.id });
-				return { ok: true, receiptId: request.requestId };
-			};
-			const promise = work().catch(error => ({ ok: false, error: error.message })); studioImageActionsRef.current.set(request.requestId, promise);
-			promise.then(result => window.dispatchEvent(new CustomEvent("cozyclay:agent-image-result", { detail: { requestId: request.requestId, ...result } })));
-		};
-		window.addEventListener("cozyclay:agent-image", image);
-		return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); window.removeEventListener("cozyclay:agent-image", image); };
+		return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); };
 	}, [embedMode]);
 	const selectedStudioChar = charIdFromHierarchyId(parseRigNodeId(selectedHierarchyId)?.rowId ?? selectedHierarchyId);
 	Object.assign(liveStateRef.current, {
@@ -12702,7 +12677,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
 						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
 							sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
-							buildContext={buildStudioAgentContext} onImageAction={requestHostImageAction} />
+							buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets} />
 					</div>}
 					<section className="inspector-pane" hidden={studioAgentMode}>
 					<div className="inspector-heading">

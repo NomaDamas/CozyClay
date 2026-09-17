@@ -12,18 +12,18 @@ import {
 	effortOptions,
 	ERROR_COPY,
 	formatJobProgress,
-	IMAGE_COST_HINT,
 	isTerminalJobState,
 	jobStateTone,
-	SUGGESTION_CHIPS,
+	AGENT_PANEL_WIDTH_DEFAULT,
 	clampPanelWidth,
 	createAgentTransport,
+	panelPresentation,
 	requestHostImageAction,
+	resolveToolLabel,
 	formatElapsed,
 	formatResetIn,
 	readStoredPanelWidth,
 	storePanelWidth,
-	toolCallLabel,
 } from "./agent-client.js";
 import "./agent-panel.css";
 
@@ -31,35 +31,17 @@ function StatusDot({ tone, title }) {
 	return <span className={`agent-status-dot ${tone}`} title={title} aria-hidden="true" />;
 }
 
-// Canvas tools read as actions, never as raw function names; the map takes
-// precedence over the server's underscore-to-space label.
-const CANVAS_TOOL_LABELS = {
-	describe_workflow: "Read canvas",
-	add_workflow_node: "Add node",
-	update_workflow_node: "Edit node",
-	remove_workflow_node: "Remove node",
-	connect_workflow_nodes: "Connect nodes",
-	disconnect_workflow_nodes: "Disconnect nodes",
-	run_workflow: "Run workflow",
-	set_workflow_node_output: "Set node output",
-	focus_workflow_node: "Focus node",
-	add_reference_node: "Add reference image",
-};
-
-/** The one label a tool call is known by, in a card and in the activity line. */
-function resolveToolLabel(call) {
-	return Object.hasOwn(CANVAS_TOOL_LABELS, call.name) ? CANVAS_TOOL_LABELS[call.name] : toolCallLabel(call);
-}
-
-function ToolCallCard({ call, onRetry }) {
+function ToolCallCard({ call, presentation, onRetry }) {
 	const tone = call.status === "running" ? "busy" : ["failed", "cancelled"].includes(call.status) ? "alert" : "ok";
-	const canvasTool = Object.hasOwn(CANVAS_TOOL_LABELS, call.name);
+	// The badge marks a call that edits the host surface, so it is drawn exactly
+	// for the families that surface names.
+	const hostTool = Object.hasOwn(presentation.toolLabels, call.name);
 	const detail = call.error ? `error: ${call.error}` : JSON.stringify(call.result ?? call.args ?? {}, null, 2);
 	return <div className={`agent-card agent-tool-card${call.status === "failed" ? " failed" : ""}`} data-tool-status={call.status} data-tool-name={call.name}>
 		<details>
 			<summary>
 				<StatusDot tone={tone} title={call.status} />
-				<span className="agent-tool-label">{resolveToolLabel(call)}</span>{canvasTool && <span className="agent-tool-badge">Canvas</span>}
+				<span className="agent-tool-label">{resolveToolLabel(call, presentation.toolLabels)}</span>{hostTool && <span className="agent-tool-badge">{presentation.toolBadge}</span>}
 				<span className="agent-tool-elapsed">{call.status === "running" ? "running…" : call.status === "cancelled" ? (call.result?.status === "not_applied" ? "not applied" : "result unknown") : formatElapsed(call.elapsedMs)}</span>
 				<FiChevronRight size={12} aria-hidden="true" />
 			</summary>
@@ -204,12 +186,20 @@ export default function AgentPanel({
 	surface = "workflow",
 	buildContext = null,
 	onImageAction = null,
+	onReceipt = null,
 }) {
-	const transport = useMemo(() => injectedTransport || createAgentTransport(), [injectedTransport]);
+	// What this host shows around the shared conversation: labels, chips, the
+	// affordances it owns and the ones it has no use for.
+	const presentation = useMemo(() => panelPresentation(surface), [surface]);
+	// The surface is a prop, not an inference from the address bar: an embedded
+	// Studio panel is a Studio panel on every route.
+	const transport = useMemo(() => injectedTransport || createAgentTransport({ surface }), [injectedTransport, surface]);
 	const mockState = transport.mock ? transport.state : null;
 
 	const [collapsed, setCollapsed] = useState(defaultCollapsed);
-	const [width, setWidth] = useState(readStoredPanelWidth);
+	// Only the dock owns a width; an embedded host sizes the panel itself and
+	// never reads the dock's stored key.
+	const [width, setWidth] = useState(() => presentation.persistWidth ? readStoredPanelWidth() : AGENT_PANEL_WIDTH_DEFAULT);
 	const [resizing, setResizing] = useState(false);
 	const [menuOpen, setMenuOpen] = useState(false);
 	const [account, setAccount] = useState(null);
@@ -236,6 +226,8 @@ export default function AgentPanel({
 	buildContextRef.current = buildContext;
 	const imageActionRef = useRef(onImageAction);
 	imageActionRef.current = onImageAction;
+	const receiptRef = useRef(onReceipt);
+	receiptRef.current = onReceipt;
 
 	const store = useMemo(() => createAgentChatStore({
 		transport,
@@ -243,6 +235,7 @@ export default function AgentPanel({
 		buildContext: () => buildContextRef.current?.() ?? null,
 		// Host prop first, then the scripted mock host, then the live editor event.
 		requestImageAction: (request) => (imageActionRef.current ?? transport.applyImage?.bind(transport) ?? requestHostImageAction)(request),
+		onReceipt: (receipt) => receiptRef.current?.(receipt),
 		onAuthLost: () => setAuthState("signed-out"),
 	}), [surface, transport]);
 	const chat = useSyncExternalStore(store.subscribe, store.getState, store.getState);
@@ -253,7 +246,7 @@ export default function AgentPanel({
 	// is live and holding the turn's outcome for a few seconds after it ends.
 	const [activityNow, setActivityNow] = useState(() => Date.now());
 	const activity = model
-		? describeActivity(chat, { now: activityNow, toolLabel: resolveToolLabel })
+		? describeActivity(chat, { now: activityNow, toolLabel: (call) => resolveToolLabel(call, presentation.toolLabels) })
 		: modelsState === "failed"
 			? { phase: "no-model", kind: "terminal", tone: "alert", text: "No model available — the agent service did not answer with one", ticking: false }
 			: { phase: "models", kind: "live", tone: "busy", text: "Loading models…", ticking: false };
@@ -264,17 +257,23 @@ export default function AgentPanel({
 	}, [activity.ticking]);
 
 	// --- session bootstrap -------------------------------------------------
+	// The image entitlement only gates a surface that can ask for an image; a
+	// Studio turn authors the scene, so a plan without image generation is a
+	// perfectly ready session there.
+	const sessionState = useCallback((status) => status?.signedIn
+		? (presentation.imageEntitlement && status?.entitlements?.image === false ? "no-entitlement" : "ready")
+		: status?.pending ? "signing-in" : "signed-out", [presentation]);
 	const readAccount = useCallback(async () => {
 		try {
 			const status = await transport.status();
 			setAccount(status);
-			setAuthState(status?.signedIn ? (status?.entitlements?.image === false ? "no-entitlement" : "ready") : status?.pending ? "signing-in" : "signed-out");
+			setAuthState(sessionState(status));
 			return status;
 		} catch {
 			setAuthState("signed-out");
 			return null;
 		}
-	}, [transport]);
+	}, [sessionState, transport]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -283,7 +282,7 @@ export default function AgentPanel({
 				const status = await transport.status();
 				if (cancelled) return;
 				setAccount(status);
-				setAuthState(status?.signedIn ? (status?.entitlements?.image === false ? "no-entitlement" : "ready") : status?.pending ? "signing-in" : "signed-out");
+				setAuthState(sessionState(status));
 			} catch {
 				if (!cancelled) setAuthState("signed-out");
 			}
@@ -300,7 +299,7 @@ export default function AgentPanel({
 			}
 		})();
 		return () => { cancelled = true; };
-	}, [transport]);
+	}, [sessionState, transport]);
 
 	// Sign-in finishes in another window. The panel picks the session up when
 	// this document is looked at again, or when the host announces the return —
@@ -510,7 +509,9 @@ export default function AgentPanel({
 			<h2 className="agent-title">Agent</h2>
 			<span className="agent-header-spacer" />
 			<button type="button" className="agent-ghost-button agent-new" onClick={newSession}><FiPlus size={11} /> New</button>
-			<button type="button" className="agent-ghost-button agent-history" disabled title="History is coming with the sidecar">History</button>
+			{/* A permanently disabled control is chrome that never earns its room;
+			    only the dock, where the sidecar history is coming, still shows it. */}
+			{presentation.history && <button type="button" className="agent-ghost-button agent-history" disabled title="History is coming with the sidecar">History</button>}
 			<span className="agent-overflow">
 				<button type="button" className="agent-icon-button agent-overflow-toggle" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More agent actions" onClick={() => setMenuOpen((value) => !value)}><FiMoreHorizontal size={13} /></button>
 				{menuOpen && <div className="agent-menu" role="menu">
@@ -547,17 +548,17 @@ export default function AgentPanel({
 			</div>}
 
 			{authState === "ready" && !items.length && !rateLimit && <div className="agent-state-card" data-agent-card="ready">
-				<h3>Direct the scene</h3>
-				<p>Ask for blocking, a camera move, or a rendered frame from “{sceneName}”.</p>
+				<h3>{presentation.emptyTitle}</h3>
+				<p>{presentation.emptyHint(sceneName)}</p>
 				<div className="agent-suggestions">
-					{SUGGESTION_CHIPS.map((chip) => <button type="button" key={chip} className="agent-chip" onClick={() => { store.setDraft(chip); composerRef.current?.focus(); }}>{chip}</button>)}
+					{presentation.suggestions.map((chip) => <button type="button" key={chip} className="agent-chip" onClick={() => { store.setDraft(chip); composerRef.current?.focus(); }}>{chip}</button>)}
 				</div>
 			</div>}
 
 			{items.map((item) => {
 				if (item.kind === "user") return <div className="agent-row user" key={item.id}><div className="agent-bubble">{item.text}</div></div>;
 				if (item.kind === "assistant") return <div className="agent-row assistant" key={item.id}><div className="agent-assistant-text">{item.text}{streaming && <span className="agent-caret">▌</span>}</div></div>;
-				if (item.kind === "tool") return <div className="agent-row" key={item.id}><ToolCallCard call={item} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
+				if (item.kind === "tool") return <div className="agent-row" key={item.id}><ToolCallCard call={item} presentation={presentation} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
 				if (item.kind === "job") return <div className="agent-row" key={item.id}><JobCard job={item} onStop={stopTurn} onAccept={(job) => store.acceptJob(job.jobId)} /></div>;
 				if (item.kind === "receipt") return <div className="agent-row" key={item.id}><ReceiptCard item={item} /></div>;
 				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
@@ -579,7 +580,7 @@ export default function AgentPanel({
 				ref={composerRef}
 				className="agent-input"
 				aria-label="Message the agent"
-				placeholder={panelState === "rate-limited" ? "Composer is paused" : model ? "Ask the agent to block, frame or render…" : "Waiting for the model list…"}
+				placeholder={panelState === "rate-limited" ? "Composer is paused" : model ? presentation.composerPlaceholder : "Waiting for the model list…"}
 				value={draft}
 				disabled={composerDisabled}
 				onChange={(event) => store.setDraft(event.target.value)}
@@ -606,7 +607,9 @@ export default function AgentPanel({
 					: <button type="button" className="agent-send" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}>Send</button>}
 			</div>
 		</div>}
-		{authenticated && <p className="agent-footer-hint">{IMAGE_COST_HINT}</p>}
+		{/* The hint exists to warn about image spend; a surface that cannot
+		    generate an image has nothing to warn about. */}
+		{authenticated && presentation.imageHint && <p className="agent-footer-hint">{presentation.imageHint}</p>}
 
 		{lightbox && <button type="button" className="agent-lightbox" aria-label="Close image preview" onClick={() => setLightbox(null)}>
 			<img src={lightbox.dataUrl} alt={lightbox.prompt || "Generated image"} />

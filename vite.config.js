@@ -82,7 +82,11 @@ export default defineConfig({
 						res.end(JSON.stringify({ error: "oauth sidecar is not configured" }));
 						return;
 					}
-					if (!agentUrl && /^\/agent\/(turn|stop|models)$/.test(path)) {
+					// Every route the panel calls, including the Studio turn's event
+					// replay and its explicit job acceptance: without them a dev server
+					// answers those two with the SPA's index.html, which the panel then
+					// fails to parse instead of reporting a missing sidecar.
+					if (!agentUrl && /^\/agent\/(turn|stop|models|turn\/[^/]+\/events|jobs\/[^/]+\/accept)$/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
 						res.end(JSON.stringify({ error: "agent sidecar is not configured" }));

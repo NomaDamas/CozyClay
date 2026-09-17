@@ -36,6 +36,8 @@
 	--spring: cubic-bezier(.34, 1.4, .5, 1);
 	--fast: .14s;
 	--med: .26s;
+	/* How long an agent receipt keeps the rows it changed lit. */
+	--agent-touch: 2s;
 }
 
 * {
@@ -11354,6 +11356,31 @@ input[type=range] {
 .studio-agent-inspector { display: flex; flex-direction: column; min-height: 0; height: 100%; }
 .studio-agent-inspector > .agent-panel { flex: 1 1 auto; min-height: 0; width: 100%; }
 .studio-agent-inspector[hidden], .inspector-sidebar .inspector-pane[hidden] { display: none; }
+/* A receipt points at the rows it changed: the hierarchy row glows for one
+   beat (--agent-touch, paired with AGENT_RECEIPT_HIGHLIGHT_MS in App.jsx) and
+   fades out. It is drawn on an overlay so only opacity animates, and it uses
+   the accent tokens WITHOUT the selected row's inset bar — an agent edit
+   reports itself, it does not take the selection. */
+.hierarchy-row.agent-touched { position: relative; }
+.hierarchy-row.agent-touched::after {
+	content: "";
+	position: absolute;
+	inset: 0;
+	border-radius: var(--radius);
+	background: var(--accent-soft);
+	box-shadow: inset 0 0 0 1px var(--accent-ring);
+	pointer-events: none;
+	animation: hierarchy-agent-touch var(--agent-touch) var(--ease) forwards;
+}
+@keyframes hierarchy-agent-touch {
+	0% { opacity: 0; }
+	8% { opacity: 1; }
+	65% { opacity: 1; }
+	100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+	.hierarchy-row.agent-touched::after { animation: none; opacity: 1; }
+}
 @media (max-width: 700px) {
 	.studio-agent-inspector { min-height: 540px; max-height: 80vh; }
 }

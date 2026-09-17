@@ -314,6 +314,9 @@ function TreeRow({
 	// The scene root row hands its name to the pill in `rowExtra`; printing it
 	// twice on one row is the duplication this panel just removed.
 	showLabel = true,
+	// An agent receipt named this row as something it just changed; the row
+	// says so for a beat without becoming the selection.
+	touched = false,
 	// A row that owns children still does not always earn a fold caret: the
 	// scene ROOT would fold the whole scene away, which no workflow needs
 	// (docs/studio-ui-ia.md R6).
@@ -465,7 +468,7 @@ function TreeRow({
 				// In-place rename, Unity-style: Enter commits, Escape reverts,
 				// blur commits (docs/unity-reference.md §9.7). A div, not the
 				// row button — an input inside a button is invalid HTML.
-				<div className="hierarchy-row">
+				<div className={"hierarchy-row" + (touched ? " agent-touched" : "")}>
 					<HierarchyIcon kind={node.kind} />
 					<input
 						ref={inputRef}
@@ -490,7 +493,7 @@ function TreeRow({
 			) : (
 				<button
 					type="button"
-					className={"hierarchy-row" + (showLabel ? "" : " icon-only")}
+					className={"hierarchy-row" + (showLabel ? "" : " icon-only") + (touched ? " agent-touched" : "")}
 					aria-label={showLabel ? undefined : label}
 					onClick={() => onSelect(node.id)}
 					onDoubleClick={onRenameStart ?? undefined}
@@ -524,6 +527,9 @@ export default function HierarchyPanel({
 	onFrameObject,
 	propsDrop = null,
 	reparent = null,
+	// Hierarchy ids an agent receipt just changed. The host owns how long they
+	// stay lit; the panel only draws them and brings the first one into view.
+	touchedIds = [],
 	scenes,
 	activeSceneId,
 	onSceneSelect,
@@ -630,6 +636,17 @@ export default function HierarchyPanel({
 		onSelect(id);
 	};
 
+	const touched = useMemo(() => new Set(touchedIds), [touchedIds]);
+	// A highlight nobody can see is not a receipt: the first row an agent edit
+	// touched is brought into view, exactly like a selection made outside the
+	// tree. Scrolling a hidden tree would do nothing, so it waits for the tab.
+	useEffect(() => {
+		const first = touchedIds[0];
+		const tree = treeRef.current;
+		if (!first || !tree || tree.offsetParent === null) return;
+		tree.querySelector(`[data-node-id="${CSS.escape(first)}"]`)?.scrollIntoView({ block: "nearest" });
+	}, [touchedIds]);
+
 	const openRowMenu = (event, id) => {
 		event.preventDefault();
 		event.stopPropagation(); // a row pick must not also open the create menu
@@ -734,6 +751,7 @@ export default function HierarchyPanel({
 					onToggle={toggle}
 					badge={badgeFor(node.id)}
 					status={statusFor(node.id)}
+					touched={touched.has(node.id)}
 					editing={editing}
 					onRenameCommit={(name) => commitRename(node.id, name)}
 					onRenameCancel={cancelRename}

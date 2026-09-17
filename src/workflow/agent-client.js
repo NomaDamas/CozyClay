@@ -22,6 +22,7 @@
 //   POST /agent/jobs/<jobId>/accept          -> explicit "Apply with warnings"
 
 import { bucketMs, track } from "../analytics.js";
+import { ko } from "../locale.js";
 import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
 import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
 
@@ -116,7 +117,92 @@ export const SUGGESTION_CHIPS = [
 	"Suggest a camera move for the current shot",
 ];
 
+/** Previs asks, in the Studio's own words: short enough to read at a glance in
+ * the Inspector column, and every one of them is something the Studio families
+ * can actually do. */
+export const STUDIO_SUGGESTION_CHIPS = [
+	ko("Block a two-shot", "\uD22C\uC0F7 \uBE14\uB85C\uD0B9"),
+	ko("Frame the selected character", "\uC120\uD0DD\uD55C \uCE90\uB9AD\uD130 \uAD6C\uB3C4 \uC7A1\uAE30"),
+	ko("Light the set warmer", "\uC138\uD2B8 \uC870\uBA85 \uB354 \uB530\uB73B\uD558\uAC8C"),
+];
+
 export const IMAGE_COST_HINT = "Image generation uses about 3-5x a normal turn";
+
+// Canvas tools read as actions, never as raw function names; the map takes
+// precedence over the server's underscore-to-space label.
+const CANVAS_TOOL_LABELS = {
+	describe_workflow: "Read canvas",
+	add_workflow_node: "Add node",
+	update_workflow_node: "Edit node",
+	remove_workflow_node: "Remove node",
+	connect_workflow_nodes: "Connect nodes",
+	disconnect_workflow_nodes: "Disconnect nodes",
+	run_workflow: "Run workflow",
+	set_workflow_node_output: "Set node output",
+	focus_workflow_node: "Focus node",
+	add_reference_node: "Add reference image",
+};
+
+/** The nine Studio families, named for what they do to the scene. The Studio
+ * is bilingual, so these go through ko() like every other Studio label. */
+const STUDIO_TOOL_LABELS = {
+	inspect_studio: ko("Read the scene", "\uC7A5\uBA74 \uC77D\uAE30"),
+	operate_studio: ko("Selection and view", "\uC120\uD0DD\uACFC \uBDF0"),
+	arrange_objects: ko("Arrange objects", "\uC624\uBE0C\uC81D\uD2B8 \uBC30\uCE58"),
+	arrange_characters: ko("Arrange characters", "\uCE90\uB9AD\uD130 \uBC30\uCE58"),
+	patch_elements: ko("Edit properties", "\uC18D\uC131 \uD3B8\uC9D1"),
+	frame_shot: ko("Frame the shot", "\uC0F7 \uAD6C\uB3C4 \uC7A1\uAE30"),
+	generate_motion: ko("Generate motion", "\uBAA8\uC158 \uC0DD\uC131"),
+	verify_result: ko("Verify the result", "\uACB0\uACFC \uAC80\uC99D"),
+	undo_edit: ko("Undo an edit", "\uD3B8\uC9D1 \uB418\uB3CC\uB9AC\uAE30"),
+};
+
+/**
+ * One panel, two hosts. The conversation, the transport, the composer and the
+ * activity line are identical on both surfaces; everything below is what each
+ * host shows AROUND them. A Workflow-only affordance (the image cost hint, the
+ * image entitlement gate, the storyboard chips, the History placeholder, the
+ * dock's stored width) is absent from the Studio column rather than rendered
+ * dead, because the Studio turn cannot produce an image at all.
+ */
+export const PANEL_PRESENTATIONS = Object.freeze({
+	workflow: Object.freeze({
+		toolLabels: CANVAS_TOOL_LABELS,
+		toolBadge: "Canvas",
+		suggestions: SUGGESTION_CHIPS,
+		imageHint: IMAGE_COST_HINT,
+		// The Workflow turn generates images, so an account without the image
+		// entitlement has to be told before it asks for one.
+		imageEntitlement: true,
+		history: true,
+		persistWidth: true,
+		emptyTitle: "Direct the scene",
+		emptyHint: (sceneName) => `Ask for blocking, a camera move, or a rendered frame from \u201C${sceneName}\u201D.`,
+		composerPlaceholder: "Ask the agent to block, frame or render\u2026",
+	}),
+	studio: Object.freeze({
+		toolLabels: STUDIO_TOOL_LABELS,
+		toolBadge: ko("Scene", "\uC7A5\uBA74"),
+		suggestions: STUDIO_SUGGESTION_CHIPS,
+		imageHint: null,
+		imageEntitlement: false,
+		history: false,
+		persistWidth: false,
+		emptyTitle: ko("Direct the scene", "\uC7A5\uBA74\uC744 \uC5F0\uCD9C\uD558\uC138\uC694"),
+		emptyHint: (sceneName) => ko(`Ask for blocking, a camera move, or a motion take in \u201C${sceneName}\u201D.`, `\u201C${sceneName}\u201D\uC5D0\uC11C \uBE14\uB85C\uD0B9, \uCE74\uBA54\uB77C \uC6C0\uC9C1\uC784, \uBAA8\uC158 \uD14C\uC774\uD06C\uB97C \uC694\uCCAD\uD558\uC138\uC694.`),
+		composerPlaceholder: ko("Ask the agent to block, frame or animate\u2026", "\uBE14\uB85C\uD0B9\u00B7\uAD6C\uB3C4\u00B7\uBAA8\uC158\uC744 \uC694\uCCAD\uD558\uC138\uC694\u2026"),
+	}),
+});
+
+/** The presentation a surface owns; an unknown surface is the dock's. */
+export function panelPresentation(surface) {
+	return Object.hasOwn(PANEL_PRESENTATIONS, surface) ? PANEL_PRESENTATIONS[surface] : PANEL_PRESENTATIONS.workflow;
+}
+
+/** The one label a tool call is known by, in a card and in the activity line. */
+export function resolveToolLabel(call, labels = CANVAS_TOOL_LABELS) {
+	return Object.hasOwn(labels, call?.name) ? labels[call.name] : toolCallLabel(call);
+}
 
 export function clampPanelWidth(value) {
 	const width = Number(value);
@@ -330,13 +416,17 @@ export async function refusalEvent(response) {
 
 // The real browser request owns the attempt, including HTTP refusal and Stop.
 // These IDs never use panel session IDs, model call IDs or authored content.
-function startAgentTurn({ surface, capture, now }) {
+function startAgentTurn({ surface, capture, now, correlationId = null }) {
 	const turnId = advisory(() => {
 		const bytes = new Uint8Array(16);
 		globalThis.crypto.getRandomValues(bytes);
 		return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
 	}, null);
 	const clock = () => advisory(() => { const value = now(); return Number.isFinite(value) ? value : NaN; }, NaN);
+	// A Studio turn already has a host-owned id and its frozen envelope has no
+	// room for a second one, so the sidecar names its frames with THAT id. The
+	// analytics id stays the local hex one: it is the only id analytics accepts.
+	const matchId = correlationId ?? turnId;
 	const startedAt = clock();
 	const hostSurface = advisory(() => ["studio", "workflow"].includes(surface) ? surface
 		: /^\/workflow(?:\/|$)/.test(globalThis.location?.pathname || "") ? "workflow" : "studio", "studio");
@@ -370,13 +460,13 @@ function startAgentTurn({ surface, capture, now }) {
 			try {
 				if (!turnId || terminal) return;
 				if (frame.type === "execution_tool_started") {
-					if (!exactKeys(frame, ["type", "turn_id", "telemetry_id", "tool_category"]) || frame.turn_id !== turnId
+					if (!exactKeys(frame, ["type", "turn_id", "telemetry_id", "tool_category"]) || frame.turn_id !== matchId
 						|| !validTelemetryId(frame.telemetry_id) || !AGENT_TOOL_CATEGORIES.includes(frame.tool_category)) return;
 					if (!tools.has(frame.telemetry_id) && !seenTools.has(frame.telemetry_id)) tools.set(frame.telemetry_id, { category: frame.tool_category, startedAt: clock() });
 					return;
 				}
 				const { event, props } = frame;
-				if (props?.turn_id !== turnId) return;
+				if (props?.turn_id !== matchId) return;
 				if (event === "agent:tool_executed") {
 					if (!exactKeys(frame, ["type", "event", "props", "telemetry_id"]) || !validTelemetryId(frame.telemetry_id)
 						|| !exactKeys(props, ["turn_id", "tool_category", "outcome", "duration_bucket"])
@@ -479,7 +569,7 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const { sessionId, text, attachFrame, model, effort } = turnRequest;
 			const studio = turnRequest.surface === "studio";
 			const turnId = studio ? turnRequest.turnId : null;
-			const telemetry = startAgentTurn({ surface, capture, now });
+			const telemetry = startAgentTurn({ surface, capture, now, correlationId: turnId });
 			activeTurns.set(sessionId, telemetry);
 			const onAbort = () => { if (signal.reason === "agent-stop") telemetry.cancel(); };
 			signal?.addEventListener("abort", onAbort, { once: true });
@@ -622,8 +712,31 @@ const MOCK_SCRIPT = [
 	{ delay: 40, event: { type: "done" } },
 ];
 
+// The Studio turn authors the scene instead of generating pictures, so its
+// scripted turn ends in a receipt the panel validates and the host can act on
+// — the same shape a real Studio command returns.
+const MOCK_STUDIO_HOST = { workspaceId: "tab-mock", documentEpoch: "doc-mock", sceneId: "scene-mock", sceneEpoch: "scene-open-mock" };
+const MOCK_STUDIO_RECEIPT = {
+	ok: true, commandId: "cmd-mock-1", receiptId: "receipt-mock-1", host: MOCK_STUDIO_HOST, status: "applied",
+	authored: true, revision: { before: 41, after: 42 }, affectedIds: ["char-a"],
+	delta: [{ id: "char-a", after: { position: { x: -0.8, y: 0, z: 0.4 } } }],
+	checks: { coverage: "affected-targets" }, undo: { historyEntryId: "history-mock-1", entries: 1, canUndoDirect: true }, warnings: [],
+};
+
+const MOCK_STUDIO_SCRIPT = [
+	{ delay: 40, event: { type: "text.delta", text: "Reading the scene before I move anyone. " } },
+	{ delay: 120, event: { type: "tool.start", callId: "studio-1", name: "inspect_studio", label: "inspect studio", args: { scope: "selection" } } },
+	{ delay: 220, event: { type: "tool.done", callId: "studio-1", ok: true, elapsedMs: 214, result: { entities: 2 } } },
+	{ delay: 90, event: { type: "text.delta", text: "Blocking the two-shot now." } },
+	{ delay: 120, event: { type: "tool.start", callId: "studio-2", name: "arrange_characters", label: "arrange characters", args: { ops: [{ op: "update", characterId: "char-a", position: { world: { x: -0.8, y: 0, z: 0.4 } } }] } } },
+	{ delay: 320, event: { type: "tool.done", callId: "studio-2", ok: true, elapsedMs: 332, result: { ok: true, receiptId: MOCK_STUDIO_RECEIPT.receiptId } } },
+	{ delay: 60, event: { type: "receipt", receipt: MOCK_STUDIO_RECEIPT } },
+	{ delay: 40, event: { type: "done" } },
+];
+
 export function createMockTransport(config = { state: "ready" }) {
 	const state = config?.state || "ready";
+	const studio = config?.surface === "studio";
 	const speed = config?.speed > 0 ? config.speed : 1;
 	const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms / speed)));
 	return {
@@ -669,14 +782,16 @@ export function createMockTransport(config = { state: "ready" }) {
 				return;
 			}
 			if (state === "error") {
-				onEvent({ type: "text.delta", text: "Capturing the viewport first." });
-				onEvent({ type: "tool.start", callId: "call-1", name: "capture_blocking_frame", label: "Capture blocking frame", args: { shot: "current" } });
-				onEvent({ type: "tool.done", callId: "call-1", ok: false, elapsedMs: 812, error: "Viewport is not ready" });
+				onEvent({ type: "text.delta", text: studio ? "Reading the scene first." : "Capturing the viewport first." });
+				onEvent(studio
+					? { type: "tool.start", callId: "call-1", name: "inspect_studio", label: "inspect studio", args: { scope: "selection" } }
+					: { type: "tool.start", callId: "call-1", name: "capture_blocking_frame", label: "Capture blocking frame", args: { shot: "current" } });
+				onEvent({ type: "tool.done", callId: "call-1", ok: false, elapsedMs: 812, error: studio ? "The scene is not ready" : "Viewport is not ready" });
 				onEvent({ type: "error", code: "upstream", message: ERROR_COPY.upstream });
 				onEvent({ type: "done" });
 				return;
 			}
-			for (const step of MOCK_SCRIPT) {
+			for (const step of studio ? MOCK_STUDIO_SCRIPT : MOCK_SCRIPT) {
 				if (signal?.aborted) break;
 				await wait(step.delay);
 				if (signal?.aborted) break;
@@ -689,7 +804,9 @@ export function createMockTransport(config = { state: "ready" }) {
 
 export function createAgentTransport(options = {}) {
 	const config = options.mockConfig !== undefined ? options.mockConfig : mockConfigFromSearch();
-	return config ? createMockTransport(config) : createHttpTransport(options);
+	// The surface is the host's own prop, never a guess from the URL: an
+	// embedded Studio panel is a Studio panel wherever it is mounted.
+	return config ? createMockTransport({ surface: options.surface, ...config }) : createHttpTransport(options);
 }
 
 // --- chat store (framework-free) -------------------------------------------
@@ -737,6 +854,10 @@ export function createAgentChatStore({
 	buildContext = null,
 	requestImageAction = null,
 	onAuthLost = null,
+	// A receipt names the targets it changed. The host is told once per receipt
+	// so it can show the change where the author is looking — on the element
+	// itself — instead of only as another card at the bottom of the chat.
+	onReceipt = null,
 	newId = createStudioSessionId,
 	clock = () => Date.now(),
 } = {}) {
@@ -830,6 +951,9 @@ export function createAgentChatStore({
 				: item),
 			{ kind: "receipt", id: `receipt:${receipt.receiptId}`, receiptId: receipt.receiptId, receipt, summary: receiptSummary(receipt) },
 		]);
+		// A host that throws (or has nowhere to put the highlight) cannot cost the
+		// author the receipt they already earned.
+		try { onReceipt?.(receipt); } catch { /* host presentation is advisory */ }
 	}
 
 	function applyEvent(event) {

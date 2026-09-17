@@ -13,6 +13,7 @@ const css = readFileSync(new URL("../src/workflow/agent-panel.css", import.meta.
 const builder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
 const studio = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const studioCss = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
+const { STUDIO_TOOL_FAMILIES, validateReceipt } = await import("../src/studio-agent-protocol.js");
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -120,7 +121,7 @@ const controls = [
 	["attach frame chip", "Attach current frame"],
 	["model select", "agent-model-select"],
 	["stop control", "agent-stop"],
-	["suggestion chips", "SUGGESTION_CHIPS"],
+	["suggestion chips", "presentation.suggestions"],
 	["paused card", "PausedCard"],
 	["Wait & retry", "Wait &amp; retry"],
 	["Switch model", "Switch model"],
@@ -133,7 +134,7 @@ expect("Enter sends and Shift+Enter inserts a newline", panel.includes('event.ke
 expect("Esc stops a running turn", panel.includes('event.key === "Escape" && streaming'));
 expect("Cmd/Ctrl+B toggles the panel", panel.includes("event.metaKey || event.ctrlKey") && panel.includes('=== "b"'));
 expect("focus moves to the composer on open", panel.includes("composerRef.current?.focus()"));
-expect("the footer hint states the image cost", client.includes("Image generation uses about 3-5x a normal turn") && panel.includes("IMAGE_COST_HINT"));
+expect("the footer hint states the image cost", client.includes("Image generation uses about 3-5x a normal turn") && panel.includes("presentation.imageHint"));
 expect("there is no hover-reveal for the collapsed rail", !/\.agent-panel\.collapsed:hover\s*\{[^}]*width/.test(css));
 // (the chip count is asserted from the imported module below)
 
@@ -152,6 +153,21 @@ expect("a hidden embedded panel keeps its chat mounted", panel.includes("hidden=
 expect("a hidden panel is removed from layout and focus order", /\.agent-panel\[hidden\]\s*\{[^}]*display:\s*none/.test(css));
 expect("focus never moves into a hidden panel", /if \(hidden\) \{[\s\S]{0,320}composerRef\.current\.blur\(\);[\s\S]{0,40}return;\s*\}\s*\n\s*if \(!collapsed\) composerRef\.current\?\.focus\(\)/.test(panel));
 expect("the host is told about dock collapse only", panel.includes("if (embedded) return;\n\t\tonCollapsedChange?.(collapsed);"));
+
+// --- one panel, two presentations (#350) ----------------------------------
+// The Studio mount is the SAME component: only the chrome around the shared
+// conversation differs, and the surface it was given decides it — never the
+// address bar.
+expect("the panel hands its surface to the transport", panel.includes("createAgentTransport({ surface })"));
+expect("the transport prefers the host's surface over the URL", client.includes("createMockTransport({ surface: options.surface, ...config })")
+	&& /\["studio", "workflow"\]\.includes\(surface\) \? surface/.test(client));
+expect("the panel reads its chrome from one presentation", panel.includes("panelPresentation(surface)")
+	&& panel.includes("presentation.toolLabels") && panel.includes("presentation.history") && panel.includes("presentation.persistWidth"));
+expect("the Workflow-only constants no longer reach the shared render", !panel.includes("IMAGE_COST_HINT") && !panel.includes("SUGGESTION_CHIPS") && !panel.includes("CANVAS_TOOL_LABELS"));
+expect("a receipt reaches the host that can show it on the element", panel.includes("onReceipt") && client.includes("onReceipt?.(receipt)"));
+expect("the Studio mount asks for the Inspector-row receipt callback", studio.includes("onReceipt={highlightAgentTargets}"));
+expect("the Studio mount no longer owns an image action", !studio.includes("onImageAction") && !studio.includes('"cozyclay:agent-image"'));
+expect("a touched hierarchy row is a Studio style, not panel chrome", /\.hierarchy-row\.agent-touched/.test(studioCss) && !/agent-touched/.test(css));
 
 // --- Studio session, jobs and receipts ------------------------------------
 expect("Studio identities are UUIDs", client.includes("export function createStudioSessionId") && client.includes("randomUUID"));
@@ -211,6 +227,23 @@ expect("parseSseChunk keeps a partial trailing frame", (() => {
 	return parsed.events.length === 1 && parsed.events[0].text === "hi" && parsed.tail === 'data: {"type":"do';
 })());
 expect("the empty ready state offers exactly three suggestion chips", module_.SUGGESTION_CHIPS.length === 3 && module_.SUGGESTION_CHIPS.every((chip) => typeof chip === "string" && chip.length > 8));
+{
+	const { studio: studioPresentation, workflow } = module_.PANEL_PRESENTATIONS;
+	expect("an unknown surface falls back to the dock's presentation", module_.panelPresentation("nonsense") === workflow && module_.panelPresentation("studio") === studioPresentation);
+	expect("the Studio panel drops every Workflow-only affordance", studioPresentation.imageHint === null && studioPresentation.imageEntitlement === false
+		&& studioPresentation.history === false && studioPresentation.persistWidth === false);
+	expect("the dock keeps them", workflow.imageHint === module_.IMAGE_COST_HINT && workflow.imageEntitlement === true && workflow.history === true && workflow.persistWidth === true);
+	expect("the Studio offers three previs chips of its own", studioPresentation.suggestions.length === 3
+		&& studioPresentation.suggestions.every((chip) => typeof chip === "string" && chip.length > 8)
+		&& studioPresentation.suggestions.every((chip) => !module_.SUGGESTION_CHIPS.includes(chip)));
+	expect("every Studio family reads as an action", STUDIO_TOOL_FAMILIES.every((family) => typeof studioPresentation.toolLabels[family] === "string" && studioPresentation.toolLabels[family].length > 3),
+		JSON.stringify(Object.keys(studioPresentation.toolLabels)));
+	expect("no Studio tool reads as a function name", STUDIO_TOOL_FAMILIES.every((family) => !studioPresentation.toolLabels[family].includes("_")));
+	expect("the families a mechanical label would mangle are named properly", ["inspect_studio", "operate_studio", "patch_elements", "verify_result", "undo_edit", "frame_shot"]
+		.every((family) => module_.resolveToolLabel({ name: family }, studioPresentation.toolLabels) !== module_.toolCallLabel({ name: family })));
+	expect("the label map is the panel's, not the server's", module_.resolveToolLabel({ name: "arrange_objects", label: "arrange objects" }, studioPresentation.toolLabels) === studioPresentation.toolLabels.arrange_objects);
+	expect("an unmapped tool still reads as verb + target", module_.resolveToolLabel({ name: "future_tool" }, studioPresentation.toolLabels) === "Future tool");
+}
 expect("mockConfigFromSearch stays off without ?agent=mock", module_.mockConfigFromSearch("?state=ready") === null);
 expect("mockConfigFromSearch rejects an unknown state", module_.mockConfigFromSearch("?agent=mock&state=bogus").state === "ready");
 expect("mockConfigFromSearch carries every listed state", module_.AGENT_STATES.every((state) => module_.mockConfigFromSearch(`?agent=mock&state=${state}`).state === state));
@@ -231,6 +264,20 @@ expect("the scripted turn runs capture then render", (() => {
 })(), types.join(","));
 expect("every tool.start is answered by a tool.done", seen.filter((event) => event.type === "tool.start").length === seen.filter((event) => event.type === "tool.done").length);
 expect("the scripted turn ends with an image, a quota and done", types.includes("image") && types.includes("quota") && types.at(-1) === "done");
+
+// The Studio mock is the Studio turn: scene families, no image, and a receipt
+// the panel validates before it renders anything as a success.
+const studioMock = [];
+await module_.createMockTransport({ state: "ready", speed: 60, surface: "studio" }).turn({}, (event) => studioMock.push(event));
+const studioStarts = studioMock.filter((event) => event.type === "tool.start");
+expect("the Studio mock runs Studio families only", studioStarts.length > 0 && studioStarts.every((event) => STUDIO_TOOL_FAMILIES.includes(event.name)), studioStarts.map((event) => event.name).join(","));
+expect("every Studio mock tool.start carries label and args", studioStarts.every((event) => typeof event.label === "string" && event.args));
+expect("every Studio mock tool.done states its elapsed time", studioMock.filter((event) => event.type === "tool.done").every((event) => Number.isFinite(event.elapsedMs)));
+expect("the Studio mock never generates an image", !studioMock.some((event) => event.type === "image"));
+const mockReceipt = studioMock.find((event) => event.type === "receipt")?.receipt;
+expect("the Studio mock ends in a valid receipt that names what it touched", (() => {
+	try { return module_.receiptSummary(validateReceipt(mockReceipt)).length > 0 && mockReceipt.affectedIds.length > 0; } catch { return false; }
+})(), JSON.stringify(mockReceipt?.affectedIds));
 
 const limited = [];
 await module_.createMockTransport({ state: "rate-limited" }).turn({}, (event) => limited.push(event));
