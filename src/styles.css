@@ -11231,6 +11231,9 @@ input[type=range] {
 		animation: none;
 	}
 	.tutorial-cue { transition: none; }
+	/* The agent's receipt highlight still appears and is still cleared by the
+	   host's own timer; only the fade is dropped. */
+	.hierarchy-row.agent-touched::after { animation: none; opacity: 1; }
 }
 
 /* ------------------------------------------------------------------------
@@ -11367,8 +11370,11 @@ input[type=range] {
 	position: absolute;
 	inset: 0;
 	border-radius: var(--radius);
-	background: var(--accent-soft);
-	box-shadow: inset 0 0 0 1px var(--accent-ring);
+	/* A bright outline, not another blue fill: the selected row already owns a
+	   blue gradient and a left bar, so an accent-coloured wash would be
+	   invisible on exactly the row an agent edit most often names. */
+	background: var(--hover);
+	box-shadow: inset 0 0 0 1px var(--on-accent), inset 0 0 14px var(--accent-soft);
 	pointer-events: none;
 	animation: hierarchy-agent-touch var(--agent-touch) var(--ease) forwards;
 }
@@ -11378,9 +11384,7 @@ input[type=range] {
 	65% { opacity: 1; }
 	100% { opacity: 0; }
 }
-@media (prefers-reduced-motion: reduce) {
-	.hierarchy-row.agent-touched::after { animation: none; opacity: 1; }
-}
+
 @media (max-width: 700px) {
 	.studio-agent-inspector { min-height: 540px; max-height: 80vh; }
 }

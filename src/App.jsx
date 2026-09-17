@@ -3620,6 +3620,30 @@ export default function App() {
 	const studioHistoryRef = useRef(new Map());
 	const studioIkStampsRef = useRef(new Map());
 	const [studioAgentError, setStudioAgentError] = useState(null);
+	// A receipt already names the entities it changed. Showing that only as a
+	// card at the bottom of the chat leaves the author hunting for what moved,
+	// so the hierarchy rows the receipt names light up where they already are
+	// and the first one scrolls into view. The chat card stays: one is the
+	// record, the other is the pointer.
+	const [agentTouchedRows, setAgentTouchedRows] = useState([]);
+	const agentTouchTimerRef = useRef(null);
+	useEffect(() => () => clearTimeout(agentTouchTimerRef.current), []);
+	const hierarchyRowsForAgentTarget = (targetId) => {
+		const castIndex = charactersRef.current.findIndex((entry) => entry.id === targetId);
+		if (castIndex !== -1) return [rowIdForCharIndex(castIndex)];
+		if (storeRef.current.objects.some((object) => object.id === targetId)) return [`object:${targetId}`];
+		// A stage edit is addressed by the scene itself; the rows it can change
+		// are the stage's own.
+		if (targetId === activeSceneIdRef.current) return ["light", "environment"];
+		return [];
+	};
+	const highlightAgentTargets = (receipt) => {
+		const rows = [...new Set((receipt?.affectedIds ?? []).flatMap(hierarchyRowsForAgentTarget))];
+		if (!rows.length) return;
+		clearTimeout(agentTouchTimerRef.current);
+		setAgentTouchedRows(rows);
+		agentTouchTimerRef.current = setTimeout(() => setAgentTouchedRows([]), AGENT_RECEIPT_HIGHLIGHT_MS);
+	};
 	const buildStudioAgentContext = () => {
 		if (!liveWorkspaceHandleRef.current) {
 			setStudioAgentError(ko("The live editor is disconnected. Reconnect before sending.", "라이브 편집기가 연결되지 않았어요. 연결 후 보내 주세요."));
@@ -11681,6 +11705,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					onFrameObject={frameSelection}
 					propsDrop={propsDrop}
 					reparent={hierarchyReparent}
+					touchedIds={agentTouchedRows}
 				/>
 				</aside>
 				<div

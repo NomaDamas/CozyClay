@@ -1,12 +1,20 @@
 #!/usr/bin/env node
-// Browser QA for the workflow Agent panel (#126), driven over CDP through
-// tools/qa-browser.mjs. It visits every state the issue enumerates against the
+// Browser QA for the Agent panel, driven over CDP through tools/qa-browser.mjs.
+// The Workflow half (#126) visits every state the issue enumerates against the
 // mock transport (?agent=mock&state=...), asserts the real DOM, drives the
-// scripted turn, clicks "Use in scene", and saves a 1440x900 screenshot per
-// state to /tmp/agent-panel-qa/. Evidence script; not part of the manifest.
+// scripted turn and clicks "Use in scene". The Studio half (#350) mounts the
+// SAME component in the Inspector column and proves the surface it was given
+// decides its chrome: Studio tool labels, Studio chips, no image hint, no
+// History placeholder, and a receipt that lights the hierarchy row it changed.
+// Screenshots land in QA_SHOT_DIR. Evidence script; not part of the manifest.
 //
-//   QA_URL='http://127.0.0.1:5306/workflow/?agent=mock&state=ready' \
-//   CDP_PORT=9316 node tools/qa-browser.mjs -- node test/qa-agent-panel-browser.mjs
+// The Studio half needs a live editor (the panel refuses to describe a scene it
+// is not connected to), so run it against a dev server with a live hub:
+//
+//   COZYCLAY_LIVE_PORT=5650 npm run dev -- --host 127.0.0.1 --port 5530
+//   QA_URL='http://127.0.0.1:5530/workflow/?agent=mock&state=ready' \
+//   QA_SHOT_DIR=/tmp/qa-350 CDP_PORT=9350 \
+//   node tools/qa-browser.mjs -- node test/qa-agent-panel-browser.mjs
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const port = Number(process.env.CDP_PORT || 9222);
@@ -255,6 +263,108 @@ expect("the overflow menu offers Clear context and Sign out", await waitFor("(()
 shots.push(await shot("overflow-menu"));
 await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
 expect("Sign out returns the panel to signed-out", await waitFor("document.querySelector('.agent-panel')?.dataset.agentState === 'signed-out'", 6000));
+
+/* ============================ Studio surface (#350) ====================== */
+
+// One component, two presentations. Everything below is asserted on the
+// embedded Studio mount, at the two widths the Inspector column has to work at.
+const studioUrl = (() => {
+	const url = new URL("/app/", baseUrl);
+	url.searchParams.set("agent", "mock");
+	url.searchParams.set("state", "ready");
+	return url.toString();
+})();
+
+async function openStudio(width, height) {
+	await send("Emulation.setDeviceMetricsOverride", { width, height, deviceScaleFactor: 1, mobile: width < 500 });
+	const loaded = loadedOnce();
+	await send("Page.navigate", { url: studioUrl });
+	await loaded;
+	if (!await waitFor("!!document.querySelector('.view-menu-trigger') && document.querySelectorAll('.hierarchy-row-wrap').length > 0", 40000)) {
+		throw new Error("the studio never came up");
+	}
+	if (await evaluate("document.querySelector('.studio-agent-inspector')?.hidden !== false")) {
+		await evaluate("document.querySelector('.view-menu-trigger').click()");
+		if (!await waitFor("!!document.querySelector('.view-menu .agent-panel-toggle')", 8000)) throw new Error("the View menu never opened");
+		await evaluate("document.querySelector('.view-menu .agent-panel-toggle').click()");
+		if (!await waitFor("document.querySelector('.studio-agent-inspector')?.hidden === false", 8000)) throw new Error("the agent column never opened");
+		await evaluate("document.querySelector('.view-menu-trigger').click()");
+		await waitFor("!document.querySelector('.view-menu')", 8000);
+	}
+	if (!await waitFor("!!document.querySelector('.studio-agent-inspector .agent-input:not([disabled])')", 20000)) {
+		throw new Error("the Studio composer never became usable");
+	}
+	// A Studio turn describes the scene from the live editor, so the panel
+	// refuses to send before this tab owns a live workspace. Waiting for the
+	// handle the top bar already shows is the same readiness the panel checks.
+	if (!await waitFor("!!document.querySelector('.live-workspace-handle')", 30000)) {
+		throw new Error("no live editor is connected; start the dev server with its live hub (COZYCLAY_LIVE_PORT)");
+	}
+}
+
+const studioChips = () => evaluate("[...document.querySelectorAll('[data-agent-card=\"ready\"] .agent-chip')].map((chip) => chip.textContent.trim())");
+
+await openStudio(1440, 900);
+expect("the Studio mounts ONE agent panel, embedded in the Inspector column", await evaluate("document.querySelectorAll('.agent-panel').length === 1 && document.querySelector('.studio-agent-inspector > .agent-panel')?.dataset.agentEmbedded === 'true'"));
+expect("the Studio panel shows no image cost hint", await evaluate("!document.querySelector('.studio-agent-inspector .agent-footer-hint')"));
+expect("the Studio panel shows no disabled History button", await evaluate("!document.querySelector('.studio-agent-inspector .agent-history')"));
+expect("the Workflow dock still owns both", await evaluate("!document.querySelector('.workflow-main')"), "the studio route must not mount the dock");
+expect("the Studio panel never shows the image entitlement card", await evaluate("!document.querySelector('[data-agent-card=\"no-entitlement\"]')"));
+const chips = await studioChips();
+expect("the Studio offers its own three previs chips", chips.length === 3 && chips.every((chip) => chip.length > 8) && !chips.some((chip) => /storyboard|Render/i.test(chip)), JSON.stringify(chips));
+expect("the composer asks for Studio work, not a render", /animate/i.test(await evaluate("document.querySelector('.studio-agent-inspector .agent-input').placeholder")), await evaluate("document.querySelector('.studio-agent-inspector .agent-input').placeholder"));
+shots.push(await shot("studio-ready-1440"));
+
+// A chip is a real prompt: it fills the composer it sits above.
+await evaluate("document.querySelector('[data-agent-card=\"ready\"] .agent-chip').click()");
+expect("a Studio chip prefills the composer", await waitFor("document.querySelector('.studio-agent-inspector .agent-input')?.value.length > 8", 5000));
+
+// --- a Studio turn: Studio labels, Studio badge, Inspector-row receipt -----
+// Select something the receipt will NOT name, so the highlight has to be
+// legible on its own instead of borrowing the selected row's colour.
+await evaluate("document.querySelector('.hierarchy-row-wrap[data-node-id=\"light\"] .hierarchy-row').click()");
+expect("the selection is parked away from the row the turn will touch", await waitFor("document.querySelector('.hierarchy-row-wrap.selected')?.dataset.nodeId === 'light'", 8000));
+const selectionBeforeTurn = await evaluate("document.querySelector('.hierarchy-row-wrap.selected')?.dataset.nodeId ?? null");
+await evaluate("document.querySelector('.studio-agent-inspector .agent-send').click()");
+expect("the Studio turn opens a tool card for a Studio family", await waitFor("!!document.querySelector('[data-tool-name=\"inspect_studio\"]')", 15000),
+	await evaluate("document.querySelector('.scene-save-error')?.textContent || document.querySelector('.agent-activity-text')?.textContent || ''"));
+expect("a Studio tool card reads as an action, not a function name", await evaluate("document.querySelector('[data-tool-name=\"inspect_studio\"] .agent-tool-label')?.textContent === 'Read the scene'"),
+	await evaluate("document.querySelector('[data-tool-name=\"inspect_studio\"] .agent-tool-label')?.textContent"));
+expect("the card is badged for the surface it edits", await evaluate("document.querySelector('[data-tool-name=\"inspect_studio\"] .agent-tool-badge')?.textContent === 'Scene'"));
+expect("the second Studio family is labelled too", await waitFor("document.querySelector('[data-tool-name=\"arrange_characters\"] .agent-tool-label')?.textContent === 'Arrange characters'", 15000),
+	await evaluate("document.querySelector('[data-tool-name=\"arrange_characters\"] .agent-tool-label')?.textContent"));
+expect("a finished Studio tool card states its elapsed time", await waitFor("/\\d/.test(document.querySelector('[data-tool-name=\"arrange_characters\"] .agent-tool-elapsed')?.textContent || '')", 15000));
+expect("the receipt lands as a card", await waitFor("!!document.querySelector('[data-receipt-status=\"applied\"]')", 15000));
+// The highlight is deliberately short-lived, so it is screenshotted the moment
+// it appears rather than after the rest of the assertions.
+expect("the receipt lights the hierarchy row it changed", await waitFor("!!document.querySelector('.hierarchy-row.agent-touched')", 8000));
+shots.push(await shot("studio-receipt-highlight-1440"));
+expect("the lit row is the character the receipt named", await evaluate("document.querySelector('.hierarchy-row.agent-touched')?.closest('.hierarchy-row-wrap')?.dataset.nodeId === 'characterA'"),
+	await evaluate("document.querySelector('.hierarchy-row.agent-touched')?.closest('.hierarchy-row-wrap')?.dataset.nodeId"));
+expect("the highlight is its own overlay, not the selection style", await evaluate("(() => { const row = document.querySelector('.hierarchy-row.agent-touched'); const after = getComputedStyle(row, '::after'); return after.content === '\"\"' && after.animationName === 'hierarchy-agent-touch'; })()"),
+	await evaluate("JSON.stringify({ content: getComputedStyle(document.querySelector('.hierarchy-row.agent-touched'), '::after').content, animation: getComputedStyle(document.querySelector('.hierarchy-row.agent-touched'), '::after').animationName })"));
+expect("an agent edit reports itself without taking the selection", await evaluate("document.querySelector('.hierarchy-row-wrap.selected')?.dataset.nodeId ?? null") === selectionBeforeTurn,
+	`${selectionBeforeTurn} -> ${await evaluate("document.querySelector('.hierarchy-row-wrap.selected')?.dataset.nodeId ?? null")}`);
+expect("the Studio turn never produces an image card", await evaluate("!document.querySelector('.agent-image-card')"));
+expect("the turn ends and Stop reverts to Send", await waitFor("!document.querySelector('.studio-agent-inspector .agent-send.stop')", 15000));
+shots.push(await shot("studio-turn-complete-1440"));
+expect("the highlight clears itself", await waitFor("!document.querySelector('.hierarchy-row.agent-touched')", 8000));
+
+// --- the Inspector column at phone width ----------------------------------
+await openStudio(390, 844);
+expect("the phone-width Studio panel still has no image hint or History", await evaluate("!document.querySelector('.studio-agent-inspector .agent-footer-hint') && !document.querySelector('.studio-agent-inspector .agent-history')"));
+expect("the composer fits the viewport at 390px", await evaluate("(() => { const r = document.querySelector('.studio-agent-inspector .agent-input').getBoundingClientRect(); return r.width > 0 && r.left >= 0 && r.right <= innerWidth + 1; })()"),
+	await evaluate("JSON.stringify(document.querySelector('.studio-agent-inspector .agent-input').getBoundingClientRect())"));
+expect("nothing scrolls sideways at 390px", await evaluate("document.documentElement.scrollWidth <= innerWidth && document.body.scrollWidth <= innerWidth"));
+const phoneChips = await studioChips();
+expect("the Studio chips survive the narrow column", phoneChips.length === 3, JSON.stringify(phoneChips));
+// The panel sits under the viewport at phone width; the evidence has to show
+// the panel, not the empty stage above it.
+await evaluate("document.querySelector('.studio-agent-inspector').scrollIntoView({ block: 'start' })");
+expect("the panel is on screen once it is scrolled to", await waitFor("(() => { const r = document.querySelector('.studio-agent-inspector').getBoundingClientRect(); return r.top < innerHeight - 100 && r.height > 200; })()", 5000),
+	await evaluate("JSON.stringify(document.querySelector('.studio-agent-inspector').getBoundingClientRect())"));
+shots.push(await shot("studio-ready-390"));
+await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
 
 console.log(`\nscreenshots (${shots.length}):`);
 for (const file of shots) console.log(`  ${file}`);
