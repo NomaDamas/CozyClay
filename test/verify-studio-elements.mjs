@@ -83,8 +83,11 @@ function makeCase(entry) {
 		const field = entry.path.slice("stage.".length);
 		if (field === "camera") input.shotAspect = "9:16";
 		if (field === "environmentImage") input.environmentImage = "data:image/png;base64,BBBB";
+		if (field === "environment") input.environment = "a rainy rooftop at dusk";
+		if (field === "style") input.style = "handheld 16mm, sodium streetlight";
+		if (field === "hasEnvSheet") input.hasEnvSheet = true;
 		if (field.startsWith("keyLight.")) input.keyLight = { x: -1.5, y: 7.25, z: 2.5, intensity: 2.75, warmth: 0.25 };
-		return { input, output: createSceneStage(input), read: (output) => field.startsWith("keyLight.") ? output.keyLight[field.slice("keyLight.".length)] : field === "environmentImage" ? output.environmentImage : output.shotAspect };
+		return { input, output: createSceneStage(input), read: (output) => field.startsWith("keyLight.") ? output.keyLight[field.slice("keyLight.".length)] : field === "camera" ? output.shotAspect : output[field] };
 	}
 	if (entry.normalizer === "normalizeSceneObject") {
 		const field = entry.path.slice("object.".length);
@@ -134,6 +137,9 @@ const expected = new Map([
 	["stage.keyLight.intensity", 2.75],
 	["stage.keyLight.warmth", 0.25],
 	["stage.environmentImage", "data:image/png;base64,BBBB"],
+	["stage.environment", "a rainy rooftop at dusk"],
+	["stage.style", "handheld 16mm, sodium streetlight"],
+	["stage.hasEnvSheet", true],
 	["shot.targetModel", "seedance-2.5"],
 	["object.renderer", "sphere"],
 	["object.position", [1.25, 2.5, -3.75]],

@@ -297,6 +297,7 @@ const PATH_READERS = {
   'object.path': row => row?.path ?? null, 'object.remove': row => row === undefined,
   'shot.cameraKeys': shot => shot.cameraKeys, 'shot.targetModel': shot => shot.targetModel ?? null,
   'stage.environmentImage': stage => stage.environmentImage, 'stage.camera': stage => stage.shotAspect,
+  'stage.environment': stage => stage.environment, 'stage.style': stage => stage.style, 'stage.hasEnvSheet': stage => stage.hasEnvSheet === true,
   ...Object.fromEntries(['x', 'y', 'z', 'intensity', 'warmth'].map(axis => [`stage.keyLight.${axis}`, stage => stage.keyLight[axis]])),
 };
 /** Measured readback for one path: one typed member, never the payload. A
