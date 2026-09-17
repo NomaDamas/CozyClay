@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 
+import { selectWorkspaceRule } from "../live/workspace.mjs";
+
 const objectSchema = (properties = {}, required = []) => ({ type: "object", properties, required, additionalProperties: false });
 export const SYSTEM_PROMPT = "You are CozyClay's workflow agent. The user is looking at the Workflow canvas, and you work by building and running nodes on that canvas, so every step is visible and editable. Always call describe_workflow first to read the current graph. To render the scene in a new look: reuse the existing Scene node, add an Image node with model image-generation whose data.prompt is the user's intent, connect the Scene node to it with connect_workflow_nodes (sourceHandle render, targetHandle input), and when the user attached or mentioned a reference image, add one with add_reference_node and connect it to the same Image node's input handle; then call run_workflow. Finish with one or two sentences naming the nodes you created. Never describe results you did not run. Keep responses concise and practical. When the user pastes a prose prompt to turn into a scene, follow the prompt-to-scene rules in docs/agent-prompt-to-scene.md: ask at most 5 batched questions with defaults, infer and list as assumptions, and omit what the prompt never states.";
 
@@ -9,25 +11,15 @@ export const SYSTEM_PROMPT = "You are CozyClay's workflow agent. The user is loo
  * own single-workspace rule (which throws when the choice is ambiguous). */
 export function pickWorkspace(liveHub, requiredCommands = ["capture_framing_png", "import_asset"], kind = "scene") {
 	const details = typeof liveHub.workspaceHandleDetails === "function" ? liveHub.workspaceHandleDetails() : [];
-	if (kind === "workflow") {
-		const workflow = details.filter((entry) => entry.meta?.kind === "workflow").map((entry) => entry.handle);
-		if (workflow.length) return workflow[workflow.length - 1];
-		throw new Error("No workflow canvas workspace is connected.");
+	try {
+		return selectWorkspaceRule({ details, requiredCommands, kind });
+	} catch (error) {
+		if (error?.code !== "NO_EDITOR" || kind !== "scene") throw error;
+		// The hub's own rule would hand back whatever single workspace exists —
+		// on the Workflow page that is the canvas, which cannot capture a frame.
+		if (details.some((entry) => entry.meta?.kind === "workflow")) throw new Error("No scene editor is connected yet.");
+		return liveHub.resolveWorkspace("agent turn");
 	}
-	// An editor that does not advertise its commands predates the agent work;
-	// it cannot answer capture_framing_png, so it is never a candidate.
-	const supports = (entry) => Array.isArray(entry.meta?.commands) && requiredCommands.every((name) => entry.meta.commands.includes(name));
-	const authoring = details.filter((entry) => entry.meta?.embed !== true && supports(entry)).map((entry) => entry.handle);
-	if (authoring.length === 1) return authoring[0];
-	if (authoring.length > 1) return authoring[authoring.length - 1];
-	// On the Workflow page the embedded Studio IS the scene the user is looking
-	// at; use it when no standalone editor tab is open.
-	const embedded = details.filter((entry) => entry.meta?.embed === true && supports(entry)).map((entry) => entry.handle);
-	if (embedded.length) return embedded[embedded.length - 1];
-	// The hub's own rule would hand back whatever single workspace exists —
-	// on the Workflow page that is the canvas, which cannot capture a frame.
-	if (details.some((entry) => entry.meta?.kind === "workflow")) throw new Error("No scene editor is connected yet.");
-	return liveHub.resolveWorkspace("agent turn");
 }
 
 /** What the model gets back from a canvas command: ids, types, models and

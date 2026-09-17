@@ -11,44 +11,21 @@
 import { randomUUID } from "node:crypto";
 
 import { LiveCliError } from "./client.mjs";
+import { selectWorkspaceRule } from "./workspace.mjs";
 
 /** The four fields that name one document incarnation on one workspace. */
 const IDENTITY = ["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"];
 
-const summarise = (editor) => ({
-	handle: editor.handle,
-	project: editor.meta?.project ?? null,
-	scene: editor.meta?.scene ?? null,
-	embed: editor.meta?.embed === true,
-});
-
-/** An editor that does not advertise the full-resolution capture cannot drive
- * a shot; it predates this surface, or it is the workflow canvas. */
-const drivesTheStudio = (editor) => Array.isArray(editor.meta?.commands) && editor.meta.commands.includes("capture_framing_png");
-
 /**
  * The hub never guesses which editor a command reaches, so neither does this.
  * `pickWorkspace` in bin/agent/agent-tools.mjs makes the same choice for the
- * Agent panel: prefer the tab the operator authors in, fall back to the
- * Workflow page's embedded Studio, and refuse anything ambiguous.
+ * Agent panel via the shared `selectWorkspaceRule`: prefer the tab the
+ * operator authors in, fall back to the Workflow page's embedded Studio, and
+ * refuse anything ambiguous. The CLI only needs `capture_framing_png` to
+ * consider an editor authoring-capable; it never imports assets on its own.
  */
 export function selectWorkspace(editors, requested) {
-	if (requested !== undefined) {
-		const matches = editors.filter((editor) => editor.handle === requested || editor.meta?.project === requested);
-		if (matches.length === 1) return matches[0].handle;
-		if (matches.length === 0) {
-			throw new LiveCliError("STALE_HANDLE", `No connected editor matches workspace "${requested}".`, { details: { candidates: editors.map(summarise) } });
-		}
-		throw new LiveCliError("AMBIGUOUS_WORKSPACE", `${matches.length} connected editors answer to "${requested}"; name one by handle.`, { details: { candidates: matches.map(summarise) } });
-	}
-	if (editors.length === 0) throw new LiveCliError("NO_EDITOR", "No live editor is connected to this hub.");
-	const authoring = editors.filter((editor) => editor.meta?.embed !== true && drivesTheStudio(editor));
-	const candidates = authoring.length > 0 ? authoring : editors.filter((editor) => editor.meta?.embed === true && drivesTheStudio(editor));
-	if (candidates.length === 1) return candidates[0].handle;
-	if (candidates.length === 0) {
-		throw new LiveCliError("NO_EDITOR", "No connected editor can drive a Studio shot.", { details: { candidates: editors.map(summarise) } });
-	}
-	throw new LiveCliError("AMBIGUOUS_WORKSPACE", `${candidates.length} editors are connected; choose one with --workspace.`, { details: { candidates: candidates.map(summarise) } });
+	return selectWorkspaceRule({ details: editors, requested, requiredCommands: ["capture_framing_png"] });
 }
 
 /** Status as a terminal reads it: the labels an operator recognises, not the

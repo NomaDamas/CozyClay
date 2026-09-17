@@ -171,7 +171,15 @@ console.log("agent routes verified");
 	});
 	const agentCommands = ["capture_framing_png", "import_asset"];
 	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }])), "b", "skips the embedded preview");
-	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }])), "b", "prefers the most recent authoring tab");
+	// #349: two authoring editors are ambiguous, never "pick the last one" —
+	// the CLI and the sidecar share one tie-break, and it refuses to guess.
+	try {
+		pickWorkspace(hub([{ handle: "a", meta: { commands: agentCommands } }, { handle: "b", meta: { project: "P", commands: agentCommands } }]));
+		assert.fail("expected AMBIGUOUS_WORKSPACE for two authoring editors");
+	} catch (error) {
+		assert.equal(error.code, "AMBIGUOUS_WORKSPACE");
+		assert.deepEqual(error.details.candidates.map((candidate) => candidate.handle).sort(), ["a", "b"]);
+	}
 	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }])), "a", "the embedded Studio is the scene when no standalone editor is open");
 	assert.equal(pickWorkspace(hub([{ handle: "a", meta: { embed: true, commands: agentCommands } }, { handle: "w", meta: { kind: "workflow", commands: ["get_graph"] } }])), "a", "the workflow canvas never counts as a scene editor");
 	assert.throws(() => pickWorkspace(hub([{ handle: "old", meta: { project: "P" } }])), /requires workspace_handle/, "an editor that does not advertise commands is not a candidate");
