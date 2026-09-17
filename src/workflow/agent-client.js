@@ -972,6 +972,14 @@ export function createAgentChatStore({
 		}
 		if (event?.type === "tool.done") {
 			patchItem((item) => item.kind === "tool" && item.callId === event.callId, { status: event.ok ? "done" : "failed", elapsedMs: event.elapsedMs, result: event.result, error: event.error });
+			// Synchronous Studio families (arrange_*, frame_shot, patch_elements,
+			// undo_edit) hand their receipt back as the tool result rather than as a
+			// `receipt` frame. The tool card already shows it; the host still needs
+			// it to point at the rows it changed (#362).
+			const result = event.result;
+			if (event.ok && result && typeof result === "object" && result.ok === true && typeof result.receiptId === "string" && Array.isArray(result.affectedIds)) {
+				try { onReceipt?.(result); } catch { /* host presentation is advisory */ }
+			}
 			return;
 		}
 		if (event?.type === "image") {

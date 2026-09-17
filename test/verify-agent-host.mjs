@@ -215,6 +215,30 @@ if (runs("embedded-session-and-receipts")) {
 		expect("each turn mints a fresh turnId", second?.turnId !== body?.turnId && isUuid(second?.turnId));
 	});
 
+	await group("synchronous receipts inside tool.done reach the host", async () => {
+		// #362: arrange_*/frame_shot/patch_elements/undo_edit return their receipt
+		// as the tool result, not as a `receipt` frame — the host highlight must
+		// still fire for them, and must not fire for a plain inspect result.
+		const applied = { ok: true, commandId: "cmd-p", receiptId: "receipt-p-1", status: "applied", authored: true, revision: { before: 1, after: 2 }, affectedIds: ["char-a"], delta: [], checks: { coverage: "declared-element-readback" }, undo: { historyEntryId: "h-1", entries: 1, canUndoDirect: true }, warnings: [] };
+		const sidecar = fakeSidecar({
+			"/agent/turn$": () => streamResponse([
+				frame({ type: "tool.start", callId: "c-1", name: "inspect_studio", label: "Read the scene", args: {} }),
+				frame({ type: "tool.done", callId: "c-1", ok: true, elapsedMs: 2, result: { context: {}, entities: [] } }),
+				frame({ type: "tool.start", callId: "c-2", name: "patch_elements", label: "Edit properties", args: {} }),
+				frame({ type: "tool.done", callId: "c-2", ok: true, elapsedMs: 3, result: applied }),
+				frame({ type: "done" }),
+			]),
+		});
+		const seen = [];
+		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "studio", capture: () => {}, now: () => 0 });
+		const store = createAgentChatStore({ transport, surface: "studio", buildContext: () => studioContext(7), onReceipt: (receipt) => seen.push(receipt) });
+		await store.send("tint her teal", { attachFrame: false, model: "gpt-5.1-codex" });
+		expect("an applied receipt returned by tool.done is handed to the host exactly once", seen.length === 1 && seen[0]?.receiptId === "receipt-p-1", JSON.stringify(seen.map((r) => r?.receiptId)));
+		expect("the host receipt carries the affected ids the rows are looked up by", JSON.stringify(seen[0]?.affectedIds) === JSON.stringify(["char-a"]));
+		expect("a plain tool result does not masquerade as a receipt", !seen.some((r) => r && r.receiptId === undefined));
+		expect("the transcript keeps the tool card and adds no duplicate receipt card", store.getState().items.filter((item) => item.kind === "receipt").length === 0, JSON.stringify(store.getState().items.map((item) => item.kind)));
+	});
+
 	await group("dock defaults are unchanged", async () => {
 		const sidecar = fakeSidecar({ "/agent/turn$": () => streamResponse([frame({ type: "done" })]) });
 		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 });
