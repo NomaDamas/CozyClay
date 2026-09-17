@@ -1,8 +1,14 @@
 // Shared by the browser and sidecar. No Node, React, renderer or provider imports.
+import { STUDIO_ELEMENTS } from "./studio-elements.js";
+
 export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
 export const STUDIO_CONTEXT_MAX_BYTES = 16 * 1024;
 export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, shots: 8, assets: 6, recentReceipts: 3, jobs: 8 });
-export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "frame_shot", "generate_motion", "verify_result", "undo_edit"]);
+export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit"]);
+/** One patch target kind per authored commit domain: character→cast,
+ * object→objects, shot→shot, stage→stage. */
+export const STUDIO_PATCH_KINDS = Object.freeze(["character", "object", "shot", "stage"]);
+export const STUDIO_PATCH_DOMAINS = Object.freeze({ character: "cast", object: "objects", shot: "shot", stage: "stage" });
 export const STUDIO_ERROR_CODES = Object.freeze([
 	"INVALID_ARGUMENT", "INVALID_CONTEXT", "INVALID_IDENTITY", "INVALID_TURN_ID", "INVALID_SESSION_ID", "INVALID_RECEIPT", "INVALID_RANGE", "INVALID_REQUEST",
 	"UNKNOWN_TOOL", "UNKNOWN_VARIANT", "DUPLICATE_NAME", "CONTEXT_LIMIT", "CONTEXT_TOO_LARGE", "AMBIGUOUS_TARGET", "AMBIGUOUS_BASIS", "TARGET_NOT_READY", "TARGET_BUSY",
@@ -15,7 +21,8 @@ export const STUDIO_VARIANTS = freezeStudioData({
 	framingViews: ["front", "front three-quarter", "profile", "rear three-quarter", "back"], framingLevels: ["ground", "low", "hip", "eye", "high", "overhead"],
 	framingSides: ["left", "right"], positionSides: ["left", "right", "front", "behind"], positionBases: ["world", "subject", "shot_camera"], collisionPolicies: ["report", "avoid"],
 	objectOps: ["create", "update", "remove", "group", "ungroup"], characterOps: ["create", "update", "remove"],
-	inspectScopes: ["selection", "scene", "entities", "shot", "motion", "catalogue"], receiptStatuses: ["applied", "noop", "transient", "installed", "undone"],
+	inspectScopes: ["selection", "scene", "entities", "shot", "motion", "catalogue"], receiptStatuses: ["applied", "partial", "noop", "transient", "installed", "undone"],
+	opStatuses: ["applied", "partial", "noop"],
 	jobStates: ["queued", "generating", "preparing", "verifying", "repairing", "committing", "reconciling", "installed", "review_required", "failed", "cancelled", "stale_target", "stale_environment"],
 });
 
@@ -81,11 +88,68 @@ const characterOp = union(
 );
 const generateSource = object({ kind: literal("generate"), beats: array(object({ text: text(2000) }, { seconds: number(0.5, 60) }), 8, 1) }, { durationSeconds: number(2, 60), seed: integer(-2147483648, 2147483647) });
 const source = union(generateSource, object({ kind: literal("reuse"), artifactId: id }));
+
+/* ----------------------------------------------- element patches ----
+ * The accepted fields of `patch_elements` are DERIVED from the element
+ * declaration table (src/studio-elements.js): one property per element whose
+ * agentExposure is "patch", keyed by the path inside its kind, typed by the
+ * declared type and bounded by the declared min/max/enum. Structured values
+ * (schedules, routes, pictures) declare their shape here, because the table
+ * records what an element IS, not how JSON carries it. */
+const dataImage = { ...text(2 * 1024 * 1024), pattern: "^data:image/[A-Za-z0-9.+-]+[;,]" };
+const promptBlock = object({ startFrame: integer(), endFrame: integer(1), text: text(2000) }, { id });
+const cameraKey = object({ frame: integer(), framing: object({ pos: vec3, yaw: number(), pitch: number(), fovDeg: number(1, 179) }) }, { id });
+const objectRoute = nullable(object({ points: array(vec3, 64, 2) }, { speed: number(0, 50), faceTravel: bool, loop: bool, extend: bool }));
+const PATCH_VALUE_SCHEMAS = {
+	"character.pose": nullable(id), "character.identityImage": nullable(dataImage), "character.promptBlocks": array(promptBlock, 64),
+	"object.parent": nullable(id), "object.path": objectRoute, "stage.environmentImage": nullable(dataImage),
+	"shot.cameraKeys": array(cameraKey, 64), "shot.targetModel": nullable(id),
+};
+/** One declared element as a JSON value schema, or null when the declaration
+ * carries no carriable shape (a structured element without a declared value
+ * schema above). Null elements are omitted from the patch schema, and
+ * test/verify-studio-elements.mjs fails the moment the table declares one. */
+export function patchValueSchema(element) {
+	if (Object.hasOwn(PATCH_VALUE_SCHEMAS, element.path)) return PATCH_VALUE_SCHEMAS[element.path];
+	if (element.type === "number") return number(element.min, element.max);
+	if (element.type === "boolean") return bool;
+	if (element.type === "enum") return choices([...element.enum]);
+	if (element.type === "id") return id;
+	if (element.type === "color") return { ...text(32), pattern: "^#[0-9a-fA-F]{6}$" };
+	if (element.type === "image") return nullable(dataImage);
+	if (element.type === "vec3") return vec3;
+	if (element.type === "string") return text(240);
+	return null;
+}
+/** Pure: feed it any element table and read back the `set` schema per kind. */
+export function buildPatchSchema(elements) {
+	const kinds = {};
+	for (const kind of STUDIO_PATCH_KINDS) {
+		const properties = {};
+		for (const element of elements) {
+			if (element.agentExposure !== "patch" || !element.path.startsWith(`${kind}.`)) continue;
+			const schema = patchValueSchema(element);
+			if (schema) properties[element.path.slice(kind.length + 1)] = schema;
+		}
+		kinds[kind] = { type: "object", properties, required: [], additionalProperties: false };
+	}
+	return kinds;
+}
+export const STUDIO_PATCH_SET_SCHEMAS = freezeStudioData(buildPatchSchema(STUDIO_ELEMENTS));
+export const STUDIO_PATCHABLE_PATHS = freezeStudioData(Object.fromEntries(STUDIO_PATCH_KINDS.map(kind =>
+	[kind, Object.keys(STUDIO_PATCH_SET_SCHEMAS[kind].properties).map(key => `${kind}.${key}`)])));
+const patchOp = union(
+	object({ target: object({ kind: literal("character"), id }), set: STUDIO_PATCH_SET_SCHEMAS.character }),
+	object({ target: object({ kind: literal("object"), id }), set: STUDIO_PATCH_SET_SCHEMAS.object }),
+	object({ target: object({ kind: literal("shot") }, { id }), set: STUDIO_PATCH_SET_SCHEMAS.shot }),
+	object({ target: object({ kind: literal("stage") }), set: STUDIO_PATCH_SET_SCHEMAS.stage }),
+);
 const toolSchemas = {
 	inspect_studio: object({ scope: choices(STUDIO_VARIANTS.inspectScopes) }, { ids: ids(32), query: name, cursor: text(512), limit: { ...integer(1, 32), default: 12 } }),
 	operate_studio: object({}, { selection, shotId: id, frame: integer(), playing: bool, mode: choices(STUDIO_VARIANTS.modes), view: object({}, { lookThrough: bool, grid: bool, autoColor: bool }) }),
 	arrange_objects: object({ ops: array(objectOp, 100, 1) }, { collisionPolicy: { ...choices(STUDIO_VARIANTS.collisionPolicies), default: "report" } }),
 	arrange_characters: object({ ops: array(characterOp, 8, 1) }),
+	patch_elements: object({ ops: array(patchOp, 32, 1) }),
 	frame_shot: object({ subjectIds: ids(1), framing }, { shotId: id, keyAtFrame: integer() }),
 	generate_motion: object({ characterId: id, source }, { repair: { ...choices(["bounded", "none"]), default: "bounded" } }),
 	verify_result: object({ checks: array(choices(["placement", "framing", "motion"]), 3, 1, true) }, { receiptId: id, targets: ids(), range: union(literal("whole_clip"), range), visual: { ...choices(["none", "frame", "contact_sheet"]), default: "none" } }),
@@ -116,7 +180,7 @@ const contextSchema = object({
 	entities: array(entity, 24), entityPage: object({ returned: integer(0, 24), total: integer(), truncated: bool, nextCursor: nullable(text(512)) }),
 	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, 6),
 	recentReceipts: array(object({ id, summary: name, canUndoDirect: bool }), 3), jobs: array(jobSummary, 8),
-	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), 8, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
+	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), 9, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
 });
 const guardSchema = object({ ...identityFields, targetId: id, token: id });
 const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -129,18 +193,27 @@ const verification = object({ id, status: choices(["verified", "unverified"]), p
 	surfaceMeasured: bool, maxFloorPenetrationM: number(0), maxContactSlipM: number(0), maxContactFloatM: number(0), unsupportedFrames: integer(), supportedCollisionFrames: integer(), continuityRegressed: bool,
 	semanticStatus: choices(["pending_image_review", "passed", "failed", "unavailable"]),
 });
+// One measured value per patched element path. Exactly one typed member is
+// carried, so a picture is reported by its measured size and a schedule by its
+// length instead of turning the receipt into a document transport.
+const patchedValue = object({ path: text(120) }, { number: number(), text: text(512), flag: bool, vec: vec3, count: integer(), bytes: integer() });
 const readback = object({}, { position: vec3, yawDeg: number(), rotationDeg: vec3, scale: union(positive, positiveVec3), name, color: text(32), hidden: bool, modelId: id, renderer: id,
-	parentId: nullable(id), childIds: ids(100, 0), removed: bool, range, camera, keyId: id, frame: integer(), subjectIds: ids(24, 0), selection, activeCharacterId: nullable(id), shotId: nullable(id), view, token: id, takeId: nullable(id), statureM: positive });
+	parentId: nullable(id), childIds: ids(100, 0), removed: bool, range, camera, keyId: id, frame: integer(), subjectIds: ids(24, 0), selection, activeCharacterId: nullable(id), shotId: nullable(id), view, token: id, takeId: nullable(id), statureM: positive,
+	patched: array(patchedValue, 32, 1) });
 const checks = object({ coverage: name }, { relationSatisfied: bool, overlapIds: ids(100, 0), actualGapM: number(), requestedGapM: number(0), maximumFootprintOverlapM: number(0),
 	basis: choices(STUDIO_VARIANTS.positionBases), clipped: bool, occluded: bool, behindCamera: bool, screenFraction: number(0), derivedSize: choices(STUDIO_VARIANTS.framingSizes), support: name, baseY: number(), facesTargetId: id });
 const warning = object({ code: id }, { id, message: name, suggestedOutwardDeltaM: number(), count: integer() });
 const receiptBase = { ok: literal(true), commandId: id, receiptId: id, host: identity, status: choices(STUDIO_VARIANTS.receiptStatuses), authored: bool, revision: revisions, affectedIds: ids(100, 0),
 	delta: array(object({ id, after: readback }), 8), checks, undo: nullable(undo), warnings: array(warning, 12) };
 const batchDetails = { counts: object({ created: integer(), updated: integer(), deleted: integer() }), detailCursor: nullable(text(512)) };
+// Per-operation outcome for path-addressed commands: which ops landed whole,
+// which lost a field to a domain normalizer, and exactly which paths were lost.
+const opResults = array(object({ index: integer(), status: choices(STUDIO_VARIANTS.opStatuses) }, { droppedPaths: array(text(120), 32, 1) }), 32, 1);
 const authoredReceipt = { ...receiptBase, authored: literal(true), undo };
 const receiptVariants = {
-	applied: object({ ...authoredReceipt, status: literal("applied") }, { mutated: literal(true), ...batchDetails }),
-	noop: object({ ...receiptBase, status: literal("noop"), authored: literal(false), mutated: literal(false), undo: literal(null) }),
+	applied: object({ ...authoredReceipt, status: literal("applied") }, { mutated: literal(true), ops: opResults, ...batchDetails }),
+	partial: object({ ...authoredReceipt, status: literal("partial"), ops: opResults }, { mutated: literal(true), ...batchDetails }),
+	noop: object({ ...receiptBase, status: literal("noop"), authored: literal(false), mutated: literal(false), undo: literal(null) }, { ops: opResults }),
 	transient: object({ ...receiptBase, status: literal("transient"), authored: literal(false), view: revisions, undo: literal(null) }, { mutated: bool }),
 	installed: object({ ...authoredReceipt, status: literal("installed"), jobId: id, artifactId: id, installed, verification }, {
 		mutated: literal(true), explicitUnverifiedAcceptance: bool,
@@ -276,8 +349,28 @@ function validateGenerationTiming(value) {
 	if (total < 2 || total > 60 || total / value.beats.length < 0.5) fail("INVALID_ARGUMENT", "Generation must be 2-60 seconds with at least 0.5 seconds per beat.");
 	return total;
 }
+/** Unknown paths are answered with the paths that DO exist for that kind, so a
+ * caller never has to guess the vocabulary from a rejection. */
+function validatePatchPaths(args) {
+	const kinds = new Set();
+	for (const op of Array.isArray(args?.ops) ? args.ops : []) {
+		const kind = record(op) ? op.target?.kind : undefined;
+		if (!STUDIO_PATCH_KINDS.includes(kind)) continue;
+		kinds.add(kind);
+		for (const key of record(op.set) ? Object.keys(op.set) : []) {
+			if (!Object.hasOwn(STUDIO_PATCH_SET_SCHEMAS[kind].properties, key)) {
+				fail("INVALID_ARGUMENT", `Unknown ${kind} path "${kind}.${key}". Valid ${kind} paths: ${STUDIO_PATCHABLE_PATHS[kind].join(", ")}.`);
+			}
+		}
+	}
+	// One patch is one commit domain and one history entry: a receipt asserts a
+	// single revision step and exactly one undo entry, so a mixed batch could
+	// not describe itself honestly.
+	if (kinds.size > 1) fail("INVALID_ARGUMENT", "One domain per patch: split character, object, shot and stage edits into separate commands.");
+}
 export function validateStudioCommand(command) {
 	if (!record(command) || !STUDIO_TOOL_FAMILIES.includes(command.name)) fail("UNKNOWN_TOOL", "Unsupported Studio tool.");
+	if (command.name === "patch_elements") validatePatchPaths(command.args);
 	const { args } = validateStudioSchema(object({ name: choices(STUDIO_TOOL_FAMILIES), args: toolSchemas[command.name] }), command);
 	if (command.name === "inspect_studio" && args.ids && args.query !== undefined) fail("INVALID_ARGUMENT", "IDs and query are exclusive.");
 	if (command.name === "operate_studio" && (!Object.keys(args).length || (args.view && !Object.keys(args.view).length))) fail("INVALID_ARGUMENT", "Transient operation must specify an action.");
@@ -296,6 +389,9 @@ export function validateStudioCommand(command) {
 		validateGenerationTiming(args.source);
 	}
 	if (command.name === "frame_shot" && args.framing.exact && JSON.stringify(args.framing.exact.position) === JSON.stringify(args.framing.exact.lookAt)) fail("INVALID_ARGUMENT", "Camera position and aim cannot coincide.");
+	if (command.name === "patch_elements") {
+		for (const op of args.ops) if (!Object.keys(op.set).length) fail("INVALID_ARGUMENT", "Patch has no fields.");
+	}
 	if (command.name === "verify_result") {
 		if (Boolean(args.receiptId) === Boolean(args.targets)) fail("INVALID_ARGUMENT", "Exactly one of receiptId or targets is required.");
 		if (args.checks.includes("motion") && args.range === undefined) args.range = "whole_clip";
@@ -328,6 +424,14 @@ export function validateReceipt(value) {
 	const r = validateStudioSchema(receiptSchema, value, "INVALID_RECEIPT");
 	if (utf8ByteLength(JSON.stringify(r)) > 8192) fail("INVALID_RECEIPT", "Receipt exceeds 8 KiB; use a detail cursor.");
 	if (r.delta.some(d => !r.affectedIds.includes(d.id) || !Object.keys(d.after).length)) fail("INVALID_RECEIPT", "Readback must identify affected targets and actual state.");
+	if (r.ops) {
+		const dropped = r.ops.some(op => op.status === "partial");
+		if (r.ops.some((op, index) => op.index !== index)) fail("INVALID_RECEIPT", "Operation results must report every operation in order.");
+		if (r.ops.some(op => (op.status === "partial") !== Boolean(op.droppedPaths?.length))) fail("INVALID_RECEIPT", "A partial operation must name the paths the domain dropped, and only a partial one may.");
+		if (r.status === "applied" && dropped) fail("INVALID_RECEIPT", "Applied status cannot hide a dropped path.");
+		if (r.status === "partial" && !dropped) fail("INVALID_RECEIPT", "Partial status requires at least one dropped path.");
+		if (r.status === "noop" && r.ops.some(op => op.status === "applied")) fail("INVALID_RECEIPT", "A noop cannot report an applied operation.");
+	}
 	if (r.status === "noop" || r.status === "transient") {
 		if (r.authored || r.undo !== null || r.revision.before !== r.revision.after) fail("INVALID_RECEIPT", "Non-authored operations cannot create history or advance authored revision.");
 		if (r.status === "noop" && (r.mutated !== false || r.delta.length)) fail("INVALID_RECEIPT", "Noop must prove no mutation.");

@@ -6,6 +6,7 @@ import { once } from "node:events";
 import { fileURLToPath } from "node:url";
 import * as protocol from "../src/studio-agent-protocol.js";
 import * as contextTools from "../src/studio-agent-context.js";
+import { STUDIO_ELEMENTS } from "../src/studio-elements.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 
 export const uuid = "00000000-0000-4000-8000-000000000001";
@@ -97,21 +98,80 @@ function registerTests() {
 		];
 		for (const command of invalid) rejects(() => protocol.validateStudioCommand(command));
 	});
-	test("D3 all eight families have executable happy paths and stable defaults", () => {
+	test("D3 all nine families have executable happy paths and stable defaults", () => {
 		const commands = [
 			{ name: "inspect_studio", args: { scope: "entities" } },
 			{ name: "operate_studio", args: { selection: null, frame: 0, playing: false, view: { grid: true } } },
 			{ name: "arrange_objects", args: { ops: [createOp()] } },
 			{ name: "arrange_characters", args: { ops: [{ op: "create", name: "Alex", position: { world: point() } }] } },
+			{ name: "patch_elements", args: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { tint: "#a1b2c3" } }] } },
 			{ name: "frame_shot", args: { subjectIds: ["char-alex"], framing: { intent: { size: "medium shot", view: "front three-quarter", level: "eye", side: "left" } } } },
 			{ name: "generate_motion", args: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }, { text: "wave" }], durationSeconds: 6 } } },
 			{ name: "verify_result", args: { targets: ["char-alex"], checks: ["motion"] } },
 			{ name: "undo_edit", args: { receiptId: "r-1" } },
 		];
+		assert.deepEqual(commands.map(command => command.name), [...protocol.STUDIO_TOOL_FAMILIES]);
 		const normalized = commands.map(command => protocol.validateStudioCommand(command));
-		assert.equal(normalized[0].args.limit, 12); assert.equal(normalized[2].args.collisionPolicy, "report"); assert.equal(normalized[5].args.repair, "bounded"); assert.equal(normalized[6].args.visual, "none"); assert.equal(normalized[6].args.range, "whole_clip");
+		assert.equal(normalized[0].args.limit, 12); assert.equal(normalized[2].args.collisionPolicy, "report"); assert.equal(normalized[6].args.repair, "bounded"); assert.equal(normalized[7].args.visual, "none"); assert.equal(normalized[7].args.range, "whole_clip");
 		assert.equal(commands[0].args.limit, undefined, "normalization does not edit caller input");
 		rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args: { ops: [createOp("Same"), createOp("Same")] } }), "DUPLICATE_NAME");
+	});
+	test("D3 patch_elements schema is derived from the element declaration table", () => {
+		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 9);
+		assert.ok(protocol.STUDIO_TOOL_FAMILIES.includes("patch_elements"));
+		assert.ok(protocol.STUDIO_CATALOGUE.some(tool => tool.name === "patch_elements"));
+		// Nine families must fit the context capability list.
+		const c = contextFixture(); c.capabilities.tools = [...protocol.STUDIO_TOOL_FAMILIES]; protocol.validateStudioContext(c);
+		// Derived, not hand-written: an element added to the table appears in the
+		// schema with its declared bounds, and a removed one disappears.
+		const table = [...STUDIO_ELEMENTS, { path: "stage.spotlight", type: "number", persisted: true, undoDomain: "stage", agentExposure: "patch", normalizer: "createSceneStage", min: -2, max: 7 }];
+		const derived = protocol.buildPatchSchema(table);
+		assert.deepEqual(derived.stage.properties.spotlight, { type: "number", minimum: -2, maximum: 7 });
+		assert.equal(protocol.STUDIO_PATCH_SET_SCHEMAS.stage.properties.spotlight, undefined);
+		assert.equal(derived.character.properties.tint.pattern, "^#[0-9a-fA-F]{6}$");
+		assert.deepEqual(derived.character.properties.model.enum, ["y-bot-tpose", "x-bot-tpose"]);
+		assert.equal(derived.character.properties.scale.minimum, 0.2);
+		assert.equal(derived.character.properties.scale.maximum, 3);
+		const hidden = protocol.buildPatchSchema(STUDIO_ELEMENTS.map(entry => entry.path === "character.tint" ? { ...entry, agentExposure: "todo" } : entry));
+		assert.equal(hidden.character.properties.tint, undefined);
+		for (const kind of protocol.STUDIO_PATCH_KINDS) assert.equal(protocol.STUDIO_PATCH_SET_SCHEMAS[kind].additionalProperties, false);
+		// An unknown path answers with the vocabulary that does exist.
+		try { protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "stage" }, set: { "keyLight.hue": 1 } }] } }); assert.fail("unknown path must be refused"); }
+		catch (error) {
+			assert.equal(error.code, "INVALID_ARGUMENT");
+			assert.match(error.message, /stage\.keyLight\.hue/);
+			for (const path of protocol.STUDIO_PATCHABLE_PATHS.stage) assert.ok(error.message.includes(path), `${path} must be listed`);
+		}
+		// One domain per patch, one history entry per receipt.
+		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "stage" }, set: { "keyLight.x": 1 } }, { target: { kind: "character", id: "char-alex" }, set: { rot: 4 } }] } }), "INVALID_ARGUMENT");
+		for (const args of [
+			{ ops: [] },
+			{ ops: [{ target: { kind: "stage" }, set: {} }] },
+			{ ops: [{ target: { kind: "stage", id: "scene-main" }, set: { "keyLight.x": 1 } }] },
+			{ ops: [{ target: { kind: "character" }, set: { rot: 4 } }] },
+			{ ops: [{ target: { kind: "scene", id: "scene-main" }, set: { rot: 4 } }] },
+			{ ops: [{ target: { kind: "character", id: "char-alex" }, set: { scale: 9 } }] },
+			{ ops: [{ target: { kind: "character", id: "char-alex" }, set: { identityImage: "https://example.test/face.png" } }] },
+			{ ops: [{ target: { kind: "stage" }, set: { "keyLight.intensity": 4.5 } }] },
+			{ ops: [{ target: { kind: "stage" }, set: { camera: "5:4" } }] },
+		]) rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args }));
+		const patched = protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "shot" }, set: { targetModel: "seedance-2.5" } }] } });
+		assert.deepEqual(patched.args.ops[0].target, { kind: "shot" });
+	});
+	test("D7 patch receipts report per-operation outcomes and never hide a dropped path", () => {
+		const applied = receiptFixture(); applied.delta = [{ id: "char-alex", after: { patched: [{ path: "character.tint", text: "#a1b2c3" }] } }]; applied.ops = [{ index: 0, status: "applied" }];
+		protocol.validateReceipt(applied);
+		const partial = { ...structuredClone(applied), status: "partial", ops: [{ index: 0, status: "partial", droppedPaths: ["object.renderer"] }] };
+		protocol.validateReceipt(partial);
+		for (const mutate of [
+			r => { r.status = "applied"; },
+			r => { r.ops[0].droppedPaths = []; },
+			r => { r.ops[0].index = 3; },
+			r => { delete r.ops; },
+		]) { const r = structuredClone(partial); mutate(r); rejects(() => protocol.validateReceipt(r), "INVALID_RECEIPT"); }
+		const noop = receiptFixture("noop"); noop.ops = [{ index: 0, status: "partial", droppedPaths: ["object.renderer"] }];
+		protocol.validateReceipt(noop);
+		noop.ops = [{ index: 0, status: "applied" }]; rejects(() => protocol.validateReceipt(noop), "INVALID_RECEIPT");
 	});
 	test("D4 context recursively rejects whole-document, credential and raw-pose payloads", () => {
 		for (const mutate of [c => c.document = {}, c => c.entities[0].rawPose = [1,2,3], c => c.host.accessToken = "secret", c => c.scene.inactiveScenes = [], c => c.camera = { dataUrl: "data:image/png;base64,AA" }, c => c.entities[0].position.extra = {}, c => c.jobs.push({ id: "j", payload: {} }), c => c.assets.push({ imageId: "x", path: "/tmp/private" })]) { const c = contextFixture(); mutate(c); rejects(() => protocol.validateStudioContext(c)); }
