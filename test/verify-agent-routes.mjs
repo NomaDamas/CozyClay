@@ -382,6 +382,62 @@ console.log("agent routes verified");
 }
 
 {
+	// #350: the Studio branch owes the panel and the analytics pipeline exactly
+	// what the Workflow branch already sends — a labelled tool.start whose args
+	// are summarised (no image bytes), a tool.done that states how long the tool
+	// took, and the execution telemetry frames that make a turn measurable.
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const { receiptFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const identityImage = "data:image/png;base64," + "A".repeat(120_000);
+	let parityTurns = 0;
+	const parityCodex = {
+		...fakeCodex,
+		streamResponses: () => { const first = parityTurns++ === 0; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
+			if (first) yield { type: "response.output_item.done", item: { type: "function_call", call_id: "par-1", name: "patch_elements", arguments: JSON.stringify({ ops: [{ target: { kind: "character", id: "char-alex" }, set: { identityImage } }] }) } };
+			else yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
+			yield { type: "response.completed", response: { status: "completed" } };
+		} }; },
+	};
+	let parityServer;
+	const parityHub = { command: async (name) => name === "patch_elements" ? receiptFixture() : { ok: true }, workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
+	const parityHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: parityCodex, liveHub: parityHub, studioRuntime: { readContext: async () => contextFixture() }, port: () => parityServer.address().port });
+	parityServer = createServer((req, res) => parityHandler(req, res).catch((error) => { console.error("studio-parity fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	parityServer.listen(0, "127.0.0.1");
+	await once(parityServer, "listening");
+	const parityOrigin = `http://127.0.0.1:${parityServer.address().port}`;
+	const parityEnvelope = envelopeFixture();
+	const parityText = await fetch(`${parityOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: parityOrigin }, body: JSON.stringify(parityEnvelope) }).then((r) => r.text());
+	const parityEvents = [...parityText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+	const parityStart = parityEvents.find((event) => event.type === "tool.start" && event.callId === "par-1");
+	assert.ok(parityStart, "the Studio tool call opens a card");
+	assert.equal(parityStart.label, "patch elements", "a Studio tool.start reads as an action, exactly like the Workflow branch");
+	assert.ok(parityStart.args, "a Studio tool.start carries the arguments the card shows");
+	const parityArgs = JSON.stringify(parityStart.args);
+	assert.equal(parityArgs.includes("data:image/"), false, "image bytes never travel in a tool card");
+	assert.match(parityArgs, /\[image \d+ KB\]/, "the summarised argument states the size it replaced");
+	assert.equal(parityStart.args.ops[0].target.id, "char-alex", "summarising keeps every readable argument");
+	const parityDone = parityEvents.find((event) => event.type === "tool.done" && event.callId === "par-1");
+	assert.equal(parityDone.ok, true, JSON.stringify(parityDone));
+	assert.ok(Number.isFinite(parityDone.elapsedMs) && parityDone.elapsedMs >= 0, `a Studio tool.done states its elapsed time: ${JSON.stringify(parityDone.elapsedMs)}`);
+	const parityStarted = parityEvents.filter((event) => event.type === "execution_tool_started");
+	const parityTelemetry = parityEvents.filter((event) => event.type === "execution_telemetry");
+	assert.equal(parityStarted.length, 1, "the Studio turn announces the tool it started");
+	assert.match(parityStarted[0].telemetry_id, /^[a-f0-9]{32}$/);
+	assert.equal(parityStarted[0].tool_category, "scene_write");
+	assert.deepEqual(parityTelemetry.map((event) => event.event), ["agent:result_applied", "agent:tool_executed", "agent:turn_succeeded"], JSON.stringify(parityTelemetry));
+	assert.ok(parityTelemetry.every((event) => event.props.turn_id === parityEnvelope.turnId), "the host's own turn id correlates every frame");
+	assert.equal(parityStarted[0].turn_id, parityEnvelope.turnId);
+	assert.equal(parityTelemetry.find((event) => event.event === "agent:tool_executed").props.outcome, "succeeded");
+	assert.equal(parityTelemetry.find((event) => event.event === "agent:tool_executed").telemetry_id, parityStarted[0].telemetry_id);
+	// The browser rejects a telemetry frame that carries an unexpected key, so
+	// advisory telemetry stays out of the replayable event sequence.
+	assert.ok([...parityStarted, ...parityTelemetry].every((event) => !Object.hasOwn(event, "eventSeq")), "telemetry frames carry no replay cursor");
+	assert.ok(parityEvents.filter((event) => !["execution_telemetry", "execution_tool_started"].includes(event.type)).every((event) => Number.isSafeInteger(event.eventSeq)), "every replayable Studio event keeps its cursor");
+	parityServer.close();
+	console.log("PASS Studio turns stream labelled/summarised tool cards, elapsed times and execution telemetry");
+}
+
+{
 	// Regression for #342: a Studio rejection receipt carries code/message at the
 	// top level, never under `error`. The tool.done event and the model's
 	// function_call_output must show that code, message and recovery hint — never

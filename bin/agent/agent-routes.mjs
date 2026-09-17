@@ -4,7 +4,7 @@ import { basename } from "node:path";
 import * as defaultAuth from "../codex-auth.mjs";
 import { publishLiveEndpoint, removeLiveEndpoint } from "../live-endpoint.mjs";
 import { createCodexClient } from "./codex-client.mjs";
-import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
+import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace, summariseCanvasResult } from "./agent-tools.mjs";
 
 import { createVideoAdapters } from "./video-adapters.mjs";
 
@@ -35,6 +35,10 @@ const telemetryId = () => advisory(() => randomBytes(16).toString("hex"), null);
 const telemetryNow = () => advisory(() => { const value = performance.now(); return Number.isFinite(value) ? value : NaN; }, NaN);
 const bucketMs = (ms) => !Number.isFinite(ms) || ms < 1000 ? "lt1s" : ms < 3000 ? "1-3s" : ms < 10000 ? "3-10s" : ms < 30000 ? "10-30s" : "gte30s";
 const agentToolCategory = (name) => {
+	// Studio families are authored edits or reads; the analytics vocabulary has
+	// no Studio-specific category, so a write says so and everything else does not.
+	if (["arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "undo_edit"].includes(name)) return "scene_write";
+	if (["inspect_studio", "operate_studio", "verify_result", "generate_motion"].includes(name)) return "other";
 	if (name === "run_workflow") return "workflow_run";
 	if (name === "describe_workflow" || name === "focus_workflow_node") return "workflow_read";
 	if (["add_workflow_node", "update_workflow_node", "remove_workflow_node", "connect_workflow_nodes", "disconnect_workflow_nodes", "set_workflow_node_output"].includes(name)) return "workflow_write";
@@ -57,6 +61,40 @@ const appliedCanvasResult = (name, result) => {
 	if (name === "connect_workflow_nodes") return typeof result?.edge?.id === "string" && result.edge.id.length > 0;
 	return false;
 };
+
+/**
+ * One execution-telemetry emitter, shared by both surfaces. The turn that owns
+ * the correlation id owns its frames: a turn without one stays unobserved
+ * rather than emitting frames nothing can correlate.
+ */
+function createTurnTelemetry(send, turnId) {
+	const turnStartedAt = telemetryNow();
+	let applied = false;
+	const emit = (event, props, toolId) => advisory(() => {
+		if (turnId) send({ type: "execution_telemetry", event, props, ...(toolId ? { telemetry_id: toolId } : {}) });
+	});
+	return {
+		/** One tool execution: the started frame now, its outcome when it ends. */
+		toolStarted(category) {
+			const startedAt = telemetryNow();
+			const toolId = telemetryId();
+			advisory(() => { if (turnId && toolId) send({ type: "execution_tool_started", turn_id: turnId, telemetry_id: toolId, tool_category: category }); });
+			return {
+				elapsedMs: () => Math.round(telemetryNow() - startedAt),
+				executed: (outcome) => {
+					if (toolId) emit("agent:tool_executed", { turn_id: turnId, tool_category: category, outcome, duration_bucket: bucketMs(telemetryNow() - startedAt) }, toolId);
+				},
+			};
+		},
+		/** The first proof that the scene actually changed, once per turn. */
+		applied: () => advisory(() => { if (!applied) { applied = true; emit("agent:result_applied", { turn_id: turnId }); } }),
+		finished: (outcome, failureCode) => emit(`agent:turn_${outcome}`, {
+			turn_id: turnId,
+			duration_bucket: bucketMs(telemetryNow() - turnStartedAt),
+			...(outcome !== "succeeded" ? { failure_code: failureCode } : {}),
+		}),
+	};
+}
 
 /** Reject anything that is not a list of {role, name?, dataUrl} inline images. */
 function validReferences(references) {
@@ -247,6 +285,14 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 	};
 	const emitStudioEvent = (turnId, event) => {
 		const record = studioEvents.get(turnId) || { next: 0, events: [], listeners: new Set(), terminal: false };
+		// Execution telemetry is advisory and is validated key-by-key in the
+		// browser: it carries no replay cursor, is never retained for a resume,
+		// and a reconnect simply misses the frames it was not there for.
+		if (["execution_telemetry", "execution_tool_started"].includes(event.type)) {
+			studioEvents.set(turnId, record);
+			for (const listener of [...record.listeners]) listener(event);
+			return;
+		}
 		const value = { ...event, eventSeq: ++record.next };
 		record.next = value.eventSeq;
 		const previous = record.events.at(-1);
@@ -266,7 +312,11 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 	const studioIdentity = host => Object.fromEntries(["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"].map(key => [key, host[key]]));
 	const writeStudioStream = (res, record, after = 0, req = null) => {
 		res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" }); res.flushHeaders?.();
-		let cursor = after; const send = event => { if (event.eventSeq > cursor && !res.destroyed) { cursor = event.eventSeq; res.write(`data: ${JSON.stringify(event)}\n\n`); } };
+		let cursor = after; const send = event => {
+			if (res.destroyed) return;
+			if (event.eventSeq === undefined) { res.write(`data: ${JSON.stringify(event)}\n\n`); return; }
+			if (event.eventSeq > cursor) { cursor = event.eventSeq; res.write(`data: ${JSON.stringify(event)}\n\n`); }
+		};
 		const listener = event => { send(event); if (event.type === "done" && !res.writableEnded) res.end(); }; record.listeners.add(listener); for (const event of record.events) send(event);
 		if (record.terminal) { record.listeners.delete(listener); res.end(); return () => {}; }
 		const heartbeat = setIntervalImpl(() => { clock(); if (!res.writableEnded && !res.destroyed) res.write(": heartbeat\n\n"); }, 15_000);
@@ -318,6 +368,11 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		res.setHeader("set-cookie", `studio_owner=${encodeURIComponent(session.owner)}; Path=/agent; HttpOnly; SameSite=Strict`);
 		const close = writeStudioStream(res, record, 0, req);
 		const send = event => emitStudioEvent(value.turnId, event);
+		// The Studio turn is measured exactly like the Workflow turn, correlated by
+		// the turn id the host already owns (the frozen envelope carries no room
+		// for a second one).
+		const telemetry = createTurnTelemetry(send, value.turnId);
+		let turnOutcome = "succeeded", turnFailureCode = null, toolFailed = false;
 		const controller = new AbortController(); session.controller = controller;
 		// Admission is the document identity plus the exact scene revision each
 		// command expects. Per-entity tokens are deliberately absent: the revision
@@ -380,13 +435,18 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 				for (const item of items) {
 					history.push(item); called ||= item.type === "function_call";
 					if (item.type !== "function_call") continue;
-					const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments; send({ type: "tool.start", callId: item.call_id, name: item.name, eventSeq: undefined }); let result;
+					const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments;
+					const execution = telemetry.toolStarted(advisory(() => agentToolCategory(item.name), "other"));
+					// The card names the action and shows the arguments it ran with; an
+					// identity image is reported by its size, never by its bytes.
+					send({ type: "tool.start", callId: item.call_id, name: item.name, label: item.name.replaceAll("_", " "), args: summariseCanvasResult(args), eventSeq: undefined }); let result;
 					try { const tool = modelTools.find(candidate => candidate.name === item.name); if (!tool) throw new StudioProtocolError("UNKNOWN_TOOL", "Unsupported Studio tool."); result = await tool.handler(args);
 						if (result && Array.isArray(result.visualRefs) && result.visualRefs.length) {
 							const ref = result.visualRefs.find(value => value?.imageId || value?.id);
 							if (ref) { const visual = await tools.resolveImage(ref.imageId || ref.id, { receiptId: result.receiptId, revision: result.revision }); result = { ...result, visualStatus: visual.visualStatus, imageId: visual.imageId, revision: visual.revision, receiptId: visual.receiptId, ...(visual.dataUrl ? { dataUrl: visual.dataUrl } : {}) }; }
 						}
-						const publicResult = result && typeof result === "object" ? Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl")) : result; send({ type: "tool.done", callId: item.call_id, ok: true, result: publicResult }); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(publicResult) }); session.history = history.slice();
+						advisory(() => { if (result?.ok && result.authored) telemetry.applied(); });
+						const publicResult = result && typeof result === "object" ? Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl")) : result; send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: execution.elapsedMs(), result: publicResult }); execution.executed("succeeded"); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(publicResult) }); session.history = history.slice();
 						if (result?.dataUrl && codex.appendImageObservation) { codex.appendImageObservation(history, { callId: item.call_id, dataUrl: result.dataUrl, label: `Studio image ${result.imageId} revision ${JSON.stringify(result.revision)} receipt ${result.receiptId ?? "unavailable"}` }); session.history = history.slice(); }
 					} catch (error) {
 						if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message, error?.receipt ? JSON.stringify(error.receipt).slice(0, 400) : "");
@@ -394,7 +454,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 						const code = error.code || "BACKEND_UNAVAILABLE";
 						const failure = { ok: false, error: { code, message: error.message, ...(receipt ? { phase: receipt.phase ?? null, recovery: receipt.recovery ?? null, expectedTargets: receipt.expectedTargets ?? [], currentTargets: receipt.currentTargets ?? [] } : {}) } };
 						const recoveryHint = receipt?.recovery?.action && receipt.recovery.action !== "none" ? ` (${receipt.recovery.action}${receipt.recovery.retryAllowed === false ? ", do not retry" : ", retry allowed"})` : "";
-						send({ type: "tool.done", callId: item.call_id, ok: false, error: `${code}: ${error.message}${recoveryHint}` });
+						toolFailed = true;
+						send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: execution.elapsedMs(), error: `${code}: ${error.message}${recoveryHint}` });
+						execution.executed(controller.signal.aborted ? "cancelled" : "failed");
 						history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(failure) }); session.history = history.slice();
 					}
 				}
@@ -404,11 +466,15 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			// A backend refusal reaches the Studio panel with its status and sanitized
 			// detail; a Studio protocol error already says what it means.
 			const info = errorInfo(error);
+			turnOutcome = controller.signal.aborted ? "cancelled" : "failed";
+			turnFailureCode = controller.signal.aborted ? "aborted" : agentFailureCode(error, controller.signal, toolFailed);
 			if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.detail ?? error?.body ?? "").slice(0, 300));
 			send({ type: "error", code: error.status === 429 ? "rate_limit" : error.code || "upstream", message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
 			session.history = history.slice();
 		}
 		session.history = history.slice();
+		if (controller.signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
+		telemetry.finished(turnOutcome, turnFailureCode);
 		send({ type: "done" }); record.terminal = true;
 		close(); if (!res.writableEnded) res.end(); session.controller = null; return true;
 	};
@@ -536,15 +602,11 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		// The initiating browser owns the turn ID and requested/terminal capture.
 		// Legacy/local callers without an ID retain behavior but are unobserved.
 		const turnId = typeof value.turn_id === "string" && /^[a-f0-9]{32}$/.test(value.turn_id) ? value.turn_id : null;
-		const turnStartedAt = telemetryNow();
+		const telemetry = createTurnTelemetry(send, turnId);
 		let turnOutcome = "succeeded";
 		let turnFailureCode = null;
 		let toolFailed = false;
 		let streamsCompleted = true;
-		let resultApplied = false;
-		const emitTelemetry = (event, props, toolId) => advisory(() => {
-			if (turnId) send({ type: "execution_telemetry", event, props, ...(toolId ? { telemetry_id: toolId } : {}) });
-		});
 		let quota;
 		const observeHeaders = (headers) => {
 			const next = quotaEvent(codex, headers);
@@ -579,13 +641,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			const tools = createAgentTools({ ...dependencies, session, emit: send });
 			const executeTool = async (item, override) => {
 				signal.throwIfAborted();
-				const started = telemetryNow();
-				const toolId = telemetryId();
-				const category = advisory(() => agentToolCategory(item.name), "other");
-				advisory(() => { if (turnId && toolId) send({ type: "execution_tool_started", turn_id: turnId, telemetry_id: toolId, tool_category: category }); });
-				const executed = (outcome) => {
-					if (toolId) emitTelemetry("agent:tool_executed", { turn_id: turnId, tool_category: category, outcome, duration_bucket: bucketMs(telemetryNow() - started) }, toolId);
-				};
+				const execution = telemetry.toolStarted(advisory(() => agentToolCategory(item.name), "other"));
 				let cardStarted = false;
 				try {
 					const tool = override ?? tools.find((entry) => entry.name === item.name);
@@ -595,21 +651,16 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 					cardStarted = true;
 					if (dependencies.error) throw dependencies.error;
 					const result = await tool.handler(args);
-					advisory(() => {
-						if (!resultApplied && appliedCanvasResult(item.name, result)) {
-							resultApplied = true;
-							emitTelemetry("agent:result_applied", { turn_id: turnId });
-						}
-					});
+					advisory(() => { if (appliedCanvasResult(item.name, result)) telemetry.applied(); });
 					signal.throwIfAborted();
-					send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: Math.round(telemetryNow() - started), result });
-					executed("succeeded");
+					send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: execution.elapsedMs(), result });
+					execution.executed("succeeded");
 					return result;
 				} catch (error) {
 					toolFailed = true;
 					if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message);
-					if (cardStarted) send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: Math.round(telemetryNow() - started), error: errorInfo(error).message });
-					executed(signal.aborted ? "cancelled" : "failed");
+					if (cardStarted) send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: execution.elapsedMs(), error: errorInfo(error).message });
+					execution.executed(signal.aborted ? "cancelled" : "failed");
 					throw error;
 				}
 			};
@@ -669,11 +720,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			if (signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
 			// Stream EOF is not completion evidence. Preserve the agent's existing
 			// UI/loop behavior, but leave truncated model turns unresolved.
-			if (turnOutcome !== "succeeded" || streamsCompleted) emitTelemetry(`agent:turn_${turnOutcome}`, {
-				turn_id: turnId,
-				duration_bucket: bucketMs(telemetryNow() - turnStartedAt),
-				...(turnOutcome !== "succeeded" ? { failure_code: turnFailureCode } : {}),
-			});
+			if (turnOutcome !== "succeeded" || streamsCompleted) telemetry.finished(turnOutcome, turnFailureCode);
 			session.running = false; send({ type: "done" }); res.end(); res.off("close", disconnect);
 		}
 		return true;
