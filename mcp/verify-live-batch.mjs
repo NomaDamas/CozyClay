@@ -467,7 +467,9 @@ try {
 	assert.equal(tooMany.isError, true, JSON.stringify(tooMany));
 	const nested = await call("apply_batch", { ops: [{ name: "apply_batch", args: { ops: [] } }] });
 	assert.equal(nested.isError, true, JSON.stringify(nested));
-	const characterBatch = await call("apply_batch", { ops: [{ name: "update_character", args: { ref: "A", x: 1 } }] });
+	// Since #344 the schema itself no longer lists character ops, so this is
+	// a registration-boundary rejection too: no live request lifecycle to await.
+	const characterBatch = await call("apply_batch", { ops: [{ name: "update_character", args: { ref: "A", x: 1 } }] }, false);
 	assert.equal(characterBatch.isError, true, JSON.stringify(characterBatch));
 	assert.deepEqual(JSON.parse(await description()).objects, JSON.parse(boundaryDocument).objects);
 	assert.equal((await history()).past - boundaryDepth.past, 0);
