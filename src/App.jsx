@@ -663,7 +663,7 @@ export function createStudioAppBinding(ports) {
 			motion?.dispose(); owner = host; tokens.clear(); receipts.clear(); jobs.clear(); images.clear();
 			authoredKey = physicsKey = viewKey = undefined;
 			journal = createStudioCommandJournal({ host, isRetained: receipt => ports.isRetained(receipt) });
-			commands = createStudioCommands({ read: readCommand, guard, bounds: ports.bounds, commit: ports.commit, journal });
+			commands = createStudioCommands({ read: readCommand, guard, bounds: ports.bounds, commit: ports.commit, poses: ports.poses, journal });
 			motion = createStudioMotionCandidates({ readTarget, readEnvironment, journal,
 				commit: commitMotion, loadArtifact: ports.loadArtifact, poseCast: ports.poseCast });
 		}
@@ -672,7 +672,9 @@ export function createStudioAppBinding(ports) {
 			return { ...character, sessionMotion: identityOf(target?.motion),
 				ik: physicsKeyStamp(target?.ikState?.keys ?? new Map()), rig: target?.rig?.uuid ?? null };
 		});
-		const authored = JSON.stringify([raw.objects, characters, raw.shots, raw.frameCount]);
+		// The stage is authored state too: a key-light or environment edit from any
+		// surface bumps the scene revision exactly like a cast or object edit.
+		const authored = JSON.stringify([raw.objects, characters, raw.shots, raw.frameCount, raw.stage]);
 		if (authoredKey !== undefined && authoredKey !== authored && observedSceneRevision === ports.revision.current) ports.revision.current++;
 		authoredKey = authored; observedSceneRevision = ports.revision.current;
 		const liveIds = new Set([...raw.objects, ...raw.characters, ...raw.shots].map(row => row.id));
@@ -715,7 +717,7 @@ export function createStudioAppBinding(ports) {
 		const s = refresh();
 		return { host: s.host, revision: s.revision, frame: s.view.frame, frameCount: s.frameCount,
 			objects: s.objects, characters: s.characters, activeCharacterId: s.activeCharacterId,
-			selectedShotId: s.selectedShotId, shotDocument: { shots: s.shots }, camera: s.camera,
+			selectedShotId: s.selectedShotId, shotDocument: { shots: s.shots }, camera: s.camera, stage: s.stage,
 			filmback: s.filmback, manual: s.manual, floorY: 0, busy: s.busy };
 	}
 	function context() {
@@ -787,7 +789,7 @@ export function createStudioAppBinding(ports) {
 	}
 	function execute(request) {
 		refresh();
-		if (["arrange_objects", "arrange_characters", "frame_shot"].includes(request.name)) {
+		if (["arrange_objects", "arrange_characters", "frame_shot", "patch_elements"].includes(request.name)) {
 			// Arrangements and framing are fenced by the exact scene revision, the
 			// gesture flag and the document identity inside the command module; they
 			// carry no per-entity tokens, so a turn may edit one entity twice.
@@ -855,6 +857,7 @@ export function createStudioAppBinding(ports) {
 		operate_studio: request => execute({ ...request, name: "operate_studio" }),
 		arrange_objects: request => execute({ ...request, name: "arrange_objects" }),
 		arrange_characters: request => execute({ ...request, name: "arrange_characters" }),
+		patch_elements: request => execute({ ...request, name: "patch_elements" }),
 		frame_shot: request => execute({ ...request, name: "frame_shot" }),
 		generate_motion: () => fail("CAPABILITY_MISSING", "Use the server-owned Studio generation route."),
 		verify_result: request => execute({ ...request, name: "verify_result" }),
@@ -4296,7 +4299,9 @@ export default function App() {
 		camera: cameraPos,
 		fovDeg,
 		filmback,
-		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet, environmentImage, environment, style, hasEnvSheet },
+		// keyLight rides the live stage envelope: it is authored, undoable and
+		// patchable state, so every reader sees the body the save path writes.
+		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet, environmentImage, environment, style, hasEnvSheet, keyLight },
 		timeline: { currentFrame: tlFrame, frameCount: tlFrameCount, fps: tlFps },
 		activeCharacterId,
 		partColours: partColoursEnabled ? PART_COLOURS : null,
@@ -11198,7 +11203,7 @@ function resizePromptClip(id, edge, rawFrame) {
 			preserveAuthoredMotion: Boolean(c.layer?.waypoints?.length) }]));
 		return { host: { workspaceId: liveWorkspaceIdRef.current, documentEpoch: studioDocumentEpochRef.current,
 				sceneId: activeSceneIdRef.current, sceneEpoch: studioSceneEpochRef.current }, workspaceHandle: liveWorkspaceHandleRef.current,
-			sceneName: live.scenes.find(s => s.id === activeSceneIdRef.current)?.name ?? "Untitled Scene", aspect: live.stage.shotAspect,
+			sceneName: live.scenes.find(s => s.id === activeSceneIdRef.current)?.name ?? "Untitled Scene", aspect: live.stage.shotAspect, stage: live.stage,
 			objects: storeRef.current.objects, characters: list, targets, shots: live.shots, frameCount: live.timeline.frameCount,
 			selection: live.studioSelection, activeCharacterId: live.activeCharacterId, selectedShotId: live.studioShotId,
 			view: live.studioView, camera: live.studioCamera ?? readStudioCamera(), filmback: live.filmback, manual: manualCameraOverrideRef.current,
@@ -11216,9 +11221,19 @@ function resizePromptClip(id, edge, rawFrame) {
 		manualCameraOverrideRef.current = manual; live.camera = camera.position; live.fovDeg = fov; live.studioCamera = camera;
 		setCameraPos(camera.position); setFovDeg(fov); setCameraPresetId(null);
 	}
+	/** The authored stage envelope (key light, environment, filmback) published
+	 * as one body: the live read model first, so the next synchronous read sees
+	 * it, then the React state the foldouts and the save path own. */
+	function publishStudioStage(stage) {
+		liveStateRef.current.stage = stage;
+		setKeyLight(stage.keyLight); setEnvironmentImage(stage.environmentImage ?? null);
+		setEnvironment(stage.environment); setStyle(stage.style); setHasEnvSheet(stage.hasEnvSheet === true);
+		setShotAspectKey(stage.shotAspect); setCameraPresetId(stage.cameraPresetId ?? null); setSensorFormat(stage.sensorId);
+	}
 	function snapshotStudioDomain(domain, targetId) {
 		const state = readStudioState();
 		if (domain === "shot") return { shots: state.shots, camera: state.camera, manual: state.manual };
+		if (domain === "stage") return { stage: state.stage };
 		if (domain === "cast") return { characters: state.characters };
 		const target = state.targets.get(targetId);
 		return { character: state.characters.find(c => c.id === targetId), fullMotion: motionFullRef.current.get(targetId),
@@ -11263,7 +11278,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		to.push({ ...top, studio: { ...entry, state: snapshotStudioDomain(entry.domain, entry.targetId) } }); from.pop();
 		if (entry.domain === "shot") {
 			liveStateRef.current.shots = entry.state.shots; setShots(entry.state.shots); publishStudioCamera(entry.state.camera, entry.state.manual);
-		} else if (entry.domain === "cast") publishStudioCharacters(entry.state.characters);
+		} else if (entry.domain === "stage") publishStudioStage(entry.state.stage);
+		else if (entry.domain === "cast") publishStudioCharacters(entry.state.characters);
 		else publishStudioMotion(entry.targetId, entry.state);
 		sceneRevisionRef.current++; ++opClockRef.current;
 		setToast(redo ? ko("Redone", "다시 실행됨") : ko("Undone", "실행 취소됨")); return true;
@@ -11276,8 +11292,18 @@ function resizePromptClip(id, edge, rawFrame) {
 			studioHistoryRef.current.set(historyEntryId, { domain: "objects", tick: lastObjectOpRef.current, depth: storeRef.current.depths().past });
 		} else {
 			recordStudioHistory(payload.domain, null, historyEntryId);
-			if (payload.domain === "cast") publishStudioCharacters(payload.draft, true);
-			else { liveStateRef.current.shots = payload.draft.shotDocument.shots; editShots(payload.draft.shotDocument.shots); publishStudioCamera(payload.draft.camera, payload.draft.manual); }
+			if (payload.domain === "stage") publishStudioStage(payload.draft);
+			else if (payload.domain === "cast") {
+				publishStudioCharacters(payload.draft, true);
+				// The active character's layer lives in the editing buffer, which the
+				// read model folds back over the cast. A published prompt schedule has
+				// to reach it in the same tick, or the next read would revert it.
+				const loaded = payload.draft.find(entry => entry.id === loadedLayerCharRef.current);
+				const clips = loaded?.layer?.promptClips ?? null;
+				if (clips && JSON.stringify(clips) !== JSON.stringify(bufferRef.current.promptClips)) {
+					bufferRef.current = { ...bufferRef.current, promptClips: clips }; setPromptClips(clips);
+				}
+			} else { liveStateRef.current.shots = payload.draft.shotDocument.shots; editShots(payload.draft.shotDocument.shots); publishStudioCamera(payload.draft.camera, payload.draft.manual); }
 		}
 		return { historyEntryId };
 	}
@@ -11411,6 +11437,8 @@ function resizePromptClip(id, edge, rawFrame) {
 	studioPortsRef.current = {
 		read: readStudioState, revision: sceneRevisionRef, bounds: studioBounds, commit: commitStudioDraft, commitMotion: commitStudioMotion,
 		operate: operateStudio, undo: undoScene, stepHistory: stepStudioHistory, capture: () => liveHandlersRef.current.capture_framing_png({}),
+		// The pose library a character.pose patch resolves its id against.
+		poses: () => [DEFAULT_POSE, ...customPoses],
 		loadArtifact: (artifact, options) => {
 			// Keep the server-pinned URL. Stripping the origin would silently fetch
 			// from a different bridge after a reconnect. The bridge owner must allow
