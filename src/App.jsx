@@ -11233,7 +11233,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	function recordStudioHistory(domain, targetId, historyEntryId) {
 		const tick = ++opClockRef.current;
 		charHistoryRef.current.past.push({ tick, snapshot: snapshotCast(domain === "shot"),
-			studio: { domain, targetId, historyEntryId, state: snapshotStudioDomain(domain, targetId) } });
+			studio: { domain, targetId, historyEntryId, objects: storeRef.current.objects, state: snapshotStudioDomain(domain, targetId) } });
 		charHistoryRef.current.future = [];
 		studioHistoryRef.current.set(historyEntryId, { tick, domain });
 	}
@@ -11255,7 +11255,10 @@ function resizePromptClip(id, edge, rawFrame) {
 	function stepStudioHistory(redo) {
 		const history = charHistoryRef.current, from = redo ? history.future : history.past, to = redo ? history.past : history.future;
 		const top = from.at(-1);
-		if (!top?.studio || top.tick <= lastObjectOpRef.current) return false;
+		// Object undo/redo advances the global clock, even when it returns to the
+		// exact object state captured by this Studio entry. Use that boundary
+		// instead of hiding older Studio history behind the traversal tick.
+		if (!top?.studio || top.studio.objects !== storeRef.current.objects) return false;
 		const entry = top.studio;
 		to.push({ ...top, studio: { ...entry, state: snapshotStudioDomain(entry.domain, entry.targetId) } }); from.pop();
 		if (entry.domain === "shot") {

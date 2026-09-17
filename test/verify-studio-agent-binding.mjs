@@ -18,13 +18,13 @@ import { copyPhysicsKeys, physicsKeyStamp } from '../src/ardy/physics-review.js'
 import * as playback from '../src/ardy/playback.js';
 import { primeBindPose } from '../src/poses.js';
 import { sampleAt } from '../src/sample-at.js';
-import { shotAtFrame } from '../src/cuts.js';
+import { createShot, shotAtFrame } from '../src/cuts.js';
 import { focalMmToFov, fovToFocalMm } from '../src/shot.js';
 import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
 
-const cases = ['targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead'];
+const cases = ['targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -72,18 +72,20 @@ function fixture() {
  const markSemanticEdit=(domain,before,after)=>{if(before!==after)revision.current++;currentBinding?.invalidate?.(domain,before,after);semantic.push(domain);firstEdit('craft',domain,before,after);if(domain==='characters'&&Array.isArray(after)){characterRef.current=after;live.current.characters=after;}if(domain==='shots')live.current.shots=after;};
  const castOwner=createSemanticState(chars,v=>{values.characters=v;},markSemanticEdit,'characters');
  const shotsOwner=createSemanticState([],v=>{values.shots=v;},markSemanticEdit,'shots');
- const store=ref(createSceneHistoryStore([], {onObjects(next){lastObject.current=++clock.current;values.objects=next;},onCommit(before,after){markSemanticEdit('objects',before,after);}}));
+ const suppressObjectClock=ref(false);
+ const store=ref(createSceneHistoryStore([], {onObjects(next){if(!suppressObjectClock.current)lastObject.current=++clock.current;values.objects=next;},onCommit(before,after){markSemanticEdit('objects',before,after);}}));
  const noPublish = name => value => {values[name]=typeof value==='function'?value(values[name]??0):value;};
  const scope={THREE,cloneSkeleton,...protocol,...context,...commands,...objects,...ik,...playback,createStudioMotionCandidates,copyPhysicsKeys,physicsKeyStamp,sampleAt,shotAtFrame,focalMmToFov,fovToFocalMm,objectTransformAt,aimAt,forwardFrom,
  liveStateRef:live,sceneRevisionRef:revision,charactersRef:characterRef,loadedLayerCharRef:ref(a.id),bufferRef:buffer,ikStateRef:state,ikStatesRef:layers,storeRef:store,
  charHistoryRef:history,opClockRef:clock,lastObjectOpRef:lastObject,studioHistoryRef:studioHistory,motionFullRef:ref(new Map()),
+ store:store.current,suppressObjectClockRef:suppressObjectClock,studioBindingRef:ref(null),objectDeleteUndo:null,selectedSceneObjectId:null,
  liveWorkspaceIdRef:ref('workspace'),liveWorkspaceHandleRef:ref('handle'),studioDocumentEpochRef:ref('document'),activeSceneIdRef:ref('scene'),studioSceneEpochRef:ref('epoch'),
  look:ref({yaw:0,pitch:0}),shotCamRef:ref(camera),shotCameraPosRef:ref(null),manualCameraOverrideRef:ref(false),frameCountRef:ref(48),tlFrameRef:ref(0),
  physicsOptions:{protectedFrames:[]},bridge:{ok:false},studioGestureRef:ref(false),ikBodyDragRef:ref(false),lineDragRef:ref(null),lineDrawRef:ref(null),linePinDragRef:ref(null),autoPhysicsRunRef:ref(null),recRef:ref(null),restoreRef:ref(null),
  committedIkEdits:[],IK_CORRECTION_BLEND_FRAMES:6,snapshotCast:()=>({}),markSemanticEdit,setCharacters:castOwner.set,editCharacters:castOwner.edit,setShots:shotsOwner.set,editShots:shotsOwner.edit,
  ko:en=>en};
  for(const name of ['setCameraPos','setFovDeg','setCameraPresetId','setWaypoints','setPromptClips','setMotion','setCommittedIkEdits','setIkTick','setTlFrameCount','setToast','setActiveCharacterId','setSelectedHierarchyId','setTlFrame','setWorkflowMode','setLookThroughShot','setGridView','setAutoColor','setTlPlaying','setIkMode','setIkFocus'])scope[name]=noPublish(name);
- const names=['createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','snapshotStudioDomain','publishStudioCharacters','recordStudioHistory','publishStudioMotion','stepStudioHistory','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix'];
+ const names=['createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','snapshotStudioDomain','publishStudioCharacters','recordStudioHistory','publishStudioMotion','stepStudioHistory','undoScene','redoScene','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix'];
  const code=names.map(n=>{assert(declarations.has(n),`actual App function ${n}`);return declarations.get(n);}).join('\n');
  const actual=new Function(...Object.keys(scope),code+`\nreturn {${names.join(',')}};`)(...Object.values(scope));
  let binding; let artifactLoader=async()=>clip(); const stamps=new Map();
@@ -91,8 +93,8 @@ function fixture() {
  ikRevision(id,stamp){const old=stamps.get(id);if(!old||old.stamp!==stamp)stamps.set(id,{stamp,revision:(old?.revision??0)+1});return stamps.get(id).revision;},
  isRetained:r=>Boolean(r?.undo&&studioHistory.current.has(r.undo.historyEntryId)),
  canUndo(r){const entry=r?.undo&&studioHistory.current.get(r.undo.historyEntryId);if(!entry||r.revision.after!==revision.current)return false;return entry.domain==='objects'?entry.tick===lastObject.current&&entry.tick>=(history.current.past.at(-1)?.tick??0)&&entry.depth===store.current.depths().past:entry.tick===history.current.past.at(-1)?.tick&&entry.tick>lastObject.current;},
- undo(){if(!actual.stepStudioHistory(false)){store.current.undo();live.current.objects=store.current.objects;}},capture(){throw new Error('renderer capture requires browser');}};
- binding=actual.createStudioAppBinding(ports);currentBinding=binding;binding.refresh();
+ undo:actual.undoScene,capture(){throw new Error('renderer capture requires browser');}};
+ binding=actual.createStudioAppBinding(ports);currentBinding=binding;scope.studioBindingRef.current={stepHistory:actual.stepStudioHistory};binding.refresh();
  const host=()=>binding.refresh().host;
  const request=(name,args)=>({name,args,host:host(),commandId:crypto.randomUUID(),expectedRevision:binding.refresh().revision,expectedTargets:[...store.current.objects,...characterRef.current].map(c=>binding.guard(c.id))});
  const call=async(name,args)=>{const response=await dispatchLiveFrame(JSON.stringify({type:'cmd',id:crypto.randomUUID(),name,args}),binding.handlers);assert(response.ok, response.error);return response.value;};
@@ -101,6 +103,29 @@ function fixture() {
 }
 const createArgs={ops:[{op:'create',source:{kind:'cube'},position:{world:{x:2,y:0,z:0}}}]};
 async function candidate(f) {const req=f.motionRequest();const prepared=await f.call('prepare_motion_install',req);assert(prepared.candidateId,JSON.stringify(prepared));const next={...req,...prepared,profile:'studio-motion-v1'};const verified=await f.call('verify_motion_candidate',next);assert(verified.verificationId,JSON.stringify(verified));return {req,next,verified};}
+async function railCameraUndo(f, interleaveObject) {
+ const shot=createShot('Rail shot',0,47,[],{mode:'rail',cameraRail:[{x:-2,z:4},{x:2,z:4}],railFollow:{mode:'range',startFrame:0,endFrame:47},followCam:{pitchOffsetDeg:4},craneHeight:{points:[{t:0,height:1.2},{t:1,height:2.4}]}});
+ f.scope.setShots([shot]);f.live.current.shots=[shot];
+ const before=structuredClone(f.actual.snapshotStudioDomain('shot'));
+ assert.equal(f.binding.context().shot.mode,'rail');
+ const receipt=await f.call('frame_shot',f.request('frame_shot',{subjectIds:['actor-a'],keyAtFrame:12,framing:{exact:{position:{x:1,y:2,z:6},lookAt:{x:0,y:1,z:0},focalMm:35}}}));
+ assert.equal(receipt.ok,true,JSON.stringify(receipt));
+ assert.equal(f.binding.context().shot.mode,'keys');
+ assert.equal(f.live.current.shots[0].cameraKeys.length,1);
+ if(interleaveObject){
+  const result=await f.call('arrange_objects',f.request('arrange_objects',createArgs));
+  assert.equal(result.ok,true,JSON.stringify(result));
+  assert.equal(f.actual.stepStudioHistory(false),false,'the newer object edit owns Undo first');
+  f.actual.undoScene();
+  assert.equal(f.store.current.objects.length,0);
+  assert.equal(f.binding.context().shot.mode,'keys','object Undo must not undo the camera');
+ }
+ const stepped=f.actual.stepStudioHistory(false);
+ assert.deepEqual({stepped,mode:f.binding.context().shot.mode,camera:f.actual.snapshotStudioDomain('shot').camera},
+  {stepped:true,mode:'rail',camera:before.camera},'Undo must restore the rail camera and shot chip');
+ assert.deepEqual(f.actual.snapshotStudioDomain('shot'),before,'restore the complete camera block and camera keys');
+ assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));
+}
 const implementations={
  async 'motion-preserves-playhead'(f){f.live.current.timeline.frameCount=96;f.live.current.studioView.frame=80;const {req,next,verified}=await candidate(f);const result=await f.call('commit_motion_candidate',{...next,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true});assert.equal(result.status,'installed',JSON.stringify(result));assert.equal(f.binding.context().view.frame,80);assert(f.binding.context().scene.frameCount>80);},
  async 'stale-receipt-undo'(f){const first=await f.call('arrange_objects',f.request('arrange_objects',createArgs));await f.call('arrange_objects',f.request('arrange_objects',createArgs));const before=f.store.current.objects;const r=await f.call('undo_edit',f.request('undo_edit',{receiptId:first.receiptId}));assert.equal(r.code,'UNDO_CONFLICT');assert.strictEqual(f.store.current.objects,before);},
@@ -114,6 +139,8 @@ const implementations={
  async 'mid-gesture-target'(f){f.scope.studioGestureRef.current=true;const r=await f.call('arrange_objects',f.request('arrange_objects',createArgs));assert.equal(r.code,'TARGET_BUSY');assert.equal(f.store.current.depths().past,0);},
  async 'lost-acknowledgement'(f){const request=f.request('arrange_objects',createArgs);const r=await f.call('arrange_objects',request);assert(r.ok);const replay=await f.call('reconcile_studio_command',{host:f.host(),commandId:request.commandId});assert.equal(replay.status,'applied');assert.deepEqual(replay.receipt,r);assert.deepEqual(await f.call('arrange_objects',request),r);assert.equal(f.store.current.depths().past,1);assert.equal((await f.call('reconcile_studio_command',{host:f.host(),commandId:'unknown'})).status,'unknown');},
  async 'camera-undo'(f){const before=f.actual.snapshotStudioDomain('shot');const r=await f.call('frame_shot',f.request('frame_shot',{subjectIds:['actor-a'],keyAtFrame:0,framing:{exact:{position:{x:0,y:1.6,z:5},lookAt:{x:0,y:1,z:0},focalMm:35}}}));assert.equal(r.ok,true,JSON.stringify(r));assert.equal(f.live.current.shots[0].cameraKeys.length,1);assert.equal(f.history.current.past.length,1);assert(f.actual.stepStudioHistory(false));assert.deepEqual(f.live.current.shots,before.shots);assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));assert(Math.abs(f.scope.shotCamRef.current.fov-focalMmToFov(before.camera.focalMm,'fullFrame',16/9)*180/Math.PI)<1e-9);},
+ async 'rail-camera-undo'(f){await railCameraUndo(f,false);},
+ async 'rail-camera-undo-after-object-undo'(f){await railCameraUndo(f,true);},
  async 'stop-before-commit'(f){const req=f.motionRequest();const cancelled=await f.call('cancel_motion_install',req);assert.equal(cancelled.status,'not_applied');assert.equal((await f.call('reconcile_studio_command',req)).status,'not_applied');assert.equal(f.history.current.past.length,0);},
  async 'explicit-unverified-acceptance'(f){const {req,next,verified}=await candidate(f);assert.equal(verified.status,'unverified');const before=f.actual.snapshotStudioDomain('motion','actor-a');const commit={...next,jobId:req.jobId,artifactId:req.artifactId,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true};const result=await f.call('commit_motion_candidate',commit);assert.equal(result.status,'installed',JSON.stringify(result));assert.equal(result.verification.status,'unverified');assert.equal(f.history.current.past.length,1);assert.equal(f.buffer.current.motion.studioTakeId,result.installed.takeId);assert(f.actual.stepStudioHistory(false));assert.equal(f.buffer.current.motion,before.character.sessionMotion??null);assert.deepEqual(f.scope.ikStateRef.current.keys,before.ikState.keys);assert.deepEqual(playback.snapshotPlaybackBones(f.rigs['actor-a']),before.renderer.bones);},
  async 'context-revisions'(f){const before=f.binding.context();assert.equal(before.host.workspaceHandle,'handle');f.actual.operateStudio({frame:3},f.binding.refresh());const view=f.binding.context();assert.equal(view.revision.scene,before.revision.scene);assert.equal(view.revision.physics,before.revision.physics);assert(view.revision.view>before.revision.view);assert.equal(view.entities.find(e=>e.id==='actor-a').token,before.entities.find(e=>e.id==='actor-a').token);f.scope.ikStatesRef.current.set('actor-b',{...ik.createIkState(),keys:new Map([[1,new Map([['hips',{p:new THREE.Vector3(0,1,0),q:[new THREE.Quaternion()]}]])]])});const changed=f.binding.context();assert(changed.revision.physics>view.revision.physics);assert.notEqual(changed.entities.find(e=>e.id==='actor-b').token,view.entities.find(e=>e.id==='actor-b').token);}
