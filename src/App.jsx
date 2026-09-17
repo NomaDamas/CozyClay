@@ -410,7 +410,6 @@ import {
 	MoveRig,
 	OBJECT_DELETE_UNDO_MS,
 	ObjectPathHandles,
-	POSE_PLACEMENTS,
 	PRESETS,
 	RIG_HIERARCHY_FOCUS,
 	RenderLoopController,
@@ -13055,189 +13054,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						</p>
 					</div>
 				</Foldout>
-				{/* Motion generation is authored from Prompt Blocks. The legacy ARDY
-				    status/control card remains available to the generation pipeline but
-				    is intentionally not mounted in the inspector. Keeping this boundary
-				    avoids changing bridge behavior while removing an unused UI surface. */}
-				{false && <Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Motion generation (legacy)", "레거시 모션 생성")}>
-					{/* One compact status line: which layer is being edited and on
-					    which box — the long hint texts lived here before. */}
-					<p className="ardy-meta">
-						{isKo ? `인물 ${activeCharIndex + 1} 레이어` : `Subject ${activeCharIndex + 1} layer`}
-						{bridge?.ok ? ` · ${bridge.host ?? ko("box", "로컬")}` : ""}
-					</p>
-					{/* Per-character layer status: every cast member's clip and
-					    queue position at a glance. */}
-					{characters.length > 0 && (
-						<ul className="gen-layers">
-							{characters.map((entry, index) => {
-								const job = genQueue.find((item) => item.charId === entry.id && (item.status === "queued" || item.status === "running" || item.status === "error"));
-								const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
-								const state = job?.status === "running"
-									? ko("generating…", "생성 중…")
-									: job?.status === "queued"
-										? ko("queued", "대기 중")
-										: job?.status === "error"
-											? ko("failed", "실패")
-											: clip
-												? (isKo ? `${clip.frames}프레임 로드됨` : `${clip.frames} frames loaded`)
-												: ko("no motion", "모션 없음");
-								return (
-									<li key={entry.id} className={entry.id === activeChar.id ? "active" : ""}>
-										<span className="gen-layers-name">S{index + 1}</span>
-										<span className={`gen-layers-state ${job?.status ?? (clip ? "loaded" : "")}`}>{state}</span>
-										{job?.status === "queued" && (
-											<button type="button" title={ko("Remove from queue", "대기열에서 제거")} onClick={() => setGenQueue((queue) => queue.filter((item) => item.id !== job.id))}>✕</button>
-										)}
-									</li>
-								);
-							})}
-						</ul>
-					)}
-					{bridge === null ? (
-						<p className="ardy-hint">{ko("Checking for the dev bridge…", "개발 브리지를 확인하는 중…")}</p>
-					) : bridge.ok ? (
-						<>
-							{/* Generation is authored in Prompt Blocks below: a block owns
-							    both its wording and its frame range, so the range decides the
-							    duration and a separate prompt/duration pair here could only
-							    disagree with it. This box reports the run instead of starting
-							    one. */}
-							{/* Continue out of the blocking pose. The bridge refuses poses
-							    alongside a prompt schedule, so the choice is disabled rather
-							    than accepted and dropped at the door. */}
-							<label className="check ardy-pose-start">
-								<input
-									type="checkbox"
-									data-ardy-start-from-pose
-									checked={ardyStartFromPose && promptClips.length < 2}
-									disabled={promptClips.length >= 2}
-									onChange={(event) => setArdyStartFromPose(event.target.checked)}
-								/>
-								<span>{ko("Pin the current pose", "현재 포즈 고정")}</span>
-							</label>
-							{ardyStartFromPose && promptClips.length < 2 && (
-								<>
-									{/* The box takes any destination frame, so the pose can open
-									    the clip, close it, or be passed through in the middle. */}
-									<div className="segmented ardy-pose-placement" data-active={ardyPosePlacement}>
-										{POSE_PLACEMENTS.map((placement) => (
-											<button
-												type="button"
-												key={placement}
-												data-pose-placement={placement}
-												className={ardyPosePlacement === placement ? "active" : ""}
-												onClick={() => setArdyPosePlacement(placement)}
-											>
-												{placement === "start"
-													? ko("First", "첫 프레임")
-													: placement === "middle"
-														? ko("Middle", "중간")
-														: placement === "end"
-															? ko("Last", "마지막")
-															: ko("Playhead", "재생헤드")}
-											</button>
-										))}
-									</div>
-									<p className="ardy-hint" data-pose-placement-frame>
-										{isKo
-											? `프레임 ${posePlacementFrame(ardyPosePlacement, Math.round(ardyDuration) * TIMELINE_FPS, tlFrame)}에 이 자세를 고정하고 나머지를 생성합니다.`
-											: `The pose is held at frame ${posePlacementFrame(ardyPosePlacement, Math.round(ardyDuration) * TIMELINE_FPS, tlFrame)} and the rest is generated around it.`}
-									</p>
-								</>
-							)}
-							{/* The schedule rule counts only blocks that actually carry a
-							    prompt — an empty block cannot combine and must not lock
-							    the pose checkbox (it used to gate on raw length). */}
-							{promptClips.filter((clip) => clip.text.trim()).length >= 2 && (
-								<p className="ardy-hint">
-									{ko("Prompt blocks generate from history, so they cannot also pin a pose.", "프롬프트 블록은 이전 프레임을 이어서 생성하므로 포즈 고정과 함께 쓸 수 없어요.")}
-								</p>
-							)}
-							{ardyRunning && (
-								<button type="button" className="btn ghost full" onClick={cancelArdy}>
-									{ko("Cancel run", "실행 취소")}
-								</button>
-							)}
-							{ardyStatus && <p className="ardy-status">{ardyStatus}</p>}
-							{ardyReport && (
-								<div className="ardy-report">
-									<div className="ardy-report-grid">
-									<span>{ko("shape mean error", "형태 평균 오차")}</span>
-										<b>{fmtMeters(ardyReport.shape_mean_error_m)}</b>
-									<span>{ko("shape max error", "형태 최대 오차")}</span>
-										<b>{fmtMeters(ardyReport.shape_max_error_m)}</b>
-									<span>{ko("max jump", "최대 점프")}</span>
-										<b>{fmtMeters(ardyReport.continuity?.max_jump_m)}</b>
-									</div>
-									<p className="ardy-caveat">
-										{ko("Shape error proves joint-center placement only —", "형태 오차는 관절 중심 배치만 검증합니다 —")}{" "}
-										{ardyReport.surface_contact_verified
-											? ko("contact verified", "접촉 검증됨")
-											: ko("foot-to-floor contact NOT verified", "발과 바닥의 접촉은 검증되지 않음")}{" "}
-										· {ko("target_space", "대상 좌표계")} {ardyReport.target_space ?? ko("unknown", "알 수 없음")}
-									</p>
-								</div>
-							)}
-							{ardyOutcome?.ok && (
-								<>
-									<p className="ardy-outcome done">
-									{ko("Output", "출력")} <code>{ardyOutcome.output}</code> ({ardyOutcome.bytes}{ko(" bytes", "바이트")})
-										{ardyOutcome.motionUrl && (
-											<>
-												{" "}
-											· {ko("motion", "모션")} <code>{ardyOutcome.motionUrl}</code>
-											</>
-										)}
-									</p>
-									{motionBusy ? (
-								<p className="ardy-hint">{ko("Decoding motion…", "모션 디코딩 중…")}</p>
-									) : motion ? (
-										<p className="ardy-outcome done">
-									{isKo ? `모션 로드됨 — ${motion.frames}프레임 @ ${motion.fps} fps, 인물 ${activeCharIndex + 1}에 재생 중` : `Motion loaded — ${motion.frames} frames @ ${motion.fps} fps, playing on Subject ${activeCharIndex + 1}`}
-										</p>
-									) : motionError ? (
-										<>
-								<p className="ardy-outcome error">{ko("Motion decode failed:", "모션 디코딩 실패:")} {motionError}</p>
-											{ardyOutcome.motionUrl && (
-												<button
-													type="button"
-													className="btn ghost full"
-													onClick={() => loadMotion(ardyOutcome.motionUrl, undefined, ardyOutcome.rotationDeg ?? charA.rot)}
-												>
-										{ko("Retry load", "다시 로드")}
-												</button>
-											)}
-										</>
-									) : null}
-								</>
-							)}
-							{ardyOutcome && !ardyOutcome.ok && (
-								<p className="ardy-outcome error">{ardyOutcome.message}</p>
-							)}
-						</>
-					) : (
-						<>
-							<p className="ardy-hint">
-								{isKo ? (
-									<>
-										모션 생성은 사용자의 컴퓨터에서 실행되므로 여기서는 꺼져 있어요. 타임라인의 클립은 미리 생성된 샘플입니다.
-										스테이징, 경로, 카메라, 재생은 브리지 없이도 작동합니다. 직접 생성하려면 저장소를 클론하고
-										<code>node tools/ardy/bridge.mjs</code>로 브리지를 시작하세요.
-									</>
-								) : (
-									<>
-										Motion generation runs on your own machine, so it is off here. The clip
-										on the timeline was generated ahead of time; staging, paths, cameras and
-										playback all work without it. To generate your own, clone the repo and
-										start the bridge with <code>node tools/ardy/bridge.mjs</code>.
-									</>
-								)}
-							</p>
-							{bridge.reason && <p className="ardy-hint">{bridge.reason}</p>}
-						</>
-					)}
-				</Foldout>}
 				<Foldout hidden={!isCharacterSelection} defaultOpen={false} openSignal={promptBlocksReveal} title={ko("Prompt Blocks", "프롬프트 블록")}>
 					<p className="inspector-hint">{ko("Blocks define what ARDY generates over each frame range. Selecting one also moves editing context to that prompt.", "블록은 각 프레임 범위에서 ARDY가 생성할 내용을 정합니다. 블록을 선택하면 편집 기준도 해당 프롬프트로 이동합니다.")}</p>
 						<div className="inspector-list">
@@ -14806,11 +14622,6 @@ function resizePromptClip(id, edge, rawFrame) {
 		</div>
 	);
 }
-/** ARDY report meters: missing/failed values render as an em dash, never NaN. */
-function fmtMeters(value) {
-	return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(4)} m` : "—";
-}
-
 /** Mid-clip frame of a base motion, the sensible default for the destination. */
 
 /**

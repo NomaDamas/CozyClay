@@ -32,7 +32,7 @@ Read every prompt for six groups:
 | Anything the user confirms in one batch | `apply_batch` |
 | Reading the result back | `describe_scene`, `describe_shot`, `capture_frame` |
 
-All names above are the current tool names in `mcp/tool-handlers.mjs`; use only those.
+The names above are MCP tool names, defined in `mcp/tool-handlers.mjs` for MCP clients and the `cclay` live tool — they are not the Agent/Studio panel's current tools. The Studio panel itself drives the scene through the Studio families: `inspect_studio`, `operate_studio`, `arrange_objects`, `arrange_characters`, `frame_shot`, `generate_motion`, `verify_result`, `undo_edit`.
 
 ## Known failure
 

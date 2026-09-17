@@ -1546,7 +1546,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 				title: "Apply object mutations as one undo step",
 				description:
 					"Apply up to 100 object mutations in the connected CozyClay editor as one user-visible undo entry. " +
-					"This v1 batch is deliberately object-only: place_character, update_character and remove_character are rejected because character history is a separate store. " +
+					"This v1 batch supports object mutations only: place_object, update_object, remove_object, group_objects, ungroup_objects. Character ops are not part of this schema because character history is a separate store. " +
 					"atomic defaults to false; when true, any failed operation restores the whole batch. stopOnError defaults to true and independently controls whether later operations run after a failure.",
 				inputSchema: {
 					ops: z
@@ -1556,9 +1556,6 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 									"place_object",
 									"update_object",
 									"remove_object",
-									"place_character",
-									"update_character",
-									"remove_character",
 									"group_objects",
 									"ungroup_objects",
 									"apply_batch",

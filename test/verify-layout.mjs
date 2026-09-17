@@ -159,18 +159,11 @@ expect(
 expect(
 	"the pose pin is an explicit, off-by-default choice",
 	app.includes("const [ardyStartFromPose, setArdyStartFromPose] = useState(false);") &&
-	app.includes("startFromPose: ardyStartFromPose") &&
-	app.includes("data-ardy-start-from-pose"),
+	app.includes("startFromPose: ardyStartFromPose"),
 );
 expect(
 	"the pinned pose can be placed anywhere in the clip",
-	app.includes('const POSE_PLACEMENTS = ["start", "middle", "end", "playhead"];') &&
-	app.includes("poseFrame: posePlacementFrame(ardyPosePlacement, clipFrames, tlFrame)") &&
-	app.includes("data-pose-placement={placement}"),
-);
-expect(
-	"the placement names the exact frame it will pin",
-	app.includes("data-pose-placement-frame"),
+	app.includes("poseFrame: posePlacementFrame(ardyPosePlacement, clipFrames, tlFrame)"),
 );
 // Prompt Blocks starts collapsed and can sit below the fold, so selecting a
 // block on the timeline has to open it AND bring it on screen — otherwise the
