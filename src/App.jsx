@@ -788,15 +788,10 @@ export function createStudioAppBinding(ports) {
 	function execute(request) {
 		refresh();
 		if (["arrange_objects", "arrange_characters", "frame_shot"].includes(request.name)) {
-			// The server carries entity guards; shots are fenced by the exact scene
-			// revision, then resolved to their current local guard before planning.
-			let admitted = request;
-			if (request.name === "frame_shot") {
-				try { const s = admit(request); const shot = request.args.shotId ?? shotAtFrame(s.shots, s.view.frame)?.id ?? s.selectedShotId;
-					admitted = { ...request, expectedTargets: [...(request.expectedTargets ?? []), ...(shot ? [guard(shot)] : [])] };
-				} catch (error) { return rejection(request, error); }
-			}
-			return remember(commands.execute(admitted));
+			// Arrangements and framing are fenced by the exact scene revision, the
+			// gesture flag and the document identity inside the command module; they
+			// carry no per-entity tokens, so a turn may edit one entity twice.
+			return remember(commands.execute(request));
 		}
 		const signature = JSON.stringify(request);
 		if (!same(request.host, owner)) return rejection(request, new StudioProtocolError("STALE_SCENE", "Document changed."));

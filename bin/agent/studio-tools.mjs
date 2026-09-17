@@ -10,7 +10,7 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
   const invoke = async (name, args) => {
     const command = validateStudioCommand({ name, args });
     const payload = mutationNames.has(name) && session?.admission
-      ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision, expectedTargets: session.admission.targets }
+      ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision }
       : command.args;
     const result = await liveHub.command(name, payload, workspaceHandle);
     if (result?.ok === false) {

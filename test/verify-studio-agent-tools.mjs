@@ -10,7 +10,7 @@ import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
 import { createRequire } from "node:module";
 const { WebSocket } = createRequire(new URL("../mcp/package.json", import.meta.url))("ws");
 
-const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "rejection-receipt-surfaces-reason"]);
+const CASES = new Set(["surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -96,6 +96,41 @@ if (shouldRun("sse-disconnect-reconnect")) {
   const clientFetch = async (url, init = {}) => { const target = new URL(url, liveHttp.origin).href; fetches.push(target); const headers = { ...(init.headers || {}), origin: liveHttp.origin, ...(cookie ? { cookie } : {}) }; const response = await fetch(target, { ...init, headers }); cookie ||= response.headers.get("set-cookie")?.split(";")[0] ?? null; if (firstObserver && target.endsWith("/agent/turn")) { firstObserver = false; const reader = response.body.getReader(); let dropped = false; const body = new ReadableStream({ async pull(controller) { const part = await reader.read(); if (part.done) { controller.close(); return; } controller.enqueue(part.value); if (!dropped && new TextDecoder().decode(part.value).includes('"state":"generating"')) { dropped = true; await reader.cancel(); controller.error(new Error("observer disconnected")); } } }); return new Response(body, { status: response.status, headers: response.headers }); } return response; };
   const transport = createHttpTransport({ fetchImpl: clientFetch, surface: "studio", capture: () => {} }); const seen = []; const turnPromise = transport.turn(turn, event => { seen.push(event); if (event.type === "job.state" && event.state === "generating") { arrived.promise.then(() => release.resolve()); } }); await bounded(arrived.promise); release.resolve(); await bounded(turnPromise); assert.equal(generations, 1); assert.equal(seen.filter(event => event.type === "receipt").length, 1); assert.ok(seen.some(event => event.type === "done")); assert.ok(fetches.some(url => /events\?after=[1-9]/.test(url))); assert.ok(commands.some(command => command.name === "prepare_motion_install")); assert.equal(calls.length, 2);
   await liveHttp.close(); await live.close(); console.log("PASS pending-generation disconnect/reconnect uses landed HTTP client, real live hub/bridge, one generation and receipt");
+}
+
+if (shouldRun("sequential-same-target-token-rotation")) {
+  let sceneRevision = 1; let tokenSequence = 1; const commands = []; const tokens = new Map([["cube-1", "cube-1:1"]]);
+  const objectContext = (binding, revision = sceneRevision) => {
+    const base = context(binding, revision);
+    return { ...base, scene: { ...base.scene, objectCount: 1 }, selection: { kind: "object", id: "cube-1" },
+      entities: [...base.entities, { id: "cube-1", kind: "object", token: tokens.get("cube-1"), position: { x: 0, y: 0, z: 0 }, yawDeg: 0, rotationDeg: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, bounds: null }],
+      entityPage: { returned: 2, total: 2, truncated: false, nextCursor: null } };
+  };
+  const failure = (payload, code, expected, current) => ({ ok: false, commandId: payload.commandId, host: host(live.handle), code, phase: "admission", affectedIds: [], expectedTargets: expected ? [expected] : [], currentTargets: current ? [current] : [], mutated: false, preserved: { authoredState: "unchanged" }, recovery: { action: "inspect", retryAllowed: false }, message: `The fixture editor refuses with ${code}.` });
+  const live = await liveFixture({ command: async (name, args) => {
+    commands.push({ name, args });
+    if (name === "read_studio_context") return { context: objectContext(host(live.handle)) };
+    if (name !== "arrange_objects") return { ok: true, commandId: args.commandId, receiptId: "receipt-view", status: "noop", authored: false, mutated: false, host: host(live.handle), revision: { before: sceneRevision, after: sceneRevision }, affectedIds: [], delta: [], checks: { coverage: "fixture" }, undo: null, warnings: [] };
+    const expected = args.expectedTargets?.find(target => target.targetId === "cube-1");
+    const current = { ...host(live.handle), targetId: "cube-1", token: tokens.get("cube-1") };
+    if (args.expectedRevision !== sceneRevision) return failure(args, "STALE_SCENE", null, null);
+    // The editor still enforces any guard it is given, and rotates the token of
+    // every entity it touches: a client that re-sends the token it read before
+    // its own first edit is refused. The sidecar must therefore send none.
+    if (expected && expected.token !== current.token) return failure(args, "STALE_TARGET", expected, current);
+    const before = sceneRevision; sceneRevision++; tokens.set("cube-1", `cube-1:${++tokenSequence}`);
+    return { ok: true, commandId: args.commandId, receiptId: `receipt-${before}`, host: host(live.handle), status: "applied", authored: true, mutated: true, revision: { before, after: sceneRevision }, affectedIds: ["cube-1"], delta: [], checks: { coverage: "fixture" }, undo: { historyEntryId: `history-${before}`, entries: 1, canUndoDirect: true }, warnings: [] };
+  } });
+  let callNumber = 0; const codex = { streamResponses: ({ tools }) => { assert.deepEqual(tools.map(tool => tool.name), STUDIO_TOOL_FAMILIES); callNumber++; if (callNumber <= 2) return streamOf([{ type: "function_call", call_id: `same-target-${callNumber}`, name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "update", id: "cube-1", position: { world: { x: callNumber, y: 0, z: 0 } } }] }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); } };
+  const liveHttp = await httpFixture({ codex, live });
+  const turn = envelope(host(live.handle), "update the same object twice"); turn.context = objectContext(host(live.handle), 1);
+  const result = await liveHttp.post(turn); const applied = commands.filter(command => command.name === "arrange_objects");
+  assert.equal(result.response.status, 200); assert.equal(applied.length, 2);
+  assert.ok(!result.text.includes("STALE_TARGET"), `a second mutation on the same object must not be refused for a rotated token: ${result.text}`);
+  assert.equal(sceneRevision, 3, "both mutations reach the editor and publish a revision");
+  assert.deepEqual(applied.map(command => command.args.expectedRevision), [1, 2], "each mutation is admitted against the revision the previous one published");
+  assert.ok(applied.every(command => command.args.expectedTargets === undefined), "the sync admission envelope carries no per-entity incarnation tokens");
+  await liveHttp.close(); await live.close(); console.log("PASS sequential same-target mutations tolerate editor token rotation");
 }
 
 if (shouldRun("rejection-receipt-surfaces-reason")) {

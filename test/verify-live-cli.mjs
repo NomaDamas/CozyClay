@@ -357,9 +357,8 @@ try {
 	assert.deepEqual(envelope.args.ops, [{ op: "update", id: "cube-1", position: { world: { x: 2, y: 0, z: 0 } } }]);
 	assert.match(envelope.commandId, /^[0-9a-f-]{36}$/);
 	assert.deepEqual(envelope.host, IDENTITY);
-	assert.equal(typeof envelope.expectedRevision, "number");
-	assert.deepEqual(envelope.expectedTargets.map((target) => target.targetId), ["char-a", "cube-1"]);
-	assert.ok(envelope.expectedTargets.every((target) => typeof target.token === "string" && target.workspaceId === IDENTITY.workspaceId));
+	assert.equal(envelope.expectedRevision, arranged.revision.before, "the envelope admits against the revision the inspect reported");
+	assert.equal(envelope.expectedTargets, undefined, "the admission envelope carries no per-entity incarnation tokens");
 	evidence.receipt = { printed: arranged, envelope };
 
 	const opsFile = join(scratch, "ops.json");

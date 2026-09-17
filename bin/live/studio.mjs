@@ -66,9 +66,10 @@ export const describeEditors = (editors) => editors.map((editor) => ({
 
 /**
  * The admission envelope, built from one `inspect_studio {scope:"selection"}`
- * read: the document this command was authored against, the scene revision it
- * expects, and the incarnation token of every entity it may touch. The editor
- * rejects the command outright when any of them moved.
+ * read: the document this command was authored against and the scene revision
+ * it expects. The editor rejects the command outright when either moved; it
+ * carries no per-entity tokens, because the scene revision already bumps on
+ * every authored change and a retired token only refuses a legitimate retry.
  */
 export function admissionEnvelope(name, args, context) {
 	if (!context?.host || !context.revision || !Array.isArray(context.entities)) {
@@ -81,7 +82,6 @@ export function admissionEnvelope(name, args, context) {
 		commandId: randomUUID(),
 		host,
 		expectedRevision: context.revision.scene,
-		expectedTargets: context.entities.map((entity) => ({ ...host, targetId: entity.id, token: entity.token })),
 	};
 }
 

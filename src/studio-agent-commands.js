@@ -7,7 +7,7 @@ import { createShot, shotAtFrame } from './cuts.js';
 import { captureFraming } from './camera-move.js';
 import { createStableItemId } from './stable-items.js';
 import { focalMmToFov, SENSOR_FORMATS } from './shot.js';
-import { StudioProtocolError, StudioSchemas, validateStudioSchema, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt, freezeStudioData, utf8ByteLength } from './studio-agent-protocol.js';
+import { StudioProtocolError, StudioSchemas, validateStudioSchema, validateStudioCommand, validateStudioIdentity, validateReceipt, freezeStudioData, utf8ByteLength } from './studio-agent-protocol.js';
 
 const DEG = Math.PI / 180, EPS = 1e-8, CHARACTER_SUPPORT_TOLERANCE = 5e-3;
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
@@ -301,13 +301,6 @@ export function createStudioCommandJournal({ host, now = Date.now, isRetained = 
     details(commandId) { return records.get(commandId)?.details ?? null; },
   };
 }
-function dependencies(command, state) {
-  if (command.name === 'frame_shot') {
-    const shotId = command.args.shotId ?? shotAtFrame(state.shotDocument.shots, state.frame)?.id ?? state.selectedShotId;
-    return [...command.args.subjectIds, ...(shotId ? [shotId] : [])];
-  }
-  return [...new Set(command.args.ops.flatMap(op => [op.id, op.characterId, op.parentId, ...(op.childIds ?? []), op.position?.relativeTo, ...(op.position?.between ?? []), op.position?.onObject, op.position?.support?.objectId, op.facing?.towardId, op.facing?.awayFromId, op.facing?.sameAsId].filter(Boolean)))];
-}
 function readback(plan, state) {
   return plan.affectedIds.map(id => {
     if (plan.domain === 'shot') {
@@ -320,7 +313,7 @@ function readback(plan, state) {
       ...(entity.renderer ? { name: entity.name, renderer: entity.renderer, rotationDeg: { x: entity.rotX, y: entity.rot, z: entity.rotZ }, scale: { x: entity.scaleX, y: entity.scaleY, z: entity.scaleZ }, parentId: entity.parent, color: entity.color } : { name: entity.subject, scale: entity.scale, modelId: entity.model, hidden: entity.hidden, activeCharacterId: state.activeCharacterId }) } };
   });
 }
-/** ports: synchronous read/guard/bounds/commit. commit must atomically publish
+/** ports: synchronous read/bounds/commit. commit must atomically publish
  * exactly the draft and one history entry, or throw before changing anything.
  * A thrown/invalid commit is conservatively unknown, never automatically retried. */
 export function createStudioCommands(ports) {
@@ -348,10 +341,11 @@ export function createStudioCommands(ports) {
         if (!equal(host, validateStudioIdentity(current.host)) || !equal(host, journal.host)) fail('STALE_SCENE', 'Live document identity changed.');
         if (request.expectedRevision !== current.revision) fail('STALE_SCENE', 'Authored scene revision changed.');
         if (current.busy) fail('TARGET_BUSY', 'A domain gesture is in progress.');
-        for (const id of dependencies(command, before)) {
-          const expected = request.expectedTargets?.find(t => t.targetId === id);
-          validateTargetGuard(expected, ports.guard(id));
-        }
+        // The exact scene revision is the whole authored fence here: it bumps on
+        // every authored change, so per-dependency incarnation tokens added
+        // nothing but a false refusal for a turn's second edit to one entity.
+        // A dependency that vanished is refused by the planner, which resolves
+        // every referenced ID against the admitted draft.
         if (current.frame !== before.frame || !equal(current.camera, before.camera)) fail('STALE_SCENE', 'Reference view changed during draft evaluation.');
       };
       fence(); phase = 'prepare';

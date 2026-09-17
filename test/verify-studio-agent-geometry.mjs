@@ -227,8 +227,8 @@ async function boundaries(mod) {
   {
     const f = setup();
     rejected(f, 'arrange_objects', { ops: [chair('world'), { op: 'create', source: { kind: 'not-a-kind' }, position: { world: { x: 2, y: 0, z: 0 } } }] }, 'INVALID_ARGUMENT');
-    rejected(f, 'arrange_objects', { ops: [{ ...chair('world'), position: { ...relative('world'), relativeTo: 'missing' } }] }, 'STALE_TARGET');
-    rejected(f, 'arrange_objects', { ops: [{ ...chair('world'), position: { onObject: 'missing' } }] }, 'STALE_TARGET');
+    rejected(f, 'arrange_objects', { ops: [{ ...chair('world'), position: { ...relative('world'), relativeTo: 'missing' } }] }, 'AMBIGUOUS_TARGET');
+    rejected(f, 'arrange_objects', { ops: [{ ...chair('world'), position: { onObject: 'missing' } }] }, 'AMBIGUOUS_TARGET');
     f.state.camera.lookAt = { ...f.state.camera.position, y: 0 };
     rejected(f, 'arrange_objects', { ops: [chair('shot_camera')] }, 'AMBIGUOUS_BASIS');
     f.state.characters[0].id = 'unready'; f.state.activeCharacterId = 'unready';
@@ -330,8 +330,15 @@ async function boundaries(mod) {
     assert.deepEqual(f.commands.reconcile_studio_command({ commandId: request.commandId }), { status: 'applied', receipt: first });
     assert.equal(f.commands.reconcile_studio_command({ commandId: 'missing' }).status, 'unknown');
     assert.equal(f.commands.reconcile_studio_command({ commandId: request.commandId, host: { ...f.state.host, documentEpoch: 'reloaded' } }).status, 'unknown');
-    const stale = f.envelope('arrange_objects', { ops: [{ op: 'update', id: 'chair', name: 'Renamed' }] }); stale.expectedTargets[0].token = 'old-token';
-    assert.equal(f.commands.execute(stale).code, 'STALE_TARGET');
+    // The synchronous fence is the exact revision, not per-entity incarnation
+    // tokens: an edit whose target was retired by an earlier edit in the same
+    // turn applies, and a legacy client's expectedTargets is simply ignored.
+    const rotated = f.envelope('arrange_objects', { ops: [{ op: 'update', id: 'chair', name: 'Renamed' }] });
+    rotated.expectedTargets[0].token = 'old-token';
+    const renamed = f.commands.execute(rotated); ok(renamed);
+    assert.equal(f.state.objects[0].name, 'Renamed');
+    const second = f.commands.execute(f.envelope('arrange_objects', { ops: [{ op: 'update', id: 'chair', name: 'Renamed twice' }] }));
+    ok(second); assert.equal(f.state.objects[0].name, 'Renamed twice');
     const g = fixture(); const commit = g.ports.commit;
     g.ports.commit = draft => { commit(draft); throw new Error('lost acknowledgement after real history commit'); };
     const uncertain = mod.createStudioCommands(g.ports); const req = g.envelope('arrange_objects', { ops: [chair('world')] });

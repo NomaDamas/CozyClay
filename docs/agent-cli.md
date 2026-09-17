@@ -83,9 +83,10 @@ status → inspect → act (a receipt verb) → capture / verify → undo
   own native history, exactly one entry, when you got the framing wrong.
 
 Mutations are *admitted*: the CLI reads the scene context first and sends the
-document identity, expected revision and entity tokens with the command. If
-anything moved under you — the operator dragged a gizmo, another edit landed —
-the editor refuses with `STALE_SCENE` / `STALE_TARGET` / `TARGET_BUSY` instead
+document identity and the expected scene revision with the command — no
+per-entity tokens, because that revision already bumps on every authored
+change. If anything moved under you — the operator dragged a gizmo, another
+edit landed — the editor refuses with `STALE_SCENE` / `TARGET_BUSY` instead
 of guessing. The response to a refusal is always `inspect` again and re-issue,
 never a blind retry.
 
@@ -164,10 +165,9 @@ cclay live inspect --scope shot
 {"context":{"schema":"studio-context-v1","host":{"surface":"studio","workspaceId":"8306b693-…","documentEpoch":"9110399f-…","sceneId":"scene-mu3uy6d6-1","sceneEpoch":"69c39cf9-…","workspaceHandle":"8306b693-…"},"revision":{"scene":5,"physics":4,"view":3},"units":{…},"scene":{"name":"SCENE 01","aspect":"16:9","floorY":0,"frameCount":432,"objectCount":1,"characterCount":1},"selection":{"kind":"character","id":"char-a","hierarchyId":"characterA"},"activeCharacterId":"char-a","view":{…},"shot":{"id":"shot-mu3uybub-3","name":"Shot 1","range":{"startFrame":0,"endFrameExclusive":432},"mode":"keys"},"camera":{…},"entities":[{"id":"char-a","kind":"character","token":"target-2",…},{"id":"chair","kind":"object","token":"target-5",…}],"entityPage":{"returned":2,"total":2,"truncated":false,"nextCursor":null},"shots":[{"id":"shot-mu3uybub-3","name":"Shot 1","range":{"startFrame":0,"endFrameExclusive":432},"keyCount":0}],"shotsTruncated":false,"assets":[],"recentReceipts":[{"id":"receipt-mu3uybub-4","summary":"applied","canUndoDirect":true},{"id":"receipt-mu3uybgp-2","summary":"applied","canUndoDirect":false},…],"jobs":[],"capabilities":{…}},"entities":[{"id":"char-a","kind":"character","name":"a young woman in a tan coat","token":"target-2"},{"id":"chair","kind":"object","name":"Side chair","token":"target-5"}],"total":2,"nextCursor":null}
 ```
 
-Build the envelope from that context — the four host identity fields, the
-scene revision you saw, and a target guard (host + `targetId` + `token`) for
-every entity the command may touch. Mint your own `commandId`; the editor
-journals it, which is what makes the command reconcilable later:
+Build the envelope from that context — the four host identity fields and the
+scene revision you saw. Mint your own `commandId`; the editor journals it,
+which is what makes the command reconcilable later:
 
 ```sh
 cclay live inspect --scope shot > /tmp/329-doc/f-b-inspect.json
@@ -185,7 +185,6 @@ const envelope = {
   commandId: crypto.randomUUID(),
   host,
   expectedRevision: c.revision.scene,
-  expectedTargets: c.entities.map((e) => ({ ...host, targetId: e.id, token: e.token })),
 };
 require("node:fs").writeFileSync("/tmp/329-doc/f-b-envelope.json", JSON.stringify(envelope));
 '
@@ -312,9 +311,9 @@ cclay live inspect --scope selection
 The reload reopened the same project and the chair is still there, renamed
 `Stand-in chair` — the timeout edit above had landed. Whatever the killed
 command did, the state you just read is the truth now, so close the loop on
-it: issue a fresh admitted command built from that inspect's revision and
-tokens (here a new colour; if it had re-issued the identical colour, the
-editor would have answered `noop` — also fine, just nothing to undo):
+it: issue a fresh admitted command built from that inspect's revision (here a
+new colour; if it had re-issued the identical colour, the editor would have
+answered `noop` — also fine, just nothing to undo):
 
 ```sh
 node -e '
@@ -326,7 +325,6 @@ const envelope = {
   commandId: crypto.randomUUID(),
   host,
   expectedRevision: c.revision.scene,
-  expectedTargets: c.entities.map((e) => ({ ...host, targetId: e.id, token: e.token })),
 };
 require("node:fs").writeFileSync("/tmp/329-doc/f-c-envelope2.json", JSON.stringify(envelope));
 '

@@ -319,9 +319,12 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		const close = writeStudioStream(res, record, 0, req);
 		const send = event => emitStudioEvent(value.turnId, event);
 		const controller = new AbortController(); session.controller = controller;
+		// Admission is the document identity plus the exact scene revision each
+		// command expects. Per-entity tokens are deliberately absent: the revision
+		// already moves whenever any authored content changes, and a turn's second
+		// edit to the same entity would otherwise carry a token the first edit retired.
 		const admission = {
 			commandId: () => randomUUID(), host: studioIdentity(value.context.host), revision: value.context.revision.scene,
-			targets: value.context.entities.map(entity => ({ ...studioIdentity(value.context.host), targetId: entity.id, token: entity.token })),
 			refresh: async () => {
 				const refreshed = studioRuntime?.readContext ? await studioRuntime.readContext(value.context.host) : await authoritativeStudioContext(value, hub);
 				admission.revision = refreshed.revision.scene;
