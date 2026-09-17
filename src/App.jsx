@@ -2206,6 +2206,10 @@ export default function App() {
 		// absence used to make Ctrl+Z after a light edit undo an unrelated
 		// earlier action while the light stayed put (research claim C1).
 		keyLight: { ...keyLight },
+		environmentImage,
+		environment,
+		style,
+		hasEnvSheet,
 		characters: charactersRef.current.map((entry) => ({
 			...entry,
 			layer: entry.id === activeChar.id
@@ -2269,6 +2273,64 @@ export default function App() {
 	const framingSessionRef = useRef(null);
 	// A colour picker streams values for as long as its dialog is open.
 	const tintSessionRef = useRef(null);
+	/* One Ctrl+Z entry per GESTURE for the surfaces that write cast-snapshot
+	 * state without a store transaction of their own: the key light (foldout
+	 * sliders, sun puck, move gizmo) and the character Transform rows. Every
+	 * tick of a drag or a scrub reopens the same session while its entry is
+	 * still the newest one, and the pointer/key release below closes it, so the
+	 * next gesture starts a fresh entry instead of extending the last one. */
+	const gestureUndoRef = useRef(null);
+	// Environment description / look are typed, so they keep their own session:
+	// a keyup must not cut a sentence into one entry per character.
+	const environmentTextSessionRef = useRef(null);
+	function beginGestureUndo(key) {
+		recordSessionUndo(gestureUndoRef, key);
+		// NumberField hands this token back on every tick of a scrub. These edits
+		// are not store transactions, so the scrub runs with a null token.
+		return null;
+	}
+	function endGestureUndo() {
+		gestureUndoRef.current = null;
+	}
+	useEffect(() => {
+		const end = () => endGestureUndo();
+		window.addEventListener("pointerup", end, true);
+		window.addEventListener("pointercancel", end, true);
+		window.addEventListener("keyup", end, true);
+		return () => {
+			window.removeEventListener("pointerup", end, true);
+			window.removeEventListener("pointercancel", end, true);
+			window.removeEventListener("keyup", end, true);
+		};
+	}, []);
+	/** Every key-light writer goes through here: the light rides the cast
+	 * snapshot (restoreCast puts it back), so an unrecorded light edit would be
+	 * silently reverted by an unrelated Ctrl+Z. `patch` is a partial or a
+	 * function of the current light. */
+	function changeKeyLight(gesture, patch) {
+		beginGestureUndo(`light:${gesture}`);
+		setKeyLight((current) => createKeyLight(typeof patch === "function" ? patch(current) : { ...current, ...patch }));
+	}
+	/** Reset is a whole gesture in one click. */
+	function resetKeyLight() {
+		recordCharacterUndo();
+		endGestureUndo();
+		setKeyLight(createKeyLight(null));
+	}
+	/** The Inspector's character Transform rows. The viewport gizmo already
+	 * records on drag start; these numeric rows are the same edit through
+	 * another door, so they record once per scrub / typed commit. */
+	function changeInspectorCharacter(gesture, patch) {
+		beginGestureUndo(`character:${activeChar.id}:${gesture}`);
+		updateCharacterAt(activeCharIndex, patch);
+	}
+	/** The set's look reference. One click, one entry — and the image is part
+	 * of the cast snapshot, so undo puts the previous picture back. */
+	function changeEnvironmentImage(dataUrl) {
+		recordCharacterUndo();
+		endGestureUndo();
+		setEnvironmentImage(dataUrl);
+	}
 	/** True while a framing capture for `shotId` is the newest history entry. */
 	function framingSessionOpen(shotId) {
 		const past = charHistoryRef.current.past;
@@ -2312,6 +2374,10 @@ export default function App() {
 			setIkTick((value) => value + 1);
 		}
 		if (snapshot.keyLight) setKeyLight(createKeyLight(snapshot.keyLight));
+		if (snapshot.environmentImage !== undefined) setEnvironmentImage(snapshot.environmentImage);
+		if (snapshot.environment !== undefined) setEnvironment(snapshot.environment);
+		if (snapshot.style !== undefined) setStyle(snapshot.style);
+		if (snapshot.hasEnvSheet !== undefined) setHasEnvSheet(snapshot.hasEnvSheet);
 	}
 
 	// props so the inspector cannot show a ghost.
@@ -2555,9 +2621,9 @@ export default function App() {
 	// Point height input edits this one. Reset lives after activeCamera below.
 	const [craneSelectedIndex, setCraneSelectedIndex] = useState(null);
 	const [hasCharSheet, setHasCharSheet] = useState(startupStage.hasCharSheet);
-	const [hasEnvSheet, setHasEnvSheet] = useState(false);
-	const [environment, setEnvironment] = useState(DEFAULT_ENVIRONMENT);
-	const [style, setStyle] = useState("moody cinematic lighting, 35mm film look");
+	const [hasEnvSheet, setHasEnvSheet] = useState(startupStage.hasEnvSheet);
+	const [environment, setEnvironment] = useState(startupStage.environment ?? DEFAULT_ENVIRONMENT);
+	const [style, setStyle] = useState(startupStage.style ?? "moody cinematic lighting, 35mm film look");
 
 	const [cameraPos, setCameraPos] = useState(DEFAULT_CAMERA_POSITION);
 	const [subjectVisible, setSubjectVisible] = useState(true);
@@ -3408,6 +3474,11 @@ export default function App() {
 		cameraPresetId,
 		sensorId,
 		keyLight,
+		// What this location IS and how it should look. Session state until #345:
+		// a reopened scene came back with another room's description.
+		environment,
+		style,
+		hasEnvSheet,
 	};
 
 	function snapshotActiveScene(sourceScenes = scenesRef.current) {
@@ -4069,6 +4140,9 @@ export default function App() {
 		setRigMountEpoch((value) => value + 1);
 		setHasCharSheet(stage.hasCharSheet);
 		setEnvironmentImage(stage.environmentImage ?? null);
+		setEnvironment(stage.environment ?? DEFAULT_ENVIRONMENT);
+		setStyle(stage.style ?? "moody cinematic lighting, 35mm film look");
+		setHasEnvSheet(stage.hasEnvSheet === true);
 		setShotAspectKey(stage.shotAspect);
 		setCameraPresetId(stage.cameraPresetId ?? null);
 		setSensorFormat(stage.sensorId);
@@ -4227,7 +4301,7 @@ export default function App() {
 		camera: cameraPos,
 		fovDeg,
 		filmback,
-		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet, environmentImage },
+		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet, environmentImage, environment, style, hasEnvSheet },
 		timeline: { currentFrame: tlFrame, frameCount: tlFrameCount, fps: tlFps },
 		activeCharacterId,
 		partColours: partColoursEnabled ? PART_COLOURS : null,
@@ -4865,7 +4939,7 @@ export default function App() {
 		dirtyRef.current = true;
 		const timer = setTimeout(flushScenes, 400);
 		return () => clearTimeout(timer);
-	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, environmentImage, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
+	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, environmentImage, environment, style, hasEnvSheet, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
 	useEffect(() => {
 		const onPageHide = () => flushScenes();
 		const onVisibility = () => {
@@ -4892,7 +4966,7 @@ export default function App() {
 		setProjectDirty(dirty);
 		setProjectSaveState((current) => current === "saving" ? current : dirty ? "dirty" : "saved");
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, environmentImage, sensorId, tlFrameCount, workflowRevision]);
+	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, environmentImage, environment, style, hasEnvSheet, sensorId, tlFrameCount, workflowRevision]);
 	const [selectedPromptId, setSelectedPromptId] = useState(null);
 	// Loaded motion: decoded arrays plus the world anchor captured at load.
 	const [motion, setMotion] = useState(null);
@@ -5121,7 +5195,7 @@ export default function App() {
 		setCamGlide({ target: { x: keyLight.x, y: keyLight.y, z: keyLight.z } });
 	}
 	function changeKeyLightFromGizmo(_id, patch) {
-		setKeyLight((current) => createKeyLight({
+		changeKeyLight("gizmo", (current) => ({
 			...current,
 			x: patch.x !== undefined ? patch.x : current.x,
 			y: patch.y !== undefined ? patch.y + 0.2 : current.y,
@@ -11957,7 +12031,10 @@ function resizePromptClip(id, edge, rawFrame) {
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={() => selectHierarchy("light")}
-								onChange={(patch) => setKeyLight((current) => createKeyLight({ ...current, ...patch }))}
+								/* The puck has no drag-start hook: the first move of a drag
+								   opens the entry and the drag end closes that gesture. */
+								onChange={(patch) => changeKeyLight("puck", patch)}
+								onDragEnd={endGestureUndo}
 							/>
 							{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}
 							<SetProps
@@ -12285,7 +12362,8 @@ function resizePromptClip(id, edge, rawFrame) {
 								onChange={(id, patch, token) => (id === "__shotcam__" ? changeShotCameraFromGizmo(id, patch) : id === "__keylight__" ? changeKeyLightFromGizmo(id, patch) : changeSceneObject(id, patch, token))}
 								onDragStart={(...args) => (cameraGizmoObject || lightGizmoObject ? undefined : beginSceneTransaction(...args))}
 								onDragEnd={(...args) => {
-									if (!cameraGizmoObject && !lightGizmoObject) endSceneTransaction(...args);
+									if (lightGizmoObject) endGestureUndo();
+									else if (!cameraGizmoObject) endSceneTransaction(...args);
 								}}
 								onSelect={(id) =>
 									selectHierarchy(
@@ -12647,12 +12725,12 @@ function resizePromptClip(id, edge, rawFrame) {
 					    so keep its controls beside the Motion tools as well as Shot setup. */}
 					<Foldout hidden={!keyLightSelected} title={ko("Light", "조명")}>
 						<p className="hint">{ko("Drag the sun in the scene to move the light. Shadows and warmth follow it.", "씬의 해를 드래그해 조명을 옮깁니다. 그림자와 빛의 방향이 따라옵니다.")}</p>
-						<Slider label={ko("Brightness", "밝기")} min={0} max={4} step={0.05} value={keyLight.intensity} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, intensity: value }))} />
-						<Slider label={ko("Warm ↔ Cool", "따뜻함 ↔ 차가움")} min={0} max={1} step={0.05} value={keyLight.warmth ?? 0.5} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, warmth: value }))} />
+						<Slider label={ko("Brightness", "밝기")} min={0} max={4} step={0.05} value={keyLight.intensity} onChange={(value) => changeKeyLight("intensity", { intensity: value })} />
+						<Slider label={ko("Warm ↔ Cool", "따뜻함 ↔ 차가움")} min={0} max={1} step={0.05} value={keyLight.warmth ?? 0.5} onChange={(value) => changeKeyLight("warmth", { warmth: value })} />
 						<div className="readout">
 							<span title={ko("light position", "조명 위치")}>{`x ${keyLight.x.toFixed(1)}  y ${keyLight.y.toFixed(1)}  z ${keyLight.z.toFixed(1)}`}</span>
 						</div>
-						<button className="btn ghost" onClick={() => setKeyLight(createKeyLight(null))}>
+						<button className="btn ghost" onClick={resetKeyLight}>
 							{ko("Reset light", "조명 초기화")}
 						</button>
 					</Foldout>
@@ -12757,11 +12835,11 @@ function resizePromptClip(id, edge, rawFrame) {
 							<Vector3Row
 								label={ko("Position", "위치")}
 								fields={[
-									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => updateCharacterAt(activeCharIndex, { x }) },
-									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => updateCharacterAt(activeCharIndex, { z }) },
+									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => changeInspectorCharacter("x", { x }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:x`), onScrubEnd: endGestureUndo },
+									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => changeInspectorCharacter("z", { z }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:z`), onScrubEnd: endGestureUndo },
 								]}
 							/>
-							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => updateCharacterAt(activeCharIndex, { rot })} />
+							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => changeInspectorCharacter("rot", { rot })} />
 						</div>
 					) : (
 						<>
@@ -12771,13 +12849,13 @@ function resizePromptClip(id, edge, rawFrame) {
 							<Vector3Row
 								label={ko("Position", "위치")}
 								fields={[
-									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => updateCharacterAt(activeCharIndex, { x }) },
-									{ axis: "Y", value: activeChar.y ?? 0, step: 0.05, precision: 2, scrubRange: 5, onChange: (y) => updateCharacterAt(activeCharIndex, { y: Math.max(0, y) }) },
-									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => updateCharacterAt(activeCharIndex, { z }) },
+									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => changeInspectorCharacter("x", { x }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:x`), onScrubEnd: endGestureUndo },
+									{ axis: "Y", value: activeChar.y ?? 0, step: 0.05, precision: 2, scrubRange: 5, onChange: (y) => changeInspectorCharacter("y", { y: Math.max(0, y) }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:y`), onScrubEnd: endGestureUndo },
+									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => changeInspectorCharacter("z", { z }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:z`), onScrubEnd: endGestureUndo },
 								]}
 							/>
-							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => updateCharacterAt(activeCharIndex, { rot })} />
-							<Slider compact label={ko("Scale", "크기")} min={0.2} max={3} step={0.05} value={activeChar.scale ?? 1} unit="×" onChange={(scale) => updateCharacterAt(activeCharIndex, { scale })} />
+							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => changeInspectorCharacter("rot", { rot })} />
+							<Slider compact label={ko("Scale", "크기")} min={0.2} max={3} step={0.05} value={activeChar.scale ?? 1} unit="×" onChange={(scale) => changeInspectorCharacter("scale", { scale })} />
 						</>
 					)}
 				</Foldout>
@@ -13468,16 +13546,16 @@ function resizePromptClip(id, edge, rawFrame) {
 
 				<Foldout hidden={selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
 						<label className="check">
-							<input type="checkbox" checked={hasEnvSheet} onChange={(event) => setHasEnvSheet(event.target.checked)} />
+							<input type="checkbox" checked={hasEnvSheet} onChange={(event) => { recordCharacterUndo(); setHasEnvSheet(event.target.checked); }} />
 						<span>{ko("I have an environment sheet", "환경 시트가 있어요")}</span>
 						</label>
 						{!hasEnvSheet && (
 						<Field label={ko("Environment description", "환경 설명")}>
-								<input type="text" value={environment} onChange={(event) => setEnvironment(event.target.value)} />
+								<input type="text" value={environment} onChange={(event) => { recordSessionUndo(environmentTextSessionRef, "environment:description"); setEnvironment(event.target.value); }} />
 							</Field>
 						)}
 					<Field label={ko("Look / style", "룩 / 스타일")}>
-							<input type="text" value={style} onChange={(event) => setStyle(event.target.value)} />
+							<input type="text" value={style} onChange={(event) => { recordSessionUndo(environmentTextSessionRef, "environment:style"); setStyle(event.target.value); }} />
 						</Field>
 						<ReferenceImageField
 							label={ko("Environment reference", "환경 참고 이미지")}
@@ -13489,10 +13567,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							alt={ko("Environment reference", "환경 참고 이미지")}
 							inputProps={{ "data-environment-image-input": "" }}
 							onPick={(dataUrl) => {
-								setEnvironmentImage(dataUrl);
+								changeEnvironmentImage(dataUrl);
 								setToast(ko("Environment reference set", "환경 참고 이미지를 설정했어요"));
 							}}
-							onClear={() => setEnvironmentImage(null)}
+							onClear={() => changeEnvironmentImage(null)}
 						/>
 					</Foldout>
 

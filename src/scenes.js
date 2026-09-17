@@ -44,6 +44,15 @@ export const DEFAULT_SCENE_STAGE = Object.freeze({
 	hasCharSheet: false,
 	// The look reference for the location: a data URL so it survives save/load
 	environmentImage: null,
+	// What the location IS and how it should look: the two lines every shot
+	// prompt is built from, plus the flag saying the author has a sheet for it
+	// instead. Session state until #345 — a reopened scene came back describing
+	// the previous room. The strings mirror the studio's own first-run defaults
+	// (app-stage.jsx DEFAULT_ENVIRONMENT); this module stays free of renderer
+	// imports, so they are repeated rather than borrowed.
+	environment: "a sunlit modern living room",
+	style: "moody cinematic lighting, 35mm film look",
+	hasEnvSheet: false,
 	shotAspect: "16:9",
 	cameraPresetId: null,
 	sensorId: DEFAULT_SENSOR_FORMAT,
@@ -289,7 +298,7 @@ function migrateLegacyCast(source) {
 }
 
 const STAGE_ENVELOPE_KEYS = new Set([
-	"characters", "hasCharSheet", "environmentImage", "shotAspect", "cameraPresetId", "sensorId", "keyLight",
+	"characters", "hasCharSheet", "environmentImage", "environment", "style", "hasEnvSheet", "shotAspect", "cameraPresetId", "sensorId", "keyLight",
 	"charA", "charB", "showB", "poseA", "poseB", "subject", "subject2",
 ]);
 
@@ -311,6 +320,9 @@ export function createSceneStage(stage = null) {
 		// Persisted exactly like shotAspect: part of the stage envelope, written
 		// on every save and read back on load.
 		environmentImage: normalizeReferenceImage(source.environmentImage),
+		environment: typeof source.environment === "string" ? source.environment : DEFAULT_SCENE_STAGE.environment,
+		style: typeof source.style === "string" ? source.style : DEFAULT_SCENE_STAGE.style,
+		hasEnvSheet: source.hasEnvSheet === true,
 		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7"].includes(source.shotAspect)
 			? source.shotAspect
 			: DEFAULT_SCENE_STAGE.shotAspect,
