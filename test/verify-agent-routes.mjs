@@ -269,6 +269,30 @@ server.close();
 	assert.deepEqual(withAttachments[0].attachments, [{ name: "probe.png", dataUrl: png }, { name: "2", dataUrl: png }]);
 	assert.equal(withAttachments[2].attachments, undefined, "an attachment whose image was too large to persist leaves no empty thumbnail");
 	console.log("PASS resumed transcripts carry pasted attachments as thumbnails on the user bubble");
+
+	// #375: a handler built with its own session store never touches the disk
+	// store, so suites that only need the routes leave no session files behind.
+	const memoryDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-memory-"));
+	const previousDir = process.env.COZYCLAY_AGENT_SESSIONS_DIR;
+	process.env.COZYCLAY_AGENT_SESSIONS_DIR = memoryDir;
+	const memory = new Map();
+	const memoryStore = {
+		read(sessionId) { return memory.get(sessionId) ?? null; },
+		append(sessionId, items, meta = {}) { const entry = memory.get(sessionId) ?? { history: [], meta: { sessionId, ...meta } }; entry.history.push(...items); memory.set(sessionId, entry); return entry.meta; },
+		list() { return [...memory.values()].map((entry) => entry.meta); },
+	};
+	const memoryHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: studioCodex, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() }, port: () => memoryServer.address().port, sessionStore: memoryStore });
+	const memoryServer = createServer((req, res) => memoryHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	memoryServer.listen(0, "127.0.0.1"); await once(memoryServer, "listening");
+	const memoryOrigin = `http://127.0.0.1:${memoryServer.address().port}`;
+	const memoryEnvelope = { ...envelopeFixture(), sessionId: "00000000-0000-4000-8000-00000000a375" };
+	await fetch(`${memoryOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: memoryOrigin }, body: JSON.stringify(memoryEnvelope) }).then((response) => response.text());
+	assert.ok(memory.has(memoryEnvelope.sessionId), "the injected session store received the turn");
+	assert.deepEqual(readdirSync(memoryDir), [], "an injected session store keeps the disk store untouched");
+	memoryServer.close();
+	process.env.COZYCLAY_AGENT_SESSIONS_DIR = previousDir;
+	rmSync(memoryDir, { recursive: true, force: true });
+	console.log("PASS createAgentHandler accepts an injected session store");
 }
 console.log("agent routes verified");
 

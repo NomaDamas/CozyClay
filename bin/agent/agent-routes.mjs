@@ -272,7 +272,7 @@ function liveToolsRuntime() {
 	}).catch((error) => ({ error }));
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval } = {}) {
+export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();
@@ -289,7 +289,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		} catch { return ""; }
 	};
 	const sessions = new Map();
-	const sessionStore = createSessionStore();
+	// Tests hand in a store of their own; only the real sidecar writes the
+	// author's config dir (#375).
+	const sessionStore = injectedSessionStore ?? createSessionStore();
 	const studioSessions = new Map();
 	const studioEvents = new Map();
 	let ownedStudioRuntime = studioRuntime || null;

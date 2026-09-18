@@ -8,7 +8,15 @@ import { createHttpTransport } from "../src/workflow/agent-client.js";
 import { startLiveHub } from "../mcp/live-hub.mjs";
 import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
 import { createRequire } from "node:module";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 const { WebSocket } = createRequire(new URL("../mcp/package.json", import.meta.url))("ws");
+// Sessions this suite drives through the routes stay in a scratch dir, never
+// in the author's History (#375).
+const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
+process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
+process.on("exit", () => rmSync(sessionDir, { recursive: true, force: true }));
 
 const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason"]);
 const index = process.argv.indexOf("--case");

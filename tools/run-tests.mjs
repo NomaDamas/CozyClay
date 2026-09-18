@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
-import { readdirSync } from "node:fs";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
+
+// Whatever a suite drives through the agent sidecar lands in a scratch
+// session dir for the whole run, never in the author's ~/.config (#375).
+if (!process.env.COZYCLAY_AGENT_SESSIONS_DIR) {
+	const scratch = mkdtempSync(join(tmpdir(), "cozyclay-test-agent-sessions-"));
+	process.env.COZYCLAY_AGENT_SESSIONS_DIR = scratch;
+	process.on("exit", () => rmSync(scratch, { recursive: true, force: true }));
+}
 
 const NODE_FILES = [
 	"test/verify-studio-elements.mjs",
