@@ -323,6 +323,21 @@ if (runs("embedded-session-and-receipts")) {
 		expect("the acceptance receipt is recorded once", items(store, "receipt").filter((item) => item.receiptId === "receipt-2").length === 1);
 	});
 
+	await group("restore rebuilds the transcript and preserves identity", async () => {
+		const store = createAgentChatStore({ transport: { turn: async () => {} }, surface: "studio" });
+		store.restore([
+			{ kind: "user", text: "frame a wide shot" },
+			{ kind: "assistant", text: "I will frame it." },
+			{ kind: "tool", name: "frame_shot", label: "Frame the shot", ok: true, elapsedMs: 12 },
+			{ kind: "receipt", receiptId: "receipt-restore", summary: "Applied to the scene" },
+		], "restored-session");
+		expect("restore rebuilds user, assistant, tool and receipt items", store.getState().items.map((item) => item.kind).join(",") === "user,assistant,tool,receipt");
+		expect("restore keeps the server session id", store.getState().sessionId === "restored-session");
+		const before = store.getState().sessionId;
+		store.newSession();
+		expect("New mints a different UUID after restore", store.getState().sessionId !== before && isUuid(store.getState().sessionId));
+	});
+
 	await group("coherent Clear / New and a persistent draft", async () => {
 		const sidecar = fakeSidecar({ "/agent/turn$": () => streamResponse([frame({ type: "text.delta", text: "ok" }), frame({ type: "done" })]) });
 		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "studio", capture: () => {}, now: () => 0 });

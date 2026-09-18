@@ -242,8 +242,10 @@ expect("the empty ready state offers exactly three suggestion chips", module_.SU
 	const { studio: studioPresentation, workflow } = module_.PANEL_PRESENTATIONS;
 	expect("an unknown surface falls back to the dock's presentation", module_.panelPresentation("nonsense") === workflow && module_.panelPresentation("studio") === studioPresentation);
 	expect("the Studio panel drops every Workflow-only affordance", studioPresentation.imageHint === null && studioPresentation.imageEntitlement === false
-		&& studioPresentation.history === false && studioPresentation.persistWidth === false);
+		&& studioPresentation.history === true && studioPresentation.persistWidth === false);
 	expect("the dock keeps them", workflow.imageHint === module_.IMAGE_COST_HINT && workflow.imageEntitlement === true && workflow.history === true && workflow.persistWidth === true);
+	expect("Studio History is enabled and backed by the session key", panel.includes("agent-history-popover") && panel.includes("STUDIO_SESSION_STORAGE_KEY") && client.includes('"cozyclay.agent.session.studio"'));
+	expect("Studio restore has a visible fallback notice", panel.includes("Previous conversation could not be restored") && panel.includes("store.restore"));
 	expect("the Studio offers three previs chips of its own", studioPresentation.suggestions.length === 3
 		&& studioPresentation.suggestions.every((chip) => typeof chip === "string" && chip.length > 8)
 		&& studioPresentation.suggestions.every((chip) => !module_.SUGGESTION_CHIPS.includes(chip)));

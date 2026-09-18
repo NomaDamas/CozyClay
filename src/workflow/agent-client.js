@@ -32,6 +32,7 @@ export const AGENT_PANEL_WIDTH_MIN = 300;
 export const AGENT_PANEL_WIDTH_MAX = 560;
 export const AGENT_PANEL_RAIL_WIDTH = 36;
 export const AGENT_PANEL_OVERLAY_BREAKPOINT = 1100;
+export const STUDIO_SESSION_STORAGE_KEY = "cozyclay.agent.session.studio";
 
 /** Panel states, in the order the issue lists them. Every name is part of the
  * source contract and is also the value of ?state= in mock mode. */
@@ -186,7 +187,7 @@ export const PANEL_PRESENTATIONS = Object.freeze({
 		suggestions: STUDIO_SUGGESTION_CHIPS,
 		imageHint: null,
 		imageEntitlement: false,
-		history: false,
+		history: true,
 		persistWidth: false,
 		emptyTitle: ko("Direct the scene", "\uC7A5\uBA74\uC744 \uC5F0\uCD9C\uD558\uC138\uC694"),
 		emptyHint: (sceneName) => ko(`Ask for blocking, a camera move, or a motion take in \u201C${sceneName}\u201D.`, `\u201C${sceneName}\u201D\uC5D0\uC11C \uBE14\uB85C\uD0B9, \uCE74\uBA54\uB77C \uC6C0\uC9C1\uC784, \uBAA8\uC158 \uD14C\uC774\uD06C\uB97C \uC694\uCCAD\uD558\uC138\uC694.`),
@@ -536,6 +537,13 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const result = await request("/agent/models");
 			return Array.isArray(result?.models) ? result.models : [];
 		},
+		async listSessions() {
+			const result = await request(`/agent/sessions?surface=${encodeURIComponent(surface || "studio")}`);
+			return Array.isArray(result?.sessions) ? result.sessions : [];
+		},
+		async loadSession(sessionId) {
+			return request(`/agent/sessions/${encodeURIComponent(sessionId)}`);
+		},
 		// Legacy callers pass a session id; a Studio host passes the frozen stop
 		// envelope so the sidecar can cancel one turn and one owned job.
 		async stop(target) {
@@ -763,41 +771,80 @@ export function createMockTransport(config = { state: "ready" }) {
 		async acceptJob() {
 			return { ok: true };
 		},
+		async listSessions() {
+			if (!studio) return [];
+			const sessions = [];
+			try {
+				for (let index = 0; index < globalThis.localStorage.length; index += 1) {
+					const key = globalThis.localStorage.key(index);
+					if (!key?.startsWith("cozyclay.mock.agent.session.")) continue;
+					const value = JSON.parse(globalThis.localStorage.getItem(key));
+					if (value?.meta) sessions.push(value.meta);
+				}
+			} catch { /* mock history is best effort */ }
+			return sessions.sort((a, b) => Date.parse(b.updatedAt || 0) - Date.parse(a.updatedAt || 0)).slice(0, 50);
+		},
+		async loadSession(sessionId) {
+			try {
+				const value = JSON.parse(globalThis.localStorage.getItem(`cozyclay.mock.agent.session.${sessionId}`));
+				if (value?.transcript) return value;
+			} catch { /* fall through to the same restore path as a missing sidecar record */ }
+			throw new Error("Mock session not found.");
+		},
 		// In mock mode the scripted transport also stands in for the host that
 		// would accept an image, so ?agent=mock keeps showing the placed state.
 		async applyImage({ requestId }) {
 			return { ok: true, receiptId: `mock-${requestId}` };
 		},
-		async turn(_request, onEvent, signal) {
+		async turn(request, onEvent, signal) {
+			try { if (studio && request?.sessionId) globalThis.localStorage?.setItem("cozyclay.mock.agent.last-turn-session", request.sessionId); } catch { /* mock proof state is best effort */ }
+			let transcript = [];
+			const sessionKey = studio && request?.sessionId ? `cozyclay.mock.agent.session.${request.sessionId}` : null;
+			if (sessionKey) {
+				try { transcript = JSON.parse(globalThis.localStorage.getItem(sessionKey))?.transcript || []; } catch { transcript = []; }
+				transcript.push({ kind: "user", text: request.text });
+			}
+			const emit = (event) => {
+				if (sessionKey) {
+					if (event.type === "text.delta") {
+						const last = transcript.at(-1);
+						if (last?.kind === "assistant") last.text += event.text; else transcript.push({ kind: "assistant", text: event.text });
+					} else if (event.type === "tool.start") transcript.push({ kind: "tool", name: event.name, label: event.label, ok: true, elapsedMs: null, callId: event.callId });
+					else if (event.type === "tool.done") { const tool = [...transcript].reverse().find((item) => item.kind === "tool" && item.callId === event.callId); if (tool) Object.assign(tool, { ok: event.ok, elapsedMs: event.elapsedMs }); }
+					else if (event.type === "receipt") transcript.push({ kind: "receipt", receiptId: event.receipt?.receiptId, summary: event.receipt?.status === "applied" ? "Applied to the scene" : "Receipt" });
+					try { globalThis.localStorage.setItem(sessionKey, JSON.stringify({ sessionId: request.sessionId, transcript, meta: { sessionId: request.sessionId, surface: "studio", createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), sceneName: "Mock scene", firstText: transcript.find((item) => item.kind === "user")?.text || "" } })); } catch { /* mock history is best effort */ }
+				}
+				onEvent(event);
+			};
 			if (state === "rate-limited") {
-				onEvent({ type: "text.delta", text: "Framing a wide two-shot from the current blocking." });
-				onEvent({
+				emit({ type: "text.delta", text: "Framing a wide two-shot from the current blocking." });
+				emit({
 					type: "quota",
 					plan: "Plus",
 					primary: { usedPercent: 100, windowMinutes: 300, resetAt: new Date(Date.now() + 42 * 60000).toISOString() },
 					credits: { has: false },
 				});
-				onEvent({ type: "error", code: "rate_limit", message: ERROR_COPY.rate_limit, resetAt: new Date(Date.now() + 42 * 60000).toISOString() });
-				onEvent({ type: "done" });
+				emit({ type: "error", code: "rate_limit", message: ERROR_COPY.rate_limit, resetAt: new Date(Date.now() + 42 * 60000).toISOString() });
+				emit({ type: "done" });
 				return;
 			}
 			if (state === "error") {
-				onEvent({ type: "text.delta", text: studio ? "Reading the scene first." : "Capturing the viewport first." });
-				onEvent(studio
+				emit({ type: "text.delta", text: studio ? "Reading the scene first." : "Capturing the viewport first." });
+				emit(studio
 					? { type: "tool.start", callId: "call-1", name: "inspect_studio", label: "inspect studio", args: { scope: "selection" } }
 					: { type: "tool.start", callId: "call-1", name: "capture_blocking_frame", label: "Capture blocking frame", args: { shot: "current" } });
-				onEvent({ type: "tool.done", callId: "call-1", ok: false, elapsedMs: 812, error: studio ? "The scene is not ready" : "Viewport is not ready" });
-				onEvent({ type: "error", code: "upstream", message: ERROR_COPY.upstream });
-				onEvent({ type: "done" });
+				emit({ type: "tool.done", callId: "call-1", ok: false, elapsedMs: 812, error: studio ? "The scene is not ready" : "Viewport is not ready" });
+				emit({ type: "error", code: "upstream", message: ERROR_COPY.upstream });
+				emit({ type: "done" });
 				return;
 			}
 			for (const step of studio ? MOCK_STUDIO_SCRIPT : MOCK_SCRIPT) {
 				if (signal?.aborted) break;
 				await wait(step.delay);
 				if (signal?.aborted) break;
-				onEvent(step.event);
+				emit(step.event);
 			}
-			if (signal?.aborted) onEvent({ type: "done" });
+			if (signal?.aborted) emit({ type: "done" });
 		},
 	};
 }
@@ -1041,7 +1088,19 @@ export function createAgentChatStore({
 		// the model still remembers is the divergence this replaces.
 		set({ sessionId: newId(), turnId: null, items: [], rateLimit: null, lastPrompt: "", turnStartedAt: null, lastTurn: null });
 	};
-
+	const restore = (transcript, sessionId = state.sessionId) => {
+		seenReceipts.clear();
+		settledActions.clear();
+		const restored = (Array.isArray(transcript) ? transcript : []).flatMap((item) => {
+			if (item?.kind === "user" || item?.kind === "assistant") return [{ kind: item.kind, id: newId(), text: String(item.text ?? "") }];
+			if (item?.kind === "tool") return [{ kind: "tool", id: newId(), callId: newId(), name: item.name || "tool", label: item.label, ok: item.ok, elapsedMs: item.elapsedMs, status: item.ok === false ? "failed" : "done" }];
+			if (item?.kind === "receipt") return [{ kind: "receipt", id: `receipt:${item.receiptId || newId()}`, receiptId: item.receiptId, summary: item.summary || "Receipt", receipt: { status: "applied", warnings: [], verification: { status: "verified" } } }];
+			return [];
+		});
+		const lastPrompt = [...restored].reverse().find((item) => item.kind === "user")?.text || "";
+		set({ sessionId, turnId: null, items: restored, rateLimit: null, lastPrompt, turnStartedAt: null, lastTurn: null, streaming: false });
+		return restored;
+	};
 	return {
 		getState: () => state,
 		subscribe(listener) {
@@ -1169,5 +1228,6 @@ export function createAgentChatStore({
 		clearRateLimit: () => set({ rateLimit: null }),
 		clearContext: resetSession,
 		newSession: resetSession,
+		restore,
 	};
 }

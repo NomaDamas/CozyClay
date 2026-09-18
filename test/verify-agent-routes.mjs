@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
+process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
 const calls = [];
 const fakeLive = { command: async (name) => name === "capture_framing_png" ? { dataUrl: png, width: 1920, height: 1080 } : { assetId: "a1", objectId: "o1" } };
 const fakeCodex = {
@@ -159,6 +164,48 @@ assert.equal(rateText.includes('"code":"rate_limit"'), true);
 await new Promise((resolve) => rateServer.close(resolve));
 await new Promise((resolve) => authServer.close(resolve));
 server.close();
+{
+	const { envelopeFixture, contextFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const studioCalls = [];
+	const studioCodex = {
+		...fakeCodex,
+		streamResponses: ({ input }) => {
+			studioCalls.push(input);
+			return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
+				yield { type: "response.output_text.delta", delta: studioCalls.length === 1 ? "First answer" : "Continued answer" };
+				yield { type: "response.output_item.done", item: { type: "message", role: "assistant", content: [{ type: "output_text", text: studioCalls.length === 1 ? "First answer" : "Continued answer" }] } };
+			} };
+		},
+	};
+	const makeStudio = () => {
+		const handler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: studioCodex, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() }, port: () => studioServer.address().port });
+		const studioServer = createServer((req, res) => handler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+		return { handler, studioServer };
+	};
+	const first = makeStudio();
+	first.studioServer.listen(0, "127.0.0.1"); await once(first.studioServer, "listening");
+	const firstEnvelope = envelopeFixture();
+	const studioOrigin = `http://127.0.0.1:${first.studioServer.address().port}`;
+	await fetch(`${studioOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: studioOrigin }, body: JSON.stringify(firstEnvelope) }).then((response) => response.text());
+	first.studioServer.close();
+	assert.ok(readdirSync(sessionDir).some((name) => name === `${firstEnvelope.sessionId}.jsonl`), "Studio turn writes its append-only history");
+	assert.ok(readdirSync(sessionDir).some((name) => name === `${firstEnvelope.sessionId}.meta.json`), "Studio turn writes its metadata");
+	const second = makeStudio();
+	second.studioServer.listen(0, "127.0.0.1"); await once(second.studioServer, "listening");
+	const secondEnvelope = { ...envelopeFixture(), turnId: "00000000-0000-4000-8000-000000000003", text: "continue this" };
+	const secondOrigin = `http://127.0.0.1:${second.studioServer.address().port}`;
+	await fetch(`${secondOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: secondOrigin }, body: JSON.stringify(secondEnvelope) }).then((response) => response.text());
+	assert.equal(studioCalls[1][0].role, "user");
+	assert.equal(studioCalls[1].filter((item) => item.role === "user").length, 2, "a fresh route instance sends prior history to codex");
+	const listed = await fetch(`${secondOrigin}/agent/sessions?surface=studio`).then((response) => response.json());
+	assert.equal(listed.sessions[0].sessionId, firstEnvelope.sessionId, "Studio sessions list newest metadata first");
+	const loaded = await fetch(`${secondOrigin}/agent/sessions/${firstEnvelope.sessionId}`).then((response) => response.json());
+	assert.deepEqual(loaded.transcript.filter((item) => item.kind === "user").map((item) => item.text), ["inspect selection", "continue this"]);
+	assert.ok(loaded.transcript.some((item) => item.kind === "assistant" && item.text === "First answer"), "session route derives assistant transcript text");
+	second.studioServer.close();
+	rmSync(sessionDir, { recursive: true, force: true });
+	console.log("PASS Studio sessions persist, lazy-load across route instances, list and derive transcript views");
+}
 console.log("agent routes verified");
 
 // #135: the embedded Studio preview is a live editor too; the agent must

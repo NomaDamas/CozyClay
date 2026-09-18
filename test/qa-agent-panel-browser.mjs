@@ -307,7 +307,7 @@ const studioChips = () => evaluate("[...document.querySelectorAll('[data-agent-c
 await openStudio(1440, 900);
 expect("the Studio mounts ONE agent panel, embedded in the Inspector column", await evaluate("document.querySelectorAll('.agent-panel').length === 1 && document.querySelector('.studio-agent-inspector > .agent-panel')?.dataset.agentEmbedded === 'true'"));
 expect("the Studio panel shows no image cost hint", await evaluate("!document.querySelector('.studio-agent-inspector .agent-footer-hint')"));
-expect("the Studio panel shows no disabled History button", await evaluate("!document.querySelector('.studio-agent-inspector .agent-history')"));
+expect("the Studio panel enables History", await evaluate("!!document.querySelector('.studio-agent-inspector .agent-history:not([disabled])')"));
 expect("the Workflow dock still owns both", await evaluate("!document.querySelector('.workflow-main')"), "the studio route must not mount the dock");
 expect("the Studio panel never shows the image entitlement card", await evaluate("!document.querySelector('[data-agent-card=\"no-entitlement\"]')"));
 const chips = await studioChips();
@@ -350,9 +350,32 @@ expect("the turn ends and Stop reverts to Send", await waitFor("!document.queryS
 shots.push(await shot("studio-turn-complete-1440"));
 expect("the highlight clears itself", await waitFor("!document.querySelector('.hierarchy-row.agent-touched')", 8000));
 
+// --- Studio resume after reload (#368) -------------------------------------
+const firstStudioSession = await evaluate("localStorage.getItem('cozyclay.agent.session.studio')");
+const loadedAfterReload = loadedOnce();
+await send("Page.reload", { ignoreCache: true });
+await loadedAfterReload;
+if (await evaluate("document.querySelector('.studio-agent-inspector')?.hidden !== false")) {
+	await evaluate("document.querySelector('.view-menu-trigger').click()");
+	await waitFor("!!document.querySelector('.view-menu .agent-panel-toggle')", 5000);
+	await evaluate("document.querySelector('.view-menu .agent-panel-toggle').click()");
+	await waitFor("document.querySelector('.studio-agent-inspector')?.hidden === false", 5000);
+	await evaluate("document.querySelector('.view-menu-trigger').click()");
+}
+expect("reload restores the Studio thread", await waitFor(`document.querySelectorAll('.studio-agent-inspector .agent-row').length >= 4 && localStorage.getItem('cozyclay.agent.session.studio') === ${JSON.stringify(firstStudioSession)}`, 20000));
+const followup = "Continue this shot with a softer eyeline";
+await evaluate(`(() => { const t = document.querySelector('.studio-agent-inspector .agent-input'); const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set; setter.call(t, ${JSON.stringify(followup)}); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+await evaluate("document.querySelector('.studio-agent-inspector .agent-send').click()");
+expect("the reloaded thread renders the follow-up", await waitFor("document.querySelectorAll('.studio-agent-inspector .agent-row.user').length >= 2", 20000));
+expect("the reloaded thread sends a follow-up on the same session", await waitFor(`localStorage.getItem('cozyclay.mock.agent.last-turn-session') === ${JSON.stringify(firstStudioSession)} && !document.querySelector('.studio-agent-inspector .agent-send.stop')`, 20000));
+await evaluate("document.querySelector('.studio-agent-inspector').scrollIntoView({ block: 'start' }); document.querySelector('.studio-agent-inspector .agent-transcript').scrollTop = document.querySelector('.studio-agent-inspector .agent-transcript').scrollHeight");
+shots.push(await shot("resume-after-reload"));
+
 // --- the Inspector column at phone width ----------------------------------
+await evaluate("document.querySelector('.studio-agent-inspector .agent-new').click()");
+await waitFor("!!document.querySelector('[data-agent-card=\\\"ready\\\"]')", 5000);
 await openStudio(390, 844);
-expect("the phone-width Studio panel still has no image hint or History", await evaluate("!document.querySelector('.studio-agent-inspector .agent-footer-hint') && !document.querySelector('.studio-agent-inspector .agent-history')"));
+expect("the phone-width Studio panel still has no image hint and enables History", await evaluate("!document.querySelector('.studio-agent-inspector .agent-footer-hint') && !!document.querySelector('.studio-agent-inspector .agent-history:not([disabled])')"));
 expect("the composer fits the viewport at 390px", await evaluate("(() => { const r = document.querySelector('.studio-agent-inspector .agent-input').getBoundingClientRect(); return r.width > 0 && r.left >= 0 && r.right <= innerWidth + 1; })()"),
 	await evaluate("JSON.stringify(document.querySelector('.studio-agent-inspector .agent-input').getBoundingClientRect())"));
 expect("nothing scrolls sideways at 390px", await evaluate("document.documentElement.scrollWidth <= innerWidth && document.body.scrollWidth <= innerWidth"));

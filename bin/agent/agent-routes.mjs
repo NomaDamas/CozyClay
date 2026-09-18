@@ -7,6 +7,7 @@ import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace, summariseCanvasResult } from "./agent-tools.mjs";
 
 import { createVideoAdapters } from "./video-adapters.mjs";
+import { createSessionStore, transcriptFromHistory } from "./session-store.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -257,6 +258,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		} catch { return ""; }
 	};
 	const sessions = new Map();
+	const sessionStore = createSessionStore();
 	const studioSessions = new Map();
 	const studioEvents = new Map();
 	let ownedStudioRuntime = studioRuntime || null;
@@ -355,7 +357,13 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		let session = studioSessions.get(value.sessionId);
 		const suppliedOwner = parseCookies(req).studio_owner;
 		if (session && suppliedOwner && session.owner !== suppliedOwner) throw new StudioProtocolError("AUTH_REQUIRED", "Studio session owner mismatch.");
-		if (!session) { studioOwner(req, value.sessionId, true); session = { owner: studioOwnerTokens.get(value.sessionId), history: [], turns: new Map(), controller: null, activeJobId: null, generationPrompt: null, host: null, updatedAt: clock() }; studioSessions.set(value.sessionId, session); }
+		if (!session) {
+			studioOwner(req, value.sessionId, true);
+			let persisted = null;
+			try { persisted = sessionStore.read(value.sessionId); } catch { persisted = null; }
+			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, generationPrompt: null, host: null, updatedAt: clock() };
+			studioSessions.set(value.sessionId, session);
+		}
 		session.updatedAt = clock();
 		const existing = session.turns.get(value.turnId);
 		if (existing) { writeStudioStream(res, existing, 0, req); return true; }
@@ -473,6 +481,15 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			session.history = history.slice();
 		}
 		session.history = history.slice();
+		try {
+			const sceneName = value.context?.scene?.name ?? value.context?.sceneName ?? session.meta?.sceneName ?? null;
+			const firstText = session.meta?.firstText || value.text;
+			const pending = session.history.slice(session.persistedItems ?? 0);
+			if (pending.length || !session.meta) session.meta = sessionStore.append(value.sessionId, pending, { surface: "studio", sceneName, firstText });
+			session.persistedItems = session.history.length;
+		} catch (error) {
+			if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] session persistence failed:", error?.message);
+		}
 		if (controller.signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
 		telemetry.finished(turnOutcome, turnFailureCode);
 		send({ type: "done" }); record.terminal = true;
@@ -491,6 +508,21 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			const after = Number(new URL(req.url, "http://127.0.0.1").searchParams.get("after") || 0);
 			if (!Number.isSafeInteger(after) || after < 0) { json(res, 400, { error: "invalid cursor" }); return true; }
 			writeStudioStream(res, record, after, req); return true;
+		}
+		if (path === "/agent/sessions" && req.method === "GET") {
+			const surface = new URL(req.url, "http://127.0.0.1").searchParams.get("surface") || undefined;
+			try { json(res, 200, { sessions: sessionStore.list({ surface }) }); }
+			catch { json(res, 500, { error: "session history unavailable" }); }
+			return true;
+		}
+		if (path.startsWith("/agent/sessions/") && req.method === "GET") {
+			const sessionId = decodeURIComponent(path.slice("/agent/sessions/".length));
+			try {
+				const persisted = sessionStore.read(sessionId);
+				if (!persisted) { json(res, 404, { error: "session not found" }); return true; }
+				json(res, 200, { sessionId, transcript: transcriptFromHistory(persisted.history), meta: persisted.meta });
+			} catch { json(res, 404, { error: "session not found" }); }
+			return true;
 		}
 		if (path === "/agent/models" && req.method === "GET") {
 			try {

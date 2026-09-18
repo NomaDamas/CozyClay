@@ -24,8 +24,22 @@ import {
 	formatResetIn,
 	readStoredPanelWidth,
 	storePanelWidth,
+	STUDIO_SESSION_STORAGE_KEY,
 } from "./agent-client.js";
 import "./agent-panel.css";
+
+function relativeTime(value, now = Date.now()) {
+	const at = Date.parse(value || "");
+	if (!Number.isFinite(at)) return "just now";
+	const seconds = Math.max(0, Math.floor((now - at) / 1000));
+	if (seconds < 60) return "just now";
+	const minutes = Math.floor(seconds / 60);
+	if (minutes < 60) return `${minutes}m ago`;
+	const hours = Math.floor(minutes / 60);
+	if (hours < 24) return `${hours}h ago`;
+	const days = Math.floor(hours / 24);
+	return `${days}d ago`;
+}
 
 function StatusDot({ tone, title }) {
 	return <span className={`agent-status-dot ${tone}`} title={title} aria-hidden="true" />;
@@ -133,16 +147,17 @@ function JobCard({ job, onStop, onAccept }) {
 }
 
 function ReceiptCard({ item }) {
-	const { receipt, summary } = item;
+	const { receipt = {}, summary } = item;
 	const unverified = receipt.verification?.status === "unverified";
 	const limitations = receipt.verification?.limitations ?? [];
+	const warnings = receipt.warnings ?? [];
 	return <div className="agent-card agent-receipt-card" data-receipt-id={item.receiptId} data-receipt-status={receipt.status}>
 		<div className="agent-receipt-head">
 			<StatusDot tone={unverified ? "warn" : "ok"} title={receipt.status} />
 			<span className="agent-receipt-summary">{summary}</span>
 		</div>
-		{(receipt.warnings.length > 0 || limitations.length > 0) && <ul className="agent-receipt-notes">
-			{receipt.warnings.map((warning) => <li key={warning.code}>{warning.message || warning.code}</li>)}
+		{(warnings.length > 0 || limitations.length > 0) && <ul className="agent-receipt-notes">
+			{warnings.map((warning) => <li key={warning.code}>{warning.message || warning.code}</li>)}
 			{limitations.map((limit) => <li key={limit}>{limit}</li>)}
 		</ul>}
 	</div>;
@@ -216,6 +231,10 @@ export default function AgentPanel({
 	const [attachFrame, setAttachFrame] = useState(false);
 	const [lightbox, setLightbox] = useState(null);
 	const [overlay, setOverlay] = useState(() => !embedded && (globalThis.innerWidth || 1440) < AGENT_PANEL_OVERLAY_BREAKPOINT);
+	const [historyOpen, setHistoryOpen] = useState(false);
+	const [historySessions, setHistorySessions] = useState([]);
+	const [restoreNotice, setRestoreNotice] = useState("");
+	const [restoreReady, setRestoreReady] = useState(surface !== "studio");
 
 	const composerRef = useRef(null);
 	const transcriptRef = useRef(null);
@@ -240,6 +259,35 @@ export default function AgentPanel({
 	}), [surface, transport]);
 	const chat = useSyncExternalStore(store.subscribe, store.getState, store.getState);
 	const { draft, items, quota, rateLimit, streaming } = chat;
+
+	// Studio history is sidecar-backed; Workflow keeps the existing in-memory UX.
+	useEffect(() => {
+		if (surface !== "studio") { setRestoreReady(true); return undefined; }
+		let cancelled = false;
+		let stored = null;
+		try { stored = globalThis.localStorage?.getItem(STUDIO_SESSION_STORAGE_KEY); } catch { /* storage may be unavailable */ }
+		if (!stored) { setRestoreReady(true); return undefined; }
+		(async () => {
+			try {
+				const payload = await transport.loadSession(stored);
+				if (!Array.isArray(payload?.transcript)) throw new Error("missing transcript");
+				if (!cancelled) store.restore(payload.transcript, payload.sessionId || stored);
+			} catch {
+				if (!cancelled) {
+					store.newSession();
+					setRestoreNotice("Previous conversation could not be restored");
+				}
+			} finally {
+				if (!cancelled) setRestoreReady(true);
+			}
+		})();
+		return () => { cancelled = true; };
+	}, [surface, store, transport]);
+
+	useEffect(() => {
+		if (surface !== "studio" || !restoreReady) return;
+		try { globalThis.localStorage?.setItem(STUDIO_SESSION_STORAGE_KEY, chat.sessionId); } catch { /* storage may be unavailable */ }
+	}, [chat.sessionId, restoreReady, surface]);
 
 	// --- activity line -----------------------------------------------------
 	// One line that always states what the panel is doing, ticking while a turn
@@ -427,10 +475,33 @@ export default function AgentPanel({
 	}, [store, transport]);
 
 	const newSession = useCallback(() => {
+		if (surface === "studio") {
+			try { globalThis.localStorage?.removeItem(STUDIO_SESSION_STORAGE_KEY); } catch { /* storage may be unavailable */ }
+		}
 		store.newSession();
+		setHistoryOpen(false);
 		setMenuOpen(false);
 		composerRef.current?.focus();
-	}, [store]);
+	}, [store, surface]);
+
+	const openHistory = useCallback(async () => {
+		if (surface !== "studio") return;
+		const nextOpen = !historyOpen;
+		setHistoryOpen(nextOpen);
+		if (!nextOpen) return;
+		try { setHistorySessions(await transport.listSessions()); } catch { setHistorySessions([]); }
+	}, [historyOpen, surface, transport]);
+	const restoreHistorySession = useCallback(async (sessionId) => {
+		try {
+			const payload = await transport.loadSession(sessionId);
+			if (!Array.isArray(payload?.transcript)) throw new Error("missing transcript");
+			store.restore(payload.transcript, payload.sessionId || sessionId);
+			setHistoryOpen(false);
+			setRestoreNotice("");
+		} catch {
+			setRestoreNotice("Previous conversation could not be restored");
+		}
+	}, [store, transport]);
 
 	// Clearing the transcript also retires the session, so what the author sees
 	// and what the model remembers cannot diverge.
@@ -509,9 +580,15 @@ export default function AgentPanel({
 			<h2 className="agent-title">Agent</h2>
 			<span className="agent-header-spacer" />
 			<button type="button" className="agent-ghost-button agent-new" onClick={newSession}><FiPlus size={11} /> New</button>
-			{/* A permanently disabled control is chrome that never earns its room;
-			    only the dock, where the sidecar history is coming, still shows it. */}
-			{presentation.history && <button type="button" className="agent-ghost-button agent-history" disabled title="History is coming with the sidecar">History</button>}
+			{presentation.history && <span className="agent-history-wrap">
+				<button type="button" className="agent-ghost-button agent-history" aria-haspopup="listbox" aria-expanded={surface === "studio" ? historyOpen : undefined} onClick={surface === "studio" ? openHistory : undefined} disabled={surface !== "studio"}>History</button>
+				{surface === "studio" && historyOpen && <div className="agent-history-popover" role="listbox" aria-label="Agent history">
+					{historySessions.length ? historySessions.map((entry) => <button type="button" role="option" className="agent-history-item" key={entry.sessionId} onClick={() => restoreHistorySession(entry.sessionId)}>
+						<span className="agent-history-time">{relativeTime(entry.updatedAt)}</span>
+						<span className="agent-history-text">{entry.firstText || "Untitled conversation"}</span>
+					</button>) : <span className="agent-history-empty">No previous conversations</span>}
+				</div>}
+			</span>}
 			<span className="agent-overflow">
 				<button type="button" className="agent-icon-button agent-overflow-toggle" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More agent actions" onClick={() => setMenuOpen((value) => !value)}><FiMoreHorizontal size={13} /></button>
 				{menuOpen && <div className="agent-menu" role="menu">
@@ -521,6 +598,8 @@ export default function AgentPanel({
 			</span>
 			{!embedded && <button type="button" className="agent-icon-button agent-collapse" onClick={() => setCollapsed(true)} aria-label="Collapse agent panel" title="Collapse agent panel (Cmd/Ctrl+B)"><FiChevronRight size={13} /></button>}
 		</header>
+
+		{restoreNotice && <div className="agent-toast" role="status">{restoreNotice}</div>}
 
 		{account?.signedIn && <div className="agent-account">
 			<span className="agent-account-email">{account.email}</span>
