@@ -1,6 +1,35 @@
 import { summariseCanvasResult } from "./agent-tools.mjs";
+import { sanitizeUpstreamDetail } from "./agent-routes.mjs";
 
 const DEFAULT_MODEL = "gpt-6-astra";
+
+// Bounded provider retries (issue #379): the harness's own `retry` option
+// drives the retry loop (pi classifies 429/5xx/network as transient via
+// `isRetryableAssistantError`); this is just the budget. `maxRetryDelayMs`
+// caps how long a single request sleeps for a provider-requested Retry-After
+// before pi's own SDK-level retry gives up and surfaces the error to us.
+const RETRY_POLICY = { enabled: true, maxRetries: 2, baseDelayMs: 1000 };
+const RETRY_MAX_DELAY_MS = 20000;
+
+const AUTH_ERROR_PATTERN = /\b(401|403)\b|unauthorized|forbidden/i;
+const RATE_LIMIT_PATTERN = /\b429\b|rate.?limit|too many requests/i;
+const OVERLOAD_PATTERN = /\b529\b|overloaded/i;
+
+/** Classify a failed assistant message's `errorMessage` into the runner's
+ * frozen error vocabulary. Providers do not hand us a structured status/code
+ * here (pi folds both into one string, see `formatProviderError`), so this
+ * mirrors the same pattern-matching pi itself uses to decide retryability. */
+function classifyProviderError(message) {
+	if (AUTH_ERROR_PATTERN.test(message)) return "unauthorized";
+	if (RATE_LIMIT_PATTERN.test(message)) return "rate_limit";
+	if (OVERLOAD_PATTERN.test(message)) return "overloaded";
+	return "upstream";
+}
+
+function extractStatus(message) {
+	const match = /\b(401|403|429|5\d\d)\b/.exec(message);
+	return match ? Number(match[1]) : undefined;
+}
 
 function dataUrlImage(dataUrl) {
 	const match = /^data:([^;]+);base64,(.*)$/.exec(dataUrl || "");
@@ -73,10 +102,10 @@ function attachmentMessage(attachment, index) {
  * knows about pi. Keep these imports lazy: the package-isolation checks start
  * bin/cozyclay.mjs without node_modules installed.
  */
-export function createAgentRunner({ models: suppliedModels, sessionStore, tools = [], systemPrompt = "", clock = performance.now, fauxProvider, onQuota, codexBaseUrl, auth, credentials, keys, env } = {}) {
+export function createAgentRunner({ models: suppliedModels, sessionStore, tools = [], systemPrompt = "", clock = performance.now, fauxProvider, onQuota, codexBaseUrl, auth, credentials, keys, env, compaction = { enabled: false }, pi: injectedPi } = {}) {
 	const openSessions = new Map();
 	let models = suppliedModels;
-	let piModules;
+	let piModules = injectedPi;
 
 	const loadPi = async () => {
 		if (piModules) return piModules;
@@ -133,12 +162,13 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			state.persisted = messages.length;
 		};
 
+		// pi calls AgentTool.execute(toolCallId, params, signal, onUpdate) — the
+		// `signal` it passes is the one that fires when `session.abort()` cancels
+		// the run, so tools MUST receive it as-is (not `state.lastInput.signal`,
+		// which is only a fallback for callers that never wired a signal at all).
 		const adapters = async () => {
 			const { toAgentTools } = await import("./pi-tools.mjs");
-			return toAgentTools(tools, { signal: state.lastInput?.signal, emit: (event) => state.lastInput?.emit?.(event) }).map((tool) => ({
-				...tool,
-				execute: (toolCallId, params, onUpdate) => tool.execute(toolCallId, params, state.lastInput?.signal, onUpdate),
-			}));
+			return toAgentTools(tools, { signal: state.lastInput?.signal, emit: (event) => state.lastInput?.emit?.(event) });
 		};
 
 		const emitQuota = (queue, input, response, model) => {
@@ -174,8 +204,9 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					systemPrompt,
 					toolExecution: "sequential",
 					steeringMode: "one-at-a-time",
-					compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
-					streamOptions: codexBaseUrl ? { transport: "sse" } : {},
+					compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0, ...compaction },
+					retry: RETRY_POLICY,
+					streamOptions: { maxRetryDelayMs: RETRY_MAX_DELAY_MS, ...(codexBaseUrl ? { transport: "sse" } : {}) },
 				}, state.context)).harness;
 				state.harness.hooks.on("after_response", (response) => emitQuota(state.active?.queue, state.lastInput, response, state.currentModel));
 				state.lane = await state.harness.lane("main", state.context);
@@ -188,6 +219,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				state.unsubscribers.push(state.harness.events.on("run_end", persist));
 			}
 			state.currentModel = selected.model;
+			state.registry = registry;
+			state.provider = selected.provider;
 			await state.lane.setModel({ provider: selected.provider, modelId: selected.modelId }, state.context);
 			if (input.effort !== undefined) {
 				const level = pi.clampThinkingLevel(selected.model, effortLevel(input.effort));
@@ -235,14 +268,33 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					pushFrame({ type: "tool.done", callId: event.toolCallId, ok: false, elapsedMs, error: message });
 				} else pushFrame({ type: "tool.done", callId: event.toolCallId, ok: true, elapsedMs, result: details });
 			});
+			// Auth failures on openai-codex get exactly one retry: force pi's own
+			// `Models.getAuth` refresh (the only exposed credential-store refresh
+			// path — `minOAuthValidityMs` set past any real token lifetime makes any
+			// stored token look expired) and resend the same turn once. Mirrors the
+			// old codex-client.mjs retryAuth: one refresh, one retry, no more.
+			const retryAfterAuthRefresh = async () => {
+				try { await state.registry?.getAuth?.("openai-codex", { minOAuthValidityMs: Number.MAX_SAFE_INTEGER }); } catch { /* the retried call surfaces any refresh failure itself */ }
+				try {
+					const pi = await loadPi();
+					await state.lane.prompt(input.text || "", [], input.signal ? pi.withAbortSignal(input.signal, state.context) : state.context);
+				} catch (error) {
+					if (!queue.closed) { queue.push(errorFrame(error, input.signal?.aborted)); queue.push({ type: "done" }); queue.close(); }
+				}
+			};
 			subscribe("run_end", (event) => {
 				if (state.active?.pendingFrames.length) { for (const pending of state.active.pendingFrames) queue.push(pending); state.active.pendingFrames = []; }
 				if (event.status !== "completed") {
-					const message = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
-					const truncated = /ended before a terminal response event/i.test(message);
-					const providerCode = event.error?.code;
-					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : ["overloaded", "server_error"].includes(providerCode) ? providerCode : "upstream";
-					queue.push({ type: "error", code, message });
+					const rawMessage = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
+					const truncated = /ended before a terminal response event/i.test(rawMessage);
+					if (event.status !== "aborted" && !truncated && state.provider === "openai-codex" && AUTH_ERROR_PATTERN.test(rawMessage) && !state.active?.authRetried) {
+						if (state.active) { state.active.authRetried = true; state.active.authRetryPromise = retryAfterAuthRefresh(); }
+						return;
+					}
+					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : classifyProviderError(rawMessage);
+					const status = extractStatus(rawMessage);
+					const detail = sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage }));
+					queue.push({ type: "error", code, message: detail || rawMessage, ...(status ? { status } : {}) });
 				}
 				queue.push({ type: "done" });
 				queue.close();
@@ -257,7 +309,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				return;
 			}
 			const queue = new FrameQueue();
-			state.active = { queue, quotaSent: false, pendingFrames: [] };
+			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;
@@ -284,6 +336,10 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					}
 				const images = [];
 				await state.lane.prompt(text, images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
+				// The 401-on-openai-codex retry is fired from the `run_end` handler
+				// (it needs the event to have settled first); wait for it here so the
+				// `finally` below does not unsubscribe events mid-retry.
+				if (state.active?.authRetryPromise) await state.active.authRetryPromise;
 				} catch (error) {
 					if (!queue.closed) { queue.push(errorFrame(error, signal.aborted)); queue.push({ type: "done" }); queue.close(); }
 				} finally {
