@@ -49,13 +49,21 @@ export function toAgentTools(tools, { emit, signal, labels = STUDIO_TOOL_LABELS 
 			label: labels?.[tool.name] ?? tool.label ?? tool.name.replaceAll("_", " "),
 			description: tool.description || tool.name,
 			parameters,
-			execute: async (toolCallId, params, executeSignal) => {
+			// pi's low-level `Agent` calls `execute(id, params, signal, onUpdate)`;
+			// pi's `AgentHarness` calls `execute(id, params, onUpdate, toolContext,
+			// invocation, context)` where `context.abortSignal` is the REAL abort
+			// signal (dist/harness/execution/tools.js:62-66). Accept both shapes:
+			// prefer `context.abortSignal`, else fall back to an AbortSignal found
+			// positionally in argument 3 (the low-level path), else the adapter's
+			// own fallback signal.
+			execute: async (toolCallId, params, third, toolContext, invocation, context) => {
+				const executeSignal = context?.abortSignal ?? (third instanceof AbortSignal ? third : undefined) ?? signal;
 				if (!Value.Check(parameters, params)) {
 					const first = [...Value.Errors(parameters, params)][0];
 					throw Object.assign(new Error(`Invalid arguments for ${tool.name}${first ? `: ${first.keyword}: ${first.message}` : "."}`), { code: "INVALID_ARGUMENT" });
 				}
 				try {
-					const result = await tool.handler(params, { signal: executeSignal || signal, toolCallId, emit });
+					const result = await tool.handler(params, { signal: executeSignal, toolCallId, emit });
 					const details = publicResult(result);
 					const image = result && typeof result === "object" && !Array.isArray(result) && result.dataUrl ? dataUrlImage(result.dataUrl) : null;
 					const content = [{ type: "text", text: JSON.stringify(details ?? null) }];

@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
+import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { createAgentRunner } from "../bin/agent/agent-runner.mjs";
 
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-"));
@@ -122,6 +123,44 @@ function errorMessage(text) {
 	expect("the model was only called once (no further model calls after abort)", calls.length === 1, `calls.length=${calls.length}`);
 	const errorFrames = frames.filter((f) => f.type === "error");
 	expect("every error frame surfaced by the aborted run carries code:'aborted'", errorFrames.length > 0 && errorFrames.every((f) => f.code === "aborted"), JSON.stringify(frames));
+	expect("a done frame is the last frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
+}
+
+// --- tool-level abort (#379): the harness's REAL abort signal must reach the
+// tool handler as `ctx.signal`, not a positional update-callback function.
+// A fixture tool awaits its own `ctx.signal` and records `signal.aborted`
+// once it fires; before the pi-tools.mjs fix this never resolves that way
+// because `signal` is actually the harness's `onUpdate` callback (a
+// function), so `ctx.signal.aborted` throws / never becomes true.
+{
+	let toolObservedAbort = null;
+	const slowTool = {
+		name: "slow_tool",
+		description: "A slow tool used to prove the harness abort signal reaches tool handlers.",
+		handler: (params, ctx) => new Promise((resolve) => {
+			ctx.signal.addEventListener("abort", () => {
+				toolObservedAbort = ctx.signal.aborted === true;
+				resolve({ ok: true });
+			});
+		}),
+	};
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	installScripts(faux, [fauxAssistantMessage([fauxToolCall("slow_tool", {})], { stopReason: "toolUse" })]);
+	const runner = createAgentRunner({ models, tools: [slowTool] });
+	const session = await runner.openSession("errors-tool-abort", { surface: "workflow" });
+	const frames = [];
+	let aborted = false;
+	const iterator = session.start({ text: "run the slow tool", model: "faux/scripted" })[Symbol.asyncIterator]();
+	for (;;) {
+		const { value, done } = await iterator.next();
+		if (done) break;
+		frames.push(value);
+		if (value.type === "tool.start" && !aborted) { aborted = true; await session.abort("test"); }
+	}
+	await runner.close();
+	expect("the tool handler received pi's real harness abort signal (ctx.signal.aborted became true, not a function positionally treated as a signal)", toolObservedAbort === true, `toolObservedAbort=${toolObservedAbort}`);
 	expect("a done frame is the last frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
 }
 
