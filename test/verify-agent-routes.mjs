@@ -108,6 +108,50 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	console.log("PASS attachFrame captures through the internal tool");
 }
 {
+	// #367: a picture the author pasted into the composer reaches the model as a
+	// real user image item, placed BEFORE the turn text on both surfaces — the
+	// same shape attachFrame already uses.
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const seenInputs = [];
+	const quietCodex = { ...fakeCodex, streamResponses: ({ input }) => { seenInputs.push(input); return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
+		yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
+		yield { type: "response.completed", response: { status: "completed" } };
+	} }; } };
+	const attachHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
+	let attachServer;
+	const attachHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: quietCodex, liveHub: attachHub, studioRuntime: { readContext: async () => contextFixture() }, port: () => attachServer.address().port });
+	attachServer = createServer((req, res) => attachHandler(req, res).catch((error) => { console.error("attachment fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	attachServer.listen(0, "127.0.0.1");
+	await once(attachServer, "listening");
+	const attachOrigin = `http://127.0.0.1:${attachServer.address().port}`;
+	const post = (body) => fetch(`${attachOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: attachOrigin }, body: JSON.stringify(body) }).then((response) => response.text());
+
+	const studioEnvelope = { ...envelopeFixture(), text: "what is in the attached image?", attachments: [{ dataUrl: png, name: "probe.png" }] };
+	await post(studioEnvelope);
+	const studioInput = seenInputs.at(-1) ?? [];
+	const imageAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "input_image"));
+	const textAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "input_text" && part.text.includes("what is in the attached image?")));
+	assert.ok(imageAt !== -1, `the studio turn sends an input_image user item: ${JSON.stringify(studioInput).slice(0, 400)}`);
+	assert.ok(textAt !== -1 && imageAt < textAt, "the attachment precedes the turn text, exactly like attachFrame");
+	assert.equal(studioInput[imageAt].content[1].image_url, png, "the pasted bytes reach the model");
+	assert.match(studioInput[imageAt].content[0].text, /User attachment probe\.png/, "the image is named for the model");
+
+	const rejected = await fetch(`${attachOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: attachOrigin }, body: JSON.stringify({ ...envelopeFixture(), attachments: [{ dataUrl: "data:text/plain;base64,aGk=" }] }) });
+	assert.equal(rejected.status, 400, "a non-image attachment never reaches the model");
+
+	const before = seenInputs.length;
+	await post({ sessionId: "attach-workflow", text: "describe this", attachments: [{ dataUrl: png }] });
+	const workflowInput = seenInputs[before] ?? [];
+	const workflowImageAt = workflowInput.findIndex((item) => item.content?.some((part) => part.type === "input_image"));
+	const workflowTextAt = workflowInput.findIndex((item) => item.content?.some((part) => part.type === "input_text" && part.text.includes("describe this")));
+	assert.ok(workflowImageAt !== -1 && workflowImageAt < workflowTextAt, `the workflow turn carries the attachment too: ${JSON.stringify(workflowInput).slice(0, 300)}`);
+	assert.match(workflowInput[workflowImageAt].content[0].text, /User attachment 1/, "an unnamed attachment is named by its position");
+	const badWorkflow = await fetch(`${attachOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: attachOrigin }, body: JSON.stringify({ sessionId: "attach-bad", text: "hi", attachments: [{ dataUrl: "https://example.test/a.png" }] }) });
+	assert.equal(badWorkflow.status, 400, "a remote URL is not an attachment");
+	attachServer.close();
+	console.log("PASS pasted attachments reach the model as input_image items before the turn text");
+}
+{
 	// The backend sometimes answers a whole stream with server_is_overloaded.
 	// One retry usually clears it; a persistent overload is reported as such.
 	const overloaded = { type: "error", error: { type: "service_unavailable_error", code: "server_is_overloaded", message: "Our servers are currently overloaded." } };

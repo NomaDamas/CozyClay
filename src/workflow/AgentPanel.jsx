@@ -1,5 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FiAlertTriangle, FiCheck, FiChevronRight, FiClock, FiDownload, FiImage, FiMoreHorizontal, FiPaperclip, FiPlus, FiRotateCw } from "react-icons/fi";
+import { FiAlertTriangle, FiCheck, FiChevronRight, FiClock, FiDownload, FiImage, FiMoreHorizontal, FiPaperclip, FiPlus, FiRotateCw, FiX } from "react-icons/fi";
+import {
+	ATTACHMENT_FAILED_NOTICE,
+	ATTACHMENT_LIMIT_NOTICE,
+	ATTACHMENT_TYPE_NOTICE,
+	attachmentFilesFromTransfer,
+	attachmentFromFile,
+	transferCarriesFiles,
+} from "./attachment-image.js";
 import {
 	AGENT_PANEL_OVERLAY_BREAKPOINT,
 	AGENT_PANEL_RAIL_WIDTH,
@@ -229,6 +237,10 @@ export default function AgentPanel({
 	const efforts = useMemo(() => effortOptions(models.find((entry) => entry.id === model)), [models, model]);
 	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); }, []);
 	const [attachFrame, setAttachFrame] = useState(false);
+	// What the composer refused and why, in one line under the thumbnails: a
+	// picture that silently fails to attach is the bug this replaces.
+	const [attachNotice, setAttachNotice] = useState(null);
+	const [dropping, setDropping] = useState(false);
 	const [lightbox, setLightbox] = useState(null);
 	const [overlay, setOverlay] = useState(() => !embedded && (globalThis.innerWidth || 1440) < AGENT_PANEL_OVERLAY_BREAKPOINT);
 	const [historyOpen, setHistoryOpen] = useState(false);
@@ -258,7 +270,7 @@ export default function AgentPanel({
 		onAuthLost: () => setAuthState("signed-out"),
 	}), [surface, transport]);
 	const chat = useSyncExternalStore(store.subscribe, store.getState, store.getState);
-	const { draft, items, quota, rateLimit, streaming } = chat;
+	const { draft, items, pendingAttachments, quota, rateLimit, streaming } = chat;
 
 	// Studio history is sidecar-backed; Workflow keeps the existing in-memory UX.
 	useEffect(() => {
@@ -452,8 +464,57 @@ export default function AgentPanel({
 		});
 	}, []);
 
+	// --- pasted and dropped pictures ---------------------------------------
+	// A screenshot is the fastest thing an author can show the agent, so the
+	// composer takes one from the clipboard or the desktop. Only a transfer that
+	// actually carries a picture is intercepted: a text paste still lands in the
+	// caret, which is the whole reason the studio's document handler steps aside
+	// for a textarea in the first place.
+	const attachFiles = useCallback(async (files) => {
+		const prepared = [];
+		let failed = 0;
+		for (const file of files) {
+			try { prepared.push(await attachmentFromFile(file)); } catch { failed += 1; }
+		}
+		const rejected = prepared.length ? store.addAttachments(prepared).rejected : 0;
+		setAttachNotice(rejected ? ATTACHMENT_LIMIT_NOTICE : failed ? ATTACHMENT_FAILED_NOTICE : null);
+	}, [store]);
+	/** Whether this transfer belongs to the composer. */
+	const takeTransfer = useCallback((transfer) => {
+		const { images, unsupported } = attachmentFilesFromTransfer(transfer);
+		if (!images.length) {
+			// A picture in a format the turn cannot carry is refused out loud; a
+			// clipboard with no picture at all is simply not ours.
+			if (unsupported) setAttachNotice(ATTACHMENT_TYPE_NOTICE);
+			return unsupported > 0;
+		}
+		attachFiles(images);
+		return true;
+	}, [attachFiles]);
+	const onComposerPaste = useCallback((event) => {
+		if (takeTransfer(event.clipboardData)) event.preventDefault();
+	}, [takeTransfer]);
+	const onComposerDragOver = useCallback((event) => {
+		// `files` is withheld until the drop, so the types list is the only thing
+		// that can decide whether the composer wants this drag.
+		if (!transferCarriesFiles(event.dataTransfer)) return;
+		event.preventDefault();
+		event.dataTransfer.dropEffect = "copy";
+		setDropping(true);
+	}, []);
+	const onComposerDragLeave = useCallback((event) => {
+		if (!event.currentTarget.contains(event.relatedTarget)) setDropping(false);
+	}, []);
+	const onComposerDrop = useCallback((event) => {
+		setDropping(false);
+		if (takeTransfer(event.dataTransfer)) event.preventDefault();
+	}, [takeTransfer]);
+
 	// --- turn --------------------------------------------------------------
-	const runTurn = useCallback((text) => store.send(text, { attachFrame, model, effort: effort ?? undefined }), [attachFrame, effort, model, store]);
+	const runTurn = useCallback((text) => {
+		setAttachNotice(null);
+		return store.send(text, { attachFrame, model, effort: effort ?? undefined });
+	}, [attachFrame, effort, model, store]);
 	const stopTurn = useCallback(() => store.stop(), [store]);
 
 	const signIn = useCallback(async () => {
@@ -635,7 +696,12 @@ export default function AgentPanel({
 			</div>}
 
 			{items.map((item) => {
-				if (item.kind === "user") return <div className="agent-row user" key={item.id}><div className="agent-bubble">{item.text}</div></div>;
+				if (item.kind === "user") return <div className="agent-row user" key={item.id}>
+					{item.attachments?.length > 0 && <div className="agent-bubble-attachments">
+						{item.attachments.map((attachment, index) => <img key={`${item.id}-${index}`} src={attachment.dataUrl} alt={attachment.name || "Attached image"} onClick={() => setLightbox({ dataUrl: attachment.dataUrl, prompt: attachment.name })} />)}
+					</div>}
+					<div className="agent-bubble">{item.text}</div>
+				</div>;
 				if (item.kind === "assistant") return <div className="agent-row assistant" key={item.id}><div className="agent-assistant-text">{item.text}{streaming && <span className="agent-caret">▌</span>}</div></div>;
 				if (item.kind === "tool") return <div className="agent-row" key={item.id}><ToolCallCard call={item} presentation={presentation} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
 				if (item.kind === "job") return <div className="agent-row" key={item.id}><JobCard job={item} onStop={stopTurn} onAccept={(job) => store.acceptJob(job.jobId)} /></div>;
@@ -654,7 +720,20 @@ export default function AgentPanel({
 			<span className="agent-activity-text">{activity.text}</span>
 		</div>}
 
-		{authenticated && <div className="agent-composer">
+		{authenticated && <div
+			className="agent-composer"
+			data-agent-dropping={dropping ? "true" : "false"}
+			onDragOver={composerDisabled ? undefined : onComposerDragOver}
+			onDragLeave={composerDisabled ? undefined : onComposerDragLeave}
+			onDrop={composerDisabled ? undefined : onComposerDrop}
+		>
+			{pendingAttachments.length > 0 && <ul className="agent-attachments" aria-label="Attached images">
+				{pendingAttachments.map((attachment) => <li key={attachment.id} className="agent-attachment">
+					<img src={attachment.dataUrl} alt={attachment.name || "Attached image"} />
+					<button type="button" className="agent-attachment-remove" aria-label={`Remove ${attachment.name || "attached image"}`} onClick={() => store.removeAttachment(attachment.id)}><FiX size={10} aria-hidden="true" /></button>
+				</li>)}
+			</ul>}
+			{attachNotice && <p className="agent-attachment-notice" role="status">{attachNotice}</p>}
 			<textarea
 				ref={composerRef}
 				className="agent-input"
@@ -664,6 +743,9 @@ export default function AgentPanel({
 				disabled={composerDisabled}
 				onChange={(event) => store.setDraft(event.target.value)}
 				onKeyDown={onComposerKeyDown}
+				onPaste={onComposerPaste}
+				onDragOver={onComposerDragOver}
+				onDrop={onComposerDrop}
 			/>
 			<div className="agent-composer-controls agent-composer-picks">
 				<select className="agent-model-select" aria-label="Model" value={model} disabled={!models.length} onChange={(event) => chooseModel(event.target.value)}>

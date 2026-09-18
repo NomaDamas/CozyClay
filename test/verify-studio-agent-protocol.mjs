@@ -74,6 +74,31 @@ function registerTests() {
 			assert.equal((await post(alias)).status, 400);
 		});
 	});
+	test("D2 the turn envelope carries up to four author image attachments (#367)", () => {
+		const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+		const attachment = (index) => ({ dataUrl: png, name: `screenshot-${index}.png` });
+		for (const count of [1, 2, 3, 4]) {
+			const value = envelopeFixture();
+			value.attachments = Array.from({ length: count }, (_, index) => attachment(index));
+			const accepted = protocol.validateStudioTurnEnvelope(value);
+			assert.equal(accepted.attachments.length, count);
+			assert.equal(accepted.attachments[0].dataUrl, png);
+			assert.equal(accepted.attachments[0].name, "screenshot-0.png");
+		}
+		// The name is the author's file name, not a required field.
+		assert.equal(protocol.validateStudioTurnEnvelope({ ...envelopeFixture(), attachments: [{ dataUrl: png }] }).attachments[0].name, undefined);
+		assert.equal(protocol.validateStudioTurnEnvelope(envelopeFixture()).attachments, undefined, "a turn without pictures carries no field");
+		for (const attachments of [
+			Array.from({ length: 5 }, (_, index) => attachment(index)),
+			[],
+			[{ dataUrl: "data:text/plain;base64,aGk=" }],
+			[{ dataUrl: "data:image/svg+xml;base64,aGk=" }],
+			[{ dataUrl: "https://example.test/screenshot.png" }],
+			[{ dataUrl: png, name: "a".repeat(121) }],
+			[{ dataUrl: png, alt: "private" }],
+			[png],
+		]) rejects(() => protocol.validateStudioTurnEnvelope({ ...envelopeFixture(), attachments }), "INVALID_REQUEST");
+	});
 	test("D3 bogus typed object op, unknown nested fields and later variants cannot pass", () => {
 		for (const args of [{ ops: [{ op: "bogus" }] }, { ops: [] }, { ops: [createOp()], document: {} }, { ops: [{ ...createOp(), source: { imageId: "image-1", placeAs: "cutout" } }] }, { ops: [{ op: "attach", id: "a", characterId: "b", bone: null }] }, { ops: [{ ...createOp(), position: { world: { ...point(), password: "private" } } }] }, { ops: [{ op: "update", id: "a" }] }]) rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args }));
 	});

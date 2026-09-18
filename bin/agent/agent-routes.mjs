@@ -30,6 +30,37 @@ const IMAGE_BODY_LIMIT = 24 * 1024 * 1024;
 // reference. Capped because every one of them is another full image the
 // backend has to read, and a shot with seven of them is a prompt nobody wrote.
 const IMAGE_REFERENCES_MAX = 6;
+
+// Pictures pasted or dropped into the composer (#367) ride in the turn body,
+// so the chat routes need room for them. Everything else about the small chat
+// limit stays: this is exactly four attachments of the size the turn envelope
+// admits, plus the envelope itself.
+const ATTACHMENTS_MAX = 4;
+const ATTACHMENT_MAX_CHARS = 6_000_000;
+const TURN_BODY_LIMIT = ATTACHMENTS_MAX * ATTACHMENT_MAX_CHARS + 64 * 1024;
+
+/** Reject anything that is not a short list of inline {dataUrl, name?} images.
+ * The Studio envelope validates its own copy; this is the legacy body's. */
+function validAttachments(attachments) {
+	if (attachments === undefined) return true;
+	if (!Array.isArray(attachments) || !attachments.length || attachments.length > ATTACHMENTS_MAX) return false;
+	return attachments.every((entry) => entry && typeof entry === "object" && !Array.isArray(entry)
+		&& typeof entry.dataUrl === "string" && entry.dataUrl.length <= ATTACHMENT_MAX_CHARS && /^data:image\/(png|jpeg|webp);base64,/.test(entry.dataUrl)
+		&& (entry.name === undefined || (typeof entry.name === "string" && entry.name.length <= 120)));
+}
+
+/** One user item per attached picture: what it is, then the picture itself.
+ * They are pushed BEFORE the turn text so the model reads the question with
+ * the images already in view — the same shape attachFrame uses. */
+export function attachmentInputItems(attachments) {
+	return (Array.isArray(attachments) ? attachments : []).map((attachment, index) => ({
+		role: "user",
+		content: [
+			{ type: "input_text", text: `User attachment ${attachment.name || index + 1}` },
+			{ type: "input_image", image_url: attachment.dataUrl },
+		],
+	}));
+}
 // Keep this local relay self-contained: minimal sidecar installs omit src/.
 const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
 const telemetryId = () => advisory(() => randomBytes(16).toString("hex"), null);
@@ -409,7 +440,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			finally { unsubscribe(); }
 		};
 		const modelTools = tools.map(tool => tool.name === "generate_motion" ? { ...tool, handler: motion } : tool);
-		const history = session.history; history.push(studioHistoryItem(value.context, value.text, encodeStudioContext));
+		const history = session.history;
+		for (const item of attachmentInputItems(value.attachments)) history.push(item);
+		history.push(studioHistoryItem(value.context, value.text, encodeStudioContext));
 		if (value.attachFrame) {
 			const captured = await hub.command("capture_framing_png", {}, value.context.host.workspaceHandle);
 			if (!captured?.dataUrl?.startsWith("data:image/")) throw new StudioProtocolError("TARGET_NOT_READY", "The current frame has no image bytes.");
@@ -593,7 +626,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		}
 		let value;
 		try {
-			value = await readBody(req);
+			value = await readBody(req, TURN_BODY_LIMIT);
 			if (value?.surface === "studio") {
 				// Lazy only for the minimal legacy-sidecar fixture, which omits src/.
 				// Actual npm packages include src; there is exactly one validator.
@@ -603,6 +636,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 				|| value.context !== undefined || value.turnId !== undefined || typeof value.sessionId !== "string" || !value.sessionId
 				|| (path === "/agent/turn" && (typeof value.text !== "string"
 					|| (value.attachFrame !== undefined && typeof value.attachFrame !== "boolean")
+					|| !validAttachments(value.attachments)
 					|| (value.model !== undefined && typeof value.model !== "string")
 					|| (value.effort !== undefined && !REASONING_EFFORTS.includes(value.effort))))) throw new Error("Invalid request.");
 		} catch (error) {
@@ -701,7 +735,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 				const captured = await executeTool({ call_id: "attached-frame", name: "capture_blocking_frame", arguments: {} }, tools.internal.capture);
 				text += `\nAttached frame imageId: ${captured.imageId}`;
 			}
-			const history = [...session.history, { role: "user", content: [{ type: "input_text", text }] }];
+			const history = [...session.history, ...attachmentInputItems(value.attachments), { role: "user", content: [{ type: "input_text", text }] }];
 			// runAgentTurn closes over streamResponses and hides its headers. Drive
 			// that same serial loop here so quotas are observable, and retry only
 			// the failed request rather than replaying already-executed scene tools.

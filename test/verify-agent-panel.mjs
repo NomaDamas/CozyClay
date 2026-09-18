@@ -183,7 +183,7 @@ expect("a touched hierarchy row is a Studio style, not panel chrome", /\.hierarc
 // --- Studio session, jobs and receipts ------------------------------------
 expect("Studio identities are UUIDs", client.includes("export function createStudioSessionId") && client.includes("randomUUID"));
 expect("the Studio turn body is the frozen envelope", /surface: "studio", sessionId, turnId, text, context: turnRequest\.context/.test(client));
-expect("the legacy Workflow body and its turn_id telemetry are unchanged", client.includes('JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) })'));
+expect("the legacy Workflow body and its turn_id telemetry are unchanged", client.includes('JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...attached, ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) })'));
 expect("a dropped Studio stream resumes from an event cursor", client.includes("/agent/turn/${encodeURIComponent(turnId)}/events?after=${cursor}") && client.includes("if (event.eventSeq <= cursor) return;"));
 expect("Clear context and New share one session reset", panel.includes("store.clearContext()") && client.includes("clearContext: resetSession") && client.includes("newSession: resetSession"));
 expect("the panel renders job progress", panel.includes("function JobCard") && panel.includes("agent-job-card") && panel.includes("agent-job-stop"));
@@ -195,6 +195,26 @@ expect("receipts are validated before they are rendered as success", client.incl
 expect("image actions are acknowledged by the host, never assumed", client.includes("export function requestHostImageAction") && client.includes("cozyclay:agent-image-result") && panel.includes("store.applyImage(image.id)"));
 expect("an unclaimed image action fails instead of claiming a placement", client.includes("No editor accepted the image."));
 expect("one acknowledgement settles one action", client.includes("if (!requestId || settledActions.has(requestId)) return;"));
+// --- pasted and dropped pictures (#367) -----------------------------------
+// The studio's document paste handler steps aside for a textarea so text still
+// lands in the caret; the composer therefore has to take the picture itself.
+expect("the composer intercepts a paste", panel.includes("onPaste={onComposerPaste}") && panel.includes("const onComposerPaste = useCallback"));
+expect("only a clipboard carrying a picture is intercepted", /const takeTransfer = useCallback\(\(transfer\) => \{[\s\S]{0,400}if \(!images\.length\) \{[\s\S]{0,260}return unsupported > 0;/.test(panel)
+	&& panel.includes("if (takeTransfer(event.clipboardData)) event.preventDefault();"), "a text paste must reach the caret untouched");
+expect("the composer accepts a dropped picture too", panel.includes("onDrop={onComposerDrop}") && panel.includes("onDragOver={onComposerDragOver}")
+	&& panel.includes("onDrop={composerDisabled ? undefined : onComposerDrop}"));
+expect("the detection rules are the shared, tested ones", panel.includes('from "./attachment-image.js"') && panel.includes("attachmentFilesFromTransfer") && panel.includes("attachmentFromFile"));
+expect("pending pictures are thumbnails above the composer, each with a remove control", panel.includes('<ul className="agent-attachments"')
+	&& panel.includes('className="agent-attachment-remove"') && panel.includes("store.removeAttachment(attachment.id)"));
+expect("a refused picture says why instead of vanishing", panel.includes("agent-attachment-notice") && client.includes("ATTACHMENT_MAX_COUNT"));
+expect("the sent bubble keeps the pictures it was sent with", panel.includes("agent-bubble-attachments") && client.includes('kind: "user", id: newId(), text: trimmed, attachFrame: Boolean(options.attachFrame), attachments'));
+expect("sending empties the composer's pictures with its draft", /set\(\{[\s\S]{0,200}draft: "",\n\t\t\t\tpendingAttachments: \[\],/.test(client));
+expect("the attachment strip is token-driven", /\.agent-attachment\s*\{[^}]*width: var\(--agent-thumb\)/.test(css) && /\.agent-attachments\s*\{[^}]*gap: var\(--agent-space-2\)/.test(css));
+{
+	const attachments = await import("../src/workflow/attachment-image.js");
+	expect("the composer states the limit it enforces", attachments.ATTACHMENT_LIMIT_NOTICE === "Up to 4 images per message" && attachments.ATTACHMENT_MAX_COUNT === 4);
+}
+
 expect("auth refresh is event-driven on return from sign-in", panel.includes('window.addEventListener("focus", onReturn)') && panel.includes('document.addEventListener("visibilitychange", onReturn)') && !/setTimeout/.test(panel));
 expect("the chat state has one owner, not a second emitter", panel.includes("useSyncExternalStore(store.subscribe") && !panel.includes("setItems("));
 

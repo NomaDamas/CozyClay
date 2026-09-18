@@ -55,6 +55,8 @@
 	--agent-font-xl: 14px;
 
 	--agent-dot: 6px;
+	/* One attached picture, in the composer strip and in the sent bubble. */
+	--agent-thumb: 56px;
 	--agent-shadow: 0 12px 34px #0006;
 	--agent-motion: 140ms ease;
 
@@ -826,6 +828,90 @@
 
 .agent-composer textarea:focus { border-color: var(--agent-border-focus); }
 .agent-composer textarea[disabled] { opacity: 0.55; }
+
+/* --- attached pictures (#367) ------------------------------------------- *
+ * Pasted or dropped images wait above the text they belong to, at thumbnail
+ * size: enough to recognise the screenshot, never enough to push the composer
+ * off screen. The strip disappears with the turn that carries it. */
+
+.agent-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	gap: var(--agent-space-2);
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.agent-attachment {
+	position: relative;
+	width: var(--agent-thumb);
+	height: var(--agent-thumb);
+	border: 1px solid var(--agent-border-strong);
+	border-radius: var(--agent-radius-md);
+	background: var(--agent-bg-sunken);
+	overflow: hidden;
+}
+
+.agent-attachment img {
+	width: 100%;
+	height: 100%;
+	object-fit: cover;
+	display: block;
+}
+
+.agent-attachment-remove {
+	position: absolute;
+	top: var(--agent-space-1);
+	right: var(--agent-space-1);
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: var(--agent-space-5);
+	height: var(--agent-space-5);
+	padding: 0;
+	border: 1px solid var(--agent-border-strong);
+	border-radius: var(--agent-radius-pill);
+	background: var(--agent-bg);
+	color: var(--agent-text-muted);
+	cursor: pointer;
+	transition: color var(--agent-motion), border-color var(--agent-motion);
+}
+
+.agent-attachment-remove:hover {
+	border-color: var(--agent-alert);
+	color: var(--agent-alert);
+}
+
+.agent-attachment-notice {
+	margin: 0;
+	color: var(--agent-warn);
+	font-size: var(--agent-font-sm);
+}
+
+/* A drop target says so while the picture is over it. */
+.agent-composer[data-agent-dropping="true"] {
+	box-shadow: inset 0 0 0 1px var(--agent-accent-edge);
+	background: var(--agent-accent-deep);
+}
+
+.agent-bubble-attachments {
+	display: flex;
+	flex-wrap: wrap;
+	justify-content: flex-end;
+	gap: var(--agent-space-2);
+	max-width: 86%;
+}
+
+.agent-bubble-attachments img {
+	width: var(--agent-thumb);
+	height: var(--agent-thumb);
+	object-fit: cover;
+	border: 1px solid var(--agent-border-strong);
+	border-radius: var(--agent-radius-md);
+	background: var(--agent-bg-sunken);
+	cursor: zoom-in;
+}
 
 .agent-composer-controls {
 	display: flex;

@@ -22,6 +22,7 @@
 //   POST /agent/jobs/<jobId>/accept          -> explicit "Apply with warnings"
 
 import { bucketMs, track } from "../analytics.js";
+import { appendAttachments, ATTACHMENT_MAX_COUNT } from "./attachment-image.js";
 import { ko } from "../locale.js";
 import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
 import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
@@ -574,7 +575,8 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		},
 		/** Streams sidecar events to `onEvent`. Resolves when the turn ends. */
 		async turn(turnRequest, onEvent, signal) {
-			const { sessionId, text, attachFrame, model, effort } = turnRequest;
+			const { sessionId, text, attachFrame, model, effort, attachments } = turnRequest;
+			const attached = Array.isArray(attachments) && attachments.length ? { attachments } : {};
 			const studio = turnRequest.surface === "studio";
 			const turnId = studio ? turnRequest.turnId : null;
 			const telemetry = startAgentTurn({ surface, capture, now, correlationId: turnId });
@@ -624,9 +626,9 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const body = studio
 				? JSON.stringify({
 					surface: "studio", sessionId, turnId, text, context: turnRequest.context,
-					...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(attachFrame === undefined ? {} : { attachFrame: Boolean(attachFrame) }),
+					...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(attachFrame === undefined ? {} : { attachFrame: Boolean(attachFrame) }), ...attached,
 				})
-				: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) });
+				: JSON.stringify({ sessionId, text, attachFrame, model, ...(effort ? { effort } : {}), ...attached, ...(telemetry.turnId ? { turn_id: telemetry.turnId } : {}) });
 			try {
 				const response = await fetchImpl(sidecarUrl("/agent/turn"), {
 					method: "POST",
@@ -920,6 +922,10 @@ export function createAgentChatStore({
 		sessionId: newId(),
 		turnId: null,
 		draft: "",
+		// Pictures the author pasted or dropped, waiting for the turn they belong
+		// to. They live beside the draft because that is what they are: part of
+		// the message being written, cleared by the same Send.
+		pendingAttachments: [],
 		items: [],
 		streaming: false,
 		quota: null,
@@ -1086,7 +1092,7 @@ export function createAgentChatStore({
 		settledActions.clear();
 		// Clearing the transcript also retires the server session: a cleared chat
 		// the model still remembers is the divergence this replaces.
-		set({ sessionId: newId(), turnId: null, items: [], rateLimit: null, lastPrompt: "", turnStartedAt: null, lastTurn: null });
+		set({ sessionId: newId(), turnId: null, items: [], pendingAttachments: [], rateLimit: null, lastPrompt: "", turnStartedAt: null, lastTurn: null });
 	};
 	const restore = (transcript, sessionId = state.sessionId) => {
 		seenReceipts.clear();
@@ -1108,6 +1114,20 @@ export function createAgentChatStore({
 			return () => listeners.delete(listener);
 		},
 		setDraft: (draft) => set({ draft: String(draft ?? "") }),
+		/** Pictures pasted or dropped into the composer. Returns what was taken and
+		 * what had to be refused, so the composer can say so instead of a picture
+		 * vanishing on its way in. */
+		addAttachments(list) {
+			const incoming = (Array.isArray(list) ? list : [])
+				.filter((entry) => typeof entry?.dataUrl === "string" && entry.dataUrl.startsWith("data:image/"))
+				.map((entry) => ({ id: newId(), dataUrl: entry.dataUrl, ...(entry.name ? { name: String(entry.name).slice(0, 120) } : {}) }));
+			const { attachments, rejected } = appendAttachments(state.pendingAttachments, incoming, ATTACHMENT_MAX_COUNT);
+			const added = attachments.length - state.pendingAttachments.length;
+			set({ pendingAttachments: attachments });
+			return { added, rejected };
+		},
+		removeAttachment: (id) => set({ pendingAttachments: state.pendingAttachments.filter((entry) => entry.id !== id) }),
+		clearAttachments: () => set({ pendingAttachments: [] }),
 		async send(text, options = {}) {
 			const trimmed = String(text ?? "").trim();
 			if (!trimmed || state.streaming) return;
@@ -1121,15 +1141,22 @@ export function createAgentChatStore({
 			const startedAt = clock();
 			const turn = { produced: false, failure: null };
 			activeTurn = turn;
+			// What the author attached to THIS message: an explicit list wins, the
+			// composer's pending pictures otherwise. Either way the composer is
+			// emptied with the draft, so the next turn cannot re-send them.
+			const attachments = (Array.isArray(options.attachments) ? options.attachments : state.pendingAttachments)
+				.slice(0, ATTACHMENT_MAX_COUNT)
+				.map(({ dataUrl, name }) => ({ dataUrl, ...(name ? { name } : {}) }));
 			set({
 				lastPrompt: trimmed,
 				rateLimit: null,
 				turnId,
 				streaming: true,
 				draft: "",
+				pendingAttachments: [],
 				turnStartedAt: startedAt,
 				lastTurn: null,
-				items: [...state.items, { kind: "user", id: newId(), text: trimmed, attachFrame: Boolean(options.attachFrame) }],
+				items: [...state.items, { kind: "user", id: newId(), text: trimmed, attachFrame: Boolean(options.attachFrame), attachments }],
 			});
 			controller = new AbortController();
 			const signal = controller.signal;
@@ -1138,6 +1165,7 @@ export function createAgentChatStore({
 					...(studio ? { surface: "studio", turnId, context } : {}),
 					sessionId: state.sessionId,
 					text: trimmed,
+					...(attachments.length ? { attachments } : {}),
 					attachFrame: Boolean(options.attachFrame),
 					model: options.model,
 					effort: options.effort ?? undefined,

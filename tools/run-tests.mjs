@@ -64,6 +64,7 @@ const NODE_FILES = [
 	"test/verify-execution-shared-hooks.mjs",
 	"mcp/verify-live-execution.mjs",
 	"test/verify-canvas-commands.mjs",
+	"test/verify-attachment-image.mjs",
 	"test/verify-clipboard-image.mjs",
 	"test/verify-codex-auth.mjs",
 	"test/verify-analytics.mjs",

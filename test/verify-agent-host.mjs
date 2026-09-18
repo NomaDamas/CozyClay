@@ -215,6 +215,40 @@ if (runs("embedded-session-and-receipts")) {
 		expect("each turn mints a fresh turnId", second?.turnId !== body?.turnId && isUuid(second?.turnId));
 	});
 
+	await group("pasted images ride with the turn and clear after send (#367)", async () => {
+		const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+		const sidecar = fakeSidecar({ "/agent/turn$": () => streamResponse([frame({ type: "text.delta", text: "A chair." }), frame({ type: "done" })]) });
+		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "studio", capture: () => {}, now: () => 0 });
+		const store = createAgentChatStore({ transport, surface: "studio", buildContext: () => studioContext() });
+		const accepted = store.addAttachments([{ dataUrl: png, name: "probe.png" }, { dataUrl: png, name: "second.png" }]);
+		expect("pasted pictures are pending until the turn is sent", store.getState().pendingAttachments.length === 2 && accepted.rejected === 0, JSON.stringify(accepted));
+		expect("each pending picture is addressable for removal", store.getState().pendingAttachments.every((entry) => typeof entry.id === "string" && entry.id.length > 0));
+		store.removeAttachment(store.getState().pendingAttachments[1].id);
+		expect("removing a thumbnail drops exactly that picture", store.getState().pendingAttachments.length === 1 && store.getState().pendingAttachments[0].name === "probe.png");
+		const overflow = store.addAttachments([{ dataUrl: png }, { dataUrl: png }, { dataUrl: png }, { dataUrl: png }]);
+		expect("a fifth picture is refused rather than silently dropped", store.getState().pendingAttachments.length === 4 && overflow.rejected === 1, JSON.stringify(overflow));
+		store.clearAttachments();
+		store.addAttachments([{ dataUrl: png, name: "probe.png" }]);
+		await store.send("what is in the attached image?", { attachFrame: false, model: "gpt-5.1-codex" });
+		const body = sidecar.calls.filter((call) => call.path === "/agent/turn").at(-1).body;
+		expect("the turn body carries the pasted picture", body?.attachments?.[0]?.dataUrl === png && body.attachments[0].name === "probe.png", JSON.stringify(Object.keys(body?.attachments?.[0] ?? {})));
+		let accepts = true;
+		try { validateStudioTurnEnvelope(body); } catch (error) { accepts = false; expect("a turn with an attachment still satisfies the frozen envelope", false, `${error.code} ${error.message} ${JSON.stringify(error.details)}`); }
+		if (accepts) expect("a turn with an attachment still satisfies the frozen envelope", true);
+		expect("the composer is emptied of its attachments after send", store.getState().pendingAttachments.length === 0, JSON.stringify(store.getState().pendingAttachments));
+		const bubble = store.getState().items.find((item) => item.kind === "user");
+		expect("the user bubble keeps the picture it was sent with", bubble?.attachments?.[0]?.dataUrl === png, JSON.stringify(bubble?.attachments?.length));
+		await store.send("and now?", { attachFrame: false, model: "gpt-5.1-codex" });
+		const second = sidecar.calls.filter((call) => call.path === "/agent/turn").at(-1).body;
+		expect("the next turn does not re-send the same picture", second?.attachments === undefined, JSON.stringify(second?.attachments));
+
+		const dock = fakeSidecar({ "/agent/turn$": () => streamResponse([frame({ type: "done" })]) });
+		const dockStore = createAgentChatStore({ transport: createHttpTransport({ fetchImpl: dock.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 }), surface: "workflow" });
+		await dockStore.send("describe this", { attachments: [{ dataUrl: png, name: "probe.png" }] });
+		const dockBody = dock.calls.find((call) => call.path === "/agent/turn").body;
+		expect("the Workflow dock sends the same top-level field", dockBody?.attachments?.[0]?.dataUrl === png && !Object.hasOwn(dockBody, "surface"), JSON.stringify(Object.keys(dockBody)));
+	});
+
 	await group("synchronous receipts inside tool.done reach the host", async () => {
 		// #362: arrange_*/frame_shot/patch_elements/undo_edit return their receipt
 		// as the tool result, not as a `receipt` frame — the host highlight must
