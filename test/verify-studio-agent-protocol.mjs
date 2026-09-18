@@ -8,6 +8,7 @@ import * as protocol from "../src/studio-agent-protocol.js";
 import * as contextTools from "../src/studio-agent-context.js";
 import { STUDIO_ELEMENTS } from "../src/studio-elements.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
+import { createFakeModel } from "./fixtures/fake-model.mjs";
 
 export const uuid = "00000000-0000-4000-8000-000000000001";
 export function contextFixture() {
@@ -41,12 +42,13 @@ export function receiptFixture(status = "applied") {
 const rejects = (fn, code) => assert.throws(fn, e => e instanceof Error && (code ? e.code === code : typeof e.code === "string"));
 
 export async function withHttp(run, options = {}) {
-	const calls = [];
-	const codex = { parseQuotaHeaders: () => ({ primary: {}, credits: {} }), streamResponses(request) {
-		calls.push(request);
+	const fakeModel = createFakeModel({ provider: "openai-codex", modelId: "gpt-6-astra", modelName: "GPT-6 Astra" });
+	fakeModel.script([{ type: "text", text: "" }]);
+	const calls = fakeModel.calls;
+	const codex = { parseQuotaHeaders: () => ({ primary: {}, credits: {} }), streamResponses() {
 		return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() { yield { type: "response.completed", response: { status: "completed" } }; } };
 	} };
-	const handler = createAgentHandler({ auth: { getAccessToken: async () => "fake-token" }, codex, handlers: [], liveHub: {}, port: () => server.address().port, ...options });
+	const handler = createAgentHandler({ auth: { getAccessToken: async () => "fake-token" }, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, handlers: [], liveHub: {}, port: () => server.address().port, ...options });
 	const server = createServer((req, res) => handler(req, res).catch(error => { res.writeHead(500); res.end(error.message); }));
 	const ready = once(server, "listening"); server.listen(0, "127.0.0.1"); await ready;
 	const origin = `http://127.0.0.1:${server.address().port}`;
