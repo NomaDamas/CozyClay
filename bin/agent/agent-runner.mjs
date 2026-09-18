@@ -171,7 +171,10 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 
 		const adapters = async () => {
 			const { toAgentTools } = await import("./pi-tools.mjs");
-			return toAgentTools(tools, { signal: state.lastInput?.signal, emit: state.lastInput?.emit });
+			return toAgentTools(tools, { signal: state.lastInput?.signal, emit: (event) => state.lastInput?.emit?.(event) }).map((tool) => ({
+				...tool,
+				execute: (toolCallId, params, onUpdate) => tool.execute(toolCallId, params, state.lastInput?.signal, onUpdate),
+			}));
 		};
 
 		const emitQuota = (queue, input, response, model) => {
@@ -191,7 +194,12 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		const ensureHarness = async (input) => {
 			const { pi, models: registry } = await ensureModels();
 			const { resolveModel } = await import("./providers.mjs");
-			const selected = await resolveModel(input.model || DEFAULT_MODEL, { models: registry });
+			const requested = input.model || DEFAULT_MODEL;
+			const slash = requested.indexOf("/");
+			const provider = slash === -1 ? "openai-codex" : requested.slice(0, slash);
+			const modelId = slash === -1 ? requested : requested.slice(slash + 1);
+			const direct = registry.getModel(provider, modelId);
+			const selected = direct ? { provider, modelId, model: direct } : await resolveModel(requested, { models: registry });
 			if (!state.harness) {
 				state.harness = (await pi.AgentHarness.create({
 					session: state.durable,
@@ -226,6 +234,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 
 		const mapEvents = (queue, input) => {
 			const toolStartedAt = new Map();
+			const unknownCalls = new Set();
+			const knownTools = new Set((Array.isArray(tools) ? tools : []).map((tool) => tool.name));
 			const eventUnsubscribers = [];
 			const pushFrame = (frame) => {
 				if (state.active && !state.active.quotaSent && frame.type !== "quota") state.active.pendingFrames.push(frame);
@@ -235,6 +245,15 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			listen("message_update", (event) => {
 				if (event.event?.type === "text_delta") pushFrame({ type: "text.delta", text: event.event.delta });
 				if (event.event?.type === "error") pushFrame(errorFrame(event.event.error, event.event.reason === "aborted"));
+				if (event.event?.type === "toolcall_end") {
+					const call = event.event.toolCall;
+					if (call && !knownTools.has(call.name) && !unknownCalls.has(call.id)) {
+						unknownCalls.add(call.id);
+						toolStartedAt.set(call.id, clock());
+						pushFrame({ type: "tool.start", callId: call.id, name: call.name, label: call.name.replaceAll("_", " "), args: summariseCanvasResult(call.arguments) });
+						pushFrame({ type: "tool.done", callId: call.id, ok: false, elapsedMs: 0, error: `Unknown tool: ${call.name}` });
+					}
+				}
 			});
 			listen("tool_start", (event) => {
 				toolStartedAt.set(event.toolCallId, clock());

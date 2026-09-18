@@ -12,6 +12,7 @@ export const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const SCOPE = "openid profile email offline_access";
 const DEFAULT_FILE = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cozyclay", "codex-auth.json");
 const tokenFile = process.env.COZYCLAY_CODEX_AUTH_FILE || DEFAULT_FILE;
+const providerKeysFile = join(process.env.COZYCLAY_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cozyclay"), "providers.json");
 let tokens = null;
 let authServer = null;
 let authState = null;
@@ -35,10 +36,19 @@ const clearTokens = () => {
 };
 const decodeJwt = (value) => { try { return JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString()); } catch { return {}; } };
 const claims = () => decodeJwt(readTokens()?.id_token || "");
+function providersConfigured() {
+	const configured = new Set();
+	for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"]) if (process.env[name]?.trim()) configured.add(name);
+	try {
+		const saved = JSON.parse(readFileSync(providerKeysFile, "utf8"));
+		for (const [id, value] of Object.entries(saved || {})) if (value?.key?.trim()) configured.add(id);
+	} catch {}
+	return configured.size;
+}
 export function status() {
 	const claim = claims();
 	const auth = claim["https://api.openai.com/auth"] || {};
-	return { signedIn: !!readTokens()?.refresh_token, email: claim.email || null, plan: auth.chatgpt_plan_type || null, accountId: auth.chatgpt_account_id || null, expiresAt: readTokens()?.expires_at || null };
+	return { signedIn: !!readTokens()?.refresh_token, email: claim.email || null, plan: auth.chatgpt_plan_type || null, accountId: auth.chatgpt_account_id || null, expiresAt: readTokens()?.expires_at || null, providersConfigured: providersConfigured() };
 }
 export function readStored() {
 	const current = readTokens();

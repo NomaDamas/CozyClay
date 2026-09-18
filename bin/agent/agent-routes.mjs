@@ -8,6 +8,7 @@ import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace, summa
 
 import { createVideoAdapters } from "./video-adapters.mjs";
 import { createSessionStore, transcriptFromHistory } from "./session-store.mjs";
+import { createAgentRunner } from "./agent-runner.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -272,7 +273,7 @@ function liveToolsRuntime() {
 	}).catch((error) => ({ error }));
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
+export function createAgentHandler({ auth = defaultAuth, codex, models, fauxProvider, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();
@@ -289,6 +290,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		} catch { return ""; }
 	};
 	const sessions = new Map();
+	const workflowRunners = new Map();
 	// Tests hand in a store of their own; only the real sidecar writes the
 	// author's config dir (#375).
 	const sessionStore = injectedSessionStore ?? createSessionStore();
@@ -687,139 +689,94 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		sessions.set(value.sessionId, session);
 		const controller = new AbortController();
 		const { signal } = controller;
-		Object.assign(session, { running: true, controller, signal });
+		Object.assign(session, { running: true, controller, signal, emit: send });
 		const disconnect = () => controller.abort();
 		res.once("close", disconnect);
-		// The initiating browser owns the turn ID and requested/terminal capture.
-		// Legacy/local callers without an ID retain behavior but are unobserved.
 		const turnId = typeof value.turn_id === "string" && /^[a-f0-9]{32}$/.test(value.turn_id) ? value.turn_id : null;
 		const telemetry = createTurnTelemetry(send, turnId);
+		const telemetryTools = new Map();
 		let turnOutcome = "succeeded";
 		let turnFailureCode = null;
 		let toolFailed = false;
-		let streamsCompleted = true;
 		let quota;
-		const observeHeaders = (headers) => {
-			const next = quotaEvent(codex, headers);
-			if (!quota) send(next);
-			quota = next;
+		const quotaForResponse = (headers, model) => {
+			if (quota) return quota;
+			quota = model?.provider === "openai-codex" ? quotaEvent(codex, headers) : {
+				type: "quota", plan: null,
+				primary: { usedPercent: null, windowMinutes: null, resetAt: null },
+				credits: { has: null },
+			};
+			return quota;
 		};
-		let refreshed = false;
-		// A stream that fails with server_is_overloaded usually succeeds on the
-		// next attempt; retry twice before reporting it.
-		const retryOverloaded = async (operation, attempts = 2) => {
-			for (let attempt = 0; ; attempt += 1) {
-				try { return await operation(); } catch (error) {
-					if (!["overloaded", "server_error"].includes(error.code) || attempt >= attempts || signal.aborted) throw error;
-					await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
+		const emitFrame = (frame) => {
+			if (frame.type === "tool.start") {
+				telemetryTools.set(frame.callId, { execution: telemetry.toolStarted(agentToolCategory(frame.name)), name: frame.name });
+				return send(frame);
+			}
+			if (frame.type === "tool.done") {
+				send(frame);
+				const record = telemetryTools.get(frame.callId);
+				if (record) {
+					if (frame.ok && appliedCanvasResult(record.name, frame.result)) telemetry.applied();
+					record.execution.executed(frame.ok ? "succeeded" : (signal.aborted ? "cancelled" : "failed"));
 				}
+				if (!frame.ok) toolFailed = true;
+				return;
 			}
-		};
-		const retryAuth = async (operation) => {
-			try { signal.throwIfAborted(); return await operation(); }
-			catch (error) {
-				if (error.status !== 401 || refreshed || signal.aborted) throw error;
-				refreshed = true;
-				if (!await auth.getAccessToken()) throw error;
-				signal.throwIfAborted();
-				return operation();
+			if (frame.type === "error") {
+				turnOutcome = signal.aborted || frame.code === "aborted" ? "cancelled" : "failed";
+				turnFailureCode = signal.aborted ? "aborted" : frame.code;
+				return send(frame);
 			}
+			if (frame.type === "done") {
+				if (turnOutcome === "succeeded") telemetry.finished("succeeded", null);
+				else telemetry.finished(turnOutcome, turnFailureCode);
+			}
+			send(frame);
 		};
 		const turn = async () => {
-			if (!await auth.getAccessToken()) throw Object.assign(new Error("Authentication required."), { status: 401 });
-			const dependencies = await runtime;
-			session.codex = { editImage: (args) => retryAuth(() => codex.editImage(args)) };
-			const tools = createAgentTools({ ...dependencies, session, emit: send });
-			const executeTool = async (item, override) => {
-				signal.throwIfAborted();
-				const execution = telemetry.toolStarted(advisory(() => agentToolCategory(item.name), "other"));
-				let cardStarted = false;
+			const accessToken = await auth.getAccessToken();
+			let workflowModels = models;
+			if (!accessToken && workflowModels) {
+				const { resolveModel } = await import("./providers.mjs");
 				try {
-					const tool = override ?? tools.find((entry) => entry.name === item.name);
-					if (!tool) throw new Error("Unknown tool.");
-					const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments;
-					send({ type: "tool.start", callId: item.call_id, name: item.name, label: item.name.replaceAll("_", " "), args });
-					cardStarted = true;
-					if (dependencies.error) throw dependencies.error;
-					const result = await tool.handler(args);
-					advisory(() => { if (appliedCanvasResult(item.name, result)) telemetry.applied(); });
-					signal.throwIfAborted();
-					send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: execution.elapsedMs(), result });
-					execution.executed("succeeded");
-					return result;
-				} catch (error) {
-					toolFailed = true;
-					if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message);
-					if (cardStarted) send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: execution.elapsedMs(), error: errorInfo(error).message });
-					execution.executed(signal.aborted ? "cancelled" : "failed");
-					throw error;
-				}
-			};
-			let text = value.text;
-			if (value.attachFrame) {
-				const captured = await executeTool({ call_id: "attached-frame", name: "capture_blocking_frame", arguments: {} }, tools.internal.capture);
-				text += `\nAttached frame imageId: ${captured.imageId}`;
+					const resolved = await resolveModel(value.model || "gpt-6-astra", { models: workflowModels });
+					if (!await workflowModels.getAuth(resolved.model)) throw Object.assign(new Error("Authentication required."), { status: 401 });
+				} catch (error) { throw Object.assign(new Error("Authentication required."), { status: 401, cause: error }); }
+			} else if (!accessToken && !workflowModels) throw Object.assign(new Error("Authentication required."), { status: 401 });
+			const dependencies = await runtime;
+			session.codex = { editImage: (args) => codex.editImage(args) };
+			const workflowTools = createAgentTools({ ...dependencies, session, emit: send });
+			let workflowRunner = workflowRunners.get(value.sessionId);
+			if (!workflowRunner) {
+				workflowRunner = createAgentRunner({ models: workflowModels, tools: workflowTools, systemPrompt: SYSTEM_PROMPT, clock, fauxProvider, sessionStore, legacyCodex: workflowModels ? null : codex, onQuota: quotaForResponse });
+				workflowRunners.set(value.sessionId, workflowRunner);
 			}
-			const history = [...session.history, ...attachmentInputItems(value.attachments), { role: "user", content: [{ type: "input_text", text }] }];
-			// runAgentTurn closes over streamResponses and hides its headers. Drive
-			// that same serial loop here so quotas are observable, and retry only
-			// the failed request rather than replaying already-executed scene tools.
-			while (true) {
-				const output = await retryOverloaded(() => retryAuth(async () => {
-					const stream = codex.streamResponses({ input: history, tools: agentToolSchemas(tools), instructions: SYSTEM_PROMPT, model: value.model, effort: value.effort, signal });
-					const headers = stream.headers.then(observeHeaders, () => {});
-					const items = [];
-					let completed = false;
-					try {
-						for await (const event of stream) {
-							signal.throwIfAborted();
-							if (event.type === "response.output_text.delta") send({ type: "text.delta", text: event.delta });
-							if (event.type === "response.output_item.done") items.push(event.item);
-							if (event.type === "response.completed" && (!event.response?.status || event.response.status === "completed")) completed = true;
-							if (event.type === "error" || event.type === "response.failed") {
-								if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] model event:", JSON.stringify(event).slice(0, 600));
-								const code = event.error?.code ?? event.response?.error?.code;
-								throw Object.assign(new Error("Model response failed."), code === "server_is_overloaded" ? { code: "overloaded" } : code === "server_error" ? { code: "server_error" } : {});
-							}
-						}
-						await headers;
-						streamsCompleted &&= completed;
-						return items;
-					} finally { await headers; }
-				}));
-				for (const item of output) {
-					history.push(item); // Preserve reasoning items verbatim.
-					if (item.type === "function_call") {
-						const result = await executeTool(item);
-						history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(result) });
-					}
-				}
-				if (!output.some((item) => item.type === "function_call")) break;
-			}
-			session.history = history;
+			if (!session.modelSession) session.modelSession = await workflowRunner.openSession(value.sessionId, { surface: "workflow" });
+			const turnInput = { surface: "workflow", sessionId: value.sessionId, text: value.text, model: value.model || "gpt-6-astra", effort: value.effort, attachments: value.attachments, attachFrame: value.attachFrame, signal, emit: send, quotaEvent: quotaForResponse };
+			for await (const frame of session.modelSession.start(turnInput)) emitFrame(frame);
 		};
-		try { await requestContext.run(observeHeaders, turn); }
+		try { await turn(); }
 		catch (error) {
 			turnOutcome = signal.aborted ? "cancelled" : "failed";
 			turnFailureCode = signal.aborted ? "aborted" : agentFailureCode(error, signal, toolFailed);
-			if (!signal.aborted) {
-				if (error.headers) observeHeaders(error.headers);
-				if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.detail ?? error?.body ?? "").slice(0, 300));
-				send({ type: "error", ...errorInfo(error, quota) });
-			}
-		} finally {
-			if (signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
-			// Stream EOF is not completion evidence. Preserve the agent's existing
-			// UI/loop behavior, but leave truncated model turns unresolved.
-			if (turnOutcome !== "succeeded" || streamsCompleted) telemetry.finished(turnOutcome, turnFailureCode);
-			session.running = false; send({ type: "done" }); res.end(); res.off("close", disconnect);
+			if (!signal.aborted) emitFrame({ type: "error", ...errorInfo(error, quota) });
+			if (!res.writableEnded) emitFrame({ type: "done" });
+		}
+		finally {
+			if (!res.writableEnded) res.end();
+			session.running = false;
+			res.off("close", disconnect);
 		}
 		return true;
 	};
+
 	handle.close = async () => {
 		unsubscribe?.();
 		for (const session of sessions.values()) session.controller?.abort();
 		for (const session of studioSessions.values()) session.controller?.abort();
+		for (const runner of workflowRunners.values()) await runner.close?.();
+		workflowRunners.clear();
 		if (ownedStudioRuntime?.dispose) await ownedStudioRuntime.dispose();
 		studioSessions.clear(); studioEvents.clear(); studioOwnerTokens.clear();
 		sessions.clear();
