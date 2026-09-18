@@ -234,8 +234,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 
 		const mapEvents = (queue, input) => {
 			const toolStartedAt = new Map();
-			const unknownCalls = new Set();
-			const knownTools = new Set((Array.isArray(tools) ? tools : []).map((tool) => tool.name));
+			const toolStarted = new Set();
+			const toolCompleted = new Set();
 			const eventUnsubscribers = [];
 			const pushFrame = (frame) => {
 				if (state.active && !state.active.quotaSent && frame.type !== "quota") state.active.pendingFrames.push(frame);
@@ -245,22 +245,23 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			listen("message_update", (event) => {
 				if (event.event?.type === "text_delta") pushFrame({ type: "text.delta", text: event.event.delta });
 				if (event.event?.type === "error") pushFrame(errorFrame(event.event.error, event.event.reason === "aborted"));
-				if (event.event?.type === "toolcall_end") {
-					const call = event.event.toolCall;
-					if (call && !knownTools.has(call.name) && !unknownCalls.has(call.id)) {
-						unknownCalls.add(call.id);
-						toolStartedAt.set(call.id, clock());
-						pushFrame({ type: "tool.start", callId: call.id, name: call.name, label: call.name.replaceAll("_", " "), args: summariseCanvasResult(call.arguments) });
-						pushFrame({ type: "tool.done", callId: call.id, ok: false, elapsedMs: 0, error: `Unknown tool: ${call.name}` });
-					}
-				}
 			});
 			listen("tool_start", (event) => {
+				if (toolStarted.has(event.toolCallId)) return;
+				toolStarted.add(event.toolCallId);
 				toolStartedAt.set(event.toolCallId, clock());
 				const tool = (Array.isArray(tools) ? tools : []).find((candidate) => candidate.name === event.toolName);
 				pushFrame({ type: "tool.start", callId: event.toolCallId, name: event.toolName, label: tool?.label || event.toolName.replaceAll("_", " "), args: summariseCanvasResult(event.args) });
 			});
 			listen("tool_end", (event) => {
+				if (toolCompleted.has(event.toolCallId)) return;
+				if (!toolStarted.has(event.toolCallId)) {
+					toolStarted.add(event.toolCallId);
+					toolStartedAt.set(event.toolCallId, clock());
+					const tool = (Array.isArray(tools) ? tools : []).find((candidate) => candidate.name === event.toolName);
+					pushFrame({ type: "tool.start", callId: event.toolCallId, name: event.toolName, label: tool?.label || event.toolName.replaceAll("_", " "), args: summariseCanvasResult(event.args) });
+				}
+				toolCompleted.add(event.toolCallId);
 				const started = toolStartedAt.get(event.toolCallId) ?? clock();
 				const elapsedMs = Math.round(clock() - started);
 				const details = event.result?.details;

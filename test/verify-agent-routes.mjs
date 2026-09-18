@@ -8,6 +8,12 @@ import { createAgentHandler, REASONING_EFFORTS } from "../bin/agent/agent-routes
 import { createFakeModel } from "./fixtures/fake-model.mjs";
 
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+function assertUniqueToolPairs(frames, message) {
+	const starts = frames.filter((event) => event.type === "tool.start");
+	const dones = frames.filter((event) => event.type === "tool.done");
+	assert.equal(new Set(starts.map((event) => event.callId)).size, starts.length, `${message}: tool call ids are unique`);
+	for (const start of starts) assert.equal(dones.filter((event) => event.callId === start.callId).length, 1, `${message}: ${start.callId} has one tool.done`);
+}
 const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
 const calls = [];
@@ -64,6 +70,7 @@ assert.equal(new Set(executionTelemetry.slice(0, 3).map((event) => event.telemet
 assert.ok(executionTelemetry.slice(0, 3).every((event) => /^[a-f0-9]{32}$/.test(event.telemetry_id)));
 const toolEvents = events.filter((event) => event.type === "tool.start" || event.type === "tool.done");
 assert.deepEqual(toolEvents.map((event) => event.callId), ["c1", "c1", "c2", "c2", "c3", "c3"], "every tool.start is paired with its tool.done");
+assertUniqueToolPairs(events, "golden parity W");
 assert.ok(toolEvents.every((event) => event.type !== "tool.done" || event.ok), "every scripted tool call succeeds");
 assert.equal(events.some((event) => event.type === "image"), false, "the canvas turn builds nodes instead of emitting images");
 assert.equal(JSON.stringify(fauxMain.calls[0].messages).includes(png), false);
@@ -98,11 +105,17 @@ assert.equal(JSON.stringify(fauxMain.calls[0].messages).includes(png), false);
 	const unknownHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: unknown.models, fauxProvider: unknown.fauxProvider, codex: fakeCodex, liveHub: fakeLive, port: () => unknownServer.address().port });
 	unknownServer = createServer((req, res) => unknownHandler(req, res).catch(() => {})); unknownServer.listen(0, "127.0.0.1"); await once(unknownServer, "listening");
 	const unknownOrigin = `http://127.0.0.1:${unknownServer.address().port}`;
-	const unknownText = await fetch(`${unknownOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: unknownOrigin }, body: JSON.stringify({ sessionId: "unknown", text: "hi", model: "faux/scripted" }) }).then((r) => r.text());
+	const unknownText = await fetch(`${unknownOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: unknownOrigin }, body: JSON.stringify({ sessionId: "unknown", text: "hi", model: "faux/scripted", turn_id: "b".repeat(32) }) }).then((r) => r.text());
 	const unknownEvents = [...unknownText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
-	const unknownDone = unknownEvents.findIndex((event) => event.type === "tool.done");
-	assert.equal(unknownEvents[unknownDone]?.ok, false);
+	assert.deepEqual(unknownEvents.map((event) => event.type), ["quota", "execution_tool_started", "tool.start", "tool.done", "execution_telemetry", "text.delta", "execution_telemetry", "done"], "unknown tool frame order is stable");
+	assertUniqueToolPairs(unknownEvents, "unknown tool");
+	const unknownDone = unknownEvents.find((event) => event.type === "tool.done");
+	assert.equal(unknownDone?.callId, "u1");
+	assert.equal(unknownDone?.ok, false);
+	assert.match(unknownDone?.error || "", /unknown_tool.*unavailable/i);
 	assert.equal(unknownEvents.at(-1).type, "done");
+	const errorResult = unknown.calls[1]?.messages?.find((message) => message.role === "toolResult" && message.toolCallId === "u1");
+	assert.equal(errorResult?.isError, true, "the faux model receives an error tool result for the unknown call");
 	await new Promise((resolve) => unknownServer.close(resolve));
 	console.log("PASS unknown Workflow tool returns an error result and the turn ends");
 }
