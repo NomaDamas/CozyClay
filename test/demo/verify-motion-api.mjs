@@ -37,11 +37,11 @@ globalThis.fetch = async (url, options = {}) => {
   if (String(url).startsWith("https://upload.example.test/")) return new Response(null, { status: 200 });
   if (String(url) === "https://queue.fal.run/minimax/h3-max-turbo/image-to-video") {
     const body = JSON.parse(options.body);
-    assert.match(body.input.image_url, /^https:\/\/cdn\.example\.test/u);
-    assert.match(body.input.end_image_url, /^https:\/\/cdn\.example\.test/u);
-    assert.equal(body.input.resolution, "480P");
-    assert.equal(body.input.prompt_expansion_mode, "disabled");
-    assert.equal(body.input.duration, 5);
+    assert.match(body.image_url, /^https:\/\/cdn\.example\.test/u);
+    assert.match(body.end_image_url, /^https:\/\/cdn\.example\.test/u);
+    assert.equal(body.resolution, "480P");
+    assert.equal(body.prompt_expansion_mode, "disabled");
+    assert.equal(body.duration, 5);
     return new Response(JSON.stringify({ request_id: "req-motion-test", status_url: "https://queue.example.test/status", response_url: "https://queue.example.test/result" }), { status: 200 });
   }
   if (String(url) === "https://queue.example.test/status") return new Response(JSON.stringify({ status: "COMPLETED" }), { status: 200 });

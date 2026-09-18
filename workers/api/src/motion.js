@@ -84,7 +84,7 @@ async function submitFal(inputs, env) {
   const response = await fetch(`${QUEUE_ORIGIN}/${MODEL}`, {
     method: "POST",
     headers: falHeaders(env, "application/json"),
-    body: JSON.stringify({ input: inputs }),
+    body: JSON.stringify(inputs),
   });
   if (!response.ok) throw fail("fal_submit_failed", "Fal rejected the motion request.", 502);
   return response.json();
