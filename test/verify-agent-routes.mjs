@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
@@ -252,23 +252,61 @@ server.close();
 	rmSync(sessionDir, { recursive: true, force: true });
 	console.log("PASS Studio sessions persist, lazy-load across route instances, list and derive transcript views");
 
-	// #372: pasted pictures precede their turn text in the history; the
-	// transcript view puts them back on that text's bubble as thumbnails.
+	// #372/#379: pasted pictures precede their turn text in the history; the
+	// transcript view puts them back on that text's bubble as thumbnails, now
+	// over the v2 pi Message shape.
 	const { transcriptFromHistory } = await import("../bin/agent/session-store.mjs");
 	const png = "data:image/png;base64,iVBORw0KGgo=";
 	const withAttachments = transcriptFromHistory([
-		{ role: "user", content: [{ type: "input_text", text: "User attachment probe.png" }, { type: "input_image", image_url: png }] },
-		{ role: "user", content: [{ type: "input_text", text: "User attachment 2" }, { type: "input_image", image_url: png }] },
-		{ role: "user", content: [{ type: "input_text", text: "<studio-context>{}</studio-context>\nwhat is in these?" }] },
-		{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Two probes." }] },
-		{ role: "user", content: [{ type: "input_text", text: "User attachment big.png" }] },
-		{ role: "user", content: [{ type: "input_text", text: "and this one?" }] },
+		{ role: "user", content: [{ type: "text", text: "User attachment probe.png" }, { type: "image", data: png, mimeType: "image/png" }] },
+		{ role: "user", content: [{ type: "text", text: "User attachment 2" }, { type: "image", data: png, mimeType: "image/png" }] },
+		{ role: "user", content: "<studio-context>{}</studio-context>\nwhat is in these?" },
+		{ role: "assistant", content: [{ type: "text", text: "Two probes." }] },
+		{ role: "user", content: [{ type: "text", text: "User attachment big.png" }] },
+		{ role: "user", content: "and this one?" },
 	]);
 	assert.deepEqual(withAttachments.map((item) => item.kind), ["user", "assistant", "user"], "attachment items fold into their turn's user bubble");
 	assert.equal(withAttachments[0].text, "what is in these?");
 	assert.deepEqual(withAttachments[0].attachments, [{ name: "probe.png", dataUrl: png }, { name: "2", dataUrl: png }]);
 	assert.equal(withAttachments[2].attachments, undefined, "an attachment whose image was too large to persist leaves no empty thumbnail");
 	console.log("PASS resumed transcripts carry pasted attachments as thumbnails on the user bubble");
+
+	// #379: the store persists pi Messages under a v2 header, round-trips them
+	// from a fresh instance, and treats a headerless (pre-v2) file as absent.
+	{
+		const { createSessionStore } = await import("../bin/agent/session-store.mjs");
+		const v2Dir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-v2-"));
+		const messages = [
+			{ role: "user", content: "hello there" },
+			{ role: "assistant", content: [{ type: "text", text: "hi!" }], provider: "openai", model: "gpt-6-astra", usage: { inputTokens: 3, outputTokens: 2 }, stopReason: "stop" },
+			{ role: "toolResult", toolCallId: "call-1", toolName: "frame_shot", content: [{ type: "text", text: "ok" }], details: { receiptId: "receipt-9" }, isError: false },
+		];
+		const writer = createSessionStore(v2Dir);
+		writer.append("round-trip", messages, { surface: "studio" });
+		const reader = createSessionStore(v2Dir);
+		const read = reader.read("round-trip");
+		assert.deepEqual(read.history, messages, "a fresh store instance reads back exactly what was appended");
+		const historyFile = readFileSync(join(v2Dir, "round-trip.jsonl"), "utf8");
+		const header = JSON.parse(historyFile.split("\n")[0]);
+		assert.deepEqual(header, { format: "cozyclay-agent-v2", version: 2, sessionId: "round-trip" }, "the file opens with the v2 header line");
+
+		// A headerless jsonl (pre-v2, or anything foreign) is invisible to read()
+		// and list(), and logs exactly one warning across both lookups.
+		writeFileSync(join(v2Dir, "legacy.jsonl"), `${JSON.stringify({ role: "user", content: "old shape" })}\n`, { mode: 0o600 });
+		writeFileSync(join(v2Dir, "legacy.meta.json"), `${JSON.stringify({ sessionId: "legacy", surface: "studio", updatedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+		const warnings = [];
+		const originalWarn = console.warn;
+		console.warn = (...args) => warnings.push(args.join(" "));
+		try {
+			assert.equal(reader.read("legacy"), null, "a headerless file is treated as absent by read()");
+			const listed = reader.list({ surface: "studio" });
+			assert.equal(listed.some((entry) => entry.sessionId === "legacy"), false, "list() omits the legacy session");
+		} finally { console.warn = originalWarn; }
+		assert.equal(warnings.length, 1, `exactly one warning across the read() and list() lookups: ${JSON.stringify(warnings)}`);
+		assert.match(warnings[0], /\[agent\] skipping legacy session legacy/);
+		rmSync(v2Dir, { recursive: true, force: true });
+		console.log("PASS session store v2: round-trips pi messages under a header, skips a legacy headerless file with one warning");
+	}
 
 	// #375: a handler built with its own session store never touches the disk
 	// store, so suites that only need the routes leave no session files behind.
