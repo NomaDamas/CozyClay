@@ -271,6 +271,22 @@ server.close();
 	assert.equal(withAttachments[2].attachments, undefined, "an attachment whose image was too large to persist leaves no empty thumbnail");
 	console.log("PASS resumed transcripts carry pasted attachments as thumbnails on the user bubble");
 
+	// gate-5 fix #1: attachmentNames names the attachment in content order,
+	// ahead of any adjacent label text part.
+	const namedAttachment = transcriptFromHistory([
+		{ role: "user", content: [{ type: "text", text: "What is shown?" }, { type: "image", data: "AA==", mimeType: "image/png" }], attachmentNames: ["named.png"] },
+	]);
+	assert.deepEqual(namedAttachment, [{ kind: "user", text: "What is shown?", attachments: [{ name: "named.png", dataUrl: "data:image/png;base64,AA==" }] }], "message.attachmentNames names the pasted picture");
+	console.log("PASS attachmentNames names a pi attachment ahead of an adjacent label");
+
+	// gate-5 fix #2: ordinary text that precedes a `User attachment <name>`
+	// label in the SAME message is turn text, never folded into the label.
+	const inlineLabelAttachment = transcriptFromHistory([
+		{ role: "user", content: [{ type: "text", text: "What is shown?" }, { type: "text", text: "User attachment inline.png" }, { type: "image", data: "AA==", mimeType: "image/png" }] },
+	]);
+	assert.deepEqual(inlineLabelAttachment, [{ kind: "user", text: "What is shown?", attachments: [{ name: "inline.png", dataUrl: "data:image/png;base64,AA==" }] }], "an adjacent label never leaks into the bubble text");
+	console.log("PASS a User attachment label that follows ordinary text stays out of the bubble text");
+
 	// #379: the store persists pi Messages under a v2 header, round-trips them
 	// from a fresh instance, and treats a headerless (pre-v2) file as absent.
 	{
@@ -306,6 +322,25 @@ server.close();
 		assert.match(warnings[0], /\[agent\] skipping legacy session legacy/);
 		rmSync(v2Dir, { recursive: true, force: true });
 		console.log("PASS session store v2: round-trips pi messages under a header, skips a legacy headerless file with one warning");
+
+		// gate-5 fix #3: a file whose literal first line is blank (starts with
+		// '\n') is legacy too — list() must not treat that blank truthiness as a v2 header.
+		const blankDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-blank-"));
+		const blankStore = createSessionStore(blankDir);
+		writeFileSync(join(blankDir, "blank-first.jsonl"), `\n${JSON.stringify({ role: "user", content: "old shape" })}\n`, { mode: 0o600 });
+		writeFileSync(join(blankDir, "blank-first.meta.json"), `${JSON.stringify({ sessionId: "blank-first", surface: "studio", updatedAt: new Date().toISOString() })}\n`, { mode: 0o600 });
+		const blankWarnings = [];
+		const originalBlankWarn = console.warn;
+		console.warn = (...args) => blankWarnings.push(args.join(" "));
+		try {
+			assert.equal(blankStore.read("blank-first"), null, "a blank first line is treated as absent by read()");
+			const blankListed = blankStore.list({ surface: "studio" });
+			assert.equal(blankListed.some((entry) => entry.sessionId === "blank-first"), false, "list() omits a session whose jsonl starts with a blank line");
+		} finally { console.warn = originalBlankWarn; }
+		assert.equal(blankWarnings.length, 1, `exactly one warning across the read() and list() lookups: ${JSON.stringify(blankWarnings)}`);
+		assert.match(blankWarnings[0], /\[agent\] skipping legacy session blank-first/);
+		rmSync(blankDir, { recursive: true, force: true });
+		console.log("PASS session store v2: list() also skips a legacy session whose jsonl starts with a blank first line");
 	}
 
 	// #375: a handler built with its own session store never touches the disk

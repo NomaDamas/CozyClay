@@ -145,10 +145,13 @@ export function createSessionStore(dir = agentSessionsDir()) {
 			return names.filter((name) => name.endsWith(".meta.json")).flatMap((name) => {
 				const sessionId = name.slice(0, -".meta.json".length);
 				try {
-					let firstLine = "";
+					// null means "no jsonl file at all" (fine, listed on meta alone); any
+					// string — including an empty one from a file that starts with '\n' —
+					// must parse as the v2 header or the session is legacy.
+					let firstLine = null;
 					try { firstLine = readFileSync(join(dir, `${sessionId}.jsonl`), "utf8").split("\n", 1)[0] ?? ""; }
 					catch (error) { if (error?.code !== "ENOENT") throw error; }
-					if (firstLine && !isV2Header(firstLine)) { warnLegacySession(sessionId); return []; }
+					if (firstLine !== null && !isV2Header(firstLine)) { warnLegacySession(sessionId); return []; }
 					const meta = JSON.parse(readFileSync(join(dir, name), "utf8"));
 					return (!surface || meta.surface === surface) ? [meta] : [];
 				} catch { return []; }
@@ -179,17 +182,37 @@ function legacyAttachmentPart(item) {
 	return { name: label.slice(ATTACHMENT_LABEL.length), dataUrl: image?.image_url ?? image?.imageUrl ?? image?.dataUrl ?? null };
 }
 
-/** A pasted picture in the pi message shape: a text part naming it, followed
- * by an image part (or the label alone when the image was too large to keep). */
-function piAttachmentEntry(item) {
-	if (item?.role !== "user" || !Array.isArray(item.content)) return null;
-	const textPart = item.content.find((part) => part?.type === "text");
-	const label = textPart?.text || "";
-	if (!label.startsWith(ATTACHMENT_LABEL)) return null;
-	const image = item.content.find((part) => part?.type === "image");
-	let dataUrl = null;
-	if (image) dataUrl = typeof image.data === "string" && image.data.startsWith("data:") ? image.data : (image.data ? `data:${image.mimeType || "image/png"};base64,${image.data}` : null);
-	return { name: label.slice(ATTACHMENT_LABEL.length), dataUrl };
+/** The plain text and pasted-picture attachments of one pi user message.
+ * A `User attachment <name>` text part is a LABEL for the image part that
+ * follows it, never rendered into the bubble text; every other text part is
+ * ordinary turn text, joined with '\n'. Each image maps to an attachment in
+ * content order: its name comes from `attachmentNames[i]` when present, else
+ * the adjacent label, else `attachment-<i+1>`. An image with no bytes (too
+ * large to persist) is dropped rather than left as an empty thumbnail. */
+function piUserContentParts(content, attachmentNames) {
+	if (typeof content === "string") return { text: content, attachments: [] };
+	if (!Array.isArray(content)) return { text: "", attachments: [] };
+	const names = Array.isArray(attachmentNames) ? attachmentNames : [];
+	const texts = [];
+	const attachments = [];
+	let pendingLabel = null;
+	let imageIndex = 0;
+	for (const part of content) {
+		if (part?.type === "text") {
+			const text = part.text || "";
+			if (text.startsWith(ATTACHMENT_LABEL)) { pendingLabel = text.slice(ATTACHMENT_LABEL.length); continue; }
+			if (text) texts.push(text);
+			continue;
+		}
+		if (part?.type === "image") {
+			const name = names[imageIndex] ?? pendingLabel ?? `attachment-${imageIndex + 1}`;
+			const dataUrl = typeof part.data === "string" && part.data.startsWith("data:") ? part.data : (part.data ? `data:${part.mimeType || "image/png"};base64,${part.data}` : null);
+			if (dataUrl) attachments.push({ name, dataUrl });
+			pendingLabel = null;
+			imageIndex += 1;
+		}
+	}
+	return { text: texts.join("\n"), attachments };
 }
 
 function isLegacyItem(item) {
@@ -265,9 +288,10 @@ export function transcriptFromHistory(history = []) {
 
 		// pi Message.
 		if (item?.role === "user") {
-			const attachment = piAttachmentEntry(item);
-			if (attachment) { piPendingAttachments.push(attachment); continue; }
-			flushPiAttachments(cleanUserText(textOf(item.content)));
+			const { text, attachments } = piUserContentParts(item.content, item.attachmentNames);
+			if (attachments.length) piPendingAttachments.push(...attachments);
+			const cleaned = cleanUserText(text);
+			if (cleaned) flushPiAttachments(cleaned);
 			continue;
 		}
 		if (piPendingAttachments.length) flushPiAttachments();
