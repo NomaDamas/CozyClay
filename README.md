@@ -19,12 +19,12 @@
 
 <p align="center">
   <a href="https://cozyclay.org/#try">Try it in the browser</a> ·
-  <a href="https://cozyclay.org/greybox-to-video/">Greybox to AI video</a> ·
-  <a href="https://cozyclay.org/previs-software/">Previs software compared</a> ·
   <a href="#quick-start">Quick start</a> ·
   <a href="#what-you-can-do">Features</a> ·
-  <a href="#ai-control-mcp">AI control</a> ·
+  <a href="#ai-control">AI control</a> ·
+  <a href="#workflow-canvas">Workflow</a> ·
   <a href="#controls">Controls</a> ·
+  <a href="#documentation">Docs</a> ·
   <a href="https://github.com/NomaDamas/CozyClay/issues">Issues</a>
 </p>
 
@@ -44,8 +44,6 @@ npx cozyclay --scene city-block
 
 The studio ships seeded with a pre-generated motion clip, so you can scrub the timeline, drive the cameras and draw a dolly rail straight away — generating *new* motion is optional and uses the Kimodo bridge when configured.
 
-New to the camera? The same seven-step tutorial runs inside the Studio on the City Block set: **Settings ▾ → Camera tutorial**, or open `http://127.0.0.1:5180/app/?tutorial=camera`. Each step points at the control it needs and completes only when you actually make the move.
-
 ## Demo
 
 https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
@@ -55,22 +53,17 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 |  | |
 | --- | --- |
 | **Stage a scene** | Create primitives and set pieces, then move, rotate and scale them with the transform strip's gizmo. Grid snapping is a preference, not a law — hold `Ctrl` mid-drag to invert it. A bird's-eye Top-View drives 2D root waypoints for character paths. **View ▾** on the viewport bar holds the reference grid and Auto Color — Blender's random viewport color, so twenty grey blockout boxes stay tellable apart without touching the colors you authored (captures include the display colors while it is on). |
-| **Fly the camera** | Right-drag flies (WASD walks, Q/E cranes), middle-drag pans, Alt+drag orbits the selection, click selects, `F` frames — the muscle memory you already have from a 3D editor. Selecting the camera switches to Camera mode. **Look through** in the Shot monitor puts you behind the shot camera with the same bindings; click the on-screen **Shot camera** indicator or press `Esc` to return to the free camera. |
+| **Fly the camera** | Right-drag flies (WASD walks, Q/E cranes), middle-drag pans, Alt+drag orbits the selection, click selects, `F` frames — the muscle memory you already have from a 3D editor. Fly, pan and orbit lock the pointer for the hold, so the view can turn past the window edge. Selecting the camera switches to Camera mode. **Look through** in the Shot monitor puts you behind the shot camera with the same bindings; click the on-screen **Shot camera** indicator or press `Esc` to return to the free camera. |
 | **Cut and move the camera** | Add shots on the timeline, draw a dolly rail on the Top-View, set speed, height and crane, and preview the move through the shot camera. Each shot carries a **Target model** (Seedance 2.5, Kling 2, Veo 3, self-hosted MiniMax-H3) and is flagged when the cut runs past that model's limits. |
 | **Export for AI video** | One **Export ▾** menu: a keyframe pack (first/last frame, clip, camera JSON, prompt, README) as a zip, an mp4 of the shot, depth + normal conditioning passes, a storyboard contact sheet, and an OTIO cut list. Seedance 2.5 reads the pack's greybox clip as its white-model reference video, and MiniMax H3, Wan 3.0, LTX Desktop and fal render-to-real accept the same clip. The **Shot Prompt** turns the framing into a structured prompt for the model you picked. |
-| **Undo anything** | Every scene mutation goes through one history store: a drag, a scrub, an inspector edit is exactly one undo entry. `Esc` cancels an in-flight drag and restores the pre-drag transform. |
+| **Undo anything** | Every scene mutation goes through one history store: a drag, a scrub, an inspector edit, an agent's camera key is exactly one undo entry. `Esc` cancels an in-flight drag and restores the pre-drag transform. |
 | **Generate motion** | Pose characters and export poses, sequence multi-phase motion as Prompt Blocks on a resizable timeline, send them to Kimodo, then play the result back with sparse IK correction where the generated motion needs fixing. Draw over a joint's trail to reshape a take, keep most of it and regenerate a window, and step back through its history. |
 | **Capture motion from video or a photo** | Drop a clip or a still: the GPU box runs [GVHMR](https://github.com/zju3dv/GVHMR) and the result is retargeted onto the character with stabilisation, contact correction and a quality gate. |
-| **Direct it with an AI** | Connect Claude — or any MCP client — and ask for a shot in plain language. It places the cast, frames “a low wide profile”, generates multi-phase motion, and the viewport moves in front of you. See [AI control](#ai-control-mcp). Inside the Studio, **View ▾ → Panels → Agent panel** (or `Cmd/Ctrl+B`) opens a chat column that signs in with your ChatGPT account and works the same scene. |
-
-## Requirements
-
-- Node.js 22.13 or newer
-- npm, or bun
-- A Chromium-based browser
-- A machine running Kimodo, for motion generation — run `npm run kimodo:setup` once; the installer detects the host and picks the best-supported backend (see the route table below), then downloads the matching checkpoint and text-encoder stack. An SSH-accessible NVIDIA box is the classic target; the same box runs GVHMR for video and photo mocap (`CCLAY_EXTRACT_BACKEND=gvhmr` is the default; there is no browser fallback).
+| **Direct it with an AI** | Open the **Agent panel** (`Cmd/Ctrl+B`), sign in with your ChatGPT account, and ask for a shot in plain language; the conversation survives reloads and you can paste a reference screenshot into it. Or connect Claude — or any MCP client — or drive the Studio from a terminal with `cclay live`. All three place the cast, frame "a low wide profile", generate multi-phase motion, and the viewport moves in front of you. See [AI control](#ai-control). |
 
 ## Quick start
+
+You need Node.js 22.13 or newer, npm or bun, and a Chromium-based browser.
 
 ```bash
 npx cozyclay
@@ -82,48 +75,51 @@ That downloads the built studio and opens it at `http://127.0.0.1:5180/app/`. No
 
 A global install gives you `cclay`, the same command with less typing. Once a day the launcher checks npm for a newer release and prints a one-line notice after the studio is up; it stays quiet when you're current or offline. `cclay update` installs the latest release, and `--no-update-check` skips the check entirely.
 
-Motion generation uses Kimodo by default once you point it at a Kimodo host:
+New to the camera? The seven-step tutorial runs inside the Studio on the City Block set: **Settings ▾ → Camera tutorial**, or open `http://127.0.0.1:5180/app/?tutorial=camera`. Each step points at the control it needs and completes only when you actually make the move.
+
+### From source
 
 ```bash
-CCLAY_KIMODO_HOST=user@your-gpu-box npx cozyclay
+git clone https://github.com/NomaDamas/CozyClay.git
+cd CozyClay
+npm install
+npm run dev
 ```
 
-Install the worker once, on whichever machine should generate motion:
+Open `http://127.0.0.1:5180/app/` for the Studio (the root redirects there) and `http://127.0.0.1:5180/workflow/` for the Workflow canvas. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so. `npm run dev:ui` starts the browser UI alone in every case.
+
+### Motion generation
+
+Generating new motion needs Kimodo on a machine you can reach. Point the Studio at it and install the worker once:
 
 ```bash
 CCLAY_KIMODO_HOST=user@your-gpu-box npm run kimodo:setup
-# or directly on the machine itself:
-bash tools/kimodo/setup-on-box.sh
+CCLAY_KIMODO_HOST=user@your-gpu-box npx cozyclay
 ```
 
-The installer is a router — it detects OS, architecture, RAM and CUDA, and installs the best-supported Kimodo variant for that host:
+The installer detects OS, architecture, RAM and CUDA and picks the best-supported backend for that host — kimodo-mlx on a big Apple Silicon machine, kimodo.cpp with Metal or CPU otherwise, the upstream PyTorch stack on NVIDIA. An SSH-accessible NVIDIA box is the classic target and the only route with the full feature set; the same box runs GVHMR for video and photo mocap. Routes, overrides and local-only limits are in [`docs/kimodo-setup.md`](docs/kimodo-setup.md).
 
-| Host | Backend installed | Why |
-| --- | --- | --- |
-| macOS Apple Silicon, RAM > 32 GB | [kimodo-mlx](https://github.com/NomaDamas/kimodo-mlx) (MLX/Metal) | The 15 GB text encoder stays resident in unified memory: ~0.9 s warm generation vs ~37 s streaming on an M4 Max 64 GB |
-| macOS Apple Silicon, RAM ≤ 32 GB | [kimodo.cpp](https://github.com/localai-org/kimodo.cpp) + Metal (GGML) | Residency doesn't fit; streaming transformer layers from disk is the right trade |
-| Linux + working NVIDIA CUDA | [NVIDIA Kimodo](https://github.com/nv-tlabs/kimodo) (PyTorch) | Full CUDA acceleration with the upstream stack |
-| Other Unix, no CUDA | kimodo.cpp CPU (Vulkan when available) | Local GGML execution without a GPU |
+## AI control
 
-The installer supports all routes above. CUDA motion generation works over SSH. For local generation, set `CCLAY_KIMODO_BACKEND` to `kimodo-mlx`, `kimodo.cpp-metal`, or `kimodo.cpp-cpu` and leave `CCLAY_KIMODO_HOST` unset: single unconstrained SOMA30 prompts at 30 fps now convert to the Studio NPZ format. The MLX wrapper retains runtime arrays that the upstream CLI's JSON omits; both local routes expand the 30-joint output using NVIDIA's canonical SOMA77 hierarchy and relaxed-hand rest pose, then run forward kinematics before retargeting to cskel27. Sequencing, waypoints, pinned poses, and preserve still require CUDA/SSH and are explicitly refused locally. Local conversion is tested with synthetic outputs; model inference requires the installed runtime and weights. The local integration originated in [#239](https://github.com/NomaDamas/CozyClay/issues/239).
+Three surfaces drive the same scene, live, through one hub: a chat panel in the Studio, an MCP server for external assistants, and a terminal CLI.
 
-For the CUDA route, the installer places the checkout at `$HOME/.cozyclay/kimodo` and its virtual environment at `$HOME/.cozyclay/kimodo-venv`, then links the venv at `$CCLAY_KIMODO_REPO/.venv` where the Studio runner expects it.
+### Agent panel in the Studio
 
-Inspect the route without changing anything — and override it when you know better:
+**View ▾ → Panels → Agent panel** (or `Cmd/Ctrl+B`) opens a chat column that signs in with your ChatGPT account (Codex OAuth; the token lives in `~/.config/cozyclay/`) and works the scene in front of you:
 
-```bash
-bash tools/kimodo/setup-on-box.sh --dry-run
-bash tools/kimodo/setup-on-box.sh --backend kimodo.cpp-metal   # or CCLAY_KIMODO_BACKEND=...
-```
+> "Put a detective and a courier in an alley, give me a low wide profile shot,
+> then make her stand up from the chair, sprint, and trip."
 
-The RAM threshold between the two macOS routes defaults to 32 GB (`CCLAY_KIMODO_MLX_MIN_RAM_GB`).
+- Every change comes back as a receipt that highlights the Inspector and hierarchy rows it touched, and `Cmd/Ctrl+Z` takes it back like any other edit.
+- The conversation is stored under `~/.config/cozyclay/agent-sessions/` and resumes across reloads and restarts; **History** lists earlier sessions.
+- Paste or drop up to four images into the composer — a reference frame, a storyboard panel — and they go with the turn.
+- The agent has nine Studio tool families, from `inspect_studio` and `arrange_characters` to `patch_elements`, which sets any declared authored field (a character's tint, a shot's target model, the key light) by path. How it turns a pasted video prompt into blocking — what it asks, infers, or leaves empty — is the rule in [`docs/agent-prompt-to-scene.md`](docs/agent-prompt-to-scene.md).
 
-## AI control (MCP)
+The same panel sits on the right of the Workflow canvas, where it builds and runs canvas nodes.
 
-The studio ships an [MCP](https://modelcontextprotocol.io) server, so an AI assistant can drive it — the same scene, the same viewport, live:
+### MCP server
 
-> “Put a detective and a courier in an alley, give me a low wide profile shot,
-> then make her stand up from the chair, sprint, and trip.”
+The studio ships an [MCP](https://modelcontextprotocol.io) server, so any MCP client can drive it — the same scene, the same viewport:
 
 ```json
 {
@@ -136,87 +132,20 @@ The studio ships an [MCP](https://modelcontextprotocol.io) server, so an AI assi
 }
 ```
 
-Drop that into `claude_desktop_config.json` (or any MCP client config) and restart the client. The
-first run automatically installs the MCP SDK's 95-package tree; opening the studio never waits on
-it, so those dependencies are fetched only when you actually want the server.
+Drop that into `claude_desktop_config.json` (or any MCP client config) and restart the client. The first run automatically installs the MCP SDK's 95-package tree; opening the studio never waits on it, so those dependencies are fetched only when you actually want the server.
 
 - **Editor open?** Tool calls move the visible viewport — camera, cast, set, generated motion, prompt blocks on the timeline.
-- **No editor?** Scene and project tools run headless: block scenes, derive film vocabulary
-  (“wide shot · right profile · knee level · 24mm”), render AI video prompts, and write
-  `.cclayproject` files. `capture_frame`, `set_prompt_blocks`, `generate_motion`, and
-  `apply_batch` require the live editor.
+- **No editor?** Scene and project tools run headless: block scenes, derive film vocabulary ("wide shot · right profile · knee level · 24mm"), render AI video prompts, and write `.cclayproject` files. `capture_frame`, `set_prompt_blocks`, `generate_motion`, and `apply_batch` require the live editor.
 
 Tools, transports and the live-control protocol are documented in [`mcp/README.md`](mcp/README.md).
 
-### Drive the Studio from a terminal
+### From a terminal
 
-The same hub also speaks to a terminal: `cclay live` is a small CLI that reads the scene,
-places and moves things, frames and keys shots, verifies the result with a capture PNG, and
-undoes by receipt — one JSON object per command, stable error codes, no browser of your own
-required (only the studio tab itself). It is the intended surface for a terminal agent that
-has to manage a running Studio. The full guide, with three worked sessions against a real
-editor, is in [`docs/agent-cli.md`](docs/agent-cli.md).
+`cclay live` is a small CLI that reads the scene, places and moves things, frames and keys shots, patches declared fields (`cclay live patch --target stage --set '{"keyLight.intensity":2.4}'`), verifies the result with a capture PNG, and undoes by receipt — one JSON object per command, stable error codes, no browser of your own required (only the studio tab itself). It is the intended surface for a coding agent that has to manage a running Studio. The full guide, with three worked sessions against a real editor, is in [`docs/agent-cli.md`](docs/agent-cli.md).
 
-### From a clone
+## Workflow canvas
 
-```bash
-git clone https://github.com/NomaDamas/CozyClay.git
-cd CozyClay
-npm install
-npm run dev
-```
-
-Open `http://127.0.0.1:5180/app/` for the Studio (the root redirects there). The Workflow canvas is at `http://127.0.0.1:5180/workflow/`. `npm run dev` starts the studio together with its local Kimodo bridge once `CCLAY_KIMODO_HOST` points at a GPU box; without that variable it starts the studio alone and says so, and Block Generation stays unavailable until you set it. `npm run dev:ui` starts the browser UI alone in every case. The bridge listens on loopback only; Kimodo host variables are documented in [`tools/kimodo/setup-on-box.sh`](tools/kimodo/setup-on-box.sh).
-
-### Workflow canvas
-
-The Workflow canvas at `http://127.0.0.1:5180/workflow/` is a node editor around the Studio: a **CozyClay Scene** node with a live viewport that previews the shot camera, a **Shot Prompt** node that builds a structured prompt from the capture, **Image** nodes (versions, A/B, pinned references) and a **Video** node that runs through your own ComfyUI (`COZYCLAY_COMFY_URL`) or fal (`FAL_KEY`) — bring your own key, nothing is proxied. The **Agent** panel on the right signs in with your ChatGPT account (Codex OAuth, token stored in `~/.config/cozyclay/`) and builds and runs canvas nodes for you. Graphs are saved in the browser and execute locally.
-
-## Hosted demo
-
-Installing a GPU motion backend is the hard part, so `cozyclay.org` also runs a queued demo: a visitor writes one prompt, gets a ticket link, and a GPU box owned by the maintainer generates the motion and uploads it. The visitor never installs anything and never leaves the site — the result opens in the studio itself.
-
-The pieces live in this repository, under `AGPL-3.0-or-later` like everything else:
-
-| Path | Role |
-| --- | --- |
-| `demo/`, `d/` | Static composer and ticket/result pages, built into `dist/` by the same `npm run build` |
-| `workers/api/` | Cloudflare Worker queue API (D1 for state, R2 for results), with its own pinned toolchain |
-| `tools/demo-worker/` | The GPU-box poller. Outbound fetch only — it never opens a listening socket |
-
-**Queue policy.** Jobs run in a single FIFO queue. All of these values live in `workers/api/src/policy.js`; nothing else carries a copy.
-
-| Rule | Value |
-| --- | --- |
-| Active jobs per account | 1 |
-| Daily cap | 2 per account |
-| Global waiting cap | 200, then submissions are refused |
-| Lease / heartbeat / hard timeout | 15 min lease, renewed every 60 s, 20 min hard stop |
-| Attempts | 2 (one automatic retry); a failed job refunds the daily cap |
-| Result retention | 30 days, then the R2 object is deleted |
-| Prompt limit | shared with the studio via `tools/ardy/prompt-limits.mjs` |
-
-**Secrets.** Never committed. Configure each with `wrangler secret put` against `workers/api/wrangler.toml`:
-`GOOGLE_CLIENT_SECRET`, `CC_WORKER_SECRET`, `SESSION_SIGNING_KEY`, `TURNSTILE_SECRET_KEY`. The non-secret `GOOGLE_CLIENT_ID` and `TURNSTILE_SITE_KEY` vars in `wrangler.toml` must also be replaced before a real deployment.
-
-**Running the API locally.**
-
-```bash
-npm run demo:api:install   # npm --prefix workers/api ci
-npm --prefix workers/api exec -- wrangler d1 migrations apply cozyclay-demo --local
-npm run demo:api           # wrangler dev on 127.0.0.1:8787
-```
-
-**Running the GPU-box worker.** The hosted queue worker has its own isolated runtime and reaches the API outbound only. It is independent from the local Studio's Kimodo backend.
-
-```bash
-CC_DEMO_API_BASE=https://api.cozyclay.org \
-CC_WORKER_ID=box1 \
-CC_WORKER_SECRET=... \
-  npm run demo:worker
-```
-
-See [`workers/api/README.md`](workers/api/README.md) for the deployment, migration and rollback runbook, and [`tools/demo-worker/README.md`](tools/demo-worker/README.md) for service units, environment-file permissions and the listening-socket check.
+The Workflow canvas at `http://127.0.0.1:5180/workflow/` is a node editor around the Studio: a **CozyClay Scene** node with a live viewport that previews the shot camera, a **Shot Prompt** node that builds a structured prompt from the capture, **Image** nodes (versions, A/B, pinned references) and a **Video** node that runs through your own ComfyUI (`COZYCLAY_COMFY_URL`) or fal (`FAL_KEY`) — bring your own key, nothing is proxied. Graphs are saved in the browser and execute locally.
 
 ## Controls
 
@@ -242,6 +171,22 @@ See [`workers/api/README.md`](workers/api/README.md) for the deployment, migrati
 | Cmd/Ctrl+B | Show / hide the Agent panel |
 
 Every control's home is recorded in [`docs/studio-ui-ia.md`](docs/studio-ui-ia.md), with the rule behind each placement.
+
+## Documentation
+
+| Read | For |
+| --- | --- |
+| [`docs/kimodo-setup.md`](docs/kimodo-setup.md) | Installing Kimodo: the route table, CUDA over SSH, local MLX/Metal/CPU generation and what each route supports |
+| [`docs/agent-cli.md`](docs/agent-cli.md) | Driving the Studio from a terminal with `cclay live` |
+| [`docs/agent-prompt-to-scene.md`](docs/agent-prompt-to-scene.md) | The ask / infer / omit rule the Agent follows when turning a video prompt into blocking |
+| [`mcp/README.md`](mcp/README.md) | MCP tools, transports, and the live-control protocol |
+| [`docs/studio-ui-ia.md`](docs/studio-ui-ia.md) | Where every Studio control lives and why |
+| [`docs/privacy.md`](docs/privacy.md) | The full analytics disclosure: events, identifiers, opt-out, internal QA marking |
+| [`workers/api/README.md`](workers/api/README.md) | The hosted demo on cozyclay.org: queue policy, the Cloudflare Worker and the GPU-box poller |
+| [`docs/releasing.md`](docs/releasing.md) | Publishing a signed npm release |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed in each release |
+
+Longer reads on the site: [Greybox to AI video](https://cozyclay.org/greybox-to-video/), [Seedance 2.5 camera control](https://cozyclay.org/seedance-camera-control/), [Camera control for AI video](https://cozyclay.org/ai-camera-control/), [Previs software compared](https://cozyclay.org/previs-software/).
 
 ## Validate
 
@@ -277,150 +222,18 @@ All runtime libraries intentionally live in `devDependencies` because the publis
 
 ## Analytics & privacy
 
-The hosted site at [cozyclay.org](https://cozyclay.org/) collects anonymous usage analytics via [PostHog](https://posthog.com/) (US Cloud). There are no cookies and no session recording, and Do-Not-Track is respected. A random pseudonymous identifier is kept in your browser's localStorage so that returning visits and retention can be counted; it is never linked to an account or project content and is removed by clearing site data or using the opt-out toggle.
-
-Events collected:
-
-| Event | Purpose |
-| --- | --- |
-| `install:first_launch` | First run of the official npm package |
-| `app:session_started` | Start of an official npm package session |
-| `app:session_ended` | Session duration, action count, and scenes touched (bucketed) |
-| `feature:used` | One signal per feature per session |
-| `$pageview` | Funnel and drop-off analysis |
-| `scene:created` | Funnel and drop-off analysis |
-| `scene:loaded` | Funnel and drop-off analysis |
-| `project:saved` | User-owned project persistence |
-| `project:opened` | Return to a saved project (age bucket) |
-| `craft:first_action` | Funnel and drop-off analysis |
-| `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 1`) |
-| `playground:first_edit` | First meaningful Playground edit, separate from the Studio funnel |
-| `motion:backend_state` | Motion capability at session start (`none`, `local_kimodo`, or `hosted`) |
-| `motion:generate_requested` | Explicit Generate request, never prompt-block authoring |
-| `motion:preflight_blocked`, `motion:preflight_passed` | Request readiness outcome before execution |
-| `motion:job_started` | Correlated generation execution starts |
-| `motion:job_succeeded`, `motion:job_failed` | Generation result, with normalized failure/cancellation codes |
-| `motion:result_applied` | Generated result applied to its requesting character, separately from job success |
-| `export:blocking_frame_succeeded` | Funnel and drop-off analysis |
-| `activation:completed` | Funnel and drop-off analysis |
-| `hosted:composer_viewed`, `hosted:login_started`, `hosted:ticket_created` | Hosted demo funnel |
-| `hosted:result_opened`, `hosted:opened_in_studio` | Hosted result funnel |
-
-Geo data comes from ingest-time GeoIP country lookup only — no precise location is collected. Prompt text, asset names, file names, project content, local paths, and any user-entered text are never collected.
-
-Motion requests use one ephemeral random `request_id` across intent, preflight,
-job outcome and application. The September 15, 2026 issue #273 contract stops
-emitting the ambiguous `motion:generate_blocked`; old data is not relabeled or
-included in the new demand metric. The exact properties, entry-point mapping
-and deduplicated funnel query are in
-[`docs/analytics-queries.md`](docs/analytics-queries.md#motion-generation-intent).
-Browser regression QA:
-`QA_URL=http://127.0.0.1:5254/app/ CDP_PORT=9493 node tools/qa-browser.mjs -- node test/qa-motion-intent-browser.mjs`.
-
-The official npm package also measures anonymous first launches, sessions, and
-the same in-app funnel on its `127.0.0.1` studio. It stores one random
-installation identifier in `~/.config/cozyclay/state.json` so returning use can
-be counted across normal CLI restarts, ports and browser storage resets
-(`$XDG_CONFIG_HOME/cozyclay/state.json` when configured). The browser SDK uses
-memory-only storage bootstrapped from that identifier; it does not generate a
-new install identity on each launch. Different state files get independent
-random IDs, with no fingerprinting, account linking or cross-device matching.
-Do not copy this state file between users. Source checkouts, forks,
-development servers, CI, and tests do not send analytics. Official npm
-artifacts carry a signature checked by the launcher, so copying or repackaging
-the source does not enable telemetry.
-
-Every regular event and the session-end beacon use the same `distribution`
-(`npm` or `hosted`), `app_version` (when available),
-`origin_kind` (`local` or `hosted`), a coarse
-operating-system label, and (for npm sessions) `install_kind` (`npx` or
-`global`). Source checkouts are classified as `clone` and remain telemetry-off.
-The first npm launch may optionally answer a one-line channel question
-(`x`, `hn`, `reddit`, `github`, `friend`, `other`, or `skip`); `skip` sends no
-acquisition value. Session duration and action counts are buckets, and project
-events never include names, paths, prompts, or timestamps.
-
-### Explicit internal / QA traffic
-
-Internal marking is opt-in and independent of telemetry consent:
-
-```bash
-cclay telemetry internal on
-cclay telemetry internal off
-```
-
-The CLI stores the boolean `internalQa` in the same state file and applies it
-on the next launch/reload. On the hosted Studio or Playground, open
-`https://cozyclay.org/app/?internal_qa=1` to mark that browser, or use
-`?internal_qa=0` to clear the marker. Only an explicit single `1` or `0` is
-accepted; the choice persists in `cozyclay.internalQa` localStorage for that
-origin. The URL parameter is read by the app, not by a second landing snippet.
-The npm app ignores this parameter and uses the CLI choice.
-
-All app captures, including `$pageview` and the end beacon, carry boolean
-`internal_qa` (`false` by default). Queries exclude only explicitly marked
-events. Localhost, ports, country and source checkout do not identify internal
-people; unmarked official local-app traffic stays in the external cohort.
-Marking never enables collection on a disabled build, unapproved origin,
-source checkout, CI, Do-Not-Track or opted-out session. Existing open tabs must
-be reloaded after CLI changes. Historical unmarked QA cannot be inferred or
-retroactively removed.
-
-See [the external cohort queries and baseline procedure](docs/analytics-queries.md#external-cohort-baseline-issue-270)
-for complete KST weeks, distinct-ID denominators, retention maturity and
-coverage limits.
-
-### First-edit definition (version 1)
-
-`craft:first_edit` and `playground:first_edit` carry only `edit_kind` and the
-numeric `definition_version: 1`. The closed edit-kind set is `pose_edit`,
-`object_insert`, `cutout_insert`, `object_transform`, `shot_add`, `shot_edit`,
-`camera_key_record`, `rail_edit`, `prompt_block_add`, and `prompt_block_edit`.
-An event requires an actual, successful authoring change through the shared
-semantic hook, whether the change came from the UI, `window.__cozyclay`, or
-MCP live control. Prompt text and scene values are never event properties.
-
-Deduplication is **per editor session (one App mount), not per install**.
-Repeated pointer callbacks, React effects, later edits, undo, and redo cannot
-emit another first edit in that mount. A reload or a fresh editor mount starts
-a new boundary. Studio and Playground use separate event names and never
-contribute to each other's first-edit funnel.
-
-Camera navigation (including look-through fly, orbit, and wheel dolly),
-playback/scrubbing, passive scene or project loading, initialization,
-restoration, tutorial auto-seeding, failed/no-op commands, and undo/redo do
-not qualify. Explicitly recording a camera key or authoring a shot or rail
-does qualify; moving a viewing camera alone does not.
-
-The legacy `craft:first_action` / `playground:first_action` streams retain
-their existing insertion/camera-key triggers and deduplication unchanged
-during migration. Their historical first-launch conversion is not the
-percentage of people who edited or used the app. Do not combine those
-events with version 1 first-edit events in a conversion numerator.
-
-See [the version-filtered ordered funnel query](docs/analytics-queries.md)
-for a new-install cohort with explicit event ordering and a conversion window.
-
-The npm package prints this disclosure once on first launch. Control it at any
-time:
+Anonymous usage counts, no cookies, no recordings, never your project content — on the hosted site via PostHog and in the official npm package, which prints the disclosure once on first launch. Source checkouts, forks, dev servers, CI and tests send nothing.
 
 ```bash
 cclay telemetry status
 cclay telemetry off
-cclay telemetry on
 ```
 
-`COZYCLAY_TELEMETRY=0` and `DO_NOT_TRACK=1` disable collection for a launch.
-The in-app toggle under **Settings ▾ → Privacy** changes the same npm-package
-setting and removes its anonymous installation identifier. Hosted-site visitors can opt out with that
-toggle, browser Do-Not-Track, or a content blocker.
-Disabling npm telemetry deletes the stored ID; enabling it later creates an
-unlinked new ID. The old first-launch receipt is retained, so re-enabling
-does not manufacture another new-install event. Environment overrides only
-suspend collection and do not erase the stored ID. Neither opt-out path sends
-a session-end beacon after collection has been disabled.
+`COZYCLAY_TELEMETRY=0` or `DO_NOT_TRACK=1` disables collection for a launch; **Settings ▾ → Privacy** is the same switch inside the Studio. The event list, what each identifier is, how internal QA traffic is marked and the first-edit definition are in [`docs/privacy.md`](docs/privacy.md).
 
-PostHog's free plan retains events for 1 year.
+## Hosted demo
+
+Installing a GPU motion backend is the hard part, so `cozyclay.org` also runs a queued demo: a visitor writes one prompt, gets a ticket link, and a GPU box owned by the maintainer generates the motion and uploads it — the result opens in the studio itself. The composer pages, the Cloudflare Worker queue API and the GPU-box poller all live in this repository; the queue policy and runbooks are in [`workers/api/README.md`](workers/api/README.md).
 
 ## License & credits
 

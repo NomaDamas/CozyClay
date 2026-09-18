@@ -56,7 +56,7 @@ export function MotionSetup({ state, checking, onRetry }) {
 				"Local MLX/cpp supports one unconstrained prompt. Sequencing, pinned poses, paths and preserve need the CUDA/SSH route. Line editing needs a configured ProjFlow route.",
 				"로컬 MLX/cpp는 제약 없는 단일 프롬프트를 지원해요. 블록 연결, 포즈 고정, 경로, 테이크 보존에는 CUDA/SSH가 필요하고, 라인 편집에는 ProjFlow 설정이 필요해요.",
 			)}</p>
-			<a href="https://github.com/NomaDamas/CozyClay#quick-start" target="_blank" rel="noreferrer">
+			<a href="https://github.com/NomaDamas/CozyClay/blob/main/docs/kimodo-setup.md" target="_blank" rel="noreferrer">
 				{ko("Kimodo setup and route guide", "Kimodo 설정 및 경로 안내")}
 			</a>
 			<button type="button" className="btn" data-testid="motion-health-retry" disabled={checking} onClick={onRetry}>
