@@ -11435,6 +11435,7 @@ input[type=range] {
 .fal-motion-thumbs { display: flex; gap: 6px; margin-top: 8px; min-height: 0; }
 .fal-motion-thumbs img { width: 74px; height: 42px; object-fit: cover; border-radius: 4px; border: 1px solid #42506a; background: #0c0f16; }
 .fal-motion-instruction { width: 100%; min-height: 54px; margin-top: 8px; padding: 7px; resize: vertical; border: 1px solid #343b4d; border-radius: 5px; background: #11151e; color: inherit; font: inherit; font-size: 11px; }
+.fal-motion-segmentation.ready { color: #9fe6b8; }
 .fal-motion-video { display: block; width: 100%; margin-top: 9px; border-radius: 5px; background: #090b10; }
 .agent-fal-action { color: #6d4aff; border-color: color-mix(in srgb, #6d4aff 35%, var(--line) 65%); }
 .agent-fal-action:disabled { opacity: .45; }

@@ -5925,6 +5925,9 @@ export default function App() {
 		if (captured.width !== FAL_MOTION_STILL_OUTPUT.width || captured.height !== FAL_MOTION_STILL_OUTPUT.height) {
 			throw new Error(ko("H3 480P 참조 캡처는 16:9(1920×1080)이어야 해요.", "The H3 480P reference must be captured at 16:9 (1920×1080)."));
 		}
+		if (!falMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
+			throw new Error(ko("A/B 참조는 View에서 부위 색상 → 평면을 켜야 캡처할 수 있어요.", "Enable View → Body part colours → Flat before capturing an A/B reference."));
+		}
 		return { ...captured, framing: captureCurrentFraming() };
 	}
 
@@ -5934,6 +5937,9 @@ export default function App() {
 			return;
 		}
 		try {
+			if (slot === "b" && falMotion.a && framingDistance(falMotion.a.framing, captureCurrentFraming()) > 0.001) {
+				throw new Error(ko("A와 B 사이에서 카메라가 이동했어요. 같은 카메라 프레이밍으로 다시 캡처하세요.", "The camera moved between A and B. Capture both refs with the same camera framing."));
+			}
 			const still = captureFalStill();
 			setFalMotion((current) => ({ ...current, [slot]: still, status: "idle", error: "" }));
 			setToast(isKo ? `포즈 ${slot.toUpperCase()} 캡처됨 · ${still.width}×${still.height}` : `Pose ${slot.toUpperCase()} captured · ${still.width}×${still.height}`);
@@ -5966,6 +5972,10 @@ export default function App() {
 		}
 		if (kind === "interpolate" && (!source.a || !source.b)) {
 			setFalMotion((current) => ({ ...current, error: ko("A와 B 포즈를 먼저 캡처하세요.", "Capture both A and B poses first."), status: "error" }));
+			return;
+		}
+		if (!source.a?.partColours || (kind === "interpolate" && !source.b?.partColours)) {
+			setFalMotion((current) => ({ ...current, error: ko("색 세그멘테이션이 포함된 A/B 참조를 다시 캡처하세요.", "Recapture A/B refs with flat body-part segmentation enabled."), status: "error" }));
 			return;
 		}
 		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
@@ -6192,6 +6202,9 @@ export default function App() {
 	// for the part colours, and a dot on the trigger whenever the viewport is
 	// showing something other than the plain stage.
 	const partColoursChoice = partColoursEnabled ? partColoursMode : "off";
+	// Flat palette colours are the capture contract for H3 refs: unlike shaded
+	// materials, each body part keeps a stable hue for downstream segmentation.
+	const falMotionSegmentationReady = partColoursEnabled && partColoursMode === "flat";
 	const viewLooksActive = gridView || autoColor || partColoursEnabled;
 	const rigSelection = parseRigNodeId(selectedHierarchyId);
 	const isRigSelection = rigSelection !== null;
@@ -13072,9 +13085,10 @@ function resizePromptClip(id, edge, rawFrame) {
 						</div>
 						<p className="inspector-hint">{ko("같은 카메라에서 A/B 포즈를 캡처하면 보간하고, A만 있으면 동작 지시로 생성합니다.", "Capture A and B from the same camera to interpolate, or use A alone for an instructed action.")}</p>
 						<p className="inspector-hint fal-motion-ratio">{ko("참조 캡처 16:9 · 1920×1080 → H3 480P 832×480 · 현재 샷 비율과 무관하게 이 규격으로 캡처합니다.", "Reference capture 16:9 · 1920×1080 → H3 480P 832×480 · this capture size is fixed for the motion request.")}</p>
+						<p className={"inspector-hint fal-motion-segmentation" + (falMotionSegmentationReady ? " ready" : "")}>{falMotionSegmentationReady ? ko("색 세그멘테이션 평면 모드 ON · A/B 캡처 가능", "Flat body-part segmentation ON · A/B capture ready") : ko("A/B ref 전에는 View → 부위 색상 → 평면을 켜세요. 카메라 이동도 자동 차단합니다.", "Before A/B refs, enable View → Body part colours → Flat. Camera movement is blocked automatically.")}</p>
 						<div className="fal-motion-pose-row">
-							<button type="button" className={falMotion.a ? "btn active" : "btn"} disabled={!falMotionEnabled} onClick={() => markFalPose("a")}>{falMotion.a ? "A ✓" : "Mark A"}</button>
-							<button type="button" className={falMotion.b ? "btn active" : "btn"} disabled={!falMotionEnabled} onClick={() => markFalPose("b")}>{falMotion.b ? "B ✓" : "Mark B"}</button>
+							<button type="button" className={falMotion.a ? "btn active" : "btn"} disabled={!falMotionEnabled || !falMotionSegmentationReady} onClick={() => markFalPose("a")}>{falMotion.a ? "A ✓" : "Mark A"}</button>
+							<button type="button" className={falMotion.b ? "btn active" : "btn"} disabled={!falMotionEnabled || !falMotionSegmentationReady} onClick={() => markFalPose("b")}>{falMotion.b ? "B ✓" : "Mark B"}</button>
 							{(falMotion.a || falMotion.b) && <button type="button" className="btn ghost" onClick={clearFalMotion}>{ko("초기화", "Clear")}</button>}
 						</div>
 						<div className="fal-motion-thumbs" aria-label={ko("Fal motion reference poses", "Fal motion reference poses")}>
