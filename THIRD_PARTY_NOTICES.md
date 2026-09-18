@@ -146,8 +146,7 @@ loaded lazily by the sidecar; the launcher itself does not import them).
 
 - Copyright (c) Earendil Works
 - License: MIT
-- Source: https://github.com/earendil-works/pi-ai (published as `@earendil-works/pi-ai`)
-- Source: https://github.com/earendil-works/pi-agent-core (published as `@earendil-works/pi-agent-core`)
+- Source: https://github.com/earendil-works/pi (packages/ai → @earendil-works/pi-ai, packages/agent → @earendil-works/pi-agent-core)
 
 Their transitive runtime dependencies, which the agent sidecar also loads, are:
 
@@ -158,10 +157,10 @@ Their transitive runtime dependencies, which the agent sidecar also loads, are:
 - `@smithy/node-http-handler` — License: Apache-2.0 — https://github.com/smithy-lang/smithy-typescript
 - `http-proxy-agent` — License: MIT — https://github.com/TooTallNate/proxy-agents
 - `https-proxy-agent` — License: MIT — https://github.com/TooTallNate/proxy-agents
-- `partial-json` — License: MIT — https://github.com/danielgomes14/partial-json
+- `partial-json` — License: MIT — https://github.com/promplate/partial-json-parser-js
 - `typebox` — License: MIT — https://github.com/sinclairzx81/typebox
-- `@earendil-works/chord` — License: MIT — https://github.com/earendil-works/chord
-- `@earendil-works/pi-telemetry` — License: MIT — https://github.com/earendil-works/pi-telemetry
+- `@earendil-works/chord` — License: MIT — https://github.com/earendil-works/pi
+- `@earendil-works/pi-telemetry` — License: MIT — https://github.com/earendil-works/pi
 - `diff` — License: BSD-3-Clause — https://github.com/kpdecker/jsdiff
 - `ignore` — License: MIT — https://github.com/kaelzhang/node-ignore
 - `yaml` — License: ISC — https://github.com/eemeli/yaml
