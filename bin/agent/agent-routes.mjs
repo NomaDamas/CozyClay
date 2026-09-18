@@ -544,6 +544,35 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 			if (!Number.isSafeInteger(after) || after < 0) { json(res, 400, { error: "invalid cursor" }); return true; }
 			writeStudioStream(res, record, after, req); return true;
 		}
+		if (path === "/agent/providers" && req.method === "GET") {
+			const { providerStatus } = await import("./providers.mjs");
+			try { json(res, 200, { providers: providerStatus({ auth }) }); }
+			catch { json(res, 500, { error: "provider credentials unavailable" }); }
+			return true;
+		}
+		if (/^\/agent\/providers\/[^/]+$/.test(path) && ["PUT", "DELETE"].includes(req.method)) {
+			const { PROVIDERS } = await import("./providers.mjs");
+			const keys = await import("./provider-keys.mjs");
+			const { createCredentialStore } = await import("./credential-store.mjs");
+			const id = path.slice("/agent/providers/".length);
+			if (!PROVIDERS.some((provider) => provider.id === id)) { json(res, 404, { error: "provider not found" }); return true; }
+			const credentials = createCredentialStore({ auth, keys });
+			let key;
+			if (req.method === "PUT") {
+				if (id === "openai-codex") { json(res, 400, { error: "Use ChatGPT sign-in for OpenAI Codex." }); return true; }
+				try {
+					const value = await readBody(req);
+					if (typeof value?.key !== "string" || !value.key.trim()) throw new Error("Invalid key.");
+					key = value.key.trim();
+				} catch { json(res, 400, { error: "a non-empty API key is required" }); return true; }
+			}
+			try {
+				if (req.method === "PUT") await credentials.modify(id, async () => ({ type: "api_key", key }));
+				else await credentials.delete(id);
+				json(res, 200, { ok: true });
+			} catch { json(res, 500, { error: "provider credentials could not be saved" }); }
+			return true;
+		}
 		if (path === "/agent/sessions" && req.method === "GET") {
 			const surface = new URL(req.url, "http://127.0.0.1").searchParams.get("surface") || undefined;
 			try { json(res, 200, { sessions: sessionStore.list({ surface }) }); }

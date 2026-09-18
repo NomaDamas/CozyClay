@@ -1,9 +1,10 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { readFileSync, unlinkSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { openBrowser } from "./open-browser.mjs";
+import { writeSecureJson } from "./agent/secure-file.mjs";
 
 export const AUTHORIZE_ENDPOINT = "https://auth.openai.com/oauth/authorize";
 export const TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
@@ -23,12 +24,7 @@ const readTokens = () => {
 	return tokens;
 };
 const writeTokens = (value) => {
-	mkdirSync(dirname(tokenFile), { recursive: true });
-	const temporary = `${tokenFile}.${process.pid}.tmp`;
-	writeFileSync(temporary, JSON.stringify(value, null, "\t"), { mode: 0o600 });
-	chmodSync(temporary, 0o600);
-	renameSync(temporary, tokenFile);
-	chmodSync(tokenFile, 0o600);
+	writeSecureJson(tokenFile, value);
 	tokens = value;
 	listeners.forEach((cb) => { try { cb(status()); } catch {} });
 };
@@ -44,6 +40,13 @@ export function status() {
 	const auth = claim["https://api.openai.com/auth"] || {};
 	return { signedIn: !!readTokens()?.refresh_token, email: claim.email || null, plan: auth.chatgpt_plan_type || null, accountId: auth.chatgpt_account_id || null, expiresAt: readTokens()?.expires_at || null };
 }
+export function readStored() {
+	const current = readTokens();
+	if (!current) return undefined;
+	const { access_token, refresh_token, expires_at } = current;
+	return { access_token, refresh_token, expires_at };
+}
+export function writeStored(value) { writeTokens({ ...readTokens(), ...value }); }
 export function getAccountId() { return status().accountId; }
 export function onAuthChange(cb) { listeners.add(cb); return () => listeners.delete(cb); }
 export function createPkceVerifier(bytes = randomBytes(32)) { return bytes.toString("base64url"); }

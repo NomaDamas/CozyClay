@@ -85,8 +85,8 @@ expect("the dev 503 gate covers every route the panel calls", (() => {
 	const source = vite.match(/agentUrl && (\/\^\\\/agent[^\n]*?)\.test\(path\)/)?.[1];
 	if (!source) return false;
 	const gate = new RegExp(source.slice(1, source.lastIndexOf("/")));
-	return ["/agent/turn", "/agent/stop", "/agent/models", "/agent/turn/8b1f/events", "/agent/jobs/job-1/accept"].every((route) => gate.test(route))
-		&& !["/agent/image", "/agent/turn/8b1f/events/extra"].some((route) => gate.test(route));
+	return ["/agent/turn", "/agent/stop", "/agent/models", "/agent/providers", "/agent/providers/openai", "/agent/turn/8b1f/events", "/agent/jobs/job-1/accept"].every((route) => gate.test(route))
+		&& !["/agent/image", "/agent/providers/openai/extra", "/agent/turn/8b1f/events/extra"].some((route) => gate.test(route));
 })());
 
 // --- every state name exists --------------------------------------------
