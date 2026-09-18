@@ -298,7 +298,7 @@ function run(file) {
 }
 
 // node:sqlite's DatabaseSync only ships unflagged from Node 22.13.0 (it lived
-// behind --experimental-sqlite before that). package.json requires >=22.13,
+// behind --experimental-sqlite before that). package.json requires >=22.19,
 // but older 22.x installs are still common enough that the manifest should
 // degrade gracefully instead of aborting the whole run.
 const NODE_SQLITE_MIN = [22, 13, 0];

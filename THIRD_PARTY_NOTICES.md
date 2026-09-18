@@ -138,6 +138,34 @@ event table and opt-out controls.
 - License: Apache-2.0 AND MIT
 - Source: https://github.com/PostHog/posthog-js
 
+## pi agent packages
+
+The optional agent sidecar loads `@earendil-works/pi-ai` and
+`@earendil-works/pi-agent-core` at runtime (they are declared dependencies,
+loaded lazily by the sidecar; the launcher itself does not import them).
+
+- Copyright (c) Earendil Works
+- License: MIT
+- Source: https://github.com/earendil-works/pi-ai (published as `@earendil-works/pi-ai`)
+- Source: https://github.com/earendil-works/pi-agent-core (published as `@earendil-works/pi-agent-core`)
+
+Their transitive runtime dependencies, which the agent sidecar also loads, are:
+
+- `@anthropic-ai/sdk` — License: MIT — https://github.com/anthropics/anthropic-sdk-typescript
+- `openai` — License: Apache-2.0 — https://github.com/openai/openai-node
+- `@google/genai` — License: Apache-2.0 — https://github.com/googleapis/js-genai
+- `@aws-sdk/client-bedrock-runtime` — License: Apache-2.0 — https://github.com/aws/aws-sdk-js-v3
+- `@smithy/node-http-handler` — License: Apache-2.0 — https://github.com/smithy-lang/smithy-typescript
+- `http-proxy-agent` — License: MIT — https://github.com/TooTallNate/proxy-agents
+- `https-proxy-agent` — License: MIT — https://github.com/TooTallNate/proxy-agents
+- `partial-json` — License: MIT — https://github.com/danielgomes14/partial-json
+- `typebox` — License: MIT — https://github.com/sinclairzx81/typebox
+- `@earendil-works/chord` — License: MIT — https://github.com/earendil-works/chord
+- `@earendil-works/pi-telemetry` — License: MIT — https://github.com/earendil-works/pi-telemetry
+- `diff` — License: BSD-3-Clause — https://github.com/kpdecker/jsdiff
+- `ignore` — License: MIT — https://github.com/kaelzhang/node-ignore
+- `yaml` — License: ISC — https://github.com/eemeli/yaml
+
 ## CozyClay license scope
 
 The CozyClay combined work in this repository is distributed under AGPL-3.0-or-later, subject to the transition details in `LICENSING.md`. That license does not replace or relicense Three.js, ARDY, ARDY model checkpoints, the bundled fonts, the character rigs, or any other third-party component.

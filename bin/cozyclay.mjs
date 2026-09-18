@@ -11,8 +11,12 @@
  *   - forward /ardy to its dynamically selected sidecar port (the same job Vite's dev proxy does),
  *   - keep the sidecar's lifetime tied to this process.
  *
- * It has no dependencies on purpose. A launcher that needs an install step
- * before it can serve a prebuilt app is a launcher that will break.
+ * The only runtime dependencies are the agent packages
+ * `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` (MIT), and the
+ * agent sidecar loads them lazily, so this launcher itself still starts
+ * without them. Everything else stays dependency-free on purpose: a launcher
+ * that needs an install step before it can serve a prebuilt app is a
+ * launcher that will break.
  */
 import { spawn } from "node:child_process";
 import { startBridge, terminateOwned } from "../tools/process-supervisor.mjs";

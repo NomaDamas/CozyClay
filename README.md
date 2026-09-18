@@ -13,7 +13,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: AGPL-3.0" src="https://img.shields.io/badge/license-AGPL--3.0-blue"></a>
   <a href="https://www.npmjs.com/package/cozyclay"><img alt="npm" src="https://img.shields.io/npm/v/cozyclay"></a>
-  <img alt="Node 22.13+" src="https://img.shields.io/badge/node-22.13%2B-brightgreen">
+  <img alt="Node 22.19+" src="https://img.shields.io/badge/node-22.19%2B-brightgreen">
   <a href="https://github.com/NomaDamas/CozyClay/stargazers"><img alt="Stars" src="https://img.shields.io/github/stars/NomaDamas/CozyClay?style=flat"></a>
 </p>
 

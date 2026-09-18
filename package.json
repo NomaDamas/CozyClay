@@ -71,7 +71,10 @@
   },
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "dependencies": {},
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1"
+  },
   "devDependencies": {
     "@mediapipe/tasks-vision": "0.10.17",
     "@react-three/drei": "^10.7.7",
@@ -130,7 +133,7 @@
     }
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.19.0"
   },
   "keywords": [
     "3d",
