@@ -8,6 +8,8 @@ import { createServer } from 'node:http';
 import { createServer as createPortProbe } from 'node:net';
 import { once, EventEmitter } from 'node:events';
 import { createAgentHandler } from '../../bin/agent/agent-routes.mjs';
+import { createFakeModel } from './fake-model.mjs';
+import { fauxAssistantMessage, fauxToolCall, fauxText } from '@earendil-works/pi-ai/providers/faux';
 import * as auth from '../../bin/codex-auth.mjs';
 import { startLiveHub } from '../../mcp/live-hub.mjs';
 import { writeNpz, motionArraysToNpzMembers } from '../../tools/ardy/npz.mjs';
@@ -74,6 +76,21 @@ export async function startFixtureStudio({ port, evidence }) {
     const c = await context(); const host = Object.fromEntries(['workspaceId','documentEpoch','sceneId','sceneEpoch'].map(k => [k,c.host[k]]));
     return hub.command(name, { name, args, commandId: crypto.randomUUID(), host, expectedRevision: c.revision.scene, expectedTargets: c.entities.map(e => ({ ...host, targetId: e.id, token: e.token })) }, c.host.workspaceHandle);
   };
+  const fakeModel = createFakeModel();
+  fakeModel.fauxProvider.setResponses(Array.from({ length: 64 }, () => async (context) => {
+    const messages = context.messages || [];
+    const user = [...messages].reverse().find((message) => message.role === 'user');
+    const text = (Array.isArray(user?.content) ? user.content : []).filter((part) => part.type === 'text').map((part) => part.text).join(' ');
+    const outputs = messages.filter((message) => message.role === 'toolResult').length;
+    const target = fixture.characters[0].id;
+    let call = null;
+    if (text.includes('Put a cube')) call = outputs === 0 ? { name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, position: { relativeTo: target, basis: 'shot_camera', side: 'left', gapM: 1, support: 'floor' } }] } } : outputs === 1 ? { name: 'arrange_characters', args: { ops: [{ op: 'create', name: 'Fixture second', position: { relativeTo: target, basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } }] } } : null;
+    else if (text.includes('Frame the selected')) call = outputs === 0 ? { name: 'frame_shot', args: { subjectIds: [target], keyAtFrame: 0, framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } } : null;
+    else if (text.includes('Undo the earlier')) call = outputs === 0 ? { name: 'undo_edit', args: { receiptId: controls.receiptId } } : null;
+    else if (text.includes('Inspect')) call = outputs === 0 ? { name: 'inspect_studio', args: { scope: 'selection' } } : null;
+    else call = outputs === 0 ? { name: 'generate_motion', args: { characterId: target, source: { kind: 'generate', beats: [{ text: 'walk forward' }, { text: 'wave' }, { text: 'return' }], durationSeconds: 2 } } } : null;
+    return fauxAssistantMessage(call ? [fauxToolCall(call.name, call.args, { id: crypto.randomUUID() })] : [fauxText('Fixture-only execution. Refer to the authoritative receipt; semantic motion and model vision are not verified.')]);
+  }));
   const codex = { listModels: async () => [{ id: 'fixture-only', supported_reasoning_levels: ['low'] }], streamResponses({ input, tools }) {
     const index = input.findLastIndex(item => item.role === 'user' && item.content?.[0]?.text?.startsWith('<studio-context>'));
     const c = JSON.parse(input[index].content[0].text.slice('<studio-context>\n'.length, -'\n</studio-context>'.length));
@@ -99,7 +116,7 @@ export async function startFixtureStudio({ port, evidence }) {
     } };
   } };
   let origin;
-  const handler = createAgentHandler({ ...(realModel ? {} : { auth: { getAccessToken: async () => 'fixture-only' }, codex }), liveHub: hub, port, getBridgeOrigin: () => origin });
+  const handler = createAgentHandler({ ...(realModel ? {} : { auth: { getAccessToken: async () => 'fixture-only' }, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider }), liveHub: hub, port, getBridgeOrigin: () => origin });
   const server = createServer(async (req, res) => {
     try {
       res.setHeader('access-control-allow-origin', `http://127.0.0.1:${port}`);

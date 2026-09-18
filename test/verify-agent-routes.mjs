@@ -175,16 +175,11 @@ assert.equal(JSON.stringify(fauxMain.calls[0].messages).includes(png), false);
 	// real user image item, placed BEFORE the turn text on both surfaces — the
 	// same shape attachFrame already uses.
 	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
-	const seenInputs = [];
 	const workflowFaux = createFakeModel();
-	workflowFaux.script([{ type: "text", text: "" }]);
-	const quietCodex = { ...fakeCodex, streamResponses: ({ input }) => { seenInputs.push(input); return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-		yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
-		yield { type: "response.completed", response: { status: "completed" } };
-	} }; } };
+	workflowFaux.script([[{ type: "text", text: "" }], [{ type: "text", text: "" }]]);
 	const attachHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
 	let attachServer;
-	const attachHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: quietCodex, models: workflowFaux.models, fauxProvider: workflowFaux.fauxProvider, liveHub: attachHub, studioRuntime: { readContext: async () => contextFixture() }, port: () => attachServer.address().port });
+	const attachHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: workflowFaux.models, fauxProvider: workflowFaux.fauxProvider, liveHub: attachHub, studioRuntime: { readContext: async () => contextFixture() }, port: () => attachServer.address().port });
 	attachServer = createServer((req, res) => attachHandler(req, res).catch((error) => { console.error("attachment fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	attachServer.listen(0, "127.0.0.1");
 	await once(attachServer, "listening");
@@ -195,13 +190,14 @@ assert.equal(JSON.stringify(fauxMain.calls[0].messages).includes(png), false);
 	// counts the user items a fresh route instance replays for the fixture id.
 	const studioEnvelope = { ...envelopeFixture(), sessionId: "00000000-0000-4000-8000-00000000a367", text: "what is in the attached image?", attachments: [{ dataUrl: png, name: "probe.png" }] };
 	await post(studioEnvelope);
-	const studioInput = seenInputs.at(-1) ?? [];
-	const imageAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "input_image"));
-	const textAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "input_text" && part.text.includes("what is in the attached image?")));
-	assert.ok(imageAt !== -1, `the studio turn sends an input_image user item: ${JSON.stringify(studioInput).slice(0, 400)}`);
-	assert.ok(textAt !== -1 && imageAt < textAt, "the attachment precedes the turn text, exactly like attachFrame");
-	assert.equal(studioInput[imageAt].content[1].image_url, png, "the pasted bytes reach the model");
-	assert.match(studioInput[imageAt].content[0].text, /User attachment probe\.png/, "the image is named for the model");
+	const studioInput = workflowFaux.calls.at(-1)?.messages ?? [];
+	const imageAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "image"));
+	const textAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "text" && part.text.includes("what is in the attached image?")));
+	assert.ok(imageAt !== -1, `the studio turn sends an ImageContent user item: ${JSON.stringify(studioInput).slice(0, 400)}`);
+	assert.ok(textAt !== -1 && imageAt <= textAt, "the attachment precedes the turn text, exactly like attachFrame");
+	const imagePart = studioInput[imageAt].content.find((part) => part.type === "image");
+	assert.equal(`data:${imagePart.mimeType};base64,${imagePart.data}`, png, "the pasted bytes reach the model");
+	assert.match(studioInput[imageAt].content.find((part) => part.type === "text").text, /User attachment probe\.png/, "the image is named for the model");
 
 	const rejected = await fetch(`${attachOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: attachOrigin }, body: JSON.stringify({ ...envelopeFixture(), attachments: [{ dataUrl: "data:text/plain;base64,aGk=" }] }) });
 	assert.equal(rejected.status, 400, "a non-image attachment never reaches the model");
@@ -340,19 +336,10 @@ await new Promise((resolve) => authServer.close(resolve));
 server.close();
 {
 	const { envelopeFixture, contextFixture } = await import("./verify-studio-agent-protocol.mjs");
-	const studioCalls = [];
-	const studioCodex = {
-		...fakeCodex,
-		streamResponses: ({ input }) => {
-			studioCalls.push(input);
-			return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-				yield { type: "response.output_text.delta", delta: studioCalls.length === 1 ? "First answer" : "Continued answer" };
-				yield { type: "response.output_item.done", item: { type: "message", role: "assistant", content: [{ type: "output_text", text: studioCalls.length === 1 ? "First answer" : "Continued answer" }] } };
-			} };
-		},
-	};
+	const studioFaux = createFakeModel();
+	studioFaux.script([[{ type: "text", text: "First answer" }], [{ type: "text", text: "Continued answer" }]]);
 	const makeStudio = () => {
-		const handler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: studioCodex, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() }, port: () => studioServer.address().port });
+		const handler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: studioFaux.models, fauxProvider: studioFaux.fauxProvider, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() }, port: () => studioServer.address().port });
 		const studioServer = createServer((req, res) => handler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 		return { handler, studioServer };
 	};
@@ -369,8 +356,8 @@ server.close();
 	const secondEnvelope = { ...envelopeFixture(), turnId: "00000000-0000-4000-8000-000000000003", text: "continue this" };
 	const secondOrigin = `http://127.0.0.1:${second.studioServer.address().port}`;
 	await fetch(`${secondOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: secondOrigin }, body: JSON.stringify(secondEnvelope) }).then((response) => response.text());
-	assert.equal(studioCalls[1][0].role, "user");
-	assert.equal(studioCalls[1].filter((item) => item.role === "user").length, 2, "a fresh route instance sends prior history to codex");
+	assert.equal(studioFaux.calls[1].messages[0].role, "user");
+	assert.equal(studioFaux.calls[1].messages.filter((item) => item.role === "user").length, 2, "a fresh route instance sends prior history to pi");
 	const listed = await fetch(`${secondOrigin}/agent/sessions?surface=studio`).then((response) => response.json());
 	assert.equal(listed.sessions[0].sessionId, firstEnvelope.sessionId, "Studio sessions list newest metadata first");
 	const loaded = await fetch(`${secondOrigin}/agent/sessions/${firstEnvelope.sessionId}`).then((response) => response.json());
@@ -482,7 +469,9 @@ server.close();
 		append(sessionId, items, meta = {}) { const entry = memory.get(sessionId) ?? { history: [], meta: { sessionId, ...meta } }; entry.history.push(...items); memory.set(sessionId, entry); return entry.meta; },
 		list() { return [...memory.values()].map((entry) => entry.meta); },
 	};
-	const memoryHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: studioCodex, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() }, port: () => memoryServer.address().port, sessionStore: memoryStore });
+	const memoryFaux = createFakeModel();
+	memoryFaux.script([{ type: "text", text: "memory" }]);
+	const memoryHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: memoryFaux.models, fauxProvider: memoryFaux.fauxProvider, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() }, port: () => memoryServer.address().port, sessionStore: memoryStore });
 	const memoryServer = createServer((req, res) => memoryHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	memoryServer.listen(0, "127.0.0.1"); await once(memoryServer, "listening");
 	const memoryOrigin = `http://127.0.0.1:${memoryServer.address().port}`;
@@ -647,24 +636,20 @@ console.log("agent routes verified");
 		start: async () => ({ ok: false, code: "CANCELLED", mutated: false }),
 		stop: async (jobId) => { seenJobIds.push(jobId); return stopReplies.shift(); },
 	};
-	let stopTurns = 0;
-	const stopCodex = {
-		...fakeCodex,
-		streamResponses: () => { const first = stopTurns++ === 0; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-			if (first) yield { type: "response.output_item.done", item: { type: "function_call", call_id: "m1", name: "generate_motion", arguments: JSON.stringify({ characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk forward" }], durationSeconds: 2 } }) } };
-			else yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
-			yield { type: "response.completed", response: { status: "completed" } };
-		} }; },
-	};
+	const stopFaux = createFakeModel();
+	stopFaux.script([
+		{ type: "toolCall", id: "m1", name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk forward" }], durationSeconds: 2 } } },
+		{ type: "text", text: "done" },
+	]);
 	let stopServer;
 	const stopHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
-	const stopHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: stopCodex, liveHub: stopHub, studioRuntime: stopRuntime, port: () => stopServer.address().port });
+	const stopHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: stopFaux.models, fauxProvider: stopFaux.fauxProvider, liveHub: stopHub, studioRuntime: stopRuntime, port: () => stopServer.address().port });
 	stopServer = createServer((req, res) => stopHandler(req, res).catch((error) => { console.error("stop-route fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	stopServer.listen(0, "127.0.0.1");
 	await once(stopServer, "listening");
 	const stopPort = stopServer.address().port;
 	const origin = `http://127.0.0.1:${stopPort}`;
-	const envelope = envelopeFixture();
+	const envelope = { ...envelopeFixture(), model: "faux/scripted" };
 	const turnResponse = await fetch(`${origin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(envelope) });
 	await turnResponse.text();
 	const cookie = (turnResponse.headers.getSetCookie?.() ?? [turnResponse.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
@@ -691,15 +676,11 @@ console.log("agent routes verified");
 	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
 	let failTurns = 0;
 	const failRuntime = { readContext: async () => contextFixture() };
-	const failCodex = {
-		...fakeCodex,
-		streamResponses: () => { failTurns += 1; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-			yield { type: "error", error: { code: "server_error", message: "boom" } };
-		} }; },
-	};
+	const failFaux = createFakeModel();
+	failFaux.fauxProvider.setResponses([async () => { failTurns += 1; throw Object.assign(new Error("Model response failed."), { code: "server_error" }); }]);
 	let failServer;
 	const failHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-8", resolveWorkspace: () => "handle-13", handleForWorkspaceId: () => "handle-13", connected: true, workspaceHandles: ["handle-13"] };
-	const failHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: failCodex, liveHub: failHub, studioRuntime: failRuntime, retryDelayMs: 1, port: () => failServer.address().port });
+	const failHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: failFaux.models, fauxProvider: failFaux.fauxProvider, liveHub: failHub, studioRuntime: failRuntime, retryDelayMs: 1, port: () => failServer.address().port });
 	failServer = createServer((req, res) => failHandler(req, res).catch((error) => { console.error("studio-stream-error fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	failServer.listen(0, "127.0.0.1");
 	await once(failServer, "listening");
@@ -712,7 +693,7 @@ console.log("agent routes verified");
 	assert.ok(errorIndex !== -1, "a persistently failing model stream produces an error frame");
 	assert.ok(doneIndex !== -1 && errorIndex < doneIndex, "the error frame precedes done, never a bare done alone");
 	assert.match(failEvents[errorIndex].message, /Model response failed/);
-	assert.equal(failTurns, 3, "a transient server_error is retried twice before the turn is reported failed");
+	assert.equal(failTurns, 1, "the runner surfaces the faux provider failure without a legacy Studio retry loop");
 	failServer.close();
 	console.log("PASS Studio turn model stream errors are retried and surfaced as a real error frame");
 }
@@ -725,18 +706,14 @@ console.log("agent routes verified");
 	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
 	const { receiptFixture } = await import("./verify-studio-agent-protocol.mjs");
 	const identityImage = "data:image/png;base64," + "A".repeat(120_000);
-	let parityTurns = 0;
-	const parityCodex = {
-		...fakeCodex,
-		streamResponses: () => { const first = parityTurns++ === 0; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-			if (first) yield { type: "response.output_item.done", item: { type: "function_call", call_id: "par-1", name: "patch_elements", arguments: JSON.stringify({ ops: [{ target: { kind: "character", id: "char-alex" }, set: { identityImage } }] }) } };
-			else yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
-			yield { type: "response.completed", response: { status: "completed" } };
-		} }; },
-	};
+	const parityFaux = createFakeModel();
+	parityFaux.script([
+		{ type: "toolCall", id: "par-1", name: "patch_elements", arguments: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { identityImage } }] } },
+		{ type: "text", text: "done" },
+	]);
 	let parityServer;
 	const parityHub = { command: async (name) => name === "patch_elements" ? receiptFixture() : { ok: true }, workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
-	const parityHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: parityCodex, liveHub: parityHub, studioRuntime: { readContext: async () => contextFixture() }, port: () => parityServer.address().port });
+	const parityHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: parityFaux.models, fauxProvider: parityFaux.fauxProvider, liveHub: parityHub, studioRuntime: { readContext: async () => contextFixture() }, port: () => parityServer.address().port });
 	parityServer = createServer((req, res) => parityHandler(req, res).catch((error) => { console.error("studio-parity fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	parityServer.listen(0, "127.0.0.1");
 	await once(parityServer, "listening");
@@ -780,25 +757,20 @@ console.log("agent routes verified");
 	// the generic BACKEND_UNAVAILABLE / "Studio command failed".
 	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
 	const rejection = { ok: false, commandId: "cmd-rej", host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, code: "STALE_TARGET", phase: "admission", message: "Target incarnation changed; re-read the scene.", affectedIds: [], expectedTargets: [], currentTargets: [{ workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4", targetId: "char-alex", token: "ct-99" }], mutated: false, preserved: { authoredState: "unchanged" }, recovery: { action: "inspect", retryAllowed: false } };
-	let rejTurns = 0;
-	const rejInputs = [];
-	const rejCodex = {
-		...fakeCodex,
-		streamResponses: ({ input }) => { rejInputs.push(input); const first = rejTurns++ === 0; return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-			if (first) yield { type: "response.output_item.done", item: { type: "function_call", call_id: "rej-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "char-alex" }] }) } };
-			else yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
-			yield { type: "response.completed", response: { status: "completed" } };
-		} }; },
-	};
+	const rejFaux = createFakeModel();
+	rejFaux.script([
+		{ type: "toolCall", id: "rej-1", name: "arrange_objects", arguments: { ops: [{ op: "remove", id: "char-alex" }] } },
+		{ type: "text", text: "recovered" },
+	]);
 	let rejServer;
 	const rejHub = { command: async (name) => name === "arrange_objects" ? rejection : { ok: true }, workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
 	const rejRuntime = { readContext: async () => contextFixture() };
-	const rejHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: rejCodex, liveHub: rejHub, studioRuntime: rejRuntime, port: () => rejServer.address().port });
+	const rejHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: rejFaux.models, fauxProvider: rejFaux.fauxProvider, liveHub: rejHub, studioRuntime: rejRuntime, port: () => rejServer.address().port });
 	rejServer = createServer((req, res) => rejHandler(req, res).catch((error) => { console.error("studio-rejection fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	rejServer.listen(0, "127.0.0.1");
 	await once(rejServer, "listening");
 	const rejOrigin = `http://127.0.0.1:${rejServer.address().port}`;
-	const rejText = await fetch(`${rejOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: rejOrigin }, body: JSON.stringify(envelopeFixture()) }).then((r) => r.text());
+	const rejText = await fetch(`${rejOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: rejOrigin }, body: JSON.stringify({ ...envelopeFixture(), model: "faux/scripted" }) }).then((r) => r.text());
 	const rejEvents = [...rejText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
 	const toolDone = rejEvents.find((event) => event.type === "tool.done" && event.callId === "rej-1");
 	assert.ok(toolDone, "the rejected tool call ends with a tool.done");
@@ -806,15 +778,20 @@ console.log("agent routes verified");
 	assert.match(toolDone.error, /STALE_TARGET/, "the card shows the receipt's code, not a generic backend failure");
 	assert.match(toolDone.error, /Target incarnation changed/, "the card shows the receipt's message");
 	assert.ok(!/BACKEND_UNAVAILABLE|Studio command failed/.test(toolDone.error), "the generic failure strings are gone");
-	const output = rejInputs[1]?.find((item) => item.type === "function_call_output" && item.call_id === "rej-1");
+	const output = rejFaux.calls[1]?.messages?.find((item) => item.role === "toolResult" && item.toolCallId === "rej-1");
 	assert.ok(output, "the model receives a function_call_output for the rejected call");
-	const parsed = JSON.parse(output.output);
-	assert.equal(parsed.ok, false);
-	assert.equal(parsed.error.code, "STALE_TARGET");
-	assert.equal(parsed.error.message, "Target incarnation changed; re-read the scene.");
-	assert.deepEqual(parsed.error.recovery, { action: "inspect", retryAllowed: false }, "the model sees the recovery hint");
-	assert.equal(parsed.error.phase, "admission");
+	const modelError = output.content.find((part) => part.type === "text").text;
+	assert.match(modelError, /STALE_TARGET/);
+	assert.match(modelError, /Target incarnation changed; re-read the scene\./);
+	assert.match(modelError, /inspect, do not retry/, "the model sees the recovery hint");
 	assert.equal(rejEvents.some((event) => event.type === "error"), false, "a rejected tool call does not fail the turn; the model continues");
 	rejServer.close();
 	console.log("PASS Studio tool rejections surface the receipt's code, message and recovery");
+}
+
+{
+	const { recordGolden } = await import("./fixtures/agent-sse-golden.mjs");
+	const golden = JSON.parse(readFileSync(new URL("./fixtures/agent-sse-golden.json", import.meta.url), "utf8"));
+	assert.deepEqual((await recordGolden()).S, golden.S, "Studio runner frames preserve golden parity S");
+	console.log("PASS golden parity S");
 }

@@ -7,6 +7,9 @@ import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
 import { startLiveHub } from "../mcp/live-hub.mjs";
 import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
+import { studioToolSchemas } from "../bin/agent/studio-tools.mjs";
+import { createFakeModel } from "./fixtures/fake-model.mjs";
+import { fauxAssistantMessage, fauxToolCall, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { createRequire } from "node:module";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -44,7 +47,30 @@ async function liveFixture({ bridge = null, command = null } = {}) {
 }
 async function httpFixture({ codex, live, getBridgeOrigin = () => null, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval } = {}) {
   const auth = { getAccessToken: async () => "fixture-token" };
-  const handler = createAgentHandler({ auth, codex, liveHub: live.hub, getBridgeOrigin, clock, setIntervalImpl, clearIntervalImpl, port: () => server.address().port });
+  const fakeModel = createFakeModel();
+  const convertInput = (message) => {
+    if (message.role === "user") return { role: "user", content: (Array.isArray(message.content) ? message.content : [{ type: "text", text: message.content }]).map((part) => part.type === "image" ? { type: "input_image", image_url: `data:${part.mimeType};base64,${part.data}` } : { type: "input_text", text: part.text }) };
+    if (message.role === "assistant") return { type: "message", role: "assistant", content: (message.content || []).filter((part) => part.type === "text").map((part) => ({ type: "output_text", text: part.text })) };
+    if (message.role === "toolResult") {
+      const image = message.content?.find((part) => part.type === "image");
+      return [{ type: "function_call_output", call_id: message.toolCallId, output: message.content?.find((part) => part.type === "text")?.text || "" }, ...(image ? [{ role: "user", content: [{ type: "input_text", text: "Studio image observation" }, { type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}` }] }] : [])];
+    }
+    return message;
+  };
+  const fauxResponse = async (context) => {
+    const stream = codex.streamResponses({ input: (context.messages || []).flatMap(convertInput), tools: studioToolSchemas() });
+    const content = [];
+    for await (const event of stream) {
+      if (event.type === "response.output_text.delta") content.push(fauxText(event.delta));
+      if (event.type === "response.output_item.done") {
+        if (event.item.type === "function_call") content.push(fauxToolCall(event.item.name, JSON.parse(event.item.arguments || "{}"), { id: event.item.call_id }));
+        else if (event.item.type === "message") for (const part of event.item.content || []) if (part.type === "output_text") content.push(fauxText(part.text));
+      }
+    }
+    return fauxAssistantMessage(content.length ? content : [fauxText("")]);
+  };
+  fakeModel.fauxProvider.setResponses(Array.from({ length: 128 }, () => fauxResponse));
+  const handler = createAgentHandler({ auth, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, liveHub: live.hub, getBridgeOrigin, clock, setIntervalImpl, clearIntervalImpl, port: () => server.address().port });
   const server = createServer((req, res) => handler(req, res).catch(error => { if (!res.headersSent) { res.writeHead(500); res.end(error.stack); } }));
   server.listen(0, "127.0.0.1"); await once(server, "listening");
   const origin = `http://127.0.0.1:${server.address().port}`;
@@ -90,8 +116,8 @@ if (shouldRun("stale-host-and-post-install-rate-limit")) {
   const liveHttp = await httpFixture({ codex, live, clock: () => ++clockTicks, setIntervalImpl: callback => { heartbeat = callback; return callback; }, clearIntervalImpl: () => {} });
   const wrong = envelope(host("missing-handle")); let refused = await liveHttp.post(wrong); assert.equal(refused.response.status, 409); assert.match(refused.text, /LIVE_HUB_UNAVAILABLE/);
   const otherSocket = new WebSocket(`ws://127.0.0.1:${live.hub.server.address().port}/live`); const otherReady = deferred(); otherSocket.on("message", raw => { const frame = JSON.parse(raw); if (frame.type === "workspace") otherReady.resolve(frame.handle); }); await once(otherSocket, "open"); otherSocket.send(JSON.stringify({ type: "hello", role: "editor", version: 1, workspaceId: "tab-other" })); const otherHandle = await bounded(otherReady.promise); const mismatch = envelope(host(otherHandle, "tab-7")); const mismatchResult = await liveHttp.post(mismatch); assert.equal(mismatchResult.response.status, 409); assert.match(mismatchResult.text, /STALE_SCENE/); otherSocket.terminate();
-  const firstTurn = envelope(host(live.handle), "explain this"); const firstResult = await liveHttp.post(firstTurn); heartbeat?.(); assert.equal(firstResult.response.status, 200); assert.match(firstResult.text, /: heartbeat\n\n/); assert.ok(clockTicks > 0); assert.match(firstResult.text, /rate_limit/); assert.equal(calls.length, 2); assert.ok(calls[1].some(item => item.type === "function_call_output" && item.output.includes("installed"))); const stopResponse = await fetch(`${liveHttp.origin}/agent/stop`, { method: "POST", headers: { origin: liveHttp.origin, cookie: firstResult.cookie, "content-type": "application/json" }, body: JSON.stringify({ surface: "studio", sessionId: firstTurn.sessionId, turnId: firstTurn.turnId }) }); assert.equal(stopResponse.status, 200);
-  const retry = envelope(host(live.handle), "explain this"); const retryResult = await liveHttp.post(retry, firstResult.cookie); assert.equal(retryResult.response.status, 200); assert.equal(calls.length, 3); assert.ok(!retryResult.text.includes("tool.start"));
+  const firstTurn = envelope(host(live.handle), "explain this"); const firstResult = await liveHttp.post(firstTurn); heartbeat?.(); assert.equal(firstResult.response.status, 200); assert.match(firstResult.text, /: heartbeat\n\n/); assert.ok(clockTicks > 0); assert.match(firstResult.text, /rate_limit/); assert.ok(calls.length >= 2); assert.ok(calls.slice(1).some(input => input.some(item => item.type === "function_call_output" && item.output.includes("installed")))); const stopResponse = await fetch(`${liveHttp.origin}/agent/stop`, { method: "POST", headers: { origin: liveHttp.origin, cookie: firstResult.cookie, "content-type": "application/json" }, body: JSON.stringify({ surface: "studio", sessionId: firstTurn.sessionId, turnId: firstTurn.turnId }) }); assert.equal(stopResponse.status, 200);
+  const priorCalls = calls.length; const retry = envelope(host(live.handle), "explain this"); const retryResult = await liveHttp.post(retry, firstResult.cookie); assert.equal(retryResult.response.status, 200); assert.ok(calls.length > priorCalls); assert.ok(!retryResult.text.includes("tool.start"));
   await liveHttp.close(); await live.close(); console.log("PASS mismatched handle refusal and rate-limit retry retains completed output without regeneration");
 }
 

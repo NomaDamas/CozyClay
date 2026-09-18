@@ -291,6 +291,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	};
 	const sessions = new Map();
 	const workflowRunners = new Map();
+	const studioRunners = new Map();
 	let workflowModels = models;
 	const ensureWorkflowModels = async () => {
 		if (!workflowModels) {
@@ -379,8 +380,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	};
 	const handleStudioTurn = async (req, res, value, path) => {
 		const { StudioProtocolError, validateStudioContextFreshness } = await import("../../src/studio-agent-protocol.js");
-		const [{ createStudioTools, studioToolSchemas }, { STUDIO_SYSTEM_PROMPT, studioHistoryItem }, { encodeStudioContext }] = await Promise.all([
-			import("./studio-tools.mjs"), import("./studio-prompt.mjs"), import("../../src/studio-agent-context.js"),
+		const [{ createStudioTools }, { encodeStudioContext }] = await Promise.all([
+			import("./studio-tools.mjs"), import("../../src/studio-agent-context.js"),
 		]);
 		const hubDeps = await runtime; const hub = hubDeps.liveHub || liveHub;
 		if (path === "/agent/stop") {
@@ -392,7 +393,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			// Forwarding its outcome keeps the panel from turning "I could not find
 			// out" into "nothing was applied"; a discarded outcome reads as proof.
 			let outcome = null;
-			if (jobId && ownedStudioRuntime?.stop) outcome = await ownedStudioRuntime.stop(jobId); else session.controller?.abort();
+			if (jobId && ownedStudioRuntime?.stop) outcome = await ownedStudioRuntime.stop(jobId);
+			session.controller?.abort();
+			await session.modelSession?.abort?.("studio stop");
 			json(res, 200, { ok: true, status: jobId ? "stopped" : "detached", ...(outcome ? { outcome: { status: outcome.status ?? null, code: outcome.code ?? null, mutated: outcome.mutated ?? null } } : {}) }); return true;
 		}
 		if (!studioRuntime && (!hub?.command || !hub?.workspaceId)) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio execution is not installed.");
@@ -451,93 +454,78 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			try { const outcome = await runtimeForJob.start(admissionResult.jobId); if (outcome?.ok && outcome.status === "installed") send({ type: "receipt", receipt: outcome }); return outcome; }
 			finally { unsubscribe(); }
 		};
-		const modelTools = tools.map(tool => tool.name === "generate_motion" ? { ...tool, handler: motion } : tool);
-		const history = session.history;
-		for (const item of attachmentInputItems(value.attachments)) history.push(item);
-		history.push(studioHistoryItem(value.context, value.text, encodeStudioContext));
+		const modelTools = tools.map(tool => ({
+			...tool,
+			handler: async args => {
+				const result = await (tool.name === "generate_motion" ? motion(args) : tool.handler(args));
+				if (!result || !Array.isArray(result.visualRefs) || !result.visualRefs.length) return result;
+					const ref = result.visualRefs.find(item => item?.imageId || item?.id);
+				if (!ref) return result;
+				const visual = await tools.resolveImage(ref.imageId || ref.id, { receiptId: result.receiptId, revision: result.revision });
+				return { ...result, visualStatus: visual.visualStatus, imageId: visual.imageId, revision: visual.revision, receiptId: visual.receiptId, ...(visual.dataUrl ? { dataUrl: visual.dataUrl } : {}) };
+			},
+		}));
+		let frameObservation;
 		if (value.attachFrame) {
 			const captured = await hub.command("capture_framing_png", {}, value.context.host.workspaceHandle);
 			if (!captured?.dataUrl?.startsWith("data:image/")) throw new StudioProtocolError("TARGET_NOT_READY", "The current frame has no image bytes.");
-			history.push({ role: "user", content: [{ type: "input_text", text: `Studio frame observation revision ${JSON.stringify(captured.revision ?? null)} receipt ${captured.receiptId ?? "unavailable"}` }, { type: "input_image", image_url: captured.dataUrl }] });
+			const match = /^data:([^;]+);base64,(.*)$/.exec(captured.dataUrl);
+			frameObservation = { data: match[2], mimeType: match[1], revision: captured.revision, receiptId: captured.receiptId };
 		}
-		const retryStudioStream = async (operation, attempts = 2) => {
-			for (let attempt = 0; ; attempt += 1) {
-				try { return await operation(); } catch (error) {
-					if (!["overloaded", "server_error"].includes(error.code) || attempt >= attempts || controller.signal.aborted) throw error;
-					await new Promise((resolve) => setTimeout(resolve, retryDelayMs * (attempt + 1)));
-				}
+		const telemetryTools = new Map();
+		const emitFrame = frame => {
+			if (frame.type === "tool.start") {
+			telemetryTools.set(frame.callId, { execution: telemetry.toolStarted(agentToolCategory(frame.name)), name: frame.name });
+			return send(frame);
 			}
+			if (frame.type === "tool.done") {
+			const record = telemetryTools.get(frame.callId);
+			if (record && frame.ok && frame.result?.ok && frame.result?.authored) telemetry.applied();
+			if (!frame.ok) {
+				toolFailed = true;
+				if (typeof frame.error === "string" && frame.error.startsWith("Validation failed for tool ")) frame.error = "INVALID_ARGUMENT: Unexpected field.";
+			}
+			send(frame);
+			if (record) {
+				record.execution.executed(frame.ok ? "succeeded" : (controller.signal.aborted ? "cancelled" : "failed"));
+				record.finished = true;
+			}
+			return;
+			}
+			if (frame.type === "error") {
+			turnOutcome = controller.signal.aborted || frame.code === "aborted" ? "cancelled" : "failed";
+			turnFailureCode = controller.signal.aborted ? "aborted" : frame.code;
+			return send(frame);
+			}
+			if (frame.type === "done") {
+			if (turnOutcome === "succeeded" && !toolFailed) telemetry.finished("succeeded", null);
+			else telemetry.finished(turnOutcome, turnFailureCode || "tool_failed");
+			}
+			send(frame);
 		};
+		let runner = studioRunners.get(value.sessionId);
+		if (!runner) {
+			runner = createAgentRunner({ models, fauxProvider, sessionStore, clock, codexBaseUrl, auth });
+			studioRunners.set(value.sessionId, runner);
+		}
 		try {
-			while (true) {
-				const items = await retryStudioStream(async () => {
-					const stream = codex.streamResponses({ input: history, tools: studioToolSchemas(), instructions: STUDIO_SYSTEM_PROMPT, model: value.model, effort: value.effort, signal: controller.signal });
-					const collected = [];
-					for await (const event of stream) {
-						if (event.type === "response.output_text.delta") send({ type: "text.delta", text: event.delta });
-						if (event.type === "response.output_item.done") collected.push(event.item);
-						if (event.type === "error" || event.type === "response.failed") {
-							if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] model event:", JSON.stringify(event).slice(0, 600));
-							const code = event.error?.code ?? event.response?.error?.code;
-							throw Object.assign(new Error("Model response failed."), code === "server_is_overloaded" ? { code: "overloaded" } : code === "server_error" ? { code: "server_error" } : {});
-						}
-					}
-					return collected;
-				});
-				let called = false;
-				for (const item of items) {
-					history.push(item); called ||= item.type === "function_call";
-					if (item.type !== "function_call") continue;
-					const args = typeof item.arguments === "string" ? JSON.parse(item.arguments) : item.arguments;
-					const execution = telemetry.toolStarted(advisory(() => agentToolCategory(item.name), "other"));
-					// The card names the action and shows the arguments it ran with; an
-					// identity image is reported by its size, never by its bytes.
-					send({ type: "tool.start", callId: item.call_id, name: item.name, label: item.name.replaceAll("_", " "), args: summariseCanvasResult(args), eventSeq: undefined }); let result;
-					try { const tool = modelTools.find(candidate => candidate.name === item.name); if (!tool) throw new StudioProtocolError("UNKNOWN_TOOL", "Unsupported Studio tool."); result = await tool.handler(args);
-						if (result && Array.isArray(result.visualRefs) && result.visualRefs.length) {
-							const ref = result.visualRefs.find(value => value?.imageId || value?.id);
-							if (ref) { const visual = await tools.resolveImage(ref.imageId || ref.id, { receiptId: result.receiptId, revision: result.revision }); result = { ...result, visualStatus: visual.visualStatus, imageId: visual.imageId, revision: visual.revision, receiptId: visual.receiptId, ...(visual.dataUrl ? { dataUrl: visual.dataUrl } : {}) }; }
-						}
-						advisory(() => { if (result?.ok && result.authored) telemetry.applied(); });
-						const publicResult = result && typeof result === "object" ? Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl")) : result; send({ type: "tool.done", callId: item.call_id, ok: true, elapsedMs: execution.elapsedMs(), result: publicResult }); execution.executed("succeeded"); history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(publicResult) }); session.history = history.slice();
-						if (result?.dataUrl && codex.appendImageObservation) { codex.appendImageObservation(history, { callId: item.call_id, dataUrl: result.dataUrl, label: `Studio image ${result.imageId} revision ${JSON.stringify(result.revision)} receipt ${result.receiptId ?? "unavailable"}` }); session.history = history.slice(); }
-					} catch (error) {
-						if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] tool", item.name, "failed:", error?.message, error?.receipt ? JSON.stringify(error.receipt).slice(0, 400) : "");
-						const receipt = error?.receipt && typeof error.receipt === "object" ? error.receipt : null;
-						const code = error.code || "BACKEND_UNAVAILABLE";
-						const failure = { ok: false, error: { code, message: error.message, ...(receipt ? { phase: receipt.phase ?? null, recovery: receipt.recovery ?? null, expectedTargets: receipt.expectedTargets ?? [], currentTargets: receipt.currentTargets ?? [] } : {}) } };
-						const recoveryHint = receipt?.recovery?.action && receipt.recovery.action !== "none" ? ` (${receipt.recovery.action}${receipt.recovery.retryAllowed === false ? ", do not retry" : ", retry allowed"})` : "";
-						toolFailed = true;
-						send({ type: "tool.done", callId: item.call_id, ok: false, elapsedMs: execution.elapsedMs(), error: `${code}: ${error.message}${recoveryHint}` });
-						execution.executed(controller.signal.aborted ? "cancelled" : "failed");
-						history.push({ type: "function_call_output", call_id: item.call_id, output: JSON.stringify(failure) }); session.history = history.slice();
-					}
-				}
-				if (!called) break;
-			}
+			if (!session.modelSession) session.modelSession = await runner.openSession(value.sessionId, { surface: "studio" });
+			for await (const frame of session.modelSession.start({
+				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
+				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
+				context: value.context, tools: modelTools, signal: controller.signal, emit: send,
+				meta: { sceneName: value.context?.scene?.name ?? value.context?.sceneName ?? null, firstText: value.text },
+				quotaEvent: headers => codex?.parseQuotaHeaders ? quotaEvent(codex, headers) : { type: "quota", plan: null, primary: { usedPercent: null, windowMinutes: null, resetAt: null }, credits: { has: null } },
+			})) emitFrame(frame);
 		} catch (error) {
-			// A backend refusal reaches the Studio panel with its status and sanitized
-			// detail; a Studio protocol error already says what it means.
 			const info = errorInfo(error);
 			turnOutcome = controller.signal.aborted ? "cancelled" : "failed";
 			turnFailureCode = controller.signal.aborted ? "aborted" : agentFailureCode(error, controller.signal, toolFailed);
-			if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] turn failed:", error?.status, error?.message, String(error?.detail ?? error?.body ?? "").slice(0, 300));
-			send({ type: "error", code: error.status === 429 ? "rate_limit" : error.code || "upstream", message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
-			session.history = history.slice();
-		}
-		session.history = history.slice();
-		try {
-			const sceneName = value.context?.scene?.name ?? value.context?.sceneName ?? session.meta?.sceneName ?? null;
-			const firstText = session.meta?.firstText || value.text;
-			const pending = session.history.slice(session.persistedItems ?? 0);
-			if (pending.length || !session.meta) session.meta = sessionStore.append(value.sessionId, pending, { surface: "studio", sceneName, firstText });
-			session.persistedItems = session.history.length;
-		} catch (error) {
-			if (process.env.COZYCLAY_AGENT_DEBUG) console.error("[agent] session persistence failed:", error?.message);
+			send({ type: "error", code: controller.signal.aborted ? "aborted" : error.code || "upstream", message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
+			emitFrame({ type: "done" });
 		}
 		if (controller.signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
-		telemetry.finished(turnOutcome, turnFailureCode);
-		send({ type: "done" }); record.terminal = true;
+		if (!record.terminal) emitFrame({ type: "done" });
 		close(); if (!res.writableEnded) res.end(); session.controller = null; return true;
 	};
 	const handle = async (req, res, path = new URL(req.url, "http://127.0.0.1").pathname) => {
@@ -553,6 +541,26 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			const after = Number(new URL(req.url, "http://127.0.0.1").searchParams.get("after") || 0);
 			if (!Number.isSafeInteger(after) || after < 0) { json(res, 400, { error: "invalid cursor" }); return true; }
 			writeStudioStream(res, record, after, req); return true;
+		}
+		if (path.startsWith("/agent/turn/") && path.endsWith("/steer") && req.method === "POST") {
+			const turnId = decodeURIComponent(path.slice("/agent/turn/".length, -"/steer".length));
+			let value;
+			try {
+				value = await readBody(req, TURN_BODY_LIMIT);
+				if (!value || typeof value.text !== "string" || !value.text.trim() || !validAttachments(value.attachments)) throw new Error("Invalid request.");
+			} catch { json(res, 400, { error: "invalid request" }); return true; }
+			// Studio turnIds are frozen envelopes; their events are keyed in studioSessions,
+			// never in the Workflow `sessions` map, so that lookup alone tells them apart.
+			if ([...studioSessions.values()].some(candidate => candidate.turns.has(turnId))) { json(res, 409, { error: { code: "STEER_UNSUPPORTED", message: "Steering a Studio turn is not supported." } }); return true; }
+			const session = [...sessions.values()].find(candidate => candidate.turnId === turnId);
+			if (!session) { json(res, 404, { error: "turn not found" }); return true; }
+			if (!session.running || !session.modelSession) { json(res, 409, { error: { code: "NO_ACTIVE_TURN", message: "This turn already ended." } }); return true; }
+			const images = (Array.isArray(value.attachments) ? value.attachments : []).map(attachment => {
+				const match = /^data:([^;]+);base64,(.*)$/.exec(attachment?.dataUrl || "");
+				return match ? { type: "image", data: match[2], mimeType: match[1] } : null;
+			}).filter(Boolean);
+			await session.modelSession.steer(value.text, images);
+			json(res, 200, { ok: true, queued: true }); return true;
 		}
 		if (path === "/agent/providers" && req.method === "GET") {
 			const { providerStatus } = await import("./providers.mjs");
@@ -701,6 +709,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		const disconnect = () => controller.abort();
 		res.once("close", disconnect);
 		const turnId = typeof value.turn_id === "string" && /^[a-f0-9]{32}$/.test(value.turn_id) ? value.turn_id : null;
+		session.turnId = turnId;
 		const telemetry = createTurnTelemetry(send, turnId);
 		const telemetryTools = new Map();
 		let turnOutcome = "succeeded";
@@ -794,7 +803,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		for (const session of sessions.values()) session.controller?.abort();
 		for (const session of studioSessions.values()) session.controller?.abort();
 		for (const runner of workflowRunners.values()) await runner.close?.();
-		workflowRunners.clear();
+		for (const runner of studioRunners.values()) await runner.close?.();
+		workflowRunners.clear(); studioRunners.clear();
 		if (ownedStudioRuntime?.dispose) await ownedStudioRuntime.dispose();
 		studioSessions.clear(); studioEvents.clear(); studioOwnerTokens.clear();
 		sessions.clear();

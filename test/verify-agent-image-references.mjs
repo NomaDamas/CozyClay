@@ -8,11 +8,13 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import { createAgentHandler, referenceGuidance } from "../bin/agent/agent-routes.mjs";
 import { createCodexClient } from "../bin/agent/codex-client.mjs";
+import { createFakeModel } from "./fixtures/fake-model.mjs";
 
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const jpeg = "data:image/jpeg;base64,/9j/4AAQSkZJRg==";
 
 const seen = [];
+const fakeModel = createFakeModel();
 const fakeCodex = {
 	parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: { hasCredits: true } }),
 	editImage: async (args) => { seen.push(args); return { pngBase64: png.split(",")[1], width: 1, height: 1 }; },
@@ -22,6 +24,8 @@ let server;
 const handler = createAgentHandler({
 	auth: { getAccessToken: async () => "token" },
 	codex: fakeCodex,
+	models: fakeModel.models,
+	fauxProvider: fakeModel.fauxProvider,
 	liveHub: { command: async () => ({}) },
 	handlers: [],
 	port: () => server.address().port,

@@ -254,6 +254,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		};
 
 		const emitQuota = (queue, input, response, model) => {
+			if (input?.surface === "studio") { if (state.active) state.active.quotaSent = true; return; }
 			if (state.active?.quotaSent) return;
 			if (state.active) state.active.quotaSent = true;
 			const headers = response?.headers || {};

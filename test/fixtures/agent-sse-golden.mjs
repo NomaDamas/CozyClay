@@ -78,29 +78,18 @@ async function recordStudio() {
 		connected: true,
 		workspaceHandles: ["handle-12"],
 	};
-	let calls = 0;
-	const fakeCodex = {
-		parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: { hasCredits: true } }),
-		appendImageObservation(history, value) { history.push({ role: "user", content: [{ type: "input_text", text: value.label }, { type: "input_image", image_url: value.dataUrl }] }); },
-		streamResponses: () => {
-			calls += 1;
-			const item = calls === 1
-				? { type: "function_call", call_id: "s1", name: "inspect_studio", arguments: JSON.stringify({ section: "selection" }) }
-				: calls === 2
-					? { type: "function_call", call_id: "s2", name: "patch_elements", arguments: JSON.stringify({ ops: [{ target: { kind: "stage" }, set: { "keyLight.warmth": 0.3 } }] }) }
-					: calls === 3
-						? { type: "function_call", call_id: "s3", name: "verify_result", arguments: JSON.stringify({ targets: ["char-alex"], checks: ["framing"], visual: "frame" }) }
-						: { type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] };
-			return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-				if (calls === 4) yield { type: "response.output_text.delta", delta: "done" };
-				yield { type: "response.output_item.done", item };
-				yield { type: "response.completed", response: { status: "completed" } };
-			} };
-		},
-	};
+	const fakeModel = createFakeModel();
+	fakeModel.script([
+		{ type: "toolCall", id: "s1", name: "inspect_studio", arguments: { section: "selection" } },
+		{ type: "toolCall", id: "s2", name: "patch_elements", arguments: { ops: [{ target: { kind: "stage" }, set: { "keyLight.warmth": 0.3 } }] } },
+		{ type: "toolCall", id: "s3", name: "verify_result", arguments: { targets: ["char-alex"], checks: ["framing"], visual: "frame" } },
+		{ type: "text", text: "done" },
+	]);
+	const auth = { getAccessToken: async () => "token" };
+	const codex = { parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: { hasCredits: true } }) };
 	return collectTurn(
-		{ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() } },
-		envelopeFixture(),
+		{ auth, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, liveHub: fakeLive, studioRuntime: { readContext: async () => contextFixture() } },
+		{ ...envelopeFixture(), model: "faux/scripted" },
 	);
 }
 
