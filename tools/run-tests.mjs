@@ -66,6 +66,7 @@ const NODE_FILES = [
 	"test/verify-agent-panel.mjs",
 	"test/verify-agent-host.mjs",
 	"test/verify-agent-routes.mjs",
+	"test/verify-schema-to-typebox.mjs",
 	"test/verify-agent-sse-golden.mjs",
 	"test/verify-studio-agent-protocol.mjs",
 	"test/verify-studio-agent-jobs.mjs",
