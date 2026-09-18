@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
+import { createAgentHandler, REASONING_EFFORTS } from "../bin/agent/agent-routes.mjs";
 
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
@@ -229,13 +229,26 @@ const models = await fetch(`http://127.0.0.1:${port}/agent/models`).then((r) => 
 		console.log("PASS openai-codex merges the live catalog with the pi catalog, keeping astra first");
 
 		await assert.rejects(resolveModel("anthropic/does-not-exist", { models: base }), (error) => error.code === "UNKNOWN_MODEL", "resolveModel rejects an unknown model id with the frozen error code");
+		const { getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
+		// gpt-6-astra's thinkingLevelMap marks "off" unsupported (it always thinks);
+		// resolveEffort must still hand pi "off" verbatim for the wire name "none"
+		// — clamping it up to astra's lowest supported level ("minimal") would
+		// silently turn "no reasoning requested" into "some reasoning requested".
+		const astra = base.getModel("openai-codex", "gpt-6-astra");
+		assert.equal(await resolveEffort(astra, "none"), "off", "none reaches pi as off even on a model whose thinkingLevelMap has no off");
+		assert.equal(await resolveEffort(astra, "ultra"), "max", "ultra is accepted on input and clamped to pi's top level, which astra supports");
+		assert.equal(await resolveEffort(astra, "medium"), "medium", "an effort the model already supports passes through unchanged");
 		// gpt-5.4 supports "off" and everything up to "xhigh" but not "max": it
-		// exercises the none→off mapping, the ultra→max→clamp-down chain, and a
-		// plain effort a model lacks being clamped to what it does support.
+		// exercises the ordinary none→off mapping and clamping an effort the
+		// model lacks (xhigh's neighbour, "max") down to its highest supported
+		// level — read from getSupportedThinkingLevels, not a hardcoded string.
 		const gpt54 = base.getModel("openai-codex", "gpt-5.4");
+		const gpt54Levels = getSupportedThinkingLevels(gpt54);
+		assert.ok(gpt54Levels.includes("off") && !gpt54Levels.includes("max"), "gpt-5.4 is the fixture this assertion needs: off supported, max not");
+		const gpt54Highest = gpt54Levels.at(-1);
 		assert.equal(await resolveEffort(gpt54, "none"), "off", "the wire name none maps to pi's off");
-		assert.equal(await resolveEffort(gpt54, "ultra"), "xhigh", "ultra is accepted on input, clamped to max, then clamped again to what this model supports");
-		assert.equal(await resolveEffort(gpt54, "max"), "xhigh", "an effort a model lacks is clamped down to what it supports");
+		assert.equal(await resolveEffort(gpt54, "ultra"), gpt54Highest, "ultra is accepted on input, clamped to max, then clamped again to what this model supports");
+		assert.equal(await resolveEffort(gpt54, "max"), gpt54Highest, "an effort a model lacks is clamped down to what it supports");
 		assert.deepEqual(EFFORT_LEVELS, REASONING_EFFORTS, "the frozen wire vocabulary providers.mjs exports matches the turn route's own REASONING_EFFORTS");
 		console.log("PASS resolveModel/resolveEffort: unknown model id rejects, effort maps and clamps through clampThinkingLevel");
 	} finally {

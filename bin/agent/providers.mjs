@@ -49,12 +49,15 @@ export async function resolveModel(requested, options = {}) {
 }
 
 /** Wire effort (frozen vocabulary) → pi `ModelThinkingLevel`, clamped to what
- * this model actually supports: "none"→"off", "ultra"→"max" (pi has no
- * "ultra" level), everything else passes through `clampThinkingLevel`. */
+ * this model actually supports: "none"→"off" (pi's own "no reasoning" level,
+ * never clamped up — a model that lacks "off" in its `thinkingLevelMap` still
+ * gets "off"; clamping it to the lowest *supported* level would silently turn
+ * "no reasoning requested" into "some reasoning requested"), "ultra"→"max"
+ * (pi has no "ultra" level) then clamped down like any other level. */
 export async function resolveEffort(model, effort) {
 	const { clampThinkingLevel } = await import("@earendil-works/pi-ai");
 	const level = effort === "none" ? "off" : effort === "ultra" ? "max" : effort;
-	return clampThinkingLevel(model, level);
+	return level === "off" ? "off" : clampThinkingLevel(model, level);
 }
 
 function unknownModel(requested) {
