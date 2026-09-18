@@ -20,18 +20,27 @@ const factories = {
 
 const providerConfig = (id) => PROVIDERS.find((provider) => provider.id === id);
 
-export async function loadProvider(id) {
+export async function loadProvider(id, { baseUrl } = {}) {
 	const config = providerConfig(id);
 	if (!config) throw Object.assign(new Error(`Unknown provider: ${id}`), { code: "UNKNOWN_PROVIDER" });
 	const module = await import(`@earendil-works/pi-ai/providers/${id}`);
-	return module[factories[id]]();
+	const provider = module[factories[id]]();
+	if (baseUrl) {
+		provider.baseUrl = baseUrl;
+		const getModels = provider.getModels.bind(provider);
+		provider.getModels = () => getModels().map((model) => ({ ...model, baseUrl }));
+	}
+	return provider;
 }
 
-export async function createModels({ credentials, auth = defaultAuth, keys = defaultKeys, env = process.env } = {}) {
+export async function createModels({ credentials, auth = defaultAuth, keys = defaultKeys, env = process.env, codexBaseUrl } = {}) {
 	const { createModels: createPiModels } = await import("@earendil-works/pi-ai");
 	const store = credentials ?? createCredentialStore({ auth, keys, env });
 	const models = createPiModels({ credentials: store });
-	for (const provider of PROVIDERS) models.setProvider(await loadProvider(provider.id));
+	for (const provider of PROVIDERS) {
+		const baseUrl = provider.id === "openai-codex" ? codexBaseUrl : undefined;
+		models.setProvider(await loadProvider(provider.id, { baseUrl }));
+	}
 	return models;
 }
 

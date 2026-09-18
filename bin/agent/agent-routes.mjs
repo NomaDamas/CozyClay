@@ -273,7 +273,7 @@ function liveToolsRuntime() {
 	}).catch((error) => ({ error }));
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, models, fauxProvider, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
+export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, fauxProvider, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();
@@ -291,6 +291,14 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, fauxProv
 	};
 	const sessions = new Map();
 	const workflowRunners = new Map();
+	let workflowModels = models;
+	const ensureWorkflowModels = async () => {
+		if (!workflowModels) {
+			const { createModels } = await import("./providers.mjs");
+			workflowModels = await createModels({ auth, codexBaseUrl });
+		}
+		return workflowModels;
+	};
 	// Tests hand in a store of their own; only the real sidecar writes the
 	// author's config dir (#375).
 	const sessionStore = injectedSessionStore ?? createSessionStore();
@@ -719,24 +727,34 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, fauxProv
 				if (record) {
 					if (frame.ok && appliedCanvasResult(record.name, frame.result)) telemetry.applied();
 					record.execution.executed(frame.ok ? "succeeded" : (signal.aborted ? "cancelled" : "failed"));
+					record.finished = true;
 				}
 				if (!frame.ok) toolFailed = true;
 				return;
 			}
 			if (frame.type === "error") {
+				if (frame.code === "truncated") {
+					turnOutcome = "unresolved";
+					return;
+				}
 				turnOutcome = signal.aborted || frame.code === "aborted" ? "cancelled" : "failed";
 				turnFailureCode = signal.aborted ? "aborted" : frame.code;
 				return send(frame);
 			}
 			if (frame.type === "done") {
-				if (turnOutcome === "succeeded") telemetry.finished("succeeded", null);
-				else telemetry.finished(turnOutcome, turnFailureCode);
+				for (const record of telemetryTools.values()) if (!record.finished) {
+					record.execution.executed(signal.aborted ? "cancelled" : "failed");
+					record.finished = true;
+				}
+				if (turnOutcome === "unresolved") return send(frame);
+				if (turnOutcome === "succeeded" && !toolFailed) telemetry.finished("succeeded", null);
+				else telemetry.finished(toolFailed ? "failed" : turnOutcome, toolFailed ? "tool_failed" : turnFailureCode);
 			}
 			send(frame);
 		};
 		const turn = async () => {
 			const accessToken = await auth.getAccessToken();
-			let workflowModels = models;
+			workflowModels = await ensureWorkflowModels();
 			if (!accessToken && workflowModels) {
 				const { resolveModel } = await import("./providers.mjs");
 				try {
@@ -749,7 +767,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, fauxProv
 			const workflowTools = createAgentTools({ ...dependencies, session, emit: send });
 			let workflowRunner = workflowRunners.get(value.sessionId);
 			if (!workflowRunner) {
-				workflowRunner = createAgentRunner({ models: workflowModels, tools: workflowTools, systemPrompt: SYSTEM_PROMPT, clock, fauxProvider, sessionStore, legacyCodex: workflowModels ? null : codex, onQuota: quotaForResponse });
+				workflowRunner = createAgentRunner({ models: workflowModels, tools: workflowTools, systemPrompt: SYSTEM_PROMPT, clock, fauxProvider, sessionStore, codexBaseUrl, onQuota: quotaForResponse });
 				workflowRunners.set(value.sessionId, workflowRunner);
 			}
 			if (!session.modelSession) session.modelSession = await workflowRunner.openSession(value.sessionId, { surface: "workflow" });

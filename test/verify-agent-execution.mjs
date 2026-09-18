@@ -1,12 +1,18 @@
 import assert from "node:assert/strict";
 import { EventEmitter, once } from "node:events";
 import { createServer } from "node:http";
+import { zstdDecompressSync } from "node:zlib";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { createCodexClient } from "../bin/agent/codex-client.mjs";
 import { createCanvasCommands } from "../src/workflow/canvas-commands.js";
 
 const request = { sessionId: "private-session", text: "private prompt /secret/file.png", model: "private-model" };
+process.env.COZYCLAY_CONFIG_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-config-"));
+process.env.COZYCLAY_AGENT_SESSIONS_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 const encode = (event) => `data: ${JSON.stringify(event)}\n\n`;
 const terminal = (turnId, outcome = "succeeded", failureCode) => ({ type: "execution_telemetry", event: `agent:turn_${outcome}`, props: { turn_id: turnId, duration_bucket: "gte30s", ...(failureCode ? { failure_code: failureCode } : {}) } });
 const tool = (turnId, id, outcome = "succeeded") => ({ type: "execution_telemetry", telemetry_id: id, event: "agent:tool_executed", props: { turn_id: turnId, tool_category: "workflow_write", outcome, duration_bucket: "lt1s" } });
@@ -147,28 +153,37 @@ for (const explicit of [true, false]) {
 	let graph = { nodes: [], edges: [] };
 	const canvas = createCanvasCommands({ store: { getGraph: () => graph, setGraph: (next) => { graph = next; } }, makeNode: (type, id, position) => ({ id, type, position, data: {} }), nodeSchemas: {} });
 	const model = createServer(async (req, res) => {
-		let text = ""; for await (const chunk of req) text += chunk;
-		const input = JSON.parse(text).input;
+		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+		const encoded = Buffer.concat(chunks);
+		const text = req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded).toString("utf8") : encoded.toString("utf8");
+		const body = JSON.parse(text);
+		assert.equal(body.store, false, "the fixture receives pi's non-persisted Responses request");
+		assert.ok(Array.isArray(body.input), "the fixture receives a Responses input array");
+		const input = body.input;
 		const hasOutput = input.some((item) => item.type === "function_call_output");
+		if (!hasOutput) assert.ok(Array.isArray(body.tools) && body.tools.length > 0, "the fixture receives the Workflow tools");
 		res.writeHead(200, { "content-type": "text/event-stream" });
 		if (!hasOutput) {
 			const name = scenario === "unknown" ? "private_unknown_tool" : scenario === "failure" ? "update_workflow_node" : scenario === "read" ? "describe_workflow" : "add_workflow_node";
-			const args = scenario === "parse" ? "{private malformed" : JSON.stringify({ type: "text", data: { prompt: "private payload" } });
+			const args = scenario === "read" ? "{}" : scenario === "parse" ? "{private malformed" : JSON.stringify({ type: "text", data: { prompt: "private payload" } });
 			res.write(encode({ type: "response.output_item.done", item: { type: "function_call", call_id: "private-call", name, arguments: args } }));
 			if (scenario === "success") res.write(encode({ type: "response.output_item.done", item: { type: "function_call", call_id: "private-call-2", name, arguments: args } }));
 		}
-		if (scenario !== "truncated") res.write(encode({ type: "response.completed", response: { status: "completed" } }));
+		if (scenario === "truncated" && hasOutput) return res.end();
+		res.write(encode({ type: "response.completed", response: { status: "completed" } }));
 		res.end();
 	});
 	const modelUrl = await listen(model);
-	const codex = createCodexClient({ getAccessToken: async () => "fixture", getAccountId: async () => "fixture", fetch: (_url, init) => fetch(modelUrl, init) });
+	const fixtureToken = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } })).toString("base64url")}.e30`;
+	const codex = createCodexClient({ getAccessToken: async () => fixtureToken, getAccountId: async () => "fixture", fetch: (_url, init) => fetch(modelUrl, init) });
 	let toolRelease;
 	const liveHub = { command: async (name, args) => {
 		if (scenario === "cancel") return toolRelease.promise;
 		if (scenario === "disconnected") throw new Error("Live editor disconnected");
 		return scenario === "accepted" ? { accepted: true } : canvas.handlers[name](args);
 	} };
-	const handler = createAgentHandler({ auth: { getAccessToken: async () => "fixture" }, codex, liveHub });
+	const auth = { getAccessToken: async () => fixtureToken, readStored: async () => ({ refresh_token: "fixture-refresh", access_token: fixtureToken, expires_at: Date.now() + 60 * 60 * 1000 }) };
+	const handler = createAgentHandler({ auth, codex, codexBaseUrl: modelUrl, liveHub });
 	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { res.writeHead(500); res.end(error.message); }));
 	const sidecarUrl = await listen(sidecar);
 	try {
@@ -180,7 +195,7 @@ for (const explicit of [true, false]) {
 				const copy = await response.clone().text(); wire.push(...[...copy.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])));
 				return response;
 			} });
-			await transport.turn({ ...request, sessionId: scenario }, () => {});
+			await transport.turn({ ...request, model: "gpt-6-astra", sessionId: scenario }, () => {});
 			const tools = captured.filter(({ event }) => event === "agent:tool_executed");
 			assert.equal(tools.length, scenario === "success" ? 2 : 1, scenario);
 			assert.ok(tools.every(({ props }) => props.outcome === (["failure", "parse", "unknown", "disconnected"].includes(scenario) ? "failed" : "succeeded")), scenario);
@@ -208,7 +223,7 @@ for (const explicit of [true, false]) {
 				return response;
 			} });
 			const sessionId = `cancel-${throughTransport}`;
-			const pending = transport.turn({ ...request, sessionId }, (event) => { if (event.type === "tool.start") events.emit("tool"); });
+			const pending = transport.turn({ ...request, model: "gpt-6-astra", sessionId }, (event) => { if (event.type === "tool.start") events.emit("tool"); });
 			await ready;
 			if (throughTransport) await transport.stop(sessionId);
 			else await fetch(sidecarUrl + "/agent/stop", { method: "POST", body: JSON.stringify({ sessionId }) }).then((response) => response.json());

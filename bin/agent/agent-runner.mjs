@@ -73,7 +73,7 @@ function attachmentMessage(attachment, index) {
  * knows about pi. Keep these imports lazy: the package-isolation checks start
  * bin/cozyclay.mjs without node_modules installed.
  */
-export function createAgentRunner({ models: suppliedModels, sessionStore, tools = [], systemPrompt = "", clock = performance.now, fauxProvider, onQuota, legacyCodex } = {}) {
+export function createAgentRunner({ models: suppliedModels, sessionStore, tools = [], systemPrompt = "", clock = performance.now, fauxProvider, onQuota, codexBaseUrl, auth, credentials, keys, env } = {}) {
 	const openSessions = new Map();
 	let models = suppliedModels;
 	let piModules;
@@ -93,44 +93,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 	const ensureModels = async () => {
 		const pi = await loadPi();
 		if (!models) {
-			const faux = legacyCodex ? (await import("@earendil-works/pi-ai/providers/faux")).fauxProvider({
-				provider: "openai-codex",
-				models: [{ id: DEFAULT_MODEL, name: DEFAULT_MODEL, reasoning: true, input: ["text", "image"] }],
-			}) : null;
-			if (faux) {
-				const response = async (context, options, state, model) => {
-					const stream = legacyCodex.streamResponses({ input: context.messages, tools: [], instructions: systemPrompt, model: model.id, effort: options?.reasoning, signal: options?.signal });
-					const headers = stream?.headers ? await stream.headers : null;
-					if (headers && options?.onResponse) await options.onResponse({ status: 200, headers }, model);
-					const items = [];
-					let text = "";
-					for await (const event of stream) {
-						if (event.type === "response.output_text.delta") text += event.delta;
-						if (event.type === "response.output_item.done") items.push(event.item);
-						if (event.type === "error" || event.type === "response.failed") throw Object.assign(new Error("Model response failed."), { code: event.error?.code });
-					}
-					const content = [];
-					if (text) content.push({ type: "text", text });
-					for (const item of items) {
-						if (item.type === "function_call") {
-							let args = item.arguments;
-							try { args = typeof args === "string" ? JSON.parse(args) : args; } catch {}
-							content.push({ type: "toolCall", id: item.call_id, name: item.name, arguments: args });
-						} else if (item.type === "message" && Array.isArray(item.content)) {
-							for (const part of item.content) if (part.type === "output_text" && part.text) content.push({ type: "text", text: part.text });
-						}
-					}
-					const message = { role: "assistant", content, api: model.api, provider: model.provider, model: model.id, stopReason: "stop", timestamp: Date.now() };
-					faux.appendResponses([response]);
-					return message;
-				};
-				faux.setResponses([response]);
-				models = pi.createModels();
-				models.setProvider(faux.provider);
-			} else {
-				const { createModels } = await import("./providers.mjs");
-				models = await createModels();
-			}
+			const { createModels } = await import("./providers.mjs");
+			models = await createModels({ codexBaseUrl, auth, credentials, keys, env });
 		}
 		if (fauxProvider) {
 			const provider = fauxProvider.provider || fauxProvider;
@@ -211,7 +175,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					toolExecution: "sequential",
 					steeringMode: "one-at-a-time",
 					compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0 },
-					streamOptions: {},
+					streamOptions: codexBaseUrl ? { transport: "sse" } : {},
 				}, state.context)).harness;
 				state.harness.hooks.on("after_response", (response) => emitQuota(state.active?.queue, state.lastInput, response, state.currentModel));
 				state.lane = await state.harness.lane("main", state.context);
@@ -273,7 +237,13 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			});
 			listen("run_end", (event) => {
 				if (state.active?.pendingFrames.length) { for (const pending of state.active.pendingFrames) queue.push(pending); state.active.pendingFrames = []; }
-				if (event.status !== "completed") queue.push({ type: "error", code: event.status === "aborted" ? "aborted" : event.error?.code || "upstream", message: event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.") });
+				if (event.status !== "completed") {
+					const message = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
+					const truncated = /ended before a terminal response event/i.test(message);
+					const providerCode = event.error?.code;
+					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : ["overloaded", "server_error"].includes(providerCode) ? providerCode : "upstream";
+					queue.push({ type: "error", code, message });
+				}
 				queue.push({ type: "done" });
 				queue.close();
 			});
