@@ -251,6 +251,24 @@ server.close();
 	second.studioServer.close();
 	rmSync(sessionDir, { recursive: true, force: true });
 	console.log("PASS Studio sessions persist, lazy-load across route instances, list and derive transcript views");
+
+	// #372: pasted pictures precede their turn text in the history; the
+	// transcript view puts them back on that text's bubble as thumbnails.
+	const { transcriptFromHistory } = await import("../bin/agent/session-store.mjs");
+	const png = "data:image/png;base64,iVBORw0KGgo=";
+	const withAttachments = transcriptFromHistory([
+		{ role: "user", content: [{ type: "input_text", text: "User attachment probe.png" }, { type: "input_image", image_url: png }] },
+		{ role: "user", content: [{ type: "input_text", text: "User attachment 2" }, { type: "input_image", image_url: png }] },
+		{ role: "user", content: [{ type: "input_text", text: "<studio-context>{}</studio-context>\nwhat is in these?" }] },
+		{ type: "message", role: "assistant", content: [{ type: "output_text", text: "Two probes." }] },
+		{ role: "user", content: [{ type: "input_text", text: "User attachment big.png" }] },
+		{ role: "user", content: [{ type: "input_text", text: "and this one?" }] },
+	]);
+	assert.deepEqual(withAttachments.map((item) => item.kind), ["user", "assistant", "user"], "attachment items fold into their turn's user bubble");
+	assert.equal(withAttachments[0].text, "what is in these?");
+	assert.deepEqual(withAttachments[0].attachments, [{ name: "probe.png", dataUrl: png }, { name: "2", dataUrl: png }]);
+	assert.equal(withAttachments[2].attachments, undefined, "an attachment whose image was too large to persist leaves no empty thumbnail");
+	console.log("PASS resumed transcripts carry pasted attachments as thumbnails on the user bubble");
 }
 console.log("agent routes verified");
 

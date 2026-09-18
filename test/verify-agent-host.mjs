@@ -360,13 +360,14 @@ if (runs("embedded-session-and-receipts")) {
 	await group("restore rebuilds the transcript and preserves identity", async () => {
 		const store = createAgentChatStore({ transport: { turn: async () => {} }, surface: "studio" });
 		store.restore([
-			{ kind: "user", text: "frame a wide shot" },
+			{ kind: "user", text: "frame a wide shot", attachments: [{ name: "ref.png", dataUrl: "data:image/png;base64,iVBORw0KGgo=" }] },
 			{ kind: "assistant", text: "I will frame it." },
 			{ kind: "tool", name: "frame_shot", label: "Frame the shot", ok: true, elapsedMs: 12 },
 			{ kind: "receipt", receiptId: "receipt-restore", summary: "Applied to the scene" },
 		], "restored-session");
 		expect("restore rebuilds user, assistant, tool and receipt items", store.getState().items.map((item) => item.kind).join(",") === "user,assistant,tool,receipt");
 		expect("restore keeps the server session id", store.getState().sessionId === "restored-session");
+		expect("restore keeps pasted attachments on the user item", store.getState().items[0].attachments?.length === 1 && store.getState().items[0].attachments[0].name === "ref.png");
 		const before = store.getState().sessionId;
 		store.newSession();
 		expect("New mints a different UUID after restore", store.getState().sessionId !== before && isUuid(store.getState().sessionId));

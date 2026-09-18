@@ -116,21 +116,45 @@ function receiptSummary(value) {
 	return value.status === "applied" ? "Applied to the scene" : `Receipt: ${value.status || "complete"}`;
 }
 
+const ATTACHMENT_LABEL = "User attachment ";
+
+/** A pasted picture the sidecar put in front of the turn text (#367): its label
+ * plus the inline image, or the label alone when the image was too large to keep. */
+function attachmentPart(item) {
+	if (item?.role !== "user" || !Array.isArray(item.content)) return null;
+	const label = textParts(item.content, "input_text");
+	if (!label.startsWith(ATTACHMENT_LABEL)) return null;
+	const image = item.content.find((part) => part?.type === "input_image");
+	return { name: label.slice(ATTACHMENT_LABEL.length), dataUrl: image?.image_url ?? image?.imageUrl ?? image?.dataUrl ?? null };
+}
+
 /** Convert codex input/output items into the one transcript view consumed by the panel. */
 export function transcriptFromHistory(history = []) {
 	const transcript = [];
 	const calls = new Map();
+	// Attachments precede their turn text in the history; they belong on that
+	// text's bubble, the way the live panel drew them (#372).
+	let pendingAttachments = [];
+	const flushAttachments = (text = "") => {
+		const attachments = pendingAttachments.filter((entry) => entry.dataUrl);
+		pendingAttachments = [];
+		if (!text && !attachments.length) return;
+		transcript.push(attachments.length ? { kind: "user", text, attachments } : { kind: "user", text });
+	};
 	for (const item of history) {
 		if (item?.type === "message") {
 			const text = textParts(item.content);
-			if (text) transcript.push({ kind: item.role === "user" ? "user" : "assistant", text });
+			if (item.role === "user") flushAttachments(text);
+			else if (text) transcript.push({ kind: "assistant", text });
 			continue;
 		}
 		if (item?.role === "user") {
-			const text = cleanUserText(textParts(item.content, "input_text"));
-			if (text) transcript.push({ kind: "user", text });
+			const attachment = attachmentPart(item);
+			if (attachment) { pendingAttachments.push(attachment); continue; }
+			flushAttachments(cleanUserText(textParts(item.content, "input_text")));
 			continue;
 		}
+		if (pendingAttachments.length) flushAttachments();
 		if (item?.type === "function_call") {
 			const tool = { kind: "tool", name: item.name || "tool", label: String(item.name || "tool").replaceAll("_", " "), ok: true, elapsedMs: null };
 			transcript.push(tool);
