@@ -10,7 +10,8 @@ import { join } from "node:path";
 import { createModels } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { createAgentRunner } from "../bin/agent/agent-runner.mjs";
+import { createAgentRunner, classifyError } from "../bin/agent/agent-runner.mjs";
+import { createSessionStore } from "../bin/agent/session-store.mjs";
 
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-"));
 
@@ -182,6 +183,75 @@ function errorMessage(text) {
 	await runner.close();
 	expect("the tool handler received pi's real harness abort signal (ctx.signal.aborted became true, not a function positionally treated as a signal)", toolObservedAbort === true, `toolObservedAbort=${toolObservedAbort}`);
 	expect("a done frame is the last frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
+}
+
+// --- abort persistence: the real session store never gets the cancelled
+// assistant message, only the completed user turn that preceded it ---
+{
+	const sessionsDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-store-"));
+	const sessionStore = createSessionStore(sessionsDir);
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }], tokensPerSecond: 2 });
+	models.setProvider(faux.provider);
+	installScripts(faux, [fauxAssistantMessage([fauxText("this response streams across several chunks so an abort can land mid-stream")])]);
+	const runner = createAgentRunner({ models, tools: [], sessionStore });
+	const session = await runner.openSession("errors-abort-persist", { surface: "workflow" });
+	const iterator = session.start({ text: "stream something long", model: "faux/scripted" })[Symbol.asyncIterator]();
+	let aborted = false;
+	for (;;) {
+		const { value, done } = await iterator.next();
+		if (done) break;
+		if (value.type === "text.delta" && !aborted) { aborted = true; await session.abort("test"); }
+	}
+	await runner.close();
+	const stored = sessionStore.read("errors-abort-persist");
+	const roles = (stored?.history || []).map((message) => message.role);
+	// Exactly the user turn: no tool ran in this scenario, so there is no
+	// completed toolResult to also expect; a scenario with a tool would keep
+	// any toolResult from a tool that finished BEFORE the abort (the `persist`
+	// filter only withholds the assistant role, never toolResult or user).
+	assert.deepEqual(roles, ["user"], `stored roles after abort: ${JSON.stringify(roles)}`);
+	console.log("PASS the aborted assistant message never reaches sessionStore; only the completed user turn does");
+}
+
+// --- status-first classification: a structured numeric status wins over the
+// message text; the message regex is only a fallback ---
+{
+	expect("{status:429, message:'try later'} classifies as rate_limit from status, not text", classifyError({ status: 429, message: "try later" }).code === "rate_limit", JSON.stringify(classifyError({ status: 429, message: "try later" })));
+	expect("{status:401, message:'x'} classifies as unauthorized from status, not text", classifyError({ status: 401, message: "x" }).code === "unauthorized", JSON.stringify(classifyError({ status: 401, message: "x" })));
+	const overloadedWordsWrongStatus = classifyError({ status: 500, message: "scene overloaded with props" });
+	expect("status wins over message text: status:500 classifies as upstream even though the message says 'overloaded'", overloadedWordsWrongStatus.code === "upstream", JSON.stringify(overloadedWordsWrongStatus));
+	expect("the numeric status is preserved on the classification even when it decided the code", overloadedWordsWrongStatus.status === 500, JSON.stringify(overloadedWordsWrongStatus));
+	const noStatusFallsBackToText = classifyError({ message: "529 Overloaded" });
+	expect("with no structured status, the message-text fallback still classifies 529 as overloaded", noStatusFallsBackToText.code === "overloaded" && noStatusFallsBackToText.status === 529, JSON.stringify(noStatusFallsBackToText));
+}
+
+// --- a tool error containing a status-shaped substring in its own text must
+// NOT be reclassified as a provider error: it stays a tool failure with the
+// CODE: message format, because classifyError/classifyProviderError are only
+// ever invoked on the run's own operation error (run_end), never on a tool
+// result's text (verified structurally: tool_end never calls classifyError) ---
+{
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	installScripts(faux, [
+		fauxAssistantMessage([fauxToolCall("failing_tool", {})], { stopReason: "toolUse" }),
+		fauxAssistantMessage([fauxText("handled the failure")]),
+	]);
+	const tools = [{
+		name: "failing_tool",
+		parameters: { type: "object", properties: {}, additionalProperties: false },
+		handler: async () => { throw Object.assign(new Error("the backend answered 403 Forbidden"), { code: "BACKEND_UNAVAILABLE" }); },
+	}];
+	const runner = createAgentRunner({ models, tools, clock: () => Date.now() });
+	const session = await runner.openSession("errors-tool-text-not-reclassified", { surface: "workflow" });
+	const frames = await collect(session, { text: "run the failing tool", model: "faux/scripted" });
+	await runner.close();
+	const toolDone = frames.find((f) => f.type === "tool.done");
+	expect("the tool's '403' text produces a tool.done failure frame, never a run-level error frame", toolDone && toolDone.ok === false, JSON.stringify(frames));
+	expect("the tool failure keeps the CODE: message format instead of being reclassified as code:'unauthorized'", typeof toolDone?.error === "string" && toolDone.error.startsWith("BACKEND_UNAVAILABLE:"), JSON.stringify(toolDone));
+	expect("no run-level error frame was produced for a tool failure that the assistant recovered from", frames.every((f) => f.type !== "error"), JSON.stringify(frames));
 }
 
 process.exit(failures === 0 ? 0 : 1);

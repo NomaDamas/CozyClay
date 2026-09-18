@@ -15,20 +15,56 @@ const AUTH_ERROR_PATTERN = /\b(401|403)\b|unauthorized|forbidden/i;
 const RATE_LIMIT_PATTERN = /\b429\b|rate.?limit|too many requests/i;
 const OVERLOAD_PATTERN = /\b529\b|overloaded/i;
 
+// A numeric HTTP status, one per code. 401/403 both read as "unauthorized";
+// 529 (Anthropic's overload status) reads as "overloaded"; every other 5xx
+// (500, 502, 503, 504, ...) reads as the generic "upstream" — status always
+// wins over whatever words happen to be in the message (an overload message
+// with a 500 status is still "upstream", not "overloaded").
+const STATUS_CODES = { 401: "unauthorized", 403: "unauthorized", 429: "rate_limit", 529: "overloaded" };
+function statusToCode(status) {
+	if (STATUS_CODES[status]) return STATUS_CODES[status];
+	if (Number.isInteger(status) && status >= 500 && status <= 599) return "upstream";
+	return undefined;
+}
+
 /** Classify a failed assistant message's `errorMessage` into the runner's
  * frozen error vocabulary. Providers do not hand us a structured status/code
  * here (pi folds both into one string, see `formatProviderError`), so this
- * mirrors the same pattern-matching pi itself uses to decide retryability. */
-function classifyProviderError(message) {
+ * mirrors the same pattern-matching pi itself uses to decide retryability.
+ * Message-only fallback: use `classifyError` at the run_end boundary so a
+ * structured status (when the error object carries one) wins first. */
+export function classifyProviderError(message) {
 	if (AUTH_ERROR_PATTERN.test(message)) return "unauthorized";
 	if (RATE_LIMIT_PATTERN.test(message)) return "rate_limit";
 	if (OVERLOAD_PATTERN.test(message)) return "overloaded";
 	return "upstream";
 }
 
-function extractStatus(message) {
+export function extractStatus(message) {
 	const match = /\b(401|403|429|5\d\d)\b/.exec(message);
 	return match ? Number(match[1]) : undefined;
+}
+
+function extractErrorStatus(error) {
+	const candidate = error?.status ?? error?.details?.status ?? error?.details?.httpStatus;
+	return Number.isInteger(candidate) ? candidate : undefined;
+}
+
+/** Classify a failed run's error object into `{code, status}`. A numeric
+ * status on the error boundary (a thrown Error's `.status`, or a future pi
+ * `OperationError.details.status`) is checked FIRST and wins outright; the
+ * message-text regex is only a fallback for the status pi actually ships
+ * today (folded into the string, see `formatProviderError` in pi-ai) or for
+ * an unrecognized status code. Only ever called on the run's own operation
+ * error (`event.error` from `run_end`) — a tool's own failure text never
+ * reaches this function, so it cannot reclassify a tool error as a provider
+ * one (see the `tool_end` branch in `mapEvents`, which never calls this). */
+export function classifyError(error) {
+	const message = typeof error?.message === "string" ? error.message : "";
+	const structuredStatus = extractErrorStatus(error);
+	const status = structuredStatus ?? extractStatus(message);
+	const code = (structuredStatus !== undefined ? statusToCode(structuredStatus) : undefined) ?? classifyProviderError(message);
+	return { code, status };
 }
 
 function dataUrlImage(dataUrl) {
@@ -97,6 +133,36 @@ function attachmentMessage(attachment, index) {
 	};
 }
 
+function studioAttachmentContent(attachments) {
+	return (Array.isArray(attachments) ? attachments : []).flatMap((attachment, index) => {
+		const image = dataUrlImage(attachment?.dataUrl);
+		return image ? [{ type: "text", text: `User attachment ${attachment?.name || index + 1}` }, image] : [];
+	});
+}
+
+function studioUserMessage(input) {
+	const contextText = typeof input.studioContextText === "string"
+		? input.studioContextText
+		: `<studio-context>\n${input.contextText || ""}\n</studio-context>`;
+	return {
+		role: "user",
+		content: [
+			...studioAttachmentContent(input.attachments),
+			{ type: "text", text: `${contextText}\n${input.text || ""}` },
+		],
+	};
+}
+
+function studioObservationMessage(observation) {
+	return {
+		role: "user",
+		content: [
+			{ type: "text", text: `Studio frame observation revision ${JSON.stringify(observation?.revision ?? null)} receipt ${observation?.receiptId ?? "unavailable"}` },
+			{ type: "image", data: observation.data, mimeType: observation.mimeType },
+		],
+	};
+}
+
 /**
  * The runner is deliberately the only module in the bin/agent chain that
  * knows about pi. Keep these imports lazy: the package-isolation checks start
@@ -152,23 +218,39 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			unsubscribers: [],
 		};
 
+		// An aborted turn's assistant message must never reach sessionStore, even
+		// when the generation itself finished normally before the cancellation
+		// registered (pi only stops the run from starting a FURTHER turn; it does
+		// not retroactively un-stream an already-committed message, so `run_end`'s
+		// own `status` arrives too late — by then `turn_end` has already flushed
+		// the completed turn through this same `persist`). The one reliable
+		// abort signal is therefore "did THIS session's `abort()` run during the
+		// still-active turn", tracked synchronously on `state.active` the instant
+		// `publicSession.abort` is called (see below) — not any one event's shape.
+		// The user message (and any toolResult from a tool that finished before
+		// the abort) are real, completed history and ARE persisted; only the
+		// assistant role is withheld.
 		const persist = async () => {
 			if (!state.lane || !sessionStore?.append) return;
 			const entries = await state.lane.findEntries({ order: "oldestFirst" }, state.context);
 			const messages = entries.filter((entry) => entry.type === "message").map((entry) => entry.message);
 			if (messages.length <= state.persisted) return;
-			const pending = messages.slice(state.persisted);
-			await sessionStore.append(sessionId, pending, { surface });
+			const aborted = state.active?.abortRequested === true;
+			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant"));
 			state.persisted = messages.length;
+			if (!pending.length) return;
+			const input = state.lastInput || {};
+			await sessionStore.append(sessionId, pending, { surface, ...(input.meta || {}) });
 		};
 
 		// pi calls AgentTool.execute(toolCallId, params, signal, onUpdate) — the
 		// `signal` it passes is the one that fires when `session.abort()` cancels
 		// the run, so tools MUST receive it as-is (not `state.lastInput.signal`,
 		// which is only a fallback for callers that never wired a signal at all).
-		const adapters = async () => {
+		const adapters = async (input) => {
 			const { toAgentTools } = await import("./pi-tools.mjs");
-			return toAgentTools(tools, { signal: state.lastInput?.signal, emit: (event) => state.lastInput?.emit?.(event) });
+			const activeTools = input?.tools || tools;
+			return toAgentTools(activeTools, { signal: state.lastInput?.signal, emit: (event) => state.lastInput?.emit?.(event) });
 		};
 
 		const emitQuota = (queue, input, response, model) => {
@@ -187,6 +269,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 
 		const ensureHarness = async (input) => {
 			const { pi, models: registry } = await ensureModels();
+			const activePrompt = input.systemPrompt || (input.surface === "studio" ? (await import("./studio-prompt.mjs")).STUDIO_SYSTEM_PROMPT : systemPrompt);
 			const { resolveModel } = await import("./providers.mjs");
 			const requested = input.model || DEFAULT_MODEL;
 			const slash = requested.indexOf("/");
@@ -200,8 +283,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					models: registry,
 					model: selected.model,
 					thinkingLevel: effortLevel(input.effort),
-					tools: await adapters(),
-					systemPrompt,
+					tools: await adapters(input),
+					systemPrompt: activePrompt,
 					toolExecution: "sequential",
 					steeringMode: "one-at-a-time",
 					compaction: { enabled: false, reserveTokens: 0, keepRecentTokens: 0, ...compaction },
@@ -247,7 +330,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				if (toolStarted.has(event.toolCallId)) return;
 				toolStarted.add(event.toolCallId);
 				toolStartedAt.set(event.toolCallId, clock());
-				const tool = (Array.isArray(tools) ? tools : []).find((candidate) => candidate.name === event.toolName);
+				const activeTools = state.lastInput?.tools || tools;
+				const tool = (Array.isArray(activeTools) ? activeTools : []).find((candidate) => candidate.name === event.toolName);
 				pushFrame({ type: "tool.start", callId: event.toolCallId, name: event.toolName, label: tool?.label || event.toolName.replaceAll("_", " "), args: summariseCanvasResult(event.args) });
 			});
 			subscribe("tool_end", (event) => {
@@ -255,7 +339,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				if (!toolStarted.has(event.toolCallId)) {
 					toolStarted.add(event.toolCallId);
 					toolStartedAt.set(event.toolCallId, clock());
-					const tool = (Array.isArray(tools) ? tools : []).find((candidate) => candidate.name === event.toolName);
+					const activeTools = state.lastInput?.tools || tools;
+					const tool = (Array.isArray(activeTools) ? activeTools : []).find((candidate) => candidate.name === event.toolName);
 					pushFrame({ type: "tool.start", callId: event.toolCallId, name: event.toolName, label: tool?.label || event.toolName.replaceAll("_", " "), args: summariseCanvasResult(event.args) });
 				}
 				toolCompleted.add(event.toolCallId);
@@ -287,12 +372,13 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				if (event.status !== "completed") {
 					const rawMessage = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
 					const truncated = /ended before a terminal response event/i.test(rawMessage);
-					if (event.status !== "aborted" && !truncated && state.provider === "openai-codex" && AUTH_ERROR_PATTERN.test(rawMessage) && !state.active?.authRetried) {
+					const classified = event.status === "aborted" ? { code: "aborted", status: undefined } : classifyError(event.error || {});
+					if (event.status !== "aborted" && !truncated && state.provider === "openai-codex" && classified.code === "unauthorized" && !state.active?.authRetried) {
 						if (state.active) { state.active.authRetried = true; state.active.authRetryPromise = retryAfterAuthRefresh(); }
 						return;
 					}
-					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : classifyProviderError(rawMessage);
-					const status = extractStatus(rawMessage);
+					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : classified.code;
+					const status = classified.status;
 					const detail = sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage }));
 					queue.push({ type: "error", code, message: detail || rawMessage, ...(status ? { status } : {}) });
 				}
@@ -309,7 +395,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				return;
 			}
 			const queue = new FrameQueue();
-			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false };
+			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false, abortRequested: false };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;
@@ -319,9 +405,24 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				try {
 					await ensureHarness(input);
 					removeEventListeners = mapEvents(queue, input);
+					if (input.surface === "studio") {
+						const studioContext = typeof input.studioContextText === "string" ? input.studioContextText : `<studio-context>\n${input.contextText || ""}\n</studio-context>`;
+						const attachments = Array.isArray(input.attachments) ? input.attachments : [];
+						const images = attachments.map((attachment) => dataUrlImage(attachment?.dataUrl)).filter(Boolean);
+						const attachmentLabels = attachments.map((attachment, index) => `User attachment ${attachment?.name || index + 1}`).join("\n");
+						const promptContext = input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context;
+						if (input.frameObservation) {
+							await state.lane.appendMessage(studioUserMessage({ ...input, studioContextText: studioContext }), state.context);
+							const observation = studioObservationMessage(input.frameObservation);
+							await state.lane.prompt(observation.content[0].text, [observation.content[1]], promptContext);
+						} else {
+							await state.lane.prompt(`${attachmentLabels ? `${attachmentLabels}\n` : ""}${studioContext}\n${input.text || ""}`, images, promptContext);
+						}
+					} else {
 					for (const [index, attachment] of (Array.isArray(input.attachments) ? input.attachments : []).entries()) await state.lane.appendMessage(attachmentMessage(attachment, index), state.context);
 					let text = input.text || "";
-					if (input.attachFrame && tools.internal?.capture) {
+					const activeTools = input.tools || tools;
+					if (input.attachFrame && activeTools.internal?.capture) {
 						const callId = "attached-frame";
 						const started = clock();
 						queue.push({ type: "tool.start", callId, name: tools.internal.capture.name, label: tools.internal.capture.label || "capture blocking frame", args: {} });
@@ -334,8 +435,9 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 							throw error;
 						}
 					}
-				const images = [];
-				await state.lane.prompt(text, images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
+					const images = [];
+					await state.lane.prompt(text, images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
+					}
 				// The 401-on-openai-codex retry is fired from the `run_end` handler
 				// (it needs the event to have settled first); wait for it here so the
 				// `finally` below does not unsubscribe events mid-retry.
@@ -352,7 +454,16 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		const publicSession = {
 			start,
 			steer: async (text, images = []) => state.lane?.steer(text, images, state.context),
-			abort: async (reason) => { if (state.lane) return state.lane.abort(state.context); return { ok: false, reason }; },
+			abort: async (reason) => {
+				// Set synchronously, before the (async) `lane.abort()` round-trip: any
+				// `persist` that runs after this point — for the turn that is active
+				// right now — must withhold its assistant message, whether or not the
+				// underlying generation happens to finish before pi's cancellation
+				// actually takes effect.
+				if (state.active) state.active.abortRequested = true;
+				if (state.lane) return state.lane.abort(state.context);
+				return { ok: false, reason };
+			},
 			snapshot: async () => state.lane ? state.lane.inspectExecution(state.context) : null,
 			close: async () => { for (const unsubscribe of state.unsubscribers.splice(0)) unsubscribe(); await state.harness?.close(state.context); await state.repo.close(state.context); },
 		};
