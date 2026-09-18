@@ -62,6 +62,7 @@ const NODE_FILES = [
 	"test/process/verify-lifecycle.mjs",
 	"test/process/verify-mcp-package-isolation.mjs",
 	"test/process/verify-package-telemetry.mjs",
+	"test/process/verify-agent-deps.mjs",
 	"test/verify-agent-image-references.mjs",
 	"test/verify-agent-panel.mjs",
 	"test/verify-agent-host.mjs",
