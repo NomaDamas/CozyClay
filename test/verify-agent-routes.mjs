@@ -126,7 +126,9 @@ assert.equal(calls[0][0].content[0].text.includes(png), false);
 	const attachOrigin = `http://127.0.0.1:${attachServer.address().port}`;
 	const post = (body) => fetch(`${attachOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: attachOrigin }, body: JSON.stringify(body) }).then((response) => response.text());
 
-	const studioEnvelope = { ...envelopeFixture(), text: "what is in the attached image?", attachments: [{ dataUrl: png, name: "probe.png" }] };
+	// Own session: Studio sessions persist (#368), and the resume check below
+	// counts the user items a fresh route instance replays for the fixture id.
+	const studioEnvelope = { ...envelopeFixture(), sessionId: "00000000-0000-4000-8000-00000000a367", text: "what is in the attached image?", attachments: [{ dataUrl: png, name: "probe.png" }] };
 	await post(studioEnvelope);
 	const studioInput = seenInputs.at(-1) ?? [];
 	const imageAt = studioInput.findIndex((item) => item.role === "user" && item.content?.some((part) => part.type === "input_image"));
