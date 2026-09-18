@@ -206,6 +206,7 @@ expect("the composer accepts a dropped picture too", panel.includes("onDrop={onC
 expect("the detection rules are the shared, tested ones", panel.includes('from "./attachment-image.js"') && panel.includes("attachmentFilesFromTransfer") && panel.includes("attachmentFromFile"));
 expect("pending pictures are thumbnails above the composer, each with a remove control", panel.includes('<ul className="agent-attachments"')
 	&& panel.includes('className="agent-attachment-remove"') && panel.includes("store.removeAttachment(attachment.id)"));
+expect("a paste the composer claimed is not also dropped on the canvas", /const onPaste = \(event\) => \{[\s\S]{0,240}if \(event\.defaultPrevented\) return;/.test(builder), "the builder's window paste listener must stand down for a handled paste");
 expect("a refused picture says why instead of vanishing", panel.includes("agent-attachment-notice") && client.includes("ATTACHMENT_MAX_COUNT"));
 expect("the sent bubble keeps the pictures it was sent with", panel.includes("agent-bubble-attachments") && client.includes('kind: "user", id: newId(), text: trimmed, attachFrame: Boolean(options.attachFrame), attachments'));
 expect("sending empties the composer's pictures with its draft", /set\(\{[\s\S]{0,200}draft: "",\n\t\t\t\tpendingAttachments: \[\],/.test(client));

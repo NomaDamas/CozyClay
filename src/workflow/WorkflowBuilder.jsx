@@ -311,6 +311,9 @@ export default function WorkflowBuilder() {
 	}, [addNode]);
 	useEffect(() => {
 		const onPaste = (event) => {
+			// The Agent composer holds pasted pictures itself now (#367). One gesture
+			// is one result: a paste it has already claimed never also lands a node.
+			if (event.defaultPrevented) return;
 			if (!canvasTakesPaste(event.target, event.clipboardData)) return;
 			const file = imageFileFromTransfer(event.clipboardData);
 			event.preventDefault();
