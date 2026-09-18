@@ -13,6 +13,9 @@
 // keyword) is passed straight through to the matching Type.* call as its
 // options bag, so TypeBox embeds it verbatim in the produced JSON schema and
 // Value.Check enforces it at runtime exactly as the source schema intended.
+// `format` is the one exception: it is a hint (e.g. "email", "date-time"),
+// not a constraint, so it is dropped rather than forwarded — TypeBox/AJV
+// would otherwise enforce it as if it were a pattern.
 import { Type } from "@earendil-works/pi-ai";
 
 const STRUCTURAL_OBJECT_KEYS = ["type", "properties"];
@@ -42,7 +45,7 @@ export function toTypeBox(schema, path = "#") {
 			const items = schema.items === undefined ? Type.Unknown() : toTypeBox(schema.items, `${path}/items`);
 			return Type.Array(items, rest(schema, STRUCTURAL_ARRAY_KEYS));
 		}
-		case "string": return Type.String(rest(schema, ["type"]));
+		case "string": return Type.String(rest(schema, ["type", "format"]));
 		case "number": return Type.Number(rest(schema, ["type"]));
 		case "integer": return Type.Integer(rest(schema, ["type"]));
 		case "boolean": return Type.Boolean(rest(schema, ["type"]));

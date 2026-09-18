@@ -69,6 +69,14 @@ for (const [name, args, reason] of BAD_CASES) {
 	bad++;
 }
 
+// format is a hint, not a constraint: it must be ignored, not enforced.
+{
+	const emailish = toTypeBox({ type: "string", format: "email" });
+	assert.equal(Value.Check(emailish, "plain text"), true, "format is ignored: a non-email string still validates");
+	assert.equal(Value.Check(emailish, 42), false, "format ignored does not mean type is ignored");
+	console.log("PASS format is ignored when converting a string schema");
+}
+
 // $ref is explicitly unsupported and must throw with the pointer in the message.
 assert.throws(() => toTypeBox({ $ref: "#/x" }), /\$ref/, "$ref throws");
 
