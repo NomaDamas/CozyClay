@@ -1,9 +1,12 @@
-import { chmodSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
 /** Atomically replace a private JSON/config file with mode 0600. */
 export function writeSecureFile(file, contents) {
-	mkdirSync(dirname(file), { recursive: true });
+	const parent = dirname(file);
+	const existed = existsSync(parent);
+	mkdirSync(parent, { recursive: true, mode: 0o700 });
+	if (!existed) chmodSync(parent, 0o700);
 	const temporary = `${file}.${process.pid}.tmp`;
 	writeFileSync(temporary, contents, { mode: 0o600 });
 	chmodSync(temporary, 0o600);

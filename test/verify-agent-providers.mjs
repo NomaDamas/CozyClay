@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { mkdtempSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const configDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-providers-"));
+const rootDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-providers-"));
+const configDir = join(rootDir, "new-config");
 const authFile = join(configDir, "codex-auth.json");
 process.env.COZYCLAY_CONFIG_DIR = configDir;
 process.env.COZYCLAY_CODEX_AUTH_FILE = authFile;
+process.env.COZYCLAY_AGENT_SESSIONS_DIR = join(rootDir, "sessions");
 const previousAnthropic = process.env.ANTHROPIC_API_KEY;
 delete process.env.ANTHROPIC_API_KEY;
 
@@ -37,7 +39,18 @@ const request = (path, init = {}) => fetch(`${origin}${path}`, { ...init, header
 
 let response = await request("/agent/providers/anthropic", { method: "PUT", body: JSON.stringify({ key: "anthropic-secret-value" }) });
 assert.equal(response.status, 200);
+assert.equal(statSync(configDir).mode & 0o777, 0o700);
 assert.equal(statSync(join(configDir, "providers.json")).mode & 0o777, 0o600);
+console.log("PASS newly created config parent is mode 700 and providers.json is mode 600");
+const existingConfigDir = join(rootDir, "existing-config");
+mkdirSync(existingConfigDir, { recursive: true, mode: 0o755 });
+chmodSync(existingConfigDir, 0o755);
+process.env.COZYCLAY_CONFIG_DIR = existingConfigDir;
+assert.equal((await (await request("/agent/providers/openai", { method: "PUT", body: JSON.stringify({ key: "existing-parent-secret" }) })).status), 200);
+assert.equal(statSync(existingConfigDir).mode & 0o777, 0o755);
+assert.equal(statSync(join(existingConfigDir, "providers.json")).mode & 0o777, 0o600);
+console.log("PASS existing config parent mode 755 is preserved and providers.json is mode 600");
+process.env.COZYCLAY_CONFIG_DIR = configDir;
 response = await request("/agent/providers");
 const listed = await response.json();
 assert.equal(response.status, 200);
