@@ -590,14 +590,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, handlers, liveHu
 		}
 		if (path === "/agent/models" && req.method === "GET") {
 			try {
-				const result = await codex.listModels();
-				const models = (Array.isArray(result) ? result : result.models).map((model) => {
-					const id = typeof model === "string" ? model : model.slug || model.id;
-					const efforts = Array.isArray(model.supported_reasoning_levels) ? model.supported_reasoning_levels.map((level) => (typeof level === "string" ? level : level.effort)).filter(Boolean) : [];
-					return { id, label: id, efforts, defaultEffort: typeof model.default_reasoning_level === "string" ? model.default_reasoning_level : efforts[0] ?? null };
-				});
-				models.sort((a, b) => Number(b.id === "gpt-6-astra") - Number(a.id === "gpt-6-astra"));
-				json(res, 200, { models });
+				const { listAgentModels } = await import("./providers.mjs");
+				json(res, 200, await listAgentModels({ auth, codex }));
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
 			return true;
 		}

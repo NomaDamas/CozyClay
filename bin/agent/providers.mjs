@@ -48,20 +48,114 @@ export async function resolveModel(requested, options = {}) {
 	return { provider, modelId, model };
 }
 
+/** Wire effort (frozen vocabulary) → pi `ModelThinkingLevel`, clamped to what
+ * this model actually supports: "none"→"off", "ultra"→"max" (pi has no
+ * "ultra" level), everything else passes through `clampThinkingLevel`. */
+export async function resolveEffort(model, effort) {
+	const { clampThinkingLevel } = await import("@earendil-works/pi-ai");
+	const level = effort === "none" ? "off" : effort === "ultra" ? "max" : effort;
+	return clampThinkingLevel(model, level);
+}
+
 function unknownModel(requested) {
 	return Object.assign(new Error(`Unknown model: ${requested}`), { code: "UNKNOWN_MODEL" });
+}
+
+// Shared between the legacy provider-status route and the models registry
+// below: the label a signed-in provider surfaces ("env", "file", "chatgpt")
+// comes from CozyClay's own stored credentials, never from pi's free-form
+// `AuthResult.source` string.
+function resolveAuthSource(provider, { auth, saved, env }) {
+	if (provider.id === "openai-codex") {
+		const raw = typeof auth.readStored === "function" ? auth.readStored() : undefined;
+		const signedIn = auth.status ? !!auth.status().signedIn : !!raw?.refresh_token;
+		return signedIn ? "chatgpt" : null;
+	}
+	const envName = provider.env.find((name) => typeof env[name] === "string" && env[name].trim());
+	return envName ? "env" : saved[provider.id] ? "file" : null;
 }
 
 export function providerStatus({ auth = defaultAuth, keys = defaultKeys, env = process.env } = {}) {
 	const saved = keys.readKeys();
 	return PROVIDERS.map((provider) => {
-		if (provider.id === "openai-codex") {
-			const raw = typeof auth.readStored === "function" ? auth.readStored() : undefined;
-			const signedIn = auth.status ? !!auth.status().signedIn : !!raw?.refresh_token;
-			return { id: provider.id, label: provider.label, authSource: signedIn ? "chatgpt" : null, signedIn };
-		}
-		const envName = provider.env.find((name) => typeof env[name] === "string" && env[name].trim());
-		const authSource = envName ? "env" : saved[provider.id] ? "file" : null;
+		const authSource = resolveAuthSource(provider, { auth, saved, env });
 		return { id: provider.id, label: provider.label, authSource, signedIn: !!authSource };
 	});
+}
+
+// The wire vocabulary the panel and turn route speak (frozen, #379): pi's
+// ModelThinkingLevel ("off"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max")
+// plus "none" (off's wire name) and "ultra" (accepted on input only, clamped
+// to "max" — no model ever advertises it as a supported effort).
+export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
+
+const wireEffort = (level) => (level === "off" ? "none" : level);
+
+function effortsFor(levels) {
+	const efforts = levels.map(wireEffort);
+	const defaultEffort = efforts.includes("medium") ? "medium" : (efforts[0] ?? "none");
+	return { efforts, defaultEffort };
+}
+
+/** One provider's pi catalog, filtered to chat models that take both text and
+ * image input and shaped for the panel: key-addressed, effort levels in the
+ * frozen wire vocabulary. */
+function catalogModels(models, providerId, getSupportedThinkingLevels) {
+	return models.getModels(providerId)
+		.filter((model) => Array.isArray(model.input) && model.input.includes("text") && model.input.includes("image"))
+		.map((model) => {
+			const { efforts, defaultEffort } = effortsFor(getSupportedThinkingLevels(model));
+			return { id: model.id, key: `${providerId}/${model.id}`, label: model.name ?? model.id, efforts, defaultEffort, input: ["text", "image"] };
+		});
+}
+
+/** Codex's live `/models` list, in the same shape as `catalogModels`. Used
+ * only to add models the pi catalogue does not (yet) know about. */
+function liveModelsCodex(result) {
+	const list = Array.isArray(result) ? result : result?.models ?? [];
+	return list.map((model) => {
+		const id = typeof model === "string" ? model : model.slug || model.id;
+		const levels = Array.isArray(model.supported_reasoning_levels)
+			? model.supported_reasoning_levels.map((level) => (typeof level === "string" ? level : level.effort)).filter(Boolean).map(wireEffort)
+			: [];
+		const defaultEffort = levels.includes("medium") ? "medium" : (typeof model.default_reasoning_level === "string" ? wireEffort(model.default_reasoning_level) : levels[0] ?? "none");
+		return { id, key: `openai-codex/${id}`, label: id, efforts: levels, defaultEffort, input: ["text", "image"] };
+	}).filter((model) => model.id);
+}
+
+const astraFirst = (a, b) => Number(b.id === "gpt-6-astra") - Number(a.id === "gpt-6-astra");
+
+/**
+ * `/agent/models`, built on the pi provider registry (#379): every provider
+ * signed in or not, each with its sign-in state and its chat models shaped
+ * for the panel. `models` may be injected (already-built pi `Models`, or a
+ * test double exposing `getModels`/`getAuth`) — the route builds a real one.
+ */
+export async function listAgentModels({ models, codex, auth = defaultAuth, keys = defaultKeys, env = process.env } = {}) {
+	const { getSupportedThinkingLevels } = await import("@earendil-works/pi-ai");
+	const resolvedModels = models ?? await createModels({ auth, keys, env });
+	const saved = keys.readKeys();
+	const providers = [];
+	for (const provider of PROVIDERS) {
+		const authResult = await resolvedModels.getAuth(provider.id).catch(() => undefined);
+		const signedIn = authResult !== undefined;
+		const authSource = resolveAuthSource(provider, { auth, saved, env });
+		let list = catalogModels(resolvedModels, provider.id, getSupportedThinkingLevels);
+		if (provider.id === "openai-codex") {
+			list = [...list].sort(astraFirst);
+			if (signedIn && codex?.listModels) {
+				try {
+					const known = new Set(list.map((model) => model.id));
+					const live = liveModelsCodex(await codex.listModels()).filter((model) => !known.has(model.id));
+					list = [...list, ...live];
+				} catch { /* the live catalog is a bonus; the static catalog still lists astra */ }
+			}
+		}
+		providers.push({ id: provider.id, label: provider.label, signedIn, authSource, models: list });
+	}
+	// The flat union is what the panel's dropdown reads today (`models[].id`);
+	// with five providers in play the id has to be the provider/id key so two
+	// providers' same-named model never collide there, while each provider's
+	// own `models[]` keeps the bare id.
+	return { providers, models: providers.flatMap((provider) => provider.models.map((model) => ({ ...model, id: model.key }))) };
 }

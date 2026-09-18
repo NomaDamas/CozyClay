@@ -181,9 +181,67 @@ const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers
 assert.equal(forbidden.status, 403);
 assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);
 const models = await fetch(`http://127.0.0.1:${port}/agent/models`).then((r) => r.json());
-assert.equal(models.models[0].id, "gpt-6-astra");
-assert.deepEqual(models.models[0].efforts, ["low", "medium", "xhigh"]); assert.equal(models.models[0].defaultEffort, "medium");
-assert.deepEqual(models.models[1].efforts, []); assert.equal(models.models[1].defaultEffort, null);
+{
+	// #379: /agent/models is grouped by provider, each with its pi-derived sign-in
+	// state and its chat models shaped for the panel. This handler's own auth
+	// double (getAccessToken only, no readStored/status) leaves every provider
+	// signed out, so the live codex.listModels() merge never fires here — the
+	// merge itself is exercised against providers.mjs directly below, where a
+	// signed-in double is cheap and does not need network access.
+	assert.equal(models.providers.length, 5, "all five registry providers are listed");
+	assert.deepEqual(models.providers.map((provider) => provider.id).sort(), ["anthropic", "google", "openai", "openai-codex", "openrouter"]);
+	assert.ok(models.providers.every((provider) => provider.signedIn === false), "no credentials are configured for this handler's auth double");
+	assert.ok(models.models.length > 0 && models.models.every((model) => typeof model.id === "string" && model.id.includes("/")), "the flat union is key-addressed: every models[].id is provider/id");
+	const codexProvider = models.providers.find((provider) => provider.id === "openai-codex");
+	assert.equal(codexProvider.models[0].id, "gpt-6-astra", "gpt-6-astra sorts first even though it is not the catalog's first entry");
+	const astra = codexProvider.models[0];
+	assert.ok(!astra.efforts.includes("none") && !astra.efforts.includes("off"), "astra's thinkingLevelMap marks off unsupported, so neither wire name for it is offered");
+	assert.ok(astra.efforts.includes("max"), "astra supports pi's top thinking level");
+	assert.equal(astra.defaultEffort, "medium", "medium is the default whenever a model supports it");
+	assert.ok(!astra.efforts.includes("ultra"), "ultra is never an advertised effort \u2014 it is only ever an accepted, clamped input");
+	console.log("PASS models grouped by provider");
+}
+{
+	// Sign-in state and the codex live-catalog merge, exercised directly against
+	// providers.mjs: an env-configured provider reports signedIn/authSource, and
+	// openai-codex merges codex.listModels() with the static pi catalog only for
+	// models the catalog does not already have — astra stays catalog-sourced
+	// (and therefore keeps its full pi effort list) and still sorts first.
+	const { listAgentModels, resolveModel, resolveEffort, EFFORT_LEVELS } = await import("../bin/agent/providers.mjs");
+	const previousAnthropicKey = process.env.ANTHROPIC_API_KEY;
+	process.env.ANTHROPIC_API_KEY = "x";
+	try {
+		const signedInAuth = { readStored: async () => undefined };
+		const keys = { readKeys: () => ({}) };
+		const base = await import("../bin/agent/providers.mjs").then((m) => m.createModels({ auth: signedInAuth, keys, env: process.env }));
+		const withCodexSignedIn = { getModels: (id) => base.getModels(id), getAuth: async (id) => (id === "openai-codex" ? { auth: {}, source: "chatgpt" } : base.getAuth(id)) };
+		const liveCodex = { listModels: async () => ["gpt-5", { slug: "gpt-6-astra", supported_reasoning_levels: [{ effort: "low" }], default_reasoning_level: "low" }, { slug: "gpt-9-nova", supported_reasoning_levels: [{ effort: "low" }], default_reasoning_level: "low" }] };
+		const result = await listAgentModels({ models: withCodexSignedIn, codex: liveCodex, auth: signedInAuth, keys, env: process.env });
+		const anthropic = result.providers.find((provider) => provider.id === "anthropic");
+		assert.equal(anthropic.signedIn, true, "an env-configured provider is signed in");
+		assert.equal(anthropic.authSource, "env", "the api key came from the environment");
+		const codexProvider = result.providers.find((provider) => provider.id === "openai-codex");
+		assert.equal(codexProvider.signedIn, true);
+		assert.equal(codexProvider.models[0].id, "gpt-6-astra", "the catalog's astra still sorts first after the merge");
+		assert.ok(codexProvider.models[0].efforts.includes("max"), "the merge never overwrites astra's catalog entry with codex's live one");
+		assert.ok(codexProvider.models.some((model) => model.id === "gpt-9-nova"), "a live model the pi catalog does not know about still appears");
+		assert.equal(codexProvider.models.find((model) => model.id === "gpt-9-nova").key, "openai-codex/gpt-9-nova");
+		console.log("PASS openai-codex merges the live catalog with the pi catalog, keeping astra first");
+
+		await assert.rejects(resolveModel("anthropic/does-not-exist", { models: base }), (error) => error.code === "UNKNOWN_MODEL", "resolveModel rejects an unknown model id with the frozen error code");
+		// gpt-5.4 supports "off" and everything up to "xhigh" but not "max": it
+		// exercises the none→off mapping, the ultra→max→clamp-down chain, and a
+		// plain effort a model lacks being clamped to what it does support.
+		const gpt54 = base.getModel("openai-codex", "gpt-5.4");
+		assert.equal(await resolveEffort(gpt54, "none"), "off", "the wire name none maps to pi's off");
+		assert.equal(await resolveEffort(gpt54, "ultra"), "xhigh", "ultra is accepted on input, clamped to max, then clamped again to what this model supports");
+		assert.equal(await resolveEffort(gpt54, "max"), "xhigh", "an effort a model lacks is clamped down to what it supports");
+		assert.deepEqual(EFFORT_LEVELS, REASONING_EFFORTS, "the frozen wire vocabulary providers.mjs exports matches the turn route's own REASONING_EFFORTS");
+		console.log("PASS resolveModel/resolveEffort: unknown model id rejects, effort maps and clamps through clampThinkingLevel");
+	} finally {
+		if (previousAnthropicKey === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previousAnthropicKey;
+	}
+}
 {
 	const bad = await fetch(`http://127.0.0.1:${port}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: `http://127.0.0.1:${port}` }, body: JSON.stringify({ sessionId: "e", text: "hi", effort: "bogus" }) });
 	assert.equal(bad.status, 400, "an effort the backend would reject never leaves the sidecar");
