@@ -205,19 +205,19 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				if (state.active && !state.active.quotaSent && frame.type !== "quota") state.active.pendingFrames.push(frame);
 				else queue.push(frame);
 			};
-			const listen = (type, listener) => eventUnsubscribers.push(state.harness.events.on(type, listener));
-			listen("message_update", (event) => {
+			const subscribe = (type, listener) => eventUnsubscribers.push(state.harness.events.on(type, listener));
+			subscribe("message_update", (event) => {
 				if (event.event?.type === "text_delta") pushFrame({ type: "text.delta", text: event.event.delta });
 				if (event.event?.type === "error") pushFrame(errorFrame(event.event.error, event.event.reason === "aborted"));
 			});
-			listen("tool_start", (event) => {
+			subscribe("tool_start", (event) => {
 				if (toolStarted.has(event.toolCallId)) return;
 				toolStarted.add(event.toolCallId);
 				toolStartedAt.set(event.toolCallId, clock());
 				const tool = (Array.isArray(tools) ? tools : []).find((candidate) => candidate.name === event.toolName);
 				pushFrame({ type: "tool.start", callId: event.toolCallId, name: event.toolName, label: tool?.label || event.toolName.replaceAll("_", " "), args: summariseCanvasResult(event.args) });
 			});
-			listen("tool_end", (event) => {
+			subscribe("tool_end", (event) => {
 				if (toolCompleted.has(event.toolCallId)) return;
 				if (!toolStarted.has(event.toolCallId)) {
 					toolStarted.add(event.toolCallId);
@@ -235,7 +235,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					pushFrame({ type: "tool.done", callId: event.toolCallId, ok: false, elapsedMs, error: message });
 				} else pushFrame({ type: "tool.done", callId: event.toolCallId, ok: true, elapsedMs, result: details });
 			});
-			listen("run_end", (event) => {
+			subscribe("run_end", (event) => {
 				if (state.active?.pendingFrames.length) { for (const pending of state.active.pendingFrames) queue.push(pending); state.active.pendingFrames = []; }
 				if (event.status !== "completed") {
 					const message = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
