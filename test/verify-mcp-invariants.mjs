@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_DIRECTORIES = ["src", "tools", "bin", "mcp"];
 const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
+const ROOT_DEPENDENCY_ALLOWLIST = Object.freeze({
+	"@earendil-works/pi-agent-core": "0.85.1",
+	"@earendil-works/pi-ai": "0.85.1",
+});
 const MCP_DEPENDENCY_BASELINE = Object.freeze({
 	"@modelcontextprotocol/sdk": "^1.30.0",
 	ws: "^8.19.0",
@@ -166,7 +170,7 @@ function verifyG013(packages) {
 	const mcpDependencies = packages.mcp.dependencies ?? {};
 	return {
 		failures: [
-			...(Object.keys(rootDependencies).length === 0 ? [] : [`G013 root runtime dependencies must be empty: ${JSON.stringify(rootDependencies)}`]),
+			...(sameObject(rootDependencies, ROOT_DEPENDENCY_ALLOWLIST) ? [] : [`G013 root runtime dependencies must equal the pi allow-list: ${JSON.stringify(rootDependencies)}`]),
 			...(sameObject(mcpDependencies, MCP_DEPENDENCY_BASELINE) ? [] : [`G013 mcp runtime dependencies drifted from baseline: ${JSON.stringify(mcpDependencies)}`]),
 		],
 	};
@@ -237,7 +241,9 @@ function runSelfTests() {
 	selfTest("G009 empty scan", [verifyG009({ "src/App.jsx": "" })]);
 	selfTest("G010", [verifyG010({ "mcp/server.mjs": 'import y from "yjs";', "mcp/live-hub.mjs": 'const frame = { type: "cmd" };', "src/live-control.js": "dispatchLiveFrame", "src/App.jsx": "liveHandlersRef.current = {" })]);
 	selfTest("G012", [verifyG012({ "mcp/server.mjs": 'const method = "tasks/get";' })]);
-	selfTest("G013", [verifyG013({ root: { dependencies: {} }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE, drift: "1.0.0" } } })]);
+	selfTest("G013", [verifyG013({ root: { dependencies: { ...ROOT_DEPENDENCY_ALLOWLIST } }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE, drift: "1.0.0" } } })]);
+	selfTest("G013 extra root dependency", [verifyG013({ root: { dependencies: { ...ROOT_DEPENDENCY_ALLOWLIST, "left-pad": "1.0.0" } }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE } } })]);
+	selfTest("G013 non-exact root pin", [verifyG013({ root: { dependencies: { ...ROOT_DEPENDENCY_ALLOWLIST, "@earendil-works/pi-ai": "^0.85.1" } }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE } } })]);
 	selfTest("G014", [loopbackSites({ "mcp/server.mjs": 'server.listen(5173, "0.0.0.0");' })]);
 	selfTest("executable entrypoints", [verifyExecutableEntrypoints({ "mcp/server.mjs": 0o100644, "bin/cozyclay.mjs": 0o100755 })]);
 }
@@ -252,7 +258,7 @@ console.log(`G009 live handlers scanned=${g009.handlers.length}: ${g009.handlers
 console.log("G010 agent mutation path: MCP tool -> appliedLiveMutation/liveHub.command -> WebSocket cmd frame -> dispatchLiveFrame -> App liveHandlersRef React-state handlers");
 console.log(`G010 source files scanned=${Object.keys(sources).length}; CRDT/OT imports=0`);
 console.log(`G012 MCP source files scanned=${Object.keys(sources).filter((path) => path.startsWith("mcp/")).length}; unsupported protocol constructs=0`);
-console.log(`G013 root runtime dependencies=0; MCP baseline=${JSON.stringify(MCP_DEPENDENCY_BASELINE)}`);
+console.log(`G013 root runtime dependencies allow-list=${Object.keys(ROOT_DEPENDENCY_ALLOWLIST).join(", ")}; MCP baseline=${JSON.stringify(MCP_DEPENDENCY_BASELINE)}`);
 console.log(`G014 listen sites checked=${g014.listeners.length}: ${g014.listeners.join(", ")}`);
 console.log(`G014 loopback client URL sites checked=${g014.urls.length}: ${g014.urls.join(", ")}`);
 console.log(`Executable entrypoints checked=${EXECUTABLE_ENTRYPOINTS.length}: ${EXECUTABLE_ENTRYPOINTS.map((path) => `${path}=${(modes[path] & 0o777).toString(8)}`).join(", ")}`);
