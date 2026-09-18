@@ -11424,3 +11424,20 @@ input[type=range] {
 .agent-history-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .agent-history-empty { padding: 10px; color: var(--muted); }
 .agent-toast { padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--accent-soft); color: var(--fg); font-size: 11px; }
+
+/* Fal H3 Studio motion launch slice (#380). */
+.fal-motion-card { margin-top: 12px; padding: 10px; border: 1px solid var(--line, #313747); border-radius: 8px; background: rgba(21, 25, 35, .72); }
+.fal-motion-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.fal-motion-head span { color: var(--muted, #a7afc2); font-size: 10px; }
+.fal-motion-pose-row, .fal-motion-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.fal-motion-pose-row .btn, .fal-motion-actions .btn { min-height: 28px; padding: 5px 8px; }
+.fal-motion-pose-row .btn.active { border-color: #7dd3fc; color: #d7f3ff; }
+.fal-motion-thumbs { display: flex; gap: 6px; margin-top: 8px; min-height: 0; }
+.fal-motion-thumbs img { width: 74px; height: 42px; object-fit: cover; border-radius: 4px; border: 1px solid #42506a; background: #0c0f16; }
+.fal-motion-instruction { width: 100%; min-height: 54px; margin-top: 8px; padding: 7px; resize: vertical; border: 1px solid #343b4d; border-radius: 5px; background: #11151e; color: inherit; font: inherit; font-size: 11px; }
+.fal-motion-video { display: block; width: 100%; margin-top: 9px; border-radius: 5px; background: #090b10; }
+.agent-fal-action { color: #6d4aff; border-color: color-mix(in srgb, #6d4aff 35%, var(--line) 65%); }
+.agent-fal-action:disabled { opacity: .45; }
+.result-motion-video { width: 100%; max-height: 420px; background: #090b10; }
+.result-motion-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; color: var(--muted, #a7afc2); font-size: 11px; }
+.result-motion-meta span { padding: 3px 6px; border: 1px solid var(--line, #313747); border-radius: 999px; }

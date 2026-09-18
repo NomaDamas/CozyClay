@@ -345,6 +345,7 @@ import { buildZip } from "./zip-store.js";
 import { composeStoryboard } from "./storyboard.js";
 import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
+import { buildH3MotionPrompt, motionApiOrigin, submitFalMotion, waitForFalMotionJob, FAL_MOTION_MIN_DURATION, FAL_MOTION_STILL_OUTPUT } from "./fal-motion-client.js";
 import { serializeOtio } from "./otio.js";
 import {
 	addShotAtFrame,
@@ -1445,6 +1446,21 @@ export default function App() {
 	const [rigs, setRigs] = useState({});
 	const [rigMountEpoch, setRigMountEpoch] = useState(0);
 	const [poseRevision, setPoseTick] = useState(0);
+	const [falMotion, setFalMotion] = useState({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", dailyRemaining: null });
+	const [falMotionEnabled, setFalMotionEnabled] = useState(false);
+
+	useEffect(() => {
+		let cancelled = false;
+		fetch(`${motionApiOrigin()}/v1/motion/me`, { credentials: "include" })
+			.then((response) => response.ok ? response.json() : null)
+			.then((payload) => {
+				if (cancelled || !payload) return;
+				setFalMotionEnabled(payload.enabled === true);
+				if (Number.isFinite(payload.dailyRemaining)) setFalMotion((current) => ({ ...current, dailyRemaining: payload.dailyRemaining }));
+			})
+			.catch(() => { if (!cancelled) setFalMotionEnabled(false); });
+		return () => { cancelled = true; };
+	}, []);
 
 	/* --------------------- derived cast view + shims ---------------------- */
 
@@ -4844,11 +4860,14 @@ export default function App() {
 			},
 			// The full-resolution shot-camera pull the editor's own exports use —
 		// not capture_frame's 640x360 preview, which stays exactly as it is.
-			capture_framing_png: () => {
+			capture_framing_png: (args = {}) => {
 				const live = liveStateRef.current;
-				const dataUrl = live.captureFramingPng(live.captureCurrentFraming());
+				const requested = args?.output;
+				const output = Number.isFinite(requested?.width) && Number.isFinite(requested?.height)
+					? { width: Math.round(requested.width), height: Math.round(requested.height) }
+					: SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
+				const dataUrl = live.captureFramingPng(live.captureCurrentFraming(), output);
 				if (!dataUrl) throw new Error("The shot renderer is not ready");
-				const output = SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
 				return {
 					dataUrl,
 					width: output.width,
@@ -5895,6 +5914,115 @@ export default function App() {
 		const cam = shotCamRef.current;
 		const pos = cam ? cam.position : cameraPos;
 		return captureFraming({ pos: { x: pos.x, y: pos.y, z: pos.z }, yaw: look.current.yaw, pitch: look.current.pitch, fovDeg });
+	}
+
+	function captureFalStill() {
+		// H3 480P follows the reference canvas. Keep this capture independent of
+		// the Studio's current shot ratio (2.39:1, 9:16, etc.) so the submitted
+		// still and the generated 832x480 clip have the same 16:9 canvas.
+		const captured = liveHandlersRef.current?.capture_framing_png?.({ output: FAL_MOTION_STILL_OUTPUT });
+		if (!captured?.dataUrl?.startsWith("data:image/")) throw new Error(ko("렌더러가 준비되지 않았어요.", "The shot renderer is not ready."));
+		if (captured.width !== FAL_MOTION_STILL_OUTPUT.width || captured.height !== FAL_MOTION_STILL_OUTPUT.height) {
+			throw new Error(ko("H3 480P 참조 캡처는 16:9(1920×1080)이어야 해요.", "The H3 480P reference must be captured at 16:9 (1920×1080)."));
+		}
+		return { ...captured, framing: captureCurrentFraming() };
+	}
+
+	function markFalPose(slot) {
+		if (!falMotionEnabled) {
+			setFalMotion((current) => ({ ...current, error: ko("Fal 모션 생성은 QA 중 잠겨 있어요.", "Fal motion generation is locked during QA."), status: "error" }));
+			return;
+		}
+		try {
+			const still = captureFalStill();
+			setFalMotion((current) => ({ ...current, [slot]: still, status: "idle", error: "" }));
+			setToast(isKo ? `포즈 ${slot.toUpperCase()} 캡처됨 · ${still.width}×${still.height}` : `Pose ${slot.toUpperCase()} captured · ${still.width}×${still.height}`);
+		} catch (error) {
+			setFalMotion((current) => ({ ...current, error: error.message, status: "error" }));
+		}
+	}
+
+	function clearFalMotion() {
+		setFalMotion({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", dailyRemaining: null });
+	}
+
+	function framingDistance(a, b) {
+		if (!a || !b) return Infinity;
+		return Math.max(
+			Math.abs(a.pos.x - b.pos.x), Math.abs(a.pos.y - b.pos.y), Math.abs(a.pos.z - b.pos.z),
+			Math.abs(a.yaw - b.yaw), Math.abs(a.pitch - b.pitch), Math.abs(a.fovDeg - b.fovDeg),
+		);
+	}
+
+	async function generateFalMotion(kind = "interpolate", instructionOverride = null) {
+		if (!falMotionEnabled) {
+			setFalMotion((current) => ({ ...current, error: ko("Fal 모션 생성은 QA 중 잠겨 있어요.", "Fal motion generation is locked during QA."), status: "error" }));
+			return;
+		}
+		let source = falMotion;
+		if (kind === "act" && !source.a) {
+			try { source = { ...source, a: captureFalStill() }; setFalMotion((current) => ({ ...current, a: source.a })); }
+			catch (error) { setFalMotion((current) => ({ ...current, error: error.message, status: "error" })); return; }
+		}
+		if (kind === "interpolate" && (!source.a || !source.b)) {
+			setFalMotion((current) => ({ ...current, error: ko("A와 B 포즈를 먼저 캡처하세요.", "Capture both A and B poses first."), status: "error" }));
+			return;
+		}
+		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
+			setFalMotion((current) => ({ ...current, error: ko("A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요.", "The camera changed between A and B. Capture both poses with the same camera."), status: "error" }));
+			return;
+		}
+		const prompt = kind === "interpolate"
+			? buildH3MotionPrompt("", { interpolate: true })
+			: buildH3MotionPrompt(instructionOverride || source.instruction || "Make the character perform the requested action.");
+		setFalMotion((current) => ({ ...current, status: "submitting", error: "", job: null }));
+		try {
+			const submitted = await submitFalMotion({
+				kind,
+				stillA: source.a?.dataUrl,
+				stillB: source.b?.dataUrl,
+				still: source.a?.dataUrl,
+				prompt,
+				duration: FAL_MOTION_MIN_DURATION,
+			});
+			const id = submitted?.job?.id;
+			if (!id) throw new Error(ko("생성 작업 ID를 받지 못했어요.", "The server did not return a motion job ID."));
+			setFalMotion((current) => ({ ...current, status: "queued", job: submitted.job, dailyRemaining: submitted.dailyRemaining }));
+			const finished = await waitForFalMotionJob(id, {
+				onUpdate: (job) => setFalMotion((current) => ({ ...current, job, status: job?.status ?? current.status })),
+			});
+			const job = finished?.job;
+			if (job?.status !== "done") throw new Error(job?.error || ko("Fal 생성에 실패했어요.", "Fal motion generation failed."));
+			setFalMotion((current) => ({ ...current, job, status: "done", dailyRemaining: finished.dailyRemaining }));
+			if (job.video?.url) {
+				const motionSource = { kind: "url", url: job.video.url, name: `Fal H3 Max Turbo · ${job.resolution}` };
+				setMultiModelSource(motionSource);
+				// Put the completed clip through the same probe/ingest path as a
+				// manually supplied URL so GVHMR sees measured fps, duration and
+				// a ready extraction card without another generation request.
+				await ingestFootage(motionSource);
+				setResult({
+					mode: "video",
+					modelLabel: "Fal H3 Max Turbo",
+					prompt,
+					frame: source.a?.dataUrl ?? null,
+					videoUrl: job.video.url,
+					motion: {
+						videoUrl: job.video.url,
+						resolution: job.resolution,
+						width: job.width,
+						height: job.height,
+						fps: job.fps,
+						duration: job.resultDuration ?? job.duration,
+						cost: job.cost,
+					},
+				});
+				setResultOpen(true);
+				setToast(isKo ? "Fal 영상이 준비됐어요 · 추출 패널에서 GVHMR을 실행하세요" : "Fal video is ready · run GVHMR from the extraction panel");
+			}
+		} catch (error) {
+			setFalMotion((current) => ({ ...current, status: "error", error: error.message || String(error) }));
+		}
 	}
 
 	// What a framing capture says about the shot it came from: lens, delivery
@@ -8009,27 +8137,32 @@ export default function App() {
 		setNonce((n) => n + 1);
 	}
 
-	function bufferToPng(buffer) {
+	function bufferToPng(buffer, output = shotOutput) {
 		const canvas = document.createElement("canvas");
-		canvas.width = shotOutput.width;
-		canvas.height = shotOutput.height;
+		if (output === shotOutput) {
+			canvas.width = shotOutput.width;
+			canvas.height = shotOutput.height;
+		} else {
+			canvas.width = output.width;
+			canvas.height = output.height;
+		}
 		const ctx = canvas.getContext("2d");
-		const image = ctx.createImageData(shotOutput.width, shotOutput.height);
+		const image = ctx.createImageData(output.width, output.height);
 		// WebGL reads bottom-up; flip into canvas order.
-		for (let row = 0; row < shotOutput.height; row += 1) {
-			const from = (shotOutput.height - 1 - row) * shotOutput.width * 4;
+		for (let row = 0; row < output.height; row += 1) {
+			const from = (output.height - 1 - row) * output.width * 4;
 			image.data.set(
-				buffer.subarray(from, from + shotOutput.width * 4),
-				row * shotOutput.width * 4
+				buffer.subarray(from, from + output.width * 4),
+				row * output.width * 4
 			);
 		}
 		ctx.putImageData(image, 0, 0);
 		return canvas.toDataURL("image/png");
 	}
 
-	/** Park the shot camera on a framing, read back a 1920x1080 PNG, and put
+	/** Park the shot camera on a framing, read back an offscreen PNG, and put
 	    everything back before the next paint — the viewport never sees it. */
-	function captureFramingPng(framing) {
+	function captureFramingPng(framing, output = shotOutput) {
 		const cam = shotCamRef.current;
 		if (!cam || !captureRef.current) return null;
 		const prev = { x: cam.position.x, y: cam.position.y, z: cam.position.z, yaw: look.current.yaw, pitch: look.current.pitch, fov: cam.fov };
@@ -8038,14 +8171,22 @@ export default function App() {
 		cam.rotation.set(framing.pitch, framing.yaw, 0);
 		cam.fov = framing.fovDeg;
 		cam.updateProjectionMatrix();
-		const buffer = captureRef.current.render();
-		cam.position.set(prev.x, prev.y, prev.z);
-		cam.rotation.set(prev.pitch, prev.yaw, 0);
-		look.current.yaw = prev.yaw;
-		look.current.pitch = prev.pitch;
-		cam.fov = prev.fov;
-		cam.updateProjectionMatrix();
-		return buffer ? bufferToPng(buffer) : null;
+		const needsOwnTarget = output.width !== shotOutput.width || output.height !== shotOutput.height;
+		const capture = needsOwnTarget && typeof captureRef.current.createExportCapture === "function"
+			? captureRef.current.createExportCapture(output)
+			: captureRef.current;
+		try {
+			const buffer = capture.render();
+			return buffer ? bufferToPng(buffer, output) : null;
+		} finally {
+			if (needsOwnTarget) capture.dispose?.();
+			cam.position.set(prev.x, prev.y, prev.z);
+			cam.rotation.set(prev.pitch, prev.yaw, 0);
+			look.current.yaw = prev.yaw;
+			look.current.pitch = prev.pitch;
+			cam.fov = prev.fov;
+			cam.updateProjectionMatrix();
+		}
 	}
 
 	function copyPrompt(prompt) {
@@ -12702,7 +12843,8 @@ function resizePromptClip(id, edge, rawFrame) {
 						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
 						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
 							sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
-							buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets} />
+							buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
+							onFalAction={(instruction) => void generateFalMotion("act", instruction)} />
 					</div>}
 					<section className="inspector-pane" hidden={studioAgentMode}>
 					<div className="inspector-heading">
@@ -12923,6 +13065,37 @@ function resizePromptClip(id, edge, rawFrame) {
 					<p className="inspector-hint">
 						{isKo ? `인물 ${activeCharIndex + 1}의 자세입니다.` : `The pose on Subject ${activeCharIndex + 1}.`}
 					</p>
+					<section className="fal-motion-card" data-testid="fal-motion-studio" data-motion-enabled={falMotionEnabled ? "true" : "false"}>
+						<div className="fal-motion-head">
+							<strong>{ko("Fal 모션 생성", "Fal motion")}</strong>
+							<span>{!falMotionEnabled ? ko("QA 잠금", "QA lock") : falMotion.job?.status === "done" ? ko("완료", "Done") : falMotion.status === "error" ? ko("확인 필요", "Needs attention") : "H3 Max Turbo · 480P"}</span>
+						</div>
+						<p className="inspector-hint">{ko("같은 카메라에서 A/B 포즈를 캡처하면 보간하고, A만 있으면 동작 지시로 생성합니다.", "Capture A and B from the same camera to interpolate, or use A alone for an instructed action.")}</p>
+						<p className="inspector-hint fal-motion-ratio">{ko("참조 캡처 16:9 · 1920×1080 → H3 480P 832×480 · 현재 샷 비율과 무관하게 이 규격으로 캡처합니다.", "Reference capture 16:9 · 1920×1080 → H3 480P 832×480 · this capture size is fixed for the motion request.")}</p>
+						<div className="fal-motion-pose-row">
+							<button type="button" className={falMotion.a ? "btn active" : "btn"} disabled={!falMotionEnabled} onClick={() => markFalPose("a")}>{falMotion.a ? "A ✓" : "Mark A"}</button>
+							<button type="button" className={falMotion.b ? "btn active" : "btn"} disabled={!falMotionEnabled} onClick={() => markFalPose("b")}>{falMotion.b ? "B ✓" : "Mark B"}</button>
+							{(falMotion.a || falMotion.b) && <button type="button" className="btn ghost" onClick={clearFalMotion}>{ko("초기화", "Clear")}</button>}
+						</div>
+						<div className="fal-motion-thumbs" aria-label={ko("Fal motion reference poses", "Fal motion reference poses")}>
+							{falMotion.a && <img src={falMotion.a.dataUrl} alt="Pose A" />}
+							{falMotion.b && <img src={falMotion.b.dataUrl} alt="Pose B" />}
+						</div>
+						<textarea
+							className="fal-motion-instruction"
+							value={falMotion.instruction}
+							placeholder={ko("A만 캡처한 뒤 동작을 적으세요. 예: 검을 머리 위로 휘두르고 한 걸음 전진", "With A only, describe the action. Example: swing the sword overhead and step forward")}
+							onChange={(event) => setFalMotion((current) => ({ ...current, instruction: event.target.value }))}
+						/>
+						<div className="fal-motion-actions">
+							<button type="button" className="btn primary" disabled={!falMotionEnabled || falMotion.status === "submitting" || falMotion.status === "queued" || !falMotion.a || !falMotion.b} onClick={() => void generateFalMotion("interpolate")}>{falMotion.status === "submitting" || falMotion.status === "queued" ? ko("생성 중…", "Generating…") : ko("A→B 보간", "Interpolate A→B")}</button>
+							<button type="button" className="btn" disabled={!falMotionEnabled || falMotion.status === "submitting" || falMotion.status === "queued" || !falMotion.a || !!falMotion.b || !falMotion.instruction.trim()} onClick={() => void generateFalMotion("act")}>{ko("동작 생성", "Generate action")}</button>
+						</div>
+						{!falMotionEnabled && <p className="inspector-hint">{ko("소유자 테스트가 끝날 때까지 생성 요청은 서버에서 차단됩니다.", "Generation requests stay blocked on the server until owner testing is complete.")}</p>}
+						{falMotion.job?.status === "done" && falMotion.job.video?.url && <video className="fal-motion-video" src={falMotion.job.video.url} controls playsInline preload="metadata" />}
+						{falMotion.status === "error" && <p className="studio-hint error" role="alert">{falMotion.error}</p>}
+						{falMotion.dailyRemaining !== null && <p className="inspector-hint">{ko(`오늘 남은 생성 ${falMotion.dailyRemaining}회`, `${falMotion.dailyRemaining} motion generations left today`)}</p>}
+					</section>
 					<PoseTileGrid
 						poses={selectablePoses}
 						model={activeChar.model}
