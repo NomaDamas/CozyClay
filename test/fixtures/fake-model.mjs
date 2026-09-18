@@ -50,11 +50,11 @@ function responseMessages(steps) {
  * compact sequence used by the agent tests; text immediately before a tool
  * call stays in that assistant message, matching the browser's old loop.
  */
-export function createFakeModel({ models = createModels() } = {}) {
+export function createFakeModel({ models = createModels(), provider = "faux", modelId = "scripted", modelName = "Scripted" } = {}) {
 	const calls = [];
 	const faux = fauxProvider({
-		provider: "faux",
-		models: [{ id: "scripted", name: "Scripted", reasoning: true, input: ["text", "image"] }],
+		provider,
+		models: [{ id: modelId, name: modelName, reasoning: true, input: ["text", "image"] }],
 	});
 	// Faux response factories are the public fixture's observation point: the
 	// context is exactly what pi handed to the provider for each request.

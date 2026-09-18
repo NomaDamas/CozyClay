@@ -10,6 +10,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentHandler } from "../../bin/agent/agent-routes.mjs";
+import { createFakeModel } from "./fake-model.mjs";
 import { contextFixture, envelopeFixture, receiptFixture } from "../verify-studio-agent-protocol.mjs";
 
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
@@ -42,30 +43,22 @@ async function collectTurn(handlerArgs, body) {
 // → text " done" — the exact 4-call script of test/verify-agent-routes.mjs.
 async function recordWorkflow() {
 	const fakeLive = { command: async (name) => name === "capture_framing_png" ? { dataUrl: png, width: 1920, height: 1080 } : { assetId: "a1", objectId: "o1" } };
-	const calls = [];
-	const fakeCodex = {
-		listModels: async () => ["gpt-5"],
-		parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: { hasCredits: true } }),
-		streamResponses: ({ input }) => {
-			calls.push(input);
-			const items = calls.length === 1
-				? [{ type: "message", role: "assistant" }, { type: "function_call", call_id: "c1", name: "describe_workflow", arguments: "{}" }]
-				: calls.length === 2
-					? [{ type: "function_call", call_id: "c2", name: "add_workflow_node", arguments: JSON.stringify({ type: "image", model: "image-generation", data: { prompt: "render" } }) }]
-					: calls.length === 3
-						? [{ type: "function_call", call_id: "c3", name: "run_workflow", arguments: "{}" }]
-						: [{ type: "message", role: "assistant" }];
-			return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-				if (calls.length !== 2) yield { type: "response.output_text.delta", delta: calls.length === 1 ? "hello" : " done" };
-				for (const item of items) yield { type: "response.output_item.done", item };
-				yield { type: "response.completed", response: { status: "completed" } };
-			} };
-		},
-	};
+	const fakeModel = createFakeModel({ provider: "openai-codex", modelId: "gpt-6-astra", modelName: "GPT-6 Astra" });
+	fakeModel.script([
+		{ type: "text", text: "hello" },
+		{ type: "toolCall", id: "c1", name: "describe_workflow", arguments: {} },
+		{ type: "toolCall", id: "c2", name: "add_workflow_node", arguments: { type: "image", model: "image-generation", data: { prompt: "render" } } },
+		{ type: "text", text: " done" },
+		{ type: "toolCall", id: "c3", name: "run_workflow", arguments: {} },
+		{ type: "text", text: " done" },
+	]);
+	const fixtureToken = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } })).toString("base64url")}.e30`;
+	const auth = { getAccessToken: async () => fixtureToken, readStored: async () => ({ refresh_token: "fixture-refresh", access_token: fixtureToken, expires_at: Date.now() + 60 * 60 * 1000 }) };
+	const codex = { parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: { hasCredits: true } }) };
 	const turnId = "a".repeat(32);
 	return collectTurn(
-		{ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, liveHub: fakeLive },
-		{ sessionId: "golden-w", text: "Give me a wide two-shot", attachFrame: false, turn_id: turnId },
+		{ auth, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, liveHub: fakeLive },
+		{ sessionId: "golden-w", text: "Give me a wide two-shot", model: "gpt-6-astra", attachFrame: false, turn_id: turnId },
 	);
 }
 

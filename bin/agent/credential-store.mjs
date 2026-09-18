@@ -49,7 +49,10 @@ export function createCredentialStore({ auth, keys, env = process.env }) {
 	return {
 		async read(providerId, { signal } = {}) {
 			signal?.throwIfAborted();
-			if (providerId === codexId) return mapOAuth(await auth.readStored());
+			if (providerId === codexId) {
+				const stored = typeof auth?.readStored === "function" ? await auth.readStored() : undefined;
+				return mapOAuth(stored);
+			}
 			const provider = configured(providerId);
 			if (!provider) return undefined;
 			const key = envValue(provider, env) ?? keys.readKeys()[providerId];
@@ -61,7 +64,8 @@ export function createCredentialStore({ auth, keys, env = process.env }) {
 			const result = [];
 			for (const provider of PROVIDERS) {
 				if (provider.id === codexId) {
-					if (await auth.readStored()) result.push({ providerId: provider.id, type: "oauth", source: "chatgpt" });
+					const stored = typeof auth?.readStored === "function" ? await auth.readStored() : undefined;
+					if (stored) result.push({ providerId: provider.id, type: "oauth", source: "chatgpt" });
 					continue;
 				}
 				const source = envValue(provider, env) ? "env" : saved[provider.id] ? "file" : null;
