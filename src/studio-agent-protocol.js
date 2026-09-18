@@ -5,6 +5,17 @@ export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
 export const STUDIO_CONTEXT_MAX_BYTES = 16 * 1024;
 export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, shots: 8, assets: 6, recentReceipts: 3, jobs: 8 });
 export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit"]);
+export const STUDIO_TOOL_LABELS = Object.freeze({
+	inspect_studio: "Read the scene",
+	operate_studio: "Selection and view",
+	arrange_objects: "Arrange objects",
+	arrange_characters: "Arrange characters",
+	patch_elements: "Edit properties",
+	frame_shot: "Frame the shot",
+	generate_motion: "Generate motion",
+	verify_result: "Verify the result",
+	undo_edit: "Undo an edit",
+});
 /** One patch target kind per authored commit domain: character→cast,
  * object→objects, shot→shot, stage→stage. */
 export const STUDIO_PATCH_KINDS = Object.freeze(["character", "object", "shot", "stage"]);
