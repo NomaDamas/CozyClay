@@ -45,9 +45,7 @@ export async function withHttp(run, options = {}) {
 	const fakeModel = createFakeModel({ provider: "openai-codex", modelId: "gpt-6-astra", modelName: "GPT-6 Astra" });
 	fakeModel.script([{ type: "text", text: "" }]);
 	const calls = fakeModel.calls;
-	const codex = { parseQuotaHeaders: () => ({ primary: {}, credits: {} }), streamResponses() {
-		return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() { yield { type: "response.completed", response: { status: "completed" } }; } };
-	} };
+	const codex = { parseQuotaHeaders: () => ({ primary: {}, credits: {} }) };
 	const handler = createAgentHandler({ auth: { getAccessToken: async () => "fake-token" }, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, handlers: [], liveHub: {}, port: () => server.address().port, ...options });
 	const server = createServer((req, res) => handler(req, res).catch(error => { res.writeHead(500); res.end(error.message); }));
 	const ready = once(server, "listening"); server.listen(0, "127.0.0.1"); await ready;

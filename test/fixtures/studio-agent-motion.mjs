@@ -91,32 +91,8 @@ export async function startFixtureStudio({ port, evidence }) {
     else call = outputs === 0 ? { name: 'generate_motion', args: { characterId: target, source: { kind: 'generate', beats: [{ text: 'walk forward' }, { text: 'wave' }, { text: 'return' }], durationSeconds: 2 } } } : null;
     return fauxAssistantMessage(call ? [fauxToolCall(call.name, call.args, { id: crypto.randomUUID() })] : [fauxText('Fixture-only execution. Refer to the authoritative receipt; semantic motion and model vision are not verified.')]);
   }));
-  const codex = { listModels: async () => [{ id: 'fixture-only', supported_reasoning_levels: ['low'] }], streamResponses({ input, tools }) {
-    const index = input.findLastIndex(item => item.role === 'user' && item.content?.[0]?.text?.startsWith('<studio-context>'));
-    const c = JSON.parse(input[index].content[0].text.slice('<studio-context>\n'.length, -'\n</studio-context>'.length));
-    const text = input[index].content[1].text, outputs = input.slice(index).filter(item => item.type === 'function_call_output');
-    const target = c.activeCharacterId;
-    assert.deepEqual(tools.map(t => t.name), ['inspect_studio','operate_studio','arrange_objects','arrange_characters','frame_shot','generate_motion','verify_result','undo_edit']);
-    let calls;
-    if (text.startsWith('Put a cube')) calls = [
-      { name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, position: { relativeTo: target, basis: 'shot_camera', side: 'left', gapM: 1, support: 'floor' } }] } },
-      { name: 'arrange_characters', args: { ops: [{ op: 'create', name: 'Fixture second', position: { relativeTo: target, basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } }] } },
-    ];
-    else if (text.startsWith('Frame the selected')) calls = [{ name: 'frame_shot', args: { subjectIds: [target], keyAtFrame: 0, framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } }];
-    else if (text.startsWith('Undo the earlier')) calls = [{ name: 'undo_edit', args: { receiptId: controls.receiptId } }];
-    else if (text.startsWith('Inspect')) calls = [{ name: 'inspect_studio', args: { scope: 'selection' } }];
-    else calls = [{ name: 'generate_motion', args: { characterId: target, source: { kind: 'generate', beats: [{ text: 'walk forward' },{ text: 'wave' },{ text: 'return' }], durationSeconds: 2 } } }];
-    requests.push({ tools: tools.map(t => t.name), outputCount: outputs.length });
-    const call = calls[outputs.length];
-    return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-      if (controls.rateLimit) { controls.rateLimit = false; throw Object.assign(Error('Fixture rate limit'), { status: 429 }); }
-      if (call) yield { type: 'response.output_item.done', item: { type: 'function_call', name: call.name, call_id: crypto.randomUUID(), arguments: JSON.stringify(call.args) } };
-      else yield { type: 'response.output_text.delta', delta: 'Fixture-only execution. Refer to the authoritative receipt; semantic motion and model vision are not verified.' };
-      yield { type: 'response.completed', response: { status: 'completed' } };
-    } };
-  } };
   let origin;
-  const handler = createAgentHandler({ ...(realModel ? {} : { auth: { getAccessToken: async () => 'fixture-only' }, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider }), liveHub: hub, port, getBridgeOrigin: () => origin });
+  const handler = createAgentHandler({ ...(realModel ? {} : { auth: { getAccessToken: async () => 'fixture-only' }, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider }), liveHub: hub, port, getBridgeOrigin: () => origin });
   const server = createServer(async (req, res) => {
     try {
       res.setHeader('access-control-allow-origin', `http://127.0.0.1:${port}`);

@@ -7,7 +7,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
-import { createCodexClient } from "../bin/agent/codex-client.mjs";
 import { createCanvasCommands } from "../src/workflow/canvas-commands.js";
 
 const request = { sessionId: "private-session", text: "private prompt /secret/file.png", model: "private-model" };
@@ -175,7 +174,6 @@ for (const explicit of [true, false]) {
 	});
 	const modelUrl = await listen(model);
 	const fixtureToken = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } })).toString("base64url")}.e30`;
-	const codex = createCodexClient({ getAccessToken: async () => fixtureToken, getAccountId: async () => "fixture", fetch: (_url, init) => fetch(modelUrl, init) });
 	let toolRelease;
 	const liveHub = { command: async (name, args) => {
 		if (scenario === "cancel") return toolRelease.promise;
@@ -183,7 +181,7 @@ for (const explicit of [true, false]) {
 		return scenario === "accepted" ? { accepted: true } : canvas.handlers[name](args);
 	} };
 	const auth = { getAccessToken: async () => fixtureToken, readStored: async () => ({ refresh_token: "fixture-refresh", access_token: fixtureToken, expires_at: Date.now() + 60 * 60 * 1000 }) };
-	const handler = createAgentHandler({ auth, codex, codexBaseUrl: modelUrl, liveHub });
+	const handler = createAgentHandler({ auth, codexBaseUrl: modelUrl, liveHub });
 	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { res.writeHead(500); res.end(error.message); }));
 	const sidecarUrl = await listen(sidecar);
 	try {

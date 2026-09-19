@@ -10,6 +10,8 @@ import { createRequire } from "node:module";
 import { mkdir, writeFile } from "node:fs/promises";
 import { startLiveHub } from "../mcp/live-hub.mjs";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
+import { createFakeModel } from "./fixtures/fake-model.mjs";
+import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 const requireMcp = createRequire(new URL("../mcp/package.json", import.meta.url));
 const { Client } = requireMcp("@modelcontextprotocol/sdk/client/index.js");
 const { StdioClientTransport } = requireMcp("@modelcontextprotocol/sdk/client/stdio.js");
@@ -116,21 +118,16 @@ function installFixture() {
 const hub = await startLiveHub(livePort);
 assert.ok(hub, `QA must own live port ${livePort}; do not start dev-full`);
 const auth = { getAccessToken: async () => "qa-token" };
+const fakeModel = createFakeModel({ provider: "openai-codex", modelId: "gpt-6-astra", modelName: "QA model" });
+fakeModel.fauxProvider.setResponses([
+	async () => fauxAssistantMessage([fauxToolCall("add_workflow_node", { type: "text", data: { prompt: "PRIVATE_TOOL_ARGUMENT" } }, { id: "qa-call" })]),
+	async () => fauxAssistantMessage([fauxText("QA model completed.")]),
+]);
 const codex = {
 	parseQuotaHeaders: () => ({ planType: "Plus", primary: {}, credits: {} }),
 	listModels: async () => ["qa-model"],
-	streamResponses({ input }) {
-		const hasToolResult = input.some((item) => item.type === "function_call_output");
-		return { headers: Promise.resolve(new Headers()), async *[Symbol.asyncIterator]() {
-			if (hasToolResult) {
-				yield { type: "response.output_text.delta", delta: "QA model completed." };
-				yield { type: "response.output_item.done", item: { type: "message", role: "assistant" } };
-			} else yield { type: "response.output_item.done", item: { type: "function_call", call_id: "qa-call", name: "add_workflow_node", arguments: JSON.stringify({ type: "text", data: { prompt: "PRIVATE_TOOL_ARGUMENT" } }) } };
-			yield { type: "response.completed", response: { status: "completed" } };
-		} };
-	},
 };
-const agent = createAgentHandler({ auth, codex, handlers: [], liveHub: hub });
+const agent = createAgentHandler({ auth, codex, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, handlers: [], liveHub: hub });
 const http = createServer(async (request, response) => {
 	try {
 		if (request.url === "/oauth/status") {

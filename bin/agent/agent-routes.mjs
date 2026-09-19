@@ -50,18 +50,6 @@ function validAttachments(attachments) {
 		&& (entry.name === undefined || (typeof entry.name === "string" && entry.name.length <= 120)));
 }
 
-/** One user item per attached picture: what it is, then the picture itself.
- * They are pushed BEFORE the turn text so the model reads the question with
- * the images already in view — the same shape attachFrame uses. */
-export function attachmentInputItems(attachments) {
-	return (Array.isArray(attachments) ? attachments : []).map((attachment, index) => ({
-		role: "user",
-		content: [
-			{ type: "input_text", text: `User attachment ${attachment.name || index + 1}` },
-			{ type: "input_image", image_url: attachment.dataUrl },
-		],
-	}));
-}
 // Keep this local relay self-contained: minimal sidecar installs omit src/.
 const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
 const telemetryId = () => advisory(() => randomBytes(16).toString("hex"), null);
