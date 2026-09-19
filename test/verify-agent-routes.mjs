@@ -1232,3 +1232,158 @@ for (const kind of ["replaced", "signed_out", "rotated"]) {
 		await new Promise((resolve) => noModelsServer16p.close(resolve));
 	}
 }
+
+// #379 / 16q (discovered by 16p's browser run): an acknowledged Stop mid-generation
+// must settle the held generate_motion tool call with the runtime's structured
+// outcome (tool.done{ok:true,result:{code:"CANCELLED",mutated:false,...}}, the
+// tool CALL itself having succeeded exactly like the sibling STALE_TARGET/
+// VERIFICATION_FAILED resilience scenarios) then
+// done — never a synthesized error{code:'aborted'} that hides whether the scene
+// was touched. Real motion runtime (bin/agent/motion-runtime.mjs, no studioRuntime
+// override), a real bridge HTTP server whose /ardy/generate is held open exactly
+// like the browser fixture's controls.hold, and a real /agent/turn + /agent/stop
+// round trip — no sleeps: the held generation is released only after the SSE
+// stream itself has already delivered the job.state{generating} frame carrying
+// the jobId.
+async function run16qStopScenario() {
+	const hub16q = {
+		connected: true, workspaceHandles: ["handle-12"],
+		workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12",
+		command: async (name, args) => {
+			if (name === "read_studio_context") return { context: (await import("./verify-studio-agent-protocol.mjs")).contextFixture() };
+			if (name === "cancel_motion_install") return { status: "not_applied", evidence: true };
+			if (name === "discard_motion_candidate") return { discarded: true };
+			return { ok: true };
+		},
+	};
+	const held16q = Promise.withResolvers();
+	const bridge16q = createServer((req, res) => {
+		if (req.url === "/ardy/health") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, backend: "local_kimodo", host: "fixture", device: "cpu" })); return; }
+		(async () => {
+			res.writeHead(200, { "content-type": "application/x-ndjson" });
+			res.write(`${JSON.stringify({ event: "progress", progress: 0.25 })}\n`);
+			await Promise.race([held16q.promise, once(res, "close")]);
+			if (!res.destroyed) res.end(`${JSON.stringify({ event: "done", motionUrl: "/ardy/motions/123456-abcdef" })}\n`);
+		})();
+	});
+	bridge16q.listen(0, "127.0.0.1"); await once(bridge16q, "listening");
+	const bridgeOrigin16q = `http://127.0.0.1:${bridge16q.address().port}`;
+	const faux16q = createFakeModel();
+	faux16q.script([
+		{ type: "toolCall", id: "m16q", name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk forward" }], durationSeconds: 2 } } },
+		{ type: "text", text: "done" },
+	]);
+	let server16q;
+	const handler16q = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: faux16q.models, fauxProvider: faux16q.fauxProvider, liveHub: hub16q, getBridgeOrigin: () => bridgeOrigin16q, port: () => server16q.address().port });
+	server16q = createServer((req, res) => handler16q(req, res).catch((error) => { console.error("16q fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	server16q.listen(0, "127.0.0.1"); await once(server16q, "listening");
+	const origin16q = `http://127.0.0.1:${server16q.address().port}`;
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const turnEnvelope16q = { ...envelopeFixture(), model: "faux/scripted" };
+	try {
+		const turnResponse16q = await fetch(`${origin16q}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: origin16q }, body: JSON.stringify(turnEnvelope16q) });
+		assert.equal(turnResponse16q.status, 200);
+		const cookie16q = (turnResponse16q.headers.getSetCookie?.() ?? [turnResponse16q.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
+		assert.match(cookie16q, /studio_owner=/);
+		const reader16q = turnResponse16q.body.getReader();
+		const decoder16q = new TextDecoder();
+		const frames16q = [];
+		let carry16q = "";
+		let jobId16q = null;
+		const pump16q = async () => {
+			const { value, done } = await bounded16q(reader16q.read(), "16q SSE read");
+			if (done) return false;
+			carry16q += decoder16q.decode(value, { stream: true });
+			const lines = carry16q.split("\n"); carry16q = lines.pop();
+			for (const line of lines) if (line.startsWith("data: ")) {
+				const frame = JSON.parse(line.slice(6)); frames16q.push(frame);
+				if (frame.type === "job.state" && frame.state === "generating" && !jobId16q) jobId16q = frame.jobId;
+			}
+			return true;
+		};
+		while (!jobId16q) { if (!(await pump16q())) throw new Error("16q: stream ended before job.state{generating}"); }
+		const stopResponse16q = await fetch(`${origin16q}/agent/stop`, { method: "POST", headers: { "content-type": "application/json", origin: origin16q, cookie: cookie16q }, body: JSON.stringify({ surface: "studio", sessionId: turnEnvelope16q.sessionId, turnId: turnEnvelope16q.turnId, jobId: jobId16q }) });
+		assert.equal(stopResponse16q.status, 200);
+		held16q.resolve();
+		while (await pump16q()) { /* drain until the SSE stream itself closes */ }
+		return frames16q;
+	} finally {
+		await handler16q.close();
+		await new Promise((resolve) => server16q.close(resolve));
+		await new Promise((resolve) => bridge16q.close(resolve));
+	}
+}
+async function bounded16q(promise, label, ms = 10000) {
+	let timer;
+	return Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`Deadline: ${label}`)), ms); })]).finally(() => clearTimeout(timer));
+}
+{
+	const frames16q = await run16qStopScenario();
+	const types16q = frames16q.map((frame) => frame.type);
+	const toolDone16q = frames16q.find((frame) => frame.type === "tool.done");
+	const failures16q = [];
+	if (types16q.includes("error")) failures16q.push(`no error{aborted} frame is allowed for an acknowledged stop with a resolvable outcome; got types ${JSON.stringify(types16q)}`);
+	if (!toolDone16q) failures16q.push(`a tool.done frame settling the held generate_motion call is required; got types ${JSON.stringify(types16q)}`);
+	else {
+		// The tool CALL itself succeeded (pi's own isError/ok wire flag) exactly
+		// like the already-passing STALE_TARGET/VERIFICATION_FAILED sibling
+		// scenarios in this same resilience case (test/qa-studio-agent-browser.mjs
+		// checks `result.code`/`result.mutated`, never top-level tool.done.ok, for
+		// those); the BUSINESS-level failure lives in the nested `result`.
+		if (toolDone16q.ok !== true) failures16q.push(`tool.done.ok (the wire-level call outcome) must be true, matching the STALE_TARGET/VERIFICATION_FAILED sibling scenarios; got ${JSON.stringify(toolDone16q)}`);
+		if (toolDone16q.result?.code !== "CANCELLED") failures16q.push(`tool.done.result.code must be CANCELLED; got ${JSON.stringify(toolDone16q)}`);
+		if (toolDone16q.result?.mutated !== false) failures16q.push(`tool.done.result.mutated must be false; got ${JSON.stringify(toolDone16q)}`);
+	}
+	if (types16q.at(-1) !== "done") failures16q.push(`the stream must still end with done; got types ${JSON.stringify(types16q)}`);
+	console.log("16q frame types:", JSON.stringify(types16q));
+	assert.deepEqual(failures16q, [], `an acknowledged Stop with a resolvable outcome must settle tool.done{ok:true,result:{code:'CANCELLED',mutated:false}} then done, never error{aborted}: ${JSON.stringify(failures16q)}`);
+	console.log("PASS 16q: an acknowledged Stop settles the held generate_motion tool card with the runtime outcome, no error{aborted}");
+}
+
+{
+	// 16q: a stop with NO active job (no jobId, session detaches) stays a plain
+	// abort — error{aborted} + done — unchanged.
+	// Held exactly the way the harness's own canonical abort test holds a slow
+	// tool (verify-agent-runner-errors.mjs's `slowTool`): the held step listens
+	// for its OWN abort signal and rejects itself — pi does not forcibly race or
+	// kill an in-flight model/tool call that never checks its signal, so a mock
+	// that just hangs forever (never checking `options.signal`) would hang this
+	// test exactly as it would hang the real harness. This is the cooperative
+	// contract every real provider and Studio tool already follows.
+	const startedDetached = Promise.withResolvers();
+	const { fauxAssistantMessage: detachedFauxMessage, fauxText: detachedFauxText } = await import("@earendil-works/pi-ai/providers/faux");
+	const detachedFaux = createFakeModel();
+	detachedFaux.fauxProvider.setResponses([(context, options) => new Promise((resolve, reject) => {
+		const signal = options?.signal;
+		startedDetached.resolve(signal);
+		signal?.addEventListener("abort", () => reject(Object.assign(new Error("aborted"), { name: "AbortError" })), { once: true });
+	})]);
+	const detachedHub = { command: async () => ({ ok: true }), workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"] };
+	let detachedServer;
+	const detachedHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: detachedFaux.models, fauxProvider: detachedFaux.fauxProvider, liveHub: detachedHub, studioRuntime: { readContext: async () => (await import("./verify-studio-agent-protocol.mjs")).contextFixture() }, port: () => detachedServer.address().port });
+	detachedServer = createServer((req, res) => detachedHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	detachedServer.listen(0, "127.0.0.1"); await once(detachedServer, "listening");
+	const detachedOrigin = `http://127.0.0.1:${detachedServer.address().port}`;
+	const { envelopeFixture: detachedEnvelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const detachedEnvelope = { ...detachedEnvelopeFixture(), model: "faux/scripted" };
+	try {
+		const detachedTurnResponse = await bounded16q(fetch(`${detachedOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: detachedOrigin }, body: JSON.stringify(detachedEnvelope) }), "16q detached turn POST");
+		const detachedCookie = (detachedTurnResponse.headers.getSetCookie?.() ?? [detachedTurnResponse.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
+		// The turn must still be genuinely in flight (the model response held) when
+		// Stop is clicked, or this proves nothing about the abort path at all.
+		await bounded16q(startedDetached.promise, "16q detached model call start");
+		const detachedStopResponse = await bounded16q(fetch(`${detachedOrigin}/agent/stop`, { method: "POST", headers: { "content-type": "application/json", origin: detachedOrigin, cookie: detachedCookie }, body: JSON.stringify({ surface: "studio", sessionId: detachedEnvelope.sessionId, turnId: detachedEnvelope.turnId }) }), "16q detached stop POST");
+		assert.equal(detachedStopResponse.status, 200);
+		const detachedStopBody = await detachedStopResponse.json();
+		assert.equal(detachedStopBody.status, "detached", "a stop with no jobId reports status:detached");
+		const detachedText = await bounded16q(detachedTurnResponse.text(), "16q detached SSE");
+		const detachedFrames = [...detachedText.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+		const detachedTypes = detachedFrames.map((frame) => frame.type);
+		assert.ok(detachedFrames.some((frame) => frame.type === "error" && frame.code === "aborted"), `a stop with no active job must still abort the turn: ${JSON.stringify(detachedTypes)}`);
+		assert.equal(detachedTypes.at(-1), "done");
+		console.log("PASS 16q: a stop with no active job (status:detached) is still a plain abort—error{aborted}+done");
+	} finally {
+		await detachedHandler.close();
+		await new Promise((resolve) => detachedServer.close(resolve));
+	}
+}

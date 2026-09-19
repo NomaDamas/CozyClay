@@ -395,8 +395,21 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			// out" into "nothing was applied"; a discarded outcome reads as proof.
 			let outcome = null;
 			if (jobId && ownedStudioRuntime?.stop) outcome = await ownedStudioRuntime.stop(jobId);
-			session.controller?.abort();
-			await session.modelSession?.abort?.("studio stop");
+			// #379 / 16q: `session.controller.signal` is the SAME signal wired into the
+			// active turn's prompt context (`:520 signal: controller.signal`), which
+			// pi's `withAbortSignal`/`awaitWithContext` races against every awaited
+			// internal step — aborting it here interrupts the in-flight generate_motion
+			// tool call's OWN completion machinery before it can settle, well before
+			// pi's own graceful `lane.abort()` (below) ever runs. A job the runtime
+			// actually acknowledged already resolved the held tool call with its real
+			// outcome via `runtime.stop()` above; the only abort this stop still needs
+			// is the graceful one that stops the model from being prompted again, so
+			// `session.controller` must NOT be touched on that path (no other tool is
+			// concurrently in flight while generate_motion holds the turn). A stop
+			// with no active job never resolved anything and stays a plain (loud)
+			// abort on both signals, unchanged.
+			if (!jobId) session.controller?.abort();
+			await session.modelSession?.abort?.("studio stop", jobId ? { quiet: true } : undefined);
 			json(res, 200, { ok: true, status: jobId ? "stopped" : "detached", ...(outcome ? { outcome: { status: outcome.status ?? null, code: outcome.code ?? null, mutated: outcome.mutated ?? null } } : {}) }); return true;
 		}
 		if (!studioRuntime && (!hub?.command || !hub?.workspaceId)) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio execution is not installed.");

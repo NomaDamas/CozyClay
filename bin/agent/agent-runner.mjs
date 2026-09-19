@@ -386,7 +386,15 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			});
 			subscribe("run_end", (event) => {
 				if (state.active?.pendingFrames.length) { for (const pending of state.active.pendingFrames) queue.push(pending); state.active.pendingFrames = []; }
-				if (event.status !== "completed") {
+				// #379 / 16q: an acknowledged Studio Stop whose held tool already settled
+				// with a real structured outcome (tool.done above) calls `abort(reason,
+				// { quiet: true })` purely to stop the model from being prompted again —
+				// it is not a genuine mid-generation cancellation the browser needs to be
+				// told about a second time via a synthesized error. Only THIS run's own
+				// quiet flag suppresses the error frame; a stop with no active job (no
+				// resolvable outcome) never sets it and still surfaces error{aborted}.
+				const quiet = event.status === "aborted" && state.active?.quietAbort;
+				if (event.status !== "completed" && !quiet) {
 					const rawMessage = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
 					const truncated = /ended before a terminal response event/i.test(rawMessage);
 					const classified = event.status === "aborted" ? { code: "aborted", status: undefined } : classifyError(event.error || {});
@@ -485,13 +493,17 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		const publicSession = {
 			start,
 			steer: async (text, images = []) => state.lane?.steer(text, images, state.context),
-			abort: async (reason) => {
+			abort: async (reason, { quiet = false } = {}) => {
 				// Set synchronously, before the (async) `lane.abort()` round-trip: any
 				// `persist` that runs after this point — for the turn that is active
 				// right now — must withhold its assistant message, whether or not the
 				// underlying generation happens to finish before pi's cancellation
-				// actually takes effect.
-				if (state.active) state.active.abortRequested = true;
+				// actually takes effect. `quiet` (#379 / 16q) additionally withholds the
+				// run_end error frame this abort would otherwise cause: the caller
+				// already has a real, settled tool outcome to show instead (a Studio
+				// Stop that the motion runtime acknowledged) and is only using this
+				// abort to stop the model from being prompted again.
+				if (state.active) { state.active.abortRequested = true; if (quiet) state.active.quietAbort = true; }
 				if (state.lane) return state.lane.abort(state.context);
 				return { ok: false, reason };
 			},
