@@ -63,7 +63,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 
 ## Quick start
 
-You need Node.js 22.13 or newer, npm or bun, and a Chromium-based browser.
+You need Node.js 22.19 or newer, npm or bun, and a Chromium-based browser.
 
 ```bash
 npx cozyclay
@@ -114,6 +114,10 @@ Three surfaces drive the same scene, live, through one hub: a chat panel in the 
 - The conversation is stored under `~/.config/cozyclay/agent-sessions/` and resumes across reloads and restarts; **History** lists earlier sessions.
 - Paste or drop up to four images into the composer — a reference frame, a storyboard panel — and they go with the turn.
 - The agent has nine Studio tool families, from `inspect_studio` and `arrange_characters` to `patch_elements`, which sets any declared authored field (a character's tint, a shot's target model, the key light) by path. How it turns a pasted video prompt into blocking — what it asks, infers, or leaves empty — is the rule in [`docs/agent-prompt-to-scene.md`](docs/agent-prompt-to-scene.md).
+
+The panel is not tied to ChatGPT. Models come from five providers: ChatGPT (your Codex sign-in), Anthropic, OpenAI, Google Gemini and OpenRouter. A model id reads `provider/model`, so you pick one in the dropdown and that is where the turn goes. The four API-key providers take a key from an environment variable (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENROUTER_API_KEY`) or from `~/.config/cozyclay/providers.json`, written at mode 0600 and never echoed back by any route; ChatGPT still signs in the way it always did. On the Workflow canvas you can steer a turn while it runs instead of stopping it. Conversations are saved in a new transcript format, so sessions recorded before this version are ignored rather than converted: the old files stay on disk, unread. The provider table, the key routes, the steer route and the session format are in [`docs/agent-cli.md`](docs/agent-cli.md).
+
+The agent runs on [pi](https://github.com/earendil-works/pi), an open-source agent harness: `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` (MIT) are the only runtime dependencies the package declares, and the sidecar loads them lazily, when a turn starts.
 
 The same panel sits on the right of the Workflow canvas, where it builds and runs canvas nodes.
 
@@ -218,7 +222,7 @@ Found something broken, or want a feature? [Open an issue](https://github.com/No
 
 **Repository hygiene.** Generated motion archives, QA output, build output, logs and local runtime artifacts are not source files and must not be committed. Keep `tools/ardy/out/`, `artifacts/`, `dist/`, `.gjc/` and `.npz` files local.
 
-All runtime libraries intentionally live in `devDependencies` because the published npm package ships the prebuilt `dist/`, so `npx cozyclay` must not install the studio's dependency tree.
+Every runtime library except the two agent packages (`@earendil-works/pi-ai`, `@earendil-works/pi-agent-core`) intentionally lives in `devDependencies`, because the published npm package ships the prebuilt `dist/`, so `npx cozyclay` must not install the studio's dependency tree.
 
 ## Analytics & privacy
 

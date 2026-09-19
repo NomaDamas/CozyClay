@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- The Agent panel runs on the open-source pi agent harness
+  (`@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`, MIT), which
+  the sidecar loads only when a turn starts. Node 22.19 is the new floor.
+- Five model providers instead of one: ChatGPT (the same Codex sign-in),
+  Anthropic, OpenAI, Google Gemini and OpenRouter. Model ids read
+  `provider/model`, and a bare id still resolves to the ChatGPT provider.
+  API keys come from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`
+  or `GOOGLE_API_KEY`, and `OPENROUTER_API_KEY`, or from
+  `~/.config/cozyclay/providers.json` (mode 0600), managed through
+  `GET/PUT/DELETE /agent/providers`, which never return key material.
+- A running Workflow turn can be steered: `POST /agent/turn/<turnId>/steer`
+  hands the text to the model at the next step of the same turn instead of
+  stopping it. Studio turns keep their frozen envelopes and refuse with
+  `STEER_UNSUPPORTED`.
+- Conversations are stored in a new v2 transcript format that keeps each
+  provider's own message fields. Sessions saved before this version are
+  ignored, not migrated: the files stay on disk and are skipped by History.
 - Look through has one entry in the Shot monitor; the on-screen Shot camera
   indicator and Esc return to the free camera without a duplicate toolbar toggle.
 

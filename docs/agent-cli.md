@@ -435,6 +435,128 @@ Metres (`x` right, `z` toward the default camera, `y` up), degrees of yaw,
 frames at 24 fps, frame ranges end-exclusive. Ids are the ids the scene
 document uses — take them from `inspect`, never from memory.
 
+## Models and providers
+
+The other prompt surface, the Agent panel (Studio and Workflow), runs on the
+pi agent harness and can talk to five providers. A model id on the wire is
+`provider/model`, so `openai-codex/gpt-6-astra` and `anthropic/claude-fable-5`
+name two different models without ambiguity. A bare id with no slash still
+works and means `openai-codex/<id>`, which is why older saved model choices
+keep resolving.
+
+| provider id | shows up as | how it authenticates |
+| --- | --- | --- |
+| `openai-codex` | ChatGPT (OpenAI Codex) | your ChatGPT sign-in, unchanged |
+| `anthropic` | Anthropic | API key, `ANTHROPIC_API_KEY` |
+| `openai` | OpenAI | API key, `OPENAI_API_KEY` |
+| `google` | Google Gemini | API key, `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
+| `openrouter` | OpenRouter | API key, `OPENROUTER_API_KEY` |
+
+ChatGPT sign-in did not change: the panel still runs the Codex OAuth flow,
+the token still lives in `~/.config/cozyclay/codex-auth.json`, and it is still
+the only provider you sign in to rather than paste a key for. There are no
+OAuth flows for the other four.
+
+### Where the keys live
+
+An API-key provider is read from its environment variable first, and from
+`~/.config/cozyclay/providers.json` second. That file is written atomically at
+mode 0600 and is a flat map of provider id to key:
+
+```json
+{"anthropic":"sk-ant-…","openrouter":"sk-or-…"}
+```
+
+The environment variable wins when both are set, so a key exported in the
+shell that started the Studio temporarily overrides the saved one without
+touching the file. `COZYCLAY_CONFIG_DIR` moves the whole config home,
+`providers.json` and `codex-auth.json` together, which is what the tests use.
+
+Three routes manage the file. They sit behind the same origin guard as the
+rest of `/agent/*`: a browser request must carry an `Origin` of the Studio's
+own loopback address, and a header-less `curl` is accepted for `GET` only, so
+the writing calls need the header spelled out.
+
+```sh
+curl -s http://127.0.0.1:5180/agent/providers
+curl -s -X PUT http://127.0.0.1:5180/agent/providers/anthropic \
+  -H 'origin: http://127.0.0.1:5180' -H 'content-type: application/json' \
+  -d '{"key":"sk-ant-…"}'
+curl -s -X DELETE http://127.0.0.1:5180/agent/providers/anthropic \
+  -H 'origin: http://127.0.0.1:5180'
+```
+```json
+{"providers":[{"id":"openai-codex","label":"ChatGPT (OpenAI Codex)","authSource":"chatgpt","signedIn":true},{"id":"anthropic","label":"Anthropic","authSource":"file","signedIn":true},{"id":"openai","label":"OpenAI","authSource":null,"signedIn":false},…]}
+```
+
+`GET /agent/providers` never echoes key material: `authSource` tells you where
+a key came from (`chatgpt`, `env`, `file`) and that is all. `PUT` on
+`/agent/providers/openai-codex` is refused with 400 and a message naming the
+ChatGPT sign-in, because that provider has no key to store.
+
+`GET /agent/models` is the catalogue the panel's dropdown reads: every
+provider with its sign-in state, each model key-addressed as `provider/id`,
+and the reasoning-effort levels that model actually supports. A provider you
+have no key for is still listed, its models with it and `signedIn: false`, so
+the panel can show what a key would buy you.
+
+The model is picked per turn, so one session can start on ChatGPT and
+continue on Anthropic without losing its history.
+
+## Steering a running turn
+
+On the Workflow canvas you can add to a turn while it is still running,
+instead of stopping it and starting over:
+
+```sh
+curl -s -X POST http://127.0.0.1:5180/agent/turn/<turnId>/steer \
+  -H 'origin: http://127.0.0.1:5180' -H 'content-type: application/json' \
+  -d '{"text":"make it a profile instead"}'
+```
+```json
+{"ok":true,"queued":true}
+```
+
+`<turnId>` is the id the Workflow client minted for the running turn.
+`attachments` is accepted too, the same short list of `{dataUrl}` images the
+composer sends. `queued: true` is literal: the harness takes one steer at a
+time and hands the text to the model at the next step of the same turn, so a
+tool call already in flight finishes first and nothing is cancelled.
+
+Studio turns are not steerable in this version. Their envelopes are frozen,
+so the route answers 409 `STEER_UNSUPPORTED` for a Studio turn id. The other
+refusals: 404 when no Workflow turn carries that id, 409 `NO_ACTIVE_TURN`
+when the turn has already ended, 400 when the text is missing or empty or an
+attachment is not an inline data URL.
+
+## Sessions
+
+Conversations live in `~/.config/cozyclay/agent-sessions/`
+(`COZYCLAY_AGENT_SESSIONS_DIR` overrides the directory), one
+`<sessionId>.jsonl` transcript plus a `<sessionId>.meta.json` index entry per
+session, both mode 0600. `GET /agent/sessions` lists the 50 most recent,
+`GET /agent/sessions/<id>` returns one as a transcript.
+
+The transcript is the v2 format: a header line, then one message per line.
+
+```json
+{"format":"cozyclay-agent-v2","version":2,"sessionId":"wf-3a91"}
+{"kind":"message","message":{"role":"user","content":[{"type":"text","text":"Give me a wide two-shot"}]}}
+```
+
+The stored messages are the harness's own messages, written back verbatim,
+including the provider-opaque reasoning fields an assistant message carries.
+That is what lets a resumed session continue on the same provider instead of
+replaying a lossy summary. Inline images over 2 MiB are dropped on write and
+the text around them is kept. Nothing compacts or summarises a transcript
+behind your back.
+
+Sessions saved before this version have no v2 header, and they are ignored,
+not migrated. The files stay on disk untouched; `list` skips them, a direct
+read answers 404, and the sidecar logs `[agent] skipping legacy session <id>`
+once per session per process. If you want one of those conversations back,
+read the old file yourself: nothing in the Studio will convert it.
+
 ## Limits
 
 Motion generation is not on the CLI yet: `generate_motion` and the motion
