@@ -405,6 +405,67 @@ await open("ready");
 expect("the panel reopens on the model that was picked", await waitFor(`document.querySelector('.agent-model-select')?.value === ${JSON.stringify(picked)}`, 10000),
 	await evaluate("document.querySelector('.agent-model-select')?.value"));
 
+// --- a selection whose provider is unavailable is dropped (#379) -----------
+// A key saved or removed in the section above changes WHICH models can run.
+// The selection has to follow that: the panel must never sit on a disabled
+// "add key" model, and Send must never submit one.
+const selection = () => evaluate("(() => { const select = document.querySelector('.agent-model-select:not(.agent-effort-select)'); const send = document.querySelector('.agent-send:not(.stop)'); return { value: select?.value ?? null, optionDisabled: select?.selectedOptions[0]?.disabled ?? null, sendDisabled: send ? send.disabled : null }; })()");
+const lastTurnModel = () => evaluate("(() => { try { return JSON.parse(localStorage.getItem('cozyclay.mock.agent.last-turn'))?.model ?? null; } catch { return null; } })()");
+const saveKey = async (id, key) => {
+	if (!await evaluate(`!!document.querySelector('[data-provider="${id}"] .agent-key-input')`)) {
+		await evaluate("document.querySelector('.agent-overflow-toggle').click()");
+		if (!await waitFor("!!document.querySelector('.agent-menu-keys')", 8000)) throw new Error("the overflow menu never opened");
+		await evaluate("document.querySelector('.agent-menu-keys').click()");
+		if (!await waitFor(`!!document.querySelector('[data-provider="${id}"] .agent-key-input')`, 8000)) throw new Error("the provider keys section never opened");
+	}
+	await typeKey(id, key);
+	await clickWhenEnabled(`[data-provider="${id}"] .agent-key-save`);
+	if (!await waitFor(`document.querySelector('[data-provider="${id}"]')?.dataset.providerSignedIn === 'true'`, 8000)) throw new Error(`the ${id} key was never stored`);
+};
+const sendTurn = async (text) => {
+	await setValue(".agent-input", text);
+	await clickWhenEnabled(".agent-send:not(.stop)");
+	if (!await waitFor("!document.querySelector('.agent-send.stop')", 30000)) throw new Error("the scripted turn never finished");
+};
+
+// The author who never signed in to ChatGPT, carrying a remembered ChatGPT
+// model into a session that cannot run one.
+await evaluate("localStorage.setItem('cozyclay.agent.model', 'openai-codex/gpt-6-astra')");
+await open("signed-out");
+expect("a signed-out session offers no composer to send that remembered model from", await evaluate("!document.querySelector('.agent-composer')"));
+await saveKey("anthropic", "sk-selection-123");
+expect("saving the first key brings up a composer", await waitFor("!!document.querySelector('.agent-composer')", 8000));
+const afterFirstKey = await selection();
+expect("the composer opens on a model the session can actually run, not the remembered ChatGPT one",
+	afterFirstKey.optionDisabled === false && afterFirstKey.value !== "openai-codex/gpt-6-astra", JSON.stringify(afterFirstKey));
+await sendTurn("Block a wide two-shot of this scene");
+expect("the first turn is addressed to that usable model", await lastTurnModel() === afterFirstKey.value, `${await lastTurnModel()} vs ${afterFirstKey.value}`);
+
+// The same rule the other way round: the key behind the CHOSEN model goes
+// away while the panel is mounted.
+await evaluate("localStorage.removeItem('cozyclay.agent.model')");
+await open("ready");
+await saveKey("anthropic", "sk-selection-123");
+expect("the saved key makes its models pickable", await waitFor("[...document.querySelectorAll('.agent-model-select option')].some((option) => option.value.startsWith('anthropic/') && !option.disabled)", 8000),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select option')].map((option) => option.value + (option.disabled ? ' (disabled)' : '')))"));
+const anthropicModel = await evaluate("[...document.querySelectorAll('.agent-model-select option')].find((option) => option.value.startsWith('anthropic/') && !option.disabled)?.value ?? null");
+await setValue(".agent-model-select:not(.agent-effort-select)", anthropicModel);
+expect("the newly usable model can be chosen", await waitFor(`document.querySelector('.agent-model-select:not(.agent-effort-select)')?.value === ${JSON.stringify(anthropicModel)}`, 5000), String(anthropicModel));
+await sendTurn("Frame this on the character");
+expect("the turn goes to the model that was chosen", await lastTurnModel() === anthropicModel, `${await lastTurnModel()} vs ${anthropicModel}`);
+shots.push(await shot("panel-keys-select-after-save"));
+
+await clickWhenEnabled('[data-provider="anthropic"] .agent-key-remove');
+expect("removing that key takes its models back out of reach", await waitFor(`document.querySelector('[data-provider="anthropic"]')?.dataset.providerSignedIn === 'false'`, 8000));
+const afterRemove = await selection();
+expect("the panel drops a selection whose provider just lost its key",
+	afterRemove.value !== anthropicModel && afterRemove.optionDisabled === false, JSON.stringify(afterRemove));
+await sendTurn("And hold that frame");
+expect("the next turn is never addressed to the provider that lost its key", await lastTurnModel() === afterRemove.value && !String(await lastTurnModel()).startsWith("anthropic/"),
+	`${await lastTurnModel()} vs ${afterRemove.value}`);
+shots.push(await shot("panel-keys-select-after-remove"));
+await evaluate("localStorage.removeItem('cozyclay.agent.model')");
+
 // --- the phone-width dock ---------------------------------------------------
 await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await open("ready");

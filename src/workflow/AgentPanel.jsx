@@ -22,11 +22,12 @@ import {
 	formatJobProgress,
 	isTerminalJobState,
 	jobStateTone,
+	modelIsSelectable,
+	nextSelectedModel,
 	AGENT_PANEL_WIDTH_DEFAULT,
 	clampPanelWidth,
 	createAgentTransport,
 	panelPresentation,
-	preferredModel,
 	providerEnvLabel,
 	requestHostImageAction,
 	resolveToolLabel,
@@ -50,15 +51,6 @@ function relativeTime(value, now = Date.now()) {
 	if (hours < 24) return `${hours}h ago`;
 	const days = Math.floor(hours / 24);
 	return `${days}d ago`;
-}
-
-/** A model the session can actually run: one whose provider holds a
- * credential. Without the grouped payload nothing is known about providers, so
- * every advertised model stays selectable. */
-function modelIsSelectable(providers, key) {
-	if (!providers.length) return true;
-	const provider = providers.find((entry) => entry.models?.some((model) => model.key === key));
-	return provider ? provider.signedIn : true;
 }
 
 function StatusDot({ tone, title }) {
@@ -316,10 +308,11 @@ export default function AgentPanel({
 		const list = Array.isArray(advertised?.models) ? advertised.models : [];
 		if (!list.length) return false;
 		const providers = Array.isArray(advertised?.providers) ? advertised.providers : [];
-		const usable = list.filter((entry) => modelIsSelectable(providers, entry.id));
 		setModelProviders(providers);
 		setModels(list);
-		setModel((current) => current || preferredModel(usable.length ? usable : list));
+		// A saved or removed key arrives through this same path, so a selection the
+		// panel opened with is dropped here the moment its provider cannot run it.
+		setModel((current) => nextSelectedModel(providers, list, current));
 		setModelsState("ready");
 		return true;
 	}, []);
@@ -762,7 +755,10 @@ export default function AgentPanel({
 	// A disabled composer under the sign-in card is dead weight: the composer
 	// only exists once there is a session to talk to.
 	const authenticated = authState === "ready" || authState === "no-entitlement";
-	const composerDisabled = panelState === "rate-limited" || !model;
+	// A model whose provider holds no credential is not something this session
+	// can send to: the composer stays shut instead of submitting a turn the
+	// provider would refuse.
+	const composerDisabled = panelState === "rate-limited" || !model || !modelIsSelectable(modelProviders, model);
 
 	if (collapsed && !embedded) {
 		return <aside className="agent-panel collapsed" data-agent-state={panelState} data-agent-collapsed="true" aria-label="Agent panel, collapsed">

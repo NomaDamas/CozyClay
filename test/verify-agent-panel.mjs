@@ -593,7 +593,8 @@ expect("the panel stops inventing a generic refusal message", !panel.includes("t
 const liveClient = client.slice(0, client.indexOf("// --- mock transport"));
 expect("the client hardcodes no model list", !client.includes("DEFAULT_MODELS") && !/gpt-[\d.]/.test(liveClient));
 expect("the panel starts with no model and takes the advertised list", panel.includes('const [model, setModel] = useState("")') && panel.includes('setModelsState("ready")'));
-expect("the composer stays disabled until a model is advertised", panel.includes('const composerDisabled = panelState === "rate-limited" || !model;'));
+expect("the composer stays disabled until a model it may send to is selected",
+	panel.includes('const composerDisabled = panelState === "rate-limited" || !model || !modelIsSelectable(modelProviders, model);'));
 expect("the wait for the model list is visible, not silent", panel.includes("Loading models…") && panel.includes("No model available"));
 expect("an unanswered model list is a state, not a guess", client.includes("const models = Array.isArray(result?.models) ? result.models : [];")
 	&& panel.includes('if (!applyModelList(advertised)) { setModelsState("failed"); return; }'));
@@ -609,8 +610,8 @@ expect("a sidecar that answers with the flat list alone still fills the dropdown
 expect("the dropdown is grouped by provider", panel.includes("<optgroup key={provider.id} label={provider.label}>") && panel.includes("value={entry.key}"));
 expect("a provider without a key still lists its models, unpickable and labelled", panel.includes("disabled={!provider.signedIn}") && panel.includes("\u2014 add key"));
 expect("the chosen model key is remembered between sessions", client.includes('export const AGENT_MODEL_KEY = "cozyclay.agent.model"')
-	&& panel.includes("storeModel(id)") && panel.includes("preferredModel("));
-expect("only a model whose provider holds a credential is auto-selected or switched to", panel.includes("function modelIsSelectable(providers, key)") && panel.includes("modelIsSelectable(modelProviders, entry.id)"));
+	&& panel.includes("storeModel(id)") && client.includes("preferredModel(models.filter("));
+expect("only a model whose provider holds a credential is auto-selected or switched to", client.includes("export function modelIsSelectable(providers, key)") && panel.includes("modelIsSelectable(modelProviders, entry.id)"));
 expect("effort options come from the selected model", panel.includes("effortOptions(models.find((entry) => entry.id === model))")
 	&& client.includes("entry.defaultEffort && efforts.includes(entry.defaultEffort)"));
 expect("the transport can steer a running turn", client.includes("async steer(turnId, body)") && client.includes("/agent/turn/${encodeURIComponent(turnId)}/steer"));
@@ -645,6 +646,69 @@ expect("preferredModel falls back to nothing rather than a guess", module_.prefe
 	expect("a scripted session reports how many provider keys it has", Number.isInteger((await mock.status()).providersConfigured)
 		&& (await module_.createMockTransport({ state: "signed-out" }).status()).providersConfigured === 0);
 }
+
+// --- a selection whose provider is unavailable is dropped (#379) ----------
+// The panel opens on whatever the sidecar listed first, which — before any
+// credential exists — is a provider that cannot run a turn. Saving the first
+// key makes the session ready WITHOUT making that model usable, so the list
+// load is where the selection is settled again: a turn is never addressed to a
+// provider this session cannot reach, and the composer is shut while the
+// selected model is not one it may send to.
+{
+	// The sidecar's own shape, with ChatGPT signed out and Anthropic holding the
+	// key the author just saved — the catalogue ordering that produced the bug.
+	const catalogue = (anthropicSignedIn) => [
+		{ id: "openai-codex", label: "ChatGPT", signedIn: false, authSource: null, models: [{ key: "openai-codex/gpt-6-astra", label: "gpt-6-astra" }] },
+		{ id: "anthropic", label: "Anthropic", signedIn: anthropicSignedIn, authSource: anthropicSignedIn ? "file" : null, models: [{ key: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" }] },
+	];
+	const advertised = catalogue(false).flatMap((provider) => provider.models.map((entry) => ({ ...entry, id: entry.key })));
+	const entries = new Map([[module_.AGENT_MODEL_KEY, "openai-codex/gpt-6-astra"]]);
+	const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) },
+	});
+	try {
+		// Before the save nothing is usable, so there is nothing to select: the
+		// composer has no model to submit rather than a disabled one.
+		const beforeSave = module_.nextSelectedModel(catalogue(false), advertised, "");
+		expect("a session with no usable provider selects no model at all", beforeSave === "", beforeSave);
+		// The panel has been mounted since before the key existed, so the remembered
+		// ChatGPT key is what it is holding when the list reloads.
+		const afterSave = module_.nextSelectedModel(catalogue(true), advertised, "openai-codex/gpt-6-astra");
+		expect("saving the first key drops the selection its provider cannot run", afterSave === "anthropic/claude-sonnet-4-5", afterSave);
+		expect("the model the save left selected is one the session can send to", module_.modelIsSelectable(catalogue(true), afterSave));
+		expect("the remembered preference is re-validated, never rewritten", entries.get(module_.AGENT_MODEL_KEY) === "openai-codex/gpt-6-astra", entries.get(module_.AGENT_MODEL_KEY));
+		// The composer's gate, on the value the panel is holding: usable model in,
+		// unusable model out.
+		expect("the composer may send to the re-picked model", Boolean(afterSave) && module_.modelIsSelectable(catalogue(true), afterSave));
+		expect("the composer may NOT send to the model the panel was holding", !module_.modelIsSelectable(catalogue(true), "openai-codex/gpt-6-astra"));
+		// And the turn really is addressed to it: the store is the same one the
+		// panel sends through.
+		let request = null;
+		const sending = module_.createAgentChatStore({
+			transport: { turn: async (sent, onEvent) => { request = sent; onEvent({ type: "text.delta", text: "framing" }); onEvent({ type: "done" }); } },
+		});
+		await sending.send("frame a two-shot", { model: afterSave });
+		expect("the turn is addressed to the model the save re-picked", request?.model === "anthropic/claude-sonnet-4-5", JSON.stringify(request?.model));
+		// Removing that key takes the way in away again: no usable model, so no
+		// model is selected and the composer has nothing to submit.
+		const afterRemove = module_.nextSelectedModel(catalogue(false), advertised, afterSave);
+		expect("removing the key leaves no submittable model behind", afterRemove === "", afterRemove);
+		// A signed-in ChatGPT author is not moved off their own model by someone
+		// else's key landing beside it.
+		const signedIn = [{ ...catalogue(true)[0], signedIn: true, authSource: "chatgpt" }, catalogue(true)[1]];
+		expect("a usable ChatGPT selection survives another provider's key", module_.nextSelectedModel(signedIn, advertised, "openai-codex/gpt-6-astra") === "openai-codex/gpt-6-astra");
+		// A sidecar that answers with the flat list alone says nothing about
+		// providers, so it can never invalidate a selection.
+		expect("an ungrouped list keeps the selection it knows nothing about", module_.nextSelectedModel([], advertised, "openai-codex/gpt-6-astra") === "openai-codex/gpt-6-astra");
+	} finally {
+		if (original) Object.defineProperty(globalThis, "localStorage", original);
+		else delete globalThis.localStorage;
+	}
+}
+expect("the list load settles the selection instead of keeping it unconditionally", panel.includes("setModel((current) => nextSelectedModel(providers, list, current));")
+	&& !panel.includes("current || preferredModel("));
 
 if (failures) {
 	console.error(`${failures} FAILURES`);

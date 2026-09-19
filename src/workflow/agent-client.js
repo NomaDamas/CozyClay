@@ -267,6 +267,26 @@ export function preferredModel(models, stored = readStoredModel()) {
 	return list.some((entry) => entry?.id === stored) ? stored : list[0]?.id ?? "";
 }
 
+/** A model the session can actually run: one whose provider holds a
+ * credential. Without the grouped payload nothing is known about providers, so
+ * every advertised model stays selectable. */
+export function modelIsSelectable(providers, key) {
+	if (!providers.length) return true;
+	const provider = providers.find((entry) => entry.models?.some((model) => model.key === key));
+	return provider ? provider.signedIn : true;
+}
+
+/** The model a freshly advertised list leaves selected. The current choice
+ * survives only while its provider still holds a credential: a key saved (or
+ * removed) elsewhere in the panel changes WHICH models can run, and a
+ * selection its provider cannot serve would otherwise be sent to a provider
+ * the session has no way to reach. The remembered preference is re-read here
+ * rather than rewritten, so it comes back the moment its provider does. */
+export function nextSelectedModel(providers, models, current) {
+	if (current && modelIsSelectable(providers, current)) return current;
+	return preferredModel(models.filter((entry) => modelIsSelectable(providers, entry.id)));
+}
+
 /** "resets in 42m" / "resets in 1h 05m" for the account strip and the paused
  * card countdown. Returns null when there is nothing to count down to. */
 export function formatResetIn(resetAt, now = Date.now()) {
