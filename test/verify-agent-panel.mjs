@@ -808,6 +808,91 @@ expect("no timer drives the auth transition", !/set(Interval|Timeout)\([^)]*(sig
 	}
 }
 
+// --- a refreshed catalogue that no longer advertises the selection (#379) --
+// A live-only Codex model exists only while the ChatGPT credential does, so a
+// sign-out (or any catalogue that shrank) can retire the selected id WITHOUT
+// changing which providers hold a key. A rule that only asks "does this
+// model's provider hold a credential?" keeps that retired id while the native
+// <select> — which can only show an option it actually has — falls back to
+// another one: the panel then submits a model nobody is looking at. What the
+// composer submits must be the option the dropdown is showing, every time.
+{
+	const codexLive = { key: "openai-codex/live-only", label: "live-only" };
+	const codexStatic = { key: "openai-codex/gpt-6-astra", label: "gpt-6-astra" };
+	const codex = (signedIn, models) => ({ id: "openai-codex", label: "ChatGPT", signedIn, authSource: signedIn ? "chatgpt" : null, models });
+	const anthropic = { id: "anthropic", label: "Anthropic", signedIn: true, authSource: "file", models: [{ key: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" }] };
+	const flatten = (catalogue) => catalogue.flatMap((provider) => provider.models.map((entry) => ({ ...entry, id: entry.key })));
+	// What the panel's <select value={model}> shows: the option carrying that
+	// value when the list still has one, and otherwise the fallback a native
+	// select lands on — the first option it is allowed to select.
+	const visibleOption = (catalogue, value) => {
+		const options = catalogue.flatMap((provider) => provider.models.map((entry) => ({ value: entry.key, disabled: !provider.signedIn })));
+		return (options.find((option) => option.value === value) ?? options.find((option) => !option.disabled) ?? options[0] ?? null)?.value ?? "";
+	};
+	// The model the composer actually submits, through the same store the panel
+	// sends its turns with.
+	const submittedModel = async (model) => {
+		let request = null;
+		const store = module_.createAgentChatStore({
+			transport: { turn: async (sent, onEvent) => { request = sent; onEvent({ type: "text.delta", text: "framing" }); onEvent({ type: "done" }); } },
+		});
+		await store.send("hold the wider frame", { model });
+		return request?.model ?? null;
+	};
+	const entries = new Map();
+	const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) },
+	});
+	try {
+		// 1. The catalogue shrank with every credential intact: ChatGPT is still
+		// signed in, it simply stopped listing the live-only entry.
+		const shrunk = [codex(true, [codexStatic]), anthropic];
+		const afterShrink = module_.nextSelectedModel(shrunk, flatten(shrunk), codexLive.key);
+		expect("a selection the refreshed catalogue no longer advertises is dropped, signed in or not", afterShrink === codexStatic.key, afterShrink);
+		expect("the dropped selection is replaced by the preferred advertised model", afterShrink === module_.preferredModel(flatten(shrunk).filter((entry) => module_.modelIsSelectable(shrunk, entry.id))), afterShrink);
+		expect("the next turn is submitted with the re-picked model, never the retired id", await submittedModel(afterShrink) === codexStatic.key);
+		expect("what is submitted is the option the dropdown is showing", await submittedModel(afterShrink) === visibleOption(shrunk, afterShrink), `${afterShrink} vs ${visibleOption(shrunk, afterShrink)}`);
+
+		// 2. The sign-out that produced the bug: the live-only model goes with the
+		// credential, the remaining Codex option is drawn disabled, and the key
+		// behind another provider is what the session still has.
+		const signedOut = [codex(false, [codexStatic]), anthropic];
+		const afterSignOut = module_.nextSelectedModel(signedOut, flatten(signedOut), codexLive.key);
+		expect("a sign-out that retires the selected model lands on one this session can run", afterSignOut === "anthropic/claude-sonnet-4-5", afterSignOut);
+		expect("and the turn after the sign-out goes to exactly the visible option", await submittedModel(afterSignOut) === visibleOption(signedOut, afterSignOut), `${await submittedModel(afterSignOut)} vs ${visibleOption(signedOut, afterSignOut)}`);
+		expect("no retired id survives the refresh in the composer's hands", await submittedModel(afterSignOut) !== codexLive.key);
+
+		// 3. A model the refreshed catalogue still advertises is NOT disturbed.
+		const unchanged = [codex(true, [codexLive, codexStatic]), anthropic];
+		const kept = module_.nextSelectedModel(unchanged, flatten(unchanged), codexLive.key);
+		expect("a still-advertised selection survives the refresh untouched", kept === codexLive.key, kept);
+		expect("and that turn is submitted with the model the dropdown shows", await submittedModel(kept) === visibleOption(unchanged, kept), `${kept} vs ${visibleOption(unchanged, kept)}`);
+		expect("the remembered preference is re-read, never rewritten by the refresh", !entries.has(module_.AGENT_MODEL_KEY), JSON.stringify([...entries]));
+
+		// The scripted sidecar carries the same live-only entry, which is what lets
+		// browser QA drive this transition (panel-signout-selection.png).
+		const session = module_.createMockTransport({ state: "ready" });
+		const live = await session.models();
+		const liveOnly = live.models.filter((entry) => entry.id.startsWith("openai-codex/")).map((entry) => entry.id);
+		expect("the scripted signed-in catalogue advertises a live-only ChatGPT model", liveOnly.some((id) => id.endsWith("-live-preview")), JSON.stringify(liveOnly));
+		const retired = liveOnly.find((id) => id.endsWith("-live-preview"));
+		await session.setProviderKey("anthropic", "sk-signout-16t");
+		await session.signOut();
+		const outList = await session.models();
+		expect("signing out of the scripted sidecar retires that model from the catalogue", !outList.models.some((entry) => entry.id === retired), JSON.stringify(outList.models.map((entry) => entry.id)));
+		const scripted = module_.nextSelectedModel(outList.providers, outList.models, retired);
+		expect("the scripted sign-out hands the composer an advertised model it may send to",
+			outList.models.some((entry) => entry.id === scripted) && module_.modelIsSelectable(outList.providers, scripted), scripted);
+		expect("the scripted sign-out turn is addressed to the visible option too", await submittedModel(scripted) === visibleOption(outList.providers, scripted),
+			`${scripted} vs ${visibleOption(outList.providers, scripted)}`);
+	} finally {
+		if (original) Object.defineProperty(globalThis, "localStorage", original);
+		else delete globalThis.localStorage;
+	}
+}
+
 if (failures) {
 	console.error(`${failures} FAILURES`);
 	process.exitCode = 1;

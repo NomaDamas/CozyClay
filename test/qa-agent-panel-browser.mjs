@@ -397,7 +397,9 @@ expect("a successful sign-in brings the composer up without a reload", await wai
 	await evaluate("JSON.stringify({ state: document.querySelector('.agent-panel')?.dataset.agentState, composer: !!document.querySelector('.agent-composer'), inputDisabled: document.querySelector('.agent-input')?.disabled, model: document.querySelector('.agent-model-select')?.value })"));
 expect("the page was never reloaded to get there", await evaluate("window.__signInMark === 'kept'"));
 expect("the sign-in card gives way to the session it now has", await evaluate("!document.querySelector('[data-agent-card=\"signed-out\"]') && !!document.querySelector('.agent-account-email')"));
-expect("the whole ChatGPT group becomes pickable at the transition", await evaluate("(() => { const options = [...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].filter((option) => option.value.startsWith('openai-codex/')); return options.length === 2 && options.every((option) => !option.disabled && !/add key/.test(option.textContent)); })()"),
+// Three: the two static ChatGPT models and the live-only entry the sidecar can
+// only read with the credential it just got.
+expect("the whole ChatGPT group becomes pickable at the transition", await evaluate("(() => { const options = [...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].filter((option) => option.value.startsWith('openai-codex/')); return options.length === 3 && options.every((option) => !option.disabled && !/add key/.test(option.textContent)); })()"),
 	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].map((option) => option.value + (option.disabled ? ' (disabled)' : '')))"));
 expect("the composer is pointed at a model this session can actually run", await evaluate("(() => { const select = document.querySelector('.agent-model-select:not(.agent-effort-select)'); return !!select?.value && select.selectedOptions[0]?.disabled === false; })()"),
 	await evaluate("document.querySelector('.agent-model-select:not(.agent-effort-select)')?.value"));
@@ -522,6 +524,38 @@ await sendTurn("And hold that frame");
 expect("the next turn is never addressed to the provider that lost its key", await lastTurnModel() === afterRemove.value && !String(await lastTurnModel()).startsWith("anthropic/"),
 	`${await lastTurnModel()} vs ${afterRemove.value}`);
 shots.push(await shot("panel-keys-select-after-remove"));
+await evaluate("localStorage.removeItem('cozyclay.agent.model')");
+
+// --- a sign-out that RETIRES the selected model (#379, F2 pass 7) ----------
+// A live-only ChatGPT model exists only while the credential that fetched it
+// does: signing out does not draw it disabled, it takes it out of the
+// catalogue. A <select> can only show an option it still has, so a panel that
+// kept the retired id would submit a model nobody is looking at. The selection
+// has to move with the catalogue, and the turn has to follow the selection.
+const liveOnlyModel = "openai-codex/gpt-6-live-preview";
+await open("ready");
+await saveKey("anthropic", "sk-signout-16t"); // the way in that survives the sign-out
+expect("the signed-in catalogue advertises a live-only ChatGPT model",
+	await evaluate(`[...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].some((option) => option.value === ${JSON.stringify(liveOnlyModel)} && !option.disabled)`),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].map((option) => option.value + (option.disabled ? ' (disabled)' : '')))"));
+await setValue(".agent-model-select:not(.agent-effort-select)", liveOnlyModel);
+expect("the live-only model is what the composer is pointed at", await waitFor(`document.querySelector('.agent-model-select:not(.agent-effort-select)')?.value === ${JSON.stringify(liveOnlyModel)}`, 5000),
+	await evaluate("document.querySelector('.agent-model-select:not(.agent-effort-select)')?.value"));
+await evaluate("document.querySelector('.agent-overflow-toggle').click()");
+await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => b.textContent === 'Sign out')", 5000);
+await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
+expect("the sign-out takes the live-only model out of the catalogue altogether",
+	await waitFor(`![...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].some((option) => option.value === ${JSON.stringify(liveOnlyModel)})`, 8000),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].map((option) => option.value + (option.disabled ? ' (disabled)' : '')))"));
+expect("the provider key behind the session keeps the composer open", await waitFor("!!document.querySelector('.agent-composer') && document.querySelector('.agent-input')?.disabled === false", 8000));
+const afterSignOut = await selection();
+expect("the dropdown is left showing a model this session can still run",
+	afterSignOut.value !== liveOnlyModel && afterSignOut.optionDisabled === false && !String(afterSignOut.value).startsWith("openai-codex/"), JSON.stringify(afterSignOut));
+shots.push(await shot("panel-signout-selection"));
+await sendTurn("Hold the wider frame now that the live model is gone");
+expect("the turn after the sign-out is addressed to the option the DOM is showing", await lastTurnModel() === afterSignOut.value,
+	`${await lastTurnModel()} vs ${afterSignOut.value}`);
+expect("the retired live-only model is never submitted", await lastTurnModel() !== liveOnlyModel, String(await lastTurnModel()));
 await evaluate("localStorage.removeItem('cozyclay.agent.model')");
 
 // --- the phone-width dock ---------------------------------------------------

@@ -277,13 +277,16 @@ export function modelIsSelectable(providers, key) {
 }
 
 /** The model a freshly advertised list leaves selected. The current choice
- * survives only while its provider still holds a credential: a key saved (or
- * removed) elsewhere in the panel changes WHICH models can run, and a
- * selection its provider cannot serve would otherwise be sent to a provider
- * the session has no way to reach. The remembered preference is re-read here
- * rather than rewritten, so it comes back the moment its provider does. */
+ * survives only while the refreshed catalogue still lists it AND its provider
+ * still holds a credential: a key saved (or removed) elsewhere in the panel
+ * changes WHICH models can run, and a sign-out takes the models that existed
+ * only for that credential away with it. A selection the list no longer
+ * carries has no option to be shown by — the dropdown falls back to another
+ * one while the panel would go on submitting the retired id. The remembered
+ * preference is re-read here rather than rewritten, so it comes back the
+ * moment its provider (and its model) does. */
 export function nextSelectedModel(providers, models, current) {
-	if (current && modelIsSelectable(providers, current)) return current;
+	if (current && models.some((entry) => entry.id === current) && modelIsSelectable(providers, current)) return current;
 	return preferredModel(models.filter((entry) => modelIsSelectable(providers, entry.id)));
 }
 
@@ -885,6 +888,12 @@ const MOCK_PROVIDER_MODELS = {
 	google: [{ id: "gemini-3-pro", label: "Gemini 3 Pro", efforts: ["none", "low", "medium", "high"], defaultEffort: "medium" }],
 	openrouter: [{ id: "deepseek-v3", label: "DeepSeek V3", efforts: ["none"], defaultEffort: "none" }],
 };
+/** A ChatGPT model the sidecar learns about from the live catalogue, which it
+ * can only read with the credential: signing out does not merely draw it
+ * disabled, it stops being advertised at all. That is the transition browser
+ * QA drives to prove the panel never submits a model the dropdown is no
+ * longer showing (#379). */
+const MOCK_LIVE_ONLY_CODEX_MODEL = { id: "gpt-6-live-preview", label: "gpt-6 live preview", efforts: ["none", "low", "medium", "high"], defaultEffort: "high" };
 /** The shortest key the scripted sidecar will store, so QA can drive the
  * refusal path (PUT → 400) without a real provider. */
 export const MOCK_PROVIDER_KEY_MIN = 8;
@@ -953,10 +962,12 @@ export function createMockTransport(config = { state: "ready" }) {
 		},
 		async models() {
 			countMockCall(MOCK_MODEL_CALLS_KEY);
-			const providers = providerStatus().map((provider) => ({
-				...provider,
-				models: (MOCK_PROVIDER_MODELS[provider.id] ?? []).map((model) => ({ ...model, key: `${provider.id}/${model.id}`, input: ["text", "image"] })),
-			}));
+			const providers = providerStatus().map((provider) => {
+				const listed = MOCK_PROVIDER_MODELS[provider.id] ?? [];
+				// The live-only entry exists only while the ChatGPT session does.
+				const catalogue = provider.id === "openai-codex" && session === "in" ? [...listed, MOCK_LIVE_ONLY_CODEX_MODEL] : listed;
+				return { ...provider, models: catalogue.map((model) => ({ ...model, key: `${provider.id}/${model.id}`, input: ["text", "image"] })) };
+			});
 			return { providers, models: providers.flatMap((provider) => provider.models.map((model) => ({ ...model, id: model.key }))) };
 		},
 		async providers() {
