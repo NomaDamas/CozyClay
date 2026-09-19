@@ -1695,3 +1695,76 @@ await run16rTwoTurnScenario();
 		console.log("PASS 16u restore: accepted motion ownership survives a fresh handler and remains session-bound");
 	} finally { await close16uRestore(); rmSync(sessionStore16uRestore.dir, { recursive: true, force: true }); }
 }
+
+// #379 / 16y: an owned retired job must not acknowledge a Stop for the
+// current turn while a different motion job is active. The retired target is
+// stale relative to the active turn and must be rejected before runtime.stop.
+{
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const started16y = Promise.withResolvers();
+	const release16y = Promise.withResolvers();
+	const stopCalls16y = [];
+	let admissions16y = 0;
+	let active16y = false;
+	const runtime16y = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: ++admissions16y === 1 ? "retired-16y" : "active-16y", commandId: `command-${admissions16y}`, state: "queued" }),
+		subscribe: () => () => {},
+		start: async jobId => {
+			if (jobId === "retired-16y") return { ok: false, status: "cancelled", code: "CANCELLED", mutated: false };
+			active16y = true;
+			started16y.resolve();
+			const outcome = await release16y.promise;
+			active16y = false;
+			return outcome;
+		},
+		stop: async jobId => {
+			stopCalls16y.push(jobId);
+			// Keep the defective implementation from hanging the RED test: if it
+			// incorrectly stops the retired id, let the active job finish naturally.
+			release16y.resolve({ ok: true, status: "installed", mutated: true, receiptId: "installed-16y" });
+			return { status: "cancelled", code: "CANCELLED", mutated: false };
+		},
+	};
+	const faux16y = createFakeModel();
+	const motion16y = id => ({ type: "toolCall", id, name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } });
+	faux16y.script([motion16y("first-16y"), [{ type: "text", text: "first complete" }], motion16y("second-16y"), [{ type: "text", text: "second complete" }]]);
+	let server16y;
+	const handler16y = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: faux16y.models, fauxProvider: faux16y.fauxProvider, liveHub: { workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", command: async () => ({ ok: true }) }, studioRuntime: runtime16y, port: () => server16y.address().port });
+	server16y = createServer((req, res) => handler16y(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	server16y.listen(0, "127.0.0.1"); await once(server16y, "listening");
+	const origin16y = `http://127.0.0.1:${server16y.address().port}`;
+	const post16y = (path, body, cookie) => fetch(origin16y + path, { method: "POST", headers: { origin: origin16y, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+	const cookie16y = response => (response.headers.getSetCookie?.() ?? [response.headers.get("set-cookie")]).filter(Boolean).map(entry => entry.split(";")[0]).join("; ");
+	const session16y = "00000000-0000-4000-8000-000000000181";
+	const firstTurn16y = { ...envelopeFixture(), sessionId: session16y, turnId: "00000000-0000-4000-8000-000000000182", text: "first motion" };
+	let secondBody16y;
+	try {
+		const firstResponse16y = await post16y("/agent/turn", firstTurn16y);
+		assert.equal(firstResponse16y.status, 200);
+		const owner16y = cookie16y(firstResponse16y);
+		await firstResponse16y.text();
+		const secondTurn16y = { ...firstTurn16y, turnId: "00000000-0000-4000-8000-000000000183", text: "second motion" };
+		const secondResponse16y = await post16y("/agent/turn", secondTurn16y, owner16y);
+		assert.equal(secondResponse16y.status, 200);
+		secondBody16y = secondResponse16y.text();
+		await bounded16q(started16y.promise, "16y active second motion");
+		const stopResponse16y = await post16y("/agent/stop", { surface: "studio", sessionId: session16y, turnId: secondTurn16y.turnId, jobId: "retired-16y" }, owner16y);
+		const stopBody16y = await stopResponse16y.json();
+		assert.equal(stopResponse16y.status, 409);
+		assert.equal(stopBody16y.error?.code, "STALE_TARGET");
+		assert.deepEqual(stopCalls16y, [], "a retired owned id is rejected before runtime.stop while another job is active");
+		assert.equal(active16y, true, "the active motion remains running after the stale Stop");
+		release16y.resolve({ ok: true, status: "installed", mutated: true, receiptId: "installed-16y" });
+		const secondFrames16y = [...(await secondBody16y).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+		assert.ok(secondFrames16y.some(frame => frame.type === "receipt" && frame.receipt?.status === "installed"));
+		assert.equal(secondFrames16y.some(frame => frame.type === "error"), false);
+		console.log("PASS 16y: an owned retired Stop is stale while a different active motion job is running");
+	} finally {
+		release16y.resolve({ ok: false, status: "cancelled", code: "CANCELLED" });
+		if (secondBody16y) await bounded16q(secondBody16y, "16y second turn cleanup");
+		await handler16y.close();
+		server16y.closeAllConnections();
+		await new Promise(resolve => server16y.close(resolve));
+	}
+}
