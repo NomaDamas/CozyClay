@@ -11,8 +11,9 @@ const authFile = join(configDir, "codex-auth.json");
 process.env.COZYCLAY_CONFIG_DIR = configDir;
 process.env.COZYCLAY_CODEX_AUTH_FILE = authFile;
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = join(rootDir, "sessions");
-const previousAnthropic = process.env.ANTHROPIC_API_KEY;
-delete process.env.ANTHROPIC_API_KEY;
+const providerEnvNames = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"];
+const previousProviderEnv = Object.fromEntries(providerEnvNames.map((name) => [name, process.env[name]]));
+for (const name of providerEnvNames) delete process.env[name];
 
 const [{ createAgentHandler }, auth, { createCredentialStore }, keys, providers] = await Promise.all([
 	import("../bin/agent/agent-routes.mjs"),
@@ -84,11 +85,19 @@ const models = await providers.createModels({ credentials: fileStore });
 assert.equal((await models.getAuth("openai-codex")).auth.apiKey, "access-token");
 assert.equal((await providers.resolveModel("gpt-6-astra")).provider, "openai-codex");
 await assert.rejects(() => providers.resolveModel("nope/x"), (error) => error.code === "UNKNOWN_MODEL");
+keys.removeKey("anthropic");
+assert.equal(auth.status().providersConfigured, 0);
+keys.setKey("anthropic", "sk-ant-x");
+assert.equal(auth.status().providersConfigured, 1);
+keys.removeKey("anthropic");
+assert.equal(auth.status().providersConfigured, 0);
 keys.setKey("anthropic", "file-secret");
 const envStore = createCredentialStore({ auth, keys, env: { ANTHROPIC_API_KEY: "env-secret" } });
 assert.deepEqual(await envStore.read("anthropic"), { type: "api_key", key: "env-secret" });
 assert.ok((await envStore.list()).some((entry) => entry.providerId === "anthropic" && entry.source === "env"));
 assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-codex" && entry.source === "chatgpt"));
-if (previousAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY;
-else process.env.ANTHROPIC_API_KEY = previousAnthropic;
+for (const [name, value] of Object.entries(previousProviderEnv)) {
+	if (value === undefined) delete process.env[name];
+	else process.env[name] = value;
+}
 console.log("agent provider verification passed");

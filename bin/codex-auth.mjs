@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { openBrowser } from "./open-browser.mjs";
 import { writeSecureJson } from "./agent/secure-file.mjs";
+import { readKeys } from "./agent/provider-keys.mjs";
 
 export const AUTHORIZE_ENDPOINT = "https://auth.openai.com/oauth/authorize";
 export const TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
@@ -12,7 +13,6 @@ export const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 export const SCOPE = "openid profile email offline_access";
 const DEFAULT_FILE = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cozyclay", "codex-auth.json");
 const tokenFile = process.env.COZYCLAY_CODEX_AUTH_FILE || DEFAULT_FILE;
-const providerKeysFile = join(process.env.COZYCLAY_CONFIG_DIR || join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cozyclay"), "providers.json");
 let tokens = null;
 let authServer = null;
 let authState = null;
@@ -39,10 +39,7 @@ const claims = () => decodeJwt(readTokens()?.id_token || "");
 function providersConfigured() {
 	const configured = new Set();
 	for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"]) if (process.env[name]?.trim()) configured.add(name);
-	try {
-		const saved = JSON.parse(readFileSync(providerKeysFile, "utf8"));
-		for (const [id, value] of Object.entries(saved || {})) if (value?.key?.trim()) configured.add(id);
-	} catch {}
+	for (const [id, value] of Object.entries(readKeys())) if (typeof value === "string" && value.trim()) configured.add(id);
 	return configured.size;
 }
 export function status() {

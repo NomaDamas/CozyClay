@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createModels } from "@earendil-works/pi-ai";
 import { createAgentHandler, REASONING_EFFORTS } from "../bin/agent/agent-routes.mjs";
 import { createFakeModel } from "./fixtures/fake-model.mjs";
 
@@ -317,6 +318,64 @@ const authPort = authServer.address().port;
 const authResponse = await fetch(`http://127.0.0.1:${authPort}/agent/turn`, { method: "POST", headers: { origin: `http://127.0.0.1:${authPort}`, "content-type": "application/json" }, body: JSON.stringify({ sessionId: "auth", text: "hi" }) });
 assert.equal((await authResponse.text()).includes('"code":"auth"'), true);
 await new Promise((resolve) => authServer.close(resolve));
+
+// Provider-only Studio sessions can replay events and accept an owned candidate;
+// neither route should require a ChatGPT token once the registry has a key.
+{
+	const { envelopeFixture, contextFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const providerModels = createModels();
+	const providerFaux = createFakeModel({ models: providerModels, provider: "anthropic", modelId: "claude-3" });
+	let savedKey = "sk-ant-route-test";
+	providerModels.getAuth = async (providerOrModel) => (typeof providerOrModel === "string" ? providerOrModel : providerOrModel.provider) === "anthropic" && savedKey
+		? { auth: { apiKey: savedKey }, source: "file" } : undefined;
+	const acceptedJobs = [];
+	const motionRuntime = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: "provider-job", commandId: "provider-command", state: "queued" }),
+		subscribe: () => () => {},
+		start: async () => ({ ok: false, status: "unverified", mutated: false }),
+		accept: async (id) => { acceptedJobs.push(id); return { ok: true, jobId: id, status: "installed" }; },
+	};
+	const providerAuth = { getAccessToken: async () => null, onAuthChange: () => () => {} };
+	let providerServer;
+	const providerHandler = createAgentHandler({ auth: providerAuth, codex: fakeCodex, models: providerModels, fauxProvider: providerFaux.fauxProvider, liveHub: fakeLive, studioRuntime: motionRuntime, port: () => providerServer.address().port });
+	providerFaux.script([
+		{ type: "toolCall", id: "provider-motion", name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } },
+		{ type: "text", text: "provider-only" },
+	]);
+	providerServer = createServer((req, res) => providerHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const ready = once(providerServer, "listening", { signal: AbortSignal.timeout(5000) });
+	providerServer.listen(0, "127.0.0.1");
+	await ready;
+	const providerOrigin = `http://127.0.0.1:${providerServer.address().port}`;
+	const providerEnvelope = { ...envelopeFixture(), sessionId: "00000000-0000-4000-8000-00000000c379", turnId: "00000000-0000-4000-8000-00000000c380", model: "anthropic/claude-3" };
+	const request = (path, init = {}) => fetch(`${providerOrigin}${path}`, { ...init, signal: AbortSignal.timeout(5000), headers: { origin: providerOrigin, "content-type": "application/json", ...init.headers } });
+	const turnResponse = await request("/agent/turn", { method: "POST", body: JSON.stringify(providerEnvelope) });
+	assert.equal((await turnResponse.text()).includes('"type":"error"'), false);
+	const ownerCookie = (turnResponse.headers.getSetCookie?.() ?? [turnResponse.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
+	assert.match(ownerCookie, /studio_owner=/);
+	const eventsPath = `/agent/turn/${providerEnvelope.turnId}/events`;
+	const acceptPath = "/agent/jobs/provider-job/accept";
+	const accept = (cookie) => ({ method: "POST", headers: { cookie }, body: JSON.stringify({ surface: "studio", sessionId: providerEnvelope.sessionId, turnId: providerEnvelope.turnId, explicitUnverifiedAcceptance: true }) });
+	const eventsResponse = await request(eventsPath, { headers: { cookie: ownerCookie } });
+	assert.equal(eventsResponse.status, 200, "provider-only owner can replay Studio events");
+	assert.match(eventsResponse.headers.get("content-type"), /text\/event-stream/);
+	assert.ok((await eventsResponse.text()).includes('"type":"done"'));
+	assert.equal((await request(eventsPath, { headers: { cookie: "studio_owner=wrong" } })).status, 403);
+	assert.equal((await request(acceptPath, accept("studio_owner=wrong"))).status, 403);
+	assert.equal((await request("/agent/image", { method: "POST", body: JSON.stringify({ prompt: "render", imageDataUrl: png }) })).status, 401, "image generation stays ChatGPT-only");
+	assert.equal((await request(acceptPath, accept(ownerCookie))).status, 200, "provider-only owner can accept the unverified candidate");
+	assert.deepEqual(acceptedJobs, ["provider-job"]);
+	providerFaux.script([{ type: "text", text: "workflow provider-only" }]);
+	const workflow = await request("/agent/turn", { method: "POST", body: JSON.stringify({ sessionId: "provider-workflow", model: "anthropic/claude-3", text: "hi" }) });
+	assert.equal((await workflow.text()).includes('"type":"error"'), false, "the turn route shares provider-neutral readiness");
+	savedKey = null;
+	assert.equal((await request(eventsPath, { headers: { cookie: ownerCookie } })).status, 401);
+	assert.equal((await request(acceptPath, accept(ownerCookie))).status, 401);
+	await new Promise((resolve) => providerServer.close(resolve));
+	await providerHandler.close();
+	console.log("PASS provider-only Studio event replay and acceptance gates; no-credential requests remain 401");
+}
 server.close();
 {
 	const { envelopeFixture, contextFixture } = await import("./verify-studio-agent-protocol.mjs");

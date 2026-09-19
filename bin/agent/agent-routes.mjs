@@ -182,7 +182,7 @@ export function sanitizeUpstreamDetail(body) {
 	if (!message) return null;
 	const cleaned = message
 		.replace(/data:[^\s"']+/gi, "[image]")
-		.replace(/\b(?:Bearer\s+|sk-|eyJ)[\w.\-+/=]+/gi, "[redacted]")
+		.replace(/\b(?:AIza[\w-]{20,}|(?:sk-or-|sk-ant-|sk-|Bearer\s+|eyJ)[\w.\-+/=]+)/gi, "[redacted]")
 		.replace(/\s+/g, " ")
 		.trim();
 	if (!cleaned) return null;
@@ -287,6 +287,13 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			workflowModels = await createModels({ auth, codexBaseUrl });
 		}
 		return workflowModels;
+	};
+	const hasAnyCredential = async () => {
+		if (await auth.getAccessToken()) return true;
+		const registry = await ensureWorkflowModels();
+		const { PROVIDERS } = await import("./providers.mjs");
+		for (const provider of PROVIDERS) if (await registry.getAuth(provider.id)) return true;
+		return false;
 	};
 	// Tests hand in a store of their own; only the real sidecar writes the
 	// author's config dir (#375).
@@ -522,7 +529,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			json(res, 403, { error: "forbidden origin" }); return true;
 		}
 		if (path.startsWith("/agent/turn/") && path.endsWith("/events") && req.method === "GET") {
-			if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "AUTH_REQUIRED", message: "Sign in with ChatGPT." } }); return true; }
+			if (!await hasAnyCredential()) { json(res, 401, { error: { code: "AUTH_REQUIRED", message: "Sign in or configure a provider key." } }); return true; }
 			const turnId = decodeURIComponent(path.slice("/agent/turn/".length, -"/events".length));
 			const session = [...studioSessions.values()].find(candidate => candidate.turns.has(turnId)); const record = studioEvents.get(turnId);
 			if (!record || !session || parseCookies(req).studio_owner !== session.owner) { json(res, 403, { error: { code: "AUTH_REQUIRED", message: "Studio event stream is not owned by this session." } }); return true; }
@@ -645,7 +652,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			return true;
 		}
 		if (path.startsWith("/agent/jobs/") && path.endsWith("/accept") && req.method === "POST") {
-			if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "AUTH_REQUIRED", message: "Sign in with ChatGPT." } }); return true; }
+			if (!await hasAnyCredential()) { json(res, 401, { error: { code: "AUTH_REQUIRED", message: "Sign in or configure a provider key." } }); return true; }
 			let value; try { value = await readBody(req); } catch { json(res, 400, { error: "invalid request" }); return true; }
 			const jobId = decodeURIComponent(path.slice("/agent/jobs/".length, -"/accept".length)); const session = studioSessions.get(value?.sessionId);
 			if (!session || session.owner !== parseCookies(req).studio_owner || value.surface !== "studio" || value.explicitUnverifiedAcceptance !== true || !session.turns.has(value.turnId) || session.activeJobId !== jobId) { json(res, 403, { error: { code: "AUTH_REQUIRED", message: "Only the owning Studio UI may accept this candidate." } }); return true; }
@@ -750,15 +757,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			send(frame);
 		};
 		const turn = async () => {
-			const accessToken = await auth.getAccessToken();
+			if (!await hasAnyCredential()) throw Object.assign(new Error("Authentication required."), { status: 401 });
 			workflowModels = await ensureWorkflowModels();
-			if (!accessToken && workflowModels) {
-				const { resolveModel } = await import("./providers.mjs");
-				try {
-					const resolved = await resolveModel(value.model || "gpt-6-astra", { models: workflowModels });
-					if (!await workflowModels.getAuth(resolved.model)) throw Object.assign(new Error("Authentication required."), { status: 401 });
-				} catch (error) { throw Object.assign(new Error("Authentication required."), { status: 401, cause: error }); }
-			} else if (!accessToken && !workflowModels) throw Object.assign(new Error("Authentication required."), { status: 401 });
 			const dependencies = await runtime;
 			session.codex = { editImage: (args) => codex.editImage(args) };
 			const workflowTools = createAgentTools({ ...dependencies, session, emit: send });

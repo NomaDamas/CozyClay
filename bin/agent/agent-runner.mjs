@@ -362,8 +362,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			const retryAfterAuthRefresh = async () => {
 				try { await state.registry?.getAuth?.("openai-codex", { minOAuthValidityMs: Number.MAX_SAFE_INTEGER }); } catch { /* the retried call surfaces any refresh failure itself */ }
 				try {
-					const pi = await loadPi();
-					await state.lane.prompt(input.text || "", [], input.signal ? pi.withAbortSignal(input.signal, state.context) : state.context);
+					await state.active.resend();
 				} catch (error) {
 					if (!queue.closed) { queue.push(errorFrame(error, input.signal?.aborted)); queue.push({ type: "done" }); queue.close(); }
 				}
@@ -381,7 +380,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : classified.code;
 					const status = classified.status;
 					const detail = sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage }));
-					queue.push({ type: "error", code, message: detail || rawMessage, ...(status ? { status } : {}) });
+					const fallback = code === "aborted" ? "The turn was aborted." : code === "truncated" ? "The model stream ended before a terminal response event." : "The model or live editor could not complete this turn.";
+					queue.push({ type: "error", code, message: detail || fallback, ...(status ? { status } : {}) });
 				}
 				queue.push({ type: "done" });
 				queue.close();
@@ -396,7 +396,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				return;
 			}
 			const queue = new FrameQueue();
-			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false, abortRequested: false };
+			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false, abortRequested: false, resend: async () => {} };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;
@@ -406,39 +406,56 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				try {
 					await ensureHarness(input);
 					removeEventListeners = mapEvents(queue, input);
+					// The turn is composed ONCE (an attached frame is captured once, its
+					// tool card emitted once) and then delivered; a 401 retry replays this
+					// same composition after rewinding the lane, so the transcript keeps
+					// exactly one copy of the user turn with its attachments.
+					let composed;
 					if (input.surface === "studio") {
 						const studioContext = typeof input.studioContextText === "string" ? input.studioContextText : `<studio-context>\n${input.contextText || ""}\n</studio-context>`;
 						const attachments = Array.isArray(input.attachments) ? input.attachments : [];
 						const images = attachments.map((attachment) => dataUrlImage(attachment?.dataUrl)).filter(Boolean);
 						const attachmentLabels = attachments.map((attachment, index) => `User attachment ${attachment?.name || index + 1}`).join("\n");
-						const promptContext = input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context;
 						if (input.frameObservation) {
-							await state.lane.appendMessage(studioUserMessage({ ...input, studioContextText: studioContext }), state.context);
 							const observation = studioObservationMessage(input.frameObservation);
-							await state.lane.prompt(observation.content[0].text, [observation.content[1]], promptContext);
+							composed = { appends: [studioUserMessage({ ...input, studioContextText: studioContext })], text: observation.content[0].text, images: [observation.content[1]] };
 						} else {
-							await state.lane.prompt(`${attachmentLabels ? `${attachmentLabels}\n` : ""}${studioContext}\n${input.text || ""}`, images, promptContext);
+							composed = { appends: [], text: `${attachmentLabels ? `${attachmentLabels}\n` : ""}${studioContext}\n${input.text || ""}`, images };
 						}
 					} else {
-					for (const [index, attachment] of (Array.isArray(input.attachments) ? input.attachments : []).entries()) await state.lane.appendMessage(attachmentMessage(attachment, index), state.context);
-					let text = input.text || "";
-					const activeTools = input.tools || tools;
-					if (input.attachFrame && activeTools.internal?.capture) {
-						const callId = "attached-frame";
-						const started = clock();
-						queue.push({ type: "tool.start", callId, name: tools.internal.capture.name, label: tools.internal.capture.label || "capture blocking frame", args: {} });
-						try {
-							const captured = await tools.internal.capture.handler({}, { signal });
-							queue.push({ type: "tool.done", callId, ok: true, elapsedMs: Math.round(clock() - started), result: publicDetails(captured) });
-							text += `\nAttached frame imageId: ${captured.imageId}`;
-						} catch (error) {
-							queue.push({ type: "tool.done", callId, ok: false, elapsedMs: Math.round(clock() - started), error: error.message });
-							throw error;
+						let text = input.text || "";
+						const activeTools = input.tools || tools;
+						if (input.attachFrame && activeTools.internal?.capture) {
+							const callId = "attached-frame";
+							const started = clock();
+							queue.push({ type: "tool.start", callId, name: tools.internal.capture.name, label: tools.internal.capture.label || "capture blocking frame", args: {} });
+							try {
+								const captured = await tools.internal.capture.handler({}, { signal });
+								queue.push({ type: "tool.done", callId, ok: true, elapsedMs: Math.round(clock() - started), result: publicDetails(captured) });
+								text += `\nAttached frame imageId: ${captured.imageId}`;
+							} catch (error) {
+								queue.push({ type: "tool.done", callId, ok: false, elapsedMs: Math.round(clock() - started), error: error.message });
+								throw error;
+							}
 						}
+						composed = { appends: (Array.isArray(input.attachments) ? input.attachments : []).map(attachmentMessage), text, images: [] };
 					}
-					const images = [];
-					await state.lane.prompt(text, images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
-					}
+					const deliver = async () => {
+						for (const message of composed.appends) await state.lane.appendMessage(message, state.context);
+						await state.lane.prompt(composed.text, composed.images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
+					};
+					// The failed turn's own messages are already committed to the lane, and
+					// the harness has no "continue from this transcript" entry point for a
+					// settled run (an empty prompt is refused as InvalidMessage, and a
+					// settled operation has nothing to resume). Rewinding the branch to the
+					// pre-turn tip and redelivering the identical turn is the one path that
+					// resends the SAME user message instead of appending a duplicate.
+					const tipBeforeTurn = (await state.lane.inspectExecution(state.context)).tipId;
+					state.active.resend = async () => {
+						await state.lane.navigateTree(tipBeforeTurn, undefined, state.context);
+						await deliver();
+					};
+					await deliver();
 				// The 401-on-openai-codex retry is fired from the `run_end` handler
 				// (it needs the event to have settled first); wait for it here so the
 				// `finally` below does not unsubscribe events mid-retry.

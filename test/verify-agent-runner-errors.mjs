@@ -57,6 +57,20 @@ function errorMessage(text) {
 	expect("the surviving text reached the panel", frames.some((f) => f.type === "text.delta" && f.text) || frames.some((f) => f.type === "text.delta"), JSON.stringify(frames));
 }
 
+// --- provider-shaped key material in an upstream error is never exposed ---
+for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-ant-secret", "sk-secret", "Bearer secret", "eyJsecret"]) {
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	installScripts(faux, [() => { throw new Error(`provider key ${token}`); }]);
+	const runner = createAgentRunner({ models, tools: [] });
+	const session = await runner.openSession("errors-sanitized-key", { surface: "workflow" });
+	const frames = await collect(session, { text: "hi", model: "faux/scripted" });
+	await runner.close();
+	const error = frames.find((frame) => frame.type === "error");
+	expect(`provider key material (${token.split("secret")[0]}) is redacted from the runner error frame`, !!error && !error.message.includes("AIza") && !error.message.includes("secret"), JSON.stringify(error));
+}
+
 // --- 529 three times: retries exhausted (maxRetries:2 = 3 attempts total) -> error{code:'overloaded'} ---
 {
 	const models = createModels();
@@ -92,6 +106,30 @@ function errorMessage(text) {
 	await runner.close();
 	expect("the credential-store refresh path (Models.getAuth forced-expiry) runs exactly once", authCalls.length === 1, `authCalls.length=${authCalls.length}`);
 	expect("the turn is retried exactly once and recovers", calls.length === 2 && frames.every((f) => f.type !== "error") && frames.at(-1)?.type === "done", JSON.stringify(frames));
+}
+
+// --- 401 retry continues the existing transcript, preserving one attachment ---
+{
+	const models = createModels();
+	const faux = fauxProvider({ provider: "openai-codex", models: [{ id: "gpt-6-astra", name: "Astra", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	const calls = installScripts(faux, [errorMessage("401 Unauthorized"), fauxAssistantMessage([fauxText("recovered with the original image")])]);
+	const runner = createAgentRunner({ models, tools: [] });
+	const session = await runner.openSession("errors-401-attachment", { surface: "workflow" });
+	const frames = await collect(session, {
+		text: "describe this image",
+		attachments: [{ dataUrl: "data:image/png;base64,AA==", name: "probe.png" }],
+	});
+	await runner.close();
+	const counts = calls.map((context) => context.messages.length);
+	const imageCounts = calls.map((context) => context.messages.filter((message) => message.role === "user" && message.content?.some((part) => part.type === "image")).length);
+	expect("401 retry resumes the same transcript with one attachment (message counts [2,2])", JSON.stringify(counts) === "[2,2]", JSON.stringify(counts));
+	expect("401 retry preserves exactly one image-bearing user message", JSON.stringify(imageCounts) === "[1,1]", JSON.stringify(imageCounts));
+	// pi stamps each delivery with its own `timestamp`; the turn's own content
+	// (roles, text and image bytes) is what must survive the retry unchanged.
+	const content = (context) => JSON.stringify(context.messages.map(({ role, content: parts }) => ({ role, content: parts })));
+	expect("401 retry keeps the original user messages and image bytes unchanged", content(calls[0]) === content(calls[1]), JSON.stringify(calls.map(content)));
+	expect("401 attachment retry still completes without an error frame", frames.every((frame) => frame.type !== "error") && frames.at(-1)?.type === "done", JSON.stringify(frames));
 }
 
 // --- abort mid-stream: no further model calls, an error{code:'aborted'} frame, then done ---
