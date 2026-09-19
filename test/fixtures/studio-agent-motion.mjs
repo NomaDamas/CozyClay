@@ -81,8 +81,10 @@ export async function startFixtureStudio({ port, evidence }) {
     const messages = context.messages || [];
     const user = [...messages].reverse().find((message) => message.role === 'user');
     const text = (Array.isArray(user?.content) ? user.content : []).filter((part) => part.type === 'text').map((part) => part.text).join(' ');
-    const outputs = messages.filter((message) => message.role === 'toolResult').length;
+    const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user');
+    const outputs = messages.slice(lastUserIndex + 1).filter((message) => message.role === 'toolResult').length;
     const target = fixture.characters[0].id;
+    if (controls.rateLimit) return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'Fixture rate limit: 429 Too Many Requests' });
     let call = null;
     if (text.includes('Put a cube')) call = outputs === 0 ? { name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, position: { relativeTo: target, basis: 'shot_camera', side: 'left', gapM: 1, support: 'floor' } }] } } : outputs === 1 ? { name: 'arrange_characters', args: { ops: [{ op: 'create', name: 'Fixture second', position: { relativeTo: target, basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } }] } } : null;
     else if (text.includes('Frame the selected')) call = outputs === 0 ? { name: 'frame_shot', args: { subjectIds: [target], keyAtFrame: 0, framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } } : null;

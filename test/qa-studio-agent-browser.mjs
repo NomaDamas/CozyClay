@@ -226,7 +226,7 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${port}/app/`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
       if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }
-      const c = await fixture.context(); assert.equal(c.capabilities.tools.length,8);
+      const c = await fixture.context(); assert.equal(c.capabilities.tools.length,9);
       await fixture.command('set_camera',{x:0,y:1.6,z:5,lookAtX:0,lookAtY:1,lookAtZ:0,focalMm:35},c.host.workspaceHandle);
       await implementations[name](); results.push({name,status:'PASS'}); console.log(`PASS CASE ${name}`);
     } catch (error) { results.push({name,status:'FAIL',error:error.stack}); console.error(`FAIL CASE ${name}`,error); await shot(`${name}-failure`); }
