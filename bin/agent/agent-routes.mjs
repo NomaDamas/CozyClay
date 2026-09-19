@@ -289,10 +289,13 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		return workflowModels;
 	};
 	const hasAnyCredential = async () => {
-		if (await auth.getAccessToken()) return true;
+		try { if (await auth.getAccessToken()) return true; } catch { /* an unavailable ChatGPT token is not a credential */ }
 		const registry = await ensureWorkflowModels();
+		if (typeof registry?.getAuth !== "function") return false;
 		const { PROVIDERS } = await import("./providers.mjs");
-		for (const provider of PROVIDERS) if (await registry.getAuth(provider.id)) return true;
+		for (const provider of PROVIDERS) {
+			try { if (await registry.getAuth(provider.id)) return true; } catch { /* one broken provider does not break the gate */ }
+		}
 		return false;
 	};
 	// Tests hand in a store of their own; only the real sidecar writes the

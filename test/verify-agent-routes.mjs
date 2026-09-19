@@ -376,6 +376,43 @@ await new Promise((resolve) => authServer.close(resolve));
 	await providerHandler.close();
 	console.log("PASS provider-only Studio event replay and acceptance gates; no-credential requests remain 401");
 }
+
+// Older route fixtures may inject only a model registry shell. Credential gates
+// must treat that as no provider credential, never as an internal server error.
+{
+	let registryServer;
+	const noGetAuth = createAgentHandler({ auth: { getAccessToken: async () => null }, models: {}, liveHub: fakeLive, port: () => registryServer.address().port });
+	registryServer = createServer((req, res) => noGetAuth(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	registryServer.listen(0, "127.0.0.1");
+	await once(registryServer, "listening");
+	const registryOrigin = `http://127.0.0.1:${registryServer.address().port}`;
+	const noTokenEvents = await fetch(`${registryOrigin}/agent/turn/missing/events`, { headers: { origin: registryOrigin } });
+	assert.equal(noTokenEvents.status, 401, "a registry without getAuth is treated as no credential");
+	await new Promise((resolve) => registryServer.close(resolve));
+	await noGetAuth.close();
+
+	let tokenServer;
+	const tokenRegistry = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: {}, liveHub: fakeLive, port: () => tokenServer.address().port });
+	tokenServer = createServer((req, res) => tokenRegistry(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	tokenServer.listen(0, "127.0.0.1");
+	await once(tokenServer, "listening");
+	const tokenOrigin = `http://127.0.0.1:${tokenServer.address().port}`;
+	const tokenEvents = await fetch(`${tokenOrigin}/agent/turn/missing/events`, { headers: { origin: tokenOrigin } });
+	assert.equal(tokenEvents.status, 403, "a ChatGPT token reaches the owner-cookie authorization check");
+	await new Promise((resolve) => tokenServer.close(resolve));
+	await tokenRegistry.close();
+
+	let throwingServer;
+	const throwingRegistry = createAgentHandler({ auth: { getAccessToken: async () => null }, models: { getAuth: async () => { throw new Error("provider lookup failed"); } }, liveHub: fakeLive, port: () => throwingServer.address().port });
+	throwingServer = createServer((req, res) => throwingRegistry(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	throwingServer.listen(0, "127.0.0.1");
+	await once(throwingServer, "listening");
+	const throwingOrigin = `http://127.0.0.1:${throwingServer.address().port}`;
+	assert.equal((await fetch(`${throwingOrigin}/agent/turn/missing/events`, { headers: { origin: throwingOrigin } })).status, 401, "a throwing provider lookup is treated as no credential");
+	await new Promise((resolve) => throwingServer.close(resolve));
+	await throwingRegistry.close();
+	console.log("PASS credential gates tolerate injected registries without getAuth");
+}
 server.close();
 {
 	const { envelopeFixture, contextFixture } = await import("./verify-studio-agent-protocol.mjs");

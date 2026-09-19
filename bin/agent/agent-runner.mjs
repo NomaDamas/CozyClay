@@ -230,13 +230,23 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		// The user message (and any toolResult from a tool that finished before
 		// the abort) are real, completed history and ARE persisted; only the
 		// assistant role is withheld.
-		const persist = async () => {
+		const persist = async (event) => {
 			if (!state.lane || !sessionStore?.append) return;
 			const entries = await state.lane.findEntries({ order: "oldestFirst" }, state.context);
 			const messages = entries.filter((entry) => entry.type === "message").map((entry) => entry.message);
 			if (messages.length <= state.persisted) return;
+			const latest = event?.message || messages.at(-1);
+			const authFailure = state.provider === "openai-codex"
+				&& latest?.role === "assistant"
+				&& latest?.stopReason === "error"
+				&& classifyError({ message: latest.errorMessage || "" }).code === "unauthorized";
+			// The first failed auth attempt is about to rewind this branch. Do not
+			// advance the durable watermark or write any of its messages; the retry
+			// will persist the final branch instead. If the retry also fails, keep
+			// its user messages but withhold the failed assistant message.
+			if (authFailure && !state.active?.authRetried) return;
 			const aborted = state.active?.abortRequested === true;
-			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant"));
+			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant") && !(authFailure && message?.role === "assistant"));
 			state.persisted = messages.length;
 			if (!pending.length) return;
 			const input = state.lastInput || {};
@@ -453,6 +463,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					const tipBeforeTurn = (await state.lane.inspectExecution(state.context)).tipId;
 					state.active.resend = async () => {
 						await state.lane.navigateTree(tipBeforeTurn, undefined, state.context);
+						const rewoundEntries = await state.lane.findEntries({ order: "oldestFirst" }, state.context);
+						state.persisted = rewoundEntries.filter((entry) => entry.type === "message").length;
 						await deliver();
 					};
 					await deliver();
