@@ -75,10 +75,13 @@ const loadedOnce = () => new Promise((resolve) => {
 	ws.addEventListener("message", onMessage);
 });
 
-async function open(state) {
+async function open(state, params = {}) {
 	const url = new URL(baseUrl);
 	url.searchParams.set("agent", "mock");
 	url.searchParams.set("state", state);
+	// ?speed= slows the scripted turn down so a steer can be typed into a turn
+	// that is genuinely still running.
+	for (const [key, value] of Object.entries(params)) url.searchParams.set(key, String(value));
 	const loaded = loadedOnce();
 	await send("Page.navigate", { url: url.toString() });
 	await loaded;
@@ -318,6 +321,114 @@ await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => 
 await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
 expect("Sign out returns the panel to signed-out", await waitFor("document.querySelector('.agent-panel')?.dataset.agentState === 'signed-out'", 6000));
 
+/* ===================== provider-grouped models + steering (#379) ========= */
+
+// Five providers answer the scripted /agent/models: two hold a credential and
+// three are waiting for a key. Everything below is asserted on the real DOM of
+// the dock, at 1440 and at 390.
+// A composer click is only real once the panel has taken the text: Send and
+// Steer stay disabled until the store has the draft, so that is the signal to
+// wait for rather than a sleep after typing.
+const clickWhenEnabled = async (selector) => {
+	if (!await waitFor(`!!document.querySelector(${JSON.stringify(`${selector}:not([disabled])`)})`, 8000)) throw new Error(`${selector} never became clickable`);
+	await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
+};
+const setValue = (selector, value) => evaluate(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); const proto = node instanceof window.HTMLSelectElement ? window.HTMLSelectElement.prototype : window.HTMLTextAreaElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(node, ${JSON.stringify(value)}); node.dispatchEvent(new Event(node instanceof window.HTMLSelectElement ? 'change' : 'input', { bubbles: true })); return node.value; })()`);
+
+await evaluate("localStorage.removeItem('cozyclay.agent.model')");
+await open("ready");
+expect("the model dropdown is grouped, one optgroup per provider", await waitFor("document.querySelectorAll('.agent-model-select optgroup').length === 5", 10000),
+	String(await evaluate("document.querySelectorAll('.agent-model-select optgroup').length")));
+expect("every group is labelled with the provider that serves it", await evaluate("[...document.querySelectorAll('.agent-model-select optgroup')].every((group) => group.label.length > 2)"),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select optgroup')].map((group) => group.label))"));
+expect("every option is a provider/model key", await evaluate("[...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].every((option) => option.value.includes('/'))"),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].map((option) => option.value))"));
+const disabledOption = await evaluate("(() => { const option = [...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].find((entry) => entry.disabled); return option ? { value: option.value, text: option.textContent, group: option.closest('optgroup')?.label } : null; })()");
+expect("a provider without a key is still listed, disabled, and says what it needs", Boolean(disabledOption) && /\u2014 add key$/.test(disabledOption.text || ""), JSON.stringify(disabledOption));
+expect("the panel opens on a model whose provider holds a credential", await evaluate("document.querySelector('.agent-model-select').selectedOptions[0]?.disabled === false"),
+	await evaluate("document.querySelector('.agent-model-select').value"));
+expect("the effort select offers the selected model's levels, its default first", await evaluate("(() => { const effort = document.querySelector('.agent-effort-select'); return !!effort && effort.options.length >= 2 && / \u00b7 default$/.test(effort.options[0].textContent); })()"),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-effort-select option')].map((option) => option.textContent))"));
+// A native dropdown draws its list outside the page, so the grouped structure
+// is recorded here as well as screenshotted.
+console.log(`     model select: ${await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) optgroup')].map((group) => ({ provider: group.label, options: [...group.children].map((option) => option.value + (option.disabled ? ' (disabled: ' + option.textContent + ')' : '')) })))")}`);
+shots.push(await shot("panel-optgroups-1440"));
+
+// Happy path: pick another provider's model and the turn is sent with THAT key.
+const picked = await evaluate("(() => { const select = document.querySelector('.agent-model-select'); const option = [...select.options].find((entry) => !entry.disabled && !entry.value.startsWith('openai-codex/')); return option?.value ?? null; })()");
+expect("a second provider has a model that can be picked", typeof picked === "string" && picked.includes("/"), String(picked));
+await setValue(".agent-model-select", picked);
+const pickedEfforts = await evaluate("JSON.stringify([...document.querySelectorAll('.agent-effort-select option')].map((option) => option.value))");
+expect("the effort list follows the model that was picked", JSON.parse(pickedEfforts).length > 0, pickedEfforts);
+await setValue(".agent-input", "Give me a wide two-shot of this scene");
+await clickWhenEnabled(".agent-send:not(.stop)");
+expect("the turn is sent with the provider-qualified key of the chosen model", await waitFor(`(() => { try { return JSON.parse(localStorage.getItem('cozyclay.mock.agent.last-turn'))?.model === ${JSON.stringify(picked)}; } catch { return false; } })()`, 10000),
+	await evaluate("localStorage.getItem('cozyclay.mock.agent.last-turn')"));
+expect("the turn carries the effort the model advertised", await evaluate("(() => { try { const turn = JSON.parse(localStorage.getItem('cozyclay.mock.agent.last-turn')); return turn.effort === null || typeof turn.effort === 'string'; } catch { return false; } })()"));
+await waitFor("!document.querySelector('.agent-send.stop')", 20000);
+
+// The choice is a preference, not a per-session accident.
+await open("ready");
+expect("the panel reopens on the model that was picked", await waitFor(`document.querySelector('.agent-model-select')?.value === ${JSON.stringify(picked)}`, 10000),
+	await evaluate("document.querySelector('.agent-model-select')?.value"));
+
+// --- the phone-width dock ---------------------------------------------------
+await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+await open("ready");
+expect("the grouped dropdown survives the phone-width drawer", await waitFor("document.querySelectorAll('.agent-model-select optgroup').length === 5", 10000));
+// The dock is a drawer pinned to the right of a canvas that is wider than a
+// phone, so the panel has to be scrolled to before it can be judged — and the
+// evidence has to be framed on it, not on the empty canvas beside it.
+await evaluate("document.querySelector('.agent-composer').scrollIntoView({ inline: 'end', block: 'end' })");
+expect("the drawer is wholly on screen once it is scrolled to", await waitFor("(() => { const rect = document.querySelector('.agent-panel').getBoundingClientRect(); return rect.width >= 300 && rect.left >= -1 && rect.right <= innerWidth + 1; })()", 5000),
+	await evaluate("JSON.stringify(document.querySelector('.agent-panel').getBoundingClientRect())"));
+expect("the model select and the effort select share the row without clipping", await evaluate("(() => { const [model, effort] = [document.querySelector('.agent-model-select:not(.agent-effort-select)'), document.querySelector('.agent-effort-select')]; const rects = [model, effort].map((node) => node.getBoundingClientRect()); return rects.every((rect) => rect.width > 0 && rect.left >= 0 && rect.right <= innerWidth + 1) && rects[0].right <= rects[1].left + 1; })()"),
+	await evaluate("JSON.stringify([document.querySelector('.agent-model-select:not(.agent-effort-select)').getBoundingClientRect(), document.querySelector('.agent-effort-select').getBoundingClientRect()])"));
+expect("the whole composer is on screen at 390px, not below the fold", await evaluate("(() => { const rect = document.querySelector('.agent-composer').getBoundingClientRect(); return rect.top >= 0 && rect.bottom <= innerHeight + 1 && rect.right <= innerWidth + 1; })()"),
+	await evaluate("JSON.stringify({ composer: document.querySelector('.agent-composer').getBoundingClientRect(), viewport: [innerWidth, innerHeight] })"));
+expect("the Send button is reachable at 390px", await evaluate("(() => { const rect = document.querySelector('.agent-send').getBoundingClientRect(); return rect.width > 0 && rect.right <= innerWidth + 1 && rect.bottom <= innerHeight + 1; })()"),
+	await evaluate("JSON.stringify(document.querySelector('.agent-send').getBoundingClientRect())"));
+shots.push(await shot("panel-optgroups-390"));
+await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+
+// --- steering a turn that is still running ----------------------------------
+await open("ready", { speed: 0.15 });
+await setValue(".agent-input", "Block a two-shot in this scene");
+await clickWhenEnabled(".agent-send:not(.stop)");
+expect("a running turn keeps Stop and offers Steer", await waitFor("!!document.querySelector('.agent-send.stop') && !!document.querySelector('.agent-send.agent-steer')", 15000));
+expect("Steer is disabled until there is something to say", await evaluate("document.querySelector('.agent-send.agent-steer').disabled === true"));
+const steerText = "actually, make it a low angle";
+await setValue(".agent-input", steerText);
+await clickWhenEnabled(".agent-send.agent-steer");
+expect("the steer reaches the turn that is still running", await waitFor(`(() => { try { return JSON.parse(localStorage.getItem('cozyclay.mock.agent.last-steer'))?.text === ${JSON.stringify(steerText)}; } catch { return false; } })()`, 15000),
+	await evaluate("localStorage.getItem('cozyclay.mock.agent.last-steer')"));
+expect("an accepted steer joins the transcript and empties the composer", await waitFor("document.querySelectorAll('.agent-row.user').length === 2 && document.querySelector('.agent-input').value === ''", 8000),
+	await evaluate("document.querySelectorAll('.agent-row.user').length + ' rows'"));
+expect("the turn is still streaming after the steer", await evaluate("document.querySelector('.agent-panel')?.dataset.agentState === 'streaming'"));
+shots.push(await shot("panel-steer"));
+
+// Failure probe: the scripted turn holds its stream open for a moment after the
+// last frame, exactly as the sidecar does while it closes the turn out. A steer
+// inside that window is the 409 the route answers, and the panel has to say so
+// instead of eating the text.
+// The probe starts at the last visible frame of the turn and keeps offering the
+// same text until either the turn takes it or the panel stops streaming, so it
+// is bounded by the turn itself rather than by a sleep.
+await waitFor("!!document.querySelector('.agent-image-card')", 30000);
+let steerNotice = "";
+for (let attempt = 0; attempt < 1000; attempt += 1) {
+	const probe = await evaluate("(() => { const notice = document.querySelector('.agent-steer-notice')?.textContent || ''; const button = document.querySelector('.agent-send.agent-steer'); const input = document.querySelector('.agent-input'); if (!notice && button && input && input.value !== 'too late') { Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set.call(input, 'too late'); input.dispatchEvent(new Event('input', { bubbles: true })); } return { notice, steerable: !!button }; })()");
+	steerNotice = probe.notice;
+	if (steerNotice || !probe.steerable) break;
+	await evaluate("document.querySelector('.agent-send.agent-steer:not([disabled])')?.click()");
+}
+steerNotice = steerNotice || await evaluate("document.querySelector('.agent-steer-notice')?.textContent || ''");
+expect("a steer the turn can no longer take reports the 409 instead of vanishing", /already ended/.test(steerNotice), steerNotice);
+expect("the refused text is still in the composer", await evaluate("document.querySelector('.agent-input')?.value === 'too late'"),
+	await evaluate("document.querySelector('.agent-input')?.value"));
+shots.push(await shot("panel-steer-refused"));
+await waitFor("!document.querySelector('.agent-send.stop')", 20000);
+
 /* ============================ Studio surface (#350) ====================== */
 
 // One component, two presentations. Everything below is asserted on the
@@ -417,10 +528,16 @@ if (await evaluate("document.querySelector('.studio-agent-inspector')?.hidden !=
 	await evaluate("document.querySelector('.view-menu-trigger').click()");
 }
 expect("reload restores the Studio thread", await waitFor(`document.querySelectorAll('.studio-agent-inspector .agent-row').length >= 4 && localStorage.getItem('cozyclay.agent.session.studio') === ${JSON.stringify(firstStudioSession)}`, 20000));
+// A Studio turn describes the scene from the live editor, so the reloaded tab
+// has to own a live workspace again before it can send anything at all.
+if (!await waitFor("!!document.querySelector('.live-workspace-handle')", 30000)) throw new Error("no live editor after the reload");
 const followup = "Continue this shot with a softer eyeline";
 await evaluate(`(() => { const t = document.querySelector('.studio-agent-inspector .agent-input'); const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set; setter.call(t, ${JSON.stringify(followup)}); t.dispatchEvent(new Event('input', { bubbles: true })); })()`);
-await evaluate("document.querySelector('.studio-agent-inspector .agent-send').click()");
-expect("the reloaded thread renders the follow-up", await waitFor("document.querySelectorAll('.studio-agent-inspector .agent-row.user').length >= 2", 20000));
+// The reloaded panel enables Send only once the store holds the draft; clicking
+// before that lands on a disabled button and the follow-up is never sent.
+await clickWhenEnabled(".studio-agent-inspector .agent-send:not(.stop)");
+expect("the reloaded thread renders the follow-up", await waitFor("document.querySelectorAll('.studio-agent-inspector .agent-row.user').length >= 2", 20000),
+	await evaluate("document.querySelector('.studio-agent-inspector .agent-failure-message')?.textContent || document.querySelector('.studio-agent-inspector .agent-activity-text')?.textContent || ''"));
 expect("the reloaded thread sends a follow-up on the same session", await waitFor(`localStorage.getItem('cozyclay.mock.agent.last-turn-session') === ${JSON.stringify(firstStudioSession)} && !document.querySelector('.studio-agent-inspector .agent-send.stop')`, 20000));
 await evaluate("document.querySelector('.studio-agent-inspector').scrollIntoView({ block: 'start' }); document.querySelector('.studio-agent-inspector .agent-transcript').scrollTop = document.querySelector('.studio-agent-inspector .agent-transcript').scrollHeight");
 shots.push(await shot("resume-after-reload"));

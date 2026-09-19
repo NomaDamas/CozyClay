@@ -625,6 +625,64 @@ if (runs("failed-action-and-reconnect")) {
 		expect("the job card follows the failure", items(store, "job")[0]?.state === "failed", String(items(store, "job")[0]?.state));
 	});
 
+	await group("a refused steer keeps the draft (#379)", async () => {
+		const refusal = (code, message) => ({
+			ok: false,
+			status: 409,
+			json: async () => ({ error: { code, message } }),
+			clone: () => ({ json: async () => ({ error: { code, message } }) }),
+		});
+		const held = heldSseBody([frame({ type: "text.delta", text: "Framing the shot." })]);
+		const sidecar = fakeSidecar({
+			"/agent/turn$": () => ({ ok: true, status: 200, body: held.body }),
+			"/steer$": () => refusal("NO_ACTIVE_TURN", "409 \u2014 This turn already ended."),
+			"/agent/stop$": () => jsonResponse({ ok: true }),
+		});
+		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 });
+		const store = createAgentChatStore({ transport, surface: "workflow" });
+		const turn = store.send("block the two-shot", { model: "anthropic/claude" });
+		await settled(store, (state) => state.items.some((item) => item.kind === "assistant"));
+		store.setDraft("actually, make it wider");
+		const result = await store.steer(store.getState().draft);
+		expect("the refusal is reported by the code the sidecar answered with", result.ok === false && result.code === "NO_ACTIVE_TURN", JSON.stringify(result));
+		expect("the refusal explains itself in the panel's own words", result.message === client.STEER_ERROR_COPY.NO_ACTIVE_TURN, result.message);
+		expect("a refused steer leaves the draft exactly where it was", store.getState().draft === "actually, make it wider", store.getState().draft);
+		expect("a refused steer adds nothing to the transcript", store.getState().items.filter((item) => item.kind === "user").length === 1);
+		store.stop();
+		held.release();
+		await turn.catch(() => {});
+
+		// The Studio envelope cannot be steered at all: the sidecar answers 409
+		// STEER_UNSUPPORTED and the panel says so instead of eating the text.
+		const studioHeld = heldSseBody([frame({ type: "text.delta", text: "Reading the scene." })]);
+		const studioSidecar = fakeSidecar({
+			"/agent/turn$": () => ({ ok: true, status: 200, body: studioHeld.body }),
+			"/steer$": () => refusal("STEER_UNSUPPORTED", "409 \u2014 Steering a Studio turn is not supported."),
+			"/agent/stop$": () => jsonResponse({ ok: true }),
+		});
+		const studioStore = createAgentChatStore({
+			transport: createHttpTransport({ fetchImpl: studioSidecar.fetchImpl, surface: "studio", capture: () => {}, now: () => 0 }),
+			surface: "studio",
+			buildContext: () => studioContext(),
+		});
+		const studioTurn = studioStore.send("frame the shot", {});
+		await settled(studioStore, (state) => state.items.some((item) => item.kind === "assistant"));
+		const studioResult = await studioStore.steer("nudge it left");
+		expect("a Studio steer is refused as unsupported, not silently dropped", studioResult.ok === false && studioResult.code === "STEER_UNSUPPORTED"
+			&& studioResult.message === client.STEER_ERROR_COPY.STEER_UNSUPPORTED, JSON.stringify(studioResult));
+		studioStore.stop();
+		studioHeld.release();
+		await studioTurn.catch(() => {});
+	});
+
+	await group("the composer states what the button will do (#379)", () => {
+		expect("Send is the idle label", /className="agent-send" disabled=\{composerDisabled \|\| !draft\.trim\(\)\}[\s\S]{0,80}>Send</.test(panelSource));
+		expect("a running turn keeps Stop and adds Steer where steering is supported", /\{streaming[\s\S]{0,200}agent-send stop agent-stop"[\s\S]{0,40}>Stop<[\s\S]{0,120}presentation\.steer && <button[\s\S]{0,160}agent-steer"[\s\S]{0,80}>Steer</.test(panelSource));
+		expect("Steer is disabled without something to say", /agent-steer" disabled=\{!draft\.trim\(\)\}/.test(panelSource));
+		expect("the refusal is shown to the author, not swallowed", panelSource.includes("setSteerNotice(result.message") && panelSource.includes('className="agent-toast alert agent-steer-notice"'));
+		expect("the Studio surface never renders Steer", panelSource.includes("presentation.steer &&"));
+	});
+
 	await group("hidden embedded chat keeps state and refuses focus", () => {
 		expect("the hidden panel keeps its draft and transcript mounted", /hidden=\{/.test(panelSource) && !/if \(hidden\) return null/.test(panelSource));
 		expect("focus never moves to a hidden composer, and leaves one that is hidden", /if \(hidden\) \{[\s\S]{0,320}composerRef\.current\.blur\(\);[\s\S]{0,40}return;\s*\}\s*\n\s*if \(!collapsed\) composerRef\.current\?\.focus\(\)/.test(panelSource));
