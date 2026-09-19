@@ -5932,10 +5932,6 @@ export default function App() {
 	}
 
 	function markFalPose(slot) {
-		if (!falMotionEnabled) {
-			setFalMotion((current) => ({ ...current, error: ko("Fal 모션 생성은 QA 중 잠겨 있어요.", "Fal motion generation is locked during QA."), status: "error" }));
-			return;
-		}
 		try {
 			if (slot === "b" && falMotion.a && framingDistance(falMotion.a.framing, captureCurrentFraming()) > 0.001) {
 				throw new Error(ko("A와 B 사이에서 카메라가 이동했어요. 같은 카메라 프레이밍으로 다시 캡처하세요.", "The camera moved between A and B. Capture both refs with the same camera framing."));
@@ -13087,8 +13083,8 @@ function resizePromptClip(id, edge, rawFrame) {
 						<p className="inspector-hint fal-motion-ratio">{ko("참조 캡처 16:9 · 1920×1080 → H3 480P 832×480 · 현재 샷 비율과 무관하게 이 규격으로 캡처합니다.", "Reference capture 16:9 · 1920×1080 → H3 480P 832×480 · this capture size is fixed for the motion request.")}</p>
 						<p className={"inspector-hint fal-motion-segmentation" + (falMotionSegmentationReady ? " ready" : "")}>{falMotionSegmentationReady ? ko("색 세그멘테이션 평면 모드 ON · A/B 캡처 가능", "Flat body-part segmentation ON · A/B capture ready") : ko("A/B ref 전에는 View → 부위 색상 → 평면을 켜세요. 카메라 이동도 자동 차단합니다.", "Before A/B refs, enable View → Body part colours → Flat. Camera movement is blocked automatically.")}</p>
 						<div className="fal-motion-pose-row">
-							<button type="button" className={falMotion.a ? "btn active" : "btn"} disabled={!falMotionEnabled || !falMotionSegmentationReady} onClick={() => markFalPose("a")}>{falMotion.a ? "A ✓" : "Mark A"}</button>
-							<button type="button" className={falMotion.b ? "btn active" : "btn"} disabled={!falMotionEnabled || !falMotionSegmentationReady} onClick={() => markFalPose("b")}>{falMotion.b ? "B ✓" : "Mark B"}</button>
+							<button type="button" className={falMotion.a ? "btn active" : "btn"} disabled={!falMotionSegmentationReady} onClick={() => markFalPose("a")}>{falMotion.a ? "A ✓" : "Mark A"}</button>
+							<button type="button" className={falMotion.b ? "btn active" : "btn"} disabled={!falMotionSegmentationReady} onClick={() => markFalPose("b")}>{falMotion.b ? "B ✓" : "Mark B"}</button>
 							{(falMotion.a || falMotion.b) && <button type="button" className="btn ghost" onClick={clearFalMotion}>{ko("초기화", "Clear")}</button>}
 						</div>
 						<div className="fal-motion-thumbs" aria-label={ko("Fal motion reference poses", "Fal motion reference poses")}>
