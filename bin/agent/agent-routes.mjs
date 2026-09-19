@@ -353,6 +353,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		void ownedStudioRuntime?.dispose?.(); ownedStudioRuntime = studioRuntime || null;
 		for (const runner of [...workflowRunners.values(), ...studioRunners.values()]) void runner.close?.();
 		workflowRunners.clear(); studioRunners.clear();
+		workflowModels = models;
 		sessions.clear(); studioSessions.clear(); studioEvents.clear(); studioOwnerTokens.clear();
 	});
 

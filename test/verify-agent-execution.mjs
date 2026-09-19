@@ -364,4 +364,42 @@ for (const explicit of [true, false]) {
 	} finally { await handler.close(); await close(sidecar); await close(fixture); }
 }
 
+// #379 / 16m: identity changes retire the handler's catalogue registry too.
+{
+	let identity = "a";
+	let onAuthChange;
+	const calls = [];
+	const token = () => `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: identity } })).toString("base64url")}.e30`;
+	const auth = {
+		getAccessToken: async () => identity ? token() : null,
+		readStored: () => identity ? ({ access_token: token(), refresh_token: "fixture-refresh", expires_at: Date.now() + 3600000 }) : undefined,
+		status: () => ({ signedIn: !!identity }),
+		onAuthChange: callback => { onAuthChange = callback; return () => {}; },
+	};
+	const codex = { listModels: async () => { calls.push(identity); return [{ slug: `gpt-16m-${identity}`, supported_reasoning_levels: ["medium"] }]; } };
+	const handler = createAgentHandler({ auth, codex, handlers: [], liveHub: {} });
+	const server = createServer((req, res) => handler(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const origin = await listen(server);
+	const getModels = async () => {
+		const response = await fetch(`${origin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+		return { status: response.status, models: (await response.json()).models.filter(model => model.id.includes("gpt-16m")).map(model => model.id) };
+	};
+	try {
+		const accountA = await getModels();
+		assert.deepEqual(accountA.models, ["openai-codex/gpt-16m-a"]);
+		assert.deepEqual(calls, ["a"]);
+		identity = null;
+		onAuthChange({ kind: "signed_out" });
+		const signedOut = await getModels();
+		assert.deepEqual(signedOut.models, [], "sign-out drops the previous account's live-only model");
+		assert.deepEqual(calls, ["a"], "sign-out does not fetch a catalogue");
+		identity = "b";
+		onAuthChange({ kind: "replaced" });
+		const accountB = await getModels();
+		assert.deepEqual(accountB.models, ["openai-codex/gpt-16m-b"], "account replacement rebuilds the live catalogue registry");
+		assert.deepEqual(calls, ["a", "b"], "account replacement fetches exactly the new account's catalogue");
+		console.log("PASS 16m: identity changes rebuild the handler's catalogue registry");
+	} finally { await handler.close(); await close(server); }
+}
+
 console.log("PASS Agent execution: browser ownership, refusal, failure, cancellation, retry, frame validation/dedupe, applied ack and fake-model HTTP/SSE");
