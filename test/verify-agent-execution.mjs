@@ -3,6 +3,7 @@ import { EventEmitter, once } from "node:events";
 import { createServer } from "node:http";
 import { zstdDecompressSync } from "node:zlib";
 import { mkdtempSync } from "node:fs";
+import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
@@ -471,6 +472,97 @@ for (const count of [2, 5]) {
 		}
 	} finally { assert.equal(PROVIDERS.pop(), unavailable); await injected.close(); await close(injectedServer); }
 	console.log("PASS 16z: failed construction retries and injected registries are never rebuilt");
+}
+
+// #379 / 16z: replace identity while ensureWorkflowModels is still awaiting
+// construction, not merely while the later catalogue fetch is pending. This
+// wrapper builds real registries and delays only the first build's return.
+{
+	const providersUrl = new URL("../bin/agent/providers.mjs", import.meta.url).href;
+	const handlerUrl = new URL("../bin/agent/agent-routes.mjs?16z-identity-inflight", import.meta.url).href;
+	const gatedUrl = `data:text/javascript,${encodeURIComponent(`
+		import { EventEmitter } from "node:events";
+		import { createModels as build } from ${JSON.stringify(providersUrl)};
+		export * from ${JSON.stringify(providersUrl)};
+		export const events = new EventEmitter();
+		export const release = Promise.withResolvers();
+		export const accounts = [], order = [];
+		export async function createModels(options) {
+			const account = options.auth.getAccountId();
+			accounts.push(account);
+			order.push("build-started:" + account);
+			const registry = await build(options);
+			if (accounts.length === 1) {
+				events.emit("held");
+				await release.promise;
+			}
+			order.push("build-settled:" + account);
+			return registry;
+		}
+	`)}`;
+	const gate = await import(gatedUrl);
+	const held = bounded(gate.events, "held");
+	const hooks = registerHooks({ resolve(specifier, context, nextResolve) {
+		return nextResolve(context.parentURL === handlerUrl && specifier === "./providers.mjs" ? gatedUrl : specifier, context);
+	} });
+	const { createAgentHandler: createGatedHandler } = await import(handlerUrl);
+	let identity = "a", onAuthChange, catalogueCalls = 0;
+	const token = () => `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: identity } })).toString("base64url")}.e30`;
+	const auth = {
+		getAccountId: () => identity,
+		getAccessToken: async () => token(),
+		readStored: () => ({ access_token: token(), refresh_token: "16z-inflight-refresh", expires_at: Date.now() + 3600000 }),
+		status: () => ({ signedIn: true }),
+		onAuthChange: callback => { onAuthChange = callback; return () => {}; },
+	};
+	const codex = {
+		// Deliberately distinct live catalogues for the old and new builds make
+		// adopting the retired registry observable, even after its caller ends.
+		listModels: async () => [{ slug: `gpt-16z-inflight-${gate.accounts[catalogueCalls++]}`, supported_reasoning_levels: ["medium"] }],
+		parseQuotaHeaders: () => ({ primary: {}, credits: {} }),
+	};
+	const received = [];
+	const fixture = createServer(async (req, res) => {
+		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+		const encoded = Buffer.concat(chunks);
+		const body = JSON.parse(req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded);
+		received.push({ path: req.url, model: body.model });
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(encode({ type: "response.completed", response: { status: "completed" } }));
+	});
+	const fixtureUrl = await listen(fixture);
+	const handler = createGatedHandler({ auth, codex, codexBaseUrl: fixtureUrl, handlers: [], liveHub: {} });
+	const server = createServer((req, res) => handler(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const origin = await listen(server);
+	const getModels = async () => {
+		const response = await fetch(`${origin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+		assert.equal(response.status, 200);
+		return (await response.json()).models.filter(model => model.id.includes("gpt-16z-inflight")).map(model => model.id);
+	};
+	try {
+		const staleCaller = getModels();
+		await held;
+		assert.deepEqual(gate.order, ["build-started:a"], "the first createModels promise has not settled");
+		assert.equal(catalogueCalls, 0, "the old request is still in construction, before discovery");
+		identity = "b";
+		onAuthChange({ kind: "replaced" });
+		gate.order.push("replaced:b");
+		gate.release.resolve();
+		assert.deepEqual(await staleCaller, ["openai-codex/gpt-16z-inflight-a"], "the already admitted caller may finish with its retired registry");
+		assert.deepEqual(await getModels(), ["openai-codex/gpt-16z-inflight-b"], "a stale completion must not poison the next listing");
+		assert.deepEqual(await getModels(), ["openai-codex/gpt-16z-inflight-b"]);
+		assert.deepEqual(gate.accounts, ["a", "b"], "replacement causes exactly one new registry build");
+		assert.equal(catalogueCalls, 2, "each identity's registry discovers its own catalogue once");
+		assert.deepEqual(gate.order, ["build-started:a", "replaced:b", "build-settled:a", "build-started:b", "build-settled:b"]);
+		const response = await fetch(`${origin}/agent/turn`, { method: "POST", body: JSON.stringify({ sessionId: "16z-inflight", text: "hello", model: "openai-codex/gpt-16z-inflight-b" }), signal: AbortSignal.timeout(8000) });
+		assert.equal(response.status, 200);
+		const frames = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+		assert.equal(frames.some(frame => frame.type === "error"), false);
+		assert.equal(frames.at(-1)?.type, "done");
+		assert.deepEqual(received, [{ path: "/codex/responses", model: "gpt-16z-inflight-b" }]);
+		assert.deepEqual(gate.accounts, ["a", "b"], "execution reuses the replacement registry");
+		console.log(`PASS 16z identity in flight: ${gate.order.join(" -> ")}; stale caller=a, later listings/turn=b, builds=2, catalogues=2`);
+	} finally { gate.release.resolve(); hooks.deregister(); await handler.close(); await close(server); await close(fixture); }
 }
 
 // #379 / 16m: identity changes retire the handler's catalogue registry too.
