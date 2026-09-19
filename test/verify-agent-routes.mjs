@@ -1089,3 +1089,76 @@ server.close();
 	studioAttachServer.close();
 	console.log("PASS 16i: a Studio turn with an attachment and no frameObservation restores its prompt text and attachment name");
 }
+
+// #379 / 16m (F2 pass 6 finding 2): signed_out/replaced must retire the
+// cached workflowRunner, not just abort the route session, because the
+// runner's tools (e.g. the attach-frame capture) close over the FIRST
+// turn's session/signal. A later turn reusing the same sessionId must build
+// a fresh runner instead of running tools bound to the retired session.
+for (const kind of ["replaced", "signed_out", "rotated"]) {
+	const scratch16m = mkdtempSync(join(tmpdir(), `cozyclay-agent-16m-${kind}-`));
+	const previousAuthFile16m = process.env.COZYCLAY_CODEX_AUTH_FILE;
+	process.env.COZYCLAY_CODEX_AUTH_FILE = join(scratch16m, "codex-auth.json");
+	let realAuth16m;
+	try {
+		realAuth16m = await import(`../bin/codex-auth.mjs?16m=${kind}`);
+	} finally {
+		if (previousAuthFile16m === undefined) delete process.env.COZYCLAY_CODEX_AUTH_FILE;
+		else process.env.COZYCLAY_CODEX_AUTH_FILE = previousAuthFile16m;
+	}
+	const tokenFor16m = accountId => `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } })).toString("base64url")}.e30`;
+	realAuth16m.writeStored({ access_token: "16m-old-access", refresh_token: "16m-refresh", expires_at: Date.now() + 3600000, id_token: tokenFor16m("16m-account-a") });
+	const { createSessionStore: createSessionStore16m } = await import("../bin/agent/session-store.mjs");
+	const faux16m = createFakeModel();
+	faux16m.script(["first turn ok"]);
+	let captures16m = 0;
+	const sessions16m = createSessionStore16m(join(scratch16m, "sessions"));
+	const handler16m = createAgentHandler({
+		auth: realAuth16m, models: faux16m.models, fauxProvider: faux16m.fauxProvider, sessionStore: sessions16m,
+		liveHub: { command: async name => { assert.equal(name, "capture_framing_png"); captures16m++; return { dataUrl: png, width: 1, height: 1 }; } },
+		port: () => server16m.address().port,
+	});
+	const server16m = createServer((req, res) => handler16m(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const listening16m = once(server16m, "listening", { signal: AbortSignal.timeout(5000) });
+	server16m.listen(0, "127.0.0.1");
+	await listening16m;
+	const origin16m = `http://127.0.0.1:${server16m.address().port}`;
+	const sessionId16m = `16m-${kind}`;
+	const turn16m = async (attachFrame, text) => {
+		const response = await fetch(`${origin16m}/agent/turn`, { method: "POST", headers: { origin: origin16m, "content-type": "application/json" }, body: JSON.stringify({ sessionId: sessionId16m, text, model: "faux/scripted", attachFrame }), signal: AbortSignal.timeout(10000) });
+		assert.equal(response.status, 200);
+		return [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+	};
+	try {
+		const first16m = await turn16m(false, "before identity change");
+		assert.equal(first16m.some(frame => frame.type === "error"), false, `${kind}: first turn has no error`);
+		if (kind === "rotated") realAuth16m.writeStored({ access_token: "16m-new-access", refresh_token: "16m-refresh", expires_at: Date.now() + 3600000, id_token: tokenFor16m("16m-account-a") });
+		else if (kind === "replaced") realAuth16m.writeStored({ access_token: "16m-new-access", refresh_token: "16m-refresh", expires_at: Date.now() + 3600000, id_token: tokenFor16m("16m-account-b") });
+		else realAuth16m.logout();
+		faux16m.script(["second turn ok"]);
+		const second16m = await turn16m(true, "after identity change");
+		if (kind === "rotated") {
+			assert.equal(captures16m, 1, `${kind}: rotation reuses the runner, so the capture tool still runs`);
+			assert.equal(second16m.some(frame => frame.type === "error"), false, `${kind}: rotation must not invalidate the runner`);
+			assert.equal(second16m.filter(frame => frame.type === "text.delta").map(frame => frame.text).join(""), "second turn ok", `${kind}: the reused runner ran the second script`);
+		} else if (kind === "replaced") {
+			assert.equal(captures16m, 1, `${kind}: the fresh runner's capture tool still ran exactly once`);
+			assert.equal(second16m.some(frame => frame.type === "error"), false, `${kind}: a fresh post-identity-change turn must not retain the retired runner's aborted capture tool`);
+			assert.equal(second16m.filter(frame => frame.type === "text.delta").map(frame => frame.text).join(""), "second turn ok", `${kind}: the fresh runner ran the second script instead of failing on the stale session`);
+			assert.equal(second16m.some(frame => frame.type === "tool.done" && frame.ok === false), false, `${kind}: no tool.done{ok:false} from a stale capture`);
+		} else {
+			// signed_out with no other credential correctly refuses the second turn
+			// with 401 before any tool runs; the fix under test is that this 401
+			// comes from hasAnyCredential(), never from a tool.done{ok:false} on a
+			// runner whose tools still close over the retired signed-out session.
+			assert.equal(captures16m, 0, `${kind}: no credential means the turn never reaches the capture tool`);
+			assert.equal(second16m.some(frame => frame.type === "tool.done" && frame.ok === false), false, `${kind}: no stale tool.done{ok:false} from a retired runner`);
+			assert.equal(second16m.some(frame => frame.type === "error" && frame.status === 401), true, `${kind}: the second turn is refused for lack of credential, not a stale-session abort`);
+		}
+		console.log(`PASS 16m ${kind}: ${kind === "rotated" ? "the runner is reused with no invalidation" : "the cached runner is retired so the next turn builds a fresh one"}`);
+	} finally {
+		await handler16m.close();
+		await new Promise(resolve => server16m.close(resolve));
+		rmSync(scratch16m, { recursive: true, force: true });
+	}
+}

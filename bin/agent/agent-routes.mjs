@@ -351,6 +351,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		for (const session of sessions.values()) session.controller?.abort();
 		for (const session of studioSessions.values()) session.controller?.abort();
 		void ownedStudioRuntime?.dispose?.(); ownedStudioRuntime = studioRuntime || null;
+		for (const runner of [...workflowRunners.values(), ...studioRunners.values()]) void runner.close?.();
+		workflowRunners.clear(); studioRunners.clear();
 		sessions.clear(); studioSessions.clear(); studioEvents.clear(); studioOwnerTokens.clear();
 	});
 
