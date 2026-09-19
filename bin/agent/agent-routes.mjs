@@ -4,7 +4,7 @@ import { basename } from "node:path";
 import * as defaultAuth from "../codex-auth.mjs";
 import { publishLiveEndpoint, removeLiveEndpoint } from "../live-endpoint.mjs";
 import { createCodexClient } from "./codex-client.mjs";
-import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace, summariseCanvasResult } from "./agent-tools.mjs";
+import { createAgentTools, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mjs";
 
 import { createVideoAdapters } from "./video-adapters.mjs";
 import { createSessionStore, transcriptFromHistory } from "./session-store.mjs";
@@ -261,7 +261,7 @@ function liveToolsRuntime() {
 	}).catch((error) => ({ error }));
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, fauxProvider, handlers, liveHub, port, getBridgeOrigin, retryDelayMs = 2000, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
+export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, fauxProvider, handlers, liveHub, port, getBridgeOrigin, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();

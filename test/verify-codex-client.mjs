@@ -56,6 +56,7 @@ function client(fetch, sleep) {
 {
 	const fetch = mockFetch([() => jsonResponse({ data: [{ b64_json: PNG_1X1_BASE64 }] })]);
 	const result = await client(fetch).generateImage({ prompt: "a clay cat", quality: "high" });
+	assert.equal(fetch.calls[0].url, "https://chatgpt.com/backend-api/codex/images/generations");
 	assert.deepEqual(fetch.calls[0].body, { model: "gpt-image-2", prompt: "a clay cat", quality: "high" });
 	assert.equal(result.width, 1);
 	assert.equal(result.height, 1);
@@ -68,6 +69,7 @@ function client(fetch, sleep) {
 	const models = await client(fetch).listModels();
 	assert.equal(fetch.calls[0].url, "https://chatgpt.com/backend-api/codex/models?client_version=0.153.4");
 	assert.equal(fetch.calls[0].method, "GET");
+	assert.equal(fetch.calls[0].headers.authorization, "Bearer tok-123");
 	assert.equal(models.data[0].slug, "gpt-5.1-codex");
 	pass("listModels sends the catalog request");
 }
@@ -93,6 +95,7 @@ function client(fetch, sleep) {
 	assert.deepEqual(quota.secondary, { usedPercent: 7, windowMinutes: 10080, resetAfterSeconds: 600000, resetAt: "2026-09-13T00:00:00Z" });
 	assert.deepEqual(quota.credits, { balance: 12.5, hasCredits: true, unlimited: false });
 	const empty = client(async () => { throw new Error("no network"); }).parseQuotaHeaders({});
+	assert.equal(empty.planType, undefined);
 	assert.equal(empty.primary.usedPercent, undefined);
 	assert.equal(empty.credits.hasCredits, false);
 	pass("parseQuotaHeaders converts quota numbers and booleans");
