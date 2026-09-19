@@ -221,11 +221,23 @@ assert.equal(JSON.stringify(fauxMain.calls[0].messages).includes(png), false);
 	assert.equal(LiveHub.commandTimeoutMs("add_node"), DEFAULT_COMMAND_TIMEOUT_MS);
 	console.log("PASS run_workflow and capture_frame get long live command timeouts");
 }
-const forbidden = await fetch(`http://127.0.0.1:${port}/agent/models`, { headers: { origin: "http://evil.example" } });
+// #379 / 16p: /agent/models must answer from the handler's OWN injected
+// `models` registry (proven separately below); `handler`/`port` above inject
+// `models: fauxMain.models` for turn execution, which is a bare pi registry
+// with only the faux provider set up (no real provider catalogs), so the
+// real-catalog assertions in this block need a handler with NO `models`
+// option, exercising the real-registry fallback in `listAgentModels`
+// (`models ?? await createModels(...)`) exactly as the live sidecar runs it.
+const realCatalogHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, liveHub: fakeLive, port: () => realCatalogServer.address().port });
+const realCatalogServer = createServer((req, res) => realCatalogHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+realCatalogServer.listen(0, "127.0.0.1");
+await once(realCatalogServer, "listening");
+const realCatalogPort = realCatalogServer.address().port;
+const forbidden = await fetch(`http://127.0.0.1:${realCatalogPort}/agent/models`, { headers: { origin: "http://evil.example" } });
 assert.equal(forbidden.status, 403);
-assert.equal((await fetch(`http://127.0.0.1:${port}/agent/models`)).status, 200);
-const models = await fetch(`http://127.0.0.1:${port}/agent/models`).then((r) => r.json());
-{
+assert.equal((await fetch(`http://127.0.0.1:${realCatalogPort}/agent/models`)).status, 200);
+const models = await fetch(`http://127.0.0.1:${realCatalogPort}/agent/models`).then((r) => r.json());
+try {
 	// #379: /agent/models is grouped by provider, each with its pi-derived sign-in
 	// state and its chat models shaped for the panel. This handler's own auth
 	// double (getAccessToken only, no readStored/status) leaves every provider
@@ -244,6 +256,9 @@ const models = await fetch(`http://127.0.0.1:${port}/agent/models`).then((r) => 
 	assert.equal(astra.defaultEffort, "medium", "medium is the default whenever a model supports it");
 	assert.ok(!astra.efforts.includes("ultra"), "ultra is never an advertised effort \u2014 it is only ever an accepted, clamped input");
 	console.log("PASS models grouped by provider");
+} finally {
+	await realCatalogHandler.close();
+	await new Promise((resolve) => realCatalogServer.close(resolve));
 }
 {
 	// Sign-in state and the codex live-catalog merge, exercised directly against
@@ -1160,5 +1175,60 @@ for (const kind of ["replaced", "signed_out", "rotated"]) {
 		await handler16m.close();
 		await new Promise(resolve => server16m.close(resolve));
 		rmSync(scratch16m, { recursive: true, force: true });
+	}
+}
+
+// #379 / 16p (discovered by 16o): GET /agent/models must answer from the
+// handler's own injected `models` registry, exactly like the turn routes
+// (:509/:773) already do, instead of always building a fresh real registry.
+// A test double whose `anthropic` catalog carries one deliberately
+// unmistakable model id proves which registry answered: the real registry
+// (built with no credentials configured here) never has this id under any
+// provider, so its presence in the response can only come from the injected
+// double.
+{
+	const injected16p = {
+		getModels: (providerId) => (providerId === "anthropic" ? [{ id: "16p-test-double-model", name: "16p Test Double", input: ["text", "image"] }] : []),
+		getAuth: async (providerId) => (providerId === "anthropic" ? { auth: {}, source: "16p-double" } : undefined),
+	};
+	const handler16p = createAgentHandler({ auth: { getAccessToken: async () => null }, codex: { listModels: async () => [] }, models: injected16p, liveHub: fakeLive, port: () => server16p.address().port });
+	const server16p = createServer((req, res) => handler16p(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const listening16p = once(server16p, "listening", { signal: AbortSignal.timeout(5000) });
+	server16p.listen(0, "127.0.0.1");
+	await listening16p;
+	const origin16p = `http://127.0.0.1:${server16p.address().port}`;
+	try {
+		const result16p = await fetch(`${origin16p}/agent/models`, { headers: { origin: origin16p } }).then((r) => r.json());
+		assert.ok(result16p.models.some((model) => model.id === "anthropic/16p-test-double-model"), "GET /agent/models must answer from the handler's own injected `models` registry (createAgentHandler :264), the same one the turn routes already use (:509/:773), not always build a fresh real registry from credentials this handler was never given");
+		const anthropicProvider16p = result16p.providers.find((provider) => provider.id === "anthropic");
+		assert.equal(anthropicProvider16p?.signedIn, true, "the injected registry's getAuth result decides signedIn, not a freshly built registry with no credentials");
+		console.log("PASS 16p: /agent/models serves the handler's injected model registry");
+	} finally {
+		await handler16p.close();
+		await new Promise((resolve) => server16p.close(resolve));
+	}
+}
+
+// The no-`models` path (the real sidecar's shape) must be unaffected: with no
+// injected registry, listAgentModels still builds a real one from credentials
+// (already covered above by the `port`/`models` server's provider assertions);
+// this just pins that omitting `models` from createAgentHandler still reaches
+// GET /agent/models successfully rather than throwing on an undefined registry.
+{
+	const noModelsHandler16p = createAgentHandler({ auth: { getAccessToken: async () => null }, codex: { listModels: async () => [] }, liveHub: fakeLive, port: () => noModelsServer16p.address().port });
+	const noModelsServer16p = createServer((req, res) => noModelsHandler16p(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const listeningNoModels16p = once(noModelsServer16p, "listening", { signal: AbortSignal.timeout(5000) });
+	noModelsServer16p.listen(0, "127.0.0.1");
+	await listeningNoModels16p;
+	const originNoModels16p = `http://127.0.0.1:${noModelsServer16p.address().port}`;
+	try {
+		const responseNoModels16p = await fetch(`${originNoModels16p}/agent/models`, { headers: { origin: originNoModels16p } });
+		assert.equal(responseNoModels16p.status, 200, "omitting `models` from createAgentHandler still builds a real registry and answers 200");
+		const resultNoModels16p = await responseNoModels16p.json();
+		assert.equal(resultNoModels16p.providers.length, 5, "the real-registry path (no injected `models`) is unchanged: all five providers are still listed");
+		console.log("PASS 16p: the real-registry path (no injected `models`) is unchanged");
+	} finally {
+		await noModelsHandler16p.close();
+		await new Promise((resolve) => noModelsServer16p.close(resolve));
 	}
 }
