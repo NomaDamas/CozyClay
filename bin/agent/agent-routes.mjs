@@ -432,7 +432,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			studioOwner(req, value.sessionId, true);
 			let persisted = null;
 			try { persisted = sessionStore.read(value.sessionId); } catch { persisted = null; }
-			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, activeJobTurnId: null, motionJobIds: new Set(), generationPrompt: null, host: null, updatedAt: clock() };
+			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, activeJobTurnId: null, motionJobIds: new Set(Array.isArray(persisted?.meta?.motionJobIds) ? persisted.meta.motionJobIds.filter(id => typeof id === "string") : []), generationPrompt: null, host: null, updatedAt: clock() };
 			studioSessions.set(value.sessionId, session);
 		}
 		session.updatedAt = clock();
@@ -473,7 +473,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			if (!character) throw new StudioProtocolError("TARGET_NOT_READY", "The admitted character is unavailable.");
 			const commandId = randomUUID(); const host = { ...value.context.host, workspaceHandle: value.context.host.workspaceHandle };
 			const admissionResult = runtimeForJob.admit({ hostBinding: host, characterId: args.characterId, targetToken: character.token, turnId: value.turnId, commandId, authorization: { id: randomUUID(), generations: 1 }, source: args.source, repair: args.repair ?? "bounded" });
-			session.motionJobIds.add(admissionResult.jobId); session.activeJobId = admissionResult.jobId; session.activeJobTurnId = value.turnId; session.generationPrompt = value.text;
+			session.motionJobIds.add(admissionResult.jobId); persistenceMeta.motionJobIds = [...session.motionJobIds]; session.activeJobId = admissionResult.jobId; session.activeJobTurnId = value.turnId; session.generationPrompt = value.text;
 			const unsubscribe = runtimeForJob.subscribe(admissionResult.jobId, event => send({ ...event, sourceEventSeq: event.eventSeq }));
 			// Subscription precedes start, including replay of the queued admission event.
 			let outcome;
@@ -536,6 +536,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			}
 			send(frame);
 		};
+		const persistenceMeta = { sceneName: value.context?.scene?.name ?? value.context?.sceneName ?? null, firstText: value.text, motionJobIds: [...session.motionJobIds] };
 		let runner = studioRunners.get(value.sessionId);
 		if (!runner) {
 			runner = createAgentRunner({ models, fauxProvider, sessionStore, clock, codexBaseUrl, auth });
@@ -547,7 +548,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
 				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
 				context: value.context, tools: modelTools, signal: controller.signal, emit: send,
-				meta: { sceneName: value.context?.scene?.name ?? value.context?.sceneName ?? null, firstText: value.text },
+				meta: persistenceMeta,
 				quotaEvent: headers => codex?.parseQuotaHeaders ? quotaEvent(codex, headers) : { type: "quota", plan: null, primary: { usedPercent: null, windowMinutes: null, resetAt: null }, credits: { has: null } },
 			})) emitFrame(frame);
 		} catch (error) {

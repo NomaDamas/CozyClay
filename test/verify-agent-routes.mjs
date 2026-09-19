@@ -513,10 +513,12 @@ server.close();
 			{ role: "toolResult", toolCallId: "call-1", toolName: "frame_shot", content: [{ type: "text", text: "ok" }], details: { receiptId: "receipt-9" }, isError: false },
 		];
 		const writer = createSessionStore(v2Dir);
-		writer.append("round-trip", messages, { surface: "studio" });
+		writer.append("round-trip", messages, { surface: "studio", motionJobIds: ["job-a", "job-a", 42] });
+		writer.append("round-trip", [], { motionJobIds: ["job-b", null, "job-a"] });
 		const reader = createSessionStore(v2Dir);
 		const read = reader.read("round-trip");
 		assert.deepEqual(read.history, messages, "a fresh store instance reads back exactly what was appended");
+		assert.deepEqual(read.meta.motionJobIds, ["job-a", "job-b"], "session metadata unions only deduped string motion job ids across appends");
 		const historyFile = readFileSync(join(v2Dir, "round-trip.jsonl"), "utf8");
 		const header = JSON.parse(historyFile.split("\n")[0]);
 		assert.deepEqual(header, { format: "cozyclay-agent-v2", version: 2, sessionId: "round-trip" }, "the file opens with the v2 header line");
@@ -1616,4 +1618,80 @@ await run16rTwoTurnScenario();
 		const bSecondFrames = frames16u(await bSecondText); assert.ok(bSecondFrames.some(frame => frame.type === "error" && frame.code === "aborted")); assert.equal(bSecondFrames.at(-1).type, "done");
 		console.log("PASS 16u: explicit Stop ids are session-admitted, own retired ids remain idempotent, and plain Stop stays loud");
 	} finally { await handler16u.close(); server16u.closeAllConnections(); await new Promise(resolve => server16u.close(resolve)); }
+}
+
+// #379 / 16u restore: admitted motion ownership is durable with the Studio
+// session. An accepted retired job remains stoppable after a fresh handler
+// restores the same JSONL/meta store, without gaining another session's job.
+{
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const { createSessionStore } = await import("../bin/agent/session-store.mjs");
+	const sessionStore16uRestore = createSessionStore(mkdtempSync(join(tmpdir(), "cozyclay-agent-16u-restore-")));
+	const stopCalls16uRestore = [];
+	const started16uRestore = Promise.withResolvers(), held16uRestore = Promise.withResolvers();
+	let admissions16uRestore = 0;
+	const motionRuntime16uRestore = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: ++admissions16uRestore === 1 ? "gate-owned" : "gate-other", commandId: `gate-command-${admissions16uRestore}`, state: "queued" }),
+		subscribe: () => () => {},
+		start: async () => { started16uRestore.resolve(); await held16uRestore.promise; return { ok: false, status: "review_required", code: "REVIEW_REQUIRED" }; },
+		accept: async () => ({ ok: true, status: "installed" }),
+		stop: async jobId => { stopCalls16uRestore.push(jobId); return { status: "installed", code: "ALREADY_INSTALLED", mutated: true }; },
+	};
+	const faux16uRestore = createFakeModel();
+	const hub16uRestore = { workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", command: async () => ({ ok: true }) };
+	const sessionId16uRestore = "00000000-0000-4000-8000-000000000171";
+	const initialTurn16uRestore = { ...envelopeFixture(), sessionId: sessionId16uRestore, turnId: "00000000-0000-4000-8000-000000000172", text: "generate motion" };
+	let handler16uRestore, server16uRestore;
+	const open16uRestore = async () => {
+		handler16uRestore = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: faux16uRestore.models, fauxProvider: faux16uRestore.fauxProvider, liveHub: hub16uRestore, studioRuntime: motionRuntime16uRestore, sessionStore: createSessionStore(sessionStore16uRestore.dir), port: () => server16uRestore.address().port });
+		server16uRestore = createServer((req, res) => handler16uRestore(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+		const listening = once(server16uRestore, "listening", { signal: AbortSignal.timeout(5000) });
+		server16uRestore.listen(0, "127.0.0.1"); await listening;
+		return `http://127.0.0.1:${server16uRestore.address().port}`;
+	};
+	const close16uRestore = async () => {
+		held16uRestore.resolve();
+		await bounded16q(handler16uRestore.close(), "restore handler close");
+		const closed = once(server16uRestore, "close", { signal: AbortSignal.timeout(5000) });
+		server16uRestore.close(); server16uRestore.closeAllConnections(); await closed;
+	};
+	const cookie16uRestore = response => response.headers.get("set-cookie")?.split(";")[0] || "";
+	try {
+		faux16uRestore.script([{ type: "toolCall", id: "gate-motion", name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } }, [{ type: "text", text: "review" }]]);
+		const firstOrigin16uRestore = await open16uRestore();
+		const post16uRestore = (origin, path, body, cookie) => fetch(origin + path, { method: "POST", headers: { origin, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+		const firstResponse16uRestore = await post16uRestore(firstOrigin16uRestore, "/agent/turn", initialTurn16uRestore);
+		assert.equal(firstResponse16uRestore.status, 200); const firstCookie16uRestore = cookie16uRestore(firstResponse16uRestore);
+		await bounded16q(started16uRestore.promise, "restore motion admission");
+		held16uRestore.resolve();
+		const firstFrames = [...(await firstResponse16uRestore.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+		assert.equal(firstFrames.find(frame => frame.type === "tool.done")?.result?.status, "review_required");
+		assert.equal(firstFrames.some(frame => frame.type === "error"), false);
+		const accept16uRestore = await post16uRestore(firstOrigin16uRestore, "/agent/jobs/gate-owned/accept", { surface: "studio", sessionId: sessionId16uRestore, turnId: initialTurn16uRestore.turnId, explicitUnverifiedAcceptance: true }, firstCookie16uRestore);
+		assert.equal(accept16uRestore.status, 200); await accept16uRestore.text();
+		faux16uRestore.script([{ type: "toolCall", id: "other-motion", name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } }, ["review"]]);
+		const otherTurn = { ...initialTurn16uRestore, sessionId: "00000000-0000-4000-8000-000000000174", turnId: "00000000-0000-4000-8000-000000000175" };
+		const otherResponse = await post16uRestore(firstOrigin16uRestore, "/agent/turn", otherTurn);
+		assert.equal(otherResponse.status, 200);
+		await otherResponse.text();
+		assert.equal(admissions16uRestore, 2, "the foreign id actually exists in the shared runtime");
+		await close16uRestore();
+
+		faux16uRestore.script([[{ type: "text", text: "resumed" }]]);
+		const restoredOrigin16uRestore = await open16uRestore();
+		const restoredTurn16uRestore = { ...initialTurn16uRestore, turnId: "00000000-0000-4000-8000-000000000173", text: "resume" };
+		const restoredResponse16uRestore = await post16uRestore(restoredOrigin16uRestore, "/agent/turn", restoredTurn16uRestore);
+		assert.equal(restoredResponse16uRestore.status, 200); const restoredCookie16uRestore = cookie16uRestore(restoredResponse16uRestore); await restoredResponse16uRestore.text();
+		const foreignStop = await post16uRestore(restoredOrigin16uRestore, "/agent/stop", { surface: "studio", sessionId: sessionId16uRestore, turnId: restoredTurn16uRestore.turnId, jobId: "gate-other" }, restoredCookie16uRestore);
+		assert.equal(foreignStop.status, 409); assert.equal((await foreignStop.json()).error.code, "STALE_TARGET");
+		assert.deepEqual(stopCalls16uRestore, [], "the restored session cannot forward another session's admitted id");
+		const restoredStop16uRestore = await post16uRestore(restoredOrigin16uRestore, "/agent/stop", { surface: "studio", sessionId: sessionId16uRestore, turnId: restoredTurn16uRestore.turnId, jobId: "gate-owned" }, restoredCookie16uRestore);
+		assert.equal(restoredStop16uRestore.status, 200); assert.deepEqual((await restoredStop16uRestore.json()).outcome, { status: "installed", code: "ALREADY_INSTALLED", mutated: true }); assert.deepEqual(stopCalls16uRestore, ["gate-owned"]);
+
+		const loaded = await fetch(`${restoredOrigin16uRestore}/agent/sessions/${sessionId16uRestore}`, { signal: AbortSignal.timeout(5000) }).then(response => response.json());
+		assert.deepEqual(loaded.meta.motionJobIds, ["gate-owned"], "GET session metadata retains only this session's trusted admissions");
+		assert.deepEqual(sessionStore16uRestore.read(otherTurn.sessionId).meta.motionJobIds, ["gate-other"]);
+		console.log("PASS 16u restore: accepted motion ownership survives a fresh handler and remains session-bound");
+	} finally { await close16uRestore(); rmSync(sessionStore16uRestore.dir, { recursive: true, force: true }); }
 }

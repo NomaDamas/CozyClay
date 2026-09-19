@@ -128,6 +128,10 @@ export function createSessionStore(dir = agentSessionsDir()) {
 			const now = new Date().toISOString();
 			let previous = null;
 			try { previous = JSON.parse(readFileSync(metaFile, "utf8")); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+			const motionJobIds = [...new Set([
+				...(Array.isArray(previous?.motionJobIds) ? previous.motionJobIds : []),
+				...(Array.isArray(meta.motionJobIds) ? meta.motionJobIds : []),
+			].filter((id) => typeof id === "string"))];
 			const next = {
 				sessionId: validSessionId(sessionId),
 				surface: meta.surface ?? previous?.surface ?? "studio",
@@ -135,6 +139,7 @@ export function createSessionStore(dir = agentSessionsDir()) {
 				updatedAt: now,
 				sceneName: meta.sceneName ?? previous?.sceneName ?? null,
 				firstText: previous?.firstText || meta.firstText || firstUserText(messages),
+				motionJobIds,
 			};
 			writeFileSync(metaFile, `${JSON.stringify(next, null, "\t")}\n`, { mode: 0o600 });
 			return next;
