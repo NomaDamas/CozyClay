@@ -364,6 +364,115 @@ for (const explicit of [true, false]) {
 	} finally { await handler.close(); await close(sidecar); await close(fixture); }
 }
 
+// #379 / 16z: concurrent cold listings share discovery and execution, not just
+// the last registry to finish construction. Dispatch every request before the
+// catalogue can return; no sleep or second catalogue fetch opens this gate.
+for (const count of [2, 5]) {
+	const events = new EventEmitter();
+	const release = Promise.withResolvers();
+	const dispatched = bounded(events, "dispatched");
+	const catalogueEntered = bounded(events, "catalogue");
+	let catalogueCalls = 0;
+	const received = [];
+	const token = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "16z" } })).toString("base64url")}.e30`;
+	const auth = {
+		getAccessToken: async () => token,
+		readStored: () => ({ access_token: token, refresh_token: "16z-refresh", expires_at: Date.now() + 3600000 }),
+		status: () => ({ signedIn: true }),
+	};
+	const codex = {
+		listModels: async () => {
+			const call = ++catalogueCalls;
+			events.emit("catalogue");
+			await release.promise;
+			return [{ slug: `gpt-16z-live-${call}`, supported_reasoning_levels: ["medium"] }];
+		},
+		parseQuotaHeaders: () => ({ primary: {}, credits: {} }),
+	};
+	const fixture = createServer(async (req, res) => {
+		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+		const encoded = Buffer.concat(chunks);
+		const body = JSON.parse(req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded);
+		received.push({ path: req.url, model: body.model });
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(encode({ type: "response.completed", response: { status: "completed" } }));
+	});
+	const fixtureUrl = await listen(fixture);
+	const handler = createAgentHandler({ auth, codex, codexBaseUrl: fixtureUrl, handlers: [], liveHub: {} });
+	const waiting = [];
+	const dispatch = (req, res) => handler(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); });
+	const server = createServer((req, res) => {
+		if (req.url !== "/agent/models") return dispatch(req, res);
+		waiting.push([req, res]);
+		if (waiting.length === count) {
+			for (const args of waiting) dispatch(...args);
+			events.emit("dispatched");
+		}
+	});
+	const origin = await listen(server);
+	try {
+		const pending = Promise.all(Array.from({ length: count }, async () => {
+			const response = await fetch(`${origin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+			assert.equal(response.status, 200);
+			return response.json();
+		}));
+		await Promise.all([dispatched, catalogueEntered]);
+		release.resolve();
+		const catalogues = await pending;
+		assert.equal(catalogueCalls, 1, `${count} cold requests fetch one catalogue`);
+		for (const catalogue of catalogues) {
+			assert.deepEqual(catalogue.models.filter(model => model.id.includes("gpt-16z-live")).map(model => model.id), ["openai-codex/gpt-16z-live-1"]);
+		}
+		const response = await fetch(`${origin}/agent/turn`, { method: "POST", body: JSON.stringify({ sessionId: `16z-${count}`, text: "hello", model: "openai-codex/gpt-16z-live-1" }), signal: AbortSignal.timeout(8000) });
+		assert.equal(response.status, 200);
+		const frames = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+		assert.equal(frames.some(frame => frame.type === "error"), false);
+		assert.equal(frames.at(-1)?.type, "done");
+		assert.deepEqual(received, [{ path: "/codex/responses", model: "gpt-16z-live-1" }]);
+		console.log(`PASS 16z: ${count} concurrent cold listings share one executable live catalogue`);
+	} finally { release.resolve(); await handler.close(); await close(server); await close(fixture); }
+}
+
+// A real provider import failure rejects createModels, rather than merely
+// failing optional catalogue discovery (whose failure is cached separately).
+{
+	const { PROVIDERS, createModels } = await import("../bin/agent/providers.mjs");
+	const auth = { getAccessToken: async () => null, readStored: () => undefined, status: () => ({ signedIn: false }) };
+	const handler = createAgentHandler({ auth, handlers: [], liveHub: {} });
+	const server = createServer((req, res) => handler(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const origin = await listen(server);
+	const unavailable = { id: "16z-unavailable", env: [] };
+	try {
+		PROVIDERS.push(unavailable);
+		try {
+			const failed = await fetch(`${origin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+			assert.equal(failed.status, 502, "registry construction failure reaches the caller");
+			await failed.json();
+		} finally { assert.equal(PROVIDERS.pop(), unavailable); }
+		const retried = await fetch(`${origin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+		assert.equal(retried.status, 200, "a rejected registry build is retried");
+		assert.ok((await retried.json()).models.some(model => model.id === "openai-codex/gpt-6-astra"));
+	} finally { await handler.close(); await close(server); }
+
+	const models = await createModels({ auth, keys: { readKeys: () => ({}) }, env: {} });
+	let onAuthChange;
+	const injected = createAgentHandler({ auth: { ...auth, onAuthChange: callback => { onAuthChange = callback; return () => {}; } }, models, handlers: [], liveHub: {} });
+	const injectedServer = createServer((req, res) => injected(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const injectedOrigin = await listen(injectedServer);
+	try {
+		// Any attempted rebuild now fails. The extra provider can still be listed
+		// by the injected registry as an empty, unconfigured catalogue.
+		PROVIDERS.push(unavailable);
+		for (const kind of [null, "rotated", "replaced", "signed_out"]) {
+			if (kind) onAuthChange({ kind });
+			const response = await fetch(`${injectedOrigin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+			assert.equal(response.status, 200, `injected registry is not rebuilt after ${kind}`);
+			assert.ok((await response.json()).models.some(model => model.id === "openai-codex/gpt-6-astra"));
+		}
+	} finally { assert.equal(PROVIDERS.pop(), unavailable); await injected.close(); await close(injectedServer); }
+	console.log("PASS 16z: failed construction retries and injected registries are never rebuilt");
+}
+
 // #379 / 16m: identity changes retire the handler's catalogue registry too.
 {
 	let identity = "a";

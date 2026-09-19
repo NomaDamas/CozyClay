@@ -281,12 +281,15 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	const workflowRunners = new Map();
 	const studioRunners = new Map();
 	let workflowModels = models;
+	let workflowModelsPromise = models ? Promise.resolve(models) : null;
 	const ensureWorkflowModels = async () => {
-		if (!workflowModels) {
-			const { createModels } = await import("./providers.mjs");
-			workflowModels = await createModels({ auth, codexBaseUrl });
+		const pending = workflowModelsPromise ??= import("./providers.mjs").then(({ createModels }) => createModels({ auth, codexBaseUrl }));
+		try { return await pending; }
+		catch (error) {
+			// A retired build must not clear a newer identity's initialization.
+			if (workflowModelsPromise === pending) workflowModelsPromise = null;
+			throw error;
 		}
-		return workflowModels;
 	};
 	const hasAnyCredential = async () => {
 		try { if (await auth.getAccessToken()) return true; } catch { /* an unavailable ChatGPT token is not a credential */ }
@@ -354,6 +357,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		for (const runner of [...workflowRunners.values(), ...studioRunners.values()]) void runner.close?.();
 		workflowRunners.clear(); studioRunners.clear();
 		workflowModels = models;
+		workflowModelsPromise = models ? Promise.resolve(models) : null;
 		sessions.clear(); studioSessions.clear(); studioEvents.clear(); studioOwnerTokens.clear();
 	});
 
