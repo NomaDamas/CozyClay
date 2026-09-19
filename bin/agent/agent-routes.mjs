@@ -346,7 +346,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		if (["done", "error", "receipt"].includes(value.type)) record.terminal = true;
 		studioEvents.set(turnId, record); for (const listener of [...record.listeners]) listener(value);
 	};
-	const unsubscribe = auth.onAuthChange?.(() => {
+	const unsubscribe = auth.onAuthChange?.(({ kind }) => {
+		if (kind !== "signed_out" && kind !== "replaced") return;
 		for (const session of sessions.values()) session.controller?.abort();
 		for (const session of studioSessions.values()) session.controller?.abort();
 		void ownedStudioRuntime?.dispose?.(); ownedStudioRuntime = studioRuntime || null;

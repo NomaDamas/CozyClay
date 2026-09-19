@@ -24,15 +24,28 @@ const readTokens = () => {
 	try { tokens = JSON.parse(readFileSync(tokenFile, "utf8")); } catch { tokens = null; }
 	return tokens;
 };
+const identity = () => {
+	const current = readTokens();
+	if (!current?.refresh_token) return null;
+	return decodeJwt(current.id_token || "")["https://api.openai.com/auth"]?.chatgpt_account_id || true;
+};
+const notifyAuthChange = (before) => {
+	const after = identity();
+	const kind = after === null ? "signed_out" : before === after ? "rotated" : "replaced";
+	const change = { kind, status: status() };
+	listeners.forEach((cb) => { try { cb(change); } catch {} });
+};
 const writeTokens = (value) => {
+	const before = identity();
 	writeSecureJson(tokenFile, value);
 	tokens = value;
-	listeners.forEach((cb) => { try { cb(status()); } catch {} });
+	notifyAuthChange(before);
 };
 const clearTokens = () => {
-	tokens = null;
+	const before = identity();
 	try { unlinkSync(tokenFile); } catch (error) { if (error?.code !== "ENOENT") throw error; }
-	listeners.forEach((cb) => { try { cb(status()); } catch {} });
+	tokens = null;
+	notifyAuthChange(before);
 };
 const decodeJwt = (value) => { try { return JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString()); } catch { return {}; } };
 const claims = () => decodeJwt(readTokens()?.id_token || "");
