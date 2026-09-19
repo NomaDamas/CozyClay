@@ -13,13 +13,24 @@ function filePath() {
 }
 
 export function readKeys() {
+	const path = filePath();
+	let raw;
 	try {
-		const value = JSON.parse(readFileSync(filePath(), "utf8"));
-		return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+		raw = readFileSync(path, "utf8");
 	} catch (error) {
 		if (error?.code === "ENOENT") return {};
 		throw error;
 	}
+	let value;
+	try {
+		value = JSON.parse(raw);
+	} catch {
+		console.warn(`[agent] providers.json is not valid JSON; ignoring it: ${path}`);
+		return {};
+	}
+	if (value && typeof value === "object" && !Array.isArray(value)) return value;
+	console.warn(`[agent] providers.json is not valid JSON; ignoring it: ${path}`);
+	return {};
 }
 
 export function setKey(id, key) {

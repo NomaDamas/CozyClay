@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { chmodSync, mkdirSync, mkdtempSync, statSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -96,6 +96,53 @@ const envStore = createCredentialStore({ auth, keys, env: { ANTHROPIC_API_KEY: "
 assert.deepEqual(await envStore.read("anthropic"), { type: "api_key", key: "env-secret" });
 assert.ok((await envStore.list()).some((entry) => entry.providerId === "anthropic" && entry.source === "env"));
 assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-codex" && entry.source === "chatgpt"));
+{
+	// #379: readKeys() treats a corrupt providers.json as the empty-provider
+	// boundary — no throw, exactly one console.warn naming the path (never key
+	// contents), ENOENT stays silent {}, and setKey repairs the file.
+	const corruptDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-providers-corrupt-"));
+	const corruptFile = join(corruptDir, "providers.json");
+	writeFileSync(corruptFile, "{bad", { mode: 0o600 });
+	const previousConfigDir = process.env.COZYCLAY_CONFIG_DIR;
+	process.env.COZYCLAY_CONFIG_DIR = corruptDir;
+	const warnings = [];
+	const originalWarn = console.warn;
+	console.warn = (...args) => warnings.push(args.join(" "));
+	let readResult;
+	try {
+		readResult = keys.readKeys();
+	} finally {
+		console.warn = originalWarn;
+	}
+	assert.deepEqual(readResult, {}, "a corrupt providers.json reads as empty, not a throw");
+	assert.equal(warnings.length, 1, `exactly one warning: ${JSON.stringify(warnings)}`);
+	assert.match(warnings[0], /providers\.json is not valid JSON; ignoring it/);
+	assert.ok(warnings[0].includes(corruptFile), "the warning names the offending path");
+	assert.ok(!warnings[0].includes("bad"), "the warning never leaks the file contents");
+	console.log("PASS readKeys() treats a corrupt providers.json as {} with exactly one warning");
+
+	const previousAnthropicForCorrupt = process.env.ANTHROPIC_API_KEY;
+	delete process.env.ANTHROPIC_API_KEY;
+	assert.equal(auth.status().providersConfigured, 0, "a corrupt providers.json never throws status() and counts as 0 configured");
+	process.env.ANTHROPIC_API_KEY = "env-secret-for-corrupt-file";
+	assert.equal(auth.status().providersConfigured, 1, "an env key still counts even while the file is corrupt");
+	if (previousAnthropicForCorrupt === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previousAnthropicForCorrupt;
+	console.log("PASS codex-auth status() survives a corrupt providers.json");
+
+	const corruptModels = await providers.listAgentModels({ auth, keys, env: process.env });
+	assert.equal(corruptModels.providers.length, 5, "listAgentModels still lists all five providers with a corrupt providers.json");
+	assert.ok(corruptModels.providers.every((provider) => provider.id !== "anthropic" || provider.signedIn === false), "the key provider reports signed-out, not an unhandled rejection");
+	console.log("PASS listAgentModels tolerates a corrupt providers.json");
+
+	keys.setKey("anthropic", "sk-ant-x");
+	assert.deepEqual(keys.readKeys(), { anthropic: "sk-ant-x" }, "setKey repairs the corrupt file");
+	assert.equal(statSync(corruptFile).mode & 0o777, 0o600, "the repaired file is still mode 0600");
+	console.log("PASS setKey repairs a corrupt providers.json and keeps it mode 0600");
+
+	process.env.COZYCLAY_CONFIG_DIR = previousConfigDir;
+	rmSync(corruptDir, { recursive: true, force: true });
+}
+
 for (const [name, value] of Object.entries(previousProviderEnv)) {
 	if (value === undefined) delete process.env[name];
 	else process.env[name] = value;

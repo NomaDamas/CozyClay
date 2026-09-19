@@ -875,3 +875,42 @@ console.log("agent routes verified");
 	assert.deepEqual((await recordGolden()).S, golden.S, "Studio runner frames preserve golden parity S");
 	console.log("PASS golden parity S");
 }
+
+{
+	// #379: a corrupt providers.json must not take ChatGPT readiness down.
+	// codex-auth.mjs fixes its token file path at import time, so this exercises
+	// the real production dispatch (handleOAuthRequest) in a fresh child process
+	// with a scratch COZYCLAY_CONFIG_DIR (corrupt providers.json) and a faked
+	// ChatGPT token, and asserts on its stdout.
+	const { spawnSync } = await import("node:child_process");
+	const oauthConfigDir = mkdtempSync(join(tmpdir(), "cozyclay-oauth-status-corrupt-"));
+	writeFileSync(join(oauthConfigDir, "providers.json"), "{bad", { mode: 0o600 });
+	const oauthAuthFile = join(oauthConfigDir, "codex-auth.json");
+	const probeScript = `
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { handleOAuthRequest, writeStored } from ${JSON.stringify(new URL("../bin/codex-auth.mjs", import.meta.url).pathname)};
+await writeStored({ access_token: "probe-access", refresh_token: "probe-refresh", expires_at: Date.now() + 3600000 });
+const server = createServer((req, res) => { handleOAuthRequest(req, res).catch(() => { if (!res.headersSent) { res.writeHead(502, { "content-type": "application/json" }); res.end("{}"); } }); });
+server.listen(0, "127.0.0.1");
+await once(server, "listening");
+const port = server.address().port;
+const response = await fetch(\`http://127.0.0.1:\${port}/oauth/status\`);
+const body = await response.json();
+console.log(JSON.stringify({ status: response.status, body }));
+server.close();
+`;
+	const probeFile = join(oauthConfigDir, "probe.mjs");
+	writeFileSync(probeFile, probeScript);
+	const result = spawnSync(process.execPath, [probeFile], {
+		env: { ...process.env, COZYCLAY_CONFIG_DIR: oauthConfigDir, COZYCLAY_CODEX_AUTH_FILE: oauthAuthFile },
+		encoding: "utf8",
+	});
+	assert.equal(result.status, 0, `probe process exited cleanly: ${result.stderr}`);
+	const { status, body } = JSON.parse(result.stdout.trim().split("\n").at(-1));
+	assert.equal(status, 200, "a corrupt providers.json no longer produces a 502 from /oauth/status");
+	assert.equal(body.signedIn, true, "a valid ChatGPT token still reports signed in");
+	assert.equal(body.providersConfigured, 0, "the corrupt file counts as zero saved provider keys");
+	rmSync(oauthConfigDir, { recursive: true, force: true });
+	console.log("PASS GET /oauth/status: a corrupt providers.json returns 200 with signedIn true and providersConfigured 0");
+}
