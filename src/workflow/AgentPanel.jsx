@@ -426,6 +426,38 @@ export default function AgentPanel({
 			return null;
 		}
 	}, [sessionState, transport]);
+	// The sidecar owns the credentials; this reads which providers have one and
+	// where it came from. The list is read when the keys section opens and again
+	// after every write — a key that just landed (or left) changes which models
+	// the composer may offer, so the model list is re-read with it.
+	const readProviders = useCallback(async () => {
+		try {
+			const list = await transport.providers?.();
+			if (!Array.isArray(list)) throw new Error("no provider list");
+			setProviders(list);
+			setProvidersState("ready");
+		} catch {
+			setProviders([]);
+			setProvidersState("failed");
+		}
+	}, [transport]);
+	// Everything an authentication change moves, read back once: WHO the session
+	// is (readiness is `signedIn || providersConfigured > 0`), which providers
+	// hold a credential, and WHICH models this session may therefore send to. A
+	// credential write and a ChatGPT sign-in/sign-out are the same event for the
+	// composer — both change the answer to all three — so both come through
+	// here, once per transition, beside the rows and the models. That is what
+	// lets an author who just signed in (or just saved their first key) type
+	// into a composer without reloading the page, and what takes it away again
+	// when the last way in goes. No timer is involved.
+	const refreshProviderState = useCallback(async () => {
+		const session = readAccount();
+		await readProviders();
+		await session;
+		try {
+			applyModelList(await transport.models());
+		} catch { /* the composer keeps the list it was last advertised */ }
+	}, [applyModelList, readAccount, readProviders, transport]);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -455,7 +487,7 @@ export default function AgentPanel({
 	// never on a fixed timer.
 	useEffect(() => {
 		if (authState !== "signing-in") return;
-		const onReturn = () => { if (document.visibilityState !== "hidden") readAccount(); };
+		const onReturn = () => { if (document.visibilityState !== "hidden") refreshProviderState(); };
 		window.addEventListener("focus", onReturn);
 		window.addEventListener("cozyclay:agent-auth-return", onReturn);
 		document.addEventListener("visibilitychange", onReturn);
@@ -464,7 +496,7 @@ export default function AgentPanel({
 			window.removeEventListener("cozyclay:agent-auth-return", onReturn);
 			document.removeEventListener("visibilitychange", onReturn);
 		};
-	}, [authState, readAccount]);
+	}, [authState, refreshProviderState]);
 
 	// Mock states that only exist as a rendered result (a finished streaming
 	// turn, a paused card, a failed tool call) are driven by replaying the
@@ -618,23 +650,31 @@ export default function AgentPanel({
 		if (!result.ok) setSteerNotice(result.message || "The running turn did not take that message.");
 	}, [store]);
 
+	// A sign-in that succeeds is an authentication transition, not a status
+	// read: the grouped catalogue's `signedIn` flags — and with them every
+	// ChatGPT option the dropdown draws disabled — are only true of the session
+	// that asked for them. Refreshing the account alone leaves the panel
+	// "ready" with nothing it may send (#379).
 	const signIn = useCallback(async () => {
 		setAuthState("signing-in");
 		try {
 			await transport.signIn();
-			await readAccount();
+			await refreshProviderState();
 		} catch {
 			setAuthState("signed-out");
 		}
-	}, [readAccount, transport]);
+	}, [refreshProviderState, transport]);
 
 	const signOut = useCallback(async () => {
 		setMenuOpen(false);
 		await transport.signOut().catch(() => {});
+		// The account this panel was holding is gone. Who the session is now — it
+		// may still hold a provider key, which is the other way in — and which
+		// models that leaves it is read back through the same refresh.
 		setAccount(null);
-		setAuthState("signed-out");
 		store.newSession();
-	}, [store, transport]);
+		await refreshProviderState();
+	}, [refreshProviderState, store, transport]);
 
 	const newSession = useCallback(() => {
 		if (surface === "studio") {
@@ -666,35 +706,8 @@ export default function AgentPanel({
 	}, [store, transport]);
 
 	// --- provider keys -----------------------------------------------------
-	// The sidecar owns the credentials; this section only states which providers
-	// have one and where it came from. The list is read when the section opens
-	// and again after every write — a key that just landed (or left) changes
-	// which models the composer may offer, so the model list is re-read with it.
-	const readProviders = useCallback(async () => {
-		try {
-			const list = await transport.providers?.();
-			if (!Array.isArray(list)) throw new Error("no provider list");
-			setProviders(list);
-			setProvidersState("ready");
-		} catch {
-			setProviders([]);
-			setProvidersState("failed");
-		}
-	}, [transport]);
-	// A credential write also changes WHO the session is: readiness is
-	// `signedIn || providersConfigured > 0`, so the account that gate reads is
-	// re-requested through the same status call, once per write, beside the rows
-	// and the models. That is what lets a signed-out author who just saved their
-	// first key type into a composer without reloading the page — and what takes
-	// it away again when the last key is removed. No timer is involved.
-	const refreshProviderState = useCallback(async () => {
-		const session = readAccount();
-		await readProviders();
-		await session;
-		try {
-			applyModelList(await transport.models());
-		} catch { /* the composer keeps the list it was last advertised */ }
-	}, [applyModelList, readAccount, readProviders, transport]);
+	// The section is read when it opens; every write goes back through the
+	// refresh above, because a key changes the session, not just a row.
 	const toggleProviderKeys = useCallback(() => {
 		setMenuOpen(false);
 		const next = !keysOpen;

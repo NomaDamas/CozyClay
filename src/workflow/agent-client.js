@@ -892,6 +892,14 @@ export const MOCK_PROVIDER_KEY_MIN = 8;
  * the session once per credential write and never on a timer (#379), and this
  * is how browser QA proves it without reaching inside the component. */
 export const MOCK_STATUS_CALLS_KEY = "cozyclay.mock.agent.status-calls";
+/** How many times the scripted sidecar answered /agent/models. A ChatGPT
+ * sign-in changes WHICH models the session may run, so the panel re-reads the
+ * catalogue at that transition; this is how browser QA proves it reads it once
+ * and never on a timer (#379). */
+export const MOCK_MODEL_CALLS_KEY = "cozyclay.mock.agent.model-calls";
+const countMockCall = (key) => {
+	try { globalThis.localStorage?.setItem(key, String(Number(globalThis.localStorage.getItem(key) || 0) + 1)); } catch { /* mock proof state is best effort */ }
+};
 
 export function createMockTransport(config = { state: "ready" }) {
 	const state = config?.state || "ready";
@@ -899,9 +907,14 @@ export function createMockTransport(config = { state: "ready" }) {
 	const speed = config?.speed > 0 ? config.speed : 1;
 	const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms / speed)));
 	const storedProviders = new Set();
+	// The ChatGPT session is something the panel can MOVE, not a fixed property
+	// of the scripted state: signIn() and signOut() flip it, so QA drives the
+	// authentication transition itself (#379) rather than two separate pages.
+	// "pending" is the scripted OAuth window that has not come back yet.
+	let session = state === "signed-out" ? "out" : state === "signing-in" ? "pending" : "in";
 	// Which providers hold a credential right now, in the sidecar's own shape.
 	const providerStatus = () => MOCK_PROVIDER_LABELS.map(([id, label]) => {
-		const authSource = id === "openai-codex" ? (state === "signed-out" ? null : "chatgpt")
+		const authSource = id === "openai-codex" ? (session === "in" ? "chatgpt" : null)
 			: id === MOCK_ENV_PROVIDER ? "env"
 				: storedProviders.has(id) ? "file" : null;
 		return { id, label, authSource, signedIn: Boolean(authSource) };
@@ -914,7 +927,7 @@ export function createMockTransport(config = { state: "ready" }) {
 		mock: true,
 		state,
 		async status() {
-			try { globalThis.localStorage?.setItem(MOCK_STATUS_CALLS_KEY, String(Number(globalThis.localStorage.getItem(MOCK_STATUS_CALLS_KEY) || 0) + 1)); } catch { /* mock proof state is best effort */ }
+			countMockCall(MOCK_STATUS_CALLS_KEY);
 			// `providersConfigured` is the second way in (#379): a session with a
 			// provider key can talk to a model without a ChatGPT sign-in. A session
 			// that never signed in owns nothing until a key is saved through the
@@ -922,18 +935,24 @@ export function createMockTransport(config = { state: "ready" }) {
 			// so only the keys this session stored count there. Saving the first one
 			// opens the readiness gate; removing the last one closes it again.
 			const providersConfigured = providerStatus().filter((provider) => provider.id !== "openai-codex" && provider.signedIn).length;
-			if (state === "signed-out") return { signedIn: false, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: storedProviders.size };
-			if (state === "signing-in") return { signedIn: false, pending: true, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: storedProviders.size };
+			if (session === "pending") return { signedIn: false, pending: true, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: storedProviders.size };
+			if (session === "out") return { signedIn: false, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: storedProviders.size };
 			if (state === "no-entitlement") return { ...MOCK_ACCOUNT, plan: "Free", entitlements: { image: false }, providersConfigured };
 			return { ...MOCK_ACCOUNT, entitlements: { image: true }, providersConfigured };
 		},
+		// The scripted OAuth completes in place: the session this transport answers
+		// with is signed in from here on, exactly as the sidecar's is once the code
+		// exchange lands.
 		async signIn() {
+			session = "in";
 			return { ok: true, authorizeUrl: "https://auth.example.invalid/mock" };
 		},
 		async signOut() {
+			session = "out";
 			return { ok: true };
 		},
 		async models() {
+			countMockCall(MOCK_MODEL_CALLS_KEY);
 			const providers = providerStatus().map((provider) => ({
 				...provider,
 				models: (MOCK_PROVIDER_MODELS[provider.id] ?? []).map((model) => ({ ...model, key: `${provider.id}/${model.id}`, input: ["text", "image"] })),

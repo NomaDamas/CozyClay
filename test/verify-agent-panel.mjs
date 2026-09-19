@@ -397,11 +397,15 @@ expect("the provider keys section hardcodes no colour", !/#[0-9a-f]{3,8}/i.test(
 }
 // The panel re-reads that session through the ONE status path it already owns,
 // once per credential write — never a second route, never a timer.
-expect("a saved or removed key re-reads the session the readiness gate depends on", (() => {
+// The refresh is read as its own declaration, so nothing that merely sits
+// between it and the next callback can satisfy this.
+const refreshBody = (() => {
 	const start = panel.indexOf("const refreshProviderState = useCallback");
-	const body = panel.slice(start, panel.indexOf("const toggleProviderKeys", start));
-	return start !== -1 && (body.match(/readAccount\(\)/g) || []).length === 1 && body.includes("await readProviders();") && body.includes("transport.models()");
-})(), panel.slice(panel.indexOf("const refreshProviderState = useCallback"), panel.indexOf("const toggleProviderKeys")));
+	if (start === -1) return "";
+	return panel.slice(start, panel.indexOf("\n\tconst ", start + 1));
+})();
+expect("a saved or removed key re-reads the session the readiness gate depends on",
+	(refreshBody.match(/readAccount\(\)/g) || []).length === 1 && refreshBody.includes("await readProviders();") && refreshBody.includes("transport.models()"), refreshBody);
 expect("readiness is refreshed through the existing status call, not a new one", (panel.match(/transport\.status\(\)/g) || []).length === 2
 	&& panel.includes("const status = await transport.status();") && !/setInterval\([^)]*(status|readAccount|refreshProviderState)/.test(panel),
 	String((panel.match(/transport\.status\(\)/g) || []).length));
@@ -709,6 +713,100 @@ expect("preferredModel falls back to nothing rather than a guess", module_.prefe
 }
 expect("the list load settles the selection instead of keeping it unconditionally", panel.includes("setModel((current) => nextSelectedModel(providers, list, current));")
 	&& !panel.includes("current || preferredModel("));
+
+// --- signing in is an authentication transition, not a status read (#379) --
+// The grouped catalogue carries each provider's sign-in state, and the
+// composer may only send to a model whose provider holds a credential. A
+// ChatGPT sign-in therefore changes WHICH models exist for this session, not
+// just who it is: it has to go through the same refresh a credential write
+// uses (providers + models + status), or the panel reaches "ready" with every
+// ChatGPT option still drawn disabled and nothing to submit. The DOM proof is
+// in test/qa-agent-panel-browser.mjs; this pins the wiring and the scripted
+// sidecar the browser drives.
+expect("a successful sign-in refreshes the catalogue, not only the account", /await transport\.signIn\(\);\n\t\t\tawait refreshProviderState\(\);/.test(panel),
+	panel.slice(panel.indexOf("const signIn = useCallback"), panel.indexOf("const signOut = useCallback")));
+expect("signing out refreshes the catalogue through that same path", /transport\.signOut\(\)[\s\S]{0,420}await refreshProviderState\(\);/.test(panel),
+	panel.slice(panel.indexOf("const signOut = useCallback"), panel.indexOf("const newSession = useCallback")));
+expect("a sign-in finished in another window lands on the same refresh", (() => {
+	const start = panel.indexOf('if (authState !== "signing-in") return;');
+	const body = panel.slice(start, panel.indexOf("}, [authState", start));
+	return start !== -1 && body.includes("refreshProviderState()") && !body.includes("readAccount()");
+})(), panel.slice(panel.indexOf('if (authState !== "signing-in") return;'), panel.indexOf("// Mock states that only exist")));
+expect("the auth transition adds no second models-fetch path", (panel.match(/transport\.models\(\)/g) || []).length === 2,
+	String((panel.match(/transport\.models\(\)/g) || []).length));
+expect("no timer drives the auth transition", !/set(Interval|Timeout)\([^)]*(signIn|signOut|readAccount|refreshProviderState)/.test(panel));
+{
+	// The scripted sidecar is a session, not a fixed prop: signIn() and signOut()
+	// move it, which is what lets the browser QA drive the transition the F2
+	// probe reproduced.
+	const entries = new Map([[module_.AGENT_MODEL_KEY, "openai-codex/gpt-6-astra"]]);
+	const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) },
+	});
+	try {
+		const session = module_.createMockTransport({ state: "signed-out" });
+		const gate = (status) => Boolean(status?.signedIn || status?.providersConfigured > 0);
+		const before = await session.status();
+		expect("a signed-out scripted session with no key has no composer to type into", !gate(before), JSON.stringify(before));
+		const beforeList = await session.models();
+		expect("the signed-out catalogue draws every ChatGPT model out of reach", !module_.modelIsSelectable(beforeList.providers, "openai-codex/gpt-6-astra")
+			&& beforeList.providers.find((provider) => provider.id === "openai-codex")?.signedIn === false,
+			JSON.stringify(beforeList.providers.map((provider) => [provider.id, provider.signedIn])));
+		expect("the scripted sign-in reports success", (await session.signIn())?.ok === true);
+		const after = await session.status();
+		expect("a successful ChatGPT sign-in opens the gate with no key saved", after.signedIn === true && gate(after), JSON.stringify(after));
+		const afterList = await session.models();
+		expect("the refreshed catalogue marks ChatGPT signed in", afterList.providers.find((provider) => provider.id === "openai-codex")?.signedIn === true,
+			JSON.stringify(afterList.providers.map((provider) => [provider.id, provider.signedIn])));
+		const picked = module_.nextSelectedModel(afterList.providers, afterList.models, "");
+		expect("the refreshed catalogue hands the composer a ChatGPT model it may send to",
+			picked === "openai-codex/gpt-6-astra" && module_.modelIsSelectable(afterList.providers, picked), picked);
+		expect("the sign-in re-validated the remembered preference instead of rewriting it", entries.get(module_.AGENT_MODEL_KEY) === "openai-codex/gpt-6-astra");
+		expect("the scripted sign-out reports success", (await session.signOut())?.ok === true);
+		const out = await session.status();
+		expect("signing out closes the gate again", out.signedIn === false && !gate(out), JSON.stringify(out));
+		const outList = await session.models();
+		expect("the sign-out catalogue takes the ChatGPT models back out of reach", !module_.modelIsSelectable(outList.providers, picked)
+			&& !module_.nextSelectedModel(outList.providers, outList.models, picked).startsWith("openai-codex/"),
+			`${JSON.stringify(outList.providers.map((provider) => [provider.id, provider.signedIn]))} -> ${module_.nextSelectedModel(outList.providers, outList.models, picked)}`);
+		// A provider key is the OTHER way in, and signing out of ChatGPT does not
+		// take it away: the gate rule is unchanged.
+		await session.setProviderKey("anthropic", "sk-signout-123");
+		expect("a key still open after the sign-out keeps the session usable", gate(await session.status()), JSON.stringify(await session.status()));
+		const keyed = await session.models();
+		expect("and the composer is handed that provider's model, never the signed-out one",
+			module_.nextSelectedModel(keyed.providers, keyed.models, picked) === "anthropic/claude-sonnet-4-5",
+			module_.nextSelectedModel(keyed.providers, keyed.models, picked));
+	} finally {
+		if (original) Object.defineProperty(globalThis, "localStorage", original);
+		else delete globalThis.localStorage;
+	}
+}
+{
+	// The catalogue reads the browser QA counts, beside the session reads it
+	// already counted: exactly one of each per auth transition proves the panel
+	// refreshed once and never polled for it.
+	const entries = new Map();
+	const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) },
+	});
+	try {
+		const counted = module_.createMockTransport({ state: "signed-out" });
+		await counted.models();
+		await counted.signIn();
+		await counted.models();
+		expect("every scripted catalogue read is counted for QA", entries.get(module_.MOCK_MODEL_CALLS_KEY) === "2", JSON.stringify([...entries]));
+		expect("the catalogue counter is its own key, beside the session counter", module_.MOCK_MODEL_CALLS_KEY !== module_.MOCK_STATUS_CALLS_KEY
+			&& String(module_.MOCK_MODEL_CALLS_KEY).startsWith("cozyclay.mock.agent."), String(module_.MOCK_MODEL_CALLS_KEY));
+	} finally {
+		if (original) Object.defineProperty(globalThis, "localStorage", original);
+		else delete globalThis.localStorage;
+	}
+}
 
 if (failures) {
 	console.error(`${failures} FAILURES`);

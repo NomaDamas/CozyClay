@@ -319,7 +319,15 @@ expect("closing the section leaves the conversation where it was", await waitFor
 await evaluate("document.querySelector('.agent-overflow-toggle').click()");
 await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => b.textContent === 'Sign out')", 5000);
 await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
-expect("Sign out returns the panel to signed-out", await waitFor("document.querySelector('.agent-panel')?.dataset.agentState === 'signed-out'", 6000));
+// Signing out of ChatGPT drops the account and everything that account could
+// run. The provider key saved above is the OTHER way in and is untouched, so
+// this session keeps a composer — pointed at a model it can still reach (#379).
+expect("Sign out drops the ChatGPT account strip", await waitFor("!document.querySelector('.agent-account')", 6000),
+	await evaluate("document.querySelector('.agent-account')?.innerText || ''"));
+expect("Sign out takes every ChatGPT model out of reach", await waitFor("(() => { const options = [...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].filter((option) => option.value.startsWith('openai-codex/')); return options.length > 0 && options.every((option) => option.disabled); })()", 6000),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].map((option) => option.value + (option.disabled ? ' (disabled)' : '')))"));
+expect("the provider key that remains keeps the composer open on a model it can run", await evaluate("(() => { const select = document.querySelector('.agent-model-select:not(.agent-effort-select)'); return !!document.querySelector('.agent-composer') && select?.selectedOptions[0]?.disabled === false && !select.value.startsWith('openai-codex/'); })()"),
+	await evaluate("document.querySelector('.agent-model-select:not(.agent-effort-select)')?.value"));
 
 // --- a saved key is a way in, immediately (#379) ---------------------------
 // Readiness is `signedIn || providersConfigured > 0`. An author who never
@@ -367,6 +375,56 @@ const clickWhenEnabled = async (selector) => {
 	await evaluate(`document.querySelector(${JSON.stringify(selector)}).click()`);
 };
 const setValue = (selector, value) => evaluate(`(() => { const node = document.querySelector(${JSON.stringify(selector)}); const proto = node instanceof window.HTMLSelectElement ? window.HTMLSelectElement.prototype : window.HTMLTextAreaElement.prototype; Object.getOwnPropertyDescriptor(proto, 'value').set.call(node, ${JSON.stringify(value)}); node.dispatchEvent(new Event(node instanceof window.HTMLSelectElement ? 'change' : 'input', { bubbles: true })); return node.value; })()`);
+
+// --- a ChatGPT sign-in is a way in too, and it lands in THIS page (#379) ---
+// The catalogue carries each provider's sign-in state, so the models a session
+// may run change with the session itself. A successful sign-in has to bring
+// the ChatGPT models with it: composer up, codex group pickable, a turn
+// actually addressed to one — without reloading the page. The scripted sidecar
+// counts both reads, which is how this proves the panel refreshes once per
+// transition rather than polling for it.
+const modelCalls = () => evaluate("localStorage.getItem('cozyclay.mock.agent.model-calls')");
+await evaluate("localStorage.removeItem('cozyclay.agent.model')");
+await open("signed-out");
+expect("a session that never signed in has no composer and no model dropdown",
+	await evaluate("!document.querySelector('.agent-composer') && !document.querySelector('.agent-model-select') && !!document.querySelector('[data-agent-card=\"signed-out\"] .agent-signin')"));
+// Both counters are zeroed on the settled signed-out panel, so what they hold
+// from here belongs to the sign-in and to nothing else. A page-lifetime marker
+// goes with them: if the composer only arrives with a new document, it is gone.
+await evaluate("localStorage.setItem('cozyclay.mock.agent.status-calls', '0'); localStorage.setItem('cozyclay.mock.agent.model-calls', '0'); window.__signInMark = 'kept';");
+await evaluate("document.querySelector('.agent-signin').click()");
+expect("a successful sign-in brings the composer up without a reload", await waitFor("document.querySelector('.agent-panel')?.dataset.agentState === 'ready' && document.querySelector('.agent-input')?.disabled === false", 10000),
+	await evaluate("JSON.stringify({ state: document.querySelector('.agent-panel')?.dataset.agentState, composer: !!document.querySelector('.agent-composer'), inputDisabled: document.querySelector('.agent-input')?.disabled, model: document.querySelector('.agent-model-select')?.value })"));
+expect("the page was never reloaded to get there", await evaluate("window.__signInMark === 'kept'"));
+expect("the sign-in card gives way to the session it now has", await evaluate("!document.querySelector('[data-agent-card=\"signed-out\"]') && !!document.querySelector('.agent-account-email')"));
+expect("the whole ChatGPT group becomes pickable at the transition", await evaluate("(() => { const options = [...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].filter((option) => option.value.startsWith('openai-codex/')); return options.length === 2 && options.every((option) => !option.disabled && !/add key/.test(option.textContent)); })()"),
+	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].map((option) => option.value + (option.disabled ? ' (disabled)' : '')))"));
+expect("the composer is pointed at a model this session can actually run", await evaluate("(() => { const select = document.querySelector('.agent-model-select:not(.agent-effort-select)'); return !!select?.value && select.selectedOptions[0]?.disabled === false; })()"),
+	await evaluate("document.querySelector('.agent-model-select:not(.agent-effort-select)')?.value"));
+expect("the sign-in re-read the session exactly once", await statusCalls() === "1", String(await statusCalls()));
+expect("the sign-in re-read the catalogue exactly once", await modelCalls() === "1", String(await modelCalls()));
+shots.push(await shot("panel-signin-ready"));
+// The group is not merely drawn enabled: a turn goes to it.
+const codexModel = await evaluate("[...document.querySelectorAll('.agent-model-select:not(.agent-effort-select) option')].find((option) => option.value.startsWith('openai-codex/') && !option.disabled)?.value ?? null");
+await setValue(".agent-model-select:not(.agent-effort-select)", codexModel);
+await setValue(".agent-input", "Block the opening two-shot");
+await clickWhenEnabled(".agent-send:not(.stop)");
+expect("the first turn after signing in is addressed to the ChatGPT model", await waitFor(`(() => { try { return JSON.parse(localStorage.getItem('cozyclay.mock.agent.last-turn'))?.model === ${JSON.stringify(codexModel)}; } catch { return false; } })()`, 15000),
+	await evaluate("localStorage.getItem('cozyclay.mock.agent.last-turn')"));
+await waitFor("!document.querySelector('.agent-send.stop')", 30000);
+// And back out again: with no provider key behind it, signing out of ChatGPT
+// closes the same gate it opened, in the same page.
+await evaluate("document.querySelector('.agent-overflow-toggle').click()");
+await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => b.textContent === 'Sign out')", 5000);
+await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
+expect("signing out with no key behind it puts the sign-in card back, still without a reload",
+	await waitFor("!document.querySelector('.agent-composer') && !!document.querySelector('[data-agent-card=\"signed-out\"]')", 10000),
+	await evaluate("JSON.stringify({ state: document.querySelector('.agent-panel')?.dataset.agentState, composer: !!document.querySelector('.agent-composer') })"));
+expect("the page was never reloaded on the way back either", await evaluate("window.__signInMark === 'kept'"));
+expect("the sign-out re-read the session and the catalogue exactly once too", await statusCalls() === "2" && await modelCalls() === "2",
+	`${await statusCalls()} / ${await modelCalls()}`);
+shots.push(await shot("panel-signout-gated"));
+await evaluate("localStorage.removeItem('cozyclay.agent.model')");
 
 await evaluate("localStorage.removeItem('cozyclay.agent.model')");
 await open("ready");
