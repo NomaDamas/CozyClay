@@ -291,3 +291,81 @@ for (const [name, value] of Object.entries(previousProviderEnv)) {
 	else process.env[name] = value;
 }
 console.log("agent provider verification passed");
+
+// #379 / 16s: a live-only model advertised by the real, non-injected route
+// must reach the real Codex HTTP provider, not stop at UNKNOWN_MODEL.
+{
+	const { zstdDecompressSync } = await import("node:zlib");
+	const { createCodexClient } = await import("../bin/agent/codex-client.mjs");
+	const liveId = "gpt-future-16s-live-only";
+	const token = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "16s-fixture" } })).toString("base64url")}.e30`;
+	const fixtureAuth = {
+		getAccessToken: async () => token,
+		readStored: () => ({ access_token: token, refresh_token: "fixture-refresh", expires_at: Date.now() + 3600000 }),
+		status: () => ({ signedIn: true }),
+	};
+	let catalogueCalls = 0;
+	const received = [];
+	const fixture = createServer(async (req, res) => {
+		if (req.method === "GET") {
+			catalogueCalls++;
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ models: [{ slug: liveId, supported_reasoning_levels: [{ effort: "medium" }, { effort: "high" }] }] }));
+			return;
+		}
+		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+		const encoded = Buffer.concat(chunks);
+		const body = JSON.parse((req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded).toString("utf8"));
+		received.push({ path: req.url, model: body.model, effort: body.reasoning?.effort });
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed" } })}\n\n`);
+	});
+	const listening = once(fixture, "listening", { signal: AbortSignal.timeout(5000) });
+	fixture.listen(0, "127.0.0.1"); await listening;
+	const fixtureOrigin = `http://127.0.0.1:${fixture.address().port}`;
+	const codex = createCodexClient({ getAccessToken: fixtureAuth.getAccessToken, getAccountId: async () => "16s-fixture", fetch: (_url, init) => fetch(`${fixtureOrigin}/models`, init) });
+	const staticRegistry = await providers.createModels({ auth: fixtureAuth, codexBaseUrl: fixtureOrigin });
+	assert.equal(staticRegistry.getModel("openai-codex", liveId), undefined, "the live id is absent from pi's static catalogue");
+	const staticModel = staticRegistry.getModel("openai-codex", "gpt-6-astra");
+	let sidecar;
+	const liveHandler = createAgentHandler({ auth: fixtureAuth, codex, codexBaseUrl: fixtureOrigin, handlers: [], liveHub: {}, port: () => sidecar.address().port });
+	sidecar = createServer((req, res) => liveHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const ready = once(sidecar, "listening", { signal: AbortSignal.timeout(5000) });
+	sidecar.listen(0, "127.0.0.1"); await ready;
+	const sidecarOrigin = `http://127.0.0.1:${sidecar.address().port}`;
+	const getCatalogue = async () => {
+		const response = await fetch(`${sidecarOrigin}/agent/models`, { signal: AbortSignal.timeout(8000) });
+		assert.equal(response.status, 200);
+		return response.json();
+	};
+	try {
+		const catalogue = await getCatalogue();
+		const advertised = catalogue.models.find((model) => model.id === `openai-codex/${liveId}`);
+		assert.ok(advertised, "GET /agent/models advertises the live-only id");
+		assert.deepEqual(advertised.efforts, ["medium", "high"]);
+		for (const model of [advertised.id, "openai-codex/gpt-6-astra", advertised.id]) {
+			const response = await fetch(`${sidecarOrigin}/agent/turn`, {
+				method: "POST", headers: { origin: sidecarOrigin, "content-type": "application/json" },
+				body: JSON.stringify({ sessionId: "16s-live-catalogue", text: "hello", model, effort: "medium" }), signal: AbortSignal.timeout(8000),
+			});
+			assert.equal(response.status, 200);
+			const frames = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+			assert.deepEqual(frames.filter((frame) => frame.type === "error"), [], "an advertised model executes without UNKNOWN_MODEL or provider errors");
+			assert.equal(frames.at(-1)?.type, "done");
+		}
+		assert.deepEqual(received, [liveId, "gpt-6-astra", liveId].map((model) => ({ path: "/codex/responses", model, effort: "medium" })), "the actual provider fixture sees both live and static model ids");
+		const refreshed = await Promise.all([getCatalogue(), getCatalogue()]);
+		assert.ok(refreshed.every((result) => result.models.some((model) => model.id === advertised.id)));
+		assert.equal(catalogueCalls, 1, "repeated listing and turns share one cached live fetch");
+		const resolvedRegistry = await providers.createModels({ auth: fixtureAuth, codexBaseUrl: fixtureOrigin });
+		assert.equal((await providers.resolveModel(advertised.id, { models: resolvedRegistry })).model.id, liveId, "a registry created after discovery sees the cached live model");
+		assert.deepEqual(resolvedRegistry.getModel("openai-codex", "gpt-6-astra"), staticModel, "registration preserves static model metadata");
+		console.log("PASS 16s: live-only and static Codex models execute through HTTP; listings and turns fetch the catalogue once");
+	} finally {
+		await liveHandler.close();
+		for (const server of [sidecar, fixture]) {
+			const closed = once(server, "close", { signal: AbortSignal.timeout(5000) });
+			server.close(); server.closeAllConnections(); await closed;
+		}
+	}
+}

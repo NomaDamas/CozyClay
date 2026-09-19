@@ -1387,3 +1387,48 @@ async function bounded16q(promise, label, ms = 10000) {
 		await new Promise((resolve) => detachedServer.close(resolve));
 	}
 }
+// #379 / 16s: the live-only Codex model already advertised by the real
+// catalogue must remain executable when the turn runner creates its registry.
+{
+	const { zstdDecompressSync } = await import("node:zlib");
+	const liveId16s = "gpt-9-nova";
+	const token16s = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "16s-routes" } })).toString("base64url")}.e30`;
+	const auth16s = {
+		getAccessToken: async () => token16s,
+		readStored: () => ({ access_token: token16s, refresh_token: "routes-refresh", expires_at: Date.now() + 3600000 }),
+		status: () => ({ signedIn: true }),
+	};
+	const received16s = [];
+	const fixture16s = createServer(async (req, res) => {
+		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+		const encoded = Buffer.concat(chunks);
+		const body = JSON.parse((req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded).toString("utf8"));
+		received16s.push(body.model);
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed" } })}\n\n`);
+	});
+	fixture16s.listen(0, "127.0.0.1"); await once(fixture16s, "listening");
+	const fixtureOrigin16s = `http://127.0.0.1:${fixture16s.address().port}`;
+	const codex16s = {
+		listModels: async () => [{ slug: liveId16s, supported_reasoning_levels: ["medium"] }],
+		parseQuotaHeaders: () => ({ primary: {}, credits: {} }),
+	};
+	let sidecar16s;
+	const handler16s = createAgentHandler({ auth: auth16s, codex: codex16s, codexBaseUrl: fixtureOrigin16s, handlers: [], liveHub: {}, port: () => sidecar16s.address().port });
+	sidecar16s = createServer((req, res) => handler16s(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	sidecar16s.listen(0, "127.0.0.1"); await once(sidecar16s, "listening");
+	const origin16s = `http://127.0.0.1:${sidecar16s.address().port}`;
+	try {
+		const catalogue16s = await fetch(`${origin16s}/agent/models`).then((response) => response.json());
+		assert.ok(catalogue16s.models.some((model) => model.id === `openai-codex/${liveId16s}`), "the cached live-only model remains advertised");
+		const turn16s = await fetch(`${origin16s}/agent/turn`, { method: "POST", headers: { origin: origin16s, "content-type": "application/json" }, body: JSON.stringify({ sessionId: "16s-route-live", text: "hello", model: `openai-codex/${liveId16s}` }) });
+		const frames16s = [...(await turn16s.text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+		assert.equal(frames16s.some((frame) => frame.type === "error" && frame.code === "UNKNOWN_MODEL"), false, "a model advertised by /agent/models resolves in the runner registry");
+		assert.deepEqual(received16s, [liveId16s], "the Codex fixture receives the advertised model id");
+		console.log("PASS 16s: the cached live-only catalogue entry executes through the route runner");
+	} finally {
+		await handler16s.close();
+		const closedSidecar16s = once(sidecar16s, "close", { signal: AbortSignal.timeout(5000) }); sidecar16s.close(); sidecar16s.closeAllConnections(); await closedSidecar16s;
+		const closedFixture16s = once(fixture16s, "close", { signal: AbortSignal.timeout(5000) }); fixture16s.close(); fixture16s.closeAllConnections(); await closedFixture16s;
+	}
+}

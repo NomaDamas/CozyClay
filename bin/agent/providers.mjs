@@ -84,13 +84,57 @@ export async function loadProvider(id, { baseUrl } = {}) {
 	return provider;
 }
 
+let liveCodexFetch;
+let liveCodexModels = [];
+const extendedCodexProviders = new WeakSet();
+
+function livePiModel(model, template) {
+	const thinkingLevelMap = Object.fromEntries(["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => [level, model.efforts.includes(level) ? level : null]));
+	return { ...template, id: model.id, name: model.label, thinkingLevelMap };
+}
+
+function extendCodexProvider(provider) {
+	if (!liveCodexModels.length || extendedCodexProviders.has(provider)) return false;
+	const getModels = provider.getModels.bind(provider);
+	const knownModels = getModels();
+	const known = new Set(knownModels.map((model) => model.id));
+	const template = knownModels.find((model) => Array.isArray(model.input) && model.input.includes("text") && model.input.includes("image")) || knownModels[0];
+	if (!template) return false;
+	const additions = liveCodexModels.filter((model) => !known.has(model.id)).map((model) => livePiModel(model, template));
+	if (!additions.length) return false;
+	provider.getModels = () => [...getModels(), ...additions];
+	extendedCodexProviders.add(provider);
+	return true;
+}
+
+async function cachedLiveCodexModels(codex) {
+	if (!liveCodexFetch) {
+		liveCodexFetch = Promise.resolve().then(() => codex.listModels()).then((result) => liveModelsCodex(result)).catch(() => []);
+		liveCodexModels = await liveCodexFetch;
+	}
+	return liveCodexFetch;
+}
+
+async function registerLiveCodexModels(models, codex) {
+	if (!codex?.listModels) return [];
+	const live = await cachedLiveCodexModels(codex);
+	const provider = models?.getProvider?.("openai-codex");
+	if (provider && typeof models.setProvider === "function") {
+		if (extendCodexProvider(provider)) models.setProvider(provider);
+		return [];
+	}
+	return live;
+}
+
 export async function createModels({ credentials, auth = defaultAuth, keys = defaultKeys, env = process.env, codexBaseUrl } = {}) {
 	const { createModels: createPiModels } = await import("@earendil-works/pi-ai");
 	const store = credentials ?? createCredentialStore({ auth, keys, env });
 	const models = createPiModels({ credentials: store });
 	for (const provider of PROVIDERS) {
 		const baseUrl = provider.id === "openai-codex" ? codexBaseUrl : undefined;
-		models.setProvider(await loadProvider(provider.id, { baseUrl }));
+		const loaded = await loadProvider(provider.id, { baseUrl });
+		if (provider.id === "openai-codex") extendCodexProvider(loaded);
+		models.setProvider(loaded);
 	}
 	return models;
 }
@@ -205,14 +249,15 @@ export async function listAgentModels({ models, codex, auth = defaultAuth, keys 
 		const authSource = resolveAuthSource(provider, { auth, saved, env });
 		let list = catalogModels(resolvedModels, provider.id, getSupportedThinkingLevels);
 		if (provider.id === "openai-codex") {
-			list = [...list].sort(astraFirst);
 			if (signedIn && codex?.listModels) {
 				try {
+					const fallbackLive = await registerLiveCodexModels(resolvedModels, codex);
+					list = catalogModels(resolvedModels, provider.id, getSupportedThinkingLevels);
 					const known = new Set(list.map((model) => model.id));
-					const live = liveModelsCodex(await codex.listModels()).filter((model) => !known.has(model.id));
-					list = [...list, ...live];
+					list = [...list, ...fallbackLive.filter((model) => !known.has(model.id))];
 				} catch { /* the live catalog is a bonus; the static catalog still lists astra */ }
 			}
+			list = [...list].sort(astraFirst);
 		}
 		providers.push({ id: provider.id, label: provider.label, signedIn, authSource, models: list });
 	}
