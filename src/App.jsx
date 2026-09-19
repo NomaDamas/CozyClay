@@ -5927,6 +5927,35 @@ export default function App() {
 		if (captured.width !== FAL_MOTION_STILL_OUTPUT.width || captured.height !== FAL_MOTION_STILL_OUTPUT.height) {
 			throw new Error(ko("H3 480P 참조 캡처는 16:9(1920×1080)이어야 해요.", "The H3 480P reference must be captured at 16:9 (1920×1080)."));
 		}
+		// H3 must see the same complete subject in both endpoints. A clipped
+		// foot or head makes the model invent the missing geometry during the
+		// transition, which is exactly the bad motion this flow is meant to avoid.
+		const rig = liveStateRef.current.rigs?.[activeChar.id];
+		const cam = shotCamRef.current;
+		if (!rig || !cam) throw new Error(ko("전신 프레임을 확인할 수 없어 참조를 캡처할 수 없어요. 잠시 후 다시 시도하세요.", "The full-body frame is not ready yet. Wait a moment and try the reference capture again."));
+		rig.updateWorldMatrix(true, true);
+		cam.updateMatrixWorld(true);
+		const bounds = new THREE.Box3().setFromObject(rig);
+		const corners = [
+			new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+			new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+			new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+			new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+			new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+			new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+			new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+			new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+		].map((corner) => corner.project(cam));
+		const margin = 0.94;
+		const clipped = corners.some((corner) =>
+			corner.z < -1 || corner.z > 1 || Math.abs(corner.x) > margin || Math.abs(corner.y) > margin
+		);
+		if (clipped) {
+			throw new Error(ko(
+				"A/B 참조에 캐릭터 전신이 다 안 들어왔어요. 머리와 양발이 화면 안에 들어오도록 카메라를 뒤로 빼고 다시 캡처하세요.",
+				"The full character is not inside the A/B reference. Pull the camera back until the head and both feet are visible, then capture again."
+			));
+		}
 		if (!falMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
 			throw new Error(ko("A/B 참조는 View에서 부위 색상 → 음영을 켜야 캡처할 수 있어요.", "Enable View → Body part colours → Shaded before capturing an A/B reference."));
 		}
