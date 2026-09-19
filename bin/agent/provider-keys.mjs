@@ -28,9 +28,17 @@ export function readKeys() {
 		console.warn(`[agent] providers.json is not valid JSON; ignoring it: ${path}`);
 		return {};
 	}
-	if (value && typeof value === "object" && !Array.isArray(value)) return value;
-	console.warn(`[agent] providers.json is not valid JSON; ignoring it: ${path}`);
-	return {};
+	if (!value || typeof value !== "object" || Array.isArray(value)) {
+		console.warn(`[agent] providers.json is not valid JSON; ignoring it: ${path}`);
+		return {};
+	}
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof key !== "string" || key.length === 0 || typeof entry !== "string" || entry.length === 0) {
+			console.warn(`[agent] providers.json has an invalid entry; ignoring it: ${path}`);
+			return {};
+		}
+	}
+	return value;
 }
 
 export function setKey(id, key) {
@@ -46,6 +54,3 @@ export function removeKey(id) {
 	return next;
 }
 
-export function providersFile() {
-	return filePath();
-}

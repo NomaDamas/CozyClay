@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -141,6 +141,73 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 
 	process.env.COZYCLAY_CONFIG_DIR = previousConfigDir;
 	rmSync(corruptDir, { recursive: true, force: true });
+}
+
+{
+	// #379 (16c): readKeys() must validate EVERY entry in the map, not just the
+	// container. Invalid entries (non-string key/value, empty value) must be
+	// treated as an untrusted whole file -> {} + exactly one path-only warning.
+	const invalidDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-providers-invalid-"));
+	const invalidFile = join(invalidDir, "providers.json");
+	const previousConfigDir = process.env.COZYCLAY_CONFIG_DIR;
+	process.env.COZYCLAY_CONFIG_DIR = invalidDir;
+	const previousAnthropicEnv = process.env.ANTHROPIC_API_KEY;
+	delete process.env.ANTHROPIC_API_KEY;
+	const { createCredentialStore: createStoreForInvalid } = await import("../bin/agent/credential-store.mjs");
+
+	const invalidCases = [
+		["object value", '{"anthropic":{"key":"x"}}'],
+		["non-string mixed", '{"anthropic":42,"openai":"sk-o"}'],
+		["empty string value", '{"anthropic":""}'],
+		["empty string key", '{"":"sk-x"}'],
+	];
+	for (const [label, raw] of invalidCases) {
+		writeFileSync(invalidFile, raw, { mode: 0o600 });
+		const warnings = [];
+		const originalWarn = console.warn;
+		console.warn = (...args) => warnings.push(args.join(" "));
+		let readResult;
+		try {
+			readResult = keys.readKeys();
+		} finally {
+			console.warn = originalWarn;
+		}
+		assert.deepEqual(readResult, {}, `${label}: readKeys() returns {}`);
+		assert.equal(warnings.length, 1, `${label}: exactly one warning, got ${JSON.stringify(warnings)}`);
+		assert.ok(warnings[0].includes(invalidFile), `${label}: warning names the path`);
+		assert.ok(!warnings[0].includes("sk-o"), `${label}: warning does not contain sk-o`);
+		assert.equal(auth.status().providersConfigured, 0, `${label}: providersConfigured is 0`);
+		const invalidStore = createStoreForInvalid({ auth, keys, env: {} });
+		assert.equal(await invalidStore.read("anthropic"), undefined, `${label}: credential store read(anthropic) is undefined`);
+		console.log(`PASS readKeys() rejects invalid entry (${label}) -> {} with one path-only warning`);
+	}
+
+	// setKey afterwards writes exactly the new map at 0600
+	writeFileSync(invalidFile, '{"anthropic":{"key":"x"}}', { mode: 0o600 });
+	keys.setKey("openai", "sk-new");
+	const afterSet = JSON.parse(readFileSync(invalidFile, "utf8"));
+	assert.deepEqual(afterSet, { openai: "sk-new" }, "setKey writes exactly the new map, discarding the invalid file");
+	assert.equal(statSync(invalidFile).mode & 0o777, 0o600, "setKey keeps the file mode 0600");
+	console.log("PASS setKey(...) after an invalid file writes exactly the new map at 0600");
+
+	// a valid map still round-trips with no warn
+	writeFileSync(invalidFile, '{"anthropic":"sk-a"}', { mode: 0o600 });
+	const validWarnings = [];
+	const originalWarn2 = console.warn;
+	console.warn = (...args) => validWarnings.push(args.join(" "));
+	let validResult;
+	try {
+		validResult = keys.readKeys();
+	} finally {
+		console.warn = originalWarn2;
+	}
+	assert.deepEqual(validResult, { anthropic: "sk-a" }, "a valid map still round-trips unchanged");
+	assert.equal(validWarnings.length, 0, "a valid map produces no warning");
+	console.log("PASS a valid providers.json round-trips with no warning");
+
+	if (previousAnthropicEnv === undefined) delete process.env.ANTHROPIC_API_KEY; else process.env.ANTHROPIC_API_KEY = previousAnthropicEnv;
+	process.env.COZYCLAY_CONFIG_DIR = previousConfigDir;
+	rmSync(invalidDir, { recursive: true, force: true });
 }
 
 for (const [name, value] of Object.entries(previousProviderEnv)) {

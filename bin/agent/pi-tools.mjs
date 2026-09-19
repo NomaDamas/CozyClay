@@ -2,7 +2,6 @@ import { Value } from "typebox/value";
 import { STUDIO_TOOL_LABELS } from "../../src/studio-agent-protocol.js";
 import { toTypeBox } from "./schema-to-typebox.mjs";
 
-export const IMAGE_DETAILS = Symbol("cozyclay.agent.imageDetails");
 
 function dataUrlImage(dataUrl) {
 	const match = /^data:([^;,]+);base64,(.*)$/.exec(dataUrl || "");
@@ -24,7 +23,6 @@ function publicResult(result) {
 	const value = Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl"));
 	const image = imageDetails(result);
 	Object.defineProperty(value, "image", { value: image, enumerable: false });
-	Object.defineProperty(value, IMAGE_DETAILS, { value: image, enumerable: false });
 	return value;
 }
 
