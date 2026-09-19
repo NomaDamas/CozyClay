@@ -406,13 +406,20 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					if (input.surface === "studio") {
 						const studioContext = typeof input.studioContextText === "string" ? input.studioContextText : `<studio-context>\n${input.contextText || ""}\n</studio-context>`;
 						const attachments = Array.isArray(input.attachments) ? input.attachments : [];
-						const images = attachments.map((attachment) => dataUrlImage(attachment?.dataUrl)).filter(Boolean);
-						const attachmentLabels = attachments.map((attachment, index) => `User attachment ${attachment?.name || index + 1}`).join("\n");
 						if (input.frameObservation) {
 							const observation = studioObservationMessage(input.frameObservation);
 							composed = { appends: [studioUserMessage({ ...input, studioContextText: studioContext })], text: observation.content[0].text, images: [observation.content[1]] };
 						} else {
-							composed = { appends: [], text: `${attachmentLabels ? `${attachmentLabels}\n` : ""}${studioContext}\n${input.text || ""}`, images };
+							// Same shape as studioUserMessage/attachmentMessage: one text part per
+							// attachment label immediately followed by its image, then the studio
+							// context and the user prompt as their OWN text parts (not concatenated
+							// into one string) so session-store's transcriptFromHistory restores
+							// the prompt text and the attachment names intact (#379, F2 pass 5).
+							const message = {
+								role: "user",
+								content: [...studioAttachmentContent(attachments), { type: "text", text: studioContext }, { type: "text", text: input.text || "" }],
+							};
+							composed = { appends: [], text: message, images: undefined };
 						}
 					} else {
 						let text = input.text || "";

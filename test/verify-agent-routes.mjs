@@ -969,3 +969,123 @@ server.close();
 	rmSync(oauthConfigDir, { recursive: true, force: true });
 	console.log("PASS GET /oauth/status: a corrupt providers.json returns 200 with signedIn true and providersConfigured 0");
 }
+
+// #379 / 16h: real credential-store modify -> auth.writeStored -> onAuthChange
+// during a 401 retry. Only remote OAuth and model/editor responses are fixtures.
+{
+	const { createCredentialStore } = await import("../bin/agent/credential-store.mjs");
+	const { createSessionStore } = await import("../bin/agent/session-store.mjs");
+	const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
+	const tokenFor = accountId => `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: accountId } })).toString("base64url")}.e30`;
+	for (const kind of ["rotated", "replaced", "signed_out"]) {
+		const scratch = mkdtempSync(join(tmpdir(), `cozyclay-agent-auth-change-${kind}-`));
+		const previousAuthFile = process.env.COZYCLAY_CODEX_AUTH_FILE;
+		process.env.COZYCLAY_CODEX_AUTH_FILE = join(scratch, "codex-auth.json");
+		let realAuth;
+		try {
+			// A separate module instance fixes its token path to this case's file.
+			realAuth = await import(`../bin/codex-auth.mjs?16h=${kind}`);
+		} finally {
+			if (previousAuthFile === undefined) delete process.env.COZYCLAY_CODEX_AUTH_FILE;
+			else process.env.COZYCLAY_CODEX_AUTH_FILE = previousAuthFile;
+		}
+		realAuth.writeStored({ access_token: "route-old-access", refresh_token: "route-refresh", expires_at: Date.now() + 3600000, id_token: tokenFor("route-account-a") });
+		const auth = { ...realAuth, writeStored: value => realAuth.writeStored({ ...value, ...(kind === "replaced" ? { id_token: tokenFor("route-account-b") } : {}) }) };
+		let refreshes = 0, mutations = 0, disposals = 0;
+		const changes = [];
+		const off = auth.onAuthChange(change => changes.push(change));
+		const models = createModels({ credentials: createCredentialStore({ auth, keys: { readKeys: () => ({}) }, env: {} }) });
+		const faux = createFakeModel({ models, provider: "openai-codex", modelId: "gpt-6-astra", modelName: "Astra" });
+		faux.provider.auth = { oauth: {
+			name: "Route OAuth",
+			refresh: async credential => {
+				refreshes++;
+				if (kind === "signed_out") {
+					auth.logout();
+					throw new Error("401 Unauthorized");
+				}
+				return { ...credential, access: "route-new-access", refresh: "route-new-refresh", expires: Date.now() + 3600000 };
+			},
+			toAuth: async credential => ({ apiKey: credential.access }),
+		} };
+		models.setProvider(faux.provider);
+		faux.fauxProvider.setResponses([
+			fauxAssistantMessage([fauxToolCall("add_workflow_node", { type: "image" }, { id: `${kind}-tool` })], { stopReason: "toolUse" }),
+			fauxAssistantMessage([], { stopReason: "error", errorMessage: "401 Unauthorized" }),
+			fauxAssistantMessage([fauxText("recovered after refresh")]),
+		]);
+		const sessions = createSessionStore(join(scratch, "sessions"));
+		const handler = createAgentHandler({
+			auth, models, codex: fakeCodex, sessionStore: sessions,
+			liveHub: { command: async command => { assert.equal(command, "add_node"); mutations++; return { node: { id: `${kind}-node` } }; } },
+			studioRuntime: { dispose: () => { disposals++; } },
+			port: () => server.address().port,
+		});
+		const server = createServer((req, res) => handler(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+		const listening = once(server, "listening", { signal: AbortSignal.timeout(5000) });
+		server.listen(0, "127.0.0.1");
+		await listening;
+		const origin = `http://127.0.0.1:${server.address().port}`;
+		const turnId = "c".repeat(32);
+		try {
+			const response = await fetch(`${origin}/agent/turn`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ sessionId: `auth-change-${kind}`, turn_id: turnId, text: "apply this exactly once", model: "openai-codex/gpt-6-astra" }), signal: AbortSignal.timeout(10000) });
+			const frames = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+			const rotated = kind === "rotated";
+			assert.equal(response.status, 200);
+			assert.equal(refreshes, 1, `${kind}: one OAuth refresh`);
+			assert.equal(mutations, 1, `${kind}: one actual editor mutation`);
+			assertUniqueToolPairs(frames, `16h ${kind}`);
+			assert.equal(frames.some(frame => frame.type === "error" && frame.code === "aborted"), !rotated, `${kind}: abort only for identity changes`);
+			assert.equal(frames.some(frame => frame.type === "error"), !rotated);
+			assert.equal(frames.filter(frame => frame.type === "text.delta").map(frame => frame.text).join(""), rotated ? "recovered after refresh" : "");
+			assert.equal(frames.at(-1)?.type, "done");
+			assert.deepEqual(sessions.read(`auth-change-${kind}`)?.history.map(message => message.role), rotated ? ["user", "assistant", "toolResult", "assistant"] : ["user", "assistant", "toolResult"]);
+			assert.equal(disposals, rotated ? 0 : 1, `${kind}: runtime invalidated only for identity changes`);
+			const steer = await fetch(`${origin}/agent/turn/${turnId}/steer`, { method: "POST", headers: { origin, "content-type": "application/json" }, body: JSON.stringify({ text: "session lookup" }), signal: AbortSignal.timeout(5000) });
+			assert.equal(steer.status, rotated ? 409 : 404, `${kind}: live session retained only for token rotation`);
+			await steer.text();
+			if (kind !== "signed_out") assert.equal(auth.readStored().access_token, "route-new-access");
+			else assert.equal(auth.readStored(), undefined);
+			assert.deepEqual(changes, [{ kind, status: auth.status() }], `${kind}: production notification payload`);
+			console.log(`PASS 16h ${kind}: real credential write preserves rotation and invalidates identity changes`);
+		} finally {
+			off();
+			await handler.close();
+			await new Promise(resolve => server.close(resolve));
+			rmSync(scratch, { recursive: true, force: true });
+		}
+	}
+}
+
+// #379 / 16i (F2 pass 5 finding 2): a Studio turn with an ordinary attachment
+// and NO frameObservation must keep the submitted prompt and the attachment
+// label as their OWN transcript parts, not one string starting with
+// "User attachment " (which session-store's transcriptFromHistory treats
+// entirely as the attachment label and drops from the bubble text).
+{
+	const { transcriptFromHistory, createSessionStore } = await import("../bin/agent/session-store.mjs");
+	const studioAttachFaux = createFakeModel();
+	studioAttachFaux.script([{ type: "text", text: "I see the reference." }]);
+	const studioAttachSessions = createSessionStore(mkdtempSync(join(tmpdir(), "cozyclay-agent-studio-attach-restore-")));
+	const studioAttachHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: studioAttachFaux.models, fauxProvider: studioAttachFaux.fauxProvider, liveHub: fakeLive, sessionStore: studioAttachSessions, studioRuntime: { readContext: async () => (await import("./verify-studio-agent-protocol.mjs")).contextFixture() }, port: () => studioAttachServer.address().port });
+	const studioAttachServer = createServer((req, res) => studioAttachHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	studioAttachServer.listen(0, "127.0.0.1");
+	await once(studioAttachServer, "listening");
+	const studioAttachOrigin = `http://127.0.0.1:${studioAttachServer.address().port}`;
+	const studioAttachSessionId = "00000000-0000-4000-8000-00000000a379";
+	const studioAttachEnvelope = { ...(await import("./verify-studio-agent-protocol.mjs")).envelopeFixture(), sessionId: studioAttachSessionId, text: "Make the character match this reference.", attachments: [{ dataUrl: png, name: "reference.png" }] };
+	await fetch(`${studioAttachOrigin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: studioAttachOrigin }, body: JSON.stringify(studioAttachEnvelope) }).then((response) => response.text());
+	const studioAttachMessage = studioAttachFaux.calls.at(-1)?.messages.findLast((item) => item.role === "user");
+	const studioAttachParts = studioAttachMessage?.content ?? [];
+	assert.equal(studioAttachParts.length, 4, `the provider-observed Studio user message carries the label, context, prompt and image as 4 separate parts: ${JSON.stringify(studioAttachParts)}`);
+	assert.match(studioAttachParts.find((part) => part.type === "text" && part.text.startsWith("User attachment"))?.text ?? "", /reference\.png/, "the attachment label part names the file");
+	assert.ok(studioAttachParts.some((part) => part.type === "text" && part.text === "Make the character match this reference."), "the user prompt is its own text part, not merged into the label or the context");
+	assert.ok(studioAttachParts.some((part) => part.type === "image"), "the image part is still sent to the model");
+	const studioAttachHistory = studioAttachSessions.read(studioAttachSessionId).history;
+	const studioAttachTranscript = transcriptFromHistory(studioAttachHistory);
+	const studioAttachBubble = studioAttachTranscript.find((item) => item.kind === "user");
+	assert.equal(studioAttachBubble?.text, "Make the character match this reference.", "the restored Studio bubble keeps the submitted prompt text");
+	assert.equal(studioAttachBubble?.attachments?.[0]?.name, "reference.png", "the restored Studio bubble keeps the attachment name");
+	studioAttachServer.close();
+	console.log("PASS 16i: a Studio turn with an attachment and no frameObservation restores its prompt text and attachment name");
+}
