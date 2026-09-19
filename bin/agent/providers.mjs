@@ -88,9 +88,16 @@ const PI_EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "m
 const piEffort = (level) => level === "none" ? "off" : level === "ultra" ? "max" : level;
 const wireEffort = (level) => (level === "off" ? "none" : level);
 
-let liveCodexFetch;
-let liveCodexModels = [];
-const extendedCodexProviders = new WeakSet();
+const registryCatalogueState = new WeakMap();
+
+function catalogueState(models) {
+	let state = registryCatalogueState.get(models);
+	if (!state) {
+		state = { fetch: null, models: [], extendedProviders: new WeakSet() };
+		registryCatalogueState.set(models, state);
+	}
+	return state;
+}
 
 function livePiModel(model, template) {
 	const supported = new Set(model.efforts.map(piEffort));
@@ -98,34 +105,38 @@ function livePiModel(model, template) {
 	return { ...template, id: model.id, name: model.label, thinkingLevelMap };
 }
 
-function extendCodexProvider(provider) {
-	if (!liveCodexModels.length || extendedCodexProviders.has(provider)) return false;
+function extendCodexProvider(provider, liveModels, state) {
+	if (!liveModels.length || state.extendedProviders.has(provider)) return false;
 	const getModels = provider.getModels.bind(provider);
 	const knownModels = getModels();
 	const known = new Set(knownModels.map((model) => model.id));
 	const template = knownModels.find((model) => Array.isArray(model.input) && model.input.includes("text") && model.input.includes("image")) || knownModels[0];
 	if (!template) return false;
-	const additions = liveCodexModels.filter((model) => !known.has(model.id)).map((model) => livePiModel(model, template));
+	const additions = liveModels.filter((model) => !known.has(model.id)).map((model) => livePiModel(model, template));
 	if (!additions.length) return false;
 	provider.getModels = () => [...getModels(), ...additions];
-	extendedCodexProviders.add(provider);
+	state.extendedProviders.add(provider);
 	return true;
 }
 
-async function cachedLiveCodexModels(codex) {
-	if (!liveCodexFetch) {
-		liveCodexFetch = Promise.resolve().then(() => codex.listModels()).then((result) => liveModelsCodex(result)).catch(() => []);
-		liveCodexModels = await liveCodexFetch;
+async function registryLiveCatalogue(models, codex) {
+	const state = catalogueState(models);
+	if (!state.fetch) {
+		state.fetch = Promise.resolve().then(() => codex.listModels()).then((result) => {
+			state.models = liveModelsCodex(result);
+			return state.models;
+		}).catch(() => []);
 	}
-	return liveCodexFetch;
+	return state.fetch;
 }
 
 async function registerLiveCodexModels(models, codex) {
 	if (!codex?.listModels) return [];
-	const live = await cachedLiveCodexModels(codex);
+	const state = catalogueState(models);
+	const live = await registryLiveCatalogue(models, codex);
 	const provider = models?.getProvider?.("openai-codex");
 	if (provider && typeof models.setProvider === "function") {
-		if (extendCodexProvider(provider)) models.setProvider(provider);
+		if (extendCodexProvider(provider, live, state)) models.setProvider(provider);
 		return [];
 	}
 	return live;
@@ -138,7 +149,6 @@ export async function createModels({ credentials, auth = defaultAuth, keys = def
 	for (const provider of PROVIDERS) {
 		const baseUrl = provider.id === "openai-codex" ? codexBaseUrl : undefined;
 		const loaded = await loadProvider(provider.id, { baseUrl });
-		if (provider.id === "openai-codex") extendCodexProvider(loaded);
 		models.setProvider(loaded);
 	}
 	return models;

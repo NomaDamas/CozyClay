@@ -292,6 +292,37 @@ for (const [name, value] of Object.entries(previousProviderEnv)) {
 }
 console.log("agent provider verification passed");
 
+// #379 / 16w: live catalogue entries belong to the registry/account that
+// discovered them, not to every registry in this process.
+{
+	const tokenFor = account => `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: account } })).toString("base64url")}.e30`;
+	const authFor = account => ({ getAccessToken: async () => tokenFor(account), readStored: () => ({ access_token: tokenFor(account), refresh_token: `${account}-refresh`, expires_at: Date.now() + 3600000 }), status: () => ({ signedIn: true }) });
+	const signedOut = { getAccessToken: async () => null, readStored: () => undefined, status: () => ({ signedIn: false }) };
+	const keys = { readKeys: () => ({}) };
+	let aCalls = 0, bCalls = 0;
+	const aClient = { listModels: async () => { aCalls++; return [{ slug: "gpt-16w-account-a", supported_reasoning_levels: ["medium"] }]; } };
+	const bClient = { listModels: async () => { bCalls++; return [{ slug: "gpt-16w-account-b", supported_reasoning_levels: ["low"] }]; } };
+	const a = await providers.createModels({ auth: authFor("account-a"), keys, env: {}, codexBaseUrl: "http://127.0.0.1:61121" });
+	const aFirst = await providers.listAgentModels({ models: a, codex: aClient, auth: authFor("account-a"), keys, env: {} });
+	const aSecond = await providers.listAgentModels({ models: a, codex: aClient, auth: authFor("account-a"), keys, env: {} });
+	const b = await providers.createModels({ auth: authFor("account-b"), keys, env: {}, codexBaseUrl: "http://127.0.0.1:61122" });
+	const bList = await providers.listAgentModels({ models: b, codex: bClient, auth: authFor("account-b"), keys, env: {} });
+	const c = await providers.createModels({ auth: signedOut, keys, env: {}, codexBaseUrl: "http://127.0.0.1:61123" });
+	const cList = await providers.listAgentModels({ models: c, codex: aClient, auth: signedOut, keys, env: {} });
+	assert.ok(aFirst.models.some(model => model.id === "openai-codex/gpt-16w-account-a"));
+	assert.ok(aSecond.models.some(model => model.id === "openai-codex/gpt-16w-account-a"));
+	assert.equal(aCalls, 1, "registry A fetches its catalogue once");
+	assert.ok(bList.models.some(model => model.id === "openai-codex/gpt-16w-account-b"), "registry B advertises its own live model");
+	assert.equal(bList.models.some(model => model.id === "openai-codex/gpt-16w-account-a"), false, "registry B does not inherit A's live model");
+	assert.equal(bCalls, 1, "registry B fetches its catalogue once");
+	assert.equal(cList.models.some(model => model.id === "openai-codex/gpt-16w-account-a"), false, "signed-out registry C does not inherit A's live model");
+	assert.equal(cList.models.some(model => model.id === "openai-codex/gpt-16w-account-b"), false, "signed-out registry C does not inherit B's live model");
+	assert.equal(a.getModel("openai-codex", "gpt-16w-account-a")?.id, "gpt-16w-account-a");
+	assert.equal(b.getModel("openai-codex", "gpt-16w-account-b")?.id, "gpt-16w-account-b");
+	assert.equal(c.getModel("openai-codex", "gpt-16w-account-a"), undefined);
+	console.log("PASS 16w: live Codex catalogues are isolated per registry and account");
+}
+
 // #379 / 16s: a live-only model advertised by the real, non-injected route
 // must reach the real Codex HTTP provider, not stop at UNKNOWN_MODEL.
 {
@@ -364,6 +395,7 @@ console.log("agent provider verification passed");
 		checkEffort(() => assert.deepEqual(noneAdvertised?.efforts, ["none", "medium", "high"]));
 		checkEffort(() => assert.equal(noneAdvertised?.defaultEffort, "medium"));
 		const noneRegistry = await providers.createModels({ auth: fixtureAuth, codexBaseUrl: fixtureOrigin });
+		await providers.listAgentModels({ models: noneRegistry, codex, auth: fixtureAuth, keys: { readKeys: () => ({}) }, env: {} });
 		const noneModel = noneRegistry.getModel("openai-codex", noneId);
 		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.off, "off"));
 		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.minimal, null));
@@ -384,10 +416,8 @@ console.log("agent provider verification passed");
 		assert.deepEqual(effortMismatches, [], `live no-reasoning effort mismatches: ${JSON.stringify(effortMismatches)}`);
 		const refreshed = await Promise.all([getCatalogue(), getCatalogue()]);
 		assert.ok(refreshed.every((result) => result.models.some((model) => model.id === advertised.id)));
-		assert.equal(catalogueCalls, 1, "repeated listing and turns share one cached live fetch");
-		const resolvedRegistry = await providers.createModels({ auth: fixtureAuth, codexBaseUrl: fixtureOrigin });
-		assert.equal((await providers.resolveModel(advertised.id, { models: resolvedRegistry })).model.id, liveId, "a registry created after discovery sees the cached live model");
-		assert.deepEqual(resolvedRegistry.getModel("openai-codex", "gpt-6-astra"), staticModel, "registration preserves static model metadata");
+		assert.equal(catalogueCalls, 2, "each registry fetches its live catalogue once");
+		assert.deepEqual(noneRegistry.getModel("openai-codex", "gpt-6-astra"), staticModel, "registration preserves static model metadata");
 		console.log("PASS 16s: live-only and static Codex models execute through HTTP; listings and turns fetch the catalogue once");
 	} finally {
 		await liveHandler.close();
