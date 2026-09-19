@@ -414,6 +414,9 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				let removeEventListeners;
 				try {
 					await ensureHarness(input);
+					// Keep the lane history, but replace per-turn tool closures (admission,
+					// workspace and cancellation). Auth resend reuses these same bindings.
+					if (state.harness && input.tools !== undefined) await state.harness.setTools(await adapters(input), state.context);
 					removeEventListeners = mapEvents(queue, input);
 					// The turn is composed ONCE (an attached frame is captured once, its
 					// tool card emitted once) and then delivered; a 401 retry replays this

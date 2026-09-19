@@ -831,6 +831,61 @@ console.log("agent routes verified");
 }
 
 {
+	// #379: each turn in one live session must use its own admitted revision,
+	// including after the author edits the scene outside the agent.
+	const { contextFixture, envelopeFixture, receiptFixture } = await import("./verify-studio-agent-protocol.mjs");
+	let revision = 41;
+	const seen = [];
+	const current = () => { const context = contextFixture(); context.revision.scene = revision; return context; };
+	const twoTurnFaux = createFakeModel();
+	const twoTurnHub = { command: async (name, args) => {
+		assert.equal(name, "patch_elements");
+		seen.push({ actualRevision: revision, expectedRevision: args.expectedRevision });
+		if (args.expectedRevision !== revision) return { ok: false, code: "STALE_SCENE", message: "Scene revision changed." };
+		return { ...receiptFixture(), revision: { before: revision, after: ++revision } };
+	} };
+	let twoTurnServer;
+	const twoTurnHandler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: twoTurnFaux.models, fauxProvider: twoTurnFaux.fauxProvider, handlers: [], liveHub: twoTurnHub, studioRuntime: { readContext: async () => current() }, port: () => twoTurnServer.address().port });
+	twoTurnServer = createServer((req, res) => twoTurnHandler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const listening = once(twoTurnServer, "listening", { signal: AbortSignal.timeout(5000) });
+	twoTurnServer.listen(0, "127.0.0.1");
+	await listening;
+	const origin = `http://127.0.0.1:${twoTurnServer.address().port}`;
+	const sessionId = "00000000-0000-4000-8000-00000000e379";
+	let cookie;
+	const post = async (turnId, callId) => {
+		twoTurnFaux.script([
+			{ type: "toolCall", id: callId, name: "patch_elements", arguments: { ops: [{ target: { kind: "stage" }, set: { "keyLight.warmth": 0.3 } }] } },
+			{ type: "text", text: "done" },
+		]);
+		const response = await fetch(`${origin}/agent/turn`, { method: "POST", headers: { origin, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ ...envelopeFixture(), sessionId, turnId, text: "set warmth", context: current(), model: "faux/scripted" }), signal: AbortSignal.timeout(5000) });
+		assert.equal(response.status, 200);
+		cookie = response.headers.get("set-cookie")?.split(";")[0] || cookie;
+		const text = await response.text();
+		return [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+	};
+	try {
+		const first = await post("00000000-0000-4000-8000-00000000e380", "first-patch");
+		assert.equal(first.find((frame) => frame.type === "tool.done")?.ok, true);
+		assert.equal(revision, 42, "the first mutation publishes revision 42");
+		revision = 99; // An ordinary manual scene edit between agent turns.
+		const second = await post("00000000-0000-4000-8000-00000000e381", "second-patch");
+		console.log("two-turn revision bindings", JSON.stringify({ seen, second }));
+		assert.equal(seen[1]?.expectedRevision, 99, "turn 2 must use its own admitted revision, not turn 1's closure");
+		assert.deepEqual(seen, [{ actualRevision: 41, expectedRevision: 41 }, { actualRevision: 99, expectedRevision: 99 }]);
+		assert.equal(second.find((frame) => frame.type === "tool.done")?.ok, true);
+		assert.equal(revision, 100, "the second mutation succeeds after the manual edit");
+		assert.equal(second.some((frame) => frame.type === "error"), false);
+		assert.equal(second.at(-1)?.type, "done");
+		assert.equal(twoTurnFaux.calls[2].messages.filter((message) => message.role === "user").length, 2, "the same harness retains both turns");
+	} finally {
+		await twoTurnHandler.close();
+		await new Promise((resolve) => twoTurnServer.close(resolve));
+	}
+	console.log("PASS Studio two-turn session installs the current admission after an out-of-band revision change");
+}
+
+{
 	// Regression for #342: a Studio rejection receipt carries code/message at the
 	// top level, never under `error`. The tool.done event and the model's
 	// function_call_output must show that code, message and recovery hint — never

@@ -270,55 +270,51 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 // because `signal` is actually the harness's `onUpdate` callback (a
 // function), so `ctx.signal.aborted` throws / never becomes true.
 {
-	let toolObservedAbort = null;
-	const slowTool = {
+	const observed = [];
+	let started;
+	const slowTool = (turn) => ({
 		name: "slow_tool",
 		description: "A slow tool used to prove the harness abort signal reaches tool handlers.",
-		// A realistic cancellable handler: it waits on its own work and, when the
-		// real harness abort signal fires, records that and rejects (mirroring
-		// how a genuine fetch/subprocess-backed tool would unwind on abort)
-		// instead of hanging forever.
+		// Subscribe inside the handler before telling the test it may abort.
+		// Each turn supplies a new closure with the same name and schema.
 		handler: (params, ctx) => new Promise((resolve, reject) => {
 			ctx.signal.addEventListener("abort", () => {
-				toolObservedAbort = ctx.signal.aborted === true;
+				observed.push({ turn, aborted: ctx.signal.aborted });
 				reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
-			});
+			}, { once: true });
+			started.resolve(ctx.signal);
 		}),
+	});
+	const bounded = async (promise) => {
+		let timer;
+		try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("tool abort event deadline")), 5000); })]); }
+		finally { clearTimeout(timer); }
 	};
 	const models = createModels();
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
 	models.setProvider(faux.provider);
-	installScripts(faux, [fauxAssistantMessage([fauxToolCall("slow_tool", {})], { stopReason: "toolUse" })]);
-	// `clock` defaults to the unbound `performance.now` in agent-runner.mjs
-	// (a pre-existing bug outside this task's scope, only reachable once a
-	// tool actually executes); supply a bound clock so the tool_start/tool_end
-	// telemetry this test depends on does not silently throw inside pi's event
-	// bus (which swallows listener errors) and drop the frame.
-	const runner = createAgentRunner({ models, tools: [slowTool], clock: () => Date.now() });
+	installScripts(faux, [1, 2].map((turn) => fauxAssistantMessage([fauxToolCall("slow_tool", {}, { id: `slow-${turn}` })], { stopReason: "toolUse" })));
+	const runner = createAgentRunner({ models });
 	const session = await runner.openSession("errors-tool-abort", { surface: "workflow" });
-	const frames = [];
-	let aborted = false;
-	const iterator = session.start({ text: "run the slow tool", model: "faux/scripted" })[Symbol.asyncIterator]();
-	const TIMEOUT_MS = 5000;
-	for (;;) {
-		const signal = AbortSignal.timeout(TIMEOUT_MS);
-		const timedOut = await new Promise((resolve) => {
-			const onTimeout = () => resolve(true);
-			signal.addEventListener("abort", onTimeout, { once: true });
-			iterator.next().then(({ value, done }) => {
-				signal.removeEventListener("abort", onTimeout);
-				if (done) { resolve(false); return; }
-				frames.push(value);
-				if (value.type === "tool.start" && !aborted) { aborted = true; session.abort("test").then(() => resolve(false)); }
-				else resolve(false);
-			});
-		});
-		if (timedOut) { expect("the runner stream did not hang waiting for the next frame", false, `no frame within ${TIMEOUT_MS}ms; frames so far=${JSON.stringify(frames)}`); break; }
-		if (frames.at(-1)?.type === "done") break;
-	}
-	await runner.close();
-	expect("the tool handler received pi's real harness abort signal (ctx.signal.aborted became true, not a function positionally treated as a signal)", toolObservedAbort === true, `toolObservedAbort=${toolObservedAbort}`);
-	expect("a done frame is the last frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
+	let previousSignal;
+	try {
+		for (const turn of [1, 2]) {
+			started = Promise.withResolvers();
+			const completed = bounded(collect(session, { text: "run the slow tool", model: "faux/scripted", tools: [slowTool(turn)] }));
+			const signal = await bounded(started.promise);
+			assert.equal(signal.aborted, false, `turn ${turn} starts with a live signal`);
+			assert.notEqual(signal, previousSignal, "each turn receives its own harness abort signal");
+			await bounded(session.abort(`test turn ${turn}`));
+			const frames = await completed;
+			assert.equal(signal.aborted, true);
+			assert.equal(frames.at(-1)?.type, "done", JSON.stringify(frames));
+			assert.ok(frames.some((frame) => frame.type === "error" && frame.code === "aborted"), JSON.stringify(frames));
+			previousSignal = signal;
+		}
+	} finally { await runner.close(); }
+	console.log("two-turn tool abort bindings", JSON.stringify(observed));
+	assert.deepEqual(observed, [{ turn: 1, aborted: true }, { turn: 2, aborted: true }], "each turn's slow-tool closure observes that turn's abort");
+	console.log("PASS both turns' tool handlers receive pi's real harness abort signal and complete with done");
 }
 
 // --- abort persistence: the real session store never gets the cancelled
