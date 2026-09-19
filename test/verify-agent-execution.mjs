@@ -304,4 +304,64 @@ for (const explicit of [true, false]) {
 	console.log("PASS 16k: the codex HTTP path's quota frame carries real header values and arrives before the model call completes");
 }
 
+// #379 / 16v: one handler registry must carry discovery from listing into every
+// execution surface, including runners created before and after discovery.
+{
+	const liveId = "gpt-16v-live-only";
+	const token = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "16v-fixture" } })).toString("base64url")}.e30`;
+	const auth = {
+		getAccessToken: async () => token,
+		readStored: () => ({ access_token: token, refresh_token: "16v-refresh", expires_at: Date.now() + 3600000 }),
+		status: () => ({ signedIn: true }),
+	};
+	const received = [];
+	const fixture = createServer(async (req, res) => {
+		if (req.method !== "POST") { res.writeHead(404); res.end(); return; }
+		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
+		const encoded = Buffer.concat(chunks);
+		const body = JSON.parse(req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded);
+		received.push(body.model);
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed" } })}\n\n`);
+	});
+	const fixtureUrl = await listen(fixture);
+	const codex = {
+		listModels: async () => [{ slug: liveId, supported_reasoning_levels: ["medium"] }],
+		parseQuotaHeaders: () => ({ primary: {}, credits: {} }),
+	};
+	const studioRuntime = { readContext: async () => (await import("./verify-studio-agent-protocol.mjs")).contextFixture() };
+	const liveHub = { workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", command: async () => ({}) };
+	const handler = createAgentHandler({ auth, codex, codexBaseUrl: fixtureUrl, handlers: [], liveHub, studioRuntime });
+	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const sidecarUrl = await listen(sidecar);
+	const workflowTurn = async (sessionId, model) => {
+		const response = await fetch(`${sidecarUrl}/agent/turn`, { method: "POST", headers: { origin: sidecarUrl, "content-type": "application/json" }, body: JSON.stringify({ sessionId, text: "hello", model }), signal: AbortSignal.timeout(8000) });
+		const text = await response.text();
+		return { response, frames: [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])), text };
+	};
+	const studioTurn = async (sessionId, turnId) => {
+		const context = (await import("./verify-studio-agent-protocol.mjs")).contextFixture();
+		const response = await fetch(`${sidecarUrl}/agent/turn`, { method: "POST", headers: { origin: sidecarUrl, "content-type": "application/json" }, body: JSON.stringify({ surface: "studio", sessionId, turnId, text: "inspect selection", model: `openai-codex/${liveId}`, context }), signal: AbortSignal.timeout(8000) });
+		const text = await response.text();
+		return { response, frames: [...text.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])), text };
+	};
+	try {
+		const warm = await workflowTurn("16v-workflow", "gpt-6-astra");
+		assert.equal(warm.response.status, 200);
+		assert.equal(warm.frames.some((frame) => frame.type === "error"), false, "the static Workflow turn warms the execution registry");
+		const catalogueResponse = await fetch(`${sidecarUrl}/agent/models`, { signal: AbortSignal.timeout(8000) });
+		const catalogue = await catalogueResponse.json();
+		assert.equal(catalogueResponse.status, 200);
+		assert.ok(catalogue.models.some((model) => model.id === `openai-codex/${liveId}`), "GET /agent/models advertises the live-only slug");
+		for (const [sessionId, turnId] of [["16v-workflow", null], ["00000000-0000-4000-8000-000000000103", "00000000-0000-4000-8000-000000000101"], ["00000000-0000-4000-8000-000000000104", "00000000-0000-4000-8000-000000000102"]]) {
+			const result = turnId ? await studioTurn(sessionId, turnId) : await workflowTurn(sessionId, `openai-codex/${liveId}`);
+			assert.equal(result.response.status, 200);
+			assert.equal(result.frames.some((frame) => frame.type === "error" && frame.code === "UNKNOWN_MODEL"), false, `${sessionId} resolves the advertised live-only slug`);
+			assert.equal(result.frames.at(-1)?.type, "done", `${sessionId} reaches a terminal done frame`);
+		}
+		assert.deepEqual(received, ["gpt-6-astra", liveId, liveId, liveId], "static, Workflow and both Studio turns reach the Codex fixture");
+		console.log("PASS 16v: one handler registry carries live Codex discovery into Workflow and Studio execution");
+	} finally { await handler.close(); await close(sidecar); await close(fixture); }
+}
+
 console.log("PASS Agent execution: browser ownership, refusal, failure, cancellation, retry, frame validation/dedupe, applied ack and fake-model HTTP/SSE");
