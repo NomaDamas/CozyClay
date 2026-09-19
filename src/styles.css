@@ -11427,8 +11427,21 @@ input[type=range] {
 
 /* Fal H3 Studio motion launch slice (#380). */
 .fal-motion-card { margin-top: 12px; padding: 10px; border: 1px solid var(--line, #313747); border-radius: 8px; background: rgba(21, 25, 35, .72); }
-.fal-motion-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.card.foldout:has(.fal-motion-card) { overflow: visible; }
+.fal-motion-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: -10px -10px 0; padding: 7px 10px; background: #151923; font-size: 12px; }
 .fal-motion-head span { color: var(--muted, #a7afc2); font-size: 10px; }
+.fal-motion-mode-tabs { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; margin-top: 8px; }
+.fal-motion-mode-tabs button { min-height: 26px; padding: 4px 7px; border: 1px solid #343b4d; border-radius: 4px; background: #11151e; color: var(--muted, #a7afc2); font: inherit; font-size: 10px; cursor: pointer; }
+.fal-motion-mode-tabs button.active { border-color: #7dd3fc; background: rgba(42, 77, 100, .32); color: #e6f7ff; }
+.fal-motion-mode-hint { margin-top: 6px; }
+.fal-motion-stepper { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin-top: 8px; }
+.fal-motion-stepper span { display: flex; align-items: center; gap: 4px; min-width: 0; padding: 4px 5px; border: 1px solid #343b4d; border-radius: 4px; color: var(--muted, #a7afc2); font-size: 9px; }
+.fal-motion-stepper span.active { border-color: #e1b45b; background: rgba(120, 85, 27, .22); color: #ffe7aa; }
+.fal-motion-stepper span.done { border-color: #3e8d62; color: #9fe6b8; }
+.fal-motion-stepper b { font-size: 10px; }
+.fal-motion-segmentation-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; }
+.fal-motion-segmentation-row .fal-motion-segmentation { flex: 1; margin: 0; }
+.fal-motion-flat-cta { flex: none; min-height: 24px !important; padding: 3px 7px !important; font-size: 10px !important; }
 .fal-motion-pose-row, .fal-motion-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
 .fal-motion-pose-row .btn, .fal-motion-actions .btn { min-height: 28px; padding: 5px 8px; }
 .fal-motion-pose-row .btn.active { border-color: #7dd3fc; color: #d7f3ff; }
@@ -11438,13 +11451,18 @@ input[type=range] {
 .fal-motion-capture-slot strong { color: var(--fg, #eef3ff); font-size: 11px; }
 .fal-motion-capture-slot.captured strong { color: #9fe6b8; }
 .fal-motion-capture-slot span { overflow: hidden; color: var(--muted, #a7afc2); font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.fal-motion-slot-action { align-self: flex-start; padding: 0; border: 0; background: transparent; color: #b8dfff; font: inherit; font-size: 9px; cursor: pointer; text-decoration: underline; }
 .fal-motion-camera-status { margin: 7px 0 0; color: var(--muted, #a7afc2); font-size: 10px; }
 .fal-motion-camera-status.ready { color: #9fe6b8; }
+.fal-motion-camera-actions { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 5px; }
+.fal-motion-camera-actions .btn { min-height: 24px !important; padding: 3px 7px !important; font-size: 10px !important; }
 .fal-motion-thumbs { display: flex; gap: 8px; margin-top: 8px; min-height: 0; }
 .fal-motion-thumbs figure { margin: 0; min-width: 0; }
-.fal-motion-thumbs img { display: block; width: 96px; height: 54px; object-fit: cover; border-radius: 4px; border: 1px solid #42506a; background: #0c0f16; }
+.fal-motion-thumbs img { display: block; width: 120px; height: 68px; object-fit: cover; border-radius: 4px; border: 1px solid #42506a; background: #0c0f16; }
 .fal-motion-thumbs figcaption { margin-top: 3px; color: var(--muted, #a7afc2); font-size: 9px; }
 .fal-motion-instruction { width: 100%; min-height: 54px; margin-top: 8px; padding: 7px; resize: vertical; border: 1px solid #343b4d; border-radius: 5px; background: #11151e; color: inherit; font: inherit; font-size: 11px; }
+.fal-motion-prompt-note { margin-top: 8px; padding: 5px 6px; border-left: 2px solid #42506a; background: rgba(17, 21, 30, .65); }
+.fal-motion-inline-error { margin-top: 8px; }
 .fal-motion-segmentation.ready { color: #9fe6b8; }
 .fal-motion-video { display: block; width: 100%; margin-top: 9px; border-radius: 5px; background: #090b10; }
 .agent-fal-action { color: #6d4aff; border-color: color-mix(in srgb, #6d4aff 35%, var(--line) 65%); }

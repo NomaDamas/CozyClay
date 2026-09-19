@@ -61,7 +61,7 @@ function announceNav(kind, key = null) {
 	window.dispatchEvent(new CustomEvent("cozyclay:nav", { detail: { kind, key } }));
 }
 
-export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange, onCameraChange }) {
+export function FlyControls({ enabled, cameraLocked = false, camRef, look, getPivot, onFlyStateChange, onCameraChange }) {
 	const { gl, invalidate } = useThree();
 	const keys = useRef(new Set());
 	const gesture = useRef(null); // { kind: "fly" | "pan" | "orbit", pointerId, x, y, ... }
@@ -200,6 +200,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		const onPointerLockError = () => { lockPending = false; };
 
 		const onPointerDown = (e) => {
+			if (cameraLocked) return;
 			if (gesture.current) return;
 			const orbit = e.button === 0 && e.altKey;
 			const kind = e.button === 2 ? "fly" : e.button === 1 ? "pan" : orbit ? "orbit" : null;
