@@ -114,13 +114,6 @@ class FrameQueue {
 	}
 }
 
-function effortLevel(effort) {
-	if (effort === undefined) return undefined;
-	if (effort === "none") return "off";
-	if (effort === "ultra") return "max";
-	return effort;
-}
-
 function attachmentMessage(attachment, index) {
 	const image = dataUrlImage(attachment?.dataUrl);
 	return {
@@ -285,19 +278,23 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		const ensureHarness = async (input) => {
 			const { pi, models: registry } = await ensureModels();
 			const activePrompt = input.systemPrompt || (input.surface === "studio" ? (await import("./studio-prompt.mjs")).STUDIO_SYSTEM_PROMPT : systemPrompt);
-			const { resolveModel } = await import("./providers.mjs");
+			const { resolveModel, resolveEffort } = await import("./providers.mjs");
 			const requested = input.model || DEFAULT_MODEL;
 			const slash = requested.indexOf("/");
 			const provider = slash === -1 ? "openai-codex" : requested.slice(0, slash);
 			const modelId = slash === -1 ? requested : requested.slice(slash + 1);
 			const direct = registry.getModel(provider, modelId);
 			const selected = direct ? { provider, modelId, model: direct } : await resolveModel(requested, { models: registry });
+			// Preserve an omitted effort (harness default or existing lane level).
+			// For explicit none, pi's harness omits reasoning when the level is off,
+			// avoiding the provider's clamp of unsupported off back up to low.
+			const thinkingLevel = input.effort === undefined ? undefined : await resolveEffort(selected.model, input.effort);
 			if (!state.harness) {
 				state.harness = (await pi.AgentHarness.create({
 					session: state.durable,
 					models: registry,
 					model: selected.model,
-					thinkingLevel: effortLevel(input.effort),
+					thinkingLevel,
 					tools: await adapters(input),
 					systemPrompt: activePrompt,
 					toolExecution: "sequential",
@@ -330,10 +327,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			state.registry = registry;
 			state.provider = selected.provider;
 			await state.lane.setModel({ provider: selected.provider, modelId: selected.modelId }, state.context);
-			if (input.effort !== undefined) {
-				const level = pi.clampThinkingLevel(selected.model, effortLevel(input.effort));
-				await state.lane.setThinkingLevel(level, state.context);
-			}
+			if (thinkingLevel !== undefined) await state.lane.setThinkingLevel(thinkingLevel, state.context);
 			return { registry, selected };
 		};
 

@@ -1,10 +1,13 @@
 // Retry, abort and error mapping on the pi runner (#379): a scripted faux
 // provider throws provider-shaped errors (`errorMessage` text pi's own
 // `isRetryableAssistantError` classifies) so the harness's `retry` policy —
-// not any code in this test — does the actual retrying. This file only
-// verifies the runner's post-retry error mapping and abort semantics.
+// not any code in this test — does the actual retrying. A real Codex HTTP
+// fixture also verifies effort mapping through the harness to the wire.
 import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { zstdDecompressSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createModels, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
@@ -12,6 +15,7 @@ import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi
 import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { createAgentRunner, classifyError } from "../bin/agent/agent-runner.mjs";
 import { createSessionStore } from "../bin/agent/session-store.mjs";
+import { createModels as createAgentModels } from "../bin/agent/providers.mjs";
 
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-"));
 
@@ -40,6 +44,73 @@ function installScripts(faux, steps) {
 
 function errorMessage(text) {
 	return fauxAssistantMessage([], { stopReason: "error", errorMessage: text });
+}
+
+// --- Wire efforts use the real runner, harness, auth and Codex API module.
+// Astra does not advertise off, but an explicit none must still omit reasoning.
+{
+	const received = [];
+	const fixture = createServer(async (req, res) => {
+		const chunks = []; for await (const chunk of req) chunks.push(chunk);
+		const encoded = Buffer.concat(chunks);
+		const body = JSON.parse((req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded).toString());
+		received.push({ path: req.url, body });
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		res.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed" } })}\n\n`);
+	});
+	const listening = once(fixture, "listening", { signal: AbortSignal.timeout(5000) });
+	fixture.listen(0, "127.0.0.1"); await listening;
+	const codexBaseUrl = `http://127.0.0.1:${fixture.address().port}`;
+	const token = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "runner-effort-fixture" } })).toString("base64url")}.e30`;
+	const auth = { readStored: () => ({ access_token: token, refresh_token: "fixture-refresh", expires_at: Date.now() + 3600000 }) };
+	let runner;
+	try {
+		const models = await createAgentModels({ auth, keys: { readKeys: () => ({}) }, env: {}, codexBaseUrl });
+		const metadata = structuredClone(models.getModels("openai-codex"));
+		assert.equal(models.getModel("openai-codex", "gpt-6-astra").thinkingLevelMap.off, null, "Astra must exercise the unsupported-off case");
+		runner = createAgentRunner({ models, codexBaseUrl });
+		const check = async (session, model, effort, expectedEffort, label) => {
+			const before = received.length;
+			const frames = await collect(session, { text: "hello", model: `openai-codex/${model}`, ...(effort === undefined ? {} : { effort }), signal: AbortSignal.timeout(8000) });
+			assert.deepEqual(frames.filter((frame) => frame.type === "error"), [], label);
+			assert.equal(frames.filter((frame) => frame.type === "done").length, 1, label);
+			assert.equal(frames.at(-1)?.type, "done", label);
+			assert.equal(received.length, before + 1, `${label}: exactly one provider request`);
+			const request = received.at(-1);
+			assert.equal(request.path, "/codex/responses");
+			assert.equal(request.body.model, model);
+			console.log("runner-effort-wire", JSON.stringify({ label, model, effort, reasoning: request.body.reasoning ?? null }));
+			expect(label, expectedEffort === undefined ? !Object.hasOwn(request.body, "reasoning") : request.body.reasoning?.effort === expectedEffort, JSON.stringify(request.body.reasoning));
+		};
+		const freshCases = [
+			["gpt-6-astra", "none", undefined],
+			["gpt-5.4", "none", undefined],
+			["gpt-6-astra", "high", "high"],
+			["gpt-6-astra", "ultra", "max"],
+			["gpt-5.4", "ultra", "xhigh"],
+			// With no initial effort the harness default is off, not medium.
+			["gpt-6-astra", undefined, undefined],
+			["gpt-5.4", undefined, undefined],
+		];
+		for (const [index, [model, effort, expected]] of freshCases.entries()) {
+			const session = await runner.openSession(`effort-fresh-${index}`);
+			await check(session, model, effort, expected, `fresh ${model} ${effort ?? "omitted"} preserves wire effort`);
+		}
+		const reused = await runner.openSession("effort-reused");
+		for (const [model, effort, expected] of [
+			["gpt-6-astra", "high", "high"],
+			["gpt-6-astra", "none", undefined],
+			["gpt-6-astra", undefined, undefined],
+			["gpt-5.4", "ultra", "xhigh"],
+			["gpt-5.4", undefined, "xhigh"],
+			["gpt-6-astra", "none", undefined],
+		]) await check(reused, model, effort, expected, `reused ${model} ${effort ?? "omitted"} preserves wire effort`);
+		assert.deepEqual(models.getModels("openai-codex"), metadata, "turn effort must not mutate advertised model metadata");
+	} finally {
+		await runner?.close();
+		const closed = once(fixture, "close", { signal: AbortSignal.timeout(5000) });
+		fixture.close(); fixture.closeAllConnections(); await closed;
+	}
 }
 
 // --- 429 twice then success: pi's own retry (maxRetries:2) absorbs both, one turn ---
