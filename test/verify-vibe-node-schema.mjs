@@ -9,6 +9,6 @@ assert.equal(properties.duration_seconds.type, "number");
 assert.equal(properties.prompt.title, "Motion prompt");
 assert.deepEqual(properties.provider.enum, ["comfy", "fal"]);
 assert.deepEqual(properties.aspect.enum, ["16:9", "9:16", "1:1", "21:9", "12:7"]);
-assert.deepEqual(defaultFormValues(properties), { provider: "comfy", prompt: "", duration_seconds: 5, aspect: "16:9" });
+assert.deepEqual(defaultFormValues(properties), { provider: "comfy", prompt: "", duration_seconds: 5, aspect: "16:9", extract_mocap: false });
 assert.deepEqual(defaultFormValues({ urls: { type: "array" }, options: { type: "object" }, enabled: { type: "boolean" } }), { urls: [], options: {}, enabled: false });
 console.log("Vibe node schema adapter checks passed");

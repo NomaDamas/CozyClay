@@ -37,6 +37,8 @@ assert.match(componentSource, /className="cozy-scene-video"/);
 assert.match(componentSource, /cozy-scene-hint/);
 {
 	const builder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
+	assert.match(builder, /data-testid="mocap-framing-warning"/, "the H3 form warns before generation when framing may crop mocap landmarks");
+	assert.match(builder, /locked camera · character motion only/, "the H3 form states the fixed-camera motion contract");
 	assert.match(builder, /onSceneVideo: sendSceneToVideo/, "the Scene node reaches the builder's Video action through decorated data");
 	assert.match(builder, /sourceHandle: "render", targetHandle: "input"/, "the added Video node is fed by the Scene render output");
 }

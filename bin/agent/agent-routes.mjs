@@ -6,7 +6,7 @@ import { publishLiveEndpoint, removeLiveEndpoint } from "../live-endpoint.mjs";
 import { createCodexClient } from "./codex-client.mjs";
 import { createAgentTools, agentToolSchemas, SYSTEM_PROMPT, pickWorkspace, summariseCanvasResult } from "./agent-tools.mjs";
 
-import { createVideoAdapters } from "./video-adapters.mjs";
+import { createVideoAdapters, validateFalVideoRequest } from "./video-adapters.mjs";
 import { createSessionStore, transcriptFromHistory } from "./session-store.mjs";
 import { createAgentRunner } from "./agent-runner.mjs";
 
@@ -625,7 +625,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			return true;
 		}
 		if (path === "/agent/video/providers" && req.method === "GET") {
-			json(res, 200, { providers: createVideoAdapters().map((adapter) => ({ id: adapter.id, name: adapter.name, configured: adapter.configured() })) });
+			json(res, 200, { providers: createVideoAdapters().map((adapter) => ({ id: adapter.id, name: adapter.name, configured: adapter.configured(), ...(adapter.model ? { model: adapter.model, resolution: adapter.resolution } : {}) })) });
 			return true;
 		}
 		if (path === "/agent/video" && req.method === "POST") {
@@ -633,17 +633,18 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			try {
 				value = await readBody(req, IMAGE_BODY_LIMIT);
 				if (!value || typeof value.provider !== "string" || typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.lastFrameDataUrl !== undefined && (typeof value.lastFrameDataUrl !== "string" || !value.lastFrameDataUrl.startsWith("data:image/"))) || !Number.isFinite(Number(value.durationSeconds)) || Number(value.durationSeconds) < 1 || Number(value.durationSeconds) > 15 || typeof value.aspect !== "string" || (value.model !== undefined && typeof value.model !== "string")) throw new Error("Invalid request.");
-			} catch { json(res, 400, { error: "invalid request" }); return true; }
+				if (value.provider === "fal") validateFalVideoRequest({ model: process.env.FAL_MODEL || undefined, durationSeconds: Number(value.durationSeconds), aspect: value.aspect });
+			} catch (error) { json(res, error?.code === "fal-invalid-request" ? 422 : 400, { error: error?.message || "invalid request" }); return true; }
 			const adapter = createVideoAdapters().find((entry) => entry.id === value.provider);
 			if (!adapter || !adapter.configured()) { json(res, 409, { error: "video provider is not configured" }); return true; }
 			try {
 				const result = await adapter.generate({ ...value, durationSeconds: Number(value.durationSeconds) });
-				json(res, 200, { ...(result.mp4Base64 ? { dataUrl: `data:video/mp4;base64,${result.mp4Base64}` } : { url: result.url }), width: result.width, height: result.height, seconds: result.seconds, ...(result.preservation ? { preservation: result.preservation } : {}) });
+				json(res, 200, { ...(result.mp4Base64 ? { dataUrl: `data:video/mp4;base64,${result.mp4Base64}` } : { url: result.url }), width: result.width, height: result.height, fps: result.fps, seconds: result.seconds, ...(result.metadataMeasured !== undefined ? { metadataMeasured: result.metadataMeasured } : {}), ...(result.preservation ? { preservation: result.preservation } : {}) });
 			} catch (error) {
 				// A generated H3 take that fails the plate check is unsafe to show as
 				// a locked shot. Keep the distinction visible to the client so it can
 				// ask for a retry instead of silently accepting a drifting set.
-				const status = error?.code === "h3-preservation-failed" ? 422 : 502;
+				const status = ["h3-preservation-failed", "fal-invalid-request"].includes(error?.code) ? 422 : 502;
 				json(res, status, { error: error?.message || "video provider failed", ...(error?.preservation ? { preservation: error.preservation } : {}) });
 			}
 			return true;

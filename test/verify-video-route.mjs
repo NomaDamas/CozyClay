@@ -6,6 +6,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 
+delete process.env.FAL_KEY;
+delete process.env.FAL_MODEL;
+delete process.env.FAL_RESOLUTION;
+
 const mp4Bytes = Buffer.from("000000206674797069736f6d0000020069736f6d69736f3261766331", "hex");
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 let promptId = 0;
@@ -40,7 +44,11 @@ assert.equal((await post({ provider: "comfy", prompt: "x", imageDataUrl: "https:
 assert.equal((await post({ provider: "comfy", prompt: "x", imageDataUrl: png, durationSeconds: 0, aspect: "16:9" })).status, 400, "duration below 1 is rejected");
 assert.equal((await post({ provider: "comfy", prompt: "x", imageDataUrl: png, durationSeconds: 16, aspect: "16:9" })).status, 400, "duration above 15 is rejected");
 assert.equal((await post({ provider: "fal", prompt: "x", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" })).status, 409, "unconfigured provider is 409");
+assert.equal((await post({ provider: "fal", prompt: "x", imageDataUrl: png, durationSeconds: 1, aspect: "16:9" })).status, 422, "H3 duration below 5 is rejected before provider dispatch");
+assert.equal((await post({ provider: "fal", prompt: "x", imageDataUrl: png, durationSeconds: 5, aspect: "12:7" })).status, 409, "H3 accepts source framing without a Seedance ratio restriction");
 assert.equal((await post({ provider: "bogus", prompt: "x", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" })).status, 409, "unknown provider is 409");
+assert.equal((await post({ provider: "fal", model: "video-generation", prompt: "x", imageDataUrl: png, durationSeconds: 4, aspect: "source" })).status, 422, "generic UI model must not bypass the actual H3 contract");
+assert.equal((await post({ provider: "fal", prompt: "x", imageDataUrl: png, durationSeconds: 5.5, aspect: "source" })).status, 422, "H3 requires integer duration");
 console.log("PASS /agent/video: 400 validation and 409 unconfigured provider");
 
 const ok = await post({ provider: "comfy", prompt: "slow pan", imageDataUrl: png, durationSeconds: 5, aspect: "16:9" });
@@ -66,7 +74,9 @@ assert.equal(providers.status, 200);
 const list = await providers.json();
 assert.equal(list.providers.find((entry) => entry.id === "comfy").configured, true);
 assert.equal(list.providers.find((entry) => entry.id === "fal").configured, false);
-console.log("PASS /agent/video/providers: configured flags");
+assert.equal(list.providers.find((entry) => entry.id === "fal").model, "minimax/h3-max-turbo/image-to-video");
+assert.equal(list.providers.find((entry) => entry.id === "fal").resolution, "480P");
+console.log("PASS /agent/video/providers: H3 model, 480P resolution and configured flags");
 
 process.env.COZYCLAY_COMFY_URL = `http://127.0.0.1:${comfy.address().port}`;
 failing.close();

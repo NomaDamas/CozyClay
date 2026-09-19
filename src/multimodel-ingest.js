@@ -193,6 +193,15 @@ export async function requestBridgeExtract(source, options = {}) {
 	return done;
 }
 
+/** Download a generated video for a downstream GVHMR extraction request. */
+export async function fetchVideoOutputBlob(url, fetchImpl = globalThis.fetch) {
+	if (typeof url !== "string" || !url) throw new Error("Generated video has no fetchable output.");
+	if (typeof fetchImpl !== "function") throw new Error("video-download-unavailable");
+	const response = await fetchImpl(url);
+	if (!response.ok) throw new Error(`Generated video download failed (${response.status}).`);
+	return response.blob();
+}
+
 /** The name shown for a source: the last path segment, never the query soup. */
 export function sourceLabel(url) {
 	if (typeof url !== "string" || url.length === 0) return "";
