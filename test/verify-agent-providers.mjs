@@ -210,6 +210,82 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 	rmSync(invalidDir, { recursive: true, force: true });
 }
 
+{
+	// #379 (16n, F2 pass 6 finding 3): the process-wide codex fetch wrapper
+	// installed by loadProvider('openai-codex') must (a) never let observation
+	// affect the returned Response, even when the RequestInfo's `url` getter
+	// throws or the observer itself throws, and (b) match ONLY the exact codex
+	// responses pathname ('/codex/responses'), not a substring anywhere in the
+	// URL. `providers.mjs` is already imported (and its wrapper already
+	// installed) earlier in this same process, so a fresh module instance
+	// (cache-busted) is required to observe install-time behavior with a
+	// controlled stub standing in for the native fetch.
+	const originalFetch = globalThis.fetch;
+	const stubResponses = new Map();
+	const stubCalls = [];
+	globalThis.fetch = async (input, init) => {
+		stubCalls.push({ input, init });
+		const key = stubCalls.length - 1;
+		const prepared = stubResponses.get(key) ?? new Response("native-body");
+		return prepared;
+	};
+	try {
+		const freshProviders = await import(`../bin/agent/providers.mjs?fetchContract=${Date.now()}-${Math.random()}`);
+		await freshProviders.loadProvider("openai-codex");
+
+		// (a) a RequestInfo whose `url` getter throws, but is string-coercible,
+		// resolves to the native Response (no throw).
+		const throwingUrlInput = { toString: () => "https://exotic.invalid/unrelated", get url() { throw new Error("unrelated url getter evaluated"); } };
+		const nativeResponse = new Response("native-body-a");
+		stubResponses.set(stubCalls.length, nativeResponse);
+		const resultA = await fetch(throwingUrlInput);
+		assert.equal(resultA, nativeResponse, "a throwing url getter must not prevent the native Response from being returned");
+		console.log("PASS (a) string-coercible RequestInfo with a throwing url getter resolves to the native Response");
+
+		// (b) a URL object and a Request for the codex responses path ARE observed.
+		const codexUrlObject = new URL("https://chatgpt.invalid/backend-api/codex/responses");
+		const seenB1 = [];
+		stubResponses.set(stubCalls.length, new Response("b1", { headers: { "x-observer": "b1" } }));
+		await freshProviders.codexResponseObserver.run((event) => seenB1.push(event), () => fetch(codexUrlObject));
+		assert.equal(seenB1.length, 1, "a URL object naming the codex responses endpoint must be observed");
+
+		const codexRequest = new Request("https://chatgpt.invalid/backend-api/codex/responses", { method: "POST", body: "x" });
+		const seenB2 = [];
+		stubResponses.set(stubCalls.length, new Response("b2", { headers: { "x-observer": "b2" } }));
+		await freshProviders.codexResponseObserver.run((event) => seenB2.push(event), () => fetch(codexRequest));
+		assert.equal(seenB2.length, 1, "a Request for the codex responses endpoint must be observed");
+		console.log("PASS (b) a URL object and a Request naming the codex responses endpoint are observed");
+
+		// (c) /other?next=/codex/responses and /codex/responses-backup are NOT observed.
+		const seenC1 = [];
+		stubResponses.set(stubCalls.length, new Response("c1"));
+		await freshProviders.codexResponseObserver.run((event) => seenC1.push(event), () => fetch("https://chatgpt.invalid/other?next=/codex/responses"));
+		assert.equal(seenC1.length, 0, "a query string containing the codex path must not be observed");
+
+		const seenC2 = [];
+		stubResponses.set(stubCalls.length, new Response("c2"));
+		await freshProviders.codexResponseObserver.run((event) => seenC2.push(event), () => fetch("https://chatgpt.invalid/codex/responses-backup"));
+		assert.equal(seenC2.length, 0, "a sibling path with a shared prefix must not be observed");
+		console.log("PASS (c) /other?next=/codex/responses and /codex/responses-backup are not observed");
+
+		// (d) a string codex URL is observed exactly once.
+		const seenD = [];
+		stubResponses.set(stubCalls.length, new Response("d"));
+		await freshProviders.codexResponseObserver.run((event) => seenD.push(event), () => fetch("https://chatgpt.invalid/backend-api/codex/responses"));
+		assert.equal(seenD.length, 1, "a string codex URL must be observed exactly once");
+		console.log("PASS (d) a string codex URL is observed exactly once");
+
+		// (e) an observer that throws never affects the returned Response.
+		const nativeResponseE = new Response("native-body-e");
+		stubResponses.set(stubCalls.length, nativeResponseE);
+		const resultE = await freshProviders.codexResponseObserver.run(() => { throw new Error("observer boom"); }, () => fetch("https://chatgpt.invalid/backend-api/codex/responses"));
+		assert.equal(resultE, nativeResponseE, "a throwing observer must never affect the returned Response");
+		console.log("PASS (e) a throwing observer never affects the returned Response");
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+}
+
 for (const [name, value] of Object.entries(previousProviderEnv)) {
 	if (value === undefined) delete process.env[name];
 	else process.env[name] = value;

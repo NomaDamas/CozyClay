@@ -23,15 +23,31 @@ function ensureCodexFetchPatched() {
 	if (codexFetchPatched) return;
 	codexFetchPatched = true;
 	const realFetch = globalThis.fetch;
+	// #379 (F2 pass 6 finding 3): the URL used for observation-scoping must be
+	// derived defensively and entirely inside an isolated try — reading an
+	// unrelated `url` property (or anything else about `input`) must never be
+	// able to turn a successful fetch into a rejection, and only the codex
+	// responses endpoint's exact pathname (`/codex/responses`, per pi-ai's own
+	// `resolveCodexUrl`) is observed, never a substring match anywhere in the
+	// URL (e.g. a query string or a sibling path with a shared prefix).
 	globalThis.fetch = async (input, init) => {
 		const response = await realFetch(input, init);
-		const url = typeof input === "string" ? input : input?.url;
-		if (typeof url === "string" && url.includes("/codex/responses")) {
-			const onResponse = codexResponseObserver.getStore();
-			// The runner's own listener must never affect the real request/response
-			// it is only observing.
-			if (onResponse) { try { onResponse({ status: response.status, headers: Object.fromEntries(response.headers.entries()) }); } catch { /* observer errors never break the turn */ } }
-		}
+		try {
+			const raw = input instanceof Request ? input.url : input instanceof URL ? input.href : typeof input === "string" ? input : "";
+			const { pathname } = new URL(raw, "http://local");
+			// pi-ai's `resolveCodexUrl` (openai-codex-responses.js) always produces a
+			// URL whose path ends in exactly "/codex/responses", regardless of the
+			// configured base URL (e.g. the default base's "/backend-api" prefix, or
+			// none at all in tests) — so matching that literal path segment suffix
+			// is exact for the codex endpoint and cannot match a sibling path like
+			// "/codex/responses-backup" (whose trailing characters differ).
+			if (pathname.endsWith("/codex/responses")) {
+				const onResponse = codexResponseObserver.getStore();
+				// The runner's own listener must never affect the real request/response
+				// it is only observing.
+				if (onResponse) onResponse({ status: response.status, headers: Object.fromEntries(response.headers.entries()) });
+			}
+		} catch { /* URL derivation or observer errors never affect the returned Response */ }
 		return response;
 	};
 }
