@@ -7,6 +7,7 @@ import { PROMPT_MAX_CHARS } from "../../../tools/ardy/prompt-limits.mjs";
 export const POLICY = Object.freeze({
   ACTIVE_JOBS_PER_ACCOUNT: 1,
   DAILY_CAP: 2,
+  MOTION_DAILY_CAP: 10,
   QUEUE_MAX_WAITING: 200,
   LEASE_TTL_MS: 15 * 60_000,
   HEARTBEAT_INTERVAL_MS: 60_000,

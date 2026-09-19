@@ -276,6 +276,7 @@ export default function AgentPanel({
 	surface = "workflow",
 	buildContext = null,
 	onImageAction = null,
+	onFalAction = null,
 	onReceipt = null,
 }) {
 	// What this host shows around the shared conversation: labels, chips, the
@@ -352,6 +353,8 @@ export default function AgentPanel({
 	buildContextRef.current = buildContext;
 	const imageActionRef = useRef(onImageAction);
 	imageActionRef.current = onImageAction;
+	const falActionRef = useRef(onFalAction);
+	falActionRef.current = onFalAction;
 	const receiptRef = useRef(onReceipt);
 	receiptRef.current = onReceipt;
 
@@ -950,6 +953,15 @@ export default function AgentPanel({
 					{attachFrame ? <span className="agent-attach-thumb" aria-hidden="true" /> : <FiPaperclip size={11} aria-hidden="true" />}
 					Attach current frame
 				</button>
+				{surface === "studio" && falActionRef.current && <button
+					type="button"
+					className="agent-attach-chip agent-fal-action"
+					data-testid="fal-agent-action"
+					disabled={composerDisabled || !draft.trim() || streaming}
+					onClick={() => { const instruction = draft.trim(); store.setDraft(""); falActionRef.current?.(instruction); }}
+				>
+					Generate motion
+				</button>}
 				<span className="agent-composer-spacer" aria-hidden="true" />
 				{/* While a turn runs, Stop is still the way out of it; on a surface
 				    that can be steered, Send becomes the way INTO it. */}

@@ -43,6 +43,7 @@ const NODE_FILES = [
 	"test/ardy/verify-timeline-coordinates.mjs",
 	"test/ardy/verify-timeline-resize.mjs",
 	"test/demo/verify-demo-pages.mjs",
+	"test/demo/verify-motion-api.mjs",
 	"test/demo/verify-motion-url-allowlist.mjs",
 	"test/demo/verify-queue-policy.mjs",
 	"test/demo/verify-queue-concurrency.mjs",
