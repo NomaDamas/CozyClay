@@ -389,12 +389,23 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			const session = studioSessions.get(value.sessionId);
 			if (!session || session.owner !== parseCookies(req).studio_owner || !session.turns.has(value.turnId)) throw new StudioProtocolError("AUTH_REQUIRED", "Studio stop is not owned by this session.");
 			const jobId = value.jobId ?? session.activeJobId;
-			if (value.jobId && value.jobId !== session.activeJobId) throw new StudioProtocolError("STALE_TARGET", "Stop does not own that motion job.");
+			// A stale explicit id is one that names a DIFFERENT job than the one this
+			// session currently has active; once the active job has already settled
+			// (activeJobId cleared), a repeat Stop naming the same, now-retired id is
+			// an idempotent re-stop, not a stale target.
+			if (value.jobId && session.activeJobId && value.jobId !== session.activeJobId) throw new StudioProtocolError("STALE_TARGET", "Stop does not own that motion job.");
+			// #379 / 16r: a job's id is only "acknowledged" by THIS turn's held motion
+			// tool — session.activeJobId now stays set only while that job is genuinely
+			// still in flight (or pending an explicit accept), and activeJobTurnId ties
+			// it to the turn that admitted it. A retired job from an earlier turn must
+			// never make a later, unrelated turn's Stop go quiet.
+			const acknowledged = Boolean(session.activeJobId) && session.activeJobTurnId === value.turnId;
 			// The runtime is the only thing that knows whether the job was applied.
 			// Forwarding its outcome keeps the panel from turning "I could not find
 			// out" into "nothing was applied"; a discarded outcome reads as proof.
 			let outcome = null;
 			if (jobId && ownedStudioRuntime?.stop) outcome = await ownedStudioRuntime.stop(jobId);
+			if (jobId && session.activeJobId === jobId) { session.activeJobId = null; session.activeJobTurnId = null; }
 			// #379 / 16q: `session.controller.signal` is the SAME signal wired into the
 			// active turn's prompt context (`:520 signal: controller.signal`), which
 			// pi's `withAbortSignal`/`awaitWithContext` races against every awaited
@@ -406,10 +417,11 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			// is the graceful one that stops the model from being prompted again, so
 			// `session.controller` must NOT be touched on that path (no other tool is
 			// concurrently in flight while generate_motion holds the turn). A stop
-			// with no active job never resolved anything and stays a plain (loud)
-			// abort on both signals, unchanged.
-			if (!jobId) session.controller?.abort();
-			await session.modelSession?.abort?.("studio stop", jobId ? { quiet: true } : undefined);
+			// for a job this turn never acknowledged (none active, or a retired one
+			// from an earlier turn) never resolved anything for THIS turn and stays a
+			// plain (loud) abort on both signals.
+			if (!acknowledged) session.controller?.abort();
+			await session.modelSession?.abort?.("studio stop", acknowledged ? { quiet: true } : undefined);
 			json(res, 200, { ok: true, status: jobId ? "stopped" : "detached", ...(outcome ? { outcome: { status: outcome.status ?? null, code: outcome.code ?? null, mutated: outcome.mutated ?? null } } : {}) }); return true;
 		}
 		if (!studioRuntime && (!hub?.command || !hub?.workspaceId)) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio execution is not installed.");
@@ -421,7 +433,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			studioOwner(req, value.sessionId, true);
 			let persisted = null;
 			try { persisted = sessionStore.read(value.sessionId); } catch { persisted = null; }
-			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, generationPrompt: null, host: null, updatedAt: clock() };
+			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, activeJobTurnId: null, generationPrompt: null, host: null, updatedAt: clock() };
 			studioSessions.set(value.sessionId, session);
 		}
 		session.updatedAt = clock();
@@ -462,11 +474,19 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			if (!character) throw new StudioProtocolError("TARGET_NOT_READY", "The admitted character is unavailable.");
 			const commandId = randomUUID(); const host = { ...value.context.host, workspaceHandle: value.context.host.workspaceHandle };
 			const admissionResult = runtimeForJob.admit({ hostBinding: host, characterId: args.characterId, targetToken: character.token, turnId: value.turnId, commandId, authorization: { id: randomUUID(), generations: 1 }, source: args.source, repair: args.repair ?? "bounded" });
-			session.activeJobId = admissionResult.jobId; session.generationPrompt = value.text;
+			session.activeJobId = admissionResult.jobId; session.activeJobTurnId = value.turnId; session.generationPrompt = value.text;
 			const unsubscribe = runtimeForJob.subscribe(admissionResult.jobId, event => send({ ...event, sourceEventSeq: event.eventSeq }));
 			// Subscription precedes start, including replay of the queued admission event.
-			try { const outcome = await runtimeForJob.start(admissionResult.jobId); if (outcome?.ok && outcome.status === "installed") send({ type: "receipt", receipt: outcome }); return outcome; }
-			finally { unsubscribe(); }
+			let outcome;
+			try { outcome = await runtimeForJob.start(admissionResult.jobId); if (outcome?.ok && outcome.status === "installed") send({ type: "receipt", receipt: outcome }); return outcome; }
+			finally {
+				unsubscribe();
+				// A job still awaiting an explicit accept (review_required) stays "active"
+				// for the accept route's ownership check (:678); every other outcome —
+				// installed, cancelled, proved-not-applied, failed, or a thrown error —
+				// is terminal for this session and must not leak into a later turn's Stop.
+				if (session.activeJobId === admissionResult.jobId && outcome?.status !== "review_required") { session.activeJobId = null; session.activeJobTurnId = null; }
+			}
 		};
 		const modelTools = tools.map(tool => ({
 			...tool,
@@ -675,7 +695,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			let value; try { value = await readBody(req); } catch { json(res, 400, { error: "invalid request" }); return true; }
 			const jobId = decodeURIComponent(path.slice("/agent/jobs/".length, -"/accept".length)); const session = studioSessions.get(value?.sessionId);
 			if (!session || session.owner !== parseCookies(req).studio_owner || value.surface !== "studio" || value.explicitUnverifiedAcceptance !== true || !session.turns.has(value.turnId) || session.activeJobId !== jobId) { json(res, 403, { error: { code: "AUTH_REQUIRED", message: "Only the owning Studio UI may accept this candidate." } }); return true; }
-			try { const receipt = await ownedStudioRuntime.accept(jobId); const record = studioEvents.get(value.turnId); if (record) { emitStudioEvent(value.turnId, { type: "receipt", receipt }); emitStudioEvent(value.turnId, { type: "done" }); record.terminal = true; } session.activeJobId = null; json(res, 200, { receipt }); } catch (error) { json(res, 409, { error: { code: error.code || "VERIFICATION_FAILED", message: error.message } }); }
+			try { const receipt = await ownedStudioRuntime.accept(jobId); const record = studioEvents.get(value.turnId); if (record) { emitStudioEvent(value.turnId, { type: "receipt", receipt }); emitStudioEvent(value.turnId, { type: "done" }); record.terminal = true; } session.activeJobId = null; session.activeJobTurnId = null; json(res, 200, { receipt }); } catch (error) { json(res, 409, { error: { code: error.code || "VERIFICATION_FAILED", message: error.message } }); }
 			return true;
 		}
 		if (req.method !== "POST" || !["/agent/turn", "/agent/stop"].includes(path)) {

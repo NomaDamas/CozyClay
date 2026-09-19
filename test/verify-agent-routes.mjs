@@ -348,7 +348,12 @@ await new Promise((resolve) => authServer.close(resolve));
 		readContext: async () => contextFixture(),
 		admit: () => ({ jobId: "provider-job", commandId: "provider-command", state: "queued" }),
 		subscribe: () => () => {},
-		start: async () => ({ ok: false, status: "unverified", mutated: false }),
+		// #379 / 16r: activeJobId now stays set for the accept route only while the
+		// runtime's outcome is genuinely pending an explicit accept, matching the
+		// real motion-runtime's own "review_required" terminal-transition status
+		// (bin/agent/motion-runtime.mjs execute()); any other resolved status is
+		// treated as terminal and clears activeJobId before this route ever runs.
+		start: async () => ({ ok: false, status: "review_required", mutated: false }),
 		accept: async (id) => { acceptedJobs.push(id); return { ok: true, jobId: id, status: "installed" }; },
 	};
 	const providerAuth = { getAccessToken: async () => null, onAuthChange: () => () => {} };
@@ -1387,6 +1392,130 @@ async function bounded16q(promise, label, ms = 10000) {
 		await new Promise((resolve) => detachedServer.close(resolve));
 	}
 }
+
+// #379 / 16r (F2 pass 7, finding 1): a retired motion job must not make a
+// LATER, unrelated turn's Stop go quiet. session.activeJobId used to be set
+// on admission (:472 pre-fix) and cleared only on explicit accept, so once a
+// motion turn was stopped and settled, the next plain (non-motion) turn's
+// Stop on the SAME session still saw the retired job id, called
+// runtime.stop() on it, skipped controller.abort(), and passed quiet:true —
+// the next turn ended silently with agent:turn_succeeded + done, no
+// error{aborted}. The fix clears activeJobId/activeJobTurnId at every
+// terminal state (the motion handler's finally, the stop route after
+// runtime.stop settles, and accept) and only treats a Stop as acknowledged
+// when session.activeJobTurnId matches the CURRENT turn's id.
+async function run16rTwoTurnScenario() {
+	const hub16r = {
+		connected: true, workspaceHandles: ["handle-12"],
+		workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12",
+		command: async (name) => {
+			if (name === "read_studio_context") return { context: (await import("./verify-studio-agent-protocol.mjs")).contextFixture() };
+			if (name === "cancel_motion_install") return { status: "not_applied", evidence: true };
+			if (name === "discard_motion_candidate") return { discarded: true };
+			return { ok: true };
+		},
+	};
+	const held16r = Promise.withResolvers();
+	const bridge16r = createServer((req, res) => {
+		if (req.url === "/ardy/health") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, backend: "local_kimodo", host: "fixture", device: "cpu" })); return; }
+		(async () => {
+			res.writeHead(200, { "content-type": "application/x-ndjson" });
+			res.write(`${JSON.stringify({ event: "progress", progress: 0.25 })}\n`);
+			await Promise.race([held16r.promise, once(res, "close")]);
+			if (!res.destroyed) res.end(`${JSON.stringify({ event: "done", motionUrl: "/ardy/motions/123456-abcdef" })}\n`);
+		})();
+	});
+	bridge16r.listen(0, "127.0.0.1"); await once(bridge16r, "listening");
+	const bridgeOrigin16r = `http://127.0.0.1:${bridge16r.address().port}`;
+	const faux16r = createFakeModel();
+	faux16r.script([
+		{ type: "toolCall", id: "m16r", name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk forward" }], durationSeconds: 2 } } },
+		{ type: "text", text: "done" },
+	]);
+	let server16r;
+	const handler16r = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: fakeCodex, models: faux16r.models, fauxProvider: faux16r.fauxProvider, liveHub: hub16r, getBridgeOrigin: () => bridgeOrigin16r, port: () => server16r.address().port });
+	server16r = createServer((req, res) => handler16r(req, res).catch((error) => { console.error("16r fixture error:", error); if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	server16r.listen(0, "127.0.0.1"); await once(server16r, "listening");
+	const origin16r = `http://127.0.0.1:${server16r.address().port}`;
+	const { envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const turnEnvelope16r = { ...envelopeFixture(), model: "faux/scripted" };
+	try {
+		// Turn 1: generate_motion held, stopped with the correct jobId. Must still
+		// behave exactly like 16q (tool.done{CANCELLED} + done, no error) — the fix
+		// must not regress the acknowledged-stop path.
+		const turnResponse16r = await fetch(`${origin16r}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: origin16r }, body: JSON.stringify(turnEnvelope16r) });
+		assert.equal(turnResponse16r.status, 200);
+		const cookie16r = (turnResponse16r.headers.getSetCookie?.() ?? [turnResponse16r.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
+		assert.match(cookie16r, /studio_owner=/);
+		const reader16r = turnResponse16r.body.getReader();
+		const decoder16r = new TextDecoder();
+		const frames16r = [];
+		let carry16r = "";
+		let jobId16r = null;
+		const pump16r = async (target) => {
+			const { value, done } = await bounded16q(reader16r.read(), "16r SSE read");
+			if (done) return false;
+			carry16r += decoder16r.decode(value, { stream: true });
+			const lines = carry16r.split("\n"); carry16r = lines.pop();
+			for (const line of lines) if (line.startsWith("data: ")) {
+				const frame = JSON.parse(line.slice(6)); target.push(frame);
+				if (frame.type === "job.state" && frame.state === "generating" && !jobId16r) jobId16r = frame.jobId;
+			}
+			return true;
+		};
+		while (!jobId16r) { if (!(await pump16r(frames16r))) throw new Error("16r: stream ended before job.state{generating}"); }
+		// A Stop carrying a stale explicit jobId must still be rejected 409
+		// STALE_TARGET, unaffected by the acknowledgment fix.
+		const staleStopResponse = await fetch(`${origin16r}/agent/stop`, { method: "POST", headers: { "content-type": "application/json", origin: origin16r, cookie: cookie16r }, body: JSON.stringify({ surface: "studio", sessionId: turnEnvelope16r.sessionId, turnId: turnEnvelope16r.turnId, jobId: "not-the-real-job-id" }) });
+		assert.equal(staleStopResponse.status, 409);
+		const staleStopBody = await staleStopResponse.json();
+		assert.equal(staleStopBody.error?.code, "STALE_TARGET", `a Stop with a stale explicit jobId must stay 409 STALE_TARGET: ${JSON.stringify(staleStopBody)}`);
+		const stopResponse16r = await fetch(`${origin16r}/agent/stop`, { method: "POST", headers: { "content-type": "application/json", origin: origin16r, cookie: cookie16r }, body: JSON.stringify({ surface: "studio", sessionId: turnEnvelope16r.sessionId, turnId: turnEnvelope16r.turnId, jobId: jobId16r }) });
+		assert.equal(stopResponse16r.status, 200);
+		held16r.resolve();
+		while (await pump16r(frames16r)) { /* drain until the SSE stream itself closes */ }
+		const types16r = frames16r.map((frame) => frame.type);
+		const toolDone16r = frames16r.find((frame) => frame.type === "tool.done");
+		const turn1Failures = [];
+		if (types16r.includes("error")) turn1Failures.push(`turn 1 (acknowledged stop) must not emit error: got ${JSON.stringify(types16r)}`);
+		if (!toolDone16r || toolDone16r.result?.code !== "CANCELLED" || toolDone16r.result?.mutated !== false) turn1Failures.push(`turn 1 tool.done must be CANCELLED/mutated:false: got ${JSON.stringify(toolDone16r)}`);
+		if (types16r.at(-1) !== "done") turn1Failures.push(`turn 1 must end with done: got ${JSON.stringify(types16r)}`);
+		assert.deepEqual(turn1Failures, [], JSON.stringify(turn1Failures));
+
+		// Turn 2: SAME session, a fresh turnId, no motion tool at all — a plain
+		// held model call. Pre-fix, session.activeJobId still held turn 1's
+		// retired job, so this Stop went quiet (no error, just done). Post-fix it
+		// must be a normal loud abort.
+		const entered16r = Promise.withResolvers(); let providerAborted16r = false;
+		faux16r.fauxProvider.setResponses([(context, options) => new Promise((resolve, reject) => {
+			options.signal.addEventListener("abort", () => { providerAborted16r = true; reject(Object.assign(new Error("cancelled active provider"), { name: "AbortError" })); }, { once: true });
+			entered16r.resolve();
+		})]);
+		const secondEnvelope16r = { ...turnEnvelope16r, turnId: "00000000-0000-4000-8000-000000000099", text: "Inspect the scene, no motion generation." };
+		const secondResponse16r = await fetch(`${origin16r}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin: origin16r, cookie: cookie16r }, body: JSON.stringify(secondEnvelope16r) });
+		assert.equal(secondResponse16r.status, 200);
+		const secondTextPromise = bounded16q(secondResponse16r.text(), "16r second turn SSE");
+		await bounded16q(entered16r.promise, "16r second provider started");
+		const stopSecond16r = await fetch(`${origin16r}/agent/stop`, { method: "POST", headers: { "content-type": "application/json", origin: origin16r, cookie: cookie16r }, body: JSON.stringify({ surface: "studio", sessionId: turnEnvelope16r.sessionId, turnId: secondEnvelope16r.turnId }) });
+		const stopSecondBody16r = await stopSecond16r.json();
+		const secondText16r = await secondTextPromise;
+		const secondFrames16r = [...secondText16r.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+		const secondTypes16r = secondFrames16r.map((frame) => frame.type);
+		console.log("16r turn 2 frame types:", JSON.stringify(secondTypes16r), "stop body:", JSON.stringify(stopSecondBody16r));
+		assert.equal(stopSecond16r.status, 200);
+		assert.equal(stopSecondBody16r.status, "detached", `turn 2's Stop must not report a retired job as active: ${JSON.stringify(stopSecondBody16r)}`);
+		assert.ok(providerAborted16r, "turn 2's provider call must actually receive the abort signal");
+		assert.ok(secondFrames16r.some((frame) => frame.type === "error" && frame.code === "aborted"), `Stop on the next, non-motion turn must not silently suppress its aborted outcome by treating a retired prior-turn job as the current acknowledged job: got ${JSON.stringify(secondTypes16r)}`);
+		assert.equal(secondTypes16r.at(-1), "done");
+		console.log("PASS 16r: turn 1 acknowledged stop unaffected; turn 2's Stop on the same session is a plain loud abort, and a stale explicit jobId stays 409 STALE_TARGET");
+	} finally {
+		await handler16r.close();
+		await new Promise((resolve) => server16r.close(resolve));
+		await new Promise((resolve) => bridge16r.close(resolve));
+	}
+}
+await run16rTwoTurnScenario();
+
 // #379 / 16s: the live-only Codex model already advertised by the real
 // catalogue must remain executable when the turn runner creates its registry.
 {
