@@ -389,11 +389,10 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			const session = studioSessions.get(value.sessionId);
 			if (!session || session.owner !== parseCookies(req).studio_owner || !session.turns.has(value.turnId)) throw new StudioProtocolError("AUTH_REQUIRED", "Studio stop is not owned by this session.");
 			const jobId = value.jobId ?? session.activeJobId;
-			// A stale explicit id is one that names a DIFFERENT job than the one this
-			// session currently has active; once the active job has already settled
-			// (activeJobId cleared), a repeat Stop naming the same, now-retired id is
-			// an idempotent re-stop, not a stale target.
-			if (value.jobId && session.activeJobId && value.jobId !== session.activeJobId) throw new StudioProtocolError("STALE_TARGET", "Stop does not own that motion job.");
+			// Explicit ids are checked against every motion job this session admitted.
+			// Retired ids remain in the set so a repeat Stop is idempotent, while an id
+			// admitted by another session is stale even when this session is idle.
+			if (value.jobId && !session.motionJobIds.has(value.jobId)) throw new StudioProtocolError("STALE_TARGET", "Stop does not own that motion job.");
 			// #379 / 16r: a job's id is only "acknowledged" by THIS turn's held motion
 			// tool — session.activeJobId now stays set only while that job is genuinely
 			// still in flight (or pending an explicit accept), and activeJobTurnId ties
@@ -433,7 +432,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			studioOwner(req, value.sessionId, true);
 			let persisted = null;
 			try { persisted = sessionStore.read(value.sessionId); } catch { persisted = null; }
-			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, activeJobTurnId: null, generationPrompt: null, host: null, updatedAt: clock() };
+			session = { owner: studioOwnerTokens.get(value.sessionId), history: persisted?.history ?? [], persistedItems: persisted?.history?.length ?? 0, meta: persisted?.meta ?? null, turns: new Map(), controller: null, activeJobId: null, activeJobTurnId: null, motionJobIds: new Set(), generationPrompt: null, host: null, updatedAt: clock() };
 			studioSessions.set(value.sessionId, session);
 		}
 		session.updatedAt = clock();
@@ -474,7 +473,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			if (!character) throw new StudioProtocolError("TARGET_NOT_READY", "The admitted character is unavailable.");
 			const commandId = randomUUID(); const host = { ...value.context.host, workspaceHandle: value.context.host.workspaceHandle };
 			const admissionResult = runtimeForJob.admit({ hostBinding: host, characterId: args.characterId, targetToken: character.token, turnId: value.turnId, commandId, authorization: { id: randomUUID(), generations: 1 }, source: args.source, repair: args.repair ?? "bounded" });
-			session.activeJobId = admissionResult.jobId; session.activeJobTurnId = value.turnId; session.generationPrompt = value.text;
+			session.motionJobIds.add(admissionResult.jobId); session.activeJobId = admissionResult.jobId; session.activeJobTurnId = value.turnId; session.generationPrompt = value.text;
 			const unsubscribe = runtimeForJob.subscribe(admissionResult.jobId, event => send({ ...event, sourceEventSeq: event.eventSeq }));
 			// Subscription precedes start, including replay of the queued admission event.
 			let outcome;
