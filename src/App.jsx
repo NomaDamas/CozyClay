@@ -6201,6 +6201,9 @@ export default function App() {
 	// Flat palette colours are the capture contract for H3 refs: unlike shaded
 	// materials, each body part keeps a stable hue for downstream segmentation.
 	const falMotionSegmentationReady = partColoursEnabled && partColoursMode === "flat";
+	const falMotionHasA = Boolean(falMotion.a);
+	const falMotionHasB = Boolean(falMotion.b);
+	const falMotionCameraMatch = falMotionHasA && falMotionHasB && framingDistance(falMotion.a.framing, falMotion.b.framing) <= 0.001;
 	const viewLooksActive = gridView || autoColor || partColoursEnabled;
 	const rigSelection = parseRigNodeId(selectedHierarchyId);
 	const isRigSelection = rigSelection !== null;
@@ -13082,14 +13085,31 @@ function resizePromptClip(id, edge, rawFrame) {
 						<p className="inspector-hint">{ko("같은 카메라에서 A/B 포즈를 캡처하면 보간하고, A만 있으면 동작 지시로 생성합니다.", "Capture A and B from the same camera to interpolate, or use A alone for an instructed action.")}</p>
 						<p className="inspector-hint fal-motion-ratio">{ko("참조 캡처 16:9 · 1920×1080 → H3 480P 832×480 · 현재 샷 비율과 무관하게 이 규격으로 캡처합니다.", "Reference capture 16:9 · 1920×1080 → H3 480P 832×480 · this capture size is fixed for the motion request.")}</p>
 						<p className={"inspector-hint fal-motion-segmentation" + (falMotionSegmentationReady ? " ready" : "")}>{falMotionSegmentationReady ? ko("색 세그멘테이션 평면 모드 ON · A/B 캡처 가능", "Flat body-part segmentation ON · A/B capture ready") : ko("A/B ref 전에는 View → 부위 색상 → 평면을 켜세요. 카메라 이동도 자동 차단합니다.", "Before A/B refs, enable View → Body part colours → Flat. Camera movement is blocked automatically.")}</p>
+						<div className="fal-motion-capture-status" aria-live="polite" data-testid="fal-motion-capture-status">
+							<div className={"fal-motion-capture-slot" + (falMotionHasA ? " captured" : "")} data-testid="fal-motion-ref-a-status">
+								<strong>A · {falMotionHasA ? ko("캡처 완료", "Captured") : ko("미캡처", "Not captured")}</strong>
+								<span>{falMotionHasA ? `${falMotion.a.width}×${falMotion.a.height} · Flat ${falMotion.a.partColours.length}개` : ko("현재 프레임에서 Mark A를 누르세요", "Press Mark A on the current frame")}</span>
+							</div>
+							<div className={"fal-motion-capture-slot" + (falMotionHasB ? " captured" : "")} data-testid="fal-motion-ref-b-status">
+								<strong>B · {falMotionHasB ? ko("캡처 완료", "Captured") : ko("미캡처", "Not captured")}</strong>
+								<span>{falMotionHasB ? `${falMotion.b.width}×${falMotion.b.height} · Flat ${falMotion.b.partColours.length}개` : ko("카메라를 움직이지 말고 Mark B를 누르세요", "Keep the camera still and press Mark B")}</span>
+							</div>
+						</div>
+						<p className={"fal-motion-camera-status" + (falMotionCameraMatch ? " ready" : "")} data-testid="fal-motion-camera-status">
+							{falMotionCameraMatch
+								? ko("✓ A/B 카메라 프레이밍 일치 확인", "✓ A/B camera framing matched")
+								: falMotionHasA
+									? ko("B를 캡처하면 A와 카메라 프레이밍을 비교합니다.", "Camera framing will be compared when B is captured.")
+									: ko("A를 먼저 캡처하면 카메라 기준을 저장합니다.", "Capture A first to save the camera reference.")}
+						</p>
 						<div className="fal-motion-pose-row">
 							<button type="button" className={falMotion.a ? "btn active" : "btn"} disabled={!falMotionSegmentationReady} onClick={() => markFalPose("a")}>{falMotion.a ? "A ✓" : "Mark A"}</button>
 							<button type="button" className={falMotion.b ? "btn active" : "btn"} disabled={!falMotionSegmentationReady} onClick={() => markFalPose("b")}>{falMotion.b ? "B ✓" : "Mark B"}</button>
 							{(falMotion.a || falMotion.b) && <button type="button" className="btn ghost" onClick={clearFalMotion}>{ko("초기화", "Clear")}</button>}
 						</div>
 						<div className="fal-motion-thumbs" aria-label={ko("Fal motion reference poses", "Fal motion reference poses")}>
-							{falMotion.a && <img src={falMotion.a.dataUrl} alt="Pose A" />}
-							{falMotion.b && <img src={falMotion.b.dataUrl} alt="Pose B" />}
+							{falMotion.a && <figure><img src={falMotion.a.dataUrl} alt="Pose A" /><figcaption>A · {falMotion.a.width}×{falMotion.a.height}</figcaption></figure>}
+							{falMotion.b && <figure><img src={falMotion.b.dataUrl} alt="Pose B" /><figcaption>B · {falMotion.b.width}×{falMotion.b.height}</figcaption></figure>}
 						</div>
 						<textarea
 							className="fal-motion-instruction"
