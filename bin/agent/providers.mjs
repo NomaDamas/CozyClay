@@ -84,12 +84,17 @@ export async function loadProvider(id, { baseUrl } = {}) {
 	return provider;
 }
 
+const PI_EFFORT_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"];
+const piEffort = (level) => level === "none" ? "off" : level === "ultra" ? "max" : level;
+const wireEffort = (level) => (level === "off" ? "none" : level);
+
 let liveCodexFetch;
 let liveCodexModels = [];
 const extendedCodexProviders = new WeakSet();
 
 function livePiModel(model, template) {
-	const thinkingLevelMap = Object.fromEntries(["off", "minimal", "low", "medium", "high", "xhigh", "max"].map((level) => [level, model.efforts.includes(level) ? level : null]));
+	const supported = new Set(model.efforts.map(piEffort));
+	const thinkingLevelMap = Object.fromEntries(PI_EFFORT_LEVELS.map((level) => [level, supported.has(level) ? level : null]));
 	return { ...template, id: model.id, name: model.label, thinkingLevelMap };
 }
 
@@ -160,7 +165,7 @@ export async function resolveModel(requested, options = {}) {
  * (pi has no "ultra" level) then clamped down like any other level. */
 export async function resolveEffort(model, effort) {
 	const { clampThinkingLevel } = await import("@earendil-works/pi-ai");
-	const level = effort === "none" ? "off" : effort === "ultra" ? "max" : effort;
+	const level = piEffort(effort);
 	return level === "off" ? "off" : clampThinkingLevel(model, level);
 }
 
@@ -196,8 +201,6 @@ export function providerStatus({ auth = defaultAuth, keys = defaultKeys, env = p
 // to "max" — no model ever advertises it as a supported effort).
 export const EFFORT_LEVELS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 
-const wireEffort = (level) => (level === "off" ? "none" : level);
-
 function effortsFor(levels) {
 	const efforts = levels.map(wireEffort);
 	const defaultEffort = efforts.includes("medium") ? "medium" : (efforts[0] ?? "none");
@@ -222,11 +225,13 @@ function liveModelsCodex(result) {
 	const list = Array.isArray(result) ? result : result?.models ?? [];
 	return list.map((model) => {
 		const id = typeof model === "string" ? model : model.slug || model.id;
-		const levels = Array.isArray(model.supported_reasoning_levels)
-			? model.supported_reasoning_levels.map((level) => (typeof level === "string" ? level : level.effort)).filter(Boolean).map(wireEffort)
-			: [];
-		const defaultEffort = levels.includes("medium") ? "medium" : (typeof model.default_reasoning_level === "string" ? wireEffort(model.default_reasoning_level) : levels[0] ?? "none");
-		return { id, key: `openai-codex/${id}`, label: id, efforts: levels, defaultEffort, input: ["text", "image"] };
+		const levels = (Array.isArray(model.supported_reasoning_levels)
+			? model.supported_reasoning_levels.map((level) => (typeof level === "string" ? level : level.effort)).filter(Boolean).filter((level) => level !== "ultra").map(wireEffort)
+			: []);
+		const efforts = levels.length ? levels : ["none"];
+		const requestedDefault = typeof model.default_reasoning_level === "string" ? wireEffort(model.default_reasoning_level) : undefined;
+		const defaultEffort = efforts.includes("medium") ? "medium" : (efforts.includes(requestedDefault) ? requestedDefault : efforts[0]);
+		return { id, key: `openai-codex/${id}`, label: id, efforts, defaultEffort, input: ["text", "image"] };
 	}).filter((model) => model.id);
 }
 

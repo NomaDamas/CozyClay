@@ -298,6 +298,7 @@ console.log("agent provider verification passed");
 	const { zstdDecompressSync } = await import("node:zlib");
 	const { createCodexClient } = await import("../bin/agent/codex-client.mjs");
 	const liveId = "gpt-future-16s-live-only";
+	const noneId = "gpt-future-16s-none";
 	const token = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "16s-fixture" } })).toString("base64url")}.e30`;
 	const fixtureAuth = {
 		getAccessToken: async () => token,
@@ -310,13 +311,16 @@ console.log("agent provider verification passed");
 		if (req.method === "GET") {
 			catalogueCalls++;
 			res.writeHead(200, { "content-type": "application/json" });
-			res.end(JSON.stringify({ models: [{ slug: liveId, supported_reasoning_levels: [{ effort: "medium" }, { effort: "high" }] }] }));
+			res.end(JSON.stringify({ models: [
+				{ slug: liveId, supported_reasoning_levels: [{ effort: "medium" }, { effort: "high" }] },
+				{ slug: noneId, supported_reasoning_levels: ["none", "medium", "high"] },
+			] }));
 			return;
 		}
 		const chunks = []; for await (const chunk of req) chunks.push(Buffer.from(chunk));
 		const encoded = Buffer.concat(chunks);
 		const body = JSON.parse((req.headers["content-encoding"] === "zstd" ? zstdDecompressSync(encoded) : encoded).toString("utf8"));
-		received.push({ path: req.url, model: body.model, effort: body.reasoning?.effort });
+		received.push({ path: req.url, model: body.model, ...(body.reasoning?.effort !== undefined ? { effort: body.reasoning.effort } : {}) });
 		res.writeHead(200, { "content-type": "text/event-stream" });
 		res.end(`data: ${JSON.stringify({ type: "response.completed", response: { status: "completed" } })}\n\n`);
 	});
@@ -353,7 +357,31 @@ console.log("agent provider verification passed");
 			assert.deepEqual(frames.filter((frame) => frame.type === "error"), [], "an advertised model executes without UNKNOWN_MODEL or provider errors");
 			assert.equal(frames.at(-1)?.type, "done");
 		}
-		assert.deepEqual(received, [liveId, "gpt-6-astra", liveId].map((model) => ({ path: "/codex/responses", model, effort: "medium" })), "the actual provider fixture sees both live and static model ids");
+		const effortMismatches = [];
+		const checkEffort = (assertion) => { try { assertion(); } catch (error) { effortMismatches.push(error.message); } };
+		const noneAdvertised = catalogue.models.find((model) => model.id === `openai-codex/${noneId}`);
+		checkEffort(() => assert.ok(noneAdvertised, "GET /agent/models advertises the live no-reasoning id"));
+		checkEffort(() => assert.deepEqual(noneAdvertised?.efforts, ["none", "medium", "high"]));
+		checkEffort(() => assert.equal(noneAdvertised?.defaultEffort, "medium"));
+		const noneRegistry = await providers.createModels({ auth: fixtureAuth, codexBaseUrl: fixtureOrigin });
+		const noneModel = noneRegistry.getModel("openai-codex", noneId);
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.off, "off"));
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.minimal, null));
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.low, null));
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.medium, "medium"));
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.high, "high"));
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.xhigh, null));
+		checkEffort(() => assert.equal(noneModel?.thinkingLevelMap?.max, null));
+		const noReasoningResponse = await fetch(`${sidecarOrigin}/agent/turn`, {
+			method: "POST", headers: { origin: sidecarOrigin, "content-type": "application/json" },
+			body: JSON.stringify({ sessionId: "16s-live-none", text: "hello", model: noneAdvertised.id, effort: "none" }), signal: AbortSignal.timeout(8000),
+		});
+		assert.equal(noReasoningResponse.status, 200);
+		const noReasoningFrames = [...(await noReasoningResponse.text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+		checkEffort(() => assert.deepEqual(noReasoningFrames.filter((frame) => frame.type === "error"), []));
+		checkEffort(() => assert.equal(noReasoningFrames.at(-1)?.type, "done"));
+		checkEffort(() => assert.deepEqual(received, [liveId, "gpt-6-astra", liveId, noneId].map((model, index) => ({ path: "/codex/responses", model, ...(index === 3 ? {} : { effort: "medium" }) })), "the provider preserves no-reasoning instead of escalating it"));
+		assert.deepEqual(effortMismatches, [], `live no-reasoning effort mismatches: ${JSON.stringify(effortMismatches)}`);
 		const refreshed = await Promise.all([getCatalogue(), getCatalogue()]);
 		assert.ok(refreshed.every((result) => result.models.some((model) => model.id === advertised.id)));
 		assert.equal(catalogueCalls, 1, "repeated listing and turns share one cached live fetch");
