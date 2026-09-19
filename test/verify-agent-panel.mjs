@@ -115,6 +115,9 @@ const controls = [
 	["History placeholder", "agent-history"],
 	["overflow menu", "agent-overflow-toggle"],
 	["Clear context action", "Clear context"],
+	["Provider keys action", "Provider keys…"],
+	["provider keys section", "agent-keys"],
+	["provider key row", "ProviderKeyRow"],
 	["Sign out action", "Sign out"],
 	["collapse control", "agent-collapse"],
 	["account strip", "agent-account"],
@@ -265,6 +268,7 @@ expect("the empty ready state offers exactly three suggestion chips", module_.SU
 	expect("the Studio panel drops every Workflow-only affordance", studioPresentation.imageHint === null && studioPresentation.imageEntitlement === false
 		&& studioPresentation.history === true && studioPresentation.persistWidth === false);
 	expect("the dock keeps them", workflow.imageHint === module_.IMAGE_COST_HINT && workflow.imageEntitlement === true && workflow.history === true && workflow.persistWidth === true);
+	expect("steering belongs to the Workflow turn alone", workflow.steer === true && studioPresentation.steer === false);
 	expect("Studio History is enabled and backed by the session key", panel.includes("agent-history-popover") && panel.includes("STUDIO_SESSION_STORAGE_KEY") && client.includes('"cozyclay.agent.session.studio"'));
 	expect("Studio restore has a visible fallback notice", panel.includes("Previous conversation could not be restored") && panel.includes("store.restore"));
 	expect("the Studio offers three previs chips of its own", studioPresentation.suggestions.length === 3
@@ -319,6 +323,56 @@ expect("the rate-limited mock emits a rate_limit error with a reset", limited.so
 const failed = [];
 await module_.createMockTransport({ state: "error" }).turn({}, (event) => failed.push(event));
 expect("the error mock fails a tool call", failed.some((event) => event.type === "tool.done" && event.ok === false));
+
+// --- provider keys (#379) -------------------------------------------------
+// The overflow menu opens an INLINE section that states which providers have a
+// key and where it came from. A key is typed into a password field, handed to
+// the sidecar once and dropped: no store, no transcript, no DOM node keeps it.
+expect("the overflow menu offers Provider keys…", panel.includes('className="agent-menu-keys"') && panel.includes("Provider keys…"));
+expect("the menu item opens an inline section, never a modal", panel.includes('<section className="agent-keys"') && !/role="dialog"/.test(panel));
+expect("the section opens from the menu and closes in place", panel.includes("toggleProviderKeys") && panel.includes("agent-keys-close"));
+expect("every listed provider gets a status dot and the source of its key", panel.includes("function ProviderKeyRow")
+	&& panel.includes('<StatusDot tone={provider.signedIn ? "ok" : ""}') && panel.includes('className="agent-key-source"'));
+expect("ChatGPT is never offered as an API-key provider", panel.includes('providers.filter((entry) => entry.id !== "openai-codex")'));
+expect("the key input is a password field", /className="agent-key-input"[\s\S]{0,240}type="password"/.test(panel) && !/agent-key-input[\s\S]{0,240}type="text"/.test(panel));
+expect("an env-backed provider names the variable on the input it refuses", panel.includes("set by ${providerEnvLabel(provider.id)}")
+	&& panel.includes("placeholder={fromEnv ? envLabel") && panel.includes("disabled={fromEnv || busy}"));
+expect("Remove exists only for a key this machine stores", panel.includes("{fromFile && <button") && panel.includes("agent-key-remove"));
+expect("a refused write is reported under the input it belongs to", /setError\(failure\?\.message/.test(panel) && panel.includes('className="agent-key-error"'));
+expect("the key leaves the page the moment the sidecar accepts it", /await action\(\);[\s\S]{0,160}setDraft\(""\)/.test(panel));
+expect("a saved or removed key re-reads the providers AND the models", /const refreshProviderState = useCallback\(async \(\) => \{[\s\S]{0,200}await readProviders\(\);[\s\S]{0,200}transport\.models\(\)/.test(panel)
+	&& /setProviderKey\(id, key\);\n\t\tawait refreshProviderState\(\)/.test(panel) && /removeProviderKey\(id\);\n\t\tawait refreshProviderState\(\)/.test(panel));
+expect("the transport owns the three provider routes", client.includes("async providers()") && client.includes("async setProviderKey(id, key)") && client.includes("async removeProviderKey(id)"));
+expect("the key is sent once as a PUT body and never in a URL", client.includes('{ method: "PUT", body: JSON.stringify({ key }) }') && !/providers\/[^\n]*key=/.test(client));
+for (const [name, rule] of [
+	["section", /\.agent-keys\s*\{[^}]*padding: var\(--agent-space-4\)/],
+	["row", /\.agent-key-row\s*\{[^}]*border-radius: var\(--agent-radius-md\)/],
+	["input", /\.agent-key-input\s*\{[^}]*background: var\(--agent-bg-sunken\)/],
+	["error", /\.agent-key-error\s*\{[^}]*color: var\(--agent-alert\)/],
+]) expect(`the provider keys ${name} is token-driven`, rule.test(css));
+expect("the provider keys section hardcodes no colour", !/#[0-9a-f]{3,8}/i.test(css.slice(css.indexOf(".agent-keys {"), css.indexOf("/* --- transcript"))));
+{
+	const keys = module_.createMockTransport({ state: "ready" });
+	const before = await keys.providers();
+	expect("the mock answers in the sidecar's provider shape", before.length === 5
+		&& before.every((entry) => typeof entry.id === "string" && typeof entry.label === "string" && Object.hasOwn(entry, "authSource") && typeof entry.signedIn === "boolean"), JSON.stringify(before));
+	expect("four API-key providers sit beside ChatGPT", before.filter((entry) => entry.id !== "openai-codex").length === 4);
+	expect("one provider is env-backed, so the disabled row is reachable in QA", before.some((entry) => entry.authSource === "env" && entry.signedIn));
+	await keys.setProviderKey("anthropic", "sk-test-123");
+	const after = await keys.providers();
+	expect("saving a key flips that provider to a file-backed signed-in state", after.find((entry) => entry.id === "anthropic")?.authSource === "file"
+		&& after.find((entry) => entry.id === "anthropic")?.signedIn === true, JSON.stringify(after));
+	expect("the provider list carries the source of a key, never the key", !JSON.stringify(after).includes("sk-test-123"));
+	await keys.removeProviderKey("anthropic");
+	expect("removing a key flips the provider back to unset", (await keys.providers()).find((entry) => entry.id === "anthropic")?.signedIn === false);
+	let refused = null;
+	try { await keys.setProviderKey("openai", "sk-no"); } catch (error) { refused = error; }
+	expect("a refused key fails with a 400 that quotes nothing it was given", refused?.status === 400 && !String(refused.message).includes("sk-no"), String(refused?.message));
+	expect("a refused save leaves the provider unconfigured", (await keys.providers()).find((entry) => entry.id === "openai")?.signedIn === false);
+	expect("the mock refuses to store a key for ChatGPT", await keys.setProviderKey("openai-codex", "sk-test-123").then(() => false, (error) => error.status === 400));
+	expect("the panel can name the variable an env-backed provider is set by", module_.providerEnvLabel("google") === "GEMINI_API_KEY or GOOGLE_API_KEY"
+		&& module_.providerEnvLabel("anthropic") === "ANTHROPIC_API_KEY" && module_.providerEnvLabel("nope") === "an environment variable");
+}
 
 // Two Stop scenarios share one driver: the host answers 200 either way, so the
 // only thing that may justify an "unchanged" claim is the runtime's own outcome.
@@ -482,11 +536,64 @@ expect("a 429 refusal routes to the paused state", (await module_.refusalEvent({
 expect("the panel stops inventing a generic refusal message", !panel.includes("turn responded") && client.includes("refusalEvent(response)"));
 
 // --- no stale model id is ever sent (#324 control finding 2) --------------
-expect("the client hardcodes no model list", !client.includes("DEFAULT_MODELS") && !/gpt-[\d.]/.test(client));
+// The guard covers the LIVE half of the file: the scripted ?agent=mock
+// catalogue below it names realistic models on purpose, and no turn can ever
+// reach a provider through it.
+const liveClient = client.slice(0, client.indexOf("// --- mock transport"));
+expect("the client hardcodes no model list", !client.includes("DEFAULT_MODELS") && !/gpt-[\d.]/.test(liveClient));
 expect("the panel starts with no model and takes the advertised list", panel.includes('const [model, setModel] = useState("")') && panel.includes('setModelsState("ready")'));
 expect("the composer stays disabled until a model is advertised", panel.includes('const composerDisabled = panelState === "rate-limited" || !model;'));
 expect("the wait for the model list is visible, not silent", panel.includes("Loading models…") && panel.includes("No model available"));
-expect("an unanswered model list is a state, not a guess", client.includes("return Array.isArray(result?.models) ? result.models : [];"));
+expect("an unanswered model list is a state, not a guess", client.includes("const models = Array.isArray(result?.models) ? result.models : [];")
+	&& panel.includes('if (!applyModelList(advertised)) { setModelsState("failed"); return; }'));
+
+// --- provider-grouped models, effort and steering (#379) ------------------
+// Five providers now answer /agent/models. The dropdown groups them, says
+// which ones are waiting for a key, and the composer can nudge a turn that is
+// already running instead of queueing a second one behind it.
+expect("the model list is consumed as the grouped { providers, models } payload", client.includes("return { providers, models };")
+	&& client.includes("Array.isArray(result?.providers)"));
+expect("a sidecar that answers with the flat list alone still fills the dropdown", /providers = Array\.isArray\(result\?\.providers\)[\s\S]{0,200}: \[\];/.test(client)
+	&& panel.includes("modelProviders.length") && panel.includes("models.map((entry) => <option key={entry.id} value={entry.id}>"));
+expect("the dropdown is grouped by provider", panel.includes("<optgroup key={provider.id} label={provider.label}>") && panel.includes("value={entry.key}"));
+expect("a provider without a key still lists its models, unpickable and labelled", panel.includes("disabled={!provider.signedIn}") && panel.includes("\u2014 add key"));
+expect("the chosen model key is remembered between sessions", client.includes('export const AGENT_MODEL_KEY = "cozyclay.agent.model"')
+	&& panel.includes("storeModel(id)") && panel.includes("preferredModel("));
+expect("only a model whose provider holds a credential is auto-selected or switched to", panel.includes("function modelIsSelectable(providers, key)") && panel.includes("modelIsSelectable(modelProviders, entry.id)"));
+expect("effort options come from the selected model", panel.includes("effortOptions(models.find((entry) => entry.id === model))")
+	&& client.includes("entry.defaultEffort && efforts.includes(entry.defaultEffort)"));
+expect("the transport can steer a running turn", client.includes("async steer(turnId, body)") && client.includes("/agent/turn/${encodeURIComponent(turnId)}/steer"));
+expect("the store steers instead of starting a second turn", client.includes("async steer(text, options = {})") && client.includes("if (!state.streaming || !wireTurnId"));
+expect("a refused steer names the code and keeps the draft", client.includes("export const STEER_ERROR_COPY") && client.includes("STEER_UNSUPPORTED")
+	&& client.includes("NO_ACTIVE_TURN") && panel.includes("setSteerNotice(result.message"));
+expect("Send becomes Steer while a steerable turn runs, and Stop stays reachable", panel.includes('className="agent-send agent-steer"') && panel.includes(">Steer</button>")
+	&& panel.includes('className="agent-send stop agent-stop"'));
+expect("only the Workflow surface offers Steer", panel.includes("presentation.steer &&") && panel.includes("if (streaming) { if (presentation.steer) steerTurn(draft); return; }"));
+expect("a provider key is a way in, not only the ChatGPT sign-in", panel.includes("status?.signedIn || status?.providersConfigured > 0"));
+expect("the scripted transport answers the grouped list and the steer route", client.includes("const MOCK_PROVIDER_MODELS") && client.includes("cozyclay.mock.agent.last-steer"));
+expect("the notice line is token-driven", /\.agent-toast\s*\{[^}]*padding: var\(--agent-space-3\) var\(--agent-space-4\)/.test(css)
+	&& /\.agent-toast\.alert\s*\{[^}]*background: var\(--agent-alert-bg\)/.test(css)
+	&& /\.agent-model-select optgroup\s*\{[^}]*color: var\(--agent-text-muted\)/.test(css));
+
+expect("preferredModel keeps a remembered key that is still advertised", module_.preferredModel([{ id: "a/1" }, { id: "b/2" }], "b/2") === "b/2");
+expect("preferredModel ignores a key nobody advertises any more", module_.preferredModel([{ id: "a/1" }], "gone/9") === "a/1");
+expect("preferredModel falls back to nothing rather than a guess", module_.preferredModel([], "a/1") === "");
+{
+	const grouped = await mock.models();
+	expect("the scripted list groups every provider", grouped.providers.length === 5 && grouped.providers.every((provider) => Array.isArray(provider.models) && provider.models.length > 0),
+		JSON.stringify(grouped.providers?.map((provider) => provider.id)));
+	expect("the flat scripted list is key-addressed", grouped.models.length > 5 && grouped.models.every((entry) => entry.id === entry.key && entry.key.includes("/")));
+	expect("the scripted list includes a provider that is waiting for a key", grouped.providers.some((provider) => !provider.signedIn && provider.models.length > 0));
+	expect("every scripted model carries its efforts and a default", grouped.models.every((entry) => Array.isArray(entry.efforts) && entry.efforts.includes(entry.defaultEffort)));
+	expect("effortOptions puts the model's default first", JSON.stringify(module_.effortOptions({ efforts: ["none", "low", "medium"], defaultEffort: "medium" })) === JSON.stringify(["medium", "none", "low"]));
+	await assert.rejects(() => mock.steer("mock-turn-404", { text: "too late" }), (error) => error.status === 409 && error.code === "NO_ACTIVE_TURN");
+	expect("the scripted steer refuses a turn that is not running", true);
+	await assert.rejects(() => module_.createMockTransport({ state: "ready", surface: "studio" }).steer("any", { text: "nope" }),
+		(error) => error.status === 409 && error.code === "STEER_UNSUPPORTED");
+	expect("the scripted Studio surface refuses steering outright", true);
+	expect("a scripted session reports how many provider keys it has", Number.isInteger((await mock.status()).providersConfigured)
+		&& (await module_.createMockTransport({ state: "signed-out" }).status()).providersConfigured === 0);
+}
 
 if (failures) {
 	console.error(`${failures} FAILURES`);

@@ -13,7 +13,8 @@
 //   POST /oauth/logout  -> { ok }
 //   POST /agent/turn    -> SSE, lines of `data: {json}`
 //   POST /agent/stop    -> { ok }
-//   GET  /agent/models  -> { models: [{ id, label }] }
+//   GET  /agent/models  -> { providers: [{ id, label, signedIn, models }], models: [flat] }
+//   POST /agent/turn/<turnId>/steer -> { ok, queued } while that turn streams
 //
 // Studio hosts add the frozen task-1 contracts on the same routes:
 //   POST /agent/turn                        -> { surface, sessionId, turnId, text, context, ... }
@@ -176,6 +177,10 @@ export const PANEL_PRESENTATIONS = Object.freeze({
 		// The Workflow turn generates images, so an account without the image
 		// entitlement has to be told before it asks for one.
 		imageEntitlement: true,
+		// Steering nudges a turn that is already running. Only the Workflow turn
+		// accepts it: a Studio turn is a frozen envelope the sidecar refuses to
+		// steer (409 STEER_UNSUPPORTED), so that surface keeps Stop alone.
+		steer: true,
 		history: true,
 		persistWidth: true,
 		emptyTitle: "Direct the scene",
@@ -188,6 +193,7 @@ export const PANEL_PRESENTATIONS = Object.freeze({
 		suggestions: STUDIO_SUGGESTION_CHIPS,
 		imageHint: null,
 		imageEntitlement: false,
+		steer: false,
 		history: true,
 		persistWidth: false,
 		emptyTitle: ko("Direct the scene", "\uC7A5\uBA74\uC744 \uC5F0\uCD9C\uD558\uC138\uC694"),
@@ -230,6 +236,37 @@ export function storePanelWidth(width, storage = globalThis.localStorage) {
 	}
 }
 
+/** The model the author last picked, by its `provider/id` key. Remembered
+ * because the choice is a working preference, not a per-session decision: a
+ * reload that silently drops you back on another provider's model is a
+ * surprise the next turn pays for. A key that is no longer advertised is
+ * ignored rather than sent. */
+export const AGENT_MODEL_KEY = "cozyclay.agent.model";
+
+export function readStoredModel(storage = globalThis.localStorage) {
+	try {
+		const raw = storage?.getItem(AGENT_MODEL_KEY);
+		return typeof raw === "string" && raw ? raw : null;
+	} catch {
+		return null;
+	}
+}
+
+export function storeModel(key, storage = globalThis.localStorage) {
+	try {
+		if (typeof key === "string" && key) storage?.setItem(AGENT_MODEL_KEY, key);
+	} catch {
+		// Private-mode storage denial must never break picking a model.
+	}
+}
+
+/** The model to open with: the remembered key when it is still advertised,
+ * otherwise the first model the sidecar listed. */
+export function preferredModel(models, stored = readStoredModel()) {
+	const list = Array.isArray(models) ? models : [];
+	return list.some((entry) => entry?.id === stored) ? stored : list[0]?.id ?? "";
+}
+
 /** "resets in 42m" / "resets in 1h 05m" for the account strip and the paused
  * card countdown. Returns null when there is nothing to count down to. */
 export function formatResetIn(resetAt, now = Date.now()) {
@@ -268,6 +305,14 @@ export function formatElapsed(ms) {
 	if (ms < 1000) return `${Math.round(ms)}ms`;
 	return `${(ms / 1000).toFixed(1)}s`;
 }
+
+/** Why a steer was refused, by the code the sidecar answers 409 with. The
+ * draft stays in the composer either way: the author's words are never eaten
+ * by a turn that ended a moment earlier. */
+export const STEER_ERROR_COPY = {
+	STEER_UNSUPPORTED: "This surface cannot steer a running turn.",
+	NO_ACTIVE_TURN: "That turn already ended — send it as a new message.",
+};
 
 export const ERROR_COPY = {
 	auth: "Your session expired. Sign in again to continue.",
@@ -498,6 +543,24 @@ function startAgentTurn({ surface, capture, now, correlationId = null }) {
 
 const RESUME_ATTEMPTS = 3;
 
+/** The environment variables the sidecar reads a provider key from (the `env`
+ * column of `bin/agent/providers.mjs` PROVIDERS). The panel never reads a key
+ * — it only needs the variable's NAME, so an env-backed provider can say which
+ * variable is already holding one instead of offering an input that would be
+ * ignored. */
+export const PROVIDER_ENV_VARS = {
+	anthropic: ["ANTHROPIC_API_KEY"],
+	openai: ["OPENAI_API_KEY"],
+	google: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+	openrouter: ["OPENROUTER_API_KEY"],
+};
+
+/** "set by <ENV_VAR>" for a provider whose key comes from the environment. */
+export function providerEnvLabel(id) {
+	const names = PROVIDER_ENV_VARS[id];
+	return names?.length ? names.join(" or ") : "an environment variable";
+}
+
 export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalThis), surface, capture = track, now = () => performance.now() } = {}) {
 	const activeTurns = new Map();
 	const request = async (path, init) => {
@@ -534,9 +597,37 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		async signOut() {
 			return request("/oauth/logout", { method: "POST", body: "{}" });
 		},
+		/** `{ providers, models }` (#379). The flat `models` is key-addressed
+		 * (`provider/id`) and carries each model's efforts; `providers` is the same
+		 * list grouped, with the sign-in state the dropdown disables its options
+		 * by. A sidecar that answers with the flat list alone still fills the
+		 * dropdown — ungrouped rather than empty. */
 		async models() {
 			const result = await request("/agent/models");
-			return Array.isArray(result?.models) ? result.models : [];
+			const models = Array.isArray(result?.models) ? result.models : [];
+			const providers = Array.isArray(result?.providers)
+				? result.providers.filter((provider) => provider?.id && Array.isArray(provider.models))
+				: [];
+			return { providers, models };
+		},
+		/** Steering a turn that is STILL streaming. The id is the one this browser
+		 * minted for that turn; the sidecar answers 409 for a Studio envelope
+		 * (STEER_UNSUPPORTED) and for a turn that already ended (NO_ACTIVE_TURN). */
+		async steer(turnId, body) {
+			return request(`/agent/turn/${encodeURIComponent(turnId)}/steer`, { method: "POST", body: JSON.stringify(body) });
+		},
+		// Provider credentials live in the sidecar's 0600 store. The browser sends
+		// a key once and never reads one back: the status route answers with the
+		// source of a key, never with key material.
+		async providers() {
+			const result = await request("/agent/providers");
+			return Array.isArray(result?.providers) ? result.providers : [];
+		},
+		async setProviderKey(id, key) {
+			return request(`/agent/providers/${encodeURIComponent(id)}`, { method: "PUT", body: JSON.stringify({ key }) });
+		},
+		async removeProviderKey(id) {
+			return request(`/agent/providers/${encodeURIComponent(id)}`, { method: "DELETE" });
 		},
 		async listSessions() {
 			const result = await request(`/agent/sessions?surface=${encodeURIComponent(surface || "studio")}`);
@@ -580,6 +671,10 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const studio = turnRequest.surface === "studio";
 			const turnId = studio ? turnRequest.turnId : null;
 			const telemetry = startAgentTurn({ surface, capture, now, correlationId: turnId });
+			// The steer route is keyed by the id THIS request is known by upstream:
+			// the Studio envelope's turnId, or the hex id the dock mints for its own
+			// turn. The caller cannot know it any other way.
+			turnRequest.onTurnId?.(studio ? turnId : telemetry.turnId);
 			activeTurns.set(sessionId, telemetry);
 			const onAbort = () => { if (signal.reason === "agent-stop") telemetry.cancel(); };
 			signal?.addEventListener("abort", onAbort, { once: true });
@@ -744,19 +839,65 @@ const MOCK_STUDIO_SCRIPT = [
 	{ delay: 40, event: { type: "done" } },
 ];
 
+// The scripted provider table: the sidecar's own shape ({id,label,authSource,
+// signedIn}) with one provider pinned to the environment so the disabled,
+// env-backed row is reachable in QA. The mock stores the SOURCE of a key and
+// never the key itself — there is nothing here for a screenshot to leak.
+const MOCK_PROVIDER_LABELS = [
+	["openai-codex", "ChatGPT (OpenAI Codex)"],
+	["anthropic", "Anthropic"],
+	["openai", "OpenAI"],
+	["google", "Google Gemini"],
+	["openrouter", "OpenRouter"],
+];
+const MOCK_ENV_PROVIDER = "google";
+/** The scripted `/agent/models` catalogue: every provider carries its own
+ * models, effort levels and backend default, signed in or not, so the grouped
+ * dropdown — its optgroups, its disabled "add key" options and the effort list
+ * that follows the chosen model — is fully drivable from ?agent=mock. */
+const MOCK_PROVIDER_MODELS = {
+	"openai-codex": [
+		{ id: "gpt-6-astra", label: "gpt-6-astra", efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" },
+		{ id: "gpt-5.1-codex", label: "gpt-5.1-codex", efforts: ["low", "medium", "high"], defaultEffort: "medium" },
+	],
+	anthropic: [{ id: "claude-sonnet-4-5", label: "Claude Sonnet 4.5", efforts: ["none", "low", "medium", "high"], defaultEffort: "medium" }],
+	openai: [{ id: "gpt-5.1", label: "GPT-5.1", efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" }],
+	google: [{ id: "gemini-3-pro", label: "Gemini 3 Pro", efforts: ["none", "low", "medium", "high"], defaultEffort: "medium" }],
+	openrouter: [{ id: "deepseek-v3", label: "DeepSeek V3", efforts: ["none"], defaultEffort: "none" }],
+};
+/** The shortest key the scripted sidecar will store, so QA can drive the
+ * refusal path (PUT → 400) without a real provider. */
+export const MOCK_PROVIDER_KEY_MIN = 8;
+
 export function createMockTransport(config = { state: "ready" }) {
 	const state = config?.state || "ready";
 	const studio = config?.surface === "studio";
 	const speed = config?.speed > 0 ? config.speed : 1;
 	const wait = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms / speed)));
+	const storedProviders = new Set();
+	// Which providers hold a credential right now, in the sidecar's own shape.
+	const providerStatus = () => MOCK_PROVIDER_LABELS.map(([id, label]) => {
+		const authSource = id === "openai-codex" ? (state === "signed-out" ? null : "chatgpt")
+			: id === MOCK_ENV_PROVIDER ? "env"
+				: storedProviders.has(id) ? "file" : null;
+		return { id, label, authSource, signedIn: Boolean(authSource) };
+	});
+	// The turn a steer may still reach. It is cleared at the last scripted frame,
+	// while the stream is still open, exactly like the sidecar's own turn record.
+	let liveTurn = null;
+	let turns = 0;
 	return {
 		mock: true,
 		state,
 		async status() {
-			if (state === "signed-out") return { signedIn: false, email: null, plan: null, accountId: null, expiresAt: null };
-			if (state === "signing-in") return { signedIn: false, pending: true, email: null, plan: null, accountId: null, expiresAt: null };
-			if (state === "no-entitlement") return { ...MOCK_ACCOUNT, plan: "Free", entitlements: { image: false } };
-			return { ...MOCK_ACCOUNT, entitlements: { image: true } };
+			// `providersConfigured` is the second way in (#379): a session with a
+			// provider key can talk to a model without a ChatGPT sign-in. The
+			// scripted signed-out state has neither, which is what it is for.
+			const providersConfigured = providerStatus().filter((provider) => provider.id !== "openai-codex" && provider.signedIn).length;
+			if (state === "signed-out") return { signedIn: false, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: 0 };
+			if (state === "signing-in") return { signedIn: false, pending: true, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: 0 };
+			if (state === "no-entitlement") return { ...MOCK_ACCOUNT, plan: "Free", entitlements: { image: false }, providersConfigured };
+			return { ...MOCK_ACCOUNT, entitlements: { image: true }, providersConfigured };
 		},
 		async signIn() {
 			return { ok: true, authorizeUrl: "https://auth.example.invalid/mock" };
@@ -765,10 +906,41 @@ export function createMockTransport(config = { state: "ready" }) {
 			return { ok: true };
 		},
 		async models() {
-			return [{ id: "mock-model", label: "Mock model" }];
+			const providers = providerStatus().map((provider) => ({
+				...provider,
+				models: (MOCK_PROVIDER_MODELS[provider.id] ?? []).map((model) => ({ ...model, key: `${provider.id}/${model.id}`, input: ["text", "image"] })),
+			}));
+			return { providers, models: providers.flatMap((provider) => provider.models.map((model) => ({ ...model, id: model.key }))) };
+		},
+		async providers() {
+			return providerStatus();
+		},
+		async setProviderKey(id, key) {
+			if (id === "openai-codex") throw Object.assign(new Error("Use ChatGPT sign-in for OpenAI Codex."), { status: 400 });
+			if (typeof key !== "string" || key.trim().length < MOCK_PROVIDER_KEY_MIN) {
+				// The refusal names the rule, never the value it refused.
+				throw Object.assign(new Error("That key was refused: it is too short."), { status: 400 });
+			}
+			storedProviders.add(id);
+			return { ok: true };
+		},
+		async removeProviderKey(id) {
+			storedProviders.delete(id);
+			return { ok: true };
 		},
 		async stop() {
+			liveTurn = null;
 			return { ok: true };
+		},
+		/** The scripted steer route. A message only reaches a turn that is still
+		 * running; anything else is the 409 the sidecar answers. QA reads the
+		 * accepted message back out of storage, because a scripted transport has
+		 * no request for it to inspect. */
+		async steer(turnId, body) {
+			if (studio) throw Object.assign(new Error("409 — Steering a Studio turn is not supported."), { status: 409, code: "STEER_UNSUPPORTED" });
+			if (!liveTurn || turnId !== liveTurn) throw Object.assign(new Error("409 — This turn already ended."), { status: 409, code: "NO_ACTIVE_TURN" });
+			try { globalThis.localStorage?.setItem("cozyclay.mock.agent.last-steer", JSON.stringify({ turnId, text: body?.text ?? null, attachments: body?.attachments?.length ?? 0 })); } catch { /* mock proof state is best effort */ }
+			return { ok: true, queued: true };
 		},
 		async acceptJob() {
 			return { ok: true };
@@ -799,6 +971,12 @@ export function createMockTransport(config = { state: "ready" }) {
 			return { ok: true, receiptId: `mock-${requestId}` };
 		},
 		async turn(request, onEvent, signal) {
+			// A scripted turn is addressable while it runs: the composer needs an id
+			// to steer it with, and QA needs to read back what the turn was asked for.
+			const turnId = `mock-turn-${++turns}`;
+			liveTurn = turnId;
+			request?.onTurnId?.(turnId);
+			try { globalThis.localStorage?.setItem("cozyclay.mock.agent.last-turn", JSON.stringify({ turnId, model: request?.model ?? null, effort: request?.effort ?? null, text: request?.text ?? null })); } catch { /* mock proof state is best effort */ }
 			try { if (studio && request?.sessionId) globalThis.localStorage?.setItem("cozyclay.mock.agent.last-turn-session", request.sessionId); } catch { /* mock proof state is best effort */ }
 			let transcript = [];
 			const sessionKey = studio && request?.sessionId ? `cozyclay.mock.agent.session.${request.sessionId}` : null;
@@ -828,6 +1006,7 @@ export function createMockTransport(config = { state: "ready" }) {
 				});
 				emit({ type: "error", code: "rate_limit", message: ERROR_COPY.rate_limit, resetAt: new Date(Date.now() + 42 * 60000).toISOString() });
 				emit({ type: "done" });
+				liveTurn = null;
 				return;
 			}
 			if (state === "error") {
@@ -838,6 +1017,7 @@ export function createMockTransport(config = { state: "ready" }) {
 				emit({ type: "tool.done", callId: "call-1", ok: false, elapsedMs: 812, error: studio ? "The scene is not ready" : "Viewport is not ready" });
 				emit({ type: "error", code: "upstream", message: ERROR_COPY.upstream });
 				emit({ type: "done" });
+				liveTurn = null;
 				return;
 			}
 			for (const step of studio ? MOCK_STUDIO_SCRIPT : MOCK_SCRIPT) {
@@ -846,6 +1026,11 @@ export function createMockTransport(config = { state: "ready" }) {
 				if (signal?.aborted) break;
 				emit(step.event);
 			}
+			// The model is done at the last frame, but the stream stays open while the
+			// sidecar closes the turn out. Steering inside that window is exactly the
+			// 409 the real route answers, so the scripted turn reproduces it.
+			liveTurn = null;
+			await wait(240);
 			if (signal?.aborted) emit({ type: "done" });
 		},
 	};
@@ -918,6 +1103,10 @@ export function createAgentChatStore({
 	// What the running turn has actually produced, so a turn that ends with
 	// nothing on screen can be reported as the failure it is.
 	let activeTurn = null;
+	// The id the SIDECAR knows the running turn by — the Studio envelope's
+	// turnId, or the hex id the dock's transport mints. It is what the steer
+	// route is keyed by, and only the transport can tell us which it is.
+	let wireTurnId = null;
 	let state = {
 		sessionId: newId(),
 		turnId: null,
@@ -1165,6 +1354,7 @@ export function createAgentChatStore({
 			const signal = controller.signal;
 			try {
 				await transport.turn({
+					onTurnId: (id) => { wireTurnId = id; },
 					...(studio ? { surface: "studio", turnId, context } : {}),
 					sessionId: state.sessionId,
 					text: trimmed,
@@ -1179,6 +1369,7 @@ export function createAgentChatStore({
 				if (controller?.signal === signal) controller = null;
 				// A turn the author already replaced owns none of this state.
 				if (activeTurn === turn) {
+					wireTurnId = null;
 					// Ending with nothing on screen is a failure, not a result.
 					if (!turn.produced && !turn.failure && !signal.aborted) {
 						turn.failure = { code: "no_output", message: "The turn ended without a response.", recovery: { action: "retry", retryAllowed: true } };
@@ -1198,6 +1389,37 @@ export function createAgentChatStore({
 					});
 				}
 			}
+		},
+		/** Steering the turn that is ALREADY running (#379). `send()` deliberately
+		 * returns early while streaming — a second turn would authorize a second
+		 * generation — so the composer's text goes to the running turn instead, as
+		 * a message the model sees before its next step. A refused steer leaves the
+		 * draft exactly where it is and reports the code it was refused with: the
+		 * author's words are never eaten by a turn that ended a moment earlier. */
+		async steer(text, options = {}) {
+			const trimmed = String(text ?? "").trim();
+			if (!trimmed) return { ok: false, code: "EMPTY", message: "" };
+			if (!state.streaming || !wireTurnId || typeof transport.steer !== "function") {
+				return { ok: false, code: "NO_ACTIVE_TURN", message: STEER_ERROR_COPY.NO_ACTIVE_TURN };
+			}
+			const attachments = (Array.isArray(options.attachments) ? options.attachments : state.pendingAttachments)
+				.slice(0, ATTACHMENT_MAX_COUNT)
+				.map(({ dataUrl, name }) => ({ dataUrl, ...(name ? { name } : {}) }));
+			try {
+				await transport.steer(wireTurnId, { text: trimmed, ...(attachments.length ? { attachments } : {}) });
+			} catch (error) {
+				const code = typeof error?.code === "string" ? error.code : "upstream";
+				return { ok: false, code, message: STEER_ERROR_COPY[code] || String(error?.message || error) };
+			}
+			// An accepted steer is part of the conversation: it is shown in the
+			// transcript like any other thing the author said, and it empties the
+			// composer like any other send.
+			set({
+				draft: "",
+				pendingAttachments: [],
+				items: [...state.items, { kind: "user", id: newId(), text: trimmed, steered: true, attachments }],
+			});
+			return { ok: true, code: null, message: "" };
 		},
 		stop() {
 			const running = [...state.items].reverse().find((item) => item.kind === "job" && !isTerminalJobState(item.state));

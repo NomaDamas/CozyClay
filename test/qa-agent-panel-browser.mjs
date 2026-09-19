@@ -261,6 +261,60 @@ await open("ready");
 await evaluate("document.querySelector('.agent-overflow-toggle').click()");
 expect("the overflow menu offers Clear context and Sign out", await waitFor("(() => { const items = [...document.querySelectorAll('.agent-menu button')].map((b) => b.textContent); return items.includes('Clear context') && items.includes('Sign out'); })()", 5000));
 shots.push(await shot("overflow-menu"));
+
+// --- provider keys (#379) --------------------------------------------------
+// The menu opens an INLINE section (no modal) that lists the API-key providers
+// the sidecar reports. A key is typed into a password field, saved through the
+// scripted sidecar, and the page is then searched for it: the panel manages
+// credentials without ever showing one.
+const providerRow = (id) => `document.querySelector('[data-provider="${id}"]')`;
+const typeKey = (id, value) => evaluate(`(() => { const input = document.querySelector('[data-provider="${id}"] .agent-key-input'); const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(input, ${JSON.stringify(value)}); input.dispatchEvent(new Event('input', { bubbles: true })); })()`);
+
+expect("the overflow menu offers Provider keys…", await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => b.textContent.startsWith('Provider keys'))", 5000),
+	await evaluate("[...document.querySelectorAll('.agent-menu button')].map((b) => b.textContent).join(',')"));
+await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent.startsWith('Provider keys')).click()");
+expect("the menu item opens an inline section inside the panel, not a modal", await waitFor("!!document.querySelector('.agent-panel .agent-keys') && !document.querySelector('[role=\"dialog\"]')", 8000));
+expect("the section lists the four API-key providers and never ChatGPT", await waitFor("document.querySelectorAll('.agent-key-row').length === 4 && !document.querySelector('[data-provider=\"openai-codex\"]')", 8000),
+	await evaluate("[...document.querySelectorAll('.agent-key-row')].map((r) => r.dataset.provider).join(',')"));
+expect("every key field is a password field", await evaluate("[...document.querySelectorAll('.agent-key-input')].every((input) => input.type === 'password')"));
+expect("an env-backed provider is disabled and names the variable it is set by", await evaluate("(() => { const row = document.querySelector('[data-provider-source=\"env\"]'); if (!row) return false; const input = row.querySelector('.agent-key-input'); return input.disabled === true && /^set by [A-Z_]+( or [A-Z_]+)?$/.test(input.placeholder) && row.querySelector('.agent-key-source').textContent === 'environment'; })()"),
+	await evaluate("document.querySelector('[data-provider-source=\"env\"]')?.innerText"));
+expect("an unconfigured provider shows a grey dot and offers no Remove", await evaluate(`(() => { const row = ${providerRow("anthropic")}; return row.dataset.providerSignedIn === 'false' && !row.querySelector('.agent-status-dot.ok') && !row.querySelector('.agent-key-remove'); })()`));
+shots.push(await shot("provider-keys-open"));
+
+// happy path: the scripted sidecar accepts the key
+await typeKey("anthropic", "sk-test-123");
+expect("typing a key enables Save", await waitFor("document.querySelector('[data-provider=\"anthropic\"] .agent-key-save').disabled === false", 5000));
+await evaluate("document.querySelector('[data-provider=\"anthropic\"] .agent-key-save').click()");
+expect("saving turns that provider's dot green and states where the key lives", await waitFor(`(() => { const row = ${providerRow("anthropic")}; return row.dataset.providerSignedIn === 'true' && !!row.querySelector('.agent-status-dot.ok') && /saved on this machine/.test(row.innerText); })()`, 8000),
+	await evaluate(`${providerRow("anthropic")}?.innerText`));
+expect("a stored key can be removed from the same row", await evaluate("!!document.querySelector('[data-provider=\"anthropic\"] .agent-key-remove')"));
+expect("the input is emptied the moment the key is stored", await evaluate("document.querySelector('[data-provider=\"anthropic\"] .agent-key-input').value === ''"));
+expect("no key material is anywhere in the page text", await evaluate("!document.body.innerText.includes('sk-test')"));
+expect("no key material survives anywhere in the DOM", await evaluate("!document.documentElement.outerHTML.includes('sk-test-123')"));
+shots.push(await shot("panel-provider-keys"));
+
+// failure path: the sidecar refuses the key with a 400
+await typeKey("openrouter", "sk-no");
+await evaluate("document.querySelector('[data-provider=\"openrouter\"] .agent-key-save').click()");
+expect("a refused key is explained under its own input and leaves the dot grey", await waitFor(`(() => { const row = ${providerRow("openrouter")}; return !!row.querySelector('.agent-key-error') && !row.querySelector('.agent-status-dot.ok') && row.dataset.providerSignedIn === 'false'; })()`, 8000),
+	await evaluate(`${providerRow("openrouter")}?.innerText`));
+expect("the refusal never quotes the key it refused", await evaluate("!document.body.innerText.includes('sk-no')"));
+expect("the provider that did save is untouched by the refusal", await evaluate(`${providerRow("anthropic")}.dataset.providerSignedIn === 'true'`));
+shots.push(await shot("provider-keys-refused"));
+
+// the section has to survive the narrow panel too
+await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+expect("the section fits a phone-width panel", await waitFor("(() => { const section = document.querySelector('.agent-keys'); if (!section) return false; const box = section.getBoundingClientRect(); return box.width > 0 && box.left >= 0 && box.right <= innerWidth + 1; })()", 5000),
+	await evaluate("JSON.stringify(document.querySelector('.agent-keys')?.getBoundingClientRect())"));
+expect("nothing scrolls sideways at 390px", await evaluate("document.documentElement.scrollWidth <= innerWidth + 1"));
+shots.push(await shot("provider-keys-390"));
+await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+
+await evaluate("document.querySelector('.agent-keys-close').click()");
+expect("closing the section leaves the conversation where it was", await waitFor("!document.querySelector('.agent-keys') && !!document.querySelector('.agent-transcript')", 5000));
+await evaluate("document.querySelector('.agent-overflow-toggle').click()");
+await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => b.textContent === 'Sign out')", 5000);
 await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
 expect("Sign out returns the panel to signed-out", await waitFor("document.querySelector('.agent-panel')?.dataset.agentState === 'signed-out'", 6000));
 

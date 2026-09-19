@@ -32,6 +32,8 @@
 	--agent-accent: #8994ff;
 	--agent-accent-deep: #303b71;
 	--agent-accent-edge: #4c5aab;
+	/* Text on an accent-filled control (Send, Save). */
+	--agent-accent-text: #e6e9ff;
 	--agent-ok: #4dcda4;
 	--agent-warn: #efb064;
 	--agent-alert: #ef759d;
@@ -65,6 +67,9 @@
 	--agent-warn-edge: #6a5a34;
 	--agent-warn-bg: #241f16;
 	--agent-warn-text: #f0dcb4;
+	--agent-alert-edge: #6d3a52;
+	--agent-alert-bg: #2a1c26;
+	--agent-alert-text: #f3c7d8;
 	--agent-ok-deep: #16302a;
 }
 
@@ -318,6 +323,124 @@
 	margin-left: auto;
 	flex: none;
 	color: var(--agent-text-dim);
+	font-size: var(--agent-font-sm);
+}
+
+/* --- provider keys (#379) ----------------------------------------------- *
+ * An inline section between the account strip and the conversation, built from
+ * the same sunken-surface + row rhythm the strips above already use. It is
+ * capped and scrollable so four providers can never push the transcript and
+ * the composer off a short panel. */
+
+.agent-keys {
+	display: flex;
+	flex-direction: column;
+	gap: var(--agent-space-3);
+	flex: none;
+	max-height: 46%;
+	overflow-y: auto;
+	padding: var(--agent-space-4);
+	border-bottom: 1px solid var(--agent-border);
+	background: var(--agent-bg-sunken);
+}
+
+.agent-keys-head {
+	display: flex;
+	align-items: center;
+	gap: var(--agent-space-2);
+}
+
+.agent-keys-title {
+	margin: 0;
+	flex: 1;
+	color: var(--agent-text);
+	font-size: var(--agent-font-lg);
+	font-weight: 600;
+}
+
+.agent-keys-hint,
+.agent-keys-note {
+	margin: 0;
+	color: var(--agent-text-dim);
+	font-size: var(--agent-font-sm);
+}
+
+.agent-keys-note.alert { color: var(--agent-alert); }
+
+.agent-key-row {
+	display: flex;
+	flex-direction: column;
+	gap: var(--agent-space-2);
+	padding: var(--agent-space-3);
+	border: 1px solid var(--agent-border);
+	border-radius: var(--agent-radius-md);
+	background: var(--agent-bg-raised);
+}
+
+.agent-key-head {
+	display: flex;
+	align-items: center;
+	gap: var(--agent-space-2);
+}
+
+.agent-key-label {
+	flex: 1;
+	min-width: 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: var(--agent-text);
+	font-size: var(--agent-font-md);
+}
+
+.agent-key-source {
+	flex: none;
+	color: var(--agent-text-dim);
+	font-size: var(--agent-font-xs);
+	letter-spacing: 0.04em;
+}
+
+.agent-key-controls {
+	display: flex;
+	align-items: center;
+	gap: var(--agent-space-2);
+	flex-wrap: wrap;
+}
+
+.agent-key-input {
+	flex: 1 1 120px;
+	min-width: 0;
+	border: 1px solid var(--agent-border-strong);
+	border-radius: var(--agent-radius-sm);
+	background: var(--agent-bg-sunken);
+	color: var(--agent-text);
+	padding: var(--agent-space-2) var(--agent-space-3);
+	font: inherit;
+	font-size: var(--agent-font-md);
+	outline: 0;
+}
+
+.agent-key-input:focus { border-color: var(--agent-border-focus); }
+.agent-key-input[disabled] { opacity: 0.55; }
+
+.agent-key-save {
+	flex: none;
+	border: 1px solid var(--agent-accent-edge);
+	border-radius: var(--agent-radius-md);
+	background: var(--agent-accent-deep);
+	color: var(--agent-accent-text);
+	padding: var(--agent-space-2) var(--agent-space-4);
+	font: inherit;
+	font-size: var(--agent-font-md);
+	cursor: pointer;
+}
+
+.agent-key-save[disabled],
+.agent-key-remove[disabled] { opacity: 0.45; cursor: default; }
+
+.agent-key-error {
+	margin: 0;
+	color: var(--agent-alert);
 	font-size: var(--agent-font-sm);
 }
 
@@ -961,6 +1084,18 @@
 }
 
 .agent-model-select:focus { border-color: var(--agent-border-focus); }
+
+/* Five providers in one dropdown: the group header reads as a heading and a
+ * model whose provider has no key reads as unavailable, not as missing. */
+.agent-model-select optgroup {
+	background: var(--agent-bg-sunken);
+	color: var(--agent-text-muted);
+	font-style: normal;
+	font-weight: 600;
+}
+
+.agent-model-select option:disabled { color: var(--agent-text-dim); }
+
 .agent-composer-picks { margin-bottom: var(--agent-space-2); }
 .agent-effort-select { flex: 0 0 auto; width: auto; max-width: 42%; }
 .agent-composer-spacer { flex: 1; }
@@ -979,6 +1114,24 @@
 
 .agent-send.stop { border-color: #7a3f58; background: #4a2536; color: #f8d5e3; }
 .agent-send[disabled] { opacity: 0.45; cursor: not-allowed; }
+
+/* One line of panel chrome for something the panel tried and could not do: a
+ * conversation that would not restore, a steer the running turn refused. */
+.agent-toast {
+	flex: none;
+	padding: var(--agent-space-3) var(--agent-space-4);
+	border-bottom: 1px solid var(--agent-border);
+	background: var(--agent-bg-sunken);
+	color: var(--agent-text-muted);
+	font-size: var(--agent-font-md);
+	line-height: 1.4;
+}
+
+.agent-toast.alert {
+	border-bottom-color: var(--agent-alert-edge);
+	background: var(--agent-alert-bg);
+	color: var(--agent-alert-text);
+}
 
 .agent-footer-hint {
 	margin: 0;

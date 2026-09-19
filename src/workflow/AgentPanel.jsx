@@ -26,11 +26,14 @@ import {
 	clampPanelWidth,
 	createAgentTransport,
 	panelPresentation,
+	preferredModel,
+	providerEnvLabel,
 	requestHostImageAction,
 	resolveToolLabel,
 	formatElapsed,
 	formatResetIn,
 	readStoredPanelWidth,
+	storeModel,
 	storePanelWidth,
 	STUDIO_SESSION_STORAGE_KEY,
 } from "./agent-client.js";
@@ -47,6 +50,15 @@ function relativeTime(value, now = Date.now()) {
 	if (hours < 24) return `${hours}h ago`;
 	const days = Math.floor(hours / 24);
 	return `${days}d ago`;
+}
+
+/** A model the session can actually run: one whose provider holds a
+ * credential. Without the grouped payload nothing is known about providers, so
+ * every advertised model stays selectable. */
+function modelIsSelectable(providers, key) {
+	if (!providers.length) return true;
+	const provider = providers.find((entry) => entry.models?.some((model) => model.key === key));
+	return provider ? provider.signedIn : true;
 }
 
 function StatusDot({ tone, title }) {
@@ -189,6 +201,61 @@ function FailureCard({ failure, onRetry }) {
 	</div>;
 }
 
+// One provider's credential row. The key lives in this component and nowhere
+// else: it is typed into a password field, handed to the transport once and
+// dropped the moment the sidecar accepts it, so no store, no transcript and no
+// screenshot can ever carry it. The sidecar answers with the SOURCE of a key
+// (env / file), never with a key, which is what the row reports.
+function ProviderKeyRow({ provider, onSave, onRemove }) {
+	const [draft, setDraft] = useState("");
+	const [busy, setBusy] = useState(false);
+	const [error, setError] = useState("");
+	const fromEnv = provider.authSource === "env";
+	const fromFile = provider.authSource === "file";
+	const envLabel = `set by ${providerEnvLabel(provider.id)}`;
+	const inputId = `agent-key-${provider.id}`;
+	const run = async (action) => {
+		setBusy(true);
+		setError("");
+		try {
+			await action();
+			// The key is gone from the page the instant it is stored.
+			setDraft("");
+		} catch (failure) {
+			// The sidecar's own refusal, which never quotes key material.
+			setError(failure?.message || "The sidecar refused that key.");
+		} finally {
+			setBusy(false);
+		}
+	};
+	return <div className="agent-key-row" data-provider={provider.id} data-provider-source={provider.authSource || "none"} data-provider-signed-in={provider.signedIn ? "true" : "false"}>
+		<div className="agent-key-head">
+			<StatusDot tone={provider.signedIn ? "ok" : ""} title={provider.signedIn ? "key configured" : "no key"} />
+			<label className="agent-key-label" htmlFor={inputId}>{provider.label}</label>
+			{/* The head states WHERE the key lives in two words; the variable's own
+			    name belongs on the input it replaces, where there is room for it. */}
+			<span className="agent-key-source">{fromEnv ? "environment" : fromFile ? "saved on this machine" : "no key"}</span>
+		</div>
+		<div className="agent-key-controls">
+			<input
+				id={inputId}
+				className="agent-key-input"
+				type="password"
+				autoComplete="off"
+				spellCheck="false"
+				aria-label={`${provider.label} API key`}
+				placeholder={fromEnv ? envLabel : provider.signedIn ? "Replace key" : "Paste API key"}
+				disabled={fromEnv || busy}
+				value={draft}
+				onChange={(event) => { setDraft(event.target.value); setError(""); }}
+			/>
+			<button type="button" className="agent-key-save" disabled={fromEnv || busy || !draft.trim()} onClick={() => run(() => onSave(provider.id, draft))}>Save</button>
+			{fromFile && <button type="button" className="agent-ghost-button agent-key-remove" disabled={busy} onClick={() => run(() => onRemove(provider.id))}>Remove</button>}
+		</div>
+		{error && <p className="agent-key-error" role="alert">{error}</p>}
+	</div>;
+}
+
 // `defaultCollapsed` + `onCollapsedChange` let a host mirror the panel's
 // visibility in its own chrome (the studio's View ▾ menu) without taking the
 // flag away from the panel: the rail button, Cmd/Ctrl+B and the toggle event
@@ -230,12 +297,32 @@ export default function AgentPanel({
 	// No model is assumed. Sending a guessed id is how a turn fails upstream with
 	// nothing the panel can explain, so the composer waits for /agent/models.
 	const [models, setModels] = useState([]);
+	// The same list grouped by the provider that serves it, which is the only
+	// way five providers' models fit one dropdown legibly.
+	const [modelProviders, setModelProviders] = useState([]);
 	const [model, setModel] = useState("");
 	const [modelsState, setModelsState] = useState("loading");
 	// null = the model's backend default; picking a model resets it.
 	const [effort, setEffort] = useState(null);
 	const efforts = useMemo(() => effortOptions(models.find((entry) => entry.id === model)), [models, model]);
-	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); }, []);
+	// Picking a model is a preference, not a per-session decision: the key is
+	// remembered so a reload does not quietly move the next turn to another
+	// provider's model.
+	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); storeModel(id); }, []);
+	// One place takes `{ providers, models }` from the sidecar: the grouped list
+	// the dropdown draws, the flat key-addressed list every lookup uses, and the
+	// model to open with. Returns false when nothing was advertised.
+	const applyModelList = useCallback((advertised) => {
+		const list = Array.isArray(advertised?.models) ? advertised.models : [];
+		if (!list.length) return false;
+		const providers = Array.isArray(advertised?.providers) ? advertised.providers : [];
+		const usable = list.filter((entry) => modelIsSelectable(providers, entry.id));
+		setModelProviders(providers);
+		setModels(list);
+		setModel((current) => current || preferredModel(usable.length ? usable : list));
+		setModelsState("ready");
+		return true;
+	}, []);
 	const [attachFrame, setAttachFrame] = useState(false);
 	// What the composer refused and why, in one line under the thumbnails: a
 	// picture that silently fails to attach is the bug this replaces.
@@ -244,8 +331,16 @@ export default function AgentPanel({
 	const [lightbox, setLightbox] = useState(null);
 	const [overlay, setOverlay] = useState(() => !embedded && (globalThis.innerWidth || 1440) < AGENT_PANEL_OVERLAY_BREAKPOINT);
 	const [historyOpen, setHistoryOpen] = useState(false);
+	// Provider credentials, read from the sidecar only while the section is open.
+	const [keysOpen, setKeysOpen] = useState(false);
+	const [providers, setProviders] = useState([]);
+	const [providersState, setProvidersState] = useState("loading");
 	const [historySessions, setHistorySessions] = useState([]);
 	const [restoreNotice, setRestoreNotice] = useState("");
+	// Why the last steer did not reach the running turn. It reads in the same
+	// line the restore notice uses, because it is the same kind of statement:
+	// something the panel tried and could not do.
+	const [steerNotice, setSteerNotice] = useState("");
 	const [restoreReady, setRestoreReady] = useState(surface !== "studio");
 
 	const composerRef = useRef(null);
@@ -317,10 +412,14 @@ export default function AgentPanel({
 	}, [activity.ticking]);
 
 	// --- session bootstrap -------------------------------------------------
+	// Two ways in (#379): the ChatGPT sign-in, or a provider key the sidecar
+	// already holds. `providersConfigured` counts the second, so a session that
+	// never signed in to ChatGPT still gets a composer instead of a sign-in wall
+	// it does not need.
 	// The image entitlement only gates a surface that can ask for an image; a
 	// Studio turn authors the scene, so a plan without image generation is a
 	// perfectly ready session there.
-	const sessionState = useCallback((status) => status?.signedIn
+	const sessionState = useCallback((status) => status?.signedIn || status?.providersConfigured > 0
 		? (presentation.imageEntitlement && status?.entitlements?.image === false ? "no-entitlement" : "ready")
 		: status?.pending ? "signing-in" : "signed-out", [presentation]);
 	const readAccount = useCallback(async () => {
@@ -347,19 +446,16 @@ export default function AgentPanel({
 				if (!cancelled) setAuthState("signed-out");
 			}
 			try {
-				const list = await transport.models();
+				const advertised = await transport.models();
 				if (cancelled) return;
-				if (!Array.isArray(list) || !list.length) { setModelsState("failed"); return; }
-				setModels(list);
-				setModel(list[0].id);
-				setModelsState("ready");
+				if (!applyModelList(advertised)) { setModelsState("failed"); return; }
 			} catch {
 				// An unanswered model list is a visible state, not a silent guess.
 				if (!cancelled) setModelsState("failed");
 			}
 		})();
 		return () => { cancelled = true; };
-	}, [sessionState, transport]);
+	}, [applyModelList, sessionState, transport]);
 
 	// Sign-in finishes in another window. The panel picks the session up when
 	// this document is looked at again, or when the host announces the return —
@@ -513,9 +609,21 @@ export default function AgentPanel({
 	// --- turn --------------------------------------------------------------
 	const runTurn = useCallback((text) => {
 		setAttachNotice(null);
+		setSteerNotice("");
 		return store.send(text, { attachFrame, model, effort: effort ?? undefined });
 	}, [attachFrame, effort, model, store]);
 	const stopTurn = useCallback(() => store.stop(), [store]);
+	// Steering the turn that is already running: the composer's text joins THAT
+	// turn instead of starting a second one. A refusal (the turn ended while the
+	// stream was still open, or this surface cannot be steered) says so and
+	// leaves the draft to be sent as a normal message.
+	const steerTurn = useCallback(async (text) => {
+		if (!String(text ?? "").trim()) return;
+		setAttachNotice(null);
+		setSteerNotice("");
+		const result = await store.steer(text);
+		if (!result.ok) setSteerNotice(result.message || "The running turn did not take that message.");
+	}, [store]);
 
 	const signIn = useCallback(async () => {
 		setAuthState("signing-in");
@@ -564,6 +672,45 @@ export default function AgentPanel({
 		}
 	}, [store, transport]);
 
+	// --- provider keys -----------------------------------------------------
+	// The sidecar owns the credentials; this section only states which providers
+	// have one and where it came from. The list is read when the section opens
+	// and again after every write — a key that just landed (or left) changes
+	// which models the composer may offer, so the model list is re-read with it.
+	const readProviders = useCallback(async () => {
+		try {
+			const list = await transport.providers?.();
+			if (!Array.isArray(list)) throw new Error("no provider list");
+			setProviders(list);
+			setProvidersState("ready");
+		} catch {
+			setProviders([]);
+			setProvidersState("failed");
+		}
+	}, [transport]);
+	const refreshProviderState = useCallback(async () => {
+		await readProviders();
+		try {
+			applyModelList(await transport.models());
+		} catch { /* the composer keeps the list it was last advertised */ }
+	}, [applyModelList, readProviders, transport]);
+	const toggleProviderKeys = useCallback(() => {
+		setMenuOpen(false);
+		const next = !keysOpen;
+		setKeysOpen(next);
+		if (!next) return;
+		setProvidersState("loading");
+		readProviders();
+	}, [keysOpen, readProviders]);
+	const saveProviderKey = useCallback(async (id, key) => {
+		await transport.setProviderKey(id, key);
+		await refreshProviderState();
+	}, [refreshProviderState, transport]);
+	const removeProviderKey = useCallback(async (id) => {
+		await transport.removeProviderKey(id);
+		await refreshProviderState();
+	}, [refreshProviderState, transport]);
+
 	// Clearing the transcript also retires the session, so what the author sees
 	// and what the model remembers cannot diverge.
 	const clearContext = useCallback(() => {
@@ -572,11 +719,15 @@ export default function AgentPanel({
 	}, [store]);
 
 	const switchModel = useCallback(() => {
-		const index = models.findIndex((entry) => entry.id === model);
-		const next = models[(index + 1) % models.length];
+		// Only a model whose provider holds a credential is worth switching to:
+		// the others are exactly the ones the dropdown draws disabled.
+		const usable = models.filter((entry) => modelIsSelectable(modelProviders, entry.id));
+		const list = usable.length ? usable : models;
+		const index = list.findIndex((entry) => entry.id === model);
+		const next = list[(index + 1) % list.length];
 		if (next) chooseModel(next.id);
 		store.clearRateLimit();
-	}, [chooseModel, model, models, store]);
+	}, [chooseModel, model, modelProviders, models, store]);
 
 	const onComposerKeyDown = useCallback((event) => {
 		if (event.key === "Escape" && streaming) {
@@ -586,9 +737,12 @@ export default function AgentPanel({
 		}
 		if (event.key === "Enter" && !event.shiftKey) {
 			event.preventDefault();
+			// Enter does what the button under it says: Send, or Steer while a turn
+			// on a steerable surface is still running.
+			if (streaming) { if (presentation.steer) steerTurn(draft); return; }
 			runTurn(draft);
 		}
-	}, [draft, runTurn, stopTurn, streaming]);
+	}, [draft, presentation, runTurn, steerTurn, stopTurn, streaming]);
 
 	const panelState = rateLimit ? "rate-limited"
 		: authState !== "ready" ? authState
@@ -654,6 +808,7 @@ export default function AgentPanel({
 				<button type="button" className="agent-icon-button agent-overflow-toggle" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More agent actions" onClick={() => setMenuOpen((value) => !value)}><FiMoreHorizontal size={13} /></button>
 				{menuOpen && <div className="agent-menu" role="menu">
 					<button type="button" role="menuitem" onClick={clearContext}>Clear context</button>
+					<button type="button" role="menuitem" className="agent-menu-keys" aria-expanded={keysOpen} onClick={toggleProviderKeys}>Provider keys…</button>
 					<button type="button" role="menuitem" onClick={signOut}>Sign out</button>
 				</div>}
 			</span>
@@ -661,12 +816,26 @@ export default function AgentPanel({
 		</header>
 
 		{restoreNotice && <div className="agent-toast" role="status">{restoreNotice}</div>}
+		{steerNotice && <div className="agent-toast alert agent-steer-notice" role="alert">{steerNotice}</div>}
 
 		{account?.signedIn && <div className="agent-account">
 			<span className="agent-account-email">{account.email}</span>
 			<span className="agent-plan-badge">{quota?.plan || account.plan || "Free"}</span>
 			{resetLabel && <span className="agent-account-reset">resets in {resetLabel}</span>}
 		</div>}
+
+		{/* An inline section, not a modal: the panel stays the one place the
+		    conversation and the credentials it runs on are managed. */}
+		{keysOpen && <section className="agent-keys" aria-label="Provider keys" data-agent-keys="true">
+			<div className="agent-keys-head">
+				<h3 className="agent-keys-title">Provider keys</h3>
+				<button type="button" className="agent-icon-button agent-keys-close" aria-label="Close provider keys" onClick={() => setKeysOpen(false)}><FiX size={11} aria-hidden="true" /></button>
+			</div>
+			<p className="agent-keys-hint">Keys are stored by the local CozyClay service and are never shown again.</p>
+			{providersState === "loading" && <p className="agent-keys-note">Loading providers…</p>}
+			{providersState === "failed" && <p className="agent-keys-note alert" role="alert">The provider list is unavailable.</p>}
+			{providers.filter((entry) => entry.id !== "openai-codex").map((entry) => <ProviderKeyRow key={entry.id} provider={entry} onSave={saveProviderKey} onRemove={removeProviderKey} />)}
+		</section>}
 
 		<div className="agent-transcript" ref={transcriptRef} aria-live="polite" aria-label="Conversation" data-agent-transcript="true">
 			{authState === "signed-out" && <div className="agent-state-card" data-agent-card="signed-out">
@@ -748,8 +917,19 @@ export default function AgentPanel({
 				onDrop={onComposerDrop}
 			/>
 			<div className="agent-composer-controls agent-composer-picks">
+				{/* Five providers in one dropdown: grouped by the provider that serves
+				    them, and a provider without a credential still lists its models —
+				    unpickable, and saying what they are waiting for. */}
 				<select className="agent-model-select" aria-label="Model" value={model} disabled={!models.length} onChange={(event) => chooseModel(event.target.value)}>
-					{models.length ? models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>) : <option value="">{modelsState === "failed" ? "No model available" : "Loading models…"}</option>}
+					{modelProviders.length
+						? modelProviders.map((provider) => <optgroup key={provider.id} label={provider.label}>
+							{provider.models.length
+								? provider.models.map((entry) => <option key={entry.key} value={entry.key} disabled={!provider.signedIn}>{provider.signedIn ? entry.label : `${entry.label} — add key`}</option>)
+								: <option value={`${provider.id}/`} disabled>{provider.signedIn ? "No models" : "No models — add key"}</option>}
+						</optgroup>)
+						: models.length
+							? models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)
+							: <option value="">{modelsState === "failed" ? "No model available" : "Loading models…"}</option>}
 				</select>
 				{efforts.length > 0 && (
 					<select className="agent-model-select agent-effort-select" aria-label="Reasoning effort" title="Reasoning effort" value={effort ?? efforts[0]} onChange={(event) => setEffort(event.target.value)}>
@@ -763,8 +943,13 @@ export default function AgentPanel({
 					Attach current frame
 				</button>
 				<span className="agent-composer-spacer" aria-hidden="true" />
+				{/* While a turn runs, Stop is still the way out of it; on a surface
+				    that can be steered, Send becomes the way INTO it. */}
 				{streaming
-					? <button type="button" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
+					? <>
+						<button type="button" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
+						{presentation.steer && <button type="button" className="agent-send agent-steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
+					</>
 					: <button type="button" className="agent-send" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}>Send</button>}
 			</div>
 		</div>}

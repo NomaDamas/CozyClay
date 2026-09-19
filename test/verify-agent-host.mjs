@@ -151,6 +151,30 @@ function sseBody(chunks, { drop = false } = {}) {
 	};
 }
 
+/** A stream that delivers its chunks and then STAYS OPEN until it is released:
+ * a turn that is still running is the only state a steer is allowed in. */
+function heldSseBody(chunks) {
+	const encoder = new TextEncoder();
+	let at = 0;
+	let release;
+	const open = new Promise((resolve) => { release = resolve; });
+	return {
+		release: () => release(),
+		body: {
+			getReader() {
+				return {
+					async read() {
+						if (at < chunks.length) return { value: encoder.encode(chunks[at++]), done: false };
+						await open;
+						return { value: undefined, done: true };
+					},
+					releaseLock() {},
+				};
+			},
+		},
+	};
+}
+
 /** Loopback sidecar double. Every call is recorded with its parsed body. */
 function fakeSidecar(routes) {
 	const calls = [];
@@ -273,6 +297,59 @@ if (runs("embedded-session-and-receipts")) {
 		expect("the transcript keeps the tool card and adds no duplicate receipt card", store.getState().items.filter((item) => item.kind === "receipt").length === 0, JSON.stringify(store.getState().items.map((item) => item.kind)));
 	});
 
+	await group("the grouped model list (#379)", async () => {
+		const catalogue = {
+			providers: [
+				{ id: "openai-codex", label: "ChatGPT (OpenAI Codex)", signedIn: true, authSource: "chatgpt", models: [{ id: "astra", key: "openai-codex/astra", label: "astra", efforts: ["none", "medium"], defaultEffort: "medium" }] },
+				{ id: "anthropic", label: "Anthropic", signedIn: false, authSource: null, models: [{ id: "claude", key: "anthropic/claude", label: "Claude", efforts: ["none"], defaultEffort: "none" }] },
+				{ id: "broken", label: "Broken", signedIn: false, authSource: null },
+			],
+			models: [
+				{ id: "openai-codex/astra", key: "openai-codex/astra", label: "astra", efforts: ["none", "medium"], defaultEffort: "medium" },
+				{ id: "anthropic/claude", key: "anthropic/claude", label: "Claude", efforts: ["none"], defaultEffort: "none" },
+			],
+		};
+		const grouped = fakeSidecar({ "/agent/models$": () => jsonResponse(catalogue) });
+		const list = await createHttpTransport({ fetchImpl: grouped.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 }).models();
+		expect("the transport parses the providers beside the flat list", list.providers.length === 2 && list.models.length === 2, JSON.stringify(list.providers.map((provider) => provider.id)));
+		expect("a provider entry without models is not offered as a group", !list.providers.some((provider) => provider.id === "broken"));
+		expect("the flat list stays key-addressed and keeps its efforts", list.models.every((entry) => entry.id === entry.key && entry.efforts.includes(entry.defaultEffort)));
+		expect("each provider keeps the sign-in state the dropdown disables by", list.providers[0].signedIn === true && list.providers[1].signedIn === false);
+
+		const flatOnly = fakeSidecar({ "/agent/models$": () => jsonResponse({ models: [{ id: "legacy", label: "Legacy" }] }) });
+		const fallback = await createHttpTransport({ fetchImpl: flatOnly.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 }).models();
+		expect("a sidecar that answers with models alone still advertises them", fallback.models.length === 1 && fallback.providers.length === 0, JSON.stringify(fallback));
+	});
+
+	await group("steering a running Workflow turn (#379)", async () => {
+		const held = heldSseBody([frame({ type: "text.delta", text: "Framing the shot." })]);
+		const sidecar = fakeSidecar({
+			"/agent/turn$": () => ({ ok: true, status: 200, body: held.body }),
+			"/steer$": () => jsonResponse({ ok: true, queued: true }),
+		});
+		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 });
+		const store = createAgentChatStore({ transport, surface: "workflow" });
+		const turn = store.send("block the two-shot", { model: "anthropic/claude" });
+		await settled(store, (state) => state.items.some((item) => item.kind === "assistant"));
+		store.setDraft("actually, make it wider");
+		const result = await store.steer(store.getState().draft);
+		const steer = sidecar.calls.find((call) => /\/steer$/.test(call.path));
+		const turnBody = sidecar.calls.find((call) => call.path === "/agent/turn").body;
+		expect("the steer is accepted while the turn is still streaming", result.ok === true, JSON.stringify(result));
+		expect("the steer posts the composer text to the running turn", steer?.method === "POST" && steer.body?.text === "actually, make it wider", JSON.stringify(steer));
+		expect("the steer is keyed by the id the browser minted for THIS turn", steer?.path === `/agent/turn/${turnBody.turn_id}/steer`, `${steer?.path} vs turn_id=${turnBody?.turn_id}`);
+		expect("an accepted steer joins the transcript and empties the composer", store.getState().draft === "" && store.getState().items.filter((item) => item.kind === "user").length === 2,
+			JSON.stringify(store.getState().items.map((item) => item.kind)));
+		expect("steering never starts a second turn", sidecar.calls.filter((call) => call.path === "/agent/turn").length === 1);
+		expect("the turn is still streaming after the steer", store.getState().streaming === true);
+		held.release();
+		await turn;
+		expect("the steered turn settles like any other", store.getState().streaming === false);
+		const late = await store.steer("one more thing");
+		expect("a steer after the turn ended never reaches the sidecar", late.ok === false && late.code === "NO_ACTIVE_TURN"
+			&& sidecar.calls.filter((call) => /\/steer$/.test(call.path)).length === 1, JSON.stringify(late));
+	});
+
 	await group("dock defaults are unchanged", async () => {
 		const sidecar = fakeSidecar({ "/agent/turn$": () => streamResponse([frame({ type: "done" })]) });
 		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 });
@@ -392,6 +469,49 @@ if (runs("embedded-session-and-receipts")) {
 		expect("New starts another session", store.getState().sessionId !== cleared && isUuid(store.getState().sessionId));
 		expect("New empties the transcript", store.getState().items.length === 0);
 		expect("New keeps the unsent draft", store.getState().draft === "half written instruction");
+	});
+
+	await group("provider keys reach the sidecar and nothing else (#379)", async () => {
+		const KEY = "sk-test-123";
+		const stored = new Set();
+		const sidecar = fakeSidecar({
+			"/agent/providers$": () => jsonResponse({ providers: [
+				{ id: "openai-codex", label: "ChatGPT (OpenAI Codex)", authSource: "chatgpt", signedIn: true },
+				{ id: "anthropic", label: "Anthropic", authSource: stored.has("anthropic") ? "file" : null, signedIn: stored.has("anthropic") },
+				{ id: "openai", label: "OpenAI", authSource: null, signedIn: false },
+				{ id: "google", label: "Google Gemini", authSource: "env", signedIn: true },
+				{ id: "openrouter", label: "OpenRouter", authSource: null, signedIn: false },
+			] }),
+			"/agent/providers/anthropic$": ({ body, path }) => {
+				if (body?.key) stored.add("anthropic"); else stored.delete("anthropic");
+				return jsonResponse({ ok: true, path });
+			},
+			"/agent/providers/openai-codex$": () => ({ ok: false, status: 400, clone: () => ({ json: async () => ({ error: "Use ChatGPT sign-in for OpenAI Codex." }) }) }),
+			"/agent/models$": () => jsonResponse({ models: [{ id: "anthropic/claude-sonnet-4-5", label: "Claude Sonnet 4.5" }] }),
+		});
+		const transport = createHttpTransport({ fetchImpl: sidecar.fetchImpl, surface: "workflow", capture: () => {}, now: () => 0 });
+		const listed = await transport.providers();
+		expect("the panel reads the provider list from GET /agent/providers", sidecar.calls.at(-1).method === "GET" && sidecar.calls.at(-1).path === "/agent/providers"
+			&& listed.length === 5 && listed.every((entry) => !Object.hasOwn(entry, "key")), JSON.stringify(sidecar.calls.at(-1)));
+		await transport.setProviderKey("anthropic", KEY);
+		const put = sidecar.calls.at(-1);
+		expect("saving a key PUTs it to that provider, as the whole body", put.method === "PUT" && put.path === "/agent/providers/anthropic"
+			&& JSON.stringify(Object.keys(put.body)) === '["key"]' && put.body.key === KEY, JSON.stringify({ ...put, body: Object.keys(put.body || {}) }));
+		expect("the key never travels in the URL", !put.path.includes(KEY) && !sidecar.calls.some((call) => call.path.includes(KEY)));
+		expect("the sidecar reports the saved provider as file-backed, without echoing a key", (await transport.providers()).find((entry) => entry.id === "anthropic")?.authSource === "file");
+		// Nothing that outlives the call may carry the key: not the transport, not
+		// the chat store that shares it, not the store's serialised state.
+		const store = createAgentChatStore({ transport, surface: "workflow" });
+		const leaked = (value) => { try { return JSON.stringify(value)?.includes(KEY) ?? false; } catch { return true; } };
+		expect("the transport keeps no copy of the key after the save", !leaked(transport) && !Object.values(transport).some((value) => typeof value === "string" && value.includes(KEY)));
+		expect("the chat store never sees the key at all", !leaked(store.getState()) && !leaked(sidecar.calls.filter((call) => call.method === "GET")));
+		await transport.removeProviderKey("anthropic");
+		const del = sidecar.calls.at(-1);
+		expect("Remove DELETEs the provider and sends no body", del.method === "DELETE" && del.path === "/agent/providers/anthropic" && del.body === null, JSON.stringify(del));
+		expect("a removed key leaves the provider unconfigured", (await transport.providers()).find((entry) => entry.id === "anthropic")?.signedIn === false);
+		let refused = null;
+		try { await transport.setProviderKey("openai-codex", KEY); } catch (error) { refused = error; }
+		expect("a 400 from the sidecar is raised with its status and its own message", refused?.status === 400 && /ChatGPT sign-in/.test(refused.message) && !refused.message.includes(KEY), String(refused?.message));
 	});
 
 	await group("embedded host contract", () => {
