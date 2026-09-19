@@ -5928,7 +5928,7 @@ export default function App() {
 			throw new Error(ko("H3 480P 참조 캡처는 16:9(1920×1080)이어야 해요.", "The H3 480P reference must be captured at 16:9 (1920×1080)."));
 		}
 		if (!falMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
-			throw new Error(ko("A/B 참조는 View에서 부위 색상 → 평면을 켜야 캡처할 수 있어요.", "Enable View → Body part colours → Flat before capturing an A/B reference."));
+			throw new Error(ko("A/B 참조는 View에서 부위 색상 → 음영을 켜야 캡처할 수 있어요.", "Enable View → Body part colours → Shaded before capturing an A/B reference."));
 		}
 		return { ...captured, framing: captureCurrentFraming() };
 	}
@@ -5999,7 +5999,7 @@ export default function App() {
 			return;
 		}
 		if (!source.a?.partColours || (kind === "interpolate" && !source.b?.partColours)) {
-			setFalMotion((current) => ({ ...current, error: ko("색 세그멘테이션이 포함된 A/B 참조를 다시 캡처하세요.", "Recapture A/B refs with flat body-part segmentation enabled."), status: "error" }));
+			setFalMotion((current) => ({ ...current, error: ko("색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요.", "Recapture A/B refs with shaded body-part segmentation enabled."), status: "error" }));
 			return;
 		}
 		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
@@ -6226,9 +6226,9 @@ export default function App() {
 	// for the part colours, and a dot on the trigger whenever the viewport is
 	// showing something other than the plain stage.
 	const partColoursChoice = partColoursEnabled ? partColoursMode : "off";
-	// Flat palette colours are the capture contract for H3 refs: unlike shaded
-	// materials, each body part keeps a stable hue for downstream segmentation.
-	const falMotionSegmentationReady = partColoursEnabled && partColoursMode === "flat";
+	// Shaded part colours keep the stable per-part hues while preserving the
+	// surface lighting H3 uses to infer the character's volume and pose.
+	const falMotionSegmentationReady = partColoursEnabled && partColoursMode === "shaded";
 	const falMotionHasA = Boolean(falMotion.a);
 	const falMotionHasB = Boolean(falMotion.b);
 	const falMotionCameraMatch = falMotionHasA && falMotionHasB && framingDistance(falMotion.a.framing, falMotion.b.framing) <= 0.001;
@@ -13127,7 +13127,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						</p>
 						<div className="fal-motion-stepper" aria-label={ko("Fal 모션 진행 단계", "Fal motion steps")}>
 							{[
-								[1, ko("평면", "Flat")],
+							[1, ko("음영", "Shaded")],
 								[2, "A"],
 								[3, "B"],
 								[4, ko("생성", "Generate")],
@@ -13135,17 +13135,17 @@ function resizePromptClip(id, edge, rawFrame) {
 						</div>
 						<p className="inspector-hint fal-motion-ratio">{ko("참조 캡처 16:9 · 1920×1080 → H3 480P 832×480 · 현재 샷 비율과 무관하게 이 규격으로 캡처합니다.", "Reference capture 16:9 · 1920×1080 → H3 480P 832×480 · this capture size is fixed for the motion request.")}</p>
 						<div className={"fal-motion-segmentation-row" + (falMotionSegmentationReady ? " ready" : "")}>
-							<p className="inspector-hint fal-motion-segmentation">{falMotionSegmentationReady ? ko("색 세그멘테이션 평면 모드 ON · A/B 캡처 가능", "Flat body-part segmentation ON · A/B capture ready") : ko("A/B 참조에는 부위 색상 평면 모드가 필요합니다.", "Flat body-part colours are required for A/B refs.")}</p>
-							{!falMotionSegmentationReady && <button type="button" className="btn fal-motion-flat-cta" onClick={() => { setPartColoursEnabled(true); setPartColoursMode("flat"); }}>{ko("평면 모드 켜기", "Enable Flat")}</button>}
+							<p className="inspector-hint fal-motion-segmentation">{falMotionSegmentationReady ? ko("색 세그멘테이션 음영 모드 ON · A/B 캡처 가능", "Shaded body-part segmentation ON · A/B capture ready") : ko("A/B 참조에는 부위 색상 음영 모드가 필요합니다.", "Shaded body-part colours are required for A/B refs.")}</p>
+							{!falMotionSegmentationReady && <button type="button" className="btn fal-motion-flat-cta" onClick={() => { setPartColoursEnabled(true); setPartColoursMode("shaded"); }}>{ko("음영 모드 켜기", "Enable Shaded")}</button>}
 						</div>
 						<div className="fal-motion-capture-status" aria-live="polite" data-testid="fal-motion-capture-status">
 							<div className={"fal-motion-capture-slot" + (falMotionHasA ? " captured" : "")} data-testid="fal-motion-ref-a-status">
 								<strong>A · {falMotionHasA ? ko("캡처 완료", "Captured") : ko("미캡처", "Not captured")}</strong>
-								<span>{falMotionHasA ? `${falMotion.a.width}×${falMotion.a.height} · Flat ${falMotion.a.partColours.length}개` : ko("현재 프레임에서 A 캡처를 누르세요", "Press Capture A on the current frame")}</span>
+								<span>{falMotionHasA ? `${falMotion.a.width}×${falMotion.a.height} · Shaded ${falMotion.a.partColours.length}개` : ko("현재 프레임에서 A 캡처를 누르세요", "Press Capture A on the current frame")}</span>
 							</div>
 							<div className={"fal-motion-capture-slot" + (falMotionHasB ? " captured" : "")} data-testid="fal-motion-ref-b-status">
 								<strong>B · {falMotionHasB ? ko("캡처 완료", "Captured") : ko("미캡처", "Not captured")}</strong>
-								<span>{falMotionHasB ? `${falMotion.b.width}×${falMotion.b.height} · Flat ${falMotion.b.partColours.length}개` : ko("B 포즈를 만든 뒤 카메라를 움직이지 말고 B 캡처를 누르세요", "Set the B pose, keep the camera still, then press Capture B")}</span>
+								<span>{falMotionHasB ? `${falMotion.b.width}×${falMotion.b.height} · Shaded ${falMotion.b.partColours.length}개` : ko("B 포즈를 만든 뒤 카메라를 움직이지 말고 B 캡처를 누르세요", "Set the B pose, keep the camera still, then press Capture B")}</span>
 								{falMotionHasB && <button type="button" className="fal-motion-slot-action" onClick={() => clearFalPose("b")}>{ko("B 제거", "Remove B")}</button>}
 							</div>
 						</div>

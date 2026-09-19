@@ -18,7 +18,7 @@ export function buildH3MotionPrompt(action, { interpolate = false } = {}) {
   const lead = interpolate
     ? "Move the character naturally from the first reference pose to the final reference pose."
     : text || "Perform the requested character action.";
-  return `${lead}\nKeep the camera fixed and preserve the full-body character framing. Animate only the character; keep the scene, lighting, floor, and every object unchanged. Use one continuous shot with no cuts, zooms, pan, tilt, orbit, crop, reframing, or time jump.`;
+  return `${lead}\nKeep the camera fixed and preserve the full-body character framing. Animate only the character; keep the character's body heading and facing direction unchanged with no yaw turn, spin, or final rotation. Keep the scene, lighting, floor, and every object unchanged. Use one continuous shot with no cuts, zooms, pan, tilt, orbit, crop, reframing, or time jump.`;
 }
 
 async function request(path, body, fetchImpl = fetch) {
