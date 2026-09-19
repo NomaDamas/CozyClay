@@ -688,12 +688,20 @@ export default function AgentPanel({
 			setProvidersState("failed");
 		}
 	}, [transport]);
+	// A credential write also changes WHO the session is: readiness is
+	// `signedIn || providersConfigured > 0`, so the account that gate reads is
+	// re-requested through the same status call, once per write, beside the rows
+	// and the models. That is what lets a signed-out author who just saved their
+	// first key type into a composer without reloading the page — and what takes
+	// it away again when the last key is removed. No timer is involved.
 	const refreshProviderState = useCallback(async () => {
+		const session = readAccount();
 		await readProviders();
+		await session;
 		try {
 			applyModelList(await transport.models());
 		} catch { /* the composer keeps the list it was last advertised */ }
-	}, [applyModelList, readProviders, transport]);
+	}, [applyModelList, readAccount, readProviders, transport]);
 	const toggleProviderKeys = useCallback(() => {
 		setMenuOpen(false);
 		const next = !keysOpen;

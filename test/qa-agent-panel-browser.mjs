@@ -321,6 +321,39 @@ await waitFor("[...document.querySelectorAll('.agent-menu button')].some((b) => 
 await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent === 'Sign out').click()");
 expect("Sign out returns the panel to signed-out", await waitFor("document.querySelector('.agent-panel')?.dataset.agentState === 'signed-out'", 6000));
 
+// --- a saved key is a way in, immediately (#379) ---------------------------
+// Readiness is `signedIn || providersConfigured > 0`. An author who never
+// signed in to ChatGPT and saves their first provider key must land in a
+// composer there and then, without reloading the page, and must be handed back
+// to the sign-in card when that key is removed. The scripted sidecar counts
+// the session reads it answers, so the count proves the panel asks once per
+// write instead of polling for it.
+const statusCalls = () => evaluate("localStorage.getItem('cozyclay.mock.agent.status-calls')");
+await open("signed-out");
+expect("a signed-out session offers no composer to begin with", await evaluate("!document.querySelector('.agent-composer') && !!document.querySelector('[data-agent-card=\"signed-out\"]')"));
+// A page-lifetime marker: if the composer only arrives with a new document,
+// this is gone and the assertion below says so.
+await evaluate("localStorage.setItem('cozyclay.mock.agent.status-calls', '0'); window.__readinessMark = 'kept';");
+await evaluate("document.querySelector('.agent-overflow-toggle').click()");
+await waitFor("!!document.querySelector('.agent-menu-keys')", 5000);
+await evaluate("document.querySelector('.agent-menu-keys').click()");
+expect("the keys section opens for a signed-out session too", await waitFor(`!!document.querySelector('[data-provider="anthropic"] .agent-key-input')`, 8000));
+await typeKey("anthropic", "sk-readiness-123");
+await waitFor(`document.querySelector('[data-provider="anthropic"] .agent-key-save').disabled === false`, 5000);
+await evaluate(`document.querySelector('[data-provider="anthropic"] .agent-key-save').click()`);
+expect("saving the first key brings the composer up without a reload", await waitFor("!!document.querySelector('.agent-composer') && document.querySelector('.agent-panel')?.dataset.agentState === 'ready'", 8000),
+	await evaluate("JSON.stringify({ state: document.querySelector('.agent-panel')?.dataset.agentState, composer: !!document.querySelector('.agent-composer') })"));
+expect("the sign-in card gives way to the session it now has", await evaluate("!document.querySelector('[data-agent-card=\"signed-out\"]')"));
+expect("the page was never reloaded", await evaluate("window.__readinessMark === 'kept'"));
+expect("the save re-read the session exactly once", await statusCalls() === "1", String(await statusCalls()));
+shots.push(await shot("panel-keys-readiness-after-save"));
+await evaluate(`document.querySelector('[data-provider="anthropic"] .agent-key-remove').click()`);
+expect("removing the last key puts the sign-in gate back, still without a reload", await waitFor("!document.querySelector('.agent-composer') && !!document.querySelector('[data-agent-card=\"signed-out\"]')", 8000),
+	await evaluate("JSON.stringify({ state: document.querySelector('.agent-panel')?.dataset.agentState, composer: !!document.querySelector('.agent-composer') })"));
+expect("the removal re-read the session exactly once too", await statusCalls() === "2", String(await statusCalls()));
+expect("the panel never reloaded to get there either", await evaluate("window.__readinessMark === 'kept'"));
+shots.push(await shot("panel-keys-readiness-after-remove"));
+
 /* ===================== provider-grouped models + steering (#379) ========= */
 
 // Five providers answer the scripted /agent/models: two hold a credential and

@@ -868,6 +868,10 @@ const MOCK_PROVIDER_MODELS = {
 /** The shortest key the scripted sidecar will store, so QA can drive the
  * refusal path (PUT → 400) without a real provider. */
 export const MOCK_PROVIDER_KEY_MIN = 8;
+/** How many times the scripted sidecar answered /oauth/status. The panel reads
+ * the session once per credential write and never on a timer (#379), and this
+ * is how browser QA proves it without reaching inside the component. */
+export const MOCK_STATUS_CALLS_KEY = "cozyclay.mock.agent.status-calls";
 
 export function createMockTransport(config = { state: "ready" }) {
 	const state = config?.state || "ready";
@@ -890,12 +894,16 @@ export function createMockTransport(config = { state: "ready" }) {
 		mock: true,
 		state,
 		async status() {
+			try { globalThis.localStorage?.setItem(MOCK_STATUS_CALLS_KEY, String(Number(globalThis.localStorage.getItem(MOCK_STATUS_CALLS_KEY) || 0) + 1)); } catch { /* mock proof state is best effort */ }
 			// `providersConfigured` is the second way in (#379): a session with a
-			// provider key can talk to a model without a ChatGPT sign-in. The
-			// scripted signed-out state has neither, which is what it is for.
+			// provider key can talk to a model without a ChatGPT sign-in. A session
+			// that never signed in owns nothing until a key is saved through the
+			// panel — the env-pinned row is a QA fixture for the disabled control,
+			// so only the keys this session stored count there. Saving the first one
+			// opens the readiness gate; removing the last one closes it again.
 			const providersConfigured = providerStatus().filter((provider) => provider.id !== "openai-codex" && provider.signedIn).length;
-			if (state === "signed-out") return { signedIn: false, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: 0 };
-			if (state === "signing-in") return { signedIn: false, pending: true, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: 0 };
+			if (state === "signed-out") return { signedIn: false, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: storedProviders.size };
+			if (state === "signing-in") return { signedIn: false, pending: true, email: null, plan: null, accountId: null, expiresAt: null, providersConfigured: storedProviders.size };
 			if (state === "no-entitlement") return { ...MOCK_ACCOUNT, plan: "Free", entitlements: { image: false }, providersConfigured };
 			return { ...MOCK_ACCOUNT, entitlements: { image: true }, providersConfigured };
 		},

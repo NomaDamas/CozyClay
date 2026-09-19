@@ -374,6 +374,57 @@ expect("the provider keys section hardcodes no colour", !/#[0-9a-f]{3,8}/i.test(
 		&& module_.providerEnvLabel("anthropic") === "ANTHROPIC_API_KEY" && module_.providerEnvLabel("nope") === "an environment variable");
 }
 
+// --- a saved key is a way in, immediately (#379) ---------------------------
+// Saving the first key changes WHO the session is, not just which rows are
+// green: readiness is `signedIn || providersConfigured > 0`, so a signed-out
+// session that saves a key must reach the composer WITHOUT a reload, and must
+// fall back behind the sign-in card the moment that key is removed.
+{
+	const signedOut = module_.createMockTransport({ state: "signed-out" });
+	// The panel's own gate, restated here as the thing the flow must flip.
+	const gate = (status) => Boolean(status?.signedIn || status?.providersConfigured > 0);
+	const before = await signedOut.status();
+	expect("a signed-out scripted session starts behind the gate", before.providersConfigured === 0 && !gate(before), JSON.stringify(before));
+	await signedOut.setProviderKey("anthropic", "sk-test-123");
+	const saved = await signedOut.status();
+	expect("saving the first key opens the gate with no ChatGPT sign-in", saved.signedIn === false && saved.providersConfigured === 1 && gate(saved), JSON.stringify(saved));
+	await signedOut.setProviderKey("openai", "sk-test-456");
+	expect("the scripted session counts every key it holds", (await signedOut.status()).providersConfigured === 2, JSON.stringify(await signedOut.status()));
+	await signedOut.removeProviderKey("openai");
+	await signedOut.removeProviderKey("anthropic");
+	const removed = await signedOut.status();
+	expect("removing the last key closes the gate again", removed.providersConfigured === 0 && !gate(removed), JSON.stringify(removed));
+}
+// The panel re-reads that session through the ONE status path it already owns,
+// once per credential write — never a second route, never a timer.
+expect("a saved or removed key re-reads the session the readiness gate depends on", (() => {
+	const start = panel.indexOf("const refreshProviderState = useCallback");
+	const body = panel.slice(start, panel.indexOf("const toggleProviderKeys", start));
+	return start !== -1 && (body.match(/readAccount\(\)/g) || []).length === 1 && body.includes("await readProviders();") && body.includes("transport.models()");
+})(), panel.slice(panel.indexOf("const refreshProviderState = useCallback"), panel.indexOf("const toggleProviderKeys")));
+expect("readiness is refreshed through the existing status call, not a new one", (panel.match(/transport\.status\(\)/g) || []).length === 2
+	&& panel.includes("const status = await transport.status();") && !/setInterval\([^)]*(status|readAccount|refreshProviderState)/.test(panel),
+	String((panel.match(/transport\.status\(\)/g) || []).length));
+{
+	// The scripted sidecar counts the session reads it answers, which is how the
+	// browser QA proves the panel asks exactly once per write and never polls.
+	const entries = new Map();
+	const original = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", {
+		configurable: true,
+		value: { getItem: (key) => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, String(value)), removeItem: (key) => entries.delete(key) },
+	});
+	try {
+		const counted = module_.createMockTransport({ state: "signed-out" });
+		await counted.status();
+		await counted.status();
+		expect("every scripted session read is counted for QA", entries.get(module_.MOCK_STATUS_CALLS_KEY) === "2", JSON.stringify([...entries]));
+	} finally {
+		if (original) Object.defineProperty(globalThis, "localStorage", original);
+		else delete globalThis.localStorage;
+	}
+}
+
 // Two Stop scenarios share one driver: the host answers 200 either way, so the
 // only thing that may justify an "unchanged" claim is the runtime's own outcome.
 const cancellationEvents = [];
