@@ -55,10 +55,9 @@ function extractErrorStatus(error) {
  * `OperationError.details.status`) is checked FIRST and wins outright; the
  * message-text regex is only a fallback for the status pi actually ships
  * today (folded into the string, see `formatProviderError` in pi-ai) or for
- * an unrecognized status code. Only ever called on the run's own operation
- * error (`event.error` from `run_end`) — a tool's own failure text never
- * reaches this function, so it cannot reclassify a tool error as a provider
- * one (see the `tool_end` branch in `mapEvents`, which never calls this). */
+ * an unrecognized status code. Called only at provider response and run
+ * failure boundaries — a tool's own failure text never reaches this function
+ * (see the `tool_end` branch in `mapEvents`, which never calls this). */
 export function classifyError(error) {
 	const message = typeof error?.message === "string" ? error.message : "";
 	const structuredStatus = extractErrorStatus(error);
@@ -230,21 +229,11 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		// The user message (and any toolResult from a tool that finished before
 		// the abort) are real, completed history and ARE persisted; only the
 		// assistant role is withheld.
-		const persist = async (event) => {
+		const persist = async () => {
 			if (!state.lane || !sessionStore?.append) return;
 			const entries = await state.lane.findEntries({ order: "oldestFirst" }, state.context);
 			const messages = entries.filter((entry) => entry.type === "message").map((entry) => entry.message);
 			if (messages.length <= state.persisted) return;
-			const latest = event?.message || messages.at(-1);
-			const authFailure = state.provider === "openai-codex"
-				&& latest?.role === "assistant"
-				&& latest?.stopReason === "error"
-				&& classifyError({ message: latest.errorMessage || "" }).code === "unauthorized";
-			// The first failed auth attempt is about to rewind this branch. Do not
-			// advance the durable watermark or write any of its messages; the retry
-			// will persist the final branch instead. If the retry also fails, keep
-			// its user messages but withhold the failed assistant message.
-			if (authFailure && !state.active?.authRetried) return;
 			const aborted = state.active?.abortRequested === true;
 			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant") && !(message?.role === "assistant" && message?.stopReason === "error"));
 			state.persisted = messages.length;
@@ -303,6 +292,16 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					streamOptions: { maxRetryDelayMs: RETRY_MAX_DELAY_MS, ...(codexBaseUrl ? { transport: "sse" } : {}) },
 				}, state.context)).harness;
 				state.harness.hooks.on("after_response", (response) => emitQuota(state.active?.queue, state.lastInput, response, state.currentModel));
+				state.harness.hooks.on("after_response", async ({ message }) => {
+					if (message.stopReason !== "error" || state.provider !== "openai-codex" || state.active.authRetried
+						|| classifyError({ message: message.errorMessage }).code !== "unauthorized") return;
+					state.active.authRetried = true;
+					try { await state.registry?.getAuth?.("openai-codex", { minOAuthValidityMs: Number.MAX_SAFE_INTEGER }); } catch { /* the retried call resolves credentials again and surfaces any refresh failure */ }
+					// "server error" opts this one auth failure into pi's generation retry.
+					// It preserves completed tools and re-resolves credentials in place;
+					// failed assistant attempts stay out of provider context and JSONL.
+					return { message: { ...message, errorMessage: `${message.errorMessage} (credentials refreshed; server error, retrying)` } };
+				});
 				state.lane = await state.harness.lane("main", state.context);
 				const restored = sessionStore?.read?.(sessionId);
 				if (restored?.history?.length) {
@@ -323,7 +322,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			return { registry, selected };
 		};
 
-		const mapEvents = (queue, input) => {
+		const mapEvents = (queue) => {
 			const toolStartedAt = new Map();
 			const toolStarted = new Set();
 			const toolCompleted = new Set();
@@ -363,29 +362,12 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					pushFrame({ type: "tool.done", callId: event.toolCallId, ok: false, elapsedMs, error: message });
 				} else pushFrame({ type: "tool.done", callId: event.toolCallId, ok: true, elapsedMs, result: details });
 			});
-			// Auth failures on openai-codex get exactly one retry: force pi's own
-			// `Models.getAuth` refresh (the only exposed credential-store refresh
-			// path — `minOAuthValidityMs` set past any real token lifetime makes any
-			// stored token look expired) and resend the same turn once. Mirrors the
-			// old codex-client.mjs retryAuth: one refresh, one retry, no more.
-			const retryAfterAuthRefresh = async () => {
-				try { await state.registry?.getAuth?.("openai-codex", { minOAuthValidityMs: Number.MAX_SAFE_INTEGER }); } catch { /* the retried call surfaces any refresh failure itself */ }
-				try {
-					await state.active.resend();
-				} catch (error) {
-					if (!queue.closed) { queue.push(errorFrame(error, input.signal?.aborted)); queue.push({ type: "done" }); queue.close(); }
-				}
-			};
 			subscribe("run_end", (event) => {
 				if (state.active?.pendingFrames.length) { for (const pending of state.active.pendingFrames) queue.push(pending); state.active.pendingFrames = []; }
 				if (event.status !== "completed") {
 					const rawMessage = event.error?.message || (event.status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
 					const truncated = /ended before a terminal response event/i.test(rawMessage);
 					const classified = event.status === "aborted" ? { code: "aborted", status: undefined } : classifyError(event.error || {});
-					if (event.status !== "aborted" && !truncated && state.provider === "openai-codex" && classified.code === "unauthorized" && !state.active?.authRetried) {
-						if (state.active) { state.active.authRetried = true; state.active.authRetryPromise = retryAfterAuthRefresh(); }
-						return;
-					}
 					const code = event.status === "aborted" ? "aborted" : truncated ? "truncated" : classified.code;
 					const status = classified.status;
 					const detail = sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage }));
@@ -405,7 +387,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				return;
 			}
 			const queue = new FrameQueue();
-			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false, abortRequested: false, resend: async () => {} };
+			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false, abortRequested: false };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;
@@ -415,13 +397,11 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				try {
 					await ensureHarness(input);
 					// Keep the lane history, but replace per-turn tool closures (admission,
-					// workspace and cancellation). Auth resend reuses these same bindings.
+					// workspace and cancellation). Auth retry reuses these same bindings.
 					if (state.harness && input.tools !== undefined) await state.harness.setTools(await adapters(input), state.context);
-					removeEventListeners = mapEvents(queue, input);
-					// The turn is composed ONCE (an attached frame is captured once, its
-					// tool card emitted once) and then delivered; a 401 retry replays this
-					// same composition after rewinding the lane, so the transcript keeps
-					// exactly one copy of the user turn with its attachments.
+					removeEventListeners = mapEvents(queue);
+					// Compose and deliver once; pi retries provider calls in place without
+					// repeating attachments, captures or completed tool executions.
 					let composed;
 					if (input.surface === "studio") {
 						const studioContext = typeof input.studioContextText === "string" ? input.studioContextText : `<studio-context>\n${input.contextText || ""}\n</studio-context>`;
@@ -452,28 +432,8 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 						}
 						composed = { appends: (Array.isArray(input.attachments) ? input.attachments : []).map(attachmentMessage), text, images: [] };
 					}
-					const deliver = async () => {
-						for (const message of composed.appends) await state.lane.appendMessage(message, state.context);
-						await state.lane.prompt(composed.text, composed.images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
-					};
-					// The failed turn's own messages are already committed to the lane, and
-					// the harness has no "continue from this transcript" entry point for a
-					// settled run (an empty prompt is refused as InvalidMessage, and a
-					// settled operation has nothing to resume). Rewinding the branch to the
-					// pre-turn tip and redelivering the identical turn is the one path that
-					// resends the SAME user message instead of appending a duplicate.
-					const tipBeforeTurn = (await state.lane.inspectExecution(state.context)).tipId;
-					state.active.resend = async () => {
-						await state.lane.navigateTree(tipBeforeTurn, undefined, state.context);
-						const rewoundEntries = await state.lane.findEntries({ order: "oldestFirst" }, state.context);
-						state.persisted = rewoundEntries.filter((entry) => entry.type === "message").length;
-						await deliver();
-					};
-					await deliver();
-				// The 401-on-openai-codex retry is fired from the `run_end` handler
-				// (it needs the event to have settled first); wait for it here so the
-				// `finally` below does not unsubscribe events mid-retry.
-				if (state.active?.authRetryPromise) await state.active.authRetryPromise;
+					for (const message of composed.appends) await state.lane.appendMessage(message, state.context);
+					await state.lane.prompt(composed.text, composed.images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
 				} catch (error) {
 					if (!queue.closed) { queue.push(errorFrame(error, signal.aborted)); queue.push({ type: "done" }); queue.close(); }
 				} finally {

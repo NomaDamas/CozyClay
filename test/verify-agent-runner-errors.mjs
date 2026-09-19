@@ -161,14 +161,59 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 	const imageCounts = calls.map((context) => context.messages.filter((message) => message.role === "user" && message.content?.some((part) => part.type === "image")).length);
 	expect("401 retry resumes the same transcript with one attachment (message counts [2,2])", JSON.stringify(counts) === "[2,2]", JSON.stringify(counts));
 	expect("401 retry preserves exactly one image-bearing user message", JSON.stringify(imageCounts) === "[1,1]", JSON.stringify(imageCounts));
-	// pi stamps each delivery with its own `timestamp`; the turn's own content
-	// (roles, text and image bytes) is what must survive the retry unchanged.
+	// The original roles, text and image bytes survive the in-place retry.
 	const content = (context) => JSON.stringify(context.messages.map(({ role, content: parts }) => ({ role, content: parts })));
 	expect("401 retry keeps the original user messages and image bytes unchanged", content(calls[0]) === content(calls[1]), JSON.stringify(calls.map(content)));
 	expect("401 attachment retry still completes without an error frame", frames.every((frame) => frame.type !== "error") && frames.at(-1)?.type === "done", JSON.stringify(frames));
 }
 
-// --- auth retry persistence mirrors the final rewound branch ---
+// --- auth retry after a completed tool must not execute that tool again ---
+{
+	const sessionsDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-post-tool-auth-"));
+	const sessionStore = createSessionStore(sessionsDir);
+	const models = createModels();
+	const faux = fauxProvider({ provider: "openai-codex", models: [{ id: "gpt-6-astra", name: "Astra", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	let mutations = 0, refreshes = 0;
+	const originalGetAuth = models.getAuth.bind(models);
+	models.getAuth = async (...args) => {
+		if (args[1]?.minOAuthValidityMs !== undefined) refreshes++;
+		return originalGetAuth(...args);
+	};
+	const calls = [];
+	const mutate = (id) => fauxAssistantMessage([fauxToolCall("mutate", {}, { id })], { stopReason: "toolUse" });
+	faux.setResponses([
+		() => mutate("first-mutation"),
+		() => errorMessage("401 Unauthorized"),
+		(context) => context.messages.some((message) => message.role === "toolResult")
+			? fauxAssistantMessage([fauxText("already applied")]) : mutate("replayed-mutation"),
+		() => fauxAssistantMessage([fauxText("done")]),
+	].map((respond) => (context) => { calls.push(structuredClone(context)); return respond(context); }));
+	const runner = createAgentRunner({ models, sessionStore, tools: [{ name: "mutate", parameters: { type: "object", properties: {}, additionalProperties: false }, handler: async () => ({ applied: ++mutations }) }] });
+	let frames;
+	try {
+		const session = await runner.openSession("errors-post-tool-auth", { surface: "workflow" });
+		frames = await collect(session, { text: "apply this change once" });
+	} finally { await runner.close(); }
+	const history = sessionStore.read("errors-post-tool-auth")?.history || [];
+	console.log("post-tool-auth", JSON.stringify({ mutations, refreshes, contexts: calls.map((context) => context.messages.map((message) => message.role)), roles: history.map((message) => message.role), frames }));
+	assert.equal(mutations, 1, "auth recovery must not execute an already completed mutation again");
+	assert.equal(refreshes, 1);
+	assert.deepEqual(calls.map((context) => context.messages.map((message) => message.role)), [["user"], ["user", "assistant", "toolResult"], ["user", "assistant", "toolResult"]]);
+	assert.deepEqual(calls[2].messages, calls[1].messages, "the pending model call retries with the exact completed transcript");
+	assert.deepEqual(history.map((message) => message.role), ["user", "assistant", "toolResult", "assistant"]);
+	assert.equal(history[2].toolCallId, "first-mutation");
+	assert.equal(history[2].details.applied, 1);
+	assert.equal(history.at(-1).content[0].text, "already applied");
+	assert.deepEqual(frames.filter((frame) => frame.type === "tool.start" || frame.type === "tool.done").map((frame) => [frame.type, frame.callId]), [["tool.start", "first-mutation"], ["tool.done", "first-mutation"]]);
+	assert.equal(frames.find((frame) => frame.type === "tool.done").ok, true);
+	assert.equal(frames.some((frame) => frame.type === "error"), false);
+	assert.equal(frames.filter((frame) => frame.type === "done").length, 1);
+	assert.equal(frames.at(-1).type, "done");
+	console.log("PASS post-tool auth retry preserves the completed mutation, transcript, persistence and tool frames");
+}
+
+// --- auth retry persistence stores the completed transcript once ---
 {
 	const sessionsDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-retry-store-"));
 	const sessionStore = createSessionStore(sessionsDir);
@@ -215,7 +260,13 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 	const models = createModels();
 	const faux = fauxProvider({ provider: "openai-codex", models: [{ id: "gpt-6-astra", name: "Astra", input: ["text", "image"] }] });
 	models.setProvider(faux.provider);
-	installScripts(faux, [errorMessage("401 Unauthorized"), errorMessage("401 Unauthorized")]);
+	const calls = installScripts(faux, [errorMessage("401 Unauthorized"), errorMessage("401 Unauthorized")]);
+	let refreshes = 0;
+	const originalGetAuth = models.getAuth.bind(models);
+	models.getAuth = async (...args) => {
+		if (args[1]?.minOAuthValidityMs !== undefined) refreshes++;
+		return originalGetAuth(...args);
+	};
 	const runner = createAgentRunner({ models, tools: [], sessionStore });
 	const session = await runner.openSession("errors-401-retry-failed", { surface: "workflow" });
 	const frames = await collect(session, { text: "describe this image", attachments: [{ dataUrl: "data:image/png;base64,AA==", name: "probe.png" }] });
@@ -224,10 +275,39 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 	assert.deepEqual(history.map((message) => message.role), ["user", "user"]);
 	assert.equal(history.some((message) => message.role === "assistant"), false);
 	assert.equal(frames.filter((frame) => frame.type === "error").length, 1);
+	assert.equal(frames.find((frame) => frame.type === "error").code, "unauthorized");
+	assert.equal(frames.filter((frame) => frame.type === "done").length, 1);
 	assert.equal(frames.at(-1)?.type, "done");
+	assert.equal(calls.length, 2, "a second 401 is terminal, not retried again");
+	assert.equal(refreshes, 1);
 	console.log("retry-failed-store-roles", JSON.stringify(history.map((message) => message.role)));
 	console.log("retry-failed-frames", JSON.stringify(frames));
 	console.log("PASS failed auth retry persists user messages only with one error and done");
+}
+
+// --- a non-Codex 401 never refreshes Codex credentials or retries ---
+{
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	const calls = installScripts(faux, [errorMessage("401 Unauthorized"), fauxAssistantMessage([fauxText("must not retry")])]);
+	let refreshes = 0;
+	const originalGetAuth = models.getAuth.bind(models);
+	models.getAuth = async (...args) => {
+		if (args[1]?.minOAuthValidityMs !== undefined) refreshes++;
+		return originalGetAuth(...args);
+	};
+	const runner = createAgentRunner({ models });
+	const session = await runner.openSession("errors-non-codex-auth");
+	const frames = await collect(session, { text: "hi", model: "faux/scripted" });
+	await runner.close();
+	assert.equal(refreshes, 0);
+	assert.equal(calls.length, 1);
+	assert.equal(frames.filter((frame) => frame.type === "error").length, 1);
+	assert.equal(frames.find((frame) => frame.type === "error").code, "unauthorized");
+	assert.equal(frames.filter((frame) => frame.type === "done").length, 1);
+	assert.equal(frames.at(-1)?.type, "done");
+	console.log("PASS a non-Codex unauthorized response is terminal without a credential refresh");
 }
 
 // --- abort mid-stream: no further model calls, an error{code:'aborted'} frame, then done ---
@@ -361,7 +441,7 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 // --- a tool error containing a status-shaped substring in its own text must
 // NOT be reclassified as a provider error: it stays a tool failure with the
 // CODE: message format, because classifyError/classifyProviderError are only
-// ever invoked on the run's own operation error (run_end), never on a tool
+// ever invoked at provider response/run failure boundaries, never on a tool
 // result's text (verified structurally: tool_end never calls classifyError) ---
 {
 	const models = createModels();
