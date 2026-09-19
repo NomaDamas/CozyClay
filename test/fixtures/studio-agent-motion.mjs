@@ -77,6 +77,17 @@ export async function startFixtureStudio({ port, evidence }) {
     return hub.command(name, { name, args, commandId: crypto.randomUUID(), host, expectedRevision: c.revision.scene, expectedTargets: c.entities.map(e => ({ ...host, targetId: e.id, token: e.token })) }, c.host.workspaceHandle);
   };
   const fakeModel = createFakeModel();
+  // #379 / 16p: GET /agent/models only lists the five registry provider ids
+  // (bin/agent/providers.mjs PROVIDERS); it never queries the faux provider's
+  // own "faux" id, so the browser panel's composer never leaves "Loading
+  // models..." against this scripted fixture. The SAME faux provider is
+  // additionally registered under the recognized "anthropic" id (a trivially-
+  // resolving faux auth, so it reads signedIn) purely so the real panel can
+  // discover and pick a model; every model definition still carries its
+  // original internal `provider: "faux"` tag, so actual execution still
+  // resolves and runs through the one faux response queue below regardless of
+  // whether a turn's model string says "faux/scripted" or "anthropic/scripted".
+  if (typeof fakeModel.models?.setProvider === 'function') fakeModel.models.setProvider({ ...fakeModel.fauxProvider.provider, id: 'anthropic' });
   fakeModel.fauxProvider.setResponses(Array.from({ length: 64 }, () => async (context) => {
     const messages = context.messages || [];
     const user = [...messages].reverse().find((message) => message.role === 'user');
