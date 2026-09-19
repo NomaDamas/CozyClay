@@ -73,19 +73,55 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 
 // --- 529 three times: retries exhausted (maxRetries:2 = 3 attempts total) -> error{code:'overloaded'} ---
 {
+	const sessionsDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-overloaded-store-"));
+	const sessionStore = createSessionStore(sessionsDir);
 	const models = createModels();
 	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
 	models.setProvider(faux.provider);
-	const calls = installScripts(faux, [errorMessage("529 Overloaded"), errorMessage("529 Overloaded"), errorMessage("529 Overloaded")]);
-	const runner = createAgentRunner({ models, tools: [] });
+	const calls = installScripts(faux, [errorMessage("500 overloaded"), errorMessage("500 overloaded"), errorMessage("500 overloaded"), fauxAssistantMessage([fauxText("recovered after overload")])]);
+	const runner = createAgentRunner({ models, tools: [], sessionStore });
 	const session = await runner.openSession("errors-529", { surface: "workflow" });
 	const frames = await collect(session, { text: "hi", model: "faux/scripted" });
-	await runner.close();
+	const firstHistory = sessionStore.read("errors-529")?.history || [];
+	console.log("16a-overloaded-store-roles", JSON.stringify(firstHistory.map((message) => message.role)));
 	const error = frames.find((f) => f.type === "error");
 	expect("529 three times exhausts retries with one error frame", !!error, JSON.stringify(frames));
 	expect("the error frame carries code:'overloaded'", error?.code === "overloaded", JSON.stringify(error));
 	expect("a done frame follows the error frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
 	expect("the model was called exactly 3 times", calls.length === 3, `calls.length=${calls.length}`);
+	expect("overloaded failures persist only the user message", JSON.stringify(firstHistory.map((message) => message.role)) === "[\"user\"]", JSON.stringify(firstHistory));
+	await collect(session, { text: "recover", model: "faux/scripted" });
+	const finalHistory = sessionStore.read("errors-529")?.history || [];
+	expect("a successful turn after overload persists [user,user,assistant]", JSON.stringify(finalHistory.map((message) => message.role)) === "[\"user\",\"user\",\"assistant\"]", JSON.stringify(finalHistory));
+	expect("the successful post-overload assistant is recovered", finalHistory.at(-1)?.content?.[0]?.text === "recovered after overload", JSON.stringify(finalHistory.at(-1)));
+	await runner.close();
+	console.log("16a-overloaded-final-roles", JSON.stringify(finalHistory.map((message) => message.role)));
+}
+
+// --- truncated provider stream: failed assistant entries never reach JSONL ---
+{
+	const sessionsDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-runner-errors-truncated-store-"));
+	const sessionStore = createSessionStore(sessionsDir);
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	const calls = installScripts(faux, [errorMessage("response ended before a terminal response event"), fauxAssistantMessage([fauxText("recovered after truncation")])]);
+	const runner = createAgentRunner({ models, tools: [], sessionStore });
+	const session = await runner.openSession("errors-truncated", { surface: "workflow" });
+	const frames = await collect(session, { text: "truncated", model: "faux/scripted" });
+	const firstHistory = sessionStore.read("errors-truncated")?.history || [];
+	console.log("16a-truncated-store-roles", JSON.stringify(firstHistory.map((message) => message.role)));
+	const error = frames.find((f) => f.type === "error");
+	assert.equal(error?.code, "truncated");
+	assert.equal(frames.at(-1)?.type, "done");
+	expect("truncated failures persist only the user message", JSON.stringify(firstHistory.map((message) => message.role)) === "[\"user\"]", JSON.stringify(firstHistory));
+	await collect(session, { text: "recover truncation", model: "faux/scripted" });
+	const finalHistory = sessionStore.read("errors-truncated")?.history || [];
+	expect("a successful turn after truncation persists [user,user,assistant]", JSON.stringify(finalHistory.map((message) => message.role)) === "[\"user\",\"user\",\"assistant\"]", JSON.stringify(finalHistory));
+	expect("the successful post-truncation assistant is recovered", finalHistory.at(-1)?.content?.[0]?.text === "recovered after truncation", JSON.stringify(finalHistory.at(-1)));
+	expect("truncated scenario uses one initial and one successful provider call", calls.length === 2, `calls.length=${calls.length}`);
+	await runner.close();
+	console.log("16a-truncated-final-roles", JSON.stringify(finalHistory.map((message) => message.role)));
 }
 
 // --- 401 on openai-codex: the credential-store refresh path runs once, then one retry ---

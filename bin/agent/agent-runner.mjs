@@ -246,7 +246,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			// its user messages but withhold the failed assistant message.
 			if (authFailure && !state.active?.authRetried) return;
 			const aborted = state.active?.abortRequested === true;
-			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant") && !(authFailure && message?.role === "assistant"));
+			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant") && !(message?.role === "assistant" && message?.stopReason === "error"));
 			state.persisted = messages.length;
 			if (!pending.length) return;
 			const input = state.lastInput || {};
