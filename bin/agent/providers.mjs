@@ -1,6 +1,40 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import * as defaultAuth from "../codex-auth.mjs";
 import * as defaultKeys from "./provider-keys.mjs";
 import { createCredentialStore } from "./credential-store.mjs";
+
+// #379 (F2 pass 5 finding 4): pi never forwards a per-request `fetch` to the
+// codex API module — `pi-agent-core`'s `createRequestOptions` (the options
+// object every harness call actually sends) whitelists a fixed field list
+// that does not include `fetch`, and `pi-ai`'s `Models#applyAuth` only adds
+// `apiKey`/`headers`/`env` on top of it — so `openai-codex-responses.js`'s
+// `options?.fetch ?? globalThis.fetch` always falls through to the global
+// fetch for every codex call the harness makes. Wrapping `globalThis.fetch`
+// once, scoped to codex's own `/codex/responses` endpoint, is therefore the
+// only seam that sees the Response the instant its headers exist (fetch's
+// promise resolves on the response line/headers, well before the SSE body is
+// read) — proved against the real codex API module with a stub HTTP server
+// (task-16k evidence). `AsyncLocalStorage` correlates each response back to
+// the ONE runner call that triggered it: Node's async context propagates
+// through the promise chain pi awaits internally, with no extra plumbing.
+export const codexResponseObserver = new AsyncLocalStorage();
+let codexFetchPatched = false;
+function ensureCodexFetchPatched() {
+	if (codexFetchPatched) return;
+	codexFetchPatched = true;
+	const realFetch = globalThis.fetch;
+	globalThis.fetch = async (input, init) => {
+		const response = await realFetch(input, init);
+		const url = typeof input === "string" ? input : input?.url;
+		if (typeof url === "string" && url.includes("/codex/responses")) {
+			const onResponse = codexResponseObserver.getStore();
+			// The runner's own listener must never affect the real request/response
+			// it is only observing.
+			if (onResponse) { try { onResponse({ status: response.status, headers: Object.fromEntries(response.headers.entries()) }); } catch { /* observer errors never break the turn */ } }
+		}
+		return response;
+	};
+}
 
 export const PROVIDERS = [
 	{ id: "openai-codex", label: "ChatGPT (OpenAI Codex)", auth: "chatgpt-oauth", env: [] },
@@ -23,6 +57,7 @@ const providerConfig = (id) => PROVIDERS.find((provider) => provider.id === id);
 export async function loadProvider(id, { baseUrl } = {}) {
 	const config = providerConfig(id);
 	if (!config) throw Object.assign(new Error(`Unknown provider: ${id}`), { code: "UNKNOWN_PROVIDER" });
+	if (id === "openai-codex") ensureCodexFetchPatched();
 	const module = await import(`@earendil-works/pi-ai/providers/${id}`);
 	const provider = module[factories[id]]();
 	if (baseUrl) {

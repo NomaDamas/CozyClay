@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createModels } from "@earendil-works/pi-ai";
+import { createModels, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
 import { createAgentRunner, classifyError } from "../bin/agent/agent-runner.mjs";
@@ -310,37 +310,114 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 	console.log("PASS a non-Codex unauthorized response is terminal without a credential refresh");
 }
 
-// --- abort mid-stream: no further model calls, an error{code:'aborted'} frame, then done ---
-// (Reacts to the runner's own "first text.delta arrived" frame, not a fixed
-// sleep; `tokensPerSecond` makes the faux stream's later chunks real,
-// throttled setTimeout delays so `session.abort()` — pure microtask work —
-// reliably wins the race and lands mid-stream, the way a real abort would
-// race a real network stream.)
+// --- abort mid-stream (#379, strengthened for 16k): the provider stream is
+// deliberately frozen — it emits its first delta then blocks forever on
+// nothing but the harness's OWN abort signal (never a timer, never a
+// self-resolving promise) — so a done+error{aborted} pair can only arrive
+// here because `session.abort()` actually propagated pi's real abort signal
+// into the still-running generation, strictly before the provider would ever
+// have completed on its own. No further model calls follow the abort.
 {
 	const models = createModels();
-	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }], tokensPerSecond: 2 });
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	const started = Promise.withResolvers();
+	let providerAborted = false;
+	let calls = 0;
+	const message = { ...fauxAssistantMessage([fauxText("this response streams across several chunks so an abort can land mid-stream")]), provider: "faux", model: "scripted" };
+	faux.provider.streamSimple = (_model, _context, options) => {
+		calls += 1;
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(() => {
+			stream.push({ type: "start", partial: { ...message, content: [] } });
+			stream.push({ type: "text_start", contentIndex: 0, partial: { ...message, content: [fauxText("")] } });
+			stream.push({ type: "text_delta", contentIndex: 0, delta: "this response streams", partial: message });
+			started.resolve();
+			// The ONLY way this stream ever ends: pi's real abort signal firing.
+			// If `session.abort()` below did not actually reach this signal, the
+			// test hangs until `bounded`'s own deadline, not a false pass.
+			options?.signal?.addEventListener("abort", () => {
+				providerAborted = true;
+				const aborted = { ...message, stopReason: "aborted", errorMessage: "Request was aborted" };
+				stream.push({ type: "error", reason: "aborted", error: aborted });
+				stream.end(aborted);
+			}, { once: true });
+		});
+		return stream;
+	};
 	models.setProvider(faux.provider);
-	const calls = installScripts(faux, [
-		fauxAssistantMessage([fauxText("this response streams across several chunks so an abort can land mid-stream")]),
-		fauxAssistantMessage([fauxText("should never be reached")]),
-	]);
 	const runner = createAgentRunner({ models, tools: [] });
 	const session = await runner.openSession("errors-abort", { surface: "workflow" });
 	const frames = [];
 	let aborted = false;
 	const iterator = session.start({ text: "stream something long", model: "faux/scripted" })[Symbol.asyncIterator]();
+	const deadline = async (promise) => {
+		let timer;
+		try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("abort mid-stream deadline")), 5000); })]); }
+		finally { clearTimeout(timer); }
+	};
 	for (;;) {
-		const { value, done } = await iterator.next();
+		const { value, done } = await deadline(iterator.next());
 		if (done) break;
 		frames.push(value);
-		if (value.type === "text.delta" && !aborted) { aborted = true; await session.abort("test"); }
+		if (value.type === "text.delta" && !aborted) { aborted = true; await started.promise; await deadline(session.abort("test")); }
 	}
 	await runner.close();
+	expect("the abort signal actually reached the still-running (frozen) provider stream", providerAborted === true);
 	expect("the stream actually started before the abort landed", frames.some((f) => f.type === "text.delta"), JSON.stringify(frames));
-	expect("the model was only called once (no further model calls after abort)", calls.length === 1, `calls.length=${calls.length}`);
+	expect("the model was only called once (no further model calls after abort)", calls === 1, `calls=${calls}`);
 	const errorFrames = frames.filter((f) => f.type === "error");
 	expect("every error frame surfaced by the aborted run carries code:'aborted'", errorFrames.length > 0 && errorFrames.every((f) => f.code === "aborted"), JSON.stringify(frames));
 	expect("a done frame is the last frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
+}
+
+// --- #379 / 16k (F2 pass 5 finding 4): the first assistant text must reach
+// the browser immediately, not after the whole provider call completes. A
+// controlled faux stream emits its first text_delta then BLOCKS completion
+// until this test releases it (no sleeps — the test's own signal bounds the
+// wait) — the SSE consumer must receive that delta, preceded by exactly one
+// quota frame, before the release, proving `pushFrame`'s gate no longer
+// withholds a turn's first output for the whole generation.
+{
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	const release = Promise.withResolvers();
+	const started = Promise.withResolvers();
+	const message = { ...fauxAssistantMessage([fauxText("first visible token")]), provider: "faux", model: "scripted" };
+	let providerEnded = false;
+	faux.provider.streamSimple = () => {
+		const stream = createAssistantMessageEventStream();
+		queueMicrotask(async () => {
+			stream.push({ type: "start", partial: { ...message, content: [] } });
+			stream.push({ type: "text_start", contentIndex: 0, partial: { ...message, content: [fauxText("")] } });
+			stream.push({ type: "text_delta", contentIndex: 0, delta: "first visible token", partial: message });
+			started.resolve();
+			await release.promise;
+			providerEnded = true;
+			stream.push({ type: "text_end", contentIndex: 0, content: "first visible token", partial: message });
+			stream.push({ type: "done", reason: "stop", message });
+			stream.end();
+		});
+		return stream;
+	};
+	models.setProvider(faux.provider);
+	const runner = createAgentRunner({ models });
+	const session = await runner.openSession("streaming-boundary", { surface: "workflow" });
+	const iterator = session.start({ text: "stream the answer", model: "faux/scripted" })[Symbol.asyncIterator]();
+	const first = iterator.next();
+	await started.promise;
+	let timer;
+	const early = await Promise.race([first.then((value) => ({ frame: value.value })), new Promise((resolve) => { timer = setTimeout(() => resolve({ deadline: true }), 5000); })]);
+	clearTimeout(timer);
+	const endedBeforeFirstFrame = providerEnded;
+	release.resolve();
+	const frames = [(await first).value];
+	for (;;) { const next = await iterator.next(); if (next.done) break; frames.push(next.value); }
+	await runner.close();
+	expect("the first frame arrives before the provider call completes, not at the 5s deadline", !early.deadline, JSON.stringify(early));
+	expect("the provider call had not ended when the first frame arrived", endedBeforeFirstFrame === false);
+	expect("the first frame delivered is the quota frame", early.frame?.type === "quota", JSON.stringify(early.frame));
+	expect("exactly one quota frame precedes the text.delta", frames.filter((f) => f.type === "quota").length === 1 && frames.findIndex((f) => f.type === "quota") < frames.findIndex((f) => f.type === "text.delta"), JSON.stringify(frames));
+	expect("the visible text and a terminal done still follow", frames.some((f) => f.type === "text.delta" && f.text === "first visible token") && frames.at(-1)?.type === "done", JSON.stringify(frames));
 }
 
 // --- tool-level abort (#379): the harness's REAL abort signal must reach the

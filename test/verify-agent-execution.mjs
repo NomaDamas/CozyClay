@@ -243,4 +243,65 @@ for (const explicit of [true, false]) {
 		}
 	} finally { await handler.close(); await close(sidecar); await close(model); }
 }
+// --- #379 / 16k (F2 pass 5 finding 4): on the REAL codex HTTP path, the
+// quota frame must carry the ACTUAL response header values (proving the
+// providers.mjs fetch seam reaches the runner with real headers) and must
+// reach the browser BEFORE the model's own completion event is even sent —
+// not merely appear first inside one all-at-once flush that happened to wait
+// for the whole call. The model fixture deliberately withholds its
+// `response.completed` (and the tool/text "done" that would end the turn)
+// until this test releases it; the sidecar's SSE body is read incrementally
+// (not `.text()`, which would hide exactly this timing) so we can observe
+// the quota+text.delta frames arriving on the wire while the upstream model
+// call is still deliberately blocked.
+{
+	const release = Promise.withResolvers();
+	const model = createServer(async (req, res) => {
+		res.writeHead(200, { "content-type": "text/event-stream", "x-quota-test-percent": "77" });
+		res.flushHeaders();
+		res.write(encode({ type: "response.output_item.added", output_index: 0, item: { type: "message" } }));
+		res.write(encode({ type: "response.output_text.delta", output_index: 0, delta: "quota timing probe" }));
+		await release.promise;
+		res.write(encode({ type: "response.output_item.done", output_index: 0, item: { type: "message" } }));
+		res.write(encode({ type: "response.completed", response: { status: "completed" } }));
+		res.end();
+	});
+	const modelUrl = await listen(model);
+	const fixtureToken = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "quota-fixture" } })).toString("base64url")}.e30`;
+	const auth = { getAccessToken: async () => fixtureToken, readStored: async () => ({ refresh_token: "fixture-refresh", access_token: fixtureToken, expires_at: Date.now() + 60 * 60 * 1000 }) };
+	const codex = { parseQuotaHeaders: (headers) => ({ planType: "Plus", primary: { usedPercent: Number(headers?.["x-quota-test-percent"] ?? -1), windowMinutes: null, resetAt: null }, credits: { hasCredits: true } }) };
+	const handler = createAgentHandler({ auth, codex, codexBaseUrl: modelUrl, liveHub: { command: async () => ({ accepted: true }) } });
+	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { res.writeHead(500); res.end(error.message); }));
+	const sidecarUrl = await listen(sidecar);
+	const deadline = async (promise, label) => {
+		let timer;
+		try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} deadline`)), 5000); })]); }
+		finally { clearTimeout(timer); }
+	};
+	try {
+		const response = await fetch(`${sidecarUrl}/agent/turn`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ sessionId: "quota-timing", text: "hi", model: "gpt-6-astra" }) });
+		const reader = response.body.getReader();
+		const decoder = new TextDecoder();
+		let buffer = "";
+		const seenBeforeRelease = [];
+		for (;;) {
+			const { value, done } = await deadline(reader.read(), "sidecar SSE read");
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+			const frames = [...buffer.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+			for (const frame of frames) if (!seenBeforeRelease.some((seen) => seen === frame.type)) seenBeforeRelease.push(frame.type);
+			if (frames.some((frame) => frame.type === "text.delta")) break; // release only after observing the early frames
+		}
+		const quotaFrame = [...buffer.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])).find((frame) => frame.type === "quota");
+		assert.ok(seenBeforeRelease.includes("quota"), `the quota frame arrived while the model call was still blocked: ${JSON.stringify(seenBeforeRelease)}`);
+		assert.ok(seenBeforeRelease.includes("text.delta"), `the text.delta arrived while the model call was still blocked: ${JSON.stringify(seenBeforeRelease)}`);
+		assert.equal(seenBeforeRelease.indexOf("quota") < seenBeforeRelease.indexOf("text.delta"), true, `the quota frame precedes the first text.delta: ${JSON.stringify(seenBeforeRelease)}`);
+		assert.equal(quotaFrame?.primary?.usedPercent, 77, "the quota frame carries the real parsed codex response header value, not a null default");
+		release.resolve();
+		// Drain the rest of the (now-released) stream so the server and sidecar close cleanly.
+		for (;;) { const { done } = await deadline(reader.read(), "sidecar SSE drain"); if (done) break; }
+	} finally { release.resolve(); await handler.close(); await close(sidecar); await close(model); }
+	console.log("PASS 16k: the codex HTTP path's quota frame carries real header values and arrives before the model call completes");
+}
+
 console.log("PASS Agent execution: browser ownership, refusal, failure, cancellation, retry, frame validation/dedupe, applied ack and fake-model HTTP/SSE");

@@ -252,19 +252,34 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			return toAgentTools(activeTools, { signal: state.lastInput?.signal, emit: (event) => state.lastInput?.emit?.(event) });
 		};
 
-		const emitQuota = (queue, input, response, model) => {
-			if (input?.surface === "studio") { if (state.active) state.active.quotaSent = true; return; }
-			if (state.active?.quotaSent) return;
-			if (state.active) state.active.quotaSent = true;
-			const headers = response?.headers || {};
-			const frame = input.quotaEvent ? input.quotaEvent(headers, model) : {
+		// The Workflow surface's ONE quota frame per turn, sent as early as
+		// possible (#379, F2 pass 5 finding 4): `sendQuota` fires the moment
+		// anything else is about to reach the browser (see `pushFrame` below),
+		// using the freshest codex response headers captured so far (from the
+		// `codexResponseObserver` seam wired around `state.lane.prompt` in
+		// `start`) or the null-quota shape when none arrived yet (a non-codex
+		// provider, or a codex call that has not resolved headers yet). The
+		// `after_response` hook below is a pure fallback for a turn that somehow
+		// reaches full completion without ever calling `pushFrame` — `sendQuota`
+		// is idempotent (`quotaSent` guards both paths), so at most one quota
+		// frame is ever sent, exactly like before.
+		const sendQuota = (queue, input) => {
+			if (!state.active || state.active.quotaSent) return;
+			state.active.quotaSent = true;
+			const headers = state.active.lastResponseHeaders || {};
+			const frame = input?.quotaEvent ? input.quotaEvent(headers, state.currentModel) : {
 				type: "quota", plan: null,
 				primary: { usedPercent: null, windowMinutes: null, resetAt: null },
 				credits: { has: null },
 			};
 			queue.push(frame);
-			for (const pending of state.active?.pendingFrames || []) queue.push(pending);
-			if (state.active) state.active.pendingFrames = [];
+			for (const pending of state.active.pendingFrames) queue.push(pending);
+			state.active.pendingFrames = [];
+		};
+		const emitQuota = (queue, input, response) => {
+			if (input?.surface === "studio") return; // quotaSent is set at turn start; no quota frame ever
+			if (state.active && response?.headers) state.active.lastResponseHeaders = response.headers;
+			sendQuota(queue, input);
 		};
 
 		const ensureHarness = async (input) => {
@@ -291,7 +306,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					retry: RETRY_POLICY,
 					streamOptions: { maxRetryDelayMs: RETRY_MAX_DELAY_MS, ...(codexBaseUrl ? { transport: "sse" } : {}) },
 				}, state.context)).harness;
-				state.harness.hooks.on("after_response", (response) => emitQuota(state.active?.queue, state.lastInput, response, state.currentModel));
+				state.harness.hooks.on("after_response", (response) => emitQuota(state.active?.queue, state.lastInput, response));
 				state.harness.hooks.on("after_response", async ({ message }) => {
 					if (message.stopReason !== "error" || state.provider !== "openai-codex" || state.active.authRetried
 						|| classifyError({ message: message.errorMessage }).code !== "unauthorized") return;
@@ -327,9 +342,16 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			const toolStarted = new Set();
 			const toolCompleted = new Set();
 			const eventUnsubscribers = [];
+			// The frame gate must never hold a turn's first visible output waiting
+			// on generation to finish (#379, F2 pass 5 finding 4): the ONLY thing it
+			// still waits for is the quota frame itself, and only long enough to
+			// send it (synchronously, using whatever codex headers are known so far,
+			// or the null shape) immediately ahead of this frame — never queued for
+			// later. Studio's `quotaSent` is already true at turn start, so this is
+			// a no-op there and every frame passes straight through.
 			const pushFrame = (frame) => {
-				if (state.active && !state.active.quotaSent && frame.type !== "quota") state.active.pendingFrames.push(frame);
-				else queue.push(frame);
+				if (state.active && !state.active.quotaSent && frame.type !== "quota") sendQuota(queue, state.lastInput);
+				queue.push(frame);
 			};
 			const subscribe = (type, listener) => eventUnsubscribers.push(state.harness.events.on(type, listener));
 			subscribe("message_update", (event) => {
@@ -387,7 +409,9 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				return;
 			}
 			const queue = new FrameQueue();
-			state.active = { queue, quotaSent: false, pendingFrames: [], authRetried: false, abortRequested: false };
+			// Studio never sends a quota frame at all (unchanged, #379): mark it sent
+			// up front so `pushFrame`'s gate never holds Studio's first frame.
+			state.active = { queue, quotaSent: input.surface === "studio", pendingFrames: [], authRetried: false, abortRequested: false, lastResponseHeaders: null };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;
@@ -440,7 +464,15 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 						composed = { appends: (Array.isArray(input.attachments) ? input.attachments : []).map(attachmentMessage), text, images: [] };
 					}
 					for (const message of composed.appends) await state.lane.appendMessage(message, state.context);
-					await state.lane.prompt(composed.text, composed.images, input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context);
+					const promptContext = input.signal ? (await loadPi()).withAbortSignal(signal, state.context) : state.context;
+					// The seam that lets the browser see codex quota headers before the
+					// response body is read (#379, F2 pass 5 finding 4): `codexResponseObserver`
+					// (bin/agent/providers.mjs) is an AsyncLocalStorage whose store this ONE
+					// runner call sets for the duration of `prompt`; the process-wide fetch
+					// patch it installs calls back into it the instant a `/codex/responses`
+					// Response exists, correlated back to this turn by async context alone.
+					const { codexResponseObserver } = await import("./providers.mjs");
+					await codexResponseObserver.run((response) => { if (state.active) state.active.lastResponseHeaders = response.headers; }, () => state.lane.prompt(composed.text, composed.images, promptContext));
 				} catch (error) {
 					if (!queue.closed) { queue.push(errorFrame(error, signal.aborted)); queue.push({ type: "done" }); queue.close(); }
 				} finally {
