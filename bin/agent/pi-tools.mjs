@@ -8,22 +8,9 @@ function dataUrlImage(dataUrl) {
 	return match ? { type: "image", data: match[2], mimeType: match[1] } : null;
 }
 
-function imageDetails(result) {
-	return {
-		imageId: result.imageId,
-		dataUrl: result.dataUrl,
-		width: result.width,
-		height: result.height,
-		prompt: result.prompt,
-	};
-}
-
 function publicResult(result) {
 	if (!result || typeof result !== "object" || Array.isArray(result) || !Object.hasOwn(result, "dataUrl")) return result;
-	const value = Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl"));
-	const image = imageDetails(result);
-	Object.defineProperty(value, "image", { value: image, enumerable: false });
-	return value;
+	return Object.fromEntries(Object.entries(result).filter(([key]) => key !== "dataUrl"));
 }
 
 function recoveryHint(error) {

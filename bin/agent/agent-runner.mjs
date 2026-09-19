@@ -358,7 +358,6 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				const started = toolStartedAt.get(event.toolCallId) ?? clock();
 				const elapsedMs = Math.round(clock() - started);
 				const details = event.result?.details;
-				if (details?.image && typeof details.image === "object") pushFrame({ type: "image", ...details.image });
 				if (event.isError) {
 					const message = event.result?.content?.find((part) => part.type === "text")?.text || "Tool execution failed.";
 					pushFrame({ type: "tool.done", callId: event.toolCallId, ok: false, elapsedMs, error: message });

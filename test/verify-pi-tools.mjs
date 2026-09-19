@@ -33,9 +33,11 @@ const imageTool = toAgentTools([{
 }])[0];
 const imageResult = await imageTool.execute("call-image", { checks: ["framing"] });
 assert.equal(imageResult.content.filter((part) => part.type === "image").length, 1);
-assert.equal(imageResult.content.find((part) => part.type === "image").data, "AAAA");
+assert.equal(imageResult.content[1].type, "image");
+assert.equal(imageResult.content[1].mimeType, "image/png");
+assert.equal(imageResult.content[1].data, "AAAA");
 assert.equal(Object.hasOwn(imageResult.details, "dataUrl"), false);
-assert.equal(imageResult.details.image.dataUrl, "data:image/png;base64,AAAA");
+assert.equal(Object.hasOwn(imageResult.details, "image"), false, "details.image must not exist: structuredClone drops the non-enumerable seam, so pi's harness never sees it");
 assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(imageResult.details)), "dataUrl"), false);
 
 const failingTool = toAgentTools([{
