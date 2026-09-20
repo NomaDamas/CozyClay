@@ -1,228 +1,321 @@
 #!/usr/bin/env node
-/** Browser QA for issue #123. Run through tools/qa-browser.mjs with the dev
- * server's live port exported:
- *
- *   COZYCLAY_LIVE_PORT=5314 npm run dev -- --port 5303
- *   QA_URL=http://127.0.0.1:5303/app/ CDP_PORT=9310 COZYCLAY_LIVE_PORT=5314 \
- *     node tools/qa-browser.mjs -- node test/qa-agent-commands-browser.mjs
- *
- * This script hosts the real local LiveHub the page's live-control client
- * connects to (the dev server only injects the port), then drives BOTH new
- * commands through the live socket, parses PNG IHDR bytes from the returned
- * data URL, imports a generated PNG, and proves one Ctrl+Z removes each
- * placed object. Evidence PNGs land in /tmp/agent-commands-qa/. */
+/** Real-editor issue #398 acceptance. Build, start dev with an isolated config
+ * and live port, then run through tools/qa-browser.mjs. QA_OWN_BROWSER=1 instead
+ * launches owned headless Chrome with SwiftShader (the wrapper has no GPU flags).
+ * Defaults: dev 5197, LiveHub 5497, CDP 9247. No model or fixture editor is used.
+ * --legacy retains issue #123 capture/import/native-Undo acceptance.
+ * Output is self-contained JSON/DOM evidence; this probe creates no artifacts.
+ */
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
-import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { deflateSync } from "node:zlib";
-import { fileURLToPath } from "node:url";
+import { once } from "node:events";
+import { cameraBrowser } from "./camera-browser-harness.mjs";
+import { connectController, discoverEndpoint } from "../bin/live/client.mjs";
+import { spawnOwned, terminateOwned } from "../tools/process-supervisor.mjs";
+import { createSceneStage } from "../src/scenes.js";
+import { normalizeSceneObject } from "../src/scene-objects.js";
+import { createShotAuthoringDocument } from "../src/shot-authoring.js";
+import { studioToolSchemas } from "../bin/agent/studio-tools.mjs";
 
-const { WebSocket } = createRequire(fileURLToPath(new URL("../mcp/package.json", import.meta.url)))("ws");
-const { startLiveHub } = await import("../mcp/live-hub.mjs");
+const legacy = process.argv.includes("--legacy");
+assert(process.argv.slice(2).every(arg => arg === "--legacy"), "only --legacy is supported");
+process.env.QA_URL ||= "http://127.0.0.1:5197/app/";
+process.env.CDP_PORT ||= "9247";
+process.env.COZYCLAY_LIVE_PORT ||= "5497";
+const evidenceDirectory = new URL("../.omo/evidence/issue-398/", import.meta.url);
+const log = (name, value) => console.log(`${name} ${JSON.stringify(value)}`);
+const results = [];
+let browser, profile, b, controller;
 
-const CDP_PORT = Number(process.env.CDP_PORT || 9222);
-const LIVE_PORT = Number(process.env.COZYCLAY_LIVE_PORT || 5184);
-const OUT_DIR = "/tmp/agent-commands-qa";
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-/** Await a real state change by polling a probe until it holds; bounded. */
-async function waitFor(label, probe, timeoutMs, intervalMs = 250) {
-	const deadline = Date.now() + timeoutMs;
-	let last;
-	while (Date.now() < deadline) {
-		last = await probe();
-		if (last) return last;
-		await sleep(intervalMs);
+async function assertion(number, name, action) {
+	try {
+		await action(); results.push({ number, name, status: "PASS" });
+		console.log(`PASS ${number}: ${name}`);
+	} catch (error) {
+		results.push({ number, name, status: "FAIL", error: error.stack });
+		console.error(`FAIL ${number}: ${name}\n${error.stack}`);
 	}
-	throw new Error(`Timed out waiting for ${label} (last: ${JSON.stringify(last)})`);
 }
 
-/* -------------------------------- CDP ---------------------------------- */
-const targets = await (await fetch(`http://127.0.0.1:${CDP_PORT}/json`)).json();
-const page = targets.find((target) => target.type === "page" && target.url.includes("/app/"))
-	?? targets.find((target) => target.type === "page");
-assert.ok(page, `no /app/ page target on CDP port ${CDP_PORT}`);
-const cdp = new WebSocket(page.webSocketDebuggerUrl);
-await new Promise((resolve, reject) => {
-	cdp.onopen = resolve;
-	cdp.onerror = reject;
-});
-let nextId = 1;
-const pending = new Map();
-cdp.onmessage = (event) => {
-	const message = JSON.parse(event.data);
-	if (!message.id || !pending.has(message.id)) return;
-	const { resolve, reject } = pending.get(message.id);
-	pending.delete(message.id);
-	if (message.error) reject(new Error(JSON.stringify(message.error)));
-	else resolve(message.result);
+// Chrome readiness is its exact DevTools announcement, not a timer probe.
+async function launchChrome() {
+	profile = await mkdtemp(join(tmpdir(), "cozyclay-398-chrome-"));
+	browser = spawnOwned(process.env.CHROME_PATH || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", [
+		"--headless=new", "--enable-unsafe-swiftshader", "--use-angle=swiftshader",
+		`--remote-debugging-port=${process.env.CDP_PORT}`, `--user-data-dir=${profile}`,
+		"--window-size=1600,1000", "about:blank",
+	], { stdio: ["ignore", "ignore", "pipe"] });
+	await new Promise((resolve, reject) => {
+		let output = "";
+		const cleanup = () => { clearTimeout(timer); browser.stderr.off("data", onData); browser.off("exit", onExit); browser.off("error", onError); };
+		const onData = data => { output += data; if (output.includes("DevTools listening on")) { cleanup(); resolve(); } };
+		const onExit = code => { cleanup(); reject(Error(`Chrome exited ${code}: ${output}`)); };
+		const onError = error => { cleanup(); reject(error); };
+		const timer = setTimeout(() => { cleanup(); reject(Error(`Chrome DevTools deadline: ${output}`)); }, 45000);
+		browser.stderr.on("data", onData); browser.once("exit", onExit); browser.once("error", onError);
+	});
+	log("CHROME", { pid: browser.pid, profile, swiftShader: true });
+}
+
+async function command(name, args = {}, handle) {
+	const reply = await controller.request({ type: "cmd", name, args, workspaceHandle: handle, timeoutMs: 30000 }, { timeoutMs: 30000 });
+	assert.equal(reply.ok, true, JSON.stringify(reply.error));
+	return reply.value;
+}
+// The wire identity is exactly the four document fields; `surface` and
+// `workspaceHandle` belong to the context host, not to an admission envelope.
+const identity = context => Object.fromEntries(["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"].map(key => [key, context.host[key]]));
+const inspect = async handle => (await command("inspect_studio", { scope: "scene" }, handle)).context;
+const mutate = (name, args, context) => command(name, {
+	name, args, commandId: randomUUID(), host: identity(context), expectedRevision: context.revision.scene,
+}, context.host.workspaceHandle);
+const describe = handle => command("describe", {}, handle);
+const object = (description, id) => description.objects.find(row => row.id === id);
+const key = async (name, code, modifiers = 0) => {
+	for (const type of ["keyDown", "keyUp"]) await b.send("Input.dispatchKeyEvent", { type, key: name, code, modifiers });
 };
-const send = (method, params = {}) => new Promise((resolve, reject) => {
-	const id = nextId++;
-	pending.set(id, { resolve, reject });
-	cdp.send(JSON.stringify({ id, method, params }));
-});
-const evaluate = async (expression) => {
-	const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true });
-	if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description ?? "page threw");
-	return result.result?.value;
+const nativeUndo = async () => {
+	await b.evaluate("document.activeElement?.blur()");
+	await key("z", "KeyZ", process.platform === "darwin" ? 4 : 2);
 };
-/** Ctrl+Z reaches the studio's window keydown handler exactly as a user's
- * chord does — the undo entry, not the DOM, is what the assertion reads. */
-const pressCtrlZ = async () => {
-	for (const type of ["rawKeyDown", "keyUp"]) {
-		await send("Input.dispatchKeyEvent", {
-			type,
-			modifiers: 2, // Ctrl
-			key: "z",
-			code: "KeyZ",
-			windowsVirtualKeyCode: 90,
-			nativeVirtualKeyCode: 90,
-		});
-	}
+const history = () => b.evaluate("window.__sceneHistory()");
+const dom = async label => log(`DOM ${label}`, await b.evaluate(`({
+	url: location.href, visibility: document.visibilityState,
+	stage: document.querySelector('.stage')?.outerHTML.slice(0, 500),
+	selection: document.querySelector('.hierarchy-row-wrap.selected')?.outerHTML,
+	toast: [...document.querySelectorAll('[role="status"], .toast')].map(node => node.outerHTML),
+	history: window.__sceneHistory(), rigReady: !!window.__cozyclay?.rigA,
+})`));
+const admitted = (receipt, context) => {
+	assert.equal(receipt.ok, true, JSON.stringify(receipt));
+	assert.equal(receipt.status, "applied", JSON.stringify(receipt));
+	assert.equal(receipt.authored, true);
+	assert.equal(receipt.revision.before, context.revision.scene);
+	assert.equal(receipt.revision.after, receipt.revision.before + 1);
 };
 
-/* ------------------------------ tiny PNG ------------------------------- */
-const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
-	let c = n;
-	for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-	return c >>> 0;
-});
-const crc32 = (buffer) => {
-	let c = 0xffffffff;
-	for (const byte of buffer) c = CRC_TABLE[(c ^ byte) & 0xff] ^ (c >>> 8);
-	return (c ^ 0xffffffff) >>> 0;
-};
-const chunk = (type, data) => {
-	const body = Buffer.concat([Buffer.from(type, "ascii"), data]);
-	const head = Buffer.alloc(4);
-	head.writeUInt32BE(data.length);
-	const crc = Buffer.alloc(4);
-	crc.writeUInt32BE(crc32(body));
-	return Buffer.concat([head, body, crc]);
-};
-/** A deterministic 16x16 red truecolor PNG, built from scratch so the QA has
- * no fixture dependency; the editor decodes it with its real import path. */
-const tinyPngDataUrl = (width = 16, height = 16) => {
-	const ihdr = Buffer.alloc(13);
-	ihdr.writeUInt32BE(width, 0);
-	ihdr.writeUInt32BE(height, 4);
-	ihdr[8] = 8; // bit depth
-	ihdr[9] = 2; // truecolor RGB
-	const raw = Buffer.alloc((width * 3 + 1) * height);
-	for (let row = 0; row < height; row++) {
-		raw[row * (width * 3 + 1)] = 0; // filter: none
-		for (let x = 0; x < width; x++) {
-			const at = row * (width * 3 + 1) + 1 + x * 3;
-			raw[at] = 0xd8; raw[at + 1] = 0x3a; raw[at + 2] = 0x2c;
+async function seedReconstruction() {
+	const snapshot = JSON.parse(await readFile(process.env.QA_SCENE_SNAPSHOT || new URL("failed-session-scene-snapshot.json", evidenceDirectory), "utf8"));
+	const { meta } = snapshot, camera = meta.camera;
+	const dx = camera.lookAt.x - camera.position.x, dy = camera.lookAt.y - camera.position.y, dz = camera.lookAt.z - camera.position.z;
+	const framing = { pos: camera.position, yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)), fovDeg: 45 };
+	const sceneId = "scene-failed-session-reconstruction";
+	const document = { version: 4, activeSceneId: sceneId, scenes: [{
+		id: sceneId, name: meta.scene.name,
+		objects: snapshot.objects.map(row => normalizeSceneObject({
+			id: row.id, name: row.name, renderer: row.renderer ?? "cube",
+			x: row.position?.x ?? 0, y: row.position?.y ?? 0, z: row.position?.z ?? 0,
+			rot: row.rotationDeg?.y ?? row.yawDeg ?? 0, rotX: row.rotationDeg?.x ?? 0, rotZ: row.rotationDeg?.z ?? 0,
+			scaleX: row.scale?.x ?? 1, scaleY: row.scale?.y ?? 1, scaleZ: row.scale?.z ?? 1, parent: row.parentId ?? null,
+		})),
+		stage: createSceneStage({ shotAspect: meta.scene.aspect, characters: snapshot.characters.map(row => ({
+			id: row.id, model: "y-bot-tpose", subject: row.name, ...row.position, rot: row.yawDeg, scale: row.scale,
+		})) }),
+		shotDocument: createShotAuthoringDocument({ frameCount: meta.scene.frameCount, shots: [{
+			id: meta.shot.id, name: meta.shot.name, startFrame: meta.shot.range.startFrame, endFrame: meta.shot.range.endFrameExclusive - 1,
+			camera: { mode: "keys" }, cameraKeys: [0, 186].map(frame => ({ id: `reconstruction-key-${frame}`, frame, framing })),
+		}] }),
+	}] };
+	await b.navigate(`${b.base.origin}/favicon.ico`);
+	await b.evaluate(`localStorage.clear(); localStorage.setItem('cozyclay.scenes.v4', ${JSON.stringify(JSON.stringify(document))});
+		localStorage.setItem('cozyclay.locale', 'en'); localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({name:'Issue 398 QA', updatedAt:1}));`);
+	log("RECONSTRUCTION", { objects: snapshot.objects.length, missingObjects: meta.scene.objectCount - snapshot.objects.length,
+		nameOnlyRows: snapshot.objects.filter(row => !row.renderer).length, frameCount: meta.scene.frameCount, aspect: meta.scene.aspect,
+		cameraKeys: "approximated at 0/186 with 45-degree FOV, as in the diagnostic", model: "y-bot-tpose" });
+}
+
+async function issue398(handle) {
+	const initial = await inspect(handle);
+	log("INITIAL", { host: initial.host, revision: initial.revision, scene: initial.scene, shot: initial.shot, rigReady: initial.capabilities.rigReady });
+	assert.equal(initial.scene.objectCount, 36); assert.equal(initial.scene.frameCount, 432);
+	assert.equal(initial.scene.aspect, "9:16"); assert.equal(initial.capabilities.rigReady, true);
+	await dom("seeded-editor");
+
+	await assertion(1, "published transform schema and catalogue per-axis ranges", async () => {
+		const catalogue = await command("inspect_studio", { scope: "catalogue" }, handle);
+		// This is the actual model-facing schema supplier, not a test-built schema.
+		const schema = studioToolSchemas().find(tool => tool.name === "patch_elements").parameters;
+		const branches = schema.properties.ops.items.oneOf;
+		const expected = {
+			"character.position": [[-4, 0, -4], [4, 240, 4]],
+			"object.position": [[-240, 0, -240], [240, 240, 240]],
+			"object.rotation": [[-180, -180, -180], [180, 180, 180]],
+			"object.scale": [[0.1, 0.1, 0.1], [100, 100, 100]],
+		};
+		const evidence = [];
+		for (const [path, [min, max]] of Object.entries(expected)) {
+			const [kind, field] = path.split(".");
+			const descriptor = catalogue.patchable[kind].find(row => row.path === path);
+			const value = branches.find(branch => branch.properties.target.properties.kind.const === kind).properties.set.properties[field];
+			evidence.push({ path, descriptor, schema: value });
+			log("RANGE", evidence.at(-1));
+			assert.equal(descriptor?.type, "vec3"); assert.equal(value.additionalProperties, false);
+			assert.deepEqual(value.required, ["x", "y", "z"]);
+			for (const [i, axis] of ["x", "y", "z"].entries()) {
+				assert.equal(descriptor.min[axis], min[i], `${path}.${axis} catalogue min`);
+				assert.equal(descriptor.max[axis], max[i], `${path}.${axis} catalogue max`);
+				assert.equal(value.properties[axis].minimum, min[i], `${path}.${axis} schema min`);
+				assert.equal(value.properties[axis].maximum, max[i], `${path}.${axis} schema max`);
+			}
 		}
+	});
+
+	await assertion(2, "exact failed-session 13-op patch rejects without authoring or silent clamp", async () => {
+		const rows = (await readFile(process.env.QA_FAILED_SESSION || new URL("failed-session-91f3774c.jsonl", evidenceDirectory), "utf8")).trim().split("\n").map(JSON.parse);
+		const patch = rows.flatMap(row => row.message?.content ?? []).find(item => item.type === "toolCall" && item.name === "patch_elements").arguments;
+		assert.equal(patch.ops.length, 13);
+		assert.equal(patch.ops.filter(op => op.set.scale?.y === 0.06).length, 7);
+		const before = await inspect(handle), original = await describe(handle), depth = await history();
+		for (const op of patch.ops) assert(object(original, op.target.id), `reconstructed target ${op.target.id}`);
+		const receipt = await mutate("patch_elements", patch, before);
+		const after = await inspect(handle), actual = await describe(handle);
+		log("REJECTION", { args: patch, receipt, before: before.revision, after: after.revision, historyBefore: depth, historyAfter: await history() });
+		assert.equal(receipt.ok, false); assert.equal(receipt.code, "INVALID_ARGUMENT");
+		assert.equal(receipt.mutated, false); assert.equal(receipt.preserved.authoredState, "unchanged");
+		assert.equal(after.revision.scene, before.revision.scene);
+		assert.deepEqual(actual.objects, original.objects, "none of the 13 targets or other objects change");
+		assert.deepEqual(await history(), depth);
+	});
+
+	await assertion(3, "native editor Undo changes revision; fresh-context mutation succeeds exactly once", async () => {
+		const before = await inspect(handle), original = object(await describe(handle), "cube-27"), depth = await history();
+		const firstArgs = { ops: [{ target: { kind: "object", id: original.id }, set: { position: { x: original.x + 0.1, y: original.y, z: original.z } } }] };
+		let first;
+		await b.change(`window.__sceneHistory().past === ${depth.past + 1}`, async () => { first = await mutate("patch_elements", firstArgs, before); });
+		log("FIRST_MUTATION", first); admitted(first, before);
+		assert.equal((await inspect(handle)).revision.scene, first.revision.after);
+		// Real platform keyboard input reaches App's native history handler.
+		await b.change(`window.__sceneHistory().past === ${depth.past} && window.__sceneHistory().future === 1`, nativeUndo);
+		const fresh = await inspect(handle), undone = object(await describe(handle), original.id);
+		log("INTERACTIVE_UNDO", { before: first.revision.after, fresh: fresh.revision, original, undone });
+		await dom("after-native-undo");
+		assert.equal(fresh.revision.scene, first.revision.after + 1);
+		assert.deepEqual(undone, original, "native Undo restores actual authored transform");
+		const nextArgs = { ops: [{ target: { kind: "object", id: original.id }, set: { position: { x: original.x + 0.2, y: original.y, z: original.z } } }] };
+		// Prove strict admission survives; this knowingly stale request must not mutate.
+		const stale = await mutate("patch_elements", nextArgs, { ...fresh, revision: { ...fresh.revision, scene: first.revision.after } });
+		assert.equal(stale.code, "STALE_SCENE"); assert.equal(stale.mutated, false);
+		let next;
+		await b.change(`window.__sceneHistory().past === ${depth.past + 1}`, async () => { next = await mutate("patch_elements", nextArgs, fresh); });
+		const after = await inspect(handle), actual = object(await describe(handle), original.id);
+		log("FRESH_MUTATION", { staleControl: stale, freshRevision: fresh.revision, receipt: next, after: after.revision, actual });
+		admitted(next, fresh); assert.notEqual(next.code, "STALE_SCENE");
+		assert.equal(after.revision.scene, next.revision.after); assert.equal(actual.x, original.x + 0.2);
+	});
+
+	await assertion(4, "applied receipt stays truthful through 60 seconds of real editor idle", async () => {
+		const before = await inspect(handle), original = object(await describe(handle), "cube-27"), depth = await history();
+		assert.equal(before.view.playing, false);
+		let receipt;
+		// Subscribe to App's real post-render history publication BEFORE mutation.
+		await b.change(`window.__sceneHistory().past === ${depth.past + 1}`, async () => {
+			receipt = await mutate("patch_elements", { ops: [{ target: { kind: "object", id: original.id }, set: { position: { x: original.x + 0.1, y: original.y, z: original.z } } }] }, before);
+		});
+		admitted(receipt, before);
+		const immediate = await inspect(handle), poststate = await describe(handle), receiptBytes = JSON.stringify(receipt);
+		assert.equal(immediate.revision.scene, receipt.revision.after);
+		assert.equal(await b.evaluate("document.visibilityState"), "visible");
+		log("IDLE_BEGIN", { receipt, revision: immediate.revision, history: await history() });
+		const started = performance.now();
+		// The sole fixed wait: elapsed idle time itself is the required behavior.
+		await new Promise(resolve => setTimeout(resolve, 60000));
+		const elapsedMs = performance.now() - started, after = await inspect(handle);
+		const reconciled = await command("reconcile_studio_command", { commandId: receipt.commandId, host: identity(after) }, handle);
+		log("IDLE_END", { elapsedMs, before: before.revision, immediate: immediate.revision, after: after.revision, reconciled });
+		await dom("after-idle-60s");
+		assert(elapsedMs >= 60000); assert.equal(after.view.playing, false);
+		assert.equal(after.revision.scene, immediate.revision.scene);
+		assert.equal(after.revision.physics, immediate.revision.physics);
+		assert.deepEqual((await describe(handle)).objects, poststate.objects);
+		assert.equal(JSON.stringify(receipt), receiptBytes);
+		assert.equal(reconciled.status, "applied"); assert.deepEqual(reconciled.receipt, receipt);
+		assert.equal(receipt.revision.before, before.revision.scene); assert.equal(receipt.revision.after, after.revision.scene);
+	});
+}
+
+// Legacy #123 acceptance still uses genuine decoded PNG bytes, the real asset
+// importer and native Undo; asynchronous completion uses state events, not polls.
+function tinyPngDataUrl() {
+	const crc32 = buffer => {
+		let crc = 0xffffffff;
+		for (const byte of buffer) { crc ^= byte; for (let i = 0; i < 8; i++) crc = crc & 1 ? 0xedb88320 ^ (crc >>> 1) : crc >>> 1; }
+		return (crc ^ 0xffffffff) >>> 0;
+	};
+	const chunk = (type, data) => {
+		const body = Buffer.concat([Buffer.from(type), data]), head = Buffer.alloc(4), crc = Buffer.alloc(4);
+		head.writeUInt32BE(data.length); crc.writeUInt32BE(crc32(body)); return Buffer.concat([head, body, crc]);
+	};
+	const header = Buffer.alloc(13); header.writeUInt32BE(16, 0); header.writeUInt32BE(16, 4); header[8] = 8; header[9] = 2;
+	const raw = Buffer.alloc(16 * 49);
+	for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) raw.set([0xd8, 0x3a, 0x2c], y * 49 + 1 + x * 3);
+	return `data:image/png;base64,${Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk("IHDR", header), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]).toString("base64")}`;
+}
+async function legacy123(handle) {
+	const shot = await command("capture_framing_png", {}, handle), png = Buffer.from(shot.dataUrl.split(",")[1], "base64");
+	assert.deepEqual([...png.subarray(0, 8)], [137,80,78,71,13,10,26,10]);
+	assert.equal(png.readUInt32BE(8), 13); assert.equal(png.toString("ascii", 12, 16), "IHDR");
+	assert.equal(png.readUInt32BE(16), shot.width); assert.equal(png.readUInt32BE(20), shot.height);
+	assert.equal(shot.width, 1920); assert.equal(shot.height, 1080); assert.equal(typeof shot.frame, "number");
+	assert(shot.shotId === null || typeof shot.shotId === "string");
+	log("LEGACY_CAPTURE", { width: shot.width, height: shot.height, frame: shot.frame, shotId: shot.shotId });
+	for (const placeAs of ["cutout", "backdrop"]) {
+		const before = await describe(handle), depth = await history(); let placed;
+		await b.change(`window.__sceneHistory().past === ${depth.past + 1}`, async () => {
+			placed = await command("import_asset", { name: "QA Red Card.png", mimeType: "image/png", dataUrl: tinyPngDataUrl(), placeAs }, handle);
+		});
+		assert.match(placed.assetId, /^img-[0-9a-f]{32}$/); assert(placed.objectId);
+		const scene = await describe(handle), actual = object(scene, placed.objectId); assert.equal(actual.renderer, "cutout");
+		if (placeAs === "backdrop") {
+			const dx = actual.x - scene.camera.x, dz = actual.z - scene.camera.z, distance = Math.hypot(dx, dz), yaw = actual.rot * Math.PI / 180;
+			assert(distance > 8); assert(Math.abs((Math.sin(yaw) * dx + Math.cos(yaw) * dz) / distance + 1) < 0.05);
+		}
+		await b.change(`window.__sceneHistory().past === ${depth.past}`, nativeUndo);
+		assert.deepEqual((await describe(handle)).objects, before.objects);
+		log("LEGACY_IMPORT_UNDO", { placeAs, placed, restoredCount: before.objects.length });
 	}
-	const png = Buffer.concat([
-		Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-		chunk("IHDR", ihdr),
-		chunk("IDAT", deflateSync(raw)),
-		chunk("IEND", Buffer.alloc(0)),
-	]);
-	return `data:image/png;base64,${png.toString("base64")}`;
-};
-const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-/** Parse the IHDR box straight out of the data URL's bytes. */
-const pngIhdr = (dataUrl) => {
-	const buffer = Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64");
-	assert.deepEqual(buffer.subarray(0, 8), PNG_SIGNATURE, "PNG signature");
-	assert.equal(buffer.readUInt32BE(8), 13, "IHDR length");
-	assert.equal(buffer.toString("ascii", 12, 16), "IHDR");
-	return { width: buffer.readUInt32BE(16), height: buffer.readUInt32BE(20), bytes: buffer };
-};
+	console.log("PASS qa-agent-commands-browser legacy #123");
+}
 
-/* ------------------------------- the run ------------------------------- */
-await mkdir(OUT_DIR, { recursive: true });
-const hub = await startLiveHub(LIVE_PORT);
-assert.ok(hub, `live port ${LIVE_PORT} is taken — stop the other hub or point COZYCLAY_LIVE_PORT at a free one`);
-const editor = await waitFor("the page's live-control client to connect", async () => {
-	const handle = hub.workspaceHandles[0];
-	return handle && hub.editors.get(handle)?.readyState === WebSocket.OPEN ? handle : null;
-}, 90_000);
-console.log(`editor connected: workspace ${editor}`);
-
-const describeScene = () => hub.command("describe", {}, editor);
-
-// capture_framing_png: the studio mounts its shot renderer asynchronously
-// (Suspense on first paint), so a "not ready" answer means "poll again".
-const shot = await waitFor("a renderable shot camera for capture_framing_png", async () => {
-	try {
-		return await hub.command("capture_framing_png", {}, editor);
-	} catch (error) {
-		if (/not ready/i.test(error.message)) return null;
-		throw error;
+try {
+	if (process.env.QA_OWN_BROWSER === "1") await launchChrome();
+	b = await cameraBrowser();
+	controller = await connectController(discoverEndpoint(Number(process.env.COZYCLAY_LIVE_PORT)));
+	log("LIVE_SERVER", controller.server);
+	await b.send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+		let state;
+		Object.defineProperty(window, '__sceneHistory', { configurable: true, get: () => state, set: value => {
+			state = value; window.dispatchEvent(new Event('qa:camera-state'));
+		} });
+	})()` });
+	if (legacy) await b.seed(); else await seedReconstruction();
+	// A fresh page connection, subscribed before navigation; never select an
+	// arbitrary workspace belonging to some other browser or the owner session.
+	const since = controller.eventCount();
+	const connected = controller.nextEvent("editor_connected", { since, timeoutMs: 45000 });
+	connected.catch(() => {}); // The promise is explicitly awaited below.
+	await b.navigate(process.env.QA_URL);
+	const connection = await connected, handle = connection.payload.handle;
+	await b.ready();
+	await b.arm("typeof window.__sceneHistory === 'function'"); await b.settled();
+	if (legacy) await legacy123(handle); else await issue398(handle);
+} catch (error) {
+	console.error("PROBE_SETUP_OR_RUN_FAILURE", error.stack);
+	process.exitCode = 1;
+	if (!legacy) for (let number = 1; number <= 4; number++) if (!results.some(row => row.number === number)) {
+		results.push({ number, status: "FAIL", error: `Blocked by setup/run failure: ${error.message}` });
+		console.error(`FAIL ${number}: blocked by setup/run failure`);
 	}
-}, 45_000, 1_000);
-assert.ok(shot.dataUrl.startsWith("data:image/png;base64,"), "capture_framing_png must return a PNG data URL");
-const ihdr = pngIhdr(shot.dataUrl);
-assert.equal(ihdr.width, shot.width, "IHDR width must match the reported width");
-assert.equal(ihdr.height, shot.height, "IHDR height must match the reported height");
-assert.equal(shot.width, 1920, "the default 16:9 shot pull is 1920 wide");
-assert.equal(shot.height, 1080, "the default 16:9 shot pull is 1080 tall");
-assert.equal(typeof shot.frame, "number", "frame must be the current timeline frame");
-assert.ok(shot.shotId === null || typeof shot.shotId === "string", "shotId names the shot under the playhead");
-await writeFile(`${OUT_DIR}/capture-framing.png`, ihdr.bytes);
-console.log(`capture_framing_png ok: IHDR ${ihdr.width}x${ihdr.height} frame=${shot.frame} shotId=${shot.shotId}`);
-
-const before = await describeScene();
-const beforeCount = before.objects.length;
-
-// import_asset, placeAs "cutout": the object lands through the Studio's own
-// pipeline and describe (the same React state the UI reads) sees it at once.
-const importArgs = { name: "QA Red Card.png", mimeType: "image/png", dataUrl: tinyPngDataUrl(), placeAs: "cutout" };
-const placed = await hub.command("import_asset", importArgs, editor);
-assert.match(placed.assetId, /^img-[0-9a-f]{32}$/, "assetId is the content-addressed digest (img- + 32 hex)");
-assert.ok(placed.objectId, "objectId must name the placed object");
-const cutoutObject = await waitFor("the imported cutout to enter the live scene", async () =>
-	(await describeScene()).objects.find((object) => object.id === placed.objectId) ?? null, 10_000);
-assert.equal(cutoutObject.renderer, "cutout");
-const afterImport = await hub.command("capture_framing_png", {}, editor);
-await writeFile(`${OUT_DIR}/import-cutout.png`, pngIhdr(afterImport.dataUrl).bytes);
-console.log(`import_asset (cutout) ok: object ${placed.objectId} asset ${placed.assetId.slice(0, 12)}…`);
-
-// ONE Ctrl+Z removes it — the whole point of import_asset.
-await pressCtrlZ();
-const afterUndo = await waitFor("the cutout to disappear after one Ctrl+Z", async () => {
-	const objects = (await describeScene()).objects;
-	return objects.some((object) => object.id === placed.objectId) ? null : objects;
-}, 10_000);
-assert.equal(afterUndo.length, beforeCount, "undo removes the import without touching the rest of the set");
-console.log("one Ctrl+Z removed the cutout");
-
-// import_asset, placeAs "backdrop": same pipeline, background-plate placement
-// down the shot camera's view ray, turned to face the lens.
-const backdropPlaced = await hub.command("import_asset", { ...importArgs, name: "QA Backdrop.png", placeAs: "backdrop" }, editor);
-const backdropObject = await waitFor("the backdrop to enter the live scene", async () =>
-	(await describeScene()).objects.find((object) => object.id === backdropPlaced.objectId) ?? null, 10_000);
-const scene = await describeScene();
-const cameraXZ = { x: scene.camera.x, z: scene.camera.z };
-const distance = Math.hypot(backdropObject.x - cameraXZ.x, backdropObject.z - cameraXZ.z);
-assert.ok(distance > 8, `a backdrop stands well down the view ray (got ${distance.toFixed(1)} m from the shot camera)`);
-// Facing check: the card's +z normal (rot in degrees) must point back along
-// the camera→card ray, i.e. the plate faces the lens rather than edge-on.
-const yawRad = (backdropObject.rot * Math.PI) / 180;
-const normal = { x: Math.sin(yawRad), z: Math.cos(yawRad) };
-const dx = backdropObject.x - cameraXZ.x;
-const dz = backdropObject.z - cameraXZ.z;
-const facing = (normal.x * dx + normal.z * dz) / Math.hypot(dx, dz);
-assert.ok(Math.abs(facing + 1) < 0.05, `the backdrop must face the shot camera (facing=${facing.toFixed(3)})`);
-const withBackdrop = await hub.command("capture_framing_png", {}, editor);
-await writeFile(`${OUT_DIR}/import-backdrop.png`, pngIhdr(withBackdrop.dataUrl).bytes);
-console.log(`import_asset (backdrop) ok: object ${backdropPlaced.objectId} at ${distance.toFixed(1)} m from the shot camera`);
-
-await pressCtrlZ();
-await waitFor("the backdrop to disappear after one Ctrl+Z", async () =>
-	(await describeScene()).objects.some((object) => object.id === backdropPlaced.objectId) ? null : true, 10_000);
-console.log("one Ctrl+Z removed the backdrop");
-
-console.log(`QA evidence saved: ${OUT_DIR}/capture-framing.png, ${OUT_DIR}/import-cutout.png, ${OUT_DIR}/import-backdrop.png`);
-console.log("PASS qa-agent-commands-browser");
-cdp.close();
-// The hub's WebSocketServer and the CDP socket keep the event loop alive;
-// without an explicit exit the runner waits until Chrome is killed.
-for (const client of hub.server.clients) client.terminate();
-hub.server.close(() => process.exit(0));
+} finally {
+	controller?.close(); b?.close();
+	if (browser) { await terminateOwned(browser); log("CHROME_CLOSED", { pid: browser.pid, exitCode: browser.exitCode, signalCode: browser.signalCode }); }
+	if (profile) { await rm(profile, { recursive: true, force: true }); log("PROFILE_REMOVED", profile); }
+	if (!legacy) {
+		log("ASSERTIONS", results);
+		console.log(`qa-agent-commands-browser issue-398: ${results.filter(row => row.status === "PASS").length}/4 PASS`);
+		if (results.some(row => row.status !== "PASS")) process.exitCode = 1;
+	}
+}
