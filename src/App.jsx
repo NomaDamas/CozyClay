@@ -58,6 +58,7 @@ import { useSemanticState } from "./use-semantic-state.js";
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt } from "./studio-agent-protocol.js";
+import { elementByPath } from "./studio-elements.js";
 import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { createStudioMotionCandidates } from "./studio-agent-motion.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
@@ -483,6 +484,8 @@ function ShotGuideOverlay({ mode, aspect, className = "" }) {
 // the photograph rather than guessed at it. Same number the fit diagnostics are
 // scaled on (0..1 visibility), so it reads as "less than half seen".
 const PHOTO_POSE_LOW_CONFIDENCE = 0.5;
+const CHARACTER_POSITION_BOUNDS = elementByPath("character.position");
+const CHARACTER_SCALE_BOUNDS = elementByPath("character.scale");
 
 // How long an agent receipt keeps its targets lit in the hierarchy. Long
 // enough to find the row after reading the chat line, short enough that it is
@@ -1592,7 +1595,9 @@ export default function App() {
 			// objects and cutouts take the same ROOM_LIMIT clamp their creators
 			// already apply.
 			if (payload.kind === "character") {
-				spawnCharacter(payload.id, THREE.MathUtils.clamp(hit.x, -4, 4), THREE.MathUtils.clamp(hit.z, -4, 4));
+				spawnCharacter(payload.id,
+					THREE.MathUtils.clamp(hit.x, CHARACTER_POSITION_BOUNDS.min.x, CHARACTER_POSITION_BOUNDS.max.x),
+					THREE.MathUtils.clamp(hit.z, CHARACTER_POSITION_BOUNDS.min.z, CHARACTER_POSITION_BOUNDS.max.z));
 			} else if (payload.kind === "object") {
 				addSceneObject(payload.objectKind, { x: hit.x, z: hit.z });
 			} else if (payload.kind === "image") {
@@ -12162,18 +12167,18 @@ function resizePromptClip(id, edge, rawFrame) {
 									shotAspect={lookThroughShot ? shotOutput.aspect : null}
 									onChange={(id, patch) => moveCharacter(activeChar.id, () => {
 										const next = {};
-										if (patch.x !== undefined) next.x = THREE.MathUtils.clamp(patch.x, -4, 4);
+										if (patch.x !== undefined) next.x = THREE.MathUtils.clamp(patch.x, CHARACTER_POSITION_BOUNDS.min.x, CHARACTER_POSITION_BOUNDS.max.x);
 										// Lift floors at the deck but has no ceiling — a crane
 										// shot may hoist the body as high as the move needs
 										// (the inspector's Height scrub agrees).
-										if (patch.y !== undefined) next.y = Math.max(0, patch.y);
-										if (patch.z !== undefined) next.z = THREE.MathUtils.clamp(patch.z, -4, 4);
+										if (patch.y !== undefined) next.y = Math.max(CHARACTER_POSITION_BOUNDS.min.y, patch.y);
+										if (patch.z !== undefined) next.z = THREE.MathUtils.clamp(patch.z, CHARACTER_POSITION_BOUNDS.min.z, CHARACTER_POSITION_BOUNDS.max.z);
 										// a body only yaws — the X/Z rings and the screen ring's
 										// other channels have nowhere to go on a character
 										if (patch.rotY !== undefined) next.rot = patch.rotY;
 										// one stature knob: any scale axis reads as uniform
 										const s = patch.scaleX ?? patch.scaleY ?? patch.scaleZ;
-										if (s !== undefined) next.scale = THREE.MathUtils.clamp(s, 0.2, 3);
+										if (s !== undefined) next.scale = THREE.MathUtils.clamp(s, CHARACTER_SCALE_BOUNDS.min, CHARACTER_SCALE_BOUNDS.max);
 										return next;
 									})}
 									onDragStart={recordCharacterUndo}
