@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { STUDIO_ELEMENTS, elementByPath, elementsFor } from "../src/studio-elements.js";
 import { buildPatchSchema, patchValueSchema, STUDIO_PATCHABLE_PATHS, STUDIO_PATCH_KINDS, validateStudioSchema } from "../src/studio-agent-protocol.js";
 import { createCharacterEntry, createSceneStage } from "../src/scenes.js";
@@ -29,9 +30,17 @@ function validate(entries) {
 		assert.ok(allowedDomains.has(entry.undoDomain), `unknown undo domain: ${entry.path}`);
 		assert.ok(allowedNormalizers.has(entry.normalizer), `unknown normalizer: ${entry.normalizer}`);
 		if (entry.type === "enum") assert.ok(Array.isArray(entry.enum) && entry.enum.length > 0, entry.path);
-		if (entry.min !== undefined) assert.ok(Number.isFinite(entry.min), entry.path);
-		if (entry.max !== undefined) assert.ok(Number.isFinite(entry.max), entry.path);
-		if (entry.min !== undefined && entry.max !== undefined) assert.ok(entry.min <= entry.max, entry.path);
+		if (entry.type === "vec3") {
+			for (const axis of ["x", "y", "z"]) {
+				if (entry.min !== undefined) assert.ok(Number.isFinite(entry.min[axis]), `${entry.path}.${axis}`);
+				if (entry.max !== undefined) assert.ok(Number.isFinite(entry.max[axis]), `${entry.path}.${axis}`);
+				if (entry.min !== undefined && entry.max !== undefined) assert.ok(entry.min[axis] <= entry.max[axis], `${entry.path}.${axis}`);
+			}
+		} else {
+			if (entry.min !== undefined) assert.ok(Number.isFinite(entry.min), entry.path);
+			if (entry.max !== undefined) assert.ok(Number.isFinite(entry.max), entry.path);
+			if (entry.min !== undefined && entry.max !== undefined) assert.ok(entry.min <= entry.max, entry.path);
+		}
 	}
 }
 
@@ -205,5 +214,75 @@ for (const entry of STUDIO_ELEMENTS) {
 for (const kind of STUDIO_PATCH_KINDS) {
 	for (const path of STUDIO_PATCHABLE_PATHS[kind]) assert.equal(elementByPath(path)?.agentExposure, "patch", `${path} is published without a patch declaration`);
 }
+
+/* Transform bounds are one contract: every editor envelope is declared, and
+ * each domain repair reaches the same declaration rather than a second set of
+ * literals. Camera key frames are the one dynamic exception: their bounds are
+ * the owning shot's [startFrame,endFrame] range. */
+const transformPaths = new Set([
+	"character.position", "character.rot", "character.scale",
+	"object.position", "object.rotation", "object.scale",
+	"stage.keyLight.x", "stage.keyLight.y", "stage.keyLight.z",
+]);
+for (const entry of STUDIO_ELEMENTS.filter(({ path }) => transformPaths.has(path))) {
+	if (entry.type === "vec3") {
+		assert.deepEqual(Object.keys(entry.min ?? {}).sort(), ["x", "y", "z"], `${entry.path} min axes`);
+		assert.deepEqual(Object.keys(entry.max ?? {}).sort(), ["x", "y", "z"], `${entry.path} max axes`);
+		for (const axis of ["x", "y", "z"]) {
+			assert.ok(Number.isFinite(entry.min[axis]), `${entry.path}.${axis} min`);
+			assert.ok(Number.isFinite(entry.max[axis]), `${entry.path}.${axis} max`);
+			assert.ok(entry.min[axis] <= entry.max[axis], `${entry.path}.${axis} order`);
+		}
+	} else {
+		assert.ok(Number.isFinite(entry.min), `${entry.path} min`);
+		assert.ok(Number.isFinite(entry.max), `${entry.path} max`);
+		assert.ok(entry.min <= entry.max, `${entry.path} order`);
+	}
+}
+assert.equal(transformPaths.size, 9);
+
+const characterPosition = elementByPath("character.position");
+const characterRot = elementByPath("character.rot");
+const objectPosition = elementByPath("object.position");
+const objectRotation = elementByPath("object.rotation");
+const objectScale = elementByPath("object.scale");
+assert.deepEqual(characterPosition.min, { x: -4, y: 0, z: -4 });
+assert.deepEqual(characterPosition.max, { x: 4, y: 240, z: 4 });
+assert.deepEqual([characterRot.min, characterRot.max], [-180, 180]);
+assert.deepEqual(objectPosition.min, { x: -240, y: 0, z: -240 });
+assert.deepEqual(objectPosition.max, { x: 240, y: 240, z: 240 });
+assert.deepEqual(objectRotation.min, { x: -180, y: -180, z: -180 });
+assert.deepEqual(objectRotation.max, { x: 180, y: 180, z: 180 });
+assert.deepEqual(objectScale.min, { x: 0.1, y: 0.1, z: 0.1 });
+assert.deepEqual(objectScale.max, { x: 100, y: 100, z: 100 });
+assert.equal(elementByPath("shot.cameraKeys").frameMin, 0);
+
+const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+assert.match(appSource, /THREE\.MathUtils\.clamp\(patch\.x, -4, 4\)/, "character gizmo X uses table envelope");
+assert.match(appSource, /THREE\.MathUtils\.clamp\(patch\.z, -4, 4\)/, "character gizmo Z uses table envelope");
+assert.match(appSource, /next\.y = Math\.max\(0, patch\.y\)/, "character gizmo Y uses table floor");
+assert.match(appSource, /THREE\.MathUtils\.clamp\(s, 0\.2, 3\)/, "character gizmo scale uses table envelope");
+
+const boundedCharacter = createCharacterEntry({ id: "bounded-character", x: 999, y: -1, z: -999, rot: 999 });
+assert.deepEqual(
+	{ x: boundedCharacter.x, y: boundedCharacter.y, z: boundedCharacter.z, rot: boundedCharacter.rot },
+	{ x: 4, y: 0, z: -4, rot: 180 },
+);
+const boundedObject = normalizeSceneObject({ id: "bounded-object", renderer: "cube", x: 999, y: -1, z: -999, rot: 999, rotX: -999, rotZ: 540, scaleX: 999, scaleY: 0.01, scaleZ: 1 });
+assert.deepEqual(
+	{ x: boundedObject.x, y: boundedObject.y, z: boundedObject.z, scaleX: boundedObject.scaleX, scaleY: boundedObject.scaleY },
+	{ x: 240, y: 0, z: -240, scaleX: 100, scaleY: 0.1 },
+);
+assert.deepEqual([boundedObject.rot, boundedObject.rotX, boundedObject.rotZ], [-81, 81, -180]);
+const boundedLight = createSceneStage({ keyLight: { x: 999, y: -1, z: -999 } }).keyLight;
+assert.deepEqual({ x: boundedLight.x, y: boundedLight.y, z: boundedLight.z }, { x: 30, y: 0.5, z: -30 });
+const repairedShot = createShotAuthoringDocument({
+	frameCount: 24,
+	shots: [{ id: "shot-bounds", startFrame: 5, endFrame: 10, cameraKeys: [
+		{ frame: -999, framing },
+		{ frame: 999, framing },
+	] }],
+}).shots[0];
+assert.deepEqual(repairedShot.cameraKeys.map(({ frame }) => frame), [5, 10], "camera keys stay in their owning shot range");
 
 console.log(`elements=${STUDIO_ELEMENTS.length} persisted-verified=${verified} patchable=${patchable} todo=${todo}`);

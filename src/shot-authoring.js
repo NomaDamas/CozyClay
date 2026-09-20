@@ -8,8 +8,10 @@ import { createTiming, timingIsFlat } from "./speed-envelope.js";
 import { createShot } from "./cuts.js";
 import { normalizeStableItems } from "./stable-items.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
+import { elementByPath } from "./studio-elements.js";
 
 const VIDEO_MODEL_IDS = new Set(VIDEO_MODEL_PRESETS.map((preset) => preset.id));
+const CAMERA_KEY_LIMITS = elementByPath("shot.cameraKeys");
 
 export const SHOT_AUTHORING_VERSION = 4;
 export const SHOT_AUTHORING_KEY = "cozyclay.shot-authoring.v4";
@@ -102,9 +104,10 @@ function repairFrameCount(value) {
 
 function repairKeys(entries, minFrame, maxFrame, ids = new Set()) {
 	const byFrame = new Map();
+	const firstFrame = Math.max(minFrame, CAMERA_KEY_LIMITS.frameMin);
 	for (const key of normalizeStableItems(entries, "camera-key", ids)) {
 		if (!finite(key.frame) || !validFraming(key.framing)) continue;
-		const frame = Math.max(minFrame, Math.min(maxFrame, Math.round(key.frame)));
+		const frame = Math.max(firstFrame, Math.min(maxFrame, Math.round(key.frame)));
 		byFrame.set(frame, {
 			id: key.id,
 			frame,

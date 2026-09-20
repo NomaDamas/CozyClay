@@ -19,6 +19,7 @@
 
 import { Euler, Quaternion } from "three";
 import { createObjectPath, translateObjectPath } from "./object-path.js";
+import { elementByPath } from "./studio-elements.js";
 
 export const DEFAULT_SCENE_OBJECTS = [];
 /** The persistence contract (plan §8.1): the version lives in the key AND in
@@ -31,22 +32,17 @@ export const SCENE_VERSION = 1;
 /** Euler convention shared with the renderer in props.jsx. */
 const EULER_ORDER = "XYZ";
 const DEG = Math.PI / 180;
-
-/** Stage half-extent; matches the plan board's ROOM_LIMIT. The set is an
- * open 500 m deck now, so the clamp is a guard against runaway coordinates,
- * not a wall — it stops just inside the floor's edge. */
-const ROOM_LIMIT = 240;
-
-// Headroom, not a ceiling: the walls (and the 6.2 m room they implied) are
-// gone, so this only stops a runaway coordinate. A rocket, a crane or a
-// skyline piece all have to fit under it.
-const CEILING = 240;
-const SCALE_MIN = 0.1;
-const SCALE_MAX = 100;
+const OBJECT_POSITION_LIMITS = elementByPath("object.position");
+const OBJECT_ROTATION_LIMITS = elementByPath("object.rotation");
+const OBJECT_SCALE_LIMITS = elementByPath("object.scale");
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-/** degrees folded into [-180, 180), the range both rotation sliders span */
-export const wrapAngle = (deg) => ((((deg + 180) % 360) + 360) % 360) - 180;
+/** degrees folded into the declared rotation envelope */
+export const wrapAngle = (deg) => {
+	const min = OBJECT_ROTATION_LIMITS.min.y;
+	const span = OBJECT_ROTATION_LIMITS.max.y - min;
+	return ((((deg - min) % span) + span) % span) + min;
+};
 /** Snap to a detent AND to that detent's own precision: plain multiplication
  * leaves 0.05 grids reading -1.7000000000000002 in the inspector. A step of 0
  * means "no detent" — a free drag still rounds, or the inspector would show a
@@ -330,10 +326,10 @@ export function createSceneObject(kind, existing = [], placement = {}) {
 		id,
 		name,
 		renderer: kind,
-		x: clamp(Number(placement.x) || 0, -ROOM_LIMIT, ROOM_LIMIT),
+		x: TRANSFORM_LIMITS.x(Number(placement.x) || 0),
 		y: 0,
-		z: clamp(Number(placement.z) || 0, -ROOM_LIMIT, ROOM_LIMIT),
-		rot: wrapAngle(Number(placement.rot) || 0),
+		z: TRANSFORM_LIMITS.z(Number(placement.z) || 0),
+		rot: TRANSFORM_LIMITS.rot(Number(placement.rot) || 0),
 		rotX: 0,
 		rotZ: 0,
 		scaleX: 1,
@@ -385,10 +381,10 @@ export function createCutoutObject({ assetId, aspect = 1, height = CUTOUT_DEFAUL
 		id,
 		name: displayName,
 		renderer: CUTOUT_KIND,
-		x: clamp(Number(placement.x) || 0, -ROOM_LIMIT, ROOM_LIMIT),
+		x: TRANSFORM_LIMITS.x(Number(placement.x) || 0),
 		y: 0,
-		z: clamp(Number(placement.z) || 0, -ROOM_LIMIT, ROOM_LIMIT),
-		rot: wrapAngle(Number(placement.rot) || 0),
+		z: TRANSFORM_LIMITS.z(Number(placement.z) || 0),
+		rot: TRANSFORM_LIMITS.rot(Number(placement.rot) || 0),
 		rotX: 0,
 		rotZ: 0,
 		scaleX: 1,
@@ -439,15 +435,15 @@ export function duplicateCutoutOptions(object) {
 
 /** Every writable transform channel and the rule that keeps it in the room. */
 const TRANSFORM_LIMITS = {
-	x: (value) => clamp(value, -ROOM_LIMIT, ROOM_LIMIT),
-	y: (value) => clamp(value, 0, CEILING),
-	z: (value) => clamp(value, -ROOM_LIMIT, ROOM_LIMIT),
-	rot: wrapAngle,
-	rotX: wrapAngle,
-	rotZ: wrapAngle,
-	scaleX: (value) => clamp(value, SCALE_MIN, SCALE_MAX),
-	scaleY: (value) => clamp(value, SCALE_MIN, SCALE_MAX),
-	scaleZ: (value) => clamp(value, SCALE_MIN, SCALE_MAX),
+	x: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.x, OBJECT_POSITION_LIMITS.max.x),
+	y: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.y, OBJECT_POSITION_LIMITS.max.y),
+	z: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.z, OBJECT_POSITION_LIMITS.max.z),
+	rot: (value) => wrapAngle(value),
+	rotX: (value) => wrapAngle(value),
+	rotZ: (value) => wrapAngle(value),
+	scaleX: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.x, OBJECT_SCALE_LIMITS.max.x),
+	scaleY: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.y, OBJECT_SCALE_LIMITS.max.y),
+	scaleZ: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.z, OBJECT_SCALE_LIMITS.max.z),
 };
 
 /** Every object that hangs off `id`, at any depth. A cycle cannot form because
@@ -849,7 +845,7 @@ export function scalePatch(start, axis, factor, snap = SCALE_SNAP) {
 	const patch = {};
 	for (const each of axes) {
 		const key = SCALE_KEYS[each];
-		patch[key] = Math.max(SCALE_MIN, snapTo((start[key] ?? 1) * factor, snap));
+		patch[key] = TRANSFORM_LIMITS[key](snapTo((start[key] ?? 1) * factor, snap));
 	}
 	return patch;
 }
@@ -965,7 +961,7 @@ export function placementInFront(cameraPos, yaw, distance = 2.6) {
 	const x = cameraPos.x - Math.sin(yaw) * distance;
 	const z = cameraPos.z - Math.cos(yaw) * distance;
 	return {
-		x: snapTo(clamp(x, -ROOM_LIMIT, ROOM_LIMIT), TRANSLATE_SNAP),
-		z: snapTo(clamp(z, -ROOM_LIMIT, ROOM_LIMIT), TRANSLATE_SNAP),
+		x: snapTo(TRANSFORM_LIMITS.x(x), TRANSLATE_SNAP),
+		z: snapTo(TRANSFORM_LIMITS.z(z), TRANSLATE_SNAP),
 	};
 }
