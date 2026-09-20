@@ -129,8 +129,9 @@ export function patchValueSchema(element) {
 	if (element.type === "color") return { ...text(32), pattern: "^#[0-9a-fA-F]{6}$" };
 	if (element.type === "image") return nullable(dataImage);
 	if (element.type === "vec3") {
-		if (element.min && typeof element.min === "object" && element.max && typeof element.max === "object") {
-			return object({ x: number(element.min.x, element.max.x), y: number(element.min.y, element.max.y), z: number(element.min.z, element.max.z) });
+		const bounds = element.gizmo ?? element;
+		if (bounds.min && typeof bounds.min === "object" && bounds.max && typeof bounds.max === "object") {
+			return object({ x: number(bounds.min.x, bounds.max.x), y: number(bounds.min.y, bounds.max.y), z: number(bounds.min.z, bounds.max.z) });
 		}
 		return vec3;
 	}
@@ -142,10 +143,10 @@ export function patchValueSchema(element) {
  * derived from the same declaration table as `patchValueSchema` so the two
  * can never drift apart. */
 export function buildPatchDescriptors(elements) {
-	return elements.filter(element => element.agentExposure === "patch").map(({ path, type, min, max, enum: enumValues }) => ({
+	return elements.filter(element => element.agentExposure === "patch").map(({ path, type, min, max, enum: enumValues, gizmo }) => ({
 		path, type,
-		...(min !== undefined ? { min: min && typeof min === "object" ? { ...min } : min } : {}),
-		...(max !== undefined ? { max: max && typeof max === "object" ? { ...max } : max } : {}),
+		...(gizmo?.min !== undefined ? { min: { ...gizmo.min } } : min !== undefined ? { min: min && typeof min === "object" ? { ...min } : min } : {}),
+		...(gizmo?.max !== undefined ? { max: { ...gizmo.max } } : max !== undefined ? { max: max && typeof max === "object" ? { ...max } : max } : {}),
 		...(enumValues ? { enum: [...enumValues] } : {}),
 	}));
 }

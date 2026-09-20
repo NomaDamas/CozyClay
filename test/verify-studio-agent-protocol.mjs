@@ -203,6 +203,10 @@ function registerTests() {
 		// silent clamp.
 		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "object", id: "o-1" }, set: { scale: { x: 1, y: 1, z: 999 } } }] } }), "INVALID_ARGUMENT");
 		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { position: { x: 99, y: 0, z: 0 } } }] } }), "INVALID_ARGUMENT");
+		// The gizmo envelope, not the wider document/persistence room, is what the
+		// agent path enforces: x=5 is inside the document bound (±240) but outside
+		// the gizmo bound (±4).
+		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { position: { x: 5, y: 0, z: 0 } } }] } }), "INVALID_ARGUMENT");
 	});
 	test("D7 patch receipts report per-operation outcomes and never hide a dropped path", () => {
 		const applied = receiptFixture(); applied.delta = [{ id: "char-alex", after: { patched: [{ path: "character.tint", text: "#a1b2c3" }] } }]; applied.ops = [{ index: 0, status: "applied" }];
