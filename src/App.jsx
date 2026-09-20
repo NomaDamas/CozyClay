@@ -484,7 +484,7 @@ function ShotGuideOverlay({ mode, aspect, className = "" }) {
 // the photograph rather than guessed at it. Same number the fit diagnostics are
 // scaled on (0..1 visibility), so it reads as "less than half seen".
 const PHOTO_POSE_LOW_CONFIDENCE = 0.5;
-const CHARACTER_POSITION_BOUNDS = elementByPath("character.position");
+const CHARACTER_POSITION_BOUNDS = elementByPath("character.position").gizmo;
 const CHARACTER_SCALE_BOUNDS = elementByPath("character.scale");
 
 // How long an agent receipt keeps its targets lit in the hierarchy. Long
