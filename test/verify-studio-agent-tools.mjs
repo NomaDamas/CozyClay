@@ -208,13 +208,17 @@ if (shouldRun("sequential-same-target-token-rotation")) {
 
 if (shouldRun("rejection-receipt-surfaces-reason")) {
   const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
-  const receipt = { ok: false, commandId: "cmd-9", code: "INVALID_ARGUMENT", phase: "admission", message: "Expected exactly one supported variant.", recovery: { action: "inspect", retryAllowed: false }, expectedTargets: [], currentTargets: [], mutated: false, preserved: { authoredState: "unchanged" } };
+  // The out-of-bounds message names the offending path and the allowed range
+  // (#398), not the generic "one supported variant" union rejection.
+  const receipt = { ok: false, commandId: "cmd-9", code: "INVALID_ARGUMENT", phase: "admission", message: "$.args.ops[0].set.scale.y: Expected a number within [0.1, 100].", recovery: { action: "inspect", retryAllowed: false }, expectedTargets: [], currentTargets: [], mutated: false, preserved: { authoredState: "unchanged" } };
   const rejecting = { command: async () => receipt };
   const tools = createStudioTools({ liveHub: rejecting, workspaceHandle: "handle-1", session: { signal: new AbortController().signal } });
   const invoke = tools.internal.invoke;
   await assert.rejects(invoke("inspect_studio", { scope: "scene" }), (error) => {
     assert.equal(error.code, "INVALID_ARGUMENT", "the receipt's top-level code wins");
-    assert.equal(error.message, "Expected exactly one supported variant.", "the receipt's top-level message wins");
+    assert.match(error.message, /scale\.y/, "the receipt's top-level message names the offending path");
+    assert.match(error.message, /0\.1/, "the receipt's top-level message names the lower bound");
+    assert.match(error.message, /100/, "the receipt's top-level message names the upper bound");
     assert.deepEqual(error.receipt, receipt, "the whole receipt is attached for the route to forward");
     return true;
   });

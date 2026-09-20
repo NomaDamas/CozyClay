@@ -275,9 +275,20 @@ export const StudioSchemas = freezeStudioData({ catalogue: STUDIO_CATALOGUE, var
 export function validateStudioSchema(schema, value, code = "INVALID_ARGUMENT", path = "$") {
 	if (schema.oneOf) {
 		const matches = [];
+		const failures = [];
 		for (const branch of schema.oneOf) {
 			try { matches.push(validateStudioSchema(branch, value, code, path)); }
-			catch (error) { if (!(error instanceof StudioProtocolError)) throw error; }
+			catch (error) { if (!(error instanceof StudioProtocolError)) throw error; failures.push({ branch, error }); }
+		}
+		// No variant matched: the generic "one of N" message hides which path and
+		// bound actually offended. Surface the failure from the variant the input
+		// discriminates to (matching target.kind), or else the deepest failing
+		// path, instead of the union's own shallow message.
+		if (matches.length === 0 && failures.length) {
+			const kind = record(value) && record(value.target) ? value.target.kind : undefined;
+			const discriminated = kind !== undefined && failures.find(({ branch }) => branch.properties?.target?.properties?.kind?.const === kind);
+			const chosen = discriminated || failures.reduce((best, next) => next.error.details.path.length > best.error.details.path.length ? next : best);
+			throw chosen.error;
 		}
 		if (matches.length !== 1) fail(code, "Expected exactly one supported variant.", path);
 		return matches[0];
@@ -309,7 +320,11 @@ export function validateStudioSchema(schema, value, code = "INVALID_ARGUMENT", p
 	}
 	if (schema.type === "boolean") { if (typeof value !== "boolean") fail(code, "Expected boolean.", path); return value; }
 	if (schema.type === "number" || schema.type === "integer") {
-		if (typeof value !== "number" || !Number.isFinite(value) || (schema.type === "integer" && !Number.isSafeInteger(value)) || (schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum) || (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum)) fail(code, "Number outside supported bounds.", path);
+		if (typeof value !== "number" || !Number.isFinite(value) || (schema.type === "integer" && !Number.isSafeInteger(value)) || (schema.exclusiveMinimum !== undefined && value <= schema.exclusiveMinimum)) fail(code, "Number outside supported bounds.", path);
+		if ((schema.minimum !== undefined && value < schema.minimum) || (schema.maximum !== undefined && value > schema.maximum)) {
+			const bounds = [schema.minimum, schema.maximum].filter(bound => bound !== undefined);
+			fail(code, `${path}: Expected a number within [${bounds.join(", ")}].`, path);
+		}
 		return value;
 	}
 	throw new Error("Unsupported internal Studio schema.");

@@ -207,6 +207,24 @@ function registerTests() {
 		// agent path enforces: x=5 is inside the document bound (±240) but outside
 		// the gizmo bound (±4).
 		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { position: { x: 5, y: 0, z: 0 } } }] } }), "INVALID_ARGUMENT");
+		// An out-of-range patch value names the offending path and the allowed
+		// range instead of the generic union rejection: every patchOp variant
+		// fails on a bad number, and the caller needs to know which path and
+		// which bound, not just that no variant matched.
+		try { protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "object", id: "cube-24" }, set: { scale: { x: 1, y: 0.06, z: 1 } } }] } }); assert.fail("out-of-range scale must be refused"); }
+		catch (error) {
+			assert.equal(error.code, "INVALID_ARGUMENT");
+			assert.match(error.message, /scale\.y/);
+			assert.match(error.message, /0\.1/);
+			assert.match(error.message, /100/);
+		}
+		try { protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { position: { x: 5, y: 0, z: 0 } } }] } }); assert.fail("out-of-range position must be refused"); }
+		catch (error) {
+			assert.equal(error.code, "INVALID_ARGUMENT");
+			assert.match(error.message, /position\.x/);
+			assert.match(error.message, /-4/);
+			assert.match(error.message, /4/);
+		}
 	});
 	test("D7 patch receipts report per-operation outcomes and never hide a dropped path", () => {
 		const applied = receiptFixture(); applied.delta = [{ id: "char-alex", after: { patched: [{ path: "character.tint", text: "#a1b2c3" }] } }]; applied.ops = [{ index: 0, status: "applied" }];
