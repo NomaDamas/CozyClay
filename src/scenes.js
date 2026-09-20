@@ -298,16 +298,9 @@ export function migrateStageFrames(stage) {
  * poseB/subject/subject2). Fold that cast into the characters list so the
  * rest of the app only ever sees one shape. */
 function migrateLegacyCast(source) {
-	const firstSource = { ...plainObject(source.charA) ? source.charA : {}, id: "char-a", pose: source.poseA ?? null, subject: source.subject ?? DEFAULT_SUBJECT_ONE };
-	const first = createCharacterEntry(firstSource, 0);
-	// Legacy v1/v2 scenes may place a cast member outside the current gizmo
-	// envelope. Preserve that authored position during the one-way cast-shape
-	// migration; subsequent writes use createCharacterEntry's declared bounds.
-	const cast = [{ ...first, x: finiteOr(firstSource.x, first.x), z: finiteOr(firstSource.z, first.z) }];
+	const cast = [createCharacterEntry({ ...plainObject(source.charA) ? source.charA : {}, id: "char-a", pose: source.poseA ?? null, subject: source.subject ?? DEFAULT_SUBJECT_ONE }, 0)];
 	if (source.showB === true) {
-		const secondSource = { ...plainObject(source.charB) ? source.charB : {}, id: "char-b", pose: source.poseB ?? null, subject: source.subject2 ?? DEFAULT_SUBJECT_TWO };
-		const second = createCharacterEntry(secondSource, 1);
-		cast.push({ ...second, x: finiteOr(secondSource.x, second.x), z: finiteOr(secondSource.z, second.z) });
+		cast.push(createCharacterEntry({ ...plainObject(source.charB) ? source.charB : {}, id: "char-b", pose: source.poseB ?? null, subject: source.subject2 ?? DEFAULT_SUBJECT_TWO }, 1));
 	}
 	return cast;
 }
@@ -320,13 +313,7 @@ const STAGE_ENVELOPE_KEYS = new Set([
 export function createSceneStage(stage = null) {
 	const source = plainObject(stage) ? stage : {};
 	const characters = Array.isArray(source.characters) && source.characters.length
-		? source.characters.map((entry, index) => {
-			const normalized = createCharacterEntry(entry, index);
-			// Stage documents preserve authored cast placement when their envelope
-			// is rebuilt; patch writes use createCharacterEntry directly and apply
-			// the declared gizmo bounds before publishing the entry.
-			return { ...normalized, x: finiteOr(entry?.x, normalized.x), z: finiteOr(entry?.z, normalized.z) };
-		})
+		? source.characters.map((entry, index) => createCharacterEntry(entry, index))
 		: migrateLegacyCast(source);
 	// Unknown extra keys (shotAspect was one, once) ride along so the envelope
 	// stays sealed-but-lossless; legacy cast keys are deliberately dropped.

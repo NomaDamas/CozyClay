@@ -241,6 +241,13 @@ for (const entry of STUDIO_ELEMENTS.filter(({ path }) => transformPaths.has(path
 	}
 }
 assert.equal(transformPaths.size, 11);
+const characterGizmo = elementByPath("character.position").gizmo;
+assert.deepEqual(characterGizmo.min, { x: -4, y: 0, z: -4 });
+assert.deepEqual(characterGizmo.max, { x: 4, y: 240, z: 4 });
+for (const axis of ["x", "y", "z"]) {
+	assert.ok(Number.isFinite(characterGizmo.min[axis]), `character.position gizmo.${axis} min`);
+	assert.ok(Number.isFinite(characterGizmo.max[axis]), `character.position gizmo.${axis} max`);
+}
 
 const wrapToEntry = (entry, value) => {
 	const span = entry.max - entry.min;
@@ -271,6 +278,9 @@ const assertVec3Bounds = (entry, normalize, wrap = false) => {
 		}
 	}
 };
+
+const persistedCharacter = createCharacterEntry({ id: "persisted-character", x: 7, y: 2, z: -7 });
+assert.deepEqual({ x: persistedCharacter.x, y: persistedCharacter.y, z: persistedCharacter.z }, { x: 7, y: 2, z: -7 }, "document character positions are not gizmo-clamped");
 
 const characterBase = { id: "bounded-character", model: "y-bot-tpose", x: 0, y: 0, z: 0, rot: 0, scale: 1 };
 const characterEntry = (path, axis, value) => {

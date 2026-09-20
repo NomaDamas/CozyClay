@@ -11,10 +11,11 @@ const freezeEntry = (entry) => Object.freeze({
 	...(entry.enum ? { enum: Object.freeze([...entry.enum]) } : {}),
 	...(entry.min && typeof entry.min === "object" ? { min: freezeBounds(entry.min) } : {}),
 	...(entry.max && typeof entry.max === "object" ? { max: freezeBounds(entry.max) } : {}),
+	...(entry.gizmo ? { gizmo: Object.freeze({ min: freezeBounds(entry.gizmo.min), max: freezeBounds(entry.gizmo.max) }) } : {}),
 });
 
 const entries = [
-	{ path: "character.position", type: "vec3", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: { x: -4, y: 0, z: -4 }, max: { x: 4, y: 240, z: 4 }, note: "x/z gizmo envelope, y floor and room ceiling" },
+	{ path: "character.position", type: "vec3", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: { x: -240, y: 0, z: -240 }, max: { x: 240, y: 240, z: 240 }, gizmo: { min: { x: -4, y: 0, z: -4 }, max: { x: 4, y: 240, z: 4 } }, note: "document room envelope; gizmo uses the narrower x/z envelope" },
 	{ path: "character.rot", type: "number", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: -180, max: 180, note: "yaw degrees" },
 	{ path: "character.scale", type: "number", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: 0.2, max: 3 },
 	{ path: "character.subject", type: "string", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry" },
