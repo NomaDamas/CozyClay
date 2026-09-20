@@ -652,11 +652,24 @@ export function createStudioAppBinding(ports) {
 	const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 	const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 	const identities = new WeakMap(); let identitySequence = 0, tokenSequence = 0;
+	const motionStamps = new Map(), calibrationStamps = new Map();
 	const identityOf = value => {
 		if (!value || typeof value !== "object") return 0;
 		if (!identities.has(value)) identities.set(value, ++identitySequence);
 		return identities.get(value);
 	};
+	const stableStamp = (stamps, key) => {
+		if (key === null) return 0;
+		if (!stamps.has(key)) stamps.set(key, stamps.size + 1);
+		return stamps.get(key);
+	};
+	const motionContentKey = value => {
+		if (!value || typeof value !== "object") return null;
+		if (typeof value.studioTakeId === "string" && value.studioTakeId) return value.studioTakeId;
+		if (typeof value.motionRef?.motionId === "string" && value.motionRef.motionId) return value.motionRef.motionId;
+		return `${value.frames ?? 0}:${value.fps ?? 0}:${value.rotMats?.length ?? 0}:${value.rootPos?.length ?? 0}:${value.posedJoints?.length ?? 0}`;
+	};
+	const calibrationContentKey = value => value && typeof value === "object" ? JSON.stringify(value) : null;
 	const tokens = new Map(), receipts = new Map(), jobs = new Map(), images = new Map();
 	let owner = null, commands = null, motion = null, journal = null;
 	let authoredKey, physicsKey, viewKey, observedSceneRevision = ports.revision.current;
@@ -677,9 +690,13 @@ export function createStudioAppBinding(ports) {
 			return { ...character, sessionMotion: identityOf(target?.motion),
 				ik: physicsKeyStamp(target?.ikState?.keys ?? new Map()), rig: target?.rig?.uuid ?? null };
 		});
+		// Runtime motion, IK and rig fields are derived from the active editor
+		// buffers, not authored document state. A fresh equivalent buffer object
+		// must not advance the scene clock on a read.
+		const authoredCharacters = raw.characters.map(({ sessionMotion, ik, rig, ...character }) => character);
 		// The stage is authored state too: a key-light or environment edit from any
 		// surface bumps the scene revision exactly like a cast or object edit.
-		const authored = JSON.stringify([raw.objects, characters, raw.shots, raw.frameCount, raw.stage]);
+		const authored = JSON.stringify([raw.objects, authoredCharacters, raw.shots, raw.frameCount, raw.stage]);
 		if (authoredKey !== undefined && authoredKey !== authored && observedSceneRevision === ports.revision.current) ports.revision.current++;
 		authoredKey = authored; observedSceneRevision = ports.revision.current;
 		const liveIds = new Set([...raw.objects, ...raw.characters, ...raw.shots].map(row => row.id));
@@ -697,11 +714,12 @@ export function createStudioAppBinding(ports) {
 				supportY: supportHeightForObject(o), parentId: o.parent ?? null, attachment: o.attach ?? null, path: o.path ?? null })),
 			characters: raw.characters.map(c => {
 				const t = raw.targets.get(c.id), summary = characters.find(row => row.id === c.id);
+				const motionKey = motionContentKey(t?.motion), calibrationKey = calibrationContentKey(t?.motion?.sceneCalibration);
 				return { id: c.id, incarnation: tokens.get(c.id).incarnation, modelId: c.model ?? null,
 					rigId: t?.rig?.uuid ?? null, rigReady: Boolean(t?.rig), hidden: Boolean(c.hidden),
 					position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1,
-					takeId: t?.motion?.studioTakeId ?? null, sessionMotionId: t?.motion ? `motion-${identityOf(t.motion)}` : null,
-					motionRevision: identityOf(t?.motion), calibrationRevision: identityOf(t?.motion?.sceneCalibration),
+					takeId: t?.motion?.studioTakeId ?? null, sessionMotionId: motionKey ? `motion-${motionKey}` : null,
+					motionRevision: stableStamp(motionStamps, motionKey), calibrationRevision: stableStamp(calibrationStamps, calibrationKey),
 					ikRevision: ports.ikRevision(c.id, summary.ik),
 					waypoints: (c.layer?.waypoints ?? []).map(p => ({ frame: p.frame, position: { x: p.x, y: p.y ?? 0, z: p.z } })) };
 			}) });
