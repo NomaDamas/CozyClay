@@ -6,6 +6,7 @@ import { DEFAULT_SENSOR_FORMAT, SENSOR_FORMATS } from "./shot.js";
 import { normalizeStableItems } from "./stable-items.js";
 import { normalizeMotionCalibration } from "./ardy/motion-calibration.js";
 import { elementByPath } from "./studio-elements.js";
+import { wrapAngle } from "./scene-objects.js";
 
 const CHARACTER_POSITION_LIMITS = elementByPath("character.position");
 const CHARACTER_ROTATION_LIMITS = elementByPath("character.rot");
@@ -161,7 +162,7 @@ export function createCharacterEntry(source = null, index = 0) {
 		// writer (inspector field, viewport gizmo, load path) shares one envelope.
 		y: Math.max(CHARACTER_POSITION_LIMITS.min.y, Math.min(CHARACTER_POSITION_LIMITS.max.y, finiteOr(s.y, 0))),
 		z: Math.max(CHARACTER_POSITION_LIMITS.min.z, Math.min(CHARACTER_POSITION_LIMITS.max.z, finiteOr(s.z, 0))),
-		rot: Math.max(CHARACTER_ROTATION_LIMITS.min, Math.min(CHARACTER_ROTATION_LIMITS.max, finiteOr(s.rot, 0))),
+		rot: wrapAngle(finiteOr(s.rot, 0)),
 		hidden: s.hidden === true,
 		// User-picked body tint; null means "model default" (y-bot clay, x-bot
 		// whiter clay) so the entry survives future default tweaks.

@@ -290,7 +290,11 @@ const characterEntry = (path, axis, value) => {
 	return createCharacterEntry(input)[field];
 };
 assertVec3Bounds(elementByPath("character.position"), (axis, value) => ({ [axis]: characterEntry("character.position", axis, value) }), false);
-assertScalarBounds(elementByPath("character.rot"), (value) => characterEntry("character.rot", "rot", value));
+assertScalarBounds(elementByPath("character.rot"), (value) => characterEntry("character.rot", "rot", value), true);
+assert.equal(characterEntry("character.rot", "rot", 181), -179, "character.rot wraps just above max");
+assert.equal(characterEntry("character.rot", "rot", -181), 179, "character.rot wraps just below min");
+assert.equal(characterEntry("character.rot", "rot", 270), -90, "character.rot wraps a full-turn-plus value");
+assert.equal(characterEntry("character.rot", "rot", 540), -180, "character.rot wraps two full turns");
 const characterScale = elementByPath("character.scale");
 // Non-positive stature is an intentional invalid-input fallback to canonical
 // scale 1; also prove a positive below-min value reaches the declared floor.
