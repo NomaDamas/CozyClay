@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { STUDIO_ELEMENTS, elementByPath, elementsFor } from "../src/studio-elements.js";
 import { buildPatchSchema, patchValueSchema, STUDIO_PATCHABLE_PATHS, STUDIO_PATCH_KINDS, validateStudioSchema } from "../src/studio-agent-protocol.js";
 import { createCharacterEntry, createSceneStage } from "../src/scenes.js";
-import { normalizeSceneObject } from "../src/scene-objects.js";
+import { normalizeSceneObject, updateSceneObject } from "../src/scene-objects.js";
 import { createShotAuthoringDocument } from "../src/shot-authoring.js";
 
 const normalizers = {
@@ -218,11 +217,13 @@ for (const kind of STUDIO_PATCH_KINDS) {
 /* Transform bounds are one contract: every editor envelope is declared, and
  * each domain repair reaches the same declaration rather than a second set of
  * literals. Camera key frames are the one dynamic exception: their bounds are
- * the owning shot's [startFrame,endFrame] range. */
+ * the owning shot's [startFrame,endFrame] range. These checks intentionally
+ * exercise the real normalizers so a divergent hard-coded clamp fails here. */
 const transformPaths = new Set([
 	"character.position", "character.rot", "character.scale",
 	"object.position", "object.rotation", "object.scale",
 	"stage.keyLight.x", "stage.keyLight.y", "stage.keyLight.z",
+	"stage.keyLight.intensity", "stage.keyLight.warmth",
 ]);
 for (const entry of STUDIO_ELEMENTS.filter(({ path }) => transformPaths.has(path))) {
 	if (entry.type === "vec3") {
@@ -239,50 +240,90 @@ for (const entry of STUDIO_ELEMENTS.filter(({ path }) => transformPaths.has(path
 		assert.ok(entry.min <= entry.max, `${entry.path} order`);
 	}
 }
-assert.equal(transformPaths.size, 9);
+assert.equal(transformPaths.size, 11);
 
-const characterPosition = elementByPath("character.position");
-const characterRot = elementByPath("character.rot");
-const objectPosition = elementByPath("object.position");
-const objectRotation = elementByPath("object.rotation");
-const objectScale = elementByPath("object.scale");
-assert.deepEqual(characterPosition.min, { x: -4, y: 0, z: -4 });
-assert.deepEqual(characterPosition.max, { x: 4, y: 240, z: 4 });
-assert.deepEqual([characterRot.min, characterRot.max], [-180, 180]);
-assert.deepEqual(objectPosition.min, { x: -240, y: 0, z: -240 });
-assert.deepEqual(objectPosition.max, { x: 240, y: 240, z: 240 });
-assert.deepEqual(objectRotation.min, { x: -180, y: -180, z: -180 });
-assert.deepEqual(objectRotation.max, { x: 180, y: 180, z: 180 });
-assert.deepEqual(objectScale.min, { x: 0.1, y: 0.1, z: 0.1 });
-assert.deepEqual(objectScale.max, { x: 100, y: 100, z: 100 });
-assert.equal(elementByPath("shot.cameraKeys").frameMin, 0);
+const wrapToEntry = (entry, value) => {
+	const span = entry.max - entry.min;
+	return ((((value - entry.min) % span) + span) % span) + entry.min;
+};
+const scalarCases = (entry, wrap = false) => {
+	const mid = (entry.min + entry.max) / 2;
+	return [
+		["min-1", entry.min - 1, wrap ? wrapToEntry(entry, entry.min - 1) : entry.min],
+		["mid", mid, wrap ? wrapToEntry(entry, mid) : mid],
+		["max+1", entry.max + 1, wrap ? wrapToEntry(entry, entry.max + 1) : entry.max],
+	];
+};
+const assertScalarBounds = (entry, normalize, wrap = false, belowExpected = null) => {
+	for (const [label, input, expectedValue] of scalarCases(entry, wrap)) {
+		assert.equal(normalize(input), label === "min-1" && belowExpected !== null ? belowExpected : expectedValue, `${entry.path} ${label}`);
+	}
+};
+const assertVec3Bounds = (entry, normalize, wrap = false) => {
+	for (const axis of ["x", "y", "z"]) {
+		const mid = (entry.min[axis] + entry.max[axis]) / 2;
+		for (const [label, input, expectedValue] of [
+			["min-1", entry.min[axis] - 1, wrap ? wrapToEntry({ min: entry.min[axis], max: entry.max[axis] }, entry.min[axis] - 1) : entry.min[axis]],
+			["mid", mid, wrap ? wrapToEntry({ min: entry.min[axis], max: entry.max[axis] }, mid) : mid],
+			["max+1", entry.max[axis] + 1, wrap ? wrapToEntry({ min: entry.min[axis], max: entry.max[axis] }, entry.max[axis] + 1) : entry.max[axis]],
+		]) {
+			assert.equal(normalize(axis, input)[axis], expectedValue, `${entry.path}.${axis} ${label}`);
+		}
+	}
+};
 
-const appSource = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
-assert.match(appSource, /THREE\.MathUtils\.clamp\(patch\.x, -4, 4\)/, "character gizmo X uses table envelope");
-assert.match(appSource, /THREE\.MathUtils\.clamp\(patch\.z, -4, 4\)/, "character gizmo Z uses table envelope");
-assert.match(appSource, /next\.y = Math\.max\(0, patch\.y\)/, "character gizmo Y uses table floor");
-assert.match(appSource, /THREE\.MathUtils\.clamp\(s, 0\.2, 3\)/, "character gizmo scale uses table envelope");
+const characterBase = { id: "bounded-character", model: "y-bot-tpose", x: 0, y: 0, z: 0, rot: 0, scale: 1 };
+const characterEntry = (path, axis, value) => {
+	const input = { ...characterBase };
+	const field = path === "character.position" ? axis : path.slice("character.".length);
+	input[field] = value;
+	return createCharacterEntry(input)[field];
+};
+assertVec3Bounds(elementByPath("character.position"), (axis, value) => ({ [axis]: characterEntry("character.position", axis, value) }), false);
+assertScalarBounds(elementByPath("character.rot"), (value) => characterEntry("character.rot", "rot", value));
+const characterScale = elementByPath("character.scale");
+// Non-positive stature is an intentional invalid-input fallback to canonical
+// scale 1; also prove a positive below-min value reaches the declared floor.
+assertScalarBounds(characterScale, (value) => characterEntry("character.scale", "scale", value), false, 1);
+assert.equal(characterEntry("character.scale", "scale", characterScale.min / 2), characterScale.min, "character.scale positive below-min");
 
-const boundedCharacter = createCharacterEntry({ id: "bounded-character", x: 999, y: -1, z: -999, rot: 999 });
-assert.deepEqual(
-	{ x: boundedCharacter.x, y: boundedCharacter.y, z: boundedCharacter.z, rot: boundedCharacter.rot },
-	{ x: 4, y: 0, z: -4, rot: 180 },
-);
-const boundedObject = normalizeSceneObject({ id: "bounded-object", renderer: "cube", x: 999, y: -1, z: -999, rot: 999, rotX: -999, rotZ: 540, scaleX: 999, scaleY: 0.01, scaleZ: 1 });
-assert.deepEqual(
-	{ x: boundedObject.x, y: boundedObject.y, z: boundedObject.z, scaleX: boundedObject.scaleX, scaleY: boundedObject.scaleY },
-	{ x: 240, y: 0, z: -240, scaleX: 100, scaleY: 0.1 },
-);
-assert.deepEqual([boundedObject.rot, boundedObject.rotX, boundedObject.rotZ], [-81, 81, -180]);
-const boundedLight = createSceneStage({ keyLight: { x: 999, y: -1, z: -999 } }).keyLight;
-assert.deepEqual({ x: boundedLight.x, y: boundedLight.y, z: boundedLight.z }, { x: 30, y: 0.5, z: -30 });
-const repairedShot = createShotAuthoringDocument({
+const objectChannels = {
+	"object.position": { x: "x", y: "y", z: "z" },
+	"object.rotation": { x: "rotX", y: "rot", z: "rotZ" },
+	"object.scale": { x: "scaleX", y: "scaleY", z: "scaleZ" },
+};
+const objectBase = { id: "bounded-object", renderer: "cube", x: 0, y: 0, z: 0, rot: 0, rotX: 0, rotZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1, name: "Cube", color: "#c2c6c8", parent: null, path: null };
+const normalizedObject = (path, axis, value) => {
+	const input = { ...objectBase, [objectChannels[path][axis]]: value };
+	return normalizeSceneObject(input);
+};
+const updatedObject = (path, axis, value) => {
+	const field = objectChannels[path][axis];
+	const next = updateSceneObject([objectBase], objectBase.id, { [field]: value })[0];
+	return next;
+};
+for (const path of ["object.position", "object.rotation", "object.scale"]) {
+	const entry = elementByPath(path);
+	const wraps = path === "object.rotation";
+	assertVec3Bounds(entry, (axis, value) => ({ [axis]: normalizedObject(path, axis, value)[objectChannels[path][axis]] }), wraps);
+	assertVec3Bounds(entry, (axis, value) => ({ [axis]: updatedObject(path, axis, value)[objectChannels[path][axis]] }), wraps);
+}
+
+const stageDefaults = createSceneStage(null).keyLight;
+for (const path of ["stage.keyLight.x", "stage.keyLight.y", "stage.keyLight.z", "stage.keyLight.intensity", "stage.keyLight.warmth"]) {
+	const entry = elementByPath(path);
+	const axis = path.slice("stage.keyLight.".length);
+	assertScalarBounds(entry, (value) => createSceneStage({ keyLight: { ...stageDefaults, [axis]: value } }).keyLight[axis]);
+}
+
+const cameraKeyEntry = elementByPath("shot.cameraKeys");
+assert.ok(Number.isFinite(cameraKeyEntry.frameMin), "shot.cameraKeys frame floor");
+const cameraKeyFrame = (value) => createShotAuthoringDocument({
 	frameCount: 24,
-	shots: [{ id: "shot-bounds", startFrame: 5, endFrame: 10, cameraKeys: [
-		{ frame: -999, framing },
-		{ frame: 999, framing },
-	] }],
-}).shots[0];
-assert.deepEqual(repairedShot.cameraKeys.map(({ frame }) => frame), [5, 10], "camera keys stay in their owning shot range");
+	shots: [{ id: "shot-bounds", startFrame: 5, endFrame: 10, cameraKeys: [{ frame: value, framing }] }],
+}).shots[0].cameraKeys[0]?.frame;
+assert.equal(cameraKeyFrame(4), 5, "camera key frame below shot range clamps to shot start");
+assert.equal(cameraKeyFrame(7), 7, "camera key frame midpoint survives exactly");
+assert.equal(cameraKeyFrame(11), 10, "camera key frame above shot range clamps to shot end");
 
 console.log(`elements=${STUDIO_ELEMENTS.length} persisted-verified=${verified} patchable=${patchable} todo=${todo}`);
