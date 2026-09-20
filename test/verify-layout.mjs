@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { elementByPath } from "../src/studio-elements.js";
 
 let failures = 0;
 function expect(name, condition) {
@@ -310,7 +311,9 @@ expect(
 );
 expect(
 	"the character gizmo no longer caps lift at 4 m",
-	app.includes("if (patch.y !== undefined) next.y = Math.max(0, patch.y);") &&
+	elementByPath("character.position").gizmo.min.y === 0 &&
+	elementByPath("character.position").gizmo.max.y >= 4 &&
+	app.includes("next.y = Math.max(CHARACTER_POSITION_BOUNDS.min.y, patch.y)") &&
 	!app.includes("clamp(patch.y, 0, 4)"),
 );
 expect(
