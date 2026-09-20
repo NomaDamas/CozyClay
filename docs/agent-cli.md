@@ -365,10 +365,20 @@ the current shot) or `kind:id` (`character:char-a`, `object:chair`,
 kind, e.g. `{"keyLight.intensity": 2.4}` for `stage.keyLight.intensity`. A
 value the editor's own persistence normalizer refuses to keep is reported, not
 assumed: the receipt's `ops[]` names it in `droppedPaths` and the receipt
-status becomes `partial`.
+status becomes `partial`. A value outside a path's declared range never
+reaches the normalizer at all — the command is refused with
+`INVALID_ARGUMENT` before admission.
 
 ```sh
 cclay live inspect --scope catalogue | jq '.patchable.stage'
+```
+```json
+[{"path":"stage.keyLight.x","type":"number","min":-30,"max":30},{"path":"stage.keyLight.y","type":"number","min":0.5,"max":30},{"path":"stage.keyLight.z","type":"number","min":-30,"max":30},{"path":"stage.keyLight.intensity","type":"number","min":0,"max":4},{"path":"stage.keyLight.warmth","type":"number","min":0,"max":1},…]
+```
+A vec3 path, e.g. `object.scale`, carries `min`/`max` as `{x,y,z}` objects —
+one limit per axis — instead of a single number.
+
+```sh
 cclay live patch --target stage --set '{"keyLight.intensity":2.4,"keyLight.warmth":0.2}'
 ```
 ```json

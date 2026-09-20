@@ -183,6 +183,27 @@ function registerTests() {
 		const patched = protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "shot" }, set: { targetModel: "seedance-2.5" } }] } });
 		assert.deepEqual(patched.args.ops[0].target, { kind: "shot" });
 	});
+	test("L2 vec3 elements carry per-axis minimum/maximum, catalogue exposes matching range descriptors, and an out-of-range patch is rejected", () => {
+		const scale = protocol.STUDIO_PATCH_SET_SCHEMAS.object.properties.scale;
+		for (const axis of ["x", "y", "z"]) { assert.equal(scale.properties[axis].minimum, 0.1); assert.equal(scale.properties[axis].maximum, 100); }
+		const objectPosition = protocol.STUDIO_PATCH_SET_SCHEMAS.object.properties.position;
+		assert.deepEqual({ min: objectPosition.properties.x.minimum, max: objectPosition.properties.x.maximum }, { min: -240, max: 240 });
+		assert.deepEqual({ min: objectPosition.properties.y.minimum, max: objectPosition.properties.y.maximum }, { min: 0, max: 240 });
+		const charPosition = protocol.STUDIO_PATCH_SET_SCHEMAS.character.properties.position;
+		for (const axis of ["x", "z"]) { assert.equal(charPosition.properties[axis].minimum, -4); assert.equal(charPosition.properties[axis].maximum, 4); }
+		assert.equal(charPosition.properties.y.minimum, 0); assert.equal(charPosition.properties.y.maximum, 240);
+		// The catalogue's patchable vocabulary carries the same declared ranges, not
+		// just the bare path list.
+		const objectDescriptor = protocol.STUDIO_PATCH_DESCRIPTORS.find(d => d.path === "object.scale");
+		assert.deepEqual(objectDescriptor, { path: "object.scale", type: "vec3", min: { x: 0.1, y: 0.1, z: 0.1 }, max: { x: 100, y: 100, z: 100 } });
+		const charPositionDescriptor = protocol.STUDIO_PATCH_DESCRIPTORS.find(d => d.path === "character.position");
+		assert.deepEqual(charPositionDescriptor.min, { x: -4, y: 0, z: -4 });
+		assert.deepEqual(charPositionDescriptor.max, { x: 4, y: 240, z: 4 });
+		// An out-of-range patch on a vec3 axis is a structured rejection, not a
+		// silent clamp.
+		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "object", id: "o-1" }, set: { scale: { x: 1, y: 1, z: 999 } } }] } }), "INVALID_ARGUMENT");
+		rejects(() => protocol.validateStudioCommand({ name: "patch_elements", args: { ops: [{ target: { kind: "character", id: "char-alex" }, set: { position: { x: 99, y: 0, z: 0 } } }] } }), "INVALID_ARGUMENT");
+	});
 	test("D7 patch receipts report per-operation outcomes and never hide a dropped path", () => {
 		const applied = receiptFixture(); applied.delta = [{ id: "char-alex", after: { patched: [{ path: "character.tint", text: "#a1b2c3" }] } }]; applied.ops = [{ index: 0, status: "applied" }];
 		protocol.validateReceipt(applied);

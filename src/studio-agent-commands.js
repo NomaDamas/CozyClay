@@ -9,7 +9,7 @@ import { createShot, shotAtFrame } from './cuts.js';
 import { captureFraming } from './camera-move.js';
 import { createStableItemId } from './stable-items.js';
 import { focalMmToFov, SENSOR_FORMATS } from './shot.js';
-import { StudioProtocolError, StudioSchemas, STUDIO_PATCH_DOMAINS, STUDIO_PATCHABLE_PATHS, validateStudioSchema, validateStudioCommand, validateStudioIdentity, validateReceipt, freezeStudioData, utf8ByteLength } from './studio-agent-protocol.js';
+import { StudioProtocolError, StudioSchemas, STUDIO_PATCH_DOMAINS, STUDIO_PATCH_KINDS, STUDIO_PATCH_DESCRIPTORS, validateStudioSchema, validateStudioCommand, validateStudioIdentity, validateReceipt, freezeStudioData, utf8ByteLength } from './studio-agent-protocol.js';
 
 const DEG = Math.PI / 180, EPS = 1e-8, CHARACTER_SUPPORT_TOLERANCE = 5e-3;
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
@@ -555,7 +555,7 @@ export function createStudioCommands(ports) {
 }
 export function studioObjectCatalogue() {
   return freezeStudioData({ objects: OBJECT_LIBRARY.map(({ kind, footprint, height, supportY }) => ({ kind, footprint: { ...footprint }, height, supportY: supportY ?? height })), imageRefs: [],
-    // The patchable vocabulary, so a caller reads the paths instead of guessing
-    // them from a rejection.
-    patchable: Object.fromEntries(Object.entries(STUDIO_PATCHABLE_PATHS).map(([kind, paths]) => [kind, [...paths]])) });
+    // The patchable vocabulary, so a caller reads the paths and their declared
+    // ranges instead of guessing them from a rejection.
+    patchable: Object.fromEntries(STUDIO_PATCH_KINDS.map(kind => [kind, STUDIO_PATCH_DESCRIPTORS.filter(descriptor => descriptor.path.startsWith(`${kind}.`))])) });
 }

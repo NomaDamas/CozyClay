@@ -128,10 +128,28 @@ export function patchValueSchema(element) {
 	if (element.type === "id") return id;
 	if (element.type === "color") return { ...text(32), pattern: "^#[0-9a-fA-F]{6}$" };
 	if (element.type === "image") return nullable(dataImage);
-	if (element.type === "vec3") return vec3;
+	if (element.type === "vec3") {
+		if (element.min && typeof element.min === "object" && element.max && typeof element.max === "object") {
+			return object({ x: number(element.min.x, element.max.x), y: number(element.min.y, element.max.y), z: number(element.min.z, element.max.z) });
+		}
+		return vec3;
+	}
 	if (element.type === "string") return text(240);
 	return null;
 }
+/** One descriptor per patch-exposed element: the wire-facing range vocabulary
+ * a caller reads instead of guessing bounds from a rejection. Pure, and
+ * derived from the same declaration table as `patchValueSchema` so the two
+ * can never drift apart. */
+export function buildPatchDescriptors(elements) {
+	return elements.filter(element => element.agentExposure === "patch").map(({ path, type, min, max, enum: enumValues }) => ({
+		path, type,
+		...(min !== undefined ? { min: min && typeof min === "object" ? { ...min } : min } : {}),
+		...(max !== undefined ? { max: max && typeof max === "object" ? { ...max } : max } : {}),
+		...(enumValues ? { enum: [...enumValues] } : {}),
+	}));
+}
+export const STUDIO_PATCH_DESCRIPTORS = freezeStudioData(buildPatchDescriptors(STUDIO_ELEMENTS));
 /** Pure: feed it any element table and read back the `set` schema per kind. */
 export function buildPatchSchema(elements) {
 	const kinds = {};
