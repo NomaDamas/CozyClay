@@ -11,7 +11,7 @@ const authFile = join(configDir, "codex-auth.json");
 process.env.COZYCLAY_CONFIG_DIR = configDir;
 process.env.COZYCLAY_CODEX_AUTH_FILE = authFile;
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = join(rootDir, "sessions");
-const providerEnvNames = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"];
+const providerEnvNames = ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY", "CLIPROXY_API_KEY", "CLIPROXY_BASE_URL"];
 const previousProviderEnv = Object.fromEntries(providerEnvNames.map((name) => [name, process.env[name]]));
 for (const name of providerEnvNames) delete process.env[name];
 
@@ -130,7 +130,7 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 	console.log("PASS codex-auth status() survives a corrupt providers.json");
 
 	const corruptModels = await providers.listAgentModels({ auth, keys, env: process.env });
-	assert.equal(corruptModels.providers.length, 5, "listAgentModels still lists all five providers with a corrupt providers.json");
+	assert.equal(corruptModels.providers.length, 6, "listAgentModels still lists all six providers with a corrupt providers.json");
 	assert.ok(corruptModels.providers.every((provider) => provider.id !== "anthropic" || provider.signedIn === false), "the key provider reports signed-out, not an unhandled rejection");
 	console.log("PASS listAgentModels tolerates a corrupt providers.json");
 
@@ -284,6 +284,86 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 	} finally {
 		globalThis.fetch = originalFetch;
 	}
+}
+
+// #400: CLIProxyAPI is a selectable provider with environment/file credentials,
+// per-API base URLs, a cached live intersection, and both upstream wire formats.
+{
+	const key = "cliproxy-test-key";
+	let catalogueCalls = 0;
+	const baseServer = createServer((req, res) => {
+		if (req.method === "GET" && req.url === "/v1/models") {
+			catalogueCalls++;
+			res.writeHead(200, { "content-type": "application/json" });
+			res.end(JSON.stringify({ data: [{ id: "gpt-6-astra" }, { id: "claude-sonnet-5" }, { id: "not-in-pi" }] }));
+			return;
+		}
+		res.writeHead(404); res.end();
+	});
+	baseServer.listen(0, "127.0.0.1"); await once(baseServer, "listening");
+	const base = `http://127.0.0.1:${baseServer.address().port}`;
+	const auth = { readStored: () => undefined };
+	const noKeys = { readKeys: () => ({}) };
+	const env = { CLIPROXY_API_KEY: key, CLIPROXY_BASE_URL: `${base}/` };
+	const envRegistry = await providers.createModels({ auth, keys: noKeys, env });
+	const envStatus = await providers.listAgentModels({ models: envRegistry, auth, keys: noKeys, env });
+	const cliproxy = envStatus.providers.find((provider) => provider.id === "cliproxy");
+	assert.equal((await providers.listAgentModels({ models: envRegistry, auth, keys: noKeys, env })).providers.find((provider) => provider.id === "cliproxy").models.length, 2);
+	assert.equal(catalogueCalls, 1);
+	assert.equal(cliproxy.signedIn, true);
+	assert.equal(cliproxy.authSource, "env");
+	assert.deepEqual(cliproxy.models.map((model) => model.id), ["gpt-6-astra", "claude-sonnet-5"]);
+	const openaiModel = envRegistry.getModel("cliproxy", "gpt-6-astra");
+	const anthropicModel = envRegistry.getModel("cliproxy", "claude-sonnet-5");
+	assert.equal(openaiModel.provider, "cliproxy");
+	assert.equal(openaiModel.baseUrl, `${base}/v1`);
+	assert.equal(anthropicModel.provider, "cliproxy");
+	assert.equal(anthropicModel.baseUrl, base);
+	const fileRegistry = await providers.createModels({ auth, keys: { readKeys: () => ({ cliproxy: key }) }, env: { CLIPROXY_BASE_URL: base }});
+	assert.equal((await providers.listAgentModels({ models: fileRegistry, auth, keys: { readKeys: () => ({ cliproxy: key }) }, env: { CLIPROXY_BASE_URL: base }})).providers.find((provider) => provider.id === "cliproxy").authSource, "file");
+	const signedOut = await providers.listAgentModels({ models: await providers.createModels({ auth, keys: noKeys, env: { CLIPROXY_BASE_URL: base }}), auth, keys: noKeys, env: { CLIPROXY_BASE_URL: base }});
+	assert.equal(signedOut.providers.find((provider) => provider.id === "cliproxy").signedIn, false);
+	assert.equal(signedOut.providers.find((provider) => provider.id === "cliproxy").models.length > 0, true);
+	await new Promise((resolve) => baseServer.close(resolve));
+
+	const failing = createServer((req, res) => { res.writeHead(500); res.end("nope"); });
+	failing.listen(0, "127.0.0.1"); await once(failing, "listening");
+	const failingBase = `http://127.0.0.1:${failing.address().port}`;
+	const fallbackModels = await providers.createModels({ auth, keys: noKeys, env: { CLIPROXY_API_KEY: key, CLIPROXY_BASE_URL: failingBase }});
+	const fallback = await providers.listAgentModels({ models: fallbackModels, auth, keys: noKeys, env: { CLIPROXY_API_KEY: key, CLIPROXY_BASE_URL: failingBase }});
+	const staticCount = fallbackModels.getModels("cliproxy").filter((model) => model.input.includes("text") && model.input.includes("image")).length;
+	assert.equal(fallback.providers.find((provider) => provider.id === "cliproxy").models.length, staticCount);
+	await new Promise((resolve) => failing.close(resolve));
+
+	const requests = [];
+	const upstream = createServer(async (req, res) => {
+		requests.push({ path: new URL(req.url, "http://local").pathname, authorization: req.headers.authorization, apiKey: req.headers["x-api-key"] });
+		for await (const _chunk of req) { /* consume the request before replying */ }
+		res.writeHead(200, { "content-type": "text/event-stream" });
+		if (req.url === "/v1/responses") {
+			res.end([`data: ${JSON.stringify({ type: "response.output_item.added", output_index: 0, item: { type: "message", content: [] } })}`, `data: ${JSON.stringify({ type: "response.output_text.delta", output_index: 0, delta: "pong" })}`, `data: ${JSON.stringify({ type: "response.output_item.done", output_index: 0, item: { type: "message", content: [{ type: "output_text", text: "pong" }] } })}`, `data: ${JSON.stringify({ type: "response.completed", response: { status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "pong" }] }] } })}`].join("\n\n") + "\n\n");
+		} else {
+			res.end([`event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg-test", type: "message", role: "assistant", content: [], model: "claude-sonnet-5", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } })}`, `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`, `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } })}`, `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`, `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } })}`, `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`].join("\n\n") + "\n\n");
+		}
+	});
+	upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
+	const upstreamBase = `http://127.0.0.1:${upstream.address().port}`;
+	const turnModels = await providers.createModels({ auth, keys: noKeys, env: { CLIPROXY_API_KEY: key, CLIPROXY_BASE_URL: upstreamBase }});
+	const handler = createAgentHandler({ models: turnModels, auth, env: { CLIPROXY_API_KEY: key, CLIPROXY_BASE_URL: upstreamBase }, handlers: [], liveHub: {}, port: () => sidecar.address().port });
+	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	sidecar.listen(0, "127.0.0.1"); await once(sidecar, "listening");
+	const sidecarOrigin = `http://127.0.0.1:${sidecar.address().port}`;
+	for (const model of ["cliproxy/gpt-6-astra", "cliproxy/claude-sonnet-5"]) {
+		const response = await fetch(`${sidecarOrigin}/agent/turn`, { method: "POST", headers: { origin: sidecarOrigin, "content-type": "application/json" }, body: JSON.stringify({ sessionId: model.replaceAll("/", "-"), text: "reply pong", model }), signal: AbortSignal.timeout(10000) });
+		assert.equal(response.status, 200);
+		const frames = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1]));
+		assert.equal(frames.some((frame) => frame.type === "error"), false, `${model} turn has no error`);
+	}
+	assert.deepEqual(requests.map((request) => ({ path: request.path, authorization: request.authorization, apiKey: request.apiKey })), [
+		{ path: "/v1/responses", authorization: `Bearer ${key}`, apiKey: undefined },
+		{ path: "/v1/messages", authorization: undefined, apiKey: key },
+	]);
+	await handler.close(); await new Promise((resolve) => sidecar.close(resolve)); await new Promise((resolve) => upstream.close(resolve));
 }
 
 for (const [name, value] of Object.entries(previousProviderEnv)) {

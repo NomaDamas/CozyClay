@@ -354,9 +354,9 @@ expect("the provider keys section hardcodes no colour", !/#[0-9a-f]{3,8}/i.test(
 {
 	const keys = module_.createMockTransport({ state: "ready" });
 	const before = await keys.providers();
-	expect("the mock answers in the sidecar's provider shape", before.length === 5
+	expect("the mock answers in the sidecar's provider shape", before.length === 6
 		&& before.every((entry) => typeof entry.id === "string" && typeof entry.label === "string" && Object.hasOwn(entry, "authSource") && typeof entry.signedIn === "boolean"), JSON.stringify(before));
-	expect("four API-key providers sit beside ChatGPT", before.filter((entry) => entry.id !== "openai-codex").length === 4);
+	expect("five API-key providers sit beside ChatGPT", before.filter((entry) => entry.id !== "openai-codex").length === 5);
 	expect("one provider is env-backed, so the disabled row is reachable in QA", before.some((entry) => entry.authSource === "env" && entry.signedIn));
 	await keys.setProviderKey("anthropic", "sk-test-123");
 	const after = await keys.providers();
@@ -636,7 +636,7 @@ expect("preferredModel ignores a key nobody advertises any more", module_.prefer
 expect("preferredModel falls back to nothing rather than a guess", module_.preferredModel([], "a/1") === "");
 {
 	const grouped = await mock.models();
-	expect("the scripted list groups every provider", grouped.providers.length === 5 && grouped.providers.every((provider) => Array.isArray(provider.models) && provider.models.length > 0),
+	expect("the scripted list groups every provider", grouped.providers.length === 6 && grouped.providers.every((provider) => Array.isArray(provider.models) && provider.models.length > 0),
 		JSON.stringify(grouped.providers?.map((provider) => provider.id)));
 	expect("the flat scripted list is key-addressed", grouped.models.length > 5 && grouped.models.every((entry) => entry.id === entry.key && entry.key.includes("/")));
 	expect("the scripted list includes a provider that is waiting for a key", grouped.providers.some((provider) => !provider.signedIn && provider.models.length > 0));

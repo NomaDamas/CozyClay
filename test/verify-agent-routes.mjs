@@ -17,6 +17,8 @@ function assertUniqueToolPairs(frames, message) {
 }
 const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
+delete process.env.CLIPROXY_API_KEY;
+delete process.env.CLIPROXY_BASE_URL;
 const fauxMain = createFakeModel();
 fauxMain.script([
 	{ type: "text", text: "hello" },
@@ -244,8 +246,8 @@ try {
 	// signed out, so the live codex.listModels() merge never fires here — the
 	// merge itself is exercised against providers.mjs directly below, where a
 	// signed-in double is cheap and does not need network access.
-	assert.equal(models.providers.length, 5, "all five registry providers are listed");
-	assert.deepEqual(models.providers.map((provider) => provider.id).sort(), ["anthropic", "google", "openai", "openai-codex", "openrouter"]);
+	assert.equal(models.providers.length, 6, "all six registry providers are listed");
+	assert.deepEqual(models.providers.map((provider) => provider.id).sort(), ["anthropic", "cliproxy", "google", "openai", "openai-codex", "openrouter"]);
 	assert.ok(models.providers.every((provider) => provider.signedIn === false), "no credentials are configured for this handler's auth double");
 	assert.ok(models.models.length > 0 && models.models.every((model) => typeof model.id === "string" && model.id.includes("/")), "the flat union is key-addressed: every models[].id is provider/id");
 	const codexProvider = models.providers.find((provider) => provider.id === "openai-codex");
@@ -1232,7 +1234,7 @@ for (const kind of ["replaced", "signed_out", "rotated"]) {
 		const responseNoModels16p = await fetch(`${originNoModels16p}/agent/models`, { headers: { origin: originNoModels16p } });
 		assert.equal(responseNoModels16p.status, 200, "omitting `models` from createAgentHandler still builds a real registry and answers 200");
 		const resultNoModels16p = await responseNoModels16p.json();
-		assert.equal(resultNoModels16p.providers.length, 5, "the real-registry path (no injected `models`) is unchanged: all five providers are still listed");
+		assert.equal(resultNoModels16p.providers.length, 6, "the real-registry path (no injected `models`) lists all six providers");
 		console.log("PASS 16p: the real-registry path (no injected `models`) is unchanged");
 	} finally {
 		await noModelsHandler16p.close();

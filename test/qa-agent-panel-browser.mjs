@@ -277,7 +277,7 @@ expect("the overflow menu offers Provider keys…", await waitFor("[...document.
 	await evaluate("[...document.querySelectorAll('.agent-menu button')].map((b) => b.textContent).join(',')"));
 await evaluate("[...document.querySelectorAll('.agent-menu button')].find((b) => b.textContent.startsWith('Provider keys')).click()");
 expect("the menu item opens an inline section inside the panel, not a modal", await waitFor("!!document.querySelector('.agent-panel .agent-keys') && !document.querySelector('[role=\"dialog\"]')", 8000));
-expect("the section lists the four API-key providers and never ChatGPT", await waitFor("document.querySelectorAll('.agent-key-row').length === 4 && !document.querySelector('[data-provider=\"openai-codex\"]')", 8000),
+expect("the section lists the five API-key providers and never ChatGPT", await waitFor("document.querySelectorAll('.agent-key-row').length === 5 && !document.querySelector('[data-provider=\"openai-codex\"]')", 8000),
 	await evaluate("[...document.querySelectorAll('.agent-key-row')].map((r) => r.dataset.provider).join(',')"));
 expect("every key field is a password field", await evaluate("[...document.querySelectorAll('.agent-key-input')].every((input) => input.type === 'password')"));
 expect("an env-backed provider is disabled and names the variable it is set by", await evaluate("(() => { const row = document.querySelector('[data-provider-source=\"env\"]'); if (!row) return false; const input = row.querySelector('.agent-key-input'); return input.disabled === true && /^set by [A-Z_]+( or [A-Z_]+)?$/.test(input.placeholder) && row.querySelector('.agent-key-source').textContent === 'environment'; })()"),
@@ -430,7 +430,7 @@ await evaluate("localStorage.removeItem('cozyclay.agent.model')");
 
 await evaluate("localStorage.removeItem('cozyclay.agent.model')");
 await open("ready");
-expect("the model dropdown is grouped, one optgroup per provider", await waitFor("document.querySelectorAll('.agent-model-select optgroup').length === 5", 10000),
+expect("the model dropdown is grouped, one optgroup per provider", await waitFor("document.querySelectorAll('.agent-model-select optgroup').length === 6", 10000),
 	String(await evaluate("document.querySelectorAll('.agent-model-select optgroup').length")));
 expect("every group is labelled with the provider that serves it", await evaluate("[...document.querySelectorAll('.agent-model-select optgroup')].every((group) => group.label.length > 2)"),
 	await evaluate("JSON.stringify([...document.querySelectorAll('.agent-model-select optgroup')].map((group) => group.label))"));
@@ -561,7 +561,7 @@ await evaluate("localStorage.removeItem('cozyclay.agent.model')");
 // --- the phone-width dock ---------------------------------------------------
 await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await open("ready");
-expect("the grouped dropdown survives the phone-width drawer", await waitFor("document.querySelectorAll('.agent-model-select optgroup').length === 5", 10000));
+expect("the grouped dropdown survives the phone-width drawer", await waitFor("document.querySelectorAll('.agent-model-select optgroup').length === 6", 10000));
 // The dock is a drawer pinned to the right of a canvas that is wider than a
 // phone, so the panel has to be scrolled to before it can be judged — and the
 // evidence has to be framed on it, not on the empty canvas beside it.
