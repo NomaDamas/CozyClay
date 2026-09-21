@@ -2,7 +2,7 @@ import { validateStudioCommand, STUDIO_TOOL_SCHEMAS, STUDIO_TOOL_FAMILIES, Studi
 
 const STUDIO_TOOL_RECEIPT_NOTE = " The result may be a receipt with status \"partial\": ops[].droppedPaths names exactly which authored path each op refused, and delta[].after carries the value actually landed for that target -- quote both the requested and the landed value when you report this, never say only that some paths were not applied. A STALE_SCENE error means inspect_studio once for the fresh revision, then resubmit the identical operation with that revision; it is not a permanent failure.";
 const STUDIO_MUTATION_TOOLS = new Set(["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit"]);
-const schema = name => ({ type: "function", name, description: `Studio ${name.replaceAll("_", " ")} command.${STUDIO_MUTATION_TOOLS.has(name) ? STUDIO_TOOL_RECEIPT_NOTE : ""}`, parameters: STUDIO_TOOL_SCHEMAS[name] });
+const schema = name => ({ type: "function", name, description: `Studio ${name.replaceAll("_", " ")} command.${name === "verify_result" ? " Pass exactly one of receiptId or targets." : ""}${STUDIO_MUTATION_TOOLS.has(name) ? STUDIO_TOOL_RECEIPT_NOTE : ""}`, parameters: STUDIO_TOOL_SCHEMAS[name] });
 export const studioToolSchemas = () => STUDIO_TOOL_FAMILIES.map(schema);
 const text = value => typeof value === "string" ? value : JSON.stringify(value);
 
@@ -14,13 +14,23 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
     const payload = mutationNames.has(name) && session?.admission
       ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision }
       : command.args;
-    const result = await liveHub.command(name, payload, workspaceHandle);
+    let result;
+    try {
+      result = await liveHub.command(name, payload, workspaceHandle);
+    } catch (error) {
+      if (mutationNames.has(name) && error?.code === "UNCERTAIN_APPLY") await session.admission.refresh();
+      throw error;
+    }
     if (result?.ok === false) {
       // Rejection receipts carry code/message at the top level, not under `error`;
       // the receipt itself holds phase, recovery and target evidence the model needs.
       const code = result.code ?? result.error?.code;
       const message = result.message ?? result.error?.message ?? "Studio command failed";
+      if (mutationNames.has(name) && code === "STALE_SCENE") await session.admission.refresh();
       throw Object.assign(new Error(message), { code, receipt: result });
+    }
+    if (name === "inspect_studio" && Number.isSafeInteger(result?.context?.revision?.scene) && session?.admission) {
+      session.admission.revision = result.context.revision.scene;
     }
     if (mutationNames.has(name)) {
       if (Number.isSafeInteger(result?.revision?.after)) session.admission.revision = result.revision.after;

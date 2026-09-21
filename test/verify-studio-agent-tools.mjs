@@ -21,7 +21,7 @@ const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
 process.on("exit", () => rmSync(sessionDir, { recursive: true, force: true }));
 
-const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason"]);
+const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -30,7 +30,7 @@ const uuid = () => randomUUID();
 const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const host = (handle = "handle-12", workspaceId = "tab-7") => ({ surface: "studio", workspaceId, workspaceHandle: handle, documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" });
 function context(binding = host(), sceneRevision = 1) {
-  return { schema: "studio-context-v1", host: binding, revision: { scene: sceneRevision, physics: 1, view: 1 }, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" }, scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 48, objectCount: 0, characterCount: 1 }, selection: { kind: "character", id: "char-alex" }, activeCharacterId: "char-alex", view: { mode: "scene", frame: 0, playing: false, lookThrough: false, grid: false, autoColor: false }, shot: null, camera: null, entities: [{ id: "char-alex", kind: "character", token: "ct-11", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1, bounds: null, motion: { takeId: null, frames: 48, ikKeyCount: 0, promptBlockCount: 0 }, capabilities: { rigReady: true, ik: true, measuredFeet: true } }], entityPage: { returned: 1, total: 1, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [], capabilities: { profile: "studio-slice-1", tools: [...STUDIO_TOOL_FAMILIES], rigReady: true, cameraReady: false, bridgeReady: true } };
+  return { schema: "studio-context-v1", host: binding, revision: { scene: sceneRevision, physics: 1, view: 1 }, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" }, scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 48, objectCount: 0, characterCount: 1 }, selection: { kind: "character", id: "char-alex" }, activeCharacterId: "char-alex", view: { mode: "scene", frame: 0, playing: false, lookThrough: false, grid: false, autoColor: false }, shot: null, camera: null, entities: [{ id: "char-alex", kind: "character", token: "ct-11", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1, bounds: null, motion: { takeId: null, frames: 48, ikKeyCount: 0, promptBlockCount: 0 }, capabilities: { rigReady: true, ik: true, measuredFeet: true } }], entityPage: { returned: 1, total: 1, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [], capabilities: { profile: "studio-slice-1", tools: [...STUDIO_TOOL_FAMILIES], rigReady: true, cameraReady: false, bridgeReady: true } };
 }
 const envelope = (binding = host(), text = "inspect") => ({ surface: "studio", sessionId: uuid(), turnId: uuid(), text, context: context(binding) });
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
@@ -79,6 +79,57 @@ async function httpFixture({ modelResponse, live, getBridgeOrigin = () => null, 
 }
 function streamOf(items) { return items.map((item) => ({ type: "response.output_item.done", item })); }
 
+for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision"]) {
+  if (!shouldRun(scenario)) continue;
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  const { LiveMutationUncertainError } = await import("../mcp/live-hub.mjs");
+  let revision = 1, uncertain = false, refreshes = 0;
+  const sent = [];
+  const admission = { host: host(), revision: 1, commandId: uuid };
+  const args = { ops: [{ op: "update", id: "cube", position: { world: { x: 1, y: 0, z: 0 } } }] };
+  const liveHub = { async command(name, payload, handle) {
+    assert.equal(handle, "handle-12");
+    if (name === "inspect_studio") return { context: { revision: { scene: revision } } };
+    sent.push(structuredClone(payload));
+    if (payload.expectedRevision !== revision) {
+      if (scenario === "stale-scene-readmits-revision") return { ok: false, code: "STALE_SCENE", message: "Authored scene revision changed." };
+      throw new Error(`unexpected revision ${payload.expectedRevision}; live is ${revision}`);
+    }
+    const before = revision;
+    revision++;
+    if (uncertain) {
+      uncertain = false;
+      throw new LiveMutationUncertainError("Editor applied but acknowledgement timed out.");
+    }
+    return { ok: true, status: "applied", revision: { before, after: revision } };
+  } };
+  admission.refresh = async () => { refreshes++; const read = await liveHub.command("inspect_studio", { scope: "scene" }, "handle-12"); admission.revision = read.context.revision.scene; };
+  const invoke = createStudioTools({ liveHub, workspaceHandle: "handle-12", session: { admission } }).internal.invoke;
+  await invoke("arrange_objects", args);
+  assert.equal(admission.revision, 2);
+  if (scenario === "inspect-readmits-revision") {
+    revision = 3;
+    await invoke("inspect_studio", { scope: "scene" });
+    await invoke("arrange_objects", args);
+    assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 3]);
+    assert.equal(refreshes, 0);
+  } else if (scenario === "stale-scene-readmits-revision") {
+    revision = 3;
+    await assert.rejects(invoke("arrange_objects", args), { code: "STALE_SCENE" });
+    assert.equal(refreshes, 1);
+    await invoke("arrange_objects", args);
+    assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 2, 3]);
+  } else {
+    uncertain = true;
+    await assert.rejects(invoke("arrange_objects", args), { code: "UNCERTAIN_APPLY" });
+    assert.equal(refreshes, 1);
+    assert.equal(admission.revision, 3);
+    await invoke("arrange_objects", args);
+    assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 2, 3]);
+  }
+  console.log(`PASS ${scenario}`);
+}
+
 if (shouldRun("studio-tool-catalogue")) {
   const { createStudioTools, studioToolSchemas } = await import("../bin/agent/studio-tools.mjs");
   const families = ["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit"];
@@ -89,6 +140,7 @@ if (shouldRun("studio-tool-catalogue")) {
     session: { admission: { commandId: () => "cmd-1", host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, revision: 1, refresh: async () => {} } } });
   assert.deepEqual(tools.map(tool => tool.name), families);
   assert.ok(tools.every(tool => tool.parameters?.type === "object"));
+  assert.match(studioToolSchemas().find(tool => tool.name === "verify_result").description, /pass exactly one of receiptId or targets/i);
   await tools.find(tool => tool.name === "patch_elements").handler({ ops: [{ target: { kind: "stage" }, set: { "keyLight.intensity": 2 } }] });
   // A mutation family carries the admission envelope, or a timeout would lose
   // its UNCERTAIN_APPLY meaning downstream.
