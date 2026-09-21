@@ -448,7 +448,7 @@ document uses — take them from `inspect`, never from memory.
 ## Models and providers
 
 The other prompt surface, the Agent panel (Studio and Workflow), runs on the
-pi agent harness and can talk to five providers. A model id on the wire is
+pi agent harness and can talk to six providers. A model id on the wire is
 `provider/model`, so `openai-codex/gpt-6-astra` and `anthropic/claude-fable-5`
 name two different models without ambiguity. A bare id with no slash still
 works and means `openai-codex/<id>`, which is why older saved model choices
@@ -461,11 +461,12 @@ keep resolving.
 | `openai` | OpenAI | API key, `OPENAI_API_KEY` |
 | `google` | Google Gemini | API key, `GEMINI_API_KEY` or `GOOGLE_API_KEY` |
 | `openrouter` | OpenRouter | API key, `OPENROUTER_API_KEY` |
+| `cliproxy` | CLIProxyAPI | API key, `CLIPROXY_API_KEY` (base URL `CLIPROXY_BASE_URL`, default `http://127.0.0.1:8317`) |
 
 ChatGPT sign-in did not change: the panel still runs the Codex OAuth flow,
 the token still lives in `~/.config/cozyclay/codex-auth.json`, and it is still
 the only provider you sign in to rather than paste a key for. There are no
-OAuth flows for the other four.
+OAuth flows for the other five.
 
 ### Where the keys live
 
