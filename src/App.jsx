@@ -746,9 +746,8 @@ export function createStudioAppBinding(ports) {
 			selectedShotId: s.selectedShotId, shotDocument: { shots: s.shots }, camera: s.camera, stage: s.stage,
 			filmback: s.filmback, manual: s.manual, floorY: 0, busy: s.busy };
 	}
-	function context() {
-		const s = refresh();
-		const entities = [...s.characters.map(c => {
+	function entityProjection(s) {
+		return [...s.characters.map(c => {
 			const t = s.targets.get(c.id);
 			return { id: c.id, kind: "character", token: tokens.get(c.id).token, name: c.subject || c.id,
 				position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1,
@@ -759,11 +758,14 @@ export function createStudioAppBinding(ports) {
 			position: { x: o.x, y: o.y ?? 0, z: o.z }, yawDeg: o.rot ?? 0,
 			rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 }, scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ },
 			renderer: o.renderer, parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
+	}
+	function context() {
+		const s = refresh(), entities = entityProjection(s);
 		const shot = s.shots.find(row => row.id === s.selectedShotId) ?? shotAtFrame(s.shots, s.view.frame);
 		const range = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
 		return buildStudioContext({ schema: "studio-context-v1", host: { surface: "studio", ...s.host, workspaceHandle: s.workspaceHandle },
 			revision: { scene: s.revision, physics: s.physicsRevision, view: s.viewRevision },
-			units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
+			units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" },
 			scene: { name: s.sceneName, aspect: s.aspect, floorY: 0, frameCount: s.frameCount, objectCount: s.objects.length, characterCount: s.characters.length },
 			selection: s.selection, activeCharacterId: s.activeCharacterId, view: s.view,
 			shot: shot ? { id: shot.id, name: shot.name, range: range(shot), mode: shot.camera?.mode ?? "keys" } : null, camera: s.camera,
@@ -873,8 +875,7 @@ export function createStudioAppBinding(ports) {
 			if (command.args.scope === "catalogue") return studioObjectCatalogue();
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
-			const s = refresh(), all = [...s.characters.map(row => ({ id: row.id, kind: "character", name: row.subject, token: guard(row.id).token })),
-				...s.objects.map(row => ({ id: row.id, kind: "object", name: row.name, token: guard(row.id).token }))];
+			const s = refresh(), all = entityProjection(s);
 			const filtered = all.filter(row => (!args.ids || args.ids.includes(row.id)) && (!args.query || row.name?.includes(args.query)));
 			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
 			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,

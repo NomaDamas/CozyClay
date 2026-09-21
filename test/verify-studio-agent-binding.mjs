@@ -24,7 +24,7 @@ import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
 
-const cases = ['targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -129,6 +129,29 @@ async function railCameraUndo(f, interleaveObject) {
  assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));
 }
 const implementations={
+ async 'inspect-entity-transforms'(f){
+  const created=await f.call('arrange_objects',f.request('arrange_objects',{ops:Array.from({length:30},(_,i)=>({op:'create',source:{kind:'cube'},name:`Prop ${i}`,position:{world:{x:i+2,y:1,z:3}},facing:{yawDeg:30},scale:{x:2,y:3,z:4}}))}));
+  assert.equal(created.status,'applied',JSON.stringify(created));
+  const id=f.store.current.objects.at(-1).id;
+  const c=f.binding.context();
+  assert.equal(c.units.pivot,'base');
+  assert.equal(c.entityPage.truncated,true);
+  assert(!c.entities.some(row=>row.id===id),'fixture target must be outside the bounded context');
+  const result=await f.call('inspect_studio',{scope:'entities',ids:[id,'actor-a']});
+  assert.equal(result.total,2);
+  const row=result.entities.find(row=>row.id===id),character=result.entities.find(row=>row.id==='actor-a');
+  assert.deepEqual(row.position,{x:31,y:1,z:3},'entity inspect must carry object position beyond the context page');
+  assert.deepEqual(row.rotationDeg,{x:0,y:30,z:0});
+  assert.deepEqual(row.scale,{x:2,y:3,z:4});
+  assert.equal(row.renderer,'cube');assert.equal(row.parentId,null);assert.equal(row.attachment,null);
+  assert.equal(row.token,f.binding.guard(id).token);
+  assert.deepEqual(character,c.entities.find(row=>row.id==='actor-a'),'character inspect reuses the context projection');
+  assert.deepEqual(character.position,{x:0,y:0,z:0});assert.equal(character.yawDeg,0);
+  const first=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:29});
+  assert.equal(first.total,30);assert.equal(first.entities.length,29);
+  const last=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:29,cursor:first.nextCursor});
+  assert.deepEqual(last.entities,[row]);assert.equal(last.nextCursor,null);
+ },
  async 'motion-preserves-playhead'(f){f.live.current.timeline.frameCount=96;f.live.current.studioView.frame=80;const {req,next,verified}=await candidate(f);const result=await f.call('commit_motion_candidate',{...next,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true});assert.equal(result.status,'installed',JSON.stringify(result));assert.equal(f.binding.context().view.frame,80);assert(f.binding.context().scene.frameCount>80);},
  async 'patch-character-tint-and-undo'(f){const before=f.binding.refresh().revision;const r=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{tint:'#123456',pose:'pose-wave'}}]}));assert.equal(r.status,'applied',JSON.stringify(r));assert.equal(r.revision.before,before);assert.equal(r.revision.after,before+1);assert.deepEqual(r.ops,[{index:0,status:'applied'}]);assert.deepEqual(r.delta,[{id:'actor-a',after:{patched:[{path:'character.tint',text:'#123456'},{path:'character.pose',text:'pose-wave'}]}}]);assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').tint,'#123456');assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').pose.id,'pose-wave');assert.equal(f.history.current.past.length,1);const undo=await f.call('undo_edit',f.request('undo_edit',{receiptId:r.receiptId}));assert.equal(undo.status,'undone',JSON.stringify(undo));assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').tint,null);assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').pose,null);},
  async 'patch-stage-key-light-and-undo'(f){const before=f.binding.refresh().revision;const r=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'stage'},set:{'keyLight.intensity':2.5,camera:'9:16'}}]}));assert.equal(r.status,'applied',JSON.stringify(r));assert.equal(r.revision.after,before+1);assert.deepEqual(r.affectedIds,['scene']);assert.deepEqual(r.delta[0].after.patched,[{path:'stage.keyLight.intensity',number:2.5},{path:'stage.camera',text:'9:16'}]);assert.equal(f.live.current.stage.keyLight.intensity,2.5);assert.equal(f.live.current.stage.shotAspect,'9:16');assert.equal(f.history.current.past.length,1);assert.equal(f.binding.refresh().revision,before+1,'one stage patch is one authored revision');const undo=await f.call('undo_edit',f.request('undo_edit',{receiptId:r.receiptId}));assert.equal(undo.status,'undone',JSON.stringify(undo));assert.equal(f.live.current.stage.keyLight.intensity,1.12);assert.equal(f.live.current.stage.shotAspect,'16:9');},

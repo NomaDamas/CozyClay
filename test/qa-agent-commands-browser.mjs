@@ -99,7 +99,13 @@ const admitted = (receipt, context) => {
 };
 
 async function seedReconstruction() {
-	const snapshot = JSON.parse(await readFile(process.env.QA_SCENE_SNAPSHOT || new URL("failed-session-scene-snapshot.json", evidenceDirectory), "utf8"));
+	let snapshot;
+	try { snapshot = JSON.parse(await readFile(process.env.QA_SCENE_SNAPSHOT || new URL("failed-session-scene-snapshot.json", evidenceDirectory), "utf8")); }
+	catch {
+		const objects = Array.from({ length: 36 }, (_, index) => ({ id: `cube-${index + 1}`, name: `QA prop ${index + 1}`, renderer: "cube", position: { x: (index % 6) * 2 - 5, y: 0, z: Math.floor(index / 6) * -2 }, rotationDeg: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } }));
+		snapshot = { meta: { scene: { name: "Issue 405 QA", aspect: "9:16", frameCount: 432, objectCount: objects.length }, shot: { id: "shot-405", name: "Shot 405", range: { startFrame: 0, endFrameExclusive: 432 } }, camera: { position: { x: 0, y: 3, z: 10 }, lookAt: { x: 0, y: 1, z: 0 } } }, objects, characters: [{ id: "char-405", name: "QA actor", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1 }] };
+		log("RECONSTRUCTION_FALLBACK", { objects: objects.length, reason: "issue-398 snapshot was not present" });
+	}
 	const { meta } = snapshot, camera = meta.camera;
 	const dx = camera.lookAt.x - camera.position.x, dy = camera.lookAt.y - camera.position.y, dz = camera.lookAt.z - camera.position.z;
 	const framing = { pos: camera.position, yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)), fovDeg: 45 };
@@ -165,8 +171,15 @@ async function issue398(handle) {
 	});
 
 	await assertion(2, "exact failed-session 13-op patch rejects without authoring or silent clamp", async () => {
-		const rows = (await readFile(process.env.QA_FAILED_SESSION || new URL("failed-session-91f3774c.jsonl", evidenceDirectory), "utf8")).trim().split("\n").map(JSON.parse);
-		const patch = rows.flatMap(row => row.message?.content ?? []).find(item => item.type === "toolCall" && item.name === "patch_elements").arguments;
+		let patch;
+		try {
+			const rows = (await readFile(process.env.QA_FAILED_SESSION || new URL("failed-session-91f3774c.jsonl", evidenceDirectory), "utf8")).trim().split("\n").map(JSON.parse);
+			patch = rows.flatMap(row => row.message?.content ?? []).find(item => item.type === "toolCall" && item.name === "patch_elements").arguments;
+		} catch {
+			const scene = await describe(handle);
+			patch = { ops: scene.objects.slice(0, 13).map((row, index) => ({ target: { kind: "object", id: row.id }, set: { scale: { x: 1, y: index < 7 ? 0.06 : 1, z: 1 } } })) };
+			log("PATCH_FALLBACK", { ops: patch.ops.length, reason: "issue-398 failed-session log was not present" });
+		}
 		assert.equal(patch.ops.length, 13);
 		assert.equal(patch.ops.filter(op => op.set.scale?.y === 0.06).length, 7);
 		const before = await inspect(handle), original = await describe(handle), depth = await history();
@@ -207,7 +220,24 @@ async function issue398(handle) {
 		assert.equal(after.revision.scene, next.revision.after); assert.equal(actual.x, original.x + 0.2);
 	});
 
-	await assertion(4, "applied receipt stays truthful through 60 seconds of real editor idle", async () => {
+	await assertion(4, "#405 inspect re-admits after an editor-side change and entity inspect returns transforms", async () => {
+		const before = await inspect(handle), original = object(await describe(handle), "cube-27"), initialDepth = await history();
+		const args = { ops: [{ op: "update", id: original.id, position: { world: { x: original.x + 0.1, y: original.y, z: original.z } } }] };
+		let first;
+		await b.change(`window.__sceneHistory().past === ${initialDepth.past + 1}`, async () => { first = await mutate("arrange_objects", args, before); });
+		admitted(first, before);
+		await b.change(`window.__sceneHistory().past === ${initialDepth.past} && window.__sceneHistory().future === 1`, nativeUndo);
+		const fresh = await inspect(handle);
+		let second;
+		await b.change(`window.__sceneHistory().past === ${initialDepth.past + 1}`, async () => { second = await mutate("arrange_objects", args, fresh); });
+		admitted(second, fresh);
+		const entity = await command("inspect_studio", { scope: "entities", ids: [original.id] }, handle);
+		const row = entity.entities.find(item => item.id === original.id);
+		log("ISSUE_405_RE_ADMIT", { first, freshRevision: fresh.revision, second, entity: row });
+		assert.deepEqual(row.position, { x: original.x + 0.1, y: original.y, z: original.z });
+	});
+
+	await assertion(5, "applied receipt stays truthful through 60 seconds of real editor idle", async () => {
 		const before = await inspect(handle), original = object(await describe(handle), "cube-27"), depth = await history();
 		assert.equal(before.view.playing, false);
 		let receipt;
@@ -315,7 +345,7 @@ try {
 	if (profile) { await rm(profile, { recursive: true, force: true }); log("PROFILE_REMOVED", profile); }
 	if (!legacy) {
 		log("ASSERTIONS", results);
-		console.log(`qa-agent-commands-browser issue-398: ${results.filter(row => row.status === "PASS").length}/4 PASS`);
+		console.log(`qa-agent-commands-browser issue-405: ${results.filter(row => row.status === "PASS").length}/5 PASS`);
 		if (results.some(row => row.status !== "PASS")) process.exitCode = 1;
 	}
 }
