@@ -16,7 +16,7 @@ export function contextFixture() {
 		schema: "studio-context-v1",
 		host: { surface: "studio", workspaceId: "tab-7", workspaceHandle: "handle-12", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" },
 		revision: { scene: 41, physics: 9, view: 18 },
-		units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
+		units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" },
 		scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 144, objectCount: 0, characterCount: 1 },
 		selection: { kind: "character", id: "char-alex", hierarchyId: "characterA" }, activeCharacterId: "char-alex",
 		view: { mode: "scene", frame: 0, playing: false, lookThrough: false, grid: false, autoColor: false }, shot: null, camera: null,
@@ -101,6 +101,18 @@ function registerTests() {
 	});
 	test("D3 bogus typed object op, unknown nested fields and later variants cannot pass", () => {
 		for (const args of [{ ops: [{ op: "bogus" }] }, { ops: [] }, { ops: [createOp()], document: {} }, { ops: [{ ...createOp(), source: { imageId: "image-1", placeAs: "cutout" } }] }, { ops: [{ op: "attach", id: "a", characterId: "b", bone: null }] }, { ops: [{ ...createOp(), position: { world: { ...point(), password: "private" } } }] }, { ops: [{ op: "update", id: "a" }] }]) rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args }));
+	});
+	test("#405 context units validate and retain the base pivot", () => {
+		assert.equal(protocol.validateStudioContext(contextFixture()).units.pivot, "base");
+		const invalid = contextFixture(); invalid.units.pivot = "centre";
+		rejects(() => protocol.validateStudioContext(invalid), "INVALID_CONTEXT");
+	});
+	test("#405 patch descriptors retain declared pivot notes", () => {
+		for (const path of ["object.position", "character.position"]) {
+			const descriptor = protocol.STUDIO_PATCH_DESCRIPTORS.find(row => row.path === path);
+			assert.equal(typeof descriptor.note, "string", `${path} descriptor must carry its pivot note`);
+			assert.equal(descriptor.note, STUDIO_ELEMENTS.find(row => row.path === path).note);
+		}
 	});
 	test("D3 finite limits, mutually exclusive fields and avoid constraints", () => {
 		const invalid = [

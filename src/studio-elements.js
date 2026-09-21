@@ -15,7 +15,7 @@ const freezeEntry = (entry) => Object.freeze({
 });
 
 const entries = [
-	{ path: "character.position", type: "vec3", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: { x: -240, y: 0, z: -240 }, max: { x: 240, y: 240, z: 240 }, gizmo: { min: { x: -4, y: 0, z: -4 }, max: { x: 4, y: 240, z: 4 } }, note: "document room envelope; gizmo uses the narrower x/z envelope" },
+	{ path: "character.position", type: "vec3", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: { x: -240, y: 0, z: -240 }, max: { x: 240, y: 240, z: 240 }, gizmo: { min: { x: -4, y: 0, z: -4 }, max: { x: 4, y: 240, z: 4 } }, note: "y is the feet" },
 	{ path: "character.rot", type: "number", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: -180, max: 180, angle: true, note: "yaw degrees, wrapped at the upper bound" },
 	{ path: "character.scale", type: "number", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", min: 0.2, max: 3 },
 	{ path: "character.subject", type: "string", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry" },
@@ -31,7 +31,7 @@ const entries = [
 	{ path: "character.sessionMotion", type: "array", persisted: false, undoDomain: "cast", agentExposure: "readonly", normalizer: "createCharacterEntry", note: "dropped by createCharacterEntry" },
 	{ path: "character.ikKeys", type: "array", persisted: false, undoDomain: "cast", agentExposure: "todo", normalizer: "createCharacterEntry", note: "dropped by createCharacterEntry" },
 	{ path: "object.renderer", type: "enum", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject", enum: ["cube", "sphere", "capsule", "cylinder", "cone", "plane", "chair", "car", "small-plane"] },
-	{ path: "object.position", type: "vec3", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject", min: { x: -240, y: 0, z: -240 }, max: { x: 240, y: 240, z: 240 } },
+	{ path: "object.position", type: "vec3", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject", min: { x: -240, y: 0, z: -240 }, max: { x: 240, y: 240, z: 240 }, note: "y is the object's base: y=0 rests on the floor; height/supportY rise from it" },
 	{ path: "object.rotation", type: "vec3", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject", min: { x: -180, y: -180, z: -180 }, max: { x: 180, y: 180, z: 180 }, note: "rot/rotX/rotZ degrees, wrapped at the upper bound" },
 	{ path: "object.scale", type: "vec3", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject", min: { x: 0.1, y: 0.1, z: 0.1 }, max: { x: 100, y: 100, z: 100 } },
 	{ path: "object.name", type: "string", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject" },

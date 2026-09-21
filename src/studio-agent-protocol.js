@@ -143,11 +143,12 @@ export function patchValueSchema(element) {
  * derived from the same declaration table as `patchValueSchema` so the two
  * can never drift apart. */
 export function buildPatchDescriptors(elements) {
-	return elements.filter(element => element.agentExposure === "patch").map(({ path, type, min, max, enum: enumValues, gizmo }) => ({
+	return elements.filter(element => element.agentExposure === "patch").map(({ path, type, min, max, enum: enumValues, gizmo, note }) => ({
 		path, type,
 		...(gizmo?.min !== undefined ? { min: { ...gizmo.min } } : min !== undefined ? { min: min && typeof min === "object" ? { ...min } : min } : {}),
 		...(gizmo?.max !== undefined ? { max: { ...gizmo.max } } : max !== undefined ? { max: max && typeof max === "object" ? { ...max } : max } : {}),
 		...(enumValues ? { enum: [...enumValues] } : {}),
+		...(note ? { note } : {}),
 	}));
 }
 export const STUDIO_PATCH_DESCRIPTORS = freezeStudioData(buildPatchDescriptors(STUDIO_ELEMENTS));
@@ -204,7 +205,7 @@ const assetSummary = object({ imageId: id, origin: choices(["user_attachment", "
 const jobSummary = object({ id, characterId: id, state: choices(STUDIO_VARIANTS.jobStates) }, { targetIds: ids(24, 0), progress: nullable(number(0, 1)), phase: name });
 const contextSchema = object({
 	schema: literal("studio-context-v1"), host, revision,
-	units: object({ distance: literal("m"), angle: literal("deg"), up: literal("+Y"), yawZero: literal("+Z"), yawPositiveToward: literal("+X"), fps: literal(24), rangeEnd: literal("exclusive") }),
+	units: object({ distance: literal("m"), angle: literal("deg"), up: literal("+Y"), yawZero: literal("+Z"), yawPositiveToward: literal("+X"), pivot: literal("base"), fps: literal(24), rangeEnd: literal("exclusive") }),
 	scene: object({ name, aspect: text(40), floorY: number(), frameCount: integer(), objectCount: integer(), characterCount: integer() }),
 	selection, activeCharacterId: nullable(id), view, shot: nullable(currentShot), camera: nullable(camera),
 	entities: array(entity, 24), entityPage: object({ returned: integer(0, 24), total: integer(), truncated: bool, nextCursor: nullable(text(512)) }),

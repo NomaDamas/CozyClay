@@ -69,7 +69,7 @@ function studioContext(sceneRevision = 41) {
 		schema: "studio-context-v1",
 		host: { surface: "studio", ...HOST, workspaceHandle: "handle-12" },
 		revision: { scene: sceneRevision, physics: 9, view: 18 },
-		units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", fps: 24, rangeEnd: "exclusive" },
+		units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" },
 		scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 144, objectCount: 1, characterCount: 1 },
 		selection: { kind: "character", id: "char-alex" },
 		activeCharacterId: "char-alex",

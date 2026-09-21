@@ -54,6 +54,8 @@ for (const entry of STUDIO_ELEMENTS) {
 	assert.equal(elementByPath(entry.path), entry);
 }
 assert.equal(elementByPath("missing.path"), undefined);
+assert.equal(elementByPath("object.position").note, "y is the object's base: y=0 rests on the floor; height/supportY rise from it");
+assert.equal(elementByPath("character.position").note, "y is the feet");
 for (const name of [...Object.keys(normalizers), null]) {
 	assert.deepEqual(elementsFor(name), STUDIO_ELEMENTS.filter((entry) => entry.normalizer === name));
 }
