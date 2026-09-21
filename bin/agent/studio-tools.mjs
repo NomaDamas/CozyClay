@@ -2,7 +2,7 @@ import { validateStudioCommand, STUDIO_TOOL_SCHEMAS, STUDIO_TOOL_FAMILIES, Studi
 
 const STUDIO_TOOL_RECEIPT_NOTE = " The result may be a receipt with status \"partial\": ops[].droppedPaths names exactly which authored path each op refused, and delta[].after carries the value actually landed for that target -- quote both the requested and the landed value when you report this, never say only that some paths were not applied. A STALE_SCENE error means inspect_studio once for the fresh revision, then resubmit the identical operation with that revision; it is not a permanent failure.";
 const STUDIO_MUTATION_TOOLS = new Set(["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit"]);
-const schema = name => ({ type: "function", name, description: `Studio ${name.replaceAll("_", " ")} command.${name === "verify_result" ? " Pass exactly one of receiptId or targets." : ""}${STUDIO_MUTATION_TOOLS.has(name) ? STUDIO_TOOL_RECEIPT_NOTE : ""}`, parameters: STUDIO_TOOL_SCHEMAS[name] });
+const schema = name => ({ type: "function", name, description: `Studio ${name.replaceAll("_", " ")} command.${name === "verify_result" ? " Pass exactly one of receiptId or targets (not both)." : ""}${STUDIO_MUTATION_TOOLS.has(name) ? STUDIO_TOOL_RECEIPT_NOTE : ""}`, parameters: STUDIO_TOOL_SCHEMAS[name] });
 export const studioToolSchemas = () => STUDIO_TOOL_FAMILIES.map(schema);
 const text = value => typeof value === "string" ? value : JSON.stringify(value);
 
