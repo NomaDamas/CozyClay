@@ -19,7 +19,7 @@ import { spawnOwned, terminateOwned } from "../tools/process-supervisor.mjs";
 import { createSceneStage } from "../src/scenes.js";
 import { normalizeSceneObject } from "../src/scene-objects.js";
 import { createShotAuthoringDocument } from "../src/shot-authoring.js";
-import { studioToolSchemas } from "../bin/agent/studio-tools.mjs";
+import { createStudioTools, studioToolSchemas } from "../bin/agent/studio-tools.mjs";
 
 const legacy = process.argv.includes("--legacy");
 assert(process.argv.slice(2).every(arg => arg === "--legacy"), "only --legacy is supported");
@@ -99,13 +99,7 @@ const admitted = (receipt, context) => {
 };
 
 async function seedReconstruction() {
-	let snapshot;
-	try { snapshot = JSON.parse(await readFile(process.env.QA_SCENE_SNAPSHOT || new URL("failed-session-scene-snapshot.json", evidenceDirectory), "utf8")); }
-	catch {
-		const objects = Array.from({ length: 36 }, (_, index) => ({ id: `cube-${index + 1}`, name: `QA prop ${index + 1}`, renderer: "cube", position: { x: (index % 6) * 2 - 5, y: 0, z: Math.floor(index / 6) * -2 }, rotationDeg: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 } }));
-		snapshot = { meta: { scene: { name: "Issue 405 QA", aspect: "9:16", frameCount: 432, objectCount: objects.length }, shot: { id: "shot-405", name: "Shot 405", range: { startFrame: 0, endFrameExclusive: 432 } }, camera: { position: { x: 0, y: 3, z: 10 }, lookAt: { x: 0, y: 1, z: 0 } } }, objects, characters: [{ id: "char-405", name: "QA actor", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1 }] };
-		log("RECONSTRUCTION_FALLBACK", { objects: objects.length, reason: "issue-398 snapshot was not present" });
-	}
+	const snapshot = JSON.parse(await readFile(process.env.QA_SCENE_SNAPSHOT || new URL("failed-session-scene-snapshot.json", evidenceDirectory), "utf8"));
 	const { meta } = snapshot, camera = meta.camera;
 	const dx = camera.lookAt.x - camera.position.x, dy = camera.lookAt.y - camera.position.y, dz = camera.lookAt.z - camera.position.z;
 	const framing = { pos: camera.position, yaw: Math.atan2(-dx, -dz), pitch: Math.atan2(dy, Math.hypot(dx, dz)), fovDeg: 45 };
@@ -170,16 +164,9 @@ async function issue398(handle) {
 		}
 	});
 
-	await assertion(2, "exact failed-session 13-op patch rejects without authoring or silent clamp", async () => {
-		let patch;
-		try {
-			const rows = (await readFile(process.env.QA_FAILED_SESSION || new URL("failed-session-91f3774c.jsonl", evidenceDirectory), "utf8")).trim().split("\n").map(JSON.parse);
-			patch = rows.flatMap(row => row.message?.content ?? []).find(item => item.type === "toolCall" && item.name === "patch_elements").arguments;
-		} catch {
-			const scene = await describe(handle);
-			patch = { ops: scene.objects.slice(0, 13).map((row, index) => ({ target: { kind: "object", id: row.id }, set: { scale: { x: 1, y: index < 7 ? 0.06 : 1, z: 1 } } })) };
-			log("PATCH_FALLBACK", { ops: patch.ops.length, reason: "issue-398 failed-session log was not present" });
-		}
+	await assertion(2, "13-op patch rejects without authoring or silent clamp", async () => {
+		const rows = (await readFile(process.env.QA_FAILED_SESSION || new URL("failed-session-91f3774c.jsonl", evidenceDirectory), "utf8")).trim().split("\n").map(JSON.parse);
+		const patch = rows.flatMap(row => row.message?.content ?? []).find(item => item.type === "toolCall" && item.name === "patch_elements").arguments;
 		assert.equal(patch.ops.length, 13);
 		assert.equal(patch.ops.filter(op => op.set.scale?.y === 0.06).length, 7);
 		const before = await inspect(handle), original = await describe(handle), depth = await history();
@@ -223,15 +210,25 @@ async function issue398(handle) {
 	await assertion(4, "#405 inspect re-admits after an editor-side change and entity inspect returns transforms", async () => {
 		const before = await inspect(handle), original = object(await describe(handle), "cube-27"), initialDepth = await history();
 		const args = { ops: [{ op: "update", id: original.id, position: { world: { x: original.x + 0.1, y: original.y, z: original.z } } }] };
+		const admission = { host: identity(before), revision: before.revision.scene, commandId: () => randomUUID(),
+			async refresh() { this.revision = (await inspect(handle)).revision.scene; } };
+		const sent = [];
+		const tools = createStudioTools({ workspaceHandle: handle, session: { admission },
+			liveHub: { command(name, payload, workspace) { sent.push({ name, payload }); return command(name, payload, workspace); } } });
+		const invoke = tools.internal.invoke;
 		let first;
-		await b.change(`window.__sceneHistory().past === ${initialDepth.past + 1}`, async () => { first = await mutate("arrange_objects", args, before); });
+		await b.change(`window.__sceneHistory().past === ${initialDepth.past + 1}`, async () => { first = await invoke("arrange_objects", args); });
 		admitted(first, before);
 		await b.change(`window.__sceneHistory().past === ${initialDepth.past} && window.__sceneHistory().future === 1`, nativeUndo);
-		const fresh = await inspect(handle);
+		assert.equal(admission.revision, first.revision.after, "native Undo is outside the agent turn");
+		const fresh = (await invoke("inspect_studio", { scope: "scene" })).context;
+		assert.equal(fresh.revision.scene, first.revision.after + 1);
 		let second;
-		await b.change(`window.__sceneHistory().past === ${initialDepth.past + 1}`, async () => { second = await mutate("arrange_objects", args, fresh); });
+		await b.change(`window.__sceneHistory().past === ${initialDepth.past + 1}`, async () => { second = await invoke("arrange_objects", args); });
 		admitted(second, fresh);
-		const entity = await command("inspect_studio", { scope: "entities", ids: [original.id] }, handle);
+		assert.equal(sent.at(-1).payload.expectedRevision, fresh.revision.scene);
+		assert.deepEqual(sent.at(-1).payload.args.ops, args.ops);
+		const entity = await invoke("inspect_studio", { scope: "entities", ids: [original.id] });
 		const row = entity.entities.find(item => item.id === original.id);
 		log("ISSUE_405_RE_ADMIT", { first, freshRevision: fresh.revision, second, entity: row });
 		assert.deepEqual(row.position, { x: original.x + 0.1, y: original.y, z: original.z });
@@ -335,7 +332,7 @@ try {
 } catch (error) {
 	console.error("PROBE_SETUP_OR_RUN_FAILURE", error.stack);
 	process.exitCode = 1;
-	if (!legacy) for (let number = 1; number <= 4; number++) if (!results.some(row => row.number === number)) {
+	if (!legacy) for (let number = 1; number <= 5; number++) if (!results.some(row => row.number === number)) {
 		results.push({ number, status: "FAIL", error: `Blocked by setup/run failure: ${error.message}` });
 		console.error(`FAIL ${number}: blocked by setup/run failure`);
 	}
