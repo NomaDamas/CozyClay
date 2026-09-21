@@ -58,6 +58,7 @@ export const PROVIDERS = [
 	{ id: "openai", label: "OpenAI", auth: "api_key", env: ["OPENAI_API_KEY"] },
 	{ id: "google", label: "Google Gemini", auth: "api_key", env: ["GEMINI_API_KEY", "GOOGLE_API_KEY"] },
 	{ id: "openrouter", label: "OpenRouter", auth: "api_key", env: ["OPENROUTER_API_KEY"] },
+	{ id: "cliproxy", label: "CLIProxyAPI", auth: "api_key", env: ["CLIPROXY_API_KEY"] },
 ];
 
 const factories = {
@@ -68,15 +69,41 @@ const factories = {
 	openrouter: "openrouterProvider",
 };
 
+async function cliproxyProvider({ baseUrl, env = process.env } = {}) {
+	const base = (baseUrl ?? env.CLIPROXY_BASE_URL ?? "http://127.0.0.1:8317").replace(/\/$/, "");
+	const [{ createProvider, envApiKeyAuth }, { openaiProvider }, { anthropicProvider }, openaiResponsesApi, anthropicMessagesApi] = await Promise.all([
+		import("@earendil-works/pi-ai"),
+		import("@earendil-works/pi-ai/providers/openai"),
+		import("@earendil-works/pi-ai/providers/anthropic"),
+		import("@earendil-works/pi-ai/api/openai-responses"),
+		import("@earendil-works/pi-ai/api/anthropic-messages"),
+	]);
+	const ids = new Set();
+	const models = [
+		...openaiProvider().getModels().map((model) => ({ ...model, provider: "cliproxy", baseUrl: `${base}/v1` })),
+		...anthropicProvider().getModels().map((model) => ({ ...model, provider: "cliproxy", baseUrl: base })),
+	].filter((model) => !ids.has(model.id) && ids.add(model.id));
+	return createProvider({
+		id: "cliproxy",
+		name: "CLIProxyAPI",
+		baseUrl: base,
+		auth: { apiKey: envApiKeyAuth("CLIProxyAPI key", ["CLIPROXY_API_KEY"]) },
+		models,
+		api: { "openai-responses": openaiResponsesApi, "anthropic-messages": anthropicMessagesApi },
+	});
+}
+
 const providerConfig = (id) => PROVIDERS.find((provider) => provider.id === id);
 
-export async function loadProvider(id, { baseUrl } = {}) {
+export async function loadProvider(id, options = {}) {
+	const { baseUrl, env = process.env } = options;
 	const config = providerConfig(id);
 	if (!config) throw Object.assign(new Error(`Unknown provider: ${id}`), { code: "UNKNOWN_PROVIDER" });
 	if (id === "openai-codex") ensureCodexFetchPatched();
-	const module = await import(`@earendil-works/pi-ai/providers/${id}`);
-	const provider = module[factories[id]]();
-	if (baseUrl) {
+	const provider = id === "cliproxy"
+		? await cliproxyProvider({ baseUrl, env })
+		: await import(`@earendil-works/pi-ai/providers/${id}`).then((module) => module[factories[id]]());
+	if (baseUrl && id !== "cliproxy") {
 		provider.baseUrl = baseUrl;
 		const getModels = provider.getModels.bind(provider);
 		provider.getModels = () => getModels().map((model) => ({ ...model, baseUrl }));
@@ -93,7 +120,7 @@ const registryCatalogueState = new WeakMap();
 function catalogueState(models) {
 	let state = registryCatalogueState.get(models);
 	if (!state) {
-		state = { fetch: null, models: [], extendedProviders: new WeakSet() };
+		state = { fetch: null, models: [], extendedProviders: new WeakSet(), cliproxyFetch: null };
 		registryCatalogueState.set(models, state);
 	}
 	return state;
@@ -142,13 +169,32 @@ async function registerLiveCodexModels(models, codex) {
 	return live;
 }
 
-export async function createModels({ credentials, auth = defaultAuth, keys = defaultKeys, env = process.env, codexBaseUrl } = {}) {
+async function registryLiveCliproxy(models, apiKey) {
+	const state = catalogueState(models);
+	if (!state.cliproxyFetch) {
+		state.cliproxyFetch = Promise.resolve().then(async () => {
+			const provider = models?.getProvider?.("cliproxy");
+			const model = provider?.getModels?.().find((entry) => entry.api === "openai-responses");
+			if (!model?.baseUrl || !apiKey) throw new Error("CLIProxyAPI is not configured");
+			const response = await fetch(`${model.baseUrl}/models`, {
+				headers: { Authorization: `Bearer ${apiKey}` },
+				signal: AbortSignal.timeout(5000),
+			});
+			if (!response.ok) throw new Error(`CLIProxyAPI models request failed: ${response.status}`);
+			const body = await response.json();
+			return new Set((Array.isArray(body?.data) ? body.data : []).map((entry) => typeof entry === "string" ? entry : entry?.id).filter(Boolean));
+		}).catch(() => null);
+	}
+	return state.cliproxyFetch;
+}
+
+export async function createModels({ credentials, auth = defaultAuth, keys = defaultKeys, env = process.env, codexBaseUrl, cliproxyBaseUrl } = {}) {
 	const { createModels: createPiModels } = await import("@earendil-works/pi-ai");
 	const store = credentials ?? createCredentialStore({ auth, keys, env });
 	const models = createPiModels({ credentials: store });
 	for (const provider of PROVIDERS) {
-		const baseUrl = provider.id === "openai-codex" ? codexBaseUrl : undefined;
-		const loaded = await loadProvider(provider.id, { baseUrl });
+		const baseUrl = provider.id === "openai-codex" ? codexBaseUrl : provider.id === "cliproxy" ? cliproxyBaseUrl : undefined;
+		const loaded = await loadProvider(provider.id, { baseUrl, env });
 		models.setProvider(loaded);
 	}
 	return models;
@@ -246,6 +292,7 @@ function liveModelsCodex(result) {
 }
 
 const astraFirst = (a, b) => Number(b.id === "gpt-6-astra") - Number(a.id === "gpt-6-astra");
+const cliproxyFirst = (a, b) => astraFirst(a, b) || Number(b.id === "claude-fable-5-1") - Number(a.id === "claude-fable-5-1");
 
 /**
  * `/agent/models`, built on the pi provider registry (#379): every provider
@@ -273,11 +320,17 @@ export async function listAgentModels({ models, codex, auth = defaultAuth, keys 
 				} catch { /* the live catalog is a bonus; the static catalog still lists astra */ }
 			}
 			list = [...list].sort(astraFirst);
+		} else if (provider.id === "cliproxy") {
+			if (signedIn) {
+				const liveIds = await registryLiveCliproxy(resolvedModels, authResult?.auth?.apiKey);
+				if (liveIds) list = list.filter((model) => liveIds.has(model.id));
+			}
+			list = [...list].sort(cliproxyFirst);
 		}
 		providers.push({ id: provider.id, label: provider.label, signedIn, authSource, models: list });
 	}
 	// The flat union is what the panel's dropdown reads today (`models[].id`);
-	// with five providers in play the id has to be the provider/id key so two
+	// with six providers in play the id has to be the provider/id key so two
 	// providers' same-named model never collide there, while each provider's
 	// own `models[]` keeps the bare id.
 	return { providers, models: providers.flatMap((provider) => provider.models.map((model) => ({ ...model, id: model.key }))) };

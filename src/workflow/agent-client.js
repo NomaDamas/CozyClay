@@ -576,6 +576,7 @@ export const PROVIDER_ENV_VARS = {
 	openai: ["OPENAI_API_KEY"],
 	google: ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
 	openrouter: ["OPENROUTER_API_KEY"],
+	cliproxy: ["CLIPROXY_API_KEY"],
 };
 
 /** "set by <ENV_VAR>" for a provider whose key comes from the environment. */
@@ -872,6 +873,7 @@ const MOCK_PROVIDER_LABELS = [
 	["openai", "OpenAI"],
 	["google", "Google Gemini"],
 	["openrouter", "OpenRouter"],
+	["cliproxy", "CLIProxyAPI"],
 ];
 const MOCK_ENV_PROVIDER = "google";
 /** The scripted `/agent/models` catalogue: every provider carries its own
@@ -887,6 +889,7 @@ const MOCK_PROVIDER_MODELS = {
 	openai: [{ id: "gpt-5.1", label: "GPT-5.1", efforts: ["none", "low", "medium", "high", "xhigh"], defaultEffort: "medium" }],
 	google: [{ id: "gemini-3-pro", label: "Gemini 3 Pro", efforts: ["none", "low", "medium", "high"], defaultEffort: "medium" }],
 	openrouter: [{ id: "deepseek-v3", label: "DeepSeek V3", efforts: ["none"], defaultEffort: "none" }],
+	cliproxy: [{ id: "claude-sonnet-5", label: "Claude Sonnet 5", efforts: ["none", "low", "medium", "high"], defaultEffort: "medium" }],
 };
 /** A ChatGPT model the sidecar learns about from the live catalogue, which it
  * can only read with the credential: signing out does not merely draw it

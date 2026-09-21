@@ -261,7 +261,7 @@ function liveToolsRuntime() {
 	}).catch((error) => ({ error }));
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, fauxProvider, handlers, liveHub, port, getBridgeOrigin, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
+export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, cliproxyBaseUrl, env, fauxProvider, handlers, liveHub, port, getBridgeOrigin, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();
@@ -283,7 +283,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	let workflowModels = models;
 	let workflowModelsPromise = models ? Promise.resolve(models) : null;
 	const ensureWorkflowModels = async () => {
-		const pending = workflowModelsPromise ??= import("./providers.mjs").then(({ createModels }) => createModels({ auth, codexBaseUrl }));
+		const pending = workflowModelsPromise ??= import("./providers.mjs").then(({ createModels }) => createModels({ auth, codexBaseUrl, cliproxyBaseUrl, env }));
 		try { return await pending; }
 		catch (error) {
 			// A retired build must not clear a newer identity's initialization.
@@ -547,7 +547,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		const persistenceMeta = { sceneName: value.context?.scene?.name ?? value.context?.sceneName ?? null, firstText: value.text, motionJobIds: [...session.motionJobIds] };
 		let runner = studioRunners.get(value.sessionId);
 		if (!runner) {
-			runner = createAgentRunner({ models: await ensureWorkflowModels(), fauxProvider, sessionStore, clock, codexBaseUrl, auth });
+			runner = createAgentRunner({ models: await ensureWorkflowModels(), fauxProvider, sessionStore, clock, codexBaseUrl, cliproxyBaseUrl, auth, env });
 			studioRunners.set(value.sessionId, runner);
 		}
 		try {
@@ -651,7 +651,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		if (path === "/agent/models" && req.method === "GET") {
 			try {
 				const { listAgentModels } = await import("./providers.mjs");
-				json(res, 200, await listAgentModels({ auth, codex, models: await ensureWorkflowModels() }));
+				json(res, 200, await listAgentModels({ auth, codex, models: await ensureWorkflowModels(), env }));
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
 			return true;
 		}
@@ -811,7 +811,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			const workflowTools = createAgentTools({ ...dependencies, session, emit: send });
 			let workflowRunner = workflowRunners.get(value.sessionId);
 			if (!workflowRunner) {
-				workflowRunner = createAgentRunner({ models: workflowModels, tools: workflowTools, systemPrompt: SYSTEM_PROMPT, clock, fauxProvider, sessionStore, codexBaseUrl, onQuota: quotaForResponse });
+				workflowRunner = createAgentRunner({ models: workflowModels, tools: workflowTools, systemPrompt: SYSTEM_PROMPT, clock, fauxProvider, sessionStore, codexBaseUrl, cliproxyBaseUrl, auth, env, onQuota: quotaForResponse });
 				workflowRunners.set(value.sessionId, workflowRunner);
 			}
 			if (!session.modelSession) session.modelSession = await workflowRunner.openSession(value.sessionId, { surface: "workflow" });

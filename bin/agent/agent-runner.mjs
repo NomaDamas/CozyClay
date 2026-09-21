@@ -160,7 +160,7 @@ function studioObservationMessage(observation) {
  * knows about pi. Keep these imports lazy: the package-isolation checks start
  * bin/cozyclay.mjs without node_modules installed.
  */
-export function createAgentRunner({ models: suppliedModels, sessionStore, tools = [], systemPrompt = "", clock = () => performance.now(), fauxProvider, onQuota, codexBaseUrl, auth, credentials, keys, env, compaction = { enabled: false }, pi: injectedPi } = {}) {
+export function createAgentRunner({ models: suppliedModels, sessionStore, tools = [], systemPrompt = "", clock = () => performance.now(), fauxProvider, onQuota, codexBaseUrl, cliproxyBaseUrl, auth, credentials, keys, env, compaction = { enabled: false }, pi: injectedPi } = {}) {
 	const openSessions = new Map();
 	let models = suppliedModels;
 	let piModules = injectedPi;
@@ -181,7 +181,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		const pi = await loadPi();
 		if (!models) {
 			const { createModels } = await import("./providers.mjs");
-			models = await createModels({ codexBaseUrl, auth, credentials, keys, env });
+			models = await createModels({ codexBaseUrl, cliproxyBaseUrl, auth, credentials, keys, env });
 		}
 		if (fauxProvider) {
 			const provider = fauxProvider.provider || fauxProvider;
