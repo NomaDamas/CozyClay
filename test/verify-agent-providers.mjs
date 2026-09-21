@@ -366,6 +366,44 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 	await handler.close(); await new Promise((resolve) => sidecar.close(resolve)); await new Promise((resolve) => upstream.close(resolve));
 }
 
+// #403: CLIProxyAPI's /v1/messages rejects the mid-conversation output_config
+// shape (per-turn system messages carrying output_config, and
+// thinking.block_binding) that pi emits for Anthropic models flagged
+// compat.supportsMidConvoEffort. The cliproxy re-map must clear that flag
+// while keeping forceAdaptiveThinking so adaptive thinking + top-level effort
+// still apply.
+{
+	const key = "cliproxy-403-key";
+	const auth = { readStored: () => undefined };
+	const noKeys = { readKeys: () => ({}) };
+	const recordedBodies = [];
+	const messagesServer = createServer(async (req, res) => {
+		const chunks = [];
+		for await (const chunk of req) chunks.push(chunk);
+		if (new URL(req.url, "http://local").pathname === "/v1/messages") {
+			recordedBodies.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+			res.writeHead(200, { "content-type": "text/event-stream" });
+			res.end([`event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "msg-403", type: "message", role: "assistant", content: [], model: "claude-fable-5-1", stop_reason: null, stop_sequence: null, usage: { input_tokens: 1, output_tokens: 0 } } })}`, `event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}`, `event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "pong" } })}`, `event: content_block_stop\ndata: ${JSON.stringify({ type: "content_block_stop", index: 0 })}`, `event: message_delta\ndata: ${JSON.stringify({ type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 1 } })}`, `event: message_stop\ndata: ${JSON.stringify({ type: "message_stop" })}`].join("\n\n") + "\n\n");
+			return;
+		}
+		res.writeHead(404); res.end();
+	});
+	messagesServer.listen(0, "127.0.0.1"); await once(messagesServer, "listening");
+	const messagesBase = `http://127.0.0.1:${messagesServer.address().port}`;
+	const registry = await providers.createModels({ auth, keys: noKeys, env: { CLIPROXY_API_KEY: key, CLIPROXY_BASE_URL: messagesBase } });
+	const model = registry.getModel("cliproxy", "claude-fable-5-1");
+	assert.ok(model, "cliproxy/claude-fable-5-1 must resolve from the anthropic catalogue re-map");
+	await registry.complete(model, { messages: [{ role: "user", content: "reply pong", timestamp: Date.now() }] }, { effort: "medium", thinkingEnabled: true });
+	await new Promise((resolve) => messagesServer.close(resolve));
+	assert.equal(recordedBodies.length, 1);
+	const [body] = recordedBodies;
+	assert.equal(body.messages.some((message) => message.output_config !== undefined), false, "no message carries the mid-conversation output_config CLIProxyAPI rejects");
+	assert.equal(body.thinking?.block_binding, undefined, "no thinking.block_binding CLIProxyAPI rejects");
+	assert.equal(body.thinking?.type, "adaptive", "adaptive thinking is preserved");
+	assert.equal(body.output_config?.effort, "medium", "top-level output_config.effort is preserved");
+	console.log("PASS #403 cliproxy Claude turns keep the schema CLIProxyAPI's /v1/messages accepts");
+}
+
 for (const [name, value] of Object.entries(previousProviderEnv)) {
 	if (value === undefined) delete process.env[name];
 	else process.env[name] = value;

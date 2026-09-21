@@ -81,7 +81,14 @@ async function cliproxyProvider({ baseUrl, env = process.env } = {}) {
 	const ids = new Set();
 	const models = [
 		...openaiProvider().getModels().map((model) => ({ ...model, provider: "cliproxy", baseUrl: `${base}/v1` })),
-		...anthropicProvider().getModels().map((model) => ({ ...model, provider: "cliproxy", baseUrl: base })),
+		...anthropicProvider().getModels().map((model) => ({
+			...model,
+			provider: "cliproxy",
+			baseUrl: base,
+			// CLIProxyAPI's /v1/messages rejects messages[].output_config and thinking.block_binding, so keep
+			// adaptive thinking (forceAdaptiveThinking) but drop the mid-conversation output_config shape.
+			compat: { ...model.compat, supportsMidConvoEffort: false },
+		})),
 	].filter((model) => !ids.has(model.id) && ids.add(model.id));
 	return createProvider({
 		id: "cliproxy",
