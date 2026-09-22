@@ -81,7 +81,7 @@ function handle(name, args) {
 		case "update_object": {
 			const object = editor.objects.find((entry) => entry.id === args.id);
 			if (!object) throw new Error(`No object ${args.id}`);
-			for (const key of ["x", "y", "z", "rot", "scale", "color"]) if (args[key] !== undefined) object[key] = args[key];
+			for (const key of ["x", "y", "z", "rot", "scale", "color", "hidden"]) if (args[key] !== undefined) object[key] = args[key];
 			return { id: object.id };
 		}
 		case "remove_object": {
@@ -161,6 +161,10 @@ try {
 	assert(placed.includes("chair-1"), "place_object did not return the live object id");
 	const scene = await call("describe_scene");
 	assert(scene.includes("LIVE TEST") && scene.includes("Chair") && scene.includes("x 3.25"), "describe_scene did not render the live description");
+	commands.length = 0;
+	const hiddenLive = await call("update_object", { id: "chair-1", hidden: true });
+	assert(commands.some(({ name, args }) => name === "update_object" && args.hidden === true), "update_object did not forward hidden");
+	assert(hiddenLive.split("\n").some((line) => line.includes("chair-1") && line.includes(" hidden")), "describe_scene did not mark the hidden object");
 
 	// frame_shot must AIM the lens, not only place it. Every view except `front`
 	// orbits the camera off the subject's facing axis, and a position-only command

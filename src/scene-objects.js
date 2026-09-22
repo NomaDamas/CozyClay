@@ -363,6 +363,7 @@ export function createSceneObject(kind, existing = [], placement = {}) {
 		// world-anchored prop — where everything starts, because a fresh object
 		// is dropped in front of the lens, not into someone's hand.
 		attach: null,
+		hidden: false,
 		footprint: { ...entry.footprint },
 		height: entry.height,
 		supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height,
@@ -413,6 +414,7 @@ export function createCutoutObject({ assetId, aspect = 1, height = CUTOUT_DEFAUL
 		color: CUTOUT_TINT,
 		parent: null,
 		attach: null,
+		hidden: false,
 		// Key order matches what `normalizeSceneObject` writes, so a record
 		// survives a storage round trip byte-for-byte.
 		assetId,
@@ -493,6 +495,7 @@ export function createMeshObject({ assetId, height = MESH_DEFAULT_HEIGHT, footpr
 		color: MESH_ENTRY.color,
 		parent: null,
 		attach: null,
+		hidden: false,
 		assetId,
 		clay: clay === true,
 		footprint: meshFootprint,
@@ -539,6 +542,36 @@ export function descendantsOf(objects, id) {
 		frontier = next;
 	}
 	return out;
+}
+
+/** True when this record, a parent above it, or a character carrying any of
+ *  those records is hidden. A cycle in parent links ends the walk. When the
+ *  id is in `objects`, that stored record is what the walk reads, so a display
+ *  copy cannot disagree with the authored flag. Nothing in the lists is changed. */
+export function isEffectivelyHidden(entity, objects = [], characters = []) {
+	if (!entity || typeof entity !== "object") return false;
+	const byId = new Map();
+	for (const object of objects) {
+		if (object && typeof object.id === "string") byId.set(object.id, object);
+	}
+	const characterHidden = (id) => characters.some((item) => item && typeof item === "object" && item.id === id && item.hidden === true);
+	const seen = new Set();
+	let current = entity;
+	while (current && typeof current === "object") {
+		const id = typeof current.id === "string" ? current.id : null;
+		if (id) {
+			if (seen.has(id)) break;
+			seen.add(id);
+			if (byId.has(id)) current = byId.get(id);
+		}
+		if (current.hidden === true) return true;
+		const characterId = current.attach && typeof current.attach.characterId === "string" ? current.attach.characterId : null;
+		if (characterId && characterHidden(characterId)) return true;
+		const parentId = typeof current.parent === "string" ? current.parent : null;
+		if (!parentId) break;
+		current = byId.get(parentId) ?? null;
+	}
+	return false;
 }
 
 export function updateSceneObject(objects, id, patch) {
@@ -595,6 +628,7 @@ export function updateSceneObject(objects, id, patch) {
 			if (typeof patch[key] !== "string" || !patch[key] || patch[key] === object[key]) continue;
 			update[key] = patch[key];
 		}
+		if (typeof patch.hidden === "boolean" && patch.hidden !== (object.hidden === true)) update.hidden = patch.hidden;
 		// The travel path is authored geometry, not a bounded transform: it is
 		// normalized by createObjectPath (which repairs or refuses it) and set
 		// wholesale, with null clearing it back to a standing object.
@@ -820,6 +854,7 @@ export function normalizeSceneObject(record) {
 		// not exist. A record written before attachment existed has no field at
 		// all, and null is exactly what it meant: world-anchored.
 		attach: normalizeSceneAttach(record.attach) ?? null,
+		hidden: record.hidden === true,
 		// Library kinds take their size from the library — a stored footprint is
 		// stale data, not a fact. Cutouts and meshes are the exceptions: their
 		// size IS per-instance. A cutout rebuilds the footprint from height and
@@ -1042,10 +1077,11 @@ export function objectFootprintBounds(object) {
  * The contact height is exact, never snapped to the 5 cm grid, and never
  * clamped here: the y clamp stays in updateSceneObject, the single owner.
  */
-export function dropToSurfacePatch(object, others) {
+export function dropToSurfacePatch(object, others, characters = []) {
 	const self = objectFootprintBounds(object);
 	let highestTop = 0;
 	for (const other of others) {
+		if (isEffectivelyHidden(other, others, characters)) continue;
 		const bounds = objectFootprintBounds(other);
 		if (self.minX >= bounds.maxX - OVERLAP_EPS || bounds.minX >= self.maxX - OVERLAP_EPS) continue;
 		if (self.minZ >= bounds.maxZ - OVERLAP_EPS || bounds.minZ >= self.maxZ - OVERLAP_EPS) continue;

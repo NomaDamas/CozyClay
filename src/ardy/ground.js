@@ -1,4 +1,4 @@
-import { objectFootprintBounds } from "../scene-objects.js";
+import { isEffectivelyHidden, objectFootprintBounds } from "../scene-objects.js";
 
 /**
  * Ground height under a point, from the scene's objects (issue #250).
@@ -25,8 +25,8 @@ import { objectFootprintBounds } from "../scene-objects.js";
  * the floor. Sloped tops are out of scope - the height is flat per object and
  * the foot keeps its source rotation.
  */
-export function createGroundSampler(objects = [], { floorY = 0, collidable = isCollidable } = {}) {
-	const surfaces = objects.filter(collidable).map((object) => objectFootprintBounds(object));
+export function createGroundSampler(objects = [], { floorY = 0, collidable = isCollidable, characters = [] } = {}) {
+	const surfaces = objects.filter((object) => !isEffectivelyHidden(object, objects, characters) && collidable(object)).map((object) => objectFootprintBounds(object));
 	const groundAt = (x, z, maxY = Infinity) => {
 		let best = floorY;
 		for (const b of surfaces) {
@@ -44,7 +44,7 @@ export function createGroundSampler(objects = [], { floorY = 0, collidable = isC
 /** Objects a foot can stand on: solid props with a real footprint. Cutouts,
  * cameras, lights, and attached/child objects are not ground. */
 export function isCollidable(object) {
-	if (!object || object.kind === "cutout") return false;
+	if (!object || object.kind === "cutout" || object.hidden === true) return false;
 	if (object.parentId || object.attach) return false;
 	if (object.collide === false) return false;
 	const b = objectFootprintBounds(object);

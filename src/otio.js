@@ -1,6 +1,7 @@
 // OpenTimelineIO cut-list export. OTIO is JSON, so this module deliberately
 // has no OTIO dependency: the schema names below are the wire contract.
 
+import { isEffectivelyHidden } from "./scene-objects.js";
 import { sampleAt } from "./sample-at.js";
 import { TIMELINE_FRAME_FPS } from "./scenes.js";
 import { usedSensorHeightMm } from "./shot.js";
@@ -71,7 +72,7 @@ function blockingAt(scene, frame) {
 		...(Array.isArray(characters) ? characters : [])
 			.filter((character) => character && character.hidden !== true)
 			.map((character, index) => characterBlocking(scene, character, index, frame)),
-		...objects.filter(Boolean).map(objectBlocking),
+		...objects.filter((object) => object && !isEffectivelyHidden(object, objects, Array.isArray(characters) ? characters : [])).map(objectBlocking),
 	];
 }
 

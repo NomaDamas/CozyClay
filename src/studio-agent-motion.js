@@ -200,10 +200,12 @@ export function createStudioMotionCandidates(ports) {
       member.evaluator.parent.updateMatrixWorld(true);
       rigs[member.character.id] = member.evaluator.rig;
     }
-    return collisionBlockers({ rigs, activeId: c.request.binding.characterId, sceneObjects: c.env.objects, library: OBJECT_LIBRARY, frame, take: { frameCount: c.env.frameCount, fps: 24 } });
+    const cast = c.cast.map((member) => member.character).filter(Boolean);
+    return collisionBlockers({ rigs, activeId: c.request.binding.characterId, characterIds: cast, sceneObjects: c.env.objects, library: OBJECT_LIBRARY, frame, take: { frameCount: c.env.frameCount, fps: 24 } });
   }
   async function samples(c, layer) {
     const rows = [], poses = [], collisions = [], blockers = [];
+    const cast = c.cast.map((member) => member.character).filter(Boolean);
     for (let frame = 0; frame < c.motion.frames; frame++) {
       checkpoint(c); poseFrame(c.evaluator, c.motion, layer, frame);
       const shapes = blockersAt(c, frame);
@@ -211,7 +213,7 @@ export function createStudioMotionCandidates(ports) {
         const at = objectTransformAt(object, frame, { frameCount: c.env.frameCount, fps: 24 });
         return at ? { ...object, x: at.x, y: at.y, z: at.z, rot: at.rot ?? object.rot } : object;
       });
-      rows.push(readSample(c.evaluator, createGroundSampler(objects, { floorY: c.env.floor.y })));
+      rows.push(readSample(c.evaluator, createGroundSampler(objects, { floorY: c.env.floor.y, characters: cast })));
       poses.push(poseValues(c.evaluator.rest));
       const capsules = buildCollisionCapsules(c.evaluator.rig);
       collisions.push(detectPenetrations(capsules, { blockers: shapes }).map(p => ({ a: p.a.def.id, b: p.b.def?.id ?? p.b.id, depth: p.depth })));

@@ -87,7 +87,7 @@ const framing = union(
 );
 const objectOp = union(
 	object({ op: literal("create"), source: object({ kind: id }), position }, { name, facing, scale: positiveVec3 }),
-	object({ op: literal("update"), id }, { position, facing, rotationDeg: vec3, scale: positiveVec3, color: text(32), name }),
+	object({ op: literal("update"), id }, { position, facing, rotationDeg: vec3, scale: positiveVec3, color: text(32), name, hidden: bool }),
 	object({ op: literal("remove"), id }),
 	object({ op: literal("group"), parentId: id, childIds: ids() }),
 	object({ op: literal("ungroup"), childIds: ids() }),

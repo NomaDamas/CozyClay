@@ -58,6 +58,14 @@ async function characterize() {
   store.applyAtomic(objects => updateSceneObject(objects, object.id, { x: -1.05, rot: 90 }));
   assert.equal(store.objects[0].x, -1.05); assert.equal(store.depths().past, 2);
   store.undo(); assert.equal(store.objects[0].x, 0); store.undo(); assert.deepEqual(store.objects, []);
+  const visible = createSceneObject('chair');
+  const hiddenStore = createSceneHistoryStore([visible], {});
+  hiddenStore.applyAtomic(objects => updateSceneObject(objects, visible.id, { hidden: true }));
+  assert.equal(hiddenStore.objects[0].hidden, true);
+  hiddenStore.applyAtomic(objects => updateSceneObject(objects, visible.id, { hidden: 'yes' }));
+  assert.equal(hiddenStore.objects[0].hidden, true);
+  hiddenStore.undo();
+  assert.equal(hiddenStore.objects[0].hidden, false);
   const absent = await dispatchLiveFrame(JSON.stringify({ type: 'cmd', id: 'baseline', name: 'arrange_objects', args: { ops: [chair('shot_camera')] } }), {});
   assert.equal(absent.ok, false); assert.equal(absent.error, 'Unknown command: arrange_objects');
   console.log('PASS characterization: actual world reducer, seat/height, two primitive history entries and absent relative dispatch', JSON.stringify(absent));
@@ -234,7 +242,7 @@ async function boundaries(mod) {
     f.state.characters[0].id = 'unready'; f.state.activeCharacterId = 'unready';
     rejected(f, 'arrange_objects', { ops: [{ ...chair('world'), position: { ...relative('world'), relativeTo: 'unready' }, facing: { yawDeg: 0 } }] }, 'TARGET_NOT_READY');
   }
-  for (const supportPatch of [{ path: { points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }] } }, { attach: { characterId: 'alex', bone: null } }, { rotX: 10 }, { renderer: 'cutout' }, { renderer: 'sphere' }]) {
+  for (const supportPatch of [{ path: { points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 0 }] } }, { attach: { characterId: 'alex', bone: null } }, { rotX: 10 }, { renderer: 'cutout' }, { renderer: 'sphere' }, { hidden: true }]) {
     const f = setup(); seed(f, { ...createSceneObject('chair'), ...supportPatch });
     rejected(f, 'arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, position: { onObject: 'chair' } }] }, 'TARGET_NOT_READY');
   }
@@ -252,6 +260,26 @@ async function boundaries(mod) {
     near(f.state.objects[1].x, -1.17); near(avoided.checks.actualGapM, 0.62); assert.deepEqual(avoided.checks.overlapIds, []);
     const g = setup(); seed(g, updateSceneObject([createSceneObject('cube')], 'cube', { x: -1.05 })[0]);
     rejected(g, 'arrange_objects', { collisionPolicy: 'avoid', ops: [chair('world')] }, 'VERIFICATION_FAILED');
+    const hiddenOverlap = setup();
+    seed(hiddenOverlap, updateSceneObject([createSceneObject('cube')], 'cube', { x: -0.685, scaleX: 0.37, scaleZ: 0.4, hidden: true })[0]);
+    const hiddenReceipt = execute(hiddenOverlap, 'arrange_objects', { ops: [chair('shot_camera')] }); ok(hiddenReceipt);
+    assert.deepEqual(hiddenReceipt.checks.overlapIds, []);
+    const cascaded = setup();
+    cascaded.stores.objects.applyAtomic(() => [
+      updateSceneObject([createSceneObject('cube')], 'cube', { hidden: true })[0],
+      { ...updateSceneObject([createSceneObject('cube')], 'cube', { x: -0.685, scaleX: 0.37, scaleZ: 0.4 })[0], id: 'child', name: 'Child', parent: 'cube' },
+    ]);
+    const cascadeReceipt = execute(cascaded, 'arrange_objects', { ops: [chair('shot_camera')] }); ok(cascadeReceipt);
+    assert.deepEqual(cascadeReceipt.checks.overlapIds, []);
+  }
+  {
+    const f = setup();
+    seed(f, createSceneObject('cube'));
+    const receipt = execute(f, 'arrange_objects', { ops: [{ op: 'update', id: 'cube', hidden: true }] }); ok(receipt);
+    assert.equal(f.state.objects[0].hidden, true);
+    assert.equal(receipt.delta[0].after.hidden, true);
+    f.stores.objects.undo();
+    assert.equal(f.state.objects[0].hidden, false);
   }
   console.log('PASS failure atomicity: operation 2, references, support readiness, vertical camera, missing rig, avoid grammar and bounded correction');
   {

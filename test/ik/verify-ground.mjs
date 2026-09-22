@@ -35,6 +35,16 @@ check("cutouts are not ground", !isCollidable({ ...box, kind: "cutout" }));
 check("attached/child objects are not ground", !isCollidable({ ...box, parentId: "x" }) && !isCollidable({ ...box, attach: { to: "hand" } }));
 check("collide:false opts out", !isCollidable({ ...box, collide: false }));
 check("a flat (zero-height) object is not ground", !isCollidable({ ...box, height: 0 }));
+check("a hidden box is not ground", !isCollidable({ ...box, hidden: true }));
+const hiddenGround = createGroundSampler([{ ...box, hidden: true }]);
+check("a hidden box is not a standing surface", near(hiddenGround(0, 0), 0) && hiddenGround.surfaces.length === 0);
+const coveredChild = { id: "child", kind: "box", x: 0, z: 0, y: 0.2, height: 0.2, footprint: { width: 0.4, depth: 0.4 }, parent: "box" };
+const cascadeGround = createGroundSampler([{ ...box, hidden: true }, coveredChild]);
+check("a child of a hidden parent is not ground", near(cascadeGround(0, 0), 0));
+const carriedBox = { ...box, id: "carried", attach: { characterId: "a" } };
+const carriedCargo = { ...coveredChild, id: "cargo", parent: "carried" };
+const carriedGround = createGroundSampler([carriedBox, carriedCargo], { characters: [{ id: "a", hidden: true }] });
+check("a child of a prop on a hidden character is not ground", near(carriedGround(0, 0), 0) && carriedGround.surfaces.length === 0);
 check("sampler exposes its surfaces for debugging", ground.surfaces.length === 3 && ground.floorY === 0);
 
 if (failures) { console.log(`${failures} FAIL`); process.exit(1); }

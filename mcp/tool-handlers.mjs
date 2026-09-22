@@ -409,7 +409,8 @@ function sceneReport({ characterCursor = 0, objectCursor = 0, limit = 50 } = {})
 			const size = objectSize(object);
 			lines.push(
 				`  ${object.id}  ${object.name}  at x ${round(object.x)}, y ${round(object.y)}, z ${round(object.z)}` +
-					`  yaw ${round(object.rot, 1)}deg  size ${round(size.width)}x${round(size.height)}x${round(size.depth)}m`,
+					`  yaw ${round(object.rot, 1)}deg  size ${round(size.width)}x${round(size.height)}x${round(size.depth)}m` +
+					`${object.hidden ? " hidden" : ""}`,
 				`    rotX: ${round(object.rotX ?? 0, 1)}  rotZ: ${round(object.rotZ ?? 0, 1)}  color: ${object.color ?? null}  parent: ${object.parent ?? null}`,
 			);
 			if (object.path?.points?.length >= 2) {
@@ -1495,7 +1496,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 				title: "Move, rotate or scale an object",
 				description:
 					"Unlike place_object, update_object changes an existing prop instead of adding one. " +
-					"Every field is optional; omitted fields are left alone. Transforms go through the same clamp/snap path the studio's gizmo uses.",
+					"Every field is optional; omitted fields are left alone. Transforms go through the same clamp/snap path the studio's gizmo uses. hidden shows or hides the prop without deleting it.",
 				inputSchema: {
 					id: z.string().describe("object id from place_object or describe_scene"),
 					x: z.number().optional(),
@@ -1530,9 +1531,10 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 						.describe("travel path; null clears it and the object stands still again"),
 					height: z.number().positive().optional().describe("cutout or mesh height in metres"),
 					clay: z.boolean().optional().describe("mesh only: replace file materials with matte clay"),
+					hidden: z.boolean().optional().describe("true hides the prop without deleting it"),
 				},
 			},
-			async ({ id, x, y, z: zPos, facing, tilt, roll, scale, scale_x, scale_y, scale_z, color, name, path, height, clay }) => {
+			async ({ id, x, y, z: zPos, facing, tilt, roll, scale, scale_x, scale_y, scale_z, color, name, path, height, clay, hidden }) => {
 				const travelPath = path === null
 					? null
 					: path
@@ -1546,6 +1548,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 							...(travelPath !== undefined ? { path: travelPath } : {}),
 							...(height !== undefined ? { height } : {}),
 							...(clay !== undefined ? { clay } : {}),
+							...(hidden !== undefined ? { hidden } : {}),
 						});
 						return text(`Updated ${id}.\n\n${sceneReport()}`);
 					} catch (error) {
@@ -1575,6 +1578,7 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 				if (name !== undefined) patch.name = name;
 				if (height !== undefined) patch.height = height;
 				if (clay !== undefined) patch.clay = clay;
+				if (hidden !== undefined) patch.hidden = hidden;
 				sc.objects = updateSceneObject(sc.objects, id, patch);
 				return text(`Updated ${id}.\n\n${sceneReport()}`);
 			},

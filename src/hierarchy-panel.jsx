@@ -210,6 +210,15 @@ function indexParents(nodes, parent = null, parents = new Map()) {
  * (Rename / Duplicate / Delete / Frame) or the create catalogue, matching
  * Unity's Hierarchy right-click menu (docs/unity-reference.md §9.7).
  * Closes on Escape, on any outside mousedown, and after a pick. */
+function findHierarchyNode(nodes, id) {
+	for (const node of nodes ?? []) {
+		if (node.id === id) return node;
+		const nested = findHierarchyNode(node.children, id);
+		if (nested) return nested;
+	}
+	return null;
+}
+
 function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 	const rootRef = useRef(null);
 	// Deleting a scene document is not undoable, so Delete arms first and only
@@ -275,8 +284,15 @@ function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 						{ko("+ New scene", "+ 새 장면")}
 					</button>
 				</>
+			) : menu.kind === "character" ? (
+				<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
+					{menu.hidden ? ko("Show", "표시") : ko("Hide", "숨기기")}
+				</button>
 			) : menu.kind === "object" ? (
 				<>
+					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
+						{menu.hidden ? ko("Show", "표시") : ko("Hide", "숨기기")}
+					</button>
 					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("rename", menu.id)}>
 						{ko("Rename", "이름 바꾸기")}
 					</button>
@@ -310,6 +326,7 @@ function TreeRow({
 	onRenameCommit,
 	onRenameCancel,
 	onRowContextMenu,
+	onToggleHidden,
 	onRenameStart,
 	// The scene root row hands its name to the pill in `rowExtra`; printing it
 	// twice on one row is the duplication this panel just removed.
@@ -361,6 +378,14 @@ function TreeRow({
 		...(draggableRow
 			? {
 					onDragStart: (event) => {
+						// The eye and the fold caret sit inside the draggable row.
+						// A press on either must not start a move, or the click is
+						// swallowed and a small slip reparents the row.
+						if (event.target instanceof Element && event.target.closest(".hierarchy-eye, .hierarchy-toggle")) {
+							event.preventDefault();
+							event.stopPropagation();
+							return;
+						}
 						event.stopPropagation();
 						event.dataTransfer.setData(HIERARCHY_DRAG_MIME, node.id);
 						event.dataTransfer.effectAllowed = "move";
@@ -441,6 +466,7 @@ function TreeRow({
 			className={"hierarchy-row-wrap" + (selectedId === node.id ? " selected" : "")}
 			style={{ "--hierarchy-depth": depth }}
 			data-node-id={node.id}
+			data-own-hidden={node.hidden ? "true" : undefined}
 			data-drop={drop || rowDropTarget ? (dropOver || rowDropOver ? "over" : "target") : undefined}
 			draggable={draggableRow || undefined}
 			{...(dropEvents ?? {})}
@@ -504,6 +530,26 @@ function TreeRow({
 					{badge !== null && badge !== undefined && badge !== 0 && <span className="hierarchy-badge">{badge}</span>}
 				</button>
 			)}
+			{(node.kind === "object" || node.kind === "character") && onToggleHidden && (
+				<button
+					type="button"
+					className="hierarchy-eye"
+					data-hidden={node.hidden ? "true" : undefined}
+					aria-pressed={node.hidden === true}
+					aria-label={node.hidden ? (isKo ? `${label} 표시` : `Show ${label}`) : (isKo ? `${label} 숨기기` : `Hide ${label}`)}
+					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						onToggleHidden(node.id);
+					}}
+				>
+					<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+						<path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4S1.5 8 1.5 8z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+						<circle cx="8" cy="8" r="1.7" fill="currentColor" />
+						{node.hidden && <path d="M3 13 13 3" stroke="currentColor" strokeWidth="1.3" />}
+					</svg>
+				</button>
+			)}
 			{rowExtra}
 		</div>
 	);
@@ -525,6 +571,7 @@ export default function HierarchyPanel({
 	onDuplicateObject,
 	onDeleteObject,
 	onFrameObject,
+	onToggleHidden,
 	propsDrop = null,
 	reparent = null,
 	// Hierarchy ids an agent receipt just changed. The host owns how long they
@@ -650,8 +697,16 @@ export default function HierarchyPanel({
 	const openRowMenu = (event, id) => {
 		event.preventDefault();
 		event.stopPropagation(); // a row pick must not also open the create menu
-		if (sceneObjectIdFromHierarchy(id) !== null) {
-			setContextMenu({ x: event.clientX, y: event.clientY, height: 148, kind: "object", id });
+		const node = findHierarchyNode(hierarchyNodes, id);
+		if (node?.kind === "object" || node?.kind === "character") {
+			setContextMenu({
+				x: event.clientX,
+				y: event.clientY,
+				height: node.kind === "object" ? 180 : 44,
+				kind: node.kind,
+				id,
+				hidden: node.hidden === true,
+			});
 		} else if (id === SCENE_ROOT_ID) {
 			// The root row is the scene document: its own verbs, never the
 			// Add-Object catalogue.
@@ -698,6 +753,10 @@ export default function HierarchyPanel({
 		}
 		if (action === "scene-create") {
 			onSceneCreate?.();
+			return;
+		}
+		if (action === "visibility") {
+			onToggleHidden?.(hierarchyId);
 			return;
 		}
 		const objectId = sceneObjectIdFromHierarchy(hierarchyId);
@@ -756,6 +815,7 @@ export default function HierarchyPanel({
 					onRenameCommit={(name) => commitRename(node.id, name)}
 					onRenameCancel={cancelRename}
 					onRowContextMenu={openRowMenu}
+					onToggleHidden={onToggleHidden}
 					// The root row names the scene document, and a double-click on a
 					// document name is where every file browser puts rename.
 					onRenameStart={sceneRoot ? () => setEditingId(node.id) : null}

@@ -295,7 +295,7 @@ function registerTests() {
 	});
 	test("D6 shared physical projection includes inactive IK and path timing, excludes view/names/tints", () => {
 		assert.equal(typeof contextTools.physicsFingerprintInput,"function");
-		const data = { objects:[{id:"prop-1",renderer:"cube",position:point(),rotationDeg:point(),scale:{x:1,y:1,z:1},footprint:{width:1,depth:1},height:1,supportY:1,parentId:null,attachment:null,path:null}], characters:[{id:"char-alex",incarnation:"i-1",modelId:"model-1",rigId:"rig-1",rigReady:true,hidden:false,position:point(),yawDeg:0,scale:1,takeId:null,sessionMotionId:null,motionRevision:0,calibrationRevision:0,ikRevision:0,waypoints:[]}],floor:{model:"flat",y:0}, frameCount:144 };
+		const data = { objects:[{id:"prop-1",renderer:"cube",position:point(),rotationDeg:point(),scale:{x:1,y:1,z:1},footprint:{width:1,depth:1},height:1,supportY:1,parentId:null,attachment:null,path:null,hidden:false}], characters:[{id:"char-alex",incarnation:"i-1",modelId:"model-1",rigId:"rig-1",rigReady:true,hidden:false,position:point(),yawDeg:0,scale:1,takeId:null,sessionMotionId:null,motionRevision:0,calibrationRevision:0,ikRevision:0,waypoints:[]}],floor:{model:"flat",y:0}, frameCount:144 };
 		data.characters.push({ ...structuredClone(data.characters[0]), id: "inactive-b", incarnation: "i-2" });
 		const first = contextTools.physicsFingerprintInput(data);
 		const cosmetic=structuredClone(data); cosmetic.view={frame:80}; cosmetic.characters[0].name="renamed"; cosmetic.characters[0].tint="#fff";
@@ -305,6 +305,8 @@ function registerTests() {
 		const moved=structuredClone(path); moved.objects[0].path.speed=2; assert.notDeepEqual(contextTools.physicsFingerprintInput(moved),contextTools.physicsFingerprintInput(path));
 		const timing = structuredClone(path); timing.objects[0].path.timing = { cuts: [], envelopes: [Array(24).fill(1)] };
 		assert.notDeepEqual(contextTools.physicsFingerprintInput(timing), contextTools.physicsFingerprintInput(path));
+		const hidden = structuredClone(data); hidden.objects[0].hidden = true;
+		assert.notDeepEqual(contextTools.physicsFingerprintInput(hidden), first);
 		assert.ok(Object.isFrozen(first.characters[0]));
 	});
 	test("D7 receipt variants require identity, revisions, actual readback and undo evidence", () => {
@@ -335,7 +337,7 @@ function registerTests() {
 		for(const position of [{world:point()},{relativeTo:"ref",basis:"subject",side:"left",gapM:0.3,support:"floor"},{relativeTo:"ref",basis:"shot_camera",side:"behind",gapM:0,support:{objectId:"table"}},{between:["a","b"],fraction:0.5,support:"floor"},{onObject:"table",offsetXZ:{x:0,z:1}}]) {
 			for(const facing of [{yawDeg:90},{towardId:"a"},{sameAsId:"a"},{awayFromId:"a"}]) protocol.validateStudioCommand({name:"arrange_objects",args:{ops:[{...createOp(),position,facing}]}});
 		}
-		for(const op of [{op:"update",id:"a",rotationDeg:point()},{op:"remove",id:"a"},{op:"group",parentId:"a",childIds:["b"]},{op:"ungroup",childIds:["b"]}]) protocol.validateStudioCommand({name:"arrange_objects",args:{ops:[op]}});
+		for(const op of [{op:"update",id:"a",rotationDeg:point()},{op:"update",id:"a",hidden:true},{op:"remove",id:"a"},{op:"group",parentId:"a",childIds:["b"]},{op:"ungroup",childIds:["b"]}]) protocol.validateStudioCommand({name:"arrange_objects",args:{ops:[op]}});
 		protocol.validateStudioCommand({name:"arrange_objects",args:{ops:[{...createOp(),position:{relativeTo:"a",basis:"world",side:"right",gapM:0.3,support:"floor"}}],collisionPolicy:"avoid"}});
 		for(const op of [{op:"update",characterId:"a",scale:1.5},{op:"remove",characterId:"a"}]) protocol.validateStudioCommand({name:"arrange_characters",args:{ops:[op]}});
 		protocol.validateStudioCommand({name:"frame_shot",args:{subjectIds:["a"],keyAtFrame:0,framing:{exact:{position:point(),lookAt:{x:0,y:0,z:0},focalMm:35}}}});

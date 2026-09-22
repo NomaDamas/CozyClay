@@ -9668,6 +9668,25 @@ input[type=range] {
 	box-shadow: none;
 }
 
+.hierarchy-eye {
+	flex: 0 0 22px;
+	display: grid;
+	place-items: center;
+	border: 0;
+	background: transparent;
+	color: #c5ccd8;
+	cursor: pointer;
+	padding: 0;
+}
+
+.hierarchy-eye[data-hidden="true"] {
+	color: #7d8696;
+}
+
+.hierarchy-row-wrap[data-own-hidden="true"] {
+	opacity: 0.45;
+}
+
 
 
 

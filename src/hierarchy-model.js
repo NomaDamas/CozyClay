@@ -101,38 +101,45 @@ function characterRowId(entry, listIndex) {
 	return listIndex === 0 ? "characterA" : listIndex === 1 ? "characterB" : `character:${entry.id}`;
 }
 
-/** The visible cast as `characterId → row id`; hidden entries have no row, so
- * anything attached to them has nowhere to nest and falls back to Props. */
-function visibleCharacterRows(characters) {
+/** Every cast member as `characterId → row id`, including hidden ones.
+ *  A prop attached to a hidden character stays under that row. An unknown
+ *  characterId still has no row and falls back to Props. */
+function characterRows(characters) {
 	const rows = new Map();
 	if (!Array.isArray(characters)) return rows;
 	characters.forEach((entry, listIndex) => {
-		if (!entry || entry.hidden) return;
+		if (!entry || typeof entry.id !== "string") return;
 		rows.set(entry.id, characterRowId(entry, listIndex));
 	});
 	return rows;
 }
 
+function objectRow(object, label) {
+	return {
+		id: `object:${object.id}`,
+		label,
+		kind: "object",
+		hidden: object.hidden === true,
+	};
+}
+
 export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 	// An attached prop is carried BY a character, so it reads under that
 	// character rather than in the flat Props list it no longer follows.
-	const characterRows = visibleCharacterRows(characters);
+	const characterRowsById = characterRows(characters);
 	const attachedRows = new Map(); // character row id → attached object rows
 	const attachedIds = new Set();
 	for (const object of sceneObjects) {
 		const attach = object?.attach;
 		if (!attach || typeof attach !== "object") continue;
-		const rowId = characterRows.get(attach.characterId);
-		// A dangling / hidden characterId keeps the object in Props: a prop that
+		const rowId = characterRowsById.get(attach.characterId);
+		// A dangling characterId keeps the object in Props: a prop that
 		// vanishes from the tree is worse than one filed in the wrong place.
+		// A hidden character still has a row, so the prop stays under it.
 		if (!rowId) continue;
 		attachedIds.add(object.id);
 		const boneLabel = attachBoneLabel(attach.bone);
-		const row = {
-			id: `object:${object.id}`,
-			label: boneLabel ? `${object.name} · ${boneLabel}` : object.name,
-			kind: "object",
-		};
+		const row = objectRow(object, boneLabel ? `${object.name} · ${boneLabel}` : object.name);
 		if (attachedRows.has(rowId)) attachedRows.get(rowId).push(row);
 		else attachedRows.set(rowId, [row]);
 	}
@@ -149,7 +156,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 				listed
 					.filter((object) => (object.parent ?? null) === parentId)
 					.map((object) => {
-						const row = { id: `object:${object.id}`, label: object.name, kind: "object" };
+						const row = objectRow(object, object.name);
 						const nested = childrenOf(object.id);
 						if (nested.length) row.children = nested;
 						return row;
@@ -163,7 +170,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 				(object) => (object.parent ?? null) === null || !ids.has(object.parent),
 			);
 			next.children = rooted.map((object) => {
-				const row = { id: `object:${object.id}`, label: object.name, kind: "object" };
+				const row = objectRow(object, object.name);
 				const nested = childrenOf(object.id);
 				if (nested.length) row.children = nested;
 				return row;
@@ -174,7 +181,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 		return next;
 	};
 	const nodes = HIERARCHY_NODES.map(clone);
-	// The cast is list-driven: one row per visible character. The first two
+	// The cast is list-driven: one row per character, hidden ones included. The first two
 	// keep the legacy row ids (characterA/characterB) that selection, IK and
 	// the inspector already route to; extras carry their character id.
 	if (Array.isArray(characters)) {
@@ -183,7 +190,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 			// Row ids follow the entry's LIST index so they match the viewport
 			// pickId (A/B/charId) stamped by the Character renderer in App.jsx.
 			group.children = characters.flatMap((entry, listIndex) => {
-				if (entry.hidden) return [];
+				if (!entry) return [];
 				const id = characterRowId(entry, listIndex);
 				// Every cast member carries its own rig subtree (#78) — ids are
 				// namespaced per row (#76) and IK state is per character (#77), so
@@ -197,6 +204,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 					id,
 					label: `Character ${listIndex + 1}`,
 					kind: "character",
+					hidden: entry.hidden === true,
 					...(children.length ? { children } : {}),
 				}];
 			});

@@ -1,7 +1,7 @@
 // Studio composites prepare private domain drafts; the App owns publication,
 // history, gesture fences and semantic revision/telemetry. No UI callbacks here.
 import { Euler, Vector3, PerspectiveCamera } from 'three';
-import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, supportHeightForObject, OBJECT_LIBRARY } from './scene-objects.js';
+import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, isEffectivelyHidden, supportHeightForObject, OBJECT_LIBRARY } from './scene-objects.js';
 import { createCharacterEntry, createSceneStage } from './scenes.js';
 import { createShotAuthoringDocument } from './shot-authoring.js';
 import { elementByPath } from './studio-elements.js';
@@ -57,7 +57,7 @@ function support(spec, state) {
   const id = spec.onObject ?? (typeof spec.support === 'object' ? spec.support.objectId : null);
   if (!id) return { y: state.floorY, label: 'floor' };
   const object = entityById(state, id);
-  if (!object.renderer || object.renderer === 'cutout' || ['sphere', 'capsule', 'cone', 'car', 'small-plane'].includes(object.renderer) || object.path || object.attach || Math.abs(object.rotX) > EPS || Math.abs(object.rotZ) > EPS) fail('TARGET_NOT_READY', 'Support must be a stationary solid upright surface.');
+  if (!object.renderer || object.renderer === 'cutout' || ['sphere', 'capsule', 'cone', 'car', 'small-plane'].includes(object.renderer) || object.path || object.attach || Math.abs(object.rotX) > EPS || Math.abs(object.rotZ) > EPS || isEffectivelyHidden(object, state.objects, state.characters)) fail('TARGET_NOT_READY', 'Support must be a stationary solid upright surface.');
   return { y: object.y + supportHeightForObject(object) * object.scaleY, label: `object:${id}`, object };
 }
 function facingYaw(spec, entity, state) {
@@ -120,7 +120,7 @@ function place(entity, op, state, ports) {
 }
 function overlapsFor(entity, state, ports) {
   const own = aabb(geometry(entity, state, ports));
-  return [...state.objects, ...state.characters].filter(e => e.id !== entity.id && !e.hidden).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
+  return [...state.objects, ...state.characters].filter(e => e.id !== entity.id && !isEffectivelyHidden(e, state.objects, state.characters)).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
 }
 function avoid(entity, relation, state, ports) {
   const blocked = overlapsFor(entity, state, ports);
@@ -479,7 +479,7 @@ function readback(plan, state) {
     }
     const entity = state[plan.domain === 'objects' ? 'objects' : 'characters'].find(e => e.id === id);
     return { id, after: !entity ? { removed: true } : { position: pos(entity), yawDeg: entity.rot,
-      ...(entity.renderer ? { name: entity.name, renderer: entity.renderer, rotationDeg: { x: entity.rotX, y: entity.rot, z: entity.rotZ }, scale: { x: entity.scaleX, y: entity.scaleY, z: entity.scaleZ }, parentId: entity.parent, color: entity.color } : { name: entity.subject, scale: entity.scale, modelId: entity.model, hidden: entity.hidden, activeCharacterId: state.activeCharacterId }) } };
+      ...(entity.renderer ? { name: entity.name, renderer: entity.renderer, rotationDeg: { x: entity.rotX, y: entity.rot, z: entity.rotZ }, scale: { x: entity.scaleX, y: entity.scaleY, z: entity.scaleZ }, parentId: entity.parent, color: entity.color, hidden: entity.hidden === true } : { name: entity.subject, scale: entity.scale, modelId: entity.model, hidden: entity.hidden, activeCharacterId: state.activeCharacterId }) } };
   });
 }
 /** ports: synchronous read/bounds/commit. commit must atomically publish

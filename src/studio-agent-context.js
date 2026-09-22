@@ -90,7 +90,7 @@ const vec = StudioSchemas.Vec3;
 const timing = object({ cuts: array(object({ t: nonnegative, d: nonnegative }), 64), envelopes: array(array(nonnegative, 24, 24), 65, 1) });
 const path = object({ points: array(vec, 64, 2), speed: nonnegative, faceTravel: bool, loop: bool, extend: bool, timing: nullable(timing) });
 const physicalObject = object({ id, renderer: id, position: vec, rotationDeg: vec, scale: object({ x: positive, y: positive, z: positive }),
-	footprint: object({ width: nonnegative, depth: nonnegative }), height: nonnegative, supportY: num, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), path: nullable(path) });
+	footprint: object({ width: nonnegative, depth: nonnegative }), height: nonnegative, supportY: num, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), path: nullable(path), hidden: bool });
 const physicalCharacter = object({ id, incarnation: id, modelId: nullable(id), rigId: nullable(id), rigReady: bool, hidden: bool, position: vec, yawDeg: num, scale: positive,
 	takeId: nullable(id), sessionMotionId: nullable(id), motionRevision: int, calibrationRevision: int, ikRevision: int,
 	waypoints: array(object({ frame: int, position: vec }), 10000) });

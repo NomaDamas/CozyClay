@@ -69,6 +69,20 @@ const shots = [{
 			scaleX: 1,
 			scaleY: 1.2,
 			scaleZ: 0.8,
+		}, {
+			id: "crate",
+			name: "Crate",
+			hidden: true,
+			x: 1,
+			y: 0,
+			z: 1,
+		}, {
+			id: "cup",
+			name: "Cup",
+			parent: "crate",
+			x: 1,
+			y: 1,
+			z: 1,
 		}],
 	};
 	const before = JSON.stringify({ scene, shot: shots[0] });
@@ -76,7 +90,8 @@ const shots = [{
 	assert.deepEqual(Object.keys(metadata.camera), ["pos", "yaw", "pitch", "fovDeg", "focalMm", "sensorId"]);
 	assert.deepEqual(metadata.range, { startFrame: 12, endFrame: 35, fps: 24 });
 	assert.deepEqual(metadata.lens, { focalMm: 50, sensorId: "fullFrame", verticalApertureMm: 20.25 });
-	assert.equal(metadata.blocking.length, 2, "hidden cast is omitted; visible cast and props remain");
+	assert.equal(metadata.blocking.length, 2, "hidden cast and effectively hidden props are omitted; visible cast and props remain");
+	assert.ok(!metadata.blocking.some((entry) => entry.id === "crate" || entry.id === "cup"));
 	assert.deepEqual(metadata.blocking[0].pos, { x: 1.2, y: 0.1, z: -0.6 }, "blocking samples the shot's first inclusive frame");
 	assert.deepEqual(metadata.blocking[1].rotationDeg, { x: 5, y: 30, z: -2 });
 	assert.equal(JSON.stringify({ scene, shot: shots[0] }), before, "metadata export is pure");

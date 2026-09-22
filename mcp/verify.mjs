@@ -124,6 +124,12 @@ check("last character is protected", lastOne.includes("at least one character"),
 // Re-cast the pair the prompt checks below rely on.
 await call("place_character", { character: "A", subject: "a detective in a wet trench coat" });
 await call("add_character", { subject: "a courier holding a package", x: 1.6, z: 0.4, facing: -150 });
+const hiddenCast = await call("place_character", { character: "B", hidden: true });
+const hiddenCastLine = hiddenCast.split("\n").find((line) => /^\s+B /.test(line)) ?? "";
+check("place_character hidden marks the cast line", hiddenCastLine.includes(" hidden"), hiddenCastLine);
+const shownCast = await call("place_character", { character: "B", hidden: false });
+const shownCastLine = shownCast.split("\n").find((line) => /^\s+B /.test(line)) ?? "";
+check("place_character hidden false clears the cast marker", !shownCastLine.includes(" hidden"), shownCastLine);
 
 /* --------------------------------- the set ------------------------------- */
 
@@ -159,6 +165,13 @@ check("update_object reflects the new name", renamed.includes("Building Renamed"
 const renamedScene = await call("describe_scene");
 check("describe_scene shows the renamed object", renamedScene.includes("Building Renamed"), renamedScene);
 check("describe_scene drops the old name", !renamedScene.includes("Building A"), renamedScene);
+
+const hiddenObject = await call("update_object", { id: namedId, hidden: true });
+const hiddenObjectLine = hiddenObject.split("\n").find((line) => line.includes(namedId) && line.includes("yaw")) ?? "";
+check("update_object hidden marks the set line", hiddenObjectLine.includes(" hidden"), hiddenObjectLine);
+const shownObject = await call("update_object", { id: namedId, hidden: false });
+const shownObjectLine = shownObject.split("\n").find((line) => line.includes(namedId) && line.includes("yaw")) ?? "";
+check("update_object hidden false clears the set marker", !shownObjectLine.includes(" hidden"), shownObjectLine);
 
 // place_object accepts an optional `parent`; the child is attached under the
 // parent and is carried when the parent moves via update_object.

@@ -275,7 +275,7 @@ const cases = {
 		const puck = source.slice(source.indexOf("<KeyLightPuck"), source.indexOf("<KeyLightPuck") + 900);
 		assert.ok(/onChange=\{\(patch\) => changeKeyLight\("puck", patch\)\}/.test(puck), "the sun puck records on its first move");
 		assert.ok(/onDragEnd=\{endGestureUndo\}/.test(puck), "the sun puck closes its gesture with the prop it already accepts");
-		const gizmo = source.slice(source.indexOf("object={cameraGizmoObject ?? lightGizmoObject ?? selectedSceneObject}"), source.indexOf("onGroundClick={waypointMode"));
+		const gizmo = source.slice(source.indexOf("<ObjectGizmo"), source.indexOf("onGroundClick={waypointMode"));
 		assert.ok(/id === "__keylight__" \? changeKeyLightFromGizmo/.test(gizmo), "the gizmo still routes the light through its own writer");
 		assert.ok(/if \(lightGizmoObject\) endGestureUndo\(\);/.test(gizmo), "the light gizmo closes its gesture on drag end");
 		const transform = source.slice(source.indexOf('title={workflowMode === "motion" ? ko("Placement"'), source.indexOf('<Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Rig"'));

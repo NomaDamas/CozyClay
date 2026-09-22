@@ -125,10 +125,21 @@ const strayTree = buildHierarchyNodes(
 	[{ id: "cast-1" }, { id: "cast-2", hidden: true }],
 );
 expect("unknown characterId falls back to Props", rowIds(findRow(strayTree, "props")).includes("object:bat"));
-expect("hidden characterId falls back to Props", rowIds(findRow(strayTree, "props")).includes("object:hat"));
+expect("a prop on a hidden character stays under that character", rowIds(findRow(strayTree, "characterB")).includes("object:hat"));
 expect("a null attach is an ordinary prop", rowIds(findRow(strayTree, "props")).includes("object:ball"));
 expect("the fallback label carries no bone", findRow(strayTree, "object:bat")?.label === "Bat");
-expect("hidden characters still own no row", !findRow(strayTree, "characterB"));
+expect("a hidden character keeps its row", findRow(strayTree, "characterB")?.hidden === true);
+expect("a visible character row is not marked hidden", findRow(strayTree, "characterA")?.hidden !== true);
+expect(
+	"a hidden prop keeps its row and a visible child keeps its own eye on",
+	(() => {
+		const tree = buildHierarchyNodes([
+			{ id: "parent", name: "Parent", hidden: true },
+			{ id: "child", name: "Child", parent: "parent" },
+		]);
+		return findRow(tree, "object:parent")?.hidden === true && findRow(tree, "object:child")?.hidden !== true;
+	})(),
+);
 
 // Grouping is untouched by attachment: rooted parents keep nesting, orphans
 // keep surfacing at the top level.
@@ -187,6 +198,9 @@ expect("the scene list is the portaled Dropdown, so the panel cannot clip it", p
 expect("the scene list ends with a create item", panelSource.includes('{ value: NEW_SCENE_OPTION, label: ko("+ New scene", "+ 새 장면") }'));
 expect("the pill's clicks never reach the row, so picking a scene cannot fold the tree", panelSource.includes("onClick={(event) => event.stopPropagation()}"));
 expect("the root row right-click opens scene verbs, not the object catalogue", panelSource.includes("} else if (id === SCENE_ROOT_ID) {") && panelSource.includes('kind: "scene",'));
+expect("object and character rows get an eye that does not also select the row", panelSource.includes('className="hierarchy-eye"') && panelSource.includes("event.stopPropagation()") && panelSource.includes("onToggleHidden(node.id)"));
+expect("a character right-click opens Hide/Show, not the add catalogue", panelSource.includes('node?.kind === "object" || node?.kind === "character"') && panelSource.includes('kind: node.kind') && panelSource.includes('menu.kind === "character"'));
+expect("the eye is only offered for objects and characters", panelSource.includes('node.kind === "object" || node.kind === "character"'));
 expect(
 	"the root row prints the scene name once: the pill is the name",
 	panelSource.includes("showLabel={!sceneRoot}") &&

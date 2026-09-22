@@ -152,6 +152,7 @@ import {
 	duplicateCutoutOptions,
 	duplicateMeshOptions,
 	dropToSurfacePatch,
+	isEffectivelyHidden,
 	normalizeObjectColor,
 	objectSize,
 	placementInFront,
@@ -687,7 +688,7 @@ export function createStudioAppBinding(ports) {
 			objects: raw.objects.map(o => ({ id: o.id, renderer: o.renderer,
 				position: { x: o.x, y: o.y ?? 0, z: o.z }, rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 },
 				scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ }, footprint: o.footprint, height: o.height,
-				supportY: supportHeightForObject(o), parentId: o.parent ?? null, attachment: o.attach ?? null, path: o.path ?? null })),
+				supportY: supportHeightForObject(o), parentId: o.parent ?? null, attachment: o.attach ?? null, path: o.path ?? null, hidden: o.hidden === true })),
 			characters: raw.characters.map(c => {
 				const t = raw.targets.get(c.id), summary = characters.find(row => row.id === c.id);
 				const motionKey = motionContentKey(t?.motion), calibrationKey = calibrationContentKey(t?.motion?.sceneCalibration);
@@ -1659,6 +1660,19 @@ export default function App() {
 		if (hierarchyId?.startsWith("character:")) return hierarchyId.slice(10);
 		return null;
 	};
+	const toggleHierarchyHidden = (hierarchyId) => {
+		const objectId = sceneObjectIdFromHierarchy(hierarchyId);
+		if (objectId) {
+			const object = sceneObjects.find((item) => item.id === objectId);
+			if (!object) return;
+			changeSceneObject(objectId, { hidden: object.hidden !== true });
+			return;
+		}
+		const charId = charIdFromHierarchyId(hierarchyId);
+		if (!charId) return;
+		recordCharacterUndo();
+		editCharacters((list) => list.map((item) => (item.id === charId ? { ...item, hidden: item.hidden !== true } : item)));
+	};
 	// State, not a ref: a ref written inside an effect never re-renders, so
 	// with an idle app the active character silently stayed behind the row
 	// the user just clicked.
@@ -1892,7 +1906,7 @@ export default function App() {
 	function dropSelectedSceneObject() {
 		const object = sceneObjects.find((item) => item.id === selectedSceneObjectId) ?? null;
 		if (!object) return;
-		const patch = dropToSurfacePatch(object, sceneObjects.filter((item) => item.id !== object.id));
+		const patch = dropToSurfacePatch(object, sceneObjects.filter((item) => item.id !== object.id), characters);
 		if (patch === null) {
 			setToast(ko("Nothing to drop", "내려놓을 대상이 없어요"));
 			return;
@@ -3091,6 +3105,10 @@ export default function App() {
 			return { ...object, autoColor: autoColorHex(object.id) };
 		});
 	}, [animatedSceneObjects, autoColor]);
+	const stageSceneObjects = useMemo(
+		() => displaySceneObjects.filter((object) => !isEffectivelyHidden(object, sceneObjects, characters)),
+		[displaySceneObjects, sceneObjects, characters],
+	);
 
 	/* ------------------------ carried props (attachment) ------------------- */
 	// A prop attached to a character rides a LIVE frame in the scene graph, so
@@ -4566,6 +4584,7 @@ export default function App() {
 					renderer: object.renderer,
 					x: object.x, y: object.y, z: object.z, rot: object.rot,
 					rotX: object.rotX ?? 0, rotZ: object.rotZ ?? 0, color: object.color ?? null,
+					hidden: object.hidden === true,
 					scaleX: object.scaleX, scaleY: object.scaleY, scaleZ: object.scaleZ,
 					parent: object.parent ?? null,
 					footprint: object.footprint, height: object.height,
@@ -4885,6 +4904,7 @@ export default function App() {
 				}
 				if (Number.isFinite(args.height)) patch.height = args.height;
 				if (typeof args.clay === "boolean") patch.clay = args.clay;
+				if (typeof args.hidden === "boolean") patch.hidden = args.hidden;
 				applyObjectMutation((objects) => updateSceneObject(objects, args.id, patch));
 				return { id: args.id };
 			},
@@ -12153,6 +12173,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					onDuplicateObject={duplicateSelectedSceneObject}
 					onDeleteObject={deleteSceneObject}
 					onFrameObject={frameSelection}
+					onToggleHidden={toggleHierarchyHidden}
 					propsDrop={propsDrop}
 					reparent={hierarchyReparent}
 					touchedIds={agentTouchedRows}
@@ -12516,7 +12537,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							/>
 							{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}
 							<SetProps
-								objects={displaySceneObjects}
+								objects={stageSceneObjects}
 								selectedId={selectedSceneObjectId}
 								frameRef={propFrameRef}
 								take={{ frameCount: tlFrameCount, fps: tlFps }}
@@ -12737,7 +12758,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									store.settle();
 									setSelectedHierarchyId(id.startsWith("object:") ? id : id === "cam" ? "camera" : charKeyToHierarchyId(id));
 								}}
-								sceneObjects={displaySceneObjects}
+								sceneObjects={stageSceneObjects}
 								selectedSceneObjectId={selectedSceneObjectId}
 								onMoveSceneObject={changeSceneObject}
 								onObjectMoveStart={beginSceneTransaction}
@@ -12827,7 +12848,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							    the plan owns the big pane (the pucks are the handles there)
 							    and while posing/IK owns the pointer. */}
 							<ObjectGizmo
-								object={cameraGizmoObject ?? lightGizmoObject ?? selectedSceneObject}
+								object={cameraGizmoObject ?? lightGizmoObject ?? (selectedSceneObject && !isEffectivelyHidden(selectedSceneObject, sceneObjects, characters) ? selectedSceneObject : null)}
 								objects={sceneObjects}
 								mode={lightGizmoObject ? "move" : cameraGizmoObject ? (gizmoMode === "scale" ? "move" : gizmoMode) : gizmoMode}
 								snap={snapEnabled}
@@ -14166,12 +14187,10 @@ function resizePromptClip(id, edge, rawFrame) {
 										value={selectedSceneObject.parent ?? ""}
 										onChange={(event) => {
 											const parent = event.target.value || null;
-											const next = setSceneObjectParent(sceneObjects, selectedSceneObject.id, parent);
-											if (next !== sceneObjects) {
-												const token = beginSceneTransaction({ owner: "reparent", cancel: () => {} });
-												setSceneObjects(next);
-												endSceneTransaction(token, { commit: true });
-											}
+											// The history store is the only writer. A direct setState here
+											// leaves the store on the old list, so the next object edit
+											// (hide, move) puts that list back and the group disappears.
+											store.applyAtomic((objects) => setSceneObjectParent(objects, selectedSceneObject.id, parent));
 										}}
 									>
 										<option value="">{ko("(none)", "(없음)")}</option>
