@@ -1,5 +1,39 @@
 # Changelog
 
+## 1.10.0
+
+Props and characters can now be hidden without being deleted, the Studio top
+bar no longer collapses at 1100px when a live workspace handle is shown, and
+the MorphGS mocap experiment gets its conversion scripts, a playback
+regression test and a cluster setup script under `tools/morphgs/`.
+
+Studio
+
+- Hide or show a prop or a character from the hierarchy eye and the row
+  context menu. The row, selection and inspector stay; move handles appear
+  only while the object is on stage. A hidden parent or a hidden character
+  takes its children and carried props off the stage, out of collision and
+  off the ground while their own eye stays on. Hidden state survives
+  save/reload and Ctrl+Z. (#416, by @bjoernfal)
+- MCP `update_object` and the Studio agent's object `update` op accept
+  `hidden`; `describe_scene` marks hidden props. The OTIO cut-list export
+  leaves hidden props out of the blocking metadata. (#416)
+- The Inspector Parent select writes through the history store, so a
+  reparent no longer disappears on the next object edit. (#416)
+- The `Live workspace <uuid>` handle in the top bar stays on one line and
+  truncates with an ellipsis instead of wrapping over Settings and Export at
+  1100px; the responsive browser QA now asserts that top-bar chrome does
+  not overlap. (#321)
+
+Tools
+
+- `tools/morphgs/`: `fbx2morphgs.mjs` (x-bot FBX → MorphGS mesh + compressed
+  rig, drops the zero-length duplicate bones FBXLoader creates and appends the
+  required `fixed_joint` line), `morphgs-to-cskel27.mjs` (rot_params +
+  pred_joints → playback NPZ), `setup-on-cluster.sh`, `demo-gate.sh` and the
+  `--mode none` preprocess patch, with `test/verify-morphgs-exporter.mjs`
+  checking the exporter against MorphGS's own Animation.step. (#415)
+
 ## 1.9.0
 
 The Agent panel moves onto the open-source pi harness with six model
