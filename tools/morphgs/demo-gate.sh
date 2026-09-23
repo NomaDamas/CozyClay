@@ -10,6 +10,8 @@ cd "$MORPHGS_ROOT"
 if [[ "${MORPHGS_SKIP_DOWNLOAD:-0}" != 1 ]]; then
   uv run --with gdown python -m gdown "$DEMO_ID" 2>&1 | tee "$LOG_DIR/demo-download.log"
 fi
+# gdown leaves the archive intact; MorphGS expects demo/processed_videos and demo/characters.
+[[ -d demo/processed_videos/tennis ]] || unzip -q -o demo.zip
 VENV_DIR="${MORPHGS_VENV:-.venv}"
 [[ -x "$VENV_DIR/bin/python" ]] || VENV_DIR="venv"
 source "$VENV_DIR/bin/activate"
