@@ -1,17 +1,26 @@
 # Changelog
 
-## Unreleased
+## 1.9.0
+
+The Agent panel moves onto the open-source pi harness with six model
+providers, the Studio gains a gated Fal H3 motion workflow with a
+mocap-readable mannequin, and the codebase sheds its dead exports and
+committed research artifacts. **Node 22.19 is the new floor**, and Agent
+sessions saved by earlier versions are skipped, not migrated.
+
+Agent
 
 - The Agent panel runs on the open-source pi agent harness
   (`@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`, MIT), which
-  the sidecar loads only when a turn starts. Node 22.19 is the new floor.
-- Five model providers instead of one: ChatGPT (the same Codex sign-in),
-  Anthropic, OpenAI, Google Gemini and OpenRouter. Model ids read
-  `provider/model`, and a bare id still resolves to the ChatGPT provider.
-  API keys come from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`
-  or `GOOGLE_API_KEY`, and `OPENROUTER_API_KEY`, or from
-  `~/.config/cozyclay/providers.json` (mode 0600), managed through
-  `GET/PUT/DELETE /agent/providers`, which never return key material.
+  the sidecar loads only when a turn starts.
+- Six model providers instead of one: ChatGPT (the same Codex sign-in),
+  Anthropic, OpenAI, Google Gemini, OpenRouter and a self-hosted CLIProxyAPI.
+  Model ids read `provider/model`, and a bare id still resolves to the ChatGPT
+  provider. API keys come from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENROUTER_API_KEY` and
+  `CLIPROXY_API_KEY`, or from `~/.config/cozyclay/providers.json` (mode 0600),
+  managed through `GET/PUT/DELETE /agent/providers`, which never return key
+  material. Saved keys are validated before they are advertised as usable.
 - A running Workflow turn can be steered: `POST /agent/turn/<turnId>/steer`
   hands the text to the model at the next step of the same turn instead of
   stopping it. Studio turns keep their frozen envelopes and refuse with
@@ -19,12 +28,47 @@
 - Conversations are stored in a new v2 transcript format that keeps each
   provider's own message fields. Sessions saved before this version are
   ignored, not migrated: the files stay on disk and are skipped by History.
-- Look through has one entry in the Shot monitor; the on-screen Shot camera
-  indicator and Esc return to the free camera without a duplicate toolbar toggle.
+- Images can be pasted or dropped into the Agent composer and travel with the
+  turn; pasted attachments come back as thumbnails in a resumed session.
+- Studio Agent sessions persist across reloads, and the shared panel is split
+  into a surface-neutral core plus a Studio adapter whose receipts land as
+  Inspector rows.
+- Studio commands: `patch_elements` is one thin family derived from the
+  element declaration table (environment description, style and sheet flag
+  included); element ranges are the single source of truth, partial receipts
+  are reported, revisions are read-safe, and a session re-admits within a turn.
+- Stop handling: a Studio stop that names a motion job this session never
+  admitted is refused; retired jobs no longer accept stale stops; the model
+  registry is built single-flight and refreshed on sign-in.
 
+Studio
+
+- Gated Fal H3 motion generation: the capture card and a wide authoring modal
+  with duration, motion description and an editable prompt. References are
+  accepted only from a fixed camera with the palette mannequin, clipped or
+  unshaded references are rejected, and Fal video routes through H3 Max Turbo.
+- The mannequin is readable for mocap input: separated palette hues per limb
+  and two eye marks on the face; a warning fires before cropped mocap framing.
+- Motion extraction: hybrid 2D keypoints use palette-derived joints where the
+  render lost a part (face from ViTPose); GVHMR takes get a sigma-3 smoother and
+  a foot-anchored root. Clearing a motion take also drops its persisted
+  `motionRef`.
+- Look through has one entry in the Shot monitor; the on-screen Shot camera
+  indicator and Esc return to the free camera without a duplicate toolbar
+  toggle.
 - Camera fly, pan and orbit lock the pointer for the hold: the cursor hides,
   the view can turn past the window edge, and release puts the cursor back
   where the press started.
+- One undo entry per key light, environment and character transform gesture;
+  agent camera history stays reachable after an object undo; persistence
+  elements are declared and verified.
+
+Housekeeping
+
+- Dead exports, duplicate 500 handlers and the committed `.omo/` research
+  artifacts are gone (#411). The README is restructured around the user path.
+- `cclay live` and the agent sidecar share one workspace-selection rule.
+- Agent tests keep their sessions out of the author's config directory.
 
 ## 1.8.1
 
