@@ -125,6 +125,12 @@ async function candidateTests(mod, selectedCase) {
     else if (archives.has(req.url)) { res.setHeader('content-length', archives.get(req.url).length); res.end(archives.get(req.url)); }
     else { res.writeHead(404); res.end(); }
   });
+  // The client is Node's pooled fetch; with the server's default 5 s
+  // keep-alive, a slow (loaded) runner let the server drop the idle socket
+  // between two candidates and the next fetch died on the reused one with
+  // 'fetch failed' (#413). Fresh sockets per request are what a bridge does
+  // anyway.
+  server.keepAliveTimeout = 0;
   const listening = once(server, 'listening'); server.listen(0, '127.0.0.1'); await listening;
   const origin = `http://127.0.0.1:${server.address().port}`;
   let sequence = 0;

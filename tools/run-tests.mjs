@@ -330,6 +330,21 @@ function run(file, { buffered }) {
 	});
 }
 
+// These suites reserve a port by binding :0, release it, and hand the number
+// to a child that binds it again (or an adjacent one). Any concurrent suite
+// can take it in between, so they run one at a time after the parallel wave
+// instead of by luck. Everything else picks its port inside the process that
+// keeps it.
+const SERIAL_ONLY = new Set([
+	"test/process/verify-bridge-launch.mjs",
+	"mcp/verify-http-origin.mjs",
+	"mcp/verify-live-controller.mjs",
+	"mcp/verify-live-motion-job.mjs",
+	"mcp/verify-live-p0.mjs",
+	"mcp/verify-live-port.mjs",
+	"mcp/verify-live-routing.mjs",
+]);
+
 // Longest files first so the tail of the run is not one slow suite on its own.
 const SLOW_FIRST = [
 	"test/verify-studio-agent-motion.mjs",
@@ -340,7 +355,8 @@ const SLOW_FIRST = [
 ];
 
 async function runAll(files, jobs) {
-	const queue = [...SLOW_FIRST.filter((file) => files.includes(file)), ...files.filter((file) => !SLOW_FIRST.includes(file))];
+	const parallel = files.filter((file) => !SERIAL_ONLY.has(file));
+	const queue = [...SLOW_FIRST.filter((file) => parallel.includes(file)), ...parallel.filter((file) => !SLOW_FIRST.includes(file))];
 	let failure = null;
 	const worker = async () => {
 		while (queue.length > 0 && !failure) {
@@ -352,8 +368,9 @@ async function runAll(files, jobs) {
 			}
 		}
 	};
-	await Promise.all(Array.from({ length: Math.min(jobs, files.length) }, worker));
+	await Promise.all(Array.from({ length: Math.min(jobs, queue.length) }, worker));
 	if (failure) throw failure;
+	for (const file of files.filter((file) => SERIAL_ONLY.has(file))) await run(file, { buffered: true });
 }
 
 // node:sqlite's DatabaseSync only ships unflagged from Node 22.13.0 (it lived
