@@ -155,6 +155,9 @@ export function createStudioMotionCandidates(ports) {
       // Foreign requests and concurrent calls must not dispose another owner.
       if (candidate && candidate.request.commandId === request.commandId && equal(candidate.request.binding, request.binding) && error.code !== 'TARGET_BUSY') release(candidate);
       const receipt = rejection(request, error, phase);
+      // The receipt deliberately carries only the code; the message is for the
+      // host's own log (tests inject it to explain a rejection).
+      ports.onRejection?.({ phase, code: receipt.code, message: error?.message ?? String(error), commandId: request.commandId });
       if (ports.journal.get(request.commandId) == null && error.code !== 'TARGET_BUSY') ports.journal.record(receipt);
       return receipt;
     } finally { if (candidate) candidate.busy = false; }

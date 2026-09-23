@@ -147,6 +147,7 @@ async function candidateTests(mod, selectedCase) {
     // clock; on a loaded CI runner preparing a rig-heavy candidate can exceed
     // the 30 s default, which turned a fence test into a budget test (#413).
     const ports = { journal, now: () => clock, yieldTask: () => Promise.resolve(), preparationMs: 300000, verificationMs: 300000,
+      onRejection: r => console.log('REJECTION', JSON.stringify(r)),
       readTarget: () => ({ guard: { ...state.host, targetId: character.id, token: state.token }, character, rig, ikState, protectedFrames: options.protectedFrames ?? [], busy: state.busy, calibration: options.calibration, preserveAuthoredMotion: options.preserveAuthoredMotion }),
       readEnvironment: () => ({ host: state.host, physicsRevision: state.physicsRevision, floor: state.floor, objects: state.objects, cast: state.cast, frameCount: state.frameCount }),
       commit(payload) {
