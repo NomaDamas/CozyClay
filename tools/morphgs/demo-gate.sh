@@ -15,6 +15,7 @@ fi
 VENV_DIR="${MORPHGS_VENV:-.venv}"
 [[ -x "$VENV_DIR/bin/python" ]] || VENV_DIR="venv"
 source "$VENV_DIR/bin/activate"
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD="${TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD:-1}"
 python src/main.py --config demo/tennis_to_Ninja.yaml 2>&1 | tee "$LOG_DIR/demo-main.log"
 python src/render.py --config demo/tennis_to_Ninja.yaml 2>&1 | tee "$LOG_DIR/demo-render.log"
 

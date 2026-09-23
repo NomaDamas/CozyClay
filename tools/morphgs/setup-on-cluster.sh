@@ -81,6 +81,9 @@ else
 fi
 export CUDA_HOME
 export PATH="$CUDA_HOME/bin:$PATH"
+# MorphGS demo caches contain trusted PyTorch3D camera pickles; PyTorch 2.11
+# otherwise defaults torch.load to weights_only=True and rejects them.
+export TORCH_FORCE_NO_WEIGHTS_ONLY_LOAD=1
 
 run uv venv "$MORPHGS_ROOT/.venv" --python 3.10
 run uv pip install --python "$MORPHGS_ROOT/.venv/bin/python" torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
