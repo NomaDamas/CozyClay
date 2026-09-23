@@ -22,13 +22,6 @@ function fail(message) {
   process.exitCode = 1;
 }
 try {
-  if (process.env.MORPHGS_SOURCE) {
-    run("git", ["clone", "--quiet", process.env.MORPHGS_SOURCE, source]);
-    run("git", ["-C", source, "checkout", "--quiet", "87d38e4"]);
-  } else {
-    run("git", ["clone", "--quiet", "https://github.com/xodus777/MorphGS.git", source]);
-    run("git", ["-C", source, "checkout", "--quiet", "87d38e4"]);
-  }
   run("node", [join(morphgs, "fbx2morphgs.mjs"), fbx, output]);
 
   // FBXLoader emits 129 bones including 64 zero-length duplicate copies. The
@@ -42,8 +35,14 @@ try {
   const fixed = "fixed_joint Spine LeftUpLeg RightUpLeg Neck LeftShoulder RightShoulder LeftHandEnd RightHandEnd";
   if (!readFileSync(rig, "utf8").includes(fixed)) throw new Error("fbx2morphgs did not append the required fixed_joint line");
 
+  // The truth comparison needs MorphGS itself plus a torch CPU wheel through uv.
+  // Missing uv is a failure, not a skip. CI opts out explicitly with
+  // MORPHGS_SKIP_TRUTH=1 (no uv on the runner, and the torch download is too
+  // heavy for every push); the structural checks above still run there.
   if (!process.env.MORPHGS_SKIP_TRUTH) {
     try { execFileSync("uv", ["--version"], { stdio: "ignore" }); } catch { throw new Error("uv is required to generate MorphGS truth (not a skip)"); }
+    run("git", ["clone", "--quiet", process.env.MORPHGS_SOURCE ?? "https://github.com/xodus777/MorphGS.git", source]);
+    run("git", ["-C", source, "checkout", "--quiet", "87d38e4"]);
     run("uv", ["run", "--no-project", "--with", "torch", "--with", "trimesh", "--with", "scipy", "--with", "numpy", "python", join(morphgs, "assets/gen_truth.py"), source, join(output, "mesh.obj"), rig, truth]);
     run("node", [join(morphgs, "morphgs-to-cskel27.mjs"), rig, join(truth, "rot_params.npy"), join(truth, "pred_joints.npy"), take, "--fps", "30", "--check"], { env: { ...process.env, COZYCLAY: root } });
     const playback = run("node", [join(morphgs, "assets/playback-check.mjs"), take, join(truth, "pred_joints.npy"), rig], { env: { ...process.env, COZYCLAY: root } });

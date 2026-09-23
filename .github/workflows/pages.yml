@@ -31,6 +31,8 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm test
         env:
+          # See ci.yml: the MorphGS truth comparison needs uv + torch.
+          MORPHGS_SKIP_TRUTH: "1"
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
           # Optional first-party proxy host (repo variable); empty falls back to us.i.posthog.com.
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}

@@ -43,6 +43,11 @@ jobs:
       # MCP verify suites — including the hermetic verify:live family — run
       # under `npm test`; only browser-bound suites stay classified out.
       - run: npm test
+        env:
+          # test/verify-morphgs-exporter.mjs: the MorphGS truth comparison
+          # needs uv + a torch wheel; the runner has neither, so only its
+          # structural checks run here. Run the full test locally.
+          MORPHGS_SKIP_TRUTH: "1"
 
   # MCP <-> real-editor element management, end to end: each suite spawns its
   # own Vite, Chrome and MCP server on reserved ports. These are the only
