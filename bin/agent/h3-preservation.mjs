@@ -212,7 +212,3 @@ export async function inspectH3Output({ imageDataUrl, videoBytes, expectedWidth,
 		await rm(dir, { recursive: true, force: true });
 	}
 }
-
-export async function inspectH3OutputFromData({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits, compositorVerified = false }) {
-	return inspectH3Output({ imageDataUrl, videoBytes, expectedWidth, expectedHeight, limits, compositorVerified });
-}

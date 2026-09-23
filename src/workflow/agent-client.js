@@ -80,10 +80,12 @@ export const JOB_STATE_COPY = {
 };
 const JOB_TERMINAL_STATES = new Set(["installed", "failed", "cancelled", "stale_target", "stale_environment"]);
 export const isTerminalJobState = (state) => JOB_TERMINAL_STATES.has(state);
-export const jobStateTone = (state) => state === "installed" ? "ok"
-	: state === "review_required" ? "warn"
-	: isTerminalJobState(state) ? "alert"
-	: "busy";
+export const jobStateTone = (state) => {
+	if (state === "installed") return "ok";
+	if (state === "review_required") return "warn";
+	if (isTerminalJobState(state)) return "alert";
+	return "busy";
+};
 /** Progress is shown only when the runtime actually reported one. */
 export const formatJobProgress = (progress) => Number.isFinite(progress) ? `${Math.round(progress * 100)}%` : "";
 

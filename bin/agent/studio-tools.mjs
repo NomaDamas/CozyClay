@@ -8,7 +8,7 @@ const text = value => typeof value === "string" ? value : JSON.stringify(value);
 
 export function createStudioTools({ liveHub, workspaceHandle, session, resolveImage } = {}) {
   if (!liveHub?.command || !workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "An exact Studio workspace is required.");
-  const mutationNames = new Set(["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit"]);
+  const mutationNames = STUDIO_MUTATION_TOOLS;
   const invoke = async (name, args) => {
     const command = validateStudioCommand({ name, args });
     const payload = mutationNames.has(name) && session?.admission
@@ -50,5 +50,4 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
   tools.internal = { invoke };
   return tools;
 }
-export const studioToolSchemasFor = studioToolSchemas;
 export function studioToolResult(result) { return text(result); }

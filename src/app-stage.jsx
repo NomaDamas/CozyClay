@@ -534,7 +534,6 @@ export const toArdyFrame = (frame) => Math.round((frame * ARDY_FPS) / TIMELINE_F
 // frames. Rounding can land two timeline frames on one bridge frame; the
 // first wins — the bridge refuses non-ascending lists outright.
 /** Where a placed pose lands, in TIMELINE frames, for a clip of `clipFrames`. */
-export const POSE_PLACEMENTS = ["start", "middle", "end", "playhead"];
 export function posePlacementFrame(placement, clipFrames, playheadFrame) {
 	const last = Math.max(0, clipFrames - 1);
 	if (placement === "end") return last;

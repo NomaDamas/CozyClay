@@ -497,12 +497,6 @@ export function resolveIkRig(rig) {
 	return { chains: out, fkJoints, contactRadii, contactHeights: measureContactHeights(rig) };
 }
 
-/** Back-compat wrapper for callers that only need the chains map. */
-export function resolveIkChains(rig) {
-	const resolved = resolveIkRig(rig);
-	return resolved ? resolved.chains : null;
-}
-
 /**
  * Two-bone analytic IK for one 3-bone chain (shoulder/hip → elbow/knee →
  * wrist/ankle). `target` is a world-space effector position. The root bone

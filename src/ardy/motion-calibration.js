@@ -116,7 +116,3 @@ export function applyMotionCalibration(motion, metadata = motion?.sceneCalibrati
 	};
 	return { motion: { ...motion, rootPos, posedJoints }, diagnostics };
 }
-
-// Descriptive aliases for callers that use the scene-calibration terminology.
-export const applySceneCalibration = applyMotionCalibration;
-export const calibrateMotion = applyMotionCalibration;

@@ -83,7 +83,8 @@ async function refresh() {
 	if (!current?.refresh_token) return null;
 	try {
 		const payload = await exchange({ client_id: CLIENT_ID, grant_type: "refresh_token", refresh_token: current.refresh_token });
-		writeTokens({ ...current, ...payload, expires_at: decodeJwt(payload.access_token || current.access_token).exp ? decodeJwt(payload.access_token || current.access_token).exp * 1000 : Date.now() + Number(payload.expires_in || 3600) * 1000 });
+		const expiresAtSeconds = decodeJwt(payload.access_token || current.access_token).exp;
+		writeTokens({ ...current, ...payload, expires_at: expiresAtSeconds ? expiresAtSeconds * 1000 : Date.now() + Number(payload.expires_in || 3600) * 1000 });
 		return tokens.access_token;
 	} catch (error) {
 		if (error.status === 401 || error.code === "invalid_grant") clearTokens();

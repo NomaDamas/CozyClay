@@ -246,5 +246,3 @@ export function buildFullBodyConstraints(poses, { genFrames } = {}) {
 		},
 	];
 }
-
-export { IDENTITY as POSE_IDENTITY };

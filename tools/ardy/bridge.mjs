@@ -141,9 +141,7 @@ let projflowRunner = null; // assigned beside `runner`
 const SAFE_BASE_PATH = /^outputs\/(?:omb\/)?[A-Za-z0-9._-]+\.npz$/;
 const SAFE_BASE_ID = /^[A-Za-z0-9._-]+$/;
 
-// ---------------------------------------------------------------------------
 // backend probes (health, bases) with caching
-// ---------------------------------------------------------------------------
 
 // The raw listing comes from the runner (a box's `ls outputs/*.npz` over ssh,
 // or a local directory scan); the bridge sanitizes every entry the same way
@@ -271,9 +269,7 @@ async function getBases() {
 	return basesInflight;
 }
 
-// ---------------------------------------------------------------------------
 // request validation
-// ---------------------------------------------------------------------------
 
 // Returns an error message naming the offending field, or null when valid.
 function validateGenerate(body) {
@@ -709,9 +705,7 @@ function readBody(req, limitBytes) {
 	});
 }
 
-// ---------------------------------------------------------------------------
 // endpoints
-// ---------------------------------------------------------------------------
 
 function sendJson(res, status, obj) {
 	res.writeHead(status, {
@@ -719,6 +713,21 @@ function sendJson(res, status, obj) {
 		"Cache-Control": "no-store",
 	});
 	res.end(`${JSON.stringify(obj)}\n`);
+}
+
+// Shared 500 handler for async route failures: if headers already went out
+// the only thing left is to drop the socket; either way the error is logged.
+function respondInternalError(res, error, route) {
+	if (!res.headersSent) sendJson(res, 500, { ok: false, reason: `internal error: ${error.message}` });
+	else {
+		try {
+			res.end();
+		} catch {
+			/* socket gone */
+		}
+	}
+	console.error(`[bridge] ${route} threw: ${error.stack || error}`);
+	log(500);
 }
 
 // The generator's single-line JSON report is the LAST stdout line of
@@ -755,9 +764,7 @@ function tryParseReport(line) {
 	return parsed;
 }
 
-// ---------------------------------------------------------------------------
 // generated-motion delivery
-// ---------------------------------------------------------------------------
 
 // run-id -> absolute npz path, populated ONLY after this process generated
 // the file and verified it on disk (see handleGenerate's done branch). The
@@ -1497,9 +1504,7 @@ async function handleGenerate(req, res) {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // server
-// ---------------------------------------------------------------------------
 
 function usage() {
 	console.log(`usage: node tools/ardy/bridge.mjs [--port <n>]
@@ -1626,18 +1631,7 @@ const server = createServer((req, res) => {
 		return;
 	}
 	if (pathname === "/ardy/generate" && req.method === "POST") {
-		handleGenerate(req, res).catch((err) => {
-			if (!res.headersSent) sendJson(res, 500, { ok: false, reason: `internal error: ${err.message}` });
-			else {
-				try {
-					res.end();
-				} catch {
-					/* socket gone */
-				}
-			}
-			console.error(`[bridge] ${req.method} ${pathname} threw: ${err.stack || err}`);
-			log(500);
-		});
+		handleGenerate(req, res).catch((err) => respondInternalError(res, err, `${req.method} ${pathname}`));
 		return;
 	}
 	if (/^\/ardy\/motions\//.test(pathname) && req.method === "GET") {
@@ -1645,18 +1639,9 @@ const server = createServer((req, res) => {
 		return;
 	}
 	if (pathname === "/ardy/footage" && req.method === "POST") {
-		handleFootage(req, res, (request) => readBody(request, MAX_BODY_BYTES)).catch((err) => {
-			if (!res.headersSent) sendJson(res, 500, { ok: false, reason: `internal error: ${err.message}` });
-			else {
-				try {
-					res.end();
-				} catch {
-					/* socket gone */
-				}
-			}
-			console.error(`[bridge] ${req.method} ${pathname} threw: ${err.stack || err}`);
-			log(500);
-		});
+		handleFootage(req, res, (request) => readBody(request, MAX_BODY_BYTES)).catch((err) =>
+			respondInternalError(res, err, `${req.method} ${pathname}`),
+		);
 		return;
 	}
 	if (/^\/ardy\/footage\//.test(pathname) && req.method === "GET") {
@@ -1669,18 +1654,7 @@ const server = createServer((req, res) => {
 			footagePath,
 			registerMotion,
 			artifactRoot: OUT_DIR,
-		}).catch((err) => {
-			if (!res.headersSent) sendJson(res, 500, { ok: false, reason: `internal error: ${err.message}` });
-			else {
-				try {
-					res.end();
-				} catch {
-					/* socket gone */
-				}
-			}
-			console.error(`[bridge] ${req.method} ${pathname} threw: ${err.stack || err}`);
-			log(500);
-		});
+		}).catch((err) => respondInternalError(res, err, `${req.method} ${pathname}`));
 		return;
 	}
 	if (

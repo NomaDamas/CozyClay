@@ -345,14 +345,6 @@ export function captureArdyRoot(rig) {
 	];
 }
 
-export function debugPrep(rig) {
-	const p = prepOf(rig);
-	return {
-		scale: p.scale,
-		offsets: p.offsets.map((o) => (o ? [o.x, o.y, o.z] : null)),
-	};
-}
-
 /** Bind offsets against the canonical neutral grown by a take's bone
  *  factors: neutral joint j = parent + boneScale[j] * (neutral[j] - neutral[parent]),
  *  floor-shifted the same way prepOf does, in rig units via prep.scale.

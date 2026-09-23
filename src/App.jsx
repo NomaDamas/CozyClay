@@ -57,7 +57,7 @@ import { createFirstEditTracker } from "./semantic-edit.js";
 import { useSemanticState } from "./use-semantic-state.js";
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
-import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt } from "./studio-agent-protocol.js";
+import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateReceipt } from "./studio-agent-protocol.js";
 import { elementByPath } from "./studio-elements.js";
 import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { createStudioMotionCandidates } from "./studio-agent-motion.js";
@@ -355,7 +355,7 @@ import { buildZip } from "./zip-store.js";
 import { composeStoryboard } from "./storyboard.js";
 import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
-import { buildH3MotionPrompt, motionApiOrigin, submitFalMotion, waitForFalMotionJob, FAL_MOTION_DURATIONS, FAL_MOTION_MIN_DURATION, FAL_MOTION_SHOT_ASPECT, FAL_MOTION_STILL_OUTPUT } from "./fal-motion-client.js";
+import { buildH3MotionPrompt, motionApiOrigin, submitFalMotion, waitForFalMotionJob, FAL_MOTION_MIN_DURATION, FAL_MOTION_SHOT_ASPECT, FAL_MOTION_STILL_OUTPUT } from "./fal-motion-client.js";
 import { serializeOtio } from "./otio.js";
 import {
 	addShotAtFrame,
@@ -436,7 +436,6 @@ import {
 	attachPlacementPatch,
 	attachWorldMatrix,
 	buildPromptSchedule,
-	cameraMoveLabelKo,
 	captureMcpFrame,
 	characterModelUrl,
 	defaultCharacterTint,
@@ -556,43 +555,6 @@ function koSubjectParticle(word) {
 }
 
 /**
- * A released bone silently keeps its neutral rotation and a low-confidence fit
- * silently loosens every bone, so a photo pose can come out wrong with nothing
- * on screen saying why. Returns "" when there is nothing to warn about — that
- * is the case where the ordinary success toast must survive untouched.
- */
-function photoPoseWarning({ releasedBones, confidence }) {
-	const groups = [];
-	for (const name of releasedBones ?? []) {
-		const group = releasedBoneGroup(name);
-		if (!groups.includes(group)) groups.push(group);
-	}
-	const labels = RELEASED_BONE_LABELS
-		.filter(([key]) => groups.includes(key))
-		.map(([, en, koText]) => (isKo ? koText : en));
-	const unsure = Number.isFinite(confidence) && confidence < PHOTO_POSE_LOW_CONFIDENCE;
-	if (labels.length === 0) {
-		if (!unsure) return "";
-		return ko(
-			"The photo is unclear, so the pose may be rough — refine it with the handles",
-			"사진이 흐릿해서 자세가 부정확할 수 있어요 — 핸들로 다듬어 보세요"
-		);
-	}
-	if (isKo) {
-		const list = labels.join("·");
-		const blur = unsure ? " — 사진도 흐릿해서 나머지가 부정확할 수 있어요" : "";
-		return `사진에서 ${list}${koSubjectParticle(list)} 안 보여서 기본 자세로 남았어요${blur}`;
-	}
-	const list = labels.length > 1
-		? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`
-		: labels[0];
-	const blur = unsure ? ", and the photo is unclear so the rest may be rough" : "";
-	return labels.length > 1
-		? `The ${list} weren't visible in the photo — they stayed in the default pose${blur}`
-		: `The ${list} wasn't visible in the photo — it stayed in the default pose${blur}`;
-}
-
-/**
  * Pose ONE cast member's rig at an absolute timeline frame: its own clip first,
  * then its own IK correction layer on top. This is the single description of
  * "where is this character at frame N" — the viewport effect, the offscreen
@@ -622,7 +584,7 @@ function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
  * read as a LOOK, not as texture detail, and the whole thing has to survive
  * inside the project document — 1024 px keeps a face legible at a fraction of
  * the bytes a phone photo would cost. */
-export const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
+const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
 
 /**
  * Read one picked file into the data URL a reference slot stores: FileReader
@@ -630,7 +592,7 @@ export const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
  * image), then a canvas pass to cap the long side. The source type is kept, so
  * a JPEG photo stays a JPEG instead of being re-encoded into a much larger PNG.
  */
-export async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIMENSION } = {}) {
+async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIMENSION } = {}) {
 	if (!file) throw new Error("No file");
 	if (!ASSET_IMAGE_TYPES.includes(String(file.type).toLowerCase())) {
 		throw new Error("unsupported image type");

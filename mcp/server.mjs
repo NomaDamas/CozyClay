@@ -131,7 +131,6 @@ const publishMotionJob = async (job) => {
 };
 
 const cancelMotionJob = ({ workspaceId, payload }) => {
-	if (payload.taskId && typeof payload.taskId !== "string") return;
 	if (typeof payload.taskId !== "string") return;
 	const task = motionJobs.cancel(payload.taskId, workspaceId);
 	if (!task) return;
@@ -218,11 +217,6 @@ for (const handler of createToolHandlers({ projectRootPromise, motionJobs, publi
 
 /* -------------------------------- start ---------------------------------- */
 
-/**
- * stdio is the default because that is how an MCP client launches a local
- * server. `--http` is for driving it by hand: a long-lived endpoint on
- * loopback that survives across client restarts and can be curled.
- */
 /** Counted as the tools are registered, so the status page cannot drift. */
 const TOOL_COUNT = registeredTools;
 
@@ -248,6 +242,9 @@ const configureLiveHub = (hub, token) => {
 	};
 };
 
+// stdio is the default because that is how an MCP client launches a local
+// server. `--http` is for driving it by hand: a long-lived endpoint on
+// loopback that survives across client restarts and can be curled.
 if (httpFlag === -1) {
 	const liveToken = randomBytes(32).toString("hex");
 	const hub = await startLiveHub(livePort, { token: liveToken, owner: "mcp" });

@@ -163,4 +163,3 @@ export default function CozySceneNode({ id = "cozy-scene", data: rawData = {}, s
 	);
 }
 
-export { BridgeHandle };

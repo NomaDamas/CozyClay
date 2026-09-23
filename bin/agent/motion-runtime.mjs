@@ -16,7 +16,6 @@ export const MOTION_TRANSITIONS = freezeStudioData({
 	review_required: ["verifying", "reconciling", "cancelled", "stale_target", "stale_environment", "failed"],
 	failed: [], cancelled: [], stale_target: [], stale_environment: [],
 });
-export const MOTION_STATES = Object.freeze(Object.keys(MOTION_TRANSITIONS));
 export function assertMotionTransition(from, to) {
 	if (!MOTION_TRANSITIONS[from]?.includes(to)) throw new Error(`Illegal motion transition ${from} -> ${to}`);
 }

@@ -23,7 +23,6 @@ import { slerpQuat } from "../../src/ardy/retime.js";
 
 const CM_TO_M = 0.01;
 
-// ---------------------------------------------------------------------------
 // EVERY temporal constant in this file is a DURATION, resolved to frames
 // against the clip's own fps at runtime. It used to be a mix, and the frame
 // counts were a measured bug: SAM extractions arrive at whatever rate the
@@ -36,7 +35,6 @@ const CM_TO_M = 0.01;
 // and 1.7x the knee jerk of the 30 fps one, and dropped grounding 86.6 → 81.4 %.
 // Every duration below is written as <30 fps frames>/30 so that 30 fps
 // reproduces exactly the numbers each comment was measured at.
-// ---------------------------------------------------------------------------
 
 // Stabilization, ported from the proven Blender retarget script the old
 // ingest pipeline used (sam3d-retarget-shadow.py):

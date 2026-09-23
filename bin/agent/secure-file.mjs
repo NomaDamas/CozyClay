@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from "nod
 import { dirname } from "node:path";
 
 /** Atomically replace a private JSON/config file with mode 0600. */
-export function writeSecureFile(file, contents) {
+function writeSecureFile(file, contents) {
 	const parent = dirname(file);
 	const existed = existsSync(parent);
 	mkdirSync(parent, { recursive: true, mode: 0o700 });
