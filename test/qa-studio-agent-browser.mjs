@@ -203,6 +203,57 @@ const implementations = {
       await page.getByLabel('Message the agent',{exact:true}).scrollIntoViewIfNeeded();
       const layout = await page.evaluate(() => { const a=document.querySelector('.studio-agent-inspector'), r=document.querySelector('[aria-label="Message the agent"]').getBoundingClientRect(); return { width:innerWidth,scrollWidth:document.documentElement.scrollWidth,bodyWidth:document.body.scrollWidth,hidden:a.hidden,inspector:document.querySelectorAll('.inspector-sidebar').length,agents:document.querySelectorAll('.agent-panel').length,composer:{x:r.x,y:r.y,right:r.right,bottom:r.bottom,width:r.width,height:r.height},height:innerHeight }; });
       log.push({action:'layout',...layout}); assert.equal(layout.hidden,false); assert.equal(layout.inspector,1); assert.equal(layout.agents,1); assert(layout.scrollWidth<=width && layout.bodyWidth<=width); assert(layout.composer.width>0 && layout.composer.x>=0 && layout.composer.right<=width && layout.composer.bottom<=layout.height);
+      if (width === 1100) {
+        const session = await page.context().newCDPSession(page);
+        const measureChrome = () => {
+          const box = (selector) => {
+            const element = document.querySelector(selector);
+            if (!element) throw new Error(`missing responsive chrome element: ${selector}`);
+            const rect = element.getBoundingClientRect();
+            return { x: rect.x, y: rect.y, left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom, width: rect.width, height: rect.height };
+          };
+          const intersection = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
+          const handle = box('.live-workspace-handle');
+          const targets = {
+            settings: box('[data-testid="settings-menu-trigger"]'),
+            export: box('[data-testid="topbar-export"]'),
+            inspectorAgentSwitch: box('.studio-agent-inspector .inspector-agent-switch'),
+            viewMenu: box('.view-menu-wrap'),
+            project: box('.project-menu-trigger'),
+            workflow: box('.workflow-topbar-link'),
+          };
+          return {
+            topbar: box('.topbar'),
+            handle,
+            targets,
+            overlaps: {
+              'handle/settings': intersection(handle, targets.settings),
+              'handle/export': intersection(handle, targets.export),
+              'handle/inspector-switch': intersection(handle, targets.inspectorAgentSwitch),
+              'settings/inspector-switch': intersection(targets.settings, targets.inspectorAgentSwitch),
+              'export/view-menu': intersection(targets.export, targets.viewMenu),
+              'project/workflow': intersection(targets.project, targets.workflow),
+            },
+            title: document.querySelector('.live-workspace-handle').title,
+            workspace: document.querySelector('.live-workspace-handle').dataset.liveWorkspace,
+          };
+        };
+        let measured;
+        try {
+          measured = await session.send('Runtime.evaluate', { expression: `(${measureChrome.toString()})()`, returnByValue: true });
+          assert(!measured.exceptionDetails, JSON.stringify(measured.exceptionDetails));
+        } finally { await session.detach(); }
+        const chrome = measured.result.value;
+        log.push({ action: 'topbar-chrome-layout', ...chrome });
+        console.log('TOPBAR 1100x950', JSON.stringify(chrome));
+        for (const [pair, overlap] of Object.entries(chrome.overlaps)) {
+          assert.equal(overlap, 0, `top-bar overlap: ${pair} = ${overlap}px^2`);
+        }
+        assert(chrome.handle.height > 0 && chrome.handle.height <= chrome.topbar.height, `live-workspace-handle must fit on one topbar line: ${chrome.handle.height}px / ${chrome.topbar.height}px`);
+        assert(chrome.handle.top >= chrome.topbar.top && chrome.handle.bottom <= chrome.topbar.bottom, 'live-workspace-handle stays inside the topbar');
+        assert.equal(chrome.title, chrome.workspace, 'full live handle remains available in title');
+        console.log('PASS TOPBAR 1100x950: one-line handle; all chrome intersections = 0');
+      }
       await page.getByLabel('Message the agent',{exact:true}).fill('responsive composer'); assert.equal(await page.getByLabel('Message the agent',{exact:true}).inputValue(),'responsive composer'); await shot(`responsive-${width}`); widths.push(width);
     }
     save('widths',widths);

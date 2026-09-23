@@ -9008,6 +9008,17 @@ input[type=range] {
 	align-items: center;
 }
 
+/* Keep the live workspace identity on one topbar line. It may shrink to the
+   space left beside the project actions, while title carries the full handle. */
+.live-workspace-handle {
+	min-width: 0;
+	max-width: min(180px, 6.5vw);
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
 /* View ▾ (#194): the viewport bar's own menu of look toggles. It borrows the
    export menu's trigger and the project menu's popover so the studio keeps one
    dropdown language; the wrap's auto margin parks it at the bar's right end in
@@ -9021,8 +9032,6 @@ input[type=range] {
 	align-items: center;
 }
 
-/* The live-workspace handle can fill the row; a settings label that wrapped to
-   one glyph per line is how the topbar used to squeeze the language button. */
 .settings-menu-trigger {
 	display: inline-flex;
 	align-items: center;
