@@ -299,6 +299,7 @@ import {
 	ikSeedTargets,
 	ikTouch,
 	resolveIkRig,
+	shareContactMeasurements,
 	solveIk,
 	solveMidJoint,
 	solveSwingAngle,
@@ -11827,6 +11828,11 @@ function resizePromptClip(id, edge, rawFrame) {
 		parent.matrixAutoUpdate = false; parent.matrix.copy(target.rig.parent?.matrixWorld ?? new THREE.Matrix4()); parent.add(rig);
 		try {
 			if (target.motion) applyMotionFrame(rig, target.motion, sampleAt({ frameCount: target.motion.frames, motion: target.motion }, null, frame).motionFrame);
+			// The clone shares the source rig's bind pose, so its contact radii
+			// and heights are the same numbers: measure the source once and
+			// hand them over instead of re-scanning every vertex per query (#413).
+			resolveIkRig(target.rig);
+			shareContactMeasurements(target.rig, rig);
 			const resolved = resolveIkRig(rig);
 			if (resolved && target.ikState?.keys.size) ikEvaluate(resolved.chains, target.ikState, frame, resolved.fkJoints, target.motion ? IK_CORRECTION_BLEND_FRAMES : 0);
 			parent.updateMatrixWorld(true);

@@ -32,6 +32,29 @@ const CONTACT_RADIUS_FALLBACK = 0.01;
 const CONTACT_HEIGHT_MAX = 0.25;
 const contactRadiusCache = new WeakMap();
 const contactHeightCache = new WeakMap();
+// Normalised once: the per-vertex loops below used to re-run the
+// normalizeBoneName regex 16 times per vertex, which was most of the cost of
+// measuring a rig (#413).
+const CONTACT_TARGETS = CONTACT_JOINTS.map((name) => [name, normalizeBoneName(`mixamorig${name}`)]);
+const contactJointFor = (normalized) => {
+	if (!normalized) return undefined;
+	for (const [name, target] of CONTACT_TARGETS) {
+		if (normalized === target || normalized.endsWith(target) || target.endsWith(normalized)) return name;
+	}
+	return undefined;
+};
+
+/** Copy one rig's measured contact radii/heights onto another rig that shares
+ * its bind pose (a skeleton clone). The measurement reads bind-pose geometry
+ * only, so the numbers are identical and re-scanning every skinned vertex per
+ * clone is pure waste: studioBounds clones the rig per query (#413). */
+export function shareContactMeasurements(from, to) {
+	if (!from || !to || from === to) return;
+	const radii = contactRadiusCache.get(from);
+	const heights = contactHeightCache.get(from);
+	if (radii && !contactRadiusCache.has(to)) contactRadiusCache.set(to, radii);
+	if (heights && !contactHeightCache.has(to)) contactHeightCache.set(to, heights);
+}
 
 function pointSegmentDistance(point, start, end) {
 	const segment = end.clone().sub(start);
@@ -259,11 +282,7 @@ export function measureContactRadii(rig) {
 				}
 			}
 			if (dominantWeight <= 0.4) continue;
-			const normalized = names[dominant];
-			const name = CONTACT_JOINTS.find((candidate) => {
-				const target = normalizeBoneName(`mixamorig${candidate}`);
-				return normalized === target || normalized.endsWith(target) || target.endsWith(normalized);
-			});
+			const name = contactJointFor(names[dominant]);
 			const segment = segments.get(name);
 			if (!segment) continue;
 			if (bindPose) bindVertexPosition(mesh, index, vertex);
@@ -327,10 +346,7 @@ export function measureContactHeights(rig) {
 				if (weight > dominantWeight) { dominantWeight = weight; dominant = indices.getComponent(index, slot); }
 			}
 			if (dominantWeight <= 0.4 || !names[dominant]) continue;
-			const name = CONTACT_JOINTS.find((candidate) => {
-				const target = normalizeBoneName(`mixamorig${candidate}`);
-				return names[dominant] === target || names[dominant].endsWith(target) || target.endsWith(names[dominant]);
-			});
+			const name = contactJointFor(names[dominant]);
 			const point = points.get(name);
 			if (!point) continue;
 			if (bindPose) bindVertexPosition(mesh, index, vertex);
