@@ -301,6 +301,16 @@ function registerTests() {
 		assert.ok(new TextEncoder().encode(contextTools.encodeStudioContext(capped)).length <= protocol.STUDIO_CONTEXT_MAX_BYTES);
 		protocol.validateStudioContext(capped);
 	});
+	test("D4 context assets list placeable catalogue kinds and imported scene assets", () => {
+		const c = contextFixture();
+		c.assets = [...["cube","sphere","capsule","cylinder","cone","plane"].map(kind => ({ kind, name: kind, type: "primitive" })), ...["chair","car","small-plane"].map(kind => ({ kind, name: kind, type: "set-piece" })),
+			{ id: "img-0a1b2c", name: "Poster", type: "image" }, { id: "mesh-3d4e5f", name: "Robot", type: "mesh" }];
+		assert.deepEqual(contextTools.buildStudioContext(c).assets, c.assets, "no placeable asset is cut");
+		protocol.validateStudioContext(c);
+		for (const bad of [{ kind: "cube", id: "img-1", name: "Both", type: "primitive" }, { kind: "cube", name: "Cube", type: "bogus" }, { name: "Neither", type: "mesh" }, { imageId: "x", origin: "scene_asset" }]) {
+			const invalid = contextFixture(); invalid.assets = [bad]; rejects(() => protocol.validateStudioContext(invalid), "INVALID_CONTEXT");
+		}
+	});
 	test("D5 missing identity and each workspace/scene/epoch/token mismatch fail closed", () => {
 		rejects(()=>protocol.validateTargetGuard({},{}));
 		for (const key of Object.keys(guard())) { const value = guard(); delete value[key]; rejects(()=>protocol.validateTargetGuard(value,guard())); const changed = {...guard(),[key]:"other"}; rejects(()=>protocol.validateTargetGuard(changed,guard()),"STALE_TARGET"); }
