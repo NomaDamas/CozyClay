@@ -189,10 +189,47 @@ async function registryLiveCliproxy(models, apiKey) {
 			});
 			if (!response.ok) throw new Error(`CLIProxyAPI models request failed: ${response.status}`);
 			const body = await response.json();
-			return new Set((Array.isArray(body?.data) ? body.data : []).map((entry) => typeof entry === "string" ? entry : entry?.id).filter(Boolean));
+			// id -> owned_by: the owner is how CLIProxyAPI routes a model (openai, anthropic, or an
+			// openai-compatibility upstream name), so it picks the wire format for models pi does not know.
+			return new Map((Array.isArray(body?.data) ? body.data : [])
+				.map((entry) => typeof entry === "string" ? [entry, undefined] : [entry?.id, typeof entry?.owned_by === "string" ? entry.owned_by : undefined])
+				.filter(([id]) => id));
 		}).catch(() => null);
 	}
 	return state.cliproxyFetch;
+}
+
+const CLIPROXY_NON_CHAT = /^gpt-image-|-auto-review$/;
+
+/** A live CLIProxyAPI model pi's catalogue does not know yet (#400 follow-up), built on the newest
+ * catalogue model of the same family and wire format: `owned_by: openai` rides openai-responses,
+ * `owned_by: anthropic` rides anthropic-messages. Other owners (openai-compatibility upstreams such as
+ * opencode-go) are left out: they need upstream-specific headers the proxy does not pass through. */
+function cliproxyLiveModel(id, owner, knownModels) {
+	if (CLIPROXY_NON_CHAT.test(id)) return null;
+	const api = owner === "openai" ? "openai-responses" : owner === "anthropic" ? "anthropic-messages" : null;
+	if (!api) return null;
+	const candidates = knownModels.filter((model) => model.api === api);
+	const family = owner === "anthropic" ? id.match(/^claude-[a-z]+/)?.[0] : id.match(/^gpt-\d+/)?.[0];
+	const sameFamily = family ? candidates.filter((model) => model.id.startsWith(family)) : [];
+	const template = [...(sameFamily.length ? sameFamily : candidates)].sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }))[0];
+	return template ? { ...template, id, name: id } : null;
+}
+
+function extendCliproxyProvider(provider, live, state) {
+	if (state.extendedProviders.has(provider)) return false;
+	const getModels = provider.getModels.bind(provider);
+	const knownModels = getModels();
+	const known = new Set(knownModels.map((model) => model.id));
+	const additions = [...live]
+		.filter(([id]) => !known.has(id))
+		.map(([id, owner]) => cliproxyLiveModel(id, owner, knownModels))
+		.filter(Boolean)
+		.sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }));
+	if (!additions.length) return false;
+	provider.getModels = () => [...getModels(), ...additions];
+	state.extendedProviders.add(provider);
+	return true;
 }
 
 export async function createModels({ credentials, auth = defaultAuth, keys = defaultKeys, env = process.env, codexBaseUrl, cliproxyBaseUrl } = {}) {
@@ -329,8 +366,14 @@ export async function listAgentModels({ models, codex, auth = defaultAuth, keys 
 			list = [...list].sort(astraFirst);
 		} else if (provider.id === "cliproxy") {
 			if (signedIn) {
-				const liveIds = await registryLiveCliproxy(resolvedModels, authResult?.auth?.apiKey);
-				if (liveIds) list = list.filter((model) => liveIds.has(model.id));
+				const live = await registryLiveCliproxy(resolvedModels, authResult?.auth?.apiKey);
+				if (live) {
+					// The proxy's own /v1/models is the lineup: register what pi's catalogue has not caught up
+					// with on the shared registry, so the turn route resolves the same ids the dropdown shows.
+					const cliproxy = resolvedModels.getProvider?.("cliproxy");
+					if (cliproxy && typeof resolvedModels.setProvider === "function" && extendCliproxyProvider(cliproxy, live, catalogueState(resolvedModels))) resolvedModels.setProvider(cliproxy);
+					list = catalogModels(resolvedModels, provider.id, getSupportedThinkingLevels).filter((model) => live.has(model.id));
+				}
 			}
 			list = [...list].sort(cliproxyFirst);
 		}
