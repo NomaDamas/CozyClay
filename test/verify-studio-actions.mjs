@@ -4,13 +4,16 @@
 import assert from "node:assert/strict";
 import { STUDIO_ACTIONS, STUDIO_ACTION_IDS, STUDIO_ACTION_KINDS, studioActionDeclaration, createStudioActionRegistry } from "../src/studio-actions.js";
 import { validateStudioCommand, validateStudioSchema } from "../src/studio-agent-protocol.js";
+import * as studioActions from "../src/studio-actions.js";
+import { FK_TRACKS, IK_TRACKS } from "../src/ardy/ik.js";
 
 const code = expected => error => error?.code === expected;
 
 /* The first batch is declared once, as data. */
 const firstBatch = ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
 const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"];
-assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions].sort());
+const ikKeyActions = ["character.setIkKey", "character.removeIkKey", "character.clearIkKeys"];
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions].sort());
 assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job"]);
 assert.ok(Object.isFrozen(STUDIO_ACTIONS));
 for (const action of STUDIO_ACTIONS) {
@@ -20,7 +23,7 @@ for (const action of STUDIO_ACTIONS) {
 	assert.ok(action.description.length > 20, `${action.id} explains itself`);
 	assert.equal(action.input.type, "object", action.id);
 	assert.equal(action.input.additionalProperties, false, `${action.id} input is closed`);
-	if (action.kind === "mutation") assert.ok(["shot", "objects", "cast"].includes(action.undoDomain), `${action.id} names its undo domain`);
+	if (action.kind === "mutation") assert.ok(["shot", "objects", "cast", "motion"].includes(action.undoDomain), `${action.id} names its undo domain`);
 	assert.equal(studioActionDeclaration(action.id), action);
 	// The declared input is usable by the protocol's own validator.
 	if (action.input.required.length === 0) validateStudioSchema(action.input, {});
@@ -45,6 +48,26 @@ assert.throws(() => validateStudioSchema(studioActionDeclaration("character.addW
 assert.deepEqual([...studioActionDeclaration("character.moveWaypoint").input.required].sort(), ["characterId", "frame", "position"]);
 assert.deepEqual([...studioActionDeclaration("character.removeWaypoint").input.required].sort(), ["characterId", "frame"]);
 assert.deepEqual(studioActionDeclaration("character.clearWaypoints").input.required, ["characterId"]);
+// IK keys: one character's IK layer is its motion-domain state, so the undo
+// entry restores that character's layer whichever character is active.
+for (const id of ikKeyActions) {
+	assert.equal(studioActionDeclaration(id).kind, "mutation", id);
+	assert.equal(studioActionDeclaration(id).undoDomain, "motion", id);
+	assert.ok(studioActionDeclaration(id).input.required.includes("characterId"), id);
+}
+// The JSON form of a key names exactly the tracks the IK layer keys.
+assert.deepEqual([...studioActions.STUDIO_IK_CHAIN_TRACKS], IK_TRACKS.map(track => track.id));
+assert.deepEqual([...studioActions.STUDIO_IK_JOINT_TRACKS], FK_TRACKS.map(track => track.id));
+const setIkKey = studioActionDeclaration("character.setIkKey").input;
+assert.deepEqual([...setIkKey.required].sort(), ["characterId", "frame", "tracks"]);
+assert.deepEqual(Object.keys(setIkKey.properties.tracks.properties).sort(), [...IK_TRACKS, ...FK_TRACKS].map(track => track.id).sort());
+const unit = { x: 0, y: 0, z: 0, w: 1 };
+const ikArgs = { characterId: "char-a", frame: 12, tracks: { leftHand: { q: [unit, unit, unit], baseQ: [unit, unit, unit] }, hips: { q: [unit], p: { x: 0, y: 0.9, z: 0 }, basePos: { x: 0, y: 1, z: 0 } } } };
+assert.deepEqual(validateStudioSchema(setIkKey, ikArgs), ikArgs);
+assert.throws(() => validateStudioSchema(setIkKey, { ...ikArgs, tracks: { leftElbow: { q: [unit] } } }), code("INVALID_ARGUMENT"), "only keyable tracks");
+assert.throws(() => validateStudioSchema(setIkKey, { ...ikArgs, tracks: { head: { q: [{ x: 0, y: 0, z: 0 }] } } }), code("INVALID_ARGUMENT"), "a rotation is a full quaternion");
+assert.deepEqual([...studioActionDeclaration("character.removeIkKey").input.required].sort(), ["characterId", "frame"]);
+assert.deepEqual(studioActionDeclaration("character.clearIkKeys").input.required, ["characterId"]);
 // Frame ranges are half-open, like every other Studio range.
 assert.deepEqual(Object.keys(studioActionDeclaration("shot.setRange").input.properties).sort(), ["range", "shotId"]);
 assert.throws(() => validateStudioSchema(studioActionDeclaration("shot.setRange").input, { shotId: "shot-1", range: { startFrame: 10, endFrameExclusive: 10 } }), code("INVALID_ARGUMENT"));

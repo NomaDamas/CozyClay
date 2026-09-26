@@ -35,7 +35,7 @@ import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 import { motionArraysToNpzMembers, writeNpz } from '../tools/ardy/npz.mjs';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'late-apply-inspect-patch'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'late-apply-inspect-patch'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -109,7 +109,8 @@ function fixture(options={}) {
  for(const name of ['setTlFps','setProjectManifest','setCameraPos','setFovDeg','setCameraPresetId','setWaypoints','setPromptClips','setMotion','setCommittedIkEdits','setIkTick','setTlFrameCount','setToast','setActiveCharacterId','setSelectedHierarchyId','setTlFrame','setWorkflowMode','setLookThroughShot','setGridView','setAutoColor','setTlPlaying','setIkMode','setIkFocus','setKeyLight','setEnvironmentImage','setEnvironment','setStyle','setHasEnvSheet','setShotAspectKey','setSensorFormat','setMovePlaying'])scope[name]=noPublish(name);
  scope.setMotion=value=>{noPublish('setMotion')(value);for(const done of motionSet.splice(0))done(value);};
  const names=['restoreMotionRefs','createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','publishStudioStage','snapshotStudioDomain','publishStudioCharacters','syncStudioLayerBuffer','recordStudioHistory','publishStudioMotion','stepStudioHistory','undoScene','redoScene','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix','createStudioAppActions','recordStudioAction','addTimelineShot','recordShotUndo',
-  'recordCharacterUndo','validateWaypointAt','waypointCharacter','readCharacterWaypoints','writeCharacterWaypoints','addCharacterWaypoint','moveCharacterWaypoint','removeCharacterWaypoint','clearCharacterWaypoints'];
+  'setCharacterIkKey','removeCharacterIkKey','clearCharacterIkKeys','ikStateFor','editCharacterIkKeys','snapshotIkKeys',
+  'recordCharacterUndo','validateWaypointAt','castMemberOf','readCharacterWaypoints','writeCharacterWaypoints','addCharacterWaypoint','moveCharacterWaypoint','removeCharacterWaypoint','clearCharacterWaypoints'];
  const code=names.map(n=>{assert(declarations.has(n),`actual App function ${n}`);return declarations.get(n);}).join('\n');
  const actual=new Function(...Object.keys(scope),code+`\nreturn {${names.join(',')}};`)(...Object.values(scope));
  let binding; let artifactLoader=async()=>clip(); const stamps=new Map();
@@ -119,7 +120,7 @@ function fixture(options={}) {
  const actionHandlers=ref({
   state:()=>({shots:live.current.shots,objects:store.current.objects,characters:characterRef.current,frame:0,frameCount:48,selectedObjectId:null,activeCharacterId:'actor-a',promptBlockCount:0,generating:false,motionReady:true}),
   addTimelineShot:()=>actual.addTimelineShot(),
-  ...Object.fromEntries(['addCharacterWaypoint','moveCharacterWaypoint','removeCharacterWaypoint','clearCharacterWaypoints'].map(name=>[name,actual[name]])),
+  ...Object.fromEntries(['addCharacterWaypoint','moveCharacterWaypoint','removeCharacterWaypoint','clearCharacterWaypoints','setCharacterIkKey','removeCharacterIkKey','clearCharacterIkKeys'].map(name=>[name,actual[name]])),
   duplicateSelectedSceneObject:id=>{const source=store.current.objects.find(o=>o.id===id);store.current.applyAtomic(list=>[...list,{...source,id:'copy-1',name:'Copy',x:source.x+0.5}]);},
   ...Object.fromEntries(['splitTimelineShot','duplicateTimelineShot','removeTimelineShot','setTimelineShotRange','moveTimelineShot','runAllPromptBlocks'].map(name=>[name,unwired(name)])),
  });
@@ -483,6 +484,48 @@ const implementations={
   await refused('character.addWaypoint',{characterId:'ghost',position:{x:1,z:0},frame:30},'STALE_TARGET');
   await refused('character.moveWaypoint',{characterId:'actor-a',frame:30,position:{x:1,z:0}},'STALE_TARGET');
   await refused('character.removeWaypoint',{characterId:'actor-a',frame:30},'STALE_TARGET');
+  assert.equal(f.history.current.past.length,depth);
+ },
+ async 'run-action-character-ik-keys-and-undo'(f){
+  const frames=async id=>(await f.call('inspect_studio',{scope:'motion'})).characters.find(c=>c.id===id).ikKeyFrames;
+  const run=(action,args)=>f.call('run_action',f.request('run_action',{action,args}));
+  const q=(x=0,y=0,z=0,w=1)=>({x,y,z,w});
+  const layerB=()=>f.scope.ikStatesRef.current.get('actor-b');
+  const listed=Object.fromEntries((await f.call('inspect_studio',{scope:'actions'})).actions.map(a=>[a.id,a]));
+  for(const id of ['character.setIkKey','character.removeIkKey','character.clearIkKeys'])assert.equal(listed[id]?.available,true,id);
+  // A key for the inactive character lands on its stored layer, from JSON.
+  const before=f.binding.refresh().revision;
+  const set=await run('character.setIkKey',{characterId:'actor-b',frame:7,tracks:{leftHand:{q:[q(),q(0,0,0.3826834,0.9238795),q()]},hips:{q:[q()],p:{x:0,y:0.9,z:0.05}}}});
+  assert.equal(set.status,'applied',JSON.stringify(set));assert.deepEqual(set.affectedIds,['actor-b']);assert.deepEqual(set.revision,{before,after:before+1});
+  assert.deepEqual(await frames('actor-b'),[7]);
+  assert.deepEqual(layerB().keys.get(7).get('hips').p.toArray(),[0,0.9,0.05]);
+  assert(Math.abs(layerB().keys.get(7).get('leftHand').q[1].z-0.3826834)<1e-6);
+  assert(layerB().tracked.has('leftHand')&&layerB().tracked.has('hips'),'keyed tracks evaluate');
+  assert.equal(f.scope.ikStateRef.current.keys.size,0,'the active layer is untouched');
+  // The active character's key lands on the live layer.
+  assert.equal((await run('character.setIkKey',{characterId:'actor-a',frame:3,tracks:{head:{q:[q(0,0.258819,0,0.9659258)]}}})).status,'applied');
+  assert(f.scope.ikStateRef.current.keys.has(3));assert.deepEqual(await frames('actor-a'),[3]);
+  // A second key at the same frame replaces only the tracks it names.
+  assert.equal((await run('character.setIkKey',{characterId:'actor-b',frame:7,tracks:{rightFoot:{q:[q(),q(),q()]}}})).status,'applied');
+  assert.deepEqual([...layerB().keys.get(7).keys()].sort(),['hips','leftHand','rightFoot']);
+  const removed=await run('character.removeIkKey',{characterId:'actor-b',frame:7});
+  assert.equal(removed.status,'applied',JSON.stringify(removed));assert.deepEqual(await frames('actor-b'),[]);
+  const undo=await f.call('undo_edit',f.request('undo_edit',{receiptId:removed.receiptId}));
+  assert.equal(undo.status,'undone',JSON.stringify(undo));
+  assert.deepEqual(await frames('actor-b'),[7]);assert.equal(layerB().keys.get(7).size,3,'undo restores the inactive character\'s whole key');
+  const cleared=await run('character.clearIkKeys',{characterId:'actor-a'});
+  assert.equal(cleared.status,'applied',JSON.stringify(cleared));assert.deepEqual(await frames('actor-a'),[]);assert.equal(f.scope.ikStateRef.current.tracked.size,0);
+  assert(f.actual.stepStudioHistory(false));assert.deepEqual(await frames('actor-a'),[3],'Ctrl+Z restores the cleared layer');
+  // Refusals change nothing and say why.
+  const depth=f.history.current.past.length;
+  const refused=async(action,args,code)=>{const r=await run(action,args);assert.equal(r.ok,false,JSON.stringify(r));assert.equal(r.code,code,`${action} ${JSON.stringify(args)}: ${JSON.stringify(r)}`);assert.equal(r.mutated,false);};
+  await refused('character.setIkKey',{characterId:'actor-a',frame:5,tracks:{leftHand:{q:[q()]}}},'INVALID_ARGUMENT');
+  await refused('character.setIkKey',{characterId:'actor-a',frame:5,tracks:{}},'INVALID_ARGUMENT');
+  await refused('character.setIkKey',{characterId:'actor-a',frame:5,tracks:{head:{}}},'INVALID_ARGUMENT');
+  await refused('character.setIkKey',{characterId:'actor-a',frame:5,tracks:{head:{q:[q(0,0,0,0)]}}},'INVALID_ARGUMENT');
+  await refused('character.setIkKey',{characterId:'actor-a',frame:48,tracks:{head:{q:[q()]}}},'INVALID_RANGE');
+  await refused('character.setIkKey',{characterId:'ghost',frame:5,tracks:{head:{q:[q()]}}},'STALE_TARGET');
+  await refused('character.removeIkKey',{characterId:'actor-a',frame:9},'STALE_TARGET');
   assert.equal(f.history.current.past.length,depth);
  },
  async 'stale-receipt-undo'(f){const first=await f.call('arrange_objects',f.request('arrange_objects',createArgs));await f.call('arrange_objects',f.request('arrange_objects',createArgs));const before=f.store.current.objects;const r=await f.call('undo_edit',f.request('undo_edit',{receiptId:first.receiptId}));assert.equal(r.code,'UNDO_CONFLICT');assert.strictEqual(f.store.current.objects,before);},

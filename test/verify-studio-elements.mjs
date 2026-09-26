@@ -61,6 +61,7 @@ assert.deepEqual([...elementByPath("shot.crud").actions].sort(), ["shot.create",
 // The capabilities that were agent exposure gaps now run through registered actions.
 const exposedThroughActions = {
 	"character.waypoints": ["character.addWaypoint", "character.clearWaypoints", "character.moveWaypoint", "character.removeWaypoint"],
+	"character.ikKeys": ["character.clearIkKeys", "character.removeIkKey", "character.setIkKey"],
 };
 for (const [path, actions] of Object.entries(exposedThroughActions)) {
 	assert.equal(elementByPath(path).agentExposure, "action", `${path} is exposed through actions`);
