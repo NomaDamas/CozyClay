@@ -1811,3 +1811,56 @@ await run16rTwoTurnScenario();
 		await new Promise(resolve => serverLimit.close(resolve));
 	}
 }
+
+// The one-generation rule holds across both generation paths: generate_motion
+// and a run_action job action (motion.generateAllBlocks) share one limit per
+// user message, in either order.
+for (const [index, [label, first, second]] of [
+	["generate_motion then generateAllBlocks", "generate_motion", "run_action"],
+	["generateAllBlocks then generate_motion", "run_action", "generate_motion"],
+].entries()) {
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	let admissionsMixed = 0; const hubMixed = [];
+	const runtimeMixed = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: `mixed-job-${++admissionsMixed}`, commandId: `mixed-command-${admissionsMixed}`, state: "queued" }),
+		subscribe: () => () => {},
+		start: async () => ({ ok: true, status: "installed", mutated: true, receiptId: "mixed-receipt" }),
+		stop: async () => ({ status: "already_applied" }),
+	};
+	const call = (name, id) => name === "generate_motion"
+		? { type: "toolCall", id, name, arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } }
+		: { type: "toolCall", id, name, arguments: { action: "motion.generateAllBlocks" } };
+	const fauxMixed = createFakeModel();
+	fauxMixed.script([call(first, "mixed-first"), call(second, "mixed-second"), [{ type: "text", text: "reported" }]]);
+	const liveHubMixed = {
+		workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12",
+		command: async (name, payload) => {
+			hubMixed.push(name);
+			if (name === "run_action") return { ok: true, commandId: payload.commandId, action: payload.args.action, kind: "job", status: "started", affectedIds: ["char-alex"], summary: "Started generating every prompt block." };
+			return { ok: true };
+		},
+	};
+	let serverMixed;
+	const handlerMixed = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: fauxMixed.models, fauxProvider: fauxMixed.fauxProvider, liveHub: liveHubMixed, studioRuntime: runtimeMixed, port: () => serverMixed.address().port });
+	serverMixed = createServer((req, res) => handlerMixed(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	serverMixed.listen(0, "127.0.0.1"); await once(serverMixed, "listening");
+	const originMixed = `http://127.0.0.1:${serverMixed.address().port}`;
+	try {
+		const turnMixed = { ...envelopeFixture(), sessionId: `00000000-0000-4000-8000-00000000019${3 + index * 2}`, turnId: `00000000-0000-4000-8000-00000000019${4 + index * 2}`, text: "make Alex walk" };
+		const response = await fetch(`${originMixed}/agent/turn`, { method: "POST", headers: { origin: originMixed, "content-type": "application/json" }, body: JSON.stringify(turnMixed), signal: AbortSignal.timeout(10000) });
+		assert.equal(response.status, 200);
+		const framesMixed = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+		const done = framesMixed.filter(frame => frame.type === "tool.done");
+		assert.equal(done.length, 2, `${label}: both tool calls finish`);
+		assert.equal(done[0].ok, true, `${label}: the first generation starts: ${done[0].error ?? ""}`);
+		assert.equal(admissionsMixed + hubMixed.filter(name => name === "run_action").length, 1, `${label}: exactly one generation starts in one user message`);
+		assert.equal(done[1].ok, false, `${label}: the second generation is refused`);
+		assert.match(done[1].error, /GENERATION_LIMIT/, `${label}: the model sees the generation-limit code: ${done[1].error}`);
+		console.log(`PASS one generation per user message across both paths: ${label}`);
+	} finally {
+		await handlerMixed.close();
+		serverMixed.closeAllConnections();
+		await new Promise(resolve => serverMixed.close(resolve));
+	}
+}
