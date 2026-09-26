@@ -46,22 +46,27 @@ const waitFor = async (expression, timeoutMs = 45_000) => evaluate(`new Promise(
 function live(args) {
   try {
     const status = JSON.parse(execFileSync("node", ["bin/cozyclay.mjs", "live", "status", "--pretty"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
-    const editor = status.editors?.findLast((row) => row.project === "QA") ?? status.editors?.at(-1);
-    const workspaceArgs = editor?.handle ? ["--workspace", editor.handle] : status.selected ? ["--workspace", status.selected] : [];
-    return JSON.parse(execFileSync("node", ["bin/cozyclay.mjs", "live", ...args, ...workspaceArgs, "--pretty"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 20 * 1024 * 1024 }));
+    // Only the QA browser's own editor (tools/qa-browser.mjs names its project
+    // "QA") or an explicit QA_WORKSPACE; another open Studio tab is never touched.
+    const handle = process.env.QA_WORKSPACE || status.editors?.findLast((row) => row.project === "QA")?.handle;
+    if (!handle) throw new Error(`no QA editor on the live hub: ${JSON.stringify(status.editors?.map(({ handle: h, project }) => ({ handle: h, project })) ?? [])}`);
+    return JSON.parse(execFileSync("node", ["bin/cozyclay.mjs", "live", ...args, "--workspace", handle, "--pretty"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 20 * 1024 * 1024 }));
   } catch (error) {
     throw new Error(`live ${args.join(" ")} failed (status ${error.status ?? "unknown"}): ${error.stderr?.trim() || error.stdout?.trim() || error.message}`);
   }
 }
 function state() {
+  // `describe` carries the complete live object list; `inspect` returns one
+  // page (12 by default), so it is only asked about the named characters.
   const description = live(["describe"]);
-  const entities = live(["inspect", "--scope", "entities"]);
   const scene = description.document.scenes.find((row) => row.id === description.document.activeSceneId);
+  const characterIds = (description.characters ?? []).map((row) => row.id);
+  const entities = characterIds.length ? live(["inspect", "--scope", "entities", "--ids", characterIds.join(",")]).entities : [];
   return {
-    objectIds: entities.entities.filter((row) => row.kind === "object").map((row) => row.id).sort(),
-    objects: entities.entities.filter((row) => row.kind === "object").map(({ id, name }) => ({ id, name })),
+    objectIds: (description.objects ?? []).map((row) => row.id).sort(),
+    objects: (description.objects ?? []).map(({ id, name }) => ({ id, name })),
     shots: scene?.shotDocument?.shots?.map(({ id, name }) => ({ id, name })) ?? [],
-    characters: entities.entities.filter((row) => row.kind === "character").map(({ id, motion }) => ({ id, takeId: motion?.takeId ?? null, frames: motion?.frames ?? 0 })),
+    characters: entities.filter((row) => row.kind === "character").map(({ id, motion }) => ({ id, takeId: motion?.takeId ?? null, frames: motion?.frames ?? 0 })),
   };
 }
 const finalReply = () => evaluate(`(() => [...document.querySelectorAll('.agent-row.assistant .agent-assistant-text')].map(node => node.innerText.trim()).filter(Boolean).at(-1) || '')()`);
