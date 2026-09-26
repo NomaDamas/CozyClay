@@ -679,6 +679,34 @@ export function createStudioAppActions(handlersRef) {
 			if (!h().state().generating) fail("TARGET_NOT_READY", "The editor did not start the generation; check the active character's rig and prompt blocks.");
 			return { affectedIds: activeCharacterId ? [activeCharacterId] : [], summary: `Started generating the active character's motion from ${promptBlockCount} prompt block${promptBlockCount === 1 ? "" : "s"}.` };
 		} });
+	// Cast actions name their character explicitly, so they run the same way
+	// whichever character is active and whatever mode the editor is in.
+	const characterOf = characterId => h().state().characters.find(entry => entry.id === characterId)
+		?? fail("STALE_TARGET", `Character ${characterId} is not in this scene.`);
+	const castAction = (id, run) => registry.register({ ...studioActionDeclaration(id),
+		available: state => state.characters.length > 0 || "There are no characters in this scene; add one with arrange_characters.",
+		run: args => {
+			const character = characterOf(args.characterId);
+			return { affectedIds: [character.id], summary: run(args, character.subject || character.id) };
+		} });
+	const pin = waypoint => `frame ${waypoint.frame} (x ${waypoint.x}, z ${waypoint.z})`;
+	const warned = warnings => warnings.length ? `; warning: ${warnings[0]}` : "";
+	castAction("character.addWaypoint", ({ characterId, position, frame }, name) => {
+		const { waypoint, index, warnings } = h().addCharacterWaypoint(characterId, position, frame ?? null);
+		return `Added ${name}'s root waypoint ${index + 1} at ${pin(waypoint)}${warned(warnings)}.`;
+	});
+	castAction("character.moveWaypoint", ({ characterId, frame, position }, name) => {
+		const { waypoint, warnings } = h().moveCharacterWaypoint(characterId, frame, position);
+		return `Moved ${name}'s root waypoint to ${pin(waypoint)}${warned(warnings)}.`;
+	});
+	castAction("character.removeWaypoint", ({ characterId, frame }, name) => {
+		h().removeCharacterWaypoint(characterId, frame);
+		return `Removed ${name}'s root waypoint at frame ${frame}.`;
+	});
+	castAction("character.clearWaypoints", ({ characterId }, name) => {
+		const count = h().clearCharacterWaypoints(characterId);
+		return count ? `Cleared ${name}'s root path (${count} waypoint${count === 1 ? "" : "s"}).` : `${name} has no root waypoints; nothing changed.`;
+	});
 	registry.register({ ...studioActionDeclaration("object.duplicate"),
 		available: state => state.objects.length > 0 || "There are no scene objects to duplicate.",
 		run: ({ objectId }) => {
@@ -6745,8 +6773,8 @@ export default function App() {
 	// path starts from its own cast member.
 	const rootStart = () => ({ frame: 0, x: activeChar.x, z: activeChar.z });
 
-	function validateWaypointAt(ordered, index, candidate) {
-		const previous = index > 0 ? ordered[index - 1] : rootStart();
+	function validateWaypointAt(ordered, index, candidate, start = rootStart()) {
+		const previous = index > 0 ? ordered[index - 1] : start;
 		const beforePrevious = index > 1 ? ordered[index - 2] : null;
 		const inbound = judgeNextWaypoint(previous, candidate, tlFps, beforePrevious);
 		if (!inbound.ok) return inbound;
@@ -6776,85 +6804,142 @@ export default function App() {
 		selectActiveCharacterInHierarchy();
 		setToast(isKo ? `프레임 ${target}이 예약됐어요. 샷 뷰 바닥을 클릭하면 그 위치에 루트 웨이포인트가 생성됩니다.` : `Frame ${target} is reserved — click the Shot-view floor to drop the root waypoint there.`);
 	}
+	/* One root-path core for every cast member, shared by the Shot-view floor
+	 * click, the plan-board drag, the timeline marker and run_action. It takes
+	 * the character explicitly: the loaded layer's path lives in the editing
+	 * buffer, every other character's on its cast entry. Refusals throw a
+	 * StudioProtocolError naming the fix; the UI door shows it as a toast. */
+	function waypointCharacter(characterId) {
+		const character = charactersRef.current.find((entry) => entry.id === characterId);
+		if (!character) throw new StudioProtocolError("STALE_TARGET", `Character ${characterId} is not in this scene.`);
+		return character;
+	}
+	function readCharacterWaypoints(characterId) {
+		if (characterId === loadedLayerCharRef.current) return bufferRef.current.waypoints;
+		return charactersRef.current.find((entry) => entry.id === characterId)?.layer?.waypoints ?? [];
+	}
+	function writeCharacterWaypoints(characterId, next) {
+		if (characterId === loadedLayerCharRef.current) {
+			bufferRef.current = { ...bufferRef.current, waypoints: next };
+			setWaypoints(next);
+			return;
+		}
+		publishStudioCharacters(charactersRef.current.map((entry) => entry.id === characterId
+			? { ...entry, layer: { ...(entry.layer ?? createCharacterLayer()), waypoints: next } }
+			: entry), true);
+	}
+	/** Pin the character's root at `point` ({x, z}) on `frame`, or — frame null —
+	 * at walking-distance pacing from the previous pin. Returns the placed
+	 * waypoint, its index on the path and the judge's warnings. */
+	function addCharacterWaypoint(characterId, point, frame = null) {
+		const character = waypointCharacter(characterId);
+		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
+		if (ordered.length + 1 > MAX_WAYPOINTS) throw new StudioProtocolError("TARGET_NOT_READY", `The root path is capped at ${MAX_WAYPOINTS} waypoints; remove one first.`);
+		const x = clampRootPosition(point.x);
+		const z = clampRootPosition(point.z);
+		const start = { frame: 0, x: character.x, z: character.z };
+		const last = ordered[ordered.length - 1] ?? start;
+		const lastFrame = frameCountRef.current - 1;
+		if (frame !== null && (frame < 1 || frame > lastFrame)) throw new StudioProtocolError("INVALID_RANGE", `Frame ${frame} is outside the root path's frames 1-${lastFrame}.`);
+		const at = frame ?? last.frame + Math.max(8, Math.round((Math.hypot(x - last.x, z - last.z) / WALK_SPEED_MPS) * tlFps));
+		if (at > lastFrame) throw new StudioProtocolError("INVALID_RANGE", "The path already fills the clip — extend the duration or clear a waypoint.");
+		if (ordered.some((waypoint) => waypoint.frame === at)) throw new StudioProtocolError("INVALID_ARGUMENT", `Frame ${at} already has a root waypoint — pick an empty frame or move that one.`);
+		// The generator cannot refuse an impossible pin, so placement is the
+		// last moment to: block out-of-band legs with the fix named.
+		const insertAt = ordered.findIndex((waypoint) => waypoint.frame > at);
+		const index = insertAt === -1 ? ordered.length : insertAt;
+		const waypoint = { id: createStableItemId("waypoint"), frame: at, x, z, heading: null };
+		const next = [...ordered.slice(0, index), waypoint, ...ordered.slice(index)];
+		const verdict = validateWaypointAt(next, index, waypoint, start);
+		if (!verdict.ok) throw new StudioProtocolError("INVALID_ARGUMENT", `Not placed — ${verdict.error}`);
+		// Past every refusal: the pre-drop path is worth one Ctrl+Z entry.
+		recordCharacterUndo();
+		writeCharacterWaypoints(characterId, next);
+		return { waypoint, index, warnings: verdict.warnings };
+	}
+	function moveCharacterWaypoint(characterId, frame, point) {
+		const character = waypointCharacter(characterId);
+		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
+		const index = ordered.findIndex((waypoint) => waypoint.frame === frame);
+		if (index === -1) throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no root waypoint at frame ${frame}.`);
+		const moved = { ...ordered[index], x: clampRootPosition(point.x), z: clampRootPosition(point.z) };
+		if (moved.x === ordered[index].x && moved.z === ordered[index].z) return { waypoint: ordered[index], index, warnings: [] };
+		const next = ordered.map((waypoint, i) => (i === index ? moved : waypoint));
+		const verdict = validateWaypointAt(next, index, moved, { frame: 0, x: character.x, z: character.z });
+		if (!verdict.ok) throw new StudioProtocolError("INVALID_ARGUMENT", `This position doesn't fit the root path: ${verdict.error}`);
+		// A plan-board drag recorded its one entry when the gesture began; every
+		// other move is its own entry.
+		const past = charHistoryRef.current.past;
+		if (!(gestureUndoRef.current?.key === "waypoint-drag" && past[past.length - 1]?.tick === gestureUndoRef.current.tick)) recordCharacterUndo();
+		writeCharacterWaypoints(characterId, next);
+		return { waypoint: moved, index, warnings: verdict.warnings };
+	}
+	function removeCharacterWaypoint(characterId, frame) {
+		const character = waypointCharacter(characterId);
+		const current = readCharacterWaypoints(characterId);
+		const waypoint = current.find((entry) => entry.frame === frame);
+		if (!waypoint) throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no root waypoint at frame ${frame}.`);
+		recordCharacterUndo();
+		writeCharacterWaypoints(characterId, removeStableItem(current, waypoint.id, "waypoints"));
+		return waypoint;
+	}
+	function clearCharacterWaypoints(characterId) {
+		waypointCharacter(characterId);
+		const current = readCharacterWaypoints(characterId);
+		if (!current.length) return 0;
+		recordCharacterUndo();
+		writeCharacterWaypoints(characterId, []);
+		return current.length;
+	}
+
 	/** ARDY-demo style authoring: each empty-floor press in the Shot view drops
 	    the next waypoint where it was clicked; the frame gap comes from walking
 	    distance. The bird's-eye board selects and drags existing waypoints. */
 	function addFloorWaypoint(point) {
-		const x = clampRootPosition(point.x);
-		const z = clampRootPosition(point.z);
 		const ordered = [...waypoints].sort((a, b) => a.frame - b.frame);
 		const last = ordered[ordered.length - 1] ?? rootStart();
-		if (waypoints.length + 1 > MAX_WAYPOINTS) {
-			setToast(isKo ? `루트 경로는 웨이포인트 ${MAX_WAYPOINTS}개까지 사용할 수 있어요` : `The root path is capped at ${MAX_WAYPOINTS} waypoints`);
-			return;
-		}
 		const pendingFrame = pendingWaypointFrame == null ? null : Math.max(1, Math.min(Math.round(pendingWaypointFrame), tlFrameCount - 1));
-		if (pendingFrame != null && ordered.some((waypoint) => waypoint.frame === pendingFrame)) {
-			setToast(isKo ? `프레임 ${pendingFrame}에는 이미 루트 웨이포인트가 있어요. 타임라인에서 빈 프레임을 선택하세요.` : `Frame ${pendingFrame} already has a root waypoint — pick an empty frame on the timeline.`);
-			setPendingWaypointFrame(null);
-			return;
-		}
 		// A scrubbed playhead is an explicit statement of time: a click lands on
 		// that exact frame. An untouched playhead (it snaps to the last pin
 		// after every placement) falls back to walking-distance pacing.
 		const playhead = Math.round(tlFrame);
 		const pinned = pendingFrame != null || playhead > last.frame;
-		const walkGap = Math.max(8, Math.round((Math.hypot(x - last.x, z - last.z) / WALK_SPEED_MPS) * tlFps));
-		const frame = pendingFrame ?? (pinned ? Math.min(playhead, tlFrameCount - 1) : last.frame + walkGap);
-		if (frame > tlFrameCount - 1) {
-			setToast(ko("The path already fills the clip — extend the duration or clear a waypoint", "경로가 이미 클립 길이를 채웠어요. 시간을 늘리거나 웨이포인트를 지워 주세요"));
+		const frame = pendingFrame ?? (pinned ? Math.min(playhead, tlFrameCount - 1) : null);
+		const before = readCharacterWaypoints(activeChar.id);
+		const placedAction = runStudioAction("character.addWaypoint", { characterId: activeChar.id, position: { x: point.x, z: point.z }, ...(frame == null ? {} : { frame }) });
+		if (!placedAction) {
+			if (pendingFrame != null && ordered.some((waypoint) => waypoint.frame === pendingFrame)) setPendingWaypointFrame(null);
 			return;
 		}
-		// The generator cannot refuse an impossible pin, so the click is the
-		// last moment a human can: block out-of-band legs with the fix named.
-		const insertAt = ordered.findIndex((waypoint) => waypoint.frame > frame);
-		const index = insertAt === -1 ? ordered.length : insertAt;
-		const waypoint = { id: createStableItemId("waypoint"), frame, x, z, heading: null };
-		const nextWaypoints = [...ordered.slice(0, index), waypoint, ...ordered.slice(index)];
-		const verdict = validateWaypointAt(nextWaypoints, index, waypoint);
-		if (!verdict.ok) {
-			setToast(isKo ? `배치하지 못했어요 — ${verdict.error}` : `Not placed — ${verdict.error}`);
-			return;
-		}
-		// Past every refusal: the waypoint is going down, so the pre-drop path is
-		// worth one Ctrl+Z entry.
-		recordCharacterUndo();
-		setWaypoints(nextWaypoints);
-		setTlFrame(frame);
+		const path = readCharacterWaypoints(activeChar.id);
+		const index = path.findIndex((waypoint) => !before.includes(waypoint));
+		const waypoint = path[index];
+		setTlFrame(waypoint.frame);
 		setActiveWaypointId(waypoint.id);
 		setPendingWaypointFrame(null);
+		const { warnings } = validateWaypointAt(path, index, waypoint);
 		const placed = isKo
-			? `루트 웨이포인트 ${index + 1} 추가: 프레임 ${frame}${pendingFrame != null ? " (타임라인 예약 프레임)" : pinned ? " (재생 헤드 위치)" : ` (~${(frame / tlFps).toFixed(1)}초 걷기 기준)`}`
-			: `Waypoint ${ordered.length + 1} — frame ${frame} ${pendingFrame != null ? "(at the reserved frame)" : pinned ? "(at the playhead)" : `(~${(frame / tlFps).toFixed(1)}s at a walk)`}`;
-		setToast(verdict.warnings.length ? `${placed} · ⚠ ${verdict.warnings[0]}` : placed);
+			? `루트 웨이포인트 ${index + 1} 추가: 프레임 ${waypoint.frame}${pendingFrame != null ? " (타임라인 예약 프레임)" : pinned ? " (재생 헤드 위치)" : ` (~${(waypoint.frame / tlFps).toFixed(1)}초 걷기 기준)`}`
+			: `Waypoint ${index + 1} — frame ${waypoint.frame} ${pendingFrame != null ? "(at the reserved frame)" : pinned ? "(at the playhead)" : `(~${(waypoint.frame / tlFps).toFixed(1)}s at a walk)`}`;
+		setToast(warnings.length ? `${placed} · ⚠ ${warnings[0]}` : placed);
 	}
 
 	function moveWaypoint(id, x, z) {
-		const ordered = [...waypoints].sort((a, b) => a.frame - b.frame);
-		const index = ordered.findIndex((waypoint) => waypoint.id === id);
-		if (index === -1) throw new Error(`Unknown waypoints ID: ${id}`);
-		const nextWaypoint = {
-			...ordered[index],
-			x: clampRootPosition(x),
-			z: clampRootPosition(z),
-		};
-		const nextOrdered = ordered.map((waypoint) => waypoint.id === id ? nextWaypoint : waypoint);
-		const verdict = validateWaypointAt(nextOrdered, index, nextWaypoint);
-		if (!verdict.ok) {
-			setToast(isKo ? `이 위치는 루트 경로에 맞지 않아요: ${verdict.error}` : `This position doesn't fit the root path: ${verdict.error}`);
-			return;
-		}
-		setWaypoints(nextOrdered);
+		const waypoint = waypoints.find((entry) => entry.id === id);
+		if (!waypoint) throw new Error(`Unknown waypoints ID: ${id}`);
+		if (!runStudioAction("character.moveWaypoint", { characterId: activeChar.id, frame: waypoint.frame, position: { x, z } })) return;
 		setActiveWaypointId(id);
-		setPendingWaypointFrame((current) => (current === nextWaypoint.frame ? null : current));
-		if (verdict.warnings.length) setToast(isKo ? `루트 웨이포인트 이동됨: ${verdict.warnings[0]}` : `Root waypoint moved: ${verdict.warnings[0]}`);
+		setPendingWaypointFrame((current) => (current === waypoint.frame ? null : current));
+		const path = readCharacterWaypoints(activeChar.id);
+		const index = path.findIndex((entry) => entry.id === id);
+		const { warnings } = index === -1 ? { warnings: [] } : validateWaypointAt(path, index, path[index]);
+		if (warnings.length) setToast(isKo ? `루트 웨이포인트 이동됨: ${warnings[0]}` : `Root waypoint moved: ${warnings[0]}`);
 	}
 
 	function removeWaypoint(id) {
 		const waypoint = waypoints.find((entry) => entry.id === id);
 		if (!waypoint) throw new Error(`Unknown waypoints ID: ${id}`);
-		recordCharacterUndo();
-		setWaypoints((prev) => removeStableItem(prev, id, "waypoints"));
+		if (!runStudioAction("character.removeWaypoint", { characterId: activeChar.id, frame: waypoint.frame })) return;
 		setActiveWaypointId((current) => (current === id ? null : current));
 		setPendingWaypointFrame((current) => (current === waypoint.frame ? null : current));
 	}
@@ -11962,12 +12047,16 @@ function resizePromptClip(id, edge, rawFrame) {
 	}
 	/** The active character's layer lives in the editing buffer, and the read
 	 * model folds that buffer back over the cast. A published or restored prompt
-	 * schedule has to reach it in the same tick, or the next read would revert it. */
+	 * schedule or root path has to reach it in the same tick, or the next read
+	 * would revert it. */
 	function syncStudioLayerBuffer(rows) {
-		const clips = rows.find(entry => entry.id === loadedLayerCharRef.current)?.layer?.promptClips;
-		if (!clips || JSON.stringify(clips) === JSON.stringify(bufferRef.current.promptClips)) return;
-		bufferRef.current = { ...bufferRef.current, promptClips: clips };
-		setPromptClips(clips);
+		const layer = rows.find(entry => entry.id === loadedLayerCharRef.current)?.layer;
+		const changed = key => Array.isArray(layer?.[key]) && JSON.stringify(layer[key]) !== JSON.stringify(bufferRef.current[key]);
+		const clips = changed("promptClips"), path = changed("waypoints");
+		if (!clips && !path) return;
+		bufferRef.current = { ...bufferRef.current, ...(clips ? { promptClips: layer.promptClips } : {}), ...(path ? { waypoints: layer.waypoints } : {}) };
+		if (clips) setPromptClips(layer.promptClips);
+		if (path) setWaypoints(layer.waypoints);
 	}
 	function recordStudioHistory(domain, targetId, historyEntryId) {
 		const tick = ++opClockRef.current;
@@ -12192,7 +12281,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// Shots and objects come from the synchronously published read model, so
 		// an action sees its own edit before React renders it.
 		state: () => ({
-			shots: liveStateRef.current.shots, objects: storeRef.current.objects, frame: tlFrame, frameCount: tlFrameCount,
+			shots: liveStateRef.current.shots, objects: storeRef.current.objects, characters: charactersRef.current, frame: tlFrame, frameCount: tlFrameCount,
 			selectedObjectId: selectedSceneObjectId, activeCharacterId: activeChar?.id ?? null,
 			promptBlockCount: promptClips.filter((clip) => clip.text.trim()).length,
 			generating: Boolean(generationPendingRef.current || genRunningRef.current || generationBusy),
@@ -12200,6 +12289,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		}),
 		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
 		runAllPromptBlocks, duplicateSelectedSceneObject,
+		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
 	/** UI door into the shared registry: an unavailable action or a refused
@@ -13029,7 +13119,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								characters={characters}
 								onMoveCharacter={moveCharacter}
 								onCharacterGestureStart={recordCharacterUndo}
-								onWaypointGestureStart={recordCharacterUndo}
+								onWaypointGestureStart={() => beginGestureUndo("waypoint-drag")}
 								onCameraGestureStart={beginCameraFramingGesture}
 								pathStart={activeChar}
 								waypoints={waypoints}

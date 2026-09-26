@@ -27,7 +27,7 @@ const entries = [
 	{ path: "character.tint", type: "color", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry" },
 	{ path: "character.identityImage", type: "image", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", note: "data:image only" },
 	{ path: "character.pose", type: "id", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry" },
-	{ path: "character.waypoints", type: "array", persisted: true, undoDomain: "cast", agentExposure: "todo", normalizer: "createCharacterEntry", note: "agent exposure gap" },
+	{ path: "character.waypoints", type: "array", persisted: true, undoDomain: "cast", agentExposure: "action", normalizer: "createCharacterEntry", actions: ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"], note: "root path pins, addressed by frame" },
 	{ path: "character.promptBlocks", type: "array", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry", note: "stored at layer.promptClips" },
 	{ path: "character.motionRef.url", type: "string", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry" },
 	{ path: "character.motionRef.motionId", type: "id", persisted: true, undoDomain: "cast", agentExposure: "patch", normalizer: "createCharacterEntry" },

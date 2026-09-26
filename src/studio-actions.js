@@ -13,6 +13,11 @@ const idSchema = StudioSchemas.TargetGuard.properties.targetId;
 const frame = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
 const input = (required = {}, optional = {}) => ({ type: "object", properties: { ...required, ...optional }, required: Object.keys(required), additionalProperties: false });
 const shotId = { shotId: idSchema };
+const characterId = { characterId: idSchema };
+/** A world floor point in metres; y is the floor. */
+const floorPoint = input({ x: { type: "number" }, z: { type: "number" } });
+const waypointFrame = { ...frame, minimum: 1 };
+const WAYPOINT_RULES = "Pins sit at least 8 frames apart, the walk between two pins must stay within 0.5-3 m/s, and x/z are clamped to +/-11 m; a pin that breaks a rule is refused with the frame or distance that would work.";
 
 export const STUDIO_ACTIONS = freezeStudioData([
 	{ id: "shot.create", label: "Add shot", kind: "mutation", undoDomain: "shot", input: input(),
@@ -29,6 +34,14 @@ export const STUDIO_ACTIONS = freezeStudioData([
 		description: "Move a shot in time to start at startFrame, keeping its length and camera keys. Refused (a noop) where it would overlap another shot." },
 	{ id: "motion.generateAllBlocks", label: "Generate all blocks", kind: "job", input: input(),
 		description: "Generate the active character's motion from all of its prompt blocks, like the timeline's Generate all blocks button. It starts a job and returns status \"started\"; the take lands in the editor when the job finishes. Counts as the one motion generation of this message." },
+	{ id: "character.addWaypoint", label: "Add root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, position: floorPoint }, { frame: waypointFrame }),
+		description: `Pin a character's root path: at frame, the character's root stands at position (world x/z metres). Frame 0 is the character's own spot, so pins start at frame 1 and each frame holds one pin. Omit frame to pace the pin at a walk (1.4 m/s) from the previous one. ${WAYPOINT_RULES} Read paths with inspect_studio { scope: "motion" }.` },
+	{ id: "character.moveWaypoint", label: "Move root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, frame: waypointFrame, position: floorPoint }),
+		description: `Move the character's root waypoint at frame to a new floor position (world x/z metres), keeping its frame. ${WAYPOINT_RULES}` },
+	{ id: "character.removeWaypoint", label: "Remove root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, frame: waypointFrame }),
+		description: "Remove the character's root waypoint at frame." },
+	{ id: "character.clearWaypoints", label: "Clear root path", kind: "mutation", undoDomain: "cast", input: input(characterId),
+		description: "Remove every root waypoint of the character, leaving its motion unconstrained by a path." },
 	{ id: "object.duplicate", label: "Duplicate object", kind: "mutation", undoDomain: "objects", input: input({}, { objectId: idSchema }),
 		description: "Copy a scene object (the selected one when objectId is omitted) and place the copy half a metre beside it." },
 ]);
