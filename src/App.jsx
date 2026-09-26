@@ -60,7 +60,7 @@ import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, valida
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateReceipt } from "./studio-agent-protocol.js";
 import { elementByPath } from "./studio-elements.js";
 import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
-import { STUDIO_IK_CHAIN_TRACKS, createStudioActionRegistry, studioActionDeclaration } from "./studio-actions.js";
+import { STUDIO_IK_CHAIN_TRACKS, createStudioActionRegistry, studioActionDeclaration, studioActionRefusal } from "./studio-actions.js";
 import { createStudioMotionCandidates } from "./studio-agent-motion.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
@@ -6972,7 +6972,10 @@ export default function App() {
 	function addCharacterWaypoint(characterId, point, frame = null) {
 		const character = castMemberOf(characterId);
 		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
-		if (ordered.length + 1 > MAX_WAYPOINTS) throw new StudioProtocolError("TARGET_NOT_READY", `The root path is capped at ${MAX_WAYPOINTS} waypoints; remove one first.`);
+		if (ordered.length + 1 > MAX_WAYPOINTS) {
+			throw studioActionRefusal("TARGET_NOT_READY", `The root path is capped at ${MAX_WAYPOINTS} waypoints; remove one first.`,
+				isKo ? `루트 경로는 웨이포인트 ${MAX_WAYPOINTS}개까지 사용할 수 있어요` : `The root path is capped at ${MAX_WAYPOINTS} waypoints`);
+		}
 		const x = clampRootPosition(point.x);
 		const z = clampRootPosition(point.z);
 		const start = { frame: 0, x: character.x, z: character.z };
@@ -6980,8 +6983,14 @@ export default function App() {
 		const lastFrame = frameCountRef.current - 1;
 		if (frame !== null && (frame < 1 || frame > lastFrame)) throw new StudioProtocolError("INVALID_RANGE", `Frame ${frame} is outside the root path's frames 1-${lastFrame}.`);
 		const at = frame ?? last.frame + Math.max(8, Math.round((Math.hypot(x - last.x, z - last.z) / WALK_SPEED_MPS) * tlFps));
-		if (at > lastFrame) throw new StudioProtocolError("INVALID_RANGE", "The path already fills the clip — extend the duration or clear a waypoint.");
-		if (ordered.some((waypoint) => waypoint.frame === at)) throw new StudioProtocolError("INVALID_ARGUMENT", `Frame ${at} already has a root waypoint — pick an empty frame or move that one.`);
+		if (at > lastFrame) {
+			throw studioActionRefusal("INVALID_RANGE", "The path already fills the clip — extend the duration or clear a waypoint.",
+				ko("The path already fills the clip — extend the duration or clear a waypoint", "경로가 이미 클립 길이를 채웠어요. 시간을 늘리거나 웨이포인트를 지워 주세요"));
+		}
+		if (ordered.some((waypoint) => waypoint.frame === at)) {
+			throw studioActionRefusal("INVALID_ARGUMENT", `Frame ${at} already has a root waypoint — pick an empty frame or move that one.`,
+				isKo ? `프레임 ${at}에는 이미 루트 웨이포인트가 있어요. 타임라인에서 빈 프레임을 선택하세요.` : `Frame ${at} already has a root waypoint — pick an empty frame on the timeline.`);
+		}
 		// The generator cannot refuse an impossible pin, so placement is the
 		// last moment to: block out-of-band legs with the fix named.
 		const insertAt = ordered.findIndex((waypoint) => waypoint.frame > at);
@@ -6989,7 +6998,7 @@ export default function App() {
 		const waypoint = { id: createStableItemId("waypoint"), frame: at, x, z, heading: null };
 		const next = [...ordered.slice(0, index), waypoint, ...ordered.slice(index)];
 		const verdict = validateWaypointAt(next, index, waypoint, start);
-		if (!verdict.ok) throw new StudioProtocolError("INVALID_ARGUMENT", `Not placed — ${verdict.error}`);
+		if (!verdict.ok) throw studioActionRefusal("INVALID_ARGUMENT", `Not placed — ${verdict.error}`, isKo ? `배치하지 못했어요 — ${verdict.error}` : `Not placed — ${verdict.error}`);
 		// Past every refusal: the pre-drop path is worth one Ctrl+Z entry.
 		recordCharacterUndo();
 		writeCharacterWaypoints(characterId, next);
@@ -7004,7 +7013,10 @@ export default function App() {
 		if (moved.x === ordered[index].x && moved.z === ordered[index].z) return { waypoint: ordered[index], index, warnings: [] };
 		const next = ordered.map((waypoint, i) => (i === index ? moved : waypoint));
 		const verdict = validateWaypointAt(next, index, moved, { frame: 0, x: character.x, z: character.z });
-		if (!verdict.ok) throw new StudioProtocolError("INVALID_ARGUMENT", `This position doesn't fit the root path: ${verdict.error}`);
+		if (!verdict.ok) {
+			throw studioActionRefusal("INVALID_ARGUMENT", `This position doesn't fit the root path: ${verdict.error}`,
+				isKo ? `이 위치는 루트 경로에 맞지 않아요: ${verdict.error}` : `This position doesn't fit the root path: ${verdict.error}`);
+		}
 		// A plan-board drag recorded its one entry when the gesture began; every
 		// other move is its own entry.
 		const past = charHistoryRef.current.past;
@@ -12434,14 +12446,16 @@ function resizePromptClip(id, edge, rawFrame) {
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
-	/** UI door into the shared registry: an unavailable action or a refused
-	 * argument becomes the editor's toast instead of an uncaught error. */
+	/** UI door into the shared registry. Refusal messages are written for the
+	 * model, so a person only ever sees the localized `uiMessage` a thrower
+	 * attached (studioActionRefusal); any other refusal stays silent, as the
+	 * controls always were. */
 	function runStudioAction(id, args = {}) {
 		try {
 			return studioActionsRef.current.run(id, args);
 		} catch (error) {
 			if (!(error instanceof StudioProtocolError)) throw error;
-			setToast(error.message);
+			if (error.uiMessage) setToast(error.uiMessage);
 			return null;
 		}
 	}

@@ -74,6 +74,13 @@ export const STUDIO_ACTIONS = freezeStudioData([
 export const STUDIO_ACTION_IDS = freezeStudioData(STUDIO_ACTIONS.map(action => action.id));
 
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
+
+/** A refusal an editor control can also meet. `message` is written for the
+ * model; `uiMessage` is the localized text the editor's UI door shows a
+ * person. A refusal without one stays silent in the UI. */
+export function studioActionRefusal(code, message, uiMessage) {
+	return Object.assign(new StudioProtocolError(code, message), { uiMessage });
+}
 const unknown = (id, known) => fail("INVALID_ARGUMENT", `Unknown Studio action "${id}". Known actions: ${known.join(", ")}. List them with inspect_studio { scope: "actions" }.`);
 
 export function studioActionDeclaration(id) {
