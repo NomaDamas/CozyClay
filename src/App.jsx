@@ -1022,7 +1022,9 @@ export function createStudioAppBinding(ports) {
 		read_studio_context(request) { const c = context(); if (!same(validateStudioIdentity(request.host), owner)) fail("STALE_SCENE", "This is not the requested document."); return c; },
 		inspect_studio(args) {
 			const command = validateStudioCommand({ name: "inspect_studio", args }); const c = context();
-			if (command.args.scope === "catalogue") return studioObjectCatalogue();
+			// Every scope carries the context: its revision is what the agent's next
+			// command is admitted at, so a scope without it leaves that admission stale.
+			if (command.args.scope === "catalogue") return { context: c, ...studioObjectCatalogue() };
 			// Discovery for run_action: every registered action, available ones with
 			// their description and input schema, unavailable ones with the reason.
 			if (command.args.scope === "actions") return { context: c, actions: ports.actions?.()?.list() ?? [] };
