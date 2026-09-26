@@ -342,7 +342,7 @@ import { CAMERA_PRESETS, cameraPresetFraming, captureFraming, classifyMove, move
 import { sampleAt } from "./sample-at.js";
 import { exportOffscreenVideo } from "./offscreen-export.js";
 import { parseRigNodeId } from "./hierarchy-model.js";
-import { timelineContentExtent } from "./timeline-extent.js";
+import { timelineContentExtent, timelineSpan } from "./timeline-extent.js";
 import {
 	GUIDE_LABELS,
 	guideGeometry,
@@ -7481,11 +7481,16 @@ export default function App() {
 			promptClips,
 			multiModelFootage?.frames,
 		);
+		// Never leave the end under an authored shot: a shot outside the
+		// timeline is an invalid scene for the Studio agent (and for playback).
 		if (extent > 0) {
-			setTlFrameCount(extent);
-			setTlFrame((frame) => Math.min(frame, extent - 1));
+			const span = timelineSpan(extent, shots);
+			setTlFrameCount(span);
+			setTlFrame((frame) => Math.min(frame, span - 1));
+		} else {
+			setTlFrameCount((count) => timelineSpan(0, shots, count));
 		}
-	}, [characters, activeChar.id, motion, promptClips, multiModelFootage?.frames]);
+	}, [characters, activeChar.id, motion, promptClips, multiModelFootage?.frames, shots]);
 
 	/* ------------------------------ IK logic ------------------------------ */
 

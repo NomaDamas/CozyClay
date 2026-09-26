@@ -37,3 +37,19 @@ export function timelineContentExtent(
 		? authoredExtent
 		: Number.isFinite(extraFrames) ? extraFrames : 0;
 }
+
+/**
+ * Return the frame count the shared timeline shows for a content `extent`.
+ *
+ * It never ends under an authored shot: a shot outside the timeline is an
+ * invalid scene for the Studio agent and for playback, so the count is at
+ * least every shot's inclusive `endFrame + 1`. A zero extent keeps
+ * `currentCount` (the existing authored duration), raised only by a shot.
+ */
+export function timelineSpan(extent, shots = [], currentCount = 0) {
+	const shotEnd = shots.reduce(
+		(max, shot) => Math.max(max, Number.isFinite(shot?.endFrame) ? shot.endFrame + 1 : 0),
+		0,
+	);
+	return Math.max(extent > 0 ? extent : currentCount, shotEnd);
+}
