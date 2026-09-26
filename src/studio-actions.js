@@ -17,6 +17,18 @@ const characterId = { characterId: idSchema };
 /** A world floor point in metres; y is the floor. */
 const floorPoint = input({ x: { type: "number" }, z: { type: "number" } });
 const waypointFrame = { ...frame, minimum: 1 };
+/** The tracks an IK key stores (src/ardy/ik.js IK_TRACKS and FK_TRACKS). A
+ * chain track keys its three bones (upper, lower, end); a joint track one. */
+export const STUDIO_IK_CHAIN_TRACKS = freezeStudioData(["leftHand", "rightHand", "leftFoot", "rightFoot"]);
+export const STUDIO_IK_JOINT_TRACKS = freezeStudioData(["hips", "spine", "chest", "neck", "head", "leftShoulder", "rightShoulder"]);
+const num = { type: "number" };
+const perBone = items => ({ type: "array", items, minItems: 1, maxItems: 3 });
+const quaternion = input({ x: num, y: num, z: num, w: num });
+/** One track's key: the IK state's { q, p, baseQ, basePos, chainP,
+ * keepTranslations } with quaternions as {x,y,z,w} and positions as {x,y,z}. */
+const ikTrackKey = input({}, { q: perBone(quaternion), p: StudioSchemas.Vec3, baseQ: perBone(quaternion), basePos: StudioSchemas.Vec3,
+	chainP: perBone(StudioSchemas.Vec3), keepTranslations: { type: "boolean" } });
+const ikTracks = input({}, Object.fromEntries([...STUDIO_IK_CHAIN_TRACKS, ...STUDIO_IK_JOINT_TRACKS].map(track => [track, ikTrackKey])));
 const WAYPOINT_RULES = "Pins sit at least 8 frames apart, the walk between two pins must stay within 0.5-3 m/s, and x/z are clamped to +/-11 m; a pin that breaks a rule is refused with the frame or distance that would work.";
 
 export const STUDIO_ACTIONS = freezeStudioData([
@@ -42,6 +54,12 @@ export const STUDIO_ACTIONS = freezeStudioData([
 		description: "Remove the character's root waypoint at frame." },
 	{ id: "character.clearWaypoints", label: "Clear root path", kind: "mutation", undoDomain: "cast", input: input(characterId),
 		description: "Remove every root waypoint of the character, leaving its motion unconstrained by a path." },
+	{ id: "character.setIkKey", label: "Set IK key", kind: "mutation", undoDomain: "motion", input: input({ ...characterId, frame, tracks: ikTracks }),
+		description: "Key a character's IK correction layer at frame, the same key a pose drag bakes. tracks maps a track id to its key: q is the bones' LOCAL rotations as unit quaternions {x,y,z,w}, three for a chain track (leftHand, rightHand, leftFoot, rightFoot: upper, lower and end bone) and one for a joint track (hips, spine, chest, neck, head, leftShoulder, rightShoulder); p is a joint's local position {x,y,z} (the hips' height and lean). Optional baseQ/basePos give the take's own pose the key was made over, so it applies as a delta on the take; chainP gives a chain's three local bone positions; keepTranslations keeps them over the take's. A key needs q or p. Each named track replaces its key at frame and starts evaluating; other tracks at that frame stay. Keyed frames are in inspect_studio { scope: \"motion\" } ikKeyFrames." },
+	{ id: "character.removeIkKey", label: "Delete IK key", kind: "mutation", undoDomain: "motion", input: input({ ...characterId, frame }),
+		description: "Delete the character's whole IK key at frame (every track keyed there), like the Full-Body lane's delete." },
+	{ id: "character.clearIkKeys", label: "Clear IK keys", kind: "mutation", undoDomain: "motion", input: input(characterId),
+		description: "Delete every IK key of the character, returning it to its take or pose without corrections." },
 	{ id: "object.duplicate", label: "Duplicate object", kind: "mutation", undoDomain: "objects", input: input({}, { objectId: idSchema }),
 		description: "Copy a scene object (the selected one when objectId is omitted) and place the copy half a metre beside it." },
 ]);

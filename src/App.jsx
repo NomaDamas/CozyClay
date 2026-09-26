@@ -60,7 +60,7 @@ import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, valida
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateReceipt } from "./studio-agent-protocol.js";
 import { elementByPath } from "./studio-elements.js";
 import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
-import { createStudioActionRegistry, studioActionDeclaration } from "./studio-actions.js";
+import { STUDIO_IK_CHAIN_TRACKS, createStudioActionRegistry, studioActionDeclaration } from "./studio-actions.js";
 import { createStudioMotionCandidates } from "./studio-agent-motion.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
@@ -707,6 +707,32 @@ export function createStudioAppActions(handlersRef) {
 		const count = h().clearCharacterWaypoints(characterId);
 		return count ? `Cleared ${name}'s root path (${count} waypoint${count === 1 ? "" : "s"}).` : `${name} has no root waypoints; nothing changed.`;
 	});
+	// The declared schema carries the key's shape; the per-track counts and the
+	// timeline bound are checked here, before anything is recorded.
+	castAction("character.setIkKey", ({ characterId, frame, tracks }, name) => {
+		const { frameCount } = h().state(), named = Object.keys(tracks);
+		if (frame >= frameCount) fail("INVALID_RANGE", `Frame ${frame} is outside the timeline (0-${frameCount - 1}).`);
+		if (!named.length) fail("INVALID_ARGUMENT", "Name at least one track in tracks.");
+		for (const track of named) {
+			const key = tracks[track], chain = STUDIO_IK_CHAIN_TRACKS.includes(track), bones = chain ? 3 : 1;
+			if (!key.q && !key.p) fail("INVALID_ARGUMENT", `tracks.${track} needs q (bone rotations) or p (a local position).`);
+			if (key.chainP && !chain) fail("INVALID_ARGUMENT", `tracks.${track}.chainP is for chain tracks only.`);
+			for (const field of ["q", "baseQ", "chainP"]) {
+				if (key[field] && key[field].length !== bones) fail("INVALID_ARGUMENT", `tracks.${track}.${field} needs ${bones} entr${bones === 1 ? "y" : "ies"}, one per bone.`);
+			}
+			if ([...(key.q ?? []), ...(key.baseQ ?? [])].some(q => Math.hypot(q.x, q.y, q.z, q.w) < 1e-6)) fail("INVALID_ARGUMENT", `tracks.${track} has a zero-length quaternion.`);
+		}
+		h().setCharacterIkKey(characterId, frame, tracks);
+		return `Keyed ${name}'s IK layer at frame ${frame}: ${named.join(", ")}.`;
+	});
+	castAction("character.removeIkKey", ({ characterId, frame }, name) => {
+		h().removeCharacterIkKey(characterId, frame);
+		return `Deleted ${name}'s IK key at frame ${frame}.`;
+	});
+	castAction("character.clearIkKeys", ({ characterId }, name) => {
+		const count = h().clearCharacterIkKeys(characterId);
+		return count ? `Cleared ${name}'s IK layer (${count} key${count === 1 ? "" : "s"}).` : `${name} has no IK keys; nothing changed.`;
+	});
 	registry.register({ ...studioActionDeclaration("object.duplicate"),
 		available: state => state.objects.length > 0 || "There are no scene objects to duplicate.",
 		run: ({ objectId }) => {
@@ -970,7 +996,8 @@ export function createStudioAppBinding(ports) {
 				revision: { before: s.revision, after: s.revision }, view: { before: s.viewRevision, after: after.viewRevision }, affectedIds: [s.host.sceneId],
 				delta: [{ id: s.host.sceneId, after: { selection: after.selection, activeCharacterId: after.activeCharacterId, shotId: after.selectedShotId, view: after.view } }], undo: null }));
 		}
-		const { result, historyEntryId } = ports.recordAction(entry.undoDomain, () => registry.run(entry.id, args.args));
+		// A motion-domain entry restores one character's layer: the one it names.
+		const { result, historyEntryId } = ports.recordAction(entry.undoDomain, () => registry.run(entry.id, args.args), args.args?.characterId ?? null);
 		const after = refresh(), ids = result.affectedIds;
 		if (after.revision === s.revision) {
 			return remember(journal.record(validateReceipt({ ...base, ok: true, status: "noop", authored: false, mutated: false, summary: result.summary,
@@ -2599,6 +2626,79 @@ export default function App() {
 		const result = mutate();
 		markSemanticEdit("pose", before, ikStateRef.current.keys);
 		return result;
+	}
+	/* One IK-key core for every cast member, shared by the Key button, a pose
+	 * drag's bake, the Full-Body lane's delete and run_action. The loaded
+	 * layer's keys live on the live IK state, every other character's on its
+	 * stored one (created on its first key). */
+	function ikStateFor(characterId) {
+		if (characterId === loadedLayerCharRef.current) return ikStateRef.current;
+		let state = ikStatesRef.current.get(characterId);
+		if (!state) ikStatesRef.current.set(characterId, (state = createIkState()));
+		return state;
+	}
+	function editCharacterIkKeys(characterId, mutate) {
+		const state = ikStateFor(characterId);
+		const before = snapshotIkKeys(state);
+		recordCharacterUndo();
+		mutate(state);
+		markSemanticEdit("pose", before, state.keys);
+		setIkTick((value) => value + 1);
+	}
+	/** Write one key from its JSON form (studio-actions.js character.setIkKey):
+	 * each named track replaces its key at `frame` and joins the tracked set. */
+	function setCharacterIkKey(characterId, frame, tracks) {
+		castMemberOf(characterId);
+		const quaternion = (q) => new THREE.Quaternion(q.x, q.y, q.z, q.w).normalize();
+		const vector = (p) => new THREE.Vector3(p.x, p.y, p.z);
+		editCharacterIkKeys(characterId, (state) => {
+			let entry = state.keys.get(frame);
+			if (!entry) state.keys.set(frame, (entry = new Map()));
+			for (const [track, key] of Object.entries(tracks)) {
+				entry.set(track, {
+					q: key.q?.map(quaternion) ?? null,
+					p: key.p ? vector(key.p) : null,
+					...(key.baseQ ? { baseQ: key.baseQ.map(quaternion) } : {}),
+					...(key.basePos ? { basePos: vector(key.basePos) } : {}),
+					...(key.chainP ? { chainP: key.chainP.map(vector) } : {}),
+					...(key.keepTranslations ? { keepTranslations: true } : {}),
+				});
+				ikTouch(state, track);
+			}
+		});
+	}
+	function removeCharacterIkKey(characterId, frame) {
+		const character = castMemberOf(characterId);
+		const state = ikStateFor(characterId);
+		if (!state.keys.has(frame)) {
+			const keyed = ikKeyframes(state);
+			throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no IK key at frame ${frame}${keyed.length ? `; keyed frames: ${keyed.join(", ")}` : ""}.`);
+		}
+		editCharacterIkKeys(characterId, (target) => ikRemoveKeyframe(target, frame));
+	}
+	function clearCharacterIkKeys(characterId) {
+		castMemberOf(characterId);
+		const count = ikStateFor(characterId).keys.size;
+		if (!count) return 0;
+		editCharacterIkKeys(characterId, (target) => {
+			target.keys.clear();
+			target.tracked.clear();
+			target.plants.clear();
+		});
+		return count;
+	}
+	/** A baked key entry in the JSON form character.setIkKey takes. */
+	function ikKeyJson(entry) {
+		const quaternion = (q) => ({ x: q.x, y: q.y, z: q.z, w: q.w });
+		const vector = (p) => ({ x: p.x, y: p.y, z: p.z });
+		return Object.fromEntries([...entry].map(([track, key]) => [track, {
+			...(key.q ? { q: key.q.map(quaternion) } : {}),
+			...(key.p ? { p: vector(key.p) } : {}),
+			...(key.baseQ ? { baseQ: key.baseQ.map(quaternion) } : {}),
+			...(key.basePos ? { basePos: vector(key.basePos) } : {}),
+			...(key.chainP ? { chainP: key.chainP.map(vector) } : {}),
+			...(key.keepTranslations ? { keepTranslations: true } : {}),
+		}]));
 	}
 	function recordCharacterUndo() {
 		charHistoryRef.current.past.push({ tick: ++opClockRef.current, snapshot: snapshotCast() });
@@ -6809,7 +6909,7 @@ export default function App() {
 	 * the character explicitly: the loaded layer's path lives in the editing
 	 * buffer, every other character's on its cast entry. Refusals throw a
 	 * StudioProtocolError naming the fix; the UI door shows it as a toast. */
-	function waypointCharacter(characterId) {
+	function castMemberOf(characterId) {
 		const character = charactersRef.current.find((entry) => entry.id === characterId);
 		if (!character) throw new StudioProtocolError("STALE_TARGET", `Character ${characterId} is not in this scene.`);
 		return character;
@@ -6832,7 +6932,7 @@ export default function App() {
 	 * at walking-distance pacing from the previous pin. Returns the placed
 	 * waypoint, its index on the path and the judge's warnings. */
 	function addCharacterWaypoint(characterId, point, frame = null) {
-		const character = waypointCharacter(characterId);
+		const character = castMemberOf(characterId);
 		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
 		if (ordered.length + 1 > MAX_WAYPOINTS) throw new StudioProtocolError("TARGET_NOT_READY", `The root path is capped at ${MAX_WAYPOINTS} waypoints; remove one first.`);
 		const x = clampRootPosition(point.x);
@@ -6858,7 +6958,7 @@ export default function App() {
 		return { waypoint, index, warnings: verdict.warnings };
 	}
 	function moveCharacterWaypoint(characterId, frame, point) {
-		const character = waypointCharacter(characterId);
+		const character = castMemberOf(characterId);
 		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
 		const index = ordered.findIndex((waypoint) => waypoint.frame === frame);
 		if (index === -1) throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no root waypoint at frame ${frame}.`);
@@ -6875,7 +6975,7 @@ export default function App() {
 		return { waypoint: moved, index, warnings: verdict.warnings };
 	}
 	function removeCharacterWaypoint(characterId, frame) {
-		const character = waypointCharacter(characterId);
+		const character = castMemberOf(characterId);
 		const current = readCharacterWaypoints(characterId);
 		const waypoint = current.find((entry) => entry.frame === frame);
 		if (!waypoint) throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no root waypoint at frame ${frame}.`);
@@ -6884,7 +6984,7 @@ export default function App() {
 		return waypoint;
 	}
 	function clearCharacterWaypoints(characterId) {
-		waypointCharacter(characterId);
+		castMemberOf(characterId);
 		const current = readCharacterWaypoints(characterId);
 		if (!current.length) return 0;
 		recordCharacterUndo();
@@ -7939,23 +8039,27 @@ export default function App() {
 	// scrub away and back restores the dragged pose exactly (slerp).
 	function ikDragEnd() {
 		ikBodyDragRef.current = false;
-		if (ikChains) {
-			// One entry per drag: the pointermoves only moved bones, the keys map is
-			// untouched until this bake — recording here captures the pre-drag keys.
-			if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-			editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints));
-		}
+		// One entry per drag: the pointermoves only moved bones, the keys map is
+		// untouched until this bake — the key it sets records the pre-drag keys.
+		if (ikChains) keyIkPoseAtPlayhead();
 		setIkTick((n) => n + 1);
+	}
+
+	/** Bake the current tracked rotations at the playhead into a scratch layer
+	 * and set them as a key through the shared registry. A bake only writes
+	 * TRACKED parts: with nothing dragged yet there is no key, nothing is
+	 * dispatched and Ctrl+Z never goes dead. */
+	function keyIkPoseAtPlayhead() {
+		const scratch = { ...createIkState(), tracked: new Set(ikStateRef.current.tracked) };
+		ikBakeKeyframe(ikChains, scratch, tlFrame, ikFkJoints);
+		const baked = scratch.keys.get(tlFrame);
+		return baked ? runStudioAction("character.setIkKey", { characterId: activeChar.id, frame: tlFrame, tracks: ikKeyJson(baked) }) : null;
 	}
 
 	// Manual key: bake the current tracked rotations at the playhead.
 	function ikAddKeyframe() {
 		if (!ikChains) return;
-		// A bake only writes TRACKED parts: with nothing dragged yet there is no
-		// key to undo, so no entry is pushed and Ctrl+Z never goes dead.
-		if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-		editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints));
-		setIkTick((n) => n + 1);
+		if (!keyIkPoseAtPlayhead()) return;
 		setToast(isKo ? `${tlFrame}프레임에 전신 IK 키를 추가했어요` : `Full-body IK key at frame ${tlFrame}`);
 	}
 
@@ -8176,9 +8280,7 @@ export default function App() {
 
 	function ikDeleteKeyframe(frame) {
 		if (!ikStateRef.current.keys.has(frame)) return;
-		recordCharacterUndo();
-		editIkKeys(() => ikRemoveKeyframe(ikStateRef.current, frame));
-		setIkTick((n) => n + 1);
+		runStudioAction("character.removeIkKey", { characterId: activeChar.id, frame });
 	}
 
 	/** With IK mode on over a loaded take, a pose pick is a CORRECTION, not a
@@ -12066,10 +12168,11 @@ function resizePromptClip(id, edge, rawFrame) {
 		studioHistoryRef.current.set(historyEntryId, { tick, domain });
 	}
 	/** Run one registry action for the agent and bind the native history entry
-	 * it pushed to a journal id, so undo_edit (and Ctrl+Z) can revert it. Shot
-	 * and cast entries gain the Studio restore state, which republishes the
-	 * live read model synchronously; object entries are the store's own. */
-	function recordStudioAction(domain, run) {
+	 * it pushed to a journal id, so undo_edit (and Ctrl+Z) can revert it. Shot,
+	 * cast and motion entries gain the Studio restore state (a motion entry the
+	 * one character `targetId` names), which republishes the live read model
+	 * synchronously; object entries are the store's own. */
+	function recordStudioAction(domain, run, targetId = null) {
 		const historyEntryId = crypto.randomUUID();
 		if (domain === "objects") {
 			const tick = lastObjectOpRef.current, result = run();
@@ -12078,10 +12181,10 @@ function resizePromptClip(id, edge, rawFrame) {
 			studioHistoryRef.current.set(historyEntryId, { domain: "objects", tick: lastObjectOpRef.current, depth: storeRef.current.depths().past });
 			return { result, historyEntryId };
 		}
-		const tick = opClockRef.current, objects = storeRef.current.objects, state = snapshotStudioDomain(domain);
+		const tick = opClockRef.current, objects = storeRef.current.objects, state = snapshotStudioDomain(domain, targetId);
 		const result = run(), top = charHistoryRef.current.past.at(-1);
 		if (!top || top.tick <= tick || top.studio) return { result, historyEntryId: null };
-		top.studio = { domain, targetId: null, historyEntryId, objects, state };
+		top.studio = { domain, targetId, historyEntryId, objects, state };
 		studioHistoryRef.current.set(historyEntryId, { tick: top.tick, domain });
 		return { result, historyEntryId };
 	}
@@ -12290,6 +12393,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
 		runAllPromptBlocks, duplicateSelectedSceneObject,
 		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
+		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
 	/** UI door into the shared registry: an unavailable action or a refused
