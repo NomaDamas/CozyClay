@@ -33,7 +33,7 @@ import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 import { motionArraysToNpzMembers, writeNpz } from '../tools/ardy/npz.mjs';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'late-apply-inspect-patch'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -159,6 +159,39 @@ async function railCameraUndo(f, interleaveObject) {
  assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));
 }
 const implementations={
+ async 'late-apply-inspect-patch'(f){
+  // The agent's real tool wrapper over this binding. The hub gives up on the
+  // first arrangement after the editor applied it (the lost-ack timeout).
+  const {createStudioTools}=await import('../bin/agent/studio-tools.mjs');
+  let giveUp=true,refreshes=0;const sent=[];
+  const liveHub={async command(name,args){
+   if(args.expectedRevision!==undefined)sent.push({name,expectedRevision:args.expectedRevision});
+   const response=await dispatchLiveFrame(JSON.stringify({type:'cmd',id:crypto.randomUUID(),name,args}),f.binding.handlers);
+   assert(response.ok,response.error);
+   if(giveUp&&name==='arrange_objects'){giveUp=false;throw Object.assign(new Error('Live editor timed out running arrange_objects.'),{code:'UNCERTAIN_APPLY'});}
+   return response.value;
+  }};
+  const {workspaceId,documentEpoch,sceneId,sceneEpoch}=f.host();
+  const admission={commandId:()=>crypto.randomUUID(),host:{workspaceId,documentEpoch,sceneId,sceneEpoch},revision:f.binding.context().revision.scene,
+   async refresh(){refreshes++;const c=await liveHub.command('read_studio_context',{host:admission.host});admission.revision=c.revision.scene;}};
+  const invoke=createStudioTools({liveHub,workspaceHandle:'handle',session:{admission}}).internal.invoke;
+  await assert.rejects(invoke('arrange_objects',createArgs),{code:'UNCERTAIN_APPLY'});
+  const id=f.store.current.objects[0].id;
+  assert.equal(f.store.current.objects.length,1,'the abandoned arrangement still applied');
+  // Whatever scope the model inspects after an edit it did not make, the
+  // revision that inspect reports is the one the next patch is admitted at.
+  const scopes=['scene','entities','selection','shot','motion','actions','catalogue'];
+  for(const [index,scope] of scopes.entries()){
+   f.actual.publishStudioCharacters(f.characterRef.current.map(c=>c.id==='actor-b'?{...c,x:5+index}:c),true);
+   const live=f.binding.refresh().revision;
+   const seen=await invoke('inspect_studio',{scope});
+   assert.equal(seen.context?.revision?.scene,live,`inspect scope ${scope} reports the admission revision`);
+   const patched=await invoke('patch_elements',{ops:[{target:{kind:'object',id},set:{color:`#12345${index}`}}]}).catch(error=>error);
+   assert.equal(patched.status,'applied',`patch after inspect scope ${scope} is admitted at the revision it reported: ${patched.code ?? ''} ${patched.message ?? ''}`);
+   assert.deepEqual(sent.at(-1),{name:'patch_elements',expectedRevision:live});
+  }
+  assert.equal(refreshes,1,'only the lost acknowledgement needed a refresh');
+ },
  async 'verify-stale-receipt'(f){
   // A receipt stays verifiable after later edits: its evidence comes back
   // marked stale with both revisions, and a requested frame is a fresh capture.
