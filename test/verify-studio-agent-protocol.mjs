@@ -367,7 +367,10 @@ function registerTests() {
 		const result=contextTools.buildStudioContext(c);assert.ok(result.entities.every(e=>e.detailsOmitted));assert.ok(result.entities.some(e=>e.id==="char-23"));assert.ok(result.entities.some(e=>e.id==="char-22"));
 		assert.ok(result.entityIndex.length < 400 && result.entityIndex.some(e=>e.id==="char-23"),"the index sheds bystanders, never a detailed row");protocol.validateStudioContext(result);
 		const cursor=contextTools.studioEntityCursor(result,10);assert.equal(contextTools.validateStudioCursor(cursor,result),10);
-		const stale=structuredClone(result);stale.revision.scene++;rejects(()=>contextTools.validateStudioCursor(cursor,stale),"STALE_CURSOR");
+		const edited=structuredClone(result);edited.revision.scene++;edited.revision.physics++;edited.revision.view++;
+		assert.equal(contextTools.validateStudioCursor(cursor,edited),10,"an unrelated edit keeps the cursor");
+		for(const key of ["workspaceId","documentEpoch","sceneEpoch"]){const reopened=structuredClone(result);reopened.host[key]="other";rejects(()=>contextTools.validateStudioCursor(cursor,reopened),"STALE_CURSOR");}
+		rejects(()=>contextTools.validateStudioCursor("pending",result),"STALE_CURSOR");
 	});
 	test("D3 every supported nested position/facing/object variant is executable", () => {
 		for(const position of [{world:point()},{relativeTo:"ref",basis:"subject",side:"left",gapM:0.3,support:"floor"},{relativeTo:"ref",basis:"shot_camera",side:"behind",gapM:0,support:{objectId:"table"}},{between:["a","b"],fraction:0.5,support:"floor"},{onObject:"table",offsetXZ:{x:0,z:1}}]) {

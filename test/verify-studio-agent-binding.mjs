@@ -25,7 +25,7 @@ import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -162,7 +162,26 @@ const implementations={
   const first=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:29});
   assert.equal(first.total,30);assert.equal(first.entities.length,29);
   const last=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:29,cursor:first.nextCursor});
-  assert.deepEqual(last.entities,[row]);assert.equal(last.nextCursor,null);
+  const byId=f.store.current.objects.map(o=>o.id).sort();
+  assert.deepEqual([...first.entities,...last.entities].map(e=>e.id),byId,'pages walk a stable id ordering');
+  assert.equal(last.nextCursor,null);
+ },
+ async 'cursor-survives-edit'(f){
+  const created=await f.call('arrange_objects',f.request('arrange_objects',{ops:Array.from({length:30},(_,i)=>({op:'create',source:{kind:'cube'},name:`Prop ${i}`,position:{world:{x:i+2,y:0,z:3}}}))}));
+  assert.equal(created.status,'applied',JSON.stringify(created));
+  const byId=f.store.current.objects.map(o=>o.id).sort();
+  const first=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:12});
+  assert.deepEqual(first.entities.map(e=>e.id),byId.slice(0,12));
+  const moved=await f.call('arrange_characters',f.request('arrange_characters',{ops:[{op:'update',characterId:'actor-b',position:{world:{x:5,y:0,z:1}}}]}));
+  assert.equal(moved.status,'applied',JSON.stringify(moved));
+  const second=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:12,cursor:first.nextCursor});
+  assert.deepEqual(second.entities.map(e=>e.id),byId.slice(12,24),'an unrelated edit leaves the cursor usable');
+  const c=f.binding.context();
+  assert.equal(c.entityPage.truncated,true);
+  const fromContext=await f.call('inspect_studio',{scope:'entities',limit:32,cursor:c.entityPage.nextCursor});
+  assert.ok(fromContext.entities.length>0,'the context cursor is a real inspect cursor');
+  f.scope.studioSceneEpochRef.current='reopened';
+  assert.throws(()=>f.binding.handlers.inspect_studio({scope:'entities',query:'Prop',limit:12,cursor:second.nextCursor}),e=>e.code==='STALE_CURSOR');
  },
  async 'context-entity-index'(f){
   const created=await f.call('arrange_objects',f.request('arrange_objects',{ops:Array.from({length:61},(_,i)=>({op:'create',source:{kind:'cube'},name:`Crate ${i}`,position:{world:{x:i,y:0,z:-3}}}))}));
