@@ -58,6 +58,14 @@ assert.throws(() => validate([{ ...elementByPath("shot.crud"), actions: ["shot.t
 assert.throws(() => validate([{ ...elementByPath("shot.crud"), actions: [] }]), /without actions/);
 assert.equal(elementByPath("shot.crud").agentExposure, "action");
 assert.deepEqual([...elementByPath("shot.crud").actions].sort(), ["shot.create", "shot.duplicate", "shot.remove", "shot.reorder", "shot.setRange", "shot.split"]);
+// The capabilities that were agent exposure gaps now run through registered actions.
+const exposedThroughActions = {
+	"character.waypoints": ["character.addWaypoint", "character.clearWaypoints", "character.moveWaypoint", "character.removeWaypoint"],
+};
+for (const [path, actions] of Object.entries(exposedThroughActions)) {
+	assert.equal(elementByPath(path).agentExposure, "action", `${path} is exposed through actions`);
+	assert.deepEqual([...elementByPath(path).actions].sort(), actions, `${path} actions`);
+}
 assert.ok(Object.isFrozen(STUDIO_ELEMENTS));
 for (const entry of STUDIO_ELEMENTS) {
 	assert.ok(Object.isFrozen(entry), entry.path);
@@ -96,9 +104,10 @@ function makeCase(entry) {
 		if (field === "hidden") input.hidden = true;
 		if (field === "model") input.model = "x-bot-tpose";
 		if (field === "promptBlocks") input.layer.promptClips = [{ id: "prompt-authored", startFrame: 12, endFrame: 36, prompt: "Walk forward" }];
+		if (field === "waypoints") input.layer.waypoints = [{ id: "waypoint-authored", frame: 24, x: 1, z: 2, heading: null }];
 		if (field === "motionRef.url") input.motionRef.url = "https://example.test/authored.npz";
 		if (field === "motionRef.motionId") input.motionRef = { motionId: "a".repeat(64), url: "https://example.test/authored.npz" };
-		return { input, output: createCharacterEntry(input), read: (output) => field === "position" ? [output.x, output.y, output.z] : field === "promptBlocks" ? output.layer.promptClips : field === "pose" ? output.pose?.id ?? null : get(output, field) };
+		return { input, output: createCharacterEntry(input), read: (output) => field === "position" ? [output.x, output.y, output.z] : field === "promptBlocks" ? output.layer.promptClips : field === "waypoints" ? output.layer.waypoints : field === "pose" ? output.pose?.id ?? null : get(output, field) };
 	}
 	if (entry.normalizer === "createSceneStage") {
 		const input = { characters: [], shotAspect: "16:9", keyLight: { x: 6, y: 9, z: 4, intensity: 1.12, warmth: 0.5 } };
@@ -147,6 +156,7 @@ const expected = new Map([
 	["character.hidden", true],
 	["character.model", "x-bot-tpose"],
 	["character.promptBlocks", [{ id: "prompt-authored", startFrame: 12, endFrame: 36, prompt: "Walk forward" }]],
+	["character.waypoints", [{ id: "waypoint-authored", frame: 24, x: 1, z: 2, heading: null }]],
 	["character.motionRef.url", "https://example.test/authored.npz"],
 	["character.motionRef.motionId", "a".repeat(64)],
 	["character.tint", "#a1b2c3"],

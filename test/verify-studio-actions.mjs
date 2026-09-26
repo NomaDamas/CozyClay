@@ -9,7 +9,8 @@ const code = expected => error => error?.code === expected;
 
 /* The first batch is declared once, as data. */
 const firstBatch = ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
-assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch].sort());
+const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"];
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions].sort());
 assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job"]);
 assert.ok(Object.isFrozen(STUDIO_ACTIONS));
 for (const action of STUDIO_ACTIONS) {
@@ -19,7 +20,7 @@ for (const action of STUDIO_ACTIONS) {
 	assert.ok(action.description.length > 20, `${action.id} explains itself`);
 	assert.equal(action.input.type, "object", action.id);
 	assert.equal(action.input.additionalProperties, false, `${action.id} input is closed`);
-	if (action.kind === "mutation") assert.ok(["shot", "objects"].includes(action.undoDomain), `${action.id} names its undo domain`);
+	if (action.kind === "mutation") assert.ok(["shot", "objects", "cast"].includes(action.undoDomain), `${action.id} names its undo domain`);
 	assert.equal(studioActionDeclaration(action.id), action);
 	// The declared input is usable by the protocol's own validator.
 	if (action.input.required.length === 0) validateStudioSchema(action.input, {});
@@ -29,6 +30,21 @@ assert.equal(studioActionDeclaration("shot.create").kind, "mutation");
 assert.equal(studioActionDeclaration("object.duplicate").undoDomain, "objects");
 assert.equal(studioActionDeclaration("motion.generateAllBlocks").kind, "job");
 assert.throws(() => studioActionDeclaration("shot.teleport"), code("INVALID_ARGUMENT"));
+// Root waypoints: every action names its character explicitly and addresses a
+// waypoint by its frame (unique on a path), the key inspect_studio "motion" shows.
+for (const id of waypointActions) {
+	const action = studioActionDeclaration(id);
+	assert.equal(action.kind, "mutation", id);
+	assert.equal(action.undoDomain, "cast", id);
+	assert.ok(action.input.required.includes("characterId"), `${id} names its character`);
+}
+assert.deepEqual(studioActionDeclaration("character.addWaypoint").input.required, ["characterId", "position"]);
+assert.deepEqual(validateStudioSchema(studioActionDeclaration("character.addWaypoint").input, { characterId: "char-a", position: { x: 1, z: 2 }, frame: 24 }), { characterId: "char-a", position: { x: 1, z: 2 }, frame: 24 });
+assert.throws(() => validateStudioSchema(studioActionDeclaration("character.addWaypoint").input, { characterId: "char-a", position: { x: 1, y: 0, z: 2 } }), code("INVALID_ARGUMENT"), "a root waypoint is a floor point");
+assert.throws(() => validateStudioSchema(studioActionDeclaration("character.addWaypoint").input, { characterId: "char-a", position: { x: 1, z: 2 }, frame: 0 }), code("INVALID_ARGUMENT"), "frame 0 is the character's own spot");
+assert.deepEqual([...studioActionDeclaration("character.moveWaypoint").input.required].sort(), ["characterId", "frame", "position"]);
+assert.deepEqual([...studioActionDeclaration("character.removeWaypoint").input.required].sort(), ["characterId", "frame"]);
+assert.deepEqual(studioActionDeclaration("character.clearWaypoints").input.required, ["characterId"]);
 // Frame ranges are half-open, like every other Studio range.
 assert.deepEqual(Object.keys(studioActionDeclaration("shot.setRange").input.properties).sort(), ["range", "shotId"]);
 assert.throws(() => validateStudioSchema(studioActionDeclaration("shot.setRange").input, { shotId: "shot-1", range: { startFrame: 10, endFrameExclusive: 10 } }), code("INVALID_ARGUMENT"));
