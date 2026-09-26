@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { parseSync } from 'rolldown/experimental';
 import * as THREE from 'three';
 import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.js';
@@ -24,8 +26,14 @@ import { focalMmToFov, fovToFocalMm } from '../src/shot.js';
 import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
+import { characterScaleFor, decodeMotionNpz } from '../src/ardy/npz.js';
+import { retimeMotion } from '../src/ardy/retime.js';
+import { createMotionEdit } from '../src/ardy/motion-edit.js';
+import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/motion-calibration.js';
+import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
+import { motionArraysToNpzMembers, writeNpz } from '../tools/ardy/npz.mjs';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -61,14 +69,20 @@ function clip() {
 }
 const bytes = readFileSync(new URL('../public/models/y-bot-tpose.fbx', import.meta.url));
 function rig() { const r=new FBXLoader().parse(bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength),'');r.scale.setScalar(.01);primeBindPose(r);const parent=new THREE.Group();parent.add(r);parent.updateMatrixWorld(true);return r; }
-function fixture() {
+// The fixture clip as the real npz archive a bridge would serve for it.
+const npzBytes=(()=>{const dir=mkdtempSync(join(tmpdir(),'binding-npz-'));try{const path=join(dir,'clip.npz');writeNpz(path,motionArraysToNpzMembers(clip()));return new Uint8Array(readFileSync(path));}finally{rmSync(dir,{recursive:true,force:true});}})();
+// options.characters stands in for the cast a reloaded page reads back from its
+// saved scene; options.motionStore is the IndexedDB motion store, which outlives
+// the page.
+function fixture(options={}) {
  const a=createCharacterEntry({id:'actor-a',model:'y-bot-tpose',x:0,z:0}), b=createCharacterEntry({id:'actor-b',model:'y-bot-tpose',x:4,z:0});
- const chars=[a,b], rigs={'actor-a':rig(),'actor-b':rig()}; rigs['actor-b'].parent.position.x=4;rigs['actor-b'].parent.updateMatrixWorld(true);
+ const chars=options.characters??[a,b], rigs={'actor-a':rig(),'actor-b':rig()}; rigs['actor-b'].parent.position.x=4;rigs['actor-b'].parent.updateMatrixWorld(true);
  const revision=ref(0), clock=ref(0), lastObject=ref(0), history=ref({past:[],future:[]}), studioHistory=ref(new Map()), characterRef=ref(chars), buffer=ref({waypoints:[],promptClips:[],motion:null}), state=ref(ik.createIkState()), layers=ref(new Map());
  const stage={shotAspect:'16:9',cameraPresetId:null,sensorId:'fullFrame',hasCharSheet:false,environmentImage:null,environment:'a sunlit modern living room',style:'moody cinematic lighting, 35mm film look',hasEnvSheet:false,keyLight:{x:6,y:9,z:4,intensity:1.12,warmth:0.5}};
  const live=ref({characters:chars,objects:[],rigs,shots:[],scenes:[{id:'scene',name:'Fixture'}],activeCharacterId:a.id,stage,timeline:{currentFrame:0,frameCount:48},filmback:{sensorId:'fullFrame',aspectRatio:16/9},studioSelection:{kind:'character',id:a.id},studioShotId:null,studioView:{mode:'scene',frame:0,playing:false,lookThrough:false,grid:false,autoColor:false}});
  const camera=new THREE.PerspectiveCamera(45,16/9); camera.position.set(0,1.6,5);
- const values={}, semantic=[];
+ const values={}, semantic=[], motionStore=options.motionStore??new Map(), stored=[], motionSet=[];
+ let urlLoader=async url=>{throw new Error(`bridge does not serve ${url}`);};
  let currentBinding;
  const firstEdit = createFirstEditTracker(() => {});
  const markSemanticEdit=(domain,before,after)=>{if(before!==after)revision.current++;currentBinding?.invalidate?.(domain,before,after);semantic.push(domain);firstEdit('craft',domain,before,after);if(domain==='characters'&&Array.isArray(after)){characterRef.current=after;live.current.characters=after;}if(domain==='shots')live.current.shots=after;};
@@ -86,9 +100,13 @@ function fixture() {
  physicsOptions:{protectedFrames:[]},bridge:{ok:false},studioGestureRef:ref(false),ikBodyDragRef:ref(false),lineDragRef:ref(null),lineDrawRef:ref(null),linePinDragRef:ref(null),autoPhysicsRunRef:ref(null),recRef:ref(null),restoreRef:ref(null),
  committedIkEdits:[],IK_CORRECTION_BLEND_FRAMES:6,snapshotCast:()=>({}),markSemanticEdit,setCharacters:castOwner.set,editCharacters:castOwner.edit,setShots:shotsOwner.set,editShots:shotsOwner.edit,
  ...studioActions,addShotAtFrame,shots:[],tlFrame:0,tlFrameCount:48,captureCurrentFraming:()=>({pos:{x:0,y:1.6,z:5},yaw:0,pitch:0,fovDeg:40}),trackFeature:()=>{},window:{dispatchEvent:()=>true},
- ko:en=>en};
- for(const name of ['setCameraPos','setFovDeg','setCameraPresetId','setWaypoints','setPromptClips','setMotion','setCommittedIkEdits','setIkTick','setTlFrameCount','setToast','setActiveCharacterId','setSelectedHierarchyId','setTlFrame','setWorkflowMode','setLookThroughShot','setGridView','setAutoColor','setTlPlaying','setIkMode','setIkFocus','setKeyLight','setEnvironmentImage','setEnvironment','setStyle','setHasEnvSheet','setShotAspectKey','setSensorFormat','setMovePlaying'])scope[name]=noPublish(name);
- const names=['createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','publishStudioStage','snapshotStudioDomain','publishStudioCharacters','syncStudioLayerBuffer','recordStudioHistory','publishStudioMotion','stepStudioHistory','undoScene','redoScene','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix','createStudioAppActions','recordStudioAction','addTimelineShot','recordShotUndo'];
+ ko:en=>en,isKo:false,loadMotionFromUrl:(...args)=>urlLoader(...args),sha256Hex,encodeMotionResource,decodeMotionResource,resolveMotionSource,retimeMotion,TIMELINE_FPS:24,createMotionEdit,applyMotionCalibration,normalizeMotionCalibration,characterScaleFor,
+ projectMotionsRef:ref(new Map()),motionEncodingCacheRef:ref(new WeakMap()),restoreEpochRef:ref(0),
+ openMotionDb:async()=>({close(){}}),getMotion:async(db,id)=>motionStore.get(id.toLowerCase())??null,
+ putMotion:async(db,record)=>{motionStore.set(record.motionId.toLowerCase(),record);for(const done of stored.splice(0))done(record);return record;}};
+ for(const name of ['setTlFps','setProjectManifest','setCameraPos','setFovDeg','setCameraPresetId','setWaypoints','setPromptClips','setMotion','setCommittedIkEdits','setIkTick','setTlFrameCount','setToast','setActiveCharacterId','setSelectedHierarchyId','setTlFrame','setWorkflowMode','setLookThroughShot','setGridView','setAutoColor','setTlPlaying','setIkMode','setIkFocus','setKeyLight','setEnvironmentImage','setEnvironment','setStyle','setHasEnvSheet','setShotAspectKey','setSensorFormat','setMovePlaying'])scope[name]=noPublish(name);
+ scope.setMotion=value=>{noPublish('setMotion')(value);for(const done of motionSet.splice(0))done(value);};
+ const names=['restoreMotionRefs','createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','publishStudioStage','snapshotStudioDomain','publishStudioCharacters','syncStudioLayerBuffer','recordStudioHistory','publishStudioMotion','stepStudioHistory','undoScene','redoScene','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix','createStudioAppActions','recordStudioAction','addTimelineShot','recordShotUndo'];
  const code=names.map(n=>{assert(declarations.has(n),`actual App function ${n}`);return declarations.get(n);}).join('\n');
  const actual=new Function(...Object.keys(scope),code+`\nreturn {${names.join(',')}};`)(...Object.values(scope));
  let binding; let artifactLoader=async()=>clip(); const stamps=new Map();
@@ -113,7 +131,7 @@ function fixture() {
  const request=(name,args)=>({name,args,host:host(),commandId:crypto.randomUUID(),expectedRevision:binding.refresh().revision,expectedTargets:[...store.current.objects,...characterRef.current].map(c=>binding.guard(c.id))});
  const call=async(name,args)=>{const response=await dispatchLiveFrame(JSON.stringify({type:'cmd',id:crypto.randomUUID(),name,args}),binding.handlers);assert(response.ok, response.error);return response.value;};
  const motionRequest=()=>{const g=binding.guard(a.id);return {commandId:crypto.randomUUID(),binding:{host:host(),characterId:a.id,targetToken:g.token},jobId:crypto.randomUUID(),artifactId:'artifact',artifact:{artifactId:'artifact',url:'http://127.0.0.1:12345/ardy/motions/123456-abcdef'},schedule:protocol.compileStudioBeats({kind:'generate',durationSeconds:2,beats:[{text:'Stand'}]}),stagingPolicy:'preserve-target-anchor'};};
- return {setArtifactLoader:loader=>{artifactLoader=loader;},binding,actual,scope,ports,request,call,motionRequest,revision,semantic,live,store,history,characterRef,buffer,rigs,host,poses,dispose:()=>binding.dispose()};
+ return {setArtifactLoader:loader=>{artifactLoader=loader;},setUrlLoader:loader=>{urlLoader=loader;},nextStored:()=>new Promise(r=>stored.push(r)),nextMotion:()=>new Promise(r=>motionSet.push(r)),motionStore,values,binding,actual,scope,ports,request,call,motionRequest,revision,semantic,live,store,history,characterRef,buffer,rigs,host,poses,dispose:()=>binding.dispose()};
 }
 const createArgs={ops:[{op:'create',source:{kind:'cube'},position:{world:{x:2,y:0,z:0}}}]};
 async function candidate(f) {const req=f.motionRequest();const prepared=await f.call('prepare_motion_install',req);assert(prepared.candidateId,JSON.stringify(prepared));const next={...req,...prepared,profile:'studio-motion-v1'};const verified=await f.call('verify_motion_candidate',next);assert(verified.verificationId,JSON.stringify(verified));return {req,next,verified};}
@@ -141,6 +159,41 @@ async function railCameraUndo(f, interleaveObject) {
  assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));
 }
 const implementations={
+ async 'agent-motion-survives-reload'(f){
+  // A take the user already had: undoing the install must bring its ref back.
+  const priorRef={url:'http://127.0.0.1:12345/ardy/motions/111111-prior',prompt:'Wave',rotationDeg:0,anchorX:0,anchorZ:0};
+  f.actual.publishStudioCharacters(f.characterRef.current.map(c=>c.id==='actor-a'?{...c,motionRef:priorRef}:c),true);
+  // The editor port fetches the pinned URL like loadMotionFromUrl: the decoded
+  // archive plus the bytes it came from.
+  const fetched=[];f.setArtifactLoader(async artifact=>{fetched.push(artifact.url);const motion=await decodeMotionNpz(npzBytes);motion.sourceBytes=npzBytes;return motion;});
+  const req=f.motionRequest();req.schedule=protocol.compileStudioBeats({kind:'generate',durationSeconds:2,beats:[{text:'Walk forward'},{text:'Stop and wave'}]});
+  const prepared=await f.call('prepare_motion_install',req);assert(prepared.candidateId,JSON.stringify(prepared));
+  const next={...req,...prepared,profile:'studio-motion-v1'};const verified=await f.call('verify_motion_candidate',next);assert(verified.verificationId,JSON.stringify(verified));
+  const cached=f.nextStored();
+  const result=await f.call('commit_motion_candidate',{...next,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true});
+  assert.equal(result.status,'installed',JSON.stringify(result));
+  const take=f.buffer.current.motion,installed=f.characterRef.current.find(c=>c.id==='actor-a');
+  const motionId=await sha256Hex(npzBytes);
+  assert.deepEqual(installed.motionRef,{url:req.artifact.url,prompt:'Walk forward Stop and wave',rotationDeg:take.rotationDeg,anchorX:take.anchorX,anchorZ:take.anchorZ,calibration:take.sceneCalibration,motionId},'the install persists the same kind of motionRef a UI take gets');
+  assert.equal((await bounded(cached)).motionId,motionId,'the artifact bytes reach the motion store under the ref motionId');
+  assert(f.actual.stepStudioHistory(false));assert.deepEqual(f.characterRef.current.find(c=>c.id==='actor-a').motionRef,priorRef,'Undo restores the previous motionRef');
+  assert(f.actual.stepStudioHistory(true));assert.deepEqual(f.characterRef.current.find(c=>c.id==='actor-a').motionRef,installed.motionRef,'Redo restores the installed motionRef');
+  // Reload: the saved scene keeps every field but the session motion, the motion
+  // store survives and the bridge has restarted, so it serves nothing.
+  const saved=JSON.parse(JSON.stringify(f.characterRef.current.map(({sessionMotion,...entry})=>entry)));
+  const page=fixture({characters:saved,motionStore:f.motionStore});
+  try {
+   page.setUrlLoader(async url=>{fetched.push(url);throw new Error(`bridge restarted: ${url} is gone`);});
+   const restored=page.nextMotion();
+   page.actual.restoreMotionRefs(saved);
+   const clip=await bounded(restored);
+   assert.deepEqual(fetched,[req.artifact.url],'the restore never asks the bridge for the artifact again');
+   assert.deepEqual({frames:clip.frames,fps:clip.fps,anchorX:clip.anchorX,anchorZ:clip.anchorZ,rotationDeg:clip.rotationDeg,sceneCalibration:clip.sceneCalibration},
+    {frames:take.frames,fps:take.fps,anchorX:take.anchorX,anchorZ:take.anchorZ,rotationDeg:take.rotationDeg,sceneCalibration:take.sceneCalibration},'the reload restores the installed placement');
+   assert.deepEqual([clip.rotMats,clip.rootPos,clip.posedJoints],[take.rotMats,take.rootPos,take.posedJoints],'the reload restores the installed take');
+   assert.equal(page.values.characters.find(c=>c.id==='actor-a').sessionMotion,clip);
+  } finally { page.dispose(); }
+ },
  async 'inspect-entity-transforms'(f){
   const created=await f.call('arrange_objects',f.request('arrange_objects',{ops:Array.from({length:30},(_,i)=>({op:'create',source:{kind:'cube'},name:`Prop ${i}`,position:{world:{x:i+2,y:1,z:3}},facing:{yawDeg:30},scale:{x:2,y:3,z:4}}))}));
   assert.equal(created.status,'applied',JSON.stringify(created));
