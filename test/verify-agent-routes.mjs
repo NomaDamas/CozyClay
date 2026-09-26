@@ -1771,3 +1771,43 @@ await run16rTwoTurnScenario();
 		await new Promise(resolve => server16y.close(resolve));
 	}
 }
+
+// A second generate_motion inside one user message is a generation limit, not
+// a sign-in failure: the model must report the first result and ask the user.
+{
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	let admissionsLimit = 0;
+	const runtimeLimit = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: `limit-job-${++admissionsLimit}`, commandId: `limit-command-${admissionsLimit}`, state: "queued" }),
+		subscribe: () => () => {},
+		start: async () => ({ ok: true, status: "installed", mutated: true, receiptId: "limit-receipt" }),
+		stop: async () => ({ status: "already_applied" }),
+	};
+	const fauxLimit = createFakeModel();
+	const motionLimit = id => ({ type: "toolCall", id, name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } });
+	fauxLimit.script([motionLimit("limit-first"), motionLimit("limit-second"), [{ type: "text", text: "reported" }]]);
+	let serverLimit;
+	const handlerLimit = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: fauxLimit.models, fauxProvider: fauxLimit.fauxProvider, liveHub: { workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", command: async () => ({ ok: true }) }, studioRuntime: runtimeLimit, port: () => serverLimit.address().port });
+	serverLimit = createServer((req, res) => handlerLimit(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	serverLimit.listen(0, "127.0.0.1"); await once(serverLimit, "listening");
+	const originLimit = `http://127.0.0.1:${serverLimit.address().port}`;
+	try {
+		const turnLimit = { ...envelopeFixture(), sessionId: "00000000-0000-4000-8000-000000000191", turnId: "00000000-0000-4000-8000-000000000192", text: "make Alex walk" };
+		const response = await fetch(`${originLimit}/agent/turn`, { method: "POST", headers: { origin: originLimit, "content-type": "application/json" }, body: JSON.stringify(turnLimit), signal: AbortSignal.timeout(10000) });
+		assert.equal(response.status, 200);
+		const framesLimit = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+		const done = framesLimit.filter(frame => frame.type === "tool.done");
+		assert.equal(admissionsLimit, 1, "the second generation in one user message is never admitted");
+		assert.equal(done.length, 2); assert.equal(done[0].ok, true);
+		assert.equal(done[1].ok, false);
+		assert.match(done[1].error, /GENERATION_LIMIT/, `the model sees the generation-limit code: ${done[1].error}`);
+		assert.match(done[1].error, /One motion generation per user message\. Report this result and ask the user before generating again\./);
+		assert.doesNotMatch(done[1].error, /AUTH_REQUIRED|sign in/i);
+		console.log("PASS a second generation in one user message fails with GENERATION_LIMIT, not AUTH_REQUIRED");
+	} finally {
+		await handlerLimit.close();
+		serverLimit.closeAllConnections();
+		await new Promise(resolve => serverLimit.close(resolve));
+	}
+}

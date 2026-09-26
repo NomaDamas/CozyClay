@@ -355,6 +355,10 @@ function registerTests() {
 		for(const acceptance of ["model","",true]){const forged=structuredClone(advisory);forged.acceptance=acceptance;rejects(()=>protocol.validateReceipt(forged));}
 		const applied=receiptFixture("applied");applied.acceptance="advisory-policy";rejects(()=>protocol.validateReceipt(applied));
 	});
+	test("GENERATION_LIMIT is a failure code of its own, distinct from AUTH_REQUIRED", () => {
+		const failure={ok:false,commandId:"cmd-1",host:receiptFixture().host,code:"GENERATION_LIMIT",phase:"admission",affectedIds:[],expectedTargets:[],currentTargets:[],mutated:false,preserved:{authoredState:"unchanged"},recovery:{action:"none"}};
+		assert.equal(protocol.validateReceipt(failure).code,"GENERATION_LIMIT");assert.ok(protocol.STUDIO_ERROR_CODES.includes("AUTH_REQUIRED"));
+	});
 	test("HTTP stale epoch/token fences use authoritative injected state before execution", async()=>{
 		let executed=0;const runtime={readContext:async()=>contextFixture(),handleTurn:async(v,req,res)=>{executed++;res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({turnId:v.turnId}));}};
 		await withHttp(async(post,calls)=>{
