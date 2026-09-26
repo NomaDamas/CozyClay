@@ -33,7 +33,7 @@ import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 import { motionArraysToNpzMembers, writeNpz } from '../tools/ardy/npz.mjs';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -159,6 +159,31 @@ async function railCameraUndo(f, interleaveObject) {
  assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));
 }
 const implementations={
+ async 'verify-stale-receipt'(f){
+  // A receipt stays verifiable after later edits: its evidence comes back
+  // marked stale with both revisions, and a requested frame is a fresh capture.
+  const first=await f.call('arrange_objects',f.request('arrange_objects',createArgs));
+  assert.equal(first.ok,true,JSON.stringify(first));
+  const second=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'update',id:first.affectedIds[0],position:{world:{x:3,y:0,z:0}}}]}));
+  assert.equal(second.ok,true,JSON.stringify(second));
+  const captured=[];f.ports.capture=()=>{captured.push(f.binding.refresh().revision);return {dataUrl:'data:image/png;base64,AAAA'};};
+  const stale=await f.call('verify_result',f.request('verify_result',{receiptId:first.receiptId,checks:['placement'],visual:'frame'}));
+  assert.notEqual(stale.ok,false,`an earlier receipt must stay verifiable: ${JSON.stringify(stale)}`);
+  assert.deepEqual({receiptId:stale.receiptId,stale:stale.stale,evidenceRevision:stale.evidenceRevision,revision:stale.revision,checks:stale.checks},
+   {receiptId:first.receiptId,stale:true,evidenceRevision:first.revision.after,revision:second.revision.after,checks:first.checks});
+  assert.deepEqual(captured,[second.revision.after],'the requested frame is captured from the current scene');
+  const image=await f.call('resolve_studio_image',{imageId:stale.visualRefs[0].imageId,receiptId:first.receiptId,revision:stale.revision});
+  assert.equal(image.revision,second.revision.after);
+  const current=await f.call('verify_result',f.request('verify_result',{receiptId:second.receiptId,checks:['placement'],visual:'none'}));
+  assert.deepEqual({stale:current.stale,evidenceRevision:current.evidenceRevision,revision:current.revision},{stale:false,evidenceRevision:second.revision.after,revision:second.revision.after});
+  // An edit that lands after the admission was read still never fails it.
+  const late=f.request('verify_result',{receiptId:second.receiptId,checks:['placement'],visual:'none'});
+  f.actual.publishStudioCharacters(f.characterRef.current.map(c=>c.id==='actor-a'?{...c,x:1}:c),true);
+  const after=await f.call('verify_result',late);
+  assert.notEqual(after.ok,false,`a later edit must not fail verification: ${JSON.stringify(after)}`);
+  assert.deepEqual({stale:after.stale,evidenceRevision:after.evidenceRevision,revision:after.revision},{stale:true,evidenceRevision:second.revision.after,revision:f.binding.refresh().revision});
+  assert(after.revision>second.revision.after);
+ },
  async 'motion-job-states'(f){
   // The context job list is what the model reads to learn what the editor is
   // doing with a candidate: every state it shows must be the current one.
@@ -394,7 +419,7 @@ const implementations={
  async 'stop-before-commit'(f){const req=f.motionRequest();const cancelled=await f.call('cancel_motion_install',req);assert.equal(cancelled.status,'not_applied');assert.equal((await f.call('reconcile_studio_command',req)).status,'not_applied');assert.equal(f.history.current.past.length,0);},
  async 'explicit-unverified-acceptance'(f){const {req,next,verified}=await candidate(f);assert.equal(verified.status,'unverified');const before=f.actual.snapshotStudioDomain('motion','actor-a');const commit={...next,jobId:req.jobId,artifactId:req.artifactId,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true};const result=await f.call('commit_motion_candidate',commit);assert.equal(result.status,'installed',JSON.stringify(result));assert.equal(result.verification.status,'unverified');assert.equal(f.history.current.past.length,1);assert.equal(f.buffer.current.motion.studioTakeId,result.installed.takeId);assert(f.actual.stepStudioHistory(false));assert.equal(f.buffer.current.motion,before.character.sessionMotion??null);assert.deepEqual(f.scope.ikStateRef.current.keys,before.ikState.keys);assert.deepEqual(playback.snapshotPlaybackBones(f.rigs['actor-a']),before.renderer.bones);},
  async 'context-revisions'(f){const before=f.binding.context();assert.equal(before.host.workspaceHandle,'handle');f.actual.operateStudio({frame:3},f.binding.refresh());const view=f.binding.context();assert.equal(view.revision.scene,before.revision.scene);assert.equal(view.revision.physics,before.revision.physics);assert(view.revision.view>before.revision.view);assert.equal(view.entities.find(e=>e.id==='actor-a').token,before.entities.find(e=>e.id==='actor-a').token);f.scope.ikStatesRef.current.set('actor-b',{...ik.createIkState(),keys:new Map([[1,new Map([['hips',{p:new THREE.Vector3(0,1,0),q:[new THREE.Quaternion()]}]])]])});const changed=f.binding.context();assert(changed.revision.physics>view.revision.physics);assert.notEqual(changed.entities.find(e=>e.id==='actor-b').token,view.entities.find(e=>e.id==='actor-b').token);},
- async 'recreated-motion-read-and-verify'(f){const baseline=f.binding.context();const equivalent=()=>({...clip(),studioTakeId:'equivalent-take'});f.buffer.current.motion=equivalent();const first=f.binding.context();assert.equal(first.revision.scene,baseline.revision.scene);assert.equal(first.recentReceipts.length,0);f.buffer.current.motion=equivalent();const second=f.binding.context();assert.equal(second.revision.scene,baseline.revision.scene);assert.equal(second.recentReceipts.length,0);const mutation=await f.call('arrange_objects',f.request('arrange_objects',createArgs));assert.equal(mutation.ok,true,JSON.stringify(mutation));assert.equal(mutation.revision.before,baseline.revision.scene);assert.equal(mutation.revision.after,baseline.revision.scene+1);const verified=await f.call('verify_result',f.request('verify_result',{receiptId:mutation.receiptId,checks:['placement'],visual:'none'}));assert.equal(verified.receiptId,mutation.receiptId);assert.equal(verified.revision,mutation.revision.after);assert(!verified.staleScene,'verify_result must not be stale after an immediate authored receipt');}
+ async 'recreated-motion-read-and-verify'(f){const baseline=f.binding.context();const equivalent=()=>({...clip(),studioTakeId:'equivalent-take'});f.buffer.current.motion=equivalent();const first=f.binding.context();assert.equal(first.revision.scene,baseline.revision.scene);assert.equal(first.recentReceipts.length,0);f.buffer.current.motion=equivalent();const second=f.binding.context();assert.equal(second.revision.scene,baseline.revision.scene);assert.equal(second.recentReceipts.length,0);const mutation=await f.call('arrange_objects',f.request('arrange_objects',createArgs));assert.equal(mutation.ok,true,JSON.stringify(mutation));assert.equal(mutation.revision.before,baseline.revision.scene);assert.equal(mutation.revision.after,baseline.revision.scene+1);const verified=await f.call('verify_result',f.request('verify_result',{receiptId:mutation.receiptId,checks:['placement'],visual:'none'}));assert.equal(verified.receiptId,mutation.receiptId);assert.equal(verified.revision,mutation.revision.after);assert.equal(verified.stale,false,'verify_result must not be stale after an immediate authored receipt');}
 };
 let passed=0;
 for(const name of argv.length?[argv[1]]:cases){const f=fixture();try{await implementations[name](f);console.log('PASS',name);passed++;}finally{f.dispose();}}
