@@ -214,6 +214,9 @@ function normalizeMotionRef(ref) {
 	// boundary for a later scene reload. cloneValue also strips non-finite values
 	// and recursively owns the object, so a caller cannot mutate the saved stage.
 	if (plainObject(ref.calibration)) normalized.calibration = normalizeMotionCalibration(ref.calibration);
+	// An agent-installed take keeps the Studio take id its receipts name, so a
+	// reload still reports the same take. Optional, like calibration.
+	if (typeof ref.studioTakeId === "string" && ref.studioTakeId) normalized.studioTakeId = ref.studioTakeId;
 	return normalized;
 }
 

@@ -11845,6 +11845,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					editSegments: createMotionEdit(decoded.frames),
 				};
 				if (entry.motionRef.calibration) clip.sceneCalibration = entry.motionRef.calibration;
+				if (entry.motionRef.studioTakeId) clip.studioTakeId = entry.motionRef.studioTakeId;
 				motionFullRef.current.set(entry.id, clip);
 				setCharacters((current) => current.map((item) => item.id === entry.id
 					// The stature rides inside the npz, so a restored take
@@ -12043,7 +12044,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		// The same persistable ref deliverMotion saves for a UI take, placed where
 		// this take was placed, so restoreMotionRefs rebuilds it after a reload.
 		const motionRef = { url: take.url, prompt: payload.schedule.blocks.map(block => block.text).join(" "),
-			rotationDeg: take.rotationDeg, anchorX: take.anchorX, anchorZ: take.anchorZ, calibration: payload.calibration };
+			rotationDeg: take.rotationDeg, anchorX: take.anchorX, anchorZ: take.anchorZ, calibration: payload.calibration, studioTakeId: payload.takeId };
 		if (take.motionId) motionRef.motionId = take.motionId;
 		const next = { ...character, scale: payload.scale, sessionMotion: take, motionRef, layer: { ...character.layer, promptClips: clips } };
 		recordStudioHistory("motion", id, payload.historyEntryId);
