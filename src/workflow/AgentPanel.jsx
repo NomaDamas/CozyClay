@@ -132,10 +132,12 @@ function JobCard({ job, onStop, onAccept }) {
 	const phase = job.state === "installed" ? null : job.phase;
 	const unverified = job.state === "review_required" || job.verification?.status === "unverified";
 	const limitations = job.verification?.limitations ?? [];
+	// An unverified take is installed all the same; the label says both.
+	const label = job.state === "installed" && unverified ? "Installed with warnings" : JOB_STATE_COPY[job.state] || job.state;
 	return <div className="agent-card agent-job-card" data-job-id={job.jobId} data-job-state={job.state}>
 		<div className="agent-job-head">
 			<StatusDot tone={jobStateTone(job.state)} title={job.state} />
-			<span className="agent-job-label">{JOB_STATE_COPY[job.state] || job.state}</span>
+			<span className="agent-job-label">{label}</span>
 			{unverified && <span className="agent-job-badge">Unverified</span>}
 			{percent !== null && <span className="agent-job-progress">{formatJobProgress(job.progress)}</span>}
 		</div>
@@ -163,15 +165,20 @@ function ReceiptCard({ item }) {
 	const unverified = receipt.verification?.status === "unverified";
 	const limitations = receipt.verification?.limitations ?? [];
 	const warnings = receipt.warnings ?? [];
+	const installedWithWarnings = receipt.status === "installed" && unverified;
 	return <div className="agent-card agent-receipt-card" data-receipt-id={item.receiptId} data-receipt-status={receipt.status}>
 		<div className="agent-receipt-head">
 			<StatusDot tone={unverified ? "warn" : "ok"} title={receipt.status} />
+			{installedWithWarnings && <span className="agent-job-label">Installed with warnings</span>}
 			<span className="agent-receipt-summary">{summary}</span>
 		</div>
 		{(warnings.length > 0 || limitations.length > 0) && <ul className="agent-receipt-notes">
 			{warnings.map((warning) => <li key={warning.code}>{warning.message || warning.code}</li>)}
 			{limitations.map((limit) => <li key={limit}>{limit}</li>)}
 		</ul>}
+		{/* The pane has no direct Undo into the Studio editor; it names the two
+		    paths that do exist rather than drawing a button it cannot honour. */}
+		{installedWithWarnings && <p className="agent-job-note">Undo with Cmd+Z or ask the agent.</p>}
 	</div>;
 }
 
