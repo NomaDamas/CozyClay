@@ -111,10 +111,28 @@ export function createSessionStore(dir = agentSessionsDir()) {
 			catch (error) { if (error?.code === "ENOENT") return null; throw error; }
 			const lines = historyText.split("\n").filter(Boolean);
 			if (!lines.length || !isV2Header(lines[0])) { warnLegacySession(sessionId); return null; }
-			const history = lines.slice(1).map((line) => JSON.parse(line)).filter((entry) => entry?.kind === "message").map((entry) => entry.message);
+			const entries = lines.slice(1).map((line) => JSON.parse(line));
+			const history = entries.filter((entry) => entry?.kind === "message").map((entry) => entry.message);
+			const turnErrors = entries.filter((entry) => entry?.kind === "turn_error").map(({ code, message, at, afterMessage }) => ({ code, message, at, afterMessage }));
+			Object.defineProperty(history, "turnErrors", { value: turnErrors });
 			let meta = null;
 			try { meta = JSON.parse(readFileSync(metaFile, "utf8")); } catch (error) { if (error?.code !== "ENOENT") throw error; }
-			return { history, meta };
+			return { history, ...(turnErrors.length ? { turnErrors } : {}), meta };
+		},
+		appendTurnError(sessionId, { code, message, at = new Date().toISOString() }, meta = {}) {
+			const { history: historyFile, meta: metaFile } = paths(dir, sessionId);
+			let historyText = "";
+			try { historyText = readFileSync(historyFile, "utf8"); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+			const lines = historyText.split("\n").filter(Boolean);
+			if (!lines.length) appendFileSync(historyFile, `${v2HeaderLine(sessionId)}\n`, { mode: 0o600 });
+			const afterMessage = lines.slice(1).reduce((count, line) => count + (JSON.parse(line)?.kind === "message" ? 1 : 0), 0);
+			appendFileSync(historyFile, `${JSON.stringify({ kind: "turn_error", code, message, at, afterMessage })}\n`, { mode: 0o600 });
+			const now = new Date().toISOString();
+			let previous = null;
+			try { previous = JSON.parse(readFileSync(metaFile, "utf8")); } catch (error) { if (error?.code !== "ENOENT") throw error; }
+			const next = { ...previous, sessionId: validSessionId(sessionId), surface: meta.surface ?? previous?.surface ?? "studio", createdAt: previous?.createdAt ?? now, updatedAt: now };
+			writeFileSync(metaFile, `${JSON.stringify(next, null, "\t")}\n`, { mode: 0o600 });
+			return next;
 		},
 		append(sessionId, messages, meta = {}) {
 			const { history: historyFile, meta: metaFile } = paths(dir, sessionId);
@@ -231,6 +249,13 @@ function isLegacyItem(item) {
  * consumed by the panel. */
 export function transcriptFromHistory(history = []) {
 	const transcript = [];
+	const turnErrors = Array.isArray(history?.turnErrors) ? history.turnErrors : [];
+	const expandedHistory = [];
+	for (let index = 0; index < history.length; index += 1) {
+		expandedHistory.push(history[index]);
+		for (const error of turnErrors) if (error.afterMessage === index + 1) expandedHistory.push({ kind: "persisted-turn-error", error });
+	}
+	for (const error of turnErrors) if (!Number.isInteger(error.afterMessage) || error.afterMessage > history.length) expandedHistory.push({ kind: "persisted-turn-error", error });
 
 	// Legacy (codex item) state.
 	const legacyCalls = new Map();
@@ -257,7 +282,11 @@ export function transcriptFromHistory(history = []) {
 		transcript.push(attachments.length ? { kind: "user", text, attachments } : { kind: "user", text });
 	};
 
-	for (const item of history) {
+	for (const item of expandedHistory) {
+		if (item?.kind === "persisted-turn-error") {
+			transcript.push({ kind: "failure", code: item.error.code, message: item.error.message });
+			continue;
+		}
 		if (isLegacyItem(item)) {
 			if (item?.type === "message") {
 				const text = textOf(item.content);

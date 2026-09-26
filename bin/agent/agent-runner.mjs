@@ -228,11 +228,18 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			const messages = entries.filter((entry) => entry.type === "message").map((entry) => entry.message);
 			if (messages.length <= state.persisted) return;
 			const aborted = state.active?.abortRequested === true;
-			const pending = messages.slice(state.persisted).filter((message) => !(aborted && message?.role === "assistant") && !(message?.role === "assistant" && message?.stopReason === "error"));
+			const newlyGenerated = messages.slice(state.persisted);
+			const failedAssistant = newlyGenerated.find((message) => message?.role === "assistant" && (aborted || message.stopReason === "error"));
+			const pending = newlyGenerated.filter((message) => !(aborted && message?.role === "assistant") && !(message?.role === "assistant" && message?.stopReason === "error"));
 			state.persisted = messages.length;
-			if (!pending.length) return;
 			const input = state.lastInput || {};
-			await sessionStore.append(sessionId, pending, { surface, ...(input.meta || {}) });
+			if (pending.length) await sessionStore.append(sessionId, pending, { surface, ...(input.meta || {}) });
+			if (failedAssistant && sessionStore.appendTurnError) {
+				const rawMessage = failedAssistant.errorMessage || "The model or live editor could not complete this turn.";
+				const message = aborted ? "The turn was aborted." : sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage })) || rawMessage;
+				const code = aborted ? "aborted" : classifyProviderError(rawMessage);
+				await sessionStore.appendTurnError(sessionId, { code, message, at: new Date().toISOString() }, { surface, ...(input.meta || {}) });
+			}
 		};
 
 		// pi calls AgentTool.execute(toolCallId, params, signal, onUpdate) — the
