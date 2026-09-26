@@ -287,7 +287,7 @@ import {
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
 import { mergeProjectCustomPoses } from "./project-poses.js";
-import { encodeMotionResource, decodeMotionResource, resolveMotionSource } from "./motion-resources.js";
+import { encodeMotionResource, decodeMotionResource, resolveMotionSource, sha256Hex } from "./motion-resources.js";
 import { openMotionDb, putMotion, getMotion, sweepMotions } from "./motion-store.js";
 import { resourceManifest } from "./project-resources.js";
 import { internWorkflowOutputs, resolveWorkflowOutputs, workflowOutputRefs } from "./workflow/workflow-resources.js";
@@ -730,7 +730,7 @@ export function createStudioAppBinding(ports) {
 			journal = createStudioCommandJournal({ host, isRetained: receipt => ports.isRetained(receipt) });
 			commands = createStudioCommands({ read: readCommand, guard, bounds: ports.bounds, commit: ports.commit, poses: ports.poses, journal });
 			motion = createStudioMotionCandidates({ readTarget, readEnvironment, journal,
-				commit: commitMotion, loadArtifact: ports.loadArtifact, poseCast: ports.poseCast });
+				commit: commitMotion, loadArtifact, poseCast: ports.poseCast });
 		}
 		const characters = raw.characters.map(character => {
 			const target = raw.targets.get(character.id);
@@ -879,6 +879,13 @@ export function createStudioAppBinding(ports) {
 			cast: s.characters.map(character => ({ character, ...s.targets.get(character.id) })) };
 	}
 	function remember(receipt) { if (receipt?.receiptId) receipts.set(receipt.receiptId, receipt); return receipt; }
+	// A candidate keeps the URL its artifact came from and the content id of its
+	// bytes: the install persists both in the motionRef, so a reload restores the
+	// take from the motion store even after the bridge has forgotten the run.
+	async function loadArtifact(artifact, options) {
+		const loaded = await ports.loadArtifact(artifact, options);
+		return { ...loaded, url: artifact.url, ...(loaded.sourceBytes ? { motionId: await sha256Hex(loaded.sourceBytes) } : {}) };
+	}
 	function commitMotion(payload) {
 		const s = refresh(), beforeTake = s.targets.get(payload.binding.characterId)?.motion;
 		const takeId = crypto.randomUUID(), historyEntryId = crypto.randomUUID();
@@ -12025,7 +12032,12 @@ function resizePromptClip(id, edge, rawFrame) {
 		const character = before.characters.find(c => c.id === id);
 		const clips = payload.schedule.blocks.map((block, index) => ({ id: `${payload.takeId}-beat-${index}`, startFrame: block.startFrame, endFrame: block.endFrameExclusive, text: block.text }));
 		const take = { ...payload.motion, studioTakeId: payload.takeId, prompt: "", sceneCalibration: payload.calibration };
-		const next = { ...character, scale: payload.scale, sessionMotion: take, motionRef: null, layer: { ...character.layer, promptClips: clips } };
+		// The same persistable ref deliverMotion saves for a UI take, placed where
+		// this take was placed, so restoreMotionRefs rebuilds it after a reload.
+		const motionRef = { url: take.url, prompt: payload.schedule.blocks.map(block => block.text).join(" "),
+			rotationDeg: take.rotationDeg, anchorX: take.anchorX, anchorZ: take.anchorZ, calibration: payload.calibration };
+		if (take.motionId) motionRef.motionId = take.motionId;
+		const next = { ...character, scale: payload.scale, sessionMotion: take, motionRef, layer: { ...character.layer, promptClips: clips } };
 		recordStudioHistory("motion", id, payload.historyEntryId);
 		const renderer = target?.rig ? snapshotExportRig(target.rig) : null;
 		publishStudioMotion(id, { character: next, fullMotion: payload.sourceMotion, ikState: payload.ikState,
@@ -12041,6 +12053,19 @@ function resizePromptClip(id, edge, rawFrame) {
 		// Preimage bones live on the native entry, not on the installed candidate.
 		charHistoryRef.current.past.at(-1).studio.state.renderer = renderer;
 		markSemanticEdit("characters", before.characters, charactersRef.current);
+		// Store the take's bytes the way a project save embeds a take
+		// (collectProjectSerialized): the same record, caches and motion store, so
+		// the ref's motionId resolves after a reload without the bridge.
+		if (take.sourceBytes) (async () => {
+			let record = motionEncodingCacheRef.current.get(take.sourceBytes);
+			if (!record) {
+				record = await encodeMotionResource(take.sourceBytes, { prompt: motionRef.prompt, sourceUrl: motionRef.url });
+				motionEncodingCacheRef.current.set(take.sourceBytes, record);
+			}
+			projectMotionsRef.current.set(record.motionId.toLowerCase(), record);
+			const db = await openMotionDb();
+			try { await putMotion(db, record); } finally { db.close(); }
+		})().catch((error) => console.warn("[cozyclay] could not cache motions", error));
 	}
 	function studioBounds({ entity, frame, state }) {
 		if (entity.renderer) {
