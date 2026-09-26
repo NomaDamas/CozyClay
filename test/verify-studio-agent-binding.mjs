@@ -33,7 +33,7 @@ import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 import { motionArraysToNpzMembers, writeNpz } from '../tools/ardy/npz.mjs';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -159,6 +159,37 @@ async function railCameraUndo(f, interleaveObject) {
  assert.deepEqual(f.scope.shotCamRef.current.position.toArray(),Object.values(before.camera.position));
 }
 const implementations={
+ async 'motion-job-states'(f){
+  // The context job list is what the model reads to learn what the editor is
+  // doing with a candidate: every state it shows must be the current one.
+  const state=id=>f.binding.context().jobs.find(job=>job.id===id)?.state??null;
+  const prepare=async()=>{const req=f.motionRequest();const prepared=await f.call('prepare_motion_install',req);assert(prepared.candidateId,JSON.stringify(prepared));assert.equal(state(req.jobId),'preparing');return {req,next:{...req,...prepared,profile:'studio-motion-v1'}};};
+  let {req,next}=await prepare();
+  const verifying=f.binding.handlers.verify_motion_candidate(next);
+  assert.equal(state(req.jobId),'verifying','a verification in flight reads verifying');
+  const verified=await verifying;assert.equal(verified.status,'unverified',JSON.stringify(verified));assert.equal(verified.repairable,true);
+  assert.equal(state(req.jobId),'review_required','an unverified candidate waiting on a decision is parked for review, not preparing');
+  const repairing=f.binding.handlers.repair_motion_candidate({...next,method:'auto_physics',protectedFrames:[]});
+  assert.equal(state(req.jobId),'repairing','a repair in flight reads repairing');
+  const repaired=await repairing;assert(repaired.candidateId,JSON.stringify(repaired));
+  next={...next,candidateRevision:repaired.candidateRevision};
+  const again=await f.call('verify_motion_candidate',next);assert(again.verificationId,JSON.stringify(again));
+  assert.equal(state(req.jobId),again.status==='verified'?'committing':'review_required');
+  const committed=await f.call('commit_motion_candidate',{...next,verificationId:again.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:again.physicsRevision,explicitUnverifiedAcceptance:true});
+  assert.equal(committed.status,'installed',JSON.stringify(committed));
+  assert.equal(state(req.jobId),null,'an installed job leaves the list');
+  ({req,next}=await prepare());
+  await f.call('verify_motion_candidate',next);
+  assert.equal((await f.call('discard_motion_candidate',next)).discarded,true);
+  assert.equal(state(req.jobId),null,'a discarded job leaves the list');
+  ({req,next}=await prepare());
+  const refused=await f.call('verify_motion_candidate',{...next,candidateRevision:next.candidateRevision+1});
+  assert.equal(refused.ok,false,JSON.stringify(refused));
+  assert.equal(state(req.jobId),null,'a refused job leaves the list');
+  ({req,next}=await prepare());
+  assert.equal((await f.call('cancel_motion_install',next)).status,'not_applied');
+  assert.equal(state(req.jobId),null,'a cancelled job leaves the list');
+ },
  async 'agent-motion-survives-reload'(f){
   // A take the user already had: undoing the install must bring its ref back.
   const priorRef={url:'http://127.0.0.1:12345/ardy/motions/111111-prior',prompt:'Wave',rotationDeg:0,anchorX:0,anchorZ:0};
