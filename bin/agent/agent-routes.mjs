@@ -475,7 +475,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		const runtimeForJob = await studioRuntimeFor(hub);
 		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, session: { signal: controller.signal, admission }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
 		const motion = async args => {
-			if (session.generationPrompt === value.text) throw new StudioProtocolError("AUTH_REQUIRED", "This generation request already has a retained result; start a new explicit request.");
+			if (session.generationPrompt === value.text) throw new StudioProtocolError("GENERATION_LIMIT", "One motion generation per user message. Report this result and ask the user before generating again.");
 			if (!runtimeForJob) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio motion runtime is unavailable.");
 			const character = value.context.entities.find(entity => entity.id === args.characterId && entity.kind === "character");
 			if (!character) throw new StudioProtocolError("TARGET_NOT_READY", "The admitted character is unavailable.");
