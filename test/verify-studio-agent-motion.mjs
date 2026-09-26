@@ -25,7 +25,7 @@ import { dispatchLiveFrame } from '../src/live-control.js';
 const args = process.argv.slice(2);
 const CASES = ['characterization', 'pre-prepare-cancellation', 'grounded-full-range', 'floor-key-order', 'hovering-no-contact', 'no-measured-skin', 'platform-unsupported',
   'inactive-target-yaw-and-retime', 'off-playhead-path-prop', 'same-frame-other-cast', 'ground-cache-invalidation', 'decode-failure', 'bounded-real-auto-physics',
-  'repair-throw', 'protected-regression', 'commit-fences', 'cancellation-checkpoint', 'expiry', 'explicit-unverified-acceptance', 'runtime-http'];
+  'repair-throw', 'protected-regression', 'collision-repair-arm-chains', 'commit-fences', 'cancellation-checkpoint', 'expiry', 'explicit-unverified-acceptance', 'runtime-http'];
 assert(!args.length || (args.length === 2 && args[0] === '--case' && CASES.includes(args[1])), 'Unknown test arguments');
 const selectedCase = args[1] ?? null;
 const evidence = process.env.MOTION_EVIDENCE_DIR;
@@ -261,6 +261,18 @@ async function candidateTests(mod, selectedCase) {
       const trace = f.api.readEvidence(c.candidateId).after;
       assert.equal(trace.collisions[0].length, 0); assert(trace.collisions.slice(15, 33).some(p => p.some(hit => hit.b.startsWith('char:char-c:'))));
       assert.notEqual(trace.blockers[0][0].az, trace.blockers[47][0].az); assert.deepEqual(boneSnapshot(other), before); f.preserved();
+    }
+    if (selected('collision-repair-arm-chains')) {
+      let collisionOptions = null;
+      const f = fixture({ ports: { fixCollisionsRange: options => { collisionOptions = options; } } });
+      const prop = { ...createSceneObject('cube'), scaleX: .2, scaleY: .3, scaleZ: .2, y: 1.45,
+        path: { points: [{ x: -.8, y: 1.45, z: -2 }, { x: -.8, y: 1.45, z: 2 }], speed: 0, faceTravel: false, loop: false, extend: false, timing: null } };
+      f.state.objects = [prop]; const c = await f.prepare(), v = await f.verify(c); ok(v);
+      assert.equal(v.repairable, true); const auto = await f.repair(c, 'auto_physics'); ok(auto);
+      const repaired = await f.repair(auto, 'fix_collisions'); ok(repaired);
+      assert(collisionOptions?.onlyChains instanceof Set);
+      assert.deepEqual([...collisionOptions.onlyChains].sort(), ['leftHand', 'rightHand']);
+      console.log('PASS collision repair limits solver to leftHand and rightHand chains');
     }
     if (selected('ground-cache-invalidation')) {
       const f = fixture(), c = await f.prepare(), first = await f.verify(c); ok(first);
