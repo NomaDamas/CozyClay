@@ -17,7 +17,7 @@ const timeoutMs = 60_000;
 const sample = await readFile(new URL("../public/demo/walk-then-stop.npz", import.meta.url));
 await mkdir(`${out}/downloads`, { recursive: true });
 const checks = [], screenshots = [], pageErrors = [], routeErrors = [], liveFrames = [];
-const requests = { health: 0, generate: [], motions: 0, unexpected: [], telemetry: [], sessionEnd: [] };
+const requests = { health: 0, generate: [], motions: 0, demo: [], unexpected: [], telemetry: [], sessionEnd: [] };
 const fixture = new EventEmitter();
 const healthStates = {
 	not_configured: { ok: false, backend: "none", host_configured: false, reason: "unconfigured", capabilities: { lineEdit: false } },
@@ -88,6 +88,9 @@ subscribe("Network.webSocketFrameReceived", ({ response }) => {
 		const frame = JSON.parse(response.payloadData);
 		if (frame.type === "cmd") liveFrames.push({ type: frame.type, name: frame.name });
 	} catch { /* Binary/non-JSON WebSocket traffic is not a live command. */ }
+});
+subscribe("Network.requestWillBeSent", ({ request }) => {
+	if (new URL(request.url).pathname === "/demo/walk-then-stop.npz") requests.demo.push(request.url);
 });
 async function evaluate(expression) {
 	const result = await send("Runtime.evaluate", { expression, awaitPromise: true, returnByValue: true, timeout: timeoutMs });
@@ -396,6 +399,20 @@ try {
 		await captureBoth(`job-${terminal}`, ".motion-readiness");
 		if (terminal === "succeeded") { assert.equal(await evaluate("window.__cozyclay.motion.url"), "/ardy/motions/qa-readiness.npz"); assert.ok(requests.motions > 0); }
 	}
+	// Clear the active character through its real editor control, then exercise
+	// a successful health probe followed by a failed retry. The earlier failed
+	// probe establishes a state transition; every response is driven by a retry
+	// action and readiness state, never a fixed delay.
+	await changeAndWait("window.__cozyclay.motion == null", () => click('button[title*="Clear motion"]'), "clear active character motion");
+	const demoRequestsBefore = requests.demo.length;
+	await recheck("unavailable", "unavailable");
+	await recheck("ready", "ready");
+	assert.equal(await evaluate("window.__cozyclay.motion ?? null"), null, "successful health probe must leave the active character unanimated");
+	await recheck("unavailable", "unavailable");
+	assert.equal(await evaluate("window.__cozyclay.motion ?? null"), null, "later failed health probe must not load demo motion onto the active character");
+	assert.equal(requests.demo.length, demoRequestsBefore, "demo clip was never requested during the success-then-failure phase");
+	pass("successful health then failed recheck leaves empty active character unanimated", { demo_requests: 0 });
+
 	const all = await records(), ids = demand(all).filter(e => e.event === "motion:generate_requested").map(e => e.properties.request_id);
 	assert.equal(new Set(ids).size, 5); assert.equal(ids.length, 5);
 	assert.ok(!JSON.stringify(all).includes("PRIVATE_"), "production sanitizer excludes prompt, scene, host and error text");

@@ -8,6 +8,17 @@ export function hasLineEditCapability(health) {
 }
 
 /**
+ * Decide whether the hosted demo take may be seeded onto the stage. The seed
+ * is for a session with no bridge (the hosted demo). The first healthy probe
+ * latches `bridgeSeenOk`: after it, a failed probe is a blip, not "no bridge",
+ * and must never load the demo take onto the character.
+ */
+export function demoSeedGate(health, bridgeSeenOk = false) {
+	const seenOk = bridgeSeenOk || Boolean(health?.ok);
+	return { bridgeSeenOk: seenOk, seed: Boolean(health) && !health.ok && !seenOk };
+}
+
+/**
  * Derive the generation affordance state from bridge health and request shape.
  * Health is deliberately interpreted through the analytics preflight contract;
  * error prose is never used to classify a route.

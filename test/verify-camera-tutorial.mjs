@@ -178,7 +178,7 @@ expect("it fires regardless of bridge state", !/if \([^)]*bridge/.test(seed));
 expect("it consumes the flag once", seed.includes("setTutorialSeedPending(false)") && seed.includes("demoSeeded.current = true"));
 expect(
 	"the hosted-demo seed keeps its own bridge rule",
-	/if \(!bridge \|\| bridge\.ok\) return;\s*demoSeeded\.current = true;/.test(app),
+	/if \(!demoSeed\.seed\) return;\s*demoSeeded\.current = true;/.test(app),
 );
 expect("the take the tutorial seeds is the landing page's", app.includes("DEMO_MOTION_URL,") && app.includes("DEMO_MOTION_PROMPT,"));
 expect(

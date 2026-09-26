@@ -251,7 +251,7 @@ import AddObjectMenu from "./object-catalog.jsx";
 import ResultModal from "./result-modal.jsx";
 import { FalMotionCaptureCard, FalMotionModal } from "./fal-motion-studio.jsx";
 import SettingsMenu from "./settings-menu.jsx";
-import { hasLineEditCapability, motionReadiness } from "./motion-readiness.js";
+import { demoSeedGate, hasLineEditCapability, motionReadiness } from "./motion-readiness.js";
 import { MotionReadiness, MotionSetup, motionReadinessMessage } from "./motion-readiness-ui.jsx";
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
@@ -7248,7 +7248,12 @@ export default function App() {
 	}, []);
 
 	const demoSeeded = useRef(false);
+	// Latched on the first healthy probe: a session that has seen the sidecar is
+	// not the hosted demo, and a later failed probe is a blip, not "no bridge".
+	const bridgeSeenOk = useRef(false);
 	useEffect(() => {
+		const demoSeed = demoSeedGate(bridge, bridgeSeenOk.current);
+		bridgeSeenOk.current = demoSeed.bridgeSeenOk;
 		if (demoSeeded.current) return;
 		if (!activeRig || motion || motionBusy) return;
 		// A hosted-demo result link opens the app with ?motion=<url>. The value
@@ -7263,7 +7268,7 @@ export default function App() {
 			});
 			return;
 		}
-		if (!bridge || bridge.ok) return;
+		if (!demoSeed.seed) return;
 		demoSeeded.current = true;
 		// Loaded, not played: the clip walks the subject out of the default
 		// framing, so autoplay would greet a first-time visitor with an empty
