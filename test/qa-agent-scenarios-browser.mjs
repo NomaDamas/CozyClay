@@ -58,6 +58,12 @@ function live(args) {
 // The page's own live workspace handle, read from the chip the Studio renders
 // once its editor is connected, so the hub is always asked about THIS page.
 let qaHandle = null;
+// The Studio mounts the Agent pane hidden behind the Inspector; switch to it so
+// every scenario screenshot shows the conversation and its receipts.
+async function showAgentPane() {
+  await evaluate(`(() => { const button = document.querySelector('button.inspector-agent-switch[aria-pressed]'); if (button && button.getAttribute('aria-pressed') !== 'true') button.click(); })()`);
+  await waitFor(`(() => { const pane = document.querySelector('aside[aria-label="Agent"]'); return !!pane && !pane.hidden && pane.offsetParent !== null; })()`, 15_000).catch(() => null);
+}
 async function readHandle() {
   const selector = "document.querySelector('.live-workspace-handle[data-live-workspace]')";
   await waitFor(`!!${selector}?.dataset.liveWorkspace`, 30_000).catch(() => null);
@@ -146,6 +152,7 @@ try {
   await pageLoad(baseUrl);
   await waitFor(`!!document.querySelector('aside[aria-label="Agent"]') && !!document.querySelector('aside[aria-label="Agent"] textarea[aria-label="Message the agent"]')`);
   await readHandle();
+  await showAgentPane();
   await chooseModel();
 } catch (error) {
   setupFailure = error.message;
@@ -207,6 +214,7 @@ await scenario("S5", "persistence", async () => {
   await pageLoad(baseUrl);
   await waitFor(`!!document.querySelector('aside[aria-label="Agent"]')`);
   await readHandle();
+  await showAgentPane();
   const restored = (s) => (s.characters.find((row) => row.id === "char-a")?.frames ?? 0) > 0;
   const after = untilState(restored, 60_000);
   const character = after.characters.find((row) => row.id === "char-a");
