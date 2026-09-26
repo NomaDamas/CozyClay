@@ -251,6 +251,7 @@ export function createStudioMotionCandidates(ports) {
     if (!flat) limitations.push('elevated-moving-or-nonflat-support-unsupported');
     if (missingCast.length) limitations.push('other-cast-evaluation-incomplete');
     if (unsupportedObjects.length) limitations.push('attached-or-tilted-object-proxies-unsupported');
+    if (c.rejectedRepairs.length) limitations.push('bounded-repair-rejected-regression');
     const repairable = !c.sealed && !c.revalidatedEnvironment && flat && m.surfaceMeasured && !missingCast.length && !unsupportedObjects.length
       && ((!c.autoAttempted && contactDefects) || (!c.collisionAttempted && supportedCollisionFrames > 0));
     const result = { ...summary(c), verificationId: newId(), profile: PROFILE, status: verified ? 'verified' : 'unverified', repairable,
@@ -288,7 +289,7 @@ export function createStudioMotionCandidates(ports) {
         if (request.stagingPolicy !== 'preserve-target-anchor' || request.artifactId !== request.artifact?.artifactId) fail('INVALID_ARGUMENT', 'Unsupported staging policy or artifact identity.');
         id(request.artifactId); id(request.jobId);
         const c = { request: structuredClone(request), candidateId: newId(), revision: 1, createdAt: now(), controller: new AbortController(), cast: [], autoCache: { value: null },
-          character: structuredClone(target.character), schedule, protectedFrames: [...new Set(target.protectedFrames ?? [])], autoAttempted: false, collisionAttempted: false, autoInvocations: 0, collisionInvocations: 0, sealed: false, busy: true };
+          character: structuredClone(target.character), schedule, protectedFrames: [...new Set(target.protectedFrames ?? [])], autoAttempted: false, collisionAttempted: false, autoInvocations: 0, collisionInvocations: 0, rejectedRepairs: [], sealed: false, busy: true };
         candidates.set(c.candidateId, c);
         for (const frame of c.protectedFrames) if (!Number.isSafeInteger(frame) || frame < 0 || frame >= schedule.frameCount) fail('INVALID_RANGE', 'Protected frame lies outside the candidate.');
         c.evaluator = isolatedRig(target.rig);
@@ -336,6 +337,7 @@ export function createStudioMotionCandidates(ports) {
         if ((request.protectedFrames ?? []).some(f => !c.protectedFrames.includes(f))) fail('INVALID_ARGUMENT', 'Protection must be admitted during preparation.');
         if (request.method === 'auto_physics' ? c.autoAttempted || c.collisionAttempted : c.collisionAttempted || !c.autoAttempted) fail('VERIFICATION_FAILED', 'Repair invocation budget or order exceeded.');
         const before = c.verification, draft = copyLayer(c.layer);
+        const preimage = { layer: c.layer, evidence: c.evidence, verifiedStamp: c.verifiedStamp, sealed: c.sealed };
         c.deadline = now() + (ports.verificationMs ?? 60000);
         if (request.method === 'auto_physics') {
           c.autoAttempted = true;
@@ -356,12 +358,19 @@ export function createStudioMotionCandidates(ports) {
         }
         checkpoint(c); c.layer = draft; c.revision++;
         // All solver writes and their blend ramps finish BEFORE this read-only
-        // full pass. A regression is a rejected private candidate, never a
-        // partial change to the visible take or its authored preimage.
+        // full pass. A regression discards only this repair: the candidate
+        // reverts to its exact pre-repair layer and evidence under a new
+        // revision (stale revisions are refused), and the spent attempt flag
+        // stays set so the same method cannot run again.
         const after = await evaluate(c), a = after.metrics, b = before.metrics;
         // Collision frames an auto_physics contact fix adds are owed to the
         // fix_collisions step that must follow (gated below against this state).
-        if (a.continuityRegressed || a.protectedPoseError > 1e-8 || a.maxFloorPenetrationM > Math.max(PHYSICS_LIMITS.floor, b.maxFloorPenetrationM) + 1e-8 || a.maxContactSlipM > Math.max(PHYSICS_LIMITS.slide, b.maxContactSlipM) + 1e-8 || a.maxContactFloatM > Math.max(PHYSICS_LIMITS.float, b.maxContactFloatM) + 1e-8 || a.unsupportedFrames > b.unsupportedFrames || (a.supportedCollisionFrames > b.supportedCollisionFrames && !(request.method === 'auto_physics' && after.repairable))) fail('REPAIR_REGRESSED', 'Final evaluated repair regressed contact, protection, continuity or collisions.');
+        if (a.continuityRegressed || a.protectedPoseError > 1e-8 || a.maxFloorPenetrationM > Math.max(PHYSICS_LIMITS.floor, b.maxFloorPenetrationM) + 1e-8 || a.maxContactSlipM > Math.max(PHYSICS_LIMITS.slide, b.maxContactSlipM) + 1e-8 || a.maxContactFloatM > Math.max(PHYSICS_LIMITS.float, b.maxContactFloatM) + 1e-8 || a.unsupportedFrames > b.unsupportedFrames || (a.supportedCollisionFrames > b.supportedCollisionFrames && !(request.method === 'auto_physics' && after.repairable))) {
+          c.layer = preimage.layer; c.evidence = preimage.evidence; c.verifiedStamp = preimage.verifiedStamp; c.sealed = preimage.sealed; c.verification = before; c.revision++;
+          const repairRejected = { method: request.method, code: 'REPAIR_REGRESSED' };
+          c.rejectedRepairs.push({ ...repairRejected });
+          return { ...summary(c), before, after: before, repairRejected };
+        }
         return { ...summary(c), before, after };
       });
     },
