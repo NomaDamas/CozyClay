@@ -861,7 +861,8 @@ export function createStudioAppBinding(ports) {
 			scene: { name: s.sceneName, aspect: s.aspect, floorY: 0, frameCount: s.frameCount, objectCount: s.objects.length, characterCount: s.characters.length },
 			selection: s.selection, activeCharacterId: s.activeCharacterId, view: s.view,
 			shot: shot ? { id: shot.id, name: shot.name, range: range(shot), mode: shot.camera?.mode ?? "keys" } : null, camera: s.camera,
-			entities, entityPage: { returned: Math.min(24, entities.length), total: entities.length, truncated: entities.length > 24, nextCursor: entities.length > 24 ? "pending" : null },
+			// buildStudioContext selects the detailed rows and writes the real page.
+			entities, entityPage: { returned: 0, total: 0, truncated: false, nextCursor: null },
 			shots: s.shots.map(row => ({ id: row.id, name: row.name, range: range(row), keyCount: row.cameraKeys.length })), shotsTruncated: false,
 			assets: assetList(s), recentReceipts: [...receipts.values()].filter(r => r.ok).reverse().slice(0, 3).map(r => ({ id: r.receiptId, summary: r.status, canUndoDirect: ports.canUndo(r) })),
 			jobs: [...jobs.values()].slice(-8), capabilities: { profile: "studio-slice-1", tools: STUDIO_TOOL_FAMILIES,
@@ -1019,8 +1020,8 @@ export function createStudioAppBinding(ports) {
 			if (inspectScopes[command.args.scope]) return { context: c, scope: command.args.scope, ...inspectScopes[command.args.scope](s, wanted) };
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
-			const all = entityProjection(s);
-			const filtered = all.filter(wanted);
+			// Stable id order, so an offset cursor survives unrelated edits.
+			const filtered = entityProjection(s).filter(wanted).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
 			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,
 				nextCursor: offset + limit < filtered.length ? studioEntityCursor(c, offset + limit) : null };
