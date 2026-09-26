@@ -262,6 +262,13 @@ try {
 	assert.equal(LiveHub.commandTimeoutMs("load_motion"), 30_000);
 	assert.equal(LiveHub.commandTimeoutMs("capture_frame"), 30_000);
 	assert.equal(LiveHub.commandTimeoutMs("import_asset"), 30_000);
+	for (const name of [
+		"inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements",
+		"frame_shot", "verify_result", "undo_edit", "read_studio_context", "resolve_studio_image",
+		"capture_framing_png", "reconcile_studio_command", "run_action",
+	]) {
+		assert.equal(LiveHub.commandTimeoutMs(name), 30_000, `${name} uses the Studio command timeout`);
+	}
 	assert.equal(LiveHub.commandTimeoutMs("describe"), 5_000);
 
 	console.log(JSON.stringify({
