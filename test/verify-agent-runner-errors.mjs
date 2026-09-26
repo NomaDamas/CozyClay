@@ -160,7 +160,10 @@ for (const token of ["AIza-secret-0123456789abcdefghijk", "sk-or-secret", "sk-an
 	expect("the error frame carries code:'overloaded'", error?.code === "overloaded", JSON.stringify(error));
 	expect("a done frame follows the error frame", frames.at(-1)?.type === "done", JSON.stringify(frames));
 	expect("the model was called exactly 3 times", calls.length === 3, `calls.length=${calls.length}`);
-	expect("overloaded failures persist only the user message", JSON.stringify(firstHistory.map((message) => message.role)) === "[\"user\"]", JSON.stringify(firstHistory));
+	expect("overloaded failures keep model history limited to the user message", JSON.stringify(firstHistory.map((message) => message.role)) === "[\"user\"]", JSON.stringify(firstHistory));
+	const firstSession = sessionStore.read("errors-529");
+	expect("overloaded failure is persisted separately with code and message", firstSession?.turnErrors?.length === 1 && firstSession.turnErrors[0].code === error.code && firstSession.turnErrors[0].message === error.message, JSON.stringify(firstSession?.turnErrors));
+	expect("the failure appears at the end of the restored transcript", JSON.stringify((await import("../bin/agent/session-store.mjs")).transcriptFromHistory(firstSession?.history || [])) === JSON.stringify([{ kind: "user", text: "hi" }, { kind: "failure", code: error.code, message: error.message }]), JSON.stringify((await import("../bin/agent/session-store.mjs")).transcriptFromHistory(firstSession?.history || [])));
 	await collect(session, { text: "recover", model: "faux/scripted" });
 	const finalHistory = sessionStore.read("errors-529")?.history || [];
 	expect("a successful turn after overload persists [user,user,assistant]", JSON.stringify(finalHistory.map((message) => message.role)) === "[\"user\",\"user\",\"assistant\"]", JSON.stringify(finalHistory));

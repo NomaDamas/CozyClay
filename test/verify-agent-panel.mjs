@@ -14,6 +14,7 @@ const builder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", impo
 const studio = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const studioCss = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const { STUDIO_TOOL_FAMILIES, validateReceipt } = await import("../src/studio-agent-protocol.js");
+const { createAgentChatStore } = await import("../src/workflow/agent-client.js");
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -194,6 +195,10 @@ expect("progress is shown only when the runtime reported one", client.includes("
 expect("an unverified candidate needs an explicit acceptance", panel.includes("agent-job-accept") && panel.includes("Apply with warnings") && client.includes("explicitUnverifiedAcceptance: true"));
 expect("an unverified installation keeps its label", panel.includes('<span className="agent-job-badge">Unverified</span>'));
 expect("receipts and structured failures have their own cards", panel.includes("function ReceiptCard") && panel.includes("function FailureCard") && panel.includes("RECOVERY_COPY"));
+const restoredStore = createAgentChatStore({ transport: {}, newId: (() => { let id = 0; return () => `restored-${++id}`; })() });
+restoredStore.restore([{ kind: "user", text: "hello" }, { kind: "failure", code: "upstream", message: "Provider unavailable." }], "restored-session");
+expect("restored turn errors become existing failure items", restoredStore.getState().items.some((item) => item.kind === "failure" && item.failure.code === "upstream" && item.failure.message === "Provider unavailable."));
+expect("restored errors render through the existing FailureCard", /item\.kind === "failure"\) return <div className="agent-row"[^]*?<FailureCard failure=\{item\.failure\}/.test(panel));
 expect("receipts are validated before they are rendered as success", client.includes("validateReceipt") && client.includes('kind: "failure", id: newId()'));
 expect("image actions are acknowledged by the host, never assumed", client.includes("export function requestHostImageAction") && client.includes("cozyclay:agent-image-result") && panel.includes("store.applyImage(image.id)"));
 expect("an unclaimed image action fails instead of claiming a placement", client.includes("No editor accepted the image."));
