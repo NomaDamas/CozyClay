@@ -25,7 +25,7 @@ import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index', 'context-assets', 'inspect-scopes'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -187,6 +187,45 @@ const implementations={
   assert.deepEqual(c.assets.find(a=>a.kind==='chair'),{kind:'chair',name:'Chair',type:'set-piece'});
   assert.deepEqual(c.assets.find(a=>a.kind==='cube'),{kind:'cube',name:'Cube',type:'primitive'});
   assert.deepEqual(c.assets.filter(a=>a.id),[{id:'img-0a1b2c',name:'Poster',type:'image'},{id:'mesh-3d4e5f',name:'Robot',type:'mesh'}],'imported scene assets are listed once each');
+ },
+ async 'inspect-scopes'(f){
+  const rail=createShot('Rail shot',0,47,[{frame:5,framing:{pos:{x:0,y:1.6,z:5},yaw:0.1,pitch:-0.05,fovDeg:40}}],{mode:'rail',cameraRail:[{x:-2,z:4},{x:2,z:4}]});
+  f.scope.setShots([rail]);f.live.current.shots=[rail];
+  const shot=await f.call('inspect_studio',{scope:'shot'});
+  assert.equal(shot.context.revision.scene,f.binding.refresh().revision,'every scope carries the admission context');
+  assert.deepEqual(shot.shots,[{id:rail.id,name:'Rail shot',range:{startFrame:0,endFrameExclusive:48},mode:'rail',
+   cameraKeys:[{frame:5,framing:{pos:{x:0,y:1.6,z:5},yaw:0.1,pitch:-0.05,fovDeg:40}}],rail:[{x:-2,z:4},{x:2,z:4}]}]);
+  const blocks=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{promptBlocks:[{startFrame:0,endFrame:24,text:'walks in'}]}}]}));
+  assert.equal(blocks.status,'applied',JSON.stringify(blocks));
+  f.buffer.current={...f.buffer.current,waypoints:[{frame:0,x:0,z:0},{frame:24,x:1,z:2}]};
+  f.scope.ikStatesRef.current.set('actor-b',{...ik.createIkState(),keys:new Map([[7,new Map([['hips',{p:new THREE.Vector3(0,1,0),q:[new THREE.Quaternion()]}]])]])});
+  const motion=await f.call('inspect_studio',{scope:'motion'});
+  assert.deepEqual(motion.characters.find(c=>c.id==='actor-a'),{id:'actor-a',name:f.characterRef.current[0].subject,takeId:null,frames:0,
+   promptBlocks:[{startFrame:0,endFrame:24,text:'walks in'}],waypoints:[{frame:0,position:{x:0,y:0,z:0}},{frame:24,position:{x:1,y:0,z:2}}],ikKeyFrames:[]});
+  assert.deepEqual(motion.characters.find(c=>c.id==='actor-b').ikKeyFrames,[7]);
+  const scene=await f.call('inspect_studio',{scope:'scene'});
+  assert.deepEqual(scene.stage,{environment:'a sunlit modern living room',style:'moody cinematic lighting, 35mm film look',hasEnvironmentImage:false,hasEnvSheet:false,
+   keyLight:{x:6,y:9,z:4,intensity:1.12,warmth:0.5},camera:{presetId:null,aspect:'16:9',sensorId:'fullFrame'}});
+  assert.deepEqual(scene.counts,{characters:2,objects:0,shots:1,frames:48,assets:commands.studioObjectCatalogue().objects.length});
+  const made=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'create',source:{kind:'cube'},position:{world:{x:0,y:0,z:0}}},{op:'create',source:{kind:'cube'},position:{world:{x:2,y:0,z:0}}}]}));
+  assert.equal(made.status,'applied',JSON.stringify(made));
+  const [base,child]=made.affectedIds;
+  for(const args of [{ops:[{op:'group',parentId:base,childIds:[child]}]},{ops:[{op:'update',id:child,color:'#d94a4a'}]}]){const r=await f.call('arrange_objects',f.request('arrange_objects',args));assert.equal(r.ok,true,JSON.stringify(r));}
+  const routed=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'object',id:child},set:{path:{points:[{x:2,y:0,z:0},{x:4,y:0,z:1}]}}}]}));
+  assert.equal(routed.status,'applied',JSON.stringify(routed));
+  f.actual.operateStudio({selection:{kind:'object',id:child}},f.binding.refresh());
+  const selected=await f.call('inspect_studio',{scope:'selection'});
+  assert.deepEqual(selected.selection,{kind:'object',id:child});
+  assert.equal(selected.entity.id,child);assert.equal(selected.entity.color,'#d94a4a');assert.equal(selected.entity.parentId,base);assert.equal(selected.entity.attachment,null);
+  assert.deepEqual(selected.entity.path.points,[{x:2,y:0,z:0},{x:4,y:0,z:1}]);
+  const tinted=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{tint:'#123456'}}]}));
+  assert.equal(tinted.status,'applied',JSON.stringify(tinted));
+  f.actual.operateStudio({selection:{kind:'character',id:'actor-a'}},f.binding.refresh());
+  const cast=await f.call('inspect_studio',{scope:'selection'});
+  assert.equal(cast.entity.id,'actor-a');assert.equal(cast.entity.tint,'#123456');assert.equal(cast.entity.modelId,'y-bot-tpose');
+  const rows=await f.call('inspect_studio',{scope:'entities',ids:[child,'actor-a']});
+  assert.equal(rows.entities.find(e=>e.id===child).color,'#d94a4a');
+  assert.equal(rows.entities.find(e=>e.id==='actor-a').tint,'#123456');assert.equal(rows.entities.find(e=>e.id==='actor-a').modelId,'y-bot-tpose');
  },
  async 'motion-preserves-playhead'(f){f.live.current.timeline.frameCount=96;f.live.current.studioView.frame=80;const {req,next,verified}=await candidate(f);const result=await f.call('commit_motion_candidate',{...next,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true});assert.equal(result.status,'installed',JSON.stringify(result));assert.equal(f.binding.context().view.frame,80);assert(f.binding.context().scene.frameCount>80);},
  async 'patch-character-tint-and-undo'(f){const before=f.binding.refresh().revision;const r=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{tint:'#123456',pose:'pose-wave'}}]}));assert.equal(r.status,'applied',JSON.stringify(r));assert.equal(r.revision.before,before);assert.equal(r.revision.after,before+1);assert.deepEqual(r.ops,[{index:0,status:'applied'}]);assert.deepEqual(r.delta,[{id:'actor-a',after:{patched:[{path:'character.tint',text:'#123456'},{path:'character.pose',text:'pose-wave'}]}}]);assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').tint,'#123456');assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').pose.id,'pose-wave');assert.equal(f.history.current.past.length,1);const undo=await f.call('undo_edit',f.request('undo_edit',{receiptId:r.receiptId}));assert.equal(undo.status,'undone',JSON.stringify(undo));assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').tint,null);assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').pose,null);},
