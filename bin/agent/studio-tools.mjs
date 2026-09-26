@@ -26,7 +26,9 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
     try {
       result = await liveHub.command(name, payload, workspaceHandle);
     } catch (error) {
-      if (mutationNames.has(name) && error?.code === "UNCERTAIN_APPLY") await session.admission.refresh();
+      // A STALE_SCENE re-admits whichever family met it, so the retry the
+      // model is told to make is admitted at the live revision.
+      if (session?.admission && (error?.code === "STALE_SCENE" || (mutationNames.has(name) && error?.code === "UNCERTAIN_APPLY"))) await session.admission.refresh();
       throw error;
     }
     if (result?.ok === false) {
@@ -34,7 +36,7 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
       // the receipt itself holds phase, recovery and target evidence the model needs.
       const code = result.code ?? result.error?.code;
       const message = result.message ?? result.error?.message ?? "Studio command failed";
-      if (mutationNames.has(name) && code === "STALE_SCENE") await session.admission.refresh();
+      if (session?.admission && code === "STALE_SCENE") await session.admission.refresh();
       throw Object.assign(new Error(message), { code, receipt: result });
     }
     if (generation) generationStarted = true;
