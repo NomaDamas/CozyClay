@@ -5,7 +5,7 @@ export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
 // Sized for the compact index of up to 400 entities (~100 bytes each) beside
 // 24 detailed rows; a small scene stays far below it.
 export const STUDIO_CONTEXT_MAX_BYTES = 64 * 1024;
-export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, entityIndex: 400, shots: 8, assets: 6, recentReceipts: 3, jobs: 8 });
+export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, entityIndex: 400, shots: 8, assets: 48, recentReceipts: 3, jobs: 8 });
 export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"]);
 export const STUDIO_TOOL_LABELS = Object.freeze({
 	inspect_studio: "Read the scene",
@@ -211,7 +211,9 @@ const indexRow = object({ id, kind: choices(["object", "character", "rig"]) }, {
 const shotSummary = object({ id, name, range, keyCount: integer() }, { subjectIds: ids(24, 0) });
 const currentShot = object({ id, name, range, mode: choices(STUDIO_VARIANTS.shotModes) }, { subjectIds: ids(24, 0) });
 const camera = object({ position: vec3, lookAt: vec3, focalMm: positive, sensorId: id, slate: name });
-const assetSummary = object({ imageId: id, origin: choices(["user_attachment", "scene_asset", "capture"]) }, { name });
+// What the agent can place: a catalogue kind, or an asset imported into the scene.
+const assetTypes = choices(["primitive", "set-piece", "image", "mesh"]);
+const assetSummary = union(object({ kind: id, name, type: assetTypes }), object({ id, name, type: assetTypes }));
 const jobSummary = object({ id, characterId: id, state: choices(STUDIO_VARIANTS.jobStates) }, { targetIds: ids(24, 0), progress: nullable(number(0, 1)), phase: name });
 const contextSchema = object({
 	schema: literal("studio-context-v1"), host, revision,
@@ -219,7 +221,7 @@ const contextSchema = object({
 	scene: object({ name, aspect: text(40), floorY: number(), frameCount: integer(), objectCount: integer(), characterCount: integer() }),
 	selection, activeCharacterId: nullable(id), view, shot: nullable(currentShot), camera: nullable(camera),
 	entities: array(entity, 24), entityPage: object({ returned: integer(0, 24), total: integer(), truncated: bool, nextCursor: nullable(text(512)) }),
-	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, 6),
+	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, STUDIO_CONTEXT_LIMITS.assets),
 	recentReceipts: array(object({ id, summary: name, canUndoDirect: bool }), 3), jobs: array(jobSummary, 8),
 	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), STUDIO_TOOL_FAMILIES.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
 }, { entityIndex: array(indexRow, STUDIO_CONTEXT_LIMITS.entityIndex) });
