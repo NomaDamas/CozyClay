@@ -40,7 +40,7 @@ const entries = [
 	{ path: "object.name", type: "string", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject" },
 	{ path: "object.color", type: "color", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject" },
 	{ path: "object.parent", type: "id", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject" },
-	{ path: "object.attach", type: "id", persisted: true, undoDomain: "objects", agentExposure: "todo", normalizer: "normalizeSceneObject", note: "agent exposure gap" },
+	{ path: "object.attach", type: "id", persisted: true, undoDomain: "objects", agentExposure: "action", normalizer: "normalizeSceneObject", actions: ["object.attach", "object.detach"], note: "carried by a character's root or bone; channels convert so the prop stays put" },
 	{ path: "object.path", type: "array", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: "normalizeSceneObject" },
 	{ path: "object.remove", type: "boolean", persisted: true, undoDomain: "objects", agentExposure: "patch", normalizer: null, note: "lifecycle operation, not a document field" },
 	{ path: "object.cutout", type: "image", persisted: true, undoDomain: "objects", agentExposure: "composite", normalizer: "normalizeSceneObject", note: "assetId-backed cutout record" },

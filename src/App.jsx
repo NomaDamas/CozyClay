@@ -733,6 +733,27 @@ export function createStudioAppActions(handlersRef) {
 		const count = h().clearCharacterIkKeys(characterId);
 		return count ? `Cleared ${name}'s IK layer (${count} key${count === 1 ? "" : "s"}).` : `${name} has no IK keys; nothing changed.`;
 	});
+	const objectOf = objectId => h().state().objects.find(object => object.id === objectId)
+		?? fail("STALE_TARGET", `Object ${objectId} is not in this scene.`);
+	registry.register({ ...studioActionDeclaration("object.attach"),
+		available: state => state.objects.length === 0 ? "There are no scene objects to attach."
+			: state.characters.length === 0 ? "There are no characters to attach an object to." : true,
+		run: ({ objectId, characterId, bone }) => {
+			const object = objectOf(objectId), character = characterOf(characterId), before = h().state().objects;
+			h().attachSceneObject(objectId, { characterId, bone: bone ?? null });
+			const frameName = `${character.subject || character.id}'s ${bone ?? "root"}`;
+			return { affectedIds: [objectId], summary: h().state().objects === before
+				? `${object.name || objectId} already rides ${frameName}; nothing changed.`
+				: `Attached ${object.name || objectId} to ${frameName}, keeping its place on screen.` };
+		} });
+	registry.register({ ...studioActionDeclaration("object.detach"),
+		available: state => state.objects.some(object => object.attach || object.parent) || "No scene object is attached to a character or grouped.",
+		run: ({ objectId }) => {
+			const object = objectOf(objectId);
+			if (!object.attach && !object.parent) fail("TARGET_NOT_READY", `${object.name || objectId} is not attached to a character or in a group.`);
+			h().attachSceneObject(objectId, null);
+			return { affectedIds: [objectId], summary: `Put ${object.name || objectId} back in the world where it is now.` };
+		} });
 	registry.register({ ...studioActionDeclaration("object.duplicate"),
 		available: state => state.objects.length > 0 || "There are no scene objects to duplicate.",
 		run: ({ objectId }) => {
@@ -3528,26 +3549,43 @@ export default function App() {
 				return;
 			}
 			const attach = targetRowId === "props" ? null : attachTargetForRow(targetRowId);
-			// Where the prop is on screen right now, expressed in the frame it is
-			// joining (or left as world when it joins none). ONE conversion, whether
-			// the prop is coming from the world or from another frame.
-			const shown = animatedSceneObjects.find((entry) => entry.id === id) ?? null;
-			const placement = shown ? attachPlacementPatch(sceneObjectWorldMatrix(shown), attach, attachFrameRef.current) : null;
-			// A placement that could not be computed refuses the DROP, not just the
-			// numbers: attaching without converting would silently reinterpret the
-			// old frame's numbers in the new frame, which is the jump itself.
-			if (!placement) return;
-			// ONE atomic: a single undo puts back both the field and the numbers.
-			store.applyAtomic((objects) => {
-				let next = setSceneObjectAttach(objects, id, attach);
-				// Dropping on Props means "world-anchored again", which drops the
-				// grouping parent too — attach and parent are the same slot.
-				if (attach === null) next = setSceneObjectParent(next, id, null);
-				if (next === objects) return objects;
-				return placeSceneObject(next, id, placement);
-			});
+			runStudioAction(attach ? "object.attach" : "object.detach", attach
+				? { objectId: id, characterId: attach.characterId, ...(attach.bone ? { bone: attach.bone } : {}) }
+				: { objectId: id });
 		},
 	};
+
+	/** Carry a prop on a character's root (`bone` null) or one of its bones, or
+	 * put it back in the world with `attach` null — the Hierarchy's character,
+	 * bone and Props drops, the Inspector's Detach and run_action
+	 * object.attach/detach. */
+	function attachSceneObject(id, attach) {
+		const object = storeRef.current.objects.find((entry) => entry.id === id);
+		if (!object) throw new StudioProtocolError("STALE_TARGET", `Object ${id} is not in this scene.`);
+		if (attach) castMemberOf(attach.characterId);
+		// Where the prop is on screen right now, expressed in the frame it is
+		// joining (or left as world when it joins none). ONE conversion, whether
+		// the prop is coming from the world or from another frame.
+		const shown = animatedSceneObjects.find((entry) => entry.id === id) ?? object;
+		const placement = attachPlacementPatch(sceneObjectWorldMatrix(shown), attach, attachFrameRef.current);
+		// A placement that could not be computed refuses the attachment, not just
+		// the numbers: attaching without converting would silently reinterpret the
+		// old frame's numbers in the new frame, which is the jump itself.
+		if (!placement) {
+			throw new StudioProtocolError("TARGET_NOT_READY", attach
+				? `The ${attach.bone ?? "root"} frame of character ${attach.characterId} is not on stage (its rig has not loaded).`
+				: `${object.name || id} is not on stage, so where it is now cannot be read.`);
+		}
+		// ONE atomic: a single undo puts back both the field and the numbers.
+		storeRef.current.applyAtomic((objects) => {
+			let next = setSceneObjectAttach(objects, id, attach);
+			// Back to the world means "world-anchored again", which drops the
+			// grouping parent too — attach and parent are the same slot.
+			if (attach === null) next = setSceneObjectParent(next, id, null);
+			if (next === objects) return objects;
+			return placeSceneObject(next, id, placement);
+		});
+	}
 
 	const activeShotIdx = shotIndexAtFrame(shots, tlFrame);
 	const activeShot = shots[activeShotIdx] ?? null;
@@ -12393,7 +12431,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
 		runAllPromptBlocks, duplicateSelectedSceneObject,
 		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
-		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys,
+		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
 	/** UI door into the shared registry: an unavailable action or a refused
