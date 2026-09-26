@@ -14,11 +14,13 @@ const text = value => typeof value === "string" ? value : JSON.stringify(value);
 export function createStudioTools({ liveHub, workspaceHandle, session, resolveImage } = {}) {
   if (!liveHub?.command || !workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "An exact Studio workspace is required.");
   const mutationNames = STUDIO_MUTATION_TOOLS;
-  let generationStarted = false;
+  // One motion generation per user message, shared with generate_motion when
+  // the route passes the turn's gate; a bare tools instance keeps its own.
+  const generationGate = session?.generation ?? { used: false };
   const invoke = async (name, args) => {
     const command = validateStudioCommand({ name, args });
     const generation = name === "run_action" && STUDIO_JOB_ACTIONS.has(command.args.action);
-    if (generation && generationStarted) throw new StudioProtocolError("GENERATION_LIMIT", "One motion generation per user message. Report this result and ask the user before generating again.");
+    if (generation && generationGate.used) throw new StudioProtocolError("GENERATION_LIMIT", "One motion generation per user message. Report this result and ask the user before generating again.");
     const payload = mutationNames.has(name) && session?.admission
       ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision }
       : command.args;
@@ -39,7 +41,7 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
       if (session?.admission && code === "STALE_SCENE") await session.admission.refresh();
       throw Object.assign(new Error(message), { code, receipt: result });
     }
-    if (generation) generationStarted = true;
+    if (generation) generationGate.used = true;
     if (name === "inspect_studio" && Number.isSafeInteger(result?.context?.revision?.scene) && session?.admission) {
       session.admission.revision = result.context.revision.scene;
     }
