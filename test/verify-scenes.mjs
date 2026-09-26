@@ -267,6 +267,9 @@ assert.deepEqual(legacyRef, { url: "/ardy/motions/legacy.npz", prompt: "walks", 
 assert.deepEqual(Object.keys(legacyRef), ["url", "prompt", "rotationDeg", "anchorX", "anchorZ"], "legacy motionRef key order is untouched");
 const embeddedRef = createCharacterEntry({ motionRef: { motionId, prompt: "walks" } }).motionRef;
 assert.deepEqual(embeddedRef, { motionId, prompt: "walks", rotationDeg: 0, anchorX: 0, anchorZ: 0 }, "motionId-only motionRef is valid without a url");
+const takeRef = createCharacterEntry({ motionRef: { motionId, url: "/ardy/motions/take.npz", studioTakeId: "take-7f3a" } }).motionRef;
+assert.equal(takeRef.studioTakeId, "take-7f3a", "an agent-installed motionRef keeps its Studio take id through normalization");
+assert.equal(createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz", studioTakeId: 42 } }).motionRef.studioTakeId, undefined, "a non-string take id is dropped");
 const bothRef = createCharacterEntry({ motionRef: { motionId: motionId.toUpperCase(), url: "/ardy/motions/both.npz", calibration: { scale: 1.1 } } }).motionRef;
 assert.equal(bothRef.motionId, motionId, "motionId normalizes to lowercase");
 assert.equal(bothRef.url, "/ardy/motions/both.npz", "url is kept next to motionId");

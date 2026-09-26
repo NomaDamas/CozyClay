@@ -205,7 +205,7 @@ const implementations={
   assert.equal(result.status,'installed',JSON.stringify(result));
   const take=f.buffer.current.motion,installed=f.characterRef.current.find(c=>c.id==='actor-a');
   const motionId=await sha256Hex(npzBytes);
-  assert.deepEqual(installed.motionRef,{url:req.artifact.url,prompt:'Walk forward Stop and wave',rotationDeg:take.rotationDeg,anchorX:take.anchorX,anchorZ:take.anchorZ,calibration:take.sceneCalibration,motionId},'the install persists the same kind of motionRef a UI take gets');
+  assert.deepEqual(installed.motionRef,{url:req.artifact.url,prompt:'Walk forward Stop and wave',rotationDeg:take.rotationDeg,anchorX:take.anchorX,anchorZ:take.anchorZ,calibration:take.sceneCalibration,studioTakeId:take.studioTakeId,motionId},'the install persists the same kind of motionRef a UI take gets');
   assert.equal((await bounded(cached)).motionId,motionId,'the artifact bytes reach the motion store under the ref motionId');
   assert(f.actual.stepStudioHistory(false));assert.deepEqual(f.characterRef.current.find(c=>c.id==='actor-a').motionRef,priorRef,'Undo restores the previous motionRef');
   assert(f.actual.stepStudioHistory(true));assert.deepEqual(f.characterRef.current.find(c=>c.id==='actor-a').motionRef,installed.motionRef,'Redo restores the installed motionRef');
@@ -222,6 +222,7 @@ const implementations={
    assert.deepEqual({frames:clip.frames,fps:clip.fps,anchorX:clip.anchorX,anchorZ:clip.anchorZ,rotationDeg:clip.rotationDeg,sceneCalibration:clip.sceneCalibration},
     {frames:take.frames,fps:take.fps,anchorX:take.anchorX,anchorZ:take.anchorZ,rotationDeg:take.rotationDeg,sceneCalibration:take.sceneCalibration},'the reload restores the installed placement');
    assert.deepEqual([clip.rotMats,clip.rootPos,clip.posedJoints],[take.rotMats,take.rootPos,take.posedJoints],'the reload restores the installed take');
+   assert.equal(clip.studioTakeId,take.studioTakeId,'the reload keeps the Studio take id the agent reads as takeId');
    assert.equal(page.values.characters.find(c=>c.id==='actor-a').sessionMotion,clip);
   } finally { page.dispose(); }
  },
