@@ -349,6 +349,11 @@ function registerTests() {
 		protocol.validateReceipt(failure);const unsafe=structuredClone(failure);unsafe.preserved.authoredState="unchanged";rejects(()=>protocol.validateReceipt(unsafe));
 		const unverified=receiptFixture("installed");unverified.verification.status="unverified";unverified.verification.evaluatedFrames=0;
 		rejects(()=>protocol.validateReceipt(unverified));unverified.explicitUnverifiedAcceptance=true;protocol.validateReceipt(unverified);
+		// The install policy is the other recorded acceptor; nothing else admits an unverified take.
+		const advisory=receiptFixture("installed");advisory.verification.status="unverified";advisory.explicitUnverifiedAcceptance=false;
+		rejects(()=>protocol.validateReceipt(advisory));advisory.acceptance="advisory-policy";assert.equal(protocol.validateReceipt(advisory).acceptance,"advisory-policy");
+		for(const acceptance of ["model","",true]){const forged=structuredClone(advisory);forged.acceptance=acceptance;rejects(()=>protocol.validateReceipt(forged));}
+		const applied=receiptFixture("applied");applied.acceptance="advisory-policy";rejects(()=>protocol.validateReceipt(applied));
 	});
 	test("HTTP stale epoch/token fences use authoritative injected state before execution", async()=>{
 		let executed=0;const runtime={readContext:async()=>contextFixture(),handleTurn:async(v,req,res)=>{executed++;res.writeHead(200,{"content-type":"application/json"});res.end(JSON.stringify({turnId:v.turnId}));}};

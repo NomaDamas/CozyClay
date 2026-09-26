@@ -23,7 +23,7 @@ const check = (name, work, group = null) => { if (args[1] !== "precommit-stop-jo
 async function fixture(work) {
 	let mode = "ok", gate = null, generationCount = 0;
 	const requests = [], commands = [], frames = [], commandGates = [], fixtureErrors = [], journal = new Map(), sockets = new Set();
-	const state = { take: "old-take", undo: 0, token: "token-1", physics: 1, verify: "verified", repairVerifies: true, repairs: [], commit: "ok", disconnect: null };
+	const state = { take: "old-take", undo: 0, token: "token-1", physics: 1, verify: "verified", structurallyValid: true, metrics: null, repairVerifies: true, repairs: [], commit: "ok", disconnect: null };
 	const bridge = createServer(async (req, res) => {
 		requests.push(req.url);
 		if (req.url === "/ardy/health") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, host: "fixture", device: "cuda" })); return; }
@@ -74,7 +74,7 @@ async function fixture(work) {
 			assert.equal(await (await fetch(a.artifact.url)).text(), "fixture-artifact-bytes");
 			value = { candidateId: "candidate-1", candidateRevision: 1, targetToken: state.token, physicsRevision: state.physics, structurallyValid: true };
 		} else if (frame.name === "verify_motion_candidate") {
-			value = { verificationId: randomUUID(), candidateId: a.candidateId, candidateRevision: a.candidateRevision, targetToken: state.token, physicsRevision: state.physics, status: state.verify, structurallyValid: true, repairable: state.verify !== "verified", profile: "studio-motion-v1", evaluatedFrames: 48 };
+			value = { verificationId: randomUUID(), candidateId: a.candidateId, candidateRevision: a.candidateRevision, targetToken: state.token, physicsRevision: state.physics, status: state.verify, structurallyValid: state.structurallyValid, repairable: state.verify !== "verified", profile: "studio-motion-v1", evaluatedFrames: 48, ...(state.metrics ? { metrics: state.metrics } : {}) };
 		} else if (frame.name === "repair_motion_candidate") {
 			state.repairs.push(a.method); if (a.method === "fix_collisions" && state.repairVerifies) state.verify = "verified";
 			value = { candidateId: a.candidateId, candidateRevision: a.candidateRevision + 1, targetToken: state.token, physicsRevision: state.physics, structurallyValid: true };
@@ -86,9 +86,9 @@ async function fixture(work) {
 			else {
 				if (state.commit !== "lost-not-applied" && state.commit !== "lost-unknown") { state.take = "new-take"; state.undo++; }
 				value = { ok: true, status: "installed", commandId: a.commandId, receiptId: "receipt-" + a.commandId, host,
-					authored: true, revision: { before: state.undo - 1, after: state.undo }, affectedIds: ["char-a"], delta: [{ id: "char-a", after: { takeId: "new-take" } }], checks: { coverage: "whole-clip" }, warnings: [], jobId: a.jobId, artifactId: a.artifactId,
+					authored: true, revision: { before: state.undo - 1, after: state.undo }, affectedIds: ["char-a"], delta: [{ id: "char-a", after: { takeId: "new-take" } }], checks: { coverage: "whole-clip" }, warnings: state.verify === "unverified" ? [{ code: "UNVERIFIED_MOTION" }] : [], jobId: a.jobId, artifactId: a.artifactId,
 					installed: { characterId: "char-a", beforeTakeId: "old-take", takeId: "new-take", targetToken: "token-new", frameCount: 48, fps: 24, durationSeconds: 2, blocks: [{ sourceBeat: 0, startFrame: 0, endFrameExclusive: 48 }], selectionChanged: false },
-					verification: { id: a.verificationId, status: state.verify, profile: "studio-motion-v1", range: { startFrame: 0, endFrameExclusive: 48 }, evaluatedFrames: 48, physicsRevision: state.physics, limitations: [] },
+					verification: { id: a.verificationId, status: state.verify, profile: "studio-motion-v1", range: { startFrame: 0, endFrameExclusive: 48 }, evaluatedFrames: 48, physicsRevision: state.physics, limitations: [], ...(state.metrics ?? {}) },
 					undo: { entries: 1, historyEntryId: "history-" + a.commandId, canUndoDirect: true }, explicitUnverifiedAcceptance: a.explicitUnverifiedAcceptance === true };
 				if (state.commit === "invalid-receipt") delete value.undo;
 				if (state.commit === "wrong-job") value.jobId = "other-job";
@@ -220,11 +220,41 @@ check("2 global / 1 workspace; receipt survives job TTL; authorization cannot re
 	await runtime.stop(first.jobId); await runtime.stop(second.jobId);
 }));
 check("bounded repair / soft review / exact stale target and environment", () => fixture(async f => {
-	const runtime = runtimeFor(f); f.state.verify = "unverified";
+	const runtime = runtimeFor(f, { installPolicy: "strict" }); f.state.verify = "unverified";
 	let { result } = begin(runtime, f.input({ repair: "bounded" })); assert.equal((await bounded(result)).status, "installed"); assert.deepEqual(f.state.repairs, ["auto_physics","fix_collisions"]);
 	f.state.verify = "unverified"; let next = begin(runtime, f.input()); assert.equal((await bounded(next.result)).status, "review_required"); assert.equal(f.state.undo, 1);
 	assert.equal((await runtime.stop(next.job.jobId)).status, "cancelled");
 	f.state.token = "edited-token"; f.state.verify = "verified"; next = begin(runtime, f.input()); assert.equal((await bounded(next.result)).code, "STALE_TARGET"); assert.equal(f.state.undo, 1);
+}));
+check("advisory policy installs a structurally valid unverified candidate at once with its failed checks", () => fixture(async f => {
+	const runtime = runtimeFor(f); f.state.verify = "unverified";
+	f.state.metrics = { surfaceMeasured: true, maxFloorPenetrationM: 0.12, maxContactSlipM: 0.001, maxContactFloatM: 0.001, unsupportedFrames: 3, supportedCollisionFrames: 0, continuityRegressed: false };
+	const events = []; const { job, result } = begin(runtime, f.input(), e => events.push(e)); const receipt = await bounded(result);
+	assert.equal(receipt.status, "installed", JSON.stringify(receipt)); assert.equal(f.state.undo, 1); assert.equal(f.state.take, "new-take");
+	assert.deepEqual(events.filter(e => e.type === "job.state").map(e => e.state), ["queued", "generating", "preparing", "verifying", "committing", "installed"]);
+	const commit = f.frames.find(frame => frame.name === "commit_motion_candidate"); assert.equal(commit.args.explicitUnverifiedAcceptance, true, "the editor refuses an unverified install without acceptance");
+	assert.equal(receipt.acceptance, "advisory-policy"); assert.equal(receipt.explicitUnverifiedAcceptance, false, "the user did not press accept");
+	assert.equal(receipt.verification.status, "unverified"); assert.equal(receipt.verification.maxFloorPenetrationM, 0.12); assert.ok(receipt.undo.historyEntryId);
+	const codes = receipt.warnings.map(w => w.code);
+	assert.ok(codes.includes("UNVERIFIED_MOTION")); assert.ok(codes.includes("FLOOR_PENETRATION")); assert.ok(codes.includes("UNSUPPORTED_FRAMES"));
+	assert.ok(!codes.includes("CONTACT_SLIP") && !codes.includes("CONTACT_FLOAT") && !codes.includes("COLLISION_FRAMES"), JSON.stringify(receipt.warnings));
+	assert.equal(receipt.warnings.find(w => w.code === "UNSUPPORTED_FRAMES").count, 3);
+	assert.deepEqual(runtime.getReceipt(job.commandId), receipt); assert.equal(runtime.get(job.jobId).state, "installed");
+	await assert.rejects(runtime.accept(job.jobId), /not awaiting/i); assert.equal(f.state.undo, 1);
+	// Structural failures and stale targets keep their outcomes under advisory.
+	f.state.structurallyValid = false; let next = begin(runtime, f.input()); let outcome = await bounded(next.result);
+	assert.equal(outcome.code, "VERIFICATION_FAILED"); assert.equal(runtime.get(next.job.jobId).state, "failed"); assert.equal(f.state.undo, 1);
+	f.state.structurallyValid = true; f.state.token = "edited-token"; next = begin(runtime, f.input()); outcome = await bounded(next.result);
+	assert.equal(outcome.code, "STALE_TARGET"); assert.equal(f.state.undo, 1);
+}));
+check("strict policy (option or COZYCLAY_STUDIO_MOTION_POLICY) keeps review_required", () => fixture(async f => {
+	f.state.verify = "unverified"; const old = process.env.COZYCLAY_STUDIO_MOTION_POLICY;
+	process.env.COZYCLAY_STUDIO_MOTION_POLICY = "strict";
+	let runtime;
+	try { runtime = runtimeFor(f); } finally { if (old === undefined) delete process.env.COZYCLAY_STUDIO_MOTION_POLICY; else process.env.COZYCLAY_STUDIO_MOTION_POLICY = old; }
+	const { job, result } = begin(runtime, f.input()); assert.equal((await bounded(result)).status, "review_required"); assert.equal(f.state.undo, 0);
+	assert.ok(!f.commands.includes("commit_motion_candidate")); await runtime.stop(job.jobId);
+	assert.throws(() => motion.createStudioMotionRuntime({ liveHub: f.hub, getBridgeOrigin: () => f.origin, installPolicy: "lenient" }), /installPolicy/);
 }));
 check("verification and repair budgets scale with clip length", () => fixture(async f => {
 	// The runtime's verification timer and the hub's per-command timers are
@@ -235,7 +265,7 @@ check("verification and repair budgets scale with clip length", () => fixture(as
 		if (key === "command") return (name, args, handle, options) => { calls.push({ name, options }); return target.command(name, args, handle, options); };
 		const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
 	} });
-	const runtime = runtimeFor(f, { liveHub, verificationMs }); f.state.verify = "unverified"; f.state.repairVerifies = false;
+	const runtime = runtimeFor(f, { liveHub, verificationMs, installPolicy: "strict" }); f.state.verify = "unverified"; f.state.repairVerifies = false;
 	const run = async seconds => {
 		calls.length = 0; delays.length = 0; const realSetTimeout = globalThis.setTimeout;
 		globalThis.setTimeout = (callback, ms, ...rest) => { delays.push(ms); return realSetTimeout(callback, ms, ...rest); };
@@ -261,7 +291,7 @@ check("malformed installation receipt is uncertainty, not success", () => fixtur
 	assert.equal((await bounded(result)).code, "UNCERTAIN_APPLY"); assert.equal(runtime.get(job.jobId).state, "reconciling"); assert.equal(f.state.undo, 1);
 }));
 check("explicit unverified acceptance rechecks guards and commits once", () => fixture(async f => {
-	const runtime = runtimeFor(f); f.state.verify = "unverified"; const { job, result } = begin(runtime, f.input());
+	const runtime = runtimeFor(f, { installPolicy: "strict" }); f.state.verify = "unverified"; const { job, result } = begin(runtime, f.input());
 	assert.equal((await bounded(result)).status, "review_required"); assert.equal(f.state.undo, 0);
 	const receipt = await runtime.accept(job.jobId); assert.equal(receipt.status, "installed"); assert.equal(receipt.explicitUnverifiedAcceptance, true); assert.equal(receipt.verification.status, "unverified");
 	await assert.rejects(runtime.accept(job.jobId)); assert.equal(f.state.undo, 1); assert.equal(f.generations, 1);
@@ -271,14 +301,14 @@ check("commit-time environment fence preserves state", () => fixture(async f => 
 	assert.equal((await bounded(result)).code, "STALE_ENVIRONMENT"); assert.equal(runtime.get(job.jobId).state, "stale_environment"); assert.equal(f.state.take, "old-take"); assert.equal(f.state.undo, 0);
 }));
 check("unverified acceptance with stale target stays rejected", () => fixture(async f => {
-	const runtime = runtimeFor(f); f.state.verify = "unverified"; const { job, result } = begin(runtime, f.input()); await bounded(result); f.state.token = "edited-token";
+	const runtime = runtimeFor(f, { installPolicy: "strict" }); f.state.verify = "unverified"; const { job, result } = begin(runtime, f.input()); await bounded(result); f.state.token = "edited-token";
 	await assert.rejects(runtime.accept(job.jobId), e => e.code === "STALE_TARGET"); assert.equal(runtime.get(job.jobId).state, "stale_target"); assert.equal(f.state.undo, 0);
 }));
 check("valid receipt for another job cannot establish application", () => fixture(async f => {
 	const runtime = runtimeFor(f); f.state.commit = "wrong-job"; const { result } = begin(runtime, f.input()); assert.equal((await bounded(result)).mutated, "unknown"); assert.equal(f.state.undo, 1);
 }));
 check("review acceptance cannot bypass workspace capacity or candidate expiry", () => fixture(async f => {
-	let now = 0; const runtime = runtimeFor(f, { clock: () => now, ttlMs: 10 }); f.state.verify = "unverified"; const { job, result } = begin(runtime, f.input()); await bounded(result);
+	let now = 0; const runtime = runtimeFor(f, { clock: () => now, ttlMs: 10, installPolicy: "strict" }); f.state.verify = "unverified"; const { job, result } = begin(runtime, f.input()); await bounded(result);
 	const other = runtime.admit(f.input()); await assert.rejects(runtime.accept(job.jobId), e => e.code === "TARGET_BUSY"); await runtime.stop(other.jobId);
 	now = 11; await assert.rejects(runtime.accept(job.jobId), e => e.code === "STALE_TARGET"); assert.equal(f.state.undo, 0);
 }));
