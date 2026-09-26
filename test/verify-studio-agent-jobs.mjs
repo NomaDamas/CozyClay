@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import * as motion from "../bin/agent/motion-runtime.mjs";
 import { startLiveHub, MotionJobRegistry, LiveHub } from "../mcp/live-hub.mjs";
+import * as liveHubModule from "../mcp/live-hub.mjs";
 import { createToolHandlers, setLiveHub } from "../mcp/tool-handlers.mjs";
 import { startMotionRequest } from "../src/analytics.js";
 import { createStudioCommandJournal } from "../src/studio-agent-commands.js";
@@ -22,7 +23,7 @@ const check = (name, work, group = null) => { if (args[1] !== "precommit-stop-jo
 async function fixture(work) {
 	let mode = "ok", gate = null, generationCount = 0;
 	const requests = [], commands = [], frames = [], commandGates = [], fixtureErrors = [], journal = new Map(), sockets = new Set();
-	const state = { take: "old-take", undo: 0, token: "token-1", physics: 1, verify: "verified", repairs: [], commit: "ok", disconnect: null };
+	const state = { take: "old-take", undo: 0, token: "token-1", physics: 1, verify: "verified", repairVerifies: true, repairs: [], commit: "ok", disconnect: null };
 	const bridge = createServer(async (req, res) => {
 		requests.push(req.url);
 		if (req.url === "/ardy/health") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, host: "fixture", device: "cuda" })); return; }
@@ -75,7 +76,7 @@ async function fixture(work) {
 		} else if (frame.name === "verify_motion_candidate") {
 			value = { verificationId: randomUUID(), candidateId: a.candidateId, candidateRevision: a.candidateRevision, targetToken: state.token, physicsRevision: state.physics, status: state.verify, structurallyValid: true, repairable: state.verify !== "verified", profile: "studio-motion-v1", evaluatedFrames: 48 };
 		} else if (frame.name === "repair_motion_candidate") {
-			state.repairs.push(a.method); if (a.method === "fix_collisions") state.verify = "verified";
+			state.repairs.push(a.method); if (a.method === "fix_collisions" && state.repairVerifies) state.verify = "verified";
 			value = { candidateId: a.candidateId, candidateRevision: a.candidateRevision + 1, targetToken: state.token, physicsRevision: state.physics, structurallyValid: true };
 		} else if (frame.name === "commit_motion_candidate") {
 			assert.equal(a.binding.characterId, "char-a"); assert.deepEqual(a.binding.host, host);
@@ -224,6 +225,36 @@ check("bounded repair / soft review / exact stale target and environment", () =>
 	f.state.verify = "unverified"; let next = begin(runtime, f.input()); assert.equal((await bounded(next.result)).status, "review_required"); assert.equal(f.state.undo, 1);
 	assert.equal((await runtime.stop(next.job.jobId)).status, "cancelled");
 	f.state.token = "edited-token"; f.state.verify = "verified"; next = begin(runtime, f.input()); assert.equal((await bounded(next.result)).code, "STALE_TARGET"); assert.equal(f.state.undo, 1);
+}));
+check("verification and repair budgets scale with clip length", () => fixture(async f => {
+	// The runtime's verification timer and the hub's per-command timers are
+	// read from the scheduled delays; nothing waits on them. The prime
+	// verificationMs keeps its multiples apart from every other non-zero timer.
+	const { MOTION_COMMAND_TIMEOUT_MS } = liveHubModule, verificationMs = 1009, calls = [], delays = [];
+	const liveHub = new Proxy(f.hub, { get(target, key) {
+		if (key === "command") return (name, args, handle, options) => { calls.push({ name, options }); return target.command(name, args, handle, options); };
+		const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+	} });
+	const runtime = runtimeFor(f, { liveHub, verificationMs }); f.state.verify = "unverified"; f.state.repairVerifies = false;
+	const run = async seconds => {
+		calls.length = 0; delays.length = 0; const realSetTimeout = globalThis.setTimeout;
+		globalThis.setTimeout = (callback, ms, ...rest) => { delays.push(ms); return realSetTimeout(callback, ms, ...rest); };
+		let next;
+		try { next = begin(runtime, f.input({ repair: "bounded", source: { kind: "generate", beats: [{ text: "A person walks.", seconds }] } })); assert.equal((await bounded(next.result)).status, "review_required"); }
+		finally { globalThis.setTimeout = realSetTimeout; }
+		await runtime.stop(next.job.jobId);
+		const candidateCommands = calls.filter(c => c.name === "verify_motion_candidate" || c.name === "repair_motion_candidate");
+		return { budgets: delays.filter(ms => ms > 0 && ms % verificationMs === 0), candidateCommands, hubTimers: delays.filter(ms => ms === MOTION_COMMAND_TIMEOUT_MS).length };
+	};
+	const short = await run(2), long = await run(10);
+	assert.equal(short.budgets.length, 1); assert.equal(long.budgets.length, 1);
+	assert.ok(short.budgets[0] >= verificationMs, `a 48-frame clip keeps at least the base budget: ${short.budgets[0]}`);
+	assert.equal(long.budgets[0], short.budgets[0] * 5, "a 240-frame clip gets five times the 48-frame verification budget");
+	assert.equal(typeof MOTION_COMMAND_TIMEOUT_MS, "number", "the live hub exports the motion command ceiling");
+	assert.deepEqual(long.candidateCommands.map(c => c.name), ["verify_motion_candidate", "repair_motion_candidate", "verify_motion_candidate", "repair_motion_candidate", "verify_motion_candidate"]);
+	for (const c of long.candidateCommands) assert.equal(c.options?.timeoutMs, MOTION_COMMAND_TIMEOUT_MS, `${c.name} carries the motion command timeout`);
+	assert.equal(long.hubTimers, long.candidateCommands.length, "the hub honours the motion command timeout instead of clamping it");
+	assert.deepEqual(f.state.repairs, ["auto_physics", "fix_collisions", "auto_physics", "fix_collisions"]);
 }));
 check("malformed installation receipt is uncertainty, not success", () => fixture(async f => {
 	const runtime = runtimeFor(f); f.state.commit = "invalid-receipt"; const { job, result } = begin(runtime, f.input());
