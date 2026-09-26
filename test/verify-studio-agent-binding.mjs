@@ -36,7 +36,7 @@ import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 import { motionArraysToNpzMembers, writeNpz } from '../tools/ardy/npz.mjs';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'late-apply-inspect-patch'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'late-apply-inspect-patch'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -88,6 +88,7 @@ const npzBytes=(()=>{const dir=mkdtempSync(join(tmpdir(),'binding-npz-'));try{co
 function fixture(options={}) {
  const a=createCharacterEntry({id:'actor-a',model:'y-bot-tpose',x:0,z:0}), b=createCharacterEntry({id:'actor-b',model:'y-bot-tpose',x:4,z:0});
  const chars=options.characters??[a,b], rigs={'actor-a':rig(),'actor-b':rig()}; rigs['actor-b'].parent.position.x=4;rigs['actor-b'].parent.updateMatrixWorld(true);
+ const actionsRef=ref(null);
  const revision=ref(0), clock=ref(0), lastObject=ref(0), history=ref({past:[],future:[]}), studioHistory=ref(new Map()), characterRef=ref(chars), buffer=ref({waypoints:[],promptClips:[],motion:null}), state=ref(ik.createIkState()), layers=ref(new Map());
  const stage={shotAspect:'16:9',cameraPresetId:null,sensorId:'fullFrame',hasCharSheet:false,environmentImage:null,environment:'a sunlit modern living room',style:'moody cinematic lighting, 35mm film look',hasEnvSheet:false,keyLight:{x:6,y:9,z:4,intensity:1.12,warmth:0.5}};
  const live=ref({characters:chars,objects:[],rigs,shots:[],scenes:[{id:'scene',name:'Fixture'}],activeCharacterId:a.id,stage,timeline:{currentFrame:0,frameCount:48},filmback:{sensorId:'fullFrame',aspectRatio:16/9},studioSelection:{kind:'character',id:a.id},studioShotId:null,studioView:{mode:'scene',frame:0,playing:false,lookThrough:false,grid:false,autoColor:false}});
@@ -114,13 +115,13 @@ function fixture(options={}) {
  // Stands in for the mounted prop groups: where each prop is drawn right now.
  propWorldRef:ref((id,out)=>{const o=store.current.objects.find(row=>row.id===id);if(!o)return null;const local=carried.sceneObjectMatrix(o,new THREE.Matrix4());if(!o.attach)return out.copy(local);const frame=carried.attachFrameMatrix(rigs[o.attach.characterId]??null,o.attach.bone??null,new THREE.Matrix4());return frame?out.copy(frame.multiply(local)):null;}),snapshotCast:()=>({}),markSemanticEdit,setCharacters:castOwner.set,editCharacters:castOwner.edit,setShots:shotsOwner.set,editShots:shotsOwner.edit,
  ...studioActions,addShotAtFrame,shots:[],tlFrame:0,tlFrameCount:48,captureCurrentFraming:()=>({pos:{x:0,y:1.6,z:5},yaw:0,pitch:0,fovDeg:40}),trackFeature:()=>{},window:{dispatchEvent:()=>true},
- ko:en=>en,isKo:false,loadMotionFromUrl:(...args)=>urlLoader(...args),sha256Hex,encodeMotionResource,decodeMotionResource,resolveMotionSource,retimeMotion,TIMELINE_FPS:24,createMotionEdit,applyMotionCalibration,normalizeMotionCalibration,characterScaleFor,
+ ko:options.korean?(en,kr)=>kr:en=>en,isKo:Boolean(options.korean),studioActionsRef:actionsRef,loadMotionFromUrl:(...args)=>urlLoader(...args),sha256Hex,encodeMotionResource,decodeMotionResource,resolveMotionSource,retimeMotion,TIMELINE_FPS:24,createMotionEdit,applyMotionCalibration,normalizeMotionCalibration,characterScaleFor,
  projectMotionsRef:ref(new Map()),motionEncodingCacheRef:ref(new WeakMap()),restoreEpochRef:ref(0),
  openMotionDb:async()=>({close(){}}),getMotion:async(db,id)=>motionStore.get(id.toLowerCase())??null,
  putMotion:async(db,record)=>{motionStore.set(record.motionId.toLowerCase(),record);for(const done of stored.splice(0))done(record);return record;}};
  for(const name of ['setTlFps','setProjectManifest','setCameraPos','setFovDeg','setCameraPresetId','setWaypoints','setPromptClips','setMotion','setCommittedIkEdits','setIkTick','setTlFrameCount','setToast','setActiveCharacterId','setSelectedHierarchyId','setTlFrame','setWorkflowMode','setLookThroughShot','setGridView','setAutoColor','setTlPlaying','setIkMode','setIkFocus','setKeyLight','setEnvironmentImage','setEnvironment','setStyle','setHasEnvSheet','setShotAspectKey','setSensorFormat','setMovePlaying'])scope[name]=noPublish(name);
  scope.setMotion=value=>{noPublish('setMotion')(value);for(const done of motionSet.splice(0))done(value);};
- const names=['restoreMotionRefs','createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','publishStudioStage','snapshotStudioDomain','publishStudioCharacters','syncStudioLayerBuffer','recordStudioHistory','publishStudioMotion','stepStudioHistory','undoScene','redoScene','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix','createStudioAppActions','recordStudioAction','addTimelineShot','recordShotUndo',
+ const names=['restoreMotionRefs','createStudioAppBinding','readStudioCamera','readStudioState','publishStudioCamera','publishStudioStage','snapshotStudioDomain','publishStudioCharacters','syncStudioLayerBuffer','recordStudioHistory','publishStudioMotion','stepStudioHistory','undoScene','redoScene','commitStudioDraft','commitStudioMotion','studioBounds','operateStudio','snapshotExportRig','restoreExportRig','poseMemberAtFrame','beginPlaybackOn','leaveIkMode','sceneObjectWorldMatrix','createStudioAppActions','recordStudioAction','addTimelineShot','recordShotUndo','runStudioAction',
   'attachSceneObject','setCharacterIkKey','removeCharacterIkKey','clearCharacterIkKeys','ikStateFor','editCharacterIkKeys','snapshotIkKeys',
   'recordCharacterUndo','validateWaypointAt','castMemberOf','readCharacterWaypoints','writeCharacterWaypoints','addCharacterWaypoint','moveCharacterWaypoint','removeCharacterWaypoint','clearCharacterWaypoints'];
  const code=names.map(n=>{assert(declarations.has(n),`actual App function ${n}`);return declarations.get(n);}).join('\n');
@@ -136,7 +137,7 @@ function fixture(options={}) {
   duplicateSelectedSceneObject:id=>{const source=store.current.objects.find(o=>o.id===id);store.current.applyAtomic(list=>[...list,{...source,id:'copy-1',name:'Copy',x:source.x+0.5}]);},
   ...Object.fromEntries(['splitTimelineShot','duplicateTimelineShot','removeTimelineShot','setTimelineShotRange','moveTimelineShot','runAllPromptBlocks'].map(name=>[name,unwired(name)])),
  });
- const registry=actual.createStudioAppActions(actionHandlers);
+ const registry=actual.createStudioAppActions(actionHandlers);actionsRef.current=registry;
  const poses=[{id:'pose-rest',label:'Rest',bones:{}},{id:'pose-wave',label:'Wave',bones:{}}];
  const ports={revision,read:actual.readStudioState,bounds:actual.studioBounds,commit:actual.commitStudioDraft,commitMotion:actual.commitStudioMotion,operate:actual.operateStudio,loadArtifact:(...args)=>artifactLoader(...args),poses:()=>poses,
  ikRevision(id,stamp){const old=stamps.get(id);if(!old||old.stamp!==stamp)stamps.set(id,{stamp,revision:(old?.revision??0)+1});return stamps.get(id).revision;},
@@ -148,7 +149,7 @@ function fixture(options={}) {
  const request=(name,args)=>({name,args,host:host(),commandId:crypto.randomUUID(),expectedRevision:binding.refresh().revision,expectedTargets:[...store.current.objects,...characterRef.current].map(c=>binding.guard(c.id))});
  const call=async(name,args)=>{const response=await dispatchLiveFrame(JSON.stringify({type:'cmd',id:crypto.randomUUID(),name,args}),binding.handlers);assert(response.ok, response.error);return response.value;};
  const motionRequest=()=>{const g=binding.guard(a.id);return {commandId:crypto.randomUUID(),binding:{host:host(),characterId:a.id,targetToken:g.token},jobId:crypto.randomUUID(),artifactId:'artifact',artifact:{artifactId:'artifact',url:'http://127.0.0.1:12345/ardy/motions/123456-abcdef'},schedule:protocol.compileStudioBeats({kind:'generate',durationSeconds:2,beats:[{text:'Stand'}]}),stagingPolicy:'preserve-target-anchor'};};
- return {setArtifactLoader:loader=>{artifactLoader=loader;},setUrlLoader:loader=>{urlLoader=loader;},nextStored:()=>new Promise(r=>stored.push(r)),nextMotion:()=>new Promise(r=>motionSet.push(r)),motionStore,values,binding,actual,scope,ports,request,call,motionRequest,revision,semantic,live,store,history,characterRef,buffer,rigs,host,poses,dispose:()=>binding.dispose()};
+ return {setArtifactLoader:loader=>{artifactLoader=loader;},setUrlLoader:loader=>{urlLoader=loader;},nextStored:()=>new Promise(r=>stored.push(r)),nextMotion:()=>new Promise(r=>motionSet.push(r)),motionStore,values,binding,actual,scope,ports,registry,request,call,motionRequest,revision,semantic,live,store,history,characterRef,buffer,rigs,host,poses,dispose:()=>binding.dispose()};
 }
 const createArgs={ops:[{op:'create',source:{kind:'cube'},position:{world:{x:2,y:0,z:0}}}]};
 async function candidate(f) {const req=f.motionRequest();const prepared=await f.call('prepare_motion_install',req);assert(prepared.candidateId,JSON.stringify(prepared));const next={...req,...prepared,profile:'studio-motion-v1'};const verified=await f.call('verify_motion_candidate',next);assert(verified.verificationId,JSON.stringify(verified));return {req,next,verified};}
@@ -577,6 +578,31 @@ const implementations={
   delete f.rigs['actor-b'];
   await refused('object.attach',{objectId:loose,characterId:'actor-b',bone:'leftHand'},'TARGET_NOT_READY');
   assert.equal(f.store.current.depths().past,depth);
+ },
+ async 'ui-refusals-localized-or-silent'(){
+  // The editor's UI door into the registry (runStudioAction) under the Korean
+  // locale. A refusal written for the model never reaches a person: the UI
+  // toasts only the localized text the thrower attached, and is otherwise as
+  // silent as the old handlers were. The model keeps its English message.
+  const f=fixture({korean:true});
+  try {
+   const ui=(id,args)=>{f.values.setToast=undefined;return f.actual.runStudioAction(id,args);};
+   const agent=(id,args,pattern)=>assert.throws(()=>f.registry.run(id,args),e=>e.code==='TARGET_NOT_READY'&&pattern.test(e.message)&&!/[\uac00-\ud7a3]/.test(e.message),`${id} tells the model in English`);
+   // + Add shot with no free room: silent.
+   const whole=createShot('Whole',0,47,[]);f.scope.setShots([whole]);f.live.current.shots=[whole];
+   assert.equal(ui('shot.create'),null);assert.equal(f.values.setToast,undefined,'no room for a shot stays silent');
+   agent('shot.create',{},/operate_studio/);
+   // Ctrl+D with nothing selected: silent.
+   assert.equal((await f.call('arrange_objects',f.request('arrange_objects',createArgs))).ok,true);
+   assert.equal(ui('object.duplicate'),null);assert.equal(f.values.setToast,undefined,'duplicate with nothing selected stays silent');
+   agent('object.duplicate',{},/select an object/);
+   // The waypoint cap: its original Korean toast.
+   f.buffer.current={...f.buffer.current,waypoints:Array.from({length:32},(_,i)=>({id:`waypoint-${i}`,frame:i+1,x:0,z:0,heading:null}))};
+   const pin={characterId:'actor-a',position:{x:1,z:0}};
+   assert.equal(ui('character.addWaypoint',pin),null);assert.equal(f.values.setToast,'루트 경로는 웨이포인트 32개까지 사용할 수 있어요');
+   agent('character.addWaypoint',pin,/capped at 32 waypoints/);
+   assert.equal(f.history.current.past.length,0,'no refusal records history');
+  } finally { f.dispose(); }
  },
  async 'stale-receipt-undo'(f){const first=await f.call('arrange_objects',f.request('arrange_objects',createArgs));await f.call('arrange_objects',f.request('arrange_objects',createArgs));const before=f.store.current.objects;const r=await f.call('undo_edit',f.request('undo_edit',{receiptId:first.receiptId}));assert.equal(r.code,'UNDO_CONFLICT');assert.strictEqual(f.store.current.objects,before);},
  async 'unverified-default-refusal'(f){const {req,next,verified}=await candidate(f);const result=await f.call('commit_motion_candidate',{...next,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision});assert.equal(result.code,'VERIFICATION_FAILED');assert.equal(f.history.current.past.length,0);assert.equal(f.buffer.current.motion,null);},
