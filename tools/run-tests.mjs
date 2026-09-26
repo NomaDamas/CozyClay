@@ -144,6 +144,7 @@ const NODE_FILES = [
 	"test/verify-mcp-invariants.mjs",
 	"test/verify-motion-edit.mjs",
 	"test/verify-motion-readiness.mjs",
+	"test/verify-demo-seed.mjs",
 	"test/verify-motion-readiness-ui.mjs",
 	"test/verify-multimodel-ingest.mjs",
 	"test/verify-offscreen-export.mjs",
