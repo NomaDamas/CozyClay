@@ -21,6 +21,9 @@ import { objectTransformAt } from './object-path.js';
 import { sampleAt } from './sample-at.js';
 
 const PROFILE = 'studio-motion-v1', BLEND = 6;
+// Bounded collision repair runs AFTER auto_physics planted the feet: it may
+// only move the arms, never re-break the leg contacts that pass just verified.
+const REPAIR_CHAINS = new Set(['leftHand', 'rightHand']);
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 const equal = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const id = value => validateStudioSchema(StudioSchemas.TargetGuard.properties.targetId, value);
@@ -347,7 +350,7 @@ export function createStudioMotionCandidates(ports) {
           c.collisionAttempted = true;
           if (before.metrics.supportedCollisionFrames) {
             c.collisionInvocations++;
-            (ports.fixCollisionsRange ?? fixCollisionsRange)({ rig: c.evaluator.rig, chains: c.evaluator.chains, fkJoints: c.evaluator.fkJoints, ikState: draft, startFrame: 0, endFrame: c.motion.frames - 1, floorY: c.env.floor.y,
+            (ports.fixCollisionsRange ?? fixCollisionsRange)({ rig: c.evaluator.rig, chains: c.evaluator.chains, fkJoints: c.evaluator.fkJoints, ikState: draft, startFrame: 0, endFrame: c.motion.frames - 1, floorY: c.env.floor.y, onlyChains: REPAIR_CHAINS,
               applyFrame: f => { checkpoint(c); poseFrame(c.evaluator, c.motion, draft, f); }, blockersAt: f => blockersAt(c, f), blendWindow: BLEND });
           }
         }
@@ -356,7 +359,9 @@ export function createStudioMotionCandidates(ports) {
         // full pass. A regression is a rejected private candidate, never a
         // partial change to the visible take or its authored preimage.
         const after = await evaluate(c), a = after.metrics, b = before.metrics;
-        if (a.continuityRegressed || a.protectedPoseError > 1e-8 || a.maxFloorPenetrationM > Math.max(PHYSICS_LIMITS.floor, b.maxFloorPenetrationM) + 1e-8 || a.maxContactSlipM > Math.max(PHYSICS_LIMITS.slide, b.maxContactSlipM) + 1e-8 || a.maxContactFloatM > Math.max(PHYSICS_LIMITS.float, b.maxContactFloatM) + 1e-8 || a.unsupportedFrames > b.unsupportedFrames || a.supportedCollisionFrames > b.supportedCollisionFrames) fail('REPAIR_REGRESSED', 'Final evaluated repair regressed contact, protection, continuity or collisions.');
+        // Collision frames an auto_physics contact fix adds are owed to the
+        // fix_collisions step that must follow (gated below against this state).
+        if (a.continuityRegressed || a.protectedPoseError > 1e-8 || a.maxFloorPenetrationM > Math.max(PHYSICS_LIMITS.floor, b.maxFloorPenetrationM) + 1e-8 || a.maxContactSlipM > Math.max(PHYSICS_LIMITS.slide, b.maxContactSlipM) + 1e-8 || a.maxContactFloatM > Math.max(PHYSICS_LIMITS.float, b.maxContactFloatM) + 1e-8 || a.unsupportedFrames > b.unsupportedFrames || (a.supportedCollisionFrames > b.supportedCollisionFrames && !(request.method === 'auto_physics' && after.repairable))) fail('REPAIR_REGRESSED', 'Final evaluated repair regressed contact, protection, continuity or collisions.');
         return { ...summary(c), before, after };
       });
     },
