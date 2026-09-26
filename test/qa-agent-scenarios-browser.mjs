@@ -153,7 +153,18 @@ try {
 }
 
 await scenario("S1", "sight", async (result) => {
+  // More objects than the old 24-row context cap, so a correct count proves the
+  // agent sees the whole scene, not the first page of it.
+  const target = 30;
+  const missing = Math.max(0, target - result.before.objectIds.length);
+  if (missing) {
+    const opsFile = `${outputDir}/s1-ops.json`;
+    writeFileSync(opsFile, JSON.stringify(Array.from({ length: missing }, (_, i) => ({ op: "create", source: { kind: "cube" }, name: `QA sight ${i + 1}`, position: { world: { x: -12 + (i % 6) * 2, y: 0, z: -12 - Math.floor(i / 6) * 2 } }, scale: { x: 0.5, y: 0.5, z: 0.5 } }))));
+    live(["arrange-objects", "-f", opsFile]);
+    result.before = state();
+  }
   const count = result.before.objectIds.length;
+  if (count <= 24) throw new Error(`Setup left only ${count} objects; S1 needs more than 24`);
   const reply = await turn("How many objects are in the scene? Answer with the number only.");
   const answer = Number(reply.trim().match(/^\d+$/)?.[0]);
   if (answer !== count) throw new Error(`Expected object count ${count}; assistant reply was ${JSON.stringify(reply)}`);
