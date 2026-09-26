@@ -254,7 +254,9 @@ const receiptVariants = {
 	noop: object({ ...receiptBase, status: literal("noop"), authored: literal(false), mutated: literal(false), undo: literal(null) }, { ops: opResults }),
 	transient: object({ ...receiptBase, status: literal("transient"), authored: literal(false), view: revisions, undo: literal(null) }, { mutated: bool }),
 	installed: object({ ...authoredReceipt, status: literal("installed"), jobId: id, artifactId: id, installed, verification }, {
-		mutated: literal(true), explicitUnverifiedAcceptance: bool,
+		// Who accepted an unverified take: the user's explicit button, or the
+		// runtime's advisory install policy. Exactly these two may admit one.
+		mutated: literal(true), explicitUnverifiedAcceptance: bool, acceptance: literal("advisory-policy"),
 		repairs: object({ autoPhysicsInvocations: integer(0, 1), fixCollisionsInvocations: integer(0, 1), remaining: integer(0, 2) }), ...batchDetails,
 	}),
 	undone: object({ ...authoredReceipt, status: literal("undone"), undoneReceiptId: id, restoredTargets: array(guardSchema, 100, 1) }, { mutated: literal(true), ...batchDetails }),
@@ -502,7 +504,7 @@ export function validateReceipt(value) {
 		for (const block of blocks) { if (block.startFrame !== previous || block.endFrameExclusive <= previous || block.endFrameExclusive - previous > 120) fail("INVALID_RECEIPT", "Installed schedule is not contiguous or bounded."); previous = block.endFrameExclusive; }
 		if (previous !== frameCount || r.installed.durationSeconds !== frameCount / 24 || r.verification.range.startFrame !== 0 || r.verification.range.endFrameExclusive !== frameCount || r.verification.evaluatedFrames > frameCount) fail("INVALID_RECEIPT", "Installed schedule and verification coverage disagree.");
 		if (r.verification.status === "verified" && r.verification.evaluatedFrames !== frameCount) fail("INVALID_RECEIPT", "Verified motion requires whole-clip coverage.");
-		if (r.verification.status === "unverified" && r.explicitUnverifiedAcceptance !== true) fail("INVALID_RECEIPT", "Unverified installation requires explicit user acceptance.");
+		if (r.verification.status === "unverified" && r.explicitUnverifiedAcceptance !== true && r.acceptance !== "advisory-policy") fail("INVALID_RECEIPT", "Unverified installation requires explicit user or advisory-policy acceptance.");
 	} else if (r.installed || r.verification || r.jobId || r.artifactId || r.repairs || r.explicitUnverifiedAcceptance !== undefined) fail("INVALID_RECEIPT", "Installation evidence is exclusive to installed receipts.");
 	return freezeStudioData(r);
 }

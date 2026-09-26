@@ -4,6 +4,7 @@ import { MAX_ACTIVE_MOTION_JOBS, MAX_ACTIVE_MOTION_JOBS_PER_WORKSPACE, MOTION_CO
 import { normalizePhases } from "../../mcp/ardy-prompts.mjs";
 import { compileStudioBeats, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt, freezeStudioData, StudioProtocolError } from "../../src/studio-agent-protocol.js";
 import { motionPreflightReason } from "../../src/analytics.js";
+import { PHYSICS_LIMITS } from "../../src/ardy/physics-review.js";
 
 const precommit = ["queued", "generating", "preparing", "verifying", "repairing"];
 const rejected = ["failed", "cancelled", "stale_target", "stale_environment"];
@@ -75,10 +76,33 @@ function pinOrigin(value) {
 	return url.origin;
 }
 const identifier = value => typeof value === "string" && value.length > 0 && value.length <= 128;
+const centimetres = metres => `${(metres * 100).toFixed(1)} cm`;
+/** The receipt's own verification evidence, restated as one warning per failed
+ * check, so an advisory install names what it did not pass. */
+function advisoryWarnings(receipt) {
+	const v = receipt.verification, failed = [];
+	if (v.maxFloorPenetrationM > PHYSICS_LIMITS.floor) failed.push({ code: "FLOOR_PENETRATION", message: `Feet sink ${centimetres(v.maxFloorPenetrationM)} into the floor (limit ${centimetres(PHYSICS_LIMITS.floor)}).` });
+	if (v.maxContactSlipM > PHYSICS_LIMITS.slide) failed.push({ code: "CONTACT_SLIP", message: `Planted feet slide ${centimetres(v.maxContactSlipM)} (limit ${centimetres(PHYSICS_LIMITS.slide)}).` });
+	if (v.maxContactFloatM > PHYSICS_LIMITS.float) failed.push({ code: "CONTACT_FLOAT", message: `Planted feet float ${centimetres(v.maxContactFloatM)} above support (limit ${centimetres(PHYSICS_LIMITS.float)}).` });
+	if (v.unsupportedFrames > 0) failed.push({ code: "UNSUPPORTED_FRAMES", count: v.unsupportedFrames, message: `${v.unsupportedFrames} frames lack physical support.` });
+	if (v.supportedCollisionFrames > 0) failed.push({ code: "COLLISION_FRAMES", count: v.supportedCollisionFrames, message: `${v.supportedCollisionFrames} frames collide with the body, cast or scene.` });
+	if (v.continuityRegressed) failed.push({ code: "CONTINUITY_REGRESSED", message: "Repair made the joint motion less continuous." });
+	if (v.surfaceMeasured === false) failed.push({ code: "SURFACE_UNMEASURED", message: "Foot contact surfaces could not be measured." });
+	if (!failed.length) failed.push({ code: "VERIFICATION_INCOMPLETE", message: "Verification coverage was incomplete; see verification.limitations." });
+	const warnings = [...receipt.warnings];
+	for (const warning of failed) if (!warnings.some(w => w.code === warning.code)) warnings.push(warning);
+	return warnings.slice(0, 12);
+}
+export const MOTION_INSTALL_POLICIES = Object.freeze(["advisory", "strict"]);
 
 /** Task 6 supplies this single owner its existing liveHub and launcher getter.
  * No model polling, provider calls, second installer, or execution telemetry emitter. */
-export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Date.now, ttlMs = MOTION_JOB_TTL_MS, generationMs = 300000, preparationMs = 30000, verificationMs = 60000 } = {}) {
+/** installPolicy "advisory" (default) commits a structurally valid, unverified
+ * candidate at once as an undoable take whose receipt carries its warnings;
+ * "strict" (COZYCLAY_STUDIO_MOTION_POLICY=strict) holds it in review_required
+ * until the user's explicit accept. */
+export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Date.now, ttlMs = MOTION_JOB_TTL_MS, generationMs = 300000, preparationMs = 30000, verificationMs = 60000, installPolicy = process.env.COZYCLAY_STUDIO_MOTION_POLICY === "strict" ? "strict" : "advisory" } = {}) {
+	if (!MOTION_INSTALL_POLICIES.includes(installPolicy)) throw new TypeError(`Unknown motion installPolicy: ${installPolicy}`);
 	const jobs = new Map(), records = new Map(), artifacts = new Map();
 	let disposed = false;
 	const snapshot = job => freezeStudioData({ jobId: job.jobId, commandId: job.input.commandId, state: job.state, eventSeq: job.eventSeq, outcome: job.outcome, artifactId: job.artifact?.artifactId ?? null });
@@ -119,6 +143,9 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 	const installed = (job, receipt) => {
 		receipt = validateReceipt(receipt);
 		if (!receipt?.ok || receipt.status !== "installed" || receipt.commandId !== job.input.commandId || receipt.jobId !== job.jobId || receipt.artifactId !== job.artifact.artifactId || receipt.installed?.frameCount !== job.schedule.frameCount || receipt.verification?.id !== job.verification.verificationId || !identifier(receipt.receiptId) || receipt.installed?.characterId !== job.input.characterId || !isDeepStrictEqual(receipt.host, job.host)) throw error("UNCERTAIN_APPLY", "Uncorrelated installation receipt");
+		// The editor only knows "accepted"; the runtime records that the policy,
+		// not the user, accepted this unverified take, and which checks it failed.
+		if (job.acceptance === "advisory-policy" && receipt.verification.status === "unverified") receipt = validateReceipt({ ...receipt, explicitUnverifiedAcceptance: false, acceptance: "advisory-policy", warnings: advisoryWarnings(receipt) });
 		remember(job, receipt); transition(job, "installed"); job.motionRequest?.apply(); return job.outcome;
 	};
 	const reconcile = async job => {
@@ -144,10 +171,11 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 		// retain ownership/uncertainty until the same command can be reconciled.
 		transition(job, "reconciling"); return reconcile(job);
 	};
-	const commit = async (job, explicitUnverifiedAcceptance = false) => {
-		fence(job); transition(job, "committing");
+	// acceptance: null (verified only), "user" (explicit accept) or "advisory-policy".
+	const commit = async (job, acceptance = null) => {
+		fence(job); transition(job, "committing"); job.acceptance = acceptance;
 		try {
-			const receipt = await command(job, "commit_motion_candidate", { jobId: job.jobId, artifactId: job.artifact.artifactId, candidateId: job.candidate.candidateId, candidateRevision: job.candidate.candidateRevision, expectedTargetToken: job.input.targetToken, expectedPhysicsRevision: job.verification.physicsRevision, verificationId: job.verification.verificationId, explicitUnverifiedAcceptance });
+			const receipt = await command(job, "commit_motion_candidate", { jobId: job.jobId, artifactId: job.artifact.artifactId, candidateId: job.candidate.candidateId, candidateRevision: job.candidate.candidateRevision, expectedTargetToken: job.input.targetToken, expectedPhysicsRevision: job.verification.physicsRevision, verificationId: job.verification.verificationId, explicitUnverifiedAcceptance: acceptance !== null });
 			return installed(job, receipt);
 		} catch (e) {
 			if (["STALE_TARGET", "STALE_ENVIRONMENT", "STALE_SCENE", "VERIFICATION_FAILED", "CANCELLED"].includes(e.code)) {
@@ -191,8 +219,8 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 				fence(job); checkTarget(job, job.candidate.targetToken); v = await verify(job);
 			}
 			clearTimeout(timer); fence(job);
-			if (v.status !== "verified") { transition(job, "review_required"); return remember(job, { ok: false, status: "review_required", commandId: job.input.commandId, jobId: job.jobId, artifactId: job.artifact.artifactId, candidateId: job.candidate.candidateId, mutated: false, verification: v }); }
-			return await commit(job);
+			if (v.status !== "verified" && installPolicy === "strict") { transition(job, "review_required"); return remember(job, { ok: false, status: "review_required", commandId: job.input.commandId, jobId: job.jobId, artifactId: job.artifact.artifactId, candidateId: job.candidate.candidateId, mutated: false, verification: v }); }
+			return await commit(job, v.status === "verified" ? null : "advisory-policy");
 		} catch (e) {
 			if (job.state === "committing" || job.state === "reconciling") { if (job.state === "committing") transition(job, "reconciling"); return reconcile(job); }
 			if (job.cancelRequested) { job.motionRequest?.fail(e, "aborted"); return await settleCancellation(job); }
@@ -280,7 +308,7 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 			const pending = [...jobs.values()].filter(j => active(j.state));
 			if (pending.length >= MAX_ACTIVE_MOTION_JOBS || pending.some(j => j.host.workspaceId === job.host.workspaceId)) throw error("TARGET_BUSY", "Motion acceptance capacity reached");
 			job.accepting = true;
-			try { await verify(job); return await commit(job, true); }
+			try { await verify(job); return await commit(job, "user"); }
 			catch (e) {
 				transition(job, e.code === "STALE_TARGET" ? "stale_target" : e.code === "STALE_ENVIRONMENT" ? "stale_environment" : "failed");
 				remember(job, failure(job, e.code ?? "VERIFICATION_FAILED"));
