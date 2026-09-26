@@ -135,7 +135,7 @@ function registerTests() {
 		];
 		for (const command of invalid) rejects(() => protocol.validateStudioCommand(command));
 	});
-	test("D3 all nine families have executable happy paths and stable defaults", () => {
+	test("D3 all ten families have executable happy paths and stable defaults", () => {
 		const commands = [
 			{ name: "inspect_studio", args: { scope: "entities" } },
 			{ name: "operate_studio", args: { selection: null, frame: 0, playing: false, view: { grid: true } } },
@@ -146,6 +146,7 @@ function registerTests() {
 			{ name: "generate_motion", args: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }, { text: "wave" }], durationSeconds: 6 } } },
 			{ name: "verify_result", args: { targets: ["char-alex"], checks: ["motion"] } },
 			{ name: "undo_edit", args: { receiptId: "r-1" } },
+			{ name: "run_action", args: { action: "shot.create" } },
 		];
 		assert.deepEqual(commands.map(command => command.name), [...protocol.STUDIO_TOOL_FAMILIES]);
 		const normalized = commands.map(command => protocol.validateStudioCommand(command));
@@ -154,10 +155,10 @@ function registerTests() {
 		rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args: { ops: [createOp("Same"), createOp("Same")] } }), "DUPLICATE_NAME");
 	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
-		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 9);
+		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 10);
 		assert.ok(protocol.STUDIO_TOOL_FAMILIES.includes("patch_elements"));
 		assert.ok(protocol.STUDIO_CATALOGUE.some(tool => tool.name === "patch_elements"));
-		// Nine families must fit the context capability list.
+		// Every family must fit the context capability list.
 		const c = contextFixture(); c.capabilities.tools = [...protocol.STUDIO_TOOL_FAMILIES]; protocol.validateStudioContext(c);
 		// Derived, not hand-written: an element added to the table appears in the
 		// schema with its declared bounds, and a removed one disappears.
@@ -354,6 +355,29 @@ function registerTests() {
 		rejects(()=>protocol.validateReceipt(advisory));advisory.acceptance="advisory-policy";assert.equal(protocol.validateReceipt(advisory).acceptance,"advisory-policy");
 		for(const acceptance of ["model","",true]){const forged=structuredClone(advisory);forged.acceptance=acceptance;rejects(()=>protocol.validateReceipt(forged));}
 		const applied=receiptFixture("applied");applied.acceptance="advisory-policy";rejects(()=>protocol.validateReceipt(applied));
+	});
+	test("run_action names one registered action; inspect_studio scope actions discovers them", () => {
+		assert.ok(protocol.STUDIO_TOOL_FAMILIES.includes("run_action"));
+		assert.equal(typeof protocol.STUDIO_TOOL_LABELS.run_action, "string");
+		assert.ok(protocol.STUDIO_VARIANTS.inspectScopes.includes("actions"));
+		assert.deepEqual(protocol.validateStudioCommand({ name: "inspect_studio", args: { scope: "actions" } }).args, { scope: "actions", limit: 12 });
+		// The action's own schema validates its arguments in the editor; the
+		// family carries them as one JSON object, detached from the caller's.
+		const args = { shotId: "shot-1", range: { startFrame: 0, endFrameExclusive: 24 } };
+		const command = protocol.validateStudioCommand({ name: "run_action", args: { action: "shot.setRange", args } });
+		assert.deepEqual(command.args, { action: "shot.setRange", args });
+		assert.notStrictEqual(command.args.args, args);
+		assert.deepEqual(protocol.validateStudioCommand({ name: "run_action", args: { action: "shot.create" } }).args, { action: "shot.create" });
+		for (const bad of [{}, { action: "" }, { action: "shot create" }, { action: "shot.create", args: [] }, { action: "shot.create", args: "x" }, { action: "shot.create", extra: 1 }]) {
+			rejects(() => protocol.validateStudioCommand({ name: "run_action", args: bad }), "INVALID_ARGUMENT");
+		}
+		// A mutating action's receipt is an ordinary journal receipt that names
+		// the action and what it did.
+		const applied = { ...receiptFixture("applied"), action: "shot.create", summary: "Added Shot 2 at frames [48, 96)." };
+		assert.equal(protocol.validateReceipt(applied).action, "shot.create");
+		const noop = { ...receiptFixture("noop"), action: "shot.create", summary: "No room for a new shot." };
+		assert.equal(protocol.validateReceipt(noop).summary, "No room for a new shot.");
+		rejects(() => protocol.validateReceipt({ ...receiptFixture("applied"), action: "not an id" }), "INVALID_RECEIPT");
 	});
 	test("GENERATION_LIMIT is a failure code of its own, distinct from AUTH_REQUIRED", () => {
 		const failure={ok:false,commandId:"cmd-1",host:receiptFixture().host,code:"GENERATION_LIMIT",phase:"admission",affectedIds:[],expectedTargets:[],currentTargets:[],mutated:false,preserved:{authoredState:"unchanged"},recovery:{action:"none"}};

@@ -21,7 +21,7 @@ const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
 process.on("exit", () => rmSync(sessionDir, { recursive: true, force: true }));
 
-const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision"]);
+const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision", "run-action-admission-and-generation-limit"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -132,8 +132,8 @@ for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revis
 
 if (shouldRun("studio-tool-catalogue")) {
   const { createStudioTools, studioToolSchemas } = await import("../bin/agent/studio-tools.mjs");
-  const families = ["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit"];
-  assert.deepEqual([...STUDIO_TOOL_FAMILIES], families, "the Studio panel sees exactly these nine families");
+  const families = ["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"];
+  assert.deepEqual([...STUDIO_TOOL_FAMILIES], families, "the Studio panel sees exactly these ten families");
   assert.deepEqual(studioToolSchemas().map(tool => tool.name), families);
   const sent = [];
   const tools = createStudioTools({ liveHub: { command: async (name, payload) => { sent.push({ name, payload }); return { ok: true, commandId: payload.commandId, receiptId: "receipt-1", status: "applied", revision: { before: 1, after: 2 } }; } }, workspaceHandle: "handle-1",
@@ -149,7 +149,7 @@ if (shouldRun("studio-tool-catalogue")) {
   assert.equal(sent[0].payload.expectedRevision, 1);
   // Mutation tool descriptions must teach receipt semantics: dropped paths,
   // landed delta values, and STALE_SCENE inspect-then-resubmit recovery.
-  const mutations = ["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit"];
+  const mutations = ["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit", "run_action"];
   for (const tool of studioToolSchemas()) {
     if (!mutations.includes(tool.name)) continue;
     assert.ok(tool.description.includes("droppedPaths"), `${tool.name} description names ops[].droppedPaths`);
@@ -167,7 +167,43 @@ if (shouldRun("studio-tool-catalogue")) {
   assert.deepEqual(parsed.ops[0].droppedPaths, ["object.scale"]);
   assert.equal(parsed.delta[0].after.patched.find(p => p.path === "object.scale").vec.y, 0.1);
   assert.ok(rendered.length < 8000, "sanity: this fixture is far under the 8000-byte receipt cap");
-  console.log("PASS the Studio tool list is exactly the nine families and patch_elements is admitted");
+  console.log("PASS the Studio tool list is exactly the ten families and patch_elements is admitted");
+}
+
+if (shouldRun("run-action-admission-and-generation-limit")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  const { LiveHub } = await import("../mcp/live-hub.mjs");
+  // The hub treats a lost run_action acknowledgement as a possibly applied mutation.
+  assert.equal(LiveHub.commandMayMutate("run_action"), true);
+  assert.equal(LiveHub.commandTimeoutMs("run_action"), 30_000);
+  const sent = []; let commandNumber = 0;
+  const admission = { commandId: () => `cmd-${++commandNumber}`, host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, revision: 4, refresh: async () => {} };
+  const liveHub = { command: async (name, payload) => {
+    sent.push({ name, payload });
+    if (payload.args?.action === "motion.generateAllBlocks") return { ok: true, commandId: payload.commandId, action: "motion.generateAllBlocks", kind: "job", status: "started", affectedIds: ["char-alex"], summary: "Started generating from 2 prompt blocks." };
+    return { ok: true, commandId: payload.commandId, receiptId: `receipt-${commandNumber}`, status: "applied", action: payload.args.action, revision: { before: admission.revision, after: admission.revision + 1 } };
+  } };
+  const tools = createStudioTools({ liveHub, workspaceHandle: "handle-1", session: { admission } });
+  const run = tools.find(tool => tool.name === "run_action");
+  assert.ok(run, "run_action is an agent tool");
+  const applied = await run.handler({ action: "shot.create", args: {} });
+  assert.equal(applied.status, "applied");
+  // run_action is admitted like every other mutation family.
+  assert.deepEqual(sent[0], { name: "run_action", payload: { name: "run_action", args: { action: "shot.create", args: {} }, commandId: "cmd-1", host: admission.host, expectedRevision: 4 } });
+  assert.equal(admission.revision, 5, "the receipt's revision admits the next command");
+  await assert.rejects(run.handler({ action: "shot create" }), { code: "INVALID_ARGUMENT" });
+  assert.equal(sent.length, 1, "a malformed action never reaches the editor");
+  // A job action is a generation: one per user message, like generate_motion.
+  const started = await run.handler({ action: "motion.generateAllBlocks" });
+  assert.equal(started.status, "started");
+  await assert.rejects(run.handler({ action: "motion.generateAllBlocks" }), { code: "GENERATION_LIMIT" });
+  assert.equal(sent.length, 2, "the second generation never reaches the editor");
+  await run.handler({ action: "shot.create" });
+  assert.equal(sent.length, 3, "other actions still run after a generation");
+  // A new turn builds new tools and may generate again.
+  const nextTurn = createStudioTools({ liveHub, workspaceHandle: "handle-1", session: { admission } });
+  assert.equal((await nextTurn.find(tool => tool.name === "run_action").handler({ action: "motion.generateAllBlocks" })).status, "started");
+  console.log("PASS run_action is admitted as a mutation and a job action counts as the turn's generation");
 }
 
 if (shouldRun("surface-context-and-images")) {

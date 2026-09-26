@@ -5,6 +5,7 @@ import { buildPatchSchema, patchValueSchema, STUDIO_PATCHABLE_PATHS, STUDIO_PATC
 import { createCharacterEntry, createSceneStage } from "../src/scenes.js";
 import { normalizeSceneObject, updateSceneObject } from "../src/scene-objects.js";
 import { createShotAuthoringDocument } from "../src/shot-authoring.js";
+import { STUDIO_ACTION_IDS } from "../src/studio-actions.js";
 
 const normalizers = {
 	createCharacterEntry,
@@ -13,7 +14,7 @@ const normalizers = {
 	repairCamera: (camera) => createShotAuthoringDocument({ frameCount: 96, shots: [{ id: "shot-test", startFrame: 0, endFrame: 95, camera }] }).shots[0].camera,
 };
 const allowedTypes = new Set(["number", "string", "boolean", "vec3", "color", "enum", "id", "image", "array"]);
-const allowedExposure = new Set(["patch", "composite", "readonly", "todo"]);
+const allowedExposure = new Set(["patch", "action", "composite", "readonly", "todo"]);
 const allowedDomains = new Set(["cast", "objects", "shot", "stage", null]);
 const allowedNormalizers = new Set([...Object.keys(normalizers), null]);
 
@@ -29,6 +30,12 @@ function validate(entries) {
 		assert.ok(allowedDomains.has(entry.undoDomain), `unknown undo domain: ${entry.path}`);
 		assert.ok(allowedNormalizers.has(entry.normalizer), `unknown normalizer: ${entry.normalizer}`);
 		if (entry.type === "enum") assert.ok(Array.isArray(entry.enum) && entry.enum.length > 0, entry.path);
+		// An element the agent reaches through the action registry names the
+		// registered action ids that edit it; no other exposure lists actions.
+		if (entry.agentExposure === "action") {
+			assert.ok(Array.isArray(entry.actions) && entry.actions.length > 0, `action element without actions: ${entry.path}`);
+			for (const id of entry.actions) assert.ok(STUDIO_ACTION_IDS.includes(id), `unregistered action ${id} on ${entry.path}`);
+		} else assert.equal(entry.actions, undefined, `actions on a non-action element: ${entry.path}`);
 		if (entry.type === "vec3") {
 			for (const axis of ["x", "y", "z"]) {
 				if (entry.min !== undefined) assert.ok(Number.isFinite(entry.min[axis]), `${entry.path}.${axis}`);
@@ -47,10 +54,15 @@ validate(STUDIO_ELEMENTS);
 assert.throws(() => validate([STUDIO_ELEMENTS[0], STUDIO_ELEMENTS[0]]), /duplicate path/);
 assert.throws(() => validate([{ ...STUDIO_ELEMENTS[0], normalizer: "unknown" }]), /unknown normalizer/);
 assert.throws(() => validate([{ ...STUDIO_ELEMENTS[0], undoDomain: "unknown" }]), /unknown undo domain/);
+assert.throws(() => validate([{ ...elementByPath("shot.crud"), actions: ["shot.teleport"] }]), /unregistered action/);
+assert.throws(() => validate([{ ...elementByPath("shot.crud"), actions: [] }]), /without actions/);
+assert.equal(elementByPath("shot.crud").agentExposure, "action");
+assert.deepEqual([...elementByPath("shot.crud").actions].sort(), ["shot.create", "shot.duplicate", "shot.remove", "shot.reorder", "shot.setRange", "shot.split"]);
 assert.ok(Object.isFrozen(STUDIO_ELEMENTS));
 for (const entry of STUDIO_ELEMENTS) {
 	assert.ok(Object.isFrozen(entry), entry.path);
 	if (entry.enum) assert.ok(Object.isFrozen(entry.enum), entry.path);
+	if (entry.actions) assert.ok(Object.isFrozen(entry.actions), entry.path);
 	assert.equal(elementByPath(entry.path), entry);
 }
 assert.equal(elementByPath("missing.path"), undefined);

@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+// One Studio action registry for the UI and the agent: declarations are data
+// shared with the sidecar, implementations are registered by the editor.
+import assert from "node:assert/strict";
+import { STUDIO_ACTIONS, STUDIO_ACTION_IDS, STUDIO_ACTION_KINDS, studioActionDeclaration, createStudioActionRegistry } from "../src/studio-actions.js";
+import { validateStudioCommand, validateStudioSchema } from "../src/studio-agent-protocol.js";
+
+const code = expected => error => error?.code === expected;
+
+/* The first batch is declared once, as data. */
+const firstBatch = ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch].sort());
+assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job"]);
+assert.ok(Object.isFrozen(STUDIO_ACTIONS));
+for (const action of STUDIO_ACTIONS) {
+	assert.match(action.id, /^[a-z]+\.[A-Za-z]+$/, action.id);
+	assert.ok(STUDIO_ACTION_KINDS.includes(action.kind), action.id);
+	assert.equal(typeof action.label, "string", action.id);
+	assert.ok(action.description.length > 20, `${action.id} explains itself`);
+	assert.equal(action.input.type, "object", action.id);
+	assert.equal(action.input.additionalProperties, false, `${action.id} input is closed`);
+	if (action.kind === "mutation") assert.ok(["shot", "objects"].includes(action.undoDomain), `${action.id} names its undo domain`);
+	assert.equal(studioActionDeclaration(action.id), action);
+	// The declared input is usable by the protocol's own validator.
+	if (action.input.required.length === 0) validateStudioSchema(action.input, {});
+	else assert.throws(() => validateStudioSchema(action.input, {}), code("INVALID_ARGUMENT"), action.id);
+}
+assert.equal(studioActionDeclaration("shot.create").kind, "mutation");
+assert.equal(studioActionDeclaration("object.duplicate").undoDomain, "objects");
+assert.equal(studioActionDeclaration("motion.generateAllBlocks").kind, "job");
+assert.throws(() => studioActionDeclaration("shot.teleport"), code("INVALID_ARGUMENT"));
+// Frame ranges are half-open, like every other Studio range.
+assert.deepEqual(Object.keys(studioActionDeclaration("shot.setRange").input.properties).sort(), ["range", "shotId"]);
+assert.throws(() => validateStudioSchema(studioActionDeclaration("shot.setRange").input, { shotId: "shot-1", range: { startFrame: 10, endFrameExclusive: 10 } }), code("INVALID_ARGUMENT"));
+
+/* Registration refuses malformed or duplicate entries. */
+const calls = [];
+const state = { shots: 0 };
+const registry = createStudioActionRegistry({ readState: () => state });
+const entry = (overrides = {}) => ({
+	...studioActionDeclaration("shot.remove"),
+	available: current => current.shots > 0 || "There are no shots to remove.",
+	run: args => { calls.push(args); return { affectedIds: [args.shotId], summary: `Removed ${args.shotId}.` }; },
+	...overrides,
+});
+registry.register(entry());
+assert.throws(() => registry.register(entry()), /already registered/);
+assert.throws(() => createStudioActionRegistry().register(entry({ run: undefined })), /run/);
+assert.throws(() => createStudioActionRegistry().register(entry({ available: undefined })), /available/);
+assert.throws(() => createStudioActionRegistry().register(entry({ kind: "sometimes" })), /kind/);
+assert.throws(() => createStudioActionRegistry().register(entry({ id: "not an id" })), /id/);
+assert.throws(() => createStudioActionRegistry().register(entry({ input: { type: "string" } })), /input/);
+registry.register({
+	...studioActionDeclaration("shot.create"),
+	available: () => true,
+	run: () => ({ affectedIds: ["shot-new"], summary: "Added Shot 2." }),
+});
+
+/* list(state): available actions carry their schema, unavailable ones their reason. */
+const listed = registry.list({ shots: 0 });
+assert.deepEqual(listed.map(item => item.id), ["shot.remove", "shot.create"]);
+const remove = listed.find(item => item.id === "shot.remove");
+assert.equal(remove.available, false);
+assert.equal(remove.reason, "There are no shots to remove.");
+assert.equal(remove.input, undefined, "an unavailable action does not advertise arguments");
+assert.equal(remove.description, studioActionDeclaration("shot.remove").description);
+const create = listed.find(item => item.id === "shot.create");
+assert.equal(create.available, true);
+assert.deepEqual(create.input, studioActionDeclaration("shot.create").input);
+assert.equal(create.kind, "mutation");
+assert.equal(registry.list({ shots: 2 }).find(item => item.id === "shot.remove").available, true);
+// Without an explicit state the registry reads its own.
+assert.equal(registry.list().find(item => item.id === "shot.remove").available, false);
+
+/* run(id, args): validated arguments, availability, then the one implementation. */
+assert.throws(() => registry.run("shot.remove", { shotId: "shot-1" }), error => error.code === "TARGET_NOT_READY" && /no shots/.test(error.message));
+assert.equal(calls.length, 0, "an unavailable action never runs");
+state.shots = 1;
+assert.throws(() => registry.run("shot.remove", {}), code("INVALID_ARGUMENT"));
+assert.throws(() => registry.run("shot.remove", { shotId: "shot-1", extra: true }), code("INVALID_ARGUMENT"));
+assert.throws(() => registry.run("shot.remove", { shotId: 7 }), code("INVALID_ARGUMENT"));
+assert.throws(() => registry.run("shot.teleport", {}), error => error.code === "INVALID_ARGUMENT" && /shot\.remove/.test(error.message) && /shot\.create/.test(error.message));
+assert.equal(calls.length, 0, "invalid arguments never reach the implementation");
+assert.deepEqual(registry.run("shot.remove", { shotId: "shot-1" }), { affectedIds: ["shot-1"], summary: "Removed shot-1." });
+assert.deepEqual(calls, [{ shotId: "shot-1" }]);
+assert.deepEqual(registry.run("shot.create"), { affectedIds: ["shot-new"], summary: "Added Shot 2." }, "args default to {}");
+assert.equal(registry.get("shot.create").kind, "mutation");
+assert.throws(() => registry.get("shot.teleport"), code("INVALID_ARGUMENT"));
+
+/* An implementation must report what it touched. */
+const sloppy = createStudioActionRegistry();
+sloppy.register({ ...studioActionDeclaration("shot.create"), available: () => true, run: () => undefined });
+assert.throws(() => sloppy.run("shot.create", {}), /affectedIds/);
+// Availability must be true or a reason, never a bare false.
+const vague = createStudioActionRegistry();
+vague.register({ ...studioActionDeclaration("shot.create"), available: () => false, run: () => ({ affectedIds: [], summary: "" }) });
+assert.throws(() => vague.list({}), /reason/);
+
+/* The protocol carries the new family and discovery scope. */
+assert.deepEqual(validateStudioCommand({ name: "run_action", args: { action: "shot.split", args: { shotId: "shot-1" } } }).args, { action: "shot.split", args: { shotId: "shot-1" } });
+assert.equal(validateStudioCommand({ name: "inspect_studio", args: { scope: "actions" } }).args.scope, "actions");
+
+console.log(`studio actions verified: ${STUDIO_ACTIONS.length} declared`);
