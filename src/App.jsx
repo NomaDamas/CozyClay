@@ -794,15 +794,51 @@ export function createStudioAppBinding(ports) {
 		return [...s.characters.map(c => {
 			const t = s.targets.get(c.id);
 			return { id: c.id, kind: "character", token: tokens.get(c.id).token, name: c.subject || c.id,
-				position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1,
+				position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1, tint: c.tint ?? null, modelId: c.model ?? null,
 				motion: { takeId: t?.motion?.studioTakeId ?? null, frames: t?.motion?.frames ?? 0,
 					ikKeyCount: t?.ikState?.keys.size ?? 0, promptBlockCount: c.layer?.promptClips?.length ?? 0 },
 				capabilities: { rigReady: Boolean(t?.rig), ik: Boolean(t?.rig?.userData?.poseBind), measuredFeet: false } };
 		}), ...s.objects.map(o => ({ id: o.id, kind: "object", token: tokens.get(o.id).token, name: o.name || o.id,
 			position: { x: o.x, y: o.y ?? 0, z: o.z }, yawDeg: o.rot ?? 0,
 			rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 }, scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ },
-			renderer: o.renderer, parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
+			renderer: o.renderer, color: o.color ?? null, ...(o.assetId ? { assetId: o.assetId } : {}),
+			parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
 	}
+	const frameRange = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
+	// Scope-specific inspection: each scope answers with the authored detail the
+	// compact context only counts, in the shapes patch_elements writes back.
+	const inspectScopes = {
+		scene: s => ({
+			stage: { environment: s.stage.environment ?? null, style: s.stage.style ?? null, hasEnvironmentImage: Boolean(s.stage.environmentImage),
+				hasEnvSheet: s.stage.hasEnvSheet === true, keyLight: { ...s.stage.keyLight },
+				camera: { presetId: s.stage.cameraPresetId ?? null, aspect: s.stage.shotAspect, sensorId: s.stage.sensorId } },
+			counts: { characters: s.characters.length, objects: s.objects.length, shots: s.shots.length, frames: s.frameCount, assets: assetList(s).length },
+		}),
+		shot: (s, wanted) => {
+			const shots = s.shots.filter(wanted).map(row => ({ id: row.id, name: row.name, range: frameRange(row), mode: row.camera?.mode ?? "keys",
+				cameraKeys: row.cameraKeys.map(({ frame, framing }) => ({ frame, framing: { pos: { ...framing.pos }, yaw: framing.yaw, pitch: framing.pitch, fovDeg: framing.fovDeg } })),
+				rail: row.camera?.cameraRail?.map(({ x, z }) => ({ x, z })) ?? null }));
+			return { shots, total: shots.length };
+		},
+		motion: (s, wanted) => {
+			const characters = s.characters.map(c => ({ ...c, name: c.subject || c.id })).filter(wanted).map(c => {
+				const t = s.targets.get(c.id);
+				return { id: c.id, name: c.name, takeId: t?.motion?.studioTakeId ?? null, frames: t?.motion?.frames ?? 0,
+					promptBlocks: (c.layer?.promptClips ?? []).map(({ startFrame, endFrame, text }) => ({ startFrame, endFrame, text })),
+					waypoints: (c.layer?.waypoints ?? []).map(p => ({ frame: p.frame, position: { x: p.x, y: p.y ?? 0, z: p.z } })),
+					ikKeyFrames: [...(t?.ikState?.keys?.keys() ?? [])].sort((a, b) => a - b) };
+			});
+			return { characters, total: characters.length };
+		},
+		selection: s => {
+			const id = ["object", "character", "rig"].includes(s.selection?.kind) ? s.selection.id : null;
+			const row = id ? entityProjection(s).find(entry => entry.id === id) : null;
+			const o = row?.kind === "object" ? s.objects.find(entry => entry.id === id) : null, c = row?.kind === "character" ? s.characters.find(entry => entry.id === id) : null;
+			const entity = !row ? null : o ? { ...row, hidden: o.hidden === true, path: o.path ? structuredClone(o.path) : null }
+				: { ...row, hidden: c.hidden === true, poseId: c.pose?.id ?? null };
+			return { selection: s.selection ?? null, entity };
+		},
+	};
 	function assetList(s) {
 		const catalogue = studioObjectCatalogue().objects.map(({ kind }) => {
 			const entry = OBJECT_LIBRARY.find(row => row.kind === kind);
@@ -818,7 +854,7 @@ export function createStudioAppBinding(ports) {
 	function context() {
 		const s = refresh(), entities = entityProjection(s);
 		const shot = s.shots.find(row => row.id === s.selectedShotId) ?? shotAtFrame(s.shots, s.view.frame);
-		const range = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
+		const range = frameRange;
 		return buildStudioContext({ schema: "studio-context-v1", host: { surface: "studio", ...s.host, workspaceHandle: s.workspaceHandle },
 			revision: { scene: s.revision, physics: s.physicsRevision, view: s.viewRevision },
 			units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" },
@@ -978,10 +1014,13 @@ export function createStudioAppBinding(ports) {
 			// Discovery for run_action: every registered action, available ones with
 			// their description and input schema, unavailable ones with the reason.
 			if (command.args.scope === "actions") return { context: c, actions: ports.actions?.()?.list() ?? [] };
+			const s = refresh();
+			const wanted = row => (!args.ids || args.ids.includes(row.id)) && (!args.query || Boolean(row.name?.includes(args.query)));
+			if (inspectScopes[command.args.scope]) return { context: c, scope: command.args.scope, ...inspectScopes[command.args.scope](s, wanted) };
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
-			const s = refresh(), all = entityProjection(s);
-			const filtered = all.filter(row => (!args.ids || args.ids.includes(row.id)) && (!args.query || row.name?.includes(args.query)));
+			const all = entityProjection(s);
+			const filtered = all.filter(wanted);
 			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
 			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,
 				nextCursor: offset + limit < filtered.length ? studioEntityCursor(c, offset + limit) : null };
