@@ -21,7 +21,7 @@ const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
 process.on("exit", () => rmSync(sessionDir, { recursive: true, force: true }));
 
-const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision", "run-action-admission-and-generation-limit"]);
+const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision", "run-action-admission-and-generation-limit", "stale-scene-readmits-any-family"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -128,6 +128,27 @@ for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revis
     assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 2, 3]);
   }
   console.log(`PASS ${scenario}`);
+}
+
+if (shouldRun("stale-scene-readmits-any-family")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  // A STALE_SCENE re-admits whichever family reported it and however it
+  // arrived: as a rejection receipt or as a thrown error.
+  const calls = [["verify_result", { receiptId: "receipt-1", checks: ["placement"] }], ["operate_studio", { frame: 3 }], ["inspect_studio", { scope: "scene" }]];
+  for (const shape of ["receipt", "thrown"]) {
+    for (const [name, args] of calls) {
+      let live = 7, refreshes = 0;
+      const admission = { host: host(), revision: 5, commandId: uuid, refresh: async () => { refreshes++; admission.revision = live; } };
+      const liveHub = { async command() {
+        if (shape === "thrown") throw Object.assign(new Error("Authored state changed; obtain fresh intent."), { code: "STALE_SCENE" });
+        return { ok: false, code: "STALE_SCENE", phase: "admission", mutated: false, recovery: { action: "inspect", retryAllowed: false } };
+      } };
+      const invoke = createStudioTools({ liveHub, workspaceHandle: "handle-12", session: { admission } }).internal.invoke;
+      await assert.rejects(invoke(name, args), { code: "STALE_SCENE" });
+      assert.deepEqual({ refreshes, revision: admission.revision }, { refreshes: 1, revision: live }, `a ${shape} STALE_SCENE from ${name} re-admits at the live revision`);
+    }
+  }
+  console.log("PASS a STALE_SCENE from any Studio family, receipt or thrown, re-admits the live revision");
 }
 
 if (shouldRun("studio-tool-catalogue")) {
