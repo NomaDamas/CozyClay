@@ -63,6 +63,7 @@ const exposedThroughActions = {
 	"character.waypoints": ["character.addWaypoint", "character.clearWaypoints", "character.moveWaypoint", "character.removeWaypoint"],
 	"character.ikKeys": ["character.clearIkKeys", "character.removeIkKey", "character.setIkKey"],
 	"object.attach": ["object.attach", "object.detach"],
+	"shot.cameraRail": ["shot.clearCameraRail", "shot.setCameraRail"],
 };
 for (const [path, actions] of Object.entries(exposedThroughActions)) {
 	assert.equal(elementByPath(path).agentExposure, "action", `${path} is exposed through actions`);
@@ -176,6 +177,7 @@ const expected = new Map([
 	["stage.style", "handheld 16mm, sodium streetlight"],
 	["stage.hasEnvSheet", true],
 	["shot.targetModel", "seedance-2.5"],
+	["shot.cameraRail", rail],
 	["object.renderer", "sphere"],
 	["object.position", [1.25, 2.5, -3.75]],
 	["object.rotation", [15, 25, -35]],

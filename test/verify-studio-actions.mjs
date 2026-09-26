@@ -15,7 +15,8 @@ const firstBatch = ["shot.create", "shot.split", "shot.duplicate", "shot.remove"
 const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"];
 const ikKeyActions = ["character.setIkKey", "character.removeIkKey", "character.clearIkKeys"];
 const attachActions = ["object.attach", "object.detach"];
-assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions, ...attachActions].sort());
+const railActions = ["shot.setCameraRail", "shot.clearCameraRail"];
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions, ...attachActions, ...railActions].sort());
 assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job"]);
 assert.ok(Object.isFrozen(STUDIO_ACTIONS));
 for (const action of STUDIO_ACTIONS) {
@@ -82,6 +83,18 @@ assert.deepEqual(validateStudioSchema(attach, { objectId: "cube-1", characterId:
 assert.deepEqual(validateStudioSchema(attach, { objectId: "cube-1", characterId: "char-a" }), { objectId: "cube-1", characterId: "char-a" }, "no bone is the animated root");
 assert.throws(() => validateStudioSchema(attach, { objectId: "cube-1", characterId: "char-a", bone: "tail" }), code("INVALID_ARGUMENT"));
 assert.deepEqual(studioActionDeclaration("object.detach").input.required, ["objectId"]);
+// Camera rail: floor points in travel order, as many as the shot document keeps.
+for (const id of railActions) {
+	assert.equal(studioActionDeclaration(id).kind, "mutation", id);
+	assert.equal(studioActionDeclaration(id).undoDomain, "shot", id);
+}
+const rail = studioActionDeclaration("shot.setCameraRail").input;
+assert.deepEqual([...rail.required].sort(), ["points", "shotId"]);
+assert.equal(rail.properties.points.minItems, 2);
+assert.equal(rail.properties.points.maxItems, 512, "shot-authoring.js RAIL_MAX_POINTS");
+assert.deepEqual(validateStudioSchema(rail, { shotId: "shot-1", points: [{ x: -2, z: 4 }, { x: 2, z: 4 }] }), { shotId: "shot-1", points: [{ x: -2, z: 4 }, { x: 2, z: 4 }] });
+assert.throws(() => validateStudioSchema(rail, { shotId: "shot-1", points: [{ x: -2, z: 4 }] }), code("INVALID_ARGUMENT"), "a rail needs two points");
+assert.deepEqual(studioActionDeclaration("shot.clearCameraRail").input.required, ["shotId"]);
 // Frame ranges are half-open, like every other Studio range.
 assert.deepEqual(Object.keys(studioActionDeclaration("shot.setRange").input.properties).sort(), ["range", "shotId"]);
 assert.throws(() => validateStudioSchema(studioActionDeclaration("shot.setRange").input, { shotId: "shot-1", range: { startFrame: 10, endFrameExclusive: 10 } }), code("INVALID_ARGUMENT"));
