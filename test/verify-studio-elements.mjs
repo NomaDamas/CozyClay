@@ -64,6 +64,7 @@ const exposedThroughActions = {
 	"character.ikKeys": ["character.clearIkKeys", "character.removeIkKey", "character.setIkKey"],
 	"object.attach": ["object.attach", "object.detach"],
 	"shot.cameraRail": ["shot.clearCameraRail", "shot.setCameraRail"],
+	"view.partColoursGuideModeInset": ["view.setGuideMode", "view.setInset", "view.setPartColours"],
 };
 for (const [path, actions] of Object.entries(exposedThroughActions)) {
 	assert.equal(elementByPath(path).agentExposure, "action", `${path} is exposed through actions`);
@@ -371,3 +372,5 @@ assert.equal(cameraKeyFrame(7), 7, "camera key frame midpoint survives exactly")
 assert.equal(cameraKeyFrame(11), 10, "camera key frame above shot range clamps to shot end");
 
 console.log(`elements=${STUDIO_ELEMENTS.length} persisted-verified=${verified} patchable=${patchable} todo=${todo}`);
+// Every authored capability reaches the agent: no exposure gap is left.
+assert.equal(todo, 0, "no element is left agentExposure todo");

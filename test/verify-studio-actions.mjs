@@ -7,6 +7,7 @@ import { validateStudioCommand, validateStudioSchema } from "../src/studio-agent
 import * as studioActions from "../src/studio-actions.js";
 import { FK_TRACKS, IK_TRACKS } from "../src/ardy/ik.js";
 import { SCENE_ATTACH_BONES } from "../src/scene-objects.js";
+import { GUIDE_MODES } from "../src/shot-guides.js";
 
 const code = expected => error => error?.code === expected;
 
@@ -16,7 +17,8 @@ const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "cha
 const ikKeyActions = ["character.setIkKey", "character.removeIkKey", "character.clearIkKeys"];
 const attachActions = ["object.attach", "object.detach"];
 const railActions = ["shot.setCameraRail", "shot.clearCameraRail"];
-assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions, ...attachActions, ...railActions].sort());
+const viewActions = ["view.setPartColours", "view.setGuideMode", "view.setInset"];
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions, ...attachActions, ...railActions, ...viewActions].sort());
 assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job"]);
 assert.ok(Object.isFrozen(STUDIO_ACTIONS));
 for (const action of STUDIO_ACTIONS) {
@@ -95,6 +97,15 @@ assert.equal(rail.properties.points.maxItems, 512, "shot-authoring.js RAIL_MAX_P
 assert.deepEqual(validateStudioSchema(rail, { shotId: "shot-1", points: [{ x: -2, z: 4 }, { x: 2, z: 4 }] }), { shotId: "shot-1", points: [{ x: -2, z: 4 }, { x: 2, z: 4 }] });
 assert.throws(() => validateStudioSchema(rail, { shotId: "shot-1", points: [{ x: -2, z: 4 }] }), code("INVALID_ARGUMENT"), "a rail needs two points");
 assert.deepEqual(studioActionDeclaration("shot.clearCameraRail").input.required, ["shotId"]);
+// View toggles are viewer preferences: transient, never an undo entry.
+for (const id of viewActions) {
+	assert.equal(studioActionDeclaration(id).kind, "transient", id);
+	assert.equal(studioActionDeclaration(id).undoDomain, undefined, id);
+}
+assert.deepEqual(studioActionDeclaration("view.setPartColours").input.properties.mode.enum, ["off", "flat", "shaded"]);
+assert.deepEqual([...studioActionDeclaration("view.setGuideMode").input.properties.mode.enum], [...GUIDE_MODES]);
+assert.deepEqual(validateStudioSchema(studioActionDeclaration("view.setInset").input, { collapsed: true }), { collapsed: true });
+assert.throws(() => validateStudioSchema(studioActionDeclaration("view.setGuideMode").input, { mode: "fibonacci" }), code("INVALID_ARGUMENT"));
 // Frame ranges are half-open, like every other Studio range.
 assert.deepEqual(Object.keys(studioActionDeclaration("shot.setRange").input.properties).sort(), ["range", "shotId"]);
 assert.throws(() => validateStudioSchema(studioActionDeclaration("shot.setRange").input, { shotId: "shot-1", range: { startFrame: 10, endFrameExclusive: 10 } }), code("INVALID_ARGUMENT"));
