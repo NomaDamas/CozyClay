@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
-import { MAX_ACTIVE_MOTION_JOBS, MAX_ACTIVE_MOTION_JOBS_PER_WORKSPACE, MOTION_JOB_TTL_MS } from "../../mcp/live-hub.mjs";
+import { MAX_ACTIVE_MOTION_JOBS, MAX_ACTIVE_MOTION_JOBS_PER_WORKSPACE, MOTION_COMMAND_TIMEOUT_MS, MOTION_JOB_TTL_MS } from "../../mcp/live-hub.mjs";
 import { normalizePhases } from "../../mcp/ardy-prompts.mjs";
 import { compileStudioBeats, validateStudioCommand, validateStudioIdentity, validateTargetGuard, validateReceipt, freezeStudioData, StudioProtocolError } from "../../src/studio-agent-protocol.js";
 import { motionPreflightReason } from "../../src/analytics.js";
@@ -96,7 +96,9 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 	const remember = (job, outcome) => { job.outcome = freezeStudioData(structuredClone(outcome)); records.get(job.input.commandId).outcome = job.outcome; return job.outcome; };
 	const failure = (job, code, mutated = false) => ({ ok: false, commandId: job.input.commandId, host: job.host, code, phase: job.state === "reconciling" ? "reconcile" : "execution", affectedIds: [job.input.characterId], expectedTargets: [job.guard], currentTargets: [], mutated, preserved: { authoredState: mutated === "unknown" ? "unknown" : "unchanged" }, recovery: { action: mutated === "unknown" ? "reconcile" : "new_intent", retryAllowed: false } });
 	const command = async (job, name, args = {}) => {
-		const value = await liveHub.command(name, { commandId: job.input.commandId, binding: job.binding, ...args }, handle(job));
+		const options = name === "verify_motion_candidate" || name === "repair_motion_candidate" ? { timeoutMs: MOTION_COMMAND_TIMEOUT_MS } : null;
+		const request = { commandId: job.input.commandId, binding: job.binding, ...args };
+		const value = options ? await liveHub.command(name, request, handle(job), options) : await liveHub.command(name, request, handle(job));
 		if (value?.ok === false && value.mutated === false) throw error(value.code ?? "VERIFICATION_FAILED", "Editor rejected motion command");
 		return value;
 	};
@@ -179,7 +181,8 @@ export function createStudioMotionRuntime({ liveHub, getBridgeOrigin, clock = Da
 			clearTimeout(timer); fence(job);
 			if (!identifier(job.candidate?.candidateId) || !Number.isSafeInteger(job.candidate.candidateRevision) || !job.candidate.structurallyValid) throw error("VERIFICATION_FAILED", "Invalid private candidate");
 			checkTarget(job, job.candidate.targetToken);
-			timer = setTimeout(() => job.controller.abort(error("VERIFICATION_FAILED", "Verification deadline exceeded")), verificationMs);
+			const verificationBudgetMs = verificationMs * Math.max(1, job.schedule.frameCount / 48) * 3;
+			timer = setTimeout(() => job.controller.abort(error("VERIFICATION_FAILED", "Verification deadline exceeded")), verificationBudgetMs);
 			let v = await verify(job);
 			if (job.input.repair === "bounded") for (const method of ["auto_physics", "fix_collisions"]) {
 				if (v.status === "verified" || !v.repairable) break;

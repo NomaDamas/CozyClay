@@ -228,7 +228,7 @@ export function createStudioMotionCandidates(ports) {
   }
   async function evaluate(c) {
     captureEnvironment(c);
-    c.deadline = now() + (ports.verificationMs ?? 60000);
+    c.deadline = now() + (ports.verificationMs ?? 60000) * Math.max(1, c.motion.frames / 48) * 2;
     if (!c.cache) c.cache = await samples(c, copyLayer());
     const before = c.cache, after = await samples(c, c.layer), m = after.metrics;
     const continuityRegressed = m.kneeStep > Math.max(before.metrics.kneeStep + 2, 12)
@@ -338,7 +338,7 @@ export function createStudioMotionCandidates(ports) {
         if (request.method === 'auto_physics' ? c.autoAttempted || c.collisionAttempted : c.collisionAttempted || !c.autoAttempted) fail('VERIFICATION_FAILED', 'Repair invocation budget or order exceeded.');
         const before = c.verification, draft = copyLayer(c.layer);
         const preimage = { layer: c.layer, evidence: c.evidence, verifiedStamp: c.verifiedStamp, sealed: c.sealed };
-        c.deadline = now() + (ports.verificationMs ?? 60000);
+        c.deadline = now() + (ports.verificationMs ?? 60000) * Math.max(1, c.motion.frames / 48) * 2;
         if (request.method === 'auto_physics') {
           c.autoAttempted = true;
           if (before.metrics.maxFloorPenetrationM > PHYSICS_LIMITS.floor || before.metrics.maxContactSlipM > PHYSICS_LIMITS.slide || before.metrics.maxContactFloatM > PHYSICS_LIMITS.float || before.metrics.unsupportedFrames > 0) {
