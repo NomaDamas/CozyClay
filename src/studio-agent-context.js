@@ -7,7 +7,7 @@ const escapeContext = context => JSON.stringify(context).replaceAll("<", "\\u003
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 export function encodeStudioContext(context) {
 	const encoded = escapeContext(validateStudioContext(context));
-	if (utf8ByteLength(encoded) > STUDIO_CONTEXT_MAX_BYTES) fail("CONTEXT_TOO_LARGE", "Escaped Studio context exceeds 16 KiB.");
+	if (utf8ByteLength(encoded) > STUDIO_CONTEXT_MAX_BYTES) fail("CONTEXT_TOO_LARGE", `Escaped Studio context exceeds ${STUDIO_CONTEXT_MAX_BYTES / 1024} KiB.`);
 	return encoded;
 }
 export function buildStudioHistoryItem(context, userText) {
@@ -56,8 +56,16 @@ export function buildStudioContext(input) {
 	const distance = e => anchor && e.position ? (e.position.x - anchor.x) ** 2 + (e.position.y - anchor.y) ** 2 + (e.position.z - anchor.z) ** 2 : 0;
 	const compareIds = (a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
 	raw.entities.sort((a, b) => (rank.get(a.id) ?? Infinity) - (rank.get(b.id) ?? Infinity) || distance(a) - distance(b) || compareIds(a, b));
-	const total = raw.entities.length;
+	const total = raw.entities.length, everyEntity = raw.entities;
 	raw.entities = raw.entities.slice(0, STUDIO_CONTEXT_LIMITS.entities);
+	// The compact index names every entity (capped), detailed rows first so the
+	// cap never drops one, then listed in stable id order.
+	const detailed = new Set(raw.entities.map(e => e.id));
+	const cm = value => { const rounded = Math.round(value * 100) / 100; return rounded === 0 ? 0 : rounded; };
+	const indexRow = e => ({ id: e.id, kind: e.kind, ...(e.name ? { name: [...e.name].slice(0, 60).join("") } : {}),
+		...(e.position ? { position: { x: cm(e.position.x), y: cm(e.position.y), z: cm(e.position.z) } } : {}) });
+	raw.entityIndex = [...raw.entities, ...everyEntity.filter(e => !detailed.has(e.id)).sort(compareIds)]
+		.slice(0, STUDIO_CONTEXT_LIMITS.entityIndex).sort(compareIds).map(indexRow);
 	raw.shots.sort((a, b) => Number(b.id === raw.shot?.id) - Number(a.id === raw.shot?.id) || compareIds(a, b));
 	raw.shotsTruncated = raw.shots.length > STUDIO_CONTEXT_LIMITS.shots;
 	raw.shots = raw.shots.slice(0, STUDIO_CONTEXT_LIMITS.shots);
@@ -72,6 +80,9 @@ export function buildStudioContext(input) {
 		while (raw.shots.length && raw.shots.at(-1).id !== raw.shot?.id && utf8ByteLength(escapeContext(raw)) > STUDIO_CONTEXT_MAX_BYTES) { raw.shots.pop(); raw.shotsTruncated = true; }
 		while (raw.assets.length && utf8ByteLength(escapeContext(raw)) > STUDIO_CONTEXT_MAX_BYTES) raw.assets.pop();
 		while (raw.recentReceipts.length && utf8ByteLength(escapeContext(raw)) > STUDIO_CONTEXT_MAX_BYTES) raw.recentReceipts.pop();
+		// Index rows go last, and never one for a detailed entity.
+		const kept = new Set(raw.entities.map(e => e.id));
+		for (let i = raw.entityIndex.length - 1; i >= 0 && utf8ByteLength(escapeContext(raw)) > STUDIO_CONTEXT_MAX_BYTES; i--) if (!kept.has(raw.entityIndex[i].id)) raw.entityIndex.splice(i, 1);
 	}
 	encodeStudioContext(raw); // Never slice JSON bytes or silently lose a target.
 	return freezeStudioData(raw);

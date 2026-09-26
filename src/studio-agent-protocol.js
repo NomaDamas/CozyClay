@@ -2,8 +2,10 @@
 import { STUDIO_ELEMENTS } from "./studio-elements.js";
 
 export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
-export const STUDIO_CONTEXT_MAX_BYTES = 16 * 1024;
-export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, shots: 8, assets: 6, recentReceipts: 3, jobs: 8 });
+// Sized for the compact index of up to 400 entities (~100 bytes each) beside
+// 24 detailed rows; a small scene stays far below it.
+export const STUDIO_CONTEXT_MAX_BYTES = 64 * 1024;
+export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, entityIndex: 400, shots: 8, assets: 6, recentReceipts: 3, jobs: 8 });
 export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"]);
 export const STUDIO_TOOL_LABELS = Object.freeze({
 	inspect_studio: "Read the scene",
@@ -203,6 +205,9 @@ const entity = object({ id, kind: choices(["object", "character", "rig"]), token
 	motion: object({ takeId: nullable(id), frames: integer(), ikKeyCount: integer(), promptBlockCount: integer() }, { poseId: nullable(id), keyIds: ids(8, 0) }),
 	capabilities: object({ rigReady: bool, ik: bool, measuredFeet: bool }),
 });
+// One compact row per entity, so the model sees the whole scene even when
+// only 24 rows carry full detail.
+const indexRow = object({ id, kind: choices(["object", "character", "rig"]) }, { name, position: vec3 });
 const shotSummary = object({ id, name, range, keyCount: integer() }, { subjectIds: ids(24, 0) });
 const currentShot = object({ id, name, range, mode: choices(STUDIO_VARIANTS.shotModes) }, { subjectIds: ids(24, 0) });
 const camera = object({ position: vec3, lookAt: vec3, focalMm: positive, sensorId: id, slate: name });
@@ -217,7 +222,7 @@ const contextSchema = object({
 	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, 6),
 	recentReceipts: array(object({ id, summary: name, canUndoDirect: bool }), 3), jobs: array(jobSummary, 8),
 	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), STUDIO_TOOL_FAMILIES.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
-});
+}, { entityIndex: array(indexRow, STUDIO_CONTEXT_LIMITS.entityIndex) });
 const guardSchema = object({ ...identityFields, targetId: id, token: id });
 const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
 // Pictures the author pasted or dropped into the composer (#367). Inline bytes
@@ -355,7 +360,7 @@ export function validateStudioContext(value) {
 	// Budget check before inspecting strings/arrays; still reject nonfinite values
 	// structurally below (JSON itself would otherwise turn them into null).
 	const bytes = utf8ByteLength(JSON.stringify(value) ?? "");
-	if (bytes > STUDIO_CONTEXT_MAX_BYTES) fail("CONTEXT_TOO_LARGE", "Studio context exceeds 16 KiB.", "$", { bytes, maxBytes: STUDIO_CONTEXT_MAX_BYTES });
+	if (bytes > STUDIO_CONTEXT_MAX_BYTES) fail("CONTEXT_TOO_LARGE", `Studio context exceeds ${STUDIO_CONTEXT_MAX_BYTES / 1024} KiB.`, "$", { bytes, maxBytes: STUDIO_CONTEXT_MAX_BYTES });
 	const c = validateStudioSchema(contextSchema, value, "INVALID_CONTEXT");
 	const unique = new Set(c.entities.map(e => e.id));
 	if (unique.size !== c.entities.length) fail("INVALID_CONTEXT", "Duplicate entity ID.");
@@ -370,6 +375,11 @@ export function validateStudioContext(value) {
 	}
 	const p = c.entityPage;
 	if (p.returned !== c.entities.length || p.total < p.returned || p.truncated !== (p.total > p.returned) || (p.truncated ? p.nextCursor === null : p.nextCursor !== null)) fail("INVALID_CONTEXT", "Entity pagination is inconsistent.");
+	if (c.entityIndex) {
+		const indexed = new Set(c.entityIndex.map(e => e.id));
+		if (indexed.size !== c.entityIndex.length) fail("INVALID_CONTEXT", "Duplicate entity index ID.");
+		if (c.entityIndex.length > p.total || c.entities.some(e => !indexed.has(e.id))) fail("INVALID_CONTEXT", "Entity index must cover every detailed entity and no more than the total.");
+	}
 	if (c.view.frame >= Math.max(1, c.scene.frameCount)) fail("INVALID_CONTEXT", "Playhead is outside the scene.");
 	if (new Set(c.shots.map(s => s.id)).size !== c.shots.length) fail("INVALID_CONTEXT", "Duplicate shot ID.");
 	for (const shot of [...c.shots, ...(c.shot ? [c.shot] : [])]) if (shot.range.endFrameExclusive > c.scene.frameCount) fail("INVALID_CONTEXT", "Shot is outside the scene.");

@@ -351,8 +351,11 @@ function registerTests() {
 	});
 	test("D4 compact fallback preserves every mandatory ID and validates stale cursors", () => {
 		const c = contextFixture(); c.entities = Array.from({length:24},(_,i)=>({id:`char-${i}`,kind:"character",token:`t-${i}`,name:"<".repeat(120),position:point(),yawDeg:0,scale:1,motion:{takeId:null,frames:144,ikKeyCount:0,promptBlockCount:0,keyIds:Array.from({length:8},(_,j)=>`key-${j}-${"x".repeat(100)}`)}}));
-		c.selection={kind:"character",id:"char-23"};c.activeCharacterId="char-22";c.scene.characterCount=24;
+		// Filler whose escaped names overflow the budget through the index alone.
+		c.entities.push(...Array.from({length:376},(_,i)=>({id:`prop-${i}`,kind:"object",token:`p-${i}`,name:"<".repeat(120),position:point(),scale:{x:1,y:1,z:1}})));
+		c.selection={kind:"character",id:"char-23"};c.activeCharacterId="char-22";c.scene.characterCount=24;c.scene.objectCount=376;
 		const result=contextTools.buildStudioContext(c);assert.ok(result.entities.every(e=>e.detailsOmitted));assert.ok(result.entities.some(e=>e.id==="char-23"));assert.ok(result.entities.some(e=>e.id==="char-22"));
+		assert.ok(result.entityIndex.length < 400 && result.entityIndex.some(e=>e.id==="char-23"),"the index sheds bystanders, never a detailed row");protocol.validateStudioContext(result);
 		const cursor=contextTools.studioEntityCursor(result,10);assert.equal(contextTools.validateStudioCursor(cursor,result),10);
 		const stale=structuredClone(result);stale.revision.scene++;rejects(()=>contextTools.validateStudioCursor(cursor,stale),"STALE_CURSOR");
 	});
