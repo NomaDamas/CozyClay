@@ -61,7 +61,7 @@ if (!declarations.has('createStudioAppBinding')) {
 const ref = current => ({ current });
 // The carried-prop maths App.jsx imports from app-stage.jsx (a React module
 // Node cannot load), evaluated from its own source.
-const stage = (() => {
+const carried = (() => {
  const source = readFileSync(new URL('../src/app-stage.jsx', import.meta.url), 'utf8');
  const start = source.indexOf('export const ATTACH_BONE_ROWS'), end = source.indexOf('export const CAMERA_MOVE_LABELS_KO');
  assert(start > 0 && end > start, 'app-stage.jsx attachment block');
@@ -110,9 +110,9 @@ function fixture(options={}) {
  look:ref({yaw:0,pitch:0}),shotCamRef:ref(camera),shotCameraPosRef:ref(null),manualCameraOverrideRef:ref(false),frameCountRef:ref(48),tlFrameRef:ref(0),
  physicsOptions:{protectedFrames:[]},bridge:{ok:false},studioGestureRef:ref(false),ikBodyDragRef:ref(false),lineDragRef:ref(null),lineDrawRef:ref(null),linePinDragRef:ref(null),autoPhysicsRunRef:ref(null),recRef:ref(null),restoreRef:ref(null),
  committedIkEdits:[],IK_CORRECTION_BLEND_FRAMES:6,tlFps:24,MAX_WAYPOINTS:32,WALK_SPEED_MPS:1.4,clampRootPosition:v=>Math.max(-11,Math.min(11,v)),judgeNextWaypoint,createStableItemId,removeStableItem,createCharacterLayer,gestureUndoRef:ref(null),
- ...stage,animatedSceneObjects:[],attachFrameRef:ref((characterId,bone,out)=>stage.attachFrameMatrix(rigs[characterId]??null,bone,out)),
+ ...carried,animatedSceneObjects:[],attachFrameRef:ref((characterId,bone,out)=>carried.attachFrameMatrix(rigs[characterId]??null,bone,out)),
  // Stands in for the mounted prop groups: where each prop is drawn right now.
- propWorldRef:ref((id,out)=>{const o=store.current.objects.find(row=>row.id===id);if(!o)return null;const local=stage.sceneObjectMatrix(o,new THREE.Matrix4());if(!o.attach)return out.copy(local);const frame=stage.attachFrameMatrix(rigs[o.attach.characterId]??null,o.attach.bone??null,new THREE.Matrix4());return frame?out.copy(frame.multiply(local)):null;}),snapshotCast:()=>({}),markSemanticEdit,setCharacters:castOwner.set,editCharacters:castOwner.edit,setShots:shotsOwner.set,editShots:shotsOwner.edit,
+ propWorldRef:ref((id,out)=>{const o=store.current.objects.find(row=>row.id===id);if(!o)return null;const local=carried.sceneObjectMatrix(o,new THREE.Matrix4());if(!o.attach)return out.copy(local);const frame=carried.attachFrameMatrix(rigs[o.attach.characterId]??null,o.attach.bone??null,new THREE.Matrix4());return frame?out.copy(frame.multiply(local)):null;}),snapshotCast:()=>({}),markSemanticEdit,setCharacters:castOwner.set,editCharacters:castOwner.edit,setShots:shotsOwner.set,editShots:shotsOwner.edit,
  ...studioActions,addShotAtFrame,shots:[],tlFrame:0,tlFrameCount:48,captureCurrentFraming:()=>({pos:{x:0,y:1.6,z:5},yaw:0,pitch:0,fovDeg:40}),trackFeature:()=>{},window:{dispatchEvent:()=>true},
  ko:en=>en,isKo:false,loadMotionFromUrl:(...args)=>urlLoader(...args),sha256Hex,encodeMotionResource,decodeMotionResource,resolveMotionSource,retimeMotion,TIMELINE_FPS:24,createMotionEdit,applyMotionCalibration,normalizeMotionCalibration,characterScaleFor,
  projectMotionsRef:ref(new Map()),motionEncodingCacheRef:ref(new WeakMap()),restoreEpochRef:ref(0),
@@ -543,9 +543,12 @@ const implementations={
  async 'run-action-object-attach-and-undo'(f){
   const run=(action,args)=>f.call('run_action',f.request('run_action',{action,args}));
   const created=await f.call('arrange_objects',f.request('arrange_objects',createArgs));assert.equal(created.ok,true,JSON.stringify(created));const id=created.affectedIds[0];
+  // A second, loose prop, made before anything is attached (arrange_objects
+  // needs every prop's bounds, which an attached prop does not have here).
+  const second=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'create',source:{kind:'cube'},position:{world:{x:-2,y:0,z:0}}}]}));assert.equal(second.ok,true,JSON.stringify(second));const loose=second.affectedIds[0];
   const object=()=>f.store.current.objects.find(o=>o.id===id);
   // Where the prop is drawn: its numbers, through the frame it rides.
-  const shown=()=>{const o=object(),local=stage.sceneObjectMatrix(o,new THREE.Matrix4());if(o.attach)local.premultiply(stage.attachFrameMatrix(f.rigs[o.attach.characterId],o.attach.bone,new THREE.Matrix4()));return new THREE.Vector3().setFromMatrixPosition(local).toArray().map(v=>Math.round(v*1e4)/1e4+0);};
+  const shown=()=>{const o=object(),local=carried.sceneObjectMatrix(o,new THREE.Matrix4());if(o.attach)local.premultiply(carried.attachFrameMatrix(f.rigs[o.attach.characterId],o.attach.bone,new THREE.Matrix4()));return new THREE.Vector3().setFromMatrixPosition(local).toArray().map(v=>Math.round(v*1e4)/1e4+0);};
   assert.deepEqual(shown(),[2,0,0]);
   const listed=Object.fromEntries((await f.call('inspect_studio',{scope:'actions'})).actions.map(a=>[a.id,a]));
   assert.equal(listed['object.attach']?.available,true);assert.equal(listed['object.detach']?.available,false,'nothing rides a character yet');
@@ -565,7 +568,6 @@ const implementations={
   assert.equal(undo.status,'undone',JSON.stringify(undo));assert.deepEqual(object().attach,{characterId:'actor-a',bone:null});
   f.actual.undoScene();assert.deepEqual(object().attach,{characterId:'actor-b',bone:'rightHand'},'Ctrl+Z steps back through the attachments');
   // Refusals change nothing and say why.
-  const loose=(await f.call('arrange_objects',f.request('arrange_objects',createArgs))).affectedIds[0];
   const depth=f.store.current.depths().past;
   const refused=async(action,args,code)=>{const r=await run(action,args);assert.equal(r.ok,false,JSON.stringify(r));assert.equal(r.code,code,`${action} ${JSON.stringify(args)}: ${JSON.stringify(r)}`);assert.equal(r.mutated,false);};
   await refused('object.attach',{objectId:loose,characterId:'ghost'},'STALE_TARGET');
