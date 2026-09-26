@@ -274,10 +274,32 @@ function registerTests() {
 		const source = structuredClone(c); const result = contextTools.buildStudioContext(c);
 		assert.deepEqual(c, source); assert.equal(result.entities.length,24); assert.equal(result.entityPage.total,81); assert.equal(result.entityPage.truncated,true);
 		for (const id of ["object-079","char-alex","object-078"]) assert.ok(result.entities.some(e=>e.id===id));
-		assert.ok(new TextEncoder().encode(contextTools.encodeStudioContext(result)).length <= 16384);
+		assert.ok(new TextEncoder().encode(contextTools.encodeStudioContext(result)).length <= protocol.STUDIO_CONTEXT_MAX_BYTES);
 		assert.ok(result.entities.every(e=>!e.name || [...e.name].length <= 120)); protocol.validateStudioContext(result);
 		const stale = structuredClone(result); stale.entities = stale.entities.filter(e=>e.id!=="char-alex"); stale.entityPage.returned--;
 		rejects(()=>protocol.validateStudioContext(stale));
+	});
+	test("D4 context indexes every entity (cap 400) beside at most 24 detailed ones", () => {
+		const c = contextFixture();
+		c.entities = Array.from({length: 62}, (_,i) => ({ id: `object-${String(i).padStart(3,"0")}`, kind: "object", name: `Prop ${i}`, token: `t-${i}`, position: {x:i+0.123456,y:0,z:-2}, scale: { x: 1, y: 1, z: 1 } }));
+		c.entities.push(contextFixture().entities[0]); c.scene.objectCount = 62; c.selection = {kind:"object",id:"object-061"};
+		const result = contextTools.buildStudioContext(c);
+		assert.equal(result.entities.length, 24); assert.equal(result.entityPage.total, 63);
+		assert.deepEqual(result.entities.slice(0,2).map(e=>e.id), ["object-061","char-alex"], "selected, then active, lead the detail");
+		assert.deepEqual(result.entityIndex.map(e=>e.id), c.entities.map(e=>e.id).sort(), "every entity is indexed in stable id order");
+		assert.deepEqual(result.entityIndex.find(e=>e.id==="object-007"), { id: "object-007", kind: "object", name: "Prop 7", position: { x: 7.12, y: 0, z: -2 } });
+		assert.deepEqual(result.entityIndex.find(e=>e.id==="char-alex"), { id: "char-alex", kind: "character", name: "Alex", position: { x: 0, y: 0, z: 0 } });
+		protocol.validateStudioContext(result);
+		const duplicate = structuredClone(result); duplicate.entityIndex.push(duplicate.entityIndex[0]); rejects(()=>protocol.validateStudioContext(duplicate), "INVALID_CONTEXT");
+		const missing = structuredClone(result); missing.entityIndex = missing.entityIndex.filter(e=>e.id!=="object-061"); rejects(()=>protocol.validateStudioContext(missing), "INVALID_CONTEXT");
+		const big = contextFixture();
+		big.entities = Array.from({length: 450}, (_,i) => ({ id: `workshop-prop-${String(i).padStart(4,"0")}`, kind: "object", name: `Workshop prop number ${i}`, token: `t-${i}`, position: {x:i/7,y:0.25,z:-i/9}, scale: { x: 1, y: 1, z: 1 } }));
+		big.entities.push(contextFixture().entities[0]); big.scene.objectCount = 450; big.selection = {kind:"object",id:"workshop-prop-0449"};
+		const capped = contextTools.buildStudioContext(big);
+		assert.equal(capped.entityIndex.length, 400); assert.equal(capped.entityPage.total, 451);
+		for (const id of ["workshop-prop-0449","char-alex"]) assert.ok(capped.entityIndex.some(e=>e.id===id), `${id} survives the index cap`);
+		assert.ok(new TextEncoder().encode(contextTools.encodeStudioContext(capped)).length <= protocol.STUDIO_CONTEXT_MAX_BYTES);
+		protocol.validateStudioContext(capped);
 	});
 	test("D5 missing identity and each workspace/scene/epoch/token mismatch fail closed", () => {
 		rejects(()=>protocol.validateTargetGuard({},{}));

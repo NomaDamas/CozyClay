@@ -25,7 +25,7 @@ import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals'];
+const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'run-action-refusals', 'context-entity-index'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 const app = readFileSync(new URL('../src/App.jsx', import.meta.url), 'utf8');
@@ -163,6 +163,19 @@ const implementations={
   assert.equal(first.total,30);assert.equal(first.entities.length,29);
   const last=await f.call('inspect_studio',{scope:'entities',query:'Prop',limit:29,cursor:first.nextCursor});
   assert.deepEqual(last.entities,[row]);assert.equal(last.nextCursor,null);
+ },
+ async 'context-entity-index'(f){
+  const created=await f.call('arrange_objects',f.request('arrange_objects',{ops:Array.from({length:61},(_,i)=>({op:'create',source:{kind:'cube'},name:`Crate ${i}`,position:{world:{x:i,y:0,z:-3}}}))}));
+  assert.equal(created.status,'applied',JSON.stringify(created));
+  f.actual.operateStudio({selection:{kind:'object',id:'cube-40'}},f.binding.refresh());
+  const c=f.binding.context();
+  protocol.validateStudioContext(c);
+  assert.equal(c.entityPage.total,63);assert.equal(c.entities.length,24);
+  assert.deepEqual(c.entities.slice(0,2).map(e=>e.id),['cube-40','actor-a'],'selected, then active, lead the detail');
+  const all=[...f.store.current.objects.map(o=>o.id),'actor-a','actor-b'].sort();
+  assert.deepEqual(c.entityIndex.map(e=>e.id),all,'the per-turn context indexes all 63 entities');
+  assert.deepEqual(c.entityIndex.find(e=>e.id==='cube-40'),{id:'cube-40',kind:'object',name:'Crate 39',position:{x:39,y:0,z:-3}});
+  assert.equal(c.entityIndex.find(e=>e.id==='actor-b').kind,'character');
  },
  async 'motion-preserves-playhead'(f){f.live.current.timeline.frameCount=96;f.live.current.studioView.frame=80;const {req,next,verified}=await candidate(f);const result=await f.call('commit_motion_candidate',{...next,verificationId:verified.verificationId,expectedTargetToken:req.binding.targetToken,expectedPhysicsRevision:verified.physicsRevision,explicitUnverifiedAcceptance:true});assert.equal(result.status,'installed',JSON.stringify(result));assert.equal(f.binding.context().view.frame,80);assert(f.binding.context().scene.frameCount>80);},
  async 'patch-character-tint-and-undo'(f){const before=f.binding.refresh().revision;const r=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{tint:'#123456',pose:'pose-wave'}}]}));assert.equal(r.status,'applied',JSON.stringify(r));assert.equal(r.revision.before,before);assert.equal(r.revision.after,before+1);assert.deepEqual(r.ops,[{index:0,status:'applied'}]);assert.deepEqual(r.delta,[{id:'actor-a',after:{patched:[{path:'character.tint',text:'#123456'},{path:'character.pose',text:'pose-wave'}]}}]);assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').tint,'#123456');assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').pose.id,'pose-wave');assert.equal(f.history.current.past.length,1);const undo=await f.call('undo_edit',f.request('undo_edit',{receiptId:r.receiptId}));assert.equal(undo.status,'undone',JSON.stringify(undo));assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').tint,null);assert.equal(f.characterRef.current.find(c=>c.id==='actor-a').pose,null);},
