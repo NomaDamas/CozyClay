@@ -1,0 +1,11 @@
+{
+  "schema": "studio-agent-qa-scene-v1",
+  "fps": 24,
+  "frameCount": 48,
+  "scene": {"id":"qa-scene","name":"Studio Agent acceptance fixture","floorY":0},
+  "characters": [
+    {"id":"qa-character-a","name":"A","model":"y-bot-tpose","position":{"x":0,"y":0,"z":0},"yawDeg":0}
+  ],
+  "objects": [],
+  "shots": [{"id":"qa-shot","name":"Acceptance shot","range":{"startFrame":0,"endFrameExclusive":48}}]
+}

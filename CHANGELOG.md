@@ -1,5 +1,203 @@
 # Changelog
 
+## 1.10.0
+
+Props and characters can now be hidden without being deleted, the Studio top
+bar no longer collapses at 1100px when a live workspace handle is shown, and
+the MorphGS mocap experiment gets its conversion scripts, a playback
+regression test and a cluster setup script under `tools/morphgs/`.
+
+Studio
+
+- Hide or show a prop or a character from the hierarchy eye and the row
+  context menu. The row, selection and inspector stay; move handles appear
+  only while the object is on stage. A hidden parent or a hidden character
+  takes its children and carried props off the stage, out of collision and
+  off the ground while their own eye stays on. Hidden state survives
+  save/reload and Ctrl+Z. (#416, by @bjoernfal)
+- MCP `update_object` and the Studio agent's object `update` op accept
+  `hidden`; `describe_scene` marks hidden props. The OTIO cut-list export
+  leaves hidden props out of the blocking metadata. (#416)
+- The Inspector Parent select writes through the history store, so a
+  reparent no longer disappears on the next object edit. (#416)
+- The `Live workspace <uuid>` handle in the top bar stays on one line and
+  truncates with an ellipsis instead of wrapping over Settings and Export at
+  1100px; the responsive browser QA now asserts that top-bar chrome does
+  not overlap. (#321)
+
+Tools
+
+- `tools/morphgs/`: `fbx2morphgs.mjs` (x-bot FBX → MorphGS mesh + compressed
+  rig, drops the zero-length duplicate bones FBXLoader creates and appends the
+  required `fixed_joint` line), `morphgs-to-cskel27.mjs` (rot_params +
+  pred_joints → playback NPZ), `setup-on-cluster.sh`, `demo-gate.sh` and the
+  `--mode none` preprocess patch, with `test/verify-morphgs-exporter.mjs`
+  checking the exporter against MorphGS's own Animation.step. (#415)
+
+## 1.9.0
+
+The Agent panel moves onto the open-source pi harness with six model
+providers, the Studio gains a gated Fal H3 motion workflow with a
+mocap-readable mannequin, and the codebase sheds its dead exports and
+committed research artifacts. **Node 22.19 is the new floor**, and Agent
+sessions saved by earlier versions are skipped, not migrated.
+
+Agent
+
+- The Agent panel runs on the open-source pi agent harness
+  (`@earendil-works/pi-ai` and `@earendil-works/pi-agent-core`, MIT), which
+  the sidecar loads only when a turn starts.
+- Six model providers instead of one: ChatGPT (the same Codex sign-in),
+  Anthropic, OpenAI, Google Gemini, OpenRouter and a self-hosted CLIProxyAPI.
+  Model ids read `provider/model`, and a bare id still resolves to the ChatGPT
+  provider. API keys come from `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`,
+  `GEMINI_API_KEY` or `GOOGLE_API_KEY`, `OPENROUTER_API_KEY` and
+  `CLIPROXY_API_KEY`, or from `~/.config/cozyclay/providers.json` (mode 0600),
+  managed through `GET/PUT/DELETE /agent/providers`, which never return key
+  material. Saved keys are validated before they are advertised as usable.
+- A running Workflow turn can be steered: `POST /agent/turn/<turnId>/steer`
+  hands the text to the model at the next step of the same turn instead of
+  stopping it. Studio turns keep their frozen envelopes and refuse with
+  `STEER_UNSUPPORTED`.
+- Conversations are stored in a new v2 transcript format that keeps each
+  provider's own message fields. Sessions saved before this version are
+  ignored, not migrated: the files stay on disk and are skipped by History.
+- Images can be pasted or dropped into the Agent composer and travel with the
+  turn; pasted attachments come back as thumbnails in a resumed session.
+- Studio Agent sessions persist across reloads, and the shared panel is split
+  into a surface-neutral core plus a Studio adapter whose receipts land as
+  Inspector rows.
+- Studio commands: `patch_elements` is one thin family derived from the
+  element declaration table (environment description, style and sheet flag
+  included); element ranges are the single source of truth, partial receipts
+  are reported, revisions are read-safe, and a session re-admits within a turn.
+- Stop handling: a Studio stop that names a motion job this session never
+  admitted is refused; retired jobs no longer accept stale stops; the model
+  registry is built single-flight and refreshed on sign-in.
+
+Studio
+
+- Gated Fal H3 motion generation: the capture card and a wide authoring modal
+  with duration, motion description and an editable prompt. References are
+  accepted only from a fixed camera with the palette mannequin, clipped or
+  unshaded references are rejected, and Fal video routes through H3 Max Turbo.
+- The mannequin is readable for mocap input: separated palette hues per limb
+  and two eye marks on the face; a warning fires before cropped mocap framing.
+- Motion extraction: hybrid 2D keypoints use palette-derived joints where the
+  render lost a part (face from ViTPose); GVHMR takes get a sigma-3 smoother and
+  a foot-anchored root. Clearing a motion take also drops its persisted
+  `motionRef`.
+- Look through has one entry in the Shot monitor; the on-screen Shot camera
+  indicator and Esc return to the free camera without a duplicate toolbar
+  toggle.
+- Camera fly, pan and orbit lock the pointer for the hold: the cursor hides,
+  the view can turn past the window edge, and release puts the cursor back
+  where the press started.
+- One undo entry per key light, environment and character transform gesture;
+  agent camera history stays reachable after an object undo; persistence
+  elements are declared and verified.
+
+Housekeeping
+
+- Dead exports, duplicate 500 handlers and the committed `.omo/` research
+  artifacts are gone (#411). The README is restructured around the user path.
+- `cclay live` and the agent sidecar share one workspace-selection rule.
+- Agent tests keep their sessions out of the author's config directory.
+
+## 1.8.1
+
+The Studio camera tutorial now starts where the landing page does and shows
+where to click. Look-through flies the shot camera instead of opening the player.
+
+- Opening the tutorial (Settings ▾ → Camera tutorial or `/app/?tutorial=camera`)
+  loads the City Block starter scene with the walk take on its character, at
+  frame 0 in the free camera, so Shot / Rail / Play have something to frame.
+  A scene with unsaved changes is replaced only after a confirm.
+- Each step points at its control: a pulsing spotlight plus a numbered beacon
+  and caption pinned to `+ Add shot`, the shot block and `Draw rail`, the
+  top view, and the look-through button; the Look / Walk / Dolly / Orbit steps
+  show an animated mouse-and-keys cue in the viewport, with the walk keycaps
+  turning green as they are pressed. The hint card names the region ("↓
+  Timeline, Shots lane", "→ Viewport"). Overlays never take the pointer and go
+  static under `prefers-reduced-motion`.
+- **Look through** on the Camera bar (and the Shot monitor's expand icon) hands
+  the viewport to the shot camera with the same fly bindings as the free camera.
+  Esc returns. The chrome-free player remains the Workflow embed.
+
+## 1.8.0
+
+The Studio's chrome gets a research-backed cut: the same capabilities, a third
+fewer controls on screen at once, and one place for each of them. A first-time
+creator can now learn the camera inside the Studio itself, or on cozyclay.org
+before installing, and keep the scene they made. Video mocap gets a quality
+gate, and AI video takes are checked against the scene they were supposed to
+preserve.
+
+### Studio UI simplification
+
+- Simultaneously visible controls drop from 49 / 54 / 65 (Scene / Camera /
+  Motion mode) to 35 / 38 / 51, measured by `tools/qa/studio-control-count.mjs`
+  and recorded with the per-control rationale in `docs/studio-ui-ia.md`.
+- The top bar keeps five actions. One **Export ▾** menu leads with the keyframe
+  pack and folds the mp4, depth/normal passes, storyboard and blocking frame
+  under it; the three Record buttons and the inspector's duplicate FOV/Recenter
+  are gone. **Settings ▾** holds language and analytics.
+- **View ▾** on the viewport bar owns the reference grid, Auto Color and body
+  part colours; Move/Rotate/Scale stay on the transform strip only.
+- The scene switcher sits on the hierarchy's root row; the Projects… button,
+  the root fold caret and the Characters group row are removed and characters
+  sit directly under the scene.
+- Timeline motion tools (IK, Foot, Body, speed, Clear, take bar) render only in
+  Motion mode; Foot snap and Body contact appear only while IK is on.
+- The Scene/PlayView tabs are replaced by the viewport's look-through button:
+  it enters an explicit preview of the shot camera and Esc returns.
+- Selecting the camera switches to Camera mode; the Placement row appears in
+  Motion mode; Generate all waits for at least one prompt block.
+- The `advancedMode` / `beginnerMode` gates that had been hardcoded on are
+  removed.
+
+### Learn the camera
+
+- A seven-step camera tutorial runs inside the Studio: Look, Walk (W A S D
+  Q E), Dolly, Orbit, Shot, Rail, Play. Open it from Settings ▾ → Camera
+  tutorial or `/app/?tutorial=camera`; each step completes only when the
+  gesture actually happens, and the strip never takes the pointer.
+- cozyclay.org embeds a live Studio playground on a preset city block with the
+  same seven steps, a second demo reel, and leaner copy. The tutorial ends by
+  handing over `npx cozyclay --scene city-block`, which opens the local Studio
+  on that starter scene; starter scenes are also offered from the project
+  browser, and the visitor can download the scene they made.
+
+### Agent panel in the Studio
+
+- The Workflow page's Agent chat column is available in the Studio, toggled
+  from View ▾ → Panels → Agent panel or Cmd/Ctrl+B. It boots collapsed so the
+  mode budgets above are unchanged.
+
+### Video mocap and AI video takes
+
+- GVHMR is the only extraction backend; the bridge and the Studio return a
+  named error instead of silently falling back to browser MediaPipe.
+- GVHMR output goes through adaptive position/rotation stabilisation, explicit
+  contact correction, support-surface height (a chair lifts the motion), a
+  mocap quality gate, and scene calibration that survives restore. Palette
+  segmentation diagnostics are exposed for AI-rendered mannequin clips.
+- H3 video takes are checked against the requested scene and camera: the
+  Workflow shows a lock receipt on success and rejects a take whose background
+  or camera drifted, keeping no stale preview.
+
+### Site
+
+- Four search-facing pages (greybox to video, previs software, Seedance camera
+  control, privacy), `robots.txt` with an explicit AI-crawler policy,
+  `llms.txt`, a generated sitemap with real last-modified dates, and IndexNow
+  pings on deploy.
+
+## 1.7.1
+
+- Open the complete Studio at the development server root; the unfinished
+  Workflow canvas remains available at `/workflow/`.
+
 ## 1.7.0
 
 Kimodo becomes the default motion-generation backend, and a full edit-and-refine

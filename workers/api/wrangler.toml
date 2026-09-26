@@ -15,6 +15,10 @@ TURNSTILE_SITE_KEY = "0x4AAAAAAEbNDDTxohyi9XFd"
 # CC_WORKER_SECRET
 # SESSION_SIGNING_KEY
 # TURNSTILE_SECRET_KEY
+# Motion generation is deliberately disabled until the owner finishes production QA.
+# Enable explicitly with `MOTION_GENERATION_ENABLED = "true"`.
+MOTION_GENERATION_ENABLED = "false"
+FAL_CLIP_COST_USD = "0.0625"
 
 [[d1_databases]]
 binding = "DB"
@@ -38,6 +42,7 @@ SITE_ORIGIN = "http://127.0.0.1:5180"
 API_ORIGIN = "http://127.0.0.1:8787"
 GOOGLE_CLIENT_ID = "replace-with-development-google-client-id"
 TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+MOTION_GENERATION_ENABLED = "false"
 
 [[env.development.d1_databases]]
 binding = "DB"

@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const SOURCE_DIRECTORIES = ["src", "tools", "bin", "mcp"];
 const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
+const ROOT_DEPENDENCY_ALLOWLIST = Object.freeze({
+	"@earendil-works/pi-agent-core": "0.85.1",
+	"@earendil-works/pi-ai": "0.85.1",
+});
 const MCP_DEPENDENCY_BASELINE = Object.freeze({
 	"@modelcontextprotocol/sdk": "^1.30.0",
 	ws: "^8.19.0",
@@ -54,12 +58,21 @@ function sourceFailures(sources, pattern, label) {
 	);
 }
 
-function toolBlocks(server) {
-	const registrations = [...server.matchAll(/registerTool\(\s*\n\s*["']([^"']+)["']/g)];
+// The tools are declared in mcp/tool-handlers.mjs as `tool("name", {...})`
+// entries and registered from there by mcp/server.mjs, which may still call
+// `registerTool("name", {...})` directly. Both shapes are scanned, so moving a
+// tool between the two files cannot quietly drop it out of this contract.
+const TOOL_DECLARATION_SITES = [
+	{ path: "mcp/tool-handlers.mjs", keyword: "tool" },
+	{ path: "mcp/server.mjs", keyword: "registerTool" },
+];
+
+function toolBlocks(source, keyword = "registerTool") {
+	const registrations = [...source.matchAll(new RegExp(`(?<![\\w$.])${keyword}\\(\\s*\\n\\s*["']([^"']+)["']`, "g"))];
 	return registrations.map((match, index) => ({
 		name: match[1],
-		body: server.slice(match.index, registrations[index + 1]?.index),
-		line: lineAt(server, match.index),
+		body: source.slice(match.index, registrations[index + 1]?.index),
+		line: lineAt(source, match.index),
 	}));
 }
 
@@ -96,14 +109,20 @@ function rawArgumentFailures(scope, name, body, line, path, pattern) {
 function verifyG009(sources) {
 	const server = sources["mcp/server.mjs"] ?? "";
 	const app = sources["src/App.jsx"] ?? "";
-	const tools = toolBlocks(server);
+	const tools = TOOL_DECLARATION_SITES.flatMap(({ path, keyword }) =>
+		toolBlocks(sources[path] ?? "", keyword).map((tool) => ({ ...tool, path })),
+	);
 	const handlers = liveHandlers(app);
 	const failures = [
-		...tools.flatMap((tool) => rawArgumentFailures("tool", tool.name, schemaBody(tool.body), tool.line, "mcp/server.mjs", /\b([A-Za-z_$][\w$-]*)\s*:/g)),
+		// A rename that stops this parser finding the tools would turn every check
+		// below into a vacuous pass, so an empty scan is itself a failure.
+		...(tools.length === 0 ? [`G009 no MCP tool declarations found in ${TOOL_DECLARATION_SITES.map(({ path }) => path).join(" or ")}`] : []),
+		...tools.flatMap((tool) => rawArgumentFailures("tool", tool.name, schemaBody(tool.body), tool.line, tool.path, /\b([A-Za-z_$][\w$-]*)\s*:/g)),
 		...handlers.flatMap((handler) => rawArgumentFailures("live handler", handler.name, handler.body, handler.line, "src/App.jsx", /\bargs\.([A-Za-z_$][\w$-]*)\b/g)),
 	];
 	const handlerSources = {
 		"mcp/server.mjs": server,
+		"mcp/tool-handlers.mjs": sources["mcp/tool-handlers.mjs"] ?? "",
 		"mcp/live-hub.mjs": sources["mcp/live-hub.mjs"] ?? "",
 		"src/live-control.js": sources["src/live-control.js"] ?? "",
 		"src/App.jsx": app,
@@ -151,7 +170,7 @@ function verifyG013(packages) {
 	const mcpDependencies = packages.mcp.dependencies ?? {};
 	return {
 		failures: [
-			...(Object.keys(rootDependencies).length === 0 ? [] : [`G013 root runtime dependencies must be empty: ${JSON.stringify(rootDependencies)}`]),
+			...(sameObject(rootDependencies, ROOT_DEPENDENCY_ALLOWLIST) ? [] : [`G013 root runtime dependencies must equal the pi allow-list: ${JSON.stringify(rootDependencies)}`]),
 			...(sameObject(mcpDependencies, MCP_DEPENDENCY_BASELINE) ? [] : [`G013 mcp runtime dependencies drifted from baseline: ${JSON.stringify(mcpDependencies)}`]),
 		],
 	};
@@ -218,9 +237,13 @@ function selfTest(name, checks) {
 
 function runSelfTests() {
 	selfTest("G009", [verifyG009({ "mcp/server.mjs": 'registerTool(\n"run", { inputSchema: { code: z.string() } }, async () => eval("x"));', "src/App.jsx": "" })]);
+	selfTest("G009 registry", [verifyG009({ "mcp/tool-handlers.mjs": 'tool(\n"run", { inputSchema: { command: z.string() } }, async () => 0);', "src/App.jsx": "" })]);
+	selfTest("G009 empty scan", [verifyG009({ "src/App.jsx": "" })]);
 	selfTest("G010", [verifyG010({ "mcp/server.mjs": 'import y from "yjs";', "mcp/live-hub.mjs": 'const frame = { type: "cmd" };', "src/live-control.js": "dispatchLiveFrame", "src/App.jsx": "liveHandlersRef.current = {" })]);
 	selfTest("G012", [verifyG012({ "mcp/server.mjs": 'const method = "tasks/get";' })]);
-	selfTest("G013", [verifyG013({ root: { dependencies: {} }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE, drift: "1.0.0" } } })]);
+	selfTest("G013", [verifyG013({ root: { dependencies: { ...ROOT_DEPENDENCY_ALLOWLIST } }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE, drift: "1.0.0" } } })]);
+	selfTest("G013 extra root dependency", [verifyG013({ root: { dependencies: { ...ROOT_DEPENDENCY_ALLOWLIST, "left-pad": "1.0.0" } }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE } } })]);
+	selfTest("G013 non-exact root pin", [verifyG013({ root: { dependencies: { ...ROOT_DEPENDENCY_ALLOWLIST, "@earendil-works/pi-ai": "^0.85.1" } }, mcp: { dependencies: { ...MCP_DEPENDENCY_BASELINE } } })]);
 	selfTest("G014", [loopbackSites({ "mcp/server.mjs": 'server.listen(5173, "0.0.0.0");' })]);
 	selfTest("executable entrypoints", [verifyExecutableEntrypoints({ "mcp/server.mjs": 0o100644, "bin/cozyclay.mjs": 0o100755 })]);
 }
@@ -230,12 +253,12 @@ const sources = readSources();
 const modes = entrypointModes();
 const [g009, g010, g012, g013, g014, executableEntrypoints] = runChecks(sources, packages(), modes);
 const failures = [g009, g010, g012, g013, g014, executableEntrypoints].flatMap((check) => check.failures);
-console.log(`G009 MCP tools scanned=${g009.tools.length}: ${g009.tools.map((tool) => tool.name).join(", ")}`);
+console.log(`G009 MCP tools scanned=${g009.tools.length} across ${[...new Set(g009.tools.map((tool) => tool.path))].join(", ")}: ${g009.tools.map((tool) => tool.name).join(", ")}`);
 console.log(`G009 live handlers scanned=${g009.handlers.length}: ${g009.handlers.map((handler) => handler.name).join(", ")}`);
 console.log("G010 agent mutation path: MCP tool -> appliedLiveMutation/liveHub.command -> WebSocket cmd frame -> dispatchLiveFrame -> App liveHandlersRef React-state handlers");
 console.log(`G010 source files scanned=${Object.keys(sources).length}; CRDT/OT imports=0`);
 console.log(`G012 MCP source files scanned=${Object.keys(sources).filter((path) => path.startsWith("mcp/")).length}; unsupported protocol constructs=0`);
-console.log(`G013 root runtime dependencies=0; MCP baseline=${JSON.stringify(MCP_DEPENDENCY_BASELINE)}`);
+console.log(`G013 root runtime dependencies allow-list=${Object.keys(ROOT_DEPENDENCY_ALLOWLIST).join(", ")}; MCP baseline=${JSON.stringify(MCP_DEPENDENCY_BASELINE)}`);
 console.log(`G014 listen sites checked=${g014.listeners.length}: ${g014.listeners.join(", ")}`);
 console.log(`G014 loopback client URL sites checked=${g014.urls.length}: ${g014.urls.join(", ")}`);
 console.log(`Executable entrypoints checked=${EXECUTABLE_ENTRYPOINTS.length}: ${EXECUTABLE_ENTRYPOINTS.map((path) => `${path}=${(modes[path] & 0o777).toString(8)}`).join(", ")}`);

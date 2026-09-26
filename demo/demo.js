@@ -1,4 +1,7 @@
 import { API_BASE, DEMO_DISABLED, TURNSTILE_SITE_KEY, configuredPromptLimit } from "./config.js";
+import { initAnalytics, track } from "../src/analytics.js";
+
+void initAnalytics().then(() => track("hosted:composer_viewed"));
 
 const DISABLED_MESSAGE = "아직 동작하지 않는 기능입니다. This feature is not available yet.";
 
@@ -259,7 +262,8 @@ function returnPath() {
 }
 
 function signIn(provider, promptValue) {
-  if (provider !== "google") return;
+	if (provider !== "google") return;
+	track("hosted:login_started");
   const field = byId("prompt");
   if (typeof promptValue === "string") savePrompt(promptValue);
   else if (field) savePrompt(field.value ?? "");
@@ -341,6 +345,7 @@ async function submit({ prompt: suppliedPrompt, turnstileToken: suppliedToken } 
     });
     const data = await responseJson(response);
     if (response.status === 201) {
+		track("hosted:ticket_created");
       redirectToTicket(data.token);
       return data;
     }

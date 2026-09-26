@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="How to get the same camera out of Seedance 2.5 on every take: block the shot in 3D, export a flat greybox clip as the reference, and keep the prompt for materials and light. Includes what Seedance accepts, what to strip from the export, and what a missed take costs." />
+    <meta name="theme-color" content="#232323" />
+    <link rel="canonical" href="https://cozyclay.org/seedance-camera-control/" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48 96x96 192x192" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/site.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="CozyClay" />
+    <meta property="og:title" content="Seedance 2.5 camera control: send a reference clip, not a camera prompt" />
+    <meta property="og:description" content="How to get the same camera out of Seedance 2.5 on every take: block the shot in 3D, export a flat greybox clip as the reference, and keep the prompt for materials and light. Includes what Seedance accepts, what to strip from the export, and what a missed take costs." />
+    <meta property="og:url" content="https://cozyclay.org/seedance-camera-control/" />
+    <meta property="og:image" content="https://cozyclay.org/media/cozyclay-seedance-vs-greybox-poster.jpg" />
+    <meta property="og:image:width" content="1920" />
+    <meta property="og:image:height" content="1080" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Seedance 2.5 camera control: send a reference clip, not a camera prompt" />
+    <meta name="twitter:description" content="How to get the same camera out of Seedance 2.5 on every take: block the shot in 3D, export a flat greybox clip as the reference, and keep the prompt for materials and light. Includes what Seedance accepts, what to strip from the export, and what a missed take costs." />
+    <meta name="twitter:image" content="https://cozyclay.org/media/cozyclay-seedance-vs-greybox-poster.jpg" />
+
+    <title>Seedance 2.5 camera control — a reference clip beats a camera prompt</title>
+    <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "6a4384d1375d4ffc8a30a6346a8ad1a0"}'></script>
+    <script type="application/ld+json">
+{
+      "@context": "https://schema.org",
+      "@type": "Article",
+      "headline": "Seedance 2.5 camera control: send a reference clip, not a camera prompt",
+      "description": "How to get the same camera out of Seedance 2.5 on every take: block the shot in 3D, export a flat greybox clip as the reference, and keep the prompt for materials and light. Includes what Seedance accepts, what to strip from the export, and what a missed take costs.",
+      "image": "https://cozyclay.org/media/cozyclay-seedance-vs-greybox-poster.jpg",
+      "mainEntityOfPage": "https://cozyclay.org/seedance-camera-control/",
+      "datePublished": "2026-09-10",
+      "dateModified": "2026-09-10",
+      "author": {
+            "@type": "Organization",
+            "name": "CozyClay",
+            "url": "https://cozyclay.org/"
+      },
+      "publisher": {
+            "@type": "Organization",
+            "name": "CozyClay",
+            "logo": {
+                  "@type": "ImageObject",
+                  "url": "https://cozyclay.org/media/cozyclay-logo.png"
+            }
+      }
+}
+    </script>
+  </head>
+  <body>
+    <header class="site">
+      <div class="wrap">
+        <a class="brand" href="/">CozyClay</a>
+        <nav>
+          <a href="/#try">Try it</a>
+          <a href="/greybox-to-video/">Greybox to video</a>
+          <a href="/previs-software/">Previs software</a>
+          <a href="/ai-camera-control/">Camera control</a>
+          <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap article">
+      <div class="hero">
+        <h1>Seedance 2.5 camera control</h1>
+        <p class="lede">
+          Seedance will give you a low angle. It will not give you the same low angle twice unless you
+          show it one. Here is the reference-clip workflow, what to put in the clip, and what to leave out.
+        </p>
+        <p class="meta">Updated September 2026 · 5 min read</p>
+        <div class="reel">
+          <video src="/media/cozyclay-seedance-vs-greybox.mp4" poster="/media/cozyclay-seedance-vs-greybox-poster.jpg" width="1104" height="946" autoplay muted loop playsinline preload="metadata"></video>
+        </div>
+        <p class="reel-note">Top: a greybox blocked in CozyClay, exported flat. Bottom: Seedance 2.5 from that clip. The pillar, the fall and the camera all hold.</p>
+      </div>
+
+      <section>
+        <h2>What Seedance 2.5 accepts</h2>
+        <p>
+          Alongside the text prompt, Seedance 2.5 takes a <strong>first frame</strong> (image-to-video) and
+          <strong>reference material</strong>: images and short clips the generation should follow. ByteDance's
+          own examples include clay and white-model references, which is the previs use case exactly. The
+          reference is a pixel channel. The model matches what it sees; it does not read a camera description
+          out of it.
+        </p>
+        <p>
+          That is why a camera prompt drifts and a reference clip does not. "Slow dolly in, low angle" has
+          no numbers in it. A 3-second greybox clip of a camera dollying in at 0.6 m has all of them, in the
+          only form the model understands.
+        </p>
+      </section>
+
+      <section>
+        <h2>What a missed take costs</h2>
+        <p>
+          On BytePlus ModelArk, Seedance 2.5 at 1080p lists at about $2.84 per 5 seconds, so a 30-second
+          sequence is roughly $17. A take that comes back with the wrong angle is a take you buy again, and
+          camera prompts miss often enough that a six-shot sequence can cost two or three times its list price
+          before it cuts together. Fixing the camera in a reference clip moves the misses to the free part of
+          the process.
+        </p>
+      </section>
+
+      <section>
+        <h2>The workflow</h2>
+        <ol>
+          <li><strong>Block the set in grey.</strong> Boxes and a stand-in figure, at real scale. No textures.</li>
+          <li><strong>Set the shot.</strong> Camera height, distance, lens, then the move: a dolly rail, a crane, a hold. Decide where the cut lands.</li>
+          <li><strong>Export a flat clip.</strong> Same aspect ratio as the delivery (16:9 or 9:16), flat shading, 3 to 5 seconds, nothing drawn on top.</li>
+          <li><strong>Attach it as the reference.</strong> Prompt only for what the clip does not carry: materials, weather, wardrobe, mood. Do not describe the camera again in words; the clip already did.</li>
+          <li><strong>Judge the camera, not the render.</strong> If the framing is off, move the camera in the blockout and export again. That is free. Then spend on the generation.</li>
+        </ol>
+        <div class="callout">
+          <p>
+            Strip the export. Outlines, gizmos, the ground grid, a selection highlight, a frame counter: any
+            of these can come back in the generation as an object. A flat clay pass with a plain sky is the
+            cleanest reference Seedance can get.
+          </p>
+        </div>
+      </section>
+
+      <section>
+        <h2>Reference clip versus first frame</h2>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>You need</th><th>Send</th><th>Why</th></tr></thead>
+            <tbody>
+              <tr><td>A locked-off shot</td><td>First frame (still)</td><td>Composition and lens are fixed by the image; nothing moves, so nothing drifts.</td></tr>
+              <tr><td>A camera move</td><td>Reference clip</td><td>A still cannot carry a dolly or a crane. The clip carries the whole move, frame by frame.</td></tr>
+              <tr><td>Character motion plus camera</td><td>Reference clip with the figure moving</td><td>The model follows both. Keep the figure grey so it invents the person instead of preserving a mannequin.</td></tr>
+              <tr><td>A cut between two setups</td><td>Two references, two generations</td><td>Generate per shot and cut in an editor; models do not hold a cut inside one generation reliably.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2>Making the clip</h2>
+        <p>
+          Any 3D tool that renders flat can make the reference. Blender works with a clay material and a
+          workbench render. CozyClay, open source and in the browser, exports the flat clip directly with the
+          delivery ratio and a camera timeline built in; the reel at the top of this page came out of it.
+          The <a href="/#try">home-page playground</a> walks through blocking a shot and drawing a dolly rail in
+          seven moves, and <code>npx cozyclay --scene city-block</code> opens that set locally.
+        </p>
+        <div class="cta">
+          <a class="btn primary" href="/#try">Try it in your browser</a>
+          <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
+        </div>
+      </section>
+
+      <section id="faq">
+        <h2>FAQ</h2>
+        <details open>
+          <summary>Does Seedance 2.5 support camera control prompts?</summary>
+          <p>It responds to camera language, but as a tendency rather than a specification. The same prompt produces a different angle and distance on each run. A reference clip or a first frame is how you make the camera repeatable.</p>
+        </details>
+        <details>
+          <summary>How long should the reference clip be?</summary>
+          <p>Match the shot you want, typically 3 to 5 seconds. Longer references cost more to generate against and drift more toward the end of the clip.</p>
+        </details>
+        <details>
+          <summary>Does this work on Kling or Veo?</summary>
+          <p>Kling and Veo take a first frame, so locked-off shots transfer directly. Reference-clip camera moves are a Seedance strength; on the others, keep moves short and describe them in the prompt. See <a href="/ai-camera-control/">camera control for AI video</a>.</p>
+        </details>
+        <details>
+          <summary>Should the greybox have textures or colours?</summary>
+          <p>No. Grey or flat clay. Colour is a cue the model preserves, and you want it inventing the surfaces, not matching placeholders. A single highlight colour on the subject is the most you should add.</p>
+        </details>
+      </section>
+
+      <section>
+        <h2>Related</h2>
+        <div class="related">
+          <a href="/greybox-to-video/">Greybox to AI video<small>Block it grey, then generate</small></a>
+          <a href="/ai-camera-control/">Camera control for AI video<small>Why prompts drift, what models accept</small></a>
+          <a href="/previs-software/">Previs software compared<small>Free, open source and browser options</small></a>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site">
+      <div class="wrap">
+        <p>
+          <a href="https://github.com/NomaDamas/CozyClay">Source code (AGPL)</a> ·
+          <a href="https://www.npmjs.com/package/cozyclay">npm</a> ·
+          <a href="/privacy/">Privacy</a>
+        </p>
+        <p>CozyClay is not affiliated with or endorsed by NVIDIA, ByteDance, Kuaishou, Google or Unity Technologies.</p>
+      </div>
+    </footer>
+  </body>
+</html>

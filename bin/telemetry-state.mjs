@@ -9,8 +9,10 @@ export const POSTHOG_API_HOST = "https://t.cozyclay.org";
 const DEFAULT_STATE = Object.freeze({
 	installationId: null,
 	telemetryEnabled: true,
+	internalQa: false,
 	firstLaunchedAt: null,
 	noticeVersion: 0,
+	firstLaunchHeardFrom: null,
 });
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -29,17 +31,22 @@ function normalizedState(value) {
 			? value.installationId
 			: null,
 		telemetryEnabled: value.telemetryEnabled !== false,
+		internalQa: value.internalQa === true,
 		firstLaunchedAt: typeof value.telemetryFirstLaunchedAt === "string"
 			? value.telemetryFirstLaunchedAt
 			: null,
 		noticeVersion: Number.isInteger(value.telemetryNoticeVersion)
 			? value.telemetryNoticeVersion
 			: 0,
+		firstLaunchHeardFrom: ["x", "hn", "reddit", "github", "friend", "other"].includes(value.telemetryFirstLaunchHeardFrom)
+			? value.telemetryFirstLaunchHeardFrom
+			: null,
 	};
 }
 
 function writeState(stateFile, patch) {
 	const next = { ...rawState(stateFile), ...patch };
+	if (typeof next.internalQa !== "boolean") next.internalQa = false;
 	mkdirSync(dirname(stateFile), { recursive: true });
 	const temporary = `${stateFile}.${process.pid}.tmp`;
 	writeFileSync(temporary, JSON.stringify(next, null, "\t"), { mode: 0o600 });
@@ -60,6 +67,11 @@ export function effectiveTelemetryEnabled(state, env = process.env) {
 	return state.telemetryEnabled && !envDisablesTelemetry(env);
 }
 
+export function setTelemetryInternalQa(stateFile, enabled) {
+	writeState(stateFile, { internalQa: enabled === true });
+	return readTelemetryState(stateFile);
+}
+
 export function setTelemetryEnabled(stateFile, enabled) {
 	writeState(stateFile, {
 		telemetryEnabled: enabled === true,
@@ -77,11 +89,18 @@ export function markTelemetryFirstLaunch(stateFile, now = () => new Date().toISO
 	writeState(stateFile, { telemetryFirstLaunchedAt: now() });
 }
 
+export function setTelemetryFirstLaunchSource(stateFile, heardFrom) {
+	if (!["x", "hn", "reddit", "github", "friend", "other"].includes(heardFrom)) return readTelemetryState(stateFile);
+	writeState(stateFile, { telemetryFirstLaunchHeardFrom: heardFrom });
+	return readTelemetryState(stateFile);
+}
+
 export function takeRuntimeTelemetryConfig(
 	stateFile,
 	{
 		appVersion,
 		officialPackage = true,
+		installKind = null,
 		env = process.env,
 		now = () => new Date().toISOString(),
 		randomUUID = nodeRandomUUID,
@@ -89,6 +108,7 @@ export function takeRuntimeTelemetryConfig(
 ) {
 	const existing = readTelemetryState(stateFile);
 	const telemetryEnabled = officialPackage && effectiveTelemetryEnabled(existing, env);
+	const internalQa = telemetryEnabled && existing.internalQa === true;
 	let installationId = existing.installationId;
 	const firstLaunch = telemetryEnabled && !existing.firstLaunchedAt;
 	const patch = {};
@@ -102,10 +122,15 @@ export function takeRuntimeTelemetryConfig(
 	return {
 		distribution: "npm",
 		telemetryEnabled,
+		internalQa,
 		installationId: telemetryEnabled ? installationId : null,
 		appVersion,
 		apiKey: POSTHOG_PROJECT_TOKEN,
 		apiHost: POSTHOG_API_HOST,
 		firstLaunch,
+		firstLaunchHeardFrom: existing.firstLaunchHeardFrom,
+		installKind: ["npx", "global", "clone"].includes(installKind)
+			? installKind
+			: env.npm_config_global === "true" || env.npm_config_global === true ? "global" : "npx",
 	};
 }

@@ -14,11 +14,15 @@ import {
 	normalizeObjectColor,
 	rememberObjectColor,
 	createSceneObject,
+	supportHeightForObject,
 	createCutoutObject,
 	duplicateCutoutOptions,
 	cutoutFootprint,
 	CUTOUT_KIND,
 	CUTOUT_THICKNESS,
+	MESH_KIND,
+	createMeshObject,
+	duplicateMeshOptions,
 	dropToSurfacePatch,
 	placementInFront,
 	objectSize,
@@ -34,6 +38,7 @@ import {
 	setSceneObjectParent,
 	translatePatch,
 	updateSceneObject,
+	isEffectivelyHidden,
 	wrapAngle,
 } from "../src/scene-objects.js";
 
@@ -105,6 +110,7 @@ expect("repeat creation gets a unique id", twoCubes[0].id !== twoCubes[1].id);
 expect("repeat creation gets a numbered name", twoCubes[1].name === "Cube 2", twoCubes[1].name);
 
 const placed = createSceneObject("chair", [], { x: 999, z: -999, rot: 540 });
+expect("chair support datum targets seat, not backrest", supportHeightForObject(placed) === 0.495);
 expect("creation clamps placement onto the stage", placed.x === 240 && placed.z === -240);
 expect("an explicit placement angle is still wrapped", placed.rot === -180, String(placed.rot));
 
@@ -652,6 +658,139 @@ expect(
 	JSON.stringify(plainDup),
 );
 
+/* ------------------------------------------------------------ meshes --- */
+// A mesh prop is the 3D cousin of a cutout: imported, not in the Add-object
+// catalogue, sized per instance from the fitted GLB box, clay optional.
+
+expect(
+	"a mesh without a picture (asset id) is refused",
+	createMeshObject({ assetId: "" }) === null && createMeshObject({}) === null && createMeshObject() === null,
+);
+expect("meshes are not creatable from the catalogue", createSceneObject("mesh", []) === null && createSceneObject(MESH_KIND, []) === null);
+expect(
+	"auto-color tints file-material meshes the same way it tints a cube",
+	!/MESH_KIND && !object\.clay/.test(readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")),
+);
+expect(
+	"the catalogue menu does not offer meshes",
+	!OBJECT_LIBRARY.some((entry) => entry.kind === MESH_KIND) && MESH_KIND === "mesh",
+);
+
+const cooker = createMeshObject({
+	assetId: "mesh-asset-cooker",
+	height: 1,
+	footprint: { width: 1, depth: 0.5 },
+	name: "Cooker",
+});
+expect(
+	"a mesh keeps the fitted height and footprint it was given",
+	cooker !== null &&
+		cooker.renderer === MESH_KIND &&
+		cooker.assetId === "mesh-asset-cooker" &&
+		cooker.height === 1 &&
+		cooker.footprint.width === 1 &&
+		cooker.footprint.depth === 0.5 &&
+		cooker.y === 0 &&
+		cooker.clay === false,
+	JSON.stringify(cooker),
+);
+expect("a mesh footprint is its own copy", cooker.footprint !== undefined && cooker.footprint.width === 1);
+
+const cooker2 = createMeshObject({
+	assetId: "mesh-asset-cooker",
+	height: 1,
+	footprint: { width: 1, depth: 0.5 },
+	name: "Cooker",
+}, [cooker]);
+expect(
+	"repeat mesh creation gets a unique id and a numbered name",
+	cooker.id === "mesh" && cooker2.id === "mesh-2" && cooker2.name === "Cooker 2",
+	JSON.stringify({ first: cooker.id, second: cooker2?.id, name: cooker2?.name }),
+);
+expect(
+	"an explicit clay flag sticks on create",
+	createMeshObject({ assetId: "mesh-asset-cooker", height: 1, footprint: { width: 1, depth: 1 }, clay: true }).clay === true,
+);
+
+const revivedMesh = normalizeSceneObject({
+	id: "mesh",
+	renderer: "mesh",
+	assetId: "mesh-asset-cooker",
+	height: 3,
+	footprint: { width: 2, depth: 0.5 },
+	name: "Cooker",
+});
+expect(
+	"a stored mesh keeps per-instance footprint and height, and missing clay reads as false",
+	revivedMesh !== null &&
+		revivedMesh.assetId === "mesh-asset-cooker" &&
+		revivedMesh.height === 3 &&
+		revivedMesh.footprint.width === 2 &&
+		revivedMesh.footprint.depth === 0.5 &&
+		revivedMesh.clay === false,
+	JSON.stringify(revivedMesh),
+);
+expect(
+	"a mesh record with no asset id is dropped like an unknown renderer",
+	normalizeSceneObject({ id: "mesh", renderer: "mesh", height: 1, footprint: { width: 1, depth: 1 } }) === null,
+);
+expect(
+	"a deliberately 12 m mesh is not refitted on load — the 0.05–10 m heuristic is import-only",
+	normalizeSceneObject({
+		id: "truck",
+		renderer: "mesh",
+		assetId: "mesh-asset-truck",
+		height: 12,
+		footprint: { width: 3, depth: 8 },
+	})?.height === 12,
+);
+expect("a ghost renderer is still dropped", normalizeSceneObject({ id: "ghost", renderer: "ghost" }) === null);
+
+const grownMesh = updateSceneObject([cooker], cooker.id, { height: 2 })[0];
+expect(
+	"raising a mesh's height scales its footprint uniformly so the import box's ratio survives",
+	grownMesh.height === 2 && grownMesh.footprint.width === 2 && grownMesh.footprint.depth === 1,
+	JSON.stringify(grownMesh),
+);
+const shrunkMesh = updateSceneObject([cooker], cooker.id, { height: 0.5 })[0];
+expect(
+	"lowering a mesh's height scales its footprint uniformly",
+	shrunkMesh.height === 0.5 && Math.abs(shrunkMesh.footprint.width - 0.5) < 1e-9 && Math.abs(shrunkMesh.footprint.depth - 0.25) < 1e-9,
+	JSON.stringify(shrunkMesh.footprint),
+);
+const clayed = updateSceneObject([grownMesh], cooker.id, { clay: true })[0];
+expect("clay true sticks on a mesh", clayed.clay === true);
+expect("clay false is writable too", updateSceneObject([clayed], cooker.id, { clay: false })[0].clay === false);
+
+const meshDup = createMeshObject(duplicateMeshOptions(clayed), [clayed]);
+expect(
+	"duplicating a mesh copies assetId, clay, height and footprint onto a new record",
+	meshDup !== null &&
+		meshDup.id !== clayed.id &&
+		meshDup.assetId === clayed.assetId &&
+		meshDup.clay === clayed.clay &&
+		meshDup.height === clayed.height &&
+		meshDup.footprint.width === clayed.footprint.width &&
+		meshDup.footprint.depth === clayed.footprint.depth,
+	JSON.stringify(meshDup),
+);
+
+const meshParent = createSceneObject("cube", []);
+const meshChild = createMeshObject({ assetId: "mesh-asset-cooker", height: 1, footprint: { width: 1, depth: 1 } }, [meshParent]);
+const meshedGroup = setSceneObjectParent([meshParent, meshChild], meshChild.id, meshParent.id);
+expect(
+	"a mesh can parent under a cube like any other prop",
+	meshedGroup.find((object) => object.id === meshChild.id).parent === meshParent.id,
+);
+const meshedAttach = setSceneObjectAttach(meshedGroup, meshChild.id, { characterId: "characterA", bone: "rightHand" });
+expect(
+	"a mesh can attach to a character bone, which drops the group parent",
+	meshedAttach.find((object) => object.id === meshChild.id).attach.bone === "rightHand" &&
+		meshedAttach.find((object) => object.id === meshChild.id).parent === null,
+	JSON.stringify(meshedAttach.find((object) => object.id === meshChild.id)),
+);
+const meshedPath = updateSceneObject([cooker], cooker.id, { path: { points: [{ x: 0, z: 0 }, { x: 1, z: 1 }] } })[0];
+expect("a mesh can wear a travel path like a cube", Array.isArray(meshedPath.path?.points) && meshedPath.path.points.length >= 2);
 
 /* --- the delete-undo toast is an offer, not a permanent banner ------------- */
 // It sat on screen forever because nothing ever cleared it: only pressing Undo
@@ -968,6 +1107,70 @@ expect(
 	rememberObjectColor(["nope", "#ABCDEF", 7, "#ff3366"], "#010203").join() === ["#010203", "#abcdef", "#ff3366"].join(),
 	JSON.stringify(rememberObjectColor(["nope", "#ABCDEF", 7, "#ff3366"], "#010203")),
 );
+
+const visibleCube = createSceneObject("cube");
+expect("a catalogue object starts visible", visibleCube.hidden === false);
+expect("a cutout starts visible", createCutoutObject({ assetId: "pic", aspect: 1, height: 1 }).hidden === false);
+expect(
+	"a mesh starts visible",
+	createMeshObject({ assetId: "mesh-asset-cooker", height: 1, footprint: { width: 1, depth: 1 } }).hidden === false,
+);
+const hiddenCube = updateSceneObject([visibleCube], visibleCube.id, { hidden: true })[0];
+expect("updateSceneObject hides on a boolean true", hiddenCube.hidden === true);
+const shownAgain = updateSceneObject([hiddenCube], hiddenCube.id, { hidden: false });
+expect("updateSceneObject shows again on false", shownAgain[0].hidden === false && shownAgain !== [hiddenCube]);
+const ignored = updateSceneObject([visibleCube], visibleCube.id, { hidden: "yes" });
+expect("a non-boolean hidden is ignored", ignored === [visibleCube] || ignored[0] === visibleCube);
+const normalizedHidden = normalizeSceneObject({ ...visibleCube, hidden: true });
+expect("normalize keeps a true hidden flag", normalizedHidden.hidden === true);
+const normalizedMissing = normalizeSceneObject({ id: "cube", renderer: "cube", name: "Cube" });
+expect("normalize defaults a missing hidden flag to false", normalizedMissing.hidden === false);
+const normalizedCutout = normalizeSceneObject({ ...createCutoutObject({ assetId: "pic", aspect: 1, height: 1 }), hidden: true });
+expect("normalize keeps hidden on a cutout", normalizedCutout.hidden === true);
+const normalizedMesh = normalizeSceneObject({ ...createMeshObject({ assetId: "mesh-asset-cooker", height: 1, footprint: { width: 1, depth: 1 } }), hidden: true });
+expect("normalize keeps hidden on a mesh", normalizedMesh.hidden === true);
+const duplicate = { ...hiddenCube, id: "cube-2", name: "Cube 2", x: hiddenCube.x + 0.5 };
+expect("duplicating a hidden object keeps the flag", duplicate.hidden === true);
+
+const parent = { id: "parent", hidden: true, parent: null };
+const child = { id: "child", hidden: false, parent: "parent" };
+const grandchild = { id: "grand", hidden: false, parent: "child" };
+expect("own hidden is effectively hidden", isEffectivelyHidden(parent, [parent, child]) === true);
+expect("a child of a hidden parent is effectively hidden", isEffectivelyHidden(child, [parent, child]) === true);
+expect("a grandchild follows the hidden parent", isEffectivelyHidden(grandchild, [parent, child, grandchild]) === true);
+const shownParent = { ...parent, hidden: false };
+const stillHiddenChild = { ...child, hidden: true };
+expect(
+	"a child that is itself hidden stays hidden after the parent is shown",
+	isEffectivelyHidden(stillHiddenChild, [shownParent, stillHiddenChild]) === true,
+);
+const hat = { id: "hat", hidden: false, attach: { characterId: "cast-2" } };
+expect("a prop on a hidden character is effectively hidden", isEffectivelyHidden(hat, [hat], [{ id: "cast-2", hidden: true }]) === true);
+expect("a prop on a visible character stays visible", isEffectivelyHidden(hat, [hat], [{ id: "cast-2", hidden: false }]) === false);
+const cargo = { id: "cargo", hidden: false, parent: "hat" };
+const hiddenCast = [{ id: "cast-2", hidden: true }];
+expect(
+	"a child of a prop on a hidden character is effectively hidden",
+	isEffectivelyHidden(cargo, [hat, cargo], hiddenCast) === true,
+);
+expect(
+	"a stale display copy still follows the stored hidden flag",
+	isEffectivelyHidden({ id: "hat", hidden: false }, [{ ...hat, hidden: true }], []) === true,
+);
+const loopA = { id: "a", hidden: false, parent: "b" };
+const loopB = { id: "b", hidden: false, parent: "a" };
+const beforeLoop = JSON.stringify([loopA, loopB]);
+expect("a parent cycle ends instead of hanging", isEffectivelyHidden(loopA, [loopA, loopB]) === false);
+expect("the visibility walk does not mutate records", JSON.stringify([loopA, loopB]) === beforeLoop);
+
+const hiddenTable = updateSceneObject([createSceneObject("cube")], "cube", { hidden: true })[0];
+const falling = { ...createSceneObject("sphere", [hiddenTable]), y: 2 };
+const landed = dropToSurfacePatch(falling, [hiddenTable]);
+expect("a drop does not land on a hidden table", landed && landed.y === 0, JSON.stringify(landed));
+const hiddenChild = { ...createSceneObject("cube", [hiddenTable]), id: "child", parent: hiddenTable.id, y: 1 };
+const fallingOnChild = { ...createSceneObject("sphere", [hiddenTable, hiddenChild]), id: "ball", y: 3 };
+const landedOnChild = dropToSurfacePatch(fallingOnChild, [hiddenTable, hiddenChild]);
+expect("a drop does not land on a child of a hidden parent", landedOnChild && landedOnChild.y === 0, JSON.stringify(landedOnChild));
 
 // The grouping and attachment sections run after the first gate above, so they
 // need their own — otherwise a failure here would print FAIL and still exit 0.

@@ -7,6 +7,29 @@
 
 import { FRAMING_PIVOT_Y, SUBJECT_HEIGHT_M, deriveShot, focalMmToFov, fovToFocalMm, usedSensorHeightMm } from "./shot.js";
 
+export const CAMERA_PRESETS = Object.freeze({
+	"mocapLocomotion": Object.freeze({ id: "mocapLocomotion", label: "Mocap: locomotion", azimuthDeg: 45, height: 2.4, focalMm: 80, subjectFraction: 0.55 }),
+	"mocapInteraction": Object.freeze({ id: "mocapInteraction", label: "Mocap: interaction", azimuthDeg: 45, height: 2.4, focalMm: 38, subjectFraction: 0.35 }),
+});
+
+/** Build a repeatable camera framing around the current subject. */
+export function cameraPresetFraming(id, subject = {}, filmback = {}) {
+	const preset = CAMERA_PRESETS[id];
+	if (!preset) return null;
+	const x = Number.isFinite(subject.x) ? subject.x : 0;
+	const z = Number.isFinite(subject.z) ? subject.z : 0;
+	const height = Number.isFinite(subject.height) ? subject.height : SUBJECT_HEIGHT_M;
+	const sensorId = filmback.sensorId;
+	const aspectRatio = filmback.aspectRatio;
+	const fovDeg = (focalMmToFov(preset.focalMm, sensorId, aspectRatio) * 180) / Math.PI;
+	const distance = height / (2 * preset.subjectFraction * Math.tan((fovDeg * Math.PI) / 360));
+	const az = (preset.azimuthDeg * Math.PI) / 180;
+	const pos = { x: x + distance * Math.sin(az), y: preset.height, z: z + distance * Math.cos(az) };
+	const target = { x, y: height * 0.52, z };
+	const { yaw, pitch } = aimAngles(pos, target);
+	return { id, pos, yaw, pitch, fovDeg, focalMm: preset.focalMm };
+}
+
 /* ------------------------------------------------------------ framing --- */
 
 /**

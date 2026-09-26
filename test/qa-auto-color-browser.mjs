@@ -67,8 +67,19 @@ const GREY_BOX = "#c2c6c8"; // src/scene-objects.js:65 — asserted below before
 expect("GREY_BOX constant matches the source", await evaluate(`(${JSON.stringify(GREY_BOX)}).length === 7`) && (await import("node:fs")).readFileSync(new URL("../src/scene-objects.js", import.meta.url), "utf8").includes(`GREY_BOX = "${GREY_BOX}"`));
 expect("mode OFF renders both cubes grey-box", await evaluate(`${sceneColors}.filter(h => h === "${GREY_BOX}").length >= 2`));
 
+// The toggle moved out of the topbar into the viewport bar's View ▾ menu
+// (#194). It kept its class and its aria-pressed contract, so every
+// assertion below is the same one, driven through the menu.
 const toggle = "document.querySelector('.auto-color-toggle')";
-expect("the topbar offers the Auto Color toggle", await evaluate(`!!${toggle}`));
+const openViewMenu = async () => {
+	if (!(await evaluate("!!document.querySelector('.view-menu')"))) {
+		await evaluate("document.querySelector('.view-menu-trigger').click()");
+	}
+	return waitFor("!!document.querySelector('.view-menu')", 8000);
+};
+expect("the viewport bar offers the View menu", await waitFor("!!document.querySelector('.view-menu-trigger')", 15000));
+expect("the View menu opens", await openViewMenu());
+expect("the View menu offers the Auto Color toggle", await evaluate(`!!${toggle}`));
 expect("the toggle starts unpressed", await evaluate(`${toggle}.getAttribute("aria-pressed") === "false"`));
 await evaluate(`${toggle}.click()`);
 await sleep(400);
@@ -91,7 +102,8 @@ expect("the toggle survives the undo", await evaluate(`${toggle}.getAttribute("a
 await send("Page.enable");
 await send("Page.reload", { ignoreCache: false });
 await sleep(1000);
-expect("app returns after reload", await waitFor("!!document.querySelector('.auto-color-toggle')", 30000));
+expect("app returns after reload", await waitFor("!!document.querySelector('.view-menu-trigger')", 30000));
+expect("the View menu reopens after the reload", await openViewMenu());
 expect("the mode survives the reload", await evaluate(`${toggle}.getAttribute("aria-pressed") === "true"`));
 expect("the surviving cube keeps #66b8d6 after reload", await waitFor(`${sceneColors}.includes("#66b8d6")`, 15000));
 

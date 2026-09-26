@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
+import { elementByPath } from "../src/studio-elements.js";
 
 let failures = 0;
 function expect(name, condition) {
@@ -10,14 +11,23 @@ function expect(name, condition) {
 // The studio source spans App.jsx and app-stage.jsx (module-level extraction); pin against both.
 const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")
 	+ readFileSync(new URL("../src/app-stage.jsx", import.meta.url), "utf8");
+const extract = readFileSync(new URL("../tools/ardy/extract.mjs", import.meta.url), "utf8");
+const bridge = readFileSync(new URL("../tools/ardy/bridge.mjs", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const planview = readFileSync(new URL("../src/planview.jsx", import.meta.url), "utf8");
 const timeline = readFileSync(new URL("../src/ardy/timeline.jsx", import.meta.url), "utf8");
 const dualview = readFileSync(new URL("../src/dualview.jsx", import.meta.url), "utf8");
 const offscreenExport = readFileSync(new URL("../src/offscreen-export.js", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../src/ui.jsx", import.meta.url), "utf8");
+const workflowBuilder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
+const agentClient = readFileSync(new URL("../src/workflow/agent-client.js", import.meta.url), "utf8");
 
 expect("workspace layout persists across reloads", app.includes("WORKSPACE_LAYOUT_KEY") && app.includes("localStorage.setItem"));
+expect("H3 lock evidence is visible on successful video takes", workflowBuilder.includes('data-testid="h3-preservation-receipt"') && workflowBuilder.includes("H3 scene/camera lock verified"));
+expect("H3 drift evidence is visible when a take is rejected", workflowBuilder.includes('data-testid="h3-preservation-failed"') && workflowBuilder.includes("H3 output rejected: background/camera drift"));
+expect("failed H3 takes cannot leave a stale video preview visible", workflowBuilder.includes("videoUrl: null, resultUrl: null, outputs: [], preservation: error?.preservation || null"));
+expect("failed H3 outputs stay cleared in the returned workflow graph", workflowBuilder.includes('hasPatchedOutputs') && workflowBuilder.includes('Object.prototype.hasOwnProperty.call(patch, "outputs")'));
+expect("video requests preserve structured H3 rejection metrics", agentClient.includes("error.preservation = detail.preservation") && agentClient.includes("error.status = response.status"));
 expect("sidebar width has a pointer resize path", app.includes('beginWorkspaceResize("sidebar"'));
 expect("frame monitor height has a pointer resize path", app.includes('beginWorkspaceResize("timeline"'));
 expect("inset view has a diagonal resize path", app.includes("beginInsetResize") && app.includes("vp-inset-resize"));
@@ -34,8 +44,44 @@ expect("zoom shrinks the ortho extent, not the pane", dualview.includes("planZoo
 expect("demand loop wakes on mount and model commit", dualview.includes("requestAnimationFrame(() => requestAnimationFrame(invalidate))") && app.includes("const frame = requestAnimationFrame(invalidate);"));
 expect("double-click no longer swaps Scene and Top-View", !app.includes('setViewMode((current) => (current === "plan" ? "shot" : "plan"))'));
 expect("Scene toolbar exposes shot preset, aspect, FOV, recenter, and Top-View controls", app.includes("viewport-toolbar-field shot-field") && app.includes("SHOT_ASPECT_PRESETS") && app.includes("viewport-fov-control") && app.includes("Recenter on subject") && app.includes('ko("Top", "탑")'));
-expect("Scene and PlayView tools share one horizontal title bar", app.includes('className="viewport-titlebar"') && css.includes(".viewport-titlebar") && css.includes("position: static"));
-expect("PlayView toolbar exposes framing readouts, playback, and recording", app.includes("editor-toolbar play-tools") && app.includes("shotOutput.label") && app.includes("toggleShotRecording"));
+// #193 (R1): the viewport camera bar is the ONLY home for lens and recentring.
+// The camera inspector used to carry a second copy of both.
+expect(
+	"lens and recentring live once, in the viewport camera bar",
+	app.includes('aria-label={ko("Recenter on subject", "피사체 다시 맞추기")}') &&
+	!app.includes('ko("Lens (FOV)", "렌즈 (FOV)")') &&
+	!app.includes('<button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>'),
+);
+// #195: the title bar is one horizontal strip — mode tabs plus the scene
+// tools, rendered unconditionally. The Scene/PlayView centre tabs are gone.
+expect(
+	"the viewport title bar is one horizontal strip without centre tabs",
+	app.includes('className="viewport-titlebar"') &&
+	css.includes(".viewport-titlebar") &&
+	css.includes("position: static") &&
+	app.includes('className="editor-toolbar scene-tools"') &&
+	!app.includes('className="pane-tabs"') &&
+	!css.includes(".pane-tabs"),
+);
+// #193 emptied the PlayView bar down to two readouts; #195 removed the bar
+// itself along with the tab that reached it — the framed player is an internal
+// preview state now, and it carries no toolbar at all.
+expect(
+	"the PlayView toolbar is gone, markup and styles alike",
+	!app.includes("editor-toolbar play-tools") &&
+	!css.includes(".editor-toolbar.play-tools") &&
+	!app.includes("toggleShotRecording") &&
+	!app.includes("viewport-readout") &&
+	!css.includes(".viewport-readout"),
+);
+expect(
+	"one topbar Export menu leads with the keyframe pack",
+	app.includes('data-testid="topbar-export"') &&
+	app.includes('id="export-menu-trigger"') &&
+	app.includes('className="export-menu-primary"') &&
+	app.includes('data-testid="export-video"') &&
+	app.includes('data-testid="export-otio"'),
+);
 // Letterbox bars are editor chrome. Painting them with the scene background
 // put a sheet of near-white either side of the frame the moment a narrower
 // aspect was picked; they wear the editor's own tone now, and the scene draw
@@ -82,9 +128,13 @@ expect("new sessions start without prompt blocks", app.includes("const DEFAULT_P
 expect("new sessions start with an empty motion prompt", app.includes('const [ardyPrompt, setArdyPrompt] = useState("");'));
 expect(
 	"recording captures the clean render without a frame stamp",
-	app.includes("capture: applyExportFrame") &&
+	app.includes("capture: (frame, kind) => withExportFrame(frame, kind") &&
+		app.includes("const plate = applyExportFrame(frame);") &&
 		!app.includes("burnInCapture") &&
-		app.includes("sampleAt(playbackScene, shotAtFrame(shots, frame), frame)"),
+		// #276 retains #193's preflight shot list in the immutable request.
+		// The executable export-recovery tests verify selection and retry.
+		app.includes("structuredClone({ shots: exportShots, playbackScene") &&
+		app.includes("sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame)"),
 );
 expect(
 	"recording uses current motion content instead of a stale timeline tail",
@@ -110,18 +160,11 @@ expect(
 expect(
 	"the pose pin is an explicit, off-by-default choice",
 	app.includes("const [ardyStartFromPose, setArdyStartFromPose] = useState(false);") &&
-	app.includes("startFromPose: ardyStartFromPose") &&
-	app.includes("data-ardy-start-from-pose"),
+	app.includes("startFromPose: ardyStartFromPose"),
 );
 expect(
 	"the pinned pose can be placed anywhere in the clip",
-	app.includes('const POSE_PLACEMENTS = ["start", "middle", "end", "playhead"];') &&
-	app.includes("poseFrame: posePlacementFrame(ardyPosePlacement, clipFrames, tlFrame)") &&
-	app.includes("data-pose-placement={placement}"),
-);
-expect(
-	"the placement names the exact frame it will pin",
-	app.includes("data-pose-placement-frame"),
+	app.includes("poseFrame: posePlacementFrame(ardyPosePlacement, clipFrames, tlFrame)"),
 );
 // Prompt Blocks starts collapsed and can sit below the fold, so selecting a
 // block on the timeline has to open it AND bring it on screen — otherwise the
@@ -190,17 +233,21 @@ expect(
 expect(
 	"ARDY bridge health recovers after the sidecar starts late",
 	app.includes("const BRIDGE_RECHECK_MS = 3000;") &&
-	app.includes("const refreshBridge = () => checkBridge().then") &&
+	app.includes("if (inflight) return inflight;") &&
+	app.includes("inflight = checkBridge().then") &&
 	app.includes("const id = window.setInterval(refreshBridge, BRIDGE_RECHECK_MS);") &&
-	app.includes("return () => {") &&
+	app.includes('window.addEventListener("focus", refreshBridge);') &&
+	app.includes('window.removeEventListener("focus", refreshBridge);') &&
 	app.includes("window.clearInterval(id);"),
 );
 expect(
-	"disabled Prompt Block generation explains the exact missing prerequisite",
-	app.includes('ko("Waiting for the ARDY bridge — it reconnects automatically"') &&
-	app.includes('ko("Add a prompt block and describe its motion first"'),
+	"Prompt Block generation has request-specific readiness and a nearby recovery path",
+	app.includes("motionReadinessMessage(readinessState)") &&
+	app.includes("<MotionReadiness state={readinessState}") &&
+	app.includes("onSetup={openMotionSetup} onRetry={recheckMotionHealth}") &&
+	app.includes("!promptClips.some((clip) => clip.text.trim())"),
 );
-expect("generated motion anchors frame zero at the active character", app.includes("anchorX: activeChar.x") && app.includes("anchorZ: activeChar.z") && app.includes("anchorFrame: 0"));
+expect("generated motion anchors frame zero at the target character", app.includes("anchorX: targetCharacter.x") && app.includes("anchorZ: targetCharacter.z") && app.includes("anchorFrame: 0"));
 expect("returned playback has no CozyClay root coordinate warp", !app.includes("warpMotionRootToPath"));
 expect("Top-View root path draws from Subject 1 without a duplicate marker", planview.includes("[{ x: start.x, z: start.z }, ...waypoints]") && planview.includes("waypoints.map((w, i)"));
 expect(
@@ -238,18 +285,35 @@ expect(
 // and the readout shows the true stored value. Both write paths (head
 // scrub, viewport gizmo) agree on max(0, y).
 expect(
-	"Subject position uses the same X Y Z numeric row as scene objects",
-	app.includes('label={ko("Position", "위치")}') &&
-		app.includes('{ axis: "X", value: value.x, step: 0.05') &&
-		app.includes('{ axis: "Y", value: value.y ?? 0, step: 0.05') &&
-		app.includes('{ axis: "Z", value: value.z, step: 0.05') &&
-		!app.includes('<Slider compact label={ko("Left / right", "좌 / 우")}') &&
-		!app.includes('<Slider compact softMax label={ko("Height", "높이")}') &&
-		!app.includes('<Slider compact label={ko("Depth", "깊이")}'),
+	"Subject transforms have one inspector home with the direct tools",
+	app.includes('title={workflowMode === "motion" ? ko("Placement", "배치") : ko("Transform", "변환")}') &&
+	app.includes('{ axis: "X", value: activeChar.x, step: 0.05') &&
+	app.includes('{ axis: "Y", value: activeChar.y ?? 0, step: 0.05') &&
+	app.includes('{ axis: "Z", value: activeChar.z, step: 0.05') &&
+	app.includes('label={ko("Rotation", "회전")}') &&
+	app.includes('label={ko("Scale", "크기")}') &&
+	app.includes('data-transform-controls'),
+);
+// Motion mode hides Move/Rotate/Scale, so the same foldout becomes the open
+// Placement row (stage X/Z + turn) and Scene mode folds the full form away
+// behind the gizmo (#194). Foldout reads defaultOpen once, hence the key.
+expect(
+	"the character transform is mode-aware",
+	app.includes('key={workflowMode === "motion" ? "placement" : "transform"}') &&
+	app.includes('defaultOpen={workflowMode === "motion"}') &&
+	app.includes('ko("Stage position — does not change the take", "무대 위치 — 테이크는 바꾸지 않습니다")'),
+);
+// Entering Motion selects the active character's ROW: the placement gizmo only
+// renders for a specific cast member, never for the group.
+expect(
+	"Motion mode lands on a character the gizmo can draw",
+	app.includes("setSelectedHierarchyId(rowIdForCharIndex(activeCharIndex));"),
 );
 expect(
 	"the character gizmo no longer caps lift at 4 m",
-	app.includes("if (patch.y !== undefined) next.y = Math.max(0, patch.y);") &&
+	elementByPath("character.position").gizmo.min.y === 0 &&
+	elementByPath("character.position").gizmo.max.y >= 4 &&
+	app.includes("next.y = Math.max(CHARACTER_POSITION_BOUNDS.min.y, patch.y)") &&
 	!app.includes("clamp(patch.y, 0, 4)"),
 );
 expect(
@@ -268,22 +332,42 @@ expect("resize handles opt out on compact layouts", css.includes(".workspace-spl
 // place — each of them was a bug in the two-character prototype.
 expect(
 	"a character owns a Video capture foldout without a legacy ARDY card",
-	app.includes('<Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Video capture", "영상 모캡")}>') &&
+	app.includes('title={ko("Video capture", "영상 모캡")}') &&
 	!app.includes('title={ko("ARDY motion", "ARDY 모션")}'),
 );
 expect(
-	"ingest and extraction reach the ported core modules",
+	"the Studio has no Advanced mode toggle",
+	!app.includes("advanced-toggle") && !app.includes("cozyclay.advanced"),
+);
+expect(
+	"the Studio topbar returns to Workflow",
+	app.includes('className="topbar-action workflow-topbar-link" href="/workflow/"'),
+);
+expect(
+	"expert foldouts stay enabled in the always-advanced Studio",
+	app.includes('hidden={!isCharacterSelection}'),
+);
+expect(
+	"ingest and extraction reach the ported ingest module",
 	app.includes('from "./multimodel-ingest.js"') &&
-	app.includes('from "./pose-extract/index.js"') &&
 	app.includes("probeFootage(objectUrl") &&
 	app.includes("knownFps: Number.isFinite(source.fps) ? source.fps : null"),
 );
 expect(
-	"extraction routes to the GPU box when the bridge is up and the browser otherwise",
-	app.includes("if (bridge?.ok) return extractMultiModelMotionGpu();") &&
-	app.includes("return extractMultiModelMotionBrowser();") &&
-	app.includes("requestBridgeExtract(") &&
-	app.includes("createPoseDetector()"),
+	"extraction requires a GVHMR bridge and rejects every other route",
+	app.includes('MULTIMODEL_REASONS["extract-bridge-required"]') &&
+	app.includes('bridge.extractionBackend !== "gvhmr"') &&
+	app.includes('MULTIMODEL_REASONS["extract-backend-unsupported"]') &&
+	app.includes("return extractMultiModelMotionGpu();") &&
+	!app.includes("return extractMultiModelMotionBrowser();") &&
+	app.includes("requestBridgeExtract("),
+);
+expect(
+	"the bridge advertises GVHMR as the only extraction backend",
+	extract.includes('|| "gvhmr").toLowerCase()') &&
+	extract.includes('EXTRACT_BACKEND_SUPPORTED = EXTRACT_BACKEND === "gvhmr" && !EXTRACT_CMD') &&
+	extract.includes('reason: "extract-backend-unsupported"') &&
+	/extractionBackend:\s*EXTRACT_BACKEND_SUPPORTED\s*\?\s*EXTRACT_BACKEND\s*:\s*"unsupported"/.test(bridge),
 );
 expect("every named ingest failure is a message in both locales", app.includes("const MULTIMODEL_REASONS = {") && app.includes('MULTIMODEL_REASONS[code]?.[isKo ? 1 : 0] ?? code'));
 // THE INVARIANT: extraction divided root travel by the filmed person's
@@ -332,17 +416,35 @@ expect(
 	app.includes("ikStateRef.current.keys.clear();"),
 );
 expect(
-	"a browser-baked take is trimmable too",
-	app.indexOf("motionFullRef.current.set(activeChar.id, loaded);") > 0 &&
-	(app.match(/motionFullRef\.current\.set\(/g) ?? []).length >= 4,
+	"an extracted take is trimmable too",
+	app.indexOf("motionFullRef.current.set(targetCharacter.id, loaded);") > 0 &&
+	(app.match(/motionFullRef\.current\.set\(/g) ?? []).length >= 3,
 );
 expect(
-	"the timeline receives the active take and both trim handlers",
+	"the timeline receives the active take, both trim handlers, and the department it draws for",
 	app.includes("onMotionTrim={applyMotionTrim}") &&
 	app.includes("onMotionTrimReset={resetMotionTrim}") &&
 	app.includes("motion={motion ? {") &&
 	app.includes("frames: motion.frames,") &&
-	app.includes("segments: motionEditLayout("),
+	app.includes("segments: motionEditLayout(") &&
+	app.includes("workflowMode={workflowMode}"),
+);
+// Trim, retime and Cut edit the take: Scene and Camera never draw them, and
+// inside Motion they belong to the segment the playhead selects (#191).
+expect(
+	"take trim, retime and Cut render only in Motion mode on the selected segment",
+	timeline.includes('const motionTools = workflowMode === "motion";') &&
+	timeline.includes("segmentTools = (segment) => motionTools && (segment.preview === true || selectedMotionSegment?.id === segment.id)") &&
+	timeline.includes("segmentTools(segment) && <button") &&
+	timeline.includes("name === IK_LANE && motion && motionTools && selectedMotionSegment && ("),
+);
+// Foot snap and Body contact only reinterpret an IK drag (R7).
+expect(
+	"foot snap and body contact stay under IK, as two independent toggles",
+	timeline.includes("{ikMode && (<>") &&
+	timeline.includes('"tl-btn ik snap"') &&
+	timeline.includes('"tl-btn ik contact"') &&
+	timeline.includes('ko("Load a rig to edit poses"'),
 );
 expect("a deleted character takes its full take with it", app.includes("motionFullRef.current.delete(charId);"));
 

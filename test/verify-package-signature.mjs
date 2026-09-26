@@ -9,7 +9,11 @@ import { computePackageDigest, verifyPackageMarker } from "../bin/package-signat
 
 const directory = mkdtempSync(join(tmpdir(), "cozyclay-package-signature-"));
 mkdirSync(join(directory, "dist"));
+mkdirSync(join(directory, "dist", "demo"));
+mkdirSync(join(directory, "dist", "d"));
 writeFileSync(join(directory, "README.md"), "signed package\n");
+writeFileSync(join(directory, "dist", "demo", "index.html"), "demo build\n");
+writeFileSync(join(directory, "dist", "d", "index.html"), "d build\n");
 const marker = join(directory, "dist", "cozyclay-package.json");
 const metadata = { version: "1.5.0" };
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -28,6 +32,14 @@ try {
 		signature: sign(null, Buffer.from(payload), privateKey).toString("base64"),
 	}));
 	assert.equal(verifyPackageMarker(marker, directory, metadata, publicDer), true);
+
+	writeFileSync(join(directory, "dist", "demo", "index.html"), "rebuilt demo\n");
+	writeFileSync(join(directory, "dist", "d", "index.html"), "rebuilt d\n");
+	assert.equal(
+		verifyPackageMarker(marker, directory, metadata, publicDer),
+		true,
+		"files excluded by package.json#files do not invalidate the package marker",
+	);
 
 	writeFileSync(join(directory, "README.md"), "forked package\n");
 	assert.equal(verifyPackageMarker(marker, directory, metadata, publicDer), false, "modified package content is rejected");

@@ -213,6 +213,26 @@ check(
 );
 check("the surviving cast still blocks", characterBlockers(ghostRigs, "a", { characterIds: ["a", "b"] }).length === 15);
 check("character RECORDS work as the cast list too", characterBlockers(ghostRigs, "a", { characterIds: [{ id: "a" }, { id: "b" }] }).length === 15);
+const hiddenRig = makeRig();
+hiddenRig.updateMatrixWorld(true);
+check(
+	"a hidden cast record does not block",
+	characterBlockers({ a: makeRig(), b: hiddenRig }, "a", { characterIds: [{ id: "a" }, { id: "b", hidden: true }] }).length === 0,
+);
+const hiddenProp = { ...cube, id: "ghost-box", hidden: true };
+check("a hidden prop is not a blocker", sceneObjectBlockers([hiddenProp], { library: OBJECT_LIBRARY }).length === 0);
+const hiddenParent = { ...cube, hidden: true };
+const hiddenChild = { ...createSceneObject("cube", [cube]), id: "child", parent: hiddenParent.id };
+check(
+	"a child of a hidden parent is not a blocker",
+	sceneObjectBlockers([hiddenParent, hiddenChild], { library: OBJECT_LIBRARY }).length === 0,
+);
+const carried = { ...cube, id: "carried", attach: { characterId: "a" } };
+const cargo = { ...createSceneObject("cube", [cube]), id: "cargo", parent: "carried" };
+check(
+	"a child of a prop on a hidden character is not a blocker",
+	sceneObjectBlockers([carried, cargo], { library: OBJECT_LIBRARY, characters: [{ id: "a", hidden: true }] }).length === 0,
+);
 check("no cast list means no opinion — every mounted rig blocks", characterBlockers(ghostRigs, "a").length === 30);
 check("an empty cast list blocks nothing", characterBlockers(ghostRigs, "a", { characterIds: [] }).length === 0);
 check(

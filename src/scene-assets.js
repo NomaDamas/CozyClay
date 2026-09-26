@@ -11,12 +11,20 @@
  * duplicated scene shares its originals instead of copying them, and an id is
  * meaningful across a reload, an export and another machine.
  *
+ * Pictures and GLB models share this store. An `img-` id is a bitmap with a
+ * pixel size; a `mesh-` id is a model with no pixel size. The prefix is what
+ * keeps a GLB from being decoded as a picture.
+ *
  * Everything above the storage adapter is pure and testable in node; the
  * adapter is the only part that needs a browser.
  */
 
 /** Content-addressed, so the same bytes always land on the same id. */
 export const ASSET_ID_PREFIX = "img-";
+/** Mesh blobs share the digest but not the prefix: without this split every
+ * GLB would be stored as `img-` and `normalizeAsset` would drop it as a
+ * broken image. */
+export const MESH_ID_PREFIX = "mesh-";
 /** 128 bits of a SHA-256 digest: collision-proof for a project's worth of
  * pictures, and short enough to read in a scene file. */
 const ASSET_ID_HEX = 32;
@@ -28,6 +36,10 @@ export const ASSET_STORE_NAME = "images";
 /** What an import will accept. SVG is excluded on purpose: it is a document
  * that can carry script, and a set piece is not worth that. */
 export const ASSET_IMAGE_TYPES = Object.freeze(["image/png", "image/webp", "image/jpeg", "image/gif"]);
+/** Stored mesh MIME. Drag-and-drop also accepts `application/gltf-binary` and
+ * `text/plain` for an `.obj` or `.fbx`; once the bytes are in the store they are
+ * one of these types, so a reader never has drop-fallbacks to branch on. */
+export const ASSET_MESH_TYPES = Object.freeze(["model/gltf-binary", "model/obj", "model/fbx"]);
 /** Source-file ceiling. A 40 MP phone photo is fine as an INPUT — it gets
  * decoded and downscaled before anything is stored — but the file itself has
  * to be readable in one bite first. */
@@ -40,16 +52,48 @@ export function isSupportedImageType(type) {
 	return typeof type === "string" && ASSET_IMAGE_TYPES.includes(type.toLowerCase());
 }
 
-/** An id from a hex digest, tolerant of the caller's case and length. */
-export function assetIdFromDigest(hex) {
+export function isSupportedMeshType(type) {
+	return typeof type === "string" && ASSET_MESH_TYPES.includes(type.toLowerCase());
+}
+
+function idFromDigest(prefix, hex) {
 	if (typeof hex !== "string") return null;
 	const clean = hex.trim().toLowerCase();
 	if (!/^[0-9a-f]+$/.test(clean) || clean.length < ASSET_ID_HEX) return null;
-	return `${ASSET_ID_PREFIX}${clean.slice(0, ASSET_ID_HEX)}`;
+	return `${prefix}${clean.slice(0, ASSET_ID_HEX)}`;
+}
+
+function isPrefixedAssetId(prefix, value) {
+	return typeof value === "string" && new RegExp(`^${prefix}[0-9a-f]{${ASSET_ID_HEX}}$`).test(value);
+}
+
+/** An id from a hex digest, tolerant of the caller's case and length. */
+export function assetIdFromDigest(hex) {
+	return idFromDigest(ASSET_ID_PREFIX, hex);
+}
+
+export function meshIdFromDigest(hex) {
+	return idFromDigest(MESH_ID_PREFIX, hex);
+}
+
+export function isImageAssetId(value) {
+	return isPrefixedAssetId(ASSET_ID_PREFIX, value);
+}
+
+export function isMeshAssetId(value) {
+	return isPrefixedAssetId(MESH_ID_PREFIX, value);
 }
 
 export function isAssetId(value) {
-	return typeof value === "string" && new RegExp(`^${ASSET_ID_PREFIX}[0-9a-f]{${ASSET_ID_HEX}}$`).test(value);
+	return isImageAssetId(value) || isMeshAssetId(value);
+}
+
+async function sha256Hex(bytes, subtle) {
+	if (!subtle?.digest) throw new Error("SubtleCrypto is unavailable — a secure context is required to import images");
+	const buffer = bytes instanceof ArrayBuffer ? bytes : bytes?.buffer ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : null;
+	if (!buffer) return null;
+	const digest = await subtle.digest("SHA-256", buffer);
+	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /**
@@ -58,12 +102,17 @@ export function isAssetId(value) {
  * own SubtleCrypto, which needs a secure context (localhost counts).
  */
 export async function assetIdForBytes(bytes, subtle = globalThis.crypto?.subtle) {
-	if (!subtle?.digest) throw new Error("SubtleCrypto is unavailable — a secure context is required to import images");
-	const buffer = bytes instanceof ArrayBuffer ? bytes : bytes?.buffer ? bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) : null;
-	if (!buffer) throw new TypeError("assetIdForBytes needs an ArrayBuffer or a typed array");
-	const digest = await subtle.digest("SHA-256", buffer);
-	const hex = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+	const hex = await sha256Hex(bytes, subtle);
+	if (!hex) throw new TypeError("assetIdForBytes needs an ArrayBuffer or a typed array");
 	return assetIdFromDigest(hex);
+}
+
+/** Same digest as `assetIdForBytes`, `mesh-` prefix so a GLB cannot collide
+ * with a picture in the store or in `normalizeAsset`. */
+export async function meshIdForBytes(bytes, subtle = globalThis.crypto?.subtle) {
+	const hex = await sha256Hex(bytes, subtle);
+	if (!hex) throw new TypeError("meshIdForBytes needs an ArrayBuffer or a typed array");
+	return meshIdFromDigest(hex);
 }
 
 /**
@@ -98,13 +147,25 @@ export function assetAspect(asset) {
  */
 export function normalizeAsset(record) {
 	if (!record || typeof record !== "object" || Array.isArray(record)) return null;
-	if (!isAssetId(record.id)) return null;
+	const bytes = record.bytes instanceof ArrayBuffer ? record.bytes : null;
+	if (!bytes || !bytes.byteLength) return null;
+	// Prefix and MIME must agree: a mesh id with an image type (or the reverse)
+	// is a cross-wired record and cannot be drawn as either kind.
+	if (isMeshAssetId(record.id)) {
+		if (!isSupportedMeshType(record.type)) return null;
+		return {
+			id: record.id,
+			type: record.type.toLowerCase(),
+			bytes,
+			name: typeof record.name === "string" ? record.name : "",
+			...(typeof record.role === "string" ? { role: record.role } : {}),
+		};
+	}
+	if (!isImageAssetId(record.id)) return null;
 	if (!isSupportedImageType(record.type)) return null;
 	const width = Math.round(Number(record.width));
 	const height = Math.round(Number(record.height));
 	if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return null;
-	const bytes = record.bytes instanceof ArrayBuffer ? record.bytes : null;
-	if (!bytes || !bytes.byteLength) return null;
 	return {
 		id: record.id,
 		type: record.type.toLowerCase(),

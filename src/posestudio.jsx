@@ -105,6 +105,7 @@ export function PoseHandles({ root, enabled, onChange }) {
 			if (tmp.target.lengthSq() < 1e-8) return;
 			tmp.target.normalize();
 			tmp.qDelta.setFromUnitVectors(d.limbDir, tmp.target);
+			const before = d.writable.map((bone) => bone.quaternion.toArray());
 			for (const bone of d.writable) {
 				bone.parent.getWorldQuaternion(tmp.qParent).invert();
 				bone.getWorldQuaternion(tmp.qWorld);
@@ -112,7 +113,7 @@ export function PoseHandles({ root, enabled, onChange }) {
 				bone.quaternion.copy(tmp.qNew);
 				bone.updateMatrixWorld(true);
 			}
-			onChangeRef.current?.();
+			onChangeRef.current?.(before, d.writable.map((bone) => bone.quaternion.toArray()));
 		};
 		const onUp = () => {
 			// Detach this drag's listeners but KEEP the handler pair — nulling

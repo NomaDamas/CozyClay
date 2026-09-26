@@ -40,7 +40,7 @@
  */
 
 import * as THREE from "three";
-import { CSKEL27_JOINTS } from "./cskel27.js";
+import { CSKEL27_JOINTS, CSKEL27_PARENTS } from "./cskel27.js";
 import { CSKEL27_NEUTRAL } from "./cskel27-neutral.js";
 import { globalRotations } from "./convert.js";
 import { normalizeBoneName } from "../poses.js";
@@ -157,12 +157,23 @@ function prepOf(rig) {
 	// with a scaled root it would shrink every bind matrix and bone locals
 	// would be written in metres into a centimetre hierarchy.
 	const worldByNode = new Map();
+	// Bind TRANSLATIONS come from the same primed snapshot as the rotations.
+	// This module writes bone positions (positional skinning, stretched
+	// leaves), so a prep computed after any playback — a second take on the
+	// same character, a body swap — would read a posed rig as its bind and
+	// build every offset on it (measured: hips 101.6 vs bind 104.3, arms
+	// 8.9 vs 10.8, and the skin sat off the bones for the rest of the
+	// session). Only a rig that was never primed falls back to live values.
+	const bindPositionOf = (node) => {
+		const b = node.isBone ? binds.get(node) : null;
+		return b?.position ? new THREE.Vector3(b.position.x, b.position.y, b.position.z) : node.position;
+	};
 	const walk = (node, parentMat) => {
 		const b = node.isBone ? binds.get(node) : null;
 		const q = b
 			? new THREE.Quaternion(b.x, b.y, b.z, b.w)
 			: node.quaternion;
-		const local = new THREE.Matrix4().compose(node.position, q, node.scale);
+		const local = new THREE.Matrix4().compose(bindPositionOf(node), q, node.scale);
 		const world = parentMat.clone().multiply(local);
 		worldByNode.set(node, world);
 		for (const child of node.children) walk(child, world);
@@ -186,7 +197,7 @@ function prepOf(rig) {
 		bindPos[j] = new THREE.Vector3().setFromMatrixPosition(world);
 		bindQuat[j] = new THREE.Quaternion().setFromRotationMatrix(world);
 		bindScale[j] = bone.scale.clone();
-		bindLocalPos[j] = bone.position.clone();
+		bindLocalPos[j] = bindPositionOf(bone).clone();
 		parentBindWorld[j] = worldByNode.get(bone.parent) ?? new THREE.Matrix4();
 	}
 
@@ -244,8 +255,42 @@ function prepOf(rig) {
 		}
 	}
 
+	// The wrists are deliberately not driven (SKINNING_MAP), but a hand bone's
+	// local translation IS the forearm's length, so a mocap take's forearm
+	// factor has to be written there or the hand stays at the canonical
+	// distance while posedJoints say otherwise. Kept separately so the
+	// mocap supplies no wrist rotation. Explicitly restore their bind rotation
+	// before the IK layer: otherwise a based wrist correction is multiplied
+	// onto yesterday's correction on every seek, accumulating a hand flip.
+	const stretchedLeaves = [];
+	for (const name of ["LeftHand", "RightHand"]) {
+		const bone = findBone(rig, name);
+		if (bone) {
+			const bind = binds.get(bone);
+			stretchedLeaves.push({ bone, joint: CSKEL27_JOINTS.indexOf(name), bindLocalPos: bindPositionOf(bone).clone(),
+				bindLocalQuat: bind ? new THREE.Quaternion(bind.x, bind.y, bind.z, bind.w) : bone.quaternion.clone() });
+		}
+	}
+
+	// Bone lengths in rig units for the re-basing above: the canonical cskel27
+	// bone (neutral pose, scaled into the rig) and the rig's own bind bone.
+	const canonicalBoneLength = new Array(CSKEL27_JOINTS.length).fill(0);
+	const rigBoneLength = new Array(CSKEL27_JOINTS.length).fill(0);
+	for (let j = 1; j < CSKEL27_JOINTS.length; j += 1) {
+		const parent = CSKEL27_PARENTS[j];
+		const a = CSKEL27_NEUTRAL[j];
+		const b = CSKEL27_NEUTRAL[parent];
+		canonicalBoneLength[j] = scale * Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
+		const bone = bones[j] ?? stretchedLeaves.find((leaf) => leaf.joint === j)?.bone;
+		if (bone) rigBoneLength[j] = bindPositionOf(bone).length();
+	}
+
 	prep = {
 		bones,
+		bindPos,
+		stretchedLeaves,
+		canonicalBoneLength,
+		rigBoneLength,
 		bindQuat,
 		bindScale,
 		bindLocalPos,
@@ -291,20 +336,68 @@ export function captureArdyRoot(rig) {
 
 	const globalRotation = boneRotation.multiply(prep.bindQuat[rootIndex].clone().invert()).normalize();
 	const bindOffset = prep.offsets[rootIndex].clone().applyQuaternion(globalRotation);
+	// The scale the last applyMotionFrame used (1 for a performer-sized take).
+	const s = prep.lastScale ?? prep.scale;
 	return [
-		(position.x - bindOffset.x) / prep.scale,
-		(position.y - bindOffset.y) / prep.scale,
-		(position.z - bindOffset.z) / prep.scale,
+		(position.x - bindOffset.x) / s,
+		(position.y - bindOffset.y) / s,
+		(position.z - bindOffset.z) / s,
 	];
 }
 
-export function debugPrep(rig) {
-	const p = prepOf(rig);
-	return {
-		scale: p.scale,
-		offsets: p.offsets.map((o) => (o ? [o.x, o.y, o.z] : null)),
-	};
+/** Bind offsets against the canonical neutral grown by a take's bone
+ *  factors: neutral joint j = parent + boneScale[j] * (neutral[j] - neutral[parent]),
+ *  floor-shifted the same way prepOf does, in rig units via prep.scale.
+ *  Cached per (rig, boneScale array) — one take, one skeleton. */
+const scaledOffsetCache = new WeakMap();
+function scaledOffsets(prep, boneScale) {
+	let cached = scaledOffsetCache.get(boneScale);
+	if (cached && cached.prep === prep) return cached.offsets;
+	const grown = new Array(CSKEL27_JOINTS.length);
+	for (let j = 0; j < CSKEL27_JOINTS.length; j += 1) {
+		const parent = CSKEL27_PARENTS[j];
+		const n = CSKEL27_NEUTRAL[j];
+		if (parent === null) { grown[j] = [n[0], n[1], n[2]]; continue; }
+		const q = CSKEL27_NEUTRAL[parent];
+		const g = grown[parent];
+		grown[j] = [g[0] + boneScale[j] * (n[0] - q[0]), g[1] + boneScale[j] * (n[1] - q[1]), g[2] + boneScale[j] * (n[2] - q[2])];
+	}
+	// Same frame and scale as prepOf's offsets: only the per-bone growth
+	// differs, so an all-ones boneScale reproduces prep.offsets exactly.
+	const offsets = new Array(CSKEL27_JOINTS.length).fill(null);
+	for (let j = 0; j < CSKEL27_JOINTS.length; j += 1) {
+		if (!prep.bones[j]) continue;
+		const g = grown[j];
+		offsets[j] = new THREE.Vector3(
+			prep.bindPos[j].x - prep.scale * g[0],
+			prep.bindPos[j].y - prep.scale * (g[1] - ARDY_NEUTRAL_MIN_Y),
+			prep.bindPos[j].z - prep.scale * g[2],
+		);
+	}
+	scaledOffsetCache.set(boneScale, { prep, offsets });
+	return offsets;
 }
+
+/** Factor to apply to a rotation-driven bone's BIND translation so the bone
+ *  comes out at the performer's length. boneScale is performer/canonical; the
+ *  rig's own bind bone is not the canonical length (Mixamo forearm 27.6 cm
+ *  against cskel27's 23.3), so the factor is re-based onto the rig:
+ *  performer / rigBind = boneScale * canonical / rigBind, all in rig units. */
+function boneStretch(prep, motion, j) {
+	if (!motion.boneScale) return 1;
+	// The shoulder girdle is character geometry, like the neck: the rig's
+	// clavicle+arm-root (21 cm straight) is deliberately shorter than
+	// cskel27's 34 cm (HIERARCHY_PRESERVED_JOINTS exists to keep it), so
+	// re-basing onto the canonical length would push a 33 cm-wide performer
+	// out to 41 cm. The performer/canonical ratio applies to the rig's own
+	// girdle as-is: a narrow performer narrows the character's shoulders.
+	if (GIRDLE_JOINTS.has(CSKEL27_JOINTS[j])) return motion.boneScale[j];
+	const canonical = prep.canonicalBoneLength[j];
+	const rigBind = prep.rigBoneLength[j];
+	if (!(canonical > 1e-6) || !(rigBind > 1e-6)) return motion.boneScale[j];
+	return (motion.boneScale[j] * canonical) / rigBind;
+}
+const GIRDLE_JOINTS = new Set(["LeftShoulder", "RightShoulder", "LeftArm", "RightArm"]);
 
 /* --- per-frame application -------------------------------------------------- */
 
@@ -364,6 +457,27 @@ export function applyMotionFrame(rig, motion, frame) {
 	const anchorFrame = Math.max(0, Math.min(motion.anchorFrame || 0, motion.frames - 1));
 	const anchorX = motion.posedJoints[(anchorFrame * joints) * 3];
 	const anchorZ = motion.posedJoints[(anchorFrame * joints) * 3 + 2];
+	// A take with boneScale already IS a body: its posedJoints are the
+	// performer's metres, so they map into the rig 1:1 (0.01 cm units aside,
+	// which the root applies). prep.scale exists to keep the CANONICAL body
+	// on this rig's leg length and would shrink a filmed performer by the
+	// rig/canonical ratio (9 % on the x-bot).
+	// The same unit conversion for BOTH kinds of take. prep.scale carries the
+	// rig's leg-length over the canonical one (109 % on the x-bot, 102 % on
+	// the y-bot): every bind offset below was measured in that scaled frame,
+	// and a performer-sized take mapped 1:1 in metres instead lands its hips
+	// 9 cm above the rig's own pelvis geometry on the x-bot (the y-bot hid it
+	// at 1.6 cm). The performer's PROPORTIONS still come through untouched —
+	// this is a uniform factor, the rig's own size — and the bone factors
+	// keep them.
+	const s = prep.scale;
+	prep.lastScale = s;
+	// The bind offsets were measured against the CANONICAL neutral; a
+	// performer-sized take moves every joint by its bone factors, and an
+	// offset that still points at the canonical joint pulls the skin off
+	// the bone by the difference (measured: neck/head 7-10 cm low on a
+	// 0.84x torso). Re-measure against the neutral grown by boneScale.
+	const offsets = motion.boneScale ? scaledOffsets(prep, motion.boneScale) : prep.offsets;
 
 	for (let j = 0; j < joints; j += 1) {
 		const bone = prep.bones[j];
@@ -379,11 +493,11 @@ export function applyMotionFrame(rig, motion, frame) {
 		qGlobal.setFromRotationMatrix(mWorld.setFromMatrix3(mGlobal));
 
 		const po = (f * joints + j) * 3;
-		vOffset.copy(prep.offsets[j]).applyQuaternion(qGlobal);
+		vOffset.copy(offsets[j]).applyQuaternion(qGlobal);
 		vWorld.set(
-			prep.scale * (motion.posedJoints[po] - anchorX) + vOffset.x,
-			prep.scale * motion.posedJoints[po + 1] + vOffset.y,
-			prep.scale * (motion.posedJoints[po + 2] - anchorZ) + vOffset.z,
+			s * (motion.posedJoints[po] - anchorX) + vOffset.x,
+			s * motion.posedJoints[po + 1] + vOffset.y,
+			s * (motion.posedJoints[po + 2] - anchorZ) + vOffset.z,
 		);
 		qWorld.copy(qGlobal).multiply(prep.bindQuat[j]);
 
@@ -400,7 +514,13 @@ export function applyMotionFrame(rig, motion, frame) {
 		}
 
 		if (HIERARCHY_PRESERVED_JOINTS.has(CSKEL27_JOINTS[j])) {
-			vWorld.copy(prep.bindLocalPos[j]).applyMatrix4(mParentInv);
+			// A mocap take carries the performer's bone lengths (boneScale, see
+			// npz.js). Positionally skinned bones already sit where the scaled
+			// posedJoints put them; the arm chain rides its own bind
+			// translation, so the performer's arm length is applied HERE by
+			// stretching that translation by the factor of the bone ending at
+			// this joint. Bone scale is never touched: it would scale the skin.
+			vWorld.copy(prep.bindLocalPos[j]).multiplyScalar(boneStretch(prep, motion, j)).applyMatrix4(mParentInv);
 		}
 
 		mWorld.compose(vWorld, qWorld, prep.bindScale[j]);
@@ -409,6 +529,10 @@ export function applyMotionFrame(rig, motion, frame) {
 		mLocal.decompose(vDecompPos, qDecomp, vDecompScale);
 		bone.position.copy(vDecompPos);
 		bone.quaternion.copy(qDecomp);
+	}
+	for (const leaf of prep.stretchedLeaves) {
+		leaf.bone.position.copy(leaf.bindLocalPos).multiplyScalar(boneStretch(prep, motion, leaf.joint));
+		leaf.bone.quaternion.copy(leaf.bindLocalQuat);
 	}
 	rig.updateMatrixWorld(true);
 }
@@ -422,7 +546,8 @@ export function applyMotionFrame(rig, motion, frame) {
  */
 export function snapshotPlaybackBones(rig) {
 	const out = [];
-	for (const bone of motionBones(rig)) {
+	const prep = prepOf(rig);
+	for (const bone of [...prep.bones, ...prep.stretchedLeaves.map((leaf) => leaf.bone)]) {
 		if (!bone) continue;
 		out.push([
 			bone,

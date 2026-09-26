@@ -18,6 +18,7 @@ const EXPECTED_ANNOTATIONS = Object.freeze({
 	remove_character: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
 	focus_character: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 	place_object: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+	import_mesh: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
 	group_objects: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 	set_prompt_blocks: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
 	load_motion: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
@@ -36,6 +37,7 @@ const EXPECTED_ANNOTATIONS = Object.freeze({
 const SIBLING_PAIRS = [
 	["place_character", "add_character"],
 	["place_object", "update_object"],
+	["import_mesh", "place_object"],
 	["frame_shot", "set_camera"],
 ];
 

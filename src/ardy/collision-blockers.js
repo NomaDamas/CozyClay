@@ -27,7 +27,7 @@
 
 import * as THREE from "three";
 import { buildCollisionCapsules } from "./fix-collisions.js";
-import { objectSize } from "../scene-objects.js";
+import { isEffectivelyHidden, objectSize } from "../scene-objects.js";
 import { objectTransformAt } from "../object-path.js";
 
 const DEG = Math.PI / 180;
@@ -115,14 +115,16 @@ function resolveSize(object, library) {
  * @param {Iterable<string>} [options.skipIds]
  * @returns {Array<{id:string,kind:"box",center:THREE.Vector3,halfExtents:THREE.Vector3,yaw:number}>}
  */
-export function sceneObjectBlockers(sceneObjects, { library = null, frame = null, take = null, skipIds = null } = {}) {
+export function sceneObjectBlockers(sceneObjects, { library = null, frame = null, take = null, skipIds = null, characters = null } = {}) {
 	if (!Array.isArray(sceneObjects) || !sceneObjects.length) return [];
 	const skip = skipIds ? new Set(skipIds) : null;
+	const cast = !characters ? [] : Array.isArray(characters) ? characters : [...characters];
 	const out = [];
 	for (const object of sceneObjects) {
 		if (!object || typeof object !== "object") continue;
 		if (typeof object.id !== "string" || !object.id) continue;
 		if (skip?.has(object.id)) continue;
+		if (isEffectivelyHidden(object, sceneObjects, cast)) continue;
 		// A carried prop's numbers are not world numbers — see the note above.
 		if (object.attach) continue;
 		const size = resolveSize(object, library);
@@ -229,10 +231,14 @@ function characterIdSet(characterIds) {
  */
 export function characterBlockers(rigs, activeId = null, { radii = null, characterIds = null } = {}) {
 	const cast = characterIdSet(characterIds);
+	const hiddenCast = new Set(
+		[...(characterIds ?? [])].filter((each) => each && typeof each === "object" && each.hidden === true).map((each) => each.id),
+	);
 	const out = [];
 	for (const [characterId, rig] of rigEntries(rigs)) {
 		if (!rig || characterId === activeId) continue;
 		if (cast && !cast.has(characterId)) continue;
+		if (hiddenCast.has(characterId)) continue;
 		const override = radii instanceof Map ? radii.get(characterId) ?? null : radii?.[characterId] ?? radii ?? null;
 		const capsules = buildCollisionCapsules(rig, override);
 		if (!capsules) continue;
@@ -258,7 +264,7 @@ export function characterBlockers(rigs, activeId = null, { radii = null, charact
 export function collisionBlockers({ rigs = null, activeId = null, characterIds = null, sceneObjects = null, library = null, frame = null, take = null, skipIds = null, radii = null } = {}) {
 	return [
 		...characterBlockers(rigs, activeId, { radii, characterIds }),
-		...sceneObjectBlockers(sceneObjects ?? [], { library, frame, take, skipIds }),
+		...sceneObjectBlockers(sceneObjects ?? [], { library, frame, take, skipIds, characters: characterIds }),
 	];
 }
 

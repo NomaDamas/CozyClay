@@ -11,6 +11,7 @@ const CONTENT_ROOTS = [
 	"tools",
 	"mcp/runtime",
 	"mcp/server.mjs",
+	"mcp/tool-handlers.mjs",
 	"mcp/live-hub.mjs",
 	"mcp/ardy-prompts.mjs",
 	"mcp/package.json",
@@ -28,6 +29,8 @@ const CONTENT_ROOTS = [
 function ignored(relativePath) {
 	return relativePath === "dist/cozyclay-package.json"
 		|| (/^dist\/media\/[^/]+\.mp4$/i.test(relativePath))
+		|| relativePath === "dist/demo/index.html"
+		|| relativePath === "dist/d/index.html"
 		|| relativePath.startsWith("tools/ardy/out/")
 		|| /^tools\/qa-[^/]+\.mjs$/i.test(relativePath);
 }

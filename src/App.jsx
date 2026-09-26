@@ -11,9 +11,10 @@ import * as THREE from "three";
 import { buildArdyPose } from "./ardy/export.js";
 import { checkBridge, generate as ardyGenerate } from "./ardy/client.js";
 import { characterScaleFor, loadMotionFromUrl } from "./ardy/npz.js";
+import { applyMotionCalibration, normalizeMotionCalibration } from "./ardy/motion-calibration.js";
 import { motionUrlFromQuery } from "./ardy/motion-url.js";
 import { retimeMotion } from "./ardy/retime.js";
-import { applyAutoFall, applyRootDrop, autoRoofDrop, normalizeRootDrop } from "./ardy/root-drop.js";
+import { applyAutoFall, applyRootDrop, applySupportRise, autoRoofDrop, normalizeRootDrop } from "./ardy/root-drop.js";
 import {
 	createMotionEdit,
 	motionEditLayout,
@@ -34,17 +35,9 @@ import {
 	requestBridgeExtract,
 	requestBridgeFootage,
 	sourceLabel,
+	segmentationReceipt,
+	trajectoryReceipt,
 } from "./multimodel-ingest.js";
-import {
-	bakeExtractedTake,
-	bakePoseFrame,
-	collectLandmarkTrack,
-	createPoseDetector,
-	decodeImage,
-	detectMirrorAveraged,
-	sampleTimes,
-	videoFrames,
-} from "./pose-extract/index.js";
 import { applyMotionFrame, captureArdyRoot, restorePlaybackBones, snapshotPlaybackBones } from "./ardy/playback.js";
 import { PIN_BLOCKED, planPosePin } from "./ardy/pose-pin.js";
 import {
@@ -59,7 +52,17 @@ import { movePromptClipFrames } from "./ardy/prompt-clips.js";
 import Timeline from "./ardy/timeline.jsx";
 import { alignArdyPath, judgeAuthoredPath, judgeNextWaypoint } from "./ardy/waypoints.js";
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
-import { createLiveControl } from "./live-control.js";
+import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
+import { createFirstEditTracker } from "./semantic-edit.js";
+import { useSemanticState } from "./use-semantic-state.js";
+import AgentPanel from "./workflow/AgentPanel.jsx";
+import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
+import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateReceipt } from "./studio-agent-protocol.js";
+import { elementByPath } from "./studio-elements.js";
+import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
+import { STUDIO_IK_CHAIN_TRACKS, createStudioActionRegistry, studioActionDeclaration, studioActionRefusal } from "./studio-actions.js";
+import { createStudioMotionCandidates } from "./studio-agent-motion.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
 import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor, saveAutoColor } from "./auto-color.js";
@@ -141,12 +144,16 @@ import { SetProps } from "./props.jsx";
 import {
 	CUTOUT_DEFAULT_HEIGHT,
 	CUTOUT_KIND,
+	MESH_KIND,
 	OBJECT_COLORS,
 	OBJECT_LIBRARY,
 	createCutoutObject,
+	createMeshObject,
 	createSceneObject,
 	duplicateCutoutOptions,
+	duplicateMeshOptions,
 	dropToSurfacePatch,
+	isEffectivelyHidden,
 	normalizeObjectColor,
 	objectSize,
 	placementInFront,
@@ -156,6 +163,7 @@ import {
 	setSceneObjectAttach,
 	setSceneObjectParent,
 	sceneObjectIdFromHierarchy,
+	supportHeightForObject,
 	updateSceneObject,
 	writeStoredObjectColors,
 } from "./scene-objects.js";
@@ -164,13 +172,16 @@ import {
 	ASSET_IMAGE_TYPES,
 	assetAspect,
 	assetGraphSignature,
-	assetIdForBytes,
 	assetUsageCounts,
 	deleteAsset,
 	deleteAssetWithGraphGuard,
+	downscaleTarget,
 	getAsset,
 	imageFilesFromClipboard,
 	importImageFile,
+	isImageAssetId,
+	isMeshAssetId,
+	isSupportedMeshType,
 	listAssetIds,
 	openAssetDb,
 	putAsset,
@@ -179,6 +190,9 @@ import {
 } from "./scene-assets.js";
 import { derivedAssetIds, sourceAssetIds } from "./asset-shelf.js";
 import { assetRecord, evictAssetTexture, rememberAsset } from "./scene-asset-cache.js";
+import { evictMeshScene } from "./scene-mesh-cache.js";
+import { compressedGlbReason, fitMeshBounds, importMeshFile, MESH_HEIGHT_MIN, meshBoundsFromAsset } from "./scene-mesh.js";
+import { subscribeToSceneDocuments, subscribeToScenePlayback } from "./workflow/scene-asset-sync.js";
 import { cutOutBackground, decodeMask, maskAsset } from "./matte.js";
 import { createMatteEditor } from "./matte-editor.js";
 import {
@@ -194,6 +208,7 @@ import {
 	CHARACTER_MODEL_IDS,
 	duplicateScene,
 	migrateStageFrames,
+	normalizeReferenceImage,
 	readSceneDocument,
 	removeScene,
 	renameScene,
@@ -203,6 +218,7 @@ import {
 import {
 	clearStoredProjectHandle,
 	createProjectDocument,
+	createWorkflowGraph,
 	downloadProjectFallback,
 	hasFileSystemAccess,
 	loadStoredProjectHandle,
@@ -212,19 +228,32 @@ import {
 	queryHandlePermission,
 	requestHandlePermission,
 	readProjectDocument,
+	verifyEmbeddedAsset,
+	loadWorkflowGraph,
 	readProjectFile,
 	rememberRecentProject,
 	loadProjectSession,
 	storeProjectSession,
 	writeProjectFile,
+	storeWorkflowGraph,
+	WORKFLOW_STORAGE_KEY,
+	normalizeWorkflowGraph,
 	PROJECT_EXTENSION,
 } from "./project.js";
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
+import FirstSuccessGuide from "./first-success-guide.jsx";
+import { CameraTutorial } from "./camera-tutorial.jsx";
+import { createTutorialAnalytics } from "./tutorial-analytics.js";
+import { cameraTutorialSuppressed, createFirstShotHandoff, rememberCameraTutorialTerminal } from "./first-shot-handoff.js";
 import ObjectGizmo from "./object-gizmo.jsx";
 import AssetPane from "./asset-pane.jsx";
+import ResourceStatus, { SaveBlockedDialog } from "./resource-status.jsx";
 import AddObjectMenu from "./object-catalog.jsx";
 import ResultModal from "./result-modal.jsx";
-import AnalyticsToggle from "./analytics-toggle.jsx";
+import { FalMotionCaptureCard, FalMotionModal } from "./fal-motion-studio.jsx";
+import SettingsMenu from "./settings-menu.jsx";
+import { demoSeedGate, hasLineEditCapability, motionReadiness } from "./motion-readiness.js";
+import { MotionReadiness, MotionSetup, motionReadinessMessage } from "./motion-readiness-ui.jsx";
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
@@ -233,9 +262,11 @@ import {
 	strokeToPathPoints,
 	MAX_PATH_POINTS,
 } from "./object-path.js";
-import LocaleToggle from "./locale-toggle.jsx";
-import { bucketMs, track, trackActivation } from "./analytics.js";
+import { bucketCount, bucketProjectAge, exportFailureCode, motionPreflightReason, startMotionRequest, startExportAttempt, track, trackActivation, trackFeature } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
+import { fetchSceneProject, isPlaygroundEmbed, playgroundSceneUrl } from "./playground.js";
+import { STARTER_SCENES } from "./starter-scenes.js";
+import { PART_COLOURS } from "./part-colours.js";
 import {
 	DEFAULT_POSE,
 	applyHipsOffset,
@@ -256,6 +287,10 @@ import {
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
 import { mergeProjectCustomPoses } from "./project-poses.js";
+import { encodeMotionResource, decodeMotionResource, resolveMotionSource, sha256Hex } from "./motion-resources.js";
+import { openMotionDb, putMotion, getMotion, sweepMotions } from "./motion-store.js";
+import { resourceManifest } from "./project-resources.js";
+import { internWorkflowOutputs, resolveWorkflowOutputs, workflowOutputRefs } from "./workflow/workflow-resources.js";
 import {
 	MID_TRACKS,
 	createIkState,
@@ -266,6 +301,7 @@ import {
 	ikSeedTargets,
 	ikTouch,
 	resolveIkRig,
+	shareContactMeasurements,
 	solveIk,
 	solveMidJoint,
 	solveSwingAngle,
@@ -279,7 +315,9 @@ import {
 } from "./ardy/ik.js";
 import { buildCollisionCapsules, detectPenetrations, fixCollisions, fixCollisionsRange, supportsCollisionCleanup } from "./ardy/fix-collisions.js";
 import { collisionBlockers, blockerSummary } from "./ardy/collision-blockers.js";
-import { autoPhysicsRange, computeCenterOfMass } from "./ardy/auto-physics.js";
+import { computeCenterOfMass, markerPositions } from "./ardy/auto-physics.js";
+import { reviewAutoPhysics, copyPhysicsKeys, physicsKeyStamp } from "./ardy/physics-review.js";
+import { PhysicsPanel, createPhysicsProgress } from "./ardy/physics-panel.jsx";
 import {
 	Dropdown,
 	Field,
@@ -301,11 +339,11 @@ import {
 	fovToFocalMm,
 	slateLine,
 } from "./shot.js";
-import { captureFraming, classifyMove, moveSequenceSlate, moveSequencePhrase } from "./camera-move.js";
+import { CAMERA_PRESETS, cameraPresetFraming, captureFraming, classifyMove, moveSequenceSlate, moveSequencePhrase } from "./camera-move.js";
 import { sampleAt } from "./sample-at.js";
 import { exportOffscreenVideo } from "./offscreen-export.js";
 import { parseRigNodeId } from "./hierarchy-model.js";
-import { timelineContentExtent } from "./timeline-extent.js";
+import { timelineContentExtent, timelineSpan } from "./timeline-extent.js";
 import {
 	GUIDE_LABELS,
 	guideGeometry,
@@ -313,6 +351,14 @@ import {
 	readStoredGuideMode,
 	writeStoredGuideMode,
 } from "./shot-guides.js";
+import { shotCaptureMeta } from "./shot-meta.js";
+import { buildShotPrompt } from "./shot-prompt.js";
+import { keyframePackEntries, keyframePackName } from "./keyframe-pack.js";
+import { buildZip } from "./zip-store.js";
+import { composeStoryboard } from "./storyboard.js";
+import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
+import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
+import { buildH3MotionPrompt, motionApiOrigin, submitFalMotion, waitForFalMotionJob, FAL_MOTION_MIN_DURATION, FAL_MOTION_SHOT_ASPECT, FAL_MOTION_STILL_OUTPUT } from "./fal-motion-client.js";
 import { serializeOtio } from "./otio.js";
 import {
 	addShotAtFrame,
@@ -362,7 +408,6 @@ import {
 	GIZMO_HOTKEYS,
 	HIERARCHY_INSPECTOR_TITLES,
 	KeyLightPuck,
-	LINE_CAPABILITY_RETRY_MS,
 	LINE_CURVE_MARKER_STRIDE,
 	LINE_CURVE_REFUSALS,
 	LINE_EDIT_DEFAULT_TRACK,
@@ -374,12 +419,10 @@ import {
 	MCP_CAPTURE_W,
 	MIN_CURVE_POINTS,
 	MULTIMODEL_REASONS,
-	MULTIMODEL_SAMPLE_FPS,
 	MotionTrails,
 	MoveRig,
 	OBJECT_DELETE_UNDO_MS,
 	ObjectPathHandles,
-	POSE_PLACEMENTS,
 	PRESETS,
 	RIG_HIERARCHY_FOCUS,
 	RenderLoopController,
@@ -396,7 +439,6 @@ import {
 	attachPlacementPatch,
 	attachWorldMatrix,
 	buildPromptSchedule,
-	cameraMoveLabelKo,
 	captureMcpFrame,
 	characterModelUrl,
 	defaultCharacterTint,
@@ -418,7 +460,7 @@ import {
 	toArdyFrame,
 	toArdyFrameEntries,
 	toArdySegments,
-	useImageDrop,
+	useStageFilesDrop,
 } from "./app-stage.jsx";
 
 /**
@@ -454,6 +496,36 @@ function ShotGuideOverlay({ mode, aspect, className = "" }) {
 // the photograph rather than guessed at it. Same number the fit diagnostics are
 // scaled on (0..1 visibility), so it reads as "less than half seen".
 const PHOTO_POSE_LOW_CONFIDENCE = 0.5;
+const CHARACTER_POSITION_BOUNDS = elementByPath("character.position").gizmo;
+const CHARACTER_SCALE_BOUNDS = elementByPath("character.scale");
+
+// How long an agent receipt keeps its targets lit in the hierarchy. Long
+// enough to find the row after reading the chat line, short enough that it is
+// never mistaken for selection. Paired with --agent-touch in styles.css, which
+// fades the same highlight out over the same two seconds.
+const AGENT_RECEIPT_HIGHLIGHT_MS = 2000;
+
+// The storyboard contact sheet is drawn on a bare 2d canvas, which has no
+// stylesheet to inherit from: it gets the studio's own type stack explicitly
+// so the sheet reads like the app it came out of.
+const STORYBOARD_FONT = '12px Inter, "Pretendard", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
+// One unwrapped caption line at 12px inside a 480px cell holds about 64
+// characters before it runs into the next column.
+const STORYBOARD_CAPTION_CHARS = 64;
+
+/** Cut a caption to what one unwrapped cell line holds. */
+function storyboardLine(text) {
+	return text.length > STORYBOARD_CAPTION_CHARS ? `${text.slice(0, STORYBOARD_CAPTION_CHARS - 1)}\u2026` : text;
+}
+
+/** Fold a labelled shot prompt into the one line a board cell can hold. */
+function storyboardCaption(prompt) {
+	return storyboardLine(prompt
+		.split("\n")
+		.filter((line) => line.startsWith("SHOT:") || line.startsWith("LENS:"))
+		.map((line) => line.slice(line.indexOf(":") + 1).trim())
+		.join(" · "));
+}
 
 // cskel27 joint names are rig vocabulary — "RightForeArm" means nothing to
 // someone holding a photograph. Every joint collapses into one of six groups a
@@ -486,43 +558,6 @@ function koSubjectParticle(word) {
 }
 
 /**
- * A released bone silently keeps its neutral rotation and a low-confidence fit
- * silently loosens every bone, so a photo pose can come out wrong with nothing
- * on screen saying why. Returns "" when there is nothing to warn about — that
- * is the case where the ordinary success toast must survive untouched.
- */
-function photoPoseWarning({ releasedBones, confidence }) {
-	const groups = [];
-	for (const name of releasedBones ?? []) {
-		const group = releasedBoneGroup(name);
-		if (!groups.includes(group)) groups.push(group);
-	}
-	const labels = RELEASED_BONE_LABELS
-		.filter(([key]) => groups.includes(key))
-		.map(([, en, koText]) => (isKo ? koText : en));
-	const unsure = Number.isFinite(confidence) && confidence < PHOTO_POSE_LOW_CONFIDENCE;
-	if (labels.length === 0) {
-		if (!unsure) return "";
-		return ko(
-			"The photo is unclear, so the pose may be rough — refine it with the handles",
-			"사진이 흐릿해서 자세가 부정확할 수 있어요 — 핸들로 다듬어 보세요"
-		);
-	}
-	if (isKo) {
-		const list = labels.join("·");
-		const blur = unsure ? " — 사진도 흐릿해서 나머지가 부정확할 수 있어요" : "";
-		return `사진에서 ${list}${koSubjectParticle(list)} 안 보여서 기본 자세로 남았어요${blur}`;
-	}
-	const list = labels.length > 1
-		? `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`
-		: labels[0];
-	const blur = unsure ? ", and the photo is unclear so the rest may be rough" : "";
-	return labels.length > 1
-		? `The ${list} weren't visible in the photo — they stayed in the default pose${blur}`
-		: `The ${list} wasn't visible in the photo — it stayed in the default pose${blur}`;
-}
-
-/**
  * Pose ONE cast member's rig at an absolute timeline frame: its own clip first,
  * then its own IK correction layer on top. This is the single description of
  * "where is this character at frame N" — the viewport effect, the offscreen
@@ -548,16 +583,793 @@ function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
 	}
 }
 
+/** The longest edge a stored reference picture may have. A character sheet is
+ * read as a LOOK, not as texture detail, and the whole thing has to survive
+ * inside the project document — 1024 px keeps a face legible at a fraction of
+ * the bytes a phone photo would cost. */
+const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
+
+/**
+ * Read one picked file into the data URL a reference slot stores: FileReader
+ * for the bytes (so the result survives save/load exactly like an Upload node's
+ * image), then a canvas pass to cap the long side. The source type is kept, so
+ * a JPEG photo stays a JPEG instead of being re-encoded into a much larger PNG.
+ */
+async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIMENSION } = {}) {
+	if (!file) throw new Error("No file");
+	if (!ASSET_IMAGE_TYPES.includes(String(file.type).toLowerCase())) {
+		throw new Error("unsupported image type");
+	}
+	const dataUrl = await new Promise((resolve, reject) => {
+		const reader = new FileReader();
+		reader.onerror = () => reject(new Error("could not read the file"));
+		reader.onload = () => resolve(String(reader.result));
+		reader.readAsDataURL(file);
+	});
+	const bitmap = await createImageBitmap(file);
+	try {
+		const target = downscaleTarget(bitmap.width, bitmap.height, maxDimension);
+		if (!target) throw new Error("could not decode that image");
+		if (!target.scaled) return dataUrl;
+		const canvas = document.createElement("canvas");
+		canvas.width = target.width;
+		canvas.height = target.height;
+		const context = canvas.getContext("2d");
+		context.drawImage(bitmap, 0, 0, target.width, target.height);
+		// GIF and WebP re-encode to PNG: a still frame is what a reference is.
+		const type = file.type === "image/jpeg" ? "image/jpeg" : "image/png";
+		return canvas.toDataURL(type, type === "image/jpeg" ? 0.92 : undefined);
+	} finally {
+		bitmap.close?.();
+	}
+}
+
+/** The editor's Studio actions: ONE registry whose entries call the same
+ * handlers the UI controls call, so a timeline button and the agent's
+ * run_action share one code path. `handlersRef.current` is refreshed on every
+ * render, so a run always reaches the latest handlers; `state()` reads the
+ * synchronously published document, so the diff below sees the edit at once. */
+export function createStudioAppActions(handlersRef) {
+	const h = () => handlersRef.current;
+	const registry = createStudioActionRegistry({ readState: () => h().state() });
+	const fail = (code, message) => { throw new StudioProtocolError(code, message); };
+	const changedIds = (before, after) => [...new Set([
+		...after.filter(row => !before.includes(row)).map(row => row.id),
+		...before.filter(row => !after.some(next => next.id === row.id)).map(row => row.id),
+	])];
+	const shotLabel = shot => `${shot.name} [${shot.startFrame}, ${shot.endFrame + 1})`;
+	const hasShots = state => state.shots.length > 0 || "There are no shots yet; add one with shot.create.";
+	const shotOf = shotId => h().state().shots.find(shot => shot.id === shotId) ?? fail("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
+	const shotAction = (id, available, run) => {
+		const { label } = studioActionDeclaration(id);
+		registry.register({ ...studioActionDeclaration(id), available, run: args => {
+			const before = h().state().shots;
+			run(args);
+			const after = h().state().shots, affectedIds = changedIds(before, after);
+			const described = affectedIds.map(shotId => {
+				const shot = after.find(row => row.id === shotId);
+				return shot ? shotLabel(shot) : `${before.find(row => row.id === shotId)?.name ?? shotId} removed`;
+			});
+			return { affectedIds, summary: affectedIds.length ? `${label}: ${described.join("; ")}.` : `${label}: nothing changed.` };
+		} });
+	};
+	shotAction("shot.create", state => addShotAtFrame(state.shots, state.frame, state.frameCount, null) !== state.shots
+		|| `There is no free room for a new shot at the playhead (frame ${state.frame}); move it with operate_studio { frame } or shorten a shot.`,
+	() => h().addTimelineShot());
+	shotAction("shot.split", state => state.shots.some(shot => state.frame > shot.startFrame && state.frame <= shot.endFrame)
+		|| `The playhead (frame ${state.frame}) is not inside a shot after its first frame; move it with operate_studio { frame }.`,
+	({ shotId }) => {
+		const shot = shotOf(shotId), { frame } = h().state();
+		if (frame <= shot.startFrame || frame > shot.endFrame) fail("TARGET_NOT_READY", `The playhead (frame ${frame}) is not inside ${shot.name} after its first frame.`);
+		h().splitTimelineShot(shotId);
+	});
+	shotAction("shot.duplicate", hasShots, ({ shotId }) => { shotOf(shotId); h().duplicateTimelineShot(shotId); });
+	shotAction("shot.remove", hasShots, ({ shotId }) => { shotOf(shotId); h().removeTimelineShot(shotId); });
+	shotAction("shot.setRange", hasShots, ({ shotId, range }) => { shotOf(shotId); h().setTimelineShotRange(shotId, range.startFrame, range.endFrameExclusive - 1); });
+	shotAction("shot.setCameraRail", hasShots, ({ shotId, points }) => { shotOf(shotId); h().setShotCameraRail(shotId, points); });
+	shotAction("shot.clearCameraRail", state => state.shots.some(shot => createCameraBlock(shot.camera).cameraRail) || "No shot has a camera rail; lay one with shot.setCameraRail.",
+		({ shotId }) => { shotOf(shotId); h().clearShotCameraRail(shotId); });
+	shotAction("shot.reorder", hasShots, ({ shotId, startFrame }) => { shotOf(shotId); h().moveTimelineShot(shotId, startFrame); });
+	registry.register({ ...studioActionDeclaration("motion.generateAllBlocks"),
+		available: state => state.generating ? "A motion generation is already running."
+			: !state.motionReady ? "The motion backend is not ready."
+				: state.promptBlockCount === 0 ? "The active character has no prompt block with text; write them with patch_elements character.promptBlocks." : true,
+		run: () => {
+			const { activeCharacterId, promptBlockCount } = h().state();
+			h().runAllPromptBlocks();
+			// The generation queues synchronously or not at all; the editor's toast
+			// names the refusal (rig not loaded, over-long block, line-edit draft).
+			if (!h().state().generating) fail("TARGET_NOT_READY", "The editor did not start the generation; check the active character's rig and prompt blocks.");
+			return { affectedIds: activeCharacterId ? [activeCharacterId] : [], summary: `Started generating the active character's motion from ${promptBlockCount} prompt block${promptBlockCount === 1 ? "" : "s"}.` };
+		} });
+	// Cast actions name their character explicitly, so they run the same way
+	// whichever character is active and whatever mode the editor is in.
+	const characterOf = characterId => h().state().characters.find(entry => entry.id === characterId)
+		?? fail("STALE_TARGET", `Character ${characterId} is not in this scene.`);
+	const castAction = (id, run) => registry.register({ ...studioActionDeclaration(id),
+		available: state => state.characters.length > 0 || "There are no characters in this scene; add one with arrange_characters.",
+		run: args => {
+			const character = characterOf(args.characterId);
+			return { affectedIds: [character.id], summary: run(args, character.subject || character.id) };
+		} });
+	const pin = waypoint => `frame ${waypoint.frame} (x ${waypoint.x}, z ${waypoint.z})`;
+	const warned = warnings => warnings.length ? `; warning: ${warnings[0]}` : "";
+	castAction("character.addWaypoint", ({ characterId, position, frame }, name) => {
+		const { waypoint, index, warnings } = h().addCharacterWaypoint(characterId, position, frame ?? null);
+		return `Added ${name}'s root waypoint ${index + 1} at ${pin(waypoint)}${warned(warnings)}.`;
+	});
+	castAction("character.moveWaypoint", ({ characterId, frame, position }, name) => {
+		const { waypoint, warnings } = h().moveCharacterWaypoint(characterId, frame, position);
+		return `Moved ${name}'s root waypoint to ${pin(waypoint)}${warned(warnings)}.`;
+	});
+	castAction("character.removeWaypoint", ({ characterId, frame }, name) => {
+		h().removeCharacterWaypoint(characterId, frame);
+		return `Removed ${name}'s root waypoint at frame ${frame}.`;
+	});
+	castAction("character.clearWaypoints", ({ characterId }, name) => {
+		const count = h().clearCharacterWaypoints(characterId);
+		return count ? `Cleared ${name}'s root path (${count} waypoint${count === 1 ? "" : "s"}).` : `${name} has no root waypoints; nothing changed.`;
+	});
+	// The declared schema carries the key's shape; the per-track counts and the
+	// timeline bound are checked here, before anything is recorded.
+	castAction("character.setIkKey", ({ characterId, frame, tracks }, name) => {
+		const { frameCount } = h().state(), named = Object.keys(tracks);
+		if (frame >= frameCount) fail("INVALID_RANGE", `Frame ${frame} is outside the timeline (0-${frameCount - 1}).`);
+		if (!named.length) fail("INVALID_ARGUMENT", "Name at least one track in tracks.");
+		for (const track of named) {
+			const key = tracks[track], chain = STUDIO_IK_CHAIN_TRACKS.includes(track), bones = chain ? 3 : 1;
+			if (!key.q && !key.p) fail("INVALID_ARGUMENT", `tracks.${track} needs q (bone rotations) or p (a local position).`);
+			if (key.chainP && !chain) fail("INVALID_ARGUMENT", `tracks.${track}.chainP is for chain tracks only.`);
+			for (const field of ["q", "baseQ", "chainP"]) {
+				if (key[field] && key[field].length !== bones) fail("INVALID_ARGUMENT", `tracks.${track}.${field} needs ${bones} entr${bones === 1 ? "y" : "ies"}, one per bone.`);
+			}
+			if ([...(key.q ?? []), ...(key.baseQ ?? [])].some(q => Math.hypot(q.x, q.y, q.z, q.w) < 1e-6)) fail("INVALID_ARGUMENT", `tracks.${track} has a zero-length quaternion.`);
+		}
+		h().setCharacterIkKey(characterId, frame, tracks);
+		return `Keyed ${name}'s IK layer at frame ${frame}: ${named.join(", ")}.`;
+	});
+	castAction("character.removeIkKey", ({ characterId, frame }, name) => {
+		h().removeCharacterIkKey(characterId, frame);
+		return `Deleted ${name}'s IK key at frame ${frame}.`;
+	});
+	castAction("character.clearIkKeys", ({ characterId }, name) => {
+		const count = h().clearCharacterIkKeys(characterId);
+		return count ? `Cleared ${name}'s IK layer (${count} key${count === 1 ? "" : "s"}).` : `${name} has no IK keys; nothing changed.`;
+	});
+	const objectOf = objectId => h().state().objects.find(object => object.id === objectId)
+		?? fail("STALE_TARGET", `Object ${objectId} is not in this scene.`);
+	registry.register({ ...studioActionDeclaration("object.attach"),
+		available: state => state.objects.length === 0 ? "There are no scene objects to attach."
+			: state.characters.length === 0 ? "There are no characters to attach an object to." : true,
+		run: ({ objectId, characterId, bone }) => {
+			const object = objectOf(objectId), character = characterOf(characterId), before = h().state().objects;
+			h().attachSceneObject(objectId, { characterId, bone: bone ?? null });
+			const frameName = `${character.subject || character.id}'s ${bone ?? "root"}`;
+			return { affectedIds: [objectId], summary: h().state().objects === before
+				? `${object.name || objectId} already rides ${frameName}; nothing changed.`
+				: `Attached ${object.name || objectId} to ${frameName}, keeping its place on screen.` };
+		} });
+	registry.register({ ...studioActionDeclaration("object.detach"),
+		available: state => state.objects.some(object => object.attach || object.parent) || "No scene object is attached to a character or grouped.",
+		run: ({ objectId }) => {
+			const object = objectOf(objectId);
+			if (!object.attach && !object.parent) fail("TARGET_NOT_READY", `${object.name || objectId} is not attached to a character or in a group.`);
+			h().attachSceneObject(objectId, null);
+			return { affectedIds: [objectId], summary: `Put ${object.name || objectId} back in the world where it is now.` };
+		} });
+	// Viewer preferences: transient, like the View menu they mirror.
+	const viewAction = (id, run) => registry.register({ ...studioActionDeclaration(id), available: () => true,
+		run: args => ({ affectedIds: [], summary: run(args) }) });
+	viewAction("view.setPartColours", ({ mode }) => { h().choosePartColours(mode); return `Part colours: ${mode}.`; });
+	viewAction("view.setGuideMode", ({ mode }) => { h().setGuideMode(mode); return `Composition guide: ${mode}.`; });
+	viewAction("view.setInset", ({ collapsed }) => { h().setInsetCollapsed(collapsed); return `Top-View inset ${collapsed ? "folded" : "unfolded"}.`; });
+	registry.register({ ...studioActionDeclaration("object.duplicate"),
+		available: state => state.objects.length > 0 || "There are no scene objects to duplicate.",
+		run: ({ objectId }) => {
+			const state = h().state(), id = objectId ?? state.selectedObjectId;
+			if (!id) fail("TARGET_NOT_READY", "Name objectId or select an object first.");
+			const source = state.objects.find(object => object.id === id) ?? fail("STALE_TARGET", `Object ${id} is not in this scene.`);
+			h().duplicateSelectedSceneObject(id);
+			const after = h().state().objects, affectedIds = changedIds(state.objects, after);
+			const copy = after.find(object => affectedIds.includes(object.id));
+			return { affectedIds, summary: copy ? `Duplicated ${source.name || source.id} as ${copy.name || copy.id}.` : "Duplicate object: nothing changed." };
+		} });
+	return registry;
+}
+
+// App-owned adapter: the merged command/candidate modules remain the only
+// planners and validators. Ports below publish through the native editor stores.
+export function createStudioAppBinding(ports) {
+	const fail = (code, message) => { throw new StudioProtocolError(code, message); };
+	const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+	const identities = new WeakMap(); let identitySequence = 0, tokenSequence = 0;
+	const motionStamps = new Map(), calibrationStamps = new Map();
+	const identityOf = value => {
+		if (!value || typeof value !== "object") return 0;
+		if (!identities.has(value)) identities.set(value, ++identitySequence);
+		return identities.get(value);
+	};
+	const stableStamp = (stamps, key) => {
+		if (key === null) return 0;
+		if (!stamps.has(key)) stamps.set(key, stamps.size + 1);
+		return stamps.get(key);
+	};
+	const motionContentKey = value => {
+		if (!value || typeof value !== "object") return null;
+		if (typeof value.studioTakeId === "string" && value.studioTakeId) return value.studioTakeId;
+		if (typeof value.motionRef?.motionId === "string" && value.motionRef.motionId) return value.motionRef.motionId;
+		return `${value.frames ?? 0}:${value.fps ?? 0}:${value.rotMats?.length ?? 0}:${value.rootPos?.length ?? 0}:${value.posedJoints?.length ?? 0}`;
+	};
+	const calibrationContentKey = value => value && typeof value === "object" ? JSON.stringify(value) : null;
+	const tokens = new Map(), receipts = new Map(), jobs = new Map(), images = new Map();
+	let owner = null, commands = null, motion = null, journal = null;
+	let authoredKey, physicsKey, viewKey, observedSceneRevision = ports.revision.current;
+	let physicsRevision = 0, viewRevision = 0;
+	function refresh() {
+		const raw = ports.read();
+		const host = validateStudioIdentity(raw.host);
+		if (!same(owner, host)) {
+			motion?.dispose(); owner = host; tokens.clear(); receipts.clear(); jobs.clear(); images.clear();
+			authoredKey = physicsKey = viewKey = undefined;
+			journal = createStudioCommandJournal({ host, isRetained: receipt => ports.isRetained(receipt) });
+			commands = createStudioCommands({ read: readCommand, guard, bounds: ports.bounds, commit: ports.commit, poses: ports.poses, journal });
+			motion = createStudioMotionCandidates({ readTarget, readEnvironment, journal,
+				commit: commitMotion, loadArtifact, poseCast: ports.poseCast });
+		}
+		const characters = raw.characters.map(character => {
+			const target = raw.targets.get(character.id);
+			return { ...character, sessionMotion: identityOf(target?.motion),
+				ik: physicsKeyStamp(target?.ikState?.keys ?? new Map()), rig: target?.rig?.uuid ?? null };
+		});
+		// Runtime motion, IK and rig fields are derived from the active editor
+		// buffers, not authored document state. A fresh equivalent buffer object
+		// must not advance the scene clock on a read.
+		const authoredCharacters = raw.characters.map(({ sessionMotion, ik, rig, ...character }) => character);
+		// The stage is authored state too: a key-light or environment edit from any
+		// surface bumps the scene revision exactly like a cast or object edit.
+		const authored = JSON.stringify([raw.objects, authoredCharacters, raw.shots, raw.frameCount, raw.stage]);
+		if (authoredKey !== undefined && authoredKey !== authored && observedSceneRevision === ports.revision.current) ports.revision.current++;
+		authoredKey = authored; observedSceneRevision = ports.revision.current;
+		const liveIds = new Set([...raw.objects, ...raw.characters, ...raw.shots].map(row => row.id));
+		for (const id of tokens.keys()) if (!liveIds.has(id)) tokens.delete(id);
+		for (const entry of [...raw.objects, ...characters, ...raw.shots]) {
+			// Display-only name/tint changes never revoke a motion target.
+			const { name, subject, tint, identityImage, ...content } = entry;
+			const key = JSON.stringify(content), previous = tokens.get(entry.id);
+			if (!previous || previous.key !== key) tokens.set(entry.id, { key, token: `target-${++tokenSequence}`, incarnation: previous?.incarnation ?? crypto.randomUUID() });
+		}
+		const physical = physicsFingerprintInput({ floor: { model: "flat", y: 0 }, frameCount: raw.frameCount,
+			objects: raw.objects.map(o => ({ id: o.id, renderer: o.renderer,
+				position: { x: o.x, y: o.y ?? 0, z: o.z }, rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 },
+				scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ }, footprint: o.footprint, height: o.height,
+				supportY: supportHeightForObject(o), parentId: o.parent ?? null, attachment: o.attach ?? null, path: o.path ?? null, hidden: o.hidden === true })),
+			characters: raw.characters.map(c => {
+				const t = raw.targets.get(c.id), summary = characters.find(row => row.id === c.id);
+				const motionKey = motionContentKey(t?.motion), calibrationKey = calibrationContentKey(t?.motion?.sceneCalibration);
+				return { id: c.id, incarnation: tokens.get(c.id).incarnation, modelId: c.model ?? null,
+					rigId: t?.rig?.uuid ?? null, rigReady: Boolean(t?.rig), hidden: Boolean(c.hidden),
+					position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1,
+					takeId: t?.motion?.studioTakeId ?? null, sessionMotionId: motionKey ? `motion-${motionKey}` : null,
+					motionRevision: stableStamp(motionStamps, motionKey), calibrationRevision: stableStamp(calibrationStamps, calibrationKey),
+					ikRevision: ports.ikRevision(c.id, summary.ik),
+					waypoints: (c.layer?.waypoints ?? []).map(p => ({ frame: p.frame, position: { x: p.x, y: p.y ?? 0, z: p.z } })) };
+			}) });
+		const physicalKey = JSON.stringify(physical);
+		if (physicsKey !== undefined && physicsKey !== physicalKey) physicsRevision++;
+		physicsKey = physicalKey;
+		const nextViewKey = JSON.stringify([raw.selection, raw.activeCharacterId, raw.selectedShotId, raw.view, raw.camera]);
+		if (viewKey !== undefined && viewKey !== nextViewKey) viewRevision++;
+		viewKey = nextViewKey;
+		return { ...raw, host, revision: ports.revision.current, physicsRevision, viewRevision };
+	}
+	function guard(id) {
+		const raw = refresh(), token = tokens.get(id)?.token;
+		if (!token) fail("STALE_TARGET", "The exact target no longer exists.");
+		return { ...raw.host, targetId: id, token };
+	}
+	function readCommand() {
+		const s = refresh();
+		return { host: s.host, revision: s.revision, frame: s.view.frame, frameCount: s.frameCount,
+			objects: s.objects, characters: s.characters, activeCharacterId: s.activeCharacterId,
+			selectedShotId: s.selectedShotId, shotDocument: { shots: s.shots }, camera: s.camera, stage: s.stage,
+			filmback: s.filmback, manual: s.manual, floorY: 0, busy: s.busy };
+	}
+	function entityProjection(s) {
+		return [...s.characters.map(c => {
+			const t = s.targets.get(c.id);
+			return { id: c.id, kind: "character", token: tokens.get(c.id).token, name: c.subject || c.id,
+				position: { x: c.x, y: c.y ?? 0, z: c.z }, yawDeg: c.rot ?? 0, scale: c.scale ?? 1, tint: c.tint ?? null, modelId: c.model ?? null,
+				motion: { takeId: t?.motion?.studioTakeId ?? null, frames: t?.motion?.frames ?? 0,
+					ikKeyCount: t?.ikState?.keys.size ?? 0, promptBlockCount: c.layer?.promptClips?.length ?? 0 },
+				capabilities: { rigReady: Boolean(t?.rig), ik: Boolean(t?.rig?.userData?.poseBind), measuredFeet: false } };
+		}), ...s.objects.map(o => ({ id: o.id, kind: "object", token: tokens.get(o.id).token, name: o.name || o.id,
+			position: { x: o.x, y: o.y ?? 0, z: o.z }, yawDeg: o.rot ?? 0,
+			rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 }, scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ },
+			renderer: o.renderer, color: o.color ?? null, ...(o.assetId ? { assetId: o.assetId } : {}),
+			parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
+	}
+	const frameRange = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
+	// Scope-specific inspection: each scope answers with the authored detail the
+	// compact context only counts, in the shapes patch_elements writes back.
+	const inspectScopes = {
+		scene: s => ({
+			stage: { environment: s.stage.environment ?? null, style: s.stage.style ?? null, hasEnvironmentImage: Boolean(s.stage.environmentImage),
+				hasEnvSheet: s.stage.hasEnvSheet === true, keyLight: { ...s.stage.keyLight },
+				camera: { presetId: s.stage.cameraPresetId ?? null, aspect: s.stage.shotAspect, sensorId: s.stage.sensorId } },
+			counts: { characters: s.characters.length, objects: s.objects.length, shots: s.shots.length, frames: s.frameCount, assets: assetList(s).length },
+		}),
+		shot: (s, wanted) => {
+			const shots = s.shots.filter(wanted).map(row => ({ id: row.id, name: row.name, range: frameRange(row), mode: row.camera?.mode ?? "keys",
+				cameraKeys: row.cameraKeys.map(({ frame, framing }) => ({ frame, framing: { pos: { ...framing.pos }, yaw: framing.yaw, pitch: framing.pitch, fovDeg: framing.fovDeg } })),
+				rail: row.camera?.cameraRail?.map(({ x, z }) => ({ x, z })) ?? null }));
+			return { shots, total: shots.length };
+		},
+		motion: (s, wanted) => {
+			const characters = s.characters.map(c => ({ ...c, name: c.subject || c.id })).filter(wanted).map(c => {
+				const t = s.targets.get(c.id);
+				return { id: c.id, name: c.name, takeId: t?.motion?.studioTakeId ?? null, frames: t?.motion?.frames ?? 0,
+					promptBlocks: (c.layer?.promptClips ?? []).map(({ startFrame, endFrame, text }) => ({ startFrame, endFrame, text })),
+					waypoints: (c.layer?.waypoints ?? []).map(p => ({ frame: p.frame, position: { x: p.x, y: p.y ?? 0, z: p.z } })),
+					ikKeyFrames: [...(t?.ikState?.keys?.keys() ?? [])].sort((a, b) => a - b) };
+			});
+			return { characters, total: characters.length };
+		},
+		selection: s => {
+			const id = ["object", "character", "rig"].includes(s.selection?.kind) ? s.selection.id : null;
+			const row = id ? entityProjection(s).find(entry => entry.id === id) : null;
+			const o = row?.kind === "object" ? s.objects.find(entry => entry.id === id) : null, c = row?.kind === "character" ? s.characters.find(entry => entry.id === id) : null;
+			const entity = !row ? null : o ? { ...row, hidden: o.hidden === true, path: o.path ? structuredClone(o.path) : null }
+				: { ...row, hidden: c.hidden === true, poseId: c.pose?.id ?? null };
+			return { selection: s.selection ?? null, entity };
+		},
+	};
+	function assetList(s) {
+		const catalogue = studioObjectCatalogue().objects.map(({ kind }) => {
+			const entry = OBJECT_LIBRARY.find(row => row.kind === kind);
+			return { kind, name: entry?.label ?? kind, type: entry?.group === "Primitives" ? "primitive" : "set-piece" };
+		});
+		const imported = new Map();
+		for (const o of s.objects) {
+			const assetId = o.renderer === CUTOUT_KIND ? o.sourceAssetId || o.assetId : o.renderer === MESH_KIND ? o.assetId : null;
+			if (assetId && !imported.has(assetId)) imported.set(assetId, { id: assetId, name: o.name || assetId, type: o.renderer === CUTOUT_KIND ? "image" : "mesh" });
+		}
+		return [...catalogue, ...imported.values()];
+	}
+	function context() {
+		const s = refresh(), entities = entityProjection(s);
+		const shot = s.shots.find(row => row.id === s.selectedShotId) ?? shotAtFrame(s.shots, s.view.frame);
+		const range = frameRange;
+		return buildStudioContext({ schema: "studio-context-v1", host: { surface: "studio", ...s.host, workspaceHandle: s.workspaceHandle },
+			revision: { scene: s.revision, physics: s.physicsRevision, view: s.viewRevision },
+			units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" },
+			scene: { name: s.sceneName, aspect: s.aspect, floorY: 0, frameCount: s.frameCount, objectCount: s.objects.length, characterCount: s.characters.length },
+			selection: s.selection, activeCharacterId: s.activeCharacterId, view: s.view,
+			shot: shot ? { id: shot.id, name: shot.name, range: range(shot), mode: shot.camera?.mode ?? "keys" } : null, camera: s.camera,
+			// buildStudioContext selects the detailed rows and writes the real page.
+			entities, entityPage: { returned: 0, total: 0, truncated: false, nextCursor: null },
+			shots: s.shots.map(row => ({ id: row.id, name: row.name, range: range(row), keyCount: row.cameraKeys.length })), shotsTruncated: false,
+			assets: assetList(s), recentReceipts: [...receipts.values()].filter(r => r.ok).reverse().slice(0, 3).map(r => ({ id: r.receiptId, summary: r.status, canUndoDirect: ports.canUndo(r) })),
+			jobs: [...jobs.values()].slice(-8), capabilities: { profile: "studio-slice-1", tools: STUDIO_TOOL_FAMILIES,
+				rigReady: Boolean(s.targets.get(s.activeCharacterId)?.rig), cameraReady: Boolean(s.camera), bridgeReady: s.bridgeReady } });
+	}
+	function readTarget(binding) {
+		const s = refresh(), target = s.targets.get(binding.characterId);
+		return target ? { ...target, character: s.characters.find(c => c.id === binding.characterId), guard: guard(binding.characterId), busy: s.busy,
+			preserveAuthoredMotion: Boolean(target.preserveAuthoredMotion), protectedFrames: target.protectedFrames ?? [] } : null;
+	}
+	function readEnvironment() {
+		const s = refresh();
+		return { host: s.host, physicsRevision: s.physicsRevision, floor: { model: "flat", y: 0 }, objects: s.objects, frameCount: s.frameCount,
+			cast: s.characters.map(character => ({ character, ...s.targets.get(character.id) })) };
+	}
+	function remember(receipt) { if (receipt?.receiptId) receipts.set(receipt.receiptId, receipt); return receipt; }
+	// A candidate keeps the URL its artifact came from and the content id of its
+	// bytes: the install persists both in the motionRef, so a reload restores the
+	// take from the motion store even after the bridge has forgotten the run.
+	// The bytes come from the pinned absolute URL, but the take stores the bridge
+	// path a UI take stores: refine requests send it back as sourceMotion, and the
+	// bridge accepts only /ardy/motions/<id> there.
+	async function loadArtifact(artifact, options) {
+		const loaded = await ports.loadArtifact(artifact, options);
+		const path = new URL(artifact.url, "http://localhost").pathname;
+		const url = /^\/ardy\/(motions\/[0-9]+-[0-9a-f]{6}|assembled\/[A-Za-z0-9._-]+\.npz)$/.test(path) ? path : artifact.url;
+		return { ...loaded, url, ...(loaded.sourceBytes ? { motionId: await sha256Hex(loaded.sourceBytes) } : {}) };
+	}
+	function commitMotion(payload) {
+		const s = refresh(), beforeTake = s.targets.get(payload.binding.characterId)?.motion;
+		const takeId = crypto.randomUUID(), historyEntryId = crypto.randomUUID();
+		// Validate the complete correlated receipt BEFORE the one synchronous publish.
+		const receipt = validateReceipt({ ok: true, status: "installed", authored: true,
+			commandId: payload.commandId, receiptId: crypto.randomUUID(), host: s.host, jobId: payload.jobId, artifactId: payload.artifactId,
+			revision: { before: s.revision, after: s.revision + 1 }, affectedIds: [payload.binding.characterId],
+			delta: [{ id: payload.binding.characterId, after: { takeId } }], checks: { coverage: "studio-motion-v1" },
+			undo: { historyEntryId, entries: 1, canUndoDirect: true }, warnings: payload.verification.status === "unverified" ? [{ code: "UNVERIFIED_MOTION" }] : [],
+			installed: { characterId: payload.binding.characterId, beforeTakeId: beforeTake?.studioTakeId ?? null, takeId,
+				targetToken: `target-${tokenSequence + 1}`, frameCount: payload.schedule.frameCount, fps: 24, durationSeconds: payload.schedule.durationSeconds,
+				blocks: payload.schedule.blocks.map(({ sourceBeat, startFrame, endFrameExclusive }) => ({ sourceBeat, startFrame, endFrameExclusive })), selectionChanged: false },
+			verification: payload.verification, repairs: payload.repairs, explicitUnverifiedAcceptance: payload.explicitUnverifiedAcceptance === true });
+		ports.commitMotion({ ...payload, takeId, historyEntryId });
+		const actual = { ...receipt, installed: { ...receipt.installed, targetToken: guard(payload.binding.characterId).token } };
+		return remember(journal.record(validateReceipt(actual)));
+	}
+	function rejection(request, error, phase = "admission") {
+		return validateReceipt({ ok: false, commandId: request.commandId, host: request.host ?? request.binding?.host,
+			code: error.code ?? "INVALID_ARGUMENT", phase, affectedIds: [], expectedTargets: [], currentTargets: [], mutated: false,
+			preserved: { authoredState: "unchanged" }, recovery: { action: "inspect", retryAllowed: false } });
+	}
+	function admit(request) {
+		const s = refresh();
+		if (!same(validateStudioIdentity(request.host), s.host)) fail("STALE_SCENE", "The live document changed.");
+		if (request.expectedRevision !== s.revision) fail("STALE_SCENE", "Authored state changed; obtain fresh intent.");
+		if (s.busy) fail("TARGET_BUSY", "Finish the current editor gesture first.");
+		return s;
+	}
+	/** Actual state of one action target after it ran. */
+	function actionReadback(id, s) {
+		const shot = s.shots.find(row => row.id === id);
+		if (shot) return { name: shot.name || shot.id, range: { startFrame: shot.startFrame, endFrameExclusive: shot.endFrame + 1 } };
+		const entity = s.objects.find(row => row.id === id) ?? s.characters.find(row => row.id === id);
+		if (entity) return { name: entity.name || entity.subject || entity.id, position: { x: entity.x, y: entity.y ?? 0, z: entity.z } };
+		return { removed: true };
+	}
+	/** One registered Studio action, run for the agent through the same
+	 * registry the UI controls call. A mutation is bound to the native history
+	 * entry it pushed, so its receipt is an ordinary journal receipt that
+	 * undo_edit reverts; a job answers "started" and lands later. */
+	function runAction(request, args, s) {
+		const registry = ports.actions?.();
+		if (!registry) fail("CAPABILITY_MISSING", "This editor registers no Studio actions.");
+		const entry = registry.get(args.action);
+		const base = { commandId: request.commandId, receiptId: crypto.randomUUID(), host: s.host, action: entry.id, checks: { coverage: `studio-action:${entry.id}` }, warnings: [] };
+		if (entry.kind === "job") {
+			const result = registry.run(entry.id, args.args);
+			return { ok: true, commandId: request.commandId, action: entry.id, kind: "job", status: "started", affectedIds: result.affectedIds, summary: result.summary };
+		}
+		if (entry.kind === "transient") {
+			const result = registry.run(entry.id, args.args), after = refresh();
+			return journal.record(validateReceipt({ ...base, ok: true, status: "transient", authored: false, summary: result.summary,
+				revision: { before: s.revision, after: s.revision }, view: { before: s.viewRevision, after: after.viewRevision }, affectedIds: [s.host.sceneId],
+				delta: [{ id: s.host.sceneId, after: { selection: after.selection, activeCharacterId: after.activeCharacterId, shotId: after.selectedShotId, view: after.view } }], undo: null }));
+		}
+		// A motion-domain entry restores one character's layer: the one it names.
+		const { result, historyEntryId } = ports.recordAction(entry.undoDomain, () => registry.run(entry.id, args.args), args.args?.characterId ?? null);
+		const after = refresh(), ids = result.affectedIds;
+		if (after.revision === s.revision) {
+			return remember(journal.record(validateReceipt({ ...base, ok: true, status: "noop", authored: false, mutated: false, summary: result.summary,
+				revision: { before: s.revision, after: s.revision }, affectedIds: [], delta: [], undo: null })));
+		}
+		if (!historyEntryId || !ids.length || after.revision !== s.revision + 1) {
+			// The document changed without one attributable history entry: say so
+			// instead of pretending nothing happened.
+			return journal.record(validateReceipt({ ok: false, commandId: request.commandId, host: s.host, code: "UNCERTAIN_APPLY", phase: "commit",
+				affectedIds: ids.slice(0, 100), expectedTargets: [], currentTargets: [], mutated: true, preserved: { authoredState: "changed" },
+				recovery: { action: "inspect", retryAllowed: false }, message: `${entry.id} changed the scene without one undoable entry.` }));
+		}
+		return remember(journal.record(validateReceipt({ ...base, ok: true, status: "applied", authored: true, mutated: true, summary: result.summary,
+			revision: { before: s.revision, after: after.revision }, affectedIds: ids,
+			delta: ids.slice(0, 8).map(id => ({ id, after: actionReadback(id, after) })),
+			undo: { historyEntryId, entries: 1, canUndoDirect: true }, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) })));
+	}
+	function execute(request) {
+		refresh();
+		if (["arrange_objects", "arrange_characters", "frame_shot", "patch_elements"].includes(request.name)) {
+			// Arrangements and framing are fenced by the exact scene revision, the
+			// gesture flag and the document identity inside the command module; they
+			// carry no per-entity tokens, so a turn may edit one entity twice.
+			return remember(commands.execute(request));
+		}
+		const signature = JSON.stringify(request);
+		if (!same(request.host, owner)) return rejection(request, new StudioProtocolError("STALE_SCENE", "Document changed."));
+		try {
+			if (!journal.begin(request.commandId, signature)) return journal.get(request.commandId);
+			// Verification only observes: the document identity (checked above) is
+			// its whole fence, so a later edit never refuses it.
+			const { args } = validateStudioCommand({ name: request.name, args: request.args }), s = request.name === "verify_result" ? refresh() : admit(request);
+			if (request.name === "run_action") return runAction(request, args, s);
+			if (request.name === "operate_studio") {
+				ports.operate(args, s); const after = refresh();
+				return journal.record(validateReceipt({ ok: true, status: "transient", authored: false, commandId: request.commandId,
+					receiptId: crypto.randomUUID(), host: s.host, revision: { before: s.revision, after: s.revision },
+					view: { before: s.viewRevision, after: after.viewRevision }, affectedIds: [s.host.sceneId],
+					delta: [{ id: s.host.sceneId, after: { selection: after.selection, activeCharacterId: after.activeCharacterId, shotId: after.selectedShotId, view: after.view } }],
+					checks: { coverage: "editor-view-state" }, undo: null, warnings: [] }));
+			}
+			if (request.name === "undo_edit") {
+				const previous = receipts.get(args.receiptId);
+				if (!previous || !ports.canUndo(previous)) fail("UNDO_CONFLICT", "A newer edit owns native Undo.");
+				ports.undo(); const after = refresh();
+				const ids = previous.affectedIds;
+				// Removed creations have no live guard; their retired incarnation is
+				// still identified by a fresh restoration token in the undo receipt.
+				const restoredTargets = ids.map(id => ({ ...s.host, targetId: id, token: tokens.get(id)?.token ?? `removed-${++tokenSequence}` }));
+				const result = validateReceipt({ ok: true, status: "undone", authored: true, commandId: request.commandId, receiptId: crypto.randomUUID(), host: s.host,
+					revision: { before: s.revision, after: after.revision }, affectedIds: ids,
+					delta: ids.slice(0, 8).map(id => ({ id, after: { token: restoredTargets.find(t => t.targetId === id).token } })),
+					checks: { coverage: "native-history-restoration" }, undo: { historyEntryId: previous.undo.historyEntryId, entries: 1, canUndoDirect: false },
+					warnings: [], undoneReceiptId: previous.receiptId, restoredTargets, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
+				return remember(journal.record(result));
+			}
+			if (request.name === "verify_result") {
+				const receipt = args.receiptId ? receipts.get(args.receiptId) : null;
+				if (args.receiptId && !receipt) fail("STALE_TARGET", "Receipt is not retained in this document.");
+				for (const id of args.targets ?? []) guard(id);
+				// A receipt edited over since is still evidence of what it did: return it
+				// marked stale with the revision it describes beside the current one.
+				const evidenceRevision = receipt ? receipt.revision.after : s.revision;
+				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, evidenceRevision, stale: evidenceRevision !== s.revision, checks: receipt?.checks ?? { coverage: "unavailable" },
+					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [],
+					unsupportedChecks: args.checks.filter(check => check === "motion" ? !receipt?.verification : !receipt?.checks) };
+				if (args.visual !== "none") {
+					if (args.visual === "contact_sheet") result.unsupportedChecks.push("contact_sheet");
+					else { const capture = ports.capture(); const imageId = crypto.randomUUID(); images.set(imageId, { ...capture, revision: s.revision, receiptId: result.receiptId }); result.visualRefs.push({ imageId }); }
+				}
+				return result;
+			}
+			fail("CAPABILITY_MISSING", "Generation is owned by the server runtime.");
+		} catch (error) { const receipt = rejection(request, error); return journal.record(receipt); }
+	}
+	const handlers = {
+		read_studio_context(request) { const c = context(); if (!same(validateStudioIdentity(request.host), owner)) fail("STALE_SCENE", "This is not the requested document."); return c; },
+		inspect_studio(args) {
+			const command = validateStudioCommand({ name: "inspect_studio", args }); const c = context();
+			// Every scope carries the context: its revision is what the agent's next
+			// command is admitted at, so a scope without it leaves that admission stale.
+			if (command.args.scope === "catalogue") return { context: c, ...studioObjectCatalogue() };
+			// Discovery for run_action: every registered action, available ones with
+			// their description and input schema, unavailable ones with the reason.
+			if (command.args.scope === "actions") return { context: c, actions: ports.actions?.()?.list() ?? [] };
+			const s = refresh();
+			const wanted = row => (!args.ids || args.ids.includes(row.id)) && (!args.query || Boolean(row.name?.includes(args.query)));
+			if (inspectScopes[command.args.scope]) return { context: c, scope: command.args.scope, ...inspectScopes[command.args.scope](s, wanted) };
+			// Build each page from the same complete authoritative projection; never
+			// page by slicing an already-truncated Send context.
+			// Stable id order, so an offset cursor survives unrelated edits.
+			const filtered = entityProjection(s).filter(wanted).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
+			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,
+				nextCursor: offset + limit < filtered.length ? studioEntityCursor(c, offset + limit) : null };
+		},
+		operate_studio: request => execute({ ...request, name: "operate_studio" }),
+		arrange_objects: request => execute({ ...request, name: "arrange_objects" }),
+		arrange_characters: request => execute({ ...request, name: "arrange_characters" }),
+		patch_elements: request => execute({ ...request, name: "patch_elements" }),
+		frame_shot: request => execute({ ...request, name: "frame_shot" }),
+		generate_motion: () => fail("CAPABILITY_MISSING", "Use the server-owned Studio generation route."),
+		verify_result: request => execute({ ...request, name: "verify_result" }),
+		undo_edit: request => execute({ ...request, name: "undo_edit" }),
+		run_action: request => execute({ ...request, name: "run_action" }),
+		resolve_studio_image(request) {
+			refresh(); const image = images.get(request.imageId);
+			if (!image || (request.receiptId && request.receiptId !== image.receiptId) || (request.revision !== undefined && request.revision !== image.revision)) fail("STALE_TARGET", "Image observation does not belong to this receipt.");
+			return image;
+		},
+		reconcile_studio_command(request) { refresh(); const value = journal.reconcile({ commandId: request.commandId, host: request.host ?? request.binding?.host }); return value.status === "not_applied" ? { ...value, evidence: value.receipt } : value; },
+	};
+	for (const name of ["prepare_motion_install", "verify_motion_candidate", "repair_motion_candidate", "commit_motion_candidate", "discard_motion_candidate", "cancel_motion_install"]) {
+		handlers[name] = request => {
+			refresh(); const currentMotion = motion, currentJournal = journal;
+			const run = () => currentMotion[name](request);
+			// The job list is the model's view of each candidate, so it names the
+			// step in flight now. A verified candidate goes straight to commit; an
+			// unverified one waits on repair, the install policy or the user's accept
+			// (review_required until that next command arrives).
+			const job = jobs.get(request.commandId);
+			if (job && name === "verify_motion_candidate") jobs.set(request.commandId, { ...job, state: "verifying" });
+			if (job && name === "repair_motion_candidate") jobs.set(request.commandId, { ...job, state: "repairing" });
+			const finish = result => {
+				if (name === "prepare_motion_install" && result?.candidateId) jobs.set(request.commandId, { id: request.jobId, characterId: request.binding.characterId, state: "preparing" });
+				if (name === "verify_motion_candidate" && result?.verificationId && jobs.has(request.commandId)) jobs.set(request.commandId, { ...jobs.get(request.commandId), state: result.status === "verified" ? "committing" : "review_required" });
+				if (result?.ok === false || ["commit_motion_candidate", "discard_motion_candidate", "cancel_motion_install"].includes(name)) jobs.delete(request.commandId);
+				return remember(result);
+			};
+			const reject = error => {
+				const receipt = rejection(request, error, "prepare");
+				if (!currentJournal.get(request.commandId)) { currentJournal.begin(request.commandId, JSON.stringify(request)); currentJournal.record(receipt); }
+				return finish(receipt);
+			};
+			try { const result = run(); return result?.then ? result.then(finish, reject) : finish(result); } catch (error) { return reject(error); }
+		};
+	}
+	function invalidate(domain, before, after) {
+		if (before === after) return;
+		if (domain === "pose") {
+			const id = ports.read().activeCharacterId, previous = tokens.get(id);
+			if (previous) tokens.set(id, { ...previous, key: null });
+			return;
+		}
+		if (!["characters", "objects"].includes(domain) || !Array.isArray(before) || !Array.isArray(after)) return;
+		const content = row => {
+			if (!row) return null;
+			const { subject, name, tint, identityImage, sessionMotion, ...rest } = row;
+			return { ...rest, motionIdentity: identityOf(sessionMotion) };
+		};
+		for (const row of before) {
+			const next = after.find(c => c.id === row.id), previous = tokens.get(row.id);
+			if (!next) tokens.delete(row.id);
+			else if (previous && !same(content(row), content(next))) tokens.set(row.id, { ...previous, key: null });
+		}
+	}
+	return { handlers, context, guard, refresh, invalidate, dispose: () => motion?.dispose() };
+}
+
 export default function App() {
+	const embedMode = ["scene", "playview"].includes(new URLSearchParams(globalThis.location?.search || "").get("embed"));
+	// The landing page's try-it iframe: full studio interaction on a preset
+	// scene with the project chrome hidden and saving off (see playground.js).
+	const playgroundMode = isPlaygroundEmbed(globalThis.location?.search);
+	const [playgroundHint, setPlaygroundHint] = useState(null);
+	const playgroundExportRef = useRef(null);
+	// The camera tutorial (#206): the landing page's seven steps, run against
+	// the real studio instead of the playground iframe. It opens from
+	// /app/?tutorial=camera or from Settings ▾, and it is not offered inside an
+	// embed.
+	//
+	// Both doors go through startCameraTutorial (#209), which puts the studio in
+	// the state the landing page teaches these steps in — the city-block starter
+	// scene with the walk take on its character — so Shot / Rail / Play always
+	// have something to frame. That function is declared with the project
+	// actions further down; the listeners here reach it through a ref so they
+	// always call the current render's closure (the confirm reads projectDirty).
+	const [cameraTutorialQuery] = useState(() => !embedMode && !playgroundMode
+		&& new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera"
+		&& !cameraTutorialSuppressed());
+	const [cameraTutorial, setCameraTutorial] = useState(false);
+	const cameraTutorialAnalytics = useRef(null);
+	const [cameraTutorialAttempt, setCameraTutorialAttempt] = useState(0);
+	const [cameraTutorialHandoff, setCameraTutorialHandoff] = useState(null);
+	const cameraTutorialCompletedRef = useRef(false);
+	const exportMenuTriggerRef = useRef(null);
+	const exportShotIdRef = useRef(null);
+	// The step the tutorial is on, published on the .app root so styles.css can
+	// spotlight the one control that step needs (#211).
+	const [cameraTutorialStep, setCameraTutorialStep] = useState(null);
+	const startCameraTutorialRef = useRef(null);
+	const cameraTutorialStarted = useRef(false);
+	// A tutorial restart never reloads the starter over the user's edits.
+	const tutorialStarterRef = useRef(false);
+	const tutorialLoadingRef = useRef(false);
+	const tutorialProjectEpochRef = useRef(0);
+	const tutorialSeedEpochRef = useRef(null);
+	// Armed once the starter is applied, consumed by the seed effect next to the
+	// hosted-demo seed as soon as the new character's rig exists.
+	const [tutorialSeedPending, setTutorialSeedPending] = useState(false);
+	useEffect(() => {
+		if (!cameraTutorialQuery || cameraTutorialStarted.current) return;
+		cameraTutorialStarted.current = true;
+		void startCameraTutorialRef.current?.({ source: "query" });
+	}, [cameraTutorialQuery]);
+	useEffect(() => {
+		const onTutorial = (event) => {
+			if (event.detail?.open === false) {
+				setCameraTutorial(false);
+				cameraTutorialAnalytics.current?.dismiss();
+				rememberCameraTutorialTerminal(cameraTutorialCompletedRef.current ? "completed" : "dismissed");
+				tutorialProjectEpochRef.current += 1;
+				setTutorialSeedPending(false);
+				setCameraTutorialHandoff(null);
+				return;
+			}
+			void startCameraTutorialRef.current?.({ source: event.detail?.source ?? "settings" });
+		};
+		window.addEventListener("cozyclay:camera-tutorial", onTutorial);
+		return () => window.removeEventListener("cozyclay:camera-tutorial", onTutorial);
+	}, []);
+	useEffect(() => {
+		if (cameraTutorial) trackFeature("camera_tutorial");
+	}, [cameraTutorial]);
+	useEffect(() => {
+		if (!embedMode) return undefined;
+		// The Workflow page's Scene node embeds the studio as its preview, so the
+		// embed enters the player through enterPreview(). The states are seeded
+		// from embedMode as well, so the first painted frame is already the shot
+		// view rather than a flash of editor chrome.
+		enterPreview();
+		const capture = () => {
+			try {
+				const live = liveStateRef.current;
+				const dataUrl = live.captureFramingPng(live.captureCurrentFraming());
+				if (!dataUrl) throw new Error("The shot renderer is not ready");
+				const output = SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
+				const meta = live.captureShotMeta(live.timeline.currentFrame);
+				// The identity sheets and the environment reference ride with the
+				// frame (#167): the PNG says where the bodies stand, these say who
+				// they are and what the location is made of.
+				const references = live.captureShotReferences();
+				window.parent.postMessage({ type: "cozyclay:capture-framing-result", dataUrl, width: output.width, height: output.height, meta, references }, "*");
+			} catch (error) { window.parent.postMessage({ type: "cozyclay:capture-framing-result", error: error.message }, "*"); }
+		};
+		// The Workflow page's Scene node asks the embed for a whole reference
+		// pack (#165). The zip is transferred rather than copied: a pack carries a
+		// clip, and structured-cloning tens of megabytes across the frame boundary
+		// is the one part of this that would actually be felt.
+		const exportPack = async (shotId, ownedByWorkflow) => {
+			const attempt = ownedByWorkflow ? null : startExportAttempt({ export_kind: "keyframe_pack", format: "zip", surface: "embed" });
+			try {
+				const live = liveStateRef.current;
+				const index = live.shotIndexForPack(shotId ?? null);
+				const pack = await live.buildShotKeyframePack(live.shots[index], index);
+				const bytes = pack.bytes.buffer.slice(pack.bytes.byteOffset, pack.bytes.byteOffset + pack.bytes.byteLength);
+				window.parent.postMessage(
+					{ type: "cozyclay:export-keyframe-pack-result", name: pack.name, bytes, entries: pack.entries.map((entry) => entry.name) },
+					"*",
+					[bytes],
+				);
+				attempt?.succeed();
+			} catch (error) {
+				attempt?.fail(error);
+				window.parent.postMessage({ type: "cozyclay:export-keyframe-pack-result", error: error?.message || String(error), failure_code: exportFailureCode(error) }, "*");
+			}
+		};
+		const onMessage = (event) => {
+			if (event.data?.type === "cozyclay:capture-framing") capture();
+			if (event.data?.type === "cozyclay:export-keyframe-pack") {
+				const ownedByWorkflow = event.source === window.parent && event.origin === window.location.origin && event.data.surface === "workflow";
+				void exportPack(event.data.shotId, ownedByWorkflow);
+			}
+		};
+		window.addEventListener("message", onMessage);
+		return () => window.removeEventListener("message", onMessage);
+	}, [embedMode]);
 	// QA-only render counter (same spirit as window.__cozyclay): headless perf
 	// probes read renders/second to find re-render storms. Negligible cost.
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
+	const sceneRevisionRef = useRef(0);
+	const studioBindingRef = useRef(null);
+	const firstEditRef = useRef(null);
+	if (!firstEditRef.current) {
+		const firstEdit = createFirstEditTracker(track);
+		// Observe the existing semantic boundary once, even after its telemetry
+		// gate is satisfied. The tutorial/semantic hook itself stays unchanged.
+		firstEditRef.current = (surface, domain, before, after) => {
+			if (before !== after) sceneRevisionRef.current += 1;
+			studioBindingRef.current?.invalidate(domain, before, after);
+			studioBindingRef.current?.publishSemantic(domain, after);
+			return firstEdit(surface, domain, before, after);
+		};
+	}
+	// One semantic hook for authored UI and programmatic mutations. Passive
+	// setters intentionally bypass it (navigation, load, seed, restore, history).
+	const markSemanticEdit = (domain, before, after) => {
+		tutorialProjectEpochRef.current += 1;
+		if (tutorialSeedEpochRef.current !== null) setTutorialSeedPending(false);
+		return firstEditRef.current(playgroundMode ? "playground" : "craft", domain, before, after);
+	};
 	const craftActionTrackedRef = useRef(false);
 	const markCraftAction = (actionKind) => {
 		if (craftActionTrackedRef.current) return;
 		craftActionTrackedRef.current = true;
-		track("craft:first_action", { action_kind: actionKind });
+		// Playground pokes are funnel data for the landing page, not for the
+		// install -> first craft funnel the studio reports.
+		track(playgroundMode ? "playground:first_action" : "craft:first_action", { action_kind: actionKind });
 	};
+	useEffect(() => {
+		if (!playgroundMode) return undefined;
+		track("playground:opened");
+		// The landing page keeps a loading veil over the iframe until the
+		// studio has actually mounted; a bare `load` fires far too early.
+		window.parent?.postMessage({ type: "cozyclay:playground-ready" }, "*");
+		// Camera gestures feed the landing page's tutorial checklist, and the
+		// checklist points back at one control (the shot look-through) by hint.
+		const onNav = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind, key: event.detail?.key ?? null }, "*");
+		const onSignal = (event) => window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: event.detail?.kind }, "*");
+		window.addEventListener("cozyclay:playground-signal", onSignal);
+		const onHint = (event) => {
+			if (event.source !== window.parent || event.origin !== window.location.origin) return;
+			if (event.data?.type === "cozyclay:playground-hint") setPlaygroundHint(typeof event.data.kind === "string" ? event.data.kind : null);
+			if (event.data?.type === "cozyclay:playground-export") {
+				// The visitor keeps what they made: the landing page turns this
+				// into a .cclayproject download they can open after npx cozyclay.
+				playgroundExportRef.current?.("City Block").then(
+					(serialized) => window.parent?.postMessage({ type: "cozyclay:playground-export-result", serialized }, "*"),
+					(error) => window.parent?.postMessage({ type: "cozyclay:playground-export-result", error: String(error?.message ?? error) }, "*"),
+				);
+			}
+		};
+		window.addEventListener("cozyclay:nav", onNav);
+		window.addEventListener("message", onHint);
+		return () => { window.removeEventListener("cozyclay:nav", onNav); window.removeEventListener("cozyclay:playground-signal", onSignal); window.removeEventListener("message", onHint); };
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 	const [startup] = useState(loadSceneStartup);
 	const startupScene = startup.document.scenes[activeSceneIndex(startup.document.scenes, startup.document.activeSceneId)];
 	const startupStage = createSceneStage(startupScene.stage);
@@ -566,7 +1378,15 @@ export default function App() {
 	const [preset, setPreset] = useState("medium");
 	const [fovDeg, setFovDeg] = useState(PRESETS.medium.fov);
 	const [shotAspectKey, setShotAspectKey] = useState(startupStage.shotAspect);
+	// The set's look reference (#167): one picture that says what this location
+	// is made of. Persisted on the stage envelope exactly like shotAspect, and
+	// attached to every framing capture so the generator sees it.
+	const [environmentImage, setEnvironmentImage] = useState(startupStage.environmentImage ?? null);
 	const shotOutput = SHOT_ASPECT_PRESETS[shotAspectKey] ?? SHOT_ASPECT_PRESETS["16:9"];
+	// Which named camera framing the shot camera currently stands in, or null
+	// after any manual placement. Recorded on the scene so a take says how it
+	// was framed; it is a label, not a constraint — nothing re-applies it.
+	const [cameraPresetId, setCameraPresetId] = useState(startupStage.cameraPresetId ?? null);
 	// Composition guides over the shot frame (Blender's camera display guides).
 	// A viewer preference, not scene data: it persists per browser, never in
 	// the scene document, and never touches exported pixels.
@@ -603,13 +1423,22 @@ export default function App() {
 	// The Top-View is always the inset: the old double-click swap that let the
 	// plan own the big pane is gone, so there is no view mode to toggle.
 	const planIsMain = false;
-	// Unity Scene/Game tabs: PlayView is the framed output only — no editing
-	// chrome (gizmo, inset, fly navigation) reaches it.
-	const [centerTab, setCenterTab] = useState("scene");
-globalThis.playMode = centerTab === "play";
-	// PlayView is the player for the finished motion: entering starts playback,
-	// leaving pauses it. Scene stays the manipulation surface.
+	// The framed output only — no editing chrome (gizmo, inset, fly navigation)
+	// reaches it. The Scene/PlayView centre tabs are gone (#195): this is an
+	// internal player with two entry points (the Workflow embed and the
+	// playground rail) and one exit (Esc / the exit pill). The shot PiP's
+	// look-through button flies the recording camera instead.
+	const [preview, setPreview] = useState(embedMode);
+	// The name stays `playMode`: window.__cozyclay QA hooks and the MCP live
+	// bridge read this global, and the render path is still PlayView's.
+	globalThis.playMode = preview;
+	const playMode = preview;
+	// Preview is the player for the finished motion: entering starts playback,
+	// leaving pauses it. The editor view stays the manipulation surface.
 	const [tlPlaying, setTlPlaying] = useState(false);
+	useEffect(() => {
+		if (playgroundMode && tlPlaying) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "play" }, "*");
+	}, [playgroundMode, tlPlaying]);
 	const cameraPreviewEndRef = useRef(null);
 	// Once the operator touches the viewport, the physical camera stays in
 	// their hands. Follow/Rail only take it back through an explicit Preview or
@@ -619,23 +1448,50 @@ globalThis.playMode = centerTab === "play";
 	// records; the shot camera keeps the framing. Look-through hands the fly
 	// controls the shot camera itself — the pre-split single-view behaviour —
 	// for framing by flying.
-	const [lookThroughShot, setLookThroughShot] = useState(false);
+	// The Workflow page embeds this Studio as the Scene node's preview; that
+	// preview must show what the node captures on Run: the shot camera's view.
+	const [lookThroughShot, setLookThroughShot] = useState(embedMode);
 	useEffect(() => {
-		if (!lookThroughShot) return undefined;
+		if (playgroundMode && lookThroughShot) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "shot" }, "*");
+	}, [playgroundMode, lookThroughShot]);
+	useEffect(() => {
+		if (!lookThroughShot || embedMode) return undefined;
 		const onKey = (event) => {
-			if (event.key === "Escape") setLookThroughShot(false);
+			if (event.key === "Escape") exitPreview();
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [lookThroughShot]);
-	useEffect(() => {
-		// The player always starts the finished piece from frame 0; auto-play
-		// only exists once there is a motion to play.
-		if (centerTab === "play") setTlFrame(0);
-		if (centerTab === "play" && motion) setTlPlaying(true);
-		if (centerTab === "scene") setTlPlaying(false);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [centerTab]);
+	}, [lookThroughShot, embedMode]);
+	/** The chrome-free player. The shot camera takes the whole pane
+	 * (DualRender's playMode branch), the piece restarts from frame 0, and
+	 * auto-play only exists once there is a motion to play. Look-through rides
+	 * along so every site that picks a camera keeps pointing at the shot camera.
+	 * Studio look-through does NOT come through here — that is enterShotLook. */
+	function enterPreview() {
+		setPreview(true);
+		setLookThroughShot(true);
+		setTlFrame(0);
+		if (motion) setTlPlaying(true);
+	}
+	/** ...and the one way out of both the player and shot-look: editing chrome
+	 * back, playback paused, so leaving never leaves the timeline running
+	 * underneath it. */
+	function exitPreview() {
+		setPreview(false);
+		setLookThroughShot(false);
+		setTlPlaying(false);
+	}
+	/** Fly the shot camera with the same bindings as the free camera. Preview
+	 * stays off so FlyControls stay live and framing commits stick. */
+	function enterShotLook() {
+		if (embedMode) return;
+		setPreview(false);
+		setTlPlaying(false);
+		setLookThroughShot(true);
+		setSelectedHierarchyId("camera");
+		setWorkflowMode("camera");
+	}
 	const stageRef = useRef();
 	const mainPaneRef = useRef();
 	const insetPaneRef = useRef();
@@ -655,6 +1511,10 @@ globalThis.playMode = centerTab === "play";
 	const planHostRef = planIsMain ? mainPaneRef : insetPaneRef;
 
 	useEffect(() => {
+		// The landing-page playground runs a fixed, throwaway layout: whatever a
+		// visitor drags in the iframe must never overwrite the layout they use in
+		// the real studio (same origin, same key).
+		if (playgroundMode) return;
 		// Quota-guarded like persistScenes: a full disk used to throw out of
 		// this effect and blank the studio mid-resize (issue #63).
 		try {
@@ -662,7 +1522,7 @@ globalThis.playMode = centerTab === "play";
 		} catch (err) {
 			console.warn("[cozyclay] workspace layout not saved:", err?.name ?? err);
 		}
-	}, [workspaceLayout]);
+	}, [playgroundMode, workspaceLayout]);
 
 	// Wheel over the inset zooms the Top-View plan: scroll up closes in on
 	// the pucks (camera lower), scroll down widens out (camera higher) — the
@@ -788,8 +1648,7 @@ globalThis.playMode = centerTab === "play";
 			// flicker-toggles the inset.
 			if (!moved && ev.detail <= 1) {
 				insetToggledAtRef.current = Date.now();
-				if (workspaceLayout.insetCollapsed) expandInset();
-				else setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+				runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
 			}
 		};
 		window.addEventListener("pointermove", onMove);
@@ -809,6 +1668,17 @@ globalThis.playMode = centerTab === "play";
 			setInsetPos((pos) => (pos ? { x: Math.min(pos.x, maxX), y: Math.min(pos.y, maxY) } : pos));
 		}
 		setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
+	}
+	/** Fold or unfold the Top-View inset: the Top button, the inset's own
+	 * toggle, its tag click and run_action view.setInset. */
+	function setInsetCollapsed(collapsed) {
+		if (collapsed) setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+		else expandInset();
+	}
+	/** The View menu's part colours: "off", "flat" or "shaded". */
+	function choosePartColours(mode) {
+		setPartColoursEnabled(mode !== "off");
+		if (mode !== "off") setPartColoursMode(mode);
 	}
 
 	function beginInsetResize(e) {
@@ -845,7 +1715,7 @@ globalThis.playMode = centerTab === "play";
 	// subject line) lives in `characters`, and the legacy A/B view of the
 	// world is derived below so the rest of the studio keeps working while
 	// spawned extras ride the same rails.
-	const [characters, setCharacters] = useState(startupStage.characters);
+	const [characters, setCharacters, editCharacters] = useSemanticState(startupStage.characters, markSemanticEdit, "characters");
 	// The cast as of this render, for async handlers: an extraction that
 	// started three renders ago must place its takes against the CURRENT cast,
 	// not the one its closure captured.
@@ -864,6 +1734,23 @@ globalThis.playMode = centerTab === "play";
 	const [rigs, setRigs] = useState({});
 	const [rigMountEpoch, setRigMountEpoch] = useState(0);
 	const [poseRevision, setPoseTick] = useState(0);
+	const [falMotion, setFalMotion] = useState({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", dailyRemaining: null });
+	const [falMotionEnabled, setFalMotionEnabled] = useState(false);
+	const [falMotionMode, setFalMotionMode] = useState("interpolate");
+	const [falMotionCameraUnlocked, setFalMotionCameraUnlocked] = useState(false);
+
+	useEffect(() => {
+		let cancelled = false;
+		fetch(`${motionApiOrigin()}/v1/motion/me`, { credentials: "include" })
+			.then((response) => response.ok ? response.json() : null)
+			.then((payload) => {
+				if (cancelled || !payload) return;
+				setFalMotionEnabled(payload.enabled === true);
+				if (Number.isFinite(payload.dailyRemaining)) setFalMotion((current) => ({ ...current, dailyRemaining: payload.dailyRemaining }));
+			})
+			.catch(() => { if (!cancelled) setFalMotionEnabled(false); });
+		return () => { cancelled = true; };
+	}, []);
 
 	/* --------------------- derived cast view + shims ---------------------- */
 
@@ -880,7 +1767,7 @@ globalThis.playMode = centerTab === "play";
 	const rigB = (characters[1] ? rigs[charB.id] : null) ?? null;
 
 	function updateCharacterAt(index, next) {
-		setCharacters((list) => list.map((entry, i) => {
+		editCharacters((list) => list.map((entry, i) => {
 			if (i !== index) return entry;
 			const resolved = typeof next === "function" ? next(entry) : next;
 			return { ...entry, ...resolved };
@@ -896,7 +1783,7 @@ globalThis.playMode = centerTab === "play";
 	const setSubject2 = (value) => updateCharacterAt(1, (entry) => ({ subject: typeof value === "function" ? value(entry.subject) : value }));
 	function setShowB(next) {
 		recordCharacterUndo();
-		setCharacters((list) => {
+		editCharacters((list) => {
 			const anyVisibleExtra = list.some((entry, i) => i > 0 && !entry.hidden);
 			const on = typeof next === "function" ? next(anyVisibleExtra) : next;
 			if (on) {
@@ -909,7 +1796,7 @@ globalThis.playMode = centerTab === "play";
 		});
 	}
 	function moveCharacter(charId, next) {
-		setCharacters((list) => list.map((entry) => {
+		editCharacters((list) => list.map((entry) => {
 			if (entry.id !== charId) return entry;
 			const resolved = typeof next === "function" ? next(entry) : next;
 			return { ...entry, ...resolved };
@@ -921,7 +1808,7 @@ globalThis.playMode = centerTab === "play";
 		recordCharacterUndo();
 		const nextCharacters = list.filter((entry) => entry.id !== charId);
 		charactersRef.current = nextCharacters;
-		setCharacters(nextCharacters);
+		editCharacters(nextCharacters);
 		// The deleted layer's untrimmed take goes with it: a recycled id must
 		// never inherit a stranger's take, and its stature left with the entry.
 		motionFullRef.current.delete(charId);
@@ -956,13 +1843,13 @@ globalThis.playMode = centerTab === "play";
 
 	// A grabbed asset card follows the pointer as a DOM ghost; dropping over
 	// the shot pane raycasts to the floor and spawns the payload there. The
-	// payload is discriminated — {kind:'character'|'object'|'image'} — so one
+	// payload is discriminated — {kind:'character'|'object'|'image'|'mesh'} — so one
 	// drag seam serves the whole shelf.
 	const [assetDrag, setAssetDrag] = useState(null);
 	const spawnCharacter = (model, x, z) => {
 		recordCharacterUndo();
 		const id = nextCharacterId(characters);
-		setCharacters((list) => [...list, createCharacterEntry({ id, model, x, z, pose: DEFAULT_POSE, subject: "a person" }, list.length)]);
+		editCharacters((list) => [...list, createCharacterEntry({ id, model, x, z, pose: DEFAULT_POSE, subject: "a person" }, list.length)]);
 		setSelectedHierarchyId(`character:${id}`);
 		setToast(ko("Character added to the scene", "인물을 씬에 추가했어요"));
 	};
@@ -988,16 +1875,20 @@ globalThis.playMode = centerTab === "play";
 			raycaster.setFromCamera(pointer, cam);
 			const hit = new THREE.Vector3();
 			if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return;
-			// Dispatch on the payload kind: same ray, three spawners. Characters
+			// Dispatch on the payload kind: same ray, four spawners. Characters
 			// keep their tighter stage clamp (the rig walks, a prop does not);
-			// objects and cutouts take the same ROOM_LIMIT clamp their creators
-			// already apply.
+			// objects, cutouts and meshes take the same ROOM_LIMIT clamp their
+			// creators already apply.
 			if (payload.kind === "character") {
-				spawnCharacter(payload.id, THREE.MathUtils.clamp(hit.x, -4, 4), THREE.MathUtils.clamp(hit.z, -4, 4));
+				spawnCharacter(payload.id,
+					THREE.MathUtils.clamp(hit.x, CHARACTER_POSITION_BOUNDS.min.x, CHARACTER_POSITION_BOUNDS.max.x),
+					THREE.MathUtils.clamp(hit.z, CHARACTER_POSITION_BOUNDS.min.z, CHARACTER_POSITION_BOUNDS.max.z));
 			} else if (payload.kind === "object") {
 				addSceneObject(payload.objectKind, { x: hit.x, z: hit.z });
 			} else if (payload.kind === "image") {
 				spawnCutoutAt(payload.assetId, { x: hit.x, z: hit.z });
+			} else if (payload.kind === "mesh") {
+				spawnMeshAt(payload.assetId, { x: hit.x, z: hit.z });
 			}
 		};
 		window.addEventListener("pointermove", onMove);
@@ -1022,6 +1913,8 @@ globalThis.playMode = centerTab === "play";
 	// every drag tick and must not re-render the scene; ikTick re-renders
 	// only the timeline markers.
 	const [ikMode, setIkMode] = useState(false);
+	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
+	const [partColoursMode, setPartColoursMode] = useState("shaded");
 	const [ikChains, setIkChains] = useState(null);
 	const [ikFkJoints, setIkFkJoints] = useState(null);
 	const [ikFocus, setIkFocus] = useState(null);
@@ -1032,10 +1925,16 @@ globalThis.playMode = centerTab === "play";
 	const [workflowMode, setWorkflowMode] = useState("scene");
 	function selectWorkflowMode(next) {
 		setWorkflowMode(next);
-		setCenterTab("scene");
+		// Picking a department leaves the chrome-free player. Shot-look is
+		// camera work, so it only yields when the operator leaves Camera.
+		if (preview) exitPreview();
+		else if (lookThroughShot && next !== "camera") exitPreview();
 		if (next === "camera") setSelectedHierarchyId("camera");
 		else if (next === "motion") {
-			setSelectedHierarchyId("characters");
+			// The active character's ROW, not the group: the placement gizmo only
+			// renders for a specific cast member, so selecting the group used to
+			// drop the operator into Motion with nothing to drag.
+			setSelectedHierarchyId(rowIdForCharIndex(activeCharIndex));
 			// Selecting Motion should land on its first useful control rather than
 			// leaving the operator to hunt through a long inspector column.
 			setPromptBlocksReveal((signal) => signal + 1);
@@ -1053,6 +1952,19 @@ globalThis.playMode = centerTab === "play";
 		if (hierarchyId === "characterB") return characters[1]?.id ?? null;
 		if (hierarchyId?.startsWith("character:")) return hierarchyId.slice(10);
 		return null;
+	};
+	const toggleHierarchyHidden = (hierarchyId) => {
+		const objectId = sceneObjectIdFromHierarchy(hierarchyId);
+		if (objectId) {
+			const object = sceneObjects.find((item) => item.id === objectId);
+			if (!object) return;
+			changeSceneObject(objectId, { hidden: object.hidden !== true });
+			return;
+		}
+		const charId = charIdFromHierarchyId(hierarchyId);
+		if (!charId) return;
+		recordCharacterUndo();
+		editCharacters((list) => list.map((item) => (item.id === charId ? { ...item, hidden: item.hidden !== true } : item)));
 	};
 	// State, not a ref: a ref written inside an effect never re-renders, so
 	// with an idle app the active character silently stayed behind the row
@@ -1155,6 +2067,7 @@ globalThis.playMode = centerTab === "play";
 	const storeRef = useRef(null);
 	if (!storeRef.current) {
 		storeRef.current = createSceneHistoryStore(sceneObjects, {
+		onCommit: (before, after) => markSemanticEdit("objects", before, after),
 		onObjects: (objects) => {
 			// Object-side ops join the shared undo clock here; undo/redo of the
 			// object store bumps the clock explicitly in undoScene/redoScene.
@@ -1178,6 +2091,15 @@ globalThis.playMode = centerTab === "play";
 	const IK_CORRECTION_BLEND_FRAMES = 6;
 
 	const ikStateRef = useRef(createIkState());
+	const autoPhysicsRunRef = useRef(null);
+	const [autoPhysicsRunning, setAutoPhysicsRunning] = useState(false);
+	const [physicsPreview, setPhysicsPreview] = useState(null);
+	const [physicsShow, setPhysicsShow] = useState(true);
+	const [physicsProgress] = useState(createPhysicsProgress);
+	const setPhysicsProgress = physicsProgress.set;
+	const [physicsOptions, setPhysicsOptions] = useState({ overrides: [], protectedFrames: [], strength: 1 });
+	const physicsJobRef = useRef(0);
+	const physicsSourceCacheRef = useRef({ value: null });
 	const [ikTick, setIkTick] = useState(0);
 	const [committedIkEdits, setCommittedIkEdits] = useState([]);
 	// Sorted full-body key frames for the timeline markers. Derived from the
@@ -1210,6 +2132,12 @@ globalThis.playMode = centerTab === "play";
 		// render-captured store can still settle the scene that was left.
 		storeRef.current.settle();
 		setSelectedHierarchyId(id);
+		// Selecting the camera IS the request to frame a shot (#193). The camera
+		// bar owns FOV/Recenter/presets and is CSS-gated to Camera mode, so a
+		// camera picked from Scene mode would otherwise select a subject whose
+		// controls are all hidden. selectWorkflowMode re-selects the camera
+		// itself, so this cannot bounce back here.
+		if (id === "camera" && workflowMode !== "camera") selectWorkflowMode("camera");
 		// Moving the focus anywhere but the camera releases the crane dot too:
 		// a press on the floor or the sky must not leave a mark selected.
 		if (id !== "camera") setCraneSelectedIndex(null);
@@ -1271,7 +2199,7 @@ globalThis.playMode = centerTab === "play";
 	function dropSelectedSceneObject() {
 		const object = sceneObjects.find((item) => item.id === selectedSceneObjectId) ?? null;
 		if (!object) return;
-		const patch = dropToSurfacePatch(object, sceneObjects.filter((item) => item.id !== object.id));
+		const patch = dropToSurfacePatch(object, sceneObjects.filter((item) => item.id !== object.id), characters);
 		if (patch === null) {
 			setToast(ko("Nothing to drop", "내려놓을 대상이 없어요"));
 			return;
@@ -1280,8 +2208,9 @@ globalThis.playMode = centerTab === "play";
 		setToast(isKo ? `${sceneObjectNameDisplayKo(object.name)}을 표면 위에 내려놓았어요` : `${object.name} dropped to surface`);
 	}
 
-	/** The hidden file input behind "Import image as cutout". */
+	/** The hidden file inputs behind the Props import buttons. */
 	const cutoutInputRef = useRef(null);
+	const meshInputRef = useRef(null);
 	// One drop zone shared by every surface that accepts a picture: the Props
 	// branch of the hierarchy, the Props inspector, and the shot view itself.
 	// One per surface, so only the thing under the cursor lights up.
@@ -1313,13 +2242,17 @@ globalThis.playMode = centerTab === "play";
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, []);
 
-	const rejectImageDrop = (count) => setToast(ko(
-		`${count} file${count > 1 ? "s" : ""} not supported — use PNG, JPG, WebP or GIF (iPhone HEIC photos need converting first)`,
-		`지원하지 않는 파일 ${count}개 — PNG, JPG, WebP, GIF만 가능해요 (아이폰 HEIC 사진은 먼저 변환해 주세요)`,
+	const rejectUnsupportedDrop = (count) => setToast(ko(
+		`${count} file${count > 1 ? "s" : ""} not supported — use PNG, JPG, WebP, GIF or a .glb / .obj / .fbx (iPhone HEIC photos need converting first)`,
+		`지원하지 않는 파일 ${count}개 — PNG, JPG, WebP, GIF 또는 .glb / .obj / .fbx만 가능해요 (아이폰 HEIC 사진은 먼저 변환해 주세요)`,
 	));
-	const propsDrop = useImageDrop((files) => importCutouts(files), rejectImageDrop);
-	const inspectorDrop = useImageDrop((files) => importCutouts(files), rejectImageDrop);
-	const viewportDrop = useImageDrop((files) => importCutouts(files));
+	const stageDrop = {
+		onImages: (files) => importCutouts(files),
+		onMeshes: (files) => importMeshes(files),
+	};
+	const propsDrop = useStageFilesDrop({ ...stageDrop, onRejected: rejectUnsupportedDrop });
+	const inspectorDrop = useStageFilesDrop({ ...stageDrop, onRejected: rejectUnsupportedDrop });
+	const viewportDrop = useStageFilesDrop({ ...stageDrop, onRejected: rejectUnsupportedDrop });
 	// How much of the wall counts as the wall, and how wide the brush that
 	// argues with the answer is.
 	const [matteTolerance, setMatteTolerance] = useState(0.18);
@@ -1473,6 +2406,105 @@ globalThis.playMode = centerTab === "play";
 		);
 	}
 
+	function meshNameFromFile(fileName) {
+		const base = String(fileName ?? "").replace(/\.[^.]+$/, "").trim();
+		return base || ko("Model", "모델");
+	}
+
+	async function persistMeshAsset(asset) {
+		const db = await openAssetDb();
+		try {
+			return await putAsset(db, asset);
+		} finally {
+			db.close?.();
+		}
+	}
+
+	function placementInFrontOfShot() {
+		const camera = (lookThroughShot ? shotCamRef : editorCamRef).current;
+		return camera
+			? placementInFront({ x: camera.position.x, z: camera.position.z }, (lookThroughShot ? look : editorLook).current.yaw)
+			: {};
+	}
+
+	/**
+	 * Import one GLB and stand it on the floor. Bytes go through putAsset —
+	 * never rememberAsset — because the texture cache would decode them as a
+	 * bitmap. Height and footprint come from the import heuristic once;
+	 * later instances reuse those stored metres.
+	 */
+	async function importMesh(file) {
+		if (!file) return;
+		try {
+			const { asset, height, footprint } = await importMeshFile(file);
+			await persistMeshAsset(asset);
+			const object = createMeshObject(
+				{ assetId: asset.id, height, footprint, name: meshNameFromFile(asset.name) },
+				store.objects,
+				placementInFrontOfShot(),
+			);
+			if (!object) return;
+			store.applyAtomic((objects) => [...objects, object]);
+			setSelectedHierarchyId(`object:${object.id}`);
+			setGizmoMode("move");
+			setToast(
+				isKo
+					? `${object.name} 추가됨 — 실제 높이(m)를 입력하면 크기가 맞습니다`
+					: `${object.name} added — type its real height in metres to set the scale`,
+			);
+		} catch (error) {
+			setToast(isKo ? `모델을 가져오지 못했어요 — ${error.message}` : `Could not import that model — ${error.message}`);
+		}
+	}
+
+	async function importMeshes(files) {
+		for (const file of files) await importMesh(file);
+	}
+
+	/**
+	 * Stand an already-stored GLB up as a fresh instance. The shelf drop does
+	 * not keep a previous object's size: it re-reads the blob and fits once,
+	 * the same as a first import, because there is no prior record to copy.
+	 */
+	async function spawnMeshAt(assetId, placement) {
+		markCraftAction("object");
+		const record = await assetRecord(assetId);
+		if (!record) {
+			setToast(ko("That model is no longer stored", "그 모델은 더 이상 저장되어 있지 않아요"));
+			return;
+		}
+		const compressed = compressedGlbReason(record.bytes);
+		if (compressed) {
+			setToast(isKo ? `모델을 가져오지 못했어요 — ${compressed}` : `Could not import that model — ${compressed}`);
+			return;
+		}
+		const bounds = meshBoundsFromAsset(record);
+		const fitted = bounds ? fitMeshBounds(bounds) : null;
+		if (!fitted) {
+			setToast(ko("That model has no measurable geometry", "그 모델은 측정할 수 있는 형태가 없어요"));
+			return;
+		}
+		const object = createMeshObject(
+			{
+				assetId: record.id,
+				height: fitted.height,
+				footprint: fitted.footprint,
+				name: meshNameFromFile(record.name),
+			},
+			store.objects,
+			placement,
+		);
+		if (!object) return;
+		store.applyAtomic((objects) => [...objects, object]);
+		setSelectedHierarchyId(`object:${object.id}`);
+		setGizmoMode("move");
+		setToast(
+			isKo
+				? `${object.name} 추가됨 — 실제 높이(m)를 입력하면 크기가 맞습니다`
+				: `${object.name} added — type its real height in metres to set the scale`,
+		);
+	}
+
 	/**
 	 * Apply what the background editor is showing.
 	 *
@@ -1537,7 +2569,9 @@ globalThis.playMode = centerTab === "play";
 		// door and shares the asset rather than importing it twice.
 		const copy = object.renderer === CUTOUT_KIND
 			? createCutoutObject(duplicateCutoutOptions(object), sceneObjects, placement)
-			: createSceneObject(object.renderer, sceneObjects, placement);
+			: object.renderer === MESH_KIND
+				? createMeshObject(duplicateMeshOptions(object), sceneObjects, placement)
+				: createSceneObject(object.renderer, sceneObjects, placement);
 		if (!copy) return;
 		// Unity drops the duplicate exactly on top of the original; for blocking,
 		// one grid step to the side means you can see that it worked.
@@ -1604,6 +2638,10 @@ globalThis.playMode = centerTab === "play";
 		// absence used to make Ctrl+Z after a light edit undo an unrelated
 		// earlier action while the light stayed put (research claim C1).
 		keyLight: { ...keyLight },
+		environmentImage,
+		environment,
+		style,
+		hasEnvSheet,
 		characters: charactersRef.current.map((entry) => ({
 			...entry,
 			layer: entry.id === activeChar.id
@@ -1626,18 +2664,86 @@ globalThis.playMode = centerTab === "play";
 	 * every quaternion/position cloned so a snapshot never shares references
 	 * with the live rig state (a later bake would otherwise rewrite history). */
 	function snapshotIkKeys(ikState) {
-		const out = new Map();
-		for (const [frame, entry] of ikState?.keys ?? []) {
-			const copy = new Map();
-			for (const [trackId, value] of entry) {
-				copy.set(trackId, {
-					q: value.q ? value.q.map((quat) => quat.clone()) : null,
-					p: value.p ? value.p.clone() : null,
+		return copyPhysicsKeys(ikState?.keys ?? new Map());
+	}
+	function editIkKeys(mutate) {
+		const before = snapshotIkKeys(ikStateRef.current);
+		const result = mutate();
+		markSemanticEdit("pose", before, ikStateRef.current.keys);
+		return result;
+	}
+	/* One IK-key core for every cast member, shared by the Key button, a pose
+	 * drag's bake, the Full-Body lane's delete and run_action. The loaded
+	 * layer's keys live on the live IK state, every other character's on its
+	 * stored one (created on its first key). */
+	function ikStateFor(characterId) {
+		if (characterId === loadedLayerCharRef.current) return ikStateRef.current;
+		let state = ikStatesRef.current.get(characterId);
+		if (!state) ikStatesRef.current.set(characterId, (state = createIkState()));
+		return state;
+	}
+	function editCharacterIkKeys(characterId, mutate) {
+		const state = ikStateFor(characterId);
+		const before = snapshotIkKeys(state);
+		recordCharacterUndo();
+		mutate(state);
+		markSemanticEdit("pose", before, state.keys);
+		setIkTick((value) => value + 1);
+	}
+	/** Write one key from its JSON form (studio-actions.js character.setIkKey):
+	 * each named track replaces its key at `frame` and joins the tracked set. */
+	function setCharacterIkKey(characterId, frame, tracks) {
+		castMemberOf(characterId);
+		const quaternion = (q) => new THREE.Quaternion(q.x, q.y, q.z, q.w).normalize();
+		const vector = (p) => new THREE.Vector3(p.x, p.y, p.z);
+		editCharacterIkKeys(characterId, (state) => {
+			let entry = state.keys.get(frame);
+			if (!entry) state.keys.set(frame, (entry = new Map()));
+			for (const [track, key] of Object.entries(tracks)) {
+				entry.set(track, {
+					q: key.q?.map(quaternion) ?? null,
+					p: key.p ? vector(key.p) : null,
+					...(key.baseQ ? { baseQ: key.baseQ.map(quaternion) } : {}),
+					...(key.basePos ? { basePos: vector(key.basePos) } : {}),
+					...(key.chainP ? { chainP: key.chainP.map(vector) } : {}),
+					...(key.keepTranslations ? { keepTranslations: true } : {}),
 				});
+				ikTouch(state, track);
 			}
-			out.set(frame, copy);
+		});
+	}
+	function removeCharacterIkKey(characterId, frame) {
+		const character = castMemberOf(characterId);
+		const state = ikStateFor(characterId);
+		if (!state.keys.has(frame)) {
+			const keyed = ikKeyframes(state);
+			throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no IK key at frame ${frame}${keyed.length ? `; keyed frames: ${keyed.join(", ")}` : ""}.`);
 		}
-		return out;
+		editCharacterIkKeys(characterId, (target) => ikRemoveKeyframe(target, frame));
+	}
+	function clearCharacterIkKeys(characterId) {
+		castMemberOf(characterId);
+		const count = ikStateFor(characterId).keys.size;
+		if (!count) return 0;
+		editCharacterIkKeys(characterId, (target) => {
+			target.keys.clear();
+			target.tracked.clear();
+			target.plants.clear();
+		});
+		return count;
+	}
+	/** A baked key entry in the JSON form character.setIkKey takes. */
+	function ikKeyJson(entry) {
+		const quaternion = (q) => ({ x: q.x, y: q.y, z: q.z, w: q.w });
+		const vector = (p) => ({ x: p.x, y: p.y, z: p.z });
+		return Object.fromEntries([...entry].map(([track, key]) => [track, {
+			...(key.q ? { q: key.q.map(quaternion) } : {}),
+			...(key.p ? { p: vector(key.p) } : {}),
+			...(key.baseQ ? { baseQ: key.baseQ.map(quaternion) } : {}),
+			...(key.basePos ? { basePos: vector(key.basePos) } : {}),
+			...(key.chainP ? { chainP: key.chainP.map(vector) } : {}),
+			...(key.keepTranslations ? { keepTranslations: true } : {}),
+		}]));
 	}
 	function recordCharacterUndo() {
 		charHistoryRef.current.past.push({ tick: ++opClockRef.current, snapshot: snapshotCast() });
@@ -1672,6 +2778,64 @@ globalThis.playMode = centerTab === "play";
 	const framingSessionRef = useRef(null);
 	// A colour picker streams values for as long as its dialog is open.
 	const tintSessionRef = useRef(null);
+	/* One Ctrl+Z entry per GESTURE for the surfaces that write cast-snapshot
+	 * state without a store transaction of their own: the key light (foldout
+	 * sliders, sun puck, move gizmo) and the character Transform rows. Every
+	 * tick of a drag or a scrub reopens the same session while its entry is
+	 * still the newest one, and the pointer/key release below closes it, so the
+	 * next gesture starts a fresh entry instead of extending the last one. */
+	const gestureUndoRef = useRef(null);
+	// Environment description / look are typed, so they keep their own session:
+	// a keyup must not cut a sentence into one entry per character.
+	const environmentTextSessionRef = useRef(null);
+	function beginGestureUndo(key) {
+		recordSessionUndo(gestureUndoRef, key);
+		// NumberField hands this token back on every tick of a scrub. These edits
+		// are not store transactions, so the scrub runs with a null token.
+		return null;
+	}
+	function endGestureUndo() {
+		gestureUndoRef.current = null;
+	}
+	useEffect(() => {
+		const end = () => endGestureUndo();
+		window.addEventListener("pointerup", end, true);
+		window.addEventListener("pointercancel", end, true);
+		window.addEventListener("keyup", end, true);
+		return () => {
+			window.removeEventListener("pointerup", end, true);
+			window.removeEventListener("pointercancel", end, true);
+			window.removeEventListener("keyup", end, true);
+		};
+	}, []);
+	/** Every key-light writer goes through here: the light rides the cast
+	 * snapshot (restoreCast puts it back), so an unrecorded light edit would be
+	 * silently reverted by an unrelated Ctrl+Z. `patch` is a partial or a
+	 * function of the current light. */
+	function changeKeyLight(gesture, patch) {
+		beginGestureUndo(`light:${gesture}`);
+		setKeyLight((current) => createKeyLight(typeof patch === "function" ? patch(current) : { ...current, ...patch }));
+	}
+	/** Reset is a whole gesture in one click. */
+	function resetKeyLight() {
+		recordCharacterUndo();
+		endGestureUndo();
+		setKeyLight(createKeyLight(null));
+	}
+	/** The Inspector's character Transform rows. The viewport gizmo already
+	 * records on drag start; these numeric rows are the same edit through
+	 * another door, so they record once per scrub / typed commit. */
+	function changeInspectorCharacter(gesture, patch) {
+		beginGestureUndo(`character:${activeChar.id}:${gesture}`);
+		updateCharacterAt(activeCharIndex, patch);
+	}
+	/** The set's look reference. One click, one entry — and the image is part
+	 * of the cast snapshot, so undo puts the previous picture back. */
+	function changeEnvironmentImage(dataUrl) {
+		recordCharacterUndo();
+		endGestureUndo();
+		setEnvironmentImage(dataUrl);
+	}
 	/** True while a framing capture for `shotId` is the newest history entry. */
 	function framingSessionOpen(shotId) {
 		const past = charHistoryRef.current.past;
@@ -1710,14 +2874,20 @@ globalThis.playMode = centerTab === "play";
 				}
 			}
 			target.keys = snapshotIkKeys({ keys: snapshot.ikKeys });
+			target.tracked = new Set([...target.keys.values()].flatMap((entry) => [...entry.keys()]));
 			setCommittedIkEdits(snapshot.committedIkEdits ?? []);
 			setIkTick((value) => value + 1);
 		}
 		if (snapshot.keyLight) setKeyLight(createKeyLight(snapshot.keyLight));
+		if (snapshot.environmentImage !== undefined) setEnvironmentImage(snapshot.environmentImage);
+		if (snapshot.environment !== undefined) setEnvironment(snapshot.environment);
+		if (snapshot.style !== undefined) setStyle(snapshot.style);
+		if (snapshot.hasEnvSheet !== undefined) setHasEnvSheet(snapshot.hasEnvSheet);
 	}
 
 	// props so the inspector cannot show a ghost.
 	function undoScene() {
+		if (studioBindingRef.current?.stepHistory(false)) return;
 		const charTop = charHistoryRef.current.past[charHistoryRef.current.past.length - 1];
 		if (charTop && charTop.tick > lastObjectOpRef.current) {
 			charHistoryRef.current.future.push({ tick: charTop.tick, snapshot: snapshotCast(Boolean(charTop.snapshot.shots)) });
@@ -1754,6 +2924,7 @@ globalThis.playMode = centerTab === "play";
 	}
 
 	function redoScene() {
+		if (studioBindingRef.current?.stepHistory(true)) return;
 		const charTop = charHistoryRef.current.future[charHistoryRef.current.future.length - 1];
 		if (charTop && charTop.tick > lastObjectOpRef.current) {
 			charHistoryRef.current.past.push({ tick: charTop.tick, snapshot: snapshotCast(Boolean(charTop.snapshot.shots)) });
@@ -1834,7 +3005,7 @@ globalThis.playMode = centerTab === "play";
 			}
 			if (event.code === "KeyD" && (event.ctrlKey || event.metaKey) && selectedSceneObjectId) {
 				event.preventDefault();
-				duplicateSelectedSceneObject();
+				runStudioAction("object.duplicate");
 				return;
 			}
 			if (event.key === "Escape" && selectedSceneObjectId) {
@@ -1927,8 +3098,12 @@ globalThis.playMode = centerTab === "play";
 	const startupShotState = nestedShotStartup.state ?? shotStartup.state;
 	// Each editorial strip owns its camera keys. The playhead chooses the
 	// active strip; there is no shared key list that could blend through a cut.
-	const [shots, setShots] = useState(() => startupShotState?.shots ?? initialShots(startupShotState?.frameCount ?? DEFAULT_DURATION_S * TIMELINE_FPS));
+	const [shots, setShots, editShots] = useSemanticState(() => startupShotState?.shots ?? initialShots(startupShotState?.frameCount ?? DEFAULT_DURATION_S * TIMELINE_FPS), markSemanticEdit, "shots");
 	const [movePlaying, setMovePlaying] = useState(false);
+	useEffect(() => {
+		if (playgroundMode && movePlaying) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "play" }, "*");
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [playgroundMode, movePlaying]);
 	// Follow slaves the move to the timeline playhead so camera and character
 	// motion share one time axis; off frees the camera while both stay set.
 	const [moveFollow, setMoveFollow] = useState(true);
@@ -1951,9 +3126,9 @@ globalThis.playMode = centerTab === "play";
 	// Point height input edits this one. Reset lives after activeCamera below.
 	const [craneSelectedIndex, setCraneSelectedIndex] = useState(null);
 	const [hasCharSheet, setHasCharSheet] = useState(startupStage.hasCharSheet);
-	const [hasEnvSheet, setHasEnvSheet] = useState(false);
-	const [environment, setEnvironment] = useState(DEFAULT_ENVIRONMENT);
-	const [style, setStyle] = useState("moody cinematic lighting, 35mm film look");
+	const [hasEnvSheet, setHasEnvSheet] = useState(startupStage.hasEnvSheet);
+	const [environment, setEnvironment] = useState(startupStage.environment ?? DEFAULT_ENVIRONMENT);
+	const [style, setStyle] = useState(startupStage.style ?? "moody cinematic lighting, 35mm film look");
 
 	const [cameraPos, setCameraPos] = useState(DEFAULT_CAMERA_POSITION);
 	const [subjectVisible, setSubjectVisible] = useState(true);
@@ -1962,8 +3137,13 @@ globalThis.playMode = centerTab === "play";
 	const liveStateRef = useRef(null);
 	const liveHandlersRef = useRef(null);
 	const [liveWorkspaceHandle, setLiveWorkspaceHandle] = useState(null);
-	const liveWorkspaceIdRef = useRef(crypto.randomUUID());
+	const liveWorkspaceHandleRef = useRef(null);
+	// One identity per tab, kept in sessionStorage so a reload reconnects as the
+	// same workspace instead of orphaning the hub's retained motion outcomes.
+	const liveWorkspaceIdRef = useRef("");
+	if (!liveWorkspaceIdRef.current) liveWorkspaceIdRef.current = loadLiveWorkspaceId();
 	const [result, setResult] = useState(null);
+	const [falMotionStudioOpen, setFalMotionStudioOpen] = useState(false);
 	const [resultOpen, setResultOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [recordedVideoName, setRecordedVideoName] = useState(null);
@@ -1977,6 +3157,11 @@ globalThis.playMode = centerTab === "play";
 	}, []);
 	const [glContextLost, setGlContextLost] = useState(false);
 	const [bridge, setBridge] = useState(null);
+	const bridgeRefreshRef = useRef(null);
+	const [bridgeChecking, setBridgeChecking] = useState(false);
+	const [motionSetupReveal, setMotionSetupReveal] = useState(0);
+	const [motionSetupKind, setMotionSetupKind] = useState("prompt");
+	const generationPendingRef = useRef(false);
 	const [ardyPrompt, setArdyPrompt] = useState("");
 	const [ardyDuration, setArdyDuration] = useState(4); // default clip length in seconds; aligned with the recommended 3-5 s block range
 	// Optional native-ARDY seed: empty string = omit from the request (the
@@ -2032,6 +3217,7 @@ globalThis.playMode = centerTab === "play";
 	// re-run when a cutout's lineage changes — not on every transform tick, so
 	// a gizmo drag never hammers IndexedDB.
 	const [shelfImageIds, setShelfImageIds] = useState(null);
+	const [shelfMeshIds, setShelfMeshIds] = useState(null);
 	const [manageAssetStorage, setManageAssetStorage] = useState(false);
 	// A separate scan preserves the source-only placement shelf while the
 	// manager exposes every unreachable stored record, including matte and cut
@@ -2056,6 +3242,10 @@ globalThis.playMode = centerTab === "play";
 	const [deletingAssetId, setDeletingAssetId] = useState(null);
 	const cutoutLineage = useMemo(
 		() => JSON.stringify(sceneObjects.flatMap((object) => (object.renderer === CUTOUT_KIND ? [[object.assetId, object.sourceAssetId, object.matteAssetId]] : []))),
+		[sceneObjects],
+	);
+	const meshLineage = useMemo(
+		() => JSON.stringify(sceneObjects.flatMap((object) => (object.renderer === MESH_KIND ? [object.assetId] : []))),
 		[sceneObjects],
 	);
 	const projectCutoutLineage = useMemo(() => {
@@ -2114,7 +3304,9 @@ globalThis.playMode = centerTab === "play";
 			const latestUsageCounts = assetUsageCounts(allScenes);
 			const latestUsedAssetIds = stored.filter((id) => latestUsageCounts.has(id));
 			if (!current()) return;
-			setShelfImageIds(sourceAssetIds(stored, allScenes, derivedIds));
+			const sourceIds = sourceAssetIds(stored, allScenes, derivedIds);
+			setShelfImageIds(sourceIds.filter(isImageAssetId));
+			setShelfMeshIds(sourceIds.filter(isMeshAssetId));
 			setUnusedAssetIds(unreachableAssetIds(stored, allScenes));
 			setUsedAssetIds(latestUsedAssetIds);
 			setUsageCounts(latestUsageCounts);
@@ -2123,6 +3315,7 @@ globalThis.playMode = centerTab === "play";
 			// empty rather than presenting an unverifiable deletion target.
 			if (current()) {
 				setShelfImageIds([]);
+				setShelfMeshIds([]);
 				setUnusedAssetIds([]);
 				setUsedAssetIds([]);
 				setUsageCounts(new Map());
@@ -2139,7 +3332,7 @@ globalThis.playMode = centerTab === "play";
 			alive = false;
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [bottomTab, scenes, activeSceneId, cutoutLineage]);
+	}, [bottomTab, scenes, activeSceneId, cutoutLineage, meshLineage]);
 
 	async function deleteUnusedAsset(id, expectedUsageCount, expectedGraphSignature) {
 		if (deletingAssetId) return false;
@@ -2194,6 +3387,7 @@ globalThis.playMode = centerTab === "play";
 				return false;
 			}
 			evictAssetTexture(id);
+			evictMeshScene(id);
 			setAssetTrash((current) => [...current.filter((asset) => asset.id !== record.id), record]);
 			setAssetUndoOffered(true);
 			deleted = true;
@@ -2214,7 +3408,11 @@ globalThis.playMode = centerTab === "play";
 		setDeletingAssetId(record.id);
 		let restored = false;
 		try {
-			await rememberAsset(record);
+			if (isMeshAssetId(record.id) || isSupportedMeshType(record.type)) {
+				await persistMeshAsset(record);
+			} else {
+				await rememberAsset(record);
+			}
 			setAssetTrash((current) => current.filter((asset) => asset.id !== record.id));
 			setAssetUndoOffered(false);
 			restored = true;
@@ -2263,14 +3461,20 @@ globalThis.playMode = centerTab === "play";
 	// Auto color: Blender's viewport "Random" mode. A DISPLAY-ONLY marker rides
 	// each non-cutout object into the renderers; the authored `color`, the scene
 	// document, undo history and the MCP view never change — toggling OFF makes
-	// this list the animated list again, byte for byte.
+	// this list the animated list again, byte for byte. Meshes take the same
+	// override as a cube: the renderer tints the visible material (file or clay).
 	const [autoColor, setAutoColor] = useState(loadAutoColor);
 	const displaySceneObjects = useMemo(() => {
 		if (!autoColor) return animatedSceneObjects;
-		return animatedSceneObjects.map((object) =>
-			object.renderer === CUTOUT_KIND ? object : { ...object, autoColor: autoColorHex(object.id) },
-		);
+		return animatedSceneObjects.map((object) => {
+			if (object.renderer === CUTOUT_KIND) return object;
+			return { ...object, autoColor: autoColorHex(object.id) };
+		});
 	}, [animatedSceneObjects, autoColor]);
+	const stageSceneObjects = useMemo(
+		() => displaySceneObjects.filter((object) => !isEffectivelyHidden(object, sceneObjects, characters)),
+		[displaySceneObjects, sceneObjects, characters],
+	);
 
 	/* ------------------------ carried props (attachment) ------------------- */
 	// A prop attached to a character rides a LIVE frame in the scene graph, so
@@ -2369,26 +3573,43 @@ globalThis.playMode = centerTab === "play";
 				return;
 			}
 			const attach = targetRowId === "props" ? null : attachTargetForRow(targetRowId);
-			// Where the prop is on screen right now, expressed in the frame it is
-			// joining (or left as world when it joins none). ONE conversion, whether
-			// the prop is coming from the world or from another frame.
-			const shown = animatedSceneObjects.find((entry) => entry.id === id) ?? null;
-			const placement = shown ? attachPlacementPatch(sceneObjectWorldMatrix(shown), attach, attachFrameRef.current) : null;
-			// A placement that could not be computed refuses the DROP, not just the
-			// numbers: attaching without converting would silently reinterpret the
-			// old frame's numbers in the new frame, which is the jump itself.
-			if (!placement) return;
-			// ONE atomic: a single undo puts back both the field and the numbers.
-			store.applyAtomic((objects) => {
-				let next = setSceneObjectAttach(objects, id, attach);
-				// Dropping on Props means "world-anchored again", which drops the
-				// grouping parent too — attach and parent are the same slot.
-				if (attach === null) next = setSceneObjectParent(next, id, null);
-				if (next === objects) return objects;
-				return placeSceneObject(next, id, placement);
-			});
+			runStudioAction(attach ? "object.attach" : "object.detach", attach
+				? { objectId: id, characterId: attach.characterId, ...(attach.bone ? { bone: attach.bone } : {}) }
+				: { objectId: id });
 		},
 	};
+
+	/** Carry a prop on a character's root (`bone` null) or one of its bones, or
+	 * put it back in the world with `attach` null — the Hierarchy's character,
+	 * bone and Props drops, the Inspector's Detach and run_action
+	 * object.attach/detach. */
+	function attachSceneObject(id, attach) {
+		const object = storeRef.current.objects.find((entry) => entry.id === id);
+		if (!object) throw new StudioProtocolError("STALE_TARGET", `Object ${id} is not in this scene.`);
+		if (attach) castMemberOf(attach.characterId);
+		// Where the prop is on screen right now, expressed in the frame it is
+		// joining (or left as world when it joins none). ONE conversion, whether
+		// the prop is coming from the world or from another frame.
+		const shown = animatedSceneObjects.find((entry) => entry.id === id) ?? object;
+		const placement = attachPlacementPatch(sceneObjectWorldMatrix(shown), attach, attachFrameRef.current);
+		// A placement that could not be computed refuses the attachment, not just
+		// the numbers: attaching without converting would silently reinterpret the
+		// old frame's numbers in the new frame, which is the jump itself.
+		if (!placement) {
+			throw new StudioProtocolError("TARGET_NOT_READY", attach
+				? `The ${attach.bone ?? "root"} frame of character ${attach.characterId} is not on stage (its rig has not loaded).`
+				: `${object.name || id} is not on stage, so where it is now cannot be read.`);
+		}
+		// ONE atomic: a single undo puts back both the field and the numbers.
+		storeRef.current.applyAtomic((objects) => {
+			let next = setSceneObjectAttach(objects, id, attach);
+			// Back to the world means "world-anchored again", which drops the
+			// grouping parent too — attach and parent are the same slot.
+			if (attach === null) next = setSceneObjectParent(next, id, null);
+			if (next === objects) return objects;
+			return placeSceneObject(next, id, placement);
+		});
+	}
 
 	const activeShotIdx = shotIndexAtFrame(shots, tlFrame);
 	const activeShot = shots[activeShotIdx] ?? null;
@@ -2403,17 +3624,27 @@ globalThis.playMode = centerTab === "play";
 	const cameraRail = activeCamera.cameraRail;
 	const activeShotDuration = activeShot ? activeShot.endFrame - activeShot.startFrame + 1 : 0;
 	const hasCameraKeys = shots.some((shot) => shot.cameraKeys.length > 0);
-	function changeActiveCamera(patch, shotId = activeShot?.id) {
+	function changeActiveCamera(patch, shotId = activeShot?.id, authored = true) {
 		// Every camera-block commit (mode switch, rail draw, rail delete, lens
 		// patch) funnels through here, so this is where the shot snapshot goes.
 		// No shot resolved means the setShots below is a no-op — record nothing.
-		if (!shots.some((shot) => shot.id === shotId)) return;
+		// The live read model, so a run_action edit sees the shots of the same tick.
+		if (!liveStateRef.current.shots.some((shot) => shot.id === shotId)) return;
 		// A framing capture in the same gesture (rail draw toggle, Follow switch
 		// re-measure) already snapshotted the pre-gesture shots, so this commit
 		// joins that entry instead of pushing a second one for one click.
 		if (framingSessionOpen(shotId)) framingSessionRef.current = null;
 		else recordShotUndo();
-		setShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, camera: updateCameraBlock(shot.camera, patch) }), "shots"));
+		(authored ? editShots : setShots)((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, camera: updateCameraBlock(shot.camera, patch) }), "shots"));
+	}
+	/** Which video model this shot is being cut FOR. A label, never a
+	 * constraint: nothing re-times or re-crops the shot, the timeline simply
+	 * says when the cut breaks the target's limits. One Ctrl+Z entry per pick,
+	 * exactly like a camera-block commit. */
+	function changeShotTargetModel(targetModel, shotId = activeShot?.id) {
+		if (!shots.some((entry) => entry.id === shotId)) return;
+		recordShotUndo();
+		editShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, targetModel: targetModel || null }), "shots"));
 	}
 	function addActiveCranePoint(requestedT = null, shotId = activeShot?.id) {
 		const shot = shots.find((entry) => entry.id === shotId);
@@ -2444,6 +3675,7 @@ globalThis.playMode = centerTab === "play";
 			...points.slice(gapIndex + 1),
 		];
 		changeActiveCamera({ craneHeight: { points: added } }, shotId);
+		trackFeature("crane_graph");
 		setCraneSelectedIndex(gapIndex + 1);
 	}
 	function deleteSelectedCranePoint() {
@@ -2452,6 +3684,8 @@ globalThis.playMode = centerTab === "play";
 		changeActiveCamera({ craneHeight: { points: points.filter((_, index) => index !== craneSelectedIndex) } });
 		setCraneSelectedIndex(null);
 	}
+	// Navigation (including look-through / MCP set_camera) can persist framing,
+	// but is not a semantic edit. Keep this on the passive shot setter.
 	function syncActiveCameraFraming() {
 		const cam = shotCamRef.current;
 		if (!cam || !activeShot || ikMode || playMode) return;
@@ -2485,6 +3719,7 @@ globalThis.playMode = centerTab === "play";
 	}
 	function commitManualCameraFraming() {
 		if (ikMode || playMode) return;
+		trackFeature("orbit");
 		manualCameraOverrideRef.current = true;
 		syncActiveCameraFraming();
 	}
@@ -2512,12 +3747,29 @@ globalThis.playMode = centerTab === "play";
 		// a second entry for one edit.
 		if (kind === "prompt-text") recordSessionUndo(promptTextSessionRef, `prompt-text:${id}`);
 	}
-	function changeCameraRail(points) {
+	/* One camera-rail core for every shot, shared by the Top-View rail stroke,
+	 * the Delete rail button and run_action. */
+	function setShotCameraRail(shotId, points) {
+		const shot = liveStateRef.current.shots.find((entry) => entry.id === shotId);
+		if (!shot) throw new StudioProtocolError("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
+		const camera = createCameraBlock(shot.camera);
+		window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "rail" } }));
 		changeActiveCamera({
-			cameraRail: points,
-			railFollow: points ? railFollowForNewGeometry(activeCamera.railFollow, activeShotDuration) : null,
-			mode: points ? "rail" : activeCamera.mode === "rail" ? "follow" : activeCamera.mode,
-		});
+			cameraRail: points.map(({ x, z }) => ({ x, z })),
+			railFollow: railFollowForNewGeometry(camera.railFollow, shot.endFrame - shot.startFrame + 1),
+			mode: "rail",
+		}, shotId);
+	}
+	function clearShotCameraRail(shotId) {
+		const shot = liveStateRef.current.shots.find((entry) => entry.id === shotId);
+		if (!shot) throw new StudioProtocolError("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
+		// The camera block being edited: this shot's, whichever shot is active.
+		const activeCamera = createCameraBlock(shot.camera);
+		if (!activeCamera.cameraRail) throw new StudioProtocolError("TARGET_NOT_READY", `${shot.name || shotId} has no camera rail.`);
+		changeActiveCamera(removeCameraRail(activeCamera), shotId);
+	}
+	function changeCameraRail(points) {
+		if (activeShot) runStudioAction("shot.setCameraRail", { shotId: activeShot.id, points: points.map(({ x, z }) => ({ x, z })) });
 	}
 	function toggleCameraRailDraw() {
 		if (!activeShot || waypointMode) return;
@@ -2529,9 +3781,10 @@ globalThis.playMode = centerTab === "play";
 			changeActiveCamera({
 				mode: "rail",
 				railFollow: activeCamera.railFollow?.mode === "off" ? defaultRailRange(activeShotDuration) : activeCamera.railFollow,
-			});
+			}, activeShot.id, false); // tool preparation; accepted rail geometry is the edit
 		}
 		const next = !railDraw;
+		trackFeature("dolly_rail");
 		setRailDraw(next);
 		if (next) {
 			setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
@@ -2539,9 +3792,9 @@ globalThis.playMode = centerTab === "play";
 		}
 	}
 	function deleteCameraRail() {
-		if (!cameraRail) return;
+		if (!cameraRail || !activeShot) return;
 		setRailDraw(false);
-		changeActiveCamera(removeCameraRail(activeCamera));
+		if (!runStudioAction("shot.clearCameraRail", { shotId: activeShot.id })) return;
 		setToast(ko("Camera rail deleted — Follow keeps the current distance", "카메라 레일 삭제됨 — 팔로우가 현재 거리를 유지합니다"));
 	}
 	function previewCameraShot(shotId) {
@@ -2775,9 +4028,16 @@ globalThis.playMode = centerTab === "play";
 		// too heavy for the stage envelope; paths and prompt blocks persist.
 		characters: characters.map(({ sessionMotion, ...entry }) => entry),
 		hasCharSheet,
+		environmentImage,
 		shotAspect: shotAspectKey,
+		cameraPresetId,
 		sensorId,
 		keyLight,
+		// What this location IS and how it should look. Session state until #345:
+		// a reopened scene came back with another room's description.
+		environment,
+		style,
+		hasEnvSheet,
 	};
 
 	function snapshotActiveScene(sourceScenes = scenesRef.current) {
@@ -2819,13 +4079,17 @@ globalThis.playMode = centerTab === "play";
 	 * cache; the file is the portable, user-owned document. */
 	const [projectName, setProjectName] = useState(() => loadProjectSession()?.name ?? null);
 	const [projectDirty, setProjectDirty] = useState(false);
+	const [projectSaveState, setProjectSaveState] = useState("idle");
 	const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 	const [projectBrowserOpen, setProjectBrowserOpen] = useState(false);
 	const [projectNameDialog, setProjectNameDialog] = useState(null);
+	const [firstSuccessGuideOpen, setFirstSuccessGuideOpen] = useState(false);
 	// A first-run author should choose a document (or explicitly start a named
 	// local draft). Keep this as a light startup sheet so the studio remains
 	// inspectable while the choice is pending; it never traps the topbar.
-	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !loadProjectSession()?.name);
+	// ?tutorial=camera opens the starter scene itself (#209), so the chooser is
+	// suppressed the same way a ?scene= launch suppresses it.
+	const [projectStartupOpen, setProjectStartupOpen] = useState(() => !playgroundMode && !cameraTutorialQuery && !playgroundSceneUrl(globalThis.location?.search) && !loadProjectSession()?.name);
 
 	// Dismissal mirrors the inspector-actions menu: only listen while open,
 	// ignore presses inside the wrap (the trigger's own click keeps toggling),
@@ -2846,10 +4110,142 @@ globalThis.playMode = centerTab === "play";
 			window.removeEventListener("keydown", onKeyDown);
 		};
 	}, [projectMenuOpen]);
+	// The PlayView reference-export menu (#165) dismisses the same way.
+	const [exportMenuOpen, setExportMenuOpen] = useState(false);
+	const [exportMenuAnchor, setExportMenuAnchor] = useState({ top: 0, right: 0 });
+	useEffect(() => {
+		if (!exportMenuOpen) return undefined;
+		if (exportShotIdRef.current) document.querySelector('[data-testid="export-video"]')?.focus();
+		const onPointerDown = (event) => {
+			if (event.target instanceof Element && event.target.closest(".export-menu-wrap")) return;
+			exportShotIdRef.current = null;
+			setExportMenuOpen(false);
+		};
+		const onKeyDown = (event) => {
+			if (event.key === "Escape") {
+				exportShotIdRef.current = null;
+				setExportMenuOpen(false);
+				exportMenuTriggerRef.current?.focus();
+			}
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [exportMenuOpen]);
+	// `View ▾` on the viewport bar (#194): one home for the display-only
+	// toggles that used to be scattered across the topbar, the scene bar and
+	// the inspector. Same dismissal as the two menus above, plus focus
+	// returning to the trigger on Escape — the bar is a keyboard stop.
+	const [viewMenuOpen, setViewMenuOpen] = useState(false);
+	const [viewMenuAnchor, setViewMenuAnchor] = useState({ top: 0, right: 0 });
+	const viewMenuTriggerRef = useRef(null);
+	useEffect(() => {
+		if (!viewMenuOpen) return undefined;
+		const onPointerDown = (event) => {
+			if (event.target instanceof Element && event.target.closest(".view-menu-wrap")) return;
+			setViewMenuOpen(false);
+		};
+		const onKeyDown = (event) => {
+			if (event.key !== "Escape") return;
+			setViewMenuOpen(false);
+			viewMenuTriggerRef.current?.focus();
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [viewMenuOpen]);
+	// The agent panel keeps owning its own collapsed flag (the rail button and
+	// Cmd/Ctrl+B both live inside it); the studio only mirrors the flag so the
+	// View ▾ item can render a checkmark. It boots collapsed here: the studio
+	// opens on the stage, not on a chat column.
+	const [agentCollapsed, setAgentCollapsed] = useState(true);
+	// Studio Agent is an Inspector peer, not an additional dock. Keeping this
+	// host-owned flag separate from the Workflow dock preserves the latter's
+	// session and layout while Cmd/Ctrl+B switches the existing Inspector row.
+	const studioAgentMode = !agentCollapsed;
+	const setStudioAgentMode = (enabled) => setAgentCollapsed(!enabled);
+	const studioDocumentEpochRef = useRef(crypto.randomUUID());
+	const studioSceneEpochRef = useRef(crypto.randomUUID());
+	const studioPortsRef = useRef(null);
+	// The one Studio action registry (src/studio-actions.js) and the latest
+	// render's handlers behind it; the UI controls and run_action share both.
+	const studioActionsRef = useRef(null);
+	const studioActionHandlersRef = useRef(null);
+	const studioHistoryRef = useRef(new Map());
+	const studioIkStampsRef = useRef(new Map());
+	const [studioAgentError, setStudioAgentError] = useState(null);
+	// A receipt already names the entities it changed. Showing that only as a
+	// card at the bottom of the chat leaves the author hunting for what moved,
+	// so the hierarchy rows the receipt names light up where they already are
+	// and the first one scrolls into view. The chat card stays: one is the
+	// record, the other is the pointer.
+	const [agentTouchedRows, setAgentTouchedRows] = useState([]);
+	const agentTouchTimerRef = useRef(null);
+	useEffect(() => () => clearTimeout(agentTouchTimerRef.current), []);
+	const hierarchyRowsForAgentTarget = (targetId) => {
+		const castIndex = charactersRef.current.findIndex((entry) => entry.id === targetId);
+		if (castIndex !== -1) return [rowIdForCharIndex(castIndex)];
+		if (storeRef.current.objects.some((object) => object.id === targetId)) return [`object:${targetId}`];
+		// A stage edit is addressed by the scene itself; the rows it can change
+		// are the stage's own.
+		if (targetId === activeSceneIdRef.current) return ["light", "environment"];
+		return [];
+	};
+	const highlightAgentTargets = (receipt) => {
+		const rows = [...new Set((receipt?.affectedIds ?? []).flatMap(hierarchyRowsForAgentTarget))];
+		if (!rows.length) return;
+		clearTimeout(agentTouchTimerRef.current);
+		setAgentTouchedRows(rows);
+		agentTouchTimerRef.current = setTimeout(() => setAgentTouchedRows([]), AGENT_RECEIPT_HIGHLIGHT_MS);
+	};
+	const buildStudioAgentContext = () => {
+		if (!liveWorkspaceHandleRef.current) {
+			setStudioAgentError(ko("The live editor is disconnected. Reconnect before sending.", "라이브 편집기가 연결되지 않았어요. 연결 후 보내 주세요."));
+			return null;
+		}
+		try { const value = studioBindingRef.current.context(); setStudioAgentError(null); return value; }
+		catch (error) { setStudioAgentError(`${error.code ?? "INVALID_CONTEXT"}: ${error.message}`); return null; }
+	};
+	useEffect(() => {
+		if (embedMode) return;
+		const toggle = () => setAgentCollapsed(value => !value);
+		const key = event => {
+			if ((event.metaKey || event.ctrlKey) && event.code === "KeyB") { event.preventDefault(); toggle(); }
+		};
+		window.addEventListener("cozyclay:agent-panel-toggle", toggle);
+		window.addEventListener("keydown", key);
+		return () => { window.removeEventListener("cozyclay:agent-panel-toggle", toggle); window.removeEventListener("keydown", key); };
+	}, [embedMode]);
 	const projectHandleRef = useRef(null);
+	const projectMotionsRef = useRef(new Map());
+	// Loaded clips keep the same Uint8Array identity while they remain active.
+	// Reuse the expensive encoded record until a new byte buffer is supplied.
+	const motionEncodingCacheRef = useRef(new WeakMap());
+	const restoreEpochRef = useRef(0);
+	const [projectManifest, setProjectManifest] = useState({ items: [], totals: { embedded: 0, external: 0, missing: 0, bytes: 0 }, missing: [] });
+	const [saveBlockedReasons, setSaveBlockedReasons] = useState(null);
 	const projectSnapshotRef = useRef("");
 	const projectStateRef = useRef(null);
 	projectStateRef.current = { workspaceLayout, customPoses, scenes, activeSceneId, sceneObjects };
+	const [workflowRevision, setWorkflowRevision] = useState(0);
+	useEffect(() => {
+		const onStorage = (event) => {
+			if (event.key === WORKFLOW_STORAGE_KEY) setWorkflowRevision((value) => value + 1);
+		};
+		const onWorkflowChange = () => setWorkflowRevision((value) => value + 1);
+		window.addEventListener("storage", onStorage);
+		window.addEventListener("cozyclay:workflow-change", onWorkflowChange);
+		return () => {
+			window.removeEventListener("storage", onStorage);
+			window.removeEventListener("cozyclay:workflow-change", onWorkflowChange);
+		};
+	}, []);
 
 	function projectDocumentInput(name) {
 		return {
@@ -2860,6 +4256,7 @@ globalThis.playMode = centerTab === "play";
 			},
 			workspaceLayout: projectStateRef.current.workspaceLayout,
 			customPoses: projectStateRef.current.customPoses,
+			workflow: loadWorkflowGraph(),
 			name,
 		};
 	}
@@ -2867,23 +4264,68 @@ globalThis.playMode = centerTab === "play";
 	function collectProjectSnapshot(name) {
 		return JSON.stringify(createProjectDocument(projectDocumentInput(name)));
 	}
+	const tutorialInitialSnapshotRef = useRef(null);
+	if (tutorialInitialSnapshotRef.current === null) tutorialInitialSnapshotRef.current = collectProjectSnapshot("Tutorial");
 
+	playgroundExportRef.current = collectProjectSerialized;
 	async function collectProjectSerialized(name) {
 		const input = projectDocumentInput(name);
+		const scenesDocument = {
+			...input.scenesDocument,
+			scenes: input.scenesDocument.scenes.map((scene) => ({
+				...scene,
+				stage: scene.stage
+					? {
+						...scene.stage,
+						characters: (scene.stage.characters ?? []).map((character) => ({
+							...character,
+							motionRef: character.motionRef ? { ...character.motionRef } : character.motionRef,
+						})),
+					}
+					: scene.stage,
+			})),
+		};
 		const db = await openAssetDb();
 		try {
-			const ids = [...referencedAssetIds(input.scenesDocument.scenes)];
+			const ids = [...referencedAssetIds(scenesDocument.scenes)];
 			const assets = await Promise.all(ids.map((id) => getAsset(db, id)));
-			// A referenced asset whose record vanished (swept elsewhere, another
-			// tab) would drop out of the export in silence — the user would
-			// learn on the machine they open it on. Say it here, at save time.
-			const missing = ids.filter((id, index) => !assets[index]);
-			if (missing.length) {
-				setToast(isKo
-					? `참조된 사진 ${missing.length}개를 찾지 못해보내기에서 빠졌어요`
-					: `${missing.length} referenced image${missing.length > 1 ? "s" : ""} missing — left out of the export`);
+			const workflowResult = await internWorkflowOutputs(input.workflow);
+			const referencedMotionIds = new Set(
+				scenesDocument.scenes.flatMap((scene) => (scene.stage?.characters ?? [])
+					.map((character) => character.motionRef?.motionId?.toLowerCase())
+					.filter(Boolean)),
+			);
+			const motions = [...projectMotionsRef.current.entries()]
+				.filter(([id]) => referencedMotionIds.has(id))
+				.map(([, record]) => record);
+			const motionCache = new Map();
+			for (const record of motions) motionCache.set(record.motionId.toLowerCase(), record);
+			for (const scene of scenesDocument.scenes) for (const character of scene.stage?.characters ?? []) {
+				const clip = motionFullRef.current.get(character.id);
+				if (!clip?.sourceBytes) continue;
+				let record = motionEncodingCacheRef.current.get(clip.sourceBytes);
+				if (!record) {
+					record = await encodeMotionResource(clip.sourceBytes, { prompt: character.motionRef?.prompt, sourceUrl: character.motionRef?.url });
+					motionEncodingCacheRef.current.set(clip.sourceBytes, record);
+				}
+				const cached = motionCache.get(record.motionId) ?? record;
+				motionCache.set(record.motionId, cached);
+				if (!motions.includes(cached)) motions.push(cached);
+				projectMotionsRef.current.set(record.motionId.toLowerCase(), cached);
+				character.motionRef = { ...(character.motionRef || {}), motionId: cached.motionId };
 			}
-			return JSON.stringify(createProjectDocument({ ...input, assets }), null, 2);
+			try { const motionDb = await openMotionDb(); await Promise.all(motions.map((record) => putMotion(motionDb, record))); motionDb.close(); } catch (error) { console.warn("[cozyclay] could not cache motions", error); }
+			const allAssets = [...assets.filter(Boolean), ...workflowResult.assets];
+			const nextInput = { ...input, scenesDocument, workflow: workflowResult.graph, assets: allAssets, motions };
+			const manifest = resourceManifest({ scenesDocument: nextInput.scenesDocument, workflow: nextInput.workflow, poseLibrary: nextInput.customPoses, assets: allAssets, motions, workflowOutputRefs });
+			setProjectManifest(manifest);
+			if (manifest.missing.length) {
+				const error = new Error("Project has missing resources");
+				error.code = "missing-resources";
+				error.items = manifest.missing;
+				throw error;
+			}
+			return JSON.stringify(createProjectDocument({ ...nextInput, savedAt: Date.now() }), null, 2);
 		} finally {
 			db.close();
 		}
@@ -2894,6 +4336,14 @@ globalThis.playMode = centerTab === "play";
 		setProjectDirty(false);
 		setProjectName(name);
 		storeProjectSession(name);
+	}
+
+	function projectProblemsNotice(problems) {
+		if (!Array.isArray(problems) || !problems.length) return "";
+		const codes = [...new Set(problems.map((problem) => problem?.code).filter(Boolean))].join(", ");
+		return isKo
+			? ` · 포함된 자원 ${problems.length}개를 건너뛰었어요${codes ? ` (${codes})` : ""}`
+			: ` · skipped ${problems.length} embedded resource${problems.length === 1 ? "" : "s"}${codes ? ` (${codes})` : ""}`;
 	}
 
 	async function rehydrateProjectAssets(project, warnings = []) {
@@ -2908,7 +4358,7 @@ globalThis.playMode = centerTab === "play";
 						console.warn(`[cozyclay] skipped embedded asset outside the project closure: ${asset.id}`);
 						return;
 					}
-					if ((await assetIdForBytes(asset.bytes)) !== asset.id) {
+					if (!(await verifyEmbeddedAsset(asset))) {
 						console.warn(`[cozyclay] skipped embedded asset with mismatched content address: ${asset.id}`);
 						return;
 					}
@@ -2928,6 +4378,7 @@ globalThis.playMode = centerTab === "play";
 			setProjectNameDialog({ kind: "save", initialName: "My Project" });
 			return;
 		}
+		setProjectSaveState("saving");
 		const name = (explicitName ?? projectName ?? "My Project").trim() || "My Project";
 		try {
 			const serialized = await collectProjectSerialized(name);
@@ -2945,15 +4396,35 @@ globalThis.playMode = centerTab === "play";
 				await writeProjectFile(handle, serialized);
 			}
 			markProjectClean(name);
+			setSaveBlockedReasons(null);
+			setProjectSaveState("saved");
+			track("project:saved", {
+				object_count_bucket: bucketCount(projectStateRef.current.sceneObjects?.length ?? 0),
+				shot_count_bucket: bucketCount(shots.length),
+			});
 			setToast(isKo ? `프로젝트 저장됨: ${name}${PROJECT_EXTENSION}` : `Project saved: ${name}${PROJECT_EXTENSION}`);
 		} catch (err) {
-			if (err?.name === "AbortError") return; // user closed the picker
-			setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
+			if (err?.name === "AbortError") {
+				setProjectSaveState(projectDirty ? "dirty" : "saved");
+				return; // user closed the picker
+			}
+			setProjectSaveState("error");
+			if (err?.code === "missing-resources") setSaveBlockedReasons([{ code: err.code, items: err.items }]);
+			else if (err?.code === "resources-too-large") setSaveBlockedReasons([err]);
+			else setToast(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
 		}
 	}
 
 	function applyProject(project) {
+		studioDocumentEpochRef.current = crypto.randomUUID();
+		tutorialProjectEpochRef.current += 1;
+		tutorialSeedEpochRef.current = null;
+		setTutorialSeedPending(false);
+		setCameraTutorialHandoff(null);
+		exportShotIdRef.current = null;
+		projectMotionsRef.current = new Map((project.motions ?? []).map((record) => [record.motionId?.toLowerCase(), record]).filter(([id]) => id));
 		const source = project.scenesDocument;
+		openMotionDb().then(async (db) => { try { await Promise.all([...projectMotionsRef.current.values()].map((record) => putMotion(db, record))); const ids = new Set((source?.scenes ?? []).flatMap((scene) => (scene.stage?.characters ?? []).map((character) => character.motionRef?.motionId?.toLowerCase()).filter(Boolean))); await sweepMotions(db, ids); } finally { db.close(); } }).catch(() => {});
 		// A project FILE carries its own scene document and never passes the
 		// storage reader, so the 20 fps → 24 fps clock migration is applied here
 		// too — otherwise an older .cozyclay would open a sixth too fast.
@@ -2965,6 +4436,8 @@ globalThis.playMode = centerTab === "play";
 		setActiveSceneId(doc.activeSceneId);
 		if (project.workspaceLayout) setWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...project.workspaceLayout });
 		setCustomPoses(mergedCustomPoses);
+		const resolvedWorkflow = resolveWorkflowOutputs(normalizeWorkflowGraph(project.workflow), new Map((project.assets ?? []).map((asset) => [asset.id, asset])));
+		storeWorkflowGraph(resolvedWorkflow);
 		saveCustomPoses(mergedCustomPoses);
 		persistScenes(doc.scenes, doc.activeSceneId);
 		openScene(doc.scenes[activeSceneIndex(doc.scenes, doc.activeSceneId)], doc.scenes);
@@ -2973,7 +4446,123 @@ globalThis.playMode = centerTab === "play";
 		setProjectName(project.name);
 		storeProjectSession(project.name);
 		setProjectStartupOpen(false);
+		// Whatever document this is, it is no longer the scene the tutorial opened
+		// for itself; startCameraTutorial re-arms the flag after its own open.
+		tutorialStarterRef.current = false;
+		setProjectManifest(resourceManifest({ scenesDocument: doc, workflow: resolvedWorkflow, poseLibrary: mergedCustomPoses, assets: project.assets ?? [], motions: projectMotionsRef.current, workflowOutputRefs }));
+		track("project:opened", { age_bucket: bucketProjectAge(Date.now() - (project.savedAt ?? Date.now())) });
 	}
+
+	/** Open a bundled starter scene as a fresh, saveable project. Used by the
+	 * first-run dialog and by `npx cozyclay --scene <id>` (`?scene=`), which is
+	 * how the landing-page tutorial hands people into the local studio. */
+	async function openStarterScene(id, source = "starter") {
+		const before = source === "tutorial" ? collectProjectSnapshot("Tutorial") : null;
+		const epoch = tutorialProjectEpochRef.current;
+		const url = playgroundSceneUrl(`?scene=${encodeURIComponent(id)}`);
+		const project = url ? await fetchSceneProject(url) : null;
+		// A pending tutorial fetch has no authority over work authored/opened
+		// while it was loading, including an unnamed project.
+		if (source === "tutorial" && (epoch !== tutorialProjectEpochRef.current || before !== collectProjectSnapshot("Tutorial"))) return false;
+		if (!project) {
+			setToast(ko("That starter scene is not in this build", "이 빌드에는 그 시작 장면이 없어요"));
+			return false;
+		}
+		applyProject({ ...project, savedAt: null });
+		projectHandleRef.current = null;
+		track("scene:loaded", { scene_source: source });
+		return true;
+	}
+
+	function closeCameraTutorial(reason = null) {
+		const terminal = reason ?? (cameraTutorialCompletedRef.current ? "completed" : "dismissed");
+		rememberCameraTutorialTerminal(terminal);
+		tutorialProjectEpochRef.current += 1;
+		setTutorialSeedPending(false);
+		cameraTutorialHandoff?.dismiss();
+		setCameraTutorialHandoff(null);
+		cameraTutorialAnalytics.current?.dismiss();
+		cameraTutorialAnalytics.current = null;
+		cameraTutorialCompletedRef.current = false;
+		setCameraTutorial(false);
+		setCameraTutorialStep(null);
+	}
+
+	function openExportMenuForShot(shotId) {
+		const target = shots.find((entry) => entry.id === shotId);
+		if (!target) return;
+		exportShotIdRef.current = target.id;
+		const trigger = exportMenuTriggerRef.current;
+		if (trigger) {
+			const box = trigger.getBoundingClientRect();
+			const menuWidth = Math.min(340, window.innerWidth - 16);
+			setExportMenuAnchor({
+				top: box.bottom + 6,
+				right: Math.min(Math.max(8, window.innerWidth - box.right), Math.max(8, window.innerWidth - menuWidth - 8)),
+			});
+		}
+		setExportMenuOpen(true);
+		cameraTutorialHandoff?.dismiss();
+		setCameraTutorialHandoff(null);
+	}
+
+	/** The camera tutorial's single entry (#209), for both /app/?tutorial=camera
+	 * and the Settings ▾ item.
+	 *
+	 * The seven steps teach Shot / Rail / Play, which need a set and somebody
+	 * moving through it. On cozyclay.org they get both for free: the landing
+	 * playground opens the city-block starter and the hosted-demo seed below
+	 * loads the walk take because a statically served build has no motion
+	 * bridge. A local session HAS a bridge, so that seed is skipped and the
+	 * tutorial used to open on whatever was loaded — usually an empty room.
+	 * This puts the studio in the landing page's state explicitly. */
+	async function startCameraTutorial({ source = "settings" } = {}) {
+		if (embedMode || playgroundMode || tutorialLoadingRef.current) return;
+		// QA hook, same spirit as window.__cozyclayRenders: which door the tutorial
+		// came in by, so a headless run can prove both of them land here.
+		window.__cozyclayTutorialSource = source;
+		// Only a pristine, newly created document receives the sample. An
+		// existing project (even unnamed), or a restart, keeps all current work.
+		const seed = !tutorialStarterRef.current && startupCreatedScene && projectName === null
+			&& !projectDirty && !cameraTutorialSuppressed()
+			&& tutorialInitialSnapshotRef.current === collectProjectSnapshot("Tutorial");
+		if (seed) {
+			tutorialLoadingRef.current = true;
+			demoSeeded.current = true;
+			try {
+				const opened = await openStarterScene("city-block", "tutorial");
+				if (opened) {
+					tutorialStarterRef.current = true;
+					tutorialSeedEpochRef.current = tutorialProjectEpochRef.current;
+					setTutorialSeedPending(true);
+					exitPreview();
+					setTlFrame(0);
+				}
+			} finally {
+				tutorialLoadingRef.current = false;
+			}
+		}
+		setProjectStartupOpen(false);
+		setFirstSuccessGuideOpen(false);
+		setCameraTutorialHandoff(createFirstShotHandoff());
+		// Explicit start, including while already open, resets the existing
+		// done/walked component state. Passive renders never create an attempt.
+		cameraTutorialAnalytics.current = createTutorialAnalytics({ surface: "studio", startSource: source });
+		setCameraTutorialAttempt((attempt) => attempt + 1);
+		setCameraTutorial(true);
+		cameraTutorialCompletedRef.current = false;
+	}
+	startCameraTutorialRef.current = startCameraTutorial;
+
+	const starterOpened = useRef(false);
+	useEffect(() => {
+		if (starterOpened.current || playgroundMode) return;
+		const requested = new URLSearchParams(globalThis.location?.search || "").get("scene");
+		if (!requested) return;
+		starterOpened.current = true;
+		void openStarterScene(requested, "launch");
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 
 	async function openProject() {
 		try {
@@ -2991,12 +4580,13 @@ globalThis.playMode = centerTab === "play";
 				setToast(isKo ? `프로젝트를 열 수 없어요: ${result.reason}` : `Cannot open project: ${result.reason}`);
 				return;
 			}
+			result.project.savedAt = result.project.savedAt ?? file.savedAt ?? null;
 			projectHandleRef.current = handle;
 			if (handle) await rememberRecentProject(handle, result.project.name);
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
 			setProjectStartupOpen(false);
-			setToast(isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`);
+			setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch (err) {
 			if (err?.name === "AbortError") return;
 			console.error("openProject failed", err);
@@ -3020,13 +4610,14 @@ globalThis.playMode = centerTab === "play";
 				setToast(isKo ? `프로젝트를 열 수 없어요: ${result.reason}` : `Cannot open project: ${result.reason}`);
 				return;
 			}
+			result.project.savedAt = result.project.savedAt ?? file.savedAt ?? null;
 			projectHandleRef.current = handle;
 			await rememberRecentProject(handle, result.project.name);
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
 		setProjectBrowserOpen(false);
 		setProjectStartupOpen(false);
-		setToast(isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`);
+		setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch (err) {
 			console.error("openProjectByHandle failed", err);
 			setToast(ko("Could not open the project", "프로젝트를 열지 못했어요"));
@@ -3042,6 +4633,7 @@ globalThis.playMode = centerTab === "play";
 		if (typeof name !== "string") return requestNewProject();
 		setProjectNameDialog(null);
 		const fresh = createSceneDocument(ko("SCENE 01", "씬 01"));
+		storeWorkflowGraph(createWorkflowGraph());
 		setScenes(fresh.scenes);
 		setActiveSceneId(fresh.activeSceneId);
 		persistScenes(fresh.scenes, fresh.activeSceneId);
@@ -3052,12 +4644,14 @@ globalThis.playMode = centerTab === "play";
 			scenesDocument: fresh,
 			workspaceLayout: projectStateRef.current.workspaceLayout,
 			customPoses,
+			workflow: createWorkflowGraph(),
 			name,
 		}));
 		setProjectDirty(false);
 		setProjectName(name);
 		storeProjectSession(name);
 		setProjectStartupOpen(false);
+		setFirstSuccessGuideOpen(true);
 		setToast(ko(`New project: ${name}`, `새 프로젝트: ${name}`));
 	}
 
@@ -3071,10 +4665,11 @@ globalThis.playMode = centerTab === "play";
 			const file = await readProjectFile(record.handle);
 			const result = readProjectDocument(file.text);
 			if (!result.ok) return;
+			result.project.savedAt = result.project.savedAt ?? file.savedAt ?? null;
 			projectHandleRef.current = record.handle;
 			await rehydrateProjectAssets(result.project, result.warnings);
 			applyProject(result.project);
-			setToast(isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`);
+			setToast(`${isKo ? `프로젝트 복원됨: ${result.project.name}` : `Project restored: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
 		} catch {
 			/* missing or unreadable file: fall back to the session cache */
 		}
@@ -3107,10 +4702,19 @@ globalThis.playMode = centerTab === "play";
 	}
 
 	function openScene(scene, nextScenes) {
+		tutorialProjectEpochRef.current += 1;
+		tutorialSeedEpochRef.current = null;
+		setTutorialSeedPending(false);
+		setCameraTutorial(false);
+		setCameraTutorialHandoff(null);
+		exportShotIdRef.current = null;
+		studioSceneEpochRef.current = crypto.randomUUID();
+		studioHistoryRef.current.clear();
 		const shotState = restoredShotState(scene);
 		const stage = createSceneStage(scene.stage);
 		const objects = Array.isArray(scene.objects) ? scene.objects : [];
 		storeRef.current = createSceneHistoryStore(objects, {
+			onCommit: (before, after) => markSemanticEdit("objects", before, after),
 			onObjects: (next) => {
 				if (!suppressObjectClockRef.current) lastObjectOpRef.current = ++opClockRef.current;
 				setSceneObjects(next);
@@ -3122,7 +4726,12 @@ globalThis.playMode = centerTab === "play";
 		setCharacters(stage.characters);
 		setRigMountEpoch((value) => value + 1);
 		setHasCharSheet(stage.hasCharSheet);
+		setEnvironmentImage(stage.environmentImage ?? null);
+		setEnvironment(stage.environment ?? DEFAULT_ENVIRONMENT);
+		setStyle(stage.style ?? "moody cinematic lighting, 35mm film look");
+		setHasEnvSheet(stage.hasEnvSheet === true);
 		setShotAspectKey(stage.shotAspect);
+		setCameraPresetId(stage.cameraPresetId ?? null);
 		setSensorFormat(stage.sensorId);
 		setKeyLight(stage.keyLight);
 		// The motion-layer buffer reloads from the scene's first character.
@@ -3208,6 +4817,68 @@ globalThis.playMode = centerTab === "play";
 		openScene(target, nextScenes);
 	}
 
+	// Workflow runs in a separate tab/route. Scene writes therefore arrive as
+	// either a same-tab CustomEvent or a cross-tab storage event. Keep the
+	// Studio's live editor in sync without writing the event back in a loop:
+	// compare against the current snapshot first, then replace only the active
+	// scene's objects/cast or open the newly selected scene.
+	const externalSceneApplyRef = useRef(null);
+	externalSceneApplyRef.current = (incoming) => {
+		if (!incoming || !Array.isArray(incoming.scenes)) return;
+		const incomingActiveId = typeof incoming.activeSceneId === "string" ? incoming.activeSceneId : activeSceneIdRef.current;
+		const incomingScenes = incoming.scenes;
+		const incomingScene = incomingScenes.find((scene) => scene?.id === incomingActiveId) ?? incomingScenes[0];
+		if (!incomingScene?.id) return;
+		const currentSnapshot = {
+			version: SCENES_VERSION,
+			activeSceneId: activeSceneIdRef.current,
+			scenes: snapshotActiveScene(),
+		};
+		if (JSON.stringify(currentSnapshot) === JSON.stringify({ version: SCENES_VERSION, activeSceneId: incomingActiveId, scenes: incomingScenes })) return;
+		const nextScenes = incomingScenes;
+		if (incomingScene.id !== activeSceneIdRef.current) {
+			openScene(incomingScene, nextScenes);
+			return;
+		}
+		const currentScene = currentSnapshot.scenes.find((scene) => scene?.id === incomingScene.id);
+		if (JSON.stringify(currentScene?.objects ?? []) !== JSON.stringify(incomingScene.objects ?? [])) {
+			storeRef.current.applyAtomic(() => Array.isArray(incomingScene.objects) ? incomingScene.objects : []);
+		}
+		const incomingStage = createSceneStage(incomingScene.stage);
+		const currentStage = currentScene?.stage;
+		if (JSON.stringify(currentStage ?? null) !== JSON.stringify(incomingStage)) {
+			const mergedCharacters = incomingStage.characters.map((entry) => {
+				const current = charactersRef.current.find((item) => item.id === entry.id);
+				return current?.sessionMotion ? { ...entry, sessionMotion: current.sessionMotion } : entry;
+			});
+			charactersRef.current = mergedCharacters;
+			setCharacters(mergedCharacters);
+			restoreMotionRefs(mergedCharacters);
+		}
+		scenesRef.current = nextScenes;
+		setScenes(nextScenes);
+	};
+	useEffect(() => subscribeToSceneDocuments((document) => externalSceneApplyRef.current?.(document)), []);
+	useEffect(() => subscribeToScenePlayback((command) => {
+		if (command?.activeSceneId && command.activeSceneId !== activeSceneIdRef.current) return;
+		if (Number.isFinite(Number(command?.frame))) {
+			setTlFrame((frame) => Math.max(0, Math.min(Math.round(Number(command.frame)), Math.max(0, frameCountRef.current - 1))));
+		}
+		if (typeof command?.playing === "boolean") {
+			cameraPreviewEndRef.current = null;
+			manualCameraOverrideRef.current = false;
+			setTlPlaying(command.playing);
+		}
+	}), []);
+	// The Workflow Scene node's frame slider used to guess the take length, so
+	// its own preview clock ran on past the end of a shorter shot (#218). The
+	// embed announces the take it actually holds — on load and whenever the
+	// scene or its length changes — and the node follows it.
+	useEffect(() => {
+		if (!embedMode) return;
+		window.parent.postMessage({ type: "cozyclay:scene-timeline", activeSceneId, frameCount: tlFrameCount, fps: tlFps }, "*");
+	}, [embedMode, activeSceneId, tlFrameCount, tlFps]);
+
 	// Commands are a sequential transport boundary, while React commits on a
 	// later turn. Keep its read model current synchronously so the next frame
 	// observes the mutation that the previous frame just acknowledged.
@@ -3217,9 +4888,12 @@ globalThis.playMode = centerTab === "play";
 		camera: cameraPos,
 		fovDeg,
 		filmback,
-		stage: { shotAspect: shotAspectKey, sensorId, hasCharSheet },
+		// keyLight rides the live stage envelope: it is authored, undoable and
+		// patchable state, so every reader sees the body the save path writes.
+		stage: { shotAspect: shotAspectKey, cameraPresetId, sensorId, hasCharSheet, environmentImage, environment, style, hasEnvSheet, keyLight },
 		timeline: { currentFrame: tlFrame, frameCount: tlFrameCount, fps: tlFps },
 		activeCharacterId,
+		partColours: partColoursEnabled ? PART_COLOURS : null,
 		waypoints,
 		characters,
 		objects: sceneObjects,
@@ -3230,6 +4904,25 @@ globalThis.playMode = centerTab === "play";
 		persistScenes,
 		openScene,
 		loadMotion,
+		// The framing-capture pair the agent commands call. Both are per-render
+		// closures (captureFramingPng sizes its canvas off the render's own
+		// shotOutput), so the ref must always hold THIS render's instance — a
+		// stale one would letterbox a pull taken after the shot aspect changed.
+		activeShotId: activeShot?.id ?? null,
+		captureCurrentFraming,
+		captureFramingPng,
+		captureShotMeta,
+		// The identity / environment reference pictures a capture carries (#167).
+		captureShotReferences,
+		// Reference exports (#165): the embed message handler and the QA hooks
+		// both go through this render's closures, so a pack always describes the
+		// cut as it stands now.
+		buildShotKeyframePack,
+		shotIndexForPack,
+		renderPassDataUrls,
+		exportShotVideo,
+		generate,
+		shots,
 	};
 	if (!liveHandlersRef.current) {
 		const finitePatch = (args, fields) => {
@@ -3295,6 +4988,7 @@ globalThis.playMode = centerTab === "play";
 					renderer: object.renderer,
 					x: object.x, y: object.y, z: object.z, rot: object.rot,
 					rotX: object.rotX ?? 0, rotZ: object.rotZ ?? 0, color: object.color ?? null,
+					hidden: object.hidden === true,
 					scaleX: object.scaleX, scaleY: object.scaleY, scaleZ: object.scaleZ,
 					parent: object.parent ?? null,
 					footprint: object.footprint, height: object.height,
@@ -3304,7 +4998,7 @@ globalThis.playMode = centerTab === "play";
 		const replaceCharacters = (next) => {
 			charactersRef.current = next;
 			liveStateRef.current.characters = next;
-			setCharacters(next);
+			editCharacters(next);
 		};
 		const syncObjects = () => {
 			liveStateRef.current.objects = storeRef.current.objects;
@@ -3315,13 +5009,46 @@ globalThis.playMode = centerTab === "play";
 			else storeRef.current.applyIn(batchToken, mutation);
 			syncObjects();
 		};
+		// import_asset's "backdrop" placement: the same picture card stood up as
+		// a background plate — far enough down the shot camera's view ray to sit
+		// behind the blocking, tall enough to read as one. A "cutout" keeps the
+		// plain 1.8 m standee the Assets-shelf drop places.
+		const IMPORT_BACKDROP_DISTANCE_M = 12;
+		const IMPORT_BACKDROP_HEIGHT_M = 5;
 		liveHandlersRef.current = {
 			ping: () => ({ pong: true }),
 			describe,
 			// Camera moves are not undoable in the UI. This is the free-camera and
 			// Top-View path: drive the shot camera, lens state, then manual ownership.
-			set_camera: (args) => {
+			set_camera: (rawArgs) => {
 				const live = liveStateRef.current;
+				// A named preset is shorthand for a full framing: it is resolved
+				// against the ACTIVE subject and the CURRENT filmback, so the same
+				// preset re-frames correctly after the subject moves or the output
+				// ratio changes. Everything below then runs on plain coordinates.
+				let args = rawArgs;
+				if (rawArgs.preset !== undefined) {
+					if (typeof rawArgs.preset !== "string" || !CAMERA_PRESETS[rawArgs.preset]) throw new Error("Unknown camera preset");
+					const actor = live.characters.find((entry) => entry.id === live.activeCharacterId) ?? live.characters[0];
+					const framing = cameraPresetFraming(rawArgs.preset, {
+						x: actor?.x ?? 0,
+						z: actor?.z ?? 0,
+						height: SUBJECT_HEIGHT_M * (actor?.scale ?? 1),
+					}, live.filmback);
+					if (!framing) throw new Error("Unknown camera preset");
+					args = {
+						x: framing.pos.x, y: framing.pos.y, z: framing.pos.z,
+						lookAtX: actor?.x ?? 0,
+						lookAtY: SUBJECT_HEIGHT_M * (actor?.scale ?? 1) * 0.52,
+						lookAtZ: actor?.z ?? 0,
+						focalMm: framing.focalMm,
+					};
+					setCameraPresetId(rawArgs.preset);
+				} else if (Object.keys(finitePatch(rawArgs, ["x", "y", "z", "lookAtX", "lookAtY", "lookAtZ"])).length || rawArgs.focalMm !== undefined) {
+					// Any manual placement invalidates the recorded preset: the scene
+					// must not claim a framing it no longer has.
+					setCameraPresetId(null);
+				}
 				const patch = finitePatch(args, ["x", "y", "z"]);
 				let nextFov = live.fovDeg;
 				if (args.focalMm !== undefined) {
@@ -3445,6 +5172,112 @@ globalThis.playMode = centerTab === "play";
 				});
 				return { id: placed.id };
 			},
+			// Agent-side image import through the Studio's own pipeline:
+			// importImageFile validates and downscales, rememberAsset stores the
+			// content-addressed bytes, and the card enters React state through the
+			// object history store — ONE applyAtomic is the whole gesture, so one
+			// Ctrl+Z removes it. That is the point: the Workflow-tab sync writes
+			// the document without touching undo; this must not repeat that.
+			import_asset: async (args) => {
+				if (typeof args.name !== "string" || !args.name.trim()) throw new Error("Invalid name");
+				if (args.placeAs === "mesh") {
+					const dataUrl = args.dataUrl;
+					if (typeof dataUrl !== "string") throw new Error("dataUrl must be a 3D model data URL");
+					const nameLower = String(args.name).toLowerCase();
+					const headerMime = dataUrl.slice(5, dataUrl.search(/[;,]/)).toLowerCase();
+					const mime = (typeof args.mimeType === "string" && args.mimeType
+						? args.mimeType
+						: headerMime).toLowerCase();
+					const objPlain = mime === "text/plain" && nameLower.endsWith(".obj");
+					const fbxPlain = mime === "text/plain" && nameLower.endsWith(".fbx");
+					const headerOk = dataUrl.startsWith("data:model/gltf-binary")
+						|| dataUrl.startsWith("data:application/octet-stream")
+						|| dataUrl.startsWith("data:model/obj")
+						|| dataUrl.startsWith("data:model/fbx")
+						|| (dataUrl.startsWith("data:text/plain") && (nameLower.endsWith(".obj") || nameLower.endsWith(".fbx")));
+					const mimeOk = mime === "model/gltf-binary" || mime === "application/octet-stream"
+						|| mime === "model/obj" || mime === "model/fbx" || objPlain || fbxPlain;
+					if (!headerOk && !mimeOk) throw new Error("dataUrl must be a 3D model data URL");
+					const bytes = await (await fetch(dataUrl)).arrayBuffer();
+					const fileType = mime || headerMime || "application/octet-stream";
+					const file = new File([bytes], args.name, { type: fileType });
+					const { asset, height, footprint } = await importMeshFile(file);
+					const db = await openAssetDb();
+					try {
+						await putAsset(db, asset);
+					} finally {
+						db.close?.();
+					}
+					const live = liveStateRef.current;
+					const camera = shotCamRef.current;
+					const hasFloor = Number.isFinite(args.x) || Number.isFinite(args.z);
+					const placement = hasFloor
+						? {
+							x: Number.isFinite(args.x) ? args.x : 0,
+							z: Number.isFinite(args.z) ? args.z : 0,
+						}
+						: camera
+							? placementInFront({ x: camera.position.x, z: camera.position.z }, look.current.yaw)
+							: {};
+					if (Number.isFinite(args.rot)) placement.rot = args.rot;
+					let object = createMeshObject(
+						{
+							assetId: asset.id,
+							height,
+							footprint,
+							name: args.name,
+							clay: args.clay === true,
+						},
+						live.objects,
+						placement,
+					);
+					if (!object) throw new Error("Could not create the mesh object");
+					// Inspector height edits scale the stored footprint. Do the same
+					// here so a 50 cm import is a smaller cube, not a squat 1×1×0.5 box.
+					if (Number.isFinite(args.height) && args.height > 0) {
+						object = updateSceneObject([object], object.id, { height: args.height })[0];
+					}
+					if (Number.isFinite(args.y)) object.y = args.y;
+					applyObjectMutation((objects) => [...objects, object]);
+					return { assetId: asset.id, objectId: object.id };
+				}
+				if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout", "backdrop" or "mesh"');
+				if (typeof args.dataUrl !== "string" || !args.dataUrl.startsWith("data:image/")) throw new Error("dataUrl must be an image data URL");
+				const mime = typeof args.mimeType === "string" && args.mimeType
+					? args.mimeType
+					: args.dataUrl.slice(5, args.dataUrl.search(/[;,]/));
+				const bytes = await (await fetch(args.dataUrl)).arrayBuffer();
+				const file = new File([bytes], args.name, { type: mime });
+				const live = liveStateRef.current;
+				const asset = await rememberAsset(await importImageFile(file));
+				const backdrop = args.placeAs === "backdrop";
+				const camera = shotCamRef.current;
+				const placement = camera
+					? placementInFront(
+						{ x: camera.position.x, z: camera.position.z },
+						look.current.yaw,
+						backdrop ? IMPORT_BACKDROP_DISTANCE_M : undefined,
+					)
+					: {};
+				if (backdrop) {
+					// The card's face is its +z; rotate by the camera's own yaw so the
+					// plate faces the lens instead of standing edge-on to it.
+					placement.rot = (look.current.yaw * 180) / Math.PI;
+				}
+				const object = createCutoutObject(
+					{
+						assetId: asset.id,
+						aspect: assetAspect(asset) ?? 1,
+						height: backdrop ? IMPORT_BACKDROP_HEIGHT_M : CUTOUT_DEFAULT_HEIGHT,
+						name: args.name,
+					},
+					live.objects,
+					placement,
+				);
+				if (!object) throw new Error("Could not create the cutout object");
+				applyObjectMutation((objects) => [...objects, object]);
+				return { assetId: asset.id, objectId: object.id };
+			},
 			update_object: (args) => {
 				const live = liveStateRef.current;
 				if (typeof args.id !== "string" || !live.objects.some((object) => object.id === args.id)) throw new Error("Object not found");
@@ -3473,6 +5306,9 @@ globalThis.playMode = centerTab === "play";
 					if (args.path !== null && createObjectPath(args.path) === null) throw new Error("Invalid path: needs two or more distinct points");
 					patch.path = args.path;
 				}
+				if (Number.isFinite(args.height)) patch.height = args.height;
+				if (typeof args.clay === "boolean") patch.clay = args.clay;
+				if (typeof args.hidden === "boolean") patch.hidden = args.hidden;
 				applyObjectMutation((objects) => updateSceneObject(objects, args.id, patch));
 				return { id: args.id };
 			},
@@ -3600,7 +5436,7 @@ globalThis.playMode = centerTab === "play";
 				const live = liveStateRef.current;
 				live.recordCharacterUndo();
 				live.promptClips = clips;
-				live.setPromptClips(clips);
+				live.editPromptClips(clips);
 				if (clips.length) {
 					live.setTlFrameCount((count) => Math.max(count, clips[clips.length - 1].endFrame));
 				}
@@ -3609,6 +5445,7 @@ globalThis.playMode = centerTab === "play";
 			capture_frame: async () => {
 				const live = liveStateRef.current;
 				return captureMcpFrame({
+					partColours: live.partColours,
 					capture: mcpCaptureRef.current,
 					camera: shotCamRef.current,
 					characters: live.characters,
@@ -3629,6 +5466,30 @@ globalThis.playMode = centerTab === "play";
 						objects: liveStateRef.current.objects,
 					}),
 				});
+			},
+			// The full-resolution shot-camera pull the editor's own exports use —
+		// not capture_frame's 640x360 preview, which stays exactly as it is.
+			capture_framing_png: (args = {}) => {
+				const live = liveStateRef.current;
+				const requested = args?.output;
+				const output = Number.isFinite(requested?.width) && Number.isFinite(requested?.height)
+					? { width: Math.round(requested.width), height: Math.round(requested.height) }
+					: SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
+				const dataUrl = live.captureFramingPng(live.captureCurrentFraming(), output);
+				if (!dataUrl) throw new Error("The shot renderer is not ready");
+				return {
+					dataUrl,
+					width: output.width,
+					height: output.height,
+					frame: live.timeline.currentFrame,
+					shotId: live.activeShotId,
+					partColours: live.partColours,
+					// The production notes the PNG cannot carry: lens, delivery
+					// aspect, cast and the video model this shot is aimed at.
+					meta: live.captureShotMeta(live.timeline.currentFrame),
+					// Identity sheets per cast member plus the environment reference.
+					references: live.captureShotReferences(),
+				};
 			},
 			load_motion: async (args) => {
 				if (typeof args.url !== "string" || !args.url.startsWith("/ardy/")) throw new Error("Invalid motion url");
@@ -3680,8 +5541,37 @@ globalThis.playMode = centerTab === "play";
 						project: projectName ?? "Untitled",
 						scene: scenes.find((entry) => entry.id === activeSceneId)?.name ?? "",
 						cast: charactersRef.current.length,
+						// The Workflow page embeds this same Studio as a preview. It is a
+						// live editor too, so an agent choosing a workspace must be able to
+						// tell the preview apart from the tab the user is authoring in.
+						...(embedMode ? { embed: true } : {}),
+						// Which live commands this editor answers. A stale tab from an
+						// older build (or a different app on the same port) answers a
+						// different set; the agent picks a workspace that has what it needs.
+						commands: Object.keys(liveHandlersRef.current ?? {}),
 					},
-					onWorkspace: setLiveWorkspaceHandle,
+					// The shared client intentionally has no disconnect UI callback.
+					// Observe only this owned socket; a stale handle must never be sent.
+					WebSocketImpl: class extends WebSocket {
+						constructor(url) {
+							super(url);
+							this.addEventListener("close", () => {
+								liveWorkspaceHandleRef.current = null;
+								setLiveWorkspaceHandle(null);
+							});
+						}
+					},
+					onWorkspace: (handle) => {
+						liveWorkspaceHandleRef.current = handle;
+						setLiveWorkspaceHandle(handle);
+					},
+					// Duplicating a tab copies its sessionStorage, so both tabs claim one
+					// id and the hub refuses the second. Take a fresh id for this tab.
+					onDuplicate: () => {
+						const minted = mintLiveWorkspaceId();
+						liveWorkspaceIdRef.current = minted;
+						return minted;
+					},
 					onEvent: (name, payload) => {
 						if (name !== "motion_job" || typeof payload.taskId !== "string") return;
 						if (["failed", "cancelled", "expired"].includes(payload.status)) {
@@ -3695,6 +5585,7 @@ globalThis.playMode = centerTab === "play";
 			clearTimeout(timer);
 			liveControlRef.current?.close();
 			liveControlRef.current = null;
+			liveWorkspaceHandleRef.current = null;
 			setLiveWorkspaceHandle(null);
 		};
 	}, []);
@@ -3705,7 +5596,7 @@ globalThis.playMode = centerTab === "play";
 		dirtyRef.current = true;
 		const timer = setTimeout(flushScenes, 400);
 		return () => clearTimeout(timer);
-	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
+	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, environmentImage, environment, style, hasEnvSheet, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
 	useEffect(() => {
 		const onPageHide = () => flushScenes();
 		const onVisibility = () => {
@@ -3719,18 +5610,20 @@ globalThis.playMode = centerTab === "play";
 			flushScenes();
 		};
 	}, []);
-	const [promptClips, setPromptClips] = useState(() => (startupStage.characters?.[0]?.layer?.promptClips ?? DEFAULT_PROMPT_CLIPS).map((clip) => ({ ...clip })));
+	const [promptClips, setPromptClips, editPromptClips] = useSemanticState(() => (startupStage.characters?.[0]?.layer?.promptClips ?? DEFAULT_PROMPT_CLIPS).map((clip) => ({ ...clip })), markSemanticEdit, "promptClips");
 	// These hooks are declared after the liveStateRef assignment above runs, so
 	// they join the live read model here — same render, no TDZ.
-	Object.assign(liveStateRef.current, { promptClips, setPromptClips, setTlFrameCount });
+	Object.assign(liveStateRef.current, { promptClips, setPromptClips, editPromptClips, setTlFrameCount });
 
 	// Dirty tracking: any divergence from the last saved file lights the dot.
 	useEffect(() => {
 		if (projectName === null) return; // untitled sessions are never "dirty"
 		const serialized = collectProjectSnapshot(projectName);
-		setProjectDirty(serialized !== projectSnapshotRef.current);
+		const dirty = serialized !== projectSnapshotRef.current;
+		setProjectDirty(dirty);
+		setProjectSaveState((current) => current === "saving" ? current : dirty ? "dirty" : "saved");
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, sensorId, tlFrameCount]);
+	}, [scenes, activeSceneId, workspaceLayout, customPoses, characters, shots, waypoints, promptClips, projectName, keyLight, sceneObjects, shotAspectKey, environmentImage, environment, style, hasEnvSheet, sensorId, tlFrameCount, workflowRevision]);
 	const [selectedPromptId, setSelectedPromptId] = useState(null);
 	// Loaded motion: decoded arrays plus the world anchor captured at load.
 	const [motion, setMotion] = useState(null);
@@ -3779,13 +5672,7 @@ globalThis.playMode = centerTab === "play";
 	const [multiModelExtract, setMultiModelExtract] = useState("idle"); // idle | running | done | error
 	const [multiModelExtractProgress, setMultiModelExtractProgress] = useState(null);
 	const [multiModelExtractError, setMultiModelExtractError] = useState("");
-	const multiModelDetectorRef = useRef(null); // engine survives re-runs; the 15 MB download happens once
-	const multiModelRestRef = useRef(null);
-	// A still needs its own landmarker: MediaPipe fixes the running mode at
-	// creation and refuses detect() on a VIDEO-mode instance. The weights are
-	// already cached by then, so the second instance is cheap.
 	const photoPoseFileRef = useRef(null);
-	const photoPoseDetectorRef = useRef(null);
 	const [photoPoseState, setPhotoPoseState] = useState("idle");
 	const [photoPoseError, setPhotoPoseError] = useState("");
 
@@ -3803,6 +5690,8 @@ globalThis.playMode = centerTab === "play";
 			position: clip ? [clip.anchorX, entry.y ?? 0, clip.anchorZ] : [entry.x, entry.y ?? 0, entry.z],
 			rot: clip ? clip.rotationDeg : entry.rot,
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
+			partColoursEnabled,
+			partColoursMode,
 			pose: clip ? null : (entry.pose ?? DEFAULT_POSE),
 			// The stature the entry's take was extracted at. It rides with the
 			// clip, never separately — see Character for why.
@@ -3810,7 +5699,7 @@ globalThis.playMode = centerTab === "play";
 			onRig: reportRig(entry.id),
 			pickId: index === 0 ? "A" : index === 1 ? "B" : entry.id,
 		}];
-	}), [characters, activeChar.id, motion]);
+	}), [characters, activeChar.id, motion, partColoursEnabled, partColoursMode]);
 	// Where the selection gizmo stands: same driving rules as the render,
 	// for the active (selected) cast member only. Gated on the HIERARCHY
 	// selection, not the sticky active layer — the layer stays on the last
@@ -3963,7 +5852,7 @@ globalThis.playMode = centerTab === "play";
 		setCamGlide({ target: { x: keyLight.x, y: keyLight.y, z: keyLight.z } });
 	}
 	function changeKeyLightFromGizmo(_id, patch) {
-		setKeyLight((current) => createKeyLight({
+		changeKeyLight("gizmo", (current) => ({
 			...current,
 			x: patch.x !== undefined ? patch.x : current.x,
 			y: patch.y !== undefined ? patch.y + 0.2 : current.y,
@@ -4014,35 +5903,187 @@ globalThis.playMode = centerTab === "play";
 	const recRef = useRef(null);
 	const tlFrameRef = useRef(0);
 	tlFrameRef.current = tlFrame;
+	const [exportStatus, setExportStatus] = useState(null);
+	const retryExportRef = useRef(null);
+	const frameExportRef = useRef(null);
+
+	// Snapshot authored inputs once, not when Retry is pressed. Runtime render
+	// resources are acquired per attempt; they are never part of the snapshot.
+	function exportRequest(kind, run, { exportShots = shots, external = false, download = true } = {}) {
+		// IK's cached chains contain live Three bones/functions, not cloneable
+		// authored data. Retain that binding and copy only the evaluated keys.
+		const copyIk = (state) => state ? { ...state, keys: snapshotIkKeys(state), tracked: new Set(state.tracked) } : state;
+		const context = kind === "frame" ? null : {
+			...structuredClone({ shots: exportShots, playbackScene, characters, activeId: activeChar.id, motion,
+				framing: captureCurrentFraming(), output: shotOutput }),
+			ikState: copyIk(ikStateRef.current),
+			ikStates: new Map([...ikStatesRef.current].map(([id, state]) => [id, copyIk(state)])),
+			rigStates: Object.values(rigs).filter(Boolean).map(snapshotExportRig),
+		};
+		return Object.freeze({ kind, format: kind === "frame" ? "png" : kind === "keyframe_pack" ? "zip" : "mp4",
+			context, run, external, download, handedOff: new Set() });
+	}
+
+	function exportRecovery(code) {
+		switch (code) {
+			case "unsupported_codec": return ko("MP4 encoding is unavailable. Use a current browser with H.264 WebCodecs support (such as Chrome or Edge), enable hardware acceleration, then retry.", "MP4 인코딩을 사용할 수 없어요. H.264 WebCodecs를 지원하는 최신 Chrome·Edge 등에서 하드웨어 가속을 켠 뒤 다시 시도하세요.");
+			case "encode_failed": return ko("Video encoding failed. Retry the same request. If resources are tight, shorten the shot range or lower output resolution before starting a new export.", "영상 인코딩에 실패했어요. 같은 요청을 다시 시도하세요. 리소스가 부족하면 샷 범위를 줄이거나 출력 해상도를 낮춘 뒤 새로 내보내세요.");
+			case "render_failed": return ko("Frame rendering failed. Let the scene finish loading, then retry. If it repeats, shorten the range or reduce output resolution for a new export.", "프레임 렌더링에 실패했어요. 장면 로딩이 끝난 뒤 다시 시도하세요. 반복되면 범위나 출력 해상도를 줄여 새로 내보내세요.");
+			case "aborted": return ko("Export cancelled. No further downloads will be requested.", "내보내기를 취소했어요. 추가 다운로드는 요청하지 않아요.");
+			default: return ko("Export could not finish. Retry the same request. For memory or resource problems, close other heavy tabs or use a shorter range / lower output resolution in a new export.", "내보내기를 완료하지 못했어요. 같은 요청을 다시 시도하세요. 메모리·리소스 문제라면 무거운 탭을 닫거나 범위·출력 해상도를 줄여 새로 내보내세요.");
+		}
+	}
+
+	function updateExportStatus(job, phase, details = {}) {
+		if (recRef.current !== job) return;
+		job.cancellable = details.cancellable ?? false;
+		setExportStatus({ kind: job.request.kind, phase, label: job.label, ...details });
+	}
+
+	// Yield to input between real work units, not a progress timer. This also
+	// lets the preparing state render before synchronous PNG/ZIP work begins.
+	function exportBoundary(job) {
+		job.controller.signal.throwIfAborted();
+		return new Promise((resolve) => {
+			const channel = new MessageChannel();
+			channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
+			channel.port2.postMessage(null);
+		}).then(() => job.controller.signal.throwIfAborted());
+	}
+
+	async function executeExportRequest(request) {
+		// A synchronous ref, shared by ALL four kinds and retry, is authoritative.
+		// React's busy state alone cannot guard two calls in the same event turn.
+		if (recRef.current) {
+			if (request.external) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
+			return null;
+		}
+		const job = { request, controller: new AbortController(), capture: null, cancellable: false };
+		recRef.current = job;
+		retryExportRef.current = request;
+		setRecState("recording");
+		const attempt = request.external ? null : startExportAttempt({ export_kind: request.kind, format: request.format, surface: embedMode ? "embed" : "studio" });
+		updateExportStatus(job, "preparing", { cancellable: request.kind !== "frame" });
+		try {
+			await exportBoundary(job);
+			if (request.context) {
+				if (!captureRef.current || !shotCamRef.current) throw Object.assign(new Error("The shot renderer is not ready"), { exportFailureCode: "render_failed" });
+				job.capture = captureRef.current.createExportCapture(request.context.output);
+			}
+			const output = await request.run(job);
+			job.controller.signal.throwIfAborted();
+			attempt?.succeed();
+			updateExportStatus(job, "completed", { message: request.download
+				? ko("Export completed. Download requested; check your browser's downloads. The OS save is not confirmed.", "내보내기를 완료하고 다운로드를 요청했어요. 브라우저 다운로드를 확인하세요. OS 저장 완료는 확인할 수 없어요.")
+				: ko("Export pipeline completed. The requesting tool handles the file handoff.", "내보내기 처리를 완료했어요. 요청한 도구에서 파일 전달을 처리합니다.") });
+			if (!request.external) {
+				if (request.kind === "video") { track("export:video_succeeded", { format: "mp4" }); trackFeature("export_video"); }
+				if (request.kind === "depth_video") trackFeature("export_depth_video");
+				if (request.kind === "keyframe_pack") trackFeature("export_keyframe_pack");
+				if (request.kind === "frame") {
+					track("export:blocking_frame_succeeded", { format: "png" });
+					trackFeature("export_frame"); trackActivation("export");
+				}
+			}
+			return output;
+		} catch (error) {
+			const code = exportFailureCode(error, request.kind === "depth_video" ? "render_failed" : "unknown");
+			attempt?.fail(error, code);
+			const message = exportRecovery(code);
+			updateExportStatus(job, code === "aborted" ? "cancelled" : "failed", {
+				code, message, retryable: !request.external, handedOff: request.handedOff.size,
+			});
+			setToast(message);
+			if (request.external) throw error;
+			return null;
+		} finally {
+			try { job.capture?.dispose(); }
+			finally { if (recRef.current === job) recRef.current = null; setRecState("idle"); }
+		}
+	}
+
+	function retryExport() {
+		if (recRef.current || !retryExportRef.current || retryExportRef.current.external) return;
+		return executeExportRequest(retryExportRef.current);
+	}
 
 	function applyExportFrame(frame) {
 		// Props on a travel path read this ref inside their own useFrame, so a
 		// recorded frame shows the same placement the preview would.
 		propFrameRef.current = frame;
-		for (const entry of characters) {
-			const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
-			// Every cast member's OWN IK corrections ride its export frames (#77)
-			// — the active one from the live state, the rest from their stored
-			// layer states, exactly as the viewport applies them.
-			const state = entry.id === activeChar.id ? ikStateRef.current : ikStatesRef.current.get(entry.id);
+		const context = recRef.current?.request.context;
+		for (const entry of context?.characters ?? characters) {
+			const activeId = context?.activeId ?? activeChar.id;
+			const clip = entry.id === activeId ? (context ? context.motion : motion) : entry.sessionMotion;
+			const state = context
+				? (entry.id === activeId ? context.ikState : context.ikStates.get(entry.id))
+				: (entry.id === activeChar.id ? ikStateRef.current : ikStatesRef.current.get(entry.id));
 			poseMemberAtFrame(rigs[entry.id], clip, state, frame, IK_CORRECTION_BLEND_FRAMES);
 		}
 		// The bones for this frame are now written, so a carried prop can take
 		// its place on them. gl.render() never runs the r3f frame loop, so this
 		// pass is the recorder's stand-in for the useFrame the preview gets.
 		propSyncRef.current?.();
-		const sampled = sampleAt(playbackScene, shotAtFrame(shots, frame), frame);
+		const sampled = sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame);
+		const framing = sampled.camera ?? context?.framing;
 		const cam = shotCamRef.current;
-		if (cam && sampled.camera) {
-			cam.position.set(sampled.camera.pos.x, sampled.camera.pos.y, sampled.camera.pos.z);
+		if (cam && framing) {
+			cam.position.set(framing.pos.x, framing.pos.y, framing.pos.z);
 			cam.rotation.order = "YXZ";
-			cam.rotation.set(sampled.camera.pitch, sampled.camera.yaw, 0);
-			look.current.yaw = sampled.camera.yaw;
-			look.current.pitch = sampled.camera.pitch;
-			cam.fov = sampled.camera.fovDeg;
+			cam.rotation.set(framing.pitch, framing.yaw, 0);
+			look.current.yaw = framing.yaw;
+			look.current.pitch = framing.pitch;
+			cam.fov = framing.fovDeg;
 			cam.updateProjectionMatrix();
 		}
-		return captureRef.current?.render() ?? null;
+		return (recRef.current?.capture ?? captureRef.current)?.render() ?? null;
+	}
+
+	function snapshotExportRig(rig) {
+		return { rig, bones: snapshotPlaybackBones(rig), scale: rig.scale.clone(),
+			parent: rig.parent ? { node: rig.parent, position: rig.parent.position.clone(), quaternion: rig.parent.quaternion.clone() } : null };
+	}
+
+	function restoreExportRig(snapshot) {
+		snapshot.rig.scale.copy(snapshot.scale);
+		if (snapshot.parent) {
+			snapshot.parent.node.position.copy(snapshot.parent.position);
+			snapshot.parent.node.quaternion.copy(snapshot.parent.quaternion);
+			snapshot.parent.node.updateMatrixWorld(true);
+		}
+		restorePlaybackBones(snapshot.rig, snapshot.bones);
+	}
+
+	// Restore at each synchronous capture boundary, including the depth
+	// prepass, rather than holding an export pose across a hash/codec await.
+	function withExportFrame(frame, render = null) {
+		const cam = shotCamRef.current;
+		if (!cam) throw Object.assign(new Error("The shot renderer is not ready"), { exportFailureCode: "render_failed" });
+		const cameraSnapshot = { position: cam.position.clone(), quaternion: cam.quaternion.clone(),
+			rotationOrder: cam.rotation.order, fov: cam.fov, yaw: look.current.yaw, pitch: look.current.pitch };
+		const rigSnapshots = Object.values(rigs).filter(Boolean).map(snapshotExportRig);
+		const propFrame = propFrameRef.current;
+		try {
+			// Character stature lives on the rig and placement/yaw on its parent,
+			// not in playback bones. Retry temporarily restores both, plus the
+			// original held pose, then puts the CURRENT editor transforms back.
+			for (const snapshot of recRef.current?.request.context?.rigStates ?? []) restoreExportRig(snapshot);
+			const plate = applyExportFrame(frame);
+			return render ? render() : plate;
+		} catch (error) {
+			throw Object.assign(new Error(error?.message || String(error), { cause: error }), { exportFailureCode: exportFailureCode(error, "render_failed") });
+		} finally {
+			for (const snapshot of rigSnapshots) restoreExportRig(snapshot);
+			cam.position.copy(cameraSnapshot.position);
+			cam.rotation.order = cameraSnapshot.rotationOrder;
+			cam.quaternion.copy(cameraSnapshot.quaternion);
+			cam.fov = cameraSnapshot.fov;
+			cam.updateProjectionMatrix();
+			look.current.yaw = cameraSnapshot.yaw;
+			look.current.pitch = cameraSnapshot.pitch;
+			propFrameRef.current = propFrame;
+			propSyncRef.current?.();
+		}
 	}
 
 	function currentRecordFrameCount() {
@@ -4059,74 +6100,154 @@ globalThis.playMode = centerTab === "play";
 		return contentExtent > 0 ? contentExtent : tlFrameCount;
 	}
 
-	async function runShotExport({ startFrame = 0, endFrame, download = true } = {}) {
-		if (recRef.current) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
-		if (!captureRef.current || !shotCamRef.current) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+	async function runShotExport({ startFrame = 0, endFrame, download = true, passKind = null, depthRange = null, fileName = null } = {}, job = null) {
 		const resolvedEndFrame = endFrame ?? Math.max(0, currentRecordFrameCount() - 1);
-		const controller = new AbortController();
-		const rec = { controller };
-		recRef.current = rec;
-		setRecState("recording");
-		const cam = shotCamRef.current;
-		const cameraSnapshot = {
-			position: cam.position.clone(),
-			quaternion: cam.quaternion.clone(),
-			rotationOrder: cam.rotation.order,
-			fov: cam.fov,
-			yaw: look.current.yaw,
-			pitch: look.current.pitch,
-		};
-		const rigSnapshots = Object.values(rigs).filter(Boolean).map((rig) => ({ rig, bones: snapshotPlaybackBones(rig) }));
-		try {
-			const result = await exportOffscreenVideo({
-				startFrame,
-				endFrame: resolvedEndFrame,
-				fps: TIMELINE_FPS,
-				width: shotOutput.width,
-				height: shotOutput.height,
-				capture: applyExportFrame,
-				signal: controller.signal,
-			});
-			if (download) {
-				const slate = (moveSequence?.slate ?? "shot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shot";
-				const name = `cozyclay-${slate}.mp4`;
-				const url = URL.createObjectURL(result.blob);
-				const anchor = document.createElement("a");
-				anchor.href = url;
-				anchor.download = name;
-				anchor.click();
-				setTimeout(() => URL.revokeObjectURL(url), 10_000);
-				setRecordedVideoName(name);
-				setToast(isKo ? `${name} 저장됨 · ${result.frameCount}프레임` : `Saved ${name} · ${result.frameCount} frames`);
-			}
-			return result;
-		} finally {
-			for (const snapshot of rigSnapshots) restorePlaybackBones(snapshot.rig, snapshot.bones);
-			cam.position.copy(cameraSnapshot.position);
-			cam.rotation.order = cameraSnapshot.rotationOrder;
-			cam.quaternion.copy(cameraSnapshot.quaternion);
-			cam.fov = cameraSnapshot.fov;
-			cam.updateProjectionMatrix();
-			look.current.yaw = cameraSnapshot.yaw;
-			look.current.pitch = cameraSnapshot.pitch;
-			if (recRef.current === rec) recRef.current = null;
-			setRecState("idle");
+		// Preserve the download-free browser seam, without a nested lifecycle.
+		if (!job) return executeExportRequest(exportRequest(passKind === "depth" ? "depth_video" : "video",
+			(ownedJob) => runShotExport({ startFrame, endFrame: resolvedEndFrame, download, passKind, depthRange, fileName }, ownedJob),
+			{ external: true, download }));
+		job.controller.signal.throwIfAborted();
+		const output = job.request.context.output;
+		const result = await exportOffscreenVideo({
+			startFrame, endFrame: resolvedEndFrame, fps: TIMELINE_FPS,
+			width: output.width, height: output.height,
+			capture: (frame, kind) => withExportFrame(frame, kind
+				? () => renderPass(job.capture, job.capture.scene, shotCamRef.current, kind, null, { depthRange }) : null),
+			passKind, signal: job.controller.signal,
+			onFrame: ({ index, frameCount }) => updateExportStatus(job, "encoding", {
+				completedFrames: index + 1, frameCount, cancellable: true,
+			}),
+			onPhase: ({ phase, stage, cancellable }) => updateExportStatus(job, phase, { stage, cancellable }),
+		});
+		job.controller.signal.throwIfAborted();
+		if (download) {
+			const slate = (moveSequence?.slate ?? "shot").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "shot";
+			// Default plate filename: const name = `cozyclay-${slate}.mp4`
+			const name = fileName ?? `cozyclay-${slate}.mp4`;
+			const url = URL.createObjectURL(result.blob);
+			try { saveDownload(url, name); }
+			finally { setTimeout(() => URL.revokeObjectURL(url), 10_000); }
+			setRecordedVideoName(name);
+			setToast(isKo ? `${name} 다운로드 요청 · ${result.frameCount}프레임` : `Download requested: ${name} · ${result.frameCount} frames`);
 		}
+		return result;
 	}
 
 	function stopShotRecording() {
-		recRef.current?.controller.abort();
+		const job = recRef.current;
+		if (!job?.cancellable) return;
+		job.controller.abort();
+		updateExportStatus(job, "preparing", { message: ko("Cancelling at the current work boundary…", "현재 작업 경계에서 취소 중…") });
 	}
 
-	function toggleShotRecording() {
-		if (recRef.current) {
-			stopShotRecording();
-			return;
+	/** Export the shot under the playhead (else the first one) as an MP4.
+	 *  Repeated clicks never cancel an in-flight attempt.
+	 *
+	 *  Two preflights (#193) stand between the menu item and runShotExport:
+	 *  a shot with no camera keys has nothing for cameraMoveAt to interpolate,
+	 *  so the recording would capture wherever the physical shot camera happens
+	 *  to sit — one framing key from the current camera, the same default
+	 *  addShotAtFrame writes, makes the static shot exportable. And without
+	 *  motion the timeline extent ignores shots and falls back to the whole
+	 *  production duration, so a 40-frame static shot must record its own
+	 *  [startFrame, endFrame] range instead of 360 frames of held pose. */
+	async function exportShotVideo({ download = true, shotId = null } = {}) {
+		if (recRef.current) return null;
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shotId ? shots.find((entry) => entry.id === shotId) : shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		if (shotId && !target) return null;
+		let exportShots = shots;
+		if (target && target.cameraKeys.length === 0 && !shotId) {
+			const framing = captureCurrentFraming();
+			exportShots = updateStableItem(shots, target.id,
+				(entry) => ({ ...entry, cameraKeys: [{ id: createStableItemId("camera-key"), frame: entry.startFrame, framing }] }), "shots");
+			// Keep #193's initial static-shot preflight, but never repeat this
+			// authoring action when retrying the immutable request below.
+			recordShotUndo();
+			setShots(exportShots);
 		}
-		runShotExport().then(() => track("export:video_succeeded", { format: "mp4" })).catch((error) => {
-			if (error?.name !== "AbortError") setToast(error?.message || String(error));
-		});
+		const range = target && (shotId || !motion)
+			? { startFrame: target.startFrame, endFrame: target.endFrame }
+			: { startFrame: 0, endFrame: Math.max(0, currentRecordFrameCount() - 1) };
+		return executeExportRequest(exportRequest("video", (job) => runShotExport({ ...range, download }, job), { exportShots, download }));
 	}
+
+	async function exportDepthVideo(shotId = null) {
+		if (recRef.current) return null;
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const target = shotId ? shots.find((entry) => entry.id === shotId) : shots[atPlayhead >= 0 ? atPlayhead : 0] ?? null;
+		if (shotId && !target) return null;
+		const startFrame = target && (shotId || !motion) ? target.startFrame : 0;
+		const endFrame = target && (shotId || !motion) ? target.endFrame : Math.max(0, currentRecordFrameCount() - 1);
+		return executeExportRequest(exportRequest("depth_video", async (job) => {
+			if (!target) throw Object.assign(new Error("Add a shot before exporting depth video"), { exportFailureCode: "render_failed" });
+			let depthRange = null;
+			if (endFrame > startFrame) {
+				const samples = [];
+				for (let frame = startFrame; frame <= endFrame; frame += 1) {
+					job.controller.signal.throwIfAborted();
+					const depth = withExportFrame(frame, () => renderPass(job.capture, job.capture.scene, shotCamRef.current, "depth"));
+					if (!depth) throw Object.assign(new Error("Depth capture failed"), { exportFailureCode: "render_failed" });
+					let minGrey = 255;
+					let maxGrey = 0;
+					for (let index = 0; index < depth.length; index += 256) {
+						minGrey = Math.min(minGrey, depth[index]);
+						maxGrey = Math.max(maxGrey, depth[index]);
+					}
+					samples.push({ min: DEPTH_RANGE_M * (1 - maxGrey / 255), max: DEPTH_RANGE_M * (1 - minGrey / 255) });
+					updateExportStatus(job, "preparing", { stage: "depth", completedFrames: frame - startFrame + 1,
+						frameCount: endFrame - startFrame + 1, cancellable: true });
+					await exportBoundary(job);
+				}
+				depthRange = depthRangeFromFrames(samples, shotCamRef.current.near, DEPTH_RANGE_M);
+			}
+			return runShotExport({ startFrame, endFrame, passKind: "depth", depthRange, fileName: "blocking-depth.mp4" }, job);
+		}));
+	}
+
+	function exportPhaseLabel(phase) {
+		return ({ preparing: ko("Preparing", "준비 중"), encoding: ko("Encoding", "인코딩 중"),
+			finalizing: ko("Finalizing", "마무리 중"), completed: ko("Completed", "완료"),
+			failed: ko("Failed", "실패"), cancelled: ko("Cancelled", "취소됨") })[phase] ?? "";
+	}
+
+	function exportFeedback() {
+		if (!exportStatus) return null;
+		const { phase, kind, message, completedFrames, frameCount, stage, cancellable, retryable, handedOff, label } = exportStatus;
+		const busy = ["preparing", "encoding", "finalizing"].includes(phase);
+		return (
+			<section className="export-status" data-testid="export-status" data-phase={phase} data-kind={kind} role="status" aria-live="polite" aria-atomic="true">
+				<strong>{exportPhaseLabel(phase)}{label ? ` · ${label}` : ""}</strong>
+				{busy && <progress aria-label={exportPhaseLabel(phase)} max={frameCount} value={completedFrames} />}
+				{frameCount && <p>{stage === "depth" ? ko("Depth range sampled", "뎁스 범위 샘플링") : ko("Frames submitted to encoder", "인코더에 전달한 프레임")}: {completedFrames} / {frameCount}</p>}
+				{message && <p>{message}</p>}
+				{busy && !message && <p>{stage === "mux"
+					? ko("Finalizing MP4. Progress is indeterminate; this stage cannot be interrupted.", "MP4 마무리 중이에요. 진행률은 알 수 없으며 이 단계는 중단할 수 없어요.")
+					: stage === "flush" ? ko("Finishing encoder output. Progress is indeterminate.", "인코더 출력을 마무리하고 있어요. 진행률은 알 수 없어요.")
+					: kind === "frame" ? ko("Handing off existing PNGs. Synchronous downloads cannot be cancelled.", "기존 PNG를 전달하고 있어요. 동기 다운로드는 취소할 수 없어요.")
+					: stage === "archive" ? ko("Building the ZIP. Cancel takes effect after the current work unit, before download.", "ZIP을 만드는 중이에요. 취소는 현재 작업이 끝난 뒤 다운로드 전에 적용돼요.")
+					: stage === "depth" || stage === "frames" ? ko("Cancel stops at the next frame boundary, before download.", "취소하면 다운로드 전 다음 프레임 경계에서 멈춰요.")
+					: phase === "preparing" ? ko("Preparing the renderer and checking MP4 support…", "렌더러를 준비하고 MP4 지원을 확인하고 있어요…")
+					: ko("Encoding the requested frames, not yet a completed file.", "요청한 프레임을 인코딩 중이에요. 아직 파일이 완성되지 않았어요.")}</p>}
+				{retryable && <p>{ko("Retry keeps the original shot, camera, range and settings; it does not change your edits.", "다시 시도하면 원래 샷·카메라·범위·설정을 사용하며 편집 내용은 바꾸지 않아요.")}</p>}
+				{handedOff > 0 && <p>{ko(`${handedOff} file(s) already handed off. Retry skips those downloads; check browser downloads because OS saves cannot be confirmed.`, `파일 ${handedOff}개는 이미 전달했어요. 다시 시도할 때 해당 다운로드는 건너뛰어요. OS 저장은 확인할 수 없으니 브라우저 다운로드를 확인하세요.`)}</p>}
+				<div className="export-status-actions">
+					{busy && cancellable && <button type="button" data-testid="export-cancel" onClick={stopShotRecording}>{ko("Cancel export", "내보내기 취소")}</button>}
+					{retryable && <button type="button" data-testid="export-retry" disabled={recState === "recording"} onClick={() => void retryExport()}>{ko("Retry same export", "같은 내보내기 재시도")}</button>}
+				</div>
+			</section>
+		);
+	}
+
+	// Observe the existing export UI boundary, independently of telemetry.
+	// The first transition covers ordinary menu exports and fast failures too;
+	// progress updates do not write storage on every encoded frame.
+	const hasExportAttempt = exportStatus !== null;
+	useEffect(() => {
+		if (!hasExportAttempt) return;
+		rememberCameraTutorialTerminal("export_started");
+		setCameraTutorialHandoff(null);
+	}, [hasExportAttempt]);
 
 	function downloadOtioCutList() {
 		if (!shots.length) {
@@ -4166,10 +6287,469 @@ globalThis.playMode = centerTab === "play";
 		}
 	}
 
+	/* ======================= reference-pack exports (#165) =================
+	 * Three deliverables a video model actually asks for, all built from the
+	 * SAME offscreen capture rig the MP4 export uses, so what ships matches
+	 * what the editor previewed:
+	 *   - a per-shot keyframe pack (first/last frame, clip, camera, prompt),
+	 *   - depth + normal conditioning passes of the current framing,
+	 *   - a storyboard contact sheet of the whole cut.
+	 */
+
+	function saveDownload(href, name) {
+		const anchor = document.createElement("a");
+		anchor.href = href;
+		anchor.download = name;
+		document.body.appendChild(anchor);
+		anchor.click();
+		anchor.remove();
+	}
+
+	function loadImage(dataUrl) {
+		return new Promise((resolve, reject) => {
+			const image = new Image();
+			image.onload = () => resolve(image);
+			image.onerror = () => reject(new Error("A captured frame could not be decoded"));
+			image.src = dataUrl;
+		});
+	}
+
+	function dataUrlToBytes(dataUrl) {
+		const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1));
+		const bytes = new Uint8Array(binary.length);
+		for (let index = 0; index < binary.length; index += 1) bytes[index] = binary.charCodeAt(index);
+		return bytes;
+	}
+
+	// One frame of the shot as the recorder would draw it: applyExportFrame
+	// poses every cast member and parks the shot camera for that absolute
+	// frame, exactly as the MP4 pass does. Bones and camera are put back
+	// afterwards, so a pack built mid-session leaves the viewport untouched.
+	function captureShotFramePng(frame) {
+		const buffer = withExportFrame(frame);
+		try { return buffer ? bufferToPng(buffer) : null; }
+		catch (error) {
+			throw Object.assign(new Error(error?.message || String(error), { cause: error }), { exportFailureCode: exportFailureCode(error, "render_failed") });
+		}
+	}
+
+	// The framing the shot camera stands in at a frame, in the same shape the
+	// camera keys use — camera.json carries it so a tool can rebuild the pull.
+	function shotFramingAtFrame(entry, frame) {
+		const context = recRef.current?.request.context;
+		const sampled = sampleAt(context?.playbackScene ?? playbackScene, entry, frame).camera ?? context?.framing;
+		if (!sampled) return null;
+		return { pos: { x: sampled.pos.x, y: sampled.pos.y, z: sampled.pos.z }, yaw: sampled.yaw, pitch: sampled.pitch, fovDeg: sampled.fovDeg };
+	}
+
+	function packMetaForShot(entry, shotIndex) {
+		return shotCaptureMeta({
+			shot: entry,
+			shotIndex,
+			stage: { keyLight },
+			cast: characters,
+			fps: tlFps,
+			aspectKey: shotAspectKey,
+			size: { width: shotOutput.width, height: shotOutput.height },
+			frame: entry.startFrame,
+			// The shot's camera block stores the MOVE; the lens lives on the
+			// stage, so the live focal length fills in when the block has none.
+			lens: { focalMm: shot.focalMm, fovDeg },
+		});
+	}
+
+	// Build one shot's pack: both endpoint frames, the clip between them, the
+	// camera state and the prompt. Returns the archive bytes plus the entry
+	// names, so the download path, the embed message and QA all share it.
+	async function buildShotKeyframePack(entry, index, onProgress = null, job = null) {
+		// Embed/Workflow and the public QA API already own their lifecycle. The
+		// shared lock still covers their endpoint captures and archive stages.
+		if (!job) {
+			const snapshot = structuredClone(entry);
+			return executeExportRequest(exportRequest("keyframe_pack",
+				(ownedJob) => buildShotKeyframePack(snapshot, index, onProgress, ownedJob), { external: true, download: false }));
+		}
+		updateExportStatus(job, "preparing", { stage: "frames", cancellable: true });
+		await exportBoundary(job);
+		const packShot = { title: entry.name, index: index + 1, startFrame: entry.startFrame, endFrame: entry.endFrame };
+		onProgress?.(ko(`Rendering frames for "${entry.name}"`, `"${entry.name}" 프레임 렌더링 중`));
+		const firstUrl = captureShotFramePng(entry.startFrame);
+		if (!firstUrl) throw Object.assign(new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요")), { exportFailureCode: "render_failed" });
+		await exportBoundary(job);
+		const lastUrl = entry.endFrame > entry.startFrame ? captureShotFramePng(entry.endFrame) : null;
+		await exportBoundary(job);
+		onProgress?.(ko(`Recording the clip for "${entry.name}"`, `"${entry.name}" 클립 녹화 중`));
+		const recorded = await runShotExport({ startFrame: entry.startFrame, endFrame: entry.endFrame, download: false }, job);
+		updateExportStatus(job, "finalizing", { stage: "archive", cancellable: true });
+		await exportBoundary(job);
+		const clipBytes = new Uint8Array(await recorded.blob.arrayBuffer());
+		job.controller.signal.throwIfAborted();
+		const meta = packMetaForShot(entry, index);
+		const entries = keyframePackEntries({
+			shot: packShot,
+			fps: tlFps,
+			firstFramePng: dataUrlToBytes(firstUrl),
+			lastFramePng: lastUrl ? dataUrlToBytes(lastUrl) : null,
+			clip: { data: clipBytes, ext: recorded.mimeType === "video/webm" ? "webm" : "mp4" },
+			camera: {
+				...meta,
+				framing: {
+					start: shotFramingAtFrame(entry, entry.startFrame),
+					end: shotFramingAtFrame(entry, entry.endFrame),
+				},
+			},
+			prompt: buildShotPrompt(meta, { target: "video" }),
+		});
+		const bytes = buildZip(entries);
+		// ZIP construction is synchronous: cancellation takes effect after that
+		// work unit, before any file is handed off or the next shot is started.
+		await exportBoundary(job);
+		return { name: keyframePackName(packShot), entries, bytes };
+	}
+
+	// The shot a pack is built for: an explicit id, else the one under the
+	// playhead, else the first authored shot.
+	function shotIndexForPack(shotId = null) {
+		if (shotId) {
+			const index = shots.findIndex((entry) => entry.id === shotId);
+			if (index < 0) throw new Error(`Unknown shots ID: ${shotId}`);
+			return index;
+		}
+		if (!shots.length) throw new Error(ko("Add at least one Shot before exporting a keyframe pack", "키프레임 팩을 내보내려면 샷을 하나 이상 추가하세요"));
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		return atPlayhead >= 0 ? atPlayhead : 0;
+	}
+
+	/** Download the keyframe pack for one shot, or (Shift) for every shot. */
+	async function exportKeyframePacks(everyShot = false, shotId = null) {
+		if (recRef.current) return null;
+		const atPlayhead = shotIndexAtFrame(shots, tlFrame);
+		const current = shotId ? shots.findIndex((entry) => entry.id === shotId) : atPlayhead >= 0 ? atPlayhead : 0;
+		if (shotId && current < 0) return null;
+		const targets = everyShot ? shots.map((_, index) => index) : [current];
+		return executeExportRequest(exportRequest("keyframe_pack", async (job) => {
+			if (!job.request.context.shots.length) throw new Error(ko("Add at least one Shot before exporting a keyframe pack", "키프레임 팩을 내보내려면 샷을 하나 이상 추가하세요"));
+			for (const [order, index] of targets.entries()) {
+				if (job.request.handedOff.has(index)) continue;
+				job.label = ko(`Shot ${order + 1} of ${targets.length}`, `샷 ${order + 1} / ${targets.length}`);
+				const pack = await buildShotKeyframePack(job.request.context.shots[index], index, null, job);
+				job.controller.signal.throwIfAborted();
+				const url = URL.createObjectURL(new Blob([pack.bytes], { type: "application/zip" }));
+				try { saveDownload(url, pack.name); job.request.handedOff.add(index); }
+				finally { setTimeout(() => URL.revokeObjectURL(url), 10_000); }
+				setToast(isKo ? `${pack.name} 다운로드 요청 · 파일 ${pack.entries.length}개` : `Download requested: ${pack.name} · ${pack.entries.length} files`);
+				await exportBoundary(job);
+			}
+		}));
+	}
+
+	/** Depth and normal conditioning passes of the framing on screen now. */
+	function exportRenderPasses() {
+		try {
+			const dataUrls = renderPassDataUrls();
+			for (const kind of ["depth", "normal"]) saveDownload(dataUrls[kind], passFileName(kind));
+			setToast(ko("Depth and normal passes downloaded", "뎁스·노멀 패스를 다운로드했어요"));
+			trackFeature("export_render_pass");
+		} catch (error) {
+			setToast(error?.message || String(error));
+		}
+	}
+
+	// Both passes of the framing the shot camera stands in right now, as PNG
+	// data URLs. The rig draws through that same camera for the RGB plate, so
+	// the three images register pixel for pixel.
+	function renderPassDataUrls(kinds = ["depth", "normal"]) {
+		const capture = captureRef.current;
+		const cam = shotCamRef.current;
+		if (!capture || !cam) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+		const output = {};
+		for (const kind of kinds) {
+			const dataUrl = renderPass(capture, capture.scene, cam, kind, bufferToPng);
+			if (!dataUrl) throw new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+			output[kind] = dataUrl;
+		}
+		return output;
+	}
+
+	/** Contact sheet of the whole cut: one thumbnail and prompt per shot. */
+	async function exportStoryboard() {
+		try {
+			if (!shots.length) throw new Error(ko("Add at least one Shot before exporting a storyboard", "스토리보드를 내보내려면 샷을 하나 이상 추가하세요"));
+			setToast(ko("Composing the storyboard…", "스토리보드 구성 중…"));
+			const cells = [];
+			for (const [index, entry] of shots.entries()) {
+				const dataUrl = captureShotFramePng(entry.startFrame);
+				const meta = packMetaForShot(entry, index);
+				cells.push({
+					title: storyboardLine(`${index + 1}. ${entry.name}`),
+					durationSeconds: Number(((entry.endFrame - entry.startFrame + 1) / tlFps).toFixed(2)),
+					// The sheet gives each shot one caption line, and the composer draws
+					// it unwrapped: the labelled prompt is folded down to the two lines a
+					// board is read for (what the shot is, and on what lens), cut to what
+					// fits the cell. The pack's prompt.txt keeps the full block.
+					prompt: storyboardCaption(buildShotPrompt(meta, { target: "image" })),
+					image: dataUrl ? await loadImage(dataUrl) : null,
+				});
+			}
+			const canvas = composeStoryboard({
+				shots: cells,
+				columns: Math.min(3, cells.length),
+				// 480x300 leaves a 464x164 thumbnail box (16:9 lands at 464x261 before
+				// the fit, so the frame is scaled to height) and a caption block wide
+				// enough for the 90 characters the composer draws at this size.
+				cell: { width: 480, height: 300 },
+				createCanvas: (width, height) => {
+					const element = document.createElement("canvas");
+					element.width = width;
+					element.height = height;
+					const ctx = element.getContext("2d");
+					// The sheet is a deliverable, so it uses the studio's own type
+					// stack rather than the canvas default (10px sans-serif).
+					ctx.font = STORYBOARD_FONT;
+					ctx.textAlign = "left";
+					ctx.textBaseline = "top";
+					return element;
+				},
+			});
+			saveDownload(canvas.toDataURL("image/png"), "cozyclay-storyboard.png");
+			setToast(isKo ? `스토리보드 저장됨 · ${cells.length}샷` : `Storyboard saved · ${cells.length} shots`);
+			trackFeature("export_storyboard");
+		} catch (error) {
+			setToast(error?.message || String(error));
+		}
+	}
+
 	function captureCurrentFraming() {
 		const cam = shotCamRef.current;
 		const pos = cam ? cam.position : cameraPos;
 		return captureFraming({ pos: { x: pos.x, y: pos.y, z: pos.z }, yaw: look.current.yaw, pitch: look.current.pitch, fovDeg });
+	}
+
+	function captureFalStill() {
+		// H3 480P renders 832x480. The still is captured at exactly that canvas
+		// (x2) regardless of the Studio's shot ratio; markFalPose also switches
+		// the viewport to the matching ratio so what the user framed is what
+		// gets sent.
+		const captured = liveHandlersRef.current?.capture_framing_png?.({ output: FAL_MOTION_STILL_OUTPUT });
+		if (!captured?.dataUrl?.startsWith("data:image/")) throw new Error(ko("렌더러가 준비되지 않았어요.", "The shot renderer is not ready."));
+		if (captured.width !== FAL_MOTION_STILL_OUTPUT.width || captured.height !== FAL_MOTION_STILL_OUTPUT.height) {
+			throw new Error(ko(`H3 480P 참조 캡처는 ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}이어야 해요.`, `The H3 480P reference must be captured at ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}.`));
+		}
+		// H3 must see the same complete subject in both endpoints. A clipped
+		// foot or head makes the model invent the missing geometry during the
+		// transition, which is exactly the bad motion this flow is meant to avoid.
+		const rig = liveStateRef.current.rigs?.[activeChar.id];
+		const cam = shotCamRef.current;
+		if (!rig || !cam) throw new Error(ko("전신 프레임을 확인할 수 없어 참조를 캡처할 수 없어요. 잠시 후 다시 시도하세요.", "The full-body frame is not ready yet. Wait a moment and try the reference capture again."));
+		rig.updateWorldMatrix(true, true);
+		cam.updateMatrixWorld(true);
+		const bounds = new THREE.Box3().setFromObject(rig);
+		const corners = [
+			new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.min.z),
+			new THREE.Vector3(bounds.min.x, bounds.min.y, bounds.max.z),
+			new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.min.z),
+			new THREE.Vector3(bounds.min.x, bounds.max.y, bounds.max.z),
+			new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.min.z),
+			new THREE.Vector3(bounds.max.x, bounds.min.y, bounds.max.z),
+			new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.min.z),
+			new THREE.Vector3(bounds.max.x, bounds.max.y, bounds.max.z),
+		].map((corner) => corner.project(cam));
+		const margin = 0.94;
+		const clipped = corners.some((corner) =>
+			corner.z < -1 || corner.z > 1 || Math.abs(corner.x) > margin || Math.abs(corner.y) > margin
+		);
+		if (clipped) {
+			throw new Error(ko(
+				"A/B 참조에 캐릭터 전신이 다 안 들어왔어요. 샷 시점에서 머리와 양발이 화면 안에 들어오도록 카메라를 뒤로 빼고 다시 캡처하세요.",
+				"The full character is not inside the A/B reference. In the shot view, pull the camera back until the head and both feet are visible, then capture again."
+			));
+		}
+		if (!falMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
+			throw new Error(ko("A/B 참조는 View에서 부위 색상 → 음영을 켜야 캡처할 수 있어요.", "Enable View → Body part colours → Shaded before capturing an A/B reference."));
+		}
+		return { ...captured, framing: captureCurrentFraming() };
+	}
+
+	/** Put the viewport on the Fal canvas and hand the fly controls to the
+	 * shot camera, so the user composes the A/B reference on exactly the
+	 * 832x480 frame the clip will have. Idempotent; capture does not need it. */
+	function enterFalFraming() {
+		setShotAspectKey(FAL_MOTION_SHOT_ASPECT);
+		if (!lookThroughShot) enterShotLook();
+	}
+
+	function markFalPose(slot) {
+		try {
+			if (slot === "b" && falMotion.a && framingDistance(falMotion.a.framing, captureCurrentFraming()) > 0.001) {
+				throw new Error(ko("A와 B 사이에서 카메라가 이동했어요. 같은 카메라 프레이밍으로 다시 캡처하세요.", "The camera moved between A and B. Capture both refs with the same camera framing."));
+			}
+			const still = captureFalStill();
+			// The capture is already on the Fal canvas; make the viewport agree so
+			// the user sees the frame that was just sent.
+			setShotAspectKey(FAL_MOTION_SHOT_ASPECT);
+			setFalMotion((current) => ({ ...current, [slot]: still, status: "idle", error: "" }));
+			if (slot === "a") setFalMotionCameraUnlocked(false);
+			setToast(isKo ? `포즈 ${slot.toUpperCase()} 캡처됨 · ${still.width}×${still.height}` : `Pose ${slot.toUpperCase()} captured · ${still.width}×${still.height}`);
+		} catch (error) {
+			setFalMotion((current) => ({ ...current, error: error.message, status: "error" }));
+		}
+	}
+
+	function clearFalPose(slot) {
+		setFalMotion((current) => ({ ...current, [slot]: null, status: "idle", error: "", job: null }));
+		if (slot === "a") setFalMotionCameraUnlocked(false);
+	}
+
+	function clearFalMotion() {
+		setFalMotion({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", promptOverride: "", duration: FAL_MOTION_MIN_DURATION, dailyRemaining: null });
+		setFalMotionCameraUnlocked(false);
+	}
+
+	function restoreFalCamera() {
+		const framing = falMotion.a?.framing;
+		const camera = shotCamRef.current;
+		if (!framing || !camera) return;
+		camera.position.set(framing.pos.x, framing.pos.y, framing.pos.z);
+		camera.rotation.order = "YXZ";
+		camera.rotation.set(framing.pitch, framing.yaw, 0);
+		camera.fov = framing.fovDeg;
+		camera.updateProjectionMatrix();
+		look.current.yaw = framing.yaw;
+		look.current.pitch = framing.pitch;
+		shotCameraPosRef.current = { ...framing.pos };
+		setCameraPos({ ...framing.pos });
+		setFovDeg(framing.fovDeg);
+		setFalMotionCameraUnlocked(false);
+		setFalMotion((current) => ({ ...current, error: "", status: "idle" }));
+		setToast(isKo ? "A 캡처 카메라로 복원했어요." : "Restored the camera used for A.");
+	}
+
+	function framingDistance(a, b) {
+		if (!a || !b) return Infinity;
+		return Math.max(
+			Math.abs(a.pos.x - b.pos.x), Math.abs(a.pos.y - b.pos.y), Math.abs(a.pos.z - b.pos.z),
+			Math.abs(a.yaw - b.yaw), Math.abs(a.pitch - b.pitch), Math.abs(a.fovDeg - b.fovDeg),
+		);
+	}
+
+	async function generateFalMotion(kind = "interpolate", instructionOverride = null) {
+		if (!falMotionEnabled) {
+			setFalMotion((current) => ({ ...current, error: ko("Fal 모션 생성은 QA 중 잠겨 있어요.", "Fal motion generation is locked during QA."), status: "error" }));
+			return;
+		}
+		let source = falMotion;
+		if (kind === "act" && !source.a) {
+			try { source = { ...source, a: captureFalStill() }; setFalMotion((current) => ({ ...current, a: source.a })); }
+			catch (error) { setFalMotion((current) => ({ ...current, error: error.message, status: "error" })); return; }
+		}
+		if (kind === "interpolate" && (!source.a || !source.b)) {
+			setFalMotion((current) => ({ ...current, error: ko("A와 B 포즈를 먼저 캡처하세요.", "Capture both A and B poses first."), status: "error" }));
+			return;
+		}
+		if (!source.a?.partColours || (kind === "interpolate" && !source.b?.partColours)) {
+			setFalMotion((current) => ({ ...current, error: ko("색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요.", "Recapture A/B refs with shaded body-part segmentation enabled."), status: "error" }));
+			return;
+		}
+		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
+			setFalMotion((current) => ({ ...current, error: ko("A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요.", "The camera changed between A and B. Capture both poses with the same camera."), status: "error" }));
+			return;
+		}
+		// A hand-edited prompt wins verbatim; otherwise build from the description.
+		// Interpolate now honours the description too (#380): the bare pose
+		// difference lets the model invent the transition and produces junk.
+		const description = instructionOverride || source.instruction || "";
+		const prompt = source.promptOverride?.trim()
+			? source.promptOverride.trim()
+			: buildH3MotionPrompt(description || (kind === "interpolate" ? "" : "Make the character perform the requested action."), { interpolate: kind === "interpolate" });
+		setFalMotion((current) => ({ ...current, status: "submitting", error: "", job: null }));
+		try {
+			const submitted = await submitFalMotion({
+				kind,
+				stillA: source.a?.dataUrl,
+				stillB: source.b?.dataUrl,
+				still: source.a?.dataUrl,
+				prompt,
+				duration: source.duration ?? FAL_MOTION_MIN_DURATION,
+			});
+			const id = submitted?.job?.id;
+			if (!id) throw new Error(ko("생성 작업 ID를 받지 못했어요.", "The server did not return a motion job ID."));
+			setFalMotion((current) => ({ ...current, status: "queued", job: submitted.job, dailyRemaining: submitted.dailyRemaining }));
+			const finished = await waitForFalMotionJob(id, {
+				onUpdate: (job) => setFalMotion((current) => ({ ...current, job, status: job?.status ?? current.status })),
+			});
+			const job = finished?.job;
+			if (job?.status !== "done") throw new Error(job?.error || ko("Fal 생성에 실패했어요.", "Fal motion generation failed."));
+			setFalMotion((current) => ({ ...current, job, status: "done", dailyRemaining: finished.dailyRemaining }));
+			if (job.video?.url) {
+				const motionSource = { kind: "url", url: job.video.url, name: `Fal H3 Max Turbo · ${job.resolution}` };
+				setMultiModelSource(motionSource);
+				// Put the completed clip through the same probe/ingest path as a
+				// manually supplied URL so GVHMR sees measured fps, duration and
+				// a ready extraction card without another generation request.
+				await ingestFootage(motionSource);
+				setResult({
+					mode: "video",
+					modelLabel: "Fal H3 Max Turbo",
+					prompt,
+					frame: source.a?.dataUrl ?? null,
+					videoUrl: job.video.url,
+					motion: {
+						videoUrl: job.video.url,
+						resolution: job.resolution,
+						width: job.width,
+						height: job.height,
+						fps: job.fps,
+						duration: job.resultDuration ?? job.duration,
+						cost: job.cost,
+					},
+				});
+				setResultOpen(true);
+				// The result modal and the studio modal are both z-30; never stack them.
+				setFalMotionStudioOpen(false);
+				setToast(isKo ? "Fal 영상이 준비됐어요 · 추출 패널에서 GVHMR을 실행하세요" : "Fal video is ready · run GVHMR from the extraction panel");
+			}
+		} catch (error) {
+			setFalMotion((current) => ({ ...current, status: "error", error: error.message || String(error) }));
+		}
+	}
+
+	// What a framing capture says about the shot it came from: lens, delivery
+	// aspect, cast, cut range and the video model the shot is aimed at. Both
+	// capture paths (the live command and the embed message) attach this, so a
+	// still handed to a generator arrives with its production notes.
+	// A frame that falls in a gap between shots describes the first shot — a
+	// pull still belongs to the piece even when the playhead sits outside a cut.
+	/**
+	 * The reference pictures a capture travels with (#167): every visible cast
+	 * member's identity sheet, then the set's environment reference. Slots that
+	 * are empty simply do not appear — the array is the pictures that EXIST,
+	 * never a fixed-length list with holes in it, so a consumer can attach the
+	 * whole thing without filtering.
+	 */
+	function captureShotReferences() {
+		const references = characters
+			.filter((entry) => !entry.hidden && typeof entry.identityImage === "string" && entry.identityImage)
+			.map((entry) => ({ role: "character", name: entry.subject || entry.id, dataUrl: entry.identityImage }));
+		if (typeof environmentImage === "string" && environmentImage) {
+			references.push({ role: "environment", dataUrl: environmentImage });
+		}
+		return references;
+	}
+
+	function captureShotMeta(frame) {
+		const index = shotIndexAtFrame(shots, frame);
+		const resolvedIndex = index >= 0 ? index : shots.length ? 0 : null;
+		return shotCaptureMeta({
+			shot: resolvedIndex == null ? null : shots[resolvedIndex],
+			shotIndex: resolvedIndex,
+			stage: { keyLight },
+			cast: characters,
+			fps: tlFps,
+			aspectKey: shotAspectKey,
+			size: { width: shotOutput.width, height: shotOutput.height },
+			frame,
+			lens: { focalMm: shot.focalMm, fovDeg },
+		});
 	}
 
 	// Key authoring lives in each unified Shot block's lower key strip: clicking
@@ -4184,7 +6764,7 @@ globalThis.playMode = centerTab === "play";
 		if (lands) {
 			markCraftAction("camera_key");
 			recordShotUndo();
-			setShots((current) => updateStableItem(current, shotId, (shot) => {
+			editShots((current) => updateStableItem(current, shotId, (shot) => {
 				if (target < shot.startFrame || target > shot.endFrame) return shot;
 				const replaced = shot.cameraKeys.filter((key) => key.frame !== target);
 				return { ...shot, cameraKeys: [...replaced, { id: createStableItemId("camera-key"), frame: target, framing }].sort((a, b) => a.frame - b.frame) };
@@ -4200,7 +6780,7 @@ globalThis.playMode = centerTab === "play";
 		if (!shot) throw new Error(`Unknown shots ID: ${shotId}`);
 		const target = Math.max(shot.startFrame, Math.min(Math.round(to), shot.endFrame));
 		if (target === from) return;
-		setShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, cameraKeys: moveCameraKey(entry.cameraKeys, keyId, target) }), "shots"));
+		editShots((current) => updateStableItem(current, shotId, (entry) => ({ ...entry, cameraKeys: moveCameraKey(entry.cameraKeys, keyId, target) }), "shots"));
 	}
 
 	function removeCameraKeyframe(shotId, keyId) {
@@ -4208,14 +6788,14 @@ globalThis.playMode = centerTab === "play";
 		if (!owner) throw new Error(`Unknown shots ID: ${shotId}`);
 		if (!owner.cameraKeys.some((key) => key.id === keyId)) return;
 		recordShotUndo();
-		setShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, cameraKeys: removeCameraKey(shot.cameraKeys, keyId) }), "shots"));
+		editShots((current) => updateStableItem(current, shotId, (shot) => ({ ...shot, cameraKeys: removeCameraKey(shot.cameraKeys, keyId) }), "shots"));
 	}
 
 	function clearMove() {
 		setMovePlaying(false);
 		if (!activeShot || activeShot.cameraKeys.length === 0) return;
 		recordShotUndo();
-		setShots((current) => updateStableItem(current, activeShot?.id, (shot) => ({ ...shot, cameraKeys: [] }), "shots"));
+		editShots((current) => updateStableItem(current, activeShot?.id, (shot) => ({ ...shot, cameraKeys: [] }), "shots"));
 	}
 
 	function addTimelineShot() {
@@ -4223,7 +6803,9 @@ globalThis.playMode = centerTab === "play";
 		const next = addShotAtFrame(shots, tlFrame, tlFrameCount, captureCurrentFraming());
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
+		trackFeature("shot_add");
+		window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "shot" } }));
 	}
 
 	function splitTimelineShot(shotId) {
@@ -4234,7 +6816,8 @@ globalThis.playMode = centerTab === "play";
 		const next = cutAtFrame(shots, shotId, tlFrame, captureCurrentFraming());
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
+		trackFeature("shot_cut");
 	}
 
 	function selectTimelineShot(shotId) {
@@ -4243,12 +6826,13 @@ globalThis.playMode = centerTab === "play";
 		manualCameraOverrideRef.current = false;
 		setTlFrame(selected.startFrame);
 		setSelectedHierarchyId("camera");
+		if (workflowMode !== "camera") selectWorkflowMode("camera");
 	}
 
 	function duplicateTimelineShot(shotId) {
 		const next = duplicateShot(shots, shotId, tlFrameCount);
 		if (next !== shots) recordShotUndo();
-		setShots(next);
+		editShots(next);
 		if (next !== shots) {
 			const duplicate = next.find((shot) => shot.id !== shotId && !shots.some((existing) => existing.id === shot.id));
 			if (duplicate) setTlFrame(duplicate.startFrame);
@@ -4259,14 +6843,27 @@ globalThis.playMode = centerTab === "play";
 		const next = reorderShot(shots, shotId, targetFrame, tlFrameCount);
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
+	}
+
+	/** Both edges in one Ctrl+Z entry, through the same resize the boundary
+	 * drag uses. The edge moving away from the other goes first, so a range
+	 * that jumps past the old one never inverts on the way. */
+	function setTimelineShotRange(shotId, startFrame, endFrame) {
+		const shot = shots.find((entry) => entry.id === shotId);
+		if (!shot) throw new Error(`Unknown shots ID: ${shotId}`);
+		const edges = startFrame > shot.endFrame ? [["end", endFrame], ["start", startFrame]] : [["start", startFrame], ["end", endFrame]];
+		const next = edges.reduce((current, [edge, frame]) => resizeShot(current, shotId, edge, frame, tlFrameCount), shots);
+		if (next === shots) return;
+		recordShotUndo();
+		editShots(next);
 	}
 
 	function removeTimelineShot(shotId) {
 		const next = removeShot(shots, shotId);
 		if (next === shots) return;
 		recordShotUndo();
-		setShots(next);
+		editShots(next);
 	}
 
 	// The library is the user's own material: poses read from photographs and
@@ -4292,6 +6889,48 @@ globalThis.playMode = centerTab === "play";
 		|| selectedHierarchyId === "characterA"
 		|| selectedHierarchyId === "characterB"
 		|| selectedHierarchyId.startsWith("character:");
+	// The View menu's three toggles, as the menu reads them: one radio choice
+	// for the part colours, and a dot on the trigger whenever the viewport is
+	// showing something other than the plain stage.
+	const partColoursChoice = partColoursEnabled ? partColoursMode : "off";
+	// Shaded part colours keep the stable per-part hues while preserving the
+	// surface lighting H3 uses to infer the character's volume and pose.
+	const falMotionSegmentationReady = partColoursEnabled && partColoursMode === "shaded";
+	const falMotionHasA = Boolean(falMotion.a);
+	const falMotionHasB = Boolean(falMotion.b);
+	const falMotionCameraMatch = falMotionHasA && falMotionHasB && framingDistance(falMotion.a.framing, falMotion.b.framing) <= 0.001;
+	const falMotionCameraLocked = falMotionHasA && !falMotionCameraUnlocked;
+	const falMotionCurrentCameraMatch = !falMotionHasA || framingDistance(falMotion.a.framing, captureCurrentFraming()) <= 0.001;
+	const falMotionStep = !falMotionSegmentationReady ? 1 : !falMotionHasA ? 2 : falMotionMode === "interpolate" && !falMotionHasB ? 3 : 4;
+	// The Fal workflow is split into a viewport-side capture card and a wide
+	// authoring modal (fal-motion-studio.jsx); both render from this one model
+	// and action set so they cannot drift.
+	const falMotionModel = {
+		falMotion,
+		mode: falMotionMode,
+		enabled: falMotionEnabled,
+		segmentationReady: falMotionSegmentationReady,
+		step: falMotionStep,
+		hasA: falMotionHasA,
+		hasB: falMotionHasB,
+		cameraMatch: falMotionCameraMatch,
+		cameraUnlocked: falMotionCameraUnlocked,
+		currentCameraMatch: falMotionCurrentCameraMatch,
+		framingActive: lookThroughShot && shotAspectKey === FAL_MOTION_SHOT_ASPECT,
+	};
+	const falMotionActions = {
+		setFalMotion,
+		setMode: setFalMotionMode,
+		enterFraming: enterFalFraming,
+		markPose: markFalPose,
+		clearPose: clearFalPose,
+		clear: clearFalMotion,
+		toggleCameraLock: () => setFalMotionCameraUnlocked((value) => !value),
+		restoreCamera: restoreFalCamera,
+		generate: (kind) => void generateFalMotion(kind),
+		enableShaded: () => runStudioAction("view.setPartColours", { mode: "shaded" }),
+	};
+	const viewLooksActive = gridView || autoColor || partColoursEnabled;
 	const rigSelection = parseRigNodeId(selectedHierarchyId);
 	const isRigSelection = rigSelection !== null;
 	const inspectorHasContent = isSceneSelection || isCameraSelection || isCharacterSelection || isRigSelection
@@ -4313,8 +6952,8 @@ globalThis.playMode = centerTab === "play";
 	// path starts from its own cast member.
 	const rootStart = () => ({ frame: 0, x: activeChar.x, z: activeChar.z });
 
-	function validateWaypointAt(ordered, index, candidate) {
-		const previous = index > 0 ? ordered[index - 1] : rootStart();
+	function validateWaypointAt(ordered, index, candidate, start = rootStart()) {
+		const previous = index > 0 ? ordered[index - 1] : start;
 		const beforePrevious = index > 1 ? ordered[index - 2] : null;
 		const inbound = judgeNextWaypoint(previous, candidate, tlFps, beforePrevious);
 		if (!inbound.ok) return inbound;
@@ -4344,85 +6983,154 @@ globalThis.playMode = centerTab === "play";
 		selectActiveCharacterInHierarchy();
 		setToast(isKo ? `프레임 ${target}이 예약됐어요. 샷 뷰 바닥을 클릭하면 그 위치에 루트 웨이포인트가 생성됩니다.` : `Frame ${target} is reserved — click the Shot-view floor to drop the root waypoint there.`);
 	}
+	/* One root-path core for every cast member, shared by the Shot-view floor
+	 * click, the plan-board drag, the timeline marker and run_action. It takes
+	 * the character explicitly: the loaded layer's path lives in the editing
+	 * buffer, every other character's on its cast entry. Refusals throw a
+	 * StudioProtocolError naming the fix; the UI door shows it as a toast. */
+	function castMemberOf(characterId) {
+		const character = charactersRef.current.find((entry) => entry.id === characterId);
+		if (!character) throw new StudioProtocolError("STALE_TARGET", `Character ${characterId} is not in this scene.`);
+		return character;
+	}
+	function readCharacterWaypoints(characterId) {
+		if (characterId === loadedLayerCharRef.current) return bufferRef.current.waypoints;
+		return charactersRef.current.find((entry) => entry.id === characterId)?.layer?.waypoints ?? [];
+	}
+	function writeCharacterWaypoints(characterId, next) {
+		if (characterId === loadedLayerCharRef.current) {
+			bufferRef.current = { ...bufferRef.current, waypoints: next };
+			setWaypoints(next);
+			return;
+		}
+		publishStudioCharacters(charactersRef.current.map((entry) => entry.id === characterId
+			? { ...entry, layer: { ...(entry.layer ?? createCharacterLayer()), waypoints: next } }
+			: entry), true);
+	}
+	/** Pin the character's root at `point` ({x, z}) on `frame`, or — frame null —
+	 * at walking-distance pacing from the previous pin. Returns the placed
+	 * waypoint, its index on the path and the judge's warnings. */
+	function addCharacterWaypoint(characterId, point, frame = null) {
+		const character = castMemberOf(characterId);
+		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
+		if (ordered.length + 1 > MAX_WAYPOINTS) {
+			throw studioActionRefusal("TARGET_NOT_READY", `The root path is capped at ${MAX_WAYPOINTS} waypoints; remove one first.`,
+				isKo ? `루트 경로는 웨이포인트 ${MAX_WAYPOINTS}개까지 사용할 수 있어요` : `The root path is capped at ${MAX_WAYPOINTS} waypoints`);
+		}
+		const x = clampRootPosition(point.x);
+		const z = clampRootPosition(point.z);
+		const start = { frame: 0, x: character.x, z: character.z };
+		const last = ordered[ordered.length - 1] ?? start;
+		const lastFrame = frameCountRef.current - 1;
+		if (frame !== null && (frame < 1 || frame > lastFrame)) throw new StudioProtocolError("INVALID_RANGE", `Frame ${frame} is outside the root path's frames 1-${lastFrame}.`);
+		const at = frame ?? last.frame + Math.max(8, Math.round((Math.hypot(x - last.x, z - last.z) / WALK_SPEED_MPS) * tlFps));
+		if (at > lastFrame) {
+			throw studioActionRefusal("INVALID_RANGE", "The path already fills the clip — extend the duration or clear a waypoint.",
+				ko("The path already fills the clip — extend the duration or clear a waypoint", "경로가 이미 클립 길이를 채웠어요. 시간을 늘리거나 웨이포인트를 지워 주세요"));
+		}
+		if (ordered.some((waypoint) => waypoint.frame === at)) {
+			throw studioActionRefusal("INVALID_ARGUMENT", `Frame ${at} already has a root waypoint — pick an empty frame or move that one.`,
+				isKo ? `프레임 ${at}에는 이미 루트 웨이포인트가 있어요. 타임라인에서 빈 프레임을 선택하세요.` : `Frame ${at} already has a root waypoint — pick an empty frame on the timeline.`);
+		}
+		// The generator cannot refuse an impossible pin, so placement is the
+		// last moment to: block out-of-band legs with the fix named.
+		const insertAt = ordered.findIndex((waypoint) => waypoint.frame > at);
+		const index = insertAt === -1 ? ordered.length : insertAt;
+		const waypoint = { id: createStableItemId("waypoint"), frame: at, x, z, heading: null };
+		const next = [...ordered.slice(0, index), waypoint, ...ordered.slice(index)];
+		const verdict = validateWaypointAt(next, index, waypoint, start);
+		if (!verdict.ok) throw studioActionRefusal("INVALID_ARGUMENT", `Not placed — ${verdict.error}`, isKo ? `배치하지 못했어요 — ${verdict.error}` : `Not placed — ${verdict.error}`);
+		// Past every refusal: the pre-drop path is worth one Ctrl+Z entry.
+		recordCharacterUndo();
+		writeCharacterWaypoints(characterId, next);
+		return { waypoint, index, warnings: verdict.warnings };
+	}
+	function moveCharacterWaypoint(characterId, frame, point) {
+		const character = castMemberOf(characterId);
+		const ordered = [...readCharacterWaypoints(characterId)].sort((a, b) => a.frame - b.frame);
+		const index = ordered.findIndex((waypoint) => waypoint.frame === frame);
+		if (index === -1) throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no root waypoint at frame ${frame}.`);
+		const moved = { ...ordered[index], x: clampRootPosition(point.x), z: clampRootPosition(point.z) };
+		if (moved.x === ordered[index].x && moved.z === ordered[index].z) return { waypoint: ordered[index], index, warnings: [] };
+		const next = ordered.map((waypoint, i) => (i === index ? moved : waypoint));
+		const verdict = validateWaypointAt(next, index, moved, { frame: 0, x: character.x, z: character.z });
+		if (!verdict.ok) {
+			throw studioActionRefusal("INVALID_ARGUMENT", `This position doesn't fit the root path: ${verdict.error}`,
+				isKo ? `이 위치는 루트 경로에 맞지 않아요: ${verdict.error}` : `This position doesn't fit the root path: ${verdict.error}`);
+		}
+		// A plan-board drag recorded its one entry when the gesture began; every
+		// other move is its own entry.
+		const past = charHistoryRef.current.past;
+		if (!(gestureUndoRef.current?.key === "waypoint-drag" && past[past.length - 1]?.tick === gestureUndoRef.current.tick)) recordCharacterUndo();
+		writeCharacterWaypoints(characterId, next);
+		return { waypoint: moved, index, warnings: verdict.warnings };
+	}
+	function removeCharacterWaypoint(characterId, frame) {
+		const character = castMemberOf(characterId);
+		const current = readCharacterWaypoints(characterId);
+		const waypoint = current.find((entry) => entry.frame === frame);
+		if (!waypoint) throw new StudioProtocolError("STALE_TARGET", `${character.subject || character.id} has no root waypoint at frame ${frame}.`);
+		recordCharacterUndo();
+		writeCharacterWaypoints(characterId, removeStableItem(current, waypoint.id, "waypoints"));
+		return waypoint;
+	}
+	function clearCharacterWaypoints(characterId) {
+		castMemberOf(characterId);
+		const current = readCharacterWaypoints(characterId);
+		if (!current.length) return 0;
+		recordCharacterUndo();
+		writeCharacterWaypoints(characterId, []);
+		return current.length;
+	}
+
 	/** ARDY-demo style authoring: each empty-floor press in the Shot view drops
 	    the next waypoint where it was clicked; the frame gap comes from walking
 	    distance. The bird's-eye board selects and drags existing waypoints. */
 	function addFloorWaypoint(point) {
-		const x = clampRootPosition(point.x);
-		const z = clampRootPosition(point.z);
 		const ordered = [...waypoints].sort((a, b) => a.frame - b.frame);
 		const last = ordered[ordered.length - 1] ?? rootStart();
-		if (waypoints.length + 1 > MAX_WAYPOINTS) {
-			setToast(isKo ? `루트 경로는 웨이포인트 ${MAX_WAYPOINTS}개까지 사용할 수 있어요` : `The root path is capped at ${MAX_WAYPOINTS} waypoints`);
-			return;
-		}
 		const pendingFrame = pendingWaypointFrame == null ? null : Math.max(1, Math.min(Math.round(pendingWaypointFrame), tlFrameCount - 1));
-		if (pendingFrame != null && ordered.some((waypoint) => waypoint.frame === pendingFrame)) {
-			setToast(isKo ? `프레임 ${pendingFrame}에는 이미 루트 웨이포인트가 있어요. 타임라인에서 빈 프레임을 선택하세요.` : `Frame ${pendingFrame} already has a root waypoint — pick an empty frame on the timeline.`);
-			setPendingWaypointFrame(null);
-			return;
-		}
 		// A scrubbed playhead is an explicit statement of time: a click lands on
 		// that exact frame. An untouched playhead (it snaps to the last pin
 		// after every placement) falls back to walking-distance pacing.
 		const playhead = Math.round(tlFrame);
 		const pinned = pendingFrame != null || playhead > last.frame;
-		const walkGap = Math.max(8, Math.round((Math.hypot(x - last.x, z - last.z) / WALK_SPEED_MPS) * tlFps));
-		const frame = pendingFrame ?? (pinned ? Math.min(playhead, tlFrameCount - 1) : last.frame + walkGap);
-		if (frame > tlFrameCount - 1) {
-			setToast(ko("The path already fills the clip — extend the duration or clear a waypoint", "경로가 이미 클립 길이를 채웠어요. 시간을 늘리거나 웨이포인트를 지워 주세요"));
+		const frame = pendingFrame ?? (pinned ? Math.min(playhead, tlFrameCount - 1) : null);
+		const before = readCharacterWaypoints(activeChar.id);
+		const placedAction = runStudioAction("character.addWaypoint", { characterId: activeChar.id, position: { x: point.x, z: point.z }, ...(frame == null ? {} : { frame }) });
+		if (!placedAction) {
+			if (pendingFrame != null && ordered.some((waypoint) => waypoint.frame === pendingFrame)) setPendingWaypointFrame(null);
 			return;
 		}
-		// The generator cannot refuse an impossible pin, so the click is the
-		// last moment a human can: block out-of-band legs with the fix named.
-		const insertAt = ordered.findIndex((waypoint) => waypoint.frame > frame);
-		const index = insertAt === -1 ? ordered.length : insertAt;
-		const waypoint = { id: createStableItemId("waypoint"), frame, x, z, heading: null };
-		const nextWaypoints = [...ordered.slice(0, index), waypoint, ...ordered.slice(index)];
-		const verdict = validateWaypointAt(nextWaypoints, index, waypoint);
-		if (!verdict.ok) {
-			setToast(isKo ? `배치하지 못했어요 — ${verdict.error}` : `Not placed — ${verdict.error}`);
-			return;
-		}
-		// Past every refusal: the waypoint is going down, so the pre-drop path is
-		// worth one Ctrl+Z entry.
-		recordCharacterUndo();
-		setWaypoints(nextWaypoints);
-		setTlFrame(frame);
+		const path = readCharacterWaypoints(activeChar.id);
+		const index = path.findIndex((waypoint) => !before.includes(waypoint));
+		const waypoint = path[index];
+		setTlFrame(waypoint.frame);
 		setActiveWaypointId(waypoint.id);
 		setPendingWaypointFrame(null);
+		const { warnings } = validateWaypointAt(path, index, waypoint);
 		const placed = isKo
-			? `루트 웨이포인트 ${index + 1} 추가: 프레임 ${frame}${pendingFrame != null ? " (타임라인 예약 프레임)" : pinned ? " (재생 헤드 위치)" : ` (~${(frame / tlFps).toFixed(1)}초 걷기 기준)`}`
-			: `Waypoint ${ordered.length + 1} — frame ${frame} ${pendingFrame != null ? "(at the reserved frame)" : pinned ? "(at the playhead)" : `(~${(frame / tlFps).toFixed(1)}s at a walk)`}`;
-		setToast(verdict.warnings.length ? `${placed} · ⚠ ${verdict.warnings[0]}` : placed);
+			? `루트 웨이포인트 ${index + 1} 추가: 프레임 ${waypoint.frame}${pendingFrame != null ? " (타임라인 예약 프레임)" : pinned ? " (재생 헤드 위치)" : ` (~${(waypoint.frame / tlFps).toFixed(1)}초 걷기 기준)`}`
+			: `Waypoint ${index + 1} — frame ${waypoint.frame} ${pendingFrame != null ? "(at the reserved frame)" : pinned ? "(at the playhead)" : `(~${(waypoint.frame / tlFps).toFixed(1)}s at a walk)`}`;
+		setToast(warnings.length ? `${placed} · ⚠ ${warnings[0]}` : placed);
 	}
 
 	function moveWaypoint(id, x, z) {
-		const ordered = [...waypoints].sort((a, b) => a.frame - b.frame);
-		const index = ordered.findIndex((waypoint) => waypoint.id === id);
-		if (index === -1) throw new Error(`Unknown waypoints ID: ${id}`);
-		const nextWaypoint = {
-			...ordered[index],
-			x: clampRootPosition(x),
-			z: clampRootPosition(z),
-		};
-		const nextOrdered = ordered.map((waypoint) => waypoint.id === id ? nextWaypoint : waypoint);
-		const verdict = validateWaypointAt(nextOrdered, index, nextWaypoint);
-		if (!verdict.ok) {
-			setToast(isKo ? `이 위치는 루트 경로에 맞지 않아요: ${verdict.error}` : `This position doesn't fit the root path: ${verdict.error}`);
-			return;
-		}
-		setWaypoints(nextOrdered);
+		const waypoint = waypoints.find((entry) => entry.id === id);
+		if (!waypoint) throw new Error(`Unknown waypoints ID: ${id}`);
+		if (!runStudioAction("character.moveWaypoint", { characterId: activeChar.id, frame: waypoint.frame, position: { x, z } })) return;
 		setActiveWaypointId(id);
-		setPendingWaypointFrame((current) => (current === nextWaypoint.frame ? null : current));
-		if (verdict.warnings.length) setToast(isKo ? `루트 웨이포인트 이동됨: ${verdict.warnings[0]}` : `Root waypoint moved: ${verdict.warnings[0]}`);
+		setPendingWaypointFrame((current) => (current === waypoint.frame ? null : current));
+		const path = readCharacterWaypoints(activeChar.id);
+		const index = path.findIndex((entry) => entry.id === id);
+		const { warnings } = index === -1 ? { warnings: [] } : validateWaypointAt(path, index, path[index]);
+		if (warnings.length) setToast(isKo ? `루트 웨이포인트 이동됨: ${warnings[0]}` : `Root waypoint moved: ${warnings[0]}`);
 	}
 
 	function removeWaypoint(id) {
 		const waypoint = waypoints.find((entry) => entry.id === id);
 		if (!waypoint) throw new Error(`Unknown waypoints ID: ${id}`);
-		recordCharacterUndo();
-		setWaypoints((prev) => removeStableItem(prev, id, "waypoints"));
+		if (!runStudioAction("character.removeWaypoint", { characterId: activeChar.id, frame: waypoint.frame })) return;
 		setActiveWaypointId((current) => (current === id ? null : current));
 		setPendingWaypointFrame((current) => (current === waypoint.frame ? null : current));
 	}
@@ -4442,15 +7150,16 @@ globalThis.playMode = centerTab === "play";
 		setToast(ko("2D Root path on — click the set floor in the Shot view to drop waypoints; Subject 1 is the frame 0 start", "2D 루트 경로 켜짐 — 샷 뷰의 세트 바닥을 클릭해 웨이포인트를 놓으세요. 인물 1이 0프레임 시작점입니다"));
 	}
 
-	function advanceFrame() {
+	function advanceFrame(steps = 1) {
+		const count = Math.max(1, Math.floor(steps));
 		const previewEnd = cameraPreviewEndRef.current;
-		if (previewEnd != null && tlFrameRef.current >= previewEnd - 1) {
+		if (previewEnd != null && tlFrameRef.current + count >= previewEnd) {
 			cameraPreviewEndRef.current = null;
 			setTlFrame(previewEnd);
 			setTlPlaying(false);
 			return;
 		}
-		setTlFrame((f) => (f >= frameCountRef.current - 1 ? 0 : f + 1));
+		setTlFrame((f) => (f + count) % frameCountRef.current);
 	}
 
 	function stepFrame(delta) {
@@ -4625,12 +7334,21 @@ globalThis.playMode = centerTab === "play";
 	}
 
 	/** Extract motion from the ingested footage. With the bridge up this goes
-	 *  to the GPU box (SAM-3D-Body: whole-clip temporal context, real 3D body
-	 *  prior — previs-grade). Without it, the browser MediaPipe path below
-	 *  still works offline as the rough-blocking fallback. */
+	 *  to the GPU box (GVHMR: whole-clip temporal context, real 3D body
+	 *  prior — previs-grade). If the bridge is unavailable or is configured for
+	 *  another backend, extraction stops with a named error. */
 	async function extractMultiModelMotion() {
-		if (bridge?.ok) return extractMultiModelMotionGpu();
-		return extractMultiModelMotionBrowser();
+		if (!bridge?.ok) {
+			setMultiModelExtract("error");
+			setMultiModelExtractError(MULTIMODEL_REASONS["extract-bridge-required"]?.[isKo ? 1 : 0] ?? "extract-bridge-required");
+			return;
+		}
+		if (bridge.extractionBackend !== "gvhmr") {
+			setMultiModelExtract("error");
+			setMultiModelExtractError(MULTIMODEL_REASONS["extract-backend-unsupported"]?.[isKo ? 1 : 0] ?? "extract-backend-unsupported");
+			return;
+		}
+		return extractMultiModelMotionGpu();
 	}
 
 	async function extractMultiModelMotionGpu() {
@@ -4652,6 +7370,14 @@ globalThis.playMode = centerTab === "play";
 				}
 			);
 			if (!live()) return;
+			if (done.quality && done.quality.pass === false) {
+				const failed = Array.isArray(done.quality.checks)
+					? done.quality.checks.filter((check) => check && check.pass === false).map((check) => check.name).join(", ")
+					: "quality";
+				setToast(isKo
+					? `모캡 품질 경고: ${failed || "검증 실패"} — 결과는 로드하지만 보정이 필요합니다`
+					: `Mocap quality warning: ${failed || "validation failed"} — loaded for review, correction required`);
+			}
 			// One take per tracked performer. An older bridge sends a single
 			// motionUrl and no list; that is the same thing with one entry.
 			const takes = Array.isArray(done.takes) && done.takes.length
@@ -4696,7 +7422,7 @@ globalThis.playMode = centerTab === "play";
 			const placed = await deliverExtraTakes(takes.slice(1), active, label);
 			if (!live()) return;
 			const persons = 1 + placed;
-			setMultiModelTake({ frames: done.frames, fps: done.fps, gpu: true, personScale, persons });
+			setMultiModelTake({ frames: done.frames, fps: done.fps, gpu: true, personScale, persons, trajectory: done.performance?.trajectory, segmentation: done.segmentation ?? done.performance?.segmentation ?? takes[0]?.segmentation ?? null, quality: done.quality ?? takes[0]?.quality ?? null });
 			setMultiModelExtract("done");
 			setToast(isKo
 				? `GPU 모션 추출됨 — ${done.frames}프레임 @ ${done.fps} fps${persons > 1 ? ` · ${persons}명` : ""} · 인물 스케일 ×${personScale.toFixed(2)}`
@@ -4713,14 +7439,40 @@ globalThis.playMode = centerTab === "play";
 	 *  layer: it goes to that entry's sessionMotion, NOT through the editing
 	 *  buffer, which holds the active character's clip alone. Returns how many
 	 *  performers actually landed. */
+	const authoredSupportDescriptors = () => sceneObjects.map((object) => ({
+		x: object.x,
+		z: object.z,
+		rotDeg: object.rot ?? 0,
+		supportY: (object.y ?? 0) + supportHeightForObject(object) * (object.scaleY ?? 1),
+		topY: (object.y ?? 0) + supportHeightForObject(object) * (object.scaleY ?? 1),
+		width: (object.footprint?.width ?? 0) * (object.scaleX ?? 1),
+		depth: (object.footprint?.depth ?? 0) * (object.scaleZ ?? 1),
+	}));
+	const applyAuthoredSupportRise = (clip, anchor, rotationDeg, worldScale = characterScaleFor(clip)) => applySupportRise(clip, authoredSupportDescriptors(), {
+		subjectX: anchor.x,
+		subjectY: anchor.y ?? 0,
+		subjectZ: anchor.z,
+		rotationDeg,
+		worldScale,
+	});
+
 	async function deliverExtraTakes(extras, active, label) {
 		const decoded = await Promise.all(extras.map(async (take, index) => {
 			if (typeof take?.motionUrl !== "string" || !take.motionUrl) return null;
 			try {
 				// Inbound boundary, exactly like every other clip: decode, then
 				// retime onto the production clock before anything counts frames.
-				const clip = retimeMotion(await loadMotionFromUrl(take.motionUrl), TIMELINE_FPS);
 				const anchor = takeAnchor(active, take.offsetX, take.offsetZ);
+				const clip = retimeMotion(await loadMotionFromUrl(take.motionUrl), TIMELINE_FPS);
+				const scale = characterScaleFor(clip, take.personScale);
+				const raised = applyAuthoredSupportRise(clip, { ...anchor, y: active.y ?? 0 }, active.rot, scale);
+				const staging = autoRoofDrop(
+					raised,
+					{ x: anchor.x, z: anchor.z, y: active.y ?? 0, rotationDeg: active.rot },
+					authoredSupportDescriptors(),
+					{ worldScale: scale },
+				);
+				const stagedClip = staging ? applyAutoFall(raised, staging, { worldScale: scale }) : raised;
 				return {
 					url: take.motionUrl,
 					prompt: `${label} · ${index + 2}`,
@@ -4730,7 +7482,7 @@ globalThis.playMode = centerTab === "play";
 					// their own stature, and the response estimate is only the
 					// fallback for an npz that stores none.
 					scale: characterScaleFor(clip, take.personScale),
-					clip,
+					clip: stagedClip,
 				};
 			} catch {
 				return null; // one unreadable take never voids the others
@@ -4794,91 +7546,6 @@ globalThis.playMode = centerTab === "play";
 		return assignments.length;
 	}
 
-	async function extractMultiModelMotionBrowser() {
-		const footage = multiModelFootage;
-		if (!footage || multiModelExtract === "running") return;
-		const run = multiModelRunRef.current;
-		const live = () => multiModelRunRef.current === run;
-		setMultiModelExtract("running");
-		setMultiModelExtractProgress(null); // indeterminate while the engine spins up
-		setMultiModelExtractError("");
-		setMultiModelTake(null);
-		try {
-			if (!multiModelRestRef.current) {
-				const response = await fetch("/ardy/cskel27-rest.json").catch(() => null);
-				if (!response?.ok) throw new Error("rest-unavailable");
-				multiModelRestRef.current = await response.json().catch(() => {
-					throw new Error("rest-unavailable");
-				});
-			}
-			if (!multiModelDetectorRef.current) {
-				multiModelDetectorRef.current = await createPoseDetector();
-			}
-			const detector = multiModelDetectorRef.current;
-			const total = sampleTimes(footage.durationS, MULTIMODEL_SAMPLE_FPS).length;
-			const samples = await collectLandmarkTrack({
-				frames: videoFrames(footage.objectUrl, {
-					createVideo: () => document.createElement("video"),
-					sampleFps: MULTIMODEL_SAMPLE_FPS,
-				}),
-				detect: detector.detect,
-				onProgress: ({ processed }) => {
-					if (live()) setMultiModelExtractProgress(total > 0 ? processed / total : null);
-				},
-			});
-			if (!live()) return;
-			if (samples.length === 0) throw new Error("no-person-found");
-			const take = bakeExtractedTake({
-				samples,
-				rest: multiModelRestRef.current,
-				fps: MULTIMODEL_SAMPLE_FPS,
-				durationS: footage.durationS,
-				createdMs: Date.now(),
-			});
-			if (!live()) return;
-			const rig = activeRig;
-			if (!rig) throw new Error("rig-not-loaded");
-			beginPlaybackOn(rig);
-			const loaded = {
-				prompt: multiModelSource?.name ?? sourceLabel(footage.objectUrl),
-				frames: take.frames,
-				fps: take.fps,
-				rotMats: take.rotMats,
-				rootPos: take.rootPos,
-				posedJoints: take.posedJoints,
-				anchorX: activeChar.x,
-				anchorZ: activeChar.z,
-				anchorFrame: 0,
-				rotationDeg: activeChar.rot,
-				editSegments: createMotionEdit(take.frames),
-			};
-			// A baked take is trimmable like any other: without this the strip's
-			// handles would drag against an empty map and cut nothing at all.
-			motionFullRef.current.set(activeChar.id, loaded);
-			// The browser fallback estimates no stature, and its root travel is
-			// in canonical units — so it must not inherit the scale a previous
-			// GPU take left on the character.
-			setCharacters((list) => list.map((entry) => entry.id === activeChar.id
-				? { ...entry, scale: characterScaleFor(take) }
-				: entry));
-			setMotion(loaded);
-			setTlFrameCount(take.frames);
-			setTlFps(take.fps);
-			setTlFrame(0);
-			setTlPlaying(false);
-			setMultiModelTake({ frames: take.frames, fitted: take.fitted, held: take.held, sampled: total, accepted: samples.length });
-			setMultiModelExtract("done");
-			setToast(isKo
-				? `모션 추출됨 — ${take.frames}프레임 테이크 @ ${take.fps} fps (실측 ${take.fitted}, 유지 ${take.held})`
-				: `Motion extracted — a ${take.frames}-frame take @ ${take.fps} fps (${take.fitted} measured, ${take.held} held)`);
-		} catch (error) {
-			if (!live()) return;
-			const code = error?.message ?? String(error);
-			setMultiModelExtract("error");
-			setMultiModelExtractError(MULTIMODEL_REASONS[code]?.[isKo ? 1 : 0] ?? code);
-		}
-	}
-
 	useEffect(() => () => {
 		if (multiModelObjectUrlRef.current) URL.revokeObjectURL(multiModelObjectUrlRef.current);
 	}, []);
@@ -4899,7 +7566,7 @@ globalThis.playMode = centerTab === "play";
 		// load toast, the auto-drop toast, clearing the IK keys, snapping the
 		// playhead back to 0 — is an announcement about a take CHANGING. A
 		// preview is the same take seen a second time, so it makes none of them.
-		{ preview = false } = {},
+		{ preview = false, calibration = null, tutorialEpoch = null } = {},
 	) {
 		setMotionBusy(true);
 		setMotionError("");
@@ -4909,26 +7576,50 @@ globalThis.playMode = centerTab === "play";
 			// the timeline counts its frames. Same-rate input rides through.
 			// A drop is staging applied to the clip itself, so it happens at
 			// the same boundary — trims and IK then see the dropped take.
-			const raw = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			const retimed = retimeMotion(await loadMotionFromUrl(url), TIMELINE_FPS);
+			if (tutorialEpoch !== null && tutorialEpoch !== tutorialProjectEpochRef.current) return null;
+			const normalizedCalibration = normalizeMotionCalibration(calibration);
+			// Scene yaw/XY translation belong to the character's scene transform.
+			// Applying them to both the arrays and the Character group would rotate
+			// the trajectory twice and leave rotMats facing the old direction.
+			const playbackCalibration = { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 };
+			// Scene calibration is optional metadata from the capture boundary. It
+			// runs before support/fall staging so every downstream measurement uses
+			// the same scene-space coordinates.
+			const raw = applyMotionCalibration(retimed, playbackCalibration).motion;
+			// Staging descriptors are authored in scene metres while decoded
+			// trajectories are canonical-body units. Resolve stature before any
+			// support or fall math so a 0.8x/1.2x performer still lands exactly on
+			// the same authored surface after playback multiplies the clip.
+			const motionScale = characterScaleFor(raw);
 			const targetCharacter = charactersRef.current.find((entry) => entry.id === targetCharacterId);
 			if (!targetCharacter) throw new Error(`Motion target ${targetCharacterId} no longer exists.`);
+			const sceneAnchorX = targetCharacter.x + normalizedCalibration.offsetX;
+			const sceneAnchorZ = targetCharacter.z + normalizedCalibration.offsetZ;
+			const sceneRotationDeg = rotationDeg + normalizedCalibration.yawDeg;
 			const rig = rigs[targetCharacter.id] ?? await waitForRig(targetCharacter.id);
+			if (tutorialEpoch !== null && tutorialEpoch !== tutorialProjectEpochRef.current) return null;
 			// No explicit drop staged: a character standing on a raised object
 			// whose take walks off the edge falls on its own — ARDY motion is
 			// flat-ground, so the stage supplies the gravity.
+			const supports = authoredSupportDescriptors();
+			// A support's top is scene data, never guessed from the motion.  Apply
+			// only when the clip shows an upward root trend entering its footprint;
+			// ordinary deck walks remain byte-for-byte unchanged.
+			const raised = drop ? raw : applySupportRise(raw, supports, {
+				subjectX: sceneAnchorX,
+				subjectY: targetCharacter.y ?? 0,
+				subjectZ: sceneAnchorZ,
+				rotationDeg: sceneRotationDeg,
+				worldScale: motionScale,
+			});
 			const staging = drop ?? autoRoofDrop(
-				raw,
-				{ x: targetCharacter.x, z: targetCharacter.z, y: targetCharacter.y ?? 0, rotationDeg },
-				sceneObjects.map((object) => ({
-					x: object.x,
-					z: object.z,
-					rotDeg: object.rot ?? 0,
-					topY: (object.y ?? 0) + (object.height ?? 0) * (object.scaleY ?? 1),
-					width: (object.footprint?.width ?? 0) * (object.scaleX ?? 1),
-					depth: (object.footprint?.depth ?? 0) * (object.scaleZ ?? 1),
-				})),
+				raised,
+				{ x: sceneAnchorX, z: sceneAnchorZ, y: targetCharacter.y ?? 0, rotationDeg: sceneRotationDeg },
+				supports,
+				{ worldScale: motionScale },
 			);
-			const decoded = drop ? applyRootDrop(raw, staging) : applyAutoFall(raw, staging);
+			const decoded = drop ? applyRootDrop(raised, staging, { worldScale: motionScale }) : applyAutoFall(raised, staging, { worldScale: motionScale });
 			if (!drop && staging && !preview) {
 				setToast(ko(
 					`Auto drop staged: the take leaves its support at ${staging.fromS.toFixed(1)}s and falls ${staging.meters.toFixed(1)}m`,
@@ -4948,16 +7639,19 @@ globalThis.playMode = centerTab === "play";
 			// canonical, 1.
 			const scale = characterScaleFor(decoded);
 			const loaded = {
+			// Identity calibration retains the legacy frame-zero anchorX: targetCharacter.x
+			// and anchorZ: targetCharacter.z contract; calibrated takes use the scene anchor.
 			// Capture the exact prompt this motion was generated from; the
 			// timeline keeps showing it even if the input field is edited
 			// afterwards.
 			prompt: typeof prompt === "string" ? prompt : "",
 				...decoded,
 				url,
-				anchorX: targetCharacter.x,
-				anchorZ: targetCharacter.z,
+				anchorX: sceneAnchorX,
+				anchorZ: sceneAnchorZ,
 				anchorFrame: 0,
-				rotationDeg,
+				rotationDeg: sceneRotationDeg,
+				sceneCalibration: normalizedCalibration,
 				editSegments: createMotionEdit(decoded.frames),
 			};
 			setCharacters((list) => {
@@ -5012,6 +7706,7 @@ globalThis.playMode = centerTab === "play";
 			// (and cannot derive a different one).
 			return scale;
 		} catch (err) {
+			if (tutorialEpoch !== null && tutorialEpoch !== tutorialProjectEpochRef.current) return null;
 			if (targetCharacterId === loadedLayerCharRef.current) setMotion(null);
 			setMotionError(err?.message || String(err));
 			throw err;
@@ -5039,7 +7734,12 @@ globalThis.playMode = centerTab === "play";
 	}, []);
 
 	const demoSeeded = useRef(false);
+	// Latched on the first healthy probe: a session that has seen the sidecar is
+	// not the hosted demo, and a later failed probe is a blip, not "no bridge".
+	const bridgeSeenOk = useRef(false);
 	useEffect(() => {
+		const demoSeed = demoSeedGate(bridge, bridgeSeenOk.current);
+		bridgeSeenOk.current = demoSeed.bridgeSeenOk;
 		if (demoSeeded.current) return;
 		if (!activeRig || motion || motionBusy) return;
 		// A hosted-demo result link opens the app with ?motion=<url>. The value
@@ -5054,7 +7754,7 @@ globalThis.playMode = centerTab === "play";
 			});
 			return;
 		}
-		if (!bridge || bridge.ok) return;
+		if (!demoSeed.seed) return;
 		demoSeeded.current = true;
 		// Loaded, not played: the clip walks the subject out of the default
 		// framing, so autoplay would greet a first-time visitor with an empty
@@ -5063,6 +7763,29 @@ globalThis.playMode = centerTab === "play";
 			/* the seed is a nicety, never a failure the visitor must act on */
 		});
 	}, [bridge, activeRig, motion, motionBusy]);
+
+	// The camera tutorial's seed (#209). The hosted-demo seed above is gated on
+	// a missing bridge, which is why the tutorial used to open on an empty room
+	// in a local session. startCameraTutorial arms tutorialSeedPending once the
+	// starter scene is applied, and the same clip goes on regardless of bridge
+	// state as soon as that scene's character has a parsed rig — a state
+	// condition, not a timer, exactly like the seed above.
+	useEffect(() => {
+		if (!tutorialSeedPending || !activeRig || motionBusy) return;
+		const seedEpoch = tutorialSeedEpochRef.current;
+		if (seedEpoch === null || seedEpoch !== tutorialProjectEpochRef.current) {
+			tutorialSeedEpochRef.current = null;
+			setTutorialSeedPending(false);
+			return;
+		}
+		tutorialSeedEpochRef.current = null;
+		setTutorialSeedPending(false);
+		demoSeeded.current = true; // one seeded clip per session, whichever got here first
+		loadMotion(DEMO_MOTION_URL, DEMO_MOTION_PROMPT, undefined, null, activeChar.id, null, { tutorialEpoch: seedEpoch }).catch(() => {
+			/* the take is the tutorial's set dressing, never an error to act on */
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [tutorialSeedPending, activeRig, motionBusy]);
 
 	/** Drop the ACTIVE character's take, its IK corrections and the stature the
 	 * take imposed. One Ctrl+Z entry brings all three back; nothing to clear
@@ -5087,8 +7810,10 @@ globalThis.playMode = centerTab === "play";
 		}
 		setCommittedIkEdits([]);
 		// A cleared clip leaves the body canonical: the stature belonged to the
-		// take, not to the character.
-		setCharacters((list) => list.map((entry) => entry.id === activeChar.id ? { ...entry, scale: 1 } : entry));
+		// take, not to the character. The persisted motionRef must drop too —
+		// restoreMotionRefs re-fetches it on every reload/rejoin, and a cleared
+		// take that resurrects on the next session is exactly the bug this fixes.
+		setCharacters((list) => list.map((entry) => entry.id === activeChar.id ? { ...entry, scale: 1, motionRef: null } : entry));
 		// Back to the pre-generation timeline: the current duration on the production clock.
 		setTlFrameCount(maxDst + 1);
 		setTlFps(TIMELINE_FPS);
@@ -5242,11 +7967,16 @@ globalThis.playMode = centerTab === "play";
 			promptClips,
 			multiModelFootage?.frames,
 		);
+		// Never leave the end under an authored shot: a shot outside the
+		// timeline is an invalid scene for the Studio agent (and for playback).
 		if (extent > 0) {
-			setTlFrameCount(extent);
-			setTlFrame((frame) => Math.min(frame, extent - 1));
+			const span = timelineSpan(extent, shots);
+			setTlFrameCount(span);
+			setTlFrame((frame) => Math.min(frame, span - 1));
+		} else {
+			setTlFrameCount((count) => timelineSpan(0, shots, count));
 		}
-	}, [characters, activeChar.id, motion, promptClips, multiModelFootage?.frames]);
+	}, [characters, activeChar.id, motion, promptClips, multiModelFootage?.frames, shots]);
 
 	/* ------------------------------ IK logic ------------------------------ */
 
@@ -5400,23 +8130,27 @@ globalThis.playMode = centerTab === "play";
 	// scrub away and back restores the dragged pose exactly (slerp).
 	function ikDragEnd() {
 		ikBodyDragRef.current = false;
-		if (ikChains) {
-			// One entry per drag: the pointermoves only moved bones, the keys map is
-			// untouched until this bake — recording here captures the pre-drag keys.
-			if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-			ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
-		}
+		// One entry per drag: the pointermoves only moved bones, the keys map is
+		// untouched until this bake — the key it sets records the pre-drag keys.
+		if (ikChains) keyIkPoseAtPlayhead();
 		setIkTick((n) => n + 1);
+	}
+
+	/** Bake the current tracked rotations at the playhead into a scratch layer
+	 * and set them as a key through the shared registry. A bake only writes
+	 * TRACKED parts: with nothing dragged yet there is no key, nothing is
+	 * dispatched and Ctrl+Z never goes dead. */
+	function keyIkPoseAtPlayhead() {
+		const scratch = { ...createIkState(), tracked: new Set(ikStateRef.current.tracked) };
+		ikBakeKeyframe(ikChains, scratch, tlFrame, ikFkJoints);
+		const baked = scratch.keys.get(tlFrame);
+		return baked ? runStudioAction("character.setIkKey", { characterId: activeChar.id, frame: tlFrame, tracks: ikKeyJson(baked) }) : null;
 	}
 
 	// Manual key: bake the current tracked rotations at the playhead.
 	function ikAddKeyframe() {
 		if (!ikChains) return;
-		// A bake only writes TRACKED parts: with nothing dragged yet there is no
-		// key to undo, so no entry is pushed and Ctrl+Z never goes dead.
-		if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
-		setIkTick((n) => n + 1);
+		if (!keyIkPoseAtPlayhead()) return;
 		setToast(isKo ? `${tlFrame}프레임에 전신 IK 키를 추가했어요` : `Full-body IK key at frame ${tlFrame}`);
 	}
 
@@ -5474,7 +8208,7 @@ globalThis.playMode = centerTab === "play";
 			return;
 		}
 		if (ikStateRef.current.tracked.size > 0) recordCharacterUndo();
-		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints, result.touched, null, result.baseQuats);
+		editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints, result.touched, null, result.baseQuats));
 		setIkTick((n) => n + 1);
 		setToast(result.residual > 1e-4
 			? ko(`Collisions reduced (residual ${(result.residual * 100).toFixed(1)} cm)`, `관통을 줄였어요 (잔여 ${(result.residual * 100).toFixed(1)} cm)`)
@@ -5515,7 +8249,7 @@ globalThis.playMode = centerTab === "play";
 		let keyed = [];
 		let unresolved = [];
 		try {
-			const walked = fixCollisionsRange({
+			const walked = editIkKeys(() => fixCollisionsRange({
 				rig: activeRig,
 				chains: ikChains,
 				ikState: ikStateRef.current,
@@ -5524,7 +8258,7 @@ globalThis.playMode = centerTab === "play";
 				endFrame: motion.frames - 1,
 				applyFrame,
 				blockersAt,
-			});
+			}));
 			// The frames the walk keyed. `unresolved` — the frames whose residual
 			// survived every pass — is ADDITIVE: read it defensively off either
 			// shape so this keeps working before and after the driver grows it.
@@ -5559,77 +8293,85 @@ globalThis.playMode = centerTab === "play";
 				: ko("No body collisions in the clip", "클립에 신체 관통이 없어요")) + stillPenetrating);
 	}
 
-	// AutoPhysics: during airborne spans the centre of mass must follow a
-	// ballistic parabola. Fits one per flight phase and translates the root so
-	// each frame's CoM lands on it — grounded frames are never keyed.
-	function runAutoPhysics() {
-		if (!ikChains || !activeRig || !motion) return;
-		if (ikStateRef.current.rig !== activeRig) return;
-		const currentFrame = tlFrame;
-		const applyFrame = (frame) => {
-			applyMotionFrame(activeRig, motion, frame);
-			ikEvaluate(ikChains, ikStateRef.current, frame, ikFkJoints, IK_CORRECTION_BLEND_FRAMES);
-		};
-		// Provisional undo entry, popped when the pass keys nothing (clean or
-		// unsupported clip) — see runFixCollisionsRange.
-		const savedFuture = charHistoryRef.current.future;
+
+	useEffect(() => {
+		physicsJobRef.current += 1;
+		physicsSourceCacheRef.current.value = null;
+		setPhysicsPreview(null);
+		setPhysicsOptions({ overrides: [], protectedFrames: [], strength: 1 });
+		setAutoPhysicsRunning(false);
+		autoPhysicsRunRef.current = null;
+		return () => { physicsJobRef.current += 1; };
+	}, [activeRig, motion, activeChar.x, activeChar.y, activeChar.z, activeChar.rot, activeChar.scale]);
+	useEffect(() => {
+		if (physicsPreview && physicsPreview.sourceStamp !== physicsKeyStamp(ikStateRef.current.keys)) {
+			setPhysicsPreview(null);
+		}
+	}, [ikTick, physicsPreview]);
+	function changePhysicsOptions(next) {
+		setPhysicsOptions(next); setPhysicsPreview(null); setIkTick((n) => n + 1);
+	}
+	function showPhysicsPreview(show) { setPhysicsShow(show); setIkTick((n) => n + 1); }
+	function cancelPhysicsPreview() { setPhysicsPreview(null); setIkTick((n) => n + 1); }
+	function applyPhysicsPreview() {
+		if (!physicsPreview || physicsPreview.sourceStamp !== physicsKeyStamp(ikStateRef.current.keys)) return;
 		recordCharacterUndo();
-		const { supported, reason, spans, keyedFrames, maxCorrection, skippedSpans } = autoPhysicsRange({
-			rig: activeRig,
-			motion,
-			chains: ikChains,
-			fkJoints: ikFkJoints,
-			ikState: ikStateRef.current,
-			applyFrame,
-			startFrame: 0,
-			endFrame: motion.frames - 1,
-			fps: motion.fps ?? TIMELINE_FPS,
-			floorY: 0,
-		});
-		if (!keyedFrames.length) {
-			charHistoryRef.current.past.pop();
-			charHistoryRef.current.future = savedFuture;
+		editIkKeys(() => { ikStateRef.current.keys = copyPhysicsKeys(physicsPreview.candidate.keys); });
+		ikStateRef.current.tracked = new Set(physicsPreview.candidate.tracked);
+		autoPhysicsRunRef.current = { motion, rig: activeRig, stamp: physicsKeyStamp(ikStateRef.current.keys) };
+		setPhysicsPreview(null); setIkTick((n) => n + 1);
+		setToast(ko("AutoPhysics applied · Undo restores the original", "오토피직스를 적용했어요 · 실행 취소로 원본 복구"));
+	}
+	async function runAutoPhysics() {
+		if (autoPhysicsRunning || !ikChains || !activeRig || !motion || ikStateRef.current.rig !== activeRig) return null;
+		const previous = autoPhysicsRunRef.current;
+		if (previous?.motion === motion && previous.rig === activeRig && previous.stamp === physicsKeyStamp(ikStateRef.current.keys)) {
+			setToast(ko("Already applied. Undo to review this correction again.", "이미 적용했어요. 실행 취소 후 다시 비교할 수 있어요.")); return null;
 		}
-		applyFrame(currentFrame);
-		setIkTick((n) => n + 1);
-		if (!supported) {
-			setToast(reason === "range-too-short"
-				? ko("The clip is too short for AutoPhysics", "클립이 너무 짧아 오토피직스를 쓸 수 없어요")
-				: ko("This rig doesn't support AutoPhysics", "이 리그는 오토피직스를 지원하지 않아요"));
-			return;
+		const job = ++physicsJobRef.current, frame = tlFrame;
+		const sourceKeys = copyPhysicsKeys(ikStateRef.current.keys), stamp = physicsKeyStamp(sourceKeys);
+		let lastYieldAt = Date.now(), yieldWaitMs = 0, yieldCount = 0;
+		const restore = () => { poseMemberAtFrame(activeRig, motion, ikStateRef.current, frame, IK_CORRECTION_BLEND_FRAMES); };
+		setTlPlaying(false); setAutoPhysicsRunning(true); setPhysicsProgress(0); setPhysicsPreview(null);
+		try {
+			const result = await reviewAutoPhysics({ rig: activeRig, motion, chains: ikChains, fkJoints: ikFkJoints, sourceKeys,
+				applyRaw: (f) => poseMemberAtFrame(activeRig, motion, null, f), sceneObjects, ...physicsOptions,
+				cache: physicsSourceCacheRef.current,
+				onProgress: setPhysicsProgress,
+				yieldFrame: async () => {
+					if (physicsJobRef.current !== job) throw new Error("Analysis cancelled after changing the character or motion");
+					// A batch is a cancellation checkpoint, not necessarily a paint/
+					// event-loop boundary. Yield on a time budget, not every 12 frames.
+					if (Date.now() - lastYieldAt < 16) return;
+					restore();
+					const queuedAt = Date.now();
+					// Yield CPU work without waiting for a paint. requestAnimationFrame
+					// can be throttled/paused in an occluded tab, stretching a seconds-
+					// long solve into minutes. MessageChannel also lets input run.
+					await new Promise((resolve) => {
+						const channel = new MessageChannel();
+						channel.port1.onmessage = () => { channel.port1.close(); channel.port2.close(); resolve(); };
+						channel.port2.postMessage(0);
+					});
+					lastYieldAt = Date.now(); yieldWaitMs += lastYieldAt - queuedAt; yieldCount += 1;
+					if (physicsJobRef.current !== job) throw new Error("Analysis cancelled after changing the character or motion");
+				},
+			});
+			Object.assign(result.performance, { yieldWaitMs, yieldCount });
+			if (physicsJobRef.current !== job || physicsKeyStamp(ikStateRef.current.keys) !== stamp) return null;
+			setPhysicsPreview(result); setPhysicsShow(true);
+			return { before: result.before, after: result.after, warnings: result.warnings, unresolved: result.unresolved, contacts: result.contacts.spans };
+		} catch (error) {
+			if (physicsJobRef.current === job) setToast(ko(`AutoPhysics: ${error.message}`, `오토피직스: ${error.message}`));
+			return null;
+		} finally {
+			if (physicsJobRef.current === job) { restore(); setAutoPhysicsRunning(false); setIkTick((n) => n + 1); }
 		}
-		// Skips are checked BEFORE the empty-spans branch: when every sub-arc
-		// of a detected span is refused (too short, unfittable), spans comes
-		// back empty but skippedSpans does not — "no airborne frames" would
-		// be a lie about a clip whose jump was seen and given up on.
-		if (!keyedFrames.length && skippedSpans.length) {
-			setToast(ko(
-				`AutoPhysics skipped ${skippedSpans.length} span(s) — the flight arc could not be fitted`,
-				`오토피직스가 공중 구간 ${skippedSpans.length}개를 건너뛰었어요 — 궤적을 신뢰할 수 없어요`));
-			return;
-		}
-		if (!spans.length) {
-			setToast(ko("No airborne frames in the clip", "클립에 공중 구간이 없어요"));
-			return;
-		}
-		// A refused span must never hide behind a success message — the user
-		// reads "worked" and the float they pressed the button for is still
-		// there. The skip count rides every toast that had one.
-		const skipNote = skippedSpans.length
-			? ko(` · ${skippedSpans.length} span(s) skipped (arc could not be fitted)`, ` · ${skippedSpans.length}개 구간은 궤적을 못 맞춰 건너뜀`)
-			: "";
-		setToast(keyedFrames.length
-			? ko(
-				`AutoPhysics: ${keyedFrames.length} frame(s) keyed (max ${(maxCorrection * 100).toFixed(1)} cm)${skipNote}`,
-				`오토피직스: ${keyedFrames.length}개 프레임 키 (최대 ${(maxCorrection * 100).toFixed(1)} cm)${skipNote}`)
-			: ko(`Airborne motion is already ballistic${skipNote}`, `공중 동작이 이미 물리적으로 자연스러워요${skipNote}`));
 	}
 
 	function ikDeleteKeyframe(frame) {
 		if (!ikStateRef.current.keys.has(frame)) return;
-		recordCharacterUndo();
-		ikRemoveKeyframe(ikStateRef.current, frame);
-		setIkTick((n) => n + 1);
+		runStudioAction("character.removeIkKey", { characterId: activeChar.id, frame });
 	}
 
 	/** With IK mode on over a loaded take, a pose pick is a CORRECTION, not a
@@ -5656,7 +8398,7 @@ globalThis.playMode = centerTab === "play";
 		// untracked chain would silently keep the clip's limb.
 		for (const id of ikChains.keys()) ikTouch(ikStateRef.current, id);
 		if (ikFkJoints) for (const id of ikFkJoints.keys()) ikTouch(ikStateRef.current, id);
-		ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints);
+		editIkKeys(() => ikBakeKeyframe(ikChains, ikStateRef.current, tlFrame, ikFkJoints));
 		// Handles re-seat on the posed effectors, ready to drag into a refinement.
 		ikSeedTargets(ikChains, ikStateRef.current);
 		setIkTick((n) => n + 1);
@@ -5681,10 +8423,14 @@ globalThis.playMode = centerTab === "play";
 	// untouched.
 	useEffect(() => {
 		if (!ikChains || !activeRig || posing) return;
-		if (ikMode || ikStateRef.current.keys.size > 0) {
-			ikEvaluate(ikChains, ikStateRef.current, tlFrame, ikFkJoints, motion ? IK_CORRECTION_BLEND_FRAMES : 0);
+		// Preview changes may re-run this effect without a playhead change.
+		// Always re-establish the motion base before adding a correction.
+		if (motion) poseMemberAtFrame(activeRig, motion, null, tlFrame);
+		const layer = physicsPreview && physicsShow ? physicsPreview.candidate : ikStateRef.current;
+		if (ikMode || layer.keys.size > 0) {
+			ikEvaluate(ikChains, layer, tlFrame, ikFkJoints, motion ? IK_CORRECTION_BLEND_FRAMES : 0);
 		}
-	}, [ikMode, ikChains, activeRig, motion, posing, tlFrame, ikTick, ikFkJoints]);
+	}, [ikMode, ikChains, activeRig, motion, posing, tlFrame, ikTick, ikFkJoints, physicsPreview, physicsShow]);
 
 	// Re-seat the handles on the keyed pose when the FRAME changes with IK
 	// on — scrubbing to frame 39 shows that frame's interpolated pose AND
@@ -5705,7 +8451,8 @@ globalThis.playMode = centerTab === "play";
 	// (tools/ardy/visual-qa.mjs). Harmless in normal use.
 	useEffect(() => {
 	window.__cozyclay = {
-			rigA: activeRig, motion, tlFrame, ikMode, ikChains, ikFocus, contactRadii: ikChains?.values().next().value?.contactRadii ?? null, ik: ikStateRef.current,
+			runArdy: (options) => liveStateRef.current.runArdy(options),
+			rigA: activeRig, motion, tlFrame, frameCount: tlFrameCount, playing: tlPlaying, ikMode, ikChains, ikFocus, contactRadii: ikChains?.values().next().value?.contactRadii ?? null, ik: ikStateRef.current,
 			committedIkEdits, waypoints,
 			// the camera the main view renders through (poser in IK mode) — QA
 			// projections must use this one, not the frozen shot camera
@@ -5714,6 +8461,83 @@ globalThis.playMode = centerTab === "play";
 			poserCam: poserCamRef.current,
 			planCam: planCamRef.current,
 			editorCam: editorCamRef.current,
+			// QA-only: swap the active character's body ("x-bot-tpose" / "y-bot-tpose")
+			// or stature, so a browser QA run can check every shipped rig.
+			setCharacterModel: (id) => updateCharacterAt(activeCharIndex, { model: id }),
+			setPartColours: (enabled, mode = "shaded") => {
+				setPartColoursEnabled(!!enabled);
+				setPartColoursMode(mode === "flat" ? "flat" : "shaded");
+			},
+			setCharacterScale: (scale) => updateCharacterAt(activeCharIndex, { scale }),
+			// QA-only: the production notes a framing capture carries (lens,
+			// delivery aspect, cast, cut range, target video model) for the frame
+			// the playhead is on — the same object both capture paths attach.
+			// Read through liveStateRef, which every render refreshes: this hook's
+			// effect does not depend on the shot list, so a closure over it would
+			// answer with the cut as it stood when the effect last ran.
+			captureMeta: (frame) => liveStateRef.current.captureShotMeta(frame ?? liveStateRef.current.timeline.currentFrame),
+			// QA-only reference slots (#167): set the pictures a headless run cannot
+			// reach through a file dialog, then take the capture the live
+			// capture_framing_png command returns — references included.
+			setCharacterIdentityImage: (index, dataUrl) => {
+				updateCharacterAt(index, { identityImage: normalizeReferenceImage(dataUrl) });
+				return true;
+			},
+			setEnvironmentImage: (dataUrl) => {
+				setEnvironmentImage(normalizeReferenceImage(dataUrl));
+				return true;
+			},
+			captureWithReferences: () => liveHandlersRef.current.capture_framing_png({}),
+			importAsset: (args) => liveHandlersRef.current.import_asset(args),
+			// QA-only reference exports (#165): the production builders without the
+			// download, so a headless run can unzip a real pack and diff the passes
+			// instead of driving a file dialog. Same liveStateRef reasoning as
+			// captureMeta — the effect does not depend on the shot list.
+			exportKeyframePack: async (shotId) => {
+				const attempt = startExportAttempt({ export_kind: "keyframe_pack", format: "zip", surface: embedMode ? "embed" : "studio" });
+				try {
+					const live = liveStateRef.current;
+					const index = live.shotIndexForPack(shotId ?? null);
+					const pack = await live.buildShotKeyframePack(live.shots[index], index);
+					// base64: a pack holds an MP4, and a megabyte-scale JS number array
+					// is not something to hand a CDP evaluate.
+					let binary = "";
+					for (const byte of pack.bytes) binary += String.fromCharCode(byte);
+					const result = { name: pack.name, entries: pack.entries.map((entry) => entry.name), byteLength: pack.bytes.byteLength, bytes: btoa(binary) };
+					attempt.succeed();
+					return result;
+				} catch (error) {
+					attempt.fail(error);
+					throw error;
+				}
+			},
+			renderPass: (kind) => liveStateRef.current.renderPassDataUrls([kind])[kind],
+			// QA-only video export (#193): the Export menu's Video item without the
+			// download, so a headless run can assert that a keyless 40-frame static
+			// shot yields 40 frames. Same liveStateRef reasoning as captureMeta.
+			exportShotVideo: (options = {}) => liveStateRef.current.exportShotVideo(options),
+			// Open the production result modal so QA clicks its real download.
+			prepareFrameExport: () => liveStateRef.current.generate(),
+			// The RGB plate the passes are compared against — same rig, same
+			// framing, no material override.
+			capturePlate: () => liveStateRef.current.captureFramingPng(liveStateRef.current.captureCurrentFraming()),
+			characterScale: activeChar?.scale ?? 1,
+			characterModel: activeChar?.model ?? null,
+			// QA-only framing: FlyControls rewrites the editor camera's rotation
+			// from editorLook every frame, so a bare camera.lookAt is overwritten
+			// before the next paint. Set both, the way the live frame_shot does.
+			frameEditorCam: (position, target) => {
+				const camera = editorCamRef.current;
+				if (!camera) return false;
+				const angles = aimAt(position, target);
+				editorLook.current.yaw = angles.yaw;
+				editorLook.current.pitch = angles.pitch;
+				camera.position.set(position.x, position.y, position.z);
+				camera.rotation.order = "YXZ";
+				camera.rotation.set(angles.pitch, angles.yaw, 0);
+				camera.updateProjectionMatrix();
+				return true;
+			},
 			lookThroughShot,
 			setLookThrough: (value) => setLookThroughShot(!!value),
 			charA,
@@ -5722,8 +8546,9 @@ globalThis.playMode = centerTab === "play";
 			// the selected prop's route, so QA can aim a gesture at the line
 			objectPath: selectedSceneObject?.path ?? null,
 			pathPointIndex,
-			pathHandlesEnabled: centerTab === "scene" && !lookThroughShot && !ikMode && !posing && !playMode && !!selectedSceneObject?.path,
+			pathHandlesEnabled: !preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path,
 			scrub: (frame) => setTlFrame(Math.max(0, Math.min(tlFrameCount - 1, Math.round(frame)))),
+			pause: () => setTlPlaying(false),
 			// Motion-trail QA surface: read the current trail policy and drive the
 			// same drag -> preview -> pending-edit path headless checks cannot reach
 			// through synthetic pointers reliably.
@@ -5760,7 +8585,14 @@ globalThis.playMode = centerTab === "play";
 				const com = activeRig ? computeCenterOfMass(activeRig) : null;
 				return com ? { x: com.x, y: com.y, z: com.z } : null;
 			},
-			centerTab,
+			apFeet: () => {
+				const points = activeRig ? markerPositions(activeRig) : null;
+				return points ? Object.fromEntries(Object.entries(points).map(([name, point]) => [name, { x: point.x, y: point.y, z: point.z }])) : null;
+			},
+			apRun: runAutoPhysics,
+			physics: { preview: physicsPreview, show: physicsShow, running: autoPhysicsRunning, options: physicsOptions },
+			apOptions: changePhysicsOptions,
+			preview,
 			pathDraw,
 		};
 		// eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5768,12 +8600,33 @@ globalThis.playMode = centerTab === "play";
 		// close over them: a stale closure would report the set as it was two
 		// edits ago — and, after an undo that removes a subject, would keep
 		// reporting the ghost's capsules.
-	}, [activeRig, motion, tlFrame, ikMode, ikChains, ikFocus, ikTick, charA, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, centerTab, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails]);
+	}, [activeRig, motion, tlFrame, ikMode, ikChains, ikFocus, ikTick, charA, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, preview, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning]);
 	// QA hook (plan §6.5): exposes history depth and the present === objects
 	// invariant so the browser suite can assert undo entry counts directly.
 	// Reads live store state at call time; re-registered after every render.
 	useEffect(() => {
 		window.__sceneHistory = () => ({ ...store.depths(), settled: store.present() === store.objects });
+	});
+	// QA-only project-file seam: browser acceptance tests still exercise the
+	// production serializer/parser and apply path without depending on native
+	// file-picker UI, which headless Chrome does not expose consistently.
+	useEffect(() => {
+		window.__cozyclayProject = {
+			export: (name = "QA Project") => collectProjectSerialized(name),
+			open: async (text) => {
+				const result = readProjectDocument(text);
+				if (!result.ok) return result;
+				await rehydrateProjectAssets(result.project, result.warnings);
+				applyProject(result.project);
+				setToast(`${isKo ? `프로젝트 열림: ${result.project.name}` : `Project opened: ${result.project.name}`}${projectProblemsNotice(result.problems)}`);
+				return result;
+			},
+			manifest: () => projectManifest,
+			saveBlocked: () => saveBlockedReasons,
+		};
+		return () => {
+			if (window.__cozyclayProject?.export) delete window.__cozyclayProject;
+		};
 	});
 
 	// On clear, restore the exact pre-playback bone rotations. This runs in
@@ -5887,7 +8740,7 @@ globalThis.playMode = centerTab === "play";
 	// The follow camera owns the shot camera in the same situations key
 	// following would: never while an authoring mode holds the viewport.
 	const followCamActive =
-		activeCamera.mode !== "keys" && !!followTrack?.[tlFrame] && (centerTab === "play" || (!ikMode && !waypointMode && !posing));
+		activeCamera.mode !== "keys" && !!followTrack?.[tlFrame] && (preview || (!ikMode && !waypointMode && !posing));
 
 	// Implied locomotion speed per authored segment, on the timeline clock
 	// (m/s is physical, so the judge always uses tlFps). Shown in the
@@ -5941,6 +8794,7 @@ globalThis.playMode = centerTab === "play";
 	 * character: a running take must survive having its best frame bottled. */
 	function saveCurrentPose() {
 		if (!activeRig) return;
+		trackFeature("pose_edit");
 		const pose = {
 			id: `custom_${Date.now()}`,
 			label: isKo ? `내 포즈 ${customPoses.length + 1}` : `My Pose ${customPoses.length + 1}`,
@@ -5963,6 +8817,7 @@ globalThis.playMode = centerTab === "play";
 	function savePose() {
 		const rig = posedRig();
 		if (!rig) return;
+		trackFeature("pose_edit");
 		const pose = {
 			id: `custom_${Date.now()}`,
 		label: isKo ? `내 포즈 ${customPoses.length + 1}` : `My Pose ${customPoses.length + 1}`,
@@ -6005,73 +8860,39 @@ globalThis.playMode = centerTab === "play";
 		setPhotoPoseError("");
 		try {
 			if (!rig) throw new Error("rig-not-loaded");
-			if (!multiModelRestRef.current) {
-				const response = await fetch("/ardy/cskel27-rest.json").catch(() => null);
-				if (!response?.ok) throw new Error("rest-unavailable");
-				multiModelRestRef.current = await response.json().catch(() => {
-					throw new Error("rest-unavailable");
-				});
-			}
 			objectUrl = URL.createObjectURL(file);
 			let bones = null;
 			let rootY = 0;
-			let warning = "";
-			// GPU route first: SAM-3D-Body on the box MEASURES the body in 3D,
-			// which beats anything a browser landmarker can infer from one frame.
+			let gpuError = null;
+			// GVHMR on the box measures the body over the whole clip,
+			// which is more reliable than a single-frame depth estimate.
 			// The bridge wraps the still into a second of video and runs the exact
-			// footage pipeline; the in-browser landmark path below is the fallback
-			// for a missing bridge or a failed run, never the first choice.
+			// GVHMR footage pipeline. A missing bridge or another backend is an error.
 			try {
 				const health = await fetch("/ardy/health", { signal: AbortSignal.timeout(2000) }).catch(() => null);
-				if (health?.ok) {
-					const done = await requestBridgeExtract(file, {});
-					const take = await loadMotionFromUrl(done.motionUrl);
-					// The middle frame: the wrap's smoothing passes have settled
-					// there, while frame 0 can still carry filter warm-up.
-					const frame = Math.floor((take.frames - 1) / 2);
-					const snapshot = snapshotPlaybackBones(rig);
-					try {
-						applyMotionFrame(rig, { ...take, anchorFrame: frame }, frame);
-						bones = capturePose(rig);
-						// SAM measured the hips' true height — a crouch is a crouch
-						// because the hips came DOWN, not just because the knees bent.
-						rootY = captureHipsOffset(rig);
-					} finally {
-						restorePlaybackBones(rig, snapshot);
-					}
-				}
-			} catch (error) {
-				console.warn("photo pose: GPU extract failed, falling back to browser landmarks", error);
-			}
-			if (!bones) {
-				if (!photoPoseDetectorRef.current) {
-					// "heavy", not the "full" the footage path uses: a photograph is one
-					// offline frame, so the ~25 MB one-time download and the several-times
-					// slower inference are paid once and buy accuracy no later step can
-					// recover. This ref only ever holds the photo detector, so caching it
-					// without a model key is safe.
-					photoPoseDetectorRef.current = await createPoseDetector({ runningMode: "IMAGE", model: "heavy" });
-				}
-				// One detection of one still is the least evidence this app ever works
-				// from, so the still is measured twice — as shot and mirrored — and
-				// averaged. Downstream sees one ordinary landmark sample at t=0.
-				const image = await decodeImage(objectUrl, { createImage: () => new Image() });
-				const landmarks = await detectMirrorAveraged(image, photoPoseDetectorRef.current.detect);
-				if (!landmarks) throw new Error("no-person-in-photo");
-				const samples = [{ timeS: 0, landmarks }];
-				const take = bakePoseFrame({ samples, rest: multiModelRestRef.current, createdMs: Date.now() });
-				// Pose the rig, read the pose back, then put the rig exactly as it was:
-				// the capture is the product, the posing is only how it is measured.
+				if (!health?.ok) throw new Error("extract-bridge-required");
+				const healthPayload = await health.json().catch(() => null);
+				if (healthPayload?.extractionBackend !== "gvhmr") throw new Error("extract-backend-unsupported");
+				const done = await requestBridgeExtract(file, {});
+				const take = await loadMotionFromUrl(done.motionUrl);
+				// The middle frame: the wrap's smoothing passes have settled
+				// there, while frame 0 can still carry filter warm-up.
+				const frame = Math.floor((take.frames - 1) / 2);
 				const snapshot = snapshotPlaybackBones(rig);
 				try {
-					applyMotionFrame(rig, { ...take, anchorFrame: 0 }, 0);
+					applyMotionFrame(rig, { ...take, anchorFrame: frame }, frame);
 					bones = capturePose(rig);
+					// GVHMR measured the hips' true height — a crouch is a crouch
+					// because the hips came DOWN, not just because the knees bent.
 					rootY = captureHipsOffset(rig);
 				} finally {
 					restorePlaybackBones(rig, snapshot);
 				}
-				warning = photoPoseWarning(take);
+			} catch (error) {
+				gpuError = error;
+				console.warn("photo pose: GVHMR extract failed", error);
 			}
+			if (!bones) throw new Error(gpuError?.message || "extract-run-failed");
 			const pose = {
 				id: `photo_${Date.now()}`,
 				label: isKo ? `사진 포즈 ${customPoses.length + 1}` : `Photo Pose ${customPoses.length + 1}`,
@@ -6099,14 +8920,9 @@ globalThis.playMode = centerTab === "play";
 			else recordCharacterUndo();
 			updateCharacterAt(poseTargetIndex, { pose });
 			setPhotoPoseState("done");
-			// The pose is already saved and written by this point, so the warning
-			// only changes what the user is told, never whether the read happened.
-			// It takes the success slot rather than queueing a second toast: two
-			// toasts in a row means the first one is never read. (The GPU route
-			// leaves it empty — SAM measures the whole body or fails outright.)
-			setToast(warning
-				? (hadMotion ? `${ko("Cleared the motion.", "모션을 지웠어요.")} ${warning}` : warning)
-				: hadMotion
+			// The pose is already saved and written by this point. GVHMR either
+			// returns a measured pose or the named error above reaches the user.
+			setToast(hadMotion
 					? ko("Cleared the motion and posed from the photo — refine it with the handles", "모션을 지우고 사진으로 자세를 잡았어요 — 핸들로 다듬어 보세요")
 					: ko("Pose read from the photo — refine it with the handles", "사진에서 자세를 읽었어요 — 핸들로 다듬어 보세요"));
 		} catch (error) {
@@ -6143,27 +8959,32 @@ globalThis.playMode = centerTab === "play";
 		setNonce((n) => n + 1);
 	}
 
-	function bufferToPng(buffer) {
+	function bufferToPng(buffer, output = shotOutput) {
 		const canvas = document.createElement("canvas");
-		canvas.width = shotOutput.width;
-		canvas.height = shotOutput.height;
+		if (output === shotOutput) {
+			canvas.width = shotOutput.width;
+			canvas.height = shotOutput.height;
+		} else {
+			canvas.width = output.width;
+			canvas.height = output.height;
+		}
 		const ctx = canvas.getContext("2d");
-		const image = ctx.createImageData(shotOutput.width, shotOutput.height);
+		const image = ctx.createImageData(output.width, output.height);
 		// WebGL reads bottom-up; flip into canvas order.
-		for (let row = 0; row < shotOutput.height; row += 1) {
-			const from = (shotOutput.height - 1 - row) * shotOutput.width * 4;
+		for (let row = 0; row < output.height; row += 1) {
+			const from = (output.height - 1 - row) * output.width * 4;
 			image.data.set(
-				buffer.subarray(from, from + shotOutput.width * 4),
-				row * shotOutput.width * 4
+				buffer.subarray(from, from + output.width * 4),
+				row * output.width * 4
 			);
 		}
 		ctx.putImageData(image, 0, 0);
 		return canvas.toDataURL("image/png");
 	}
 
-	/** Park the shot camera on a framing, read back a 1920x1080 PNG, and put
+	/** Park the shot camera on a framing, read back an offscreen PNG, and put
 	    everything back before the next paint — the viewport never sees it. */
-	function captureFramingPng(framing) {
+	function captureFramingPng(framing, output = shotOutput) {
 		const cam = shotCamRef.current;
 		if (!cam || !captureRef.current) return null;
 		const prev = { x: cam.position.x, y: cam.position.y, z: cam.position.z, yaw: look.current.yaw, pitch: look.current.pitch, fov: cam.fov };
@@ -6172,14 +8993,22 @@ globalThis.playMode = centerTab === "play";
 		cam.rotation.set(framing.pitch, framing.yaw, 0);
 		cam.fov = framing.fovDeg;
 		cam.updateProjectionMatrix();
-		const buffer = captureRef.current.render();
-		cam.position.set(prev.x, prev.y, prev.z);
-		cam.rotation.set(prev.pitch, prev.yaw, 0);
-		look.current.yaw = prev.yaw;
-		look.current.pitch = prev.pitch;
-		cam.fov = prev.fov;
-		cam.updateProjectionMatrix();
-		return buffer ? bufferToPng(buffer) : null;
+		const needsOwnTarget = output.width !== shotOutput.width || output.height !== shotOutput.height;
+		const capture = needsOwnTarget && typeof captureRef.current.createExportCapture === "function"
+			? captureRef.current.createExportCapture(output)
+			: captureRef.current;
+		try {
+			const buffer = capture.render();
+			return buffer ? bufferToPng(buffer, output) : null;
+		} finally {
+			if (needsOwnTarget) capture.dispose?.();
+			cam.position.set(prev.x, prev.y, prev.z);
+			cam.rotation.set(prev.pitch, prev.yaw, 0);
+			look.current.yaw = prev.yaw;
+			look.current.pitch = prev.pitch;
+			cam.fov = prev.fov;
+			cam.updateProjectionMatrix();
+		}
 	}
 
 	function copyPrompt(prompt) {
@@ -6252,6 +9081,7 @@ globalThis.playMode = centerTab === "play";
 			prompt,
 			frame,
 			frameB,
+			partColours: partColoursEnabled ? PART_COLOURS : null,
 			move: movePlan,
 			mode,
 			modelLabel: model?.label,
@@ -6281,29 +9111,37 @@ globalThis.playMode = centerTab === "play";
 	}
 
 	function download() {
-		const save = (href, name) => {
-			const a = document.createElement("a");
-			a.href = href;
-			a.download = name;
-			document.body.appendChild(a);
-			a.click();
-			a.remove();
-		};
-		if (result.frameB) {
-			// named for the seat they take in a first/last-frame video request
-			save(result.frame, "blocking-frame-A-start.png");
-			save(result.frameB, "blocking-frame-B-end.png");
-			setToast(ko("Start & end frames downloaded", "시작·끝 프레임 다운로드됨"));
-			setResult((current) => current ? { ...current, downloaded: true } : current);
-			track("export:blocking_frame_succeeded", { format: "png" });
-			trackActivation("export");
-			return;
+		if (recRef.current || result?.downloaded) return null;
+		if (frameExportRef.current?.source === result) {
+			if (frameExportRef.current.done) return null;
+			return executeExportRequest(frameExportRef.current.request);
 		}
-		save(result.frame, "blocking-frame.png");
-		setToast(ko("Frame downloaded", "프레임 다운로드됨"));
-		setResult((current) => current ? { ...current, downloaded: true } : current);
-		track("export:blocking_frame_succeeded", { format: "png" });
-		trackActivation("export");
+		const snapshot = structuredClone(result);
+		const frameJob = { source: result, done: false, request: null };
+		frameJob.request = exportRequest("frame", (job) => {
+			if (!snapshot?.frame) throw Object.assign(new Error("The captured frame is not ready"), { exportFailureCode: "render_failed" });
+			updateExportStatus(job, "finalizing", { stage: "download", cancellable: false });
+			const save = (href, name) => {
+				if (job.request.handedOff.has(name)) return;
+				saveDownload(href, name);
+				job.request.handedOff.add(name);
+			};
+			if (snapshot.partColours && !job.request.handedOff.has("blocking-frame-palette.json")) {
+				const blob = new Blob([JSON.stringify({ partColours: snapshot.partColours }, null, 2)], { type: "application/json" });
+				const url = URL.createObjectURL(blob);
+				try { save(url, "blocking-frame-palette.json"); }
+				finally { setTimeout(() => URL.revokeObjectURL(url), 1000); }
+			}
+			if (snapshot.frameB) {
+				save(snapshot.frame, "blocking-frame-A-start.png");
+				save(snapshot.frameB, "blocking-frame-B-end.png");
+			} else save(snapshot.frame, "blocking-frame.png");
+			frameJob.done = true;
+			setResult((current) => current === frameJob.source ? { ...current, downloaded: true } : current);
+			setToast(ko("Frame download requested. Check your browser's downloads.", "프레임 다운로드를 요청했어요. 브라우저 다운로드를 확인하세요."));
+		});
+		frameExportRef.current = frameJob;
+		return executeExportRequest(frameJob.request);
 	}
 	function downloadArdyPose() {
 		const rig = posedRig();
@@ -6311,6 +9149,7 @@ globalThis.playMode = centerTab === "play";
 			setToast(ko("Character not loaded yet", "캐릭터가 아직 로드되지 않았어요"));
 			return;
 		}
+		trackFeature("export_pose");
 		const pose = buildArdyPose({
 			rig,
 			camRef: shotCamRef,
@@ -6337,32 +9176,54 @@ globalThis.playMode = centerTab === "play";
 	// second; a one-shot failed probe left Generate disabled until reload.
 	useEffect(() => {
 		let alive = true;
+		let inflight = null;
 		// The poll answer is almost always identical to the last one; keeping the
 		// previous object identity skips a full App re-render per poll. Each of
 		// those renders costs ~80ms of main thread on this tree, which read as a
 		// periodic hitch while orbiting/flying the camera.
-		const refreshBridge = () => checkBridge().then((state) => {
-			if (!alive) return;
-			setBridge((previous) => (
-				previous &&
-				previous.ok === state.ok &&
-				previous.host === state.host &&
-				previous.encoder === state.encoder &&
-				previous.device === state.device &&
-				previous.reason === state.reason
-					? previous
-					: state
-			));
-		});
+		const refreshBridge = () => {
+			if (inflight) return inflight;
+			inflight = checkBridge().then((state) => {
+				if (!alive) return;
+				if (state.ok) trackFeature("mcp_connected");
+				setBridge((previous) => JSON.stringify(previous) === JSON.stringify(state) ? previous : state);
+				setLineEditBackend(hasLineEditCapability(state));
+			}).finally(() => { inflight = null; });
+			return inflight;
+		};
+		bridgeRefreshRef.current = refreshBridge;
 		refreshBridge();
 		const id = window.setInterval(refreshBridge, BRIDGE_RECHECK_MS);
+		window.addEventListener("focus", refreshBridge);
 		return () => {
 			alive = false;
 			window.clearInterval(id);
+			window.removeEventListener("focus", refreshBridge);
 		};
 	}, []);
 
-	function addPromptClip(frame) {
+	function recheckMotionHealth() {
+		setBridgeChecking(true);
+		return bridgeRefreshRef.current().finally(() => setBridgeChecking(false));
+	}
+
+	// QA/programmatic requests must use the current render's same generation path.
+	liveStateRef.current.runArdy = runArdy;
+	function requestMotionGeneration(surface, inputMode, body = {}) {
+		const request = startMotionRequest({ surface, input_mode: inputMode });
+		const options = { body, lineEditSupported: lineEditBackend };
+		// Record known readiness refusals even if existing input validation returns
+		// early. A pass waits for the fully packaged payload at the queue boundary.
+		// The queue independently checks readiness; telemetry failure cannot
+		// enable or disable generation.
+		if (motionPreflightReason(bridge, options)) {
+			request.preflight(bridge, options);
+			setToast(motionReadinessMessage(motionReadiness(bridge, options)));
+		}
+		return request;
+	}
+
+	function addPromptClip(frame, surface = "timeline") {
 		const snapped = Math.max(0, Math.round(frame / ARDY_PROMPT_HORIZON_FRAMES) * ARDY_PROMPT_HORIZON_FRAMES);
 		// Add at the playhead when the spot is free; only fall through to
 		// after-the-last-block when the playhead slot is taken. The old
@@ -6373,10 +9234,11 @@ globalThis.playMode = centerTab === "play";
 			: snapped;
 		const clip = { id: createStableItemId("prompt-clip"), startFrame, endFrame: startFrame + ARDY_PROMPT_HORIZON_FRAMES, text: "" };
 		recordCharacterUndo();
-		setPromptClips((prev) => [...prev, clip]);
+		editPromptClips((prev) => [...prev, clip]);
 		setSelectedPromptId(clip.id);
 		setTlFrameCount((count) => Math.max(count, clip.endFrame));
 		setArdyDuration(Math.max(ARDY_DURATION_MIN, clip.endFrame / TIMELINE_FPS));
+		trackFeature("prompt_block_add");
 	}
 
 	function changePromptClip(id, text) {
@@ -6388,7 +9250,7 @@ globalThis.playMode = centerTab === "play";
 		// session keeps writing into that same entry. Reached from the inspector
 		// field and from the timeline chip alike.
 		recordSessionUndo(promptTextSessionRef, `prompt-text:${id}`);
-		setPromptClips((prev) => updateStableItem(prev, id, (clip) => ({ ...clip, text }), "promptClips"));
+		editPromptClips((prev) => updateStableItem(prev, id, (clip) => ({ ...clip, text }), "promptClips"));
 		if (id === selectedPromptId) setArdyPrompt(text);
 	}
 
@@ -6401,7 +9263,7 @@ globalThis.playMode = centerTab === "play";
 const PROMPT_BLOCK_MAX_FRAMES = 5 * TIMELINE_FPS;
 
 function resizePromptClip(id, edge, rawFrame) {
-		setPromptClips((prev) => {
+		editPromptClips((prev) => {
 			const candidate = updateStableItem(prev, id, (clip) => {
 				const snapped = Math.max(0, Math.round(rawFrame / ARDY_PROMPT_HORIZON_FRAMES) * ARDY_PROMPT_HORIZON_FRAMES);
 				return edge === "start"
@@ -6424,7 +9286,7 @@ function resizePromptClip(id, edge, rawFrame) {
 
 	function movePromptClip(id, rawStartFrame) {
 		if (!promptClips.some((clip) => clip.id === id)) throw new Error(`Unknown promptClips ID: ${id}`);
-		setPromptClips((prev) => {
+		editPromptClips((prev) => {
 			const next = movePromptClipFrames(prev, id, rawStartFrame, ARDY_PROMPT_HORIZON_FRAMES);
 			if (next === prev) return prev;
 			const end = next.reduce((max, clip) => Math.max(max, clip.endFrame), ARDY_PROMPT_HORIZON_FRAMES);
@@ -6437,7 +9299,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	function removePromptClip(id) {
 		if (!promptClips.some((clip) => clip.id === id)) throw new Error(`Unknown promptClips ID: ${id}`);
 		recordCharacterUndo();
-		setPromptClips((prev) => removeStableItem(prev, id, "promptClips"));
+		editPromptClips((prev) => removeStableItem(prev, id, "promptClips"));
 		if (selectedPromptId === id) setSelectedPromptId(null);
 	}
 
@@ -8153,75 +11015,19 @@ function resizePromptClip(id, edge, rawFrame) {
 		poll();
 		const id = window.setInterval(poll, 250);
 		return () => window.clearInterval(id);
-		// lookThroughShot / centerTab / ikMode are dependencies even though the
+		// lookThroughShot / preview / ikMode are dependencies even though the
 		// body never reads them directly: they are what lineEditPane branches on,
 		// so a stale closure would keep measuring the camera the pane used to
 		// hold and a view SWITCH — the most obvious way to invalidate a curve —
 		// would go undetected. Lens and aspect changes need no dependency: they
 		// move fx/fy, which the comparison sees on its own.
-	}, [lineEditMode, lineCurve, lookThroughShot, centerTab, ikMode]);
+	}, [lineEditMode, lineCurve, lookThroughShot, preview, ikMode]);
 
-	// Wave-2 capability preflight. `checkBridge` reports health only, so the
-	// line-edit route is probed here: today's bridge IGNORES unknown request
-	// fields, which means an ungated POST would come back as a plausible but
-	// completely unrelated fresh take. Absence of the capability is a refusal,
-	// never an attempt. Both the object and array spellings are accepted so
-	// M4's health payload can choose either.
-	//
-	// SELF-HEALING, because the answer is allowed to arrive late. The bridge
-	// derives the flag from a lazy ssh probe of the ProjFlow box (~3 s cold,
-	// cached for 5 s), so ONE fetch at the moment the bridge came up could catch
-	// a cold cache, a box still waking or a transient ssh failure and latch
-	// `false` for the whole session — the panel then says "not connected yet"
-	// forever and no pull ever previews, which is exactly the reported bug. So:
-	// while the bridge is up and the capability is still false, ask again every
-	// LINE_CAPABILITY_RETRY_MS, and ask IMMEDIATELY when the artist enters the
-	// mode (lineEditMode is a dependency for that reason — entering is the one
-	// moment the answer is about to matter). A confirmed capability stops the
-	// polling: the effect re-runs when the flag flips and returns early.
-	//
-	// What does NOT change is the gate itself. Retrying is a way to learn the
-	// truth sooner, never a reason to proceed without it — nothing here ever
-	// sets the flag on anything weaker than a health payload that positively
-	// says lineEdit.
+	// Use the same bounded, coalesced probe as generation. Capabilities can
+	// disappear under a live bridge too; every health result refreshes them.
 	useEffect(() => {
-		if (!bridge?.ok) {
-			setLineEditBackend(false);
-			return undefined;
-		}
-		// Already confirmed. The capability does not go away under a live bridge,
-		// and re-asking would be a request every 4 s for the rest of the session.
-		if (lineEditBackend) return undefined;
-		let alive = true;
-		let timer = 0;
-		const again = () => {
-			if (!alive) return;
-			timer = window.setTimeout(probe, LINE_CAPABILITY_RETRY_MS);
-		};
-		const probe = () => {
-			timer = 0;
-			fetch("/ardy/health")
-				.then((res) => (res.ok ? res.json() : null))
-				.then((payload) => {
-					if (!alive) return;
-					const caps = payload?.capabilities ?? payload?.features;
-					const capable = Array.isArray(caps) ? caps.includes("lineEdit") : caps?.lineEdit === true;
-					setLineEditBackend(capable);
-					// A `false` is not an answer, it is "not yet" — keep asking.
-					if (!capable) again();
-				})
-				.catch(() => {
-					if (!alive) return;
-					setLineEditBackend(false);
-					again();
-				});
-		};
-		probe();
-		return () => {
-			alive = false;
-			if (timer) window.clearTimeout(timer);
-		};
-	}, [bridge?.ok, lineEditBackend, lineEditMode]);
+		if (lineEditMode) bridgeRefreshRef.current();
+	}, [lineEditMode]);
 
 	/** CONFIRM the pull: the full-quality run of exactly what the preview has
 	 * been showing. Its own run mode — the body carries lineEdit and NOTHING
@@ -8231,7 +11037,8 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * curve as the last preview; only `preview: true` is absent, which is what
 	 * buys the full step count. */
 	function runLineEdit() {
-		if (ardyRunning) return;
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
+		const generationRequest = requestMotionGeneration("line_edit", "edit", { lineEdit: true });
 		if (!takeSourceUrl) {
 			setToast(ko("The current take has no bridge source — generate it once before editing a path", "현재 테이크에 브리지 원본이 없어요 — 궤적을 편집하기 전에 한 번 생성하세요"));
 			return;
@@ -8262,7 +11069,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		// The take being edited, not the draft that may be on screen: a preview
 		// is a picture and must never become anyone's lineage.
 		const source = linePreviewSource;
-		enqueueMotionJob({
+		const queued = enqueueMotionJob({
+			request: generationRequest,
 			charId: source?.charId ?? activeChar.id,
 			charIndex: activeCharIndex,
 			prompt: body.prompt,
@@ -8281,6 +11089,8 @@ function resizePromptClip(id, edge, rawFrame) {
 			recipeLineEdit: stripSourceMotion({ ...lineEdit, sourceMotion: undefined, seed }),
 			recipeLabel: isKo ? `다듬기 · ${lineTrackLabel(lineTrack)}` : `Refine · ${lineTrackLabel(lineTrack)}`,
 		});
+		if (!queued) return;
+		generationPendingRef.current = true;
 		// The pull has left the building. The curve stays (it is the reference
 		// the next edit starts from) but its deformation is released, so the
 		// Generate button goes back to needing a fresh pull instead of inviting
@@ -8296,6 +11106,7 @@ function resizePromptClip(id, edge, rawFrame) {
 	}
 
 	function runAllPromptBlocks() {
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
 		const clips = promptClips
 			.filter((clip) => clip.text.trim())
 			.sort((a, b) => a.startFrame - b.startFrame);
@@ -8324,6 +11135,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		// the current take's lineage and carries both.
 		fresh = false,
 	} = {}) {
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
+		const request = requestMotionGeneration("timeline", motion?.url && ikFrames.length ? "edit" : ardyStartFromPose ? "pose" : "prompt");
 		// A line-edit draft is not a take, and every source this function reads
 		// (preserve, motionEdit, the recipe) is about THE take. Refusing here is
 		// the last line of defence behind sceneDisabledReason, which already
@@ -8670,7 +11483,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		// live layer — the queue only needs the frozen payload. Results are
 		// delivered to THIS character even if the selection moves on while
 		// the box is still working.
-		enqueueMotionJob({
+		generationPendingRef.current = enqueueMotionJob({
+			request,
 			charId: activeChar.id,
 			charIndex: activeCharIndex,
 			prompt,
@@ -8696,7 +11510,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						: motion?.url
 							? ko("Again", "다시 뽑기")
 							: ko("Generate", "생성"),
-		});
+		}) === true;
 	}
 
 	/* --------------------- trail drag -> preview -> regen -------------------- */
@@ -8752,6 +11566,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		}
 		// The one and only React commit of the whole drag.
 		setMotion(deformed);
+		markSemanticEdit("pose", base.rootPos, deformed.rootPos);
 		setTrailEdit({ track, grabFrame, radiusFrames: trailFalloffFrames, clipDelta: trailClipDelta(base, delta) });
 	}
 	/** Send the pending trail edit through the existing motionEdit pipeline:
@@ -8759,7 +11574,9 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * keys inside the window ride as hard constraints (their tracks), and the
 	 * deformed line contributes the grab-frame pose as a root guide. */
 	function runTrailRegeneration() {
-		if (!trailEdit || ardyRunning) return;
+		if (generationPendingRef.current || genRunningRef.current || ardyRunning) return;
+		const request = requestMotionGeneration("trail", "edit", { motionEdit: true });
+		if (!trailEdit) return;
 		// Same rule as runArdy: motionEdit rewrites a span of THE take, and a
 		// draft on the viewport is not it.
 		if (linePreviewUrl) {
@@ -8824,7 +11641,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		const seed = takeSeed();
 		if (seed === null) return;
 		body.seed = seed;
-		enqueueMotionJob({
+		const queued = enqueueMotionJob({
+			request,
 			charId: activeChar.id,
 			charIndex: activeCharIndex,
 			prompt,
@@ -8841,20 +11659,27 @@ function resizePromptClip(id, edge, rawFrame) {
 			recipeSeed: seed,
 			recipeLabel: ko("Trail fix", "궤적 수정"),
 		});
+		if (!queued) return;
+		generationPendingRef.current = true;
 		setTrailEdit(null);
 	}
 
 	/* ------------------------- motion job queue ---------------------------
-	 * One box, one job at a time: Generate never blocks, it enqueues. The
+	 * One box, one job at a time: explicit entry points suppress duplicate
+	 * requests through queueing and execution. The
 	 * payload is frozen at enqueue time; completion delivers the clip to the
 	 * REQUESTING character's layer, not whoever happens to be selected then. */
 	const [genQueue, setGenQueue] = useState([]);
 	const genRunningRef = useRef(false);
 	const genJobSeq = useRef(0);
 	function enqueueMotionJob(spec) {
+		const options = { body: spec.body, lineEditSupported: lineEditBackend };
+		spec.request.preflight(bridge, options);
+		if (motionPreflightReason(bridge, options)) return;
 		const id = `gen-${++genJobSeq.current}`;
 		setGenQueue((queue) => [...queue, { id, status: "queued", ...spec }]);
 		setToast(isKo ? `인물 ${spec.charIndex + 1} 모션 생성을 대기열에 넣었어요` : `Queued motion generation for Subject ${spec.charIndex + 1}`);
+		return true;
 	}
 	useEffect(() => {
 		if (genRunningRef.current) return;
@@ -8871,6 +11696,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				setGenQueue((queue) => queue.map((job) => (job.id === next.id ? { ...job, status: "error", error: message } : job)));
 			} finally {
 				genRunningRef.current = false;
+				generationPendingRef.current = false;
 			}
 		})();
 	}, [genQueue]);
@@ -8884,9 +11710,9 @@ function resizePromptClip(id, edge, rawFrame) {
 		setArdyOutcome(null);
 		// Replay notices belong to ONE run; the next run re-earns them.
 		setReplayNotices([]);
-		const inputMode = job.hasBlockEdits ? "edit" : job.body.posePin ? "pose" : "prompt";
-		const startedAt = Date.now();
-		track("motion:job_started", { input_mode: inputMode });
+		const request = job.request;
+		request.start();
+		controller.signal.addEventListener("abort", () => request.fail(new DOMException("", "AbortError")), { once: true });
 		let editCommitReport = null;
 		try {
 			const done = await ardyGenerate(
@@ -8921,13 +11747,14 @@ function resizePromptClip(id, edge, rawFrame) {
 				throw new Error(ko("ARDY returned motion without verified authored IK keys", "ARDY가 검증된 수동 IK 키 없이 모션을 반환했어요"));
 			}
 			setArdyOutcome({ ok: true, output: done.output, bytes: done.bytes, motionUrl: done.motionUrl, rotationDeg: job.rootRotationDeg });
-			track("motion:job_succeeded", { latency_bucket: bucketMs(Date.now() - startedAt), input_mode: inputMode });
+			request.succeed();
 			trackActivation("motion");
 			// Fetch and decode the real npz right away; decode errors are shown
 			// in the card, playback is never faked. The clip lands on the
 			// REQUESTING character, not whoever is selected now.
 			if (done.motionUrl) {
 				await deliverMotion(job, done.motionUrl);
+				if (!controller.signal.aborted && charactersRef.current.some((entry) => entry.id === job.charId)) request.apply();
 				commitTakeRecipe(job, done.motionUrl);
 			}
 			if (job.hasBlockEdits && job.ikState) {
@@ -8957,11 +11784,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				ok: false,
 				message: err?.name === "AbortError" ? ko("Cancelled", "취소됨") : err?.message || String(err),
 			});
-			track("motion:job_failed", {
-				latency_bucket: bucketMs(Date.now() - startedAt),
-				input_mode: inputMode,
-				error_code: err?.name === "AbortError" ? "aborted" : (err?.name || "error"),
-			});
+			request.fail(err, job.body.lineEdit && isLineEditUnsupported(err?.message) ? "unsupported_route" : undefined);
 			throw err;
 		} finally {
 			setArdyRunning(false);
@@ -9083,6 +11906,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				prompt: entry.recipe?.blocks?.[0]?.prompt ?? motion?.prompt ?? "",
 				rootRotationDeg: motion?.rotationDeg ?? activeChar.rot,
 				anchor: { x: motion?.anchorX ?? activeChar.x, z: motion?.anchorZ ?? activeChar.z },
+				calibration: motion?.sceneCalibration ?? null,
 			}, entry.motionUrl);
 		} catch {
 			/* loadMotion already surfaced the decode failure in the panel */
@@ -9101,15 +11925,57 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * leaves the button looking identical to the ones that work. Each reason
 	 * below is rendered as a line under its entry AND as data-disabled-reason,
 	 * which is also what the CDP surface gate reads. */
+	function selectedMotionReadiness({ fresh = false, clips = promptClips } = {}) {
+		const authored = clips.filter((clip) => clip.text.trim()).sort((a, b) => a.startFrame - b.startFrame);
+		const prompt = authored[0]?.text.trim() || ardyPrompt.trim();
+		const duration = motion && ikFrames.length > 0 ? motion.frames / motion.fps
+			: authored.length ? Math.max(ARDY_DURATION_MIN, Math.ceil(Math.max(...authored.map((clip) => clip.endFrame)) / TIMELINE_FPS))
+				: Math.round(Number(ardyDuration)) || ARDY_DURATION_MIN;
+		const clipFrames = duration * TIMELINE_FPS;
+		const segments = buildPromptSchedule(authored, clipFrames, prompt);
+		const hasPromptSchedule = segments.length > 1;
+		const editedSegments = motion?.url && hasPromptSchedule
+			? segments.filter((segment) => ikFrames.some((frame) => frame >= segment.startFrame && frame < segment.endFrame))
+			: [];
+		const hasBlockEdits = editedSegments.length > 0;
+		const pinPlan = planPosePin({
+			startFromPose: ardyStartFromPose,
+			poseFrame: posePlacementFrame(ardyPosePlacement, clipFrames, tlFrame),
+			hasPromptSchedule, hasBlockEdits, waypointMode, ikFrames, clipFrames, segments, editedSegments,
+		});
+		// Only the capability-bearing fields are needed here; the queue still
+		// preflights the actual frozen request before any generation HTTP call.
+		const body = { prompt, duration, posePin: pinPlan.pin };
+		if (hasBlockEdits) body.motionEdit = {};
+		else if (hasPromptSchedule) body.segments = toArdySegments(segments);
+		if (waypointMode) body.waypoints = [{}];
+		const recipe = takeRecipeRef.current;
+		if (!fresh && !hasBlockEdits && Number.isInteger(recipe?.seed)) body.replay = replayPayload(recipe);
+		if (!fresh && !hasBlockEdits && !hasPromptSchedule && motion?.url && preserveStrength > 0
+			&& Math.abs(motion.frames / TIMELINE_FPS - duration) <= 1 / ARDY_FPS + 1e-9) {
+			const blocks = blocksFromRequest(body, ARDY_FPS);
+			if (recipe?.blocks?.length === blocks.length
+				&& recipe.blocks.every((block, index) => block.prompt.trim() === blocks[index].prompt.trim())) body.preserve = {};
+		}
+		return motionReadiness(bridge, { body, lineEditSupported: lineEditBackend });
+	}
+	const generationBusy = ardyRunning || genQueue.some((job) => job.status === "queued" || job.status === "running");
+	const readinessState = selectedMotionReadiness();
+	const lineReadinessState = motionReadiness(bridge, { body: { lineEdit: true }, lineEditSupported: lineEditBackend });
+	const trailReadinessState = motionReadiness(bridge, { body: { motionEdit: true } });
+	function openMotionSetup(kind = "prompt") {
+		setMotionSetupKind(kind);
+		setMotionSetupReveal((value) => value + 1);
+	}
+
 	function refineDisabledReason() {
 		if (!motion) return ko("No take yet — block a scene first", "아직 테이크가 없어요 — 먼저 장면을 만들어 주세요");
 		if (!motion.url) return ko("This take has no bridge source — generate it once before refining", "이 테이크에는 브리지 원본이 없어요 — 한 번 생성해야 다듬을 수 있어요");
 		return "";
 	}
 	function sceneDisabledReason() {
-		if (bridge === null) return ko("Checking for the ARDY bridge…", "ARDY 브리지를 확인하는 중…");
-		if (!bridge.ok) return ko("The ARDY bridge is not connected — it reconnects on its own", "ARDY 브리지가 연결되지 않았어요 — 자동으로 다시 연결됩니다");
-		if (ardyRunning) return ko("A generation is already running", "이미 생성이 돌고 있어요");
+		if (bridge === null || bridgeChecking) return motionReadinessMessage("loading");
+		if (generationBusy) return ko("A generation is already running", "이미 생성이 돌고 있어요");
 		// NOT a line-edit preview, deliberately. Every other reason here is a
 		// standing capability the entry should be greyed for; a draft on the
 		// viewport lasts a second and a half, and a reason line appearing and
@@ -9187,30 +12053,39 @@ function resizePromptClip(id, edge, rawFrame) {
 	 * lightweight motionRef is persisted with the entry either way, so the
 	 * clip can be re-fetched after a reload. */
 	async function deliverMotion(job, motionUrl) {
+		const calibration = job.calibration ?? job.sceneCalibration ?? null;
+		const normalizedCalibration = normalizeMotionCalibration(calibration);
+		const sceneAnchorX = job.anchor.x + normalizedCalibration.offsetX;
+		const sceneAnchorZ = job.anchor.z + normalizedCalibration.offsetZ;
+		const sceneRotationDeg = job.rootRotationDeg + normalizedCalibration.yawDeg;
 		const motionRef = {
 			url: motionUrl,
 			prompt: job.prompt,
-			rotationDeg: job.rootRotationDeg,
-			anchorX: job.anchor.x,
-			anchorZ: job.anchor.z,
+			rotationDeg: sceneRotationDeg,
+			anchorX: sceneAnchorX,
+			anchorZ: sceneAnchorZ,
 		};
+		if (calibration && typeof calibration === "object") motionRef.calibration = normalizedCalibration;
 		setCharacters((list) => list.map((entry) => entry.id === job.charId ? { ...entry, motionRef } : entry));
 		if (job.charId === loadedLayerCharRef.current) {
-			await loadMotion(motionUrl, job.prompt, job.rootRotationDeg);
+			await loadMotion(motionUrl, job.prompt, job.rootRotationDeg, null, job.charId, null, { calibration });
 			return;
 		}
 		// Inbound boundary for a clip delivered to a non-active layer.
-		const decoded = retimeMotion(await loadMotionFromUrl(motionUrl), TIMELINE_FPS);
+		const retimed = retimeMotion(await loadMotionFromUrl(motionUrl), TIMELINE_FPS);
+		const decoded = applyMotionCalibration(retimed, { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 }).motion;
 		const clip = {
 			...decoded,
 			url: motionUrl,
 			prompt: job.prompt,
-			anchorX: job.anchor.x,
-			anchorZ: job.anchor.z,
+			anchorX: sceneAnchorX,
+			anchorZ: sceneAnchorZ,
 			anchorFrame: 0,
-			rotationDeg: job.rootRotationDeg,
+			rotationDeg: sceneRotationDeg,
+			sceneCalibration: normalizedCalibration,
 			editSegments: createMotionEdit(decoded.frames),
 		};
+		if (calibration && typeof calibration === "object") clip.sceneCalibration = normalizedCalibration;
 		// Same stature rule as loadMotion, on the layer that asked for the clip.
 		const scale = characterScaleFor(decoded);
 		motionFullRef.current.set(job.charId, clip);
@@ -9222,23 +12097,39 @@ function resizePromptClip(id, edge, rawFrame) {
 	/** After a scene (re)load, re-fetch every persisted clip reference and
 	 * rebuild the session motions. The bridge may be gone — failures just
 	 * leave the character posed, never an error the user must act on. */
-	function restoreMotionRefs(list) {
+	async function restoreMotionRefs(list) {
+		const epoch = ++restoreEpochRef.current;
+		const motions = projectMotionsRef.current;
+		try { const db = await openMotionDb(); const ids = [...new Set(list.map((entry) => entry.motionRef?.motionId?.toLowerCase()).filter(Boolean))]; const cached = await Promise.all(ids.map((id) => getMotion(db, id))); cached.filter(Boolean).forEach((record) => motions.set(record.motionId.toLowerCase(), record)); db.close(); } catch (error) { console.warn("[cozyclay] could not restore motion cache", error); }
 		for (const entry of list) {
-			if (!entry.motionRef?.url) continue;
+			const source = resolveMotionSource(entry.motionRef, motions);
+			if (source.kind === "missing") {
+				setToast(isKo ? `저장된 모션이 누락되었습니다 (${entry.subject || entry.id})` : `Saved motion is missing for ${entry.subject || entry.id}`);
+				continue;
+			}
+			const load = source.kind === "embedded" ? decodeMotionResource(source.record) : loadMotionFromUrl(source.url);
+			load.then((raw) => {
+				if (epoch !== restoreEpochRef.current) return;
 			// Inbound boundary: a re-fetched clip is retimed exactly like a
 			// freshly generated one, so a reload cannot resurrect 20 fps frames.
-			loadMotionFromUrl(entry.motionRef.url).then((raw) => {
-				const decoded = retimeMotion(raw, TIMELINE_FPS);
+			const sourceUrl = source.kind === "url" ? source.url : entry.motionRef?.url;
+				const retimed = retimeMotion(raw, TIMELINE_FPS);
+				const normalizedCalibration = normalizeMotionCalibration(entry.motionRef.calibration);
+				const decoded = applyMotionCalibration(retimed, { ...normalizedCalibration, yawDeg: 0, offsetX: 0, offsetZ: 0 }).motion;
 				const clip = {
 					...decoded,
-					url: entry.motionRef.url,
+					url: sourceUrl,
+					sourceBytes: raw.sourceBytes,
 					prompt: entry.motionRef.prompt,
 					anchorX: entry.motionRef.anchorX,
 					anchorZ: entry.motionRef.anchorZ,
 					anchorFrame: 0,
 					rotationDeg: entry.motionRef.rotationDeg,
+					sceneCalibration: normalizedCalibration,
 					editSegments: createMotionEdit(decoded.frames),
 				};
+				if (entry.motionRef.calibration) clip.sceneCalibration = entry.motionRef.calibration;
+				if (entry.motionRef.studioTakeId) clip.studioTakeId = entry.motionRef.studioTakeId;
 				motionFullRef.current.set(entry.id, clip);
 				setCharacters((current) => current.map((item) => item.id === entry.id
 					// The stature rides inside the npz, so a restored take
@@ -9253,14 +12144,28 @@ function resizePromptClip(id, edge, rawFrame) {
 					setTlFrameCount((count) => Math.max(count, decoded.frames));
 					setTlFps(decoded.fps);
 				}
-			}).catch(() => {
+			}).catch((error) => {
+				if (epoch !== restoreEpochRef.current) return;
+				setProjectManifest((current) => {
+					const id = entry.motionRef?.motionId?.toLowerCase();
+					if (!id || !current?.items?.some((item) => item.kind === "motion" && item.id === id)) return current;
+					const items = current.items.map((item) => item.kind === "motion" && item.id === id
+						? { ...item, status: "missing", url: undefined }
+						: item);
+					const totals = { embedded: 0, external: 0, missing: 0, bytes: 0 };
+					for (const item of items) {
+						totals[item.status] += 1;
+						if (Number.isFinite(item.bytes)) totals.bytes += item.bytes;
+					}
+					return { items, totals, missing: items.filter((item) => item.status === "missing") };
+				});
 				// A saved take that fails to refetch used to vanish silently — the
 				// user would find a merely posed character and assume their motion
 				// was lost. Name it and offer the reload path.
 				const subject = entry.subject || entry.id;
 				setToast(isKo
-					? `저장된 모션을 다시 불러오지 못했어요 (${subject}) — 새로고침하거나 모션을 다시 생성해 주세요`
-					: `Saved motion could not be restored for ${subject} — reload or generate it again`);
+					? `저장된 모션을 다시 불러오지 못했어요 (${subject}) [${error?.code || "decode"}]`
+					: `Saved motion could not be restored for ${subject} [${error?.code || "decode"}]`);
 			});
 		}
 	}
@@ -9269,8 +12174,358 @@ function resizePromptClip(id, edge, rawFrame) {
 		ardyAbortRef.current?.abort();
 	}
 
+	// Studio native ports. Kept together so the binding test executes these exact
+	// publication/history functions, not a substitute editor or parallel journal.
+	function readStudioCamera() {
+		const live = liveStateRef.current, camera = shotCamRef.current;
+		if (!camera) return null;
+		const position = { x: camera.position.x, y: camera.position.y, z: camera.position.z };
+		const direction = forwardFrom(look.current.yaw, look.current.pitch);
+		return { position, lookAt: { x: position.x + direction.x, y: position.y + direction.y, z: position.z + direction.z },
+			focalMm: fovToFocalMm(camera.fov * Math.PI / 180, live.filmback.sensorId, live.filmback.aspectRatio),
+			sensorId: live.filmback.sensorId, slate: "Shot camera" };
+	}
+	function readStudioState() {
+		const live = liveStateRef.current;
+		const list = charactersRef.current.map(c => c.id === loadedLayerCharRef.current ? {
+			...c, layer: { ...c.layer, waypoints: bufferRef.current.waypoints, promptClips: bufferRef.current.promptClips }, sessionMotion: bufferRef.current.motion,
+		} : c);
+		const targets = new Map(list.map(c => [c.id, { rig: live.rigs[c.id], motion: c.sessionMotion ?? null,
+			ikState: c.id === loadedLayerCharRef.current ? ikStateRef.current : ikStatesRef.current.get(c.id),
+			calibration: c.sessionMotion?.sceneCalibration, protectedFrames: c.id === loadedLayerCharRef.current ? physicsOptions.protectedFrames : [],
+			preserveAuthoredMotion: Boolean(c.layer?.waypoints?.length) }]));
+		return { host: { workspaceId: liveWorkspaceIdRef.current, documentEpoch: studioDocumentEpochRef.current,
+				sceneId: activeSceneIdRef.current, sceneEpoch: studioSceneEpochRef.current }, workspaceHandle: liveWorkspaceHandleRef.current,
+			sceneName: live.scenes.find(s => s.id === activeSceneIdRef.current)?.name ?? "Untitled Scene", aspect: live.stage.shotAspect, stage: live.stage,
+			objects: storeRef.current.objects, characters: list, targets, shots: live.shots, frameCount: live.timeline.frameCount,
+			selection: live.studioSelection, activeCharacterId: live.activeCharacterId, selectedShotId: live.studioShotId,
+			view: live.studioView, camera: live.studioCamera ?? readStudioCamera(), filmback: live.filmback, manual: manualCameraOverrideRef.current,
+			bridgeReady: Boolean(bridge?.ok), busy: storeRef.current.present() !== storeRef.current.objects || Boolean(studioGestureRef.current ||
+				ikBodyDragRef.current || lineDragRef.current || lineDrawRef.current || linePinDragRef.current || live.studioPhysicsRunning || recRef.current) };
+	}
+	function publishStudioCamera(camera, manual) {
+		const angles = aimAt(camera.position, camera.lookAt), live = liveStateRef.current;
+		const fov = focalMmToFov(camera.focalMm, live.filmback.sensorId, live.filmback.aspectRatio) * 180 / Math.PI;
+		Object.assign(look.current, angles); shotCameraPosRef.current = { ...camera.position };
+		if (shotCamRef.current) {
+			shotCamRef.current.position.copy(camera.position); shotCamRef.current.rotation.order = "YXZ";
+			shotCamRef.current.rotation.set(angles.pitch, angles.yaw, 0); shotCamRef.current.fov = fov; shotCamRef.current.updateProjectionMatrix();
+		}
+		manualCameraOverrideRef.current = manual; live.camera = camera.position; live.fovDeg = fov; live.studioCamera = camera;
+		setCameraPos(camera.position); setFovDeg(fov); setCameraPresetId(null);
+	}
+	/** The authored stage envelope (key light, environment, filmback) published
+	 * as one body: the live read model first, so the next synchronous read sees
+	 * it, then the React state the foldouts and the save path own. */
+	function publishStudioStage(stage) {
+		liveStateRef.current.stage = stage;
+		setKeyLight(stage.keyLight); setEnvironmentImage(stage.environmentImage ?? null);
+		setEnvironment(stage.environment); setStyle(stage.style); setHasEnvSheet(stage.hasEnvSheet === true);
+		setShotAspectKey(stage.shotAspect); setCameraPresetId(stage.cameraPresetId ?? null); setSensorFormat(stage.sensorId);
+	}
+	function snapshotStudioDomain(domain, targetId) {
+		const state = readStudioState();
+		if (domain === "shot") return { shots: state.shots, camera: state.camera, manual: state.manual };
+		if (domain === "stage") return { stage: state.stage };
+		if (domain === "cast") return { characters: state.characters };
+		const target = state.targets.get(targetId);
+		return { character: state.characters.find(c => c.id === targetId), fullMotion: motionFullRef.current.get(targetId),
+			ikState: { ...createIkState(), keys: copyPhysicsKeys(target?.ikState?.keys ?? new Map()), tracked: new Set(target?.ikState?.tracked ?? []) },
+			frameCount: state.frameCount, committedIkEdits: targetId === loadedLayerCharRef.current ? committedIkEdits : [],
+			renderer: target?.rig ? snapshotExportRig(target.rig) : null };
+	}
+	function publishStudioCharacters(next, authored = false) {
+		charactersRef.current = next; liveStateRef.current.characters = next;
+		(authored ? editCharacters : setCharacters)(next);
+	}
+	/** The active character's layer lives in the editing buffer, and the read
+	 * model folds that buffer back over the cast. A published or restored prompt
+	 * schedule or root path has to reach it in the same tick, or the next read
+	 * would revert it. */
+	function syncStudioLayerBuffer(rows) {
+		const layer = rows.find(entry => entry.id === loadedLayerCharRef.current)?.layer;
+		const changed = key => Array.isArray(layer?.[key]) && JSON.stringify(layer[key]) !== JSON.stringify(bufferRef.current[key]);
+		const clips = changed("promptClips"), path = changed("waypoints");
+		if (!clips && !path) return;
+		bufferRef.current = { ...bufferRef.current, ...(clips ? { promptClips: layer.promptClips } : {}), ...(path ? { waypoints: layer.waypoints } : {}) };
+		if (clips) setPromptClips(layer.promptClips);
+		if (path) setWaypoints(layer.waypoints);
+	}
+	function recordStudioHistory(domain, targetId, historyEntryId) {
+		const tick = ++opClockRef.current;
+		charHistoryRef.current.past.push({ tick, snapshot: snapshotCast(domain === "shot"),
+			studio: { domain, targetId, historyEntryId, objects: storeRef.current.objects, state: snapshotStudioDomain(domain, targetId) } });
+		charHistoryRef.current.future = [];
+		studioHistoryRef.current.set(historyEntryId, { tick, domain });
+	}
+	/** Run one registry action for the agent and bind the native history entry
+	 * it pushed to a journal id, so undo_edit (and Ctrl+Z) can revert it. Shot,
+	 * cast and motion entries gain the Studio restore state (a motion entry the
+	 * one character `targetId` names), which republishes the live read model
+	 * synchronously; object entries are the store's own. */
+	function recordStudioAction(domain, run, targetId = null) {
+		const historyEntryId = crypto.randomUUID();
+		if (domain === "objects") {
+			const tick = lastObjectOpRef.current, result = run();
+			if (lastObjectOpRef.current === tick) return { result, historyEntryId: null };
+			liveStateRef.current.objects = storeRef.current.objects;
+			studioHistoryRef.current.set(historyEntryId, { domain: "objects", tick: lastObjectOpRef.current, depth: storeRef.current.depths().past });
+			return { result, historyEntryId };
+		}
+		const tick = opClockRef.current, objects = storeRef.current.objects, state = snapshotStudioDomain(domain, targetId);
+		const result = run(), top = charHistoryRef.current.past.at(-1);
+		if (!top || top.tick <= tick || top.studio) return { result, historyEntryId: null };
+		top.studio = { domain, targetId, historyEntryId, objects, state };
+		studioHistoryRef.current.set(historyEntryId, { tick: top.tick, domain });
+		return { result, historyEntryId };
+	}
+	function publishStudioMotion(targetId, state) {
+		const current = readStudioState();
+		publishStudioCharacters(current.characters.map(c => c.id === targetId ? state.character : c));
+		if (state.fullMotion) motionFullRef.current.set(targetId, state.fullMotion); else motionFullRef.current.delete(targetId);
+		const layer = { ...createIkState(), keys: copyPhysicsKeys(state.ikState.keys), tracked: new Set(state.ikState.tracked) };
+		ikStatesRef.current.set(targetId, layer);
+		if (loadedLayerCharRef.current === targetId) {
+			ikStateRef.current = layer;
+			bufferRef.current = { waypoints: state.character.layer?.waypoints ?? [], promptClips: state.character.layer?.promptClips ?? [], motion: state.character.sessionMotion ?? null, ik: layer };
+			setWaypoints(bufferRef.current.waypoints); setPromptClips(bufferRef.current.promptClips); setMotion(bufferRef.current.motion);
+			setCommittedIkEdits(state.committedIkEdits); setIkTick(n => n + 1);
+		}
+		liveStateRef.current.timeline.frameCount = state.frameCount; frameCountRef.current = state.frameCount; setTlFrameCount(state.frameCount);
+		if (state.renderer) restoreExportRig(state.renderer);
+	}
+	function stepStudioHistory(redo) {
+		const history = charHistoryRef.current, from = redo ? history.future : history.past, to = redo ? history.past : history.future;
+		const top = from.at(-1);
+		// Object undo/redo advances the global clock, even when it returns to the
+		// exact object state captured by this Studio entry. Use that boundary
+		// instead of hiding older Studio history behind the traversal tick.
+		if (!top?.studio || top.studio.objects !== storeRef.current.objects) return false;
+		const entry = top.studio;
+		to.push({ ...top, studio: { ...entry, state: snapshotStudioDomain(entry.domain, entry.targetId) } }); from.pop();
+		if (entry.domain === "shot") {
+			liveStateRef.current.shots = entry.state.shots; setShots(entry.state.shots); publishStudioCamera(entry.state.camera, entry.state.manual);
+		} else if (entry.domain === "stage") publishStudioStage(entry.state.stage);
+		else if (entry.domain === "cast") { publishStudioCharacters(entry.state.characters); syncStudioLayerBuffer(entry.state.characters); }
+		else publishStudioMotion(entry.targetId, entry.state);
+		sceneRevisionRef.current++; ++opClockRef.current;
+		setToast(redo ? ko("Redone", "다시 실행됨") : ko("Undone", "실행 취소됨")); return true;
+	}
+	function commitStudioDraft(payload) {
+		const historyEntryId = crypto.randomUUID();
+		if (payload.domain === "objects") {
+			storeRef.current.applyAtomic(() => payload.draft);
+			liveStateRef.current.objects = storeRef.current.objects;
+			studioHistoryRef.current.set(historyEntryId, { domain: "objects", tick: lastObjectOpRef.current, depth: storeRef.current.depths().past });
+		} else {
+			recordStudioHistory(payload.domain, null, historyEntryId);
+			if (payload.domain === "stage") publishStudioStage(payload.draft);
+			else if (payload.domain === "cast") { publishStudioCharacters(payload.draft, true); syncStudioLayerBuffer(payload.draft); }
+			else { liveStateRef.current.shots = payload.draft.shotDocument.shots; editShots(payload.draft.shotDocument.shots); publishStudioCamera(payload.draft.camera, payload.draft.manual); }
+		}
+		return { historyEntryId };
+	}
+	function commitStudioMotion(payload) {
+		const id = payload.binding.characterId, before = readStudioState(), target = before.targets.get(id);
+		const character = before.characters.find(c => c.id === id);
+		const clips = payload.schedule.blocks.map((block, index) => ({ id: `${payload.takeId}-beat-${index}`, startFrame: block.startFrame, endFrame: block.endFrameExclusive, text: block.text }));
+		const take = { ...payload.motion, studioTakeId: payload.takeId, prompt: "", sceneCalibration: payload.calibration };
+		// The same persistable ref deliverMotion saves for a UI take, placed where
+		// this take was placed, so restoreMotionRefs rebuilds it after a reload.
+		const motionRef = { url: take.url, prompt: payload.schedule.blocks.map(block => block.text).join(" "),
+			rotationDeg: take.rotationDeg, anchorX: take.anchorX, anchorZ: take.anchorZ, calibration: payload.calibration, studioTakeId: payload.takeId };
+		if (take.motionId) motionRef.motionId = take.motionId;
+		const next = { ...character, scale: payload.scale, sessionMotion: take, motionRef, layer: { ...character.layer, promptClips: clips } };
+		recordStudioHistory("motion", id, payload.historyEntryId);
+		const renderer = target?.rig ? snapshotExportRig(target.rig) : null;
+		publishStudioMotion(id, { character: next, fullMotion: payload.sourceMotion, ikState: payload.ikState,
+			frameCount: id === loadedLayerCharRef.current ? Math.max(payload.schedule.frameCount, before.view.frame + 1, ...before.shots.map(s => s.endFrame + 1)) : before.frameCount,
+			committedIkEdits: [], renderer: null });
+		if (target?.rig) {
+			if (id === loadedLayerCharRef.current) beginPlaybackOn(target.rig);
+			const resolved = resolveIkRig(target.rig), layer = ikStatesRef.current.get(id);
+			if (resolved) Object.assign(layer, resolved, { rig: target.rig });
+			poseMemberAtFrame(target.rig, take, layer, before.view.frame, IK_CORRECTION_BLEND_FRAMES);
+			target.rig.updateMatrixWorld(true);
+		}
+		// Preimage bones live on the native entry, not on the installed candidate.
+		charHistoryRef.current.past.at(-1).studio.state.renderer = renderer;
+		markSemanticEdit("characters", before.characters, charactersRef.current);
+		// Store the take's bytes the way a project save embeds a take
+		// (collectProjectSerialized): the same record, caches and motion store, so
+		// the ref's motionId resolves after a reload without the bridge.
+		if (take.sourceBytes) (async () => {
+			let record = motionEncodingCacheRef.current.get(take.sourceBytes);
+			if (!record) {
+				record = await encodeMotionResource(take.sourceBytes, { prompt: motionRef.prompt, sourceUrl: motionRef.url });
+				motionEncodingCacheRef.current.set(take.sourceBytes, record);
+			}
+			projectMotionsRef.current.set(record.motionId.toLowerCase(), record);
+			const db = await openMotionDb();
+			try { await putMotion(db, record); } finally { db.close(); }
+		})().catch((error) => console.warn("[cozyclay] could not cache motions", error));
+	}
+	function studioBounds({ entity, frame, state }) {
+		if (entity.renderer) {
+			if (entity.attach) throw new StudioProtocolError("TARGET_NOT_READY", "Attached bounds require an evaluated attachment frame.");
+			const at = objectTransformAt(entity, frame, { frameCount: state.frameCount, fps: 24 });
+			const object = at ? { ...entity, ...at } : entity;
+			const matrix = new THREE.Matrix4().compose(new THREE.Vector3(object.x, object.y ?? 0, object.z),
+				new THREE.Quaternion().setFromEuler(new THREE.Euler((object.rotX ?? 0) * Math.PI / 180, (object.rot ?? 0) * Math.PI / 180, (object.rotZ ?? 0) * Math.PI / 180)),
+				new THREE.Vector3(object.scaleX, object.scaleY, object.scaleZ));
+			const box = new THREE.Box3(new THREE.Vector3(-object.footprint.width / 2, 0, -object.footprint.depth / 2), new THREE.Vector3(object.footprint.width / 2, object.height, object.footprint.depth / 2));
+			box.applyMatrix4(matrix); return { min: { ...box.min }, max: { ...box.max } };
+		}
+		const raw = readStudioState();
+		const original = raw.characters.find(c => c.id === entity.id) ?? raw.characters.find(c => c.model === entity.model);
+		const target = original && raw.targets.get(original.id);
+		if (!target?.rig) throw new StudioProtocolError("TARGET_NOT_READY", "Character bounds require its loaded rig.");
+		const rig = cloneSkeleton(target.rig), parent = new THREE.Group();
+		const originals = [], copies = [];
+		target.rig.traverse(node => originals.push(node)); rig.traverse(node => copies.push(node));
+		rig.userData.poseBind = new Map(originals.flatMap((node, index) => {
+			const bind = target.rig.userData.poseBind?.get(node);
+			return bind ? [[copies[index], structuredClone(bind)]] : [];
+		}));
+		parent.matrixAutoUpdate = false; parent.matrix.copy(target.rig.parent?.matrixWorld ?? new THREE.Matrix4()); parent.add(rig);
+		try {
+			if (target.motion) applyMotionFrame(rig, target.motion, sampleAt({ frameCount: target.motion.frames, motion: target.motion }, null, frame).motionFrame);
+			// The clone shares the source rig's bind pose, so its contact radii
+			// and heights are the same numbers: measure the source once and
+			// hand them over instead of re-scanning every vertex per query (#413).
+			resolveIkRig(target.rig);
+			shareContactMeasurements(target.rig, rig);
+			const resolved = resolveIkRig(rig);
+			if (resolved && target.ikState?.keys.size) ikEvaluate(resolved.chains, target.ikState, frame, resolved.fkJoints, target.motion ? IK_CORRECTION_BLEND_FRAMES : 0);
+			parent.updateMatrixWorld(true);
+			const transform = c => new THREE.Matrix4().compose(new THREE.Vector3(c.x, c.y ?? 0, c.z), new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (c.rot ?? 0) * Math.PI / 180), new THREE.Vector3().setScalar(c.scale ?? 1));
+			const delta = transform(entity).multiply(transform(original).invert());
+			const box = new THREE.Box3().setFromObject(rig, true).applyMatrix4(delta);
+			return { min: { ...box.min }, max: { ...box.max } };
+		} finally {
+			const skeletons = new Set(); rig.traverse(n => { if (n.isSkinnedMesh) skeletons.add(n.skeleton); });
+			for (const skeleton of skeletons) skeleton.dispose(); parent.remove(rig);
+		}
+	}
+	function operateStudio(args, state) {
+		let selection = args.selection === undefined ? state.selection : args.selection;
+		if (selection) {
+			const found = selection.kind === "scene" ? selection.id === state.host.sceneId : selection.kind === "camera" ? selection.id === "camera" :
+				(selection.kind === "object" ? state.objects : state.characters).some(row => row.id === selection.id);
+			if (!found) throw new StudioProtocolError("STALE_TARGET", "Selection is not present in this document.");
+		}
+		const shot = args.shotId === undefined ? null : state.shots.find(s => s.id === args.shotId);
+		if (args.shotId !== undefined && !shot) throw new StudioProtocolError("STALE_TARGET", "Shot is not present in this document.");
+		const frame = args.frame ?? shot?.startFrame ?? state.view.frame;
+		if (frame >= state.frameCount) throw new StudioProtocolError("INVALID_RANGE", "Frame is outside the timeline.");
+		const view = { ...state.view, ...args.view, frame, mode: args.mode ?? state.view.mode, playing: args.playing ?? state.view.playing };
+		const live = liveStateRef.current; live.studioSelection = selection; live.studioView = view;
+		live.studioShotId = args.shotId ?? shotAtFrame(state.shots, frame)?.id ?? null;
+		live.timeline.currentFrame = frame; tlFrameRef.current = frame;
+		if (selection && ["character", "rig"].includes(selection.kind)) { live.activeCharacterId = selection.id; setActiveCharacterId(selection.id); }
+		setSelectedHierarchyId(selection ? selection.kind === "object" ? `object:${selection.id}` : ["character", "rig"].includes(selection.kind) ? `character:${selection.id}` : selection.kind === "camera" ? "camera" : "shot" : "");
+		setTlFrame(frame); setWorkflowMode(view.mode); setLookThroughShot(view.lookThrough); setGridView(view.grid); setAutoColor(view.autoColor); setTlPlaying(view.playing);
+	}
+	const studioGestureRef = useRef(false);
+	// The Studio turn authors the scene through its own families and never
+	// returns an image, so there is no image action for this host to accept.
+	// The Workflow dock keeps its half of that contract.
+	useEffect(() => {
+		if (embedMode) return;
+		const down = event => { if (event.target.closest?.("canvas, .inspector-scroll, .tl-body, .plan-board")) studioGestureRef.current = true; };
+		const up = () => { studioGestureRef.current = false; };
+		window.addEventListener("pointerdown", down, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
+		return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); };
+	}, [embedMode]);
+	const selectedStudioChar = charIdFromHierarchyId(parseRigNodeId(selectedHierarchyId)?.rowId ?? selectedHierarchyId);
+	Object.assign(liveStateRef.current, {
+		studioSelection: selectedSceneObjectId ? { kind: "object", id: selectedSceneObjectId, hierarchyId: selectedHierarchyId } :
+			selectedStudioChar ? { kind: "character", id: selectedStudioChar, hierarchyId: selectedHierarchyId } : selectedHierarchyId === "camera" ? { kind: "camera", id: "camera" } : { kind: "scene", id: activeSceneId },
+		studioShotId: activeShot?.id ?? null,
+		studioPhysicsRunning: autoPhysicsRunning,
+		studioView: { mode: workflowMode, frame: tlFrame, playing: tlPlaying, lookThrough: lookThroughShot, grid: gridView, autoColor },
+	});
+	studioPortsRef.current = {
+		read: readStudioState, revision: sceneRevisionRef, bounds: studioBounds, commit: commitStudioDraft, commitMotion: commitStudioMotion,
+		operate: operateStudio, undo: undoScene, stepHistory: stepStudioHistory, capture: () => liveHandlersRef.current.capture_framing_png({}),
+		// The pose library a character.pose patch resolves its id against.
+		poses: () => [DEFAULT_POSE, ...customPoses],
+		loadArtifact: (artifact, options) => {
+			// Keep the server-pinned URL. Stripping the origin would silently fetch
+			// from a different bridge after a reconnect. The bridge owner must allow
+			// CORS or supply a pinned same-origin artifact proxy; never use load_motion.
+			return loadMotionFromUrl(artifact.url, options);
+		},
+		ikRevision: (id, stamp) => {
+			const prior = studioIkStampsRef.current.get(id);
+			if (!prior || prior.stamp !== stamp) studioIkStampsRef.current.set(id, { stamp, revision: (prior?.revision ?? 0) + 1 });
+			return studioIkStampsRef.current.get(id).revision;
+		},
+		isRetained: receipt => Boolean(receipt?.undo && studioHistoryRef.current.has(receipt.undo.historyEntryId)),
+		canUndo: receipt => {
+			const entry = receipt?.undo && studioHistoryRef.current.get(receipt.undo.historyEntryId);
+			if (!entry || receipt.revision.after !== sceneRevisionRef.current) return false;
+			return entry.domain === "objects" ? entry.tick === lastObjectOpRef.current && entry.tick >= (charHistoryRef.current.past.at(-1)?.tick ?? 0) && entry.depth === storeRef.current.depths().past :
+				entry.tick === charHistoryRef.current.past.at(-1)?.tick && entry.tick > lastObjectOpRef.current;
+		},
+		actions: () => studioActionsRef.current,
+		recordAction: recordStudioAction,
+	};
+	studioActionHandlersRef.current = {
+		// Shots and objects come from the synchronously published read model, so
+		// an action sees its own edit before React renders it.
+		state: () => ({
+			shots: liveStateRef.current.shots, objects: storeRef.current.objects, characters: charactersRef.current, frame: tlFrame, frameCount: tlFrameCount,
+			selectedObjectId: selectedSceneObjectId, activeCharacterId: activeChar?.id ?? null,
+			promptBlockCount: promptClips.filter((clip) => clip.text.trim()).length,
+			generating: Boolean(generationPendingRef.current || genRunningRef.current || generationBusy),
+			motionReady: bridge !== null && !bridgeChecking,
+		}),
+		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
+		runAllPromptBlocks, duplicateSelectedSceneObject,
+		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
+		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject, setShotCameraRail, clearShotCameraRail,
+		choosePartColours, setGuideMode, setInsetCollapsed,
+	};
+	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
+	/** UI door into the shared registry. Refusal messages are written for the
+	 * model, so a person only ever sees the localized `uiMessage` a thrower
+	 * attached (studioActionRefusal); any other refusal stays silent, as the
+	 * controls always were. */
+	function runStudioAction(id, args = {}) {
+		try {
+			return studioActionsRef.current.run(id, args);
+		} catch (error) {
+			if (!(error instanceof StudioProtocolError)) throw error;
+			if (error.uiMessage) setToast(error.uiMessage);
+			return null;
+		}
+	}
+	if (!studioBindingRef.current) {
+		const delegates = Object.fromEntries(Object.keys(studioPortsRef.current).filter(key => key !== "revision").map(key => [key, (...args) => studioPortsRef.current[key](...args)]));
+		studioBindingRef.current = createStudioAppBinding({ ...delegates, revision: sceneRevisionRef });
+		studioBindingRef.current.stepHistory = redo => studioPortsRef.current.stepHistory(redo);
+		studioBindingRef.current.publishSemantic = (domain, after) => {
+			if (domain === "characters" && Array.isArray(after)) { charactersRef.current = after; liveStateRef.current.characters = after; }
+			if (domain === "shots") liveStateRef.current.shots = after;
+			if (domain === "promptClips") bufferRef.current.promptClips = after;
+		};
+		Object.assign(liveHandlersRef.current, studioBindingRef.current.handlers);
+	}
+	useEffect(() => () => studioBindingRef.current?.dispose(), []);
+
+	const projectStatus = projectSaveState === "saving"
+		? ko("Saving…", "저장 중…")
+		: projectSaveState === "error"
+			? ko("Save failed", "저장 실패")
+			: projectName === null
+				? ko("Not saved", "저장되지 않음")
+				: projectDirty
+					? ko("Unsaved changes", "저장되지 않은 변경사항")
+					: ko("Saved", "저장됨");
+
 	return (
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode}>
+		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}>
 			<header className="topbar">
 				<div className="logo">
 					<span className="wordmark">
@@ -9294,34 +12549,165 @@ function resizePromptClip(id, edge, rawFrame) {
 							<button type="button" role="menuitem" onClick={() => { setProjectStartupOpen(false); setProjectBrowserOpen(true); }}>{ko("Open Project…", "프로젝트 열기…")}</button>
 							<button type="button" role="menuitem" onClick={() => saveProject(false)}>{ko("Save Project", "프로젝트 저장")}</button>
 							<button type="button" role="menuitem" onClick={() => saveProject(true)}>{ko("Save Project As…", "다른 이름으로 저장…")}</button>
+							<ResourceStatus manifest={projectManifest} compact />
 						</div>
 					)}
 				</div>
 				<div className="topbar-actions">
-					<button
-						type="button"
-						className="auto-color-toggle"
-						aria-pressed={autoColor}
-						title={ko(
-							"Distinct display colors per object — captures include them while on",
-							"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
-						)}
-						onClick={() => {
-							setAutoColor((on) => {
-								saveAutoColor(!on);
-								return !on;
-							});
-						}}
-					>
-						{ko("Auto Color", "자동 색")}
-					</button>
+					<a className="topbar-action workflow-topbar-link" href="/workflow/" aria-label={ko("Open Workflow", "워크플로 열기")}>{ko("Workflow", "워크플로우")}</a>
+					<div className="project-actions" aria-label={ko("Project actions", "프로젝트 작업")}>
+						<button
+							type="button"
+							className="topbar-action project-save-action"
+							data-testid="topbar-save"
+							disabled={projectSaveState === "saving"}
+							onClick={() => void saveProject(false)}
+						>
+							{projectSaveState === "saving" ? ko("Saving…", "저장 중…") : ko("Save", "저장")}
+						</button>
+						{/* One Export menu for every delivery this studio makes (#193,
+						    R4). The keyframe pack leads because it is the pack an AI video
+						    tool is fed; items whose precondition is missing are not
+						    rendered disabled — the footer line says what to author first. */}
+						{/* One element cannot carry two data-testids: the topbar contract
+						    keeps the attribute, the menu contract gets the same handle as an
+						    id, so both selectors still reach this one trigger. */}
+						<div className="export-menu-wrap">
+							<button
+								type="button"
+								className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
+								data-testid="topbar-export"
+								id="export-menu-trigger"
+								ref={exportMenuTriggerRef}
+								aria-expanded={exportMenuOpen}
+								aria-haspopup="menu"
+								title={ko("Exports: keyframe pack, video, passes, storyboard, cut list", "내보내기: 키프레임 팩·영상·패스·스토리보드·컷 목록")}
+								onClick={(event) => {
+									exportShotIdRef.current = null;
+									// The panel is fixed to the viewport and anchored to this
+									// trigger in JS, the way it was in the PlayView bar: one
+									// popover geometry for the studio's export menu wherever
+									// its trigger lives.
+									const box = event.currentTarget.getBoundingClientRect();
+									const menuWidth = Math.min(340, window.innerWidth - 16);
+									setExportMenuAnchor({
+										top: box.bottom + 6,
+										right: Math.min(Math.max(8, window.innerWidth - box.right), Math.max(8, window.innerWidth - menuWidth - 8)),
+									});
+									setExportMenuOpen((open) => !open);
+								}}
+							>
+								{ko("Export", "내보내기")}
+								{exportStatus && <span className="export-trigger-state" data-phase={exportStatus.phase}>{exportPhaseLabel(exportStatus.phase)}</span>}
+								<span className="caret">▾</span>
+							</button>
+							{exportMenuOpen && (
+								<div
+									className="project-menu export-menu"
+									role="menu"
+									style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
+								>
+									{!(resultOpen && exportStatus?.kind === "frame") && exportFeedback()}
+									<button
+										type="button"
+										role="menuitem"
+										className="export-menu-primary"
+										data-testid="export-keyframe-pack"
+										disabled={!shots.length || recState === "recording"}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={shots.length
+											? ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")
+											: ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다")}
+										onClick={(event) => void exportKeyframePacks(event.shiftKey, exportShotIdRef.current)}
+									>
+										{ko("Keyframe pack (zip)", "키프레임 팩 (zip)")}
+										<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
+									</button>
+									{(shots.length > 0 || hasCameraKeys || motion) && (
+										<button
+											type="button"
+											role="menuitem"
+											data-testid="export-video"
+											disabled={recState === "recording"}
+											title={ko("Render the shot to an MP4 — camera move and character motion, no editor chrome", "샷을 MP4로 렌더링합니다 — 카메라 움직임과 캐릭터 모션만, 편집 UI는 제외")}
+											onClick={() => void exportShotVideo({ shotId: exportShotIdRef.current })}
+										>
+											{ko("Video (mp4)", "영상 (mp4)")}
+										</button>
+									)}
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-render-passes"
+										disabled={recState === "recording"}
+										title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
+										onClick={exportRenderPasses}
+									>
+										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-depth-video"
+										disabled={!shots.length || recState === "recording"}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
+										onClick={() => void exportDepthVideo(exportShotIdRef.current)}
+									>
+										{ko("Depth (mp4)", "뎁스 (mp4)")}
+									</button>
+									<button
+										type="button"
+										role="menuitem"
+										data-testid="export-storyboard"
+										disabled={!shots.length || recState === "recording"}
+										data-disabled-reason={shots.length ? undefined : "no-shots"}
+										title={shots.length
+											? ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")
+											: ko("Add a shot first — a storyboard is one row per shot", "샷을 먼저 추가하세요 — 스토리보드는 샷마다 한 줄입니다")}
+										onClick={() => void exportStoryboard()}
+									>
+										{ko("Storyboard (PNG)", "스토리보드 (PNG)")}
+									</button>
+									{shots.length > 0 && (
+										<button
+											type="button"
+											role="menuitem"
+											data-testid="export-otio"
+											title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
+											onClick={downloadOtioCutList}
+										>
+											{ko("OTIO cut list", "OTIO 컷 목록")}
+										</button>
+									)}
+									{!shots.length && (
+										<p className="export-menu-hint">
+											{hasCameraKeys || motion
+												? ko("Add a shot to export OTIO", "OTIO를 내보내려면 샷을 추가하세요")
+												: ko("Add a shot to export video or OTIO", "영상·OTIO를 내보내려면 샷을 추가하세요")}
+										</p>
+									)}
+								</div>
+							)}
+						</div>
+						<span
+							className={"project-save-status status-" + projectSaveState}
+							data-testid="project-save-status"
+							role="status"
+							aria-live="polite"
+						>
+							{projectStatus}
+						</span>
+					</div>
 					{liveWorkspaceHandle && (
 						<span className="live-workspace-handle" data-live-workspace={liveWorkspaceHandle} title={liveWorkspaceHandle}>
-							Live workspace {liveWorkspaceHandle}
+							{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
 						</span>
 					)}
-					<LocaleToggle />
-					<AnalyticsToggle />
+					<SettingsMenu
+						motionSetupReveal={motionSetupReveal}
+						motionSetup={<MotionSetup state={motionSetupKind === "trail" ? trailReadinessState : motionSetupKind === "line" ? lineReadinessState : readinessState} checking={bridgeChecking} onRetry={recheckMotionHealth} />}
+					/>
 				</div>
 			</header>
 
@@ -9334,7 +12720,6 @@ function resizePromptClip(id, edge, rawFrame) {
 					<span className="hierarchy-project-label">{ko("Project", "프로젝트")}</span>
 					<strong>{projectName ?? (projectStartupOpen ? ko("Choose Project", "프로젝트 선택") : ko("Untitled", "제목 없음"))}</strong>
 					{projectDirty && <i className="project-dirty-dot" aria-label={ko("Unsaved changes", "저장되지 않은 변경사항")} />}
-					<button type="button" onClick={() => { setProjectStartupOpen(false); setProjectBrowserOpen(true); }}>{ko("Projects…", "프로젝트…")}</button>
 				</div>
 				<HierarchyPanel
 					selectedId={selectedHierarchyId}
@@ -9359,11 +12744,13 @@ function resizePromptClip(id, edge, rawFrame) {
 					onSceneDelete={deleteSceneDocumentFromUi}
 					onAddObject={addSceneObject}
 					onRenameObject={renameSceneObject}
-					onDuplicateObject={duplicateSelectedSceneObject}
+					onDuplicateObject={(objectId) => runStudioAction("object.duplicate", objectId ? { objectId } : {})}
 					onDeleteObject={deleteSceneObject}
 					onFrameObject={frameSelection}
+					onToggleHidden={toggleHierarchyHidden}
 					propsDrop={propsDrop}
 					reparent={hierarchyReparent}
+					touchedIds={agentTouchedRows}
 				/>
 				</aside>
 				<div
@@ -9393,34 +12780,14 @@ function resizePromptClip(id, edge, rawFrame) {
 						</button>
 					))}
 				</div>
-				<div className="pane-tabs" role="tablist" aria-label={ko("Center view", "가운데 보기")}>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={centerTab === "scene"}
-						className={centerTab === "scene" ? "active" : ""}
-						onClick={() => setCenterTab("scene")}
-					>
-						{ko("Scene", "장면")}
-					</button>
-					<button
-						type="button"
-						role="tab"
-						aria-selected={centerTab === "play"}
-						className={centerTab === "play" ? "active" : ""}
-						onClick={() => setCenterTab("play")}
-					>
-						{ko("PlayView", "재생 보기")}
-					</button>
-				</div>
-				{centerTab === "scene" ? (
 				<div className="editor-toolbar scene-tools" aria-label={ko("Scene tools", "장면 도구")}>
 					{workflowMode === "motion" && (
 						<span className="workflow-toolbar-hint" role="status">
 							{ko("Motion mode · edit the timeline below", "모션 모드 · 아래 타임라인에서 편집하세요")}
 						</span>
 					)}
-						<div className="tool-switch workflow-scene-context" role="group" aria-label={ko("Gizmo tool", "기즈모 도구")}>
+						<span className="transform-toolbar-label workflow-scene-context">{ko("Transform", "변환")}</span>
+						<div className="tool-switch workflow-scene-context" role="group" aria-label={ko("Transform tools", "변환 도구")} data-transform-controls>
 							<button
 								type="button"
 								className={gizmoMode === "move" ? "active" : ""}
@@ -9461,15 +12828,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						>
 							{ko("Snap", "스냅")}
 						</button>
-						<button
-							type="button"
-							className={"snap-switch grid-view-switch workflow-scene-context" + (gridView ? " active" : "")}
-							title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
-							aria-pressed={gridView}
-							onClick={() => setGridView((v) => !v)}
-						>
-							{ko("Grid", "그리드")}
-						</button>
 						<span className="viewport-toolbar-separator settings-separator workflow-camera-context" aria-hidden="true" />
 						<label className="viewport-toolbar-field shot-field workflow-camera-context">
 							<span>{ko("Shot", "샷")}</span>
@@ -9480,6 +12838,24 @@ function resizePromptClip(id, edge, rawFrame) {
 							>
 								{Object.entries(PRESETS).map(([key, value]) => (
 									<option key={key} value={key}>{value.label}</option>
+								))}
+							</select>
+						</label>
+						<label className="viewport-toolbar-field ratio-field workflow-camera-context">
+							<span>{ko("Cam", "카메라")}</span>
+							<select
+								aria-label={ko("Camera preset", "카메라 프리셋")}
+								value={cameraPresetId ?? ""}
+								disabled={falMotionCameraLocked}
+								onChange={(event) => {
+									const id = event.target.value;
+									if (!id) { setCameraPresetId(null); return; }
+									liveHandlersRef.current?.set_camera({ preset: id });
+								}}
+							>
+								<option value="">{ko("Free", "자유")}</option>
+								{Object.values(CAMERA_PRESETS).map((value) => (
+									<option key={value.id} value={value.id}>{value.label}</option>
 								))}
 							</select>
 						</label>
@@ -9503,6 +12879,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								max="90"
 								step="1"
 								value={fovDeg}
+								disabled={falMotionCameraLocked}
 								onChange={(event) => setFovDeg(Number(event.target.value))}
 							/>
 							<output>{Math.round(fovDeg)}°</output>
@@ -9523,40 +12900,150 @@ function resizePromptClip(id, edge, rawFrame) {
 							aria-pressed={!workspaceLayout.insetCollapsed}
 							className="workflow-scene-context workflow-camera-context"
 							onClick={() => {
-								if (workspaceLayout.insetCollapsed) expandInset();
-								else setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+								runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
 							}}
 						>
 							{ko("Top", "탑")} {workspaceLayout.insetCollapsed ? "▸" : "▾"}
 						</button>
+						{/* One menu for every viewport-look toggle (R4), in every mode:
+						    what the stage LOOKS like is not a mode's business. The 27px
+						    bar clips its own overflow, so the panel is fixed to the
+						    viewport and anchored to the trigger, like the export menu.
+						    Items keep the menu open: these are toggles you compare, not
+						    commands you fire. */}
+						<div className="view-menu-wrap">
+							<button
+								type="button"
+								className="view-menu-trigger"
+								data-testid="view-menu-trigger"
+								ref={viewMenuTriggerRef}
+								aria-haspopup="menu"
+								aria-expanded={viewMenuOpen}
+								title={ko("Viewport display toggles", "뷰포트 표시 토글")}
+								onClick={(event) => {
+									const box = event.currentTarget.getBoundingClientRect();
+									setViewMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
+									setViewMenuOpen((open) => !open);
+								}}
+							>
+								{ko("View", "보기")}
+								<span className="caret">▾</span>
+								{viewLooksActive && <span className="view-menu-dot" data-testid="view-menu-dot" aria-hidden="true" />}
+							</button>
+							{viewMenuOpen && (
+								<div
+									className="project-menu view-menu"
+									role="menu"
+									aria-label={ko("Viewport display", "뷰포트 표시")}
+									style={{ top: `${viewMenuAnchor.top}px`, right: `${viewMenuAnchor.right}px` }}
+								>
+									{/* aria-pressed rides along with aria-checked: the toggles
+									    published that state contract in their old homes and QA
+									    still reads it, so the move keeps the signpost (R9). */}
+									<button
+										type="button"
+										role="menuitemcheckbox"
+										className={"view-menu-item grid-view-switch" + (gridView ? " active" : "")}
+										aria-checked={gridView}
+										aria-pressed={gridView}
+										title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
+										onClick={() => setGridView((v) => !v)}
+									>
+										<span className="view-menu-mark" aria-hidden="true">{gridView ? "✓" : ""}</span>
+										{ko("Reference grid", "기준 그리드")}
+									</button>
+									<button
+										type="button"
+										role="menuitemcheckbox"
+										className={"view-menu-item auto-color-toggle" + (autoColor ? " active" : "")}
+										aria-checked={autoColor}
+										aria-pressed={autoColor}
+										title={ko(
+											"Distinct display colors per object — captures include them while on",
+											"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
+										)}
+										onClick={() => {
+											setAutoColor((on) => {
+												saveAutoColor(!on);
+												trackFeature("auto_color");
+												return !on;
+											});
+										}}
+									>
+										<span className="view-menu-mark" aria-hidden="true">{autoColor ? "✓" : ""}</span>
+										{ko("Auto Color", "자동 색")}
+									</button>
+									{/* Part colours repaint a BODY, so the section only exists
+									    while a character is selected (R2). */}
+									{isCharacterSelection && (
+										<div className="view-menu-group" role="group" aria-label={ko("Body part colours", "부위 색상")}>
+											<span className="view-menu-label" aria-hidden="true">{ko("Body part colours", "부위 색상")}</span>
+											{[
+												{ value: "off", label: ko("Off", "끕") },
+												{ value: "shaded", label: ko("Shaded", "음영") },
+												{ value: "flat", label: ko("Flat", "평면") },
+											].map((option) => {
+												const checked = option.value === partColoursChoice;
+												return (
+													<button
+														type="button"
+														key={option.value}
+														role="menuitemradio"
+														className={"view-menu-item part-colour-option" + (checked ? " active" : "")}
+														data-part-colours={option.value}
+														aria-checked={checked}
+														onClick={() => runStudioAction("view.setPartColours", { mode: option.value })}
+													>
+														<span className="view-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
+														{option.label}
+													</button>
+												);
+											})}
+										</div>
+									)}
+									{/* Panel visibility belongs to the same menu (R4): the
+									    agent column is something you show, not a mode, so it
+									    gets a checkmark here instead of a topbar button. */}
+									{!embedMode && (
+										<div className="view-menu-group" role="group" aria-label={ko("Panels", "패널")}>
+											<span className="view-menu-label" aria-hidden="true">{ko("Panels", "패널")}</span>
+											<button
+												type="button"
+												role="menuitemcheckbox"
+												className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
+												aria-checked={!agentCollapsed}
+												aria-pressed={!agentCollapsed}
+												title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
+												onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
+											>
+												<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
+												{ko("Agent panel", "에이전트 패널")}
+											</button>
+										</div>
+									)}
+								</div>
+							)}
+						</div>
 					</div>
-				) : (
-					<div className="editor-toolbar play-tools" aria-label={ko("PlayView tools", "재생 보기 도구")}>
-						<span className="viewport-readout">{shotOutput.label}</span>
-						<span className="viewport-readout">FOV {Math.round(fovDeg)}° · {shot.focalMm}mm</span>
-						<span className="viewport-toolbar-spacer" />
-						<button type="button" onClick={() => stepFrame(-1)} aria-label={ko("Previous frame", "이전 프레임")}>◀</button>
-						<button type="button" onClick={() => setTlPlaying((value) => !value)}>
-							{tlPlaying ? "Ⅱ" : "▶"}
-						</button>
-						<button type="button" onClick={() => stepFrame(1)} aria-label={ko("Next frame", "다음 프레임")}>▶│</button>
-						<span className="viewport-readout">1.00×</span>
-						<span className="viewport-toolbar-separator" aria-hidden="true" />
-						<button type="button" disabled={!shots.length} onClick={downloadOtioCutList}>
-							OTIO
-						</button>
-						<button
-							type="button"
-							className={recState === "recording" ? "recording" : ""}
-							disabled={recState !== "recording" && !hasCameraKeys && !motion}
-							onClick={toggleShotRecording}
-						>
-							{recState === "recording" ? ko("■ Stop", "■ 정지") : ko("● Record", "● 녹화")}
-						</button>
-					</div>
-				)}
 				</div>
 
+					{/* Sits under the mode tabs and left of the Top-View inset, over the
+					    stage it is teaching. The overlay itself never takes the pointer
+					    (styles.css) — every step is completed in the studio underneath. */}
+					{cameraTutorial && !embedMode && (
+						<CameraTutorial
+							key={cameraTutorialAttempt}
+							analytics={cameraTutorialAnalytics.current}
+							previewing={lookThroughShot}
+							onStepChange={setCameraTutorialStep}
+							onComplete={() => { cameraTutorialCompletedRef.current = true; cameraTutorialHandoff?.complete(); }}
+							onClose={() => closeCameraTutorial()}
+							handoff={cameraTutorialHandoff}
+							shotId={activeShot?.id ?? null}
+							onOpenExport={openExportMenuForShot}
+							onContinue={() => closeCameraTutorial()}
+						/>
+					)}
 					<div className="stage" id="stage" ref={stageRef} data-render-loop={renderActive ? "always" : "demand"}>
 						{/* Shadows were off, so every castShadow in props.jsx was inert and
 						    nothing on the open stage ever touched the floor. A contact
@@ -9609,15 +13096,18 @@ function resizePromptClip(id, edge, rawFrame) {
 							<KeyLightPuck
 								keyLight={keyLight}
 								selected={keyLightSelected}
-								visible={centerTab === "scene" && !lookThroughShot && !playMode}
+								visible={!preview && !lookThroughShot}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={() => selectHierarchy("light")}
-								onChange={(patch) => setKeyLight((current) => createKeyLight({ ...current, ...patch }))}
+								/* The puck has no drag-start hook: the first move of a drag
+								   opens the entry and the drag end closes that gesture. */
+								onChange={(patch) => changeKeyLight("puck", patch)}
+								onDragEnd={endGestureUndo}
 							/>
 							{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}
 							<SetProps
-								objects={displaySceneObjects}
+								objects={stageSceneObjects}
 								selectedId={selectedSceneObjectId}
 								frameRef={propFrameRef}
 								take={{ frameCount: tlFrameCount, fps: tlFps }}
@@ -9672,6 +13162,8 @@ function resizePromptClip(id, edge, rawFrame) {
 									position={view.position}
 									rot={view.rot}
 									tint={view.tint}
+									partColoursEnabled={view.partColoursEnabled}
+									partColoursMode={view.partColoursMode}
 									pose={view.pose}
 									scale={view.scale}
 									onRig={view.onRig}
@@ -9695,18 +13187,18 @@ function resizePromptClip(id, edge, rawFrame) {
 									shotAspect={lookThroughShot ? shotOutput.aspect : null}
 									onChange={(id, patch) => moveCharacter(activeChar.id, () => {
 										const next = {};
-										if (patch.x !== undefined) next.x = THREE.MathUtils.clamp(patch.x, -4, 4);
+										if (patch.x !== undefined) next.x = THREE.MathUtils.clamp(patch.x, CHARACTER_POSITION_BOUNDS.min.x, CHARACTER_POSITION_BOUNDS.max.x);
 										// Lift floors at the deck but has no ceiling — a crane
 										// shot may hoist the body as high as the move needs
 										// (the inspector's Height scrub agrees).
-										if (patch.y !== undefined) next.y = Math.max(0, patch.y);
-										if (patch.z !== undefined) next.z = THREE.MathUtils.clamp(patch.z, -4, 4);
+										if (patch.y !== undefined) next.y = Math.max(CHARACTER_POSITION_BOUNDS.min.y, patch.y);
+										if (patch.z !== undefined) next.z = THREE.MathUtils.clamp(patch.z, CHARACTER_POSITION_BOUNDS.min.z, CHARACTER_POSITION_BOUNDS.max.z);
 										// a body only yaws — the X/Z rings and the screen ring's
 										// other channels have nowhere to go on a character
 										if (patch.rotY !== undefined) next.rot = patch.rotY;
 										// one stature knob: any scale axis reads as uniform
 										const s = patch.scaleX ?? patch.scaleY ?? patch.scaleZ;
-										if (s !== undefined) next.scale = THREE.MathUtils.clamp(s, 0.2, 3);
+										if (s !== undefined) next.scale = THREE.MathUtils.clamp(s, CHARACTER_SCALE_BOUNDS.min, CHARACTER_SCALE_BOUNDS.max);
 										return next;
 									})}
 									onDragStart={recordCharacterUndo}
@@ -9742,12 +13234,12 @@ function resizePromptClip(id, edge, rawFrame) {
 								// waypoint scrubs the playhead as a side effect, and follow
 								// must not turn that scrub into a camera lurch. Same for IK
 								// and pose studio, where the shot camera is deliberately frozen.
-								// PlayView is the finished-output player: the move always rides
+								// Preview is the finished-output player: the move always rides
 								// the playhead there. The Follow toggle and authoring-mode gates
-								// only protect the Scene tab's manipulation surfaces.
+								// only protect the editor view's manipulation surfaces.
 								// This shot's Camera Block owns the camera while Follow or Rail is active;
 								// editorial camera keys resume when the block returns to Keys mode.
-								following={!followCamActive && hasCameraKeys && (centerTab === "play" || (moveFollow && !ikMode && !waypointMode && !posing))}
+								following={!followCamActive && hasCameraKeys && (preview || (moveFollow && !ikMode && !waypointMode && !posing))}
 								followFrame={tlFrame}
 								fps={tlFps}
 								keys={cameraKeys}
@@ -9776,6 +13268,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							    and the wheel dollies without wrecking the framing. */}
 							<FlyControls
 								enabled={!posing && !playMode}
+								cameraLocked={lookThroughShot && falMotionCameraLocked}
 								camRef={ikMode ? poserCamRef : lookThroughShot ? shotCamRef : editorCamRef}
 								look={ikMode ? poserLook : lookThroughShot ? look : editorLook}
 								getPivot={() => {
@@ -9783,15 +13276,19 @@ function resizePromptClip(id, edge, rawFrame) {
 									const size = objectSize(selectedSceneObject);
 									return { x: selectedSceneObject.x, y: (selectedSceneObject.y ?? 0) + size.height / 2, z: selectedSceneObject.z };
 								}}
-								onFlyStateChange={(flying) => {
-									flyingRef.current = flying;
-								}}
+							onFlyStateChange={(flying) => {
+								flyingRef.current = flying;
+								if (flying) trackFeature("camera_fly");
+							}}
 								onCameraChange={lookThroughShot && !ikMode ? commitManualCameraFraming : undefined}
 							/>
 							<PoseHandles
 								root={posedRig()}
 								enabled={!!posing && !planIsMain && !playMode}
-								onChange={() => setPoseTick((n) => n + 1)}
+								onChange={(before, after) => {
+									markSemanticEdit("pose", before, after);
+									setPoseTick((n) => n + 1);
+								}}
 							/>
 							<IkHandles
 								chains={ikChains}
@@ -9803,7 +13300,11 @@ function resizePromptClip(id, edge, rawFrame) {
 								onSolve={ikSolve}
 								onDragEnd={ikDragEnd}
 							/>
+							{/* The tutorial's top view is the landing playground's: camera, cast
+							    and the rail only, so the line the Rail step asks for is drawn on
+							    a clean floor instead of over 34 footprints. */}
 							<PlanBoard
+								minimal={playgroundMode || cameraTutorial}
 								hostRef={planHostRef}
 								planCamRef={planCamRef}
 								shotCamRef={shotCamRef}
@@ -9812,7 +13313,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								characters={characters}
 								onMoveCharacter={moveCharacter}
 								onCharacterGestureStart={recordCharacterUndo}
-								onWaypointGestureStart={recordCharacterUndo}
+								onWaypointGestureStart={() => beginGestureUndo("waypoint-drag")}
 								onCameraGestureStart={beginCameraFramingGesture}
 								pathStart={activeChar}
 								waypoints={waypoints}
@@ -9827,7 +13328,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									store.settle();
 									setSelectedHierarchyId(id.startsWith("object:") ? id : id === "cam" ? "camera" : charKeyToHierarchyId(id));
 								}}
-								sceneObjects={displaySceneObjects}
+								sceneObjects={stageSceneObjects}
 								selectedSceneObjectId={selectedSceneObjectId}
 								onMoveSceneObject={changeSceneObject}
 								onObjectMoveStart={beginSceneTransaction}
@@ -9878,6 +13379,20 @@ function resizePromptClip(id, edge, rawFrame) {
 									changeCameraRail(simplified);
 									setRailDraw(false);
 									const curve = buildRail(simplified);
+									if (playgroundMode && activeShot && curve) {
+										// Playground: a first-timer drew a dolly and wants to see the
+										// whole ride. Stretch the cut to the rail's travel time at the
+										// dolly's speed cap and put them behind the shot camera, so ▶
+										// plays the move full-screen instead of in the corner monitor.
+										const speed = Math.max(0.2, activeCamera.followCam?.maxDollySpeed ?? 4);
+										const travel = Math.ceil((curve.length / speed) * tlFps) + Math.round(tlFps * 0.5);
+										const endFrame = Math.min(tlFrameCount - 1, activeShot.startFrame + Math.max(travel, activeShot.endFrame - activeShot.startFrame));
+										editShots((current) => resizeShot(current, activeShot.id, "end", endFrame, tlFrameCount));
+										enterPreview();
+										setTlFrame(activeShot.startFrame);
+										setToast(isKo ? "레일 완성 — 샷 카메라 시점으로 전환했습니다. ▶ 로 재생, Esc 로 복귀" : "Rail drawn — you are looking through the shot camera. Press ▶ to ride it; Esc goes back to flying.");
+										return;
+									}
 									setToast(isKo ? `카메라 레일 완성 — ${curve ? curve.length.toFixed(1) : "?"} m, 제어점 ${simplified.length}개` : `Camera rail drawn — ${curve ? curve.length.toFixed(1) : "?"} m, ${simplified.length} control points`);
 								}}
 								onPathStroke={(stroke) => {
@@ -9903,7 +13418,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							    the plan owns the big pane (the pucks are the handles there)
 							    and while posing/IK owns the pointer. */}
 							<ObjectGizmo
-								object={cameraGizmoObject ?? lightGizmoObject ?? selectedSceneObject}
+								object={cameraGizmoObject ?? lightGizmoObject ?? (selectedSceneObject && !isEffectivelyHidden(selectedSceneObject, sceneObjects, characters) ? selectedSceneObject : null)}
 								objects={sceneObjects}
 								mode={lightGizmoObject ? "move" : cameraGizmoObject ? (gizmoMode === "scale" ? "move" : gizmoMode) : gizmoMode}
 								snap={snapEnabled}
@@ -9917,7 +13432,8 @@ function resizePromptClip(id, edge, rawFrame) {
 								onChange={(id, patch, token) => (id === "__shotcam__" ? changeShotCameraFromGizmo(id, patch) : id === "__keylight__" ? changeKeyLightFromGizmo(id, patch) : changeSceneObject(id, patch, token))}
 								onDragStart={(...args) => (cameraGizmoObject || lightGizmoObject ? undefined : beginSceneTransaction(...args))}
 								onDragEnd={(...args) => {
-									if (!cameraGizmoObject && !lightGizmoObject) endSceneTransaction(...args);
+									if (lightGizmoObject) endGestureUndo();
+									else if (!cameraGizmoObject) endSceneTransaction(...args);
 								}}
 								onSelect={(id) =>
 									selectHierarchy(
@@ -9927,7 +13443,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								onGroundClick={waypointMode && !planIsMain ? addFloorWaypoint : undefined}
 								claimPointer={lineEditMode ? lineGrabProbe : undefined}
 							/>
-							{centerTab === "scene" && railCurve && (
+							{!preview && railCurve && (
 								<CameraRailScenePreview
 									points={railCurve.points}
 									cumLen={railCurve.cumLen}
@@ -9938,7 +13454,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							<ObjectPathHandles
 								path={selectedSceneObject?.path ?? null}
 								selectedIndex={pathPointIndex}
-								enabled={centerTab === "scene" && !lookThroughShot && !ikMode && !posing && !playMode && !!selectedSceneObject?.path}
+								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setPathPointIndex}
@@ -9959,7 +13475,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								crane={activeCamera.craneHeight}
 								controlPoints={activeCamera.cameraRail}
 								selectedIndex={craneSelectedIndex}
-								enabled={centerTab === "scene" && !lookThroughShot && !ikMode && !posing && !playMode && !!railCurve && !!activeCamera.craneHeight}
+								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!railCurve && !!activeCamera.craneHeight}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setCraneSelectedIndex}
@@ -9968,7 +13484,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										changeActiveCamera({ craneHeight: { points } });
 										return;
 									}
-									setShots((current) =>
+									editShots((current) =>
 										updateStableItem(
 											current,
 											activeShot.id,
@@ -9982,7 +13498,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										changeActiveCamera({ cameraRail: points });
 										return;
 									}
-									setShots((current) =>
+									editShots((current) =>
 										updateStableItem(
 											current,
 											activeShot.id,
@@ -10000,10 +13516,10 @@ function resizePromptClip(id, edge, rawFrame) {
 								camRef={shotCamRef}
 								fovDeg={fovDeg}
 								aspect={shotOutput.aspect}
-								visible={centerTab === "scene" && !lookThroughShot && !ikMode && !posing}
+								visible={!preview && !lookThroughShot && !ikMode && !posing}
 								selected={shotCameraSelected}
 							/>
-							{waypointMode && centerTab === "scene" && (
+							{waypointMode && !preview && (
 								<ShotPathPreview waypoints={waypoints} start={charA} activeWaypointId={activeWaypointId} />
 							)}
 							<CaptureRig
@@ -10041,7 +13557,11 @@ function resizePromptClip(id, edge, rawFrame) {
 								editorCamRef={editorCamRef}
 								ikMode={ikMode}
 								planIsMain={planIsMain}
-								playMode={playMode}
+								// Preview IS PlayView's render path: DualRender tests this branch
+								// first, so the embed and playground rail land in the letterboxed
+								// player. Studio look-through keeps playMode false and flies the
+								// shot camera in the editing draw instead.
+								playMode={preview}
 								lookThrough={lookThroughShot}
 								insetCollapsed={workspaceLayout.insetCollapsed || workflowMode === "motion"}
 								planZoom={workspaceLayout.planZoom}
@@ -10105,8 +13625,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									onClick={(e) => {
 										if (e.detail > 1) return;
 										insetToggledAtRef.current = Date.now();
-										if (workspaceLayout.insetCollapsed) expandInset();
-										else setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+										runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
 									}}
 								>
 									{workspaceLayout.insetCollapsed ? "▸" : "▾"}
@@ -10141,7 +13660,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									className={"vp-guide-cycle" + (guideMode === "off" ? "" : " on")}
 									aria-label={ko("Cycle composition guides", "구도 가이드 전환")}
 									title={ko(GUIDE_LABELS[guideMode].en, GUIDE_LABELS[guideMode].ko) + ko(" · click to cycle", " · 클릭으로 전환")}
-									onClick={() => setGuideMode((mode) => nextGuideMode(mode))}
+									onClick={() => runStudioAction("view.setGuideMode", { mode: nextGuideMode(guideMode) })}
 								>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
 										<path d="M3 3h18v18H3z" />
@@ -10152,8 +13671,8 @@ function resizePromptClip(id, edge, rawFrame) {
 									type="button"
 									className="vp-look-through"
 									aria-label={ko("Look through the shot camera", "샷 카메라 시점으로 보기")}
-									title={ko("Fly the shot camera itself (Esc returns)", "샷 카메라를 직접 조종 (Esc로 복귀)")}
-									onClick={() => setLookThroughShot(true)}
+									title={ko("Look through the shot camera — right-drag, WASD and orbit set the recording lens (Esc returns)", "샷 카메라 시점으로 보기 — 오른쪽 드래그, WASD, 궤도로 촬영 렌즈를 맞춥니다 (Esc로 복귀)")}
+									onClick={enterShotLook}
 								>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
 										<path d="M15 3h6v6" />
@@ -10161,15 +13680,19 @@ function resizePromptClip(id, edge, rawFrame) {
 										<path d="M9 21H3v-6" />
 										<path d="M3 21l8-8" />
 									</svg>
+									{ko("Look through", "샷 시점")}
 								</button>
 							</span>
 						</div>
-						{lookThroughShot && !playMode && !ikMode && (
+						{/* The player's only visible affordance: without it Esc would be
+						    the sole way back, and the embed has no way back at all — the
+						    Workflow node's preview is meant to stay in the shot view. */}
+						{lookThroughShot && !ikMode && !embedMode && (
 							<button
 								type="button"
 								className="vp-inset-tag vp-look-through-exit"
 								title={ko("Return to the editor view (Esc)", "에디터 시점으로 돌아가기 (Esc)")}
-								onClick={() => setLookThroughShot(false)}
+								onClick={exitPreview}
 							>
 								<span className="vp-rec-dot" aria-hidden="true" />
 								{ko("Shot camera", "샷 카메라")}
@@ -10177,7 +13700,10 @@ function resizePromptClip(id, edge, rawFrame) {
 							</button>
 						)}
 
-						{lookThroughShot && !playMode && !ikMode && (
+						{/* Composition guides are an opt-in viewer preference (default off),
+						    so they follow the shot camera into the player rather than being
+						    counted as chrome. */}
+						{lookThroughShot && !ikMode && (
 							<ShotGuideOverlay mode={guideMode} aspect={shotOutput.aspect} className="lookthrough" />
 						)}
 						<div className="film-frame" hidden={playMode || !lookThroughShot}>
@@ -10190,21 +13716,6 @@ function resizePromptClip(id, edge, rawFrame) {
 							{subjectVisible ? slateLineKo(shot) : ko("SUBJECT OUT OF FRAME", "피사체가 프레임 밖에 있어요")}
 						</div>
 
-						{playMode && !motion && (
-							<div className="playview-empty" role="status">
-								<strong>{ko("No motion yet", "아직 모션이 없어요")}</strong>
-								{bridge?.ok ? (
-									<span>{ko("Generate motion in the Scene tab — PlayView plays the finished result.", "장면 탭에서 모션을 생성하세요. 재생 보기는 완성 결과를 보여줍니다.")}</span>
-								) : (
-									<>
-										<span>{ko("This hosted demo loads a sample walk cycle for you — switch to the Scene tab and press play.", "이 데모는 샘플 걷기 모션을 불러왔어요 — 장면 탭에서 재생을 눌러보세요.")}</span>
-										<button type="button" className="btn ghost" onClick={() => { setCenterTab("scene"); track("sample:played", { from: "playview_empty" }); }}>
-											{ko("▶ Watch the sample", "▶ 샘플 구경하기")}
-										</button>
-									</>
-								)}
-							</div>
-						)}
 
 						</div>
 					</div>
@@ -10229,9 +13740,18 @@ function resizePromptClip(id, edge, rawFrame) {
 							{sceneSaveError}
 						</p>
 					)}
-					<section className="inspector-pane">
+					{studioAgentError && <p className="scene-save-error" role="alert">{studioAgentError}</p>}
+					{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
+						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
+						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
+							sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
+							buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
+							onFalAction={(instruction) => void generateFalMotion("act", instruction)} />
+					</div>}
+					<section className="inspector-pane" hidden={studioAgentMode}>
 					<div className="inspector-heading">
 						<strong>{ko("Inspector", "속성")}</strong>
+						<button type="button" className="inspector-agent-switch" aria-pressed={studioAgentMode} onClick={() => setStudioAgentMode(true)}>{ko("Agent", "에이전트")}</button>
 						<span className="inspector-heading-selection">{selectedSceneObject ? sceneObjectNameDisplayKo(selectedSceneObject.name) : HIERARCHY_INSPECTOR_TITLES[rigSelection?.token ?? selectedHierarchyId] ?? ko("Selection", "선택 항목")}</span>
 						{selectedSceneObject && (
 							<div className="inspector-actions-wrap">
@@ -10246,7 +13766,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								</button>
 								{inspectorActionsOpen && (
 									<div className="inspector-actions-menu" role="menu">
-										<button type="button" role="menuitem" onClick={() => { duplicateSelectedSceneObject(); setInspectorActionsOpen(false); }}>
+										<button type="button" role="menuitem" onClick={() => { runStudioAction("object.duplicate"); setInspectorActionsOpen(false); }}>
 											{ko("Duplicate", "복제")}
 										</button>
 										<button type="button" role="menuitem" onClick={() => { deleteSelectedSceneObject(); setInspectorActionsOpen(false); }}>
@@ -10275,38 +13795,27 @@ function resizePromptClip(id, edge, rawFrame) {
 					    so keep its controls beside the Motion tools as well as Shot setup. */}
 					<Foldout hidden={!keyLightSelected} title={ko("Light", "조명")}>
 						<p className="hint">{ko("Drag the sun in the scene to move the light. Shadows and warmth follow it.", "씬의 해를 드래그해 조명을 옮깁니다. 그림자와 빛의 방향이 따라옵니다.")}</p>
-						<Slider label={ko("Brightness", "밝기")} min={0} max={4} step={0.05} value={keyLight.intensity} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, intensity: value }))} />
-						<Slider label={ko("Warm ↔ Cool", "따뜻함 ↔ 차가움")} min={0} max={1} step={0.05} value={keyLight.warmth ?? 0.5} onChange={(value) => setKeyLight((current) => createKeyLight({ ...current, warmth: value }))} />
+						<Slider label={ko("Brightness", "밝기")} min={0} max={4} step={0.05} value={keyLight.intensity} onChange={(value) => changeKeyLight("intensity", { intensity: value })} />
+						<Slider label={ko("Warm ↔ Cool", "따뜻함 ↔ 차가움")} min={0} max={1} step={0.05} value={keyLight.warmth ?? 0.5} onChange={(value) => changeKeyLight("warmth", { warmth: value })} />
 						<div className="readout">
 							<span title={ko("light position", "조명 위치")}>{`x ${keyLight.x.toFixed(1)}  y ${keyLight.y.toFixed(1)}  z ${keyLight.z.toFixed(1)}`}</span>
 						</div>
-						<button className="btn ghost" onClick={() => setKeyLight(createKeyLight(null))}>
+						<button className="btn ghost" onClick={resetKeyLight}>
 							{ko("Reset light", "조명 초기화")}
 						</button>
 					</Foldout>
+					{/* Lens, Recenter and Record used to live here as well as in the
+					    viewport camera bar and the topbar Export menu. One home each
+					    (#193, R1): framing is the bar's job, delivery is Export's, and
+					    selecting the camera now switches to Camera mode so the bar's
+					    controls are on screen when this panel opens. */}
 					<Foldout hidden={!isCameraSelection} title={ko("Camera", "카메라")}>
-					<Slider label={ko("Lens (FOV)", "렌즈 (FOV)")} min={14} max={90} step={1} value={fovDeg} unit="°" onChange={setFovDeg} />
 						<div className="readout">
 						<span title={ko("camera to subject", "카메라와 피사체 거리")}>{shot.distance.toFixed(2)} m</span>
 						<span title={ko("nearest prime on the cropped filmback", "크롭된 필름백 기준 가장 가까운 단렌즈")}>{shot.focalMm} mm</span>
 						<span title={ko("angle relative to the subject's eyes", "피사체 눈높이 기준 각도")}>{shot.elevationDeg.toFixed(0)}°</span>
 						</div>
-						<button className="btn ghost" onClick={() => setNonce((n) => n + 1)}>
-							{ko("Recenter on subject", "피사체 다시 맞추기")}
-						</button>
-
 						<h3 className="move-head">{ko("Move keys", "움직임 키")}</h3>
-						<div className="move-ab">
-							<button
-								type="button"
-								className={"btn ghost" + (recState === "recording" ? " rec-live" : "")}
-								disabled={!hasCameraKeys && !motion}
-								title={ko("Play the piece in PlayView and save it as a video file — camera move and character motion, no editor chrome", "재생 보기에서 장면을 재생하고 영상 파일로 저장합니다. 카메라 움직임과 캐릭터 모션만 담고 편집 UI는 제외됩니다")}
-								onClick={toggleShotRecording}
-							>
-								{recState === "recording" ? ko("■ Stop rec", "■ 녹화 정지") : ko("● Record", "● 녹화")}
-							</button>
-						</div>
 						{moveSequence ? (
 							<div className="move-slate" title={ko("derived from the keyframings, not chosen from a list", "목록에서 고른 값이 아니라 키프레임에서 계산된 움직임입니다")}>
 								{moveSequence.displaySlate} · {moveSequence.spanS}{ko("s", "초")}
@@ -10325,6 +13834,29 @@ function resizePromptClip(id, edge, rawFrame) {
 								? ko(`Editing ${activeShot.name} in the timeline camera bar below.`, `아래 타임라인 카메라 바에서 ${activeShot.name}을 편집합니다.`)
 								: ko("Select a Shot block below to edit its camera.", "아래에서 샷 블록을 선택하면 카메라를 편집할 수 있습니다.")}
 						</p>
+
+						{/* Which generator this cut is being made FOR. Nothing here
+						    re-times or re-crops the shot — the timeline simply warns
+						    when the cut runs past the target's clip length or leaves
+						    its delivery aspects. */}
+						<h3 className="move-head">{ko("Target model", "타깃 모델")}</h3>
+						<p className="inspector-hint">
+							{ko("The timeline flags this shot when the cut runs past the model's clip length or leaves its delivery ratios. Nothing is re-timed or re-cropped.", "컷 길이나 화면 비율이 모델 한계를 벗어나면 타임라인이 표시해줘요. 자동으로 재조정하지는 않습니다.")}
+						</p>
+						<Field label={ko("Cut for", "맞출 모델")}>
+							<select
+								data-shot-target-model
+								aria-label={ko("Target video model", "타깃 영상 모델")}
+								disabled={!activeShot}
+								value={activeShot?.targetModel ?? ""}
+								onChange={(event) => changeShotTargetModel(event.target.value)}
+							>
+								<option value="">{ko("None", "없음")}</option>
+								{VIDEO_MODEL_PRESETS.map((entry) => (
+									<option key={entry.id} value={entry.id}>{entry.name}</option>
+								))}
+							</select>
+						</Field>
 					</Foldout>
 
 				<Foldout hidden={!isCharacterSelection} title={showB ? ko("Subjects", "인물들") : ko("Subject", "인물")}>
@@ -10353,6 +13885,50 @@ function resizePromptClip(id, edge, rawFrame) {
 							</button>
 						)}
 					</Foldout>
+
+				{/* Scene mode: the viewport gizmo and Move/Rotate/Scale are the primary
+				    path, so the numeric form starts folded (R5). Motion mode hides
+				    those tools, so the same foldout becomes the open Placement row —
+				    where the body stands on stage, which is all Motion can restage.
+				    Foldout reads defaultOpen once, so the key remounts it per mode. */}
+				<Foldout
+					key={workflowMode === "motion" ? "placement" : "transform"}
+					hidden={!isCharacterSelection}
+					defaultOpen={workflowMode === "motion"}
+					title={workflowMode === "motion" ? ko("Placement", "배치") : ko("Transform", "변환")}
+				>
+					{workflowMode === "motion" ? (
+						<div className="placement-fields">
+							<p className="inspector-hint">
+								{ko("Stage position — does not change the take", "무대 위치 — 테이크는 바꾸지 않습니다")}
+							</p>
+							<Vector3Row
+								label={ko("Position", "위치")}
+								fields={[
+									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => changeInspectorCharacter("x", { x }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:x`), onScrubEnd: endGestureUndo },
+									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => changeInspectorCharacter("z", { z }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:z`), onScrubEnd: endGestureUndo },
+								]}
+							/>
+							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => changeInspectorCharacter("rot", { rot })} />
+						</div>
+					) : (
+						<>
+							<p className="inspector-hint">
+								{ko("Edit the selected subject's placement, turn and size. Drag the Transform tool in the viewport for direct manipulation.", "선택한 인물의 위치·회전·크기를 편집합니다. 뷰포트의 변환 도구를 드래그해 바로 조작할 수도 있어요.")}
+							</p>
+							<Vector3Row
+								label={ko("Position", "위치")}
+								fields={[
+									{ axis: "X", value: activeChar.x, step: 0.05, precision: 2, scrubRange: 5, onChange: (x) => changeInspectorCharacter("x", { x }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:x`), onScrubEnd: endGestureUndo },
+									{ axis: "Y", value: activeChar.y ?? 0, step: 0.05, precision: 2, scrubRange: 5, onChange: (y) => changeInspectorCharacter("y", { y: Math.max(0, y) }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:y`), onScrubEnd: endGestureUndo },
+									{ axis: "Z", value: activeChar.z, step: 0.05, precision: 2, scrubRange: 5, onChange: (z) => changeInspectorCharacter("z", { z }), onScrubStart: () => beginGestureUndo(`character:${activeChar.id}:z`), onScrubEnd: endGestureUndo },
+								]}
+							/>
+							<Slider compact label={ko("Rotation", "회전")} min={-180} max={180} step={1} value={activeChar.rot ?? 0} unit="°" onChange={(rot) => changeInspectorCharacter("rot", { rot })} />
+							<Slider compact label={ko("Scale", "크기")} min={0.2} max={3} step={0.05} value={activeChar.scale ?? 1} unit="×" onChange={(scale) => changeInspectorCharacter("scale", { scale })} />
+						</>
+					)}
+				</Foldout>
 
 				{/* Rig and Pose are chosen once when a character is cast and then left
 				    alone, so they open on demand — Subject and Prompt are the panels
@@ -10391,6 +13967,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					<p className="inspector-hint">
 						{isKo ? `인물 ${activeCharIndex + 1}의 자세입니다.` : `The pose on Subject ${activeCharIndex + 1}.`}
 					</p>
+					<FalMotionCaptureCard model={falMotionModel} actions={falMotionActions} onOpen={() => setFalMotionStudioOpen(true)} />
 					<PoseTileGrid
 						poses={selectablePoses}
 						model={activeChar.model}
@@ -10439,6 +14016,24 @@ function resizePromptClip(id, edge, rawFrame) {
 					>
 						{ko("Save current pose", "지금 자세 저장")}
 					</button>
+					{/* Identity sits beside "Pose from photo" on purpose: both take a
+					    picture of a person, but that one reads a SHAPE off it while
+					    this one keeps the picture itself as who the character is. */}
+					<ReferenceImageField
+						label={ko("Identity image", "인물 이미지")}
+						hint={ko(
+							"A character sheet or photo of this person. It travels with every framing capture so a render keeps the same face, hair and wardrobe.",
+							"이 인물의 캐릭터 시트나 사진입니다. 모든 프레이밍 캐프처에 함께 실려 얼굴·머리·의상을 유지합니다.",
+						)}
+						value={activeChar.identityImage ?? null}
+						alt={ko("Identity reference", "인물 참고 이미지")}
+						inputProps={{ "data-identity-image-input": "" }}
+						onPick={(dataUrl) => {
+							updateCharacterAt(activeCharIndex, { identityImage: dataUrl });
+							setToast(ko("Identity image set", "인물 이미지를 설정했어요"));
+						}}
+						onClear={() => updateCharacterAt(activeCharIndex, { identityImage: null })}
+					/>
 				</Foldout>
 
 				<Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Video capture", "영상 모캡")}>
@@ -10561,16 +14156,24 @@ function resizePromptClip(id, edge, rawFrame) {
 								)}
 								{multiModelExtract === "error" && <p className="multimodel-error">{multiModelExtractError}</p>}
 								{multiModelTake && (
-									<p className="multimodel-extract-receipt">
-										{multiModelTake.gpu
-											? (isKo
-												? `GPU 테이크 ${multiModelTake.frames}프레임 추출됨 — 타임라인에서 재생하세요`
-												: `GPU take extracted, ${multiModelTake.frames} frames — press play on the timeline`)
+					<p className="multimodel-extract-receipt">
+						{multiModelTake.gpu
+							? (isKo
+								? `GVHMR 테이크 ${multiModelTake.frames}프레임 추출됨 — 타임라인에서 재생하세요`
+								: `GVHMR take extracted, ${multiModelTake.frames} frames — press play on the timeline`)
 											: (isKo
 												? `${multiModelTake.frames}프레임 테이크 구움 (실측 ${multiModelTake.fitted} · 유지 ${multiModelTake.held}) — 타임라인에서 재생하세요`
 												: `Baked a ${multiModelTake.frames}-frame take (${multiModelTake.fitted} measured · ${multiModelTake.held} held) — press play on the timeline`)}
 									</p>
 								)}
+								{multiModelTake?.trajectory && <p className="multimodel-note" data-testid="trajectory-receipt">{trajectoryReceipt(multiModelTake.trajectory, isKo)}</p>}
+								{multiModelTake?.segmentation && <p className="multimodel-note" data-testid="segmentation-receipt">{segmentationReceipt(multiModelTake.segmentation, isKo)}</p>}
+								{multiModelTake?.quality && <p className="multimodel-note" data-testid="mocap-quality-receipt">
+									{multiModelTake.quality.pass
+										? ko("모캡 품질 게이트 통과", "Mocap quality gate passed")
+										: ko(`모캡 품질 게이트 경고: ${multiModelTake.quality.checks?.filter((check) => !check.pass).map((check) => check.name).join(", ") || "확인 필요"}`, `Mocap quality warning: ${multiModelTake.quality.checks?.filter((check) => !check.pass).map((check) => check.name).join(", ") || "review required"}`)}
+								</p>}
+								{multiModelTake?.gpu && Math.abs(activeChar.y ?? 0) > .001 && <p className="multimodel-note" data-testid="trajectory-stage-offset">{isKo ? `씬 높이 ${(activeChar.y * 100).toFixed(1)}cm가 모션에 추가돼요 (Subject → Y)` : `Scene height ${(activeChar.y * 100).toFixed(1)}cm is added to the motion (Subject → Y)`}</p>}
 								{multiModelTake?.persons > 1 && (
 									<p className="multimodel-extract-receipt">
 										{isKo
@@ -10580,17 +14183,17 @@ function resizePromptClip(id, edge, rawFrame) {
 								)}
 								{multiModelExtract === "idle" && !multiModelTake && (
 									<p className="multimodel-note">
-										{bridge === null
-											? ko("Checking for the dev bridge…", "개발 브리지를 확인하는 중…")
-											: bridge.ok
-												? ko(
-													"Extraction runs on the GPU box (about a minute per 15 s of footage).",
-													"추출은 GPU 박스에서 돌아갑니다(영상 15초당 약 1분)."
-												)
-												: ko(
-													"No bridge: extraction runs in this browser (rougher). First run downloads the pose engine (~15 MB).",
-													"브리지 없음: 이 브라우저에서 추출합니다(품질 낮음). 첫 실행은 포즈 엔진(~15 MB)을 내려받습니다."
-												)}
+						{bridge === null
+							? ko("Checking for the dev bridge…", "개발 브리지를 확인하는 중…")
+							: bridge.ok && bridge.extractionBackend === "gvhmr"
+								? ko(
+									"GVHMR extraction runs on the GPU box (about a minute per 15 s of footage).",
+									"GVHMR 추출은 GPU 박스에서 돌아갑니다(영상 15초당 약 1분)."
+								)
+								: ko(
+									"GVHMR extraction is unavailable until the local GPU bridge is connected.",
+									"로컬 GPU 브리지가 연결될 때까지 GVHMR 추출을 사용할 수 없어요."
+								)}
 									</p>
 								)}
 							</div>
@@ -10600,189 +14203,6 @@ function resizePromptClip(id, edge, rawFrame) {
 						</p>
 					</div>
 				</Foldout>
-				{/* Motion generation is authored from Prompt Blocks. The legacy ARDY
-				    status/control card remains available to the generation pipeline but
-				    is intentionally not mounted in the inspector. Keeping this boundary
-				    avoids changing bridge behavior while removing an unused UI surface. */}
-				{false && <Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Motion generation (legacy)", "레거시 모션 생성")}>
-					{/* One compact status line: which layer is being edited and on
-					    which box — the long hint texts lived here before. */}
-					<p className="ardy-meta">
-						{isKo ? `인물 ${activeCharIndex + 1} 레이어` : `Subject ${activeCharIndex + 1} layer`}
-						{bridge?.ok ? ` · ${bridge.host ?? ko("box", "로컬")}` : ""}
-					</p>
-					{/* Per-character layer status: every cast member's clip and
-					    queue position at a glance. */}
-					{characters.length > 0 && (
-						<ul className="gen-layers">
-							{characters.map((entry, index) => {
-								const job = genQueue.find((item) => item.charId === entry.id && (item.status === "queued" || item.status === "running" || item.status === "error"));
-								const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
-								const state = job?.status === "running"
-									? ko("generating…", "생성 중…")
-									: job?.status === "queued"
-										? ko("queued", "대기 중")
-										: job?.status === "error"
-											? ko("failed", "실패")
-											: clip
-												? (isKo ? `${clip.frames}프레임 로드됨` : `${clip.frames} frames loaded`)
-												: ko("no motion", "모션 없음");
-								return (
-									<li key={entry.id} className={entry.id === activeChar.id ? "active" : ""}>
-										<span className="gen-layers-name">S{index + 1}</span>
-										<span className={`gen-layers-state ${job?.status ?? (clip ? "loaded" : "")}`}>{state}</span>
-										{job?.status === "queued" && (
-											<button type="button" title={ko("Remove from queue", "대기열에서 제거")} onClick={() => setGenQueue((queue) => queue.filter((item) => item.id !== job.id))}>✕</button>
-										)}
-									</li>
-								);
-							})}
-						</ul>
-					)}
-					{bridge === null ? (
-						<p className="ardy-hint">{ko("Checking for the dev bridge…", "개발 브리지를 확인하는 중…")}</p>
-					) : bridge.ok ? (
-						<>
-							{/* Generation is authored in Prompt Blocks below: a block owns
-							    both its wording and its frame range, so the range decides the
-							    duration and a separate prompt/duration pair here could only
-							    disagree with it. This box reports the run instead of starting
-							    one. */}
-							{/* Continue out of the blocking pose. The bridge refuses poses
-							    alongside a prompt schedule, so the choice is disabled rather
-							    than accepted and dropped at the door. */}
-							<label className="check ardy-pose-start">
-								<input
-									type="checkbox"
-									data-ardy-start-from-pose
-									checked={ardyStartFromPose && promptClips.length < 2}
-									disabled={promptClips.length >= 2}
-									onChange={(event) => setArdyStartFromPose(event.target.checked)}
-								/>
-								<span>{ko("Pin the current pose", "현재 포즈 고정")}</span>
-							</label>
-							{ardyStartFromPose && promptClips.length < 2 && (
-								<>
-									{/* The box takes any destination frame, so the pose can open
-									    the clip, close it, or be passed through in the middle. */}
-									<div className="segmented ardy-pose-placement" data-active={ardyPosePlacement}>
-										{POSE_PLACEMENTS.map((placement) => (
-											<button
-												type="button"
-												key={placement}
-												data-pose-placement={placement}
-												className={ardyPosePlacement === placement ? "active" : ""}
-												onClick={() => setArdyPosePlacement(placement)}
-											>
-												{placement === "start"
-													? ko("First", "첫 프레임")
-													: placement === "middle"
-														? ko("Middle", "중간")
-														: placement === "end"
-															? ko("Last", "마지막")
-															: ko("Playhead", "재생헤드")}
-											</button>
-										))}
-									</div>
-									<p className="ardy-hint" data-pose-placement-frame>
-										{isKo
-											? `프레임 ${posePlacementFrame(ardyPosePlacement, Math.round(ardyDuration) * TIMELINE_FPS, tlFrame)}에 이 자세를 고정하고 나머지를 생성합니다.`
-											: `The pose is held at frame ${posePlacementFrame(ardyPosePlacement, Math.round(ardyDuration) * TIMELINE_FPS, tlFrame)} and the rest is generated around it.`}
-									</p>
-								</>
-							)}
-							{/* The schedule rule counts only blocks that actually carry a
-							    prompt — an empty block cannot combine and must not lock
-							    the pose checkbox (it used to gate on raw length). */}
-							{promptClips.filter((clip) => clip.text.trim()).length >= 2 && (
-								<p className="ardy-hint">
-									{ko("Prompt blocks generate from history, so they cannot also pin a pose.", "프롬프트 블록은 이전 프레임을 이어서 생성하므로 포즈 고정과 함께 쓸 수 없어요.")}
-								</p>
-							)}
-							{ardyRunning && (
-								<button type="button" className="btn ghost full" onClick={cancelArdy}>
-									{ko("Cancel run", "실행 취소")}
-								</button>
-							)}
-							{ardyStatus && <p className="ardy-status">{ardyStatus}</p>}
-							{ardyReport && (
-								<div className="ardy-report">
-									<div className="ardy-report-grid">
-									<span>{ko("shape mean error", "형태 평균 오차")}</span>
-										<b>{fmtMeters(ardyReport.shape_mean_error_m)}</b>
-									<span>{ko("shape max error", "형태 최대 오차")}</span>
-										<b>{fmtMeters(ardyReport.shape_max_error_m)}</b>
-									<span>{ko("max jump", "최대 점프")}</span>
-										<b>{fmtMeters(ardyReport.continuity?.max_jump_m)}</b>
-									</div>
-									<p className="ardy-caveat">
-										{ko("Shape error proves joint-center placement only —", "형태 오차는 관절 중심 배치만 검증합니다 —")}{" "}
-										{ardyReport.surface_contact_verified
-											? ko("contact verified", "접촉 검증됨")
-											: ko("foot-to-floor contact NOT verified", "발과 바닥의 접촉은 검증되지 않음")}{" "}
-										· {ko("target_space", "대상 좌표계")} {ardyReport.target_space ?? ko("unknown", "알 수 없음")}
-									</p>
-								</div>
-							)}
-							{ardyOutcome?.ok && (
-								<>
-									<p className="ardy-outcome done">
-									{ko("Output", "출력")} <code>{ardyOutcome.output}</code> ({ardyOutcome.bytes}{ko(" bytes", "바이트")})
-										{ardyOutcome.motionUrl && (
-											<>
-												{" "}
-											· {ko("motion", "모션")} <code>{ardyOutcome.motionUrl}</code>
-											</>
-										)}
-									</p>
-									{motionBusy ? (
-								<p className="ardy-hint">{ko("Decoding motion…", "모션 디코딩 중…")}</p>
-									) : motion ? (
-										<p className="ardy-outcome done">
-									{isKo ? `모션 로드됨 — ${motion.frames}프레임 @ ${motion.fps} fps, 인물 ${activeCharIndex + 1}에 재생 중` : `Motion loaded — ${motion.frames} frames @ ${motion.fps} fps, playing on Subject ${activeCharIndex + 1}`}
-										</p>
-									) : motionError ? (
-										<>
-								<p className="ardy-outcome error">{ko("Motion decode failed:", "모션 디코딩 실패:")} {motionError}</p>
-											{ardyOutcome.motionUrl && (
-												<button
-													type="button"
-													className="btn ghost full"
-													onClick={() => loadMotion(ardyOutcome.motionUrl, undefined, ardyOutcome.rotationDeg ?? charA.rot)}
-												>
-										{ko("Retry load", "다시 로드")}
-												</button>
-											)}
-										</>
-									) : null}
-								</>
-							)}
-							{ardyOutcome && !ardyOutcome.ok && (
-								<p className="ardy-outcome error">{ardyOutcome.message}</p>
-							)}
-						</>
-					) : (
-						<>
-							<p className="ardy-hint">
-								{isKo ? (
-									<>
-										모션 생성은 사용자의 컴퓨터에서 실행되므로 여기서는 꺼져 있어요. 타임라인의 클립은 미리 생성된 샘플입니다.
-										스테이징, 경로, 카메라, 재생은 브리지 없이도 작동합니다. 직접 생성하려면 저장소를 클론하고
-										<code>node tools/ardy/bridge.mjs</code>로 브리지를 시작하세요.
-									</>
-								) : (
-									<>
-										Motion generation runs on your own machine, so it is off here. The clip
-										on the timeline was generated ahead of time; staging, paths, cameras and
-										playback all work without it. To generate your own, clone the repo and
-										start the bridge with <code>node tools/ardy/bridge.mjs</code>.
-									</>
-								)}
-							</p>
-							{bridge.reason && <p className="ardy-hint">{bridge.reason}</p>}
-						</>
-					)}
-				</Foldout>}
 				<Foldout hidden={!isCharacterSelection} defaultOpen={false} openSignal={promptBlocksReveal} title={ko("Prompt Blocks", "프롬프트 블록")}>
 					<p className="inspector-hint">{ko("Blocks define what ARDY generates over each frame range. Selecting one also moves editing context to that prompt.", "블록은 각 프레임 범위에서 ARDY가 생성할 내용을 정합니다. 블록을 선택하면 편집 기준도 해당 프롬프트로 이동합니다.")}</p>
 						<div className="inspector-list">
@@ -11023,64 +14443,63 @@ function resizePromptClip(id, edge, rawFrame) {
 										<button
 											type="button"
 											className="btn primary full generate"
-											disabled={!bridge?.ok || !lineCurveDirty || ardyRunning}
-											title={!bridge?.ok
-												? ko("Waiting for the ARDY bridge — it reconnects automatically", "ARDY 브리지를 기다리는 중 — 자동으로 다시 연결됩니다")
+											disabled={!lineCurveDirty || generationBusy || bridgeChecking || bridge === null}
+											title={generationBusy ? ko("A generation is already running", "이미 생성이 돌고 있어요")
 												: !lineCurveDirty
 													? ko("Pull the path on the viewport first", "먼저 뷰포트에서 궤적을 잡아당겨 주세요")
-													: ""}
+													: motionReadinessMessage(lineReadinessState)}
 											onClick={runLineEdit}
 										>
 											{ko("Generate the line edit", "라인 편집 생성")}
 										</button>
+										<MotionReadiness state={lineReadinessState} checking={bridgeChecking} onSetup={() => openMotionSetup("line")} onRetry={recheckMotionHealth} />
 										<button type="button" className="btn ghost full" disabled={!lineCurveDirty} onClick={resetLineCurve}>
 											{ko("Reset the curve", "원래대로")}
 										</button>
 										<button type="button" className="btn ghost full" onClick={exitLineEditMode}>
 											{ko("Exit line editing (Esc)", "라인 편집 끝내기 (Esc)")}
 										</button>
-										{!lineEditBackend && (
-											<p className="inspector-hint line-edit-pending">
-												{ko(
-													"The line-editing backend is not connected yet — pulling and drawing work, and this keeps retrying until it answers.",
-													"라인 편집 백엔드가 아직 연결 전이에요 — 끌기와 그리기는 되고, 연결될 때까지 계속 다시 확인합니다.",
-												)}
-											</p>
-										)}
 									</div>
 								)}
 							</Field>
 						)}
+						{/* Nothing to generate yet is not a disabled button: with no blocks
+						    the panel's own "Add block at frame N" and its hint already say
+						    what comes next, so the action stays absent until there is at
+						    least one block to run (docs/studio-ui-ia.md R3). */}
+						{promptClips.length >= 1 && (
 						<button
 							type="button"
 							className="btn primary full generate prompt-block-generate"
-							disabled={!bridge?.ok || !promptClips.some((clip) => clip.text.trim())}
-							title={!bridge?.ok
-								? ko("Waiting for the ARDY bridge — it reconnects automatically", "ARDY 브리지를 기다리는 중 — 자동으로 다시 연결됩니다")
+							disabled={generationBusy || bridgeChecking || bridge === null || !promptClips.some((clip) => clip.text.trim())}
+							title={generationBusy ? ko("A generation is already running", "이미 생성이 돌고 있어요")
 								: !promptClips.some((clip) => clip.text.trim())
 									? ko("Add a prompt block and describe its motion first", "프롬프트 블록을 추가하고 동작을 먼저 적어 주세요")
-									: ""}
-							onClick={runAllPromptBlocks}
+									: motionReadinessMessage(readinessState)}
+							onClick={() => runStudioAction("motion.generateAllBlocks")}
 						>
-							{ardyRunning || genQueue.some((job) => job.status === "queued")
-								? ko("Queue block generation", "블록 생성 대기열에 추가")
+							{generationBusy
+								? ko("Generating motion…", "모션 생성 중…")
 								: isKo
 									? `${promptClips.length}개 블록 모두 생성`
 									: `Generate all ${promptClips.length} blocks`}
 						</button>
+						)}
 						{ardyRunning && (
 							<button type="button" className="btn ghost full" onClick={cancelArdy}>
 								{ko("Cancel run", "실행 취소")}
 							</button>
 						)}
-					{!bridge?.ok && <p className="ardy-hint">{ko("Start the ARDY bridge to enable generation.", "생성을 사용하려면 ARDY 브리지를 시작하세요.")}</p>}
-						{ardyStatus && <p className="ardy-status">{ardyStatus}</p>}
+						{!lineEditMode && <MotionReadiness state={readinessState} checking={bridgeChecking} onSetup={openMotionSetup} onRetry={recheckMotionHealth} />}
+						{ardyRunning && ardyStatus && <p className="ardy-status" role="status">{ardyStatus}</p>}
+						{!ardyRunning && ardyOutcome?.ok === false && <p className="ardy-status" role="alert">{ardyOutcome.message}</p>}
+						{!ardyRunning && ardyOutcome?.ok === true && <p className="ardy-status" role="status">{ko("Motion generation complete", "모션 생성 완료")}</p>}
 						<button type="button" className="btn ghost full" onClick={() => addPromptClip(tlFrame)}>
 						{isKo ? `프레임 ${tlFrame}에 블록 추가` : `Add block at frame ${tlFrame}`}
 						</button>
 					</Foldout>
 
-				<Foldout hidden={!isRigSelection} title={ko("Rig Control", "리그 제어")}>
+					<Foldout hidden={!isRigSelection} title={ko("Rig Control", "리그 제어")}>
 						<p className="inspector-hint">
 							{rigSelection && rigSelection.token !== "rig"
 							? (isKo ? `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]}이 활성 제어 그룹입니다.` : `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]} is the active control group.`)
@@ -11116,12 +14535,10 @@ function resizePromptClip(id, edge, rawFrame) {
 						    qualifies, so this button is deliberately outside the
 						    collisionCleanupSupported gate. Unsupported rigs get an
 						    explanatory toast from the handler. */}
-						<button type="button" className="btn full" onClick={runAutoPhysics} disabled={!ikChains || !motion}>
-						{ko("AutoPhysics (whole clip)", "오토피직스 (클립 전체)")}
-						</button>
-						<p className="inspector-hint">
-						{ko("Finds airborne spans and forces the centre of mass onto a real gravity parabola, so jumps stop floating. Grounded frames are left untouched.", "공중에 뜬 구간을 찾아 무게중심을 실제 중력 포물선에 맞춥니다. 점프가 더 이상 떠 있지 않게 되고, 바닥에 닿은 프레임은 건드리지 않습니다.")}
-						</p>
+						<PhysicsPanel ko={ko} disabled={!ikChains || !motion} running={autoPhysicsRunning} progress={physicsProgress}
+							preview={physicsPreview} show={physicsShow} options={physicsOptions} frame={tlFrame} frames={motion?.frames ?? 1}
+							onOptions={changePhysicsOptions} onRun={runAutoPhysics} onShow={showPhysicsPreview}
+							onApply={applyPhysicsPreview} onCancel={cancelPhysicsPreview} onFrame={setTlFrame} />
 						{/* Motion trail editing: falloff radius + confirm-to-regenerate.
 						    Only meaningful with IK mode on and a loaded take. */}
 						{ikMode && motion && (
@@ -11177,7 +14594,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								<button
 									type="button"
 									className="btn primary full trail-regenerate"
-									disabled={!trailEdit || !motion?.url || !bridge?.ok || ardyRunning}
+									disabled={!trailEdit || !motion?.url || generationBusy || bridgeChecking || bridge === null}
 									title={!trailEdit
 										? ko("Drag the trajectory line in the viewport first", "먼저 뷰포트에서 궤적선을 끌어 수정하세요")
 										: !motion?.url
@@ -11187,6 +14604,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								>
 									{ko("Regenerate from trail edit", "궤적 수정으로 재생성")}
 								</button>
+								<MotionReadiness state={trailReadinessState} checking={bridgeChecking} onSetup={() => openMotionSetup("trail")} onRetry={recheckMotionHealth} />
 								<p className="inspector-hint">
 									{ko(
 										"Grab any point of the trajectory line to bend the motion; nearby frames follow within the falloff range. Confirm to regenerate that span with Kimodo — explicit IK keys stay pinned exactly.",
@@ -11199,22 +14617,37 @@ function resizePromptClip(id, edge, rawFrame) {
 
 				<Foldout hidden={selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
 						<label className="check">
-							<input type="checkbox" checked={hasEnvSheet} onChange={(event) => setHasEnvSheet(event.target.checked)} />
+							<input type="checkbox" checked={hasEnvSheet} onChange={(event) => { recordCharacterUndo(); setHasEnvSheet(event.target.checked); }} />
 						<span>{ko("I have an environment sheet", "환경 시트가 있어요")}</span>
 						</label>
 						{!hasEnvSheet && (
 						<Field label={ko("Environment description", "환경 설명")}>
-								<input type="text" value={environment} onChange={(event) => setEnvironment(event.target.value)} />
+								<input type="text" value={environment} onChange={(event) => { recordSessionUndo(environmentTextSessionRef, "environment:description"); setEnvironment(event.target.value); }} />
 							</Field>
 						)}
 					<Field label={ko("Look / style", "룩 / 스타일")}>
-							<input type="text" value={style} onChange={(event) => setStyle(event.target.value)} />
+							<input type="text" value={style} onChange={(event) => { recordSessionUndo(environmentTextSessionRef, "environment:style"); setStyle(event.target.value); }} />
 						</Field>
+						<ReferenceImageField
+							label={ko("Environment reference", "환경 참고 이미지")}
+							hint={ko(
+								"A picture of this location. It travels with every framing capture so a render takes its materials, palette and lighting from the real place.",
+								"이 장소의 사진입니다. 모든 프레이밍 캐프처에 함께 실려 재질·색감·조명을 실제 장소에서 가져옵니다.",
+							)}
+							value={environmentImage}
+							alt={ko("Environment reference", "환경 참고 이미지")}
+							inputProps={{ "data-environment-image-input": "" }}
+							onPick={(dataUrl) => {
+								changeEnvironmentImage(dataUrl);
+								setToast(ko("Environment reference set", "환경 참고 이미지를 설정했어요"));
+							}}
+							onClear={() => changeEnvironmentImage(null)}
+						/>
 					</Foldout>
 
 				<Foldout hidden={selectedHierarchyId !== "props"} title={ko("Props", "소품")}>
 					<div className="props-drop" data-drop={inspectorDrop.over ? "over" : "target"} {...inspectorDrop.handlers}>
-					<p className="inspector-hint">{ko("Everything you add to the set lives here. Pick one to edit it, or click it in the shot view. Drop a picture anywhere here — or on the shot view — to stand it up as a cutout.", "세트에 추가한 모든 소품이 여기에 모입니다. 편집하려면 하나를 고르거나 샷 뷰에서 클릭하세요. 사진을 이 영역이나 샷 뷰에 끌어다 놓으면 컷아웃으로 세워집니다.")}</p>
+					<p className="inspector-hint">{ko("Everything you add to the set lives here. Pick one to edit it, or click it in the shot view. Drop a picture anywhere here — or on the shot view — to stand it up as a cutout. You can also drop a .glb, .obj or .fbx to import a 3D object.", "세트에 추가한 모든 소품이 여기에 모입니다. 편집하려면 하나를 고르거나 샷 뷰에서 클릭하세요. 사진을 이 영역이나 샷 뷰에 끌어다 놓으면 컷아웃으로 세워집니다. .glb, .obj 또는 .fbx 파일을 놓으면 3D 오브젝트로 가져옵니다.")}</p>
 					<AddObjectMenu onAdd={addSceneObject} label={ko("Add object to the set", "세트에 오브젝트 추가")} />
 					<button
 						type="button"
@@ -11223,6 +14656,14 @@ function resizePromptClip(id, edge, rawFrame) {
 						title={ko("A photo of the real thing, standing in the set as a card", "실제 사진을 판때기로 세워 세트에 배치합니다")}
 					>
 						{ko("Import image as cutout", "이미지를 컷아웃으로 가져오기")}
+					</button>
+					<button
+						type="button"
+						className="btn ghost full"
+						onClick={() => meshInputRef.current?.click()}
+						title={ko("A GLB, OBJ or FBX model standing in the set", "GLB, OBJ 또는 FBX 모델을 세트에 배치합니다")}
+					>
+						{ko("Import 3D object", "3D 오브젝트 가져오기")}
 					</button>
 					<input
 						ref={cutoutInputRef}
@@ -11236,6 +14677,17 @@ function resizePromptClip(id, edge, rawFrame) {
 							// still holds it.
 							event.target.value = "";
 							importCutout(file);
+						}}
+					/>
+					<input
+						ref={meshInputRef}
+						type="file"
+						hidden
+						accept=".glb,.obj,.fbx,model/gltf-binary,model/obj,model/fbx"
+						onChange={(event) => {
+							const [file] = event.target.files ?? [];
+							event.target.value = "";
+							importMesh(file);
 						}}
 					/>
 						<div className="inspector-list compact">
@@ -11253,7 +14705,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					</div>
 					</Foldout>
 
-				<Foldout hidden={!selectedSceneObject} title={ko("Object Transform", "오브젝트 변환")}>
+				<Foldout hidden={!selectedSceneObject} title={ko("Transform", "변환")}>
 						{selectedSceneObject && (
 							<>
 								<p className="inspector-hint">
@@ -11304,12 +14756,10 @@ function resizePromptClip(id, edge, rawFrame) {
 										value={selectedSceneObject.parent ?? ""}
 										onChange={(event) => {
 											const parent = event.target.value || null;
-											const next = setSceneObjectParent(sceneObjects, selectedSceneObject.id, parent);
-											if (next !== sceneObjects) {
-												const token = beginSceneTransaction({ owner: "reparent", cancel: () => {} });
-												setSceneObjects(next);
-												endSceneTransaction(token, { commit: true });
-											}
+											// The history store is the only writer. A direct setState here
+											// leaves the store on the old list, so the next object edit
+											// (hide, move) puts that list back and the group disappears.
+											store.applyAtomic((objects) => setSceneObjectParent(objects, selectedSceneObject.id, parent));
 										}}
 									>
 										<option value="">{ko("(none)", "(없음)")}</option>
@@ -11345,6 +14795,29 @@ function resizePromptClip(id, edge, rawFrame) {
 										{ axis: "Z", value: selectedSceneObject.scaleZ ?? 1, step: 0.05, precision: 2, scrubRange: 4, onChange: (scaleZ, token) => changeSceneObject(selectedSceneObject.id, { scaleZ }, token), onScrubStart: beginSceneTransaction, onScrubEnd: endSceneTransaction },
 									]}
 								/>
+								{selectedSceneObject.renderer === MESH_KIND && (
+									<>
+										<Field label={ko("Height (m)", "높이 (m)")}>
+											<input
+												type="number"
+												data-field="mesh-height"
+												min={MESH_HEIGHT_MIN}
+												step="0.05"
+												value={selectedSceneObject.height ?? 1}
+												onChange={(event) => changeSceneObject(selectedSceneObject.id, { height: Number(event.target.value) })}
+											/>
+										</Field>
+										<label className="check">
+											<input
+												type="checkbox"
+												data-field="mesh-clay"
+												checked={selectedSceneObject.clay === true}
+												onChange={(event) => changeSceneObject(selectedSceneObject.id, { clay: event.target.checked })}
+											/>
+											<span>{ko("Clay", "클레이")}</span>
+										</label>
+									</>
+								)}
 								{selectedSceneObject.renderer === CUTOUT_KIND && (
 									<>
 										<Field label={ko("Card height (m)", "판 높이 (m)")}>
@@ -11637,7 +15110,7 @@ function resizePromptClip(id, edge, rawFrame) {
 										</p>
 									</>
 								)}
-								{selectedSceneObject.renderer !== CUTOUT_KIND && (
+								{selectedSceneObject.renderer !== CUTOUT_KIND && (selectedSceneObject.renderer !== MESH_KIND || selectedSceneObject.clay) && (
 									// One swatch shows the colour; the row opens only when you want
 									// to change it, instead of six chips sitting there all day.
 									<details className="object-colors-pop">
@@ -11807,6 +15280,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						/>
 					)}
 				</aside>
+
 			</div>
 
 			<div
@@ -11838,6 +15312,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					<AssetPane
 						onAssetGrab={beginAssetDrag}
 						imageAssetIds={shelfImageIds}
+						meshAssetIds={shelfMeshIds}
 						manageStorage={manageAssetStorage}
 						onManageStorageToggle={() => setManageAssetStorage((current) => !current)}
 						unusedAssetIds={unusedAssetIds}
@@ -11848,6 +15323,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						onDeleteUnusedAsset={deleteUnusedAsset}
 						onUndoDelete={undoDeletedAsset}
 						deletingAssetId={deletingAssetId}
+						resourceManifest={projectManifest}
 					/>
 				</div>
 				<div className="bottom-timeline" hidden={bottomTab !== "timeline"}>
@@ -11909,6 +15385,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					</div>
 					{sceneMenuOpen && (
 						<div className="take-scene-menu">
+							<MotionReadiness state={readinessState} checking={bridgeChecking} onSetup={openMotionSetup} onRetry={recheckMotionHealth} />
 							{[
 								{ id: "new", label: ko("Start over", "새로 만들기"), reason: sceneGenerateDisabledReason(), onClick: () => runArdy({ fresh: true }) },
 								{ id: "again", label: ko("Take it again", "다시 뽑기"), reason: sceneAgainDisabledReason(), onClick: runSceneAgain },
@@ -12045,6 +15522,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				ghostLayers={ghostLayers}
 				pathSpeed={pathSpeed}
 				playing={tlPlaying}
+				workflowMode={workflowMode}
 				waypointMode={waypointMode}
 				waypoints={waypoints}
 				pathSpeed={pathSpeed}
@@ -12068,6 +15546,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				footSnap={footSnap}
 				bodyContact={bodyContact}
 					shots={shots}
+					shotAspect={shotAspectKey}
 					activeShotIdx={activeShotIdx}
 					railDraw={railDraw}
 					pathDraw={pathDraw}
@@ -12110,7 +15589,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						return !v;
 					});
 				}}
-				onScrub={setTlFrame}
+				onScrub={(frame) => { trackFeature("timeline_scrub"); setTlFrame(frame); }}
 				onAdvance={advanceFrame}
 				onStep={stepFrame}
 				onPlayToggle={() => {
@@ -12147,6 +15626,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				onPromptRemove={removePromptClip}
 				onCameraMoveSelect={() => {
 					setSelectedHierarchyId("camera");
+					if (workflowMode !== "camera") selectWorkflowMode("camera");
 				}}
 				onCameraKeyframeAdd={addCameraKeyframe}
 				onCameraKeyframeMove={moveCameraKeyframe}
@@ -12156,6 +15636,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						if (!selected) throw new Error(`Unknown shots ID: ${shotId}`);
 						setTlFrame(selected.startFrame);
 						setSelectedHierarchyId("camera");
+						if (workflowMode !== "camera") selectWorkflowMode("camera");
 					}}
 					onCameraBlockChange={(patch, shotId) => {
 						if (patch.mode === "follow") syncActiveCameraFraming();
@@ -12181,7 +15662,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					onCameraRailDrawToggle={toggleCameraRailDraw}
 					onCameraRailDelete={deleteCameraRail}
 				onShotSelect={selectTimelineShot}
-				onShotBoundaryMove={(shotId, edge, frame) => setShots((current) => resizeShot(current, shotId, edge, frame, tlFrameCount))}
+				onShotBoundaryMove={(shotId, edge, frame) => editShots((current) => resizeShot(current, shotId, edge, frame, tlFrameCount))}
 				onShotRename={(shotId, name) => {
 					const shot = shots.find((entry) => entry.id === shotId);
 					if (!shot) throw new Error(`Unknown shots ID: ${shotId}`);
@@ -12190,13 +15671,13 @@ function resizePromptClip(id, edge, rawFrame) {
 					// name is no edit at all: it neither writes nor records.
 					if (typeof name !== "string" || !name.trim() || shot.name === name.trim()) return;
 					recordShotUndo();
-					setShots((current) => renameShot(current, shotId, name));
+					editShots((current) => renameShot(current, shotId, name));
 				}}
-				onShotRemove={removeTimelineShot}
-				onShotDuplicate={duplicateTimelineShot}
-				onShotCut={addTimelineShot}
-				onShotSplit={splitTimelineShot}
-				onShotMove={moveTimelineShot}
+				onShotRemove={(shotId) => runStudioAction("shot.remove", { shotId })}
+				onShotDuplicate={(shotId) => runStudioAction("shot.duplicate", { shotId })}
+				onShotCut={() => runStudioAction("shot.create")}
+				onShotSplit={(shotId) => runStudioAction("shot.split", { shotId })}
+				onShotMove={(shotId, targetFrame) => runStudioAction("shot.reorder", { shotId, startFrame: Math.max(0, Math.round(targetFrame)) })}
 				onEditGestureStart={beginTimelineEditGesture}
 				onClearMotion={motion ? clearMotion : null}
 			/>
@@ -12211,6 +15692,7 @@ function resizePromptClip(id, edge, rawFrame) {
 				<SourceOffer />
 			</footer>
 
+			{falMotionStudioOpen && <FalMotionModal model={falMotionModel} actions={falMotionActions} onClose={() => setFalMotionStudioOpen(false)} />}
 			{result && resultOpen && (
 				<ResultModal
 					result={result}
@@ -12219,6 +15701,8 @@ function resizePromptClip(id, edge, rawFrame) {
 					onClose={() => setResultOpen(false)}
 					onCopy={() => copyPrompt(result.prompt)}
 					onDownload={download}
+					downloadDisabled={recState === "recording" || Boolean(result.downloaded)}
+					exportFeedback={exportStatus?.kind === "frame" ? exportFeedback() : null}
 				/>
 			)}
 
@@ -12230,6 +15714,11 @@ function resizePromptClip(id, edge, rawFrame) {
 					onOpenFile={() => {
 						setProjectBrowserOpen(false);
 						openProject();
+					}}
+					starters={STARTER_SCENES}
+					onStarter={(id) => {
+						setProjectBrowserOpen(false);
+						void openStarterScene(id);
 					}}
 					onNew={() => {
 						setProjectBrowserOpen(false);
@@ -12251,7 +15740,9 @@ function resizePromptClip(id, edge, rawFrame) {
 					else newProject(name);
 				}}
 			/>
-			<Toast message={toast} onDone={() => setToast("")} />
+			<FirstSuccessGuide open={firstSuccessGuideOpen} onDismiss={() => setFirstSuccessGuideOpen(false)} />
+			{saveBlockedReasons && <SaveBlockedDialog reasons={saveBlockedReasons} onClose={() => setSaveBlockedReasons(null)} />}
+			<Toast message={toast} onDone={() => setToast((current) => current === toast ? "" : current)} />
 			{pwaUpdate && (
 				<div className="scene-delete-toast" role="status">
 					<span>{ko("A new version of CozyClay is ready.", "CozyClay 새 버전이 준비됐어요.")}</span>
@@ -12322,12 +15813,73 @@ function resizePromptClip(id, edge, rawFrame) {
 		</div>
 	);
 }
-/** ARDY report meters: missing/failed values render as an em dash, never NaN. */
-function fmtMeters(value) {
-	return typeof value === "number" && Number.isFinite(value) ? `${value.toFixed(4)} m` : "—";
-}
-
 /** Mid-clip frame of a base motion, the sensible default for the destination. */
+
+/**
+ * One reference-picture slot (#167): pick a file, see what is loaded, clear it.
+ * Used by the cast member's identity sheet and by the set's environment
+ * reference, so both slots behave identically — same picker, same thumbnail,
+ * same Clear — rather than growing two dialects of the same control.
+ *
+ * The value IS the stored data URL: there is no separate "pending" state, so
+ * what the panel shows is exactly what a capture will attach.
+ */
+function ReferenceImageField({ label, hint, value, alt, onPick, onClear, inputProps = {} }) {
+	const inputRef = useRef(null);
+	const [error, setError] = useState("");
+	return (
+		<div className="reference-slot">
+			<div className="reference-slot-head">
+				<span className="reference-slot-label">{label}</span>
+				{value && (
+					<button type="button" className="btn ghost small" onClick={() => { setError(""); onClear(); }}>
+						{ko("Clear", "지우기")}
+					</button>
+				)}
+			</div>
+			<div className="reference-slot-body">
+				<button
+					type="button"
+					className="reference-slot-thumb"
+					data-empty={value ? undefined : "true"}
+					onClick={() => inputRef.current?.click()}
+					title={ko("Choose a reference picture", "참고 이미지를 선택합니다")}
+				>
+					{value
+						? <img src={value} alt={alt ?? label} />
+						: <span className="reference-slot-plus" aria-hidden="true">＋</span>}
+				</button>
+				<div className="reference-slot-copy">
+					<p className="inspector-hint">{hint}</p>
+					<button type="button" className="btn ghost small" onClick={() => inputRef.current?.click()}>
+						{value ? ko("Replace", "교체") : ko("Choose image", "이미지 선택")}
+					</button>
+				</div>
+			</div>
+			{error && <p className="inspector-hint reference-slot-error" role="status">{error}</p>}
+			<input
+				ref={inputRef}
+				type="file"
+				className="multimodel-file-input"
+				accept="image/*"
+				{...inputProps}
+				onChange={async (event) => {
+					const file = event.target.files?.[0];
+					// Cleared before the await: re-picking the same file after an
+					// error must fire change again.
+					event.target.value = "";
+					if (!file) return;
+					setError("");
+					try {
+						onPick(await readReferenceImage(file));
+					} catch (failure) {
+						setError(isKo ? `이미지를 불러오지 못했어요 — ${failure.message}` : `Could not load that image — ${failure.message}`);
+					}
+				}}
+			/>
+		</div>
+	);
+}
 
 /** Unity Inspector-style foldout: a titled section the user can collapse.
  * Cards default to open; the fold state is per-title session state. */
@@ -12362,7 +15914,6 @@ function Foldout({ title, hidden, defaultOpen = true, openSignal = 0, children }
 }
 
 function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, onColorChange, onColorEditStart }) {
-	const set = (key) => (v) => onChange((prev) => ({ ...prev, [key]: v }));
 	return (
 		<div className="subject-box">
 			<div className="subject-box-head">
@@ -12390,6 +15941,7 @@ function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, o
 						<button
 							type="button"
 							className={"cam-toggle" + (posing ? " active" : "")}
+							aria-label={isKo ? `${label} 포즈 열기` : `Open pose studio for ${label}`}
 							title={isKo ? `${label} 포즈` : `Pose ${label}`}
 							onClick={onPose}
 						>
@@ -12403,15 +15955,6 @@ function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, o
 					)}
 				</div>
 			</div>
-			<Vector3Row
-				label={ko("Position", "위치")}
-				fields={[
-					{ axis: "X", value: value.x, step: 0.05, precision: 2, onChange: (x) => set("x")(x) },
-					{ axis: "Y", value: value.y ?? 0, step: 0.05, precision: 2, onChange: (y) => set("y")(Math.max(0, y)) },
-					{ axis: "Z", value: value.z, step: 0.05, precision: 2, onChange: (z) => set("z")(z) },
-				]}
-			/>
-			<Slider compact label={ko("Rotate", "회전")} min={-180} max={180} step={1} value={value.rot} unit="°" onChange={set("rot")} />
 		</div>
 	);
 }

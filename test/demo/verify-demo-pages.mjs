@@ -60,9 +60,11 @@ assert.match(robots, /^Disallow:\s*\/d\/\s*$/m);
 // Unlisted mode: the composer is reachable by URL only, never via search.
 assert.match(robots, /^Disallow:\s*\/demo\/\s*$/m);
 assert.match(demoHtml, /<meta\s+name="robots"\s+content="noindex, nofollow"\s*\/?>(?:\s*)/u);
-const sitemap = readFileSync(path("public/sitemap.xml"), "utf8");
-assert.doesNotMatch(sitemap, /<loc>[^<]*\/demo\//u);
-assert.doesNotMatch(sitemap, /<loc>[^<]*\/d\//u);
+// The sitemap is generated into dist/ by tools/sitemap.mjs at build time; its
+// PAGES table is the source of truth for what search engines are told about.
+const sitemapSource = readFileSync(path("tools/sitemap.mjs"), "utf8");
+assert.doesNotMatch(sitemapSource, /path:\s*"\/demo\//u);
+assert.doesNotMatch(sitemapSource, /path:\s*"\/d\//u);
 console.log("PASS ticket bookmark notice, Google-only sign-in, robots rule, and sitemap visibility");
 
 for (const relativePath of ["demo/demo.js", "d/ticket.js"]) {

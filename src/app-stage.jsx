@@ -14,6 +14,7 @@ import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { Line, Text, useFBX } from "@react-three/drei";
 import * as THREE from "three";
 import { SkeletonUtils } from "three/examples/jsm/Addons.js";
+import { addFacingMarks } from "./facing-marks.js";
 import { retimeMotion } from "./ardy/retime.js";
 import {
 	TRAIL_EFFECTOR_JOINTS,
@@ -34,8 +35,9 @@ import {
 	validateLineEdit,
 } from "./line-edit.js";
 import { craneHeightAt, railPoint } from "./camera-follow.js";
-import { CUTOUT_KIND, DEFAULT_SCENE_OBJECTS, SCENE_ATTACH_BONES, updateSceneObject } from "./scene-objects.js";
+import { CUTOUT_KIND, DEFAULT_SCENE_OBJECTS, MESH_KIND, SCENE_ATTACH_BONES, updateSceneObject } from "./scene-objects.js";
 import { imageFilesFrom } from "./scene-assets.js";
+import { splitDroppedFiles } from "./scene-mesh.js";
 import {
 	SCENES_QUARANTINE_KEY,
 	createSceneDocument,
@@ -47,6 +49,8 @@ import ObjectGizmo from "./object-gizmo.jsx";
 import { MAX_PATH_POINTS } from "./object-path.js";
 import { track } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
+import { isPlaygroundEmbed, takePlaygroundProject } from "./playground.js";
+import { applyPartColours } from "./part-colours.js";
 import { POSE_BONES, applyHipsOffset, applyPose, primeBindPose, normalizeBoneName } from "./poses.js";
 import { FK_TRACKS, IK_TRACKS, MID_TRACKS } from "./ardy/ik.js";
 import { RENDER_ACTIVITY_EVENT } from "./use-render-activity.js";
@@ -353,6 +357,7 @@ export const SCENE_RENDERER_LABELS_KO = new Map([
 	["car", ko("car", "자동차")],
 	["aircraft", ko("aircraft", "비행기")],
 	[CUTOUT_KIND, ko("cutout", "컷아웃")],
+	[MESH_KIND, ko("Mesh", "모델")],
 ]);
 
 export const SCENE_OBJECT_NAME_LABELS_KO = new Map([
@@ -365,6 +370,8 @@ export const SCENE_OBJECT_NAME_LABELS_KO = new Map([
 	["Chair", ko("Chair", "의자")],
 	["Car", ko("Car", "자동차")],
 	["Plane (aircraft)", ko("Plane (aircraft)", "비행기")],
+	["Mesh", ko("Mesh", "모델")],
+	["Model", ko("Model", "모델")],
 ]);
 
 export function poseLabelKo(pose) {
@@ -440,6 +447,8 @@ export const SHOT_ASPECT_PRESETS = Object.freeze({
 	"9:16": Object.freeze({ label: "9:16", aspect: SHOT_ASPECT_RATIOS["9:16"], width: 1080, height: 1920 }),
 	"1:1": Object.freeze({ label: "1:1", aspect: SHOT_ASPECT_RATIOS["1:1"], width: 1080, height: 1080 }),
 	"4:3": Object.freeze({ label: "4:3", aspect: SHOT_ASPECT_RATIOS["4:3"], width: 1440, height: 1080 }),
+	"12:7": Object.freeze({ label: "12:7", aspect: SHOT_ASPECT_RATIOS["12:7"], width: 1536, height: 896, title: "12:7 video-inbetweener ratio" }),
+	"fal 480P": Object.freeze({ label: "fal 480P", aspect: SHOT_ASPECT_RATIOS["fal 480P"], width: 1664, height: 960, title: "Fal H3 480P canvas (832x480)" }),
 });
 // Pre-generated clip shipped with the build so a bridge-less session (a hosted
 // static demo, or `npm run dev:ui`) still shows real generated motion.
@@ -525,7 +534,6 @@ export const toArdyFrame = (frame) => Math.round((frame * ARDY_FPS) / TIMELINE_F
 // frames. Rounding can land two timeline frames on one bridge frame; the
 // first wins — the bridge refuses non-ascending lists outright.
 /** Where a placed pose lands, in TIMELINE frames, for a clip of `clipFrames`. */
-export const POSE_PLACEMENTS = ["start", "middle", "end", "playhead"];
 export function posePlacementFrame(placement, clipFrames, playheadFrame) {
 	const last = Math.max(0, clipFrames - 1);
 	if (placement === "end") return last;
@@ -773,11 +781,13 @@ export const MULTIMODEL_REASONS = {
 	"footage-timeout": ["The bridge download took too long and was stopped", "브리지 다운로드가 너무 오래 걸려 중단됐어요"],
 	"bridge-extract-incomplete": ["The bridge stream ended without a take", "브리지 전송이 테이크 없이 끝났어요"],
 	"extract-host-missing": ["The bridge has no GPU box configured (CCLAY_EXTRACT_HOST)", "브리지에 GPU 박스가 설정돼 있지 않아요(CCLAY_EXTRACT_HOST)"],
+	"extract-bridge-required": ["GVHMR extraction requires the local GPU bridge", "GVHMR 추출에는 로컬 GPU 브리지가 필요해요"],
+	"extract-backend-unsupported": ["This bridge is not configured for GVHMR", "이 브리지가 GVHMR로 설정되지 않았어요"],
 	"extract-upload-failed": ["The footage could not be copied to the GPU box", "영상을 GPU 박스로 복사하지 못했어요"],
 	"extract-upload-too-large": ["That clip is too large to upload for extraction (300 MB cap)", "추출 업로드 한도(300MB)를 넘는 영상이에요"],
 	"extract-upload-empty": ["No video bytes arrived at the bridge", "브리지에 영상 데이터가 도착하지 않았어요"],
 	"extract-footage-unknown": ["The bridge no longer holds that download — re-ingest the URL", "브리지에 그 다운로드가 더 이상 없어요 — URL을 다시 넣어 주세요"],
-	"extract-run-failed": ["SAM-3D-Body failed on the GPU box (see the bridge log)", "GPU 박스에서 SAM-3D-Body 실행이 실패했어요(브리지 로그 확인)"],
+	"extract-run-failed": ["GVHMR failed on the GPU box (see the bridge log)", "GPU 박스에서 GVHMR 실행이 실패했어요(브리지 로그 확인)"],
 	"extract-no-person": ["The GPU box tracked no person in that footage", "GPU 박스가 영상에서 사람을 추적하지 못했어요"],
 	"extract-convert-failed": ["The extracted take could not be converted for the timeline", "추출된 테이크를 타임라인용으로 변환하지 못했어요"],
 	"extract-timeout": ["GPU extraction took too long and was stopped", "GPU 추출이 너무 오래 걸려 중단됐어요"],
@@ -790,54 +800,7 @@ export const MULTIMODEL_SAMPLE_FPS = TIMELINE_FPS;
 /* ------------------------------------------------------------------ 3D --- */
 
 // Memoized: unchanged cast members skip re-rendering on every playhead tick.
-/**
- * Give the head a front.
- *
- * Both shipped rigs are smooth helmets with no facial geometry and no texture
- * of any kind — the FBX materials carry a flat colour and nothing else — and
- * the app then replaces every material with one clay tone. The result reads as
- * an ovoid with no direction, which matters most in an exported blocking
- * frame: the prompt claims a three-quarter front view and the picture has to
- * back it up.
- *
- * Two marks, because they fail in different conditions. The visor is a value
- * cue and disappears in silhouette or backlight; the brow ridge is a shape cue
- * and survives both. Both hang off the head bone, so posing, playback and
- * pose extraction are untouched — nothing here is skinned or animated.
- *
- * Sizes are in the head bone's own units. The rig is authored in Mixamo
- * centimetres and the whole clone is scaled by 0.01 afterwards, so a child of
- * the bone is written in centimetres too: the skull reaches ~6 cm forward of
- * the bone, which is 6 units here. Deliberately small — the maquette should
- * keep reading as a mannequin rather than a robot.
- */
-export function addFacingMarks(clone, markTint) {
-	let head = null;
-	clone.traverse((node) => {
-		if (!head && node.isBone && /head$/i.test(node.name)) head = node;
-	});
-	if (!head) return;
-	const material = new THREE.MeshStandardMaterial({ color: markTint, roughness: 0.7, metalness: 0 });
-	const mark = (geometry, position, rotation) => {
-		const mesh = new THREE.Mesh(geometry, material);
-		mesh.position.set(...position);
-		if (rotation) mesh.rotation.set(...rotation);
-		mesh.castShadow = true;
-		mesh.frustumCulled = false;
-		// The head bone's local +Z is the face direction on both rigs.
-		head.add(mesh);
-		return mesh;
-	};
-	// The skull surface sits ~6 units forward of the bone, so both marks are
-	// placed to break that plane rather than rest on it — flush is invisible.
-	// Visor: a wide, shallow band across the eyeline.
-	mark(new THREE.BoxGeometry(8.5, 2.4, 1.8), [0, 5.5, 6.6], [-0.2, 0, 0]);
-	// Brow ridge: a short wedge that breaks the skull's outline from the side,
-	// so facing survives silhouette and backlight where the visor does not.
-	mark(new THREE.ConeGeometry(1.7, 3.6, 4), [0, 2.8, 6.4], [Math.PI / 2, Math.PI / 4, 0]);
-}
-
-export const Character = memo(function Character({ url, position, rot, tint, pose, scale = 1, onRig, pickId }) {
+export const Character = memo(function Character({ url, position, rot, tint, pose, scale = 1, onRig, pickId, partColoursEnabled = false, partColoursMode = "shaded" }) {
 	const fbx = useFBX(url);
 	const model = useMemo(() => {
 		const clone = SkeletonUtils.clone(fbx);
@@ -875,12 +838,13 @@ export const Character = memo(function Character({ url, position, rot, tint, pos
 				child.receiveShadow = true;
 			}
 		});
-		addFacingMarks(clone, jointTint);
+		if (partColoursEnabled) applyPartColours(clone, partColoursMode);
+		addFacingMarks(clone);
 		// Stamp the bind pose while the rig is still untouched: the pose effect
 		// below runs immediately after and would otherwise be baked into "rest".
 		primeBindPose(clone);
 		return clone;
-	}, [fbx, tint]);
+	}, [fbx, tint, partColoursEnabled, partColoursMode]);
 
 	// A new stature (a fresh extraction on this character) must not rebuild the
 	// clone — that would drop the rig the playback effects hold. Only the world
@@ -954,7 +918,7 @@ export function ShotRig({ preset, nonce, fovDeg, charA, charB, showB, probeX, pr
 		const horizontal = p.distance * Math.cos(el);
 		cam.position.set(
 			aim.x + horizontal * Math.sin(az),
-			Math.max(p.targetY + p.distance * Math.sin(el), 0.15),
+			p.height ?? Math.max(p.targetY + p.distance * Math.sin(el), 0.15),
 			aim.z + horizontal * Math.cos(az),
 		);
 		const angles = aimAt(cam.position, { x: aim.x, y: p.targetY, z: aim.z });
@@ -2328,53 +2292,59 @@ export const CAPTURE_FOG_FAR = 95;
 export function CaptureRig({ apiRef, camRef, width = CAPTURE_W, height = CAPTURE_H }) {
 	const { gl, scene } = useThree();
 	useEffect(() => {
-		const target = new THREE.WebGLRenderTarget(width, height, {
-			colorSpace: THREE.SRGBColorSpace,
-			samples: 4,
-		});
-		const buffer = new Uint8Array(width * height * 4);
-		const api = {
-			scene,
-			render() {
-				const source = camRef.current;
-				if (!source) return null;
-				const cam = source.clone();
-				// the transform gizmo is UI: it never reaches an exported frame
-				cam.layers.disable(GIZMO_LAYER);
-				// QA hook: the layer mask the export camera actually renders
-				// with — the browser suite asserts GIZMO_LAYER (the gizmo AND
-				// the selection cage) is never in it.
-				window.__captureCameraMask = cam.layers.mask;
-				cam.aspect = width / height;
-				cam.updateProjectionMatrix();
-				const previous = gl.getRenderTarget();
-				// The viewport's fog dissolves the deck into the background by ~54 m
-				// so the working view has no horizon to distract from blocking. An
-				// exported frame wants the opposite: the horizon IS the vanishing
-				// point, and without it the floor has no far edge to read depth
-				// against. Push the falloff back for this draw only, then restore
-				// it so the viewport is untouched.
-				const fog = scene.fog;
-				const fogNear = fog?.near;
-				const fogFar = fog?.far;
-				if (fog) {
-					fog.near = CAPTURE_FOG_NEAR;
-					fog.far = CAPTURE_FOG_FAR;
-				}
-				try {
-					gl.setRenderTarget(target);
-					gl.render(scene, cam);
-					gl.readRenderTargetPixels(target, 0, 0, width, height, buffer);
-				} finally {
-					gl.setRenderTarget(previous);
+		// Each attempt owns its target independently of the live output size.
+		// Resizing the editor cannot dispose an in-flight export's resources.
+		function createExportCapture({ width, height }) {
+			const target = new THREE.WebGLRenderTarget(width, height, {
+				colorSpace: THREE.SRGBColorSpace,
+				samples: 4,
+			});
+			const buffer = new Uint8Array(width * height * 4);
+			return {
+				scene,
+				dispose: () => target.dispose(),
+				render() {
+					const source = camRef.current;
+					if (!source) return null;
+					const cam = source.clone();
+					// the transform gizmo is UI: it never reaches an exported frame
+					cam.layers.disable(GIZMO_LAYER);
+					// QA hook: the layer mask the export camera actually renders
+					// with — the browser suite asserts GIZMO_LAYER (the gizmo AND
+					// the selection cage) is never in it.
+					window.__captureCameraMask = cam.layers.mask;
+					cam.aspect = width / height;
+					cam.updateProjectionMatrix();
+					const previous = gl.getRenderTarget();
+					// The viewport's fog dissolves the deck into the background by ~54 m
+					// so the working view has no horizon to distract from blocking. An
+					// exported frame wants the opposite: the horizon IS the vanishing
+					// point, and without it the floor has no far edge to read depth
+					// against. Push the falloff back for this draw only, then restore
+					// it so the viewport is untouched.
+					const fog = scene.fog;
+					const fogNear = fog?.near;
+					const fogFar = fog?.far;
 					if (fog) {
-						fog.near = fogNear;
-						fog.far = fogFar;
+						fog.near = CAPTURE_FOG_NEAR;
+						fog.far = CAPTURE_FOG_FAR;
 					}
-				}
-				return buffer;
-			},
-		};
+					try {
+						gl.setRenderTarget(target);
+						gl.render(scene, cam);
+						gl.readRenderTargetPixels(target, 0, 0, width, height, buffer);
+					} finally {
+						gl.setRenderTarget(previous);
+						if (fog) {
+							fog.near = fogNear;
+							fog.far = fogFar;
+						}
+					}
+					return buffer;
+				},
+			};
+		}
+		const api = { ...createExportCapture({ width, height }), createExportCapture };
 		apiRef.current = api;
 		if (width === MCP_CAPTURE_W && height === MCP_CAPTURE_H) {
 			window.__cozyclayMcpCaptureReady = true;
@@ -2400,13 +2370,13 @@ export function CaptureRig({ apiRef, camRef, width = CAPTURE_W, height = CAPTURE
 		return () => {
 			if (apiRef.current === api) apiRef.current = null;
 			if (width === MCP_CAPTURE_W && height === MCP_CAPTURE_H) window.__cozyclayMcpCaptureReady = false;
-			target.dispose();
+			api.dispose();
 		};
 	}, [gl, scene, camRef, apiRef, width, height]);
 	return null;
 }
 
-export async function captureMcpFrame({ capture, camera, characters, activeCharacterId, objects, rigs, readAuthoredState }) {
+export async function captureMcpFrame({ capture, camera, characters, activeCharacterId, objects, rigs, readAuthoredState, partColours = null }) {
 	if (!capture || !camera) throw new Error("No renderable shot camera is available for capture_frame.");
 	const authoredStateBefore = JSON.stringify(readAuthoredState());
 	const buffer = capture.render();
@@ -2496,6 +2466,7 @@ export async function captureMcpFrame({ capture, camera, characters, activeChara
 		encoding: "base64",
 		byteSize: bytes.length,
 		data: btoa(binary),
+		partColours,
 		authoredStateBefore,
 		authoredStateAfter,
 		assertions: {
@@ -2564,6 +2535,57 @@ export function useImageDrop(onFiles, onRejected) {
 	};
 }
 
+/**
+ * Inspector, hierarchy and viewport drop: pictures AND .glb files in one
+ * gesture. A GLB must not go through `useImageDrop`, or it toasts as an
+ * unsupported image even though the set can now stand it up as a mesh.
+ *
+ * `onRejected` fires only when the drop carried files and none of them were
+ * a picture or a GLB — a mixed PNG+GLB drop imports both, and leftover
+ * HEICs in that mix stay silent rather than blocking the good files.
+ */
+export function useStageFilesDrop({ onImages, onMeshes, onRejected } = {}) {
+	const [over, setOver] = useState(false);
+	const depth = useRef(0);
+	const carriesFiles = (event) => !!event.dataTransfer?.types?.includes?.("Files");
+	return {
+		over,
+		handlers: {
+			onDragEnter: (event) => {
+				if (!carriesFiles(event)) return;
+				event.preventDefault();
+				depth.current += 1;
+				setOver(true);
+			},
+			onDragOver: (event) => {
+				if (!carriesFiles(event)) return;
+				event.preventDefault();
+				event.dataTransfer.dropEffect = "copy";
+			},
+			onDragLeave: () => {
+				depth.current = Math.max(0, depth.current - 1);
+				if (!depth.current) setOver(false);
+			},
+			onDrop: (event) => {
+				const { images = [], meshes = [] } = splitDroppedFiles(event.dataTransfer);
+				depth.current = 0;
+				setOver(false);
+				if (!images.length && !meshes.length) {
+					const dropped = event.dataTransfer?.files?.length ?? 0;
+					if (dropped > 0) onRejected?.(dropped);
+					return;
+				}
+				event.preventDefault();
+				event.stopPropagation();
+				void (async () => {
+					if (images.length) await onImages?.(images);
+					if (meshes.length) await onMeshes?.(meshes);
+				})();
+			},
+		},
+	};
+}
+
 /* ----------------------------------------------------------------- app --- */
 
 // Unity's tool keys. They are free because camera movement now lives behind a
@@ -2582,6 +2604,9 @@ export const DEFAULT_WORKSPACE_LAYOUT = Object.freeze({
 });
 
 export function loadWorkspaceLayout() {
+	// The landing-page playground is a fixed, chrome-less layout: the plan
+	// inset starts folded and nothing the visitor drags is written back.
+	if (isPlaygroundEmbed(globalThis.location?.search)) return { ...DEFAULT_WORKSPACE_LAYOUT, insetCollapsed: true };
 	try {
 		const saved = JSON.parse(localStorage.getItem(WORKSPACE_LAYOUT_KEY) || "null");
 		return saved ? { ...DEFAULT_WORKSPACE_LAYOUT, ...saved } : { ...DEFAULT_WORKSPACE_LAYOUT };
@@ -2594,6 +2619,15 @@ export function loadWorkspaceLayout() {
  * scenes.js; App only supplies the familiar starter set for a truly new room. */
 export function loadSceneStartup() {
 	const defaults = () => DEFAULT_SCENE_OBJECTS.map((object) => ({ ...object, footprint: { ...object.footprint } }));
+	// The landing-page playground never reads or writes the visitor's saved
+	// scenes: it opens the preset the page fetched (or an empty room if that
+	// fetch failed) and saving stays off for the whole session.
+	if (isPlaygroundEmbed(globalThis.location?.search)) {
+		const preset = takePlaygroundProject();
+		const document = preset?.document ?? createSceneDocument();
+		if (!preset?.document) document.scenes[0].objects = defaults();
+		return { document, saveBlocked: true, error: null, startupCreatedScene: false, toast: null };
+	}
 	try {
 		const result = loadSceneDocumentFromStorage(localStorage);
 		if (result.status === "future") {

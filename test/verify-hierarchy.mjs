@@ -125,10 +125,21 @@ const strayTree = buildHierarchyNodes(
 	[{ id: "cast-1" }, { id: "cast-2", hidden: true }],
 );
 expect("unknown characterId falls back to Props", rowIds(findRow(strayTree, "props")).includes("object:bat"));
-expect("hidden characterId falls back to Props", rowIds(findRow(strayTree, "props")).includes("object:hat"));
+expect("a prop on a hidden character stays under that character", rowIds(findRow(strayTree, "characterB")).includes("object:hat"));
 expect("a null attach is an ordinary prop", rowIds(findRow(strayTree, "props")).includes("object:ball"));
 expect("the fallback label carries no bone", findRow(strayTree, "object:bat")?.label === "Bat");
-expect("hidden characters still own no row", !findRow(strayTree, "characterB"));
+expect("a hidden character keeps its row", findRow(strayTree, "characterB")?.hidden === true);
+expect("a visible character row is not marked hidden", findRow(strayTree, "characterA")?.hidden !== true);
+expect(
+	"a hidden prop keeps its row and a visible child keeps its own eye on",
+	(() => {
+		const tree = buildHierarchyNodes([
+			{ id: "parent", name: "Parent", hidden: true },
+			{ id: "child", name: "Child", parent: "parent" },
+		]);
+		return findRow(tree, "object:parent")?.hidden === true && findRow(tree, "object:child")?.hidden !== true;
+	})(),
+);
 
 // Grouping is untouched by attachment: rooted parents keep nesting, orphans
 // keep surfacing at the top level.
@@ -177,12 +188,57 @@ expect("row handlers never swallow a picture drop", panelSource.includes("if (ca
 for (const callback of ["onSceneSelect", "onSceneCreate", "onSceneDuplicate", "onSceneRename", "onSceneDelete"]) {
 	expect(`panel exposes ${callback}`, panelSource.includes(callback));
 }
-expect("scene selector is separate from entity tree", panelSource.includes('className="scene-switcher"') && panelSource.includes('className="hierarchy-tree"'));
-expect("scene rename supports double-click", panelSource.includes("onDoubleClick={() => setEditingId(scene.id)}"));
+expect(
+	"the scene selector rides the tree root row",
+	panelSource.includes('className="hierarchy-scene-pill"') &&
+		panelSource.includes("const sceneRoot = node.id === SCENE_ROOT_ID;") &&
+		panelSource.includes('ariaLabel={ko("Select scene", "장면 선택")}'),
+);
+expect("the scene list is the portaled Dropdown, so the panel cannot clip it", panelSource.includes('import { Dropdown } from "./ui.jsx"'));
+expect("the scene list ends with a create item", panelSource.includes('{ value: NEW_SCENE_OPTION, label: ko("+ New scene", "+ 새 장면") }'));
+expect("the pill's clicks never reach the row, so picking a scene cannot fold the tree", panelSource.includes("onClick={(event) => event.stopPropagation()}"));
+expect("the root row right-click opens scene verbs, not the object catalogue", panelSource.includes("} else if (id === SCENE_ROOT_ID) {") && panelSource.includes('kind: "scene",'));
+expect("object and character rows get an eye that does not also select the row", panelSource.includes('className="hierarchy-eye"') && panelSource.includes("event.stopPropagation()") && panelSource.includes("onToggleHidden(node.id)"));
+expect("a character right-click opens Hide/Show, not the add catalogue", panelSource.includes('node?.kind === "object" || node?.kind === "character"') && panelSource.includes('kind: node.kind') && panelSource.includes('menu.kind === "character"'));
+expect("the eye is only offered for objects and characters", panelSource.includes('node.kind === "object" || node.kind === "character"'));
+expect(
+	"the root row prints the scene name once: the pill is the name",
+	panelSource.includes("showLabel={!sceneRoot}") &&
+		panelSource.includes("{showLabel && <span className=\"hierarchy-label\">{label}</span>}") &&
+		panelSource.includes("rowExtra={sceneRoot && !editing ? ("),
+);
+// The row outlives its renames: a second rename on the same row must not be
+// blocked by the first session's "already finished" flag.
+expect("the once-only rename flag is per edit session", panelSource.includes("if (editing) doneRef.current = false;"));
+expect("scene rename supports double-click, on the row icon and on the pill", panelSource.includes("onRenameStart={sceneRoot ? () => setEditingId(node.id) : null}") && panelSource.includes("onRenameStart={() => setEditingId(node.id)}"));
+expect("F2 on the root row renames the scene document", panelSource.includes("if (selectedId !== SCENE_ROOT_ID && sceneObjectIdFromHierarchy(selectedId) === null) return;") && panelSource.includes("if (hierarchyId === SCENE_ROOT_ID) {"));
 expect("scene deletion requires a second deliberate click", panelSource.includes("deleteArmed") && panelSource.includes('ko("Confirm delete", "삭제 확인")'));
-expect("active scene clicks do not repeat selection callbacks", panelSource.includes("if (!active) onSceneSelect?.(scene.id)"));
-expect("last scene deletion is protected", panelSource.includes("disabled={availableScenes.length <= 1}"));
-expect("entity tree root follows the active scene name", panelSource.includes('node.kind === "scene" ? { ...node, label: activeSceneName } : node'));
+expect("active scene clicks do not repeat selection callbacks", panelSource.includes("else if (value !== activeSceneId) onSceneSelect?.(value)"));
+expect(
+	"last scene deletion is protected, with a reason",
+	panelSource.includes("{menu.canDelete && (") &&
+		panelSource.includes("canDelete: availableScenes.length > 1,") &&
+		panelSource.includes('setSceneHint(ko("At least one scene is required", "장면은 최소 하나 필요합니다"))'),
+);
+expect("entity tree root follows the active scene name", panelSource.includes('node.kind === "scene" ? { label: activeSceneName } : {}'));
+// docs/studio-ui-ia.md R6: the last two hierarchy affordances that folded the
+// whole scene are gone. The MODEL keeps the `characters` group (ids above are
+// unchanged, so selection, IK and inspector routing are too); the RENDERED
+// tree splices its children under the root, and the root gets no fold caret.
+expect(
+	"the rendered tree lifts the cast out of the Characters group",
+	panelSource.includes('node.children.flatMap((child) => (child.id === "characters" ? (child.children ?? []) : [child]))'),
+);
+expect(
+	"the group row's count badge went with it",
+	!panelSource.includes('if (id === "characters")') && panelSource.includes('if (id === "props") return sceneObjects.length;'),
+);
+expect(
+	"the scene root renders no fold caret, and cannot be folded",
+	panelSource.includes("foldable={!sceneRoot}") &&
+		panelSource.includes("{branch && foldable ? (") &&
+		panelSource.includes("const open = sceneRoot || expanded.has(node.id);"),
+);
 
 // The studio source spans App.jsx and app-stage.jsx (module-level extraction); pin against both.
 const appSource = await readFile(new URL("../src/App.jsx", import.meta.url), "utf8")
@@ -199,6 +255,10 @@ expect(
 for (const prop of ["scenes={scenes}", "activeSceneId={activeSceneId}", "onSceneSelect={selectSceneDocument}", "onSceneCreate={createSceneDocumentFromUi}", "onSceneDuplicate={duplicateSceneDocumentFromUi}", "onSceneRename={renameSceneDocumentFromUi}", "onSceneDelete={deleteSceneDocumentFromUi}"]) {
 	expect(`App wires ${prop.split("=")[0]}`, appSource.includes(prop));
 }
+// The project row keeps the name and the dirty dot; opening a project is the
+// Project menu's "Open Project…", not a second button in the hierarchy column.
+expect("the hierarchy column has no duplicate Projects… button", !appSource.includes('ko("Projects…", "프로젝트…")'));
+expect("the Project menu still opens the project browser", appSource.includes('ko("Open Project…", "프로젝트 열기…")'));
 expect("App seals shots inside the active Scene", appSource.includes("shotDocument: shotDocumentRef.current"));
 expect("App persists the unified Scene document", appSource.includes("serializeSceneDocument({"));
 expect("Scene switch snapshots outgoing work first", appSource.indexOf("const savedScenes = snapshotActiveScene();", appSource.indexOf("function selectSceneDocument")) < appSource.indexOf("openScene(target, savedScenes);", appSource.indexOf("function selectSceneDocument")));

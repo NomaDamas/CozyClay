@@ -307,6 +307,10 @@ state.queue.push({
 	lease_token: "lease-signal",
 	lease_expires_at: Date.now() + 60_000,
 });
+// The signal must land while the job is being generated: wait for the
+// generate callback itself, not a fixed delay - under a loaded runner the
+// loop had not claimed the job yet when a 10 ms sleep expired (#413).
+const generating = Promise.withResolvers();
 const signalRun = runLoop({
 	apiClient: api,
 	prewarm: false,
@@ -314,10 +318,11 @@ const signalRun = runLoop({
 	installSignalHandlers: true,
 	generate: async (_prompt, _duration, { signal }) => new Promise((resolvePromise, reject) => {
 		signal.addEventListener("abort", () => reject(new Error("aborted by test")), { once: true });
+		generating.resolve();
 	}),
 	logger: { info() {}, warn() {}, error() {} },
 });
-await new Promise((resolvePromise) => setTimeout(resolvePromise, 10));
+await generating.promise;
 process.emit("SIGINT");
 const signalResult = await signalRun;
 assert.equal(signalResult.signal, "SIGINT");

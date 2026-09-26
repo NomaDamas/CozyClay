@@ -1,0 +1,19 @@
+.physics-review { border-top: 1px solid var(--border, #40444c); margin-top: 12px; padding-top: 12px; }
+.physics-review h4 { margin: 0 0 8px; font-size: 13px; }
+.physics-review h4 small { font-weight: 400; opacity: .7; }
+.physics-review fieldset { margin: 0; padding: 0; border: 0; min-width: 0; }
+.physics-review label { display: block; font-size: 12px; }
+.physics-review label output { float: right; }
+.physics-review input[type=range], .physics-review progress { width: 100%; }
+.physics-review input[type=range] { display: block; margin: 12px 0 16px; background: #626b77; }
+.physics-review summary { cursor: pointer; font-size: 12px; padding: 10px 0; }
+.physics-contact-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.physics-contact-editor input, .physics-contact-editor select { width: 100%; min-width: 0; padding: 5px; color: inherit; background: var(--panel, #25272d); border: 1px solid var(--border, #50535c); border-radius: 4px; }
+.physics-actions { display: flex; gap: 6px; margin: 8px 0; }
+.physics-actions > button { flex: 1; }
+.physics-row { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin: 4px 0; font-size: 11px; }
+.physics-review table { width: 100%; border-collapse: collapse; font-size: 10px; font-variant-numeric: tabular-nums; }
+.physics-review th, .physics-review td { padding: 5px 2px; text-align: right; border-bottom: 1px solid #8883; }
+.physics-review th:first-child, .physics-review td:first-child { text-align: left; }
+.physics-list { max-height: 170px; overflow: auto; }
+.physics-warning { padding: 8px; border: 1px solid #cc924e; border-radius: 5px; font-size: 11px; margin-top: 8px; }

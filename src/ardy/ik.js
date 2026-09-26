@@ -32,6 +32,29 @@ const CONTACT_RADIUS_FALLBACK = 0.01;
 const CONTACT_HEIGHT_MAX = 0.25;
 const contactRadiusCache = new WeakMap();
 const contactHeightCache = new WeakMap();
+// Normalised once: the per-vertex loops below used to re-run the
+// normalizeBoneName regex 16 times per vertex, which was most of the cost of
+// measuring a rig (#413).
+const CONTACT_TARGETS = CONTACT_JOINTS.map((name) => [name, normalizeBoneName(`mixamorig${name}`)]);
+const contactJointFor = (normalized) => {
+	if (!normalized) return undefined;
+	for (const [name, target] of CONTACT_TARGETS) {
+		if (normalized === target || normalized.endsWith(target) || target.endsWith(normalized)) return name;
+	}
+	return undefined;
+};
+
+/** Copy one rig's measured contact radii/heights onto another rig that shares
+ * its bind pose (a skeleton clone). The measurement reads bind-pose geometry
+ * only, so the numbers are identical and re-scanning every skinned vertex per
+ * clone is pure waste: studioBounds clones the rig per query (#413). */
+export function shareContactMeasurements(from, to) {
+	if (!from || !to || from === to) return;
+	const radii = contactRadiusCache.get(from);
+	const heights = contactHeightCache.get(from);
+	if (radii && !contactRadiusCache.has(to)) contactRadiusCache.set(to, radii);
+	if (heights && !contactHeightCache.has(to)) contactHeightCache.set(to, heights);
+}
 
 function pointSegmentDistance(point, start, end) {
 	const segment = end.clone().sub(start);
@@ -259,11 +282,7 @@ export function measureContactRadii(rig) {
 				}
 			}
 			if (dominantWeight <= 0.4) continue;
-			const normalized = names[dominant];
-			const name = CONTACT_JOINTS.find((candidate) => {
-				const target = normalizeBoneName(`mixamorig${candidate}`);
-				return normalized === target || normalized.endsWith(target) || target.endsWith(normalized);
-			});
+			const name = contactJointFor(names[dominant]);
 			const segment = segments.get(name);
 			if (!segment) continue;
 			if (bindPose) bindVertexPosition(mesh, index, vertex);
@@ -327,10 +346,7 @@ export function measureContactHeights(rig) {
 				if (weight > dominantWeight) { dominantWeight = weight; dominant = indices.getComponent(index, slot); }
 			}
 			if (dominantWeight <= 0.4 || !names[dominant]) continue;
-			const name = CONTACT_JOINTS.find((candidate) => {
-				const target = normalizeBoneName(`mixamorig${candidate}`);
-				return names[dominant] === target || names[dominant].endsWith(target) || target.endsWith(names[dominant]);
-			});
+			const name = contactJointFor(names[dominant]);
 			const point = points.get(name);
 			if (!point) continue;
 			if (bindPose) bindVertexPosition(mesh, index, vertex);
@@ -497,12 +513,6 @@ export function resolveIkRig(rig) {
 	return { chains: out, fkJoints, contactRadii, contactHeights: measureContactHeights(rig) };
 }
 
-/** Back-compat wrapper for callers that only need the chains map. */
-export function resolveIkChains(rig) {
-	const resolved = resolveIkRig(rig);
-	return resolved ? resolved.chains : null;
-}
-
 /**
  * Two-bone analytic IK for one 3-bone chain (shoulder/hip → elbow/knee →
  * wrist/ankle). `target` is a world-space effector position. The root bone
@@ -514,8 +524,13 @@ export function resolveIkChains(rig) {
  * a dragged limb keeps its own side and never mirror-flips when the target
  * crosses the bone line. Only a perfectly straight chain (no offset to
  * continue) falls back to the character-local pole hint.
+ *
+ * `maxExtension` (tuned by `softening`, default 0.01) optionally caps the
+ * root→effector reach with a soft clamp: past the cap the effector approaches
+ * it asymptotically and never exceeds it, so a locked foot cannot straighten
+ * the leg past the extension the source pose actually had.
  */
-export function solveIk(chain, targetWorld) {
+export function solveIk(chain, targetWorld, { maxExtension = null, softening = 0.01 } = {}) {
 	restoreChainPositions(chain);
 	const { bones, lengths, poleLocal, rig } = chain;
 	const [b0, b1, b2] = bones;
@@ -543,6 +558,25 @@ export function solveIk(chain, targetWorld) {
 	} else if (d < minD) {
 		d = minD;
 		t.copy(p0).addScaledVector(dir, d);
+	}
+
+	// Soft maximum-extension clamp (Holden's TwoBoneInverseKinematics): IK is a
+	// minimal modification of the source pose, so a foot locked against floor
+	// sliding must not be allowed to straighten the leg PAST the extension that
+	// pose had — clamping hard instead of softly would snap the reach at the
+	// cap frame-over-frame, where the exponential saturation eases toward it.
+	if (Number.isFinite(maxExtension) && maxExtension > 0) {
+		const cap = Math.min(maxD, maxExtension);
+		if (cap - softening < minD) {
+			// No room for the soft curve inside the annulus: fall back to a hard
+			// clamp rather than feed the law of cosines a d below minD.
+			d = Math.min(d, cap);
+			t.copy(p0).addScaledVector(dir, d);
+		} else if (d > cap - softening) {
+			const saturation = 1 - Math.exp(-Math.max(d - cap + softening, 0) / softening);
+			d = cap - softening + softening * saturation;
+			t.copy(p0).addScaledVector(dir, d);
+		}
 	}
 
 	// Law of cosines: the elbow sits at p0 + dir·proj + bend·off.
@@ -1020,6 +1054,7 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 		const w = blendWindow > 0 ? correctionWeight(ikState.keys, id, frame, blendWindow) : 1;
 		if (w <= 0) continue;
 		if (chain) {
+			if (sampled.chainP) chain.bones.forEach((bone, i) => { if (sampled.chainP[i]) bone.position.lerp(sampled.chainP[i], w); });
 			// DELTA blend for chain rotations, the mirror of basePos for the hips
 			// and for exactly the same reason. Easing a bone toward the key's
 			// ABSOLUTE rotation makes the smear proportional to how different the
@@ -1036,7 +1071,7 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 				// Translations stay on the CLIP until the correction has full
 				// authority. See restoreChainPositions for why this is a step and
 				// not a ramp.
-				if (w >= 1) restoreChainPositions(chain, 1);
+				if (w >= 1 && !sampled.keepTranslations) restoreChainPositions(chain, 1);
 				for (let index = 0; index < chain.bones.length && index < deltas.length; index += 1) {
 					if (!deltas[index]) continue;
 					easedDelta.copy(deltas[index]);
@@ -1044,7 +1079,7 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 					chain.bones[index].quaternion.multiply(easedDelta);
 				}
 			} else {
-				restoreChainPositions(chain, w);
+				if (!sampled.keepTranslations) restoreChainPositions(chain, w);
 				if (w >= 1) {
 					chain.bones[0].quaternion.copy(sampled.q[0]);
 					chain.bones[1].quaternion.copy(sampled.q[1]);
@@ -1064,7 +1099,10 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 			// A translation-only key (see ikBakeKeyframe) stores no rotation at
 			// all, and must leave the clip's own orientation strictly alone.
 			if (sampled.q?.[0]) {
-				if (w >= 1) joint.bone.quaternion.copy(sampled.q[0]);
+				if (blendWindow > 0 && sampled.deltaQ?.[0]) {
+					easedDelta.copy(sampled.deltaQ[0]).slerp(identityQuat, 1 - w);
+					joint.bone.quaternion.multiply(easedDelta);
+				} else if (w >= 1) joint.bone.quaternion.copy(sampled.q[0]);
 				else joint.bone.quaternion.slerp(sampled.q[0], w);
 			}
 			if (sampled.p && joint.bindPos) {
@@ -1226,6 +1264,8 @@ function sampleChain(keys, trackId, frame) {
 	const deltasA = keyDeltas(a);
 	const deltasB = keyDeltas(b);
 	return {
+		keepTranslations: a.keepTranslations === true && b.keepTranslations === true,
+		chainP: a.chainP && b.chainP ? a.chainP.map((p, i) => p.clone().lerp(b.chainP[i], t)) : null,
 		// Between two based keys the DELTAS interpolate, not the absolute
 		// rotations and their bases separately: each key's delta is a statement
 		// about its own frame's clip pose, and interpolating those statements is

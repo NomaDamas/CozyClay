@@ -67,6 +67,8 @@ const editor = {
 	objects: [],
 };
 let rejectDescribe = false;
+let rejectAfterMutation = false;
+const executionTelemetry = [];
 let disconnectBeforeDescribe = false;
 let omitCharacterFields = true;
 
@@ -82,6 +84,7 @@ const handle = (name, args) => {
 				? { ...description, characters: description.characters.map(({ model, ...character }) => character) }
 				: description;
 		case "add_character": {
+			if (rejectAfterMutation) { rejectDescribe = true; rejectAfterMutation = false; }
 			const id = `char-${String.fromCharCode(97 + editor.characters.length)}`;
 			editor.characters.push({
 				id,
@@ -118,6 +121,7 @@ try {
 	socket = new WebSocket(`ws://127.0.0.1:${livePort}/live`);
 	socket.on("message", (raw) => {
 		const frame = JSON.parse(raw.toString());
+		if (frame.type === "event" && frame.name === "telemetry") executionTelemetry.push(frame.payload);
 		if (frame.type !== "cmd") return;
 		try {
 			const value = handle(frame.name, frame.args);
@@ -213,7 +217,8 @@ try {
 
 	// Given an editor that applies add_character but cannot describe afterward
 	// When the MCP mutation is called
-	rejectDescribe = true;
+	rejectAfterMutation = true;
+	const ambiguousOffset = executionTelemetry.length;
 	const ambiguous = await call("add_character", { subject: "a second performer", model: "x-bot-tpose" });
 	// Then MCP marks the result failed and explicitly prevents duplicate retry.
 	assert.equal(ambiguous.isError, true, JSON.stringify(ambiguous));
@@ -226,6 +231,11 @@ try {
 	// Then the MCP tool result uses the protocol error state.
 	assert.equal(rejected.isError, true, JSON.stringify(rejected));
 	assert.match(rejected.content[0].text, /Character not found: missing/, rejected.content[0].text);
+	const uncertainEvents = executionTelemetry.slice(ambiguousOffset);
+	const uncertainRequest = uncertainEvents.find(({ event }) => event === "mcp:tool_requested");
+	const lifecycle = uncertainEvents.filter(({ props }) => props.request_id === uncertainRequest.props.request_id);
+	assert.deepEqual(lifecycle.map(({ event }) => event), ["mcp:tool_requested", "mcp:tool_executed"]);
+	assert.equal(lifecycle[1].props.outcome, "uncertain", "transport observation preserves uncertainty hidden by handler isError prose");
 
 	// Given an already-generated take
 	// When generate_motion schedules its internal job
@@ -250,6 +260,15 @@ try {
 	// When its timeout policy is selected
 	// Then it receives the dedicated processing timeout, not the generic command timeout.
 	assert.equal(LiveHub.commandTimeoutMs("load_motion"), 30_000);
+	assert.equal(LiveHub.commandTimeoutMs("capture_frame"), 30_000);
+	assert.equal(LiveHub.commandTimeoutMs("import_asset"), 30_000);
+	for (const name of [
+		"inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements",
+		"frame_shot", "verify_result", "undo_edit", "read_studio_context", "resolve_studio_image",
+		"capture_framing_png", "reconcile_studio_command", "run_action",
+	]) {
+		assert.equal(LiveHub.commandTimeoutMs(name), 30_000, `${name} uses the Studio command timeout`);
+	}
 	assert.equal(LiveHub.commandTimeoutMs("describe"), 5_000);
 
 	console.log(JSON.stringify({

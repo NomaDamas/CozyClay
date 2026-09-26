@@ -1,0 +1,76 @@
+--- a/src/preprocess/preprocess_src.py	2026-09-23 18:54:26
++++ b/src/preprocess/preprocess_src.py	2026-09-23 22:00:59
+@@ -18,14 +18,6 @@
+
+ # Add generative-models to path
+ sys.path.append(os.path.join(os.path.dirname(__file__), "../extlibs/generative-models"))
+-
+-from scripts.demo.sv4d_helpers import (
+-    load_model,
+-    preprocess_video,
+-    read_video,
+-    run_img2vid,
+-)
+-from sgm.modules.encoders.modules import VideoPredictionEmbedderWithEncoder
+
+ IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".bmp", ".webp", ".PNG", ".JPG", ".JPEG", ".BMP", ".WEBP"}
+ VIDEO_EXTS = {".mp4", ".gif", ".mov", ".avi", ".mkv", ".webm", ".MP4", ".GIF", ".MOV", ".AVI", ".MKV", ".WEBM"}
+@@ -137,6 +129,8 @@
+     verbose=False,
+     remove_bg=False,
+ ):
++    from scripts.demo.sv4d_helpers import load_model, preprocess_video, read_video, run_img2vid
++    from sgm.modules.encoders.modules import VideoPredictionEmbedderWithEncoder
+     sp4d_model = "sp4d"
+     config = sp4d_configs[sp4d_model]
+     T = config["T"]
+@@ -319,6 +313,8 @@
+     Simple script to generate multiple novel-view videos conditioned on a video `input_path` or multiple frames, one for each
+     image file in folder `input_path`. If you run out of VRAM, try decreasing `decoding_t` and `encoding_t`.
+     """
++    from scripts.demo.sv4d_helpers import load_model, preprocess_video, read_video, run_img2vid
++    from sgm.modules.encoders.modules import VideoPredictionEmbedderWithEncoder
+     # Set model config
+     assert os.path.basename(model_path) in [
+         "sv4d2.safetensors",
+@@ -582,6 +578,7 @@
+     "sv4d": [0, 60, 120, 180, 240],
+     "sp4d": [0, 60, 120, 180, 240],
+     "sv4d2_8views": [0, 30, 75, 120, 165, 210, 255, 300, 330],
++    "none": [0],
+ }
+
+
+@@ -630,6 +627,23 @@
+             yield
+         finally:
+             os.chdir(prev_cwd)
++    if mode == "none":
++        # MorphGS can train from the source view alone. Keep the same square,
++        # white-background contract as generated views and avoid importing or
++        # loading the SV4D checkpoints on CPU-only preprocessing nodes.
++        color_dir = os.path.join(out_dir, "view_0", "color")
++        os.makedirs(color_dir, exist_ok=True)
++        frames = _list_image_frames(src_video_path)
++        if not frames:
++            raise RuntimeError(f"no image frames found under {src_video_path}")
++        for index, name in enumerate(frames):
++            image = Image.open(os.path.join(src_video_path, name)).convert("RGB")
++            side = max(image.size)
++            canvas = Image.new("RGB", (side, side), (255, 255, 255))
++            canvas.paste(image, ((side - image.width) // 2, (side - image.height) // 2))
++            canvas.save(os.path.join(color_dir, f"{index:03d}.png"))
++        return out_dir
++
+     model_root = "src/extlibs/generative-models"
+     sparse_input_path, sparse_cleanup_dir, sparse_nf = _build_sparse_input_dir(
+         src_video_path,
+@@ -766,7 +780,7 @@
+
+     parser = argparse.ArgumentParser(description="Preprocess source data for MorphGS.")
+     parser.add_argument("src_video_path", help="Path to source frames folder / mp4 / gif.")
+-    parser.add_argument("--mode", default="sv4d", choices=["sv4d", "sp4d", "sv4d2_8views"])
++    parser.add_argument("--mode", default="sv4d", choices=["sv4d", "sp4d", "sv4d2_8views", "none"])
+     parser.add_argument("--sv4d_num_steps", type=int, default=50)
+     parser.add_argument("--sv4d_img_size", type=int, default=512)
+     parser.add_argument("--sv4d_max_frames", type=int, default=None)

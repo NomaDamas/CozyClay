@@ -82,6 +82,9 @@ self.addEventListener("fetch", (event) => {
 	// The composer and ticket are live API surfaces. A stale shell would either
 	// submit with an old Turnstile key or show a frozen queue position.
 	if (url.pathname.startsWith("/d/") || url.pathname.startsWith("/demo/")) return;
+	// Landing-page playground presets are edited in place; a cache-first hit
+	// would pin the first version a visitor ever saw.
+	if (url.pathname.startsWith("/scenes/")) return;
 	if (request.method !== "GET") return;
 	if (url.origin !== self.location.origin || url.pathname.includes("/ardy/")) return;
 	if (request.headers.has("range")) {

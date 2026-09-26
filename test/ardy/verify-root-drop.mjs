@@ -91,6 +91,22 @@ expect("a walk that stays on the roof stages nothing", autoRoofDrop(walk(), subj
 	expect("a lower support under the exit shortens the fall", !!drop && drop.meters === 5, JSON.stringify(drop));
 }
 
+// Scene dimensions are world metres, while extracted takes are canonical
+// body units. Edge detection and the baked Y arc must agree after playback
+// applies the performer's stature scale.
+{
+	const scaledRoof = { x: 0, z: 0, rotDeg: 0, topY: 12, width: 2.2, depth: 2 };
+	const scaledSubject = { x: 0, z: 0, y: 12, rotationDeg: 0 };
+	const scaledDrop = autoRoofDrop(walk(), scaledSubject, [scaledRoof], { worldScale: 0.8 });
+	expect("scaled edge detection uses world displacement", !!scaledDrop && Math.abs(scaledDrop.fromS - 0.5) < 1e-9, JSON.stringify(scaledDrop));
+	const scaledSource = { ...clip(), rotMats: new Float32Array(FRAMES * JOINTS * 9) };
+	const scaledFall = applyAutoFall(scaledSource, { fromS: 0.2, toS: 0.8, meters: 8 }, { worldScale: 0.8 });
+	expect("scaled auto fall lands at the requested world height", Math.abs((yOf(scaledFall, 8, 0) - 5) * 0.8 + 8) < 1e-5);
+	const scaledExplicit = applyRootDrop(source, { fromS: 0.2, toS: 0.8, meters: 8 }, { worldScale: 1.2 });
+	const explicitT = (0.9 - 0.2) / 0.6;
+	expect("scaled explicit drops preserve world metres", Math.abs((yOf(scaledExplicit, 9, 0) - 5) * 1.2 + 8) < 1e-5);
+}
+
 /* ------------------------------------------------ cinematic bake ---- */
 const CINEMATIC_FRAMES = 80;
 const CINEMATIC_JOINTS = 27;

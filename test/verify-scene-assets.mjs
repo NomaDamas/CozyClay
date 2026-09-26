@@ -3,6 +3,8 @@ import { webcrypto } from "node:crypto";
 import {
 	ASSET_ID_PREFIX,
 	ASSET_MAX_DIMENSION,
+	ASSET_MESH_TYPES,
+	MESH_ID_PREFIX,
 	assetAspect,
 	assetGraphSignature,
 	assetIdForBytes,
@@ -14,7 +16,10 @@ import {
 	imageFilesFromClipboard,
 	importImageFile,
 	isAssetId,
+	isImageAssetId,
+	isMeshAssetId,
 	isSupportedImageType,
+	isSupportedMeshType,
 	normalizeAsset,
 	referencedAssetIds,
 	unreachableAssetIds,
@@ -37,6 +42,11 @@ expect(
 	(await assetIdForBytes(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3, 5]), webcrypto.subtle)) !== id,
 );
 expect("an id is prefixed and hex", id.startsWith(ASSET_ID_PREFIX) && /^[0-9a-f]{32}$/.test(id.slice(ASSET_ID_PREFIX.length)));
+expect("assetIdForBytes still prefixes img- — a GLB must never land on an image id", id.startsWith(ASSET_ID_PREFIX) && !id.startsWith(MESH_ID_PREFIX));
+const meshHex = "ab".repeat(16);
+const meshId = `${MESH_ID_PREFIX}${meshHex}`;
+expect("isAssetId still accepts the existing image fixture", isAssetId(id) && isImageAssetId(id) && !isMeshAssetId(id));
+expect("isAssetId also accepts a mesh- hex", isAssetId(meshId) && isMeshAssetId(meshId) && !isImageAssetId(meshId));
 expect("an ArrayBuffer and its view agree", (await assetIdForBytes(bytes.buffer, webcrypto.subtle)) === id);
 expect(
 	"a digest becomes an id, case and whitespace tolerated",
@@ -59,6 +69,10 @@ await assetIdForBytes(bytes, { digest: null }).then(
 
 expect("the image types an import accepts", isSupportedImageType("image/png") && isSupportedImageType("IMAGE/WEBP") && isSupportedImageType("image/jpeg"));
 expect("svg and non-images are refused", !isSupportedImageType("image/svg+xml") && !isSupportedImageType("application/pdf") && !isSupportedImageType(""));
+expect(
+	"stored mesh MIMEs are glTF binary, Wavefront OBJ and FBX — octet-stream is a drop-fallback, not a stored type",
+	isSupportedMeshType("model/gltf-binary") && isSupportedMeshType("MODEL/GLTF-BINARY") && isSupportedMeshType("model/obj") && isSupportedMeshType("model/fbx") && isSupportedMeshType("MODEL/FBX") && !isSupportedMeshType("application/octet-stream") && !isSupportedMeshType("text/plain") && ASSET_MESH_TYPES.includes("model/obj") && ASSET_MESH_TYPES.includes("model/fbx"),
+);
 
 /* -------------------------------------------------------- downscale ---- */
 
@@ -93,6 +107,43 @@ expect(
 );
 expect("a record with a foreign id or type is dropped", normalizeAsset({ ...record, id: "sofa" }) === null && normalizeAsset({ ...record, type: "image/svg+xml" }) === null);
 expect("a non-record is dropped, not fatal", normalizeAsset(null) === null && normalizeAsset([record]) === null && normalizeAsset("id") === null);
+expect(
+	"an image record without a width is still dropped — mesh size lives on the scene object, not the blob",
+	normalizeAsset({ id, type: "image/png", height: 800, bytes: bytes.buffer, name: "sofa.png" }) === null,
+);
+
+const meshRecord = { id: meshId, type: "MODEL/GLTF-BINARY", bytes: bytes.buffer, name: "stove.glb" };
+const meshAsset = normalizeAsset(meshRecord);
+expect(
+	"a mesh record survives without pixel width or height",
+	meshAsset !== null && meshAsset.id === meshId && meshAsset.type === "model/gltf-binary" && meshAsset.name === "stove.glb" && meshAsset.bytes === bytes.buffer,
+	JSON.stringify(meshAsset && { ...meshAsset, bytes: meshAsset.bytes?.byteLength }),
+);
+expect(
+	"a mesh id wearing an image type is dropped — the prefix and the MIME have to agree",
+	normalizeAsset({ ...record, id: meshId }) === null && normalizeAsset({ id, type: "model/gltf-binary", bytes: bytes.buffer, name: "stove.glb" }) === null,
+);
+
+const objMeshAsset = normalizeAsset({ id: meshId, type: "model/obj", bytes: bytes.buffer, name: "stove.obj" });
+expect(
+	"a mesh record with model/obj survives without pixel size",
+	objMeshAsset !== null && objMeshAsset.type === "model/obj" && objMeshAsset.id === meshId,
+	JSON.stringify(objMeshAsset && { ...objMeshAsset, bytes: objMeshAsset.bytes?.byteLength }),
+);
+expect(
+	"a mesh id wearing text/plain is dropped — only stored mesh MIMEs are kept",
+	normalizeAsset({ id: meshId, type: "text/plain", bytes: bytes.buffer, name: "stove.obj" }) === null,
+);
+const fbxMeshAsset = normalizeAsset({ id: meshId, type: "model/fbx", bytes: bytes.buffer, name: "stove.fbx" });
+expect(
+	"a mesh record with model/fbx survives without pixel size",
+	fbxMeshAsset !== null && fbxMeshAsset.type === "model/fbx" && fbxMeshAsset.id === meshId,
+	JSON.stringify(fbxMeshAsset && { ...fbxMeshAsset, bytes: fbxMeshAsset.bytes?.byteLength }),
+);
+expect(
+	"a mesh id wearing octet-stream is dropped even with an .fbx name",
+	normalizeAsset({ id: meshId, type: "application/octet-stream", bytes: bytes.buffer, name: "stove.fbx" }) === null,
+);
 
 /* ------------------------------------------------------ reachability ---- */
 
@@ -159,6 +210,10 @@ expect(
 	unreachableAssetIds([secondSceneAsset], scenes).length === 0 && unreachableAssetIds([rendered], [scenes[0]]).length === 0,
 );
 expect("a junk stored key is not mistaken for an asset", JSON.stringify(unreachableAssetIds(["junk", orphan], scenes)) === JSON.stringify([orphan]));
+
+const meshScenes = [{ objects: [{ id: "cooker", renderer: "mesh", assetId: meshId }] }];
+expect("a mesh object's assetId is reachable", referencedAssetIds(meshScenes).has(meshId));
+expect("a mesh object's assetId counts once", assetUsageCounts(meshScenes).get(meshId) === 1);
 
 /* ------------------------------------------------------------ import ---- */
 

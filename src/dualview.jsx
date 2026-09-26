@@ -374,6 +374,10 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 		}
 		planCam.updateProjectionMatrix();
 
+		// Branch order is the contract: `playMode` (the preview state, #195) is
+		// tested first, so the Workflow embed and the playground rail land HERE —
+		// the framed player — and never in the editing draw below that keeps the
+		// gizmo layer, the plan inset, and fly controls on the shot camera.
 		if (playMode) {
 			// PlayView (Unity Game view): the shot camera owns the whole pane —
 			// no plan inset, no editing chrome, just the framed output. Editor
@@ -417,6 +421,10 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 				}
 			}
 		} else {
+			// Shot camera in the main pane WITH the editing chrome. Look-through
+			// (the PiP expand) lands here so the operator
+			// can fly the recording lens with the same bindings as the free camera.
+			// The QA hook (`window.__cozyclay.setLookThrough`) draws the same path.
 			draw(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
 			if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(planCam, planPane, null, false);
 		}

@@ -38,8 +38,9 @@
 
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawn } from "node:child_process";
+import { KIMODO_BACKENDS } from "./generate.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const RUN_SEQUENCE = join(HERE, "run-sequence-on-box.mjs");
@@ -89,17 +90,52 @@ function unsupported(feature) {
 
 export function createKimodoRunner() {
 	const HOST = process.env.CCLAY_KIMODO_HOST || "";
-	const REPO = process.env.CCLAY_KIMODO_REPO || "$HOME/kimodo";
-	const MODEL = process.env.CCLAY_KIMODO_MODEL || "Kimodo-SOMA-RP-v1.1";
+	let installed = {};
+	try { installed = JSON.parse(readFileSync(process.env.CCLAY_KIMODO_BACKEND_FILE || `${process.env.HOME || ""}/.cozyclay/kimodo-backend.json`, "utf8")); } catch {}
+	const BACKEND = process.env.CCLAY_KIMODO_BACKEND || installed.backend || "nvidia-cuda";
+	const REPO = process.env.CCLAY_KIMODO_REPO || (BACKEND === "kimodo-mlx" ? "$HOME/.cozyclay/kimodo-mlx" : BACKEND.startsWith("kimodo.cpp") ? "$HOME/.cozyclay/kimodo.cpp" : "$HOME/.cozyclay/kimodo");
+	const MODEL = process.env.CCLAY_KIMODO_MODEL || installed.model || "Kimodo-SOMA-RP-v1.1";
+	const MOTION = process.env.CCLAY_KIMODO_MLX_MOTION || process.env.CCLAY_KIMODO_CPP_MOTION_GGUF || installed.motion || "";
+	const TEXT = process.env.CCLAY_KIMODO_MLX_TEXT || process.env.CCLAY_KIMODO_CPP_TEXT_BUNDLE || installed.text || "";
 	const TARGET_FPS = Number(process.env.CCLAY_KIMODO_TARGET_FPS || 24);
 
-	if (!HOST) {
-		throw new Error(
-			"CCLAY_KIMODO_HOST is required for the Kimodo backend (for example: user@gpu-box)"
-		);
+	if (!HOST && BACKEND === "nvidia-cuda") {
+		throw new Error("CCLAY_KIMODO_HOST is required for the Kimodo backend (for example: user@gpu-box)");
+	}
+
+	function expandHome(path) {
+		return path?.startsWith("$HOME/") ? join(process.env.HOME || "", path.slice(6)) : path;
+	}
+
+	function localArtifactReady(path) {
+		return Boolean(path && existsSync(expandHome(path)));
+	}
+
+	function localRuntimeReady() {
+		const spec = KIMODO_BACKENDS[BACKEND];
+		if (!spec || spec.mode === "cuda") return false;
+		const entry = spec.entry.startsWith("$HOME/") ? spec.entry : `${REPO}/${spec.entry}`;
+		return existsSync(expandHome(entry));
 	}
 
 	async function probeHealth() {
+		if (!HOST) {
+			// A selected local route is not end-to-end ready merely because its
+			// wrapper is installed. Generation also needs both model artifacts.
+			const defaults = KIMODO_BACKENDS[BACKEND];
+			const artifactsReady = localRuntimeReady()
+				&& localArtifactReady(MOTION || defaults.motion)
+				&& localArtifactReady(TEXT || defaults.text);
+			return {
+				ok: artifactsReady,
+				backend: "local_kimodo",
+				host: "local",
+				host_configured: true,
+				encoder: "in-process",
+				device: "local",
+				...(artifactsReady ? {} : { capabilities: { lineEdit: false } }),
+			};
+		}
 		const remote = [
 			`cd ${REPO}`,
 			`DEV="$(.venv/bin/python -c 'import torch; print("cuda:0" if torch.cuda.is_available() else "cpu")')"`,
@@ -134,6 +170,8 @@ export function createKimodoRunner() {
 			CCLAY_KIMODO_HOST: HOST,
 			CCLAY_KIMODO_REPO: REPO,
 			CCLAY_KIMODO_MODEL: MODEL,
+			...(MOTION ? { CCLAY_KIMODO_MLX_MOTION: MOTION, CCLAY_KIMODO_CPP_MOTION_GGUF: MOTION } : {}),
+			...(TEXT ? { CCLAY_KIMODO_MLX_TEXT: TEXT, CCLAY_KIMODO_CPP_TEXT_BUNDLE: TEXT } : {}),
 		};
 		delete env.CCLAY_KIMODO_NATIVE_OUT;
 		delete env.CCLAY_KIMODO_PRESERVE;
@@ -235,7 +273,7 @@ export function createKimodoRunner() {
 
 	return {
 		mode: "kimodo",
-		describe: () => `box ${HOST} (repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps)`,
+		describe: () => `${HOST ? `box ${HOST}` : "local"} (${BACKEND}, repo ${REPO}, model ${MODEL}, retimed to ${TARGET_FPS} fps${HOST ? "" : ", single unconstrained SOMA30 prompt to Studio NPZ"})`,
 		probeHealth,
 		listBases,
 		baseMotionFor,

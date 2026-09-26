@@ -211,12 +211,26 @@ try {
 	// check below would race. Poll the hub's own view.
 	await waitForWorkspaceGone(formerHandle);
 	reconnected = await connectEditor("RECONNECTED");
-	assert.notEqual(reconnected.workspace, formerHandle, "reconnect must issue a fresh workspace handle");
+	assert.notEqual(reconnected.workspace, formerHandle, "a different workspace id is a different handle");
 	const beforeStale = clone(reconnected.state);
 	const stale = await call("set_camera", { workspace_handle: formerHandle, x: 44 });
 	assert.equal(stale.isError, true, JSON.stringify(stale));
 	assert.match(stale.content[0].text, /unknown|stale/i);
 	assert.deepEqual(reconnected.state, beforeStale);
+
+	// Same tab, same id: the handle IS the workspace id, so it survives the
+	// reconnect — and is stale for exactly as long as that editor is away.
+	const resumedId = "RECONNECTED-workspace";
+	assert.equal(reconnected.workspace, resumedId, "the hello's workspace id is the handle the hub issues");
+	const resumedClosed = once(reconnected.socket, "close");
+	reconnected.socket.close();
+	await resumedClosed;
+	await waitForWorkspaceGone(resumedId);
+	const duringGap = await call("set_camera", { workspace_handle: resumedId, x: 66 });
+	assert.equal(duringGap.isError, true, JSON.stringify(duringGap));
+	assert.match(duringGap.content[0].text, /unknown|stale/i);
+	reconnected = await connectEditor("RECONNECTED");
+	assert.equal(reconnected.workspace, resumedId, "the same workspace id resumes the same handle");
 
 	const firstClosed = once(first.socket, "close");
 	first.socket.close();
@@ -240,6 +254,7 @@ try {
 		isolation: { first: first.state, second: beforeBoundOther },
 		ambiguity: ambiguous.content[0].text,
 		stale: stale.content[0].text,
+		sameId: { handle: resumedId, duringGap: duringGap.content[0].text },
 		guards: { untrustedOrigin: untrustedClose, duplicateWorkspace: duplicateClose },
 		single: { isError: unboundSingle.isError ?? false, state: reconnected.state },
 	}));

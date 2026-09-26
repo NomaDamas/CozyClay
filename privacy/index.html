@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="description" content="What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores." />
+    <meta name="theme-color" content="#232323" />
+    <link rel="canonical" href="https://cozyclay.org/privacy/" />
+    <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
+    <link rel="icon" href="/favicon.ico" sizes="48x48 96x96 192x192" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <link rel="stylesheet" href="/site.css" />
+
+    <meta property="og:type" content="article" />
+    <meta property="og:site_name" content="CozyClay" />
+    <meta property="og:title" content="CozyClay privacy: analytics and telemetry disclosure" />
+    <meta property="og:description" content="What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores." />
+    <meta property="og:url" content="https://cozyclay.org/privacy/" />
+    <meta property="og:image" content="https://cozyclay.org/media/cozyclay-demo-poster.jpg" />
+    <meta property="og:image:width" content="1920" />
+    <meta property="og:image:height" content="1080" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="CozyClay privacy: analytics and telemetry disclosure" />
+    <meta name="twitter:description" content="What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores." />
+    <meta name="twitter:image" content="https://cozyclay.org/media/cozyclay-demo-poster.jpg" />
+
+    <title>Privacy — CozyClay</title>
+    <script defer src="https://static.cloudflareinsights.com/beacon.min.js" data-cf-beacon='{"token": "6a4384d1375d4ffc8a30a6346a8ad1a0"}'></script>
+    <script type="application/ld+json">
+{
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "description": "What cozyclay.org and the cozyclay npm package collect (anonymous usage analytics via PostHog, no cookies, no session recording, no project content), how to opt out, and what the hosted demo stores.",
+      "image": "https://cozyclay.org/media/cozyclay-demo-poster.jpg",
+      "mainEntityOfPage": "https://cozyclay.org/privacy/",
+      "datePublished": "2026-09-10",
+      "dateModified": "2026-09-10",
+      "name": "Privacy"
+}
+    </script>
+  </head>
+  <body>
+    <header class="site">
+      <div class="wrap">
+        <a class="brand" href="/">CozyClay</a>
+        <nav>
+          <a href="/#try">Try it</a>
+          <a href="/greybox-to-video/">Greybox to video</a>
+          <a href="/previs-software/">Previs software</a>
+          <a href="/ai-camera-control/">Camera control</a>
+          <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
+        </nav>
+      </div>
+    </header>
+
+    <main class="wrap article">
+      <div class="hero">
+        <h1>Privacy</h1>
+        <p class="lede">Short version: anonymous usage counts, no cookies, no recordings, never your project content. Every part of it can be turned off.</p>
+        <p class="meta">Effective September 10, 2026</p>
+      </div>
+
+      <section>
+        <h2>The website (cozyclay.org)</h2>
+        <p>
+          The site uses <a href="https://posthog.com/">PostHog</a> (US Cloud) for anonymous usage analytics and
+          Cloudflare Web Analytics for page counts. There are no cookies and no session recording, and
+          Do-Not-Track is respected. PostHog keeps a random pseudonymous identifier in your browser's
+          localStorage so returning visits can be counted; it is never linked to an account or to anything you
+          make, and clearing site data removes it. Country comes from ingest-time GeoIP only; no precise
+          location is collected.
+        </p>
+        <p>
+          The in-browser playground on the home page runs the studio inside the page. It does not read or
+          write your saved scenes, and nothing you build there leaves your browser unless you download it.
+        </p>
+      </section>
+
+      <section>
+        <h2>The npm package (npx cozyclay)</h2>
+        <p>
+          The official npm package measures anonymous first launches, sessions and an in-app usage funnel on
+          its local studio. It stores one random installation identifier in <code>~/.config/cozyclay/state.json</code>
+          (or <code>$XDG_CONFIG_HOME/cozyclay/state.json</code>) so returning use can be counted across normal
+          CLI restarts, ports and browser storage resets. The browser's memory-only SDK starts with this
+          anonymous ID on each launch. Independent state files receive independent random IDs, without
+          fingerprinting, account linking or cross-device matching; do not copy the state file between users.
+          Prompt text, asset names,
+          file names, project content, local paths and any user-entered text are never collected. Session
+          duration and action counts are bucketed. Source checkouts, forks, development servers, CI and tests
+          send nothing.
+        </p>
+        <p>The package prints this disclosure once on first launch. Control it at any time:</p>
+        <pre><code>cclay telemetry status
+cclay telemetry off
+cclay telemetry on</code></pre>
+        <p>
+          <code>COZYCLAY_TELEMETRY=0</code> or <code>DO_NOT_TRACK=1</code> disable collection for a launch. The
+          topbar toggle inside the studio changes the same setting and removes the installation identifier.
+          Enabling collection later creates a new, unlinked ID; the original first-launch receipt remains,
+          so this does not create another new-install event. Environment overrides only suspend collection
+          and do not erase the stored ID. Opting out also suppresses the session-end beacon.
+        </p>
+      </section>
+
+      <section>
+        <h2>Explicit internal and QA marking</h2>
+        <p>
+          Internal marking is optional and never enables telemetry. Use
+          <code>cclay telemetry internal on</code> or <code>cclay telemetry internal off</code> to store
+          the boolean <code>internalQa</code> in the npm CLI state file, then reload open studio tabs.
+          For the hosted app, open <code>https://cozyclay.org/app/?internal_qa=1</code> to mark that browser
+          or <code>?internal_qa=0</code> to clear it. A single explicit 1 or 0 persists as
+          <code>cozyclay.internalQa</code> in localStorage for that origin. The npm app uses only its CLI
+          setting, not this URL parameter.
+        </p>
+        <p>
+          All app events and end beacons carry boolean <code>internal_qa</code>, false by default.
+          External usage queries exclude only explicitly marked events; localhost, ports, country and
+          source checkouts are never used to infer internal people. Unmarked local-app users remain
+          included. Opt-out, Do-Not-Track, CI, origin restrictions and disabled builds still win.
+          Historical unmarked QA cannot be retroactively distinguished.
+        </p>
+      </section>
+
+      <section>
+        <h2>Events collected</h2>
+        <div class="scroller">
+          <table>
+            <thead><tr><th>Event</th><th>Purpose</th></tr></thead>
+            <tbody>
+              <tr><td>install:first_launch, app:session_started, app:session_ended</td><td>Counting installs and sessions; duration and action counts are bucketed</td></tr>
+              <tr><td>feature:used</td><td>One signal per feature per session</td></tr>
+              <tr><td>$pageview, scene:created, scene:loaded, craft:first_action, activation:completed</td><td>Funnel and drop-off analysis</td></tr>
+              <tr><td>craft:first_edit</td><td>First successful Studio authoring change per editor mount; only a fixed edit-kind label and definition version 1 (not camera navigation, playback, loading, restore, or undo/redo)</td></tr>
+              <tr><td>playground:first_edit</td><td>The same versioned first-edit definition for Playground, counted separately from Studio; no prompts or scene contents</td></tr>
+              <tr><td>project:saved, project:opened</td><td>Whether people keep their work (object counts and ages are bucketed; never names or paths)</td></tr>
+              <tr><td>motion:backend_state</td><td>Session capability baseline: backend (none, local_kimodo or hosted) and boolean host_configured, never a host address</td></tr>
+              <tr><td>motion:generate_requested</td><td>Explicit generation intent, not prompt-block editing: initiating surface (timeline, line_edit, trail or mcp), input_mode (prompt, pose or edit) and an ephemeral random request_id</td></tr>
+              <tr><td>motion:preflight_blocked</td><td>Request readiness refusal: request_id, surface and normalized reason (unconfigured, unreachable or unsupported_route)</td></tr>
+              <tr><td>motion:preflight_passed</td><td>Request readiness accepted, before job start: request_id, surface and backend (none, local_kimodo or hosted)</td></tr>
+              <tr><td>motion:job_started</td><td>Generation execution started: request_id, backend and input_mode</td></tr>
+              <tr><td>motion:job_succeeded</td><td>Generation completed before result application: request_id, backend, input_mode and bucketed duration_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s)</td></tr>
+              <tr><td>motion:job_failed</td><td>Generation failure or real cancellation: request_id, backend, input_mode, duration_bucket and normalized error_code (aborted, unsupported_route, generation_failed or unknown), never raw error messages</td></tr>
+              <tr><td>motion:result_applied</td><td>A generated result was applied to its requesting character: request_id and backend. Job success alone does not prove application.</td></tr>
+              <tr><td>workflow:run_requested</td><td>Workflow execution requests: surface (workflow), ephemeral run_id and node_count_bucket (0, 1-3, 4-10 or gte11). No graph contents, node labels or outputs.</td></tr>
+              <tr><td>workflow:run_succeeded, workflow:run_failed, workflow:run_cancelled</td><td>Workflow outcomes paired by run_id, with duration_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s); failures and actual cancellations also include failure_code (aborted, capture_failed, generation_failed or unknown). Starting another run does not imply cancellation.</td></tr>
+              <tr><td>workflow:result_applied</td><td>Captured or generated image/video output was written to the Workflow canvas: run_id only, at most once per run, independently of a later failure. No image bytes or output contents.</td></tr>
+              <tr><td>agent:turn_requested</td><td>Explicit Agent turn requests from surface (studio or workflow), paired by ephemeral turn_id. No prompts, responses or model identifiers.</td></tr>
+              <tr><td>agent:tool_executed</td><td>Agent tool observations: turn_id, tool_category (workflow_read, workflow_write, workflow_run, frame_capture, image_generate, scene_write or other), outcome (succeeded, failed or cancelled) and duration_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s). Tool names, arguments and results are excluded.</td></tr>
+              <tr><td>agent:turn_succeeded, agent:turn_failed, agent:turn_cancelled</td><td>Agent turn outcomes: turn_id and duration_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s); failures and actual cancellations also include failure_code (aborted, auth, rate_limited, tool_failed, upstream or unknown). Missing terminal delivery is not success.</td></tr>
+              <tr><td>agent:result_applied</td><td>An Agent turn produced an acknowledged editor change: turn_id only, at most once per turn. Successful reads and focus/navigation do not prove applied output.</td></tr>
+              <tr><td>mcp:tool_requested</td><td>Connected-editor MCP execution requests: ephemeral request_id and tool_category (read, camera, scene_write, prompt_authoring, frame_capture, motion_generate, motion_apply, project_io or other).</td></tr>
+              <tr><td>mcp:tool_executed</td><td>Connected-editor MCP outcomes: request_id, tool_category (read, camera, scene_write, prompt_authoring, frame_capture, motion_generate, motion_apply, project_io or other), outcome (succeeded, failed, uncertain or cancelled) and duration_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s). Control-plane success does not prove a mutation applied.</td></tr>
+              <tr><td>mcp:result_applied</td><td>A connected editor acknowledged an MCP mutation, paired by request_id. Detached or disconnected MCP sessions remain unobserved.</td></tr>
+              <tr><td>export:blocking_frame_succeeded, export:video_succeeded</td><td>Export reliability</td></tr>
+              <tr><td>export:attempt_started, export:attempt_succeeded, export:attempt_failed, export:attempt_cancelled</td><td>Export attempts and outcomes, paired by an ephemeral random attempt_id; export_kind (video, depth_video, frame or keyframe_pack), format (mp4, png or zip) and initiating surface (studio, workflow or embed). Terminal events include a bucketed duration_bucket; failures and real cancellations include only a normalized failure_code (unsupported_codec, encode_failed, render_failed, aborted or unknown), never raw error messages, filenames, URLs, paths, prompts or scene content. Success means pipeline completion or download handoff, not confirmation that the OS saved a file.</td></tr>
+              <tr><td>export:keyframe_pack</td><td>Legacy Workflow pack handoffs, with numeric entries count and source=workflow; not an additional export attempt</td></tr>
+              <tr><td>playground:opened, playground:first_action</td><td>Whether the home-page playground gets used</td></tr>
+              <tr><td>hosted:composer_viewed, hosted:login_started, hosted:ticket_created, hosted:result_opened, hosted:opened_in_studio</td><td>Hosted demo funnel</td></tr>
+              <tr><td>tutorial:started</td><td>Camera tutorial attempts on surface (studio or playground), with numeric tutorial_version 1 and start_source (query, settings or landing). Restarting starts a new attempt; no tutorial attempt identifier or user text is sent.</td></tr>
+              <tr><td>tutorial:step_entered, tutorial:dismissed</td><td>Entered steps and explicit dismissal of an unfinished tutorial; surface (studio or playground), numeric tutorial_version 1 and step_kind (fly, walk, dolly, orbit, shot, rail or play). Missing completion can indicate abandonment or missing telemetry; browser close does not promise a dismissal event.</td></tr>
+              <tr><td>tutorial:step_completed</td><td>One completion per step per attempt; surface (studio or playground), numeric tutorial_version 1, step_kind (fly, walk, dolly, orbit, shot, rail or play) and elapsed_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s) since entering that step. No raw timing, prompts, scene contents, names or paths.</td></tr>
+              <tr><td>tutorial:completed</td><td>All seven steps completed; surface (studio or playground), numeric tutorial_version 1 and elapsed_bucket (lt1s, 1-3s, 3-10s, 10-30s or gte30s) since tutorial start. Sample loading and camera playback do not count as a user edit.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="note">Motion request_id values are fresh random 32-character hexadecimal values, held only for one request; they are not persisted or derived from prompts, hosts, credentials, project content or other identifiers. The ambiguous motion:generate_blocked event stopped being emitted in the September 15, 2026 issue #273 contract. Historical events are not relabeled and are excluded from the new explicit-demand metric. Automatic line previews and prompt-block edits are not explicit Generate requests.</p>
+        <p class="note">Every regular app event and session-end beacon carries the same distribution (npm or hosted), app_version when available, origin_kind (local or hosted), internal_qa boolean, coarse operating-system label and, for npm sessions, install_kind (npx or global). PostHog's free plan retains events for one year.</p>
+        <p class="note">Workflow run_id, Agent turn_id and MCP request_id values are fresh random 32-character hexadecimal values held only for one execution. Execution telemetry contains only closed categories, outcomes and elapsed-time buckets; missing telemetry is left unknown, and a disconnected MCP editor is not backfilled.</p>
+      </section>
+
+      <section>
+        <h2>The hosted demo (Google sign-in)</h2>
+        <p>
+          The hosted motion demo asks you to sign in with Google so that the daily generation cap can be
+          enforced per account. It receives your Google account's email address and basic profile only, stores
+          a session cookie signed by our server, and keeps your prompt and the generated result for up to 30
+          days so the ticket link keeps working. Results are stored on Cloudflare R2 and deleted after that
+          window. The demo does not post to your account or read anything else from it. Cloudflare Turnstile
+          is used to block automated submissions.
+        </p>
+      </section>
+
+      <section>
+        <h2>Your rights and contact</h2>
+        <p>
+          Nothing collected is tied to a person, so there is nothing to look up by name; opting out and
+          clearing site data is the complete remedy. For anything else, open an issue on
+          <a href="https://github.com/NomaDamas/CozyClay/issues">GitHub</a> or email
+          <a href="mailto:doyunha16@gmail.com">doyunha16@gmail.com</a>.
+        </p>
+      </section>
+    </main>
+
+    <footer class="site">
+      <div class="wrap">
+        <p>
+          <a href="https://github.com/NomaDamas/CozyClay">Source code (AGPL)</a> ·
+          <a href="https://www.npmjs.com/package/cozyclay">npm</a> ·
+          <a href="/privacy/">Privacy</a>
+        </p>
+        <p>CozyClay is not affiliated with or endorsed by NVIDIA, ByteDance, Kuaishou, Google or Unity Technologies.</p>
+      </div>
+    </footer>
+  </body>
+</html>

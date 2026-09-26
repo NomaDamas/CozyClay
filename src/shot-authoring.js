@@ -7,6 +7,11 @@
 import { createTiming, timingIsFlat } from "./speed-envelope.js";
 import { createShot } from "./cuts.js";
 import { normalizeStableItems } from "./stable-items.js";
+import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
+import { elementByPath } from "./studio-elements.js";
+
+const VIDEO_MODEL_IDS = new Set(VIDEO_MODEL_PRESETS.map((preset) => preset.id));
+const CAMERA_KEY_LIMITS = elementByPath("shot.cameraKeys");
 
 export const SHOT_AUTHORING_VERSION = 4;
 export const SHOT_AUTHORING_KEY = "cozyclay.shot-authoring.v4";
@@ -99,9 +104,10 @@ function repairFrameCount(value) {
 
 function repairKeys(entries, minFrame, maxFrame, ids = new Set()) {
 	const byFrame = new Map();
+	const firstFrame = Math.max(minFrame, CAMERA_KEY_LIMITS.frameMin);
 	for (const key of normalizeStableItems(entries, "camera-key", ids)) {
 		if (!finite(key.frame) || !validFraming(key.framing)) continue;
-		const frame = Math.max(minFrame, Math.min(maxFrame, Math.round(key.frame)));
+		const frame = Math.max(firstFrame, Math.min(maxFrame, Math.round(key.frame)));
 		byFrame.set(frame, {
 			id: key.id,
 			frame,
@@ -135,6 +141,11 @@ function repairShots(entries, frameCount, inheritedCamera = null, ids = new Set(
 	);
 	return ordered.map((entry, index) => {
 		const startFrame = entry.startFrame;
+		// Which video model this cut is aimed at. Absent unless the shot names
+		// one, so an untargeted body round-trips byte-identical; an unknown id
+		// from a newer build is dropped rather than kept, because the badge must
+		// never cite a preset this build cannot describe.
+		const targetModel = VIDEO_MODEL_IDS.has(entry.targetModel) ? { targetModel: entry.targetModel } : null;
 		const nextStart = ordered[index + 1]?.startFrame ?? frameCount;
 		// Pre-overlay v3 bodies had no endFrame and were gapless by definition.
 		// Infer their old boundary exactly; new bodies persist an explicit end.
@@ -147,6 +158,7 @@ function repairShots(entries, frameCount, inheritedCamera = null, ids = new Set(
 			endFrame,
 			cameraKeys: repairKeys(entry.cameraKeys, startFrame, endFrame, ids),
 			camera: repairCamera(inheritedCamera ?? entry.camera),
+			...targetModel,
 		};
 	});
 }

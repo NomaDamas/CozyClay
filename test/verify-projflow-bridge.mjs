@@ -711,7 +711,7 @@ async function startBridge(env) {
 	// a lineEdit never consults CCLAY_MOTION_BACKEND.
 	assert.match(bridgeSource, /projflowRunner = createProjflowRunner\(\);/);
 	assert.match(bridgeSource, /Promise\.all\(\[getHealth\(\), getLineEditCapability\(\)\]\)/);
-	assert.match(bridgeSource, /capabilities: \{ lineEdit \}/);
+	assert.match(bridgeSource, /capabilities: \{ lineEdit,/);
 	// The take is registered like every other output, or the app could not load
 	// the result of an edit — nor edit it a second time.
 	assert.match(bridgeSource, /registerMotion\(stamp, outNpzPath\);\n\t\t\tsend\(\{ event: "done", output: outNpzPath, bytes: finalSize, motionUrl: `\/ardy\/motions\/\$\{stamp\}` \}\);/);

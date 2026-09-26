@@ -37,6 +37,7 @@ const editor = {
 	activeCharacterId: "char-a",
 };
 const commands = [];
+const telemetry = [];
 
 const describe = () => clone(editor);
 const characterFor = (ref) => {
@@ -80,7 +81,7 @@ function handle(name, args) {
 		case "update_object": {
 			const object = editor.objects.find((entry) => entry.id === args.id);
 			if (!object) throw new Error(`No object ${args.id}`);
-			for (const key of ["x", "y", "z", "rot", "scale", "color"]) if (args[key] !== undefined) object[key] = args[key];
+			for (const key of ["x", "y", "z", "rot", "scale", "color", "hidden"]) if (args[key] !== undefined) object[key] = args[key];
 			return { id: object.id };
 		}
 		case "remove_object": {
@@ -112,6 +113,10 @@ try {
 	socket = new WebSocket(LIVE_URL);
 	socket.on("message", (raw) => {
 		const frame = JSON.parse(raw.toString());
+		if (frame.type === "event" && frame.name === "telemetry") {
+			telemetry.push(frame.payload);
+			return;
+		}
 		if (frame.type !== "cmd") return;
 		try {
 			socket.send(JSON.stringify(result(frame.id, true, handle(frame.name, frame.args))));
@@ -130,6 +135,14 @@ try {
 	assert((await call("live_status")).includes("Live editor connected. Workspaces:"), "live_status did not report the editor connection");
 	await call("set_camera", { x: 3.25, y: 2, z: 6, focal_mm: 50 });
 	assert(commands.some(({ name, args }) => name === "set_camera" && args.x === 3.25 && args.focalMm === 50), "set_camera was not forwarded");
+	assert(JSON.stringify(telemetry.map(({ event }) => event)) === JSON.stringify(["mcp:tool_requested", "mcp:tool_executed", "mcp:result_applied"]), "MCP telemetry has no request/outcome/application lifecycle");
+	assert(telemetry[0].props.request_id === telemetry[1].props.request_id, "MCP request and outcome were not correlated");
+	assert(telemetry[0].props.tool_category === telemetry[1].props.tool_category, "MCP request and outcome categories differ");
+	assert(/^[a-f0-9]{32}$/.test(telemetry[0].props.request_id), "MCP request ID is not ephemeral hexadecimal");
+	assert(telemetry[0].props.tool_category === "camera", "MCP camera category was not normalized");
+	assert(telemetry[1].props.outcome === "succeeded", "MCP outcome was not normalized");
+	assert(telemetry[1].props.request_id === telemetry[0].props.request_id, "MCP applied result was not correlated");
+	assert(!/private|set_camera|focalMm/.test(JSON.stringify(telemetry)), "MCP telemetry leaked command details");
 	const added = await call("add_character", { subject: "an x-bot performer", model: "x-bot-tpose" });
 	assert(commands.some(({ name, args }) => name === "add_character" && args.model === "x-bot-tpose"), "add_character did not forward the requested model");
 	assert(added.includes("[x-bot-tpose]"), "add_character did not report the requested model");
@@ -148,6 +161,10 @@ try {
 	assert(placed.includes("chair-1"), "place_object did not return the live object id");
 	const scene = await call("describe_scene");
 	assert(scene.includes("LIVE TEST") && scene.includes("Chair") && scene.includes("x 3.25"), "describe_scene did not render the live description");
+	commands.length = 0;
+	const hiddenLive = await call("update_object", { id: "chair-1", hidden: true });
+	assert(commands.some(({ name, args }) => name === "update_object" && args.hidden === true), "update_object did not forward hidden");
+	assert(hiddenLive.split("\n").some((line) => line.includes("chair-1") && line.includes(" hidden")), "describe_scene did not mark the hidden object");
 
 	// frame_shot must AIM the lens, not only place it. Every view except `front`
 	// orbits the camera off the subject's facing axis, and a position-only command

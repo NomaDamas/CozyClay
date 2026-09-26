@@ -1,31 +1,167 @@
+import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
+export const MCP_TOOL_CATEGORIES = Object.freeze([
+	"read",
+	"camera",
+	"scene_write",
+	"prompt_authoring",
+	"frame_capture",
+	"motion_generate",
+	"motion_apply",
+	"project_io",
+	"other",
+]);
+export const AGENT_TOOL_CATEGORIES = Object.freeze([
+	"workflow_read",
+	"workflow_write",
+	"workflow_run",
+	"frame_capture",
+	"image_generate",
+	"scene_write",
+	"other",
+]);
+
+export const EXECUTION_TELEMETRY_EVENTS = Object.freeze([
+	"workflow:run_requested",
+	"workflow:run_succeeded",
+	"workflow:run_failed",
+	"workflow:run_cancelled",
+	"workflow:result_applied",
+	"agent:turn_requested",
+	"agent:tool_executed",
+	"agent:turn_succeeded",
+	"agent:turn_failed",
+	"agent:turn_cancelled",
+	"agent:result_applied",
+	"mcp:tool_requested",
+	"mcp:tool_executed",
+	"mcp:result_applied",
+]);
+
+export const EXECUTION_TELEMETRY_PROPERTY_KEYS = Object.freeze({
+	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
+	"workflow:run_succeeded": ["run_id", "duration_bucket"],
+	"workflow:run_failed": ["run_id", "duration_bucket", "failure_code"],
+	"workflow:run_cancelled": ["run_id", "duration_bucket", "failure_code"],
+	"workflow:result_applied": ["run_id"],
+	"agent:turn_requested": ["surface", "turn_id"],
+	"agent:tool_executed": ["turn_id", "tool_category", "outcome", "duration_bucket"],
+	"agent:turn_succeeded": ["turn_id", "duration_bucket"],
+	"agent:turn_failed": ["turn_id", "duration_bucket", "failure_code"],
+	"agent:turn_cancelled": ["turn_id", "duration_bucket", "failure_code"],
+	"agent:result_applied": ["turn_id"],
+	"mcp:tool_requested": ["tool_category", "request_id"],
+	"mcp:tool_executed": ["tool_category", "outcome", "duration_bucket", "request_id"],
+	"mcp:result_applied": ["request_id"],
+});
+
+export const EXECUTION_TELEMETRY_VALUES = Object.freeze({
+	surface: new Set(["studio", "workflow"]),
+	node_count_bucket: new Set(["0", "1-3", "4-10", "gte11"]),
+	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+	tool_category: new Set([...MCP_TOOL_CATEGORIES, ...AGENT_TOOL_CATEGORIES]),
+	outcome: new Set(["succeeded", "failed", "uncertain", "cancelled"]),
+});
+
 const OPT_OUT_KEY = "cozyclay.analyticsOptOut";
+const INTERNAL_QA_KEY = "cozyclay.internalQa";
 const ACTIVATION_KEY = "cozyclay.analyticsActivation";
 const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 	"https://cozyclay.org",
 	"https://www.cozyclay.org",
 ]);
 const EVENT_PROPERTIES = Object.freeze({
-	"install:first_launch": [],
+	"install:first_launch": ["heard_from"],
 	"app:session_started": [],
+	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched"],
+	"feature:used": ["name"],
+	"hosted:composer_viewed": [],
+	"hosted:login_started": [],
+	"hosted:ticket_created": [],
+	"hosted:result_opened": [],
+	"hosted:opened_in_studio": [],
 	"scene:created": ["scene_source"],
 	"scene:loaded": ["scene_source"],
+	"project:saved": ["object_count_bucket", "shot_count_bucket"],
+	"project:opened": ["age_bucket"],
 	"craft:first_action": ["action_kind"],
-	"motion:job_started": ["input_mode"],
-	"motion:job_succeeded": ["latency_bucket", "input_mode"],
-	"motion:job_failed": ["latency_bucket", "input_mode", "error_code"],
+	"craft:first_edit": ["edit_kind", "definition_version"],
+	"motion:backend_state": ["backend", "host_configured"],
+	"motion:generate_requested": ["surface", "input_mode", "request_id"],
+	"motion:preflight_blocked": ["reason", "surface", "request_id"],
+	"motion:preflight_passed": ["backend", "surface", "request_id"],
+	"motion:job_started": ["backend", "input_mode", "request_id"],
+	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode", "request_id"],
+	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code", "request_id"],
+	"motion:result_applied": ["request_id", "backend"],
 	"export:blocking_frame_succeeded": ["format"],
 	"export:video_succeeded": ["format"],
+	"export:keyframe_pack": ["entries", "source"],
+	"export:attempt_started": ["attempt_id", "export_kind", "format", "surface"],
+	"export:attempt_succeeded": ["attempt_id", "export_kind", "format", "surface", "duration_bucket"],
+	"export:attempt_failed": ["attempt_id", "export_kind", "format", "surface", "duration_bucket", "failure_code"],
+	"export:attempt_cancelled": ["attempt_id", "export_kind", "format", "surface", "duration_bucket", "failure_code"],
 	"sample:played": ["from"],
+	"playground:opened": [],
+	"playground:first_action": ["action_kind"],
+	"playground:first_edit": ["edit_kind", "definition_version"],
 	"activation:completed": ["activation_path"],
+	"tutorial:started": ["surface", "tutorial_version", "start_source"],
+	"tutorial:step_entered": ["surface", "tutorial_version", "step_kind"],
+	"tutorial:step_completed": ["surface", "tutorial_version", "step_kind", "elapsed_bucket"],
+	"tutorial:completed": ["surface", "tutorial_version", "elapsed_bucket"],
+	"tutorial:dismissed": ["surface", "tutorial_version", "step_kind"],
+	...EXECUTION_TELEMETRY_PROPERTY_KEYS,
 });
-const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "name", "url", "path", "file"]);
+const FEATURE_NAMES = new Set([
+	"pose_edit", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
+	"prompt_block_add", "shot_add", "shot_cut", "export_pose", "export_frame", "export_video",
+	"mcp_connected", "auto_color", "plan_view", "camera_tutorial",
+]);
+const HEARD_FROM_VALUES = new Set(["x", "hn", "reddit", "github", "friend", "other"]);
+const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "url", "path", "file"]);
+const MOTION_ERROR_CODES = new Set(["aborted", "unsupported_route", "generation_failed", "unknown"]);
+const MOTION_PROPERTY_VALUES = Object.freeze({
+	backend: new Set(["none", "local_kimodo", "hosted"]),
+	host_configured: new Set([true, false]),
+	surface: new Set(["timeline", "line_edit", "trail", "mcp"]),
+	input_mode: new Set(["prompt", "pose", "edit"]),
+	reason: new Set(["unconfigured", "unreachable", "unsupported_route"]),
+	error_code: MOTION_ERROR_CODES,
+	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+});
+const EXPORT_FAILURE_CODES = new Set(["unsupported_codec", "encode_failed", "render_failed", "aborted", "unknown"]);
+const EXPORT_PROPERTY_VALUES = Object.freeze({
+	export_kind: new Set(["video", "depth_video", "frame", "keyframe_pack"]),
+	format: new Set(["mp4", "png", "zip"]),
+	surface: new Set(["studio", "workflow", "embed"]),
+	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+	failure_code: EXPORT_FAILURE_CODES,
+});
+const TUTORIAL_PROPERTY_VALUES = Object.freeze({
+	surface: new Set(["studio", "playground"]),
+	tutorial_version: new Set([1]),
+	start_source: new Set(["query", "settings", "landing"]),
+	step_kind: new Set(["fly", "walk", "dolly", "orbit", "shot", "rail", "play"]),
+	elapsed_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
+});
+const EXECUTION_FAILURE_CODES = Object.freeze({
+	workflow: new Set(["aborted", "capture_failed", "generation_failed", "unknown"]),
+	agent: new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]),
+});
 
 let posthog = null;
 let initialized = false;
 let enabled = false;
+let optOutPending = false;
 let initPromise = null;
 let activationFired = false;
 let disabledLogged = false;
+let sessionStartedAt = 0;
+let sessionActionCount = 0;
+let sessionScenesTouched = 0;
+let sessionEnded = false;
+let sessionEndListenersInstalled = false;
+const featureNamesSeen = new Set();
 
 function storage() {
 	try {
@@ -82,9 +218,201 @@ export function sanitizeProps(event, props) {
 	const sanitized = {};
 	for (const key of allowedKeys) {
 		if (DENIED_PROPERTY_KEYS.has(key) || !Object.hasOwn(props, key)) continue;
+		if (event === "feature:used" && (key !== "name" || !FEATURE_NAMES.has(props[key]))) continue;
+		if (event === "install:first_launch" && (key !== "heard_from" || !HEARD_FROM_VALUES.has(props[key]))) continue;
+		if (event.startsWith("export:attempt_")) {
+			if (key === "attempt_id") {
+				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
+			} else if (!EXPORT_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		}
+		if (event === "export:keyframe_pack") {
+			if (key === "source" && props[key] !== "workflow") continue;
+			if (key === "entries" && (!Number.isFinite(props[key]) || props[key] < 0)) continue;
+		}
+		if (event === "craft:first_edit" || event === "playground:first_edit") {
+			if (key === "edit_kind" && !FIRST_EDIT_KINDS.includes(props[key])) continue;
+			if (key === "definition_version" && props[key] !== FIRST_EDIT_VERSION) continue;
+		}
+		if (event.startsWith("motion:")) {
+			if (key === "request_id") {
+				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
+			} else if (!MOTION_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		}
+		if (event.startsWith("tutorial:") && !TUTORIAL_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		if (event.startsWith("workflow:") || event.startsWith("agent:") || event.startsWith("mcp:")) {
+			if (key === "run_id" || key === "turn_id" || key === "request_id") {
+				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
+			} else if (key === "surface") {
+				if (!EXECUTION_TELEMETRY_VALUES.surface.has(props[key]) || (event.startsWith("workflow:") && props[key] !== "workflow")) continue;
+			}
+			else if (key === "node_count_bucket" && !EXECUTION_TELEMETRY_VALUES.node_count_bucket.has(props[key])) continue;
+			else if (key === "duration_bucket" && !EXECUTION_TELEMETRY_VALUES.duration_bucket.has(props[key])) continue;
+			else if (key === "tool_category") {
+				const categories = event.startsWith("agent:") ? AGENT_TOOL_CATEGORIES : MCP_TOOL_CATEGORIES;
+				if (!categories.includes(props[key])) continue;
+			} else if (key === "outcome") {
+				const outcomes = event === "mcp:tool_executed" ? ["succeeded", "failed", "uncertain", "cancelled"] : ["succeeded", "failed", "cancelled"];
+				if (!outcomes.includes(props[key])) continue;
+			} else if (key === "failure_code") {
+				const channel = event.startsWith("agent:") ? "agent" : "workflow";
+				if (!EXECUTION_FAILURE_CODES[channel].has(props[key])) continue;
+			}
+		}
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
 	return sanitized;
+}
+
+/**
+ * Convert the bridge health payload into the analytics contract. The bridge
+ * only exposes a safe location label; the configured host itself never leaves
+ * the local process. A missing/unhealthy bridge is the useful `none` bucket.
+ */
+export function motionBackendState(health) {
+	if (!health || health.ok !== true) return { backend: "none", host_configured: false };
+	if (typeof health.backend === "string" && ["none", "local_kimodo", "hosted"].includes(health.backend)) {
+		return {
+			backend: health.backend,
+			host_configured: health.host_configured === true
+				|| (typeof health.host === "string" && health.host.trim().length > 0),
+		};
+	}
+	const host = typeof health.host === "string" ? health.host.trim() : "";
+	return {
+		// The current /ardy bridge is the local Kimodo integration even when it
+		// dispatches to a configured GPU box over SSH. A future hosted API can
+		// opt into the explicit `backend: "hosted"` field above.
+		backend: "local_kimodo",
+		host_configured: Boolean(host),
+	};
+}
+
+/** Read only structured readiness; raw health/error prose never classifies intent. */
+export function motionPreflightReason(health, { body = {}, lineEditSupported = false } = {}) {
+	if (!health || health.backend === "none" || (health.ok !== true && (health.host_configured === false || health.reason === "unconfigured"))) return "unconfigured";
+	if (health.ok !== true) return "unreachable";
+	if ((body.lineEdit || body.replay?.length) && !lineEditSupported) return "unsupported_route";
+	// The #267 local MLX/cpp route supports a single unconstrained prompt.
+	// ProjFlow line edits have their own capability/runner, even on a local bridge.
+	if (!body.lineEdit && health.host === "local" && health.device === "local" && (
+		body.segments?.length > 1 || body.posePin || body.waypoints?.length || body.motionEdit || body.preserve
+	)) return "unsupported_route";
+	return null;
+}
+
+export function motionFailureCode(error, fallbackCode) {
+	try {
+		if (error?.name === "AbortError") return "aborted";
+		if (MOTION_ERROR_CODES.has(fallbackCode)) return fallbackCode;
+		if (error instanceof Error) return "generation_failed";
+	} catch {
+		// Cross-realm error objects may have throwing getters.
+	}
+	return "unknown";
+}
+
+/** One explicit request, not an authoring draft. All methods are telemetry-only:
+ * no return value may decide whether generation runs. Duplicate/out-of-order
+ * callbacks cannot advance the funnel, and application is separate from success.
+ */
+export function startMotionRequest(metadata, dependencies = {}) {
+	let phase = "requested";
+	let props = null;
+	let startedAt = NaN;
+	let now = () => performance.now();
+	let capture = track;
+	const clock = () => { try { return now(); } catch { return NaN; } };
+	const emit = (event, extra = {}) => {
+		if (!props) return;
+		try {
+			Promise.resolve(capture(event, sanitizeProps(event, { ...props, ...extra }))).catch(() => {
+				// A rejected transport must not change generation.
+			});
+		} catch {
+			// Telemetry is best effort, including capture/payload failures.
+		}
+	};
+	try {
+		now = dependencies.now ?? now;
+		capture = dependencies.capture ?? capture;
+		const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+		const request_id = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		props = { ...sanitizeProps("motion:generate_requested", metadata), request_id };
+		emit("motion:generate_requested");
+	} catch {
+		// Omit telemetry without secure randomness; never derive an ID from content.
+		props = null;
+	}
+	return {
+		preflight(health, options) {
+			if (phase !== "requested") return;
+			try {
+				const reason = motionPreflightReason(health, options);
+				phase = reason ? "blocked" : "passed";
+				if (props) props.backend = motionBackendState(health).backend;
+				emit(reason ? "motion:preflight_blocked" : "motion:preflight_passed", reason ? { reason } : {});
+			} catch {
+				// A malformed telemetry input cannot stop the real request.
+			}
+		},
+		start() {
+			if (phase !== "passed") return;
+			phase = "started";
+			startedAt = clock();
+			emit("motion:job_started");
+		},
+		succeed() {
+			if (phase !== "started") return;
+			phase = "succeeded";
+			emit("motion:job_succeeded", { duration_bucket: bucketMs(clock() - startedAt) });
+		},
+		fail(error, fallbackCode) {
+			if (phase !== "started") return;
+			phase = "failed";
+			emit("motion:job_failed", { duration_bucket: bucketMs(clock() - startedAt), error_code: motionFailureCode(error, fallbackCode) });
+		},
+		apply() {
+			if (phase !== "succeeded") return;
+			phase = "applied";
+			emit("motion:result_applied");
+		},
+	};
+}
+
+export const FEATURE_USAGE_NAMES = Object.freeze([...FEATURE_NAMES]);
+
+export function bucketCount(value) {
+	const count = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+	if (count === 0) return "0";
+	if (count <= 3) return "1-3";
+	if (count <= 10) return "4-10";
+	return "gte11";
+}
+
+export function bucketSessionDuration(ms) {
+	if (!Number.isFinite(ms) || ms < 60_000) return "lt1m";
+	if (ms < 5 * 60_000) return "1-5m";
+	if (ms < 15 * 60_000) return "5-15m";
+	if (ms < 30 * 60_000) return "15-30m";
+	return "gte30m";
+}
+
+export function bucketProjectAge(ms) {
+	if (!Number.isFinite(ms) || ms < 0 || ms < 60 * 60_000) return "lt1h";
+	if (ms < 24 * 60 * 60_000) return "1-24h";
+	if (ms < 7 * 24 * 60 * 60_000) return "1-7d";
+	if (ms < 30 * 24 * 60 * 60_000) return "7-30d";
+	return "gte30d";
+}
+
+function detectOs() {
+	const platform = String(globalThis.navigator?.userAgentData?.platform || globalThis.navigator?.platform || "").toLowerCase();
+	if (platform.includes("mac")) return "macos";
+	if (platform.includes("win")) return "windows";
+	if (platform.includes("linux")) return "linux";
+	if (platform.includes("android")) return "android";
+	if (platform.includes("iphone") || platform.includes("ipad") || platform.includes("ios")) return "ios";
+	return "unknown";
 }
 
 export function bucketMs(ms) {
@@ -93,6 +421,74 @@ export function bucketMs(ms) {
 	if (ms < 10000) return "3-10s";
 	if (ms < 30000) return "10-30s";
 	return "gte30s";
+}
+
+/** Only structured error codes cross the analytics boundary, never messages. */
+export function exportFailureCode(error, fallbackCode = "unknown") {
+	try {
+		if (error?.name === "AbortError") return "aborted";
+		if (EXPORT_FAILURE_CODES.has(error?.exportFailureCode)) return error.exportFailureCode;
+	} catch {
+		// Error objects can cross realms or expose throwing getters.
+	}
+	return EXPORT_FAILURE_CODES.has(fallbackCode) ? fallbackCode : "unknown";
+}
+
+/**
+ * One user-initiated export, ending at pipeline completion/download handoff.
+ * Optional { now, capture } dependencies keep fixtures deterministic. Telemetry
+ * failures (including unavailable randomness) must not change export behavior.
+ */
+export function startExportAttempt(metadata, dependencies = {}) {
+	let terminal = false;
+	let props = null;
+	let startedAt = NaN;
+	let now = () => performance.now();
+	let capture = track;
+	const readClock = () => {
+		try { return now(); } catch { return NaN; }
+	};
+	const emit = (event, payload) => {
+		try {
+			Promise.resolve(capture(event, sanitizeProps(event, payload))).catch(() => {
+				// A rejected transport is as non-fatal as a synchronous failure.
+			});
+		} catch {
+			// Analytics must never affect the export or its error handling.
+		}
+	};
+	try {
+		now = dependencies.now ?? now;
+		capture = dependencies.capture ?? capture;
+		const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
+		const attempt_id = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+		props = { ...sanitizeProps("export:attempt_started", metadata), attempt_id };
+		startedAt = readClock();
+		emit("export:attempt_started", props);
+	} catch {
+		// Without a secure random ID, omit the attempt rather than inventing
+		// a persistent/content-derived identifier or blocking the export.
+		props = null;
+	}
+	const finish = (result, error, fallbackCode) => {
+		if (terminal) return;
+		terminal = true;
+		if (!props) return;
+		try {
+			const payload = { ...props, duration_bucket: bucketMs(readClock() - startedAt) };
+			if (result === "failed") {
+				payload.failure_code = exportFailureCode(error, fallbackCode);
+				if (payload.failure_code === "aborted") result = "cancelled";
+			}
+			emit(`export:attempt_${result}`, payload);
+		} catch {
+			// Clock/payload failures are isolated from the actual export too.
+		}
+	};
+	return {
+		succeed() { finish("succeeded"); },
+		fail(error, fallbackCode = "unknown") { finish("failed", error, fallbackCode); },
+	};
 }
 
 const URL_PROPERTY_KEYS = [
@@ -168,6 +564,7 @@ export function shouldFireActivation(state) {
 }
 
 export function getAnalyticsOptOut() {
+	if (optOutPending) return true;
 	return runtimeConfig()?.distribution === "npm"
 		? runtimeConfig()?.telemetryEnabled !== true
 		: readStorage(OPT_OUT_KEY) === "1";
@@ -208,7 +605,9 @@ async function syncPackageTelemetry(enabled) {
 export async function setAnalyticsOptOut(optOut) {
 	const requestedOptOut = optOut === true;
 	const packageRuntime = runtimeConfig()?.distribution === "npm";
+	optOutPending = requestedOptOut;
 	const syncResult = await syncPackageTelemetry(!requestedOptOut);
+	optOutPending = false;
 	if (!syncResult.ok) return getAnalyticsOptOut();
 	const telemetryEnabled = syncResult.enabled;
 	const value = !telemetryEnabled;
@@ -266,14 +665,22 @@ export function resolveAnalyticsRuntime({
 		if (typeof runtime.apiKey !== "string" || runtime.apiKey.length === 0) {
 			return { kind: "disabled", reason: "no key" };
 		}
+		if (typeof runtime.installationId !== "string"
+			|| !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(runtime.installationId)) {
+			return { kind: "disabled", reason: "invalid anonymous identity" };
+		}
 		return {
 			kind: "enabled",
 			distribution: "npm",
 			apiKey: runtime.apiKey,
 			apiHost: runtime.apiHost || "https://t.cozyclay.org",
 			appVersion: runtime.appVersion || null,
-			installationId: runtime.installationId || null,
+			installationId: runtime.installationId,
 			firstLaunch: runtime.firstLaunch === true,
+			firstLaunchHeardFrom: HEARD_FROM_VALUES.has(runtime.firstLaunchHeardFrom) ? runtime.firstLaunchHeardFrom : null,
+			installKind: ["npx", "global", "clone"].includes(runtime.installKind) ? runtime.installKind : "npx",
+			originKind: "local",
+			internalQa: runtime.internalQa === true,
 		};
 	}
 	if (!env.VITE_POSTHOG_KEY) return { kind: "disabled", reason: "no key" };
@@ -288,6 +695,21 @@ export function resolveAnalyticsRuntime({
 		appVersion: env.VITE_APP_VERSION || null,
 		installationId: null,
 		firstLaunch: false,
+		firstLaunchHeardFrom: null,
+		installKind: null,
+		originKind: "hosted",
+		internalQa: readStorage(INTERNAL_QA_KEY) === "1",
+	};
+}
+
+function analyticsGlobalProperties(resolved) {
+	return {
+		distribution: resolved.distribution,
+		...(resolved.appVersion ? { app_version: resolved.appVersion } : {}),
+		origin_kind: resolved.originKind,
+		os: detectOs(),
+		...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
+		internal_qa: resolved.internalQa,
 	};
 }
 
@@ -298,6 +720,14 @@ function disabledReason(env) {
 
 export async function initAnalytics() {
 	if (initialized || initPromise) return initPromise;
+	// Explicit hosted opt-in only. This flag never changes consent or build
+	// policy; npm installations use the CLI-owned state instead.
+	if (runtimeConfig()?.distribution !== "npm") {
+		const values = new URLSearchParams(globalThis.location?.search ?? "").getAll("internal_qa");
+		if (values.length === 1 && (values[0] === "1" || values[0] === "0")) {
+			writeStorage(INTERNAL_QA_KEY, values[0]);
+		}
+	}
 	const env = environment();
 	const reason = disabledReason(env);
 	if (reason) {
@@ -347,17 +777,27 @@ export async function initAnalytics() {
 			});
 			initialized = true;
 			enabled = true;
-			posthog.register({
-				distribution: resolved.distribution,
-				...(resolved.appVersion ? { app_version: resolved.appVersion } : {}),
-			});
+			const globalProperties = analyticsGlobalProperties(resolved);
+			posthog.register(globalProperties);
 			// Test hook, mirroring the window.__cozyclay convention: lets QA
 			// drivers inspect the live SDK without shipping a real global API.
 			globalThis.__cozyclayAnalytics = { instance: posthog };
 			posthog.capture("$pageview");
+			sessionStartedAt = Date.now();
+			installSessionEndListeners(resolved, globalProperties);
 			if (resolved.distribution === "npm") {
 				track("app:session_started");
-				if (resolved.firstLaunch) track("install:first_launch");
+				// This follows the session marker so the two events form one
+				// capability baseline in funnel queries.
+				void recordMotionBackendState();
+				if (resolved.firstLaunch) {
+					const heardFrom = resolved.firstLaunchHeardFrom;
+					track("install:first_launch", heardFrom ? { heard_from: heardFrom } : {});
+				}
+			} else {
+				// Hosted sessions have PostHog's native session marker rather than
+				// the npm-only custom event above.
+				void recordMotionBackendState();
 			}
 		} catch {
 			console.info("[analytics] initialization failed");
@@ -366,13 +806,73 @@ export async function initAnalytics() {
 	await initPromise;
 }
 
+async function recordMotionBackendState() {
+	let health = null;
+	try {
+		const response = await fetch("/ardy/health", { signal: AbortSignal.timeout(5000) });
+		if (response.ok) health = await response.json();
+	} catch {
+		// No bridge is a normal hosted/demo state.
+	}
+	track("motion:backend_state", motionBackendState(health));
+}
+
 export function track(event, props = {}) {
 	if (!initialized || !enabled || !posthog) return;
 	try {
-		posthog.capture(event, sanitizeProps(event, props));
+		if (getAnalyticsOptOut()) return;
+		const sanitized = sanitizeProps(event, props);
+		if (event !== "app:session_started" && event !== "app:session_ended" && event !== "install:first_launch") {
+			sessionActionCount += 1;
+			if (event === "scene:created" || event === "scene:loaded") sessionScenesTouched += 1;
+		}
+		posthog.capture(event, sanitized);
 	} catch {
 		// Analytics must never affect app behavior.
 	}
+}
+
+export function trackFeature(name) {
+	if (!initialized || !enabled || !posthog || !FEATURE_NAMES.has(name) || featureNamesSeen.has(name)) return false;
+	featureNamesSeen.add(name);
+	track("feature:used", { name });
+	return true;
+}
+
+function installSessionEndListeners(resolved, globalProperties) {
+	if (sessionEndListenersInstalled || typeof window === "undefined") return;
+	sessionEndListenersInstalled = true;
+	const finish = () => {
+		if (sessionEnded || !sessionStartedAt) return;
+		sessionEnded = true;
+		try {
+			// This transport bypasses the SDK, so explicitly apply the same
+			// current opt-out and browser DNT policy before serializing an ID.
+			if (!enabled || !posthog || getAnalyticsOptOut() || posthog.has_opted_out_capturing()) return;
+			const payload = {
+				api_key: resolved.apiKey,
+				event: "app:session_ended",
+				properties: {
+					...globalProperties,
+					distinct_id: posthog.get_distinct_id(),
+					duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
+					action_count_bucket: bucketCount(sessionActionCount),
+					scenes_touched: Math.min(20, sessionScenesTouched),
+				},
+			};
+			const body = JSON.stringify(payload);
+			const endpoint = `${resolved.apiHost.replace(/\/$/, "")}/e/`;
+			if (typeof globalThis.navigator?.sendBeacon === "function") {
+				globalThis.navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }));
+			} else {
+				void fetch(endpoint, { method: "POST", body, keepalive: true, headers: { "content-type": "application/json" } });
+			}
+		} catch {
+			// Unload telemetry is best effort.
+		}
+	};
+	window.addEventListener("pagehide", finish, { once: true });
+	window.addEventListener("beforeunload", finish, { once: true });
 }
 
 export function trackActivation(path) {

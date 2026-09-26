@@ -57,6 +57,15 @@ await send("Page.enable");
 await send("Emulation.setEmulatedMedia", { features: [{ name: "prefers-reduced-motion", value: "reduce" }] });
 await send("Page.navigate", { url: process.env.QA_URL ?? "http://127.0.0.1:5180/app/" });
 expect("app becomes ready", await waitFor("!!window.__cozyclay?.rigA"));
+// The Full-Body track tools (Cut, trim, retime) and the segment-speed editor
+// belong to Motion mode (#191): pick the department before editing the take.
+expect("Motion mode is selectable", await evaluate(`(() => {
+	const tab = [...document.querySelectorAll('.workflow-mode-switch button')].find((item) => ['Motion', '\ubaa8\uc158'].includes(item.textContent.trim()));
+	if (!tab) return false;
+	tab.click();
+	return true;
+})()`));
+expect("the studio switches to Motion mode", await waitFor("document.querySelector('.app')?.dataset.workflowMode === 'motion'"));
 expect("the demo take draws one Full-Body segment", await waitFor("document.querySelectorAll('.tl-motion-clip').length === 1"));
 
 const initial = await evaluate(`(() => {

@@ -14,6 +14,9 @@ const motionBridgeUrl = explicitBridgePort
 	? `http://127.0.0.1:${explicitBridgePort}`
 	: process.env.COZYCLAY_BRIDGE_URL?.trim() || null;
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
+const oauthPort = process.env.COZYCLAY_OAUTH_PORT?.trim();
+const oauthUrl = oauthPort ? `http://127.0.0.1:${oauthPort}` : null;
+const agentUrl = oauthUrl;
 
 export default defineConfig({
 	define: {
@@ -35,6 +38,12 @@ export default defineConfig({
 				app: resolve(import.meta.dirname, "app/index.html"),
 				// Search-facing article on camera control for AI video.
 				aiCameraControl: resolve(import.meta.dirname, "ai-camera-control/index.html"),
+				greyboxToVideo: resolve(import.meta.dirname, "greybox-to-video/index.html"),
+				previsSoftware: resolve(import.meta.dirname, "previs-software/index.html"),
+				seedanceCameraControl: resolve(import.meta.dirname, "seedance-camera-control/index.html"),
+				privacy: resolve(import.meta.dirname, "privacy/index.html"),
+				// Standalone Vibe-Workflow inspired graph editor.
+				workflow: resolve(import.meta.dirname, "workflow/index.html"),
 				// Hosted demo composer and its queue/result ticket.
 				demo: resolve(import.meta.dirname, "demo/index.html"),
 				ticket: resolve(import.meta.dirname, "d/index.html"),
@@ -55,10 +64,42 @@ export default defineConfig({
 			configureServer(server) {
 				server.middlewares.use((req, res, next) => {
 					const path = (req.url || "").split("?")[0];
+					// Dev only: the root opens the Studio so a fresh checkout starts in
+					// the complete authoring surface. The production root stays the crawlable landing
+					// page at cozyclay.org; a redirect baked into index.html would
+					// hide it from every visitor and from search. /index.html still
+					// serves the landing so it can be previewed locally.
+					if (path === "/") {
+						const query = (req.url || "").slice(path.length);
+						res.statusCode = 302;
+						res.setHeader("location", `/app/${query}`);
+						res.end();
+						return;
+					}
+					if (!oauthUrl && /^\/oauth\/(start|status|logout)$/.test(path)) {
+						res.statusCode = 503;
+						res.setHeader("content-type", "application/json; charset=utf-8");
+						res.end(JSON.stringify({ error: "oauth sidecar is not configured" }));
+						return;
+					}
+					// Every route the panel calls, including the Studio turn's event
+					// replay and its explicit job acceptance: without them a dev server
+					// answers those two with the SPA's index.html, which the panel then
+					// fails to parse instead of reporting a missing sidecar.
+					if (!agentUrl && /^\/agent\/(turn|stop|models|providers(\/[^/]+)?|turn\/[^/]+\/events|turn\/[^/]+\/steer|jobs\/[^/]+\/accept)$/.test(path)) {
+						res.statusCode = 503;
+						res.setHeader("content-type", "application/json; charset=utf-8");
+						res.end(JSON.stringify({ error: "agent sidecar is not configured" }));
+						return;
+					}
 					if (!motionBridgeUrl && /^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) {
 						res.statusCode = 503;
 						res.setHeader("content-type", "application/json; charset=utf-8");
-						res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
+						if (path === "/ardy/health") {
+							res.end(JSON.stringify({ ok: false, backend: "none", host_configured: false, reason: "unconfigured", capabilities: { lineEdit: false }, error: "motion sidecar is not configured" }));
+						} else {
+							res.end(JSON.stringify({ error: "motion sidecar is not configured" }));
+						}
 						return;
 					}
 					// The lying clip is a browser-regression fixture. Serve it only from
@@ -96,20 +137,32 @@ export default defineConfig({
 		// companion on loopback. The proxy is enabled only when dev-full (or a
 		// user-managed bridge) explicitly provides its endpoint. The production
 		// build stays fully static, so this proxy must never become a requirement.
-		...(motionBridgeUrl
+		...(motionBridgeUrl || oauthUrl
 			? {
 				proxy: {
-					// Only the routes the bridge actually owns. /ardy/ is ALSO a public
-					// asset directory (cskel27-rest.json), and a blanket proxy would
-					// hand those static files to the bridge, which 404s them.
-					"/ardy": {
-						target: motionBridgeUrl,
-						bypass(req) {
-							const path = (req.url || "").split("?")[0];
-							if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;
-							return req.url; // not a bridge route: serve the static asset
-						},
-					},
+					...(oauthUrl ? { "/oauth": { target: oauthUrl }, "/agent": { target: agentUrl } } : {}),
+					...(motionBridgeUrl
+						? {
+							// Only the routes the bridge actually owns. /ardy/ is ALSO a public
+							// asset directory (cskel27-rest.json), and a blanket proxy would
+							// hand those static files to the bridge, which 404s them.
+							"/ardy": {
+								target: motionBridgeUrl,
+								configure(proxy) {
+									proxy.on("error", (_error, req, res) => {
+										if ((req.url || "").split("?")[0] !== "/ardy/health" || res.headersSent) return;
+										res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+										res.end(JSON.stringify({ ok: false, backend: "local_kimodo", host_configured: true, reason: "unreachable", capabilities: { lineEdit: false } }));
+									});
+								},
+								bypass(req) {
+									const path = (req.url || "").split("?")[0];
+									if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(path)) return undefined;
+									return req.url; // not a bridge route: serve the static asset
+								},
+							},
+						}
+						: {}),
 				},
 			}
 			: {}),

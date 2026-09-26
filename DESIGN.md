@@ -43,6 +43,14 @@ technical, and close to the timeline state they change.
 - Destructive rail deletion uses a red hover/focus cue and an explicit text
   label; no icon-only or right-click-only deletion.
 - Keyboard focus must remain visible.
+- The camera tutorial's existing card owns the first-shot handoff: one primary
+  Export action and one Continue editing dismissal. It uses existing panel,
+  border, text and accent tokens, 8 px gaps and the 11 px control scale. Only
+  buttons take pointer input. The existing Export popover owns delivery and
+  keyboard focus; no second menu or modal is introduced.
+- The hosted tutorial reuses its completion area for the edited-project
+  download and local Studio instructions. Continue editing keeps the iframe
+  alive. Pending/error/download-requested states use text, not animation.
 - Full-Body editing is direct and frame-addressed: `Cut` splits at the
   playhead, while each resulting green segment owns a compact speed selector.
   Speed changes redraw the segment width immediately; there is no decorative
@@ -67,3 +75,16 @@ technical, and close to the timeline state they change.
 - `.tl-crane-editor`: card-local time/height graph; the whole graph is a
   click target for insertion, points have enlarged pointer targets, and
   vertical drags edit height without moving the Shot block.
+- `.motion-readiness`: compact, text-labelled generation status beside the
+  existing generation controls. It distinguishes checking, ready, not configured,
+  unavailable, and unsupported request routes without gating authoring.
+  It inherits `--fg`, `--muted`, `--cyan`, `--panel`, `--line2`, `--radius`,
+  the 11 px inspector type scale, and 4/8 px spacing. State is never colour-only.
+- `.motion-setup`: an explicitly opened region in the existing Settings popover,
+  not a modal or another topbar control. Setup documentation opens separately;
+  Retry only probes health. Both preserve the scene and prompt blocks.
+  The popover scrolls within the viewport, commands wrap, and controls remain
+  reachable at 390 px. Status updates use polite announcements, visible keyboard
+  focus, and immediate state changes without decorative animation.
+- `.camera-tutorial-handoff`: contextual action row inside the existing
+  tutorial. It wraps at narrow widths and has visible keyboard focus.

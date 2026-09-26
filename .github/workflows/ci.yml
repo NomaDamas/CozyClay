@@ -22,17 +22,32 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
           cache: npm
           cache-dependency-path: |
             package-lock.json
             mcp/package-lock.json
       - run: npm ci
       - run: npm --prefix mcp ci
+      # H3 preservation tests decode real frames with ffmpeg/ffprobe, matching
+      # the fail-closed runtime check used by the Comfy adapter.
+      - name: Install media inspection tools
+        # The runner image ships a Google Chrome apt source whose index
+        # intermittently fails its hash check; ffmpeg comes from Ubuntu, so
+        # that source is dropped before the update instead of failing the job.
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       # tools/run-tests.mjs inventories mcp/ alongside test/ (#52), so the
       # MCP verify suites — including the hermetic verify:live family — run
       # under `npm test`; only browser-bound suites stay classified out.
       - run: npm test
+        env:
+          # test/verify-morphgs-exporter.mjs: the MorphGS truth comparison
+          # needs uv + a torch wheel; the runner has neither, so only its
+          # structural checks run here. Run the full test locally.
+          MORPHGS_SKIP_TRUTH: "1"
 
   # MCP <-> real-editor element management, end to end: each suite spawns its
   # own Vite, Chrome and MCP server on reserved ports. These are the only
@@ -51,7 +66,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
           cache: npm
       - run: npm ci
       - run: npm --prefix mcp ci
@@ -151,7 +166,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
           cache: npm
       - run: npm ci
       # Vite only. `npm run dev` also starts the motion bridge, which since the

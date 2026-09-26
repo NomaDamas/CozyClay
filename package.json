@@ -1,11 +1,11 @@
 {
   "name": "cozyclay",
-  "version": "1.7.0",
+  "version": "1.10.0",
   "description": "Open source previs software in the browser: block a scene, pose characters, author camera moves and cuts, then take the same shots to an AI video model.",
   "scripts": {
     "dev": "node tools/dev-full.mjs --host 127.0.0.1 --port 5180",
     "dev:ui": "vite",
-    "build": "vite build",
+    "build": "vite build && node tools/sitemap.mjs",
     "test": "npm run build && node tools/run-tests.mjs",
     "test:manifest": "node tools/run-tests.mjs --list",
     "test:analytics": "node test/verify-analytics.mjs",
@@ -15,6 +15,8 @@
     "test:history": "node test/verify-history.mjs",
     "test:scene-objects": "node test/verify-scene-objects.mjs",
     "test:scene-assets": "node test/verify-scene-assets.mjs",
+    "test:scene-mesh": "node test/verify-scene-mesh.mjs",
+    "test:mesh-browser": "node tools/qa-browser.mjs -- node test/verify-mesh-browser.mjs",
     "test:asset-shelf": "node test/verify-asset-shelf.mjs",
     "test:matte": "node test/verify-matte.mjs",
     "test:matte-editor": "node test/verify-matte-editor.mjs",
@@ -22,6 +24,7 @@
     "test:camera-move": "node test/verify-camera-move.mjs",
     "test:cuts": "node test/verify-cuts.mjs",
     "test:project-menu": "node tools/qa-browser.mjs -- node test/verify-project-menu-browser.mjs",
+    "test:first-success-guide": "QA_STARTUP_CHOOSER=1 node tools/qa-browser.mjs -- node test/verify-first-success-guide-browser.mjs",
     "test:objects": "node tools/qa-browser.mjs -- node test/verify-object-gizmo.mjs",
     "test:theme": "node test/verify-theme.mjs",
     "test:appearance": "node test/verify-appearance.mjs",
@@ -58,7 +61,7 @@
     "test:korean-ui": "node test/verify-korean-ui.mjs",
     "prepack": "npm run build && node tools/prepare-package.mjs",
     "postpack": "node tools/prepare-package.mjs --clean",
-    "prepublishOnly": "node tools/prepare-package.mjs --check-key",
+    "prepublishOnly": "npm run build && node tools/prepare-package.mjs --check-key && node tools/prepare-package.mjs && node tools/verify-package-tarball.mjs",
     "metrics:traffic": "node tools/metrics/archive-traffic.mjs",
     "test:multimodel": "node test/verify-multimodel-ingest.mjs",
     "test:video-frames": "node test/verify-video-frames.mjs",
@@ -70,7 +73,10 @@
   },
   "license": "AGPL-3.0-or-later",
   "type": "module",
-  "dependencies": {},
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "0.85.1",
+    "@earendil-works/pi-ai": "0.85.1"
+  },
   "devDependencies": {
     "@mediapipe/tasks-vision": "0.10.17",
     "@react-three/drei": "^10.7.7",
@@ -80,6 +86,9 @@
     "posthog-js": "^1.418.12",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
+    "react-hot-toast": "^2.6.0",
+    "react-icons": "^5.7.0",
+    "reactflow": "^11.11.4",
     "three": "^0.185.1",
     "vite": "^8.2.0"
   },
@@ -98,6 +107,7 @@
     "!tools/ardy/out",
     "!tools/qa-*.mjs",
     "mcp/server.mjs",
+    "mcp/tool-handlers.mjs",
     "mcp/live-hub.mjs",
     "mcp/ardy-prompts.mjs",
     "mcp/runtime",
@@ -125,7 +135,7 @@
     }
   },
   "engines": {
-    "node": ">=22.13"
+    "node": ">=22.19.0"
   },
   "keywords": [
     "3d",

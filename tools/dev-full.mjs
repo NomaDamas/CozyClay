@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import { createServer as createNetServer } from "node:net";
 import { resolve } from "node:path";
+import { createServer } from "node:http";
+import { handleOAuthRequest } from "../bin/codex-auth.mjs";
+import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { fileURLToPath } from "node:url";
 import {
 	installSignalCleanup,
@@ -26,6 +29,7 @@ function mainPortFrom(args) {
 }
 
 const livePort = process.env.COZYCLAY_LIVE_PORT ?? "5184";
+const configuredOAuthPort = process.env.COZYCLAY_OAUTH_PORT?.trim();
 const mainPort = mainPortFrom(viteArgs);
 
 // Vite runs with --strictPort and reports a taken port as a raw stack trace —
@@ -43,7 +47,8 @@ await new Promise((resolvePromise, reject) => {
 });
 
 const children = [];
-const removeSignalCleanup = installSignalCleanup(() => children);
+let stopping = false;
+const removeSignalCleanup = installSignalCleanup(() => children, () => { stopping = true; });
 const trackChild = (child) => children.push(child);
 const untrackChild = (child) => children.splice(children.indexOf(child), 1);
 // The bridge's only backend is Kimodo, and that runner refuses to start
@@ -66,6 +71,12 @@ if (kimodoHost) {
 			mainPort,
 			onSpawn: trackChild,
 			onFailure: untrackChild,
+			onReady: (child) => child.once("exit", () => {
+				if (stopping) return;
+				stopping = true;
+				console.error("[dev] motion generation sidecar exited unexpectedly");
+				void Promise.allSettled(children.filter((entry) => entry !== child).map((entry) => terminateOwned(entry))).then(() => process.exit(1));
+			}),
 		}));
 	} catch (err) {
 		console.error(`[dev] Studio did not start: ${err.message}`);
@@ -79,6 +90,25 @@ if (kimodoHost) {
 	);
 }
 
+// Resolved once per Studio admission by task 6, not from the historical port.
+const getBridgeOrigin = () => bridge && bridgePort !== undefined && bridge.exitCode === null && bridge.signalCode === null
+	? `http://127.0.0.1:${bridgePort}` : null;
+const agentHandler = createAgentHandler({ port: mainPort, getBridgeOrigin });
+const oauthServer = createServer((req, res) => {
+	const path = (req.url || "").split("?")[0];
+	const hosts = new Set([`127.0.0.1:${mainPort}`, `localhost:${mainPort}`]);
+	const origins = new Set([`http://127.0.0.1:${mainPort}`, `http://${"local" + "host"}:${mainPort}`]);
+	if (!(origins.has(req.headers.origin) || (req.headers.origin === undefined && req.method === "GET" && hosts.has(req.headers.host)))) { res.writeHead(403, { "content-type": "application/json" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+	if (path.startsWith("/agent/")) {
+		void agentHandler(req, res, path).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); } });
+		return;
+	}
+	void handleOAuthRequest(req, res).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "oauth unavailable" })); } });
+});
+const oauthPort = configuredOAuthPort ? Number(configuredOAuthPort) : 0;
+await new Promise((resolvePromise, reject) => { oauthServer.once("error", reject); oauthServer.listen({ port: oauthPort, host: "127.0.0.1" }, resolvePromise); });
+const actualOAuthPort = oauthServer.address().port;
+
 const vite = spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", ...viteArgs], {
 	cwd: REPO,
 		env: {
@@ -86,8 +116,9 @@ const vite = spawnOwned(process.execPath, ["node_modules/vite/bin/vite.js", ...v
 			// Left as it came in when no bridge runs: Vite's /ardy proxy then
 			// falls back the same way `dev:ui` does, and the probe fails
 			// gracefully instead of pointing at a port nothing owns.
-			...(bridgePort === undefined ? {} : { COZYCLAY_BRIDGE_PORT: String(bridgePort) }),
+			...(bridgePort === undefined ? {} : { COZYCLAY_BRIDGE_PORT: String(bridgePort), COZYCLAY_BRIDGE_ORIGIN: `http://127.0.0.1:${bridgePort}` }),
 			COZYCLAY_LIVE_PORT: livePort,
+			COZYCLAY_OAUTH_PORT: String(actualOAuthPort),
 		},
 });
 children.push(vite);
@@ -97,6 +128,7 @@ const first = await Promise.race(
 );
 
 removeSignalCleanup();
+await new Promise((resolvePromise) => oauthServer.close(resolvePromise));
 await Promise.allSettled(
 	children.filter((child) => child !== first.child).map((child) => terminateOwned(child)),
 );

@@ -34,16 +34,38 @@ expect("dot drag re-times the key", timeline.includes("handlers.current.onCamera
 expect("keys stay frame-unique on re-time", app.includes("moveCameraKey(entry.cameraKeys, keyId, target)"));
 expect("re-keying a frame overwrites its framing", app.includes("shot.cameraKeys.filter((key) => key.frame !== target)") && app.includes('createStableItemId("camera-key")'));
 
-expect("the move model is per-shot N keys, not A/B", app.includes("const [shots, setShots] = useState") && app.includes("const cameraKeys = activeShot?.cameraKeys ?? []") && !app.includes("setMoveA") && !app.includes("setMoveB"));
+expect("the move model is per-shot N keys, not A/B", app.includes("const [shots, setShots, editShots] = useSemanticState") && app.includes("const cameraKeys = activeShot?.cameraKeys ?? []") && !app.includes("setMoveA") && !app.includes("setMoveB"));
 expect("interpolation samples keys segment by segment", camMove.includes("export function cameraMoveAt") && camMove.includes("interpolateFraming(a.framing, b.framing, anchor"));
 expect("MoveRig plays and follows keys through the pure frame sampler", app.includes("keys={cameraKeys}") && app.includes("sampleAt(scene, sampledShot, frame).camera"));
 expect("sequence slate and phrase derive per segment", app.includes("moveSequenceSlate(segs)") && app.includes("moveSequencePhrase(segs)"));
 expect("generation exports first/last key conditioning frames", app.includes("captureFramingPng(cameraKeys[0].framing)") && app.includes("captureFramingPng(cameraKeys[cameraKeys.length - 1].framing)"));
 expect("the duration slider is gone — dots own timing", !app.includes("moveDurationS"));
 
-expect("PlayView restarts the piece from frame 0", app.includes('if (centerTab === "play") setTlFrame(0);'));
-expect("PlayView always rides the camera move", app.includes('centerTab === "play" || (moveFollow && !ikMode && !waypointMode && !posing)'));
-expect("Scene tab keeps the authoring gates on Follow mode", app.includes("moveFollow && !ikMode && !waypointMode && !posing"));
+// #195: the Scene/PlayView tabs are gone. The framed player is the `preview`
+// state, entered from the Workflow embed and the playground rail. Studio
+// look-through flies the shot camera instead of opening that player.
+expect(
+	"entering preview restarts the piece from frame 0 and plays it when there is motion",
+	/function enterPreview\(\) \{[^}]*setPreview\(true\);[^}]*setLookThroughShot\(true\);[^}]*setTlFrame\(0\);[^}]*if \(motion\) setTlPlaying\(true\);/s.test(app),
+);
+expect(
+	"leaving preview restores the editor view and pauses",
+	/function exitPreview\(\) \{[^}]*setPreview\(false\);[^}]*setLookThroughShot\(false\);[^}]*setTlPlaying\(false\);/s.test(app),
+);
+expect(
+	"look-through flies the shot camera instead of opening the player",
+	app.includes("function enterShotLook()") &&
+	app.includes("onClick={enterShotLook}") &&
+	app.includes('if (event.key === "Escape") exitPreview();'),
+);
+expect(
+	"look-through keeps fly controls on the shot camera outside preview",
+	app.includes("camRef={ikMode ? poserCamRef : lookThroughShot ? shotCamRef : editorCamRef}") &&
+	app.includes("enabled={!posing && !playMode}") &&
+	app.includes("onCameraChange={lookThroughShot && !ikMode ? commitManualCameraFraming : undefined}"),
+);
+expect("preview always rides the camera move", app.includes("preview || (moveFollow && !ikMode && !waypointMode && !posing)"));
+expect("the editor view keeps the authoring gates on Follow mode", app.includes("moveFollow && !ikMode && !waypointMode && !posing"));
 expect(
 	"Draw Rail row owns the distance Follow On Off toggle",
 	timeline.includes('aria-pressed={mode === "follow"}') &&
@@ -239,7 +261,7 @@ expect(
 	app.includes("function previewCameraShot(shotId)") &&
 	app.includes("cameraPreviewEndRef.current = selected.endFrame") &&
 	app.includes("setTlFrame(selected.startFrame)") &&
-	app.includes("tlFrameRef.current >= previewEnd - 1") &&
+	app.includes("tlFrameRef.current + count >= previewEnd") &&
 	app.includes("setTlFrame(previewEnd)"),
 );
 expect(

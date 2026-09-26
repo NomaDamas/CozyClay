@@ -3,6 +3,7 @@ import { ko, isKo } from "./locale.js";
 import { buildHierarchyNodes } from "./hierarchy-model.js";
 import { sceneObjectIdFromHierarchy } from "./scene-objects.js";
 import AddObjectMenu, { CatalogueEntries, displayObjectLabel } from "./object-catalog.jsx";
+import { Dropdown } from "./ui.jsx";
 
 const HIERARCHY_LABELS_KO = {
 	"SCENE 01": "장면 01",
@@ -37,6 +38,12 @@ const HIERARCHY_LABELS_KO = {
 };
 
 const FALLBACK_SCENES = [{ id: "current-scene", name: "SCENE 01" }];
+
+/** The tree root row IS the active scene document (hierarchy-model.js keeps
+ *  the legacy `shot` id for selection routing). */
+const SCENE_ROOT_ID = "shot";
+/** Sentinel option value: the scene list ends with "+ New scene". */
+const NEW_SCENE_OPTION = "__new-scene__";
 
 /**
  * The drag payload for a hierarchy ROW moved onto another row (attach a prop
@@ -149,101 +156,39 @@ function displaySceneName(name) {
  * - `scenes` contains lightweight `{ id, name }` records.
  * - callbacks request document changes; this panel never owns or mutates scenes.
  *
- * A compact document selector sits above the entity tree instead of mixing
- * every Scene into one tree. This keeps the current set readable and leaves
- * Shot authoring in the timeline, where directors expect to find it.
+ * The selector lives ON the tree root row, because the root row already IS the
+ * active scene document: one line of chrome instead of a separate Scenes block
+ * repeating the same name. The list is the portaled `Dropdown` — the hierarchy
+ * column clips its overflow, so an in-place menu would be cut off.
  */
-function SceneSwitcher({
-	scenes,
-	activeSceneId,
-	onSceneSelect,
-	onSceneCreate,
-	onSceneDuplicate,
-	onSceneRename,
-	onSceneDelete,
-}) {
-	const availableScenes = scenes?.length ? scenes : FALLBACK_SCENES;
-	const selectedId = availableScenes.some((scene) => scene.id === activeSceneId) ? activeSceneId : availableScenes[0].id;
-	const selectedScene = availableScenes.find((scene) => scene.id === selectedId);
-	const [editingId, setEditingId] = useState(null);
-	const [deleteArmed, setDeleteArmed] = useState(false);
-	useEffect(() => setDeleteArmed(false), [selectedId, availableScenes.length]);
-
-	const commitRename = (scene, value) => {
-		setEditingId(null);
-		const name = value.trim();
-		if (name && name !== scene.name) onSceneRename?.(scene.id, name);
-	};
-	const requestDelete = () => {
-		if (availableScenes.length <= 1 || !selectedScene) return;
-		if (!deleteArmed) {
-			setDeleteArmed(true);
-			return;
-		}
-		setDeleteArmed(false);
-		onSceneDelete?.(selectedScene.id);
-	};
-
+function ScenePill({ scenes, activeSceneId, onSceneSelect, onSceneCreate, onRenameStart }) {
+	const options = [
+		...scenes.map((scene) => ({ value: scene.id, label: displaySceneName(scene.name) })),
+		{ value: NEW_SCENE_OPTION, label: ko("+ New scene", "+ 새 장면") },
+	];
 	return (
-		<div className="scene-switcher" aria-label={ko("Scene documents", "장면 문서") }>
-			<div className="scene-switcher-heading">
-				<div>
-					<strong>{ko("Scenes", "장면")}</strong>
-					<span>{isKo ? `${availableScenes.length}개 장면` : `${availableScenes.length} scene${availableScenes.length === 1 ? "" : "s"}`}</span>
-				</div>
-				<button type="button" className="scene-create-button" onClick={() => onSceneCreate?.()}>
-					{ko("+ New Scene", "+ 새 장면")}
-				</button>
-			</div>
-			<div className="scene-list" role="listbox" aria-label={ko("Select scene", "장면 선택")}>
-				{availableScenes.map((scene) => {
-					const active = scene.id === selectedId;
-					return (
-						<div key={scene.id} className={`scene-list-item${active ? " active" : ""}`}>
-							{editingId === scene.id ? (
-								<input
-									className="scene-rename-input"
-									defaultValue={scene.name}
-									autoFocus
-									aria-label={ko("Rename scene", "장면 이름 바꾸기")}
-									onFocus={(event) => event.currentTarget.select()}
-									onBlur={(event) => commitRename(scene, event.currentTarget.value)}
-									onKeyDown={(event) => {
-										if (event.key === "Enter") event.currentTarget.blur();
-										else if (event.key === "Escape") setEditingId(null);
-									}}
-								/>
-							) : (
-								<button
-									type="button"
-									role="option"
-									aria-selected={active}
-									onClick={() => {
-										if (!active) onSceneSelect?.(scene.id);
-									}}
-									onDoubleClick={() => setEditingId(scene.id)}
-								>
-									<HierarchyIcon kind="scene" className="scene-document-icon" />
-									<span>{displaySceneName(scene.name)}</span>
-								</button>
-							)}
-						</div>
-					);
-				})}
-			</div>
-			{/* Scene housekeeping is a once-a-session errand, so it waits under one
-			    disclosure instead of holding three buttons open all day. */}
-			<details className="scene-actions-pop">
-				<summary title={ko("Scene actions", "장면 작업")}>{ko("Scene…", "장면…")}</summary>
-			<div className="scene-actions">
-				<button type="button" onClick={() => selectedScene && onSceneDuplicate?.(selectedScene.id)}>{ko("Duplicate", "복제")}</button>
-				<button type="button" onClick={() => selectedScene && setEditingId(selectedScene.id)}>{ko("Rename", "이름 바꾸기")}</button>
-				<button type="button" className={deleteArmed ? "danger" : undefined} disabled={availableScenes.length <= 1} onClick={requestDelete} title={availableScenes.length <= 1 ? ko("At least one scene is required", "장면은 최소 하나 필요합니다") : deleteArmed ? ko("Click again to permanently delete this scene", "한 번 더 누르면 이 장면을 완전히 삭제합니다") : undefined}>
-					{deleteArmed ? ko("Confirm delete", "삭제 확인") : ko("Delete", "삭제")}
-				</button>
-			</div>
-			</details>
-		</div>
+		// The pill sits beside the expand caret but is a different control: its
+		// clicks never reach the row, so picking a scene cannot fold the tree.
+		<span
+			className="hierarchy-scene-pill"
+			onClick={(event) => event.stopPropagation()}
+			// The pill carries the scene name, so a double-click on it renames the
+			// document — the same gesture the row label used to answer.
+			onDoubleClick={(event) => {
+				event.stopPropagation();
+				onRenameStart?.();
+			}}
+		>
+			<Dropdown
+				value={activeSceneId}
+				options={options}
+				ariaLabel={ko("Select scene", "장면 선택")}
+				onChange={(value) => {
+					if (value === NEW_SCENE_OPTION) onSceneCreate?.();
+					else if (value !== activeSceneId) onSceneSelect?.(value);
+				}}
+			/>
+		</span>
 	);
 }
 
@@ -265,8 +210,21 @@ function indexParents(nodes, parent = null, parents = new Map()) {
  * (Rename / Duplicate / Delete / Frame) or the create catalogue, matching
  * Unity's Hierarchy right-click menu (docs/unity-reference.md §9.7).
  * Closes on Escape, on any outside mousedown, and after a pick. */
+function findHierarchyNode(nodes, id) {
+	for (const node of nodes ?? []) {
+		if (node.id === id) return node;
+		const nested = findHierarchyNode(node.children, id);
+		if (nested) return nested;
+	}
+	return null;
+}
+
 function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 	const rootRef = useRef(null);
+	// Deleting a scene document is not undoable, so Delete arms first and only
+	// the second click on the same item commits (the switcher behaved this way).
+	const [deleteArmed, setDeleteArmed] = useState(false);
+	useEffect(() => setDeleteArmed(false), [menu]);
 
 	useEffect(() => {
 		if (!menu) return undefined;
@@ -297,8 +255,44 @@ function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 	};
 	return (
 		<div className="hierarchy-context-menu" role="menu" style={style} ref={rootRef}>
-			{menu.kind === "object" ? (
+			{menu.kind === "scene" ? (
 				<>
+					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("rename", menu.id)}>
+						{ko("Rename", "이름 바꾸기")}
+					</button>
+					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("scene-duplicate", menu.id)}>
+						{ko("Duplicate", "복제")}
+					</button>
+					{menu.canDelete && (
+						<button
+							type="button"
+							role="menuitem"
+							className={"hierarchy-context-item" + (deleteArmed ? " danger" : "")}
+							title={deleteArmed ? ko("Click again to permanently delete this scene", "한 번 더 누르면 이 장면을 완전히 삭제합니다") : undefined}
+							onClick={() => {
+								if (!deleteArmed) {
+									setDeleteArmed(true);
+									return;
+								}
+								onAction("scene-delete", menu.id);
+							}}
+						>
+							{deleteArmed ? ko("Confirm delete", "삭제 확인") : ko("Delete", "삭제")}
+						</button>
+					)}
+					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("scene-create", menu.id)}>
+						{ko("+ New scene", "+ 새 장면")}
+					</button>
+				</>
+			) : menu.kind === "character" ? (
+				<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
+					{menu.hidden ? ko("Show", "표시") : ko("Hide", "숨기기")}
+				</button>
+			) : menu.kind === "object" ? (
+				<>
+					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
+						{menu.hidden ? ko("Show", "표시") : ko("Hide", "숨기기")}
+					</button>
 					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("rename", menu.id)}>
 						{ko("Rename", "이름 바꾸기")}
 					</button>
@@ -332,6 +326,19 @@ function TreeRow({
 	onRenameCommit,
 	onRenameCancel,
 	onRowContextMenu,
+	onToggleHidden,
+	onRenameStart,
+	// The scene root row hands its name to the pill in `rowExtra`; printing it
+	// twice on one row is the duplication this panel just removed.
+	showLabel = true,
+	// An agent receipt named this row as something it just changed; the row
+	// says so for a beat without becoming the selection.
+	touched = false,
+	// A row that owns children still does not always earn a fold caret: the
+	// scene ROOT would fold the whole scene away, which no workflow needs
+	// (docs/studio-ui-ia.md R6).
+	foldable = true,
+	rowExtra,
 	dropHandlers,
 	reparent,
 	dragSourceId,
@@ -371,6 +378,14 @@ function TreeRow({
 		...(draggableRow
 			? {
 					onDragStart: (event) => {
+						// The eye and the fold caret sit inside the draggable row.
+						// A press on either must not start a move, or the click is
+						// swallowed and a small slip reparents the row.
+						if (event.target instanceof Element && event.target.closest(".hierarchy-eye, .hierarchy-toggle")) {
+							event.preventDefault();
+							event.stopPropagation();
+							return;
+						}
 						event.stopPropagation();
 						event.dataTransfer.setData(HIERARCHY_DRAG_MIME, node.id);
 						event.dataTransfer.effectAllowed = "move";
@@ -423,8 +438,13 @@ function TreeRow({
 	const rowWrapRef = useRef(null);
 	const inputRef = useRef(null);
 	// A commit/cancel may race the blur that follows the input unmounting;
-	// the flag ends the edit session exactly once.
+	// the flag ends the edit session exactly once. It is per SESSION, not per
+	// row: the row outlives its renames, and a flag left standing would make
+	// every later rename on that row uncommittable.
 	const doneRef = useRef(false);
+	useEffect(() => {
+		if (editing) doneRef.current = false;
+	}, [editing]);
 
 	const finish = () => {
 		if (doneRef.current) return;
@@ -446,6 +466,7 @@ function TreeRow({
 			className={"hierarchy-row-wrap" + (selectedId === node.id ? " selected" : "")}
 			style={{ "--hierarchy-depth": depth }}
 			data-node-id={node.id}
+			data-own-hidden={node.hidden ? "true" : undefined}
 			data-drop={drop || rowDropTarget ? (dropOver || rowDropOver ? "over" : "target") : undefined}
 			draggable={draggableRow || undefined}
 			{...(dropEvents ?? {})}
@@ -455,7 +476,7 @@ function TreeRow({
 			aria-expanded={branch ? expanded : undefined}
 			onContextMenu={(event) => onRowContextMenu(event, node.id)}
 		>
-			{branch ? (
+			{branch && foldable ? (
 				<button
 					type="button"
 					className="hierarchy-toggle"
@@ -465,13 +486,15 @@ function TreeRow({
 					{expanded ? "▾" : "▸"}
 				</button>
 			) : (
-				<span className="hierarchy-toggle placeholder" />
+				// A leaf has nothing to fold and the root must not fold; both keep the
+				// caret column so every row's icon stays on the same line.
+				<span className={foldable ? "hierarchy-toggle placeholder" : "hierarchy-fold-space"} />
 			)}
 			{editing ? (
 				// In-place rename, Unity-style: Enter commits, Escape reverts,
 				// blur commits (docs/unity-reference.md §9.7). A div, not the
 				// row button — an input inside a button is invalid HTML.
-				<div className="hierarchy-row">
+				<div className={"hierarchy-row" + (touched ? " agent-touched" : "")}>
 					<HierarchyIcon kind={node.kind} />
 					<input
 						ref={inputRef}
@@ -494,13 +517,40 @@ function TreeRow({
 					/>
 				</div>
 			) : (
-				<button type="button" className="hierarchy-row" onClick={() => onSelect(node.id)}>
+				<button
+					type="button"
+					className={"hierarchy-row" + (showLabel ? "" : " icon-only") + (touched ? " agent-touched" : "")}
+					aria-label={showLabel ? undefined : label}
+					onClick={() => onSelect(node.id)}
+					onDoubleClick={onRenameStart ?? undefined}
+				>
 					<HierarchyIcon kind={node.kind} />
-					<span className="hierarchy-label">{label}</span>
+					{showLabel && <span className="hierarchy-label">{label}</span>}
 					{status && <span className="hierarchy-status">{status}</span>}
 					{badge !== null && badge !== undefined && badge !== 0 && <span className="hierarchy-badge">{badge}</span>}
 				</button>
 			)}
+			{(node.kind === "object" || node.kind === "character") && onToggleHidden && (
+				<button
+					type="button"
+					className="hierarchy-eye"
+					data-hidden={node.hidden ? "true" : undefined}
+					aria-pressed={node.hidden === true}
+					aria-label={node.hidden ? (isKo ? `${label} 표시` : `Show ${label}`) : (isKo ? `${label} 숨기기` : `Hide ${label}`)}
+					onClick={(event) => {
+						event.preventDefault();
+						event.stopPropagation();
+						onToggleHidden(node.id);
+					}}
+				>
+					<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+						<path d="M1.5 8s2.5-4 6.5-4 6.5 4 6.5 4-2.5 4-6.5 4S1.5 8 1.5 8z" fill="none" stroke="currentColor" strokeWidth="1.3" />
+						<circle cx="8" cy="8" r="1.7" fill="currentColor" />
+						{node.hidden && <path d="M3 13 13 3" stroke="currentColor" strokeWidth="1.3" />}
+					</svg>
+				</button>
+			)}
+			{rowExtra}
 		</div>
 	);
 }
@@ -521,8 +571,12 @@ export default function HierarchyPanel({
 	onDuplicateObject,
 	onDeleteObject,
 	onFrameObject,
+	onToggleHidden,
 	propsDrop = null,
 	reparent = null,
+	// Hierarchy ids an agent receipt just changed. The host owns how long they
+	// stay lit; the panel only draws them and brings the first one into view.
+	touchedIds = [],
 	scenes,
 	activeSceneId,
 	onSceneSelect,
@@ -531,7 +585,7 @@ export default function HierarchyPanel({
 	onSceneRename,
 	onSceneDelete,
 }) {
-	const [expanded, setExpanded] = useState(() => new Set(["shot", "characters", "characterA"]));
+	const [expanded, setExpanded] = useState(() => new Set(["shot", "characterA"]));
 	const [contextMenu, setContextMenu] = useState(null);
 	// Row currently in in-place rename. The panel owns it: F2/Return and the
 	// row context menu are the only ways in, so app state stays out of it.
@@ -544,13 +598,27 @@ export default function HierarchyPanel({
 	const lastTreeSelectRef = useRef(null);
 	const firstRenderRef = useRef(true);
 	const pendingScrollRef = useRef(false);
-	const activeSceneName = useMemo(() => {
-		const availableScenes = scenes?.length ? scenes : FALLBACK_SCENES;
-		return (availableScenes.find((scene) => scene.id === activeSceneId) ?? availableScenes[0]).name;
-	}, [activeSceneId, scenes]);
+	// Refused scene edits (the last scene cannot be deleted) explain themselves
+	// in the panel rather than failing silently.
+	const [sceneHint, setSceneHint] = useState(null);
+	const availableScenes = scenes?.length ? scenes : FALLBACK_SCENES;
+	const activeScene = availableScenes.find((scene) => scene.id === activeSceneId) ?? availableScenes[0];
+	const activeSceneName = activeScene.name;
 	const hierarchyNodes = useMemo(() => {
 		const nodes = buildHierarchyNodes(sceneObjects, characters);
-		return nodes.map((node) => node.kind === "scene" ? { ...node, label: activeSceneName } : node);
+		// The model keeps the `characters` GROUP so every id selection, the
+		// inspector and IK already route to stays exactly where it was; the
+		// RENDERED tree drops that row. One heading over one character row cost
+		// two controls (the row and its caret) and its badge only repeated the
+		// number of rows underneath it (docs/studio-ui-ia.md R6), so the cast
+		// sits directly under the root beside Camera/Light/Environment/Props.
+		return nodes.map((node) => ({
+			...node,
+			...(node.kind === "scene" ? { label: activeSceneName } : {}),
+			...(node.children
+				? { children: node.children.flatMap((child) => (child.id === "characters" ? (child.children ?? []) : [child])) }
+				: {}),
+		}));
 	}, [activeSceneName, sceneObjects, characters]);
 	const parents = useMemo(() => indexParents(hierarchyNodes), [hierarchyNodes]);
 
@@ -602,9 +670,6 @@ export default function HierarchyPanel({
 		});
 	};
 	const badgeFor = (id) => {
-		if (id === "characters") {
-			return Array.isArray(characters) ? characters.filter((entry) => !entry.hidden).length : (showB ? 2 : 1);
-		}
 		if (id === "props") return sceneObjects.length;
 		return null;
 	};
@@ -618,11 +683,41 @@ export default function HierarchyPanel({
 		onSelect(id);
 	};
 
+	const touched = useMemo(() => new Set(touchedIds), [touchedIds]);
+	// A highlight nobody can see is not a receipt: the first row an agent edit
+	// touched is brought into view, exactly like a selection made outside the
+	// tree. Scrolling a hidden tree would do nothing, so it waits for the tab.
+	useEffect(() => {
+		const first = touchedIds[0];
+		const tree = treeRef.current;
+		if (!first || !tree || tree.offsetParent === null) return;
+		tree.querySelector(`[data-node-id="${CSS.escape(first)}"]`)?.scrollIntoView({ block: "nearest" });
+	}, [touchedIds]);
+
 	const openRowMenu = (event, id) => {
 		event.preventDefault();
 		event.stopPropagation(); // a row pick must not also open the create menu
-		if (sceneObjectIdFromHierarchy(id) !== null) {
-			setContextMenu({ x: event.clientX, y: event.clientY, height: 148, kind: "object", id });
+		const node = findHierarchyNode(hierarchyNodes, id);
+		if (node?.kind === "object" || node?.kind === "character") {
+			setContextMenu({
+				x: event.clientX,
+				y: event.clientY,
+				height: node.kind === "object" ? 180 : 44,
+				kind: node.kind,
+				id,
+				hidden: node.hidden === true,
+			});
+		} else if (id === SCENE_ROOT_ID) {
+			// The root row is the scene document: its own verbs, never the
+			// Add-Object catalogue.
+			setContextMenu({
+				x: event.clientX,
+				y: event.clientY,
+				height: availableScenes.length > 1 ? 148 : 116,
+				kind: "scene",
+				id,
+				canDelete: availableScenes.length > 1,
+			});
 		} else {
 			setContextMenu({ x: event.clientX, y: event.clientY, height: 344, kind: "create" });
 		}
@@ -633,10 +728,35 @@ export default function HierarchyPanel({
 		setContextMenu({ x: event.clientX, y: event.clientY, height: 344, kind: "create" });
 	};
 
+	const deleteActiveScene = () => {
+		if (availableScenes.length <= 1) {
+			setSceneHint(ko("At least one scene is required", "장면은 최소 하나 필요합니다"));
+			return;
+		}
+		setSceneHint(null);
+		onSceneDelete?.(activeScene.id);
+	};
+
 	const handleMenuAction = (action, hierarchyId) => {
 		setContextMenu(null);
 		if (action === "rename") {
 			setEditingId(hierarchyId);
+			return;
+		}
+		if (action === "scene-duplicate") {
+			onSceneDuplicate?.(activeScene.id);
+			return;
+		}
+		if (action === "scene-delete") {
+			deleteActiveScene();
+			return;
+		}
+		if (action === "scene-create") {
+			onSceneCreate?.();
+			return;
+		}
+		if (action === "visibility") {
+			onToggleHidden?.(hierarchyId);
 			return;
 		}
 		const objectId = sceneObjectIdFromHierarchy(hierarchyId);
@@ -648,6 +768,10 @@ export default function HierarchyPanel({
 
 	const commitRename = (hierarchyId, name) => {
 		setEditingId(null);
+		if (hierarchyId === SCENE_ROOT_ID) {
+			if (name !== activeScene.name) onSceneRename?.(activeScene.id, name);
+			return;
+		}
 		const objectId = sceneObjectIdFromHierarchy(hierarchyId);
 		if (objectId) onRenameObject?.(objectId, name);
 	};
@@ -662,7 +786,7 @@ export default function HierarchyPanel({
 	const onTreeKeyDown = (event) => {
 		if (editingId) return;
 		if (event.key !== "F2" && event.key !== "Enter") return;
-		if (sceneObjectIdFromHierarchy(selectedId) === null) return;
+		if (selectedId !== SCENE_ROOT_ID && sceneObjectIdFromHierarchy(selectedId) === null) return;
 		event.preventDefault();
 		setEditingId(selectedId);
 	};
@@ -670,7 +794,11 @@ export default function HierarchyPanel({
 	const renderNodes = (nodes, depth = 0) =>
 		nodes.flatMap((node) => {
 			if (node.optional === "showB" && !showB) return [];
-			const open = expanded.has(node.id);
+			const sceneRoot = node.id === SCENE_ROOT_ID;
+			// The root carries no fold caret, so nothing can close it: the scene is
+			// always open under its own name.
+			const open = sceneRoot || expanded.has(node.id);
+			const editing = editingId === node.id;
 			return [
 				<TreeRow
 					key={node.id}
@@ -682,10 +810,28 @@ export default function HierarchyPanel({
 					onToggle={toggle}
 					badge={badgeFor(node.id)}
 					status={statusFor(node.id)}
-					editing={editingId === node.id}
+					touched={touched.has(node.id)}
+					editing={editing}
 					onRenameCommit={(name) => commitRename(node.id, name)}
 					onRenameCancel={cancelRename}
 					onRowContextMenu={openRowMenu}
+					onToggleHidden={onToggleHidden}
+					// The root row names the scene document, and a double-click on a
+					// document name is where every file browser puts rename.
+					onRenameStart={sceneRoot ? () => setEditingId(node.id) : null}
+					// On the root row the pill IS the name: the row keeps its icon,
+					// and the rename input takes the pill's place while editing.
+					showLabel={!sceneRoot}
+					foldable={!sceneRoot}
+					rowExtra={sceneRoot && !editing ? (
+						<ScenePill
+							scenes={availableScenes}
+							activeSceneId={activeScene.id}
+							onSceneSelect={onSceneSelect}
+							onSceneCreate={onSceneCreate}
+							onRenameStart={() => setEditingId(node.id)}
+						/>
+					) : null}
 					// A picture dropped on Props — or on any prop already in it —
 					// becomes a cutout in the set. Dropping ON an object is the
 					// same gesture as dropping on the group it lives in: people
@@ -708,15 +854,6 @@ export default function HierarchyPanel({
 				</div>
 				<span className="hierarchy-frame-status">{motionFrames ? (isKo ? `${motionFrames}프레임` : `${motionFrames} frames`) : ko("Blocking", "블로킹")}</span>
 			</div>
-			<SceneSwitcher
-				scenes={scenes}
-				activeSceneId={activeSceneId}
-				onSceneSelect={onSceneSelect}
-				onSceneCreate={onSceneCreate}
-				onSceneDuplicate={onSceneDuplicate}
-				onSceneRename={onSceneRename}
-				onSceneDelete={onSceneDelete}
-			/>
 			{onAddObject && (
 				<div className="hierarchy-toolbar">
 					<AddObjectMenu onAdd={onAddObject} />
@@ -726,6 +863,9 @@ export default function HierarchyPanel({
 			<div className="hierarchy-tree" role="tree" ref={treeRef} onKeyDown={onTreeKeyDown} onContextMenu={openCreateMenu}>
 				{renderNodes(hierarchyNodes)}
 			</div>
+			{sceneHint && (
+				<p className="hierarchy-scene-hint" role="status">{sceneHint}</p>
+			)}
 			<RowContextMenu
 				menu={contextMenu}
 				onClose={() => setContextMenu(null)}

@@ -30,6 +30,11 @@ export const SHOT_ASPECT_RATIOS = Object.freeze({
 	"9:16": 9 / 16,
 	"1:1": 1,
 	"4:3": 4 / 3,
+	"12:7": 12 / 7,
+	// Fal H3 480P renders 832x480 (1.733:1, 2.5 % narrower than 16:9). Composing
+	// the A/B reference through this ratio makes the viewport show exactly the
+	// canvas the generated clip will have.
+	"fal 480P": 832 / 480,
 });
 
 export function shotAspectRatio(value) {

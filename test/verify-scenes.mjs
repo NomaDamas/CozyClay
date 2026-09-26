@@ -23,6 +23,7 @@ import {
 	serializeSceneDocument,
 	takeAnchor,
 } from "../src/scenes.js";
+import { resolveMotionSource } from "../src/motion-resources.js";
 
 let scenes = [];
 scenes = addScene(scenes);
@@ -87,6 +88,7 @@ assert.equal(scenes[0].stage.characters[0].x, 4, "moving the duplicate's actor c
 assert.equal(scenes[0].stage.characters[0].pose.bones.hips[0], 1, "posing the duplicate's actor cannot contaminate the source scene");
 assert.equal(createSceneStage({ shotAspect: "invalid" }).shotAspect, "16:9", "invalid shot aspects repair to the default");
 assert.equal(createSceneStage({ shotAspect: "2.39:1" }).shotAspect, "2.39:1", "scope aspect survives stage normalization");
+assert.equal(createSceneStage({ shotAspect: "fal 480P" }).shotAspect, "fal 480P", "the Fal H3 480P canvas ratio survives stage normalization");
 assert.equal(createSceneStage({}).sensorId, "fullFrame", "fullFrame is the default filmback");
 assert.equal(createSceneStage({ sensorId: "super16" }).sensorId, "super16", "a named filmback survives stage normalization");
 assert.equal(createSceneStage({ sensorId: "unknown" }).sensorId, "fullFrame", "an unknown filmback repairs to fullFrame");
@@ -246,6 +248,55 @@ assert.equal(createCharacterEntry({ scale: 99 }).scale, 3, "an absurd stature cl
 assert.equal(createCharacterEntry({ scale: 0.05 }).scale, 0.2, "a tiny stature clamps to the band");
 assert.equal(createCharacterEntry({ y: -2 }).y, 0, "lift cannot sink below the deck");
 assert.equal(createCharacterEntry({ y: 10 }).y, 10, "lift has no ceiling — a crane shot may hoist the body");
+const sceneCalibration = { scale: 1.12, yawDeg: 14, offsetX: 0.4, offsetY: 0.08, offsetZ: -0.2 };
+const calibratedEntry = createCharacterEntry({ motionRef: { url: "/ardy/motions/calibrated.npz", calibration: sceneCalibration } });
+assert.deepEqual(calibratedEntry.motionRef.calibration, sceneCalibration, "scene calibration survives character normalization");
+assert.notEqual(calibratedEntry.motionRef.calibration, sceneCalibration, "scene calibration is owned by the normalized entry");
+sceneCalibration.offsetX = 99;
+assert.equal(calibratedEntry.motionRef.calibration.offsetX, 0.4, "mutating the source calibration cannot rewrite the entry");
+const clampedCalibration = createCharacterEntry({ motionRef: { url: "/ardy/motions/clamped.npz", calibration: { scale: 99, yawDeg: 540, offsetX: 101 } } }).motionRef.calibration;
+assert.deepEqual(clampedCalibration, { scale: 10, yawDeg: -180, offsetX: 100, offsetY: 0, offsetZ: 0 }, "persisted calibration uses the bounded scene envelope");
+assert.equal(createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz" } }).motionRef.calibration, undefined, "legacy motion refs remain free of calibration fields");
+
+// A motionRef names its take by content (motionId, embedded in the project)
+// and/or by location (url, a bridge run). Either alone is enough; a legacy
+// url-only ref keeps its exact shape so v4 documents stay byte-stable.
+const motionId = "a3f1".repeat(16);
+const legacyRef = createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz", prompt: "walks", rotationDeg: 90, anchorX: 1, anchorZ: -2 } }).motionRef;
+assert.deepEqual(legacyRef, { url: "/ardy/motions/legacy.npz", prompt: "walks", rotationDeg: 90, anchorX: 1, anchorZ: -2 }, "url-only motionRef normalizes without a motionId key");
+assert.deepEqual(Object.keys(legacyRef), ["url", "prompt", "rotationDeg", "anchorX", "anchorZ"], "legacy motionRef key order is untouched");
+const embeddedRef = createCharacterEntry({ motionRef: { motionId, prompt: "walks" } }).motionRef;
+assert.deepEqual(embeddedRef, { motionId, prompt: "walks", rotationDeg: 0, anchorX: 0, anchorZ: 0 }, "motionId-only motionRef is valid without a url");
+const takeRef = createCharacterEntry({ motionRef: { motionId, url: "/ardy/motions/take.npz", studioTakeId: "take-7f3a" } }).motionRef;
+assert.equal(takeRef.studioTakeId, "take-7f3a", "an agent-installed motionRef keeps its Studio take id through normalization");
+assert.equal(createCharacterEntry({ motionRef: { url: "/ardy/motions/legacy.npz", studioTakeId: 42 } }).motionRef.studioTakeId, undefined, "a non-string take id is dropped");
+const bothRef = createCharacterEntry({ motionRef: { motionId: motionId.toUpperCase(), url: "/ardy/motions/both.npz", calibration: { scale: 1.1 } } }).motionRef;
+assert.equal(bothRef.motionId, motionId, "motionId normalizes to lowercase");
+assert.equal(bothRef.url, "/ardy/motions/both.npz", "url is kept next to motionId");
+assert.deepEqual(Object.keys(bothRef), ["motionId", "url", "prompt", "rotationDeg", "anchorX", "anchorZ", "calibration"], "motionId leads when both are present");
+assert.equal(createCharacterEntry({ motionRef: { prompt: "walks" } }).motionRef, null, "neither motionId nor url is not a motionRef");
+assert.equal(createCharacterEntry({ motionRef: { motionId: "not-a-hash" } }).motionRef, null, "a malformed motionId alone is not a motionRef");
+assert.equal(createCharacterEntry({ motionRef: { motionId: motionId.slice(0, 63) } }).motionRef, null, "a short motionId alone is not a motionRef");
+assert.deepEqual(createCharacterEntry({ motionRef: { motionId: "not-a-hash", url: "/ardy/motions/x.npz" } }).motionRef, { url: "/ardy/motions/x.npz", prompt: "", rotationDeg: 0, anchorX: 0, anchorZ: 0 }, "a malformed motionId is dropped, the url survives");
+const refRoundTrip = readSceneDocument(serializeSceneDocument({
+	version: SCENES_VERSION,
+	activeSceneId: "s-ref",
+	scenes: [{ id: "s-ref", name: "Ref", objects: [], shotDocument: null, stage: createSceneStage({ characters: [{ id: "char-a", motionRef: { motionId } }, { id: "char-b", motionRef: { url: "/ardy/motions/b.npz" } }] }) }],
+}));
+assert.equal(refRoundTrip.status, "valid", "motionId refs do not bump SCENES_VERSION");
+const refStage = createSceneStage(refRoundTrip.document.scenes[0].stage);
+assert.equal(refStage.characters[0].motionRef.motionId, motionId, "motionId survives save and reload");
+assert.equal(refStage.characters[1].motionRef.url, "/ardy/motions/b.npz", "url refs survive save and reload");
+
+// Restore priority: embedded bytes win over a bridge url, and a ref that
+// resolves to neither is reported as missing rather than guessed.
+const embeddedRecord = { motionId, encoding: "base64", data: "", bytes: 0, frames: 1, fps: 24 };
+const motionsById = new Map([[motionId, embeddedRecord]]);
+assert.deepEqual(resolveMotionSource(bothRef, motionsById), { kind: "embedded", record: embeddedRecord }, "embedded beats url");
+assert.deepEqual(resolveMotionSource(bothRef, new Map()), { kind: "url", url: "/ardy/motions/both.npz" }, "url when the motion is not embedded");
+assert.deepEqual(resolveMotionSource(legacyRef, motionsById), { kind: "url", url: "/ardy/motions/legacy.npz" }, "legacy url-only ref resolves to url");
+assert.deepEqual(resolveMotionSource(embeddedRef, new Map()), { kind: "missing" }, "motionId without embedded bytes or url is missing");
+assert.deepEqual(resolveMotionSource(null, motionsById), { kind: "missing" }, "no ref is missing");
 const staturedStage = createSceneStage({ characters: [{ id: "char-a", scale: 1.18 }, { id: "char-b" }] });
 assert.equal(staturedStage.characters[0].scale, 1.18, "a stored stature survives the stage envelope");
 assert.equal(staturedStage.characters[1].scale, 1, "a cast member without a take stays canonical");

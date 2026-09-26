@@ -4,6 +4,14 @@
 
 import { DEFAULT_SENSOR_FORMAT, SENSOR_FORMATS } from "./shot.js";
 import { normalizeStableItems } from "./stable-items.js";
+import { normalizeMotionCalibration } from "./ardy/motion-calibration.js";
+import { elementByPath } from "./studio-elements.js";
+import { wrapAngle } from "./scene-objects.js";
+
+const CHARACTER_POSITION_LIMITS = elementByPath("character.position");
+const CHARACTER_ROTATION_LIMITS = elementByPath("character.rot");
+const CHARACTER_SCALE_LIMITS = elementByPath("character.scale");
+const KEY_LIGHT_LIMITS = Object.fromEntries(["x", "y", "z", "intensity", "warmth"].map((axis) => [axis, elementByPath(`stage.keyLight.${axis}`)]));
 
 export const SCENES_VERSION = 4;
 export const SCENES_STORAGE_KEY = "cozyclay.scenes.v4";
@@ -41,7 +49,19 @@ export const DEFAULT_SCENE_STAGE = Object.freeze({
 		Object.freeze({ id: "char-a", model: DEFAULT_CHARACTER_MODEL, x: 0, z: 0, rot: 0, hidden: false, pose: null, subject: DEFAULT_SUBJECT_ONE }),
 	]),
 	hasCharSheet: false,
+	// The look reference for the location: a data URL so it survives save/load
+	environmentImage: null,
+	// What the location IS and how it should look: the two lines every shot
+	// prompt is built from, plus the flag saying the author has a sheet for it
+	// instead. Session state until #345 — a reopened scene came back describing
+	// the previous room. The strings mirror the studio's own first-run defaults
+	// (app-stage.jsx DEFAULT_ENVIRONMENT); this module stays free of renderer
+	// imports, so they are repeated rather than borrowed.
+	environment: "a sunlit modern living room",
+	style: "moody cinematic lighting, 35mm film look",
+	hasEnvSheet: false,
 	shotAspect: "16:9",
+	cameraPresetId: null,
 	sensorId: DEFAULT_SENSOR_FORMAT,
 	// The key light the user can grab: position of the sun puck, the rig's
 	// master brightness, and a warm/cool colour offset. Values mirror the
@@ -54,14 +74,16 @@ export const DEFAULT_SCENE_STAGE = Object.freeze({
 export function createKeyLight(value) {
 	const source = plainObject(value) ? value : {};
 	const fallback = DEFAULT_SCENE_STAGE.keyLight;
-	const finite = (entry, base) => (typeof entry === "number" && Number.isFinite(entry) ? entry : base);
+	const finite = (entry, base, bounds) => (typeof entry === "number" && Number.isFinite(entry)
+		? Math.max(bounds.min, Math.min(bounds.max, entry))
+		: base);
 	return {
-		x: Math.max(-30, Math.min(30, finite(source.x, fallback.x))),
-		y: Math.max(0.5, Math.min(30, finite(source.y, fallback.y))),
-		z: Math.max(-30, Math.min(30, finite(source.z, fallback.z))),
-		intensity: Math.max(0, Math.min(4, finite(source.intensity, fallback.intensity))),
+		x: finite(source.x, fallback.x, KEY_LIGHT_LIMITS.x),
+		y: finite(source.y, fallback.y, KEY_LIGHT_LIMITS.y),
+		z: finite(source.z, fallback.z, KEY_LIGHT_LIMITS.z),
+		intensity: finite(source.intensity, fallback.intensity, KEY_LIGHT_LIMITS.intensity),
 		// 0 = cool daylight, 0.5 = the tuned warm default, 1 = sunset amber
-		warmth: Math.max(0, Math.min(1, finite(source.warmth, fallback.warmth))),
+		warmth: finite(source.warmth, fallback.warmth, KEY_LIGHT_LIMITS.warmth),
 	};
 }
 
@@ -97,13 +119,21 @@ function cloneValue(value, copies = new WeakMap()) {
 
 const finiteOr = (value, fallback) => (Number.isFinite(value) ? value : fallback);
 
+/** A reference picture kept inside the document. Only inline data URLs are
+ * accepted: a file:// or http:// path would break the moment the project is
+ * moved or reopened elsewhere, so a slot either holds its own bytes or is
+ * empty. */
+export function normalizeReferenceImage(value) {
+	return typeof value === "string" && value.startsWith("data:image/") ? value : null;
+}
+
 /** Stature band for a cast member. Wider than ardy/npz.js's mocap band
  * (0.6-1.5, a sanity clamp on ESTIMATED statures): the gizmo's scale handles
  * are a deliberate artistic ask, and a previs giant or child is legitimate. */
-export const CHARACTER_SCALE_MIN = 0.2;
-export const CHARACTER_SCALE_MAX = 3;
+export const CHARACTER_SCALE_MIN = CHARACTER_SCALE_LIMITS.min;
+export const CHARACTER_SCALE_MAX = CHARACTER_SCALE_LIMITS.max;
 const clampScale = (value) => (Number.isFinite(value) && value > 0
-	? Math.max(CHARACTER_SCALE_MIN, Math.min(CHARACTER_SCALE_MAX, value))
+	? Math.max(CHARACTER_SCALE_LIMITS.min, Math.min(CHARACTER_SCALE_LIMITS.max, value))
 	: 1);
 
 /** Where an extra extraction take's performer stands: the filmed offset from
@@ -127,17 +157,21 @@ export function createCharacterEntry(source = null, index = 0) {
 	return {
 		id: typeof s.id === "string" && s.id ? s.id : `char-${index + 1}`,
 		model: CHARACTER_MODEL_IDS.includes(s.model) ? s.model : DEFAULT_CHARACTER_MODEL,
-		x: finiteOr(s.x, 0),
-		// Lift floors at the deck; there is deliberately no ceiling, so every
-		// writer (inspector field, viewport gizmo, load path) shares max(0, y).
-		y: Math.max(0, finiteOr(s.y, 0)),
-		z: finiteOr(s.z, 0),
-		rot: finiteOr(s.rot, 0),
+		x: Math.max(CHARACTER_POSITION_LIMITS.min.x, Math.min(CHARACTER_POSITION_LIMITS.max.x, finiteOr(s.x, 0))),
+		// Lift is bounded by the deck and the shared room headroom, so every
+		// writer (inspector field, viewport gizmo, load path) shares one envelope.
+		y: Math.max(CHARACTER_POSITION_LIMITS.min.y, Math.min(CHARACTER_POSITION_LIMITS.max.y, finiteOr(s.y, 0))),
+		z: Math.max(CHARACTER_POSITION_LIMITS.min.z, Math.min(CHARACTER_POSITION_LIMITS.max.z, finiteOr(s.z, 0))),
+		rot: wrapAngle(finiteOr(s.rot, 0)),
 		hidden: s.hidden === true,
 		// User-picked body tint; null means "model default" (y-bot clay, x-bot
 		// whiter clay) so the entry survives future default tweaks.
 		tint: typeof s.tint === "string" && /^#[0-9a-fA-F]{6}$/.test(s.tint) ? s.tint : null,
 		pose: plainObject(s.pose) ? cloneValue(s.pose) : null,
+		// Who this cast member IS: a character sheet / reference photo that rides
+		// with the capture so a generator matches face, hair and wardrobe instead
+		// of re-inventing them per shot.
+		identityImage: normalizeReferenceImage(s.identityImage),
 		// Stature multiplier: 1 is the canonical body, an extracted take carries
 		// the FILMED person's leg ratio. It persists with the entry because the
 		// take's root travel was authored against it — see the render path.
@@ -152,15 +186,38 @@ export function createCharacterEntry(source = null, index = 0) {
 	};
 }
 
+const MOTION_ID_RE = /^[0-9a-f]{64}$/i;
+
+// A motionRef names its take by content (motionId: SHA-256 of the npz, kept
+// in the project's embedded motions) and/or by location (url: a bridge run,
+// which is what pre-motionId documents carry). Either one alone is a valid
+// ref; the restore path prefers the embedded bytes when both are present.
 function normalizeMotionRef(ref) {
-	if (!plainObject(ref) || typeof ref.url !== "string" || !ref.url) return null;
-	return {
-		url: ref.url,
+	if (!plainObject(ref)) return null;
+	const motionId = typeof ref.motionId === "string" && MOTION_ID_RE.test(ref.motionId) ? ref.motionId.toLowerCase() : null;
+	const url = typeof ref.url === "string" && ref.url ? ref.url : null;
+	if (!motionId && !url) return null;
+	const normalized = {};
+	// Field order matters only for byte-stable serialization; a url-only ref
+	// keeps the exact legacy shape (url first, no motionId key).
+	if (motionId) normalized.motionId = motionId;
+	if (url) normalized.url = url;
+	Object.assign(normalized, {
 		prompt: typeof ref.prompt === "string" ? ref.prompt : "",
 		rotationDeg: Number.isFinite(ref.rotationDeg) ? ref.rotationDeg : 0,
 		anchorX: Number.isFinite(ref.anchorX) ? ref.anchorX : 0,
 		anchorZ: Number.isFinite(ref.anchorZ) ? ref.anchorZ : 0,
-	};
+	});
+	// Scene calibration is deliberately metadata on the lightweight motionRef,
+	// never an NPZ member.  Keep it optional so old documents retain their exact
+	// shape, while preserving the calibration produced by the extraction/load
+	// boundary for a later scene reload. cloneValue also strips non-finite values
+	// and recursively owns the object, so a caller cannot mutate the saved stage.
+	if (plainObject(ref.calibration)) normalized.calibration = normalizeMotionCalibration(ref.calibration);
+	// An agent-installed take keeps the Studio take id its receipts name, so a
+	// reload still reports the same take. Optional, like calibration.
+	if (typeof ref.studioTakeId === "string" && ref.studioTakeId) normalized.studioTakeId = ref.studioTakeId;
+	return normalized;
 }
 
 function normalizeLayer(layer) {
@@ -253,7 +310,7 @@ function migrateLegacyCast(source) {
 }
 
 const STAGE_ENVELOPE_KEYS = new Set([
-	"characters", "hasCharSheet", "shotAspect", "sensorId", "keyLight",
+	"characters", "hasCharSheet", "environmentImage", "environment", "style", "hasEnvSheet", "shotAspect", "cameraPresetId", "sensorId", "keyLight",
 	"charA", "charB", "showB", "poseA", "poseB", "subject", "subject2",
 ]);
 
@@ -272,9 +329,21 @@ export function createSceneStage(stage = null) {
 		...extras,
 		characters,
 		hasCharSheet: source.hasCharSheet === true,
-		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3"].includes(source.shotAspect)
+		// Persisted exactly like shotAspect: part of the stage envelope, written
+		// on every save and read back on load.
+		environmentImage: normalizeReferenceImage(source.environmentImage),
+		environment: typeof source.environment === "string" ? source.environment : DEFAULT_SCENE_STAGE.environment,
+		style: typeof source.style === "string" ? source.style : DEFAULT_SCENE_STAGE.style,
+		hasEnvSheet: source.hasEnvSheet === true,
+		shotAspect: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7", "fal 480P"].includes(source.shotAspect)
 			? source.shotAspect
 			: DEFAULT_SCENE_STAGE.shotAspect,
+		// A label recording which named framing the shot camera was placed by.
+		// Unknown ids are dropped rather than kept: a stage that names a preset
+		// this build cannot apply would claim a framing nobody can reproduce.
+		cameraPresetId: typeof source.cameraPresetId === "string" && source.cameraPresetId
+			? source.cameraPresetId
+			: DEFAULT_SCENE_STAGE.cameraPresetId,
 		// `sensorFormat` was this field's name for one unreleased day; read it so
 		// a stage saved in that window still loads with its camera intact.
 		sensorId: Object.hasOwn(SENSOR_FORMATS, source.sensorId ?? source.sensorFormat)

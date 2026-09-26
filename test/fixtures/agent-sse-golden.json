@@ -1,0 +1,346 @@
+{
+	"W": [
+		{
+			"type": "quota",
+			"plan": "Plus",
+			"primary": {
+				"usedPercent": null,
+				"windowMinutes": null,
+				"resetAt": null
+			},
+			"credits": {
+				"has": true
+			}
+		},
+		{
+			"type": "text.delta",
+			"text": "hello"
+		},
+		{
+			"type": "execution_tool_started",
+			"turn_id": "<turn>",
+			"telemetry_id": "<telemetry>",
+			"tool_category": "workflow_read"
+		},
+		{
+			"type": "tool.start",
+			"callId": "<call>",
+			"name": "describe_workflow",
+			"label": "describe workflow",
+			"args": {}
+		},
+		{
+			"type": "tool.done",
+			"callId": "<call>",
+			"ok": true,
+			"elapsedMs": "<ms>",
+			"result": {
+				"assetId": "a1",
+				"objectId": "o1"
+			}
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:tool_executed",
+			"props": {
+				"turn_id": "<turn>",
+				"tool_category": "workflow_read",
+				"outcome": "succeeded",
+				"duration_bucket": "<bucket>"
+			},
+			"telemetry_id": "<telemetry>"
+		},
+		{
+			"type": "execution_tool_started",
+			"turn_id": "<turn>",
+			"telemetry_id": "<telemetry>",
+			"tool_category": "workflow_write"
+		},
+		{
+			"type": "tool.start",
+			"callId": "<call>",
+			"name": "add_workflow_node",
+			"label": "add workflow node",
+			"args": {
+				"type": "image",
+				"model": "image-generation",
+				"data": {
+					"prompt": "render"
+				}
+			}
+		},
+		{
+			"type": "tool.done",
+			"callId": "<call>",
+			"ok": true,
+			"elapsedMs": "<ms>",
+			"result": {
+				"assetId": "a1",
+				"objectId": "o1"
+			}
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:tool_executed",
+			"props": {
+				"turn_id": "<turn>",
+				"tool_category": "workflow_write",
+				"outcome": "succeeded",
+				"duration_bucket": "<bucket>"
+			},
+			"telemetry_id": "<telemetry>"
+		},
+		{
+			"type": "text.delta",
+			"text": " done"
+		},
+		{
+			"type": "execution_tool_started",
+			"turn_id": "<turn>",
+			"telemetry_id": "<telemetry>",
+			"tool_category": "workflow_run"
+		},
+		{
+			"type": "tool.start",
+			"callId": "<call>",
+			"name": "run_workflow",
+			"label": "run workflow",
+			"args": {}
+		},
+		{
+			"type": "tool.done",
+			"callId": "<call>",
+			"ok": true,
+			"elapsedMs": "<ms>",
+			"result": {
+				"assetId": "a1",
+				"objectId": "o1"
+			}
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:tool_executed",
+			"props": {
+				"turn_id": "<turn>",
+				"tool_category": "workflow_run",
+				"outcome": "succeeded",
+				"duration_bucket": "<bucket>"
+			},
+			"telemetry_id": "<telemetry>"
+		},
+		{
+			"type": "text.delta",
+			"text": " done"
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:turn_succeeded",
+			"props": {
+				"turn_id": "<turn>",
+				"duration_bucket": "<bucket>"
+			}
+		},
+		{
+			"type": "done"
+		}
+	],
+	"S": [
+		{
+			"type": "execution_tool_started",
+			"turn_id": "<turn>",
+			"telemetry_id": "<telemetry>",
+			"tool_category": "other"
+		},
+		{
+			"type": "tool.start",
+			"callId": "<call>",
+			"name": "inspect_studio",
+			"label": "inspect studio",
+			"args": {
+				"section": "selection"
+			},
+			"eventSeq": 1
+		},
+		{
+			"type": "tool.done",
+			"callId": "<call>",
+			"ok": false,
+			"elapsedMs": "<ms>",
+			"error": "INVALID_ARGUMENT: Unexpected field.",
+			"eventSeq": 2
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:tool_executed",
+			"props": {
+				"turn_id": "<turn>",
+				"tool_category": "other",
+				"outcome": "failed",
+				"duration_bucket": "<bucket>"
+			},
+			"telemetry_id": "<telemetry>"
+		},
+		{
+			"type": "execution_tool_started",
+			"turn_id": "<turn>",
+			"telemetry_id": "<telemetry>",
+			"tool_category": "scene_write"
+		},
+		{
+			"type": "tool.start",
+			"callId": "<call>",
+			"name": "patch_elements",
+			"label": "patch elements",
+			"args": {
+				"ops": [
+					{
+						"target": {
+							"kind": "stage"
+						},
+						"set": {
+							"keyLight.warmth": 0.3
+						}
+					}
+				]
+			},
+			"eventSeq": 3
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:result_applied",
+			"props": {
+				"turn_id": "<turn>"
+			}
+		},
+		{
+			"type": "tool.done",
+			"callId": "<call>",
+			"ok": true,
+			"elapsedMs": "<ms>",
+			"result": {
+				"ok": true,
+				"commandId": "cmd-1",
+				"receiptId": "receipt-1",
+				"host": {
+					"workspaceId": "tab-7",
+					"sceneId": "scene-main",
+					"documentEpoch": "doc-3",
+					"sceneEpoch": "scene-open-4"
+				},
+				"status": "applied",
+				"authored": true,
+				"revision": {
+					"before": 41,
+					"after": 42
+				},
+				"affectedIds": [
+					"char-alex"
+				],
+				"delta": [
+					{
+						"id": "char-alex",
+						"after": {
+							"position": {
+								"x": 1,
+								"y": 0,
+								"z": 2
+							}
+						}
+					}
+				],
+				"checks": {
+					"coverage": "affected-targets"
+				},
+				"undo": {
+					"historyEntryId": "history-1",
+					"entries": 1,
+					"canUndoDirect": true
+				},
+				"warnings": []
+			},
+			"eventSeq": 4
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:tool_executed",
+			"props": {
+				"turn_id": "<turn>",
+				"tool_category": "scene_write",
+				"outcome": "succeeded",
+				"duration_bucket": "<bucket>"
+			},
+			"telemetry_id": "<telemetry>"
+		},
+		{
+			"type": "execution_tool_started",
+			"turn_id": "<turn>",
+			"telemetry_id": "<telemetry>",
+			"tool_category": "other"
+		},
+		{
+			"type": "tool.start",
+			"callId": "<call>",
+			"name": "verify_result",
+			"label": "verify result",
+			"args": {
+				"targets": [
+					"char-alex"
+				],
+				"checks": [
+					"framing"
+				],
+				"visual": "frame"
+			},
+			"eventSeq": 5
+		},
+		{
+			"type": "tool.done",
+			"callId": "<call>",
+			"ok": true,
+			"elapsedMs": "<ms>",
+			"result": {
+				"ok": true,
+				"receiptId": "receipt-1",
+				"revision": {
+					"scene": 42
+				},
+				"visualRefs": [
+					{
+						"imageId": "capture-1"
+					}
+				],
+				"visualStatus": "attached",
+				"imageId": "capture-1"
+			},
+			"eventSeq": 6
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:tool_executed",
+			"props": {
+				"turn_id": "<turn>",
+				"tool_category": "other",
+				"outcome": "succeeded",
+				"duration_bucket": "<bucket>"
+			},
+			"telemetry_id": "<telemetry>"
+		},
+		{
+			"type": "text.delta",
+			"text": "done",
+			"eventSeq": 7
+		},
+		{
+			"type": "execution_telemetry",
+			"event": "agent:turn_succeeded",
+			"props": {
+				"turn_id": "<turn>",
+				"duration_bucket": "<bucket>"
+			}
+		},
+		{
+			"type": "done",
+			"eventSeq": 8
+		}
+	]
+}

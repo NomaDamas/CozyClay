@@ -13,6 +13,11 @@ import {
 	FOOT_MARKERS,
 	MIN_AIRBORNE_FRAMES,
 	AIRBORNE_LIFT,
+	GROUND_CONTACT_LIFT,
+	GROUND_CONTACT_HORIZONTAL_SPEED,
+	GROUND_LOCK_MAX_PULL,
+	GROUND_LOCK_EPSILON,
+	GROUND_LOCK_REACH_LIFT,
 	AUTO_PHYSICS_EPSILON,
 	MAX_CORRECTION,
 	EXIT_LIFT,
@@ -25,10 +30,12 @@ import {
 	GRAVITY,
 	computeCenterOfMass,
 	markerHeights,
+	markerPositions,
 	plantedFloor,
 	heightsAirborne,
 	frameAirborne,
 	detectAirborneSpans,
+	detectGroundContactSpans,
 	fitBallistic,
 	autoPhysicsRange,
 } from "../../src/ardy/auto-physics.js";
@@ -84,6 +91,26 @@ function makeRig() {
 }
 
 const FPS = 30;
+
+/* A fast low transition between two stance phases must split the contact.
+ * Treating the whole low run as one unit used to reject both real plants. */
+{
+	const positions = Array.from({ length: 30 }, (_, frame) => {
+		const x = frame < 10 ? 0 : frame < 20 ? (frame - 9) * 0.02 : 0.2;
+		const point = (offset = 0) => new THREE.Vector3(x + offset, 0, 0);
+		return {
+			mixamorigLeftFoot: point(), mixamorigLeftToeBase: point(0.05),
+			mixamorigRightFoot: point(), mixamorigRightToeBase: point(0.05),
+		};
+	});
+	const planted = Object.fromEntries(FOOT_MARKERS.map((name) => [name, 0]));
+	const contacts = detectGroundContactSpans({ positions, planted, fps: FPS });
+	check("a fast low step is split into the plants on either side",
+		contacts.spans.length === 4 && contacts.rejected.length === 0,
+		JSON.stringify(contacts));
+	check("the horizontal contact-speed gate is stricter than a walking foot",
+		GROUND_CONTACT_HORIZONTAL_SPEED < 0.2);
+}
 /* App.jsx blends IK corrections back into the clip over this many frames
  * outside the keyed range; the fake playback below mirrors it exactly. */
 const BLEND = 6;
@@ -96,11 +123,15 @@ const BLEND = 6;
  * sits at a fixed offset from the hips, so a parabolic CoM and a parabolic
  * hips track are the same claim.
  */
-function makeClip(rig, heights, leans = null) {
+function makeClip(rig, heights, leans = null, xs = null) {
 	const hips = rig.getObjectByName("mixamorigHips");
 	return (frame) => {
 		const index = Math.max(0, Math.min(frame, heights.length - 1));
-		hips.position.set(0, heights[index] * 100, 0);
+		// A real motion frame rewrites every joint. Reset the synthetic clip too,
+		// otherwise a temporarily silenced IK layer leaves yesterday's leg pose
+		// on the rig and the next frame is not a raw clip sample at all.
+		rig.traverse((node) => { if (node.isBone) node.quaternion.identity(); });
+		hips.position.set((xs?.[index] ?? 0) * 100, heights[index] * 100, 0);
 		hips.rotation.x = leans ? leans[index] : 0;
 		rig.updateMatrixWorld(true);
 	};
@@ -108,13 +139,13 @@ function makeClip(rig, heights, leans = null) {
 
 /** A rig + IK state + `run()` that can be invoked repeatedly, so idempotence
  * is testable against ONE accumulated key layer. */
-function makeDriver(heights, { leans = null, ...options } = {}) {
+function makeDriver(heights, { leans = null, xs = null, ...options } = {}) {
 	const rig = makeRig();
 	const { chains, fkJoints } = resolveIkRig(rig);
 	const ik = createIkState();
 	ik.chains = chains;
 	ik.fkJoints = fkJoints;
-	const pose = makeClip(rig, heights, leans);
+	const pose = makeClip(rig, heights, leans, xs);
 	const applyFrame = (frame) => {
 		pose(frame);
 		ikEvaluate(chains, ik, frame, fkJoints, BLEND);
@@ -840,6 +871,81 @@ const FLOATY_G = (() => {
 	check("a grounded clip has no airborne spans", result.spans.length === 0);
 	check("a grounded clip gets no keys",
 		result.keyedFrames.length === 0 && ikKeyframes(driver.ik).length === 0);
+}
+
+/* --- AutoPhysics v2: safe grounded contact + foot lock -------------------- */
+{
+	const frames = 24;
+	const heights = new Array(frames).fill(0.96); // toe bases clear y=0 by 1 cm
+	const xs = Array.from({ length: frames }, (_, frame) => 0.03 * frame / (frames - 1));
+	const probe = makeDriver(heights, { xs });
+	const positions = [];
+	const perFrameHeights = [];
+	for (let frame = 0; frame < frames; frame += 1) {
+		probe.pose(frame);
+		positions.push(markerPositions(probe.rig));
+		perFrameHeights.push(markerHeights(probe.rig));
+	}
+	const contacts = detectGroundContactSpans({ positions, planted: plantedFloor(perFrameHeights), fps: FPS });
+	check("a low settled three-centimetre drift is accepted as two planted feet",
+		contacts.spans.length === 2 && contacts.rejected.length === 0, JSON.stringify(contacts));
+	check("the accepted contact stays inside the three-centimetre safety pull",
+		contacts.spans.every((span) => span.maxPull <= GROUND_LOCK_MAX_PULL));
+	check("the straight-leg retry cannot lift a foot more than five millimetres",
+		GROUND_LOCK_REACH_LIFT <= 0.005);
+
+	const driver = makeDriver(heights, { xs, grounding: true });
+	const result = driver.run();
+	check("ground AutoPhysics keys the drifting stance",
+		result.groundedKeyedFrames.length > 0 && result.groundContactSpans.length === 2,
+		`contacts=${result.groundContactSpans.length} keys=${result.groundedKeyedFrames.length}`);
+	check("the planted-foot slide is reduced below five millimetres",
+		result.maxFootSlideBefore > 0.01 && result.maxFootSlideAfter < GROUND_LOCK_EPSILON,
+		`before=${(result.maxFootSlideBefore * 100).toFixed(2)}cm after=${(result.maxFootSlideAfter * 100).toFixed(2)}cm`);
+	check("ground correction does not invent floor penetration",
+		result.floorPenetrationBefore === 0 && result.floorPenetrationAfter < 1e-6,
+		`before=${result.floorPenetrationBefore} after=${result.floorPenetrationAfter}`);
+	const second = driver.run();
+	check("the grounded pass is a fixed point",
+		second.groundedKeyedFrames.length === 0 && second.maxFootCorrection === 0,
+		`keys=${second.groundedKeyedFrames.length} max=${second.maxFootCorrection}`);
+}
+
+/* A slow 12 cm translation can look low and settled, but pinning it would
+ * drag the leg across the floor. The whole run is refused, never sliced into
+ * fake three-centimetre plants. */
+{
+	const frames = 24;
+	const heights = new Array(frames).fill(0.96);
+	const xs = Array.from({ length: frames }, (_, frame) => 0.12 * frame / (frames - 1));
+	const driver = makeDriver(heights, { xs, grounding: true });
+	const positions = [];
+	const perFrameHeights = [];
+	for (let frame = 0; frame < frames; frame += 1) {
+		driver.pose(frame);
+		positions.push(markerPositions(driver.rig));
+		perFrameHeights.push(markerHeights(driver.rig));
+	}
+	const contacts = detectGroundContactSpans({ positions, planted: plantedFloor(perFrameHeights), fps: FPS });
+	check("a moving foot is excluded instead of snapped backward",
+		contacts.spans.length === 0, JSON.stringify(contacts));
+	const result = driver.run();
+	check("an excluded moving foot receives no ground correction keys",
+		result.groundedKeyedFrames.length === 0,
+		`keys=${result.groundedKeyedFrames.length}`);
+}
+
+/* The contact lock also owns one-sided floor cleanup. It may lift a sunken
+ * body from the root, but never lowers an already clean take. */
+{
+	const driver = makeDriver(new Array(18).fill(0.88), { grounding: true });
+	const result = driver.run();
+	check("a sunken planted foot is detected and corrected",
+		result.floorPenetrationBefore > 0.02 && result.groundedKeyedFrames.length > 0,
+		`before=${(result.floorPenetrationBefore * 100).toFixed(2)}cm keys=${result.groundedKeyedFrames.length}`);
+	check("floor penetration falls below one millimetre after evaluated playback",
+		result.floorPenetrationAfter < 0.001,
+		`after=${(result.floorPenetrationAfter * 100).toFixed(3)}cm`);
 }
 
 /* --- REGRESSION (R4): AutoPhysics keys the hips, and only the hips --------- */

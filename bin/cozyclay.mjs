@@ -11,8 +11,12 @@
  *   - forward /ardy to its dynamically selected sidecar port (the same job Vite's dev proxy does),
  *   - keep the sidecar's lifetime tied to this process.
  *
- * It has no dependencies on purpose. A launcher that needs an install step
- * before it can serve a prebuilt app is a launcher that will break.
+ * The only runtime dependencies are the agent packages
+ * `@earendil-works/pi-ai` and `@earendil-works/pi-agent-core` (MIT), and the
+ * agent sidecar loads them lazily, so this launcher itself still starts
+ * without them. Everything else stays dependency-free on purpose: a launcher
+ * that needs an install step before it can serve a prebuilt app is a
+ * launcher that will break.
  */
 import { spawn } from "node:child_process";
 import { startBridge, terminateOwned } from "../tools/process-supervisor.mjs";
@@ -25,18 +29,23 @@ import { fileURLToPath } from "node:url";
 import { runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { checkForUpdate, runUpdate } from "./update-check.mjs";
+import { handleOAuthRequest } from "./codex-auth.mjs";
+import { createAgentHandler } from "./agent/agent-routes.mjs";
 import { verifyPackageMarker } from "./package-signature.mjs";
 import {
 	markTelemetryNoticeShown,
 	markTelemetryFirstLaunch,
+	setTelemetryFirstLaunchSource,
 	effectiveTelemetryEnabled,
 	readTelemetryState,
 	setTelemetryEnabled,
+	setTelemetryInternalQa,
 	takeRuntimeTelemetryConfig,
 	TELEMETRY_NOTICE_VERSION,
 } from "./telemetry-state.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
+const SOURCE_CHECKOUT = existsSync(join(PKG_ROOT, ".git"));
 let packageMetadata = {};
 try {
 	packageMetadata = JSON.parse(readFileSync(join(PKG_ROOT, "package.json"), "utf8"));
@@ -47,9 +56,13 @@ const DIST = join(PKG_ROOT, "dist");
 const BRIDGE = join(PKG_ROOT, "tools", "ardy", "bridge.mjs");
 const OFFICIAL_PACKAGE = (
 	packageMetadata.name === "cozyclay"
-	&& !existsSync(join(PKG_ROOT, ".git"))
+	&& !SOURCE_CHECKOUT
 	&& verifyPackageMarker(join(DIST, "cozyclay-package.json"), PKG_ROOT, packageMetadata)
 );
+const INSTALL_KIND = process.env.npm_config_global === "true"
+	|| (PKG_ROOT.includes("/node_modules/") && !PKG_ROOT.includes("/_npx/"))
+	? "global"
+	: "npx";
 // A bridge is optional. Keep the endpoint unset until this launcher owns a
 // sidecar; otherwise /ardy requests could accidentally reach an unrelated
 // process that happens to be listening on the bridge's historical default
@@ -84,6 +97,8 @@ function parseArgs(argv) {
 		else if (arg.startsWith("--host=")) opts.host = arg.slice(7);
 		else if (arg === "--no-motion") opts.motion = false;
 		else if (arg === "--no-open") opts.open = false;
+		else if (arg === "--scene") opts.scene = String(argv[++i] ?? "");
+		else if (arg.startsWith("--scene=")) opts.scene = arg.slice(8);
 		else if (arg === "--no-star") opts.star = false;
 		else if (arg === "--no-update-check") opts.updateCheck = false;
 		else if (arg === "--help" || arg === "-h") opts.help = true;
@@ -114,20 +129,39 @@ const STATE_FILE = join(STATE_DIR, "state.json");
 // seconds in is a popup; a prompt after a real session is a question.
 const STAR_AFTER_MS = Number(process.env.COZYCLAY_STAR_AFTER_MS ?? 60_000);
 
+async function askFirstLaunchSource() {
+	if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
+	const answer = await new Promise((resolve) => {
+		const rl = createInterface({ input: process.stdin, output: process.stdout });
+		rl.question("How did you hear about CozyClay? [x/hn/reddit/github/friend/other/skip] ", (value) => {
+			rl.close();
+			resolve(value.trim().toLowerCase());
+		});
+	});
+	return ["x", "hn", "reddit", "github", "friend", "other"].includes(answer) ? answer : null;
+}
+
 const HELP = `cozyclay - browser-based 3D staging studio
 
   npx cozyclay              start the studio and open it
   npx cozyclay mcp          run the MCP server (for Claude, Cursor, any MCP client)
+  cclay live status         drive a running studio from the terminal
+                            (cclay live --help lists every verb)
   cclay update              install the latest cozyclay globally (npm install -g)
   npx cozyclay --port 5200  serve on another port
   npx cozyclay --no-motion  skip the optional motion-generation sidecar
   npx cozyclay --no-open    do not open a browser
+  npx cozyclay --scene city-block
+                            open the studio on a bundled starter scene
+                            (the set from the cozyclay.org tutorial)
   npx cozyclay --no-star    never ask about starring the repo
   npx cozyclay --no-update-check
                             do not look for a newer release
   cclay telemetry status   show anonymous telemetry status
   cclay telemetry off      disable anonymous telemetry
   cclay telemetry on       enable anonymous telemetry
+  cclay telemetry internal on|off
+                            mark or unmark this installation as internal QA
 
 cclay is the same command, shorter: a global install gives you both.
 
@@ -149,11 +183,15 @@ function serveFile(res, path) {
 
 // Forward /ardy to the sidecar. Same contract as the Vite dev proxy, so the
 // browser code needs no build-time knowledge of how it was launched.
-function proxyToBridge(req, res) {
+function proxyToBridge(req, res, configured) {
 	if (!bridge || bridgePort === null || bridge.exitCode !== null || bridge.signalCode !== null) {
 		req.resume();
 		res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
-		res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		if (req.url.split("?")[0] === "/ardy/health") {
+			res.end(JSON.stringify({ ok: false, backend: configured ? "local_kimodo" : "none", host_configured: configured, reason: configured ? "unreachable" : "unconfigured", capabilities: { lineEdit: false }, error: "motion sidecar is not running" }));
+		} else {
+			res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		}
 		return;
 	}
 	const upstream = httpRequest(
@@ -166,8 +204,12 @@ function proxyToBridge(req, res) {
 	upstream.on("error", () => {
 		// An absent sidecar is an expected state, not a crash: the app treats a
 		// failed probe as "generation unavailable" and carries on.
-		res.writeHead(503, { "content-type": "application/json" });
-		res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		res.writeHead(503, { "content-type": "application/json; charset=utf-8" });
+		if (req.url.split("?")[0] === "/ardy/health") {
+			res.end(JSON.stringify({ ok: false, backend: configured ? "local_kimodo" : "none", host_configured: configured, reason: configured ? "unreachable" : "unconfigured", capabilities: { lineEdit: false }, error: "motion sidecar is not running" }));
+		} else {
+			res.end(JSON.stringify({ error: "motion sidecar is not running" }));
+		}
 	});
 	req.pipe(upstream);
 }
@@ -243,6 +285,11 @@ function readVersion() {
 const argv = process.argv.slice(2);
 if (argv[0] === "mcp") {
 	await runMcp(argv.slice(1));
+} else if (argv[0] === "live") {
+	// Loaded on demand: the terminal controller is JSON over one socket and has
+	// no business being parsed on every `npx cozyclay` launch.
+	const { runLiveCli } = await import("./live/cli.mjs");
+	process.exit(await runLiveCli(argv.slice(1)));
 } else if (argv[0] === "update") {
 	// This branch bypasses parseArgs, so anything trailing would be swallowed
 	// and `cclay update --help` would perform an unrequested global install.
@@ -253,20 +300,26 @@ if (argv[0] === "mcp") {
 	runUpdate();
 } else if (argv[0] === "telemetry") {
 	const action = argv[1] ?? "status";
-	if (argv.length > 2 || !["status", "on", "off"].includes(action)) {
-		console.error("cozyclay: telemetry accepts status, on, or off");
+	const internalAction = action === "internal" ? argv[2] : null;
+	if (
+		(action === "internal" && (argv.length !== 3 || !["on", "off"].includes(internalAction)))
+		|| (action !== "internal" && (argv.length > 2 || !["status", "on", "off"].includes(action)))
+	) {
+		console.error("cozyclay: telemetry accepts status, on, off, or internal on|off");
 		process.exit(1);
 	}
 	if (action === "on") setTelemetryEnabled(STATE_FILE, true);
 	if (action === "off") setTelemetryEnabled(STATE_FILE, false);
+	if (action === "internal") setTelemetryInternalQa(STATE_FILE, internalAction === "on");
 	const state = readTelemetryState(STATE_FILE);
 	const effective = OFFICIAL_PACKAGE && effectiveTelemetryEnabled(state);
 	const reason = !OFFICIAL_PACKAGE
-		? " (source checkout)"
+		? ` (${SOURCE_CHECKOUT ? "source checkout" : "unofficial package: digest mismatch"})`
 		: state.telemetryEnabled && !effective
 			? " (environment override)"
 			: "";
 	console.log(`Telemetry: ${effective ? "on" : "off"}${reason}`);
+	console.log(`Internal QA: ${state.internalQa ? "on" : "off"}`);
 	if (action !== "status") console.log("Reload any open CozyClay studio tab to apply this setting.");
 } else {
 
@@ -283,7 +336,19 @@ if (opts.version) {
 let runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 	appVersion: version,
 	officialPackage: OFFICIAL_PACKAGE,
+	installKind: INSTALL_KIND,
 });
+if (runtimeTelemetry.firstLaunch && !readTelemetryState(STATE_FILE).firstLaunchHeardFrom) {
+	const heardFrom = await askFirstLaunchSource();
+	if (heardFrom) {
+		setTelemetryFirstLaunchSource(STATE_FILE, heardFrom);
+	runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
+		appVersion: version,
+		officialPackage: OFFICIAL_PACKAGE,
+		installKind: INSTALL_KIND,
+	});
+	}
+}
 const telemetryState = readTelemetryState(STATE_FILE);
 if (
 	runtimeTelemetry.telemetryEnabled
@@ -358,8 +423,25 @@ if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 	}
 }
 
+// Task 6 consumes this getter when constructing the Studio runtime. Never
+// substitute an environment/default port for a sidecar this launcher owns.
+const getBridgeOrigin = () => bridge && bridgePort !== null && bridge.exitCode === null && bridge.signalCode === null
+	? `http://127.0.0.1:${bridgePort}` : null;
+const agentHandler = createAgentHandler({ port: () => opts.port, getBridgeOrigin });
 server = createServer((req, res) => {
-	const url = new URL(req.url ?? "/", "http://localhost");
+	const url = new URL(req.url ?? "/", "http://127.0.0.1");
+	if (/^\/oauth\/(start|status|logout)$/.test(url.pathname)) {
+		const origin = req.headers.origin;
+		const hosts = new Set([`127.0.0.1:${opts.port}`, `localhost:${opts.port}`]);
+		const origins = new Set([`http://127.0.0.1:${opts.port}`, `http://${"local" + "host"}:${opts.port}`]);
+		if (!(origins.has(origin) || (origin === undefined && req.method === "GET" && hosts.has(req.headers.host)))) { res.writeHead(403, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "forbidden origin" })); return; }
+		void handleOAuthRequest(req, res).catch(() => { if (!res.headersSent) { res.writeHead(502, { "content-type": "application/json; charset=utf-8" }); res.end(JSON.stringify({ error: "oauth unavailable" })); } });
+		return;
+	}
+	if (url.pathname.startsWith("/agent/")) {
+		void agentHandler(req, res, url.pathname).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); } });
+		return;
+	}
 	if (url.pathname === "/__cozyclay/telemetry") {
 		if (req.method === "POST") {
 			const origin = req.headers.origin;
@@ -383,6 +465,7 @@ server = createServer((req, res) => {
 					runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 						appVersion: version,
 						officialPackage: OFFICIAL_PACKAGE,
+						installKind: INSTALL_KIND,
 					});
 					res.writeHead(200, {
 						"content-type": "application/json; charset=utf-8",
@@ -404,7 +487,7 @@ server = createServer((req, res) => {
 	// directory (cskel27-rest.json), and those files live in dist/, not behind
 	// the sidecar. Same rule as the Vite dev proxy bypass.
 	if (/^\/ardy\/(health|bases|generate|footage|extract|motions)(\/|$)/.test(url.pathname)) {
-		proxyToBridge(req, res);
+		proxyToBridge(req, res, opts.motion && Boolean(kimodoHost));
 		return;
 	}
 	let rel;
@@ -437,6 +520,7 @@ server = createServer((req, res) => {
 		runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 			appVersion: version,
 			officialPackage: OFFICIAL_PACKAGE,
+			installKind: INSTALL_KIND,
 		});
 		const runtime = runtimeTelemetry;
 		if (runtime.firstLaunch) {
@@ -471,7 +555,12 @@ server.listen({ port: opts.port, host: "127.0.0.1", ipv6Only: false }, () => {
 	// The package exists to open the studio, which the site serves from /app/.
 	// Landing on "/" would greet someone who just typed `npx cozyclay` with a
 	// marketing page.
-	const url = `http://127.0.0.1:${opts.port}/app/`;
+	// --scene <id> continues from a bundled starter scene (the landing-page
+	// tutorial hands people this exact command). Only a bare id is accepted
+	// here; the studio resolves it to dist/scenes/<id>.cclayproject.
+	const sceneParam = opts.scene && /^[a-z0-9-]+$/i.test(opts.scene) ? `?scene=${encodeURIComponent(opts.scene)}` : "";
+	if (opts.scene && !sceneParam) console.error(`cozyclay: --scene expects a starter id such as city-block (got ${opts.scene}); opening the studio without it.`);
+	const url = `http://127.0.0.1:${opts.port}/app/${sceneParam}`;
 	console.log(`CozyClay is running at ${url}`);
 	console.log("Use a Chromium-based browser — Safari and Firefox are not supported.");
 	if (!opts.motion) console.log("Motion generation: off (--no-motion).");

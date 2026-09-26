@@ -1,0 +1,345 @@
+#!/usr/bin/env node
+import assert from "node:assert/strict";
+import { createServer } from "node:http";
+import { once } from "node:events";
+import { randomUUID } from "node:crypto";
+import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
+import { createHttpTransport } from "../src/workflow/agent-client.js";
+import { startLiveHub } from "../mcp/live-hub.mjs";
+import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
+import { studioToolSchemas, studioToolResult } from "../bin/agent/studio-tools.mjs";
+import { createFakeModel } from "./fixtures/fake-model.mjs";
+import { fauxAssistantMessage, fauxToolCall, fauxText } from "@earendil-works/pi-ai/providers/faux";
+import { createRequire } from "node:module";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+const { WebSocket } = createRequire(new URL("../mcp/package.json", import.meta.url))("ws");
+// Sessions this suite drives through the routes stay in a scratch dir, never
+// in the author's History (#375).
+const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
+process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
+process.on("exit", () => rmSync(sessionDir, { recursive: true, force: true }));
+
+const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision", "run-action-admission-and-generation-limit", "stale-scene-readmits-any-family"]);
+const index = process.argv.indexOf("--case");
+const selected = index >= 0 ? process.argv[index + 1] : null;
+if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
+const shouldRun = name => !selected || selected === name;
+const uuid = () => randomUUID();
+const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const host = (handle = "handle-12", workspaceId = "tab-7") => ({ surface: "studio", workspaceId, workspaceHandle: handle, documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" });
+function context(binding = host(), sceneRevision = 1) {
+  return { schema: "studio-context-v1", host: binding, revision: { scene: sceneRevision, physics: 1, view: 1 }, units: { distance: "m", angle: "deg", up: "+Y", yawZero: "+Z", yawPositiveToward: "+X", pivot: "base", fps: 24, rangeEnd: "exclusive" }, scene: { name: "Workshop", aspect: "16:9", floorY: 0, frameCount: 48, objectCount: 0, characterCount: 1 }, selection: { kind: "character", id: "char-alex" }, activeCharacterId: "char-alex", view: { mode: "scene", frame: 0, playing: false, lookThrough: false, grid: false, autoColor: false }, shot: null, camera: null, entities: [{ id: "char-alex", kind: "character", token: "ct-11", position: { x: 0, y: 0, z: 0 }, yawDeg: 0, scale: 1, bounds: null, motion: { takeId: null, frames: 48, ikKeyCount: 0, promptBlockCount: 0 }, capabilities: { rigReady: true, ik: true, measuredFeet: true } }], entityPage: { returned: 1, total: 1, truncated: false, nextCursor: null }, shots: [], shotsTruncated: false, assets: [], recentReceipts: [], jobs: [], capabilities: { profile: "studio-slice-1", tools: [...STUDIO_TOOL_FAMILIES], rigReady: true, cameraReady: false, bridgeReady: true } };
+}
+const envelope = (binding = host(), text = "inspect") => ({ surface: "studio", sessionId: uuid(), turnId: uuid(), text, context: context(binding) });
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+async function bounded(promise) { let timer; try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("fixture event deadline")), 10000); })]); } finally { clearTimeout(timer); } }
+
+async function liveFixture({ bridge = null, command = null } = {}) {
+  const hub = await startLiveHub(0); assert.ok(hub);
+  const socket = new WebSocket(`ws://127.0.0.1:${hub.server.address().port}/live`);
+  const ready = deferred();
+  socket.on("message", raw => { const frame = JSON.parse(raw); if (frame.type === "workspace") ready.resolve(frame.handle); else if (frame.type === "cmd") void (async () => { const value = await command(frame.name, frame.args); if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: "result", id: frame.id, ok: true, value })); })(); });
+  await once(socket, "open"); socket.send(JSON.stringify({ type: "hello", role: "editor", version: 1, workspaceId: "tab-7" }));
+  const handle = await bounded(ready.promise);
+  return { hub, socket, handle, async close() { socket.terminate(); for (const peer of hub.server.clients) peer.terminate(); await new Promise(resolve => hub.server.close(resolve)); if (bridge) await new Promise(resolve => bridge.close(resolve)); } };
+}
+async function httpFixture({ modelResponse, live, getBridgeOrigin = () => null, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval } = {}) {
+  const auth = { getAccessToken: async () => "fixture-token" };
+  const fakeModel = createFakeModel();
+  const convertInput = (message) => {
+    if (message.role === "user") return { role: "user", content: (Array.isArray(message.content) ? message.content : [{ type: "text", text: message.content }]).map((part) => part.type === "image" ? { type: "input_image", image_url: `data:${part.mimeType};base64,${part.data}` } : { type: "input_text", text: part.text }) };
+    if (message.role === "assistant") return { type: "message", role: "assistant", content: (message.content || []).filter((part) => part.type === "text").map((part) => ({ type: "output_text", text: part.text })) };
+    if (message.role === "toolResult") {
+      const image = message.content?.find((part) => part.type === "image");
+      return [{ type: "function_call_output", call_id: message.toolCallId, output: message.content?.find((part) => part.type === "text")?.text || "" }, ...(image ? [{ role: "user", content: [{ type: "input_text", text: "Studio image observation" }, { type: "input_image", image_url: `data:${image.mimeType};base64,${image.data}` }] }] : [])];
+    }
+    return message;
+  };
+  const fauxResponse = async (context) => {
+    const items = await modelResponse({ input: (context.messages || []).flatMap(convertInput), tools: studioToolSchemas() });
+    const content = [];
+    for (const item of items) {
+      if (item.type === "response.output_text.delta") content.push(fauxText(item.delta));
+      if (item.type === "response.output_item.done") {
+        if (item.item.type === "function_call") content.push(fauxToolCall(item.item.name, JSON.parse(item.item.arguments || "{}"), { id: item.item.call_id }));
+        else if (item.item.type === "message") for (const part of item.item.content || []) if (part.type === "output_text") content.push(fauxText(part.text));
+      }
+    }
+    return fauxAssistantMessage(content.length ? content : [fauxText("")]);
+  };
+  fakeModel.fauxProvider.setResponses(Array.from({ length: 128 }, () => fauxResponse));
+  const handler = createAgentHandler({ auth, codex: { parseQuotaHeaders: () => ({ primary: {}, credits: {} }) }, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider, liveHub: live.hub, getBridgeOrigin, clock, setIntervalImpl, clearIntervalImpl, port: () => server.address().port });
+  const server = createServer((req, res) => handler(req, res).catch(error => { if (!res.headersSent) { res.writeHead(500); res.end(error.stack); } }));
+  server.listen(0, "127.0.0.1"); await once(server, "listening");
+  const origin = `http://127.0.0.1:${server.address().port}`;
+  const post = async (body, cookie = null, signal) => { const response = await fetch(`${origin}/agent/turn`, { method: "POST", signal: signal ?? AbortSignal.timeout(10000), headers: { origin, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body) }); return { response, text: await response.text(), cookie: response.headers.get("set-cookie")?.split(";")[0] ?? cookie }; };
+  return { handler, server, origin, post, async close() { await handler.close(); await new Promise(resolve => server.close(resolve)); } };
+}
+function streamOf(items) { return items.map((item) => ({ type: "response.output_item.done", item })); }
+
+for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision"]) {
+  if (!shouldRun(scenario)) continue;
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  const { LiveMutationUncertainError } = await import("../mcp/live-hub.mjs");
+  let revision = 1, uncertain = false, refreshes = 0;
+  const sent = [];
+  const admission = { host: host(), revision: 1, commandId: uuid };
+  const args = { ops: [{ op: "update", id: "cube", position: { world: { x: 1, y: 0, z: 0 } } }] };
+  const liveHub = { async command(name, payload, handle) {
+    assert.equal(handle, "handle-12");
+    if (name === "inspect_studio") return { context: { revision: { scene: revision } } };
+    sent.push(structuredClone(payload));
+    if (payload.expectedRevision !== revision) {
+      if (scenario === "stale-scene-readmits-revision") return { ok: false, code: "STALE_SCENE", message: "Authored scene revision changed." };
+      throw new Error(`unexpected revision ${payload.expectedRevision}; live is ${revision}`);
+    }
+    const before = revision;
+    revision++;
+    if (uncertain) {
+      uncertain = false;
+      throw new LiveMutationUncertainError("Editor applied but acknowledgement timed out.");
+    }
+    return { ok: true, status: "applied", revision: { before, after: revision } };
+  } };
+  admission.refresh = async () => { refreshes++; const read = await liveHub.command("inspect_studio", { scope: "scene" }, "handle-12"); admission.revision = read.context.revision.scene; };
+  const invoke = createStudioTools({ liveHub, workspaceHandle: "handle-12", session: { admission } }).internal.invoke;
+  await invoke("arrange_objects", args);
+  assert.equal(admission.revision, 2);
+  if (scenario === "inspect-readmits-revision") {
+    revision = 3;
+    await invoke("inspect_studio", { scope: "scene" });
+    await invoke("arrange_objects", args);
+    assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 3]);
+    assert.equal(refreshes, 0);
+  } else if (scenario === "stale-scene-readmits-revision") {
+    revision = 3;
+    await assert.rejects(invoke("arrange_objects", args), { code: "STALE_SCENE" });
+    assert.equal(refreshes, 1);
+    await invoke("arrange_objects", args);
+    assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 2, 3]);
+  } else {
+    uncertain = true;
+    await assert.rejects(invoke("arrange_objects", args), { code: "UNCERTAIN_APPLY" });
+    assert.equal(refreshes, 1);
+    assert.equal(admission.revision, 3);
+    await invoke("arrange_objects", args);
+    assert.deepEqual(sent.map(payload => payload.expectedRevision), [1, 2, 3]);
+  }
+  console.log(`PASS ${scenario}`);
+}
+
+if (shouldRun("stale-scene-readmits-any-family")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  // A STALE_SCENE re-admits whichever family reported it and however it
+  // arrived: as a rejection receipt or as a thrown error.
+  const calls = [["verify_result", { receiptId: "receipt-1", checks: ["placement"] }], ["operate_studio", { frame: 3 }], ["inspect_studio", { scope: "scene" }]];
+  for (const shape of ["receipt", "thrown"]) {
+    for (const [name, args] of calls) {
+      let live = 7, refreshes = 0;
+      const admission = { host: host(), revision: 5, commandId: uuid, refresh: async () => { refreshes++; admission.revision = live; } };
+      const liveHub = { async command() {
+        if (shape === "thrown") throw Object.assign(new Error("Authored state changed; obtain fresh intent."), { code: "STALE_SCENE" });
+        return { ok: false, code: "STALE_SCENE", phase: "admission", mutated: false, recovery: { action: "inspect", retryAllowed: false } };
+      } };
+      const invoke = createStudioTools({ liveHub, workspaceHandle: "handle-12", session: { admission } }).internal.invoke;
+      await assert.rejects(invoke(name, args), { code: "STALE_SCENE" });
+      assert.deepEqual({ refreshes, revision: admission.revision }, { refreshes: 1, revision: live }, `a ${shape} STALE_SCENE from ${name} re-admits at the live revision`);
+    }
+  }
+  console.log("PASS a STALE_SCENE from any Studio family, receipt or thrown, re-admits the live revision");
+}
+
+if (shouldRun("studio-tool-catalogue")) {
+  const { createStudioTools, studioToolSchemas } = await import("../bin/agent/studio-tools.mjs");
+  const families = ["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"];
+  assert.deepEqual([...STUDIO_TOOL_FAMILIES], families, "the Studio panel sees exactly these ten families");
+  assert.deepEqual(studioToolSchemas().map(tool => tool.name), families);
+  const sent = [];
+  const tools = createStudioTools({ liveHub: { command: async (name, payload) => { sent.push({ name, payload }); return { ok: true, commandId: payload.commandId, receiptId: "receipt-1", status: "applied", revision: { before: 1, after: 2 } }; } }, workspaceHandle: "handle-1",
+    session: { admission: { commandId: () => "cmd-1", host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, revision: 1, refresh: async () => {} } } });
+  assert.deepEqual(tools.map(tool => tool.name), families);
+  assert.ok(tools.every(tool => tool.parameters?.type === "object"));
+  assert.match(studioToolSchemas().find(tool => tool.name === "verify_result").description, /pass exactly one of receiptId or targets/i);
+  await tools.find(tool => tool.name === "patch_elements").handler({ ops: [{ target: { kind: "stage" }, set: { "keyLight.intensity": 2 } }] });
+  // A mutation family carries the admission envelope, or a timeout would lose
+  // its UNCERTAIN_APPLY meaning downstream.
+  assert.equal(sent[0].name, "patch_elements");
+  assert.equal(sent[0].payload.commandId, "cmd-1");
+  assert.equal(sent[0].payload.expectedRevision, 1);
+  // Mutation tool descriptions must teach receipt semantics: dropped paths,
+  // landed delta values, and STALE_SCENE inspect-then-resubmit recovery.
+  const mutations = ["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit", "run_action"];
+  for (const tool of studioToolSchemas()) {
+    if (!mutations.includes(tool.name)) continue;
+    assert.ok(tool.description.includes("droppedPaths"), `${tool.name} description names ops[].droppedPaths`);
+    assert.ok(tool.description.includes("delta[].after"), `${tool.name} description names the landed delta[].after value`);
+    assert.ok(tool.description.includes("STALE_SCENE"), `${tool.name} description explains STALE_SCENE`);
+    assert.ok(/inspect_studio/.test(tool.description) && /resubmit|re-?issue/i.test(tool.description), `${tool.name} description teaches inspect-then-resubmit for STALE_SCENE`);
+  }
+  // A partial receipt parses back with its dropped paths and the value that
+  // actually landed in delta[].after, unabridged.
+  const partial = { ok: true, commandId: "cmd-1", receiptId: "receipt-1", host: host(), status: "partial", authored: true, revision: { before: 1, after: 2 }, affectedIds: ["cube-24"],
+    delta: [{ id: "cube-24", after: { patched: [{ path: "object.scale", vec: { x: 0.24, y: 0.1, z: 0.5 } }] } }],
+    checks: { coverage: "declared-element-readback" }, undo: { historyEntryId: "h-1", entries: 1, canUndoDirect: true }, warnings: [], ops: [{ index: 0, status: "partial", droppedPaths: ["object.scale"] }] };
+  const rendered = studioToolResult(partial);
+  const parsed = JSON.parse(rendered);
+  assert.deepEqual(parsed.ops[0].droppedPaths, ["object.scale"]);
+  assert.equal(parsed.delta[0].after.patched.find(p => p.path === "object.scale").vec.y, 0.1);
+  assert.ok(rendered.length < 8000, "sanity: this fixture is far under the 8000-byte receipt cap");
+  console.log("PASS the Studio tool list is exactly the ten families and patch_elements is admitted");
+}
+
+if (shouldRun("run-action-admission-and-generation-limit")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  const { LiveHub } = await import("../mcp/live-hub.mjs");
+  // The hub treats a lost run_action acknowledgement as a possibly applied mutation.
+  assert.equal(LiveHub.commandMayMutate("run_action"), true);
+  assert.equal(LiveHub.commandTimeoutMs("run_action"), 30_000);
+  const sent = []; let commandNumber = 0;
+  const admission = { commandId: () => `cmd-${++commandNumber}`, host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, revision: 4, refresh: async () => {} };
+  const liveHub = { command: async (name, payload) => {
+    sent.push({ name, payload });
+    if (payload.args?.action === "motion.generateAllBlocks") return { ok: true, commandId: payload.commandId, action: "motion.generateAllBlocks", kind: "job", status: "started", affectedIds: ["char-alex"], summary: "Started generating from 2 prompt blocks." };
+    return { ok: true, commandId: payload.commandId, receiptId: `receipt-${commandNumber}`, status: "applied", action: payload.args.action, revision: { before: admission.revision, after: admission.revision + 1 } };
+  } };
+  const tools = createStudioTools({ liveHub, workspaceHandle: "handle-1", session: { admission } });
+  const run = tools.find(tool => tool.name === "run_action");
+  assert.ok(run, "run_action is an agent tool");
+  const applied = await run.handler({ action: "shot.create", args: {} });
+  assert.equal(applied.status, "applied");
+  // run_action is admitted like every other mutation family.
+  assert.deepEqual(sent[0], { name: "run_action", payload: { name: "run_action", args: { action: "shot.create", args: {} }, commandId: "cmd-1", host: admission.host, expectedRevision: 4 } });
+  assert.equal(admission.revision, 5, "the receipt's revision admits the next command");
+  await assert.rejects(run.handler({ action: "shot create" }), { code: "INVALID_ARGUMENT" });
+  assert.equal(sent.length, 1, "a malformed action never reaches the editor");
+  // A job action is a generation: one per user message, like generate_motion.
+  const started = await run.handler({ action: "motion.generateAllBlocks" });
+  assert.equal(started.status, "started");
+  await assert.rejects(run.handler({ action: "motion.generateAllBlocks" }), { code: "GENERATION_LIMIT" });
+  assert.equal(sent.length, 2, "the second generation never reaches the editor");
+  await run.handler({ action: "shot.create" });
+  assert.equal(sent.length, 3, "other actions still run after a generation");
+  // A new turn builds new tools and may generate again.
+  const nextTurn = createStudioTools({ liveHub, workspaceHandle: "handle-1", session: { admission } });
+  assert.equal((await nextTurn.find(tool => tool.name === "run_action").handler({ action: "motion.generateAllBlocks" })).status, "started");
+  console.log("PASS run_action is admitted as a mutation and a job action counts as the turn's generation");
+}
+
+if (shouldRun("surface-context-and-images")) {
+  const commands = []; let failImage = false;
+  const live = await liveFixture({ command: async (name, args) => { commands.push({ name, args }); if (name === "read_studio_context") return { context: context(host(live.handle)) }; if (name === "verify_result") return { ok: true, receiptId: "receipt-1", revision: { scene: 1, physics: 1, view: 1 }, visualRefs: [{ imageId: "capture-1" }] }; if (name === "resolve_studio_image") return failImage ? {} : { imageId: "capture-1", dataUrl: png, revision: { scene: 1 }, receiptId: "receipt-1" }; return { ok: true, commandId: args.commandId ?? "cmd-1", receiptId: "receipt-1", affectedIds: [], status: "applied" }; } });
+  const calls = []; let phase = 0;
+  const modelResponse = ({ input, tools }) => { calls.push(input); assert.deepEqual(tools.map(t => t.name), STUDIO_TOOL_FAMILIES); const turn = phase++; if (turn === 0) return streamOf([{ type: "function_call", call_id: "arrange-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "cube" }] }) }]); if (turn === 2 || turn === 4) return streamOf([{ type: "function_call", call_id: `visual-${turn}`,  name: "verify_result", arguments: JSON.stringify({ targets: ["char-alex"], checks: ["framing"], visual: "frame" }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
+  const liveHttp = await httpFixture({ modelResponse, live }); const first = envelope(host(live.handle)); const result = await liveHttp.post(first); assert.equal(result.response.status, 200); assert.ok(result.text.split("\n").some(line => line.startsWith("data: "))); assert.ok(!result.text.includes("data: {\\\"")); assert.equal(commands[1].name, "arrange_objects"); assert.equal(typeof commands[1].args.commandId, "string"); assert.deepEqual(commands[1].args.host, { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" });
+  const imageTurn = envelope(host(live.handle), "check the frame"); const imageResult = await liveHttp.post(imageTurn, result.cookie); assert.equal(imageResult.response.status, 200); assert.ok(calls.some(input => input.some(item => item.content?.some(part => part.type === "input_image" && part.image_url === png)))); assert.ok(!calls.flat().filter(item => item.type === "function_call_output").some(item => JSON.stringify(item).includes(png))); assert.match(imageResult.text, /visualStatus/);
+  failImage = true; const failedImage = await liveHttp.post(envelope(host(live.handle), "check again"), imageResult.cookie); assert.equal(failedImage.response.status, 200); assert.match(failedImage.text, /unavailable/); assert.ok(!calls.at(-1).some(item => item.content?.some(part => part.type === "input_image")));
+  await liveHttp.close(); await live.close(); console.log("PASS surface context, eight-family profile, command envelopes and actual image bytes");
+}
+
+if (shouldRun("stale-host-and-post-install-rate-limit")) {
+  const live = await liveFixture({ command: async name => { if (name !== "read_studio_context") heartbeat?.(); return name === "read_studio_context" ? { context: context(host(live.handle)) } : { ok: true, status: "installed", receiptId: "receipt-installed" }; } });
+  const calls = []; let first = true; let heartbeat; let clockTicks = 0;
+  const modelResponse = ({ input }) => { calls.push(input); if (first) { first = false; return streamOf([{ type: "function_call", call_id: "tool-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "cube" }] }) }]); } const error = Object.assign(new Error("rate limited"), { status: 429 }); throw error; };
+  const liveHttp = await httpFixture({ modelResponse, live, clock: () => ++clockTicks, setIntervalImpl: callback => { heartbeat = callback; return callback; }, clearIntervalImpl: () => {} });
+  const wrong = envelope(host("missing-handle")); let refused = await liveHttp.post(wrong); assert.equal(refused.response.status, 409); assert.match(refused.text, /LIVE_HUB_UNAVAILABLE/);
+  const otherSocket = new WebSocket(`ws://127.0.0.1:${live.hub.server.address().port}/live`); const otherReady = deferred(); otherSocket.on("message", raw => { const frame = JSON.parse(raw); if (frame.type === "workspace") otherReady.resolve(frame.handle); }); await once(otherSocket, "open"); otherSocket.send(JSON.stringify({ type: "hello", role: "editor", version: 1, workspaceId: "tab-other" })); const otherHandle = await bounded(otherReady.promise); const mismatch = envelope(host(otherHandle, "tab-7")); const mismatchResult = await liveHttp.post(mismatch); assert.equal(mismatchResult.response.status, 409); assert.match(mismatchResult.text, /STALE_SCENE/); otherSocket.terminate();
+  const firstTurn = envelope(host(live.handle), "explain this"); const firstResult = await liveHttp.post(firstTurn); heartbeat?.(); assert.equal(firstResult.response.status, 200); assert.match(firstResult.text, /: heartbeat\n\n/); assert.ok(clockTicks > 0); assert.match(firstResult.text, /rate_limit/); assert.ok(calls.length >= 2); assert.ok(calls.slice(1).some(input => input.some(item => item.type === "function_call_output" && item.output.includes("installed")))); const stopResponse = await fetch(`${liveHttp.origin}/agent/stop`, { method: "POST", headers: { origin: liveHttp.origin, cookie: firstResult.cookie, "content-type": "application/json" }, body: JSON.stringify({ surface: "studio", sessionId: firstTurn.sessionId, turnId: firstTurn.turnId }) }); assert.equal(stopResponse.status, 200);
+  const priorCalls = calls.length; const retry = envelope(host(live.handle), "explain this"); const retryResult = await liveHttp.post(retry, firstResult.cookie); assert.equal(retryResult.response.status, 200); assert.ok(calls.length > priorCalls); assert.ok(!retryResult.text.includes("tool.start"));
+  await liveHttp.close(); await live.close(); console.log("PASS mismatched handle refusal and rate-limit retry retains completed output without regeneration");
+}
+
+if (shouldRun("sequential-mutations-revision-chain") || shouldRun("external-revision-bump-refuses")) {
+  const revisionScenarios = selected ? [selected === "external-revision-bump-refuses"] : [false, true];
+  for (const externalBump of revisionScenarios) {
+    let sceneRevision = 1; let applies = 0; const commands = [];
+  const live = await liveFixture({ command: async (name, args) => {
+    commands.push({ name, args });
+    if (name === "read_studio_context") return { context: context(host(live.handle), sceneRevision) };
+    if (externalBump && applies === 1) sceneRevision++;
+    if (args.expectedRevision !== sceneRevision) return { ok: false, error: { code: "STALE_SCENE", message: "Authored scene revision changed." } };
+    applies++; const before = sceneRevision++; return { ok: true, commandId: args.commandId, receiptId: `receipt-${applies}`, host: host(live.handle), status: "applied", authored: true, revision: { before, after: sceneRevision }, affectedIds: [args.name === "arrange_objects" ? "cube" : "char-alex"], delta: [], checks: { coverage: "fixture" }, undo: { historyEntryId: `history-${applies}`, entries: 1, canUndoDirect: true }, warnings: [] };
+  } });
+  let callNumber = 0; const inputs = []; const modelResponse = ({ input }) => { inputs.push(input); callNumber++; if (callNumber === 1) return streamOf([{ type: "function_call", call_id: "mutation-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "cube" }] }) }]); if (callNumber === 2) return streamOf([{ type: "function_call", call_id: "mutation-2", name: "arrange_characters", arguments: JSON.stringify({ ops: [{ op: "remove", characterId: "char-alex" }] }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
+  const liveHttp = await httpFixture({ modelResponse, live }); const result = await liveHttp.post(envelope(host(live.handle), "apply both")).then(value => ({ ...value, calls: commands.filter(command => command.name !== "read_studio_context") }));
+  assert.equal(result.response.status, 200); assert.equal(result.calls.length, 2); assert.equal(result.calls[0].args.expectedRevision, 1); assert.equal(result.calls[1].args.expectedRevision, 2); assert.equal(applies, externalBump ? 1 : 2);
+  if (externalBump) { assert.ok(inputs[2].some(item => item.type === "function_call_output" && item.output.includes("STALE_SCENE"))); assert.equal(result.calls[1].args.expectedRevision, 2); } else { assert.ok(!result.text.includes("STALE_SCENE")); }
+    await liveHttp.close(); await live.close(); console.log(`PASS ${externalBump ? "external revision bump refuses second mutation" : "sequential mutations chain receipt revision"}`);
+  }
+}
+
+if (shouldRun("sse-disconnect-reconnect")) {
+  const arrived = deferred(), release = deferred(); let generations = 0; const bridge = createServer(async (req, res) => { if (req.url === "/ardy/health") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ ok: true, backend: "local_kimodo", host: "fixture", device: "cuda" })); return; } generations++; arrived.resolve(); await release.promise; res.writeHead(200, { "content-type": "application/x-ndjson" }); res.end('{"event":"done","motionUrl":"/ardy/motions/123456-abcdef"}\n'); }); bridge.listen(0, "127.0.0.1"); await once(bridge, "listening"); const bridgeOrigin = `http://127.0.0.1:${bridge.address().port}`;
+  const commands = []; let socket;
+  const live = await liveFixture({ bridge, command: async (name, args) => { commands.push({ name, args }); if (name === "read_studio_context") return { context: context(host(live.handle)) }; if (name === "prepare_motion_install") return { candidateId: "candidate-1", candidateRevision: 1, targetToken: "ct-11", physicsRevision: 1, structurallyValid: true }; if (name === "verify_motion_candidate") return { verificationId: "verify-1", candidateId: args.candidateId, candidateRevision: args.candidateRevision, targetToken: "ct-11", physicsRevision: 1, structurallyValid: true, status: "verified", profile: "studio-motion-v1", evaluatedFrames: 48, range: { startFrame: 0, endFrameExclusive: 48 }, limitations: [] }; if (name === "commit_motion_candidate") return { ok: true, status: "installed", commandId: args.commandId, receiptId: "receipt-1", host: { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" }, authored: true, revision: { before: 1, after: 2 }, affectedIds: ["char-alex"], delta: [{ id: "char-alex", after: { takeId: "take-1" } }], checks: { coverage: "whole-clip" }, warnings: [], undo: { historyEntryId: "history-1", entries: 1, canUndoDirect: true }, jobId: args.jobId, artifactId: args.artifactId, installed: { characterId: "char-alex", beforeTakeId: null, takeId: "take-1", targetToken: "ct-12", frameCount: 48, fps: 24, durationSeconds: 2, blocks: [{ sourceBeat: 0, startFrame: 0, endFrameExclusive: 48 }], selectionChanged: false }, verification: { id: args.verificationId, status: "verified", profile: "studio-motion-v1", range: { startFrame: 0, endFrameExclusive: 48 }, evaluatedFrames: 48, physicsRevision: 1, limitations: [] } }; return { discarded: true }; } });
+  const calls = []; const modelResponse = ({ input }) => { calls.push(input); if (calls.length === 1) return streamOf([{ type: "function_call", call_id: "motion-1", name: "generate_motion", arguments: JSON.stringify({ characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk", seconds: 2 }] }, repair: "none" }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "installed" }] }]); };
+  const liveHttp = await httpFixture({ modelResponse, live, getBridgeOrigin: () => bridgeOrigin }); const turn = envelope(host(live.handle), "generate motion"); let firstObserver = true, cookie = null; const fetches = [];
+  const clientFetch = async (url, init = {}) => { const target = new URL(url, liveHttp.origin).href; fetches.push(target); const headers = { ...(init.headers || {}), origin: liveHttp.origin, ...(cookie ? { cookie } : {}) }; const response = await fetch(target, { ...init, headers }); cookie ||= response.headers.get("set-cookie")?.split(";")[0] ?? null; if (firstObserver && target.endsWith("/agent/turn")) { firstObserver = false; const reader = response.body.getReader(); let dropped = false; const body = new ReadableStream({ async pull(controller) { const part = await reader.read(); if (part.done) { controller.close(); return; } controller.enqueue(part.value); if (!dropped && new TextDecoder().decode(part.value).includes('"state":"generating"')) { dropped = true; await reader.cancel(); controller.error(new Error("observer disconnected")); } } }); return new Response(body, { status: response.status, headers: response.headers }); } return response; };
+  const transport = createHttpTransport({ fetchImpl: clientFetch, surface: "studio", capture: () => {} }); const seen = []; const turnPromise = transport.turn(turn, event => { seen.push(event); if (event.type === "job.state" && event.state === "generating") { arrived.promise.then(() => release.resolve()); } }); await bounded(arrived.promise); release.resolve(); await bounded(turnPromise); assert.equal(generations, 1); assert.equal(seen.filter(event => event.type === "receipt").length, 1); assert.ok(seen.some(event => event.type === "done")); assert.ok(fetches.some(url => /events\?after=[1-9]/.test(url))); assert.ok(commands.some(command => command.name === "prepare_motion_install")); assert.equal(calls.length, 2);
+  await liveHttp.close(); await live.close(); console.log("PASS pending-generation disconnect/reconnect uses landed HTTP client, real live hub/bridge, one generation and receipt");
+}
+
+if (shouldRun("sequential-same-target-token-rotation")) {
+  let sceneRevision = 1; let tokenSequence = 1; const commands = []; const tokens = new Map([["cube-1", "cube-1:1"]]);
+  const objectContext = (binding, revision = sceneRevision) => {
+    const base = context(binding, revision);
+    return { ...base, scene: { ...base.scene, objectCount: 1 }, selection: { kind: "object", id: "cube-1" },
+      entities: [...base.entities, { id: "cube-1", kind: "object", token: tokens.get("cube-1"), position: { x: 0, y: 0, z: 0 }, yawDeg: 0, rotationDeg: { x: 0, y: 0, z: 0 }, scale: { x: 1, y: 1, z: 1 }, bounds: null }],
+      entityPage: { returned: 2, total: 2, truncated: false, nextCursor: null } };
+  };
+  const failure = (payload, code, expected, current) => ({ ok: false, commandId: payload.commandId, host: host(live.handle), code, phase: "admission", affectedIds: [], expectedTargets: expected ? [expected] : [], currentTargets: current ? [current] : [], mutated: false, preserved: { authoredState: "unchanged" }, recovery: { action: "inspect", retryAllowed: false }, message: `The fixture editor refuses with ${code}.` });
+  const live = await liveFixture({ command: async (name, args) => {
+    commands.push({ name, args });
+    if (name === "read_studio_context") return { context: objectContext(host(live.handle)) };
+    if (name !== "arrange_objects") return { ok: true, commandId: args.commandId, receiptId: "receipt-view", status: "noop", authored: false, mutated: false, host: host(live.handle), revision: { before: sceneRevision, after: sceneRevision }, affectedIds: [], delta: [], checks: { coverage: "fixture" }, undo: null, warnings: [] };
+    const expected = args.expectedTargets?.find(target => target.targetId === "cube-1");
+    const current = { ...host(live.handle), targetId: "cube-1", token: tokens.get("cube-1") };
+    if (args.expectedRevision !== sceneRevision) return failure(args, "STALE_SCENE", null, null);
+    // The editor still enforces any guard it is given, and rotates the token of
+    // every entity it touches: a client that re-sends the token it read before
+    // its own first edit is refused. The sidecar must therefore send none.
+    if (expected && expected.token !== current.token) return failure(args, "STALE_TARGET", expected, current);
+    const before = sceneRevision; sceneRevision++; tokens.set("cube-1", `cube-1:${++tokenSequence}`);
+    return { ok: true, commandId: args.commandId, receiptId: `receipt-${before}`, host: host(live.handle), status: "applied", authored: true, mutated: true, revision: { before, after: sceneRevision }, affectedIds: ["cube-1"], delta: [], checks: { coverage: "fixture" }, undo: { historyEntryId: `history-${before}`, entries: 1, canUndoDirect: true }, warnings: [] };
+  } });
+  let callNumber = 0; const modelResponse = ({ tools }) => { assert.deepEqual(tools.map(tool => tool.name), STUDIO_TOOL_FAMILIES); callNumber++; if (callNumber <= 2) return streamOf([{ type: "function_call", call_id: `same-target-${callNumber}`, name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "update", id: "cube-1", position: { world: { x: callNumber, y: 0, z: 0 } } }] }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
+  const liveHttp = await httpFixture({ modelResponse, live });
+  const turn = envelope(host(live.handle), "update the same object twice"); turn.context = objectContext(host(live.handle), 1);
+  const result = await liveHttp.post(turn); const applied = commands.filter(command => command.name === "arrange_objects");
+  assert.equal(result.response.status, 200); assert.equal(applied.length, 2);
+  assert.ok(!result.text.includes("STALE_TARGET"), `a second mutation on the same object must not be refused for a rotated token: ${result.text}`);
+  assert.equal(sceneRevision, 3, "both mutations reach the editor and publish a revision");
+  assert.deepEqual(applied.map(command => command.args.expectedRevision), [1, 2], "each mutation is admitted against the revision the previous one published");
+  assert.ok(applied.every(command => command.args.expectedTargets === undefined), "the sync admission envelope carries no per-entity incarnation tokens");
+  await liveHttp.close(); await live.close(); console.log("PASS sequential same-target mutations tolerate editor token rotation");
+}
+
+if (shouldRun("rejection-receipt-surfaces-reason")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  // The out-of-bounds message names the offending path and the allowed range
+  // (#398), not the generic "one supported variant" union rejection.
+  const receipt = { ok: false, commandId: "cmd-9", code: "INVALID_ARGUMENT", phase: "admission", message: "$.args.ops[0].set.scale.y: Expected a number within [0.1, 100].", recovery: { action: "inspect", retryAllowed: false }, expectedTargets: [], currentTargets: [], mutated: false, preserved: { authoredState: "unchanged" } };
+  const rejecting = { command: async () => receipt };
+  const tools = createStudioTools({ liveHub: rejecting, workspaceHandle: "handle-1", session: { signal: new AbortController().signal } });
+  const invoke = tools.internal.invoke;
+  await assert.rejects(invoke("inspect_studio", { scope: "scene" }), (error) => {
+    assert.equal(error.code, "INVALID_ARGUMENT", "the receipt's top-level code wins");
+    assert.match(error.message, /scale\.y/, "the receipt's top-level message names the offending path");
+    assert.match(error.message, /0\.1/, "the receipt's top-level message names the lower bound");
+    assert.match(error.message, /100/, "the receipt's top-level message names the upper bound");
+    assert.deepEqual(error.receipt, receipt, "the whole receipt is attached for the route to forward");
+    return true;
+  });
+  // Nested `error` still works, and top level beats it when both exist.
+  const nested = { command: async () => ({ ok: false, code: "STALE_SCENE", message: "top-level wins", error: { code: "TARGET_BUSY", message: "nested" } }) };
+  await assert.rejects(createStudioTools({ liveHub: nested, workspaceHandle: "h", session: { signal: new AbortController().signal } }).internal.invoke("inspect_studio", { scope: "scene" }), (error) => {
+    assert.equal(error.code, "STALE_SCENE"); assert.equal(error.message, "top-level wins"); return true;
+  });
+  // The generic string survives only when the receipt has neither code nor message.
+  const bare = { command: async () => ({ ok: false }) };
+  await assert.rejects(createStudioTools({ liveHub: bare, workspaceHandle: "h", session: { signal: new AbortController().signal } }).internal.invoke("inspect_studio", { scope: "scene" }), (error) => {
+    assert.equal(error.code, undefined); assert.equal(error.message, "Studio command failed"); return true;
+  });
+  console.log("PASS rejection receipts surface their code, message and recovery to the route");
+}

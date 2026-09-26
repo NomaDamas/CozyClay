@@ -46,10 +46,22 @@ export function aimAt(position, target) {
  *   Alt + left-drag       orbit the pivot the caller supplies (the selection)
  *   wheel                 dolly
  *
+ * Fly, pan and orbit request pointer lock for the hold so the system
+ * cursor stays at the press and reappears there on release. Capture plus
+ * clientX remains the fallback when lock is denied.
+ *
  * `getPivot()` is optional and returns a world point to orbit; without one,
  * Alt-drag orbits a point straight ahead of the lens.
  */
-export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange, onCameraChange }) {
+/** Coarse navigation signal for onboarding surfaces (the landing-page
+ * tutorial listens through the playground bridge). Fires once per gesture
+ * start, not per frame. */
+function announceNav(kind, key = null) {
+	if (typeof window === "undefined") return;
+	window.dispatchEvent(new CustomEvent("cozyclay:nav", { detail: { kind, key } }));
+}
+
+export function FlyControls({ enabled, cameraLocked = false, camRef, look, getPivot, onFlyStateChange, onCameraChange }) {
 	const { gl, invalidate } = useThree();
 	const keys = useRef(new Set());
 	const gesture = useRef(null); // { kind: "fly" | "pan" | "orbit", pointerId, x, y, ... }
@@ -67,10 +79,31 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		const element = gl.domElement;
 		element.tabIndex = 0;
 		element.style.touchAction = "none";
+		let lockPending = false;
+		let lockAttempts = 0;
 
 		const isTyping = () => {
 			const el = document.activeElement;
 			return !!el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.tagName === "SELECT");
+		};
+		const isLocked = () => document.pointerLockElement === element;
+		const requestNavLock = () => {
+			if (lockPending || isLocked() || lockAttempts >= 2) return;
+			if (typeof element.requestPointerLock !== "function") return;
+			lockAttempts += 1;
+			lockPending = true;
+			try {
+				const result = element.requestPointerLock();
+				if (result && typeof result.catch === "function") {
+					result.catch(() => { lockPending = false; });
+				}
+			} catch {
+				lockPending = false;
+			}
+		};
+		const releaseNavLock = () => {
+			lockPending = false;
+			if (document.pointerLockElement === element) document.exitPointerLock();
 		};
 		// Pointer events can arrive faster than the display refreshes. Camera
 		// refs are updated immediately for the latest input, but invalidate the
@@ -103,6 +136,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			if (gesture.current?.kind !== "fly") return;
 			const key = KEY_BY_CODE[e.code];
 			if (key) {
+				if (!keys.current.has(key) && key !== "shift") announceNav("walk", key);
 				keys.current.add(key);
 				e.preventDefault();
 			}
@@ -111,15 +145,32 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			const key = KEY_BY_CODE[e.code];
 			if (key) keys.current.delete(key);
 		};
+		// During a live hold Esc releases navigation first. Never prevent the
+		// browser's unlock default, and never suppress a later Escape by time:
+		// once pointerlockchange or pointerup ended the hold, App owns Esc again.
+		const onEscapeCapture = (e) => {
+			if (e.key !== "Escape") return;
+			if (isLocked() || lockPending || gesture.current) {
+				e.stopPropagation();
+				endGesture();
+			}
+		};
 
 		const endGesture = (e) => {
 			const active = gesture.current;
 			if (!active) return;
+			// Mouse buttons share one pointerId. A left-up during a right-held
+			// fly must not end the look; blur/cancel have no button and always end.
+			if (e && typeof e.pointerId === "number" && e.pointerId !== active.pointerId) return;
+			if (e?.type === "pointerup" && e.button !== active.button) return;
 			if (e && active.pointerId !== undefined && element.hasPointerCapture(active.pointerId)) {
 				element.releasePointerCapture(active.pointerId);
 			}
+			// Clear the gesture before exitPointerLock so pointerlockchange
+			// cannot re-enter and double-commit.
 			gesture.current = null;
 			if (typeof window !== "undefined") window.__cozyclayCameraGesture = false;
+			releaseNavLock();
 			flushInvalidate();
 			keys.current.clear();
 			// the fly speed set with the wheel persists between flights, as it does in Unity
@@ -129,7 +180,27 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			if (active.changed) cameraChangeRef.current?.();
 		};
 
+		const onLostCapture = (e) => {
+			// Pointer lock releases capture when it engages. Ending the gesture
+			// here would abort fly/pan/orbit before the first move, and WASD
+			// during a right-held walk would go dead.
+			if (gesture.current && (lockPending || isLocked())) return;
+			endGesture(e);
+		};
+
+		const onPointerLockChange = () => {
+			if (isLocked()) {
+				lockPending = false;
+				if (!gesture.current) document.exitPointerLock();
+				return;
+			}
+			lockPending = false;
+			if (gesture.current) endGesture();
+		};
+		const onPointerLockError = () => { lockPending = false; };
+
 		const onPointerDown = (e) => {
+			if (cameraLocked) return;
 			if (gesture.current) return;
 			const orbit = e.button === 0 && e.altKey;
 			const kind = e.button === 2 ? "fly" : e.button === 1 ? "pan" : orbit ? "orbit" : null;
@@ -141,12 +212,15 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			e.stopPropagation();
 			const cam = camRef.current;
 			const pivot = kind === "orbit" && cam ? resolvePivot(cam) : null;
-			gesture.current = { kind, pointerId: e.pointerId, x: e.clientX, y: e.clientY, pivot, changed: false };
+			gesture.current = { kind, pointerId: e.pointerId, button: e.button, x: e.clientX, y: e.clientY, pivot, changed: false };
 			if (typeof window !== "undefined") window.__cozyclayCameraGesture = true;
 			element.setPointerCapture(e.pointerId);
 			element.focus();
 			element.style.cursor = kind === "fly" ? "crosshair" : kind === "pan" ? "grabbing" : "move";
+			lockAttempts = 0;
+			if (e.pointerType !== "touch" && e.pointerType !== "pen") requestNavLock();
 			if (kind === "fly") flyStateRef.current?.(true);
+			announceNav(kind);
 			scheduleInvalidate();
 		};
 
@@ -161,10 +235,16 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		const onPointerMove = (e) => {
 			const active = gesture.current;
 			if (!active) return;
-			const dx = e.clientX - active.x;
-			const dy = e.clientY - active.y;
-			active.x = e.clientX;
-			active.y = e.clientY;
+			if (!isLocked() && !lockPending && e.pointerType !== "touch" && e.pointerType !== "pen") {
+				requestNavLock();
+			}
+			const locked = isLocked();
+			const dx = locked ? (e.movementX ?? 0) : e.clientX - active.x;
+			const dy = locked ? (e.movementY ?? 0) : e.clientY - active.y;
+			if (!locked) {
+				active.x = e.clientX;
+				active.y = e.clientY;
+			}
 			const cam = camRef.current;
 			if (!cam) return;
 
@@ -229,6 +309,7 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 				return;
 			}
 			cam.position.addScaledVector(forwardFrom(look.current.yaw, look.current.pitch), -e.deltaY * DOLLY_STEP);
+			announceNav("dolly");
 			cameraChangeRef.current?.();
 		};
 
@@ -236,14 +317,19 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 		const onContextMenu = (e) => e.preventDefault();
 
 		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("keydown", onEscapeCapture, true);
 		window.addEventListener("keyup", onKeyUp);
 		element.addEventListener("pointerdown", onPointerDown);
 		element.addEventListener("pointermove", onPointerMove);
 		element.addEventListener("pointerup", endGesture);
 		element.addEventListener("pointercancel", endGesture);
-		element.addEventListener("lostpointercapture", endGesture);
+		window.addEventListener("pointerup", endGesture);
+		window.addEventListener("pointercancel", endGesture);
+		element.addEventListener("lostpointercapture", onLostCapture);
 		element.addEventListener("contextmenu", onContextMenu);
 		element.addEventListener("wheel", onWheel, { passive: false });
+		document.addEventListener("pointerlockchange", onPointerLockChange);
+		document.addEventListener("pointerlockerror", onPointerLockError);
 		// Alt-tabbing away mid-fly must not leave keys stuck down.
 		window.addEventListener("blur", endGesture);
 		return () => {
@@ -253,16 +339,24 @@ export function FlyControls({ enabled, camRef, look, getPivot, onFlyStateChange,
 			}
 			keys.current.clear();
 			gesture.current = null;
+			if (typeof window !== "undefined") window.__cozyclayCameraGesture = false;
+			releaseNavLock();
+			element.style.cursor = "";
 			flyStateRef.current?.(false);
 			window.removeEventListener("keydown", onKeyDown);
+			window.removeEventListener("keydown", onEscapeCapture, true);
 			window.removeEventListener("keyup", onKeyUp);
 			element.removeEventListener("pointerdown", onPointerDown);
 			element.removeEventListener("pointermove", onPointerMove);
 			element.removeEventListener("pointerup", endGesture);
 			element.removeEventListener("pointercancel", endGesture);
-			element.removeEventListener("lostpointercapture", endGesture);
+			window.removeEventListener("pointerup", endGesture);
+			window.removeEventListener("pointercancel", endGesture);
+			element.removeEventListener("lostpointercapture", onLostCapture);
 			element.removeEventListener("contextmenu", onContextMenu);
 			element.removeEventListener("wheel", onWheel);
+			document.removeEventListener("pointerlockchange", onPointerLockChange);
+			document.removeEventListener("pointerlockerror", onPointerLockError);
 			window.removeEventListener("blur", endGesture);
 		};
 	}, [enabled, gl, camRef, look]);

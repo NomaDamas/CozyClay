@@ -47,6 +47,10 @@ const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 assert.ok(app.includes("{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}"), "grid replaces the deck on the export-stripped gizmo layer");
 assert.ok(app.includes('args={[gridView ? GRID_BACKGROUND : "#eef4f3"]}'), "the background swaps to the void colour");
 assert.ok(app.includes("writeStoredGridView(globalThis.localStorage, gridView)"), "the preference persists per browser");
-assert.ok(app.includes('ko("Grid", "그리드")'), "the toolbar offers a bilingual toggle");
+assert.ok(app.includes('ko("Reference grid", "기준 그리드")'), "the View menu offers a bilingual toggle");
+assert.ok(
+	app.includes('className={"view-menu-item grid-view-switch" + (gridView ? " active" : "")}'),
+	"the toggle kept its class and moved into the viewport bar's View menu",
+);
 
 console.log("verify-grid-view: all checks passed");

@@ -10,6 +10,49 @@
 
 export const INGEST_STAGES = Object.freeze(["idle", "fetching", "probing", "ready", "error"]);
 
+/** A successful extraction is not proof that vertical recovery was applied. */
+export function trajectoryReceipt(report, korean = false) {
+	if (!report) return "";
+	if (report.status === "disabled") return korean ? "낙하 보정 꺼짐" : "Descent recovery off";
+	if (report.status === "corrected") {
+		const rejected = report.rejected?.length ?? 0;
+		return korean
+			? `낙하 보정 ${report.changedFrames}프레임 적용${rejected ? ` · ${rejected}구간 미해결` : ""}`
+			: `Descent recovery: ${report.changedFrames} frames corrected${rejected ? ` · ${rejected} unresolved spans` : ""}`;
+	}
+	const reason = report.rejected?.[0]?.reason ?? report.reason ?? "unknown";
+	const labels = {
+		"world-endpoint-unsettled": ["3D endpoint never settles", "3D 끝점이 안정되지 않음"],
+		"no-confident-delayed-descent": ["no confident delayed descent detected", "확실한 낙하 지연이 검출되지 않음"],
+		"moving-camera-not-supported": ["moving-camera recovery unsupported", "이동 카메라 보정 미지원"],
+		"uncertain-keypoints": ["body tracking uncertain", "관절 추적 불확실"],
+		"uncertain-depth": ["depth change too large", "깊이 변화가 큼"],
+		"moving-landing": ["landing does not stay still", "착지 후 이동이 계속됨"],
+		"no-observed-landing": ["landing not observed", "착지를 확인할 수 없음"],
+		"landing-observation-too-short": ["not enough footage after landing", "착지 이후 영상이 너무 짧음"],
+		"excessive-correction": ["recovery exceeds its safety bound", "보정량이 안전 범위를 초과함"],
+	};
+	return `${korean ? "낙하 보정 미적용" : "Descent recovery not applied"}: ${labels[reason]?.[korean ? 1 : 0] ?? reason}`;
+}
+
+/** Human-readable evidence from the palette detector, when the GVHMR worker
+ * exposes it. Older bridges may omit the report. */
+export function segmentationReceipt(report, korean = false) {
+	if (!report) return "";
+	if (report.available === false) return korean ? "색 세그멘테이션 측정 불가" : "Palette segmentation metrics unavailable";
+	if (report.detector !== "palette" || !Number.isFinite(report.detectionRate)) return "";
+	const rate = Math.round(report.detectionRate * 100);
+	const coverage = Number.isFinite(report.coverage?.mean) ? Math.round(report.coverage.mean * 100) : null;
+	const range = Number.isFinite(report.coverage?.p10) && Number.isFinite(report.coverage?.p90)
+		? `${Math.round(report.coverage.p10 * 100)}–${Math.round(report.coverage.p90 * 100)}%`
+		: null;
+	const parts = Number.isFinite(report.parts?.mean) ? Math.round(report.parts.mean) : null;
+	const gap = Number.isFinite(report.longestGapFrames) ? report.longestGapFrames : 0;
+	const hue = Number.isFinite(report.hueErrorDeg?.p95) ? Math.round(report.hueErrorDeg.p95) : null;
+	if (korean) return `색 세그멘테이션: ${rate}% 검출${coverage === null ? "" : ` · 마스크 ${coverage}%${range ? ` (${range})` : ""}`}${parts === null ? "" : ` · 색 파트 ${parts}개`}${gap ? ` · 최대 끊김 ${gap}프레임` : ""}${hue === null ? "" : ` · 색 오차 P95 ${hue}°`}`;
+	return `Palette segmentation: ${rate}% detected${coverage === null ? "" : ` · ${coverage}% mask${range ? ` (${range})` : ""}`}${parts === null ? "" : ` · ${parts} colour parts`}${gap ? ` · longest gap ${gap} frames` : ""}${hue === null ? "" : ` · hue error P95 ${hue}°`}`;
+}
+
 // Addresses we accept: absolute http(s), or a root-relative path served by this
 // origin. Protocol-relative "//host" is refused because it silently inherits
 // the page scheme, and blob:/data:/javascript: are refused from the text field
@@ -125,9 +168,9 @@ export async function requestBridgeFootage(url, options = {}) {
 }
 
 /**
- * Ask the dev bridge to run GPU motion extraction (SAM-3D-Body on the ARDY
+ * Ask the dev bridge to run GPU motion extraction (GVHMR on the ARDY
  * box) over footage it already holds ({ footage: id }) or over uploaded
- * bytes (a Blob). Resolves to `{ motionUrl, frames, fps }` — an ordinary
+ * bytes (a Blob). Resolves to `{ motionUrl, frames, fps, quality, segmentation }` — an ordinary
  * /ardy/motions address the app loads exactly like a generated take.
  */
 export async function requestBridgeExtract(source, options = {}) {
@@ -148,6 +191,15 @@ export async function requestBridgeExtract(source, options = {}) {
 	});
 	if (!done || typeof done.motionUrl !== "string") throw new Error("bridge-extract-incomplete");
 	return done;
+}
+
+/** Download a generated video for a downstream GVHMR extraction request. */
+export async function fetchVideoOutputBlob(url, fetchImpl = globalThis.fetch) {
+	if (typeof url !== "string" || !url) throw new Error("Generated video has no fetchable output.");
+	if (typeof fetchImpl !== "function") throw new Error("video-download-unavailable");
+	const response = await fetchImpl(url);
+	if (!response.ok) throw new Error(`Generated video download failed (${response.status}).`);
+	return response.blob();
 }
 
 /** The name shown for a source: the last path segment, never the query soup. */

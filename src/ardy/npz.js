@@ -435,7 +435,7 @@ export async function decodeMotionNpz(bytes) {
 	if (missing.length) throw new NpzError(`motion npz is missing members: ${missing.join(", ")}`);
 	// person_scale is optional: only a filmed take has a performer to measure,
 	// and archives predating the member are still valid motions.
-	const read = [...names, ...(entries.has("person_scale.npy") ? ["person_scale.npy"] : [])];
+	const read = [...names, ...["person_scale.npy", "bone_scale.npy"].filter((name) => entries.has(name))];
 
 	const members = {};
 	for (const name of read) {
@@ -492,6 +492,20 @@ export async function decodeMotionNpz(bytes) {
 		if (!(personScale > 0)) throw new NpzError(`motion person_scale ${personScale} must be positive`);
 	}
 
+	// bone_scale (mocap takes): the performer's bone lengths over the canonical
+	// body, one factor per cskel27 joint. Absent means canonical (all ones).
+	let boneScale = null;
+	if (members["bone_scale.npy"]) {
+		const parsed = parseNpyMember(members["bone_scale.npy"], "bone_scale");
+		if (parsed.shape.length !== 1 || parsed.shape[0] !== joints) {
+			throw new NpzError(`bone_scale must have shape (${joints}), got (${parsed.shape.join(", ")})`);
+		}
+		boneScale = float32Of(parsed, "bone_scale");
+		for (let j = 0; j < joints; j += 1) {
+			if (!(boneScale[j] > 0) || !Number.isFinite(boneScale[j])) throw new NpzError(`motion bone_scale[${j}] ${boneScale[j]} must be positive`);
+		}
+	}
+
 	const rotMats = float32Of(rotParsed, "local_rot_mats");
 	const rootPos = float32Of(posParsed, "root_positions");
 	const posedJoints = float32Of(jointsParsed, "posed_joints");
@@ -524,7 +538,9 @@ export async function decodeMotionNpz(bytes) {
 		if (!Number.isFinite(posedJoints[i])) throw new NpzError(`motion npz posed_joints contains a non-finite value at index ${i}`);
 	}
 
-	return { frames, fps, personScale, rotMats, rootPos, posedJoints };
+	const motion = { frames, fps, personScale, rotMats, rootPos, posedJoints };
+	if (boneScale) motion.boneScale = boneScale;
+	return motion;
 }
 
 /**
@@ -577,5 +593,11 @@ export async function loadMotionFromUrl(url, { signal } = {}) {
 		throw new NpzError(`motion download is ${blob.size} bytes, over the ${MAX_ARCHIVE_BYTES} byte cap`);
 	}
 	const buffer = await blob.arrayBuffer();
-	return decodeMotionNpz(new Uint8Array(buffer));
+	const bytes = new Uint8Array(buffer);
+	const motion = await decodeMotionNpz(bytes);
+	// The validated archive rides along so a project save can embed the take
+	// (src/motion-resources.js) without a second download. Playback keeps
+	// reading the decoded arrays; nothing on that path looks at sourceBytes.
+	motion.sourceBytes = bytes;
+	return motion;
 }

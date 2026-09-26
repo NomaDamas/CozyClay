@@ -48,7 +48,7 @@
  * the pinned root is the take's own root at that frame. It is NOT a free root.
  */
 
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
 import { buildEffectorConstraints, effectorTypeForTrack } from "./effector-constraints.mjs";
 import { buildFullBodyConstraints } from "./pose-constraints.mjs";
@@ -256,9 +256,4 @@ export function planEditConstraints({ sourcePath, manifestPath, contextBefore = 
 		fps,
 		genFrames,
 	};
-}
-
-/** Byte size of a written artifact, for the bridge's done line. */
-export function artifactSize(path) {
-	return statSync(path).size;
 }

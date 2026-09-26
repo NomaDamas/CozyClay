@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { findBone, ikTouch, ikBakeKeyframe, solveHipsTranslate } from "./ik.js";
+import { findBone, ikTouch, ikBakeKeyframe, solveHipsTranslate, solveIk } from "./ik.js";
 
 /**
  * AutoPhysics: a physical-plausibility pass for generated motion, modelled on
@@ -213,6 +213,123 @@ export function heightsAirborne(heights, planted, lift = AIRBORNE_LIFT) {
  */
 export function frameAirborne(rig, planted, lift = AIRBORNE_LIFT) {
 	return heightsAirborne(markerHeights(rig), planted, lift);
+}
+
+/* --- grounded contact ------------------------------------------------------ */
+
+/** Contact must stay close to its clip-relative low and vertically settled.
+ * The final run gate below is stricter still: an ankle that wanders more than
+ * three centimetres was walking, not planted, and is never snapped backward. */
+export const GROUND_CONTACT_LIFT = 0.06;
+export const GROUND_CONTACT_VERTICAL_SPEED = 0.6;
+export const GROUND_CONTACT_HORIZONTAL_SPEED = 0.12;
+export const GROUND_CONTACT_MIN_SECONDS = 0.10;
+export const GROUND_LOCK_MAX_PULL = 0.03;
+export const GROUND_LOCK_EPSILON = 0.005;
+export const GROUND_LOCK_REACH_LIFT = 0.005;
+export const GROUND_FLOOR_MAX_LIFT = 0.15;
+export const GROUND_FLOOR_EPSILON = 0.005;
+
+const FOOT_SIDES = [
+	{ side: "left", chainId: "leftFoot", ankle: "mixamorigLeftFoot", toe: "mixamorigLeftToeBase", height: "LeftFoot" },
+	{ side: "right", chainId: "rightFoot", ankle: "mixamorigRightFoot", toe: "mixamorigRightToeBase", height: "RightFoot" },
+];
+
+/** World positions of the same four markers markerHeights reads. */
+export function markerPositions(rig) {
+	if (!rig) return null;
+	rig.updateMatrixWorld(true);
+	const out = {};
+	for (const name of FOOT_MARKERS) {
+		const bone = findBone(rig, name);
+		if (!bone) return null;
+		out[name] = bone.getWorldPosition(new THREE.Vector3());
+	}
+	return out;
+}
+
+function median(values) {
+	if (!values.length) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const middle = Math.floor(sorted.length / 2);
+	return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) * 0.5;
+}
+
+function trueRuns(flags, minFrames) {
+	const runs = [];
+	let open = -1;
+	for (let index = 0; index <= flags.length; index += 1) {
+		const on = index < flags.length && flags[index];
+		if (on && open < 0) open = index;
+		if (on || open < 0) continue;
+		if (index - open >= minFrames) runs.push({ start: open, end: index - 1, length: index - open });
+		open = -1;
+	}
+	return runs;
+}
+
+/**
+ * Find contact runs that are safe to lock. Height and vertical speed find a
+ * stance candidate; total XZ wander then separates a planted foot from a slow
+ * step. Runs outside the pull limit are reported as rejected instead of being
+ * chopped into artificial mini-plants with visible jumps between anchors.
+ */
+export function detectGroundContactSpans({
+	positions,
+	planted,
+	fps = 30,
+	startFrame = 0,
+	contactLift = GROUND_CONTACT_LIFT,
+	verticalSpeed = GROUND_CONTACT_VERTICAL_SPEED,
+	horizontalSpeed = GROUND_CONTACT_HORIZONTAL_SPEED,
+	minSeconds = GROUND_CONTACT_MIN_SECONDS,
+	maxPull = GROUND_LOCK_MAX_PULL,
+} = {}) {
+	if (!positions?.length || !planted) return { spans: [], rejected: [] };
+	const rate = Number.isFinite(fps) && fps > 0 ? fps : 30;
+	const minFrames = Math.max(3, Math.round(minSeconds * rate));
+	const half = Math.max(1, Math.round((2 / 30) * rate));
+	const spans = [];
+	const rejected = [];
+	for (const foot of FOOT_SIDES) {
+		const flags = positions.map((frame, index) => {
+			const ankle = frame?.[foot.ankle];
+			const toe = frame?.[foot.toe];
+			if (!ankle || !toe) return false;
+			const before = positions[Math.max(0, index - half)]?.[foot.ankle];
+			const after = positions[Math.min(positions.length - 1, index + half)]?.[foot.ankle];
+			if (!before || !after) return false;
+			const seconds = Math.max(1 / rate, (Math.min(positions.length - 1, index + half) - Math.max(0, index - half)) / rate);
+			const vy = Math.abs(after.y - before.y) / seconds;
+			const vxz = Math.hypot(after.x - before.x, after.z - before.z) / seconds;
+			const low = Math.min(ankle.y - planted[foot.ankle], toe.y - planted[foot.toe]);
+			// A low foot can still be in the sliding/swinging part of a step.
+			// Horizontal speed breaks a long low run into its real plant phases;
+			// maxPull below remains the second guard against slow large drifts.
+			return low <= contactLift && vy <= verticalSpeed && vxz <= horizontalSpeed;
+		});
+		for (const run of trueRuns(flags, minFrames)) {
+			const ankles = positions.slice(run.start, run.end + 1).map((frame) => frame[foot.ankle]);
+			const anchor = new THREE.Vector3(
+				median(ankles.map((point) => point.x)),
+				median(ankles.map((point) => point.y)),
+				median(ankles.map((point) => point.z)),
+			);
+			const pull = Math.max(...ankles.map((point) => Math.hypot(point.x - anchor.x, point.z - anchor.z)));
+			const span = {
+				side: foot.side,
+				chainId: foot.chainId,
+				start: startFrame + run.start,
+				end: startFrame + run.end,
+				length: run.length,
+				anchor,
+				maxPull: pull,
+			};
+			if (pull <= maxPull + 1e-9) spans.push(span);
+			else rejected.push({ ...span, reason: "foot-moving" });
+		}
+	}
+	return { spans, rejected };
 }
 
 /**
@@ -638,12 +755,17 @@ export function autoPhysicsRange({
 	maxFitResidual = MAX_FIT_RESIDUAL,
 	floorClearance = FLOOR_CLEARANCE,
 	contactHeights = null,
+	supportFrames = null,
+	grounding = false,
 	startFrame = 0,
 	endFrame = null,
 } = {}) {
 	const refuse = (reason) => ({
 		supported: false, reason,
 		spans: [], keyedFrames: [], maxCorrection: 0, corrected: 0, pinnedFrames: [], skippedSpans: [], planted: null,
+		groundContactSpans: [], rejectedGroundSpans: [], groundedKeyedFrames: [], maxFootCorrection: 0,
+		maxFootSlideBefore: 0, maxFootSlideAfter: 0, meanFootSlideBefore: 0, meanFootSlideAfter: 0,
+		floorPenetrationBefore: 0, floorPenetrationAfter: 0, skippedFloorFrames: [],
 	});
 	if (!rig || !chains || !ikState || typeof applyFrame !== "function") return refuse("no-driver");
 	// The whole correction is a root translation, so without the hips FK joint
@@ -667,24 +789,57 @@ export function autoPhysicsRange({
 	/* --- sweep 1: measure the clip, touching nothing ----------------------- */
 	const samples = [];
 	const heights = [];
+	const footPositions = [];
+	const clipFootPositions = [];
 	const basePose = [];
+	const footIds = FOOT_SIDES.map((foot) => foot.chainId).filter((id) => chains.has(id));
+	const readFootQuats = () => new Map(footIds.map((id) => [id, chains.get(id).bones.map((bone) => bone.quaternion.clone())]));
+	const layerFootQuats = [];
+	const clipFootQuats = [];
+	const layerActive = ikState.tracked.size > 0;
 	for (let frame = start; frame <= end; frame += 1) {
+		if (layerActive) {
+			const tracked = ikState.tracked;
+			ikState.tracked = new Set();
+			try {
+				applyFrame(frame);
+				clipFootQuats.push(readFootQuats());
+				clipFootPositions.push(markerPositions(rig));
+			} finally {
+				ikState.tracked = tracked;
+			}
+		}
 		applyFrame(frame);
 		const com = computeCenterOfMass(rig);
 		const marks = markerHeights(rig);
-		if (!com || !marks) return refuse("rig-not-measurable"); // cannot be judged — decline
+		const points = markerPositions(rig);
+		if (!com || !marks || !points) return refuse("rig-not-measurable"); // cannot be judged — decline
 		samples.push(com);
 		heights.push(marks);
+		footPositions.push(points);
 		basePose.push({ position: hips.bone.position.clone(), quaternion: hips.bone.quaternion.clone() });
+		layerFootQuats.push(readFootQuats());
+		if (!layerActive) {
+			clipFootQuats.push(readFootQuats());
+			clipFootPositions.push(points);
+		}
 	}
 	const planted = plantedFloor(heights);
-	const flags = heights.map((marks) => heightsAirborne(marks, planted, liftThreshold));
+	const ground = grounding
+		? detectGroundContactSpans({
+			positions: clipFootPositions,
+			planted: plantedFloor(clipFootPositions.map((frame) => Object.fromEntries(FOOT_MARKERS.map((name) => [name, frame[name].y])))),
+			fps,
+			startFrame: start,
+		})
+		: { spans: [], rejected: [] };
+	const flags = heights.map((marks, i) => !supportFrames?.has(start + i) && heightsAirborne(marks, planted, liftThreshold));
 	const lowest = heights.map((marks) => Math.min(...FOOT_MARKERS.map((name) => marks[name])));
 	// Detect strictly, then grow: the entry lift has to be high enough to
 	// ignore a stride, which necessarily clips the take-off and landing frames
 	// off a real jump. The exit lift puts them back.
 	const detected = detectAirborneSpans({ frames: count, isAirborne: flags, startFrame: start, minLength: minSpanFrames });
-	const exitFlags = heights.map((marks) => heightsAirborne(marks, planted, Math.min(exitLift, liftThreshold)));
+	const exitFlags = heights.map((marks, i) => !supportFrames?.has(start + i) && heightsAirborne(marks, planted, Math.min(exitLift, liftThreshold)));
 	const expanded = expandAirborneSpans({ spans: detected, canExtend: exitFlags, startFrame: start });
 
 	/* --- split each span into single arcs ---------------------------------- */
@@ -802,8 +957,248 @@ export function autoPhysicsRange({
 			pinnedFrames.push(frame);
 		}
 	}
+
+	/* --- grounded feet: lock safe stance runs, lift only real penetration --- */
+	const groundedKeyedFrames = [];
+	let maxFootCorrection = 0;
+	let floorPenetrationBefore = 0;
+	let floorPenetrationAfter = 0;
+	let maxFootSlideBefore = ground.spans.reduce((max, span) => Math.max(max, span.maxPull), 0);
+	let maxFootSlideAfter = 0;
+	let slideSumBefore = 0;
+	let slideSumAfter = 0;
+	let slideSampleCount = 0;
+	for (const span of ground.spans) {
+		const foot = FOOT_SIDES.find((item) => item.chainId === span.chainId);
+		if (!foot) continue;
+		for (let frame = span.start; frame <= span.end; frame += 1) {
+			const point = footPositions[frame - start]?.[foot.ankle];
+			if (!point) continue;
+			slideSumBefore += Math.hypot(point.x - span.anchor.x, point.z - span.anchor.z);
+			slideSampleCount += 1;
+		}
+	}
+	const contactHeight = (foot) => chains.get(foot.chainId)?.contactHeights?.[foot.height] ?? 0;
+	const penetrationAt = (points) => {
+		let worst = 0;
+		for (const foot of FOOT_SIDES) {
+			const ankle = points?.[foot.ankle];
+			if (!ankle) continue;
+			// Use the bind-pose MEASURED mesh drop below the ankle. ToeBase is a
+			// useful contact marker but not a sole: on X-Bot its bone sits about
+			// 12 cm below Y-Bot's relative to the visible foot, which made the old
+			// absolute toe test lift an otherwise grounded body by a false 12 cm.
+			worst = Math.max(worst, floorY + contactHeight(foot) - ankle.y);
+		}
+		return Math.max(0, worst);
+	};
+	const contactFrames = new Set();
+	for (const span of ground.spans) for (let frame = span.start; frame <= span.end; frame += 1) contactFrames.add(frame);
+	const floorLifts = new Map();
+	const skippedFloorFrames = new Set();
+	for (const frame of contactFrames) {
+		const penetration = penetrationAt(footPositions[frame - start]);
+		floorPenetrationBefore = Math.max(floorPenetrationBefore, penetration);
+		if (penetration > GROUND_FLOOR_MAX_LIFT) skippedFloorFrames.add(frame);
+		else if (penetration > GROUND_FLOOR_EPSILON) floorLifts.set(frame, penetration);
+	}
+	// A floor offset is a body placement error, not a bent-leg error. Lift the
+	// hips/root rigidly so the entire character clears the floor without
+	// changing either knee. The foot solve below then handles XZ only.
+	for (const [frame, lift] of floorLifts) {
+		writeFrame(frame, lift);
+		groundedKeyedFrames.push(frame);
+		maxCorrection = Math.max(maxCorrection, lift);
+	}
+
+	const groundWrites = new Map();
+	for (const span of ground.spans) {
+		const foot = FOOT_SIDES.find((item) => item.chainId === span.chainId);
+		if (!foot) continue;
+		for (let frame = span.start; frame <= span.end; frame += 1) {
+			const index = frame - start;
+			const ankle = footPositions[index]?.[foot.ankle];
+			if (!ankle) continue;
+			const target = ankle.clone();
+			target.x = span.anchor.x;
+			target.z = span.anchor.z;
+			// The parent root has already been lifted on a penetrated frame. Move
+			// the ankle by the same amount so the leg keeps its vertical pose.
+			target.y += floorLifts.get(frame) ?? 0;
+			const delta = Math.hypot(target.x - ankle.x, target.z - ankle.z);
+			if (delta <= GROUND_LOCK_EPSILON) continue;
+			if (!groundWrites.has(frame)) groundWrites.set(frame, []);
+			groundWrites.get(frame).push({ foot, target, delta });
+		}
+	}
+	for (const [frame, writes] of [...groundWrites.entries()].sort((a, b) => a[0] - b[0])) {
+		applyFrame(frame);
+		const index = frame - start;
+		// Restore the sweep-1 layer pose before solving either leg. This keeps
+		// a key written on frame N from becoming frame N+1's starting pose.
+		for (const id of footIds) {
+			const chain = chains.get(id);
+			const quats = layerFootQuats[index]?.get(id);
+			if (!chain || !quats) continue;
+			chain.bones.forEach((bone, boneIndex) => bone.quaternion.copy(quats[boneIndex]));
+		}
+		rig.updateMatrixWorld(true);
+		const successful = [];
+		for (const write of writes) {
+			const { foot, target } = write;
+			const chain = chains.get(foot.chainId);
+			solveIk(chain, target);
+			rig.updateMatrixWorld(true);
+			let achieved = findBone(rig, foot.ankle)?.getWorldPosition(new THREE.Vector3());
+			let residual = achieved ? Math.hypot(achieved.x - target.x, achieved.z - target.z) : Infinity;
+			// A fully straight leg has no sideways reach even for a two-centimetre
+			// plant. On failure only, permit five millimetres of sole clearance to
+			// create knee bend, then retry from the untouched clip pose once.
+			if (residual > GROUND_LOCK_EPSILON) {
+				const quats = layerFootQuats[index]?.get(foot.chainId);
+				if (quats) chain.bones.forEach((bone, boneIndex) => bone.quaternion.copy(quats[boneIndex]));
+				rig.updateMatrixWorld(true);
+				target.y += GROUND_LOCK_REACH_LIFT;
+				solveIk(chain, target);
+				rig.updateMatrixWorld(true);
+				achieved = findBone(rig, foot.ankle)?.getWorldPosition(new THREE.Vector3());
+				residual = achieved ? Math.hypot(achieved.x - target.x, achieved.z - target.z) : Infinity;
+			}
+			// A straight or fully stretched leg may not reach a sideways plant.
+			// Do not bake a half-fix that a second run would ratchet further.
+			if (residual <= GROUND_LOCK_EPSILON) {
+				successful.push(write);
+				maxFootCorrection = Math.max(maxFootCorrection, write.delta);
+			} else {
+				const quats = layerFootQuats[index]?.get(foot.chainId);
+				if (quats) chain.bones.forEach((bone, boneIndex) => bone.quaternion.copy(quats[boneIndex]));
+				rig.updateMatrixWorld(true);
+			}
+		}
+		for (const { foot } of successful) {
+			ikBakeKeyframe(chains, ikState, frame, fkJoints, [foot.chainId], null, clipFootQuats[index]);
+		}
+		if (successful.length) groundedKeyedFrames.push(frame);
+	}
+
+	// A root lift can turn a previously straight, unreachable leg into a
+	// solvable one. Re-sample the FINISHED layer and take at most three bounded
+	// refinement sweeps now, so pressing the button again cannot discover a
+	// second batch and ratchet the take. Each sweep is still snapshotted before
+	// it writes, so neighbouring keys never become one another's input.
+	for (let refinement = 0; grounding && refinement < 3; refinement += 1) {
+		const currentPositions = [];
+		const currentQuats = [];
+		for (let frame = start; frame <= end; frame += 1) {
+			applyFrame(frame);
+			currentPositions.push(markerPositions(rig));
+			currentQuats.push(readFootQuats());
+		}
+		let wrote = 0;
+		for (let frame = start; frame <= end; frame += 1) {
+			const active = ground.spans.filter((span) => frame >= span.start && frame <= span.end);
+			if (!active.length) continue;
+			const index = frame - start;
+			const candidates = [];
+			for (const span of active) {
+				const foot = FOOT_SIDES.find((item) => item.chainId === span.chainId);
+				const ankle = foot && currentPositions[index]?.[foot.ankle];
+				if (!foot || !ankle) continue;
+				const delta = Math.hypot(span.anchor.x - ankle.x, span.anchor.z - ankle.z);
+				if (delta > GROUND_LOCK_EPSILON) candidates.push({ foot, delta, target: ankle.clone().setX(span.anchor.x).setZ(span.anchor.z) });
+			}
+			if (!candidates.length) continue;
+			applyFrame(frame);
+			for (const { foot } of candidates) {
+				const chain = chains.get(foot.chainId);
+				const quats = currentQuats[index]?.get(foot.chainId);
+				if (chain && quats) chain.bones.forEach((bone, boneIndex) => bone.quaternion.copy(quats[boneIndex]));
+			}
+			rig.updateMatrixWorld(true);
+			for (const candidate of candidates) {
+				const { foot, target } = candidate;
+				const chain = chains.get(foot.chainId);
+				solveIk(chain, target);
+				rig.updateMatrixWorld(true);
+				const achieved = findBone(rig, foot.ankle)?.getWorldPosition(new THREE.Vector3());
+				const residual = achieved ? Math.hypot(achieved.x - target.x, achieved.z - target.z) : Infinity;
+				if (residual <= GROUND_LOCK_EPSILON) {
+					ikBakeKeyframe(chains, ikState, frame, fkJoints, [foot.chainId], null, clipFootQuats[index]);
+					groundedKeyedFrames.push(frame);
+					maxFootCorrection = Math.max(maxFootCorrection, candidate.delta);
+					wrote += 1;
+				} else {
+					const quats = currentQuats[index]?.get(foot.chainId);
+					if (quats) chain.bones.forEach((bone, boneIndex) => bone.quaternion.copy(quats[boneIndex]));
+					rig.updateMatrixWorld(true);
+				}
+			}
+		}
+		if (!wrote) break;
+	}
+
+	// Foot IK can lower an ankle slightly after the first root lift. Re-check
+	// the evaluated layer and add only the remaining clearance to that frame's
+	// existing root correction. Two bounded passes settle interpolation without
+	// ever accumulating beyond the measured need or the 15 cm safety cap.
+	if (grounding) {
+		for (let pass = 0; pass < 2; pass += 1) {
+			let wrote = 0;
+			for (const frame of contactFrames) {
+				applyFrame(frame);
+				const residual = penetrationAt(markerPositions(rig));
+				if (residual <= GROUND_FLOOR_EPSILON) continue;
+				const total = (floorLifts.get(frame) ?? 0) + residual;
+				if (total > GROUND_FLOOR_MAX_LIFT) {
+					skippedFloorFrames.add(frame);
+					continue;
+				}
+				floorLifts.set(frame, total);
+				writeFrame(frame, total);
+				groundedKeyedFrames.push(frame);
+				maxCorrection = Math.max(maxCorrection, total);
+				wrote += 1;
+			}
+			if (!wrote) break;
+		}
+		// Read back the final evaluated result, not the solver's momentary pose:
+		// this is the same truth the viewer sees after all keys and blend ramps.
+		const afterPositions = [];
+		for (let frame = start; frame <= end; frame += 1) {
+			applyFrame(frame);
+			const points = markerPositions(rig);
+			if (!points) continue;
+			afterPositions.push(points);
+				if (contactFrames.has(frame)) floorPenetrationAfter = Math.max(floorPenetrationAfter, penetrationAt(points));
+		}
+		for (const span of ground.spans) {
+			const foot = FOOT_SIDES.find((item) => item.chainId === span.chainId);
+			if (!foot) continue;
+			for (let frame = span.start; frame <= span.end; frame += 1) {
+				const point = afterPositions[frame - start]?.[foot.ankle];
+				if (point) {
+					const distance = Math.hypot(point.x - span.anchor.x, point.z - span.anchor.z);
+					maxFootSlideAfter = Math.max(maxFootSlideAfter, distance);
+					slideSumAfter += distance;
+				}
+			}
+		}
+	}
+	const allKeyed = [...new Set([...keyedFrames, ...groundedKeyedFrames])].sort((a, b) => a - b);
 	return {
 		supported: true, reason: "",
-		spans, keyedFrames, maxCorrection, corrected: keyedFrames.length, pinnedFrames, skippedSpans, planted,
+		spans, keyedFrames: allKeyed, airborneKeyedFrames: keyedFrames, maxCorrection,
+		corrected: allKeyed.length, pinnedFrames, skippedSpans, planted,
+		groundContactSpans: ground.spans,
+		rejectedGroundSpans: ground.rejected,
+		groundedKeyedFrames: [...new Set(groundedKeyedFrames)].sort((a, b) => a - b),
+		maxFootCorrection,
+		maxFootSlideBefore,
+		maxFootSlideAfter,
+		meanFootSlideBefore: slideSampleCount ? slideSumBefore / slideSampleCount : 0,
+		meanFootSlideAfter: slideSampleCount ? slideSumAfter / slideSampleCount : 0,
+		floorPenetrationBefore,
+		floorPenetrationAfter,
+		skippedFloorFrames: [...skippedFloorFrames].sort((a, b) => a - b),
 	};
 }

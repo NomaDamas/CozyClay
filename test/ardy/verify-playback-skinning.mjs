@@ -26,6 +26,7 @@ import {
 	restorePlaybackBones,
 } from "../../src/ardy/playback.js";
 import { decodeMotionNpz } from "../../src/ardy/npz.js";
+import { resolveIkRig, ikEvaluate } from "../../src/ardy/ik.js";
 import { CSKEL27_JOINTS } from "../../src/ardy/cskel27.js";
 import { CSKEL27_NEUTRAL } from "../../src/ardy/cskel27-neutral.js";
 
@@ -251,6 +252,21 @@ ok(
 	armDirectionError < 0.01,
 	`max direction error ${armDirectionError.toFixed(5)} deg across ${demoMotion.frames} frames`,
 );
+
+// A raw frame does not animate the wrist, but MUST reset its base before
+// the IK layer. Repeated scrub/play used to accumulate the wrist delta.
+const resolved = resolveIkRig(yRig), wristChain = resolved.chains.get("leftHand");
+applyMotionFrame(yRig, demoMotion, 0);
+const baseQ = wristChain.bones.map((b) => b.quaternion.clone());
+const corrected = baseQ.map((q) => q.clone());
+corrected[2].multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), .12));
+const wristLayer = { tracked: new Set(["leftHand"]), keys: new Map([[0, new Map([["leftHand", { q: corrected, baseQ, keepTranslations: true }]])]]) };
+let wristError = 0;
+for (let i = 0; i < 100; i += 1) {
+	applyMotionFrame(yRig, demoMotion, 0); ikEvaluate(resolved.chains, wristLayer, 0, resolved.fkJoints, 6);
+	wristError = Math.max(wristError, wristChain.bones[2].quaternion.angleTo(corrected[2]));
+}
+ok("100 repeated seeks do not accumulate the wrist correction", wristError < 1e-6, `${wristError} rad`);
 
 console.log(`\nfailures: ${fail.length}`);
 process.exit(fail.length ? 1 : 0);

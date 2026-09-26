@@ -49,4 +49,58 @@ assert.equal(updates.length, 2, "undo reannounces to the still-mounted subscribe
 assert.equal(updates.at(-1), textures[1], "undo announces the newly decoded texture, never deleted bytes");
 unsubscribe();
 
+{
+	const meshId = `mesh-${"b".repeat(32)}`;
+	const meshRecord = { id: meshId, type: "model/gltf-binary", bytes: new Uint8Array([1, 2, 3]).buffer, name: "cooker.glb" };
+	let meshBitmapStarts = 0;
+	const meshCache = createAssetTextureCache({
+		getRecord: async () => meshRecord,
+		putRecord: async (asset) => asset,
+		createBitmap: async () => {
+			meshBitmapStarts += 1;
+			return { close() {} };
+		},
+		makeTexture: () => ({ dispose() {}, userData: {} }),
+	});
+	assert.equal(await meshCache.loadAssetTexture(meshId), null, "a mesh id is never decoded as a bitmap");
+	await meshCache.rememberAsset(meshRecord);
+	assert.equal(meshBitmapStarts, 0, "rememberAsset stores a GLB without createImageBitmap");
+}
+
+{
+	const objId = `mesh-${"c".repeat(32)}`;
+	const objRecord = { id: objId, type: "model/obj", bytes: new Uint8Array([1, 2, 3]).buffer, name: "stove.obj" };
+	let objBitmapStarts = 0;
+	const objCache = createAssetTextureCache({
+		getRecord: async () => objRecord,
+		putRecord: async (asset) => asset,
+		createBitmap: async () => {
+			objBitmapStarts += 1;
+			return { close() {} };
+		},
+		makeTexture: () => ({ dispose() {}, userData: {} }),
+	});
+	assert.equal(await objCache.loadAssetTexture(objId), null, "an OBJ mesh id is never decoded as a bitmap");
+	await objCache.rememberAsset(objRecord);
+	assert.equal(objBitmapStarts, 0, "rememberAsset stores an OBJ without createImageBitmap");
+}
+
+{
+	const fbxId = `mesh-${"d".repeat(32)}`;
+	const fbxRecord = { id: fbxId, type: "model/fbx", bytes: new Uint8Array([1, 2, 3]).buffer, name: "stove.fbx" };
+	let fbxBitmapStarts = 0;
+	const fbxCache = createAssetTextureCache({
+		getRecord: async () => fbxRecord,
+		putRecord: async (asset) => asset,
+		createBitmap: async () => {
+			fbxBitmapStarts += 1;
+			return { close() {} };
+		},
+		makeTexture: () => ({ dispose() {}, userData: {} }),
+	});
+	assert.equal(await fbxCache.loadAssetTexture(fbxId), null, "an FBX mesh id is never decoded as a bitmap");
+	await fbxCache.rememberAsset(fbxRecord);
+	assert.equal(fbxBitmapStarts, 0, "rememberAsset stores an FBX without createImageBitmap");
+}
+
 console.log("scene asset cache generation race checks PASS");

@@ -20,7 +20,7 @@ import {
 // `store.present()` is reference-equal to `store.objects`. `history` is
 // assigned in exactly four places — applyAtomic, end(commit:true), settle,
 // and undo/redo — and every one pushes or steps to the POST-change present.
-export function createSceneHistoryStore(initialObjects, { onObjects }) {
+export function createSceneHistoryStore(initialObjects, { onObjects, onCommit }) {
 	let objects = initialObjects;
 	let history = createHistory(initialObjects);
 	const tx = createTransactions();
@@ -33,9 +33,10 @@ export function createSceneHistoryStore(initialObjects, { onObjects }) {
 	// A settle is triggered by the user starting something else; the
 	// travel already applied is real and becomes its own entry, so the
 	// very next Ctrl+Z discards it deliberately.
-	function settle() {
+	function settle(notify = true) {
 		if (settleTransaction(tx) === null) return;
 		history = pushHistory(history, objects);
+		if (notify) onCommit?.(before, objects);
 		before = null;
 	}
 	return {
@@ -55,8 +56,10 @@ export function createSceneHistoryStore(initialObjects, { onObjects }) {
 			settle();
 			const next = fn(objects);
 			if (next === objects) return;
+			const previous = objects;
 			emit(next);
 			history = pushHistory(history, next);
+			onCommit?.(previous, next);
 		},
 
 		// Settle first so a nested begin commits the previous drag as ONE
@@ -81,6 +84,7 @@ export function createSceneHistoryStore(initialObjects, { onObjects }) {
 			if (commit) {
 				// pushHistory coalesces: nothing applied pushes nothing.
 				history = pushHistory(history, objects);
+				onCommit?.(before, objects);
 			} else {
 				// Rollback restores the whole pre-drag array by reference —
 				// strictly more correct than replaying one record.
@@ -93,7 +97,7 @@ export function createSceneHistoryStore(initialObjects, { onObjects }) {
 		settle,
 
 		undo() {
-			settle();
+			settle(false);
 			const stepped = undoHistory(history);
 			if (stepped === null) return null;
 			history = stepped;
@@ -102,7 +106,7 @@ export function createSceneHistoryStore(initialObjects, { onObjects }) {
 		},
 
 		redo() {
-			settle();
+			settle(false);
 			const stepped = redoHistory(history);
 			if (stepped === null) return null;
 			history = stepped;

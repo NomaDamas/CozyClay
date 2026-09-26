@@ -19,6 +19,8 @@
 
 import { Euler, Quaternion } from "three";
 import { createObjectPath, translateObjectPath } from "./object-path.js";
+import { elementByPath } from "./studio-elements.js";
+import { MESH_DEFAULT_HEIGHT, MESH_HEIGHT_MIN } from "./scene-mesh.js";
 
 export const DEFAULT_SCENE_OBJECTS = [];
 /** The persistence contract (plan §8.1): the version lives in the key AND in
@@ -31,22 +33,17 @@ export const SCENE_VERSION = 1;
 /** Euler convention shared with the renderer in props.jsx. */
 const EULER_ORDER = "XYZ";
 const DEG = Math.PI / 180;
-
-/** Stage half-extent; matches the plan board's ROOM_LIMIT. The set is an
- * open 500 m deck now, so the clamp is a guard against runaway coordinates,
- * not a wall — it stops just inside the floor's edge. */
-const ROOM_LIMIT = 240;
-
-// Headroom, not a ceiling: the walls (and the 6.2 m room they implied) are
-// gone, so this only stops a runaway coordinate. A rocket, a crane or a
-// skyline piece all have to fit under it.
-const CEILING = 240;
-const SCALE_MIN = 0.1;
-const SCALE_MAX = 100;
+const OBJECT_POSITION_LIMITS = elementByPath("object.position");
+const OBJECT_ROTATION_LIMITS = elementByPath("object.rotation");
+const OBJECT_SCALE_LIMITS = elementByPath("object.scale");
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
-/** degrees folded into [-180, 180), the range both rotation sliders span */
-export const wrapAngle = (deg) => ((((deg + 180) % 360) + 360) % 360) - 180;
+/** degrees folded into the declared rotation envelope */
+export const wrapAngle = (deg) => {
+	const min = OBJECT_ROTATION_LIMITS.min.y;
+	const span = OBJECT_ROTATION_LIMITS.max.y - min;
+	return ((((deg - min) % span) + span) % span) + min;
+};
 /** Snap to a detent AND to that detent's own precision: plain multiplication
  * leaves 0.05 grids reading -1.7000000000000002 in the inspector. A step of 0
  * means "no detent" — a free drag still rounds, or the inspector would show a
@@ -70,7 +67,9 @@ export const OBJECT_LIBRARY = [
 	{ kind: "cylinder", label: "Cylinder", group: "Primitives", footprint: { width: 1, depth: 1 }, height: 1, color: GREY_BOX },
 	{ kind: "cone", label: "Cone", group: "Primitives", footprint: { width: 1, depth: 1 }, height: 1, color: GREY_BOX },
 	{ kind: "plane", label: "Plane", group: "Primitives", footprint: { width: 2, depth: 2 }, height: 0, color: GREY_BOX },
-	{ kind: "chair", label: "Chair", group: "Set pieces", footprint: { width: 0.6, depth: 0.6 }, height: 1.15, color: "#b9855d" },
+	// supportY is the walkable surface, which can differ from the object's
+	// bounding height (a chair's back rises above its seat).
+	{ kind: "chair", label: "Chair", group: "Set pieces", footprint: { width: 0.6, depth: 0.6 }, height: 1.15, supportY: 0.495, color: "#b9855d" },
 	{ kind: "car", label: "Car", group: "Set pieces", footprint: { width: 1.8, depth: 4.5 }, height: 1.4, color: "#d98770" },
 	{ kind: "small-plane", label: "Plane (aircraft)", group: "Set pieces", footprint: { width: 3.4, depth: 3.6 }, height: 1.4, color: "#7896a4" },
 ];
@@ -194,12 +193,38 @@ const CUTOUT_ENTRY = {
 	color: CUTOUT_TINT,
 };
 
+/**
+ * A mesh is an imported GLB standing on the floor. Its size is NOT library
+ * data — the box is measured (and outlier-fitted) at import — so the record
+ * carries `assetId`, `footprint` and `height`. Clay is per-instance: two
+ * clones of the same file can disagree about looking like a maquette.
+ */
+export const MESH_KIND = "mesh";
+const MESH_ENTRY = {
+	kind: MESH_KIND,
+	label: "Model",
+	group: "Models",
+	footprint: { width: 1, depth: 1 },
+	height: MESH_DEFAULT_HEIGHT,
+	color: "#c49a6c",
+};
+
 /** Every kind that can exist in a scene: the catalogue you can create from,
  * plus the kinds that arrive by import and so are deliberately absent from the
- * "Add object" menu (a cutout without an image has nothing to draw). */
-function objectLibraryEntry(kind) {
+ * "Add object" menu (a cutout without an image, a mesh without a GLB, has
+ * nothing to draw). */
+export function objectLibraryEntry(kind) {
 	if (kind === CUTOUT_KIND) return CUTOUT_ENTRY;
+	if (kind === MESH_KIND) return MESH_ENTRY;
 	return OBJECT_LIBRARY.find((entry) => entry.kind === kind) ?? null;
+}
+
+/** Return the authored walkable surface for mocap contact staging. */
+export function supportHeightForObject(object) {
+	if (!object || typeof object !== "object") return 0;
+	const entry = objectLibraryEntry(object.renderer);
+	const local = Number(object.supportY ?? entry?.supportY ?? object.height ?? entry?.height);
+	return Number.isFinite(local) ? local : 0;
 }
 
 const cutoutHeight = (value) => Math.max(CUTOUT_HEIGHT_MIN, value);
@@ -305,9 +330,9 @@ export function sceneObjectIdFromHierarchy(hierarchyId) {
  * camera); everything else starts neutral so the first drag is predictable.
  */
 export function createSceneObject(kind, existing = [], placement = {}) {
-	// Cutouts come from an import, never from the catalogue: without an asset
-	// id the record has nothing to draw. `createCutoutObject` is their door.
-	if (kind === CUTOUT_KIND) return null;
+	// Cutouts and meshes come from an import, never from the catalogue:
+	// without an asset id the record has nothing to draw.
+	if (kind === CUTOUT_KIND || kind === MESH_KIND) return null;
 	const entry = objectLibraryEntry(kind);
 	if (!entry) return null;
 	const names = new Set(existing.map((object) => object.name));
@@ -320,10 +345,10 @@ export function createSceneObject(kind, existing = [], placement = {}) {
 		id,
 		name,
 		renderer: kind,
-		x: clamp(Number(placement.x) || 0, -ROOM_LIMIT, ROOM_LIMIT),
+		x: TRANSFORM_LIMITS.x(Number(placement.x) || 0),
 		y: 0,
-		z: clamp(Number(placement.z) || 0, -ROOM_LIMIT, ROOM_LIMIT),
-		rot: wrapAngle(Number(placement.rot) || 0),
+		z: TRANSFORM_LIMITS.z(Number(placement.z) || 0),
+		rot: TRANSFORM_LIMITS.rot(Number(placement.rot) || 0),
 		rotX: 0,
 		rotZ: 0,
 		scaleX: 1,
@@ -338,8 +363,10 @@ export function createSceneObject(kind, existing = [], placement = {}) {
 		// world-anchored prop — where everything starts, because a fresh object
 		// is dropped in front of the lens, not into someone's hand.
 		attach: null,
+		hidden: false,
 		footprint: { ...entry.footprint },
 		height: entry.height,
+		supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height,
 	};
 }
 
@@ -374,10 +401,10 @@ export function createCutoutObject({ assetId, aspect = 1, height = CUTOUT_DEFAUL
 		id,
 		name: displayName,
 		renderer: CUTOUT_KIND,
-		x: clamp(Number(placement.x) || 0, -ROOM_LIMIT, ROOM_LIMIT),
+		x: TRANSFORM_LIMITS.x(Number(placement.x) || 0),
 		y: 0,
-		z: clamp(Number(placement.z) || 0, -ROOM_LIMIT, ROOM_LIMIT),
-		rot: wrapAngle(Number(placement.rot) || 0),
+		z: TRANSFORM_LIMITS.z(Number(placement.z) || 0),
+		rot: TRANSFORM_LIMITS.rot(Number(placement.rot) || 0),
 		rotX: 0,
 		rotZ: 0,
 		scaleX: 1,
@@ -387,6 +414,7 @@ export function createCutoutObject({ assetId, aspect = 1, height = CUTOUT_DEFAUL
 		color: CUTOUT_TINT,
 		parent: null,
 		attach: null,
+		hidden: false,
 		// Key order matches what `normalizeSceneObject` writes, so a record
 		// survives a storage round trip byte-for-byte.
 		assetId,
@@ -426,17 +454,73 @@ export function duplicateCutoutOptions(object) {
 	};
 }
 
+/**
+ * A fresh mesh for an imported GLB. `assetId` addresses the bytes in the
+ * asset store — the record never carries them — and `footprint`/`height` are
+ * the fitted standing size from import. Unlike a cutout, the footprint is
+ * stored (not derived): the GLB's width/depth ratio is independent of height,
+ * and a later height edit scales that stored rectangle uniformly.
+ */
+export function createMeshObject({ assetId, height = MESH_DEFAULT_HEIGHT, footprint, name = "", clay = false } = {}, existing = [], placement = {}) {
+	if (typeof assetId !== "string" || !assetId) return null;
+	const meshHeight = Math.max(MESH_HEIGHT_MIN, Number(height));
+	if (!Number.isFinite(meshHeight)) return null;
+	const width = Number(footprint?.width);
+	const depth = Number(footprint?.depth);
+	const meshFootprint =
+		Number.isFinite(width) && width > 0 && Number.isFinite(depth) && depth > 0
+			? { width, depth }
+			: { width: meshHeight, depth: meshHeight };
+	const base = typeof name === "string" && name.trim() ? name.trim() : MESH_ENTRY.label;
+	const names = new Set(existing.map((object) => object.name));
+	let displayName = base;
+	for (let n = 2; names.has(displayName); n += 1) displayName = `${base} ${n}`;
+	const ids = new Set(existing.map((object) => object.id));
+	let id = MESH_KIND;
+	for (let n = 2; ids.has(id); n += 1) id = `${MESH_KIND}-${n}`;
+	return {
+		id,
+		name: displayName,
+		renderer: MESH_KIND,
+		x: TRANSFORM_LIMITS.x(Number(placement.x) || 0),
+		y: 0,
+		z: TRANSFORM_LIMITS.z(Number(placement.z) || 0),
+		rot: wrapAngle(Number(placement.rot) || 0),
+		rotX: 0,
+		rotZ: 0,
+		scaleX: 1,
+		scaleY: 1,
+		scaleZ: 1,
+		path: null,
+		color: MESH_ENTRY.color,
+		parent: null,
+		attach: null,
+		hidden: false,
+		assetId,
+		clay: clay === true,
+		footprint: meshFootprint,
+		height: meshHeight,
+	};
+}
+
+/** The option bundle a mesh duplicate hands to `createMeshObject`. A copy
+ * is minted through the same door an import is, so it must carry the model
+ * it renders, the standing size, and whether it is wearing clay. */
+export function duplicateMeshOptions(object) {
+	return { assetId: object.assetId, height: object.height, footprint: object.footprint, name: object.name, clay: object.clay === true };
+}
+
 /** Every writable transform channel and the rule that keeps it in the room. */
 const TRANSFORM_LIMITS = {
-	x: (value) => clamp(value, -ROOM_LIMIT, ROOM_LIMIT),
-	y: (value) => clamp(value, 0, CEILING),
-	z: (value) => clamp(value, -ROOM_LIMIT, ROOM_LIMIT),
-	rot: wrapAngle,
-	rotX: wrapAngle,
-	rotZ: wrapAngle,
-	scaleX: (value) => clamp(value, SCALE_MIN, SCALE_MAX),
-	scaleY: (value) => clamp(value, SCALE_MIN, SCALE_MAX),
-	scaleZ: (value) => clamp(value, SCALE_MIN, SCALE_MAX),
+	x: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.x, OBJECT_POSITION_LIMITS.max.x),
+	y: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.y, OBJECT_POSITION_LIMITS.max.y),
+	z: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.z, OBJECT_POSITION_LIMITS.max.z),
+	rot: (value) => wrapAngle(value),
+	rotX: (value) => wrapAngle(value),
+	rotZ: (value) => wrapAngle(value),
+	scaleX: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.x, OBJECT_SCALE_LIMITS.max.x),
+	scaleY: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.y, OBJECT_SCALE_LIMITS.max.y),
+	scaleZ: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.z, OBJECT_SCALE_LIMITS.max.z),
 };
 
 /** Every object that hangs off `id`, at any depth. A cycle cannot form because
@@ -458,6 +542,36 @@ export function descendantsOf(objects, id) {
 		frontier = next;
 	}
 	return out;
+}
+
+/** True when this record, a parent above it, or a character carrying any of
+ *  those records is hidden. A cycle in parent links ends the walk. When the
+ *  id is in `objects`, that stored record is what the walk reads, so a display
+ *  copy cannot disagree with the authored flag. Nothing in the lists is changed. */
+export function isEffectivelyHidden(entity, objects = [], characters = []) {
+	if (!entity || typeof entity !== "object") return false;
+	const byId = new Map();
+	for (const object of objects) {
+		if (object && typeof object.id === "string") byId.set(object.id, object);
+	}
+	const characterHidden = (id) => characters.some((item) => item && typeof item === "object" && item.id === id && item.hidden === true);
+	const seen = new Set();
+	let current = entity;
+	while (current && typeof current === "object") {
+		const id = typeof current.id === "string" ? current.id : null;
+		if (id) {
+			if (seen.has(id)) break;
+			seen.add(id);
+			if (byId.has(id)) current = byId.get(id);
+		}
+		if (current.hidden === true) return true;
+		const characterId = current.attach && typeof current.attach.characterId === "string" ? current.attach.characterId : null;
+		if (characterId && characterHidden(characterId)) return true;
+		const parentId = typeof current.parent === "string" ? current.parent : null;
+		if (!parentId) break;
+		current = byId.get(parentId) ?? null;
+	}
+	return false;
 }
 
 export function updateSceneObject(objects, id, patch) {
@@ -514,6 +628,7 @@ export function updateSceneObject(objects, id, patch) {
 			if (typeof patch[key] !== "string" || !patch[key] || patch[key] === object[key]) continue;
 			update[key] = patch[key];
 		}
+		if (typeof patch.hidden === "boolean" && patch.hidden !== (object.hidden === true)) update.hidden = patch.hidden;
 		// The travel path is authored geometry, not a bounded transform: it is
 		// normalized by createObjectPath (which repairs or refuses it) and set
 		// wholesale, with null clearing it back to a standing object.
@@ -571,6 +686,22 @@ export function updateSceneObject(objects, id, patch) {
 				update.aspect = aspect;
 				update.stretch = patchedStretch;
 				update.footprint = cutoutFootprint(height, aspect, patchedStretch);
+			}
+		}
+		if (object.renderer === MESH_KIND) {
+			if (typeof patch.clay === "boolean" && patch.clay !== (object.clay === true)) update.clay = patch.clay;
+			if (typeof patch.assetId === "string" && patch.assetId && patch.assetId !== object.assetId) update.assetId = patch.assetId;
+			const patchedHeight = patch.height === undefined ? NaN : Math.max(MESH_HEIGHT_MIN, Number(patch.height));
+			if (Number.isFinite(patchedHeight) && patchedHeight !== object.height) {
+				update.height = patchedHeight;
+				const prevHeight = Number(object.height);
+				if (prevHeight > 0) {
+					const factor = patchedHeight / prevHeight;
+					update.footprint = {
+						width: Number(object.footprint?.width) * factor,
+						depth: Number(object.footprint?.depth) * factor,
+					};
+				}
 			}
 		}
 		if (!Object.keys(update).length) return object;
@@ -676,7 +807,9 @@ export function normalizeSceneObject(record) {
 	// draw, so it is dropped rather than restored as a blank card — the same
 	// rule an unknown renderer already gets.
 	const isCutout = entry.kind === CUTOUT_KIND;
+	const isMesh = entry.kind === MESH_KIND;
 	if (isCutout && (typeof record.assetId !== "string" || !record.assetId)) return null;
+	if (isMesh && (typeof record.assetId !== "string" || !record.assetId)) return null;
 	// Defensive import fallback, not a migration: hand-authored or external
 	// payloads may carry one `scale` (the pre-split record shape). It fans
 	// out to all three axes only when no axis is present — an explicit
@@ -688,6 +821,12 @@ export function normalizeSceneObject(record) {
 		const n = value === undefined ? fallback : Number(value);
 		return Number.isFinite(n) ? n : fallback;
 	};
+	const meshWidth = Number(record.footprint?.width);
+	const meshDepth = Number(record.footprint?.depth);
+	const meshFootprint =
+		Number.isFinite(meshWidth) && meshWidth > 0 && Number.isFinite(meshDepth) && meshDepth > 0
+			? { width: meshWidth, depth: meshDepth }
+			: { ...entry.footprint };
 	return {
 		id: record.id,
 		name: typeof record.name === "string" && record.name ? record.name : entry.label,
@@ -715,10 +854,12 @@ export function normalizeSceneObject(record) {
 		// not exist. A record written before attachment existed has no field at
 		// all, and null is exactly what it meant: world-anchored.
 		attach: normalizeSceneAttach(record.attach) ?? null,
+		hidden: record.hidden === true,
 		// Library kinds take their size from the library — a stored footprint is
-		// stale data, not a fact. A cutout is the exception: its size IS
-		// per-instance, so height and aspect are repaired from the record and
-		// the footprint is rebuilt from the pair.
+		// stale data, not a fact. Cutouts and meshes are the exceptions: their
+		// size IS per-instance. A cutout rebuilds the footprint from height and
+		// aspect; a mesh keeps the stored box (the import heuristic is not
+		// re-run, or a deliberately 12 m truck would shrink on reload).
 		...(isCutout
 			? {
 					assetId: record.assetId,
@@ -739,7 +880,17 @@ export function normalizeSceneObject(record) {
 					),
 					height: cutoutHeight(pick(record.height, CUTOUT_DEFAULT_HEIGHT)),
 				}
-			: { footprint: { ...entry.footprint }, height: entry.height }),
+			: isMesh
+				? {
+						assetId: record.assetId,
+						clay: record.clay === true,
+						// Stored box is the truth: the 0.05–10 m import heuristic is
+						// NOT re-run here, or a deliberately 12 m truck would shrink
+						// back to 1 m on reload.
+						footprint: meshFootprint,
+						height: Math.max(MESH_HEIGHT_MIN, pick(record.height, entry.height)),
+					}
+				: { footprint: { ...entry.footprint }, height: entry.height, supportY: Number.isFinite(entry.supportY) ? entry.supportY : entry.height }),
 	};
 }
 
@@ -838,7 +989,7 @@ export function scalePatch(start, axis, factor, snap = SCALE_SNAP) {
 	const patch = {};
 	for (const each of axes) {
 		const key = SCALE_KEYS[each];
-		patch[key] = Math.max(SCALE_MIN, snapTo((start[key] ?? 1) * factor, snap));
+		patch[key] = TRANSFORM_LIMITS[key](snapTo((start[key] ?? 1) * factor, snap));
 	}
 	return patch;
 }
@@ -926,10 +1077,11 @@ export function objectFootprintBounds(object) {
  * The contact height is exact, never snapped to the 5 cm grid, and never
  * clamped here: the y clamp stays in updateSceneObject, the single owner.
  */
-export function dropToSurfacePatch(object, others) {
+export function dropToSurfacePatch(object, others, characters = []) {
 	const self = objectFootprintBounds(object);
 	let highestTop = 0;
 	for (const other of others) {
+		if (isEffectivelyHidden(other, others, characters)) continue;
 		const bounds = objectFootprintBounds(other);
 		if (self.minX >= bounds.maxX - OVERLAP_EPS || bounds.minX >= self.maxX - OVERLAP_EPS) continue;
 		if (self.minZ >= bounds.maxZ - OVERLAP_EPS || bounds.minZ >= self.maxZ - OVERLAP_EPS) continue;
@@ -954,7 +1106,7 @@ export function placementInFront(cameraPos, yaw, distance = 2.6) {
 	const x = cameraPos.x - Math.sin(yaw) * distance;
 	const z = cameraPos.z - Math.cos(yaw) * distance;
 	return {
-		x: snapTo(clamp(x, -ROOM_LIMIT, ROOM_LIMIT), TRANSLATE_SNAP),
-		z: snapTo(clamp(z, -ROOM_LIMIT, ROOM_LIMIT), TRANSLATE_SNAP),
+		x: snapTo(TRANSFORM_LIMITS.x(x), TRANSLATE_SNAP),
+		z: snapTo(TRANSFORM_LIMITS.z(z), TRANSLATE_SNAP),
 	};
 }

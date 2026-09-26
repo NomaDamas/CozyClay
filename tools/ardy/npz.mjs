@@ -285,7 +285,7 @@ function flattenToF32(value, dims, name) {
  * reader that ignores the extra member (numpy, dump-npz.py, the generators)
  * sees the original four unchanged and in the original order.
  */
-export function motionArraysToNpzMembers({ frames, fps, rotMats, rootPos, posedJoints, personScale }) {
+export function motionArraysToNpzMembers({ frames, fps, rotMats, rootPos, posedJoints, personScale, boneScale }) {
 	if (!Number.isInteger(frames) || frames < 1) throw new Error("motionArraysToNpzMembers: frames must be positive");
 	if (!Number.isInteger(fps) || fps < 1) throw new Error("motionArraysToNpzMembers: fps must be positive");
 	const requireLength = (array, length, label) => {
@@ -315,6 +315,18 @@ export function motionArraysToNpzMembers({ frames, fps, rotMats, rootPos, posedJ
 		// the same four members it always did.
 		// float32 scalar, same 0-d shape convention as fps.
 		if (personScale !== 1) members.person_scale = { data: Float32Array.of(personScale), shape: [] };
+	}
+	// `boneScale` (mocap): the performer's bone lengths as a factor per cskel27
+	// joint over the canonical body. posedJoints were grown with these, so the
+	// take is only geometrically consistent when playback stretches the bones
+	// it drives by rotation alone by the same factors — it has to ride in the
+	// archive. All-ones is the canonical body, the reader's default, and is
+	// left out for the same reason person_scale 1 is.
+	if (boneScale !== undefined && boneScale !== null) {
+		if (!(boneScale instanceof Float32Array) || boneScale.length !== 27 || !boneScale.every((v) => Number.isFinite(v) && v > 0)) {
+			throw new Error("motionArraysToNpzMembers: boneScale must be a Float32Array(27) of positive finite factors");
+		}
+		if (boneScale.some((v) => v !== 1)) members.bone_scale = { data: boneScale, shape: [27] };
 	}
 	return members;
 }
@@ -357,6 +369,7 @@ export function stitchMotionSegments(segments) {
 		posedJoints: concat("posedJoints", 27 * 3),
 	};
 	if (scales.size === 1) stitched.personScale = [...scales][0];
+	if (segments[0].boneScale) stitched.boneScale = segments[0].boneScale;
 	return stitched;
 }
 
@@ -396,5 +409,6 @@ export function replaceMotionSegment(base, replacement, startFrame) {
 	// The base clip is still the same body after an edited span is written into
 	// it, and its root travel is still expressed against that stature.
 	if (Number.isFinite(base.personScale)) edited.personScale = base.personScale;
+	if (base.boneScale) edited.boneScale = base.boneScale;
 	return edited;
 }
