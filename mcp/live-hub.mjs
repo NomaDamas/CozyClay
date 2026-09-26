@@ -16,12 +16,18 @@ export const RUN_WORKFLOW_TIMEOUT_MS = 180_000;
 export const LOAD_MOTION_TIMEOUT_MS = 30_000;
 export const IMPORT_ASSET_TIMEOUT_MS = 30_000;
 export const CAPTURE_FRAME_TIMEOUT_MS = 30_000;
+export const STUDIO_COMMAND_TIMEOUT_MS = 30_000;
 export const MOTION_JOB_TTL_MS = 10 * 60_000;
 export const MOTION_JOB_POLL_INTERVAL_MS = 0;
 export const MAX_ACTIVE_MOTION_JOBS = 2;
 export const MAX_ACTIVE_MOTION_JOBS_PER_WORKSPACE = 1;
 
 const terminalMotionStatuses = new Set(["completed", "failed", "cancelled", "expired"]);
+const studioCommands = new Set([
+	"inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements",
+	"frame_shot", "verify_result", "undo_edit", "read_studio_context", "resolve_studio_image",
+	"capture_framing_png", "reconcile_studio_command", "run_action",
+]);
 
 /** MCP-internal job retention for push-only motion work. Its clock is injected
  * so expiry is deterministic without a polling loop or timing-based test. */
@@ -229,6 +235,7 @@ export class LiveHub {
 		if (name === "capture_frame") return CAPTURE_FRAME_TIMEOUT_MS;
 		// A workflow run captures a frame and may generate an image upstream.
 		if (name === "run_workflow") return RUN_WORKFLOW_TIMEOUT_MS;
+		if (studioCommands.has(name)) return STUDIO_COMMAND_TIMEOUT_MS;
 		return DEFAULT_COMMAND_TIMEOUT_MS;
 	}
 
