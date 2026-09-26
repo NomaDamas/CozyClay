@@ -972,7 +972,9 @@ export function createStudioAppBinding(ports) {
 		if (!same(request.host, owner)) return rejection(request, new StudioProtocolError("STALE_SCENE", "Document changed."));
 		try {
 			if (!journal.begin(request.commandId, signature)) return journal.get(request.commandId);
-			const { args } = validateStudioCommand({ name: request.name, args: request.args }), s = admit(request);
+			// Verification only observes: the document identity (checked above) is
+			// its whole fence, so a later edit never refuses it.
+			const { args } = validateStudioCommand({ name: request.name, args: request.args }), s = request.name === "verify_result" ? refresh() : admit(request);
 			if (request.name === "run_action") return runAction(request, args, s);
 			if (request.name === "operate_studio") {
 				ports.operate(args, s); const after = refresh();
@@ -1000,9 +1002,11 @@ export function createStudioAppBinding(ports) {
 			if (request.name === "verify_result") {
 				const receipt = args.receiptId ? receipts.get(args.receiptId) : null;
 				if (args.receiptId && !receipt) fail("STALE_TARGET", "Receipt is not retained in this document.");
-				if (receipt && receipt.revision.after !== s.revision) fail("STALE_SCENE", "Receipt evidence is no longer current.");
 				for (const id of args.targets ?? []) guard(id);
-				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, checks: receipt?.checks ?? { coverage: "unavailable" },
+				// A receipt edited over since is still evidence of what it did: return it
+				// marked stale with the revision it describes beside the current one.
+				const evidenceRevision = receipt ? receipt.revision.after : s.revision;
+				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, evidenceRevision, stale: evidenceRevision !== s.revision, checks: receipt?.checks ?? { coverage: "unavailable" },
 					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [],
 					unsupportedChecks: args.checks.filter(check => check === "motion" ? !receipt?.verification : !receipt?.checks) };
 				if (args.visual !== "none") {
