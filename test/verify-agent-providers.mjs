@@ -295,7 +295,13 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 		if (req.method === "GET" && req.url === "/v1/models") {
 			catalogueCalls++;
 			res.writeHead(200, { "content-type": "application/json" });
-			res.end(JSON.stringify({ data: [{ id: "gpt-6-astra" }, { id: "claude-sonnet-5" }, { id: "not-in-pi" }] }));
+			res.end(JSON.stringify({ data: [
+				{ id: "gpt-6-astra" }, { id: "claude-sonnet-5" }, { id: "not-in-pi" },
+				// Live-only models pi's catalogue does not know, routed by their owner.
+				{ id: "gpt-6-luna", owned_by: "openai" }, { id: "claude-opus-5-5", owned_by: "anthropic" },
+				{ id: "glm-5.2", owned_by: "opencode-go" }, { id: "opencode-go/glm-5.2", owned_by: "opencode-go" },
+				{ id: "gpt-image-2", owned_by: "openai" },
+			] }));
 			return;
 		}
 		res.writeHead(404); res.end();
@@ -308,11 +314,20 @@ assert.ok((await envStore.list()).some((entry) => entry.providerId === "openai-c
 	const envRegistry = await providers.createModels({ auth, keys: noKeys, env });
 	const envStatus = await providers.listAgentModels({ models: envRegistry, auth, keys: noKeys, env });
 	const cliproxy = envStatus.providers.find((provider) => provider.id === "cliproxy");
-	assert.equal((await providers.listAgentModels({ models: envRegistry, auth, keys: noKeys, env })).providers.find((provider) => provider.id === "cliproxy").models.length, 2);
+	assert.equal((await providers.listAgentModels({ models: envRegistry, auth, keys: noKeys, env })).providers.find((provider) => provider.id === "cliproxy").models.length, 4);
 	assert.equal(catalogueCalls, 1);
 	assert.equal(cliproxy.signedIn, true);
 	assert.equal(cliproxy.authSource, "env");
-	assert.deepEqual(cliproxy.models.map((model) => model.id), ["gpt-6-astra", "claude-sonnet-5"]);
+	assert.deepEqual(cliproxy.models.map((model) => model.id), ["gpt-6-astra", "claude-sonnet-5", "gpt-6-luna", "claude-opus-5-5"]);
+	const luna = envRegistry.getModel("cliproxy", "gpt-6-luna");
+	assert.equal(luna.api, "openai-responses");
+	assert.equal(luna.baseUrl, `${base}/v1`);
+	const opus = envRegistry.getModel("cliproxy", "claude-opus-5-5");
+	assert.equal(opus.api, "anthropic-messages");
+	assert.equal(opus.baseUrl, base);
+	assert.equal(opus.compat.supportsMidConvoEffort, false);
+	assert.equal(envRegistry.getModel("cliproxy", "glm-5.2"), undefined);
+	assert.equal(envRegistry.getModel("cliproxy", "gpt-image-2"), undefined);
 	const openaiModel = envRegistry.getModel("cliproxy", "gpt-6-astra");
 	const anthropicModel = envRegistry.getModel("cliproxy", "claude-sonnet-5");
 	assert.equal(openaiModel.provider, "cliproxy");
