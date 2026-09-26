@@ -48,12 +48,30 @@ function live(args) {
     const status = JSON.parse(execFileSync("node", ["bin/cozyclay.mjs", "live", "status", "--pretty"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }));
     // Only the QA browser's own editor (tools/qa-browser.mjs names its project
     // "QA") or an explicit QA_WORKSPACE; another open Studio tab is never touched.
-    const handle = process.env.QA_WORKSPACE || status.editors?.findLast((row) => row.project === "QA")?.handle;
+    const handle = process.env.QA_WORKSPACE || qaHandle || status.editors?.findLast((row) => row.project === "QA")?.handle;
     if (!handle) throw new Error(`no QA editor on the live hub: ${JSON.stringify(status.editors?.map(({ handle: h, project }) => ({ handle: h, project })) ?? [])}`);
     return JSON.parse(execFileSync("node", ["bin/cozyclay.mjs", "live", ...args, "--workspace", handle, "--pretty"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 20 * 1024 * 1024 }));
   } catch (error) {
     throw new Error(`live ${args.join(" ")} failed (status ${error.status ?? "unknown"}): ${error.stderr?.trim() || error.stdout?.trim() || error.message}`);
   }
+}
+// The page's own live workspace handle, read from the chip the Studio renders
+// once its editor is connected, so the hub is always asked about THIS page.
+let qaHandle = null;
+async function readHandle() {
+  const selector = "document.querySelector('.live-workspace-handle[data-live-workspace]')";
+  await waitFor(`!!${selector}?.dataset.liveWorkspace`, 30_000).catch(() => null);
+  qaHandle = await evaluate(`${selector}?.dataset.liveWorkspace || null`);
+  return qaHandle;
+}
+// Restoring a take after a reload is asynchronous (IndexedDB read + decode)
+// and has no DOM signal, so re-read the hub until the condition holds or the
+// deadline passes; each read is a CLI round trip, so no sleep is needed.
+function untilState(check, timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  let last = state();
+  while (!check(last) && Date.now() < deadline) last = state();
+  return last;
 }
 function state() {
   // `describe` carries the complete live object list; `inspect` returns one
@@ -89,6 +107,11 @@ async function scenario(id, title, run) {
     result.evidence = { error: error.message };
     console.log(`FAIL ${id} ${title} — ${JSON.stringify(result.evidence)}`);
   }
+  try {
+    const shot = await send("Page.captureScreenshot", { format: "png" });
+    result.screenshot = `${outputDir}/${id}.png`;
+    writeFileSync(result.screenshot, Buffer.from(shot.data, "base64"));
+  } catch {}
   results.push(result);
 }
 async function turn(prompt, timeoutMs = 90_000) {
@@ -122,6 +145,7 @@ await send("Runtime.enable");
 try {
   await pageLoad(baseUrl);
   await waitFor(`!!document.querySelector('aside[aria-label="Agent"]') && !!document.querySelector('aside[aria-label="Agent"] textarea[aria-label="Message the agent"]')`);
+  await readHandle();
   await chooseModel();
 } catch (error) {
   setupFailure = error.message;
@@ -171,7 +195,9 @@ await scenario("S5", "persistence", async () => {
   const before = state();
   await pageLoad(baseUrl);
   await waitFor(`!!document.querySelector('aside[aria-label="Agent"]')`);
-  const after = state();
+  await readHandle();
+  const restored = (s) => (s.characters.find((row) => row.id === "char-a")?.frames ?? 0) > 0;
+  const after = untilState(restored, 60_000);
   const character = after.characters.find((row) => row.id === "char-a");
   if (!(character?.takeId && character.frames > 0)) throw new Error(`char-a take did not persist after reload: ${JSON.stringify(character)}`);
   return { before, after, character };
