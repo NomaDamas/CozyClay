@@ -1864,3 +1864,46 @@ for (const [index, [label, first, second]] of [
 		await new Promise(resolve => serverMixed.close(resolve));
 	}
 }
+
+// The limit is per user message, not per wording: a user who says "다시해" in two
+// messages asked twice, so the second message generates again.
+{
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	let admissionsAgain = 0;
+	const runtimeAgain = {
+		readContext: async () => contextFixture(),
+		admit: () => ({ jobId: `again-job-${++admissionsAgain}`, commandId: `again-command-${admissionsAgain}`, state: "queued" }),
+		subscribe: () => () => {},
+		start: async () => ({ ok: true, status: "installed", mutated: true, receiptId: `again-receipt-${admissionsAgain}` }),
+		stop: async () => ({ status: "already_applied" }),
+	};
+	const fauxAgain = createFakeModel();
+	const motionAgain = id => ({ type: "toolCall", id, name: "generate_motion", arguments: { characterId: "char-alex", source: { kind: "generate", beats: [{ text: "walk" }], durationSeconds: 2 } } });
+	fauxAgain.script([motionAgain("again-first"), [{ type: "text", text: "first" }], motionAgain("again-second"), [{ type: "text", text: "second" }]]);
+	let serverAgain;
+	const handlerAgain = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models: fauxAgain.models, fauxProvider: fauxAgain.fauxProvider, liveHub: { workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", command: async () => ({ ok: true }) }, studioRuntime: runtimeAgain, port: () => serverAgain.address().port });
+	serverAgain = createServer((req, res) => handlerAgain(req, res).catch(error => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	serverAgain.listen(0, "127.0.0.1"); await once(serverAgain, "listening");
+	const originAgain = `http://127.0.0.1:${serverAgain.address().port}`;
+	try {
+		const sessionAgain = "00000000-0000-4000-8000-000000000197";
+		const turn = async (turnId, cookie) => {
+			const body = { ...envelopeFixture(), sessionId: sessionAgain, turnId, text: "다시해" };
+			const response = await fetch(`${originAgain}/agent/turn`, { method: "POST", headers: { origin: originAgain, "content-type": "application/json", ...(cookie ? { cookie } : {}) }, body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+			assert.equal(response.status, 200);
+			const ownerCookie = (response.headers.getSetCookie?.() ?? [response.headers.get("set-cookie")]).filter(Boolean).map((entry) => entry.split(";")[0]).join("; ");
+			const frames = [...(await response.text()).matchAll(/^data: (.+)$/gm)].map(match => JSON.parse(match[1]));
+			return { ownerCookie, done: frames.filter(frame => frame.type === "tool.done") };
+		};
+		const first = await turn("00000000-0000-4000-8000-000000000198");
+		assert.equal(first.done[0]?.ok, true, `the first message generates: ${first.done[0]?.error ?? ""}`);
+		const second = await turn("00000000-0000-4000-8000-000000000199", first.ownerCookie);
+		assert.equal(second.done[0]?.ok, true, `the same words in a later message generate again: ${second.done[0]?.error ?? ""}`);
+		assert.equal(admissionsAgain, 2, "each user message admits its own generation");
+		console.log("PASS the same words in a later user message may generate again");
+	} finally {
+		await handlerAgain.close();
+		serverAgain.closeAllConnections();
+		await new Promise(resolve => serverAgain.close(resolve));
+	}
+}
