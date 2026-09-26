@@ -62,6 +62,7 @@ assert.deepEqual([...elementByPath("shot.crud").actions].sort(), ["shot.create",
 const exposedThroughActions = {
 	"character.waypoints": ["character.addWaypoint", "character.clearWaypoints", "character.moveWaypoint", "character.removeWaypoint"],
 	"character.ikKeys": ["character.clearIkKeys", "character.removeIkKey", "character.setIkKey"],
+	"object.attach": ["object.attach", "object.detach"],
 };
 for (const [path, actions] of Object.entries(exposedThroughActions)) {
 	assert.equal(elementByPath(path).agentExposure, "action", `${path} is exposed through actions`);
@@ -131,6 +132,7 @@ function makeCase(entry) {
 		if (field === "name") input.name = "Authored prop";
 		if (field === "color") input.color = "#a1b2c3";
 		if (field === "parent") input.parent = "parent-object";
+		if (field === "attach") input.attach = { characterId: "char-test", bone: "rightHand" };
 		if (field === "path") input.path = { points: [{ x: 1, y: 0, z: 2 }, { x: 4, y: 1, z: 5 }] };
 		if (field === "cutout") Object.assign(input, { renderer: "cutout", assetId: "image-authored", aspect: 1.5, height: 2 });
 		return {
@@ -181,6 +183,7 @@ const expected = new Map([
 	["object.name", "Authored prop"],
 	["object.color", "#a1b2c3"],
 	["object.parent", "parent-object"],
+	["object.attach", { characterId: "char-test", bone: "rightHand" }],
 	["object.path", { points: [{ x: 1, y: 0, z: 2 }, { x: 4, y: 1, z: 5 }], timing: null, speed: 0, faceTravel: true, loop: false, extend: false }],
 	["object.cutout", "image-authored"],
 ]);

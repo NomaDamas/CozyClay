@@ -6,6 +6,7 @@ import { STUDIO_ACTIONS, STUDIO_ACTION_IDS, STUDIO_ACTION_KINDS, studioActionDec
 import { validateStudioCommand, validateStudioSchema } from "../src/studio-agent-protocol.js";
 import * as studioActions from "../src/studio-actions.js";
 import { FK_TRACKS, IK_TRACKS } from "../src/ardy/ik.js";
+import { SCENE_ATTACH_BONES } from "../src/scene-objects.js";
 
 const code = expected => error => error?.code === expected;
 
@@ -13,7 +14,8 @@ const code = expected => error => error?.code === expected;
 const firstBatch = ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
 const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"];
 const ikKeyActions = ["character.setIkKey", "character.removeIkKey", "character.clearIkKeys"];
-assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions].sort());
+const attachActions = ["object.attach", "object.detach"];
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions, ...attachActions].sort());
 assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job"]);
 assert.ok(Object.isFrozen(STUDIO_ACTIONS));
 for (const action of STUDIO_ACTIONS) {
@@ -68,6 +70,18 @@ assert.throws(() => validateStudioSchema(setIkKey, { ...ikArgs, tracks: { leftEl
 assert.throws(() => validateStudioSchema(setIkKey, { ...ikArgs, tracks: { head: { q: [{ x: 0, y: 0, z: 0 }] } } }), code("INVALID_ARGUMENT"), "a rotation is a full quaternion");
 assert.deepEqual([...studioActionDeclaration("character.removeIkKey").input.required].sort(), ["characterId", "frame"]);
 assert.deepEqual(studioActionDeclaration("character.clearIkKeys").input.required, ["characterId"]);
+// Attachment: an object rides a character's root or one of the store's attach bones.
+for (const id of attachActions) {
+	assert.equal(studioActionDeclaration(id).kind, "mutation", id);
+	assert.equal(studioActionDeclaration(id).undoDomain, "objects", id);
+}
+assert.deepEqual([...studioActions.STUDIO_ATTACH_BONES], [...SCENE_ATTACH_BONES]);
+const attach = studioActionDeclaration("object.attach").input;
+assert.deepEqual([...attach.required].sort(), ["characterId", "objectId"]);
+assert.deepEqual(validateStudioSchema(attach, { objectId: "cube-1", characterId: "char-a", bone: "rightHand" }), { objectId: "cube-1", characterId: "char-a", bone: "rightHand" });
+assert.deepEqual(validateStudioSchema(attach, { objectId: "cube-1", characterId: "char-a" }), { objectId: "cube-1", characterId: "char-a" }, "no bone is the animated root");
+assert.throws(() => validateStudioSchema(attach, { objectId: "cube-1", characterId: "char-a", bone: "tail" }), code("INVALID_ARGUMENT"));
+assert.deepEqual(studioActionDeclaration("object.detach").input.required, ["objectId"]);
 // Frame ranges are half-open, like every other Studio range.
 assert.deepEqual(Object.keys(studioActionDeclaration("shot.setRange").input.properties).sort(), ["range", "shotId"]);
 assert.throws(() => validateStudioSchema(studioActionDeclaration("shot.setRange").input, { shotId: "shot-1", range: { startFrame: 10, endFrameExclusive: 10 } }), code("INVALID_ARGUMENT"));
