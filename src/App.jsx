@@ -1599,9 +1599,7 @@ export default function App() {
 			if (Date.now() - insetToggledAtRef.current < 450) return; // a tag gesture already folded this double-click
 			const rect = pane.getBoundingClientRect();
 			if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return;
-			// Mount-time listener: the live inset state comes through the
-			// per-render action handlers.
-			runStudioAction("view.setInset", { collapsed: !studioActionHandlersRef.current.insetCollapsed });
+			setWorkspaceLayout((current) => ({ ...current, insetCollapsed: !current.insetCollapsed }));
 		};
 		window.addEventListener("dblclick", onDblClick);
 		return () => window.removeEventListener("dblclick", onDblClick);
@@ -1667,7 +1665,7 @@ export default function App() {
 		setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
 	}
 	/** Fold or unfold the Top-View inset: the Top button, the inset's own
-	 * toggle, its tag click and double-click, and run_action view.setInset. */
+	 * toggle, its tag click and run_action view.setInset. */
 	function setInsetCollapsed(collapsed) {
 		if (collapsed) setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
 		else expandInset();
@@ -3760,9 +3758,10 @@ export default function App() {
 	function clearShotCameraRail(shotId) {
 		const shot = liveStateRef.current.shots.find((entry) => entry.id === shotId);
 		if (!shot) throw new StudioProtocolError("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
-		const camera = createCameraBlock(shot.camera);
-		if (!camera.cameraRail) throw new StudioProtocolError("TARGET_NOT_READY", `${shot.name || shotId} has no camera rail.`);
-		changeActiveCamera(removeCameraRail(camera), shotId);
+		// The camera block being edited: this shot's, whichever shot is active.
+		const activeCamera = createCameraBlock(shot.camera);
+		if (!activeCamera.cameraRail) throw new StudioProtocolError("TARGET_NOT_READY", `${shot.name || shotId} has no camera rail.`);
+		changeActiveCamera(removeCameraRail(activeCamera), shotId);
 	}
 	function changeCameraRail(points) {
 		if (activeShot) runStudioAction("shot.setCameraRail", { shotId: activeShot.id, points: points.map(({ x, z }) => ({ x, z })) });
@@ -12482,7 +12481,6 @@ function resizePromptClip(id, edge, rawFrame) {
 		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject, setShotCameraRail, clearShotCameraRail,
 		choosePartColours, setGuideMode, setInsetCollapsed,
-		insetCollapsed: workspaceLayout.insetCollapsed,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
 	/** UI door into the shared registry. Refusal messages are written for the
