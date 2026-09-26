@@ -43,6 +43,7 @@ const NODE_FILES = [
 	"test/ardy/verify-root-drop.mjs",
 	"test/ardy/verify-surface-rise.mjs",
 	"test/ardy/verify-secure-artifacts.mjs",
+	"test/ardy/verify-motion-cors.mjs",
 	"test/ardy/verify-timeline-coordinates.mjs",
 	"test/ardy/verify-timeline-resize.mjs",
 	"test/demo/verify-demo-pages.mjs",
