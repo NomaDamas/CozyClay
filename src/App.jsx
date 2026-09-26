@@ -966,9 +966,14 @@ export function createStudioAppBinding(ports) {
 	// A candidate keeps the URL its artifact came from and the content id of its
 	// bytes: the install persists both in the motionRef, so a reload restores the
 	// take from the motion store even after the bridge has forgotten the run.
+	// The bytes come from the pinned absolute URL, but the take stores the bridge
+	// path a UI take stores: refine requests send it back as sourceMotion, and the
+	// bridge accepts only /ardy/motions/<id> there.
 	async function loadArtifact(artifact, options) {
 		const loaded = await ports.loadArtifact(artifact, options);
-		return { ...loaded, url: artifact.url, ...(loaded.sourceBytes ? { motionId: await sha256Hex(loaded.sourceBytes) } : {}) };
+		const path = new URL(artifact.url, "http://localhost").pathname;
+		const url = /^\/ardy\/(motions\/[0-9]+-[0-9a-f]{6}|assembled\/[A-Za-z0-9._-]+\.npz)$/.test(path) ? path : artifact.url;
+		return { ...loaded, url, ...(loaded.sourceBytes ? { motionId: await sha256Hex(loaded.sourceBytes) } : {}) };
 	}
 	function commitMotion(payload) {
 		const s = refresh(), beforeTake = s.targets.get(payload.binding.characterId)?.motion;
