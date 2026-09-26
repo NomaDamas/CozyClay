@@ -284,8 +284,12 @@ const implementations={
   assert.equal(result.status,'installed',JSON.stringify(result));
   const take=f.buffer.current.motion,installed=f.characterRef.current.find(c=>c.id==='actor-a');
   const motionId=await sha256Hex(npzBytes);
-  assert.deepEqual(installed.motionRef,{url:req.artifact.url,prompt:'Walk forward Stop and wave',rotationDeg:take.rotationDeg,anchorX:take.anchorX,anchorZ:take.anchorZ,calibration:take.sceneCalibration,studioTakeId:take.studioTakeId,motionId},'the install persists the same kind of motionRef a UI take gets');
+  assert.deepEqual(installed.motionRef,{url:new URL(req.artifact.url).pathname,prompt:'Walk forward Stop and wave',rotationDeg:take.rotationDeg,anchorX:take.anchorX,anchorZ:take.anchorZ,calibration:take.sceneCalibration,studioTakeId:take.studioTakeId,motionId},'the install persists the same kind of motionRef a UI take gets');
   assert.equal((await bounded(cached)).motionId,motionId,'the artifact bytes reach the motion store under the ref motionId');
+  // A UI take keeps the bridge path (/ardy/motions/<id>); refine requests send it
+  // back as sourceMotion and the bridge accepts only that path form.
+  assert.equal(take.url,new URL(req.artifact.url).pathname,'the installed take keeps the bridge path a refine request sends back');
+  assert.match(take.url,/^\/ardy\/motions\/[0-9]+-[0-9a-f]{6}$/,'the stored take url is the shape the bridge edit endpoints accept');
   assert(f.actual.stepStudioHistory(false));assert.deepEqual(f.characterRef.current.find(c=>c.id==='actor-a').motionRef,priorRef,'Undo restores the previous motionRef');
   assert(f.actual.stepStudioHistory(true));assert.deepEqual(f.characterRef.current.find(c=>c.id==='actor-a').motionRef,installed.motionRef,'Redo restores the installed motionRef');
   // Reload: the saved scene keeps every field but the session motion, the motion
