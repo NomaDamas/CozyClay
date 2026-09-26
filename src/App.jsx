@@ -666,6 +666,9 @@ export function createStudioAppActions(handlersRef) {
 	shotAction("shot.duplicate", hasShots, ({ shotId }) => { shotOf(shotId); h().duplicateTimelineShot(shotId); });
 	shotAction("shot.remove", hasShots, ({ shotId }) => { shotOf(shotId); h().removeTimelineShot(shotId); });
 	shotAction("shot.setRange", hasShots, ({ shotId, range }) => { shotOf(shotId); h().setTimelineShotRange(shotId, range.startFrame, range.endFrameExclusive - 1); });
+	shotAction("shot.setCameraRail", hasShots, ({ shotId, points }) => { shotOf(shotId); h().setShotCameraRail(shotId, points); });
+	shotAction("shot.clearCameraRail", state => state.shots.some(shot => createCameraBlock(shot.camera).cameraRail) || "No shot has a camera rail; lay one with shot.setCameraRail.",
+		({ shotId }) => { shotOf(shotId); h().clearShotCameraRail(shotId); });
 	shotAction("shot.reorder", hasShots, ({ shotId, startFrame }) => { shotOf(shotId); h().moveTimelineShot(shotId, startFrame); });
 	registry.register({ ...studioActionDeclaration("motion.generateAllBlocks"),
 		available: state => state.generating ? "A motion generation is already running."
@@ -3604,7 +3607,8 @@ export default function App() {
 		// Every camera-block commit (mode switch, rail draw, rail delete, lens
 		// patch) funnels through here, so this is where the shot snapshot goes.
 		// No shot resolved means the setShots below is a no-op — record nothing.
-		if (!shots.some((shot) => shot.id === shotId)) return;
+		// The live read model, so a run_action edit sees the shots of the same tick.
+		if (!liveStateRef.current.shots.some((shot) => shot.id === shotId)) return;
 		// A framing capture in the same gesture (rail draw toggle, Follow switch
 		// re-measure) already snapshotted the pre-gesture shots, so this commit
 		// joins that entry instead of pushing a second one for one click.
@@ -3722,13 +3726,28 @@ export default function App() {
 		// a second entry for one edit.
 		if (kind === "prompt-text") recordSessionUndo(promptTextSessionRef, `prompt-text:${id}`);
 	}
-	function changeCameraRail(points) {
-		if (Array.isArray(points) && points.length >= 2) window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "rail" } }));
+	/* One camera-rail core for every shot, shared by the Top-View rail stroke,
+	 * the Delete rail button and run_action. */
+	function setShotCameraRail(shotId, points) {
+		const shot = liveStateRef.current.shots.find((entry) => entry.id === shotId);
+		if (!shot) throw new StudioProtocolError("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
+		const camera = createCameraBlock(shot.camera);
+		window.dispatchEvent(new CustomEvent("cozyclay:playground-signal", { detail: { kind: "rail" } }));
 		changeActiveCamera({
-			cameraRail: points,
-			railFollow: points ? railFollowForNewGeometry(activeCamera.railFollow, activeShotDuration) : null,
-			mode: points ? "rail" : activeCamera.mode === "rail" ? "follow" : activeCamera.mode,
-		});
+			cameraRail: points.map(({ x, z }) => ({ x, z })),
+			railFollow: railFollowForNewGeometry(camera.railFollow, shot.endFrame - shot.startFrame + 1),
+			mode: "rail",
+		}, shotId);
+	}
+	function clearShotCameraRail(shotId) {
+		const shot = liveStateRef.current.shots.find((entry) => entry.id === shotId);
+		if (!shot) throw new StudioProtocolError("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
+		const camera = createCameraBlock(shot.camera);
+		if (!camera.cameraRail) throw new StudioProtocolError("TARGET_NOT_READY", `${shot.name || shotId} has no camera rail.`);
+		changeActiveCamera(removeCameraRail(camera), shotId);
+	}
+	function changeCameraRail(points) {
+		if (activeShot) runStudioAction("shot.setCameraRail", { shotId: activeShot.id, points: points.map(({ x, z }) => ({ x, z })) });
 	}
 	function toggleCameraRailDraw() {
 		if (!activeShot || waypointMode) return;
@@ -3751,9 +3770,9 @@ export default function App() {
 		}
 	}
 	function deleteCameraRail() {
-		if (!cameraRail) return;
+		if (!cameraRail || !activeShot) return;
 		setRailDraw(false);
-		changeActiveCamera(removeCameraRail(activeCamera));
+		if (!runStudioAction("shot.clearCameraRail", { shotId: activeShot.id })) return;
 		setToast(ko("Camera rail deleted — Follow keeps the current distance", "카메라 레일 삭제됨 — 팔로우가 현재 거리를 유지합니다"));
 	}
 	function previewCameraShot(shotId) {
@@ -12443,7 +12462,7 @@ function resizePromptClip(id, edge, rawFrame) {
 		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
 		runAllPromptBlocks, duplicateSelectedSceneObject,
 		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
-		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject,
+		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject, setShotCameraRail, clearShotCameraRail,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
 	/** UI door into the shared registry. Refusal messages are written for the

@@ -56,7 +56,7 @@ const entries = [
 	{ path: "stage.camera", type: "enum", persisted: true, undoDomain: "stage", agentExposure: "patch", normalizer: "createSceneStage", enum: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7", "fal 480P"], note: "shotAspect/cameraPresetId/sensorId" },
 	{ path: "shot.crud", type: "array", persisted: true, undoDomain: "shot", agentExposure: "action", normalizer: null, actions: ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder"], note: "create/split/duplicate/reorder/remove/range through the shared action registry" },
 	{ path: "shot.cameraKeys", type: "array", persisted: true, undoDomain: "shot", agentExposure: "patch", normalizer: null, frameMin: 0 },
-	{ path: "shot.cameraRail", type: "array", persisted: true, undoDomain: "shot", agentExposure: "todo", normalizer: "repairCamera", note: "rail/crane/dolly timing; agent exposure gap" },
+	{ path: "shot.cameraRail", type: "array", persisted: true, undoDomain: "shot", agentExposure: "action", normalizer: "repairCamera", actions: ["shot.setCameraRail", "shot.clearCameraRail"], note: "rail points; crane/dolly timing follow the shot's camera block" },
 	{ path: "shot.targetModel", type: "id", persisted: true, undoDomain: "shot", agentExposure: "patch", normalizer: "repairCamera" },
 	{ path: "shot.freeCamera", type: "vec3", persisted: false, undoDomain: "shot", agentExposure: "readonly", normalizer: null, note: "transient until keyed" },
 	{ path: "scenes", type: "array", persisted: true, undoDomain: null, agentExposure: "composite", normalizer: null },
