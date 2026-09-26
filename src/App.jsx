@@ -1053,8 +1053,16 @@ export function createStudioAppBinding(ports) {
 		handlers[name] = request => {
 			refresh(); const currentMotion = motion, currentJournal = journal;
 			const run = () => currentMotion[name](request);
+			// The job list is the model's view of each candidate, so it names the
+			// step in flight now. A verified candidate goes straight to commit; an
+			// unverified one waits on repair, the install policy or the user's accept
+			// (review_required until that next command arrives).
+			const job = jobs.get(request.commandId);
+			if (job && name === "verify_motion_candidate") jobs.set(request.commandId, { ...job, state: "verifying" });
+			if (job && name === "repair_motion_candidate") jobs.set(request.commandId, { ...job, state: "repairing" });
 			const finish = result => {
 				if (name === "prepare_motion_install" && result?.candidateId) jobs.set(request.commandId, { id: request.jobId, characterId: request.binding.characterId, state: "preparing" });
+				if (name === "verify_motion_candidate" && result?.verificationId && jobs.has(request.commandId)) jobs.set(request.commandId, { ...jobs.get(request.commandId), state: result.status === "verified" ? "committing" : "review_required" });
 				if (result?.ok === false || ["commit_motion_candidate", "discard_motion_candidate", "cancel_motion_install"].includes(name)) jobs.delete(request.commandId);
 				return remember(result);
 			};
