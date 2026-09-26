@@ -757,6 +757,12 @@ export function createStudioAppActions(handlersRef) {
 			h().attachSceneObject(objectId, null);
 			return { affectedIds: [objectId], summary: `Put ${object.name || objectId} back in the world where it is now.` };
 		} });
+	// Viewer preferences: transient, like the View menu they mirror.
+	const viewAction = (id, run) => registry.register({ ...studioActionDeclaration(id), available: () => true,
+		run: args => ({ affectedIds: [], summary: run(args) }) });
+	viewAction("view.setPartColours", ({ mode }) => { h().choosePartColours(mode); return `Part colours: ${mode}.`; });
+	viewAction("view.setGuideMode", ({ mode }) => { h().setGuideMode(mode); return `Composition guide: ${mode}.`; });
+	viewAction("view.setInset", ({ collapsed }) => { h().setInsetCollapsed(collapsed); return `Top-View inset ${collapsed ? "folded" : "unfolded"}.`; });
 	registry.register({ ...studioActionDeclaration("object.duplicate"),
 		available: state => state.objects.length > 0 || "There are no scene objects to duplicate.",
 		run: ({ objectId }) => {
@@ -1593,7 +1599,9 @@ export default function App() {
 			if (Date.now() - insetToggledAtRef.current < 450) return; // a tag gesture already folded this double-click
 			const rect = pane.getBoundingClientRect();
 			if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) return;
-			setWorkspaceLayout((current) => ({ ...current, insetCollapsed: !current.insetCollapsed }));
+			// Mount-time listener: the live inset state comes through the
+			// per-render action handlers.
+			runStudioAction("view.setInset", { collapsed: !studioActionHandlersRef.current.insetCollapsed });
 		};
 		window.addEventListener("dblclick", onDblClick);
 		return () => window.removeEventListener("dblclick", onDblClick);
@@ -1637,8 +1645,7 @@ export default function App() {
 			// flicker-toggles the inset.
 			if (!moved && ev.detail <= 1) {
 				insetToggledAtRef.current = Date.now();
-				if (workspaceLayout.insetCollapsed) expandInset();
-				else setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+				runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
 			}
 		};
 		window.addEventListener("pointermove", onMove);
@@ -1658,6 +1665,17 @@ export default function App() {
 			setInsetPos((pos) => (pos ? { x: Math.min(pos.x, maxX), y: Math.min(pos.y, maxY) } : pos));
 		}
 		setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
+	}
+	/** Fold or unfold the Top-View inset: the Top button, the inset's own
+	 * toggle, its tag click and double-click, and run_action view.setInset. */
+	function setInsetCollapsed(collapsed) {
+		if (collapsed) setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+		else expandInset();
+	}
+	/** The View menu's part colours: "off", "flat" or "shaded". */
+	function choosePartColours(mode) {
+		setPartColoursEnabled(mode !== "off");
+		if (mode !== "off") setPartColoursMode(mode);
 	}
 
 	function beginInsetResize(e) {
@@ -6906,7 +6924,7 @@ export default function App() {
 		toggleCameraLock: () => setFalMotionCameraUnlocked((value) => !value),
 		restoreCamera: restoreFalCamera,
 		generate: (kind) => void generateFalMotion(kind),
-		enableShaded: () => { setPartColoursEnabled(true); setPartColoursMode("shaded"); },
+		enableShaded: () => runStudioAction("view.setPartColours", { mode: "shaded" }),
 	};
 	const viewLooksActive = gridView || autoColor || partColoursEnabled;
 	const rigSelection = parseRigNodeId(selectedHierarchyId);
@@ -12463,6 +12481,8 @@ function resizePromptClip(id, edge, rawFrame) {
 		runAllPromptBlocks, duplicateSelectedSceneObject,
 		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints,
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject, setShotCameraRail, clearShotCameraRail,
+		choosePartColours, setGuideMode, setInsetCollapsed,
+		insetCollapsed: workspaceLayout.insetCollapsed,
 	};
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
 	/** UI door into the shared registry. Refusal messages are written for the
@@ -12877,8 +12897,7 @@ function resizePromptClip(id, edge, rawFrame) {
 							aria-pressed={!workspaceLayout.insetCollapsed}
 							className="workflow-scene-context workflow-camera-context"
 							onClick={() => {
-								if (workspaceLayout.insetCollapsed) expandInset();
-								else setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+								runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
 							}}
 						>
 							{ko("Top", "탑")} {workspaceLayout.insetCollapsed ? "▸" : "▾"}
@@ -12970,10 +12989,7 @@ function resizePromptClip(id, edge, rawFrame) {
 														className={"view-menu-item part-colour-option" + (checked ? " active" : "")}
 														data-part-colours={option.value}
 														aria-checked={checked}
-														onClick={() => {
-															setPartColoursEnabled(option.value !== "off");
-															if (option.value !== "off") setPartColoursMode(option.value);
-														}}
+														onClick={() => runStudioAction("view.setPartColours", { mode: option.value })}
 													>
 														<span className="view-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
 														{option.label}
@@ -13606,8 +13622,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									onClick={(e) => {
 										if (e.detail > 1) return;
 										insetToggledAtRef.current = Date.now();
-										if (workspaceLayout.insetCollapsed) expandInset();
-										else setWorkspaceLayout((current) => ({ ...current, insetCollapsed: true }));
+										runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
 									}}
 								>
 									{workspaceLayout.insetCollapsed ? "▸" : "▾"}
@@ -13642,7 +13657,7 @@ function resizePromptClip(id, edge, rawFrame) {
 									className={"vp-guide-cycle" + (guideMode === "off" ? "" : " on")}
 									aria-label={ko("Cycle composition guides", "구도 가이드 전환")}
 									title={ko(GUIDE_LABELS[guideMode].en, GUIDE_LABELS[guideMode].ko) + ko(" · click to cycle", " · 클릭으로 전환")}
-									onClick={() => setGuideMode((mode) => nextGuideMode(mode))}
+									onClick={() => runStudioAction("view.setGuideMode", { mode: nextGuideMode(guideMode) })}
 								>
 									<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
 										<path d="M3 3h18v18H3z" />

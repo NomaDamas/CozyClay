@@ -32,6 +32,8 @@ const ikTracks = input({}, Object.fromEntries([...STUDIO_IK_CHAIN_TRACKS, ...STU
 /** The bones an object can ride (src/scene-objects.js SCENE_ATTACH_BONES). */
 export const STUDIO_ATTACH_BONES = freezeStudioData(["hips", "spine", "chest", "neck", "head", "leftShoulder", "leftElbow", "leftHand",
 	"rightShoulder", "rightElbow", "rightHand", "leftKnee", "leftFoot", "rightKnee", "rightFoot"]);
+/** The shot frame's composition guides (src/shot-guides.js GUIDE_MODES). */
+const GUIDE_MODES = freezeStudioData(["off", "thirds", "golden", "center", "safe"]);
 const WAYPOINT_RULES = "Pins sit at least 8 frames apart, the walk between two pins must stay within 0.5-3 m/s, and x/z are clamped to +/-11 m; a pin that breaks a rule is refused with the frame or distance that would work.";
 
 export const STUDIO_ACTIONS = freezeStudioData([
@@ -73,6 +75,12 @@ export const STUDIO_ACTIONS = freezeStudioData([
 		description: "Make a scene object ride a character, like dropping it on the character's Hierarchy row: on one bone (a cup in the right hand: bone \"rightHand\") or, with bone omitted, on the character's animated root so it travels with the body. The object keeps its place on screen: its position, rotation and scale are rewritten into the new frame (local to that bone while attached), and it leaves any group. Needs the character's rig on stage." },
 	{ id: "object.detach", label: "Detach object", kind: "mutation", undoDomain: "objects", input: input({ objectId: idSchema }),
 		description: "Put an attached or grouped object back in the world where it is now, like the Inspector's Detach or dropping it on the Props row: it stops following the character, keeps its current world placement and leaves any group." },
+	{ id: "view.setPartColours", label: "Part colours", kind: "transient", input: input({ mode: { type: "string", enum: ["off", "flat", "shaded"] } }),
+		description: "Paint the characters in stable per-body-part colours (the View menu's Part colours): flat colours, shaded colours that keep the surface lighting (the look motion reading from a frame needs), or off. A viewer setting: never saved in the scene or undone." },
+	{ id: "view.setGuideMode", label: "Composition guides", kind: "transient", input: input({ mode: { type: "string", enum: GUIDE_MODES } }),
+		description: "Show a composition guide over the shot frame: rule of thirds, golden ratio, center cross, safe areas, or off. Overlay only, never in exported pixels; a viewer setting that is never undone." },
+	{ id: "view.setInset", label: "Top-View inset", kind: "transient", input: input({ collapsed: { type: "boolean" } }),
+		description: "Fold (collapsed: true) or unfold the Top-View inset pane over the viewport. A viewer setting that is never undone." },
 	{ id: "object.duplicate", label: "Duplicate object", kind: "mutation", undoDomain: "objects", input: input({}, { objectId: idSchema }),
 		description: "Copy a scene object (the selected one when objectId is omitted) and place the copy half a metre beside it." },
 ]);
