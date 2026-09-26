@@ -4,7 +4,7 @@ import { STUDIO_ELEMENTS } from "./studio-elements.js";
 export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
 export const STUDIO_CONTEXT_MAX_BYTES = 16 * 1024;
 export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, shots: 8, assets: 6, recentReceipts: 3, jobs: 8 });
-export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit"]);
+export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"]);
 export const STUDIO_TOOL_LABELS = Object.freeze({
 	inspect_studio: "Read the scene",
 	operate_studio: "Selection and view",
@@ -15,6 +15,7 @@ export const STUDIO_TOOL_LABELS = Object.freeze({
 	generate_motion: "Generate motion",
 	verify_result: "Verify the result",
 	undo_edit: "Undo an edit",
+	run_action: "Run an editor action",
 });
 /** One patch target kind per authored commit domain: character→cast,
  * object→objects, shot→shot, stage→stage. */
@@ -32,7 +33,7 @@ export const STUDIO_VARIANTS = freezeStudioData({
 	framingViews: ["front", "front three-quarter", "profile", "rear three-quarter", "back"], framingLevels: ["ground", "low", "hip", "eye", "high", "overhead"],
 	framingSides: ["left", "right"], positionSides: ["left", "right", "front", "behind"], positionBases: ["world", "subject", "shot_camera"], collisionPolicies: ["report", "avoid"],
 	objectOps: ["create", "update", "remove", "group", "ungroup"], characterOps: ["create", "update", "remove"],
-	inspectScopes: ["selection", "scene", "entities", "shot", "motion", "catalogue"], receiptStatuses: ["applied", "partial", "noop", "transient", "installed", "undone"],
+	inspectScopes: ["selection", "scene", "entities", "shot", "motion", "catalogue", "actions"], receiptStatuses: ["applied", "partial", "noop", "transient", "installed", "undone"],
 	opStatuses: ["applied", "partial", "noop"],
 	jobStates: ["queued", "generating", "preparing", "verifying", "repairing", "committing", "reconciling", "installed", "review_required", "failed", "cancelled", "stale_target", "stale_environment"],
 });
@@ -59,6 +60,9 @@ const nullable = schema => ({ oneOf: [schema, { type: "null" }] });
 const array = (items, maxItems, minItems = 0, uniqueItems = false) => ({ type: "array", items, minItems, maxItems, ...(uniqueItems ? { uniqueItems } : {}) });
 const object = (required, optional = {}) => ({ type: "object", properties: { ...required, ...optional }, required: Object.keys(required), additionalProperties: false });
 const union = (...oneOf) => ({ oneOf });
+// Arguments whose schema lives elsewhere (a registered Studio action declares
+// its own input and validates it where it runs): any JSON object, detached.
+const openObject = { type: "object", properties: {}, required: [], additionalProperties: true };
 const id = { ...text(), pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]*$" };
 const uuidSchema = { ...text(36), pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" };
 export const isUuid = value => typeof value === "string" && new RegExp(uuidSchema.pattern).test(value);
@@ -185,6 +189,7 @@ const toolSchemas = {
 	generate_motion: object({ characterId: id, source }, { repair: { ...choices(["bounded", "none"]), default: "bounded" } }),
 	verify_result: object({ checks: array(choices(["placement", "framing", "motion"]), 3, 1, true) }, { receiptId: id, targets: ids(), range: union(literal("whole_clip"), range), visual: { ...choices(["none", "frame", "contact_sheet"]), default: "none" } }),
 	undo_edit: object({ receiptId: id }),
+	run_action: object({ action: id }, { args: openObject }),
 };
 export const STUDIO_TOOL_SCHEMAS = freezeStudioData(toolSchemas);
 export const STUDIO_CATALOGUE = freezeStudioData(STUDIO_TOOL_FAMILIES.map(name => ({ name, slice: 1, parameters: toolSchemas[name] })));
@@ -211,7 +216,7 @@ const contextSchema = object({
 	entities: array(entity, 24), entityPage: object({ returned: integer(0, 24), total: integer(), truncated: bool, nextCursor: nullable(text(512)) }),
 	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, 6),
 	recentReceipts: array(object({ id, summary: name, canUndoDirect: bool }), 3), jobs: array(jobSummary, 8),
-	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), 9, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
+	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), STUDIO_TOOL_FAMILIES.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
 });
 const guardSchema = object({ ...identityFields, targetId: id, token: id });
 const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -248,11 +253,13 @@ const batchDetails = { counts: object({ created: integer(), updated: integer(), 
 // which lost a field to a domain normalizer, and exactly which paths were lost.
 const opResults = array(object({ index: integer(), status: choices(STUDIO_VARIANTS.opStatuses) }, { droppedPaths: array(text(120), 32, 1) }), 32, 1);
 const authoredReceipt = { ...receiptBase, authored: literal(true), undo };
+// A run_action receipt names the registered action and what it did.
+const actionFields = { action: id, summary: text(240) };
 const receiptVariants = {
-	applied: object({ ...authoredReceipt, status: literal("applied") }, { mutated: literal(true), ops: opResults, ...batchDetails }),
+	applied: object({ ...authoredReceipt, status: literal("applied") }, { mutated: literal(true), ops: opResults, ...batchDetails, ...actionFields }),
 	partial: object({ ...authoredReceipt, status: literal("partial"), ops: opResults }, { mutated: literal(true), ...batchDetails }),
-	noop: object({ ...receiptBase, status: literal("noop"), authored: literal(false), mutated: literal(false), undo: literal(null) }, { ops: opResults }),
-	transient: object({ ...receiptBase, status: literal("transient"), authored: literal(false), view: revisions, undo: literal(null) }, { mutated: bool }),
+	noop: object({ ...receiptBase, status: literal("noop"), authored: literal(false), mutated: literal(false), undo: literal(null) }, { ops: opResults, ...actionFields }),
+	transient: object({ ...receiptBase, status: literal("transient"), authored: literal(false), view: revisions, undo: literal(null) }, { mutated: bool, ...actionFields }),
 	installed: object({ ...authoredReceipt, status: literal("installed"), jobId: id, artifactId: id, installed, verification }, {
 		// Who accepted an unverified take: the user's explicit button, or the
 		// runtime's advisory install policy. Exactly these two may admit one.
@@ -300,8 +307,10 @@ export function validateStudioSchema(schema, value, code = "INVALID_ARGUMENT", p
 	if (schema.type === "null") { if (value !== null) fail(code, "Expected null.", path); return null; }
 	if (schema.type === "object") {
 		if (!record(value)) fail(code, "Expected object.", path);
-		for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties, key)) fail(code, "Unexpected field.", path);
+		const open = schema.additionalProperties === true;
+		for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties, key) && !open) fail(code, "Unexpected field.", path);
 		const result = {};
+		if (open) for (const key of Object.keys(value)) if (!Object.hasOwn(schema.properties, key)) result[key] = structuredClone(value[key]);
 		for (const [key, child] of Object.entries(schema.properties)) {
 			if (Object.hasOwn(value, key)) result[key] = validateStudioSchema(child, value[key], code, `${path}.${key}`);
 			else if (schema.required.includes(key)) fail(code, "Required field missing.", `${path}.${key}`);

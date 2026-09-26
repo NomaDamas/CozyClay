@@ -148,7 +148,7 @@ const CANVAS_TOOL_LABELS = {
 	add_reference_node: "Add reference image",
 };
 
-/** The nine Studio families, named for what they do to the scene. The Studio
+/** The Studio families, named for what they do to the scene. The Studio
  * is bilingual, so these go through ko() like every other Studio label. */
 const STUDIO_TOOL_LABELS = {
 	inspect_studio: ko("Read the scene", "\uC7A5\uBA74 \uC77D\uAE30"),
@@ -160,6 +160,7 @@ const STUDIO_TOOL_LABELS = {
 	generate_motion: ko("Generate motion", "\uBAA8\uC158 \uC0DD\uC131"),
 	verify_result: ko("Verify the result", "\uACB0\uACFC \uAC80\uC99D"),
 	undo_edit: ko("Undo an edit", "\uD3B8\uC9D1 \uB418\uB3CC\uB9AC\uAE30"),
+	run_action: ko("Run an editor action", "\uD3B8\uC9D1\uAE30 \uB3D9\uC791 \uC2E4\uD589"),
 };
 
 /**

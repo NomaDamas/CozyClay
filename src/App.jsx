@@ -60,6 +60,7 @@ import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, valida
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateStudioCommand, validateStudioIdentity, validateReceipt } from "./studio-agent-protocol.js";
 import { elementByPath } from "./studio-elements.js";
 import { createStudioCommands, createStudioCommandJournal, studioObjectCatalogue } from "./studio-agent-commands.js";
+import { createStudioActionRegistry, studioActionDeclaration } from "./studio-actions.js";
 import { createStudioMotionCandidates } from "./studio-agent-motion.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 import HierarchyPanel from "./hierarchy-panel.jsx";
@@ -623,6 +624,75 @@ async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIM
 	}
 }
 
+/** The editor's Studio actions: ONE registry whose entries call the same
+ * handlers the UI controls call, so a timeline button and the agent's
+ * run_action share one code path. `handlersRef.current` is refreshed on every
+ * render, so a run always reaches the latest handlers; `state()` reads the
+ * synchronously published document, so the diff below sees the edit at once. */
+export function createStudioAppActions(handlersRef) {
+	const h = () => handlersRef.current;
+	const registry = createStudioActionRegistry({ readState: () => h().state() });
+	const fail = (code, message) => { throw new StudioProtocolError(code, message); };
+	const changedIds = (before, after) => [...new Set([
+		...after.filter(row => !before.includes(row)).map(row => row.id),
+		...before.filter(row => !after.some(next => next.id === row.id)).map(row => row.id),
+	])];
+	const shotLabel = shot => `${shot.name} [${shot.startFrame}, ${shot.endFrame + 1})`;
+	const hasShots = state => state.shots.length > 0 || "There are no shots yet; add one with shot.create.";
+	const shotOf = shotId => h().state().shots.find(shot => shot.id === shotId) ?? fail("STALE_TARGET", `Shot ${shotId} is not in this scene.`);
+	const shotAction = (id, available, run) => {
+		const { label } = studioActionDeclaration(id);
+		registry.register({ ...studioActionDeclaration(id), available, run: args => {
+			const before = h().state().shots;
+			run(args);
+			const after = h().state().shots, affectedIds = changedIds(before, after);
+			const described = affectedIds.map(shotId => {
+				const shot = after.find(row => row.id === shotId);
+				return shot ? shotLabel(shot) : `${before.find(row => row.id === shotId)?.name ?? shotId} removed`;
+			});
+			return { affectedIds, summary: affectedIds.length ? `${label}: ${described.join("; ")}.` : `${label}: nothing changed.` };
+		} });
+	};
+	shotAction("shot.create", state => addShotAtFrame(state.shots, state.frame, state.frameCount, null) !== state.shots
+		|| `There is no free room for a new shot at the playhead (frame ${state.frame}); move it with operate_studio { frame } or shorten a shot.`,
+	() => h().addTimelineShot());
+	shotAction("shot.split", state => state.shots.some(shot => state.frame > shot.startFrame && state.frame <= shot.endFrame)
+		|| `The playhead (frame ${state.frame}) is not inside a shot after its first frame; move it with operate_studio { frame }.`,
+	({ shotId }) => {
+		const shot = shotOf(shotId), { frame } = h().state();
+		if (frame <= shot.startFrame || frame > shot.endFrame) fail("TARGET_NOT_READY", `The playhead (frame ${frame}) is not inside ${shot.name} after its first frame.`);
+		h().splitTimelineShot(shotId);
+	});
+	shotAction("shot.duplicate", hasShots, ({ shotId }) => { shotOf(shotId); h().duplicateTimelineShot(shotId); });
+	shotAction("shot.remove", hasShots, ({ shotId }) => { shotOf(shotId); h().removeTimelineShot(shotId); });
+	shotAction("shot.setRange", hasShots, ({ shotId, range }) => { shotOf(shotId); h().setTimelineShotRange(shotId, range.startFrame, range.endFrameExclusive - 1); });
+	shotAction("shot.reorder", hasShots, ({ shotId, startFrame }) => { shotOf(shotId); h().moveTimelineShot(shotId, startFrame); });
+	registry.register({ ...studioActionDeclaration("motion.generateAllBlocks"),
+		available: state => state.generating ? "A motion generation is already running."
+			: !state.motionReady ? "The motion backend is not ready."
+				: state.promptBlockCount === 0 ? "The active character has no prompt block with text; write them with patch_elements character.promptBlocks." : true,
+		run: () => {
+			const { activeCharacterId, promptBlockCount } = h().state();
+			h().runAllPromptBlocks();
+			// The generation queues synchronously or not at all; the editor's toast
+			// names the refusal (rig not loaded, over-long block, line-edit draft).
+			if (!h().state().generating) fail("TARGET_NOT_READY", "The editor did not start the generation; check the active character's rig and prompt blocks.");
+			return { affectedIds: activeCharacterId ? [activeCharacterId] : [], summary: `Started generating the active character's motion from ${promptBlockCount} prompt block${promptBlockCount === 1 ? "" : "s"}.` };
+		} });
+	registry.register({ ...studioActionDeclaration("object.duplicate"),
+		available: state => state.objects.length > 0 || "There are no scene objects to duplicate.",
+		run: ({ objectId }) => {
+			const state = h().state(), id = objectId ?? state.selectedObjectId;
+			if (!id) fail("TARGET_NOT_READY", "Name objectId or select an object first.");
+			const source = state.objects.find(object => object.id === id) ?? fail("STALE_TARGET", `Object ${id} is not in this scene.`);
+			h().duplicateSelectedSceneObject(id);
+			const after = h().state().objects, affectedIds = changedIds(state.objects, after);
+			const copy = after.find(object => affectedIds.includes(object.id));
+			return { affectedIds, summary: copy ? `Duplicated ${source.name || source.id} as ${copy.name || copy.id}.` : "Duplicate object: nothing changed." };
+		} });
+	return registry;
+}
+
 // App-owned adapter: the merged command/candidate modules remain the only
 // planners and validators. Ports below publish through the native editor stores.
 export function createStudioAppBinding(ports) {
@@ -789,6 +859,51 @@ export function createStudioAppBinding(ports) {
 		if (s.busy) fail("TARGET_BUSY", "Finish the current editor gesture first.");
 		return s;
 	}
+	/** Actual state of one action target after it ran. */
+	function actionReadback(id, s) {
+		const shot = s.shots.find(row => row.id === id);
+		if (shot) return { name: shot.name || shot.id, range: { startFrame: shot.startFrame, endFrameExclusive: shot.endFrame + 1 } };
+		const entity = s.objects.find(row => row.id === id) ?? s.characters.find(row => row.id === id);
+		if (entity) return { name: entity.name || entity.subject || entity.id, position: { x: entity.x, y: entity.y ?? 0, z: entity.z } };
+		return { removed: true };
+	}
+	/** One registered Studio action, run for the agent through the same
+	 * registry the UI controls call. A mutation is bound to the native history
+	 * entry it pushed, so its receipt is an ordinary journal receipt that
+	 * undo_edit reverts; a job answers "started" and lands later. */
+	function runAction(request, args, s) {
+		const registry = ports.actions?.();
+		if (!registry) fail("CAPABILITY_MISSING", "This editor registers no Studio actions.");
+		const entry = registry.get(args.action);
+		const base = { commandId: request.commandId, receiptId: crypto.randomUUID(), host: s.host, action: entry.id, checks: { coverage: `studio-action:${entry.id}` }, warnings: [] };
+		if (entry.kind === "job") {
+			const result = registry.run(entry.id, args.args);
+			return { ok: true, commandId: request.commandId, action: entry.id, kind: "job", status: "started", affectedIds: result.affectedIds, summary: result.summary };
+		}
+		if (entry.kind === "transient") {
+			const result = registry.run(entry.id, args.args), after = refresh();
+			return journal.record(validateReceipt({ ...base, ok: true, status: "transient", authored: false, summary: result.summary,
+				revision: { before: s.revision, after: s.revision }, view: { before: s.viewRevision, after: after.viewRevision }, affectedIds: [s.host.sceneId],
+				delta: [{ id: s.host.sceneId, after: { selection: after.selection, activeCharacterId: after.activeCharacterId, shotId: after.selectedShotId, view: after.view } }], undo: null }));
+		}
+		const { result, historyEntryId } = ports.recordAction(entry.undoDomain, () => registry.run(entry.id, args.args));
+		const after = refresh(), ids = result.affectedIds;
+		if (after.revision === s.revision) {
+			return remember(journal.record(validateReceipt({ ...base, ok: true, status: "noop", authored: false, mutated: false, summary: result.summary,
+				revision: { before: s.revision, after: s.revision }, affectedIds: [], delta: [], undo: null })));
+		}
+		if (!historyEntryId || !ids.length || after.revision !== s.revision + 1) {
+			// The document changed without one attributable history entry: say so
+			// instead of pretending nothing happened.
+			return journal.record(validateReceipt({ ok: false, commandId: request.commandId, host: s.host, code: "UNCERTAIN_APPLY", phase: "commit",
+				affectedIds: ids.slice(0, 100), expectedTargets: [], currentTargets: [], mutated: true, preserved: { authoredState: "changed" },
+				recovery: { action: "inspect", retryAllowed: false }, message: `${entry.id} changed the scene without one undoable entry.` }));
+		}
+		return remember(journal.record(validateReceipt({ ...base, ok: true, status: "applied", authored: true, mutated: true, summary: result.summary,
+			revision: { before: s.revision, after: after.revision }, affectedIds: ids,
+			delta: ids.slice(0, 8).map(id => ({ id, after: actionReadback(id, after) })),
+			undo: { historyEntryId, entries: 1, canUndoDirect: true }, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) })));
+	}
 	function execute(request) {
 		refresh();
 		if (["arrange_objects", "arrange_characters", "frame_shot", "patch_elements"].includes(request.name)) {
@@ -802,6 +917,7 @@ export function createStudioAppBinding(ports) {
 		try {
 			if (!journal.begin(request.commandId, signature)) return journal.get(request.commandId);
 			const { args } = validateStudioCommand({ name: request.name, args: request.args }), s = admit(request);
+			if (request.name === "run_action") return runAction(request, args, s);
 			if (request.name === "operate_studio") {
 				ports.operate(args, s); const after = refresh();
 				return journal.record(validateReceipt({ ok: true, status: "transient", authored: false, commandId: request.commandId,
@@ -847,6 +963,9 @@ export function createStudioAppBinding(ports) {
 		inspect_studio(args) {
 			const command = validateStudioCommand({ name: "inspect_studio", args }); const c = context();
 			if (command.args.scope === "catalogue") return studioObjectCatalogue();
+			// Discovery for run_action: every registered action, available ones with
+			// their description and input schema, unavailable ones with the reason.
+			if (command.args.scope === "actions") return { context: c, actions: ports.actions?.()?.list() ?? [] };
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
 			const s = refresh(), all = entityProjection(s);
@@ -863,6 +982,7 @@ export function createStudioAppBinding(ports) {
 		generate_motion: () => fail("CAPABILITY_MISSING", "Use the server-owned Studio generation route."),
 		verify_result: request => execute({ ...request, name: "verify_result" }),
 		undo_edit: request => execute({ ...request, name: "undo_edit" }),
+		run_action: request => execute({ ...request, name: "run_action" }),
 		resolve_studio_image(request) {
 			refresh(); const image = images.get(request.imageId);
 			if (!image || (request.receiptId && request.receiptId !== image.receiptId) || (request.revision !== undefined && request.revision !== image.revision)) fail("STALE_TARGET", "Image observation does not belong to this receipt.");
@@ -2639,7 +2759,7 @@ export default function App() {
 			}
 			if (event.code === "KeyD" && (event.ctrlKey || event.metaKey) && selectedSceneObjectId) {
 				event.preventDefault();
-				duplicateSelectedSceneObject();
+				runStudioAction("object.duplicate");
 				return;
 			}
 			if (event.key === "Escape" && selectedSceneObjectId) {
@@ -3773,6 +3893,10 @@ export default function App() {
 	const studioDocumentEpochRef = useRef(crypto.randomUUID());
 	const studioSceneEpochRef = useRef(crypto.randomUUID());
 	const studioPortsRef = useRef(null);
+	// The one Studio action registry (src/studio-actions.js) and the latest
+	// render's handlers behind it; the UI controls and run_action share both.
+	const studioActionsRef = useRef(null);
+	const studioActionHandlersRef = useRef(null);
 	const studioHistoryRef = useRef(new Map());
 	const studioIkStampsRef = useRef(new Map());
 	const [studioAgentError, setStudioAgentError] = useState(null);
@@ -6437,6 +6561,19 @@ export default function App() {
 
 	function moveTimelineShot(shotId, targetFrame) {
 		const next = reorderShot(shots, shotId, targetFrame, tlFrameCount);
+		if (next === shots) return;
+		recordShotUndo();
+		editShots(next);
+	}
+
+	/** Both edges in one Ctrl+Z entry, through the same resize the boundary
+	 * drag uses. The edge moving away from the other goes first, so a range
+	 * that jumps past the old one never inverts on the way. */
+	function setTimelineShotRange(shotId, startFrame, endFrame) {
+		const shot = shots.find((entry) => entry.id === shotId);
+		if (!shot) throw new Error(`Unknown shots ID: ${shotId}`);
+		const edges = startFrame > shot.endFrame ? [["end", endFrame], ["start", startFrame]] : [["start", startFrame], ["end", endFrame]];
+		const next = edges.reduce((current, [edge, frame]) => resizeShot(current, shotId, edge, frame, tlFrameCount), shots);
 		if (next === shots) return;
 		recordShotUndo();
 		editShots(next);
@@ -11765,6 +11902,26 @@ function resizePromptClip(id, edge, rawFrame) {
 		charHistoryRef.current.future = [];
 		studioHistoryRef.current.set(historyEntryId, { tick, domain });
 	}
+	/** Run one registry action for the agent and bind the native history entry
+	 * it pushed to a journal id, so undo_edit (and Ctrl+Z) can revert it. Shot
+	 * and cast entries gain the Studio restore state, which republishes the
+	 * live read model synchronously; object entries are the store's own. */
+	function recordStudioAction(domain, run) {
+		const historyEntryId = crypto.randomUUID();
+		if (domain === "objects") {
+			const tick = lastObjectOpRef.current, result = run();
+			if (lastObjectOpRef.current === tick) return { result, historyEntryId: null };
+			liveStateRef.current.objects = storeRef.current.objects;
+			studioHistoryRef.current.set(historyEntryId, { domain: "objects", tick: lastObjectOpRef.current, depth: storeRef.current.depths().past });
+			return { result, historyEntryId };
+		}
+		const tick = opClockRef.current, objects = storeRef.current.objects, state = snapshotStudioDomain(domain);
+		const result = run(), top = charHistoryRef.current.past.at(-1);
+		if (!top || top.tick <= tick || top.studio) return { result, historyEntryId: null };
+		top.studio = { domain, targetId: null, historyEntryId, objects, state };
+		studioHistoryRef.current.set(historyEntryId, { tick: top.tick, domain });
+		return { result, historyEntryId };
+	}
 	function publishStudioMotion(targetId, state) {
 		const current = readStudioState();
 		publishStudioCharacters(current.characters.map(c => c.id === targetId ? state.character : c));
@@ -11936,7 +12093,34 @@ function resizePromptClip(id, edge, rawFrame) {
 			return entry.domain === "objects" ? entry.tick === lastObjectOpRef.current && entry.tick >= (charHistoryRef.current.past.at(-1)?.tick ?? 0) && entry.depth === storeRef.current.depths().past :
 				entry.tick === charHistoryRef.current.past.at(-1)?.tick && entry.tick > lastObjectOpRef.current;
 		},
+		actions: () => studioActionsRef.current,
+		recordAction: recordStudioAction,
 	};
+	studioActionHandlersRef.current = {
+		// Shots and objects come from the synchronously published read model, so
+		// an action sees its own edit before React renders it.
+		state: () => ({
+			shots: liveStateRef.current.shots, objects: storeRef.current.objects, frame: tlFrame, frameCount: tlFrameCount,
+			selectedObjectId: selectedSceneObjectId, activeCharacterId: activeChar?.id ?? null,
+			promptBlockCount: promptClips.filter((clip) => clip.text.trim()).length,
+			generating: Boolean(generationPendingRef.current || genRunningRef.current || generationBusy),
+			motionReady: bridge !== null && !bridgeChecking,
+		}),
+		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
+		runAllPromptBlocks, duplicateSelectedSceneObject,
+	};
+	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(studioActionHandlersRef);
+	/** UI door into the shared registry: an unavailable action or a refused
+	 * argument becomes the editor's toast instead of an uncaught error. */
+	function runStudioAction(id, args = {}) {
+		try {
+			return studioActionsRef.current.run(id, args);
+		} catch (error) {
+			if (!(error instanceof StudioProtocolError)) throw error;
+			setToast(error.message);
+			return null;
+		}
+	}
 	if (!studioBindingRef.current) {
 		const delegates = Object.fromEntries(Object.keys(studioPortsRef.current).filter(key => key !== "revision").map(key => [key, (...args) => studioPortsRef.current[key](...args)]));
 		studioBindingRef.current = createStudioAppBinding({ ...delegates, revision: sceneRevisionRef });
@@ -12180,7 +12364,7 @@ function resizePromptClip(id, edge, rawFrame) {
 					onSceneDelete={deleteSceneDocumentFromUi}
 					onAddObject={addSceneObject}
 					onRenameObject={renameSceneObject}
-					onDuplicateObject={duplicateSelectedSceneObject}
+					onDuplicateObject={(objectId) => runStudioAction("object.duplicate", objectId ? { objectId } : {})}
 					onDeleteObject={deleteSceneObject}
 					onFrameObject={frameSelection}
 					onToggleHidden={toggleHierarchyHidden}
@@ -13207,7 +13391,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								</button>
 								{inspectorActionsOpen && (
 									<div className="inspector-actions-menu" role="menu">
-										<button type="button" role="menuitem" onClick={() => { duplicateSelectedSceneObject(); setInspectorActionsOpen(false); }}>
+										<button type="button" role="menuitem" onClick={() => { runStudioAction("object.duplicate"); setInspectorActionsOpen(false); }}>
 											{ko("Duplicate", "복제")}
 										</button>
 										<button type="button" role="menuitem" onClick={() => { deleteSelectedSceneObject(); setInspectorActionsOpen(false); }}>
@@ -13917,7 +14101,7 @@ function resizePromptClip(id, edge, rawFrame) {
 								: !promptClips.some((clip) => clip.text.trim())
 									? ko("Add a prompt block and describe its motion first", "프롬프트 블록을 추가하고 동작을 먼저 적어 주세요")
 									: motionReadinessMessage(readinessState)}
-							onClick={runAllPromptBlocks}
+							onClick={() => runStudioAction("motion.generateAllBlocks")}
 						>
 							{generationBusy
 								? ko("Generating motion…", "모션 생성 중…")
@@ -15114,11 +15298,11 @@ function resizePromptClip(id, edge, rawFrame) {
 					recordShotUndo();
 					editShots((current) => renameShot(current, shotId, name));
 				}}
-				onShotRemove={removeTimelineShot}
-				onShotDuplicate={duplicateTimelineShot}
-				onShotCut={addTimelineShot}
-				onShotSplit={splitTimelineShot}
-				onShotMove={moveTimelineShot}
+				onShotRemove={(shotId) => runStudioAction("shot.remove", { shotId })}
+				onShotDuplicate={(shotId) => runStudioAction("shot.duplicate", { shotId })}
+				onShotCut={() => runStudioAction("shot.create")}
+				onShotSplit={(shotId) => runStudioAction("shot.split", { shotId })}
+				onShotMove={(shotId, targetFrame) => runStudioAction("shot.reorder", { shotId, startFrame: Math.max(0, Math.round(targetFrame)) })}
 				onEditGestureStart={beginTimelineEditGesture}
 				onClearMotion={motion ? clearMotion : null}
 			/>

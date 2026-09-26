@@ -1,6 +1,8 @@
 // The authored Studio surface, declared once for future patch, schema and
 // history layers. This module is intentionally data-only: it does not import
-// React or any persistence implementation.
+// React or any persistence implementation. agentExposure "action" means the
+// agent edits the element through the registered Studio actions it names in
+// `actions` (src/studio-actions.js), the same code path as the UI controls.
 
 const freezeBounds = (bounds) => bounds && typeof bounds === "object"
 	? Object.freeze({ ...bounds })
@@ -9,6 +11,7 @@ const freezeBounds = (bounds) => bounds && typeof bounds === "object"
 const freezeEntry = (entry) => Object.freeze({
 	...entry,
 	...(entry.enum ? { enum: Object.freeze([...entry.enum]) } : {}),
+	...(entry.actions ? { actions: Object.freeze([...entry.actions]) } : {}),
 	...(entry.min && typeof entry.min === "object" ? { min: freezeBounds(entry.min) } : {}),
 	...(entry.max && typeof entry.max === "object" ? { max: freezeBounds(entry.max) } : {}),
 	...(entry.gizmo ? { gizmo: Object.freeze({ min: freezeBounds(entry.gizmo.min), max: freezeBounds(entry.gizmo.max) }) } : {}),
@@ -51,7 +54,7 @@ const entries = [
 	{ path: "stage.style", type: "string", persisted: true, undoDomain: "stage", agentExposure: "patch", normalizer: "createSceneStage", note: "look / style line for shot prompts" },
 	{ path: "stage.hasEnvSheet", type: "boolean", persisted: true, undoDomain: "stage", agentExposure: "patch", normalizer: "createSceneStage", note: "author supplies an environment sheet instead of a description" },
 	{ path: "stage.camera", type: "enum", persisted: true, undoDomain: "stage", agentExposure: "patch", normalizer: "createSceneStage", enum: ["16:9", "2.39:1", "9:16", "1:1", "4:3", "12:7", "fal 480P"], note: "shotAspect/cameraPresetId/sensorId" },
-	{ path: "shot.crud", type: "array", persisted: true, undoDomain: "shot", agentExposure: "todo", normalizer: null, note: "create/split/duplicate/reorder/remove/range; agent exposure gap" },
+	{ path: "shot.crud", type: "array", persisted: true, undoDomain: "shot", agentExposure: "action", normalizer: null, actions: ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder"], note: "create/split/duplicate/reorder/remove/range through the shared action registry" },
 	{ path: "shot.cameraKeys", type: "array", persisted: true, undoDomain: "shot", agentExposure: "patch", normalizer: null, frameMin: 0 },
 	{ path: "shot.cameraRail", type: "array", persisted: true, undoDomain: "shot", agentExposure: "todo", normalizer: "repairCamera", note: "rail/crane/dolly timing; agent exposure gap" },
 	{ path: "shot.targetModel", type: "id", persisted: true, undoDomain: "shot", agentExposure: "patch", normalizer: "repairCamera" },
