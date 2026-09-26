@@ -25,7 +25,7 @@ import { dispatchLiveFrame } from '../src/live-control.js';
 const args = process.argv.slice(2);
 const CASES = ['characterization', 'pre-prepare-cancellation', 'grounded-full-range', 'floor-key-order', 'hovering-no-contact', 'no-measured-skin', 'platform-unsupported',
   'inactive-target-yaw-and-retime', 'off-playhead-path-prop', 'same-frame-other-cast', 'ground-cache-invalidation', 'decode-failure', 'bounded-real-auto-physics',
-  'repair-throw', 'protected-regression', 'collision-repair-arm-chains', 'commit-fences', 'cancellation-checkpoint', 'expiry', 'explicit-unverified-acceptance', 'runtime-http'];
+  'repair-throw', 'repair-deadline-scales-with-clip-length', 'protected-regression', 'collision-repair-arm-chains', 'commit-fences', 'cancellation-checkpoint', 'expiry', 'explicit-unverified-acceptance', 'runtime-http'];
 assert(!args.length || (args.length === 2 && args[0] === '--case' && CASES.includes(args[1])), 'Unknown test arguments');
 const selectedCase = args[1] ?? null;
 const evidence = process.env.MOTION_EVIDENCE_DIR;
@@ -300,6 +300,17 @@ async function candidateTests(mod, selectedCase) {
       } } }); const c = await f.prepare(); await f.verify(c);
       const result = await f.repair(c, 'auto_physics'); assert.equal(result.code, 'VERIFICATION_FAILED'); assert.equal(f.api.size, 0); f.preserved();
       console.log('PASS private repair throw releases candidate without partial authored mutation');
+    }
+    if (selected('repair-deadline-scales-with-clip-length')) {
+      let f;
+      f = fixture({ clip: { frames: 240, hover: .4 }, ports: { verificationMs: 1000, reviewAutoPhysics: async options => {
+        f.setClock(5000);
+        return { candidate: { keys: options.sourceKeys, tracked: new Set() } };
+      } } });
+      f.request.schedule = compileStudioBeats({ kind: 'generate', beats: [{ text: 'Fixture motion.', seconds: 10 }] });
+      const c = await f.prepare(), v = await f.verify(c); ok(v); assert.equal(v.repairable, true);
+      const repaired = await f.repair(c, 'auto_physics'); ok(repaired);
+      console.log('PASS repair deadline scales with 240-frame clip beyond the base verification budget');
     }
     if (selected('protected-regression')) {
       // One regressing repair, three endings: the reverted candidate refuses
