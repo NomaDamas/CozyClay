@@ -5,6 +5,9 @@ import { dirname } from "node:path";
 export const TELEMETRY_NOTICE_VERSION = 1;
 export const POSTHOG_PROJECT_TOKEN = "phc_CpizzZ8VhSorSS8yEeQhdpUcvB2erp5xkCbnFD8HTJ5m";
 export const POSTHOG_API_HOST = "https://t.cozyclay.org";
+// First-launch answers plus the `npx cozyclay --via <source>` values the
+// landing page's copy commands carry (#466). Mirrors analytics HEARD_FROM_SOURCES.
+export const FIRST_LAUNCH_SOURCES = Object.freeze(["x", "hn", "reddit", "github", "friend", "other", "site", "playground"]);
 
 const DEFAULT_STATE = Object.freeze({
 	installationId: null,
@@ -38,7 +41,7 @@ function normalizedState(value) {
 		noticeVersion: Number.isInteger(value.telemetryNoticeVersion)
 			? value.telemetryNoticeVersion
 			: 0,
-		firstLaunchHeardFrom: ["x", "hn", "reddit", "github", "friend", "other"].includes(value.telemetryFirstLaunchHeardFrom)
+		firstLaunchHeardFrom: FIRST_LAUNCH_SOURCES.includes(value.telemetryFirstLaunchHeardFrom)
 			? value.telemetryFirstLaunchHeardFrom
 			: null,
 	};
@@ -90,7 +93,7 @@ export function markTelemetryFirstLaunch(stateFile, now = () => new Date().toISO
 }
 
 export function setTelemetryFirstLaunchSource(stateFile, heardFrom) {
-	if (!["x", "hn", "reddit", "github", "friend", "other"].includes(heardFrom)) return readTelemetryState(stateFile);
+	if (!FIRST_LAUNCH_SOURCES.includes(heardFrom)) return readTelemetryState(stateFile);
 	writeState(stateFile, { telemetryFirstLaunchHeardFrom: heardFrom });
 	return readTelemetryState(stateFile);
 }

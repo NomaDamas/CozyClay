@@ -28,7 +28,7 @@ import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
-import { checkForUpdate, runUpdate } from "./update-check.mjs";
+import { checkForUpdate, readUpdateStatus, runUpdate } from "./update-check.mjs";
 import { handleOAuthRequest } from "./codex-auth.mjs";
 import { createAgentHandler } from "./agent/agent-routes.mjs";
 import { verifyPackageMarker } from "./package-signature.mjs";
@@ -42,6 +42,7 @@ import {
 	setTelemetryInternalQa,
 	takeRuntimeTelemetryConfig,
 	TELEMETRY_NOTICE_VERSION,
+	FIRST_LAUNCH_SOURCES,
 } from "./telemetry-state.mjs";
 
 const PKG_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -101,6 +102,8 @@ function parseArgs(argv) {
 		else if (arg.startsWith("--scene=")) opts.scene = arg.slice(8);
 		else if (arg === "--no-star") opts.star = false;
 		else if (arg === "--no-update-check") opts.updateCheck = false;
+		else if (arg === "--via") opts.via = String(argv[++i] ?? "");
+		else if (arg.startsWith("--via=")) opts.via = arg.slice(6);
 		else if (arg === "--help" || arg === "-h") opts.help = true;
 		else if (arg === "--version" || arg === "-v") opts.version = true;
 		else {
@@ -113,6 +116,12 @@ function parseArgs(argv) {
 		console.error("cozyclay: --port must be an integer in 1..65534");
 		opts.help = true;
 		opts.invalid = true;
+	}
+	// Attribution never blocks a launch: an unknown source is dropped, not an error.
+	if (opts.via !== undefined) {
+		const via = String(opts.via).trim().toLowerCase();
+		opts.via = FIRST_LAUNCH_SOURCES.includes(via) ? via : null;
+		if (!opts.via) console.error(`cozyclay: ignoring --via ${via || "(empty)"}; expected one of ${FIRST_LAUNCH_SOURCES.join(", ")}`);
 	}
 	if (opts.host !== "127.0.0.1") {
 		console.error("cozyclay: --host is restricted to 127.0.0.1");
@@ -133,12 +142,12 @@ async function askFirstLaunchSource() {
 	if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
 	const answer = await new Promise((resolve) => {
 		const rl = createInterface({ input: process.stdin, output: process.stdout });
-		rl.question("How did you hear about CozyClay? [x/hn/reddit/github/friend/other/skip] ", (value) => {
+		rl.question("How did you hear about CozyClay? [x/hn/reddit/github/site/friend/other/skip] ", (value) => {
 			rl.close();
 			resolve(value.trim().toLowerCase());
 		});
 	});
-	return ["x", "hn", "reddit", "github", "friend", "other"].includes(answer) ? answer : null;
+	return FIRST_LAUNCH_SOURCES.includes(answer) ? answer : null;
 }
 
 const HELP = `cozyclay - browser-based 3D staging studio
@@ -157,6 +166,9 @@ const HELP = `cozyclay - browser-based 3D staging studio
   npx cozyclay --no-star    never ask about starring the repo
   npx cozyclay --no-update-check
                             do not look for a newer release
+  npx cozyclay --via site   say where you found CozyClay (site, playground, x,
+                            hn, reddit, github, friend or other); recorded once,
+                            with the anonymous first launch
   cclay telemetry status   show anonymous telemetry status
   cclay telemetry off      disable anonymous telemetry
   cclay telemetry on       enable anonymous telemetry
@@ -339,7 +351,8 @@ let runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
 	installKind: INSTALL_KIND,
 });
 if (runtimeTelemetry.firstLaunch && !readTelemetryState(STATE_FILE).firstLaunchHeardFrom) {
-	const heardFrom = await askFirstLaunchSource();
+	// A copied `--via` command already says where the install came from.
+	const heardFrom = opts.via || await askFirstLaunchSource();
 	if (heardFrom) {
 		setTelemetryFirstLaunchSource(STATE_FILE, heardFrom);
 	runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
@@ -362,7 +375,8 @@ if (
 }
 // Fired before anything blocking and never awaited on the launch path: the
 // notice is worth a line of output, never a second of startup.
-const updatePending = opts.updateCheck && !process.env.CI && !process.env.COZYCLAY_NO_UPDATE_CHECK ? checkForUpdate(version, STATE_DIR) : null;
+const updateChecksEnabled = Boolean(opts.updateCheck && !process.env.CI && !process.env.COZYCLAY_NO_UPDATE_CHECK);
+const updatePending = updateChecksEnabled ? checkForUpdate(version, STATE_DIR) : null;
 if (!existsSync(join(DIST, "app", "index.html"))) {
 	console.error("cozyclay: this package is missing its build (dist/app/index.html).");
 	console.error("cozyclay: from a clone, run `npm install && npm run build` first.");
@@ -522,7 +536,9 @@ server = createServer((req, res) => {
 			officialPackage: OFFICIAL_PACKAGE,
 			installKind: INSTALL_KIND,
 		});
-		const runtime = runtimeTelemetry;
+		// Whether this launch is the newest release, from the registry answer the
+		// update check already cached (#466). Never a request of its own.
+		const runtime = { ...runtimeTelemetry, updateStatus: updateChecksEnabled ? readUpdateStatus(version, STATE_DIR) : "unknown" };
 		if (runtime.firstLaunch) {
 			markTelemetryFirstLaunch(STATE_FILE);
 		}

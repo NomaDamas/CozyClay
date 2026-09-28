@@ -356,6 +356,7 @@ assert.deepEqual(
 		installKind: null,
 		originKind: "hosted",
 		internalQa: false,
+		updateStatus: null,
 	},
 );
 assert.deepEqual(
@@ -384,6 +385,7 @@ assert.deepEqual(
 		installKind: "npx",
 		originKind: "local",
 		internalQa: false,
+		updateStatus: "unknown",
 	},
 	"the official package can enable localhost with its injected runtime contract",
 );
@@ -1143,3 +1145,205 @@ const publishedPrivacy = readFileSync(new URL("../privacy/index.html", import.me
 const executionRows = (html) => [...html.matchAll(/<tr><td>(?:workflow|agent|mcp):[\s\S]*?<\/tr>/g)].map(([row]) => row);
 assert.deepEqual(executionRows(publishedPrivacy), executionRows(privacyHtml), "shipped execution disclosure equals its source");
 console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure schema tokens");
+
+// Issue #466: builder telemetry. Real pose edits and per-group edit gestures,
+// the Fal A->B request on the motion contract, closed error/device/use-case
+// vocabularies, install source values and the npm update status.
+{
+	const {
+		EDIT_BUCKET_KEYS, EDIT_GROUPS, FEATURE_USAGE_NAMES, HEARD_FROM_SOURCES, TEAM_VALUES, USE_CASE_VALUES,
+		bucketCpu, bucketFrameRate, bucketMemory, classifyGpu, describeError, startMotionRequest,
+	} = analytics;
+	const rowTokens = (event) => {
+		for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
+			const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
+			if ((cells[0] ?? "").split(/[\s,]+/).includes(event)) return new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
+		}
+		return null;
+	};
+	const closedSchemas = {
+		"app:error": {
+			error_kind: ["error", "unhandled_rejection"],
+			error_type: ["TypeError", "DOMException", "other", "non_error"],
+			error_source: ["app", "extension", "external", "unknown"],
+		},
+		"device:profile": {
+			gpu_vendor: ["nvidia", "amd", "intel", "apple", "qualcomm", "arm", "software", "other", "unknown"],
+			gpu_class: ["discrete", "integrated", "software", "unknown"],
+			webgl: ["webgl2", "webgl1", "none"],
+			cpu_bucket: ["1-4", "5-8", "9-16", "gte17", "unknown"],
+			memory_bucket: ["lt4", "4-7", "gte8", "unknown"],
+			frame_rate_bucket: ["lt20", "20-40", "40-55", "gte55", "unknown"],
+		},
+		"survey:use_case": { use_case: USE_CASE_VALUES, team: TEAM_VALUES },
+	};
+	for (const [event, properties] of Object.entries(closedSchemas)) {
+		const tokens = rowTokens(event);
+		assert.ok(tokens, `${event} has a telemetry disclosure row`);
+		for (const [property, values] of Object.entries(properties)) {
+			assert.ok(tokens.has(property), `${event} discloses ${property}`);
+			for (const value of values) {
+				assert.deepEqual(sanitizeProps(event, { [property]: value, prompt: "private" }), { [property]: value });
+				assert.ok(tokens.has(value), `${event} discloses enum ${value}`);
+			}
+			for (const unsafe of ["private text", "https://private", "Private-Name", 7, true, null, {}]) {
+				assert.deepEqual(sanitizeProps(event, { [property]: unsafe }), {}, `${event} rejects ${String(unsafe)} as ${property}`);
+			}
+		}
+	}
+	const errorTokens = rowTokens("app:error");
+	for (const key of ["error_file", "error_line", "error_col"]) assert.ok(errorTokens.has(key), `app:error discloses ${key}`);
+	assert.deepEqual(
+		sanitizeProps("app:error", { error_file: "index-D4x9aQ1b.js", error_line: 1, error_col: 23456 }),
+		{ error_file: "index-D4x9aQ1b.js", error_line: 1, error_col: 23456 },
+	);
+	for (const error_file of ["/Users/me/project.js", "https://cozyclay.org/a.js", "a b.js", "notes.txt", `${"x".repeat(81)}.js`]) {
+		assert.deepEqual(sanitizeProps("app:error", { error_file }), {}, `error_file rejects ${error_file}`);
+	}
+	for (const value of [-1, 1.5, "12", 10_000_001]) assert.deepEqual(sanitizeProps("app:error", { error_line: value, error_col: value }), {});
+
+	const origin = "http://127.0.0.1:5180";
+	const secret = "private prompt /Users/me/secret.cclayproject";
+	const typeError = new TypeError(secret);
+	typeError.stack = `TypeError: ${secret}\n    at pose (chrome-extension://abcdef/content.js:4:2)\n    at run (${origin}/app/assets/index-D4x9aQ1b.js:1:23456)\n    at https://cdn.example.com/lib.js:9:9`;
+	const described = describeError({ error: typeError, kind: "unhandled_rejection" }, origin);
+	assert.deepEqual(described, { error_kind: "unhandled_rejection", error_type: "TypeError", error_source: "app", error_file: "index-D4x9aQ1b.js", error_line: 1, error_col: 23456 });
+	assert.equal(JSON.stringify(described).includes("private"), false, "never the message, stack text or paths");
+	assert.deepEqual(sanitizeProps("app:error", described), described, "a described error survives its own allowlist");
+	assert.deepEqual(
+		describeError({ error: new RangeError(secret), filename: `${origin}/app/assets/App-9f8e7d6c.js?token=private`, lineno: 12, colno: 7 }, origin),
+		{ error_kind: "error", error_type: "RangeError", error_source: "app", error_file: "App-9f8e7d6c.js", error_line: 12, error_col: 7 },
+		"an ErrorEvent location in our bundle wins and loses its query string",
+	);
+	assert.deepEqual(describeError({ error: null, filename: "chrome-extension://abc/inject.js", lineno: 1, colno: 1 }, origin), { error_kind: "error", error_type: "non_error", error_source: "extension" });
+	assert.deepEqual(describeError({ error: new Error(secret), filename: "https://cdn.example.com/lib.js", lineno: 3, colno: 4 }, origin), { error_kind: "error", error_type: "Error", error_source: "external" });
+	class CustomerNamedError extends Error { constructor() { super(secret); this.name = "AcmeStudioError"; } }
+	assert.equal(describeError({ error: new CustomerNamedError() }, origin).error_type, "other", "custom error names are authored text");
+	assert.equal(describeError({ error: "string rejection" }, origin).error_type, "non_error");
+	assert.equal(describeError({ error: Object.assign(new Error(secret), { name: "AbortError" }) }, origin).error_type, "AbortError");
+	const hostile = { get name() { throw new Error("getter"); }, get stack() { throw new Error("getter"); } };
+	assert.doesNotThrow(() => describeError({ error: hostile }, origin));
+	console.log("PASS app:error closed vocabulary: type, source and same-origin bundle location only");
+
+	for (const [renderer, gpu_vendor, gpu_class] of [
+		["ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)", "nvidia", "discrete"],
+		["ANGLE (Intel, Intel(R) UHD Graphics 620 (0x00005917) Direct3D11 vs_5_0 ps_5_0, D3D11)", "intel", "integrated"],
+		["ANGLE (Intel, Intel(R) Arc(TM) A770 Graphics (0x000056A0) Direct3D11 vs_5_0 ps_5_0, D3D11)", "intel", "discrete"],
+		["ANGLE (AMD, AMD Radeon(TM) Graphics (0x00001638) Direct3D11 vs_5_0 ps_5_0, D3D11)", "amd", "integrated"],
+		["ANGLE (AMD, AMD Radeon RX 6700 XT (0x000073DF) Direct3D11 vs_5_0 ps_5_0, D3D11)", "amd", "discrete"],
+		["ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, Unspecified Version)", "apple", "integrated"],
+		["ANGLE (Microsoft, Microsoft Basic Render Driver (0x0000008C) Direct3D11 vs_5_0 ps_5_0, D3D11)", "software", "software"],
+		["ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)", "software", "software"],
+		["Adreno (TM) 740", "qualcomm", "integrated"],
+		["Mali-G78", "arm", "integrated"],
+		["Mozilla", "other", "unknown"],
+		["", "unknown", "unknown"],
+	]) assert.deepEqual(classifyGpu(renderer), { gpu_vendor, gpu_class }, renderer || "(empty renderer)");
+	assert.deepEqual([0, 4, 8, 12, 32, undefined].map(bucketCpu), ["unknown", "1-4", "5-8", "9-16", "gte17", "unknown"]);
+	assert.deepEqual([undefined, 2, 4, 8].map(bucketMemory), ["unknown", "lt4", "4-7", "gte8"]);
+	assert.deepEqual([null, 12, 30, 50, 60, 144].map(bucketFrameRate), ["unknown", "lt20", "20-40", "40-55", "gte55", "gte55"]);
+	console.log("PASS device:profile buckets and GPU vendor/class without the renderer string");
+
+	const { FIRST_EDIT_KINDS } = await import("../src/semantic-edit.js");
+	assert.deepEqual(Object.values(EDIT_GROUPS).flat().sort(), [...FIRST_EDIT_KINDS].sort(), "every semantic edit kind belongs to exactly one group");
+	const fresh = await import("../src/analytics.js?issue-466-edits");
+	assert.deepEqual(Object.keys(fresh.sessionEditBuckets()), [...EDIT_BUCKET_KEYS]);
+	assert.ok(Object.values(fresh.sessionEditBuckets()).every((bucket) => bucket === "0"));
+	let now = 0;
+	for (let i = 0; i < 30; i += 1) fresh.recordSemanticEdit("pose_edit", now += 40);
+	assert.equal(fresh.sessionEditBuckets().pose_edit_bucket, "1-3", "one continuous bone drag is one gesture");
+	for (let i = 0; i < 11; i += 1) fresh.recordSemanticEdit("pose_edit", now += 2000);
+	fresh.recordSemanticEdit("camera_key_record", now += 10);
+	fresh.recordSemanticEdit("rail_edit", now += 10);
+	fresh.recordSemanticEdit("object_insert", now += 10);
+	fresh.recordSemanticEdit("shot_add", now += 10);
+	fresh.recordSemanticEdit("prompt_block_add", now += 10);
+	assert.equal(fresh.recordSemanticEdit("private-kind", now += 10), false);
+	assert.deepEqual(fresh.sessionEditBuckets(), {
+		pose_edit_bucket: "gte11", camera_edit_bucket: "1-3", object_edit_bucket: "1-3", shot_edit_bucket: "1-3", prompt_edit_bucket: "1-3",
+	});
+	const sessionTokens = rowTokens("app:session_ended");
+	for (const key of EDIT_BUCKET_KEYS) assert.ok(sessionTokens.has(key), `session end discloses ${key}`);
+	assert.ok(FEATURE_USAGE_NAMES.includes("pose_save"));
+	for (const name of ["export_depth_video", "export_keyframe_pack"]) assert.ok(FEATURE_USAGE_NAMES.includes(name), `${name} is no longer silently dropped`);
+	assert.deepEqual(sanitizeProps("feature:used", { name: "pose_save" }), { name: "pose_save" });
+	for (const name of ["pose_edit", "pose_save", "fal_motion_open"]) {
+		assert.ok(FEATURE_USAGE_NAMES.includes(name), `${name} is a closed feature name`);
+		assert.ok(rowTokens("feature:used").has(name), `feature:used discloses ${name}`);
+	}
+	console.log("PASS per-group edit gestures, real pose_edit vs pose_save, and session-end disclosure");
+
+	for (const [event, property, values] of [
+		["motion:generate_requested", "surface", ["fal_card", "agent"]],
+		["motion:generate_requested", "input_mode", ["a_to_b", "still"]],
+		["motion:preflight_blocked", "reason", ["locked", "missing_input"]],
+		["motion:preflight_passed", "backend", ["fal"]],
+		["motion:job_failed", "error_code", ["quota"]],
+	]) {
+		const tokens = rowTokens(event);
+		for (const value of values) {
+			assert.deepEqual(sanitizeProps(event, { [property]: value }), { [property]: value });
+			assert.ok(tokens.has(value), `${event} discloses ${value}`);
+		}
+	}
+	const motionEvents = [];
+	const capture = (event, props) => motionEvents.push([event, props]);
+	const locked = startMotionRequest({ surface: "fal_card", input_mode: "a_to_b" }, { capture });
+	locked.block("locked"); locked.pass("fal"); locked.start(); locked.succeed(); locked.apply();
+	assert.deepEqual(motionEvents.map(([event]) => event), ["motion:generate_requested", "motion:preflight_blocked"], "a locked request ends at its refusal");
+	assert.deepEqual(motionEvents[1][1], { reason: "locked", surface: "fal_card", request_id: motionEvents[0][1].request_id });
+	motionEvents.length = 0;
+	let clock = 0;
+	const fal = startMotionRequest({ surface: "agent", input_mode: "still", prompt: "private" }, { capture, now: () => clock });
+	fal.pass("fal"); fal.block("locked"); fal.start(); clock = 42_000; fal.succeed(); fal.apply(); fal.apply();
+	assert.deepEqual(motionEvents.map(([event]) => event), ["motion:generate_requested", "motion:preflight_passed", "motion:job_started", "motion:job_succeeded", "motion:result_applied"]);
+	assert.equal(motionEvents[1][1].backend, "fal");
+	assert.equal(motionEvents[3][1].duration_bucket, "gte30s");
+	assert.equal(new Set(motionEvents.map(([, props]) => props.request_id)).size, 1, "one request_id pairs the whole Fal request");
+	assert.equal(JSON.stringify(motionEvents).includes("private"), false);
+	motionEvents.length = 0;
+	const capped = startMotionRequest({ surface: "fal_card", input_mode: "a_to_b" }, { capture });
+	capped.pass("fal"); capped.start(); capped.fail(Object.assign(new Error("daily cap private"), { status: 429 }), "quota");
+	assert.deepEqual(motionEvents.at(-1)[0], "motion:job_failed");
+	assert.equal(motionEvents.at(-1)[1].error_code, "quota");
+	assert.equal(JSON.stringify(motionEvents).includes("daily cap"), false);
+	console.log("PASS Fal A->B request on the motion contract: locked, missing input, passed, quota and applied");
+
+	const { FIRST_LAUNCH_SOURCES } = await import("../bin/telemetry-state.mjs");
+	assert.deepEqual([...HEARD_FROM_SOURCES].sort(), [...FIRST_LAUNCH_SOURCES].sort(), "the CLI and the browser agree on install sources");
+	for (const heard_from of ["site", "playground"]) {
+		assert.deepEqual(sanitizeProps("install:first_launch", { heard_from }), { heard_from });
+		assert.ok(rowTokens("install:first_launch").has(heard_from), `install source ${heard_from} is disclosed`);
+	}
+	assert.ok(privacyHtml.includes("update_status (latest, outdated or unknown)"), "update_status is disclosed");
+	assert.equal(analytics.shouldAskUseCase(), false, "never asks while telemetry is off");
+}
+try {
+	const npmRuntime = { distribution: "npm", telemetryEnabled: true, installationId, appVersion: "1.8.1", apiKey: "test", apiHost: "https://telemetry.invalid", internalQa: false, installKind: "npx" };
+	const outdated = await runtimeFixture({ runtime: { ...npmRuntime, updateStatus: "outdated" } });
+	outdated.module.track("app:error", { error_kind: "error", error_type: "TypeError", error_source: "app" });
+	outdated.module.track("device:profile", { gpu_vendor: "nvidia" });
+	const [ended] = await outdated.unload();
+	for (const record of outdated.records) assert.equal(record.properties.update_status, "outdated", `${record.event} carries update_status`);
+	assert.equal(ended.properties.update_status, "outdated", "beacon/capture parity: update_status");
+	assert.equal(ended.properties.action_count_bucket, "0", "passive session signals are not user actions");
+	for (const key of analytics.EDIT_BUCKET_KEYS) assert.equal(ended.properties[key], "0", `the end beacon carries ${key}`);
+	const forged = await runtimeFixture({ runtime: { ...npmRuntime, updateStatus: "private" } });
+	assert.equal(forged.records[0].properties.update_status, "unknown", "only a closed update status crosses");
+	const hostedRun = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org" });
+	assert.equal(Object.hasOwn(hostedRun.records[0].properties, "update_status"), false, "hosted builds have no update status");
+
+	const survey = await runtimeFixture();
+	assert.equal(survey.module.shouldAskUseCase(), true);
+	survey.module.recordUseCase("film", "team");
+	assert.equal(survey.module.shouldAskUseCase(), false, "asked once per browser profile and origin");
+	survey.module.recordUseCase("private text", "somebody");
+	const answers = survey.records.filter((record) => record.event === "survey:use_case").map((record) => [record.properties.use_case, record.properties.team]);
+	assert.deepEqual(answers, [["film", "team"], ["skip", "skip"]]);
+	console.log("PASS update_status parity, passive action counts, edit buckets in the end beacon and the one-time use-case answer");
+} finally {
+	for (const [key, descriptor] of savedGlobals) {
+		if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+		else delete globalThis[key];
+	}
+}

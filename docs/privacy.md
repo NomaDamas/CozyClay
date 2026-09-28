@@ -12,8 +12,8 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | --- | --- |
 | `install:first_launch` | First run of the official npm package |
 | `app:session_started` | Start of an official npm package session |
-| `app:session_ended` | Session duration, action count, and scenes touched (bucketed) |
-| `feature:used` | One signal per feature per session |
+| `app:session_ended` | Session duration, action count, scenes touched, and per-group edit gesture counts (`pose`, `camera`, `object`, `shot`, `prompt`), all bucketed |
+| `feature:used` | One signal per feature per session (`pose_edit` is a real pose change; `pose_save` is saving a pose to the library; `fal_motion_open` is opening the AI video A/B card) |
 | `$pageview` | Funnel and drop-off analysis |
 | `scene:created` | Funnel and drop-off analysis |
 | `scene:loaded` | Funnel and drop-off analysis |
@@ -23,8 +23,11 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 1`) |
 | `playground:first_edit` | First meaningful Playground edit, separate from the Studio funnel |
 | `motion:backend_state` | Motion capability at session start (`none`, `local_kimodo`, or `hosted`) |
-| `motion:generate_requested` | Explicit Generate request, never prompt-block authoring |
-| `motion:preflight_blocked`, `motion:preflight_passed` | Request readiness outcome before execution |
+| `app:error` | Uncaught errors and unhandled rejections: type label, source, and for the app's own bundle only file name + line/column. Never messages, stacks, URLs, or paths |
+| `device:profile` | Once per session: GPU vendor/class, WebGL version, CPU/memory buckets, and a frame-rate bucket. Never the raw renderer string |
+| `survey:use_case` | Optional one-time question after a successful export: `use_case` and `team`, closed choices only |
+| `motion:generate_requested` | Explicit Generate request, never prompt-block authoring; includes the Fal A→B card (`surface: fal_card`, `input_mode: a_to_b`) |
+| `motion:preflight_blocked`, `motion:preflight_passed` | Request readiness outcome before execution (`locked` while the AI video route is gated) |
 | `motion:job_started` | Correlated generation execution starts |
 | `motion:job_succeeded`, `motion:job_failed` | Generation result, with normalized failure/cancellation codes |
 | `motion:result_applied` | Generated result applied to its requesting character, separately from job success |
@@ -63,10 +66,12 @@ Every regular event and the session-end beacon use the same `distribution`
 (`npm` or `hosted`), `app_version` (when available),
 `origin_kind` (`local` or `hosted`), a coarse
 operating-system label, and (for npm sessions) `install_kind` (`npx` or
-`global`). Source checkouts are classified as `clone` and remain telemetry-off.
+`global`) and `update_status` (`latest`, `outdated`, or `unknown`, from the
+package's own cached update check). Source checkouts are classified as `clone` and remain telemetry-off.
 The first npm launch may optionally answer a one-line channel question
-(`x`, `hn`, `reddit`, `github`, `friend`, `other`, or `skip`); `skip` sends no
-acquisition value. Session duration and action counts are buckets, and project
+(`x`, `hn`, `reddit`, `github`, `site`, `friend`, `other`, or `skip`); `skip` sends no
+acquisition value. A copied `npx cozyclay --via site` (or `--via playground`)
+command supplies the same one label without the question. Session duration and action counts are buckets, and project
 events never include names, paths, prompts, or timestamps.
 
 ## Controls

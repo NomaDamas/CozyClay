@@ -83,7 +83,7 @@ function outputWatcher(child) {
 	};
 }
 
-function launch(port) {
+function launch(port, extraArgs = []) {
 	const child = spawn(process.execPath, [
 		"bin/cozyclay.mjs",
 		"--port", String(port),
@@ -91,6 +91,7 @@ function launch(port) {
 		"--no-motion",
 		"--no-star",
 		"--no-update-check",
+		...extraArgs,
 	], {
 		cwd: packageRoot,
 		env: {
@@ -140,7 +141,8 @@ try {
 	assert.match(sourceStatus.output, /Telemetry: off \(source checkout\)/);
 
 	const port = await freePort();
-	const first = launch(port);
+	// A copied landing command answers the first-launch source without a TTY prompt (#466).
+	const first = launch(port, ["--via", "site"]);
 	try {
 		await first.output.waitFor(/CozyClay is running at/);
 		const html = await (await fetch(`http://127.0.0.1:${port}/app/`)).text();
@@ -150,6 +152,8 @@ try {
 		assert.equal(runtime.distribution, "npm");
 		assert.equal(runtime.telemetryEnabled, true);
 		assert.equal(runtime.firstLaunch, true);
+		assert.equal(runtime.firstLaunchHeardFrom, "site", "--via site is recorded with the first launch");
+		assert.equal(runtime.updateStatus, "unknown", "--no-update-check never claims latest or outdated");
 		assert.match(runtime.installationId, /^[0-9a-f-]{36}$/);
 		assert.match(html, /window\.__COZYCLAY_LIVE__ = true;/, "the served studio opts into the loopback live socket (issue #58)");
 
@@ -203,7 +207,8 @@ try {
 	assert.match(enabled.output, /Telemetry: on/);
 
 	const secondPort = await freePort();
-	const second = launch(secondPort);
+	// An unknown --via never blocks a launch and never rewrites the first-launch source.
+	const second = launch(secondPort, ["--via=private text"]);
 	try {
 		await second.output.waitFor(/CozyClay is running at/);
 		const html = await (await fetch(`http://127.0.0.1:${secondPort}/app/`)).text();
@@ -211,6 +216,8 @@ try {
 		const runtime = JSON.parse(match[1]);
 		assert.equal(runtime.firstLaunch, false);
 		assert.equal(runtime.telemetryEnabled, true);
+		assert.equal(runtime.firstLaunchHeardFrom, "site");
+		assert.equal(JSON.stringify(runtime).includes("private text"), false);
 		const persisted = JSON.parse(readFileSync(join(stateRoot, "cozyclay", "state.json"), "utf8"));
 		assert.equal(runtime.installationId, persisted.installationId);
 	} finally {

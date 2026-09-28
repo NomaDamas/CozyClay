@@ -328,7 +328,7 @@
           <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
         </div>
         <p class="note">
-          Or run it on your machine: <code>npx cozyclay</code>. No Blender, no Unity. Open a saved <code>.cclayproject</code> from the first dialog.
+          Or run it on your machine: <code>npx cozyclay --via site</code>. No Blender, no Unity. Open a saved <code>.cclayproject</code> from the first dialog.
         </p>
       </div>
 
@@ -340,7 +340,7 @@
           <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
             <span class="btn primary">Play with the scene</span>
             <small>Loads the studio in this box (about 2 MB)</small>
-            <span class="playground-phone">Needs a mouse and keyboard. Come back on a computer, or run <code>npx cozyclay</code>.</span>
+            <span class="playground-phone">Needs a mouse and keyboard. Come back on a computer, or run <code>npx cozyclay --via site</code>.</span>
           </button>
           <div class="playground-loading">Loading the studio…</div>
           <div class="tutorial-card" id="tutorial-card" aria-live="polite">
@@ -351,7 +351,7 @@
         <div class="playground-bar">
           <div class="tutorial-done" id="tutorial-done" hidden>
             <p>Take your shot with you. Video export is not offered in this embedded Playground.</p>
-            <p>Download your edited project, run <code>npx cozyclay</code>, and open the downloaded <code>.cclayproject</code> in the local Studio. Use its existing Export menu for video.</p>
+            <p>Download your edited project, run <code>npx cozyclay --via playground</code>, and open the downloaded <code>.cclayproject</code> in the local Studio. Use its existing Export menu for video.</p>
             <button type="button" id="playground-download" class="copy">Download my project</button>
             <button type="button" id="playground-handoff-dismiss">Continue editing</button>
           </div>
@@ -558,7 +558,7 @@
       <section id="start">
         <h2>Quick start</h2>
         <p class="sub">Node.js 22.13+ and a Chromium browser.</p>
-        <pre class="with-copy"><code>npx cozyclay</code><button type="button" class="copy" data-copy="npx cozyclay">Copy</button></pre>
+        <pre class="with-copy"><code>npx cozyclay --via site</code><button type="button" class="copy" data-copy="npx cozyclay --via site">Copy</button></pre>
         <p class="sub">Or from source:</p>
         <pre><code>git clone https://github.com/NomaDamas/CozyClay.git
 cd CozyClay

@@ -10129,4 +10129,74 @@ input[type=range] {
 .result-motion-video { width: 100%; max-height: 420px; background: #090b10; }
 .result-motion-meta { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; color: var(--muted, #a7afc2); font-size: 11px; }
 .result-motion-meta span { padding: 3px 6px; border: 1px solid var(--line, #313747); border-radius: 999px; }
+
+/* ------------------------------------------- use-case question (#466) ----- */
+/* One optional, non-modal question after the first successful export. Same
+   surface as the bottom toasts, parked bottom-right so it never covers them. */
+.use-case-ask {
+	position: fixed;
+	z-index: 42;
+	right: 16px;
+	bottom: 76px;
+	width: min(300px, calc(100vw - 32px));
+	padding: 10px 12px;
+	border: 1px solid var(--line2);
+	border-radius: 6px;
+	background: var(--panel);
+	box-shadow: var(--shadow-md);
+	color: var(--fg);
+	font-size: 11px;
+}
+
+.use-case-ask-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.use-case-ask-prompt {
+	margin: 6px 0 8px;
+}
+
+.use-case-ask-choices {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+}
+
+.use-case-ask-choices button {
+	padding: 4px 8px;
+	border: 1px solid var(--line2);
+	border-radius: 4px;
+	background: transparent;
+	color: var(--fg);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.use-case-ask-choices button:hover {
+	border-color: var(--accent);
+	background: var(--accent-soft);
+}
+
+.use-case-ask-close {
+	padding: 0 4px;
+	border: 0;
+	background: transparent;
+	color: var(--muted);
+	font-size: 14px;
+	line-height: 1;
+	cursor: pointer;
+}
+
+.use-case-ask button:focus-visible {
+	outline: 2px solid var(--cyan);
+	outline-offset: 1px;
+}
+
+.use-case-ask .use-case-ask-note {
+	margin: 8px 0 0;
+	color: var(--muted);
+}
 }

@@ -65,6 +65,21 @@ export const EXECUTION_TELEMETRY_VALUES = Object.freeze({
 const OPT_OUT_KEY = "cozyclay.analyticsOptOut";
 const INTERNAL_QA_KEY = "cozyclay.internalQa";
 const ACTIVATION_KEY = "cozyclay.analyticsActivation";
+const USE_CASE_ASKED_KEY = "cozyclay.useCaseAsked";
+
+// Authored edits are reported as per-session counts of five closed groups,
+// never as individual edits: the kind vocabulary is FIRST_EDIT_KINDS.
+export const EDIT_GROUPS = Object.freeze({
+	pose: Object.freeze(["pose_edit"]),
+	camera: Object.freeze(["camera_key_record", "rail_edit"]),
+	object: Object.freeze(["object_insert", "cutout_insert", "object_transform"]),
+	shot: Object.freeze(["shot_add", "shot_edit"]),
+	prompt: Object.freeze(["prompt_block_add", "prompt_block_edit"]),
+});
+export const EDIT_BUCKET_KEYS = Object.freeze(Object.keys(EDIT_GROUPS).map((group) => `${group}_edit_bucket`));
+export const USE_CASE_VALUES = Object.freeze(["animation", "film", "game", "ad_mv", "personal", "other", "skip"]);
+export const TEAM_VALUES = Object.freeze(["team", "solo", "skip"]);
+export const UPDATE_STATUS_VALUES = Object.freeze(["latest", "outdated", "unknown"]);
 const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 	"https://cozyclay.org",
 	"https://www.cozyclay.org",
@@ -72,7 +87,10 @@ const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 const EVENT_PROPERTIES = Object.freeze({
 	"install:first_launch": ["heard_from"],
 	"app:session_started": [],
-	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched"],
+	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched", ...EDIT_BUCKET_KEYS],
+	"app:error": ["error_kind", "error_type", "error_source", "error_file", "error_line", "error_col"],
+	"device:profile": ["gpu_vendor", "gpu_class", "webgl", "cpu_bucket", "memory_bucket", "frame_rate_bucket"],
+	"survey:use_case": ["use_case", "team"],
 	"feature:used": ["name"],
 	"hosted:composer_viewed": [],
 	"hosted:login_started": [],
@@ -113,19 +131,26 @@ const EVENT_PROPERTIES = Object.freeze({
 	...EXECUTION_TELEMETRY_PROPERTY_KEYS,
 });
 const FEATURE_NAMES = new Set([
-	"pose_edit", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
+	"pose_edit", "pose_save", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
 	"prompt_block_add", "shot_add", "shot_cut", "export_pose", "export_frame", "export_video",
+	"export_depth_video", "export_keyframe_pack", "fal_motion_open",
 	"mcp_connected", "auto_color", "plan_view", "camera_tutorial",
 ]);
-const HEARD_FROM_VALUES = new Set(["x", "hn", "reddit", "github", "friend", "other"]);
+// `site` and `playground` arrive through `npx cozyclay --via <source>` from the
+// landing page's copy commands; the others are the first-launch prompt answers.
+export const HEARD_FROM_SOURCES = Object.freeze(["x", "hn", "reddit", "github", "friend", "other", "site", "playground"]);
+const HEARD_FROM_VALUES = new Set(HEARD_FROM_SOURCES);
 const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "url", "path", "file"]);
-const MOTION_ERROR_CODES = new Set(["aborted", "unsupported_route", "generation_failed", "unknown"]);
+const MOTION_ERROR_CODES = new Set(["aborted", "unsupported_route", "generation_failed", "quota", "unknown"]);
 const MOTION_PROPERTY_VALUES = Object.freeze({
-	backend: new Set(["none", "local_kimodo", "hosted"]),
+	// `fal` is the Studio's AI video route (H3 Max Turbo through api.cozyclay.org).
+	backend: new Set(["none", "local_kimodo", "hosted", "fal"]),
 	host_configured: new Set([true, false]),
-	surface: new Set(["timeline", "line_edit", "trail", "mcp"]),
-	input_mode: new Set(["prompt", "pose", "edit"]),
-	reason: new Set(["unconfigured", "unreachable", "unsupported_route"]),
+	surface: new Set(["timeline", "line_edit", "trail", "mcp", "fal_card", "agent"]),
+	input_mode: new Set(["prompt", "pose", "edit", "a_to_b", "still"]),
+	// `locked`: the AI video route is not enabled for this account yet.
+	// `missing_input`: A/B stills, segmentation or a shared camera are missing.
+	reason: new Set(["unconfigured", "unreachable", "unsupported_route", "locked", "missing_input"]),
 	error_code: MOTION_ERROR_CODES,
 	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
 });
@@ -148,6 +173,27 @@ const EXECUTION_FAILURE_CODES = Object.freeze({
 	workflow: new Set(["aborted", "capture_failed", "generation_failed", "unknown"]),
 	agent: new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]),
 });
+// Only a type label and a same-origin script location cross the boundary; the
+// error message, stack text, URLs and anything a user typed never do.
+const ERROR_PROPERTY_VALUES = Object.freeze({
+	error_kind: new Set(["error", "unhandled_rejection"]),
+	error_type: new Set([
+		"Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError",
+		"AggregateError", "AbortError", "TimeoutError", "NotAllowedError", "NotSupportedError", "NotFoundError",
+		"NotReadableError", "InvalidStateError", "QuotaExceededError", "SecurityError", "NetworkError",
+		"DataCloneError", "OperationError", "EncodingError", "UnknownError", "DOMException", "non_error", "other",
+	]),
+	error_source: new Set(["app", "extension", "external", "unknown"]),
+});
+const ERROR_FILE_PATTERN = /^[A-Za-z0-9_.-]{1,80}\.(?:m?js|jsx|ts|tsx)$/;
+const DEVICE_PROPERTY_VALUES = Object.freeze({
+	gpu_vendor: new Set(["nvidia", "amd", "intel", "apple", "qualcomm", "arm", "software", "other", "unknown"]),
+	gpu_class: new Set(["discrete", "integrated", "software", "unknown"]),
+	webgl: new Set(["webgl2", "webgl1", "none"]),
+	cpu_bucket: new Set(["1-4", "5-8", "9-16", "gte17", "unknown"]),
+	memory_bucket: new Set(["lt4", "4-7", "gte8", "unknown"]),
+	frame_rate_bucket: new Set(["lt20", "20-40", "40-55", "gte55", "unknown"]),
+});
 
 let posthog = null;
 let initialized = false;
@@ -162,6 +208,23 @@ let sessionScenesTouched = 0;
 let sessionEnded = false;
 let sessionEndListenersInstalled = false;
 const featureNamesSeen = new Set();
+const EDIT_GROUP_BY_KIND = new Map(Object.entries(EDIT_GROUPS).flatMap(([group, kinds]) => kinds.map((kind) => [kind, group])));
+// A bone drag or gizmo move reaches the semantic boundary many times; edits of
+// one group closer together than this count as one gesture.
+const EDIT_GESTURE_GAP_MS = 1000;
+const sessionEditCounts = Object.fromEntries(Object.keys(EDIT_GROUPS).map((group) => [group, 0]));
+let lastEditGroup = null;
+let lastEditAt = -Infinity;
+const ERROR_SIGNATURE_LIMIT = 10;
+const errorSignaturesSeen = new Set();
+let errorListenersInstalled = false;
+let deviceProfileStarted = false;
+// Passive signals describe the session; they are not user actions and never
+// move action_count_bucket.
+const PASSIVE_EVENTS = new Set([
+	"app:session_started", "app:session_ended", "install:first_launch",
+	"motion:backend_state", "app:error", "device:profile",
+]);
 
 function storage() {
 	try {
@@ -257,6 +320,22 @@ export function sanitizeProps(event, props) {
 				const channel = event.startsWith("agent:") ? "agent" : "workflow";
 				if (!EXECUTION_FAILURE_CODES[channel].has(props[key])) continue;
 			}
+		}
+		if (event === "app:error") {
+			if (key === "error_file") {
+				if (typeof props[key] === "string" && ERROR_FILE_PATTERN.test(props[key])) sanitized[key] = props[key];
+				continue;
+			}
+			if (key === "error_line" || key === "error_col") {
+				if (Number.isInteger(props[key]) && props[key] >= 0 && props[key] <= 10_000_000) sanitized[key] = props[key];
+				continue;
+			}
+			if (!ERROR_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		}
+		if (event === "device:profile" && !DEVICE_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		if (event === "survey:use_case") {
+			if (key === "use_case" && !USE_CASE_VALUES.includes(props[key])) continue;
+			if (key === "team" && !TEAM_VALUES.includes(props[key])) continue;
 		}
 		if (isSafePropertyValue(props[key])) sanitized[key] = props[key];
 	}
@@ -355,6 +434,20 @@ export function startMotionRequest(metadata, dependencies = {}) {
 				// A malformed telemetry input cannot stop the real request.
 			}
 		},
+		/** A route that decides readiness without the /ardy health payload (the
+		 * Fal card): refuse with one closed reason, such as `locked`. */
+		block(reason) {
+			if (phase !== "requested") return;
+			phase = "blocked";
+			emit("motion:preflight_blocked", { reason });
+		},
+		/** The same route's acceptance, naming the backend that will run it. */
+		pass(backend) {
+			if (phase !== "requested") return;
+			phase = "passed";
+			if (props) props.backend = backend;
+			emit("motion:preflight_passed");
+		},
 		start() {
 			if (phase !== "passed") return;
 			phase = "started";
@@ -421,6 +514,141 @@ export function bucketMs(ms) {
 	if (ms < 10000) return "3-10s";
 	if (ms < 30000) return "10-30s";
 	return "gte30s";
+}
+
+export function bucketCpu(cores) {
+	if (!Number.isFinite(cores) || cores <= 0) return "unknown";
+	if (cores <= 4) return "1-4";
+	if (cores <= 8) return "5-8";
+	if (cores <= 16) return "9-16";
+	return "gte17";
+}
+
+/** navigator.deviceMemory is Chromium-only and already rounded (max 8). */
+export function bucketMemory(gigabytes) {
+	if (!Number.isFinite(gigabytes) || gigabytes <= 0) return "unknown";
+	if (gigabytes < 4) return "lt4";
+	if (gigabytes < 8) return "4-7";
+	return "gte8";
+}
+
+export function bucketFrameRate(fps) {
+	if (!Number.isFinite(fps) || fps <= 0) return "unknown";
+	if (fps < 20) return "lt20";
+	if (fps < 40) return "20-40";
+	if (fps < 55) return "40-55";
+	return "gte55";
+}
+
+/**
+ * Reduce a WebGL renderer string to a vendor and a class. The raw string (driver
+ * versions, exact model) is a fingerprint and never leaves the browser.
+ */
+export function classifyGpu(renderer) {
+	const text = String(renderer ?? "").toLowerCase();
+	if (!text.trim()) return { gpu_vendor: "unknown", gpu_class: "unknown" };
+	if (/swiftshader|llvmpipe|softpipe|software|basic render driver/.test(text)) return { gpu_vendor: "software", gpu_class: "software" };
+	if (/nvidia|geforce|quadro|\brtx\b|\bgtx\b|tesla/.test(text)) return { gpu_vendor: "nvidia", gpu_class: "discrete" };
+	if (/\bamd\b|radeon|\bati\b/.test(text)) {
+		const integrated = /radeon\(tm\) graphics|radeon graphics|vega \d+ graphics|\b(?:610|660|680|740|760|780|880|890)m\b/.test(text);
+		return { gpu_vendor: "amd", gpu_class: integrated ? "integrated" : "discrete" };
+	}
+	if (/intel|iris|uhd graphics|hd graphics/.test(text)) {
+		return { gpu_vendor: "intel", gpu_class: /arc(?:\(tm\))? [ab]\d{3}/.test(text) ? "discrete" : "integrated" };
+	}
+	if (/apple|\bm[1-9](?: pro| max| ultra)?\b/.test(text)) return { gpu_vendor: "apple", gpu_class: "integrated" };
+	if (/adreno|qualcomm/.test(text)) return { gpu_vendor: "qualcomm", gpu_class: "integrated" };
+	if (/\bmali\b|\barm\b|powervr/.test(text)) return { gpu_vendor: "arm", gpu_class: "integrated" };
+	return { gpu_vendor: "other", gpu_class: "unknown" };
+}
+
+const STACK_LOCATION = /((?:https?|chrome-extension|moz-extension|safari-extension|safari-web-extension):\/\/[^\s()]+?):(\d+):(\d+)/g;
+
+function errorSource(url, origin) {
+	if (typeof url !== "string" || !url) return "unknown";
+	if (/^(?:chrome|moz|safari|safari-web)-extension:/.test(url)) return "extension";
+	try {
+		return origin && new URL(url).origin === origin ? "app" : "external";
+	} catch {
+		return "unknown";
+	}
+}
+
+function scriptBasename(url) {
+	try {
+		const name = new URL(url).pathname.split("/").pop() ?? "";
+		return ERROR_FILE_PATTERN.test(name) ? name : null;
+	} catch {
+		return null;
+	}
+}
+
+function errorType(error) {
+	try {
+		if (error === null || (typeof error !== "object" && typeof error !== "function")) return "non_error";
+		const name = typeof error.name === "string" ? error.name : "";
+		if (name && name !== "non_error" && name !== "other" && ERROR_PROPERTY_VALUES.error_type.has(name)) return name;
+		if (typeof DOMException !== "undefined" && error instanceof DOMException) return "DOMException";
+		// A custom subclass name is authored text; keep only that it was an Error.
+		return error instanceof Error ? "other" : "non_error";
+	} catch {
+		return "other";
+	}
+}
+
+/**
+ * The closed app:error payload for one thrown value: a type label, whether the
+ * failing script was ours, and for our own bundle only its file name plus a
+ * line and column (enough to map through the release's build). Messages, stack
+ * text, URLs, query strings and paths stay local.
+ */
+export function describeError({ error, filename, lineno, colno, kind = "error" } = {}, origin = globalThis.location?.origin ?? "") {
+	const props = {
+		error_kind: kind === "unhandled_rejection" ? "unhandled_rejection" : "error",
+		error_type: errorType(error),
+		error_source: "unknown",
+	};
+	let location = typeof filename === "string" && filename ? { url: filename, line: lineno, col: colno } : null;
+	if (!location || errorSource(location.url, origin) !== "app") {
+		let stack = "";
+		try {
+			stack = typeof error?.stack === "string" ? error.stack.slice(0, 4000) : "";
+		} catch {
+			stack = "";
+		}
+		const frames = [...stack.matchAll(STACK_LOCATION)].map((match) => ({ url: match[1], line: Number(match[2]), col: Number(match[3]) }));
+		location = frames.find((frame) => errorSource(frame.url, origin) === "app") ?? location ?? frames[0] ?? null;
+	}
+	if (!location) return props;
+	props.error_source = errorSource(location.url, origin);
+	if (props.error_source !== "app") return props;
+	const file = scriptBasename(location.url);
+	if (file) props.error_file = file;
+	if (Number.isInteger(location.line) && location.line >= 0) props.error_line = location.line;
+	if (Number.isInteger(location.col) && location.col >= 0) props.error_col = location.col;
+	return props;
+}
+
+/**
+ * Count one authored edit by its closed semantic kind (FIRST_EDIT_KINDS). Edits
+ * of the same group closer than EDIT_GESTURE_GAP_MS count as one gesture. The
+ * first real pose edit of a session is also the `pose_edit` feature signal;
+ * saving a pose to the library is `pose_save`.
+ */
+export function recordSemanticEdit(kind, now = Date.now()) {
+	const group = EDIT_GROUP_BY_KIND.get(kind);
+	if (!group) return false;
+	const continuing = group === lastEditGroup && now - lastEditAt < EDIT_GESTURE_GAP_MS;
+	lastEditGroup = group;
+	lastEditAt = now;
+	if (!continuing) sessionEditCounts[group] += 1;
+	if (kind === "pose_edit") trackFeature("pose_edit");
+	return !continuing;
+}
+
+/** Per-group edit gesture counts for app:session_ended, bucketed like actions. */
+export function sessionEditBuckets() {
+	return Object.fromEntries(Object.entries(sessionEditCounts).map(([group, count]) => [`${group}_edit_bucket`, bucketCount(count)]));
 }
 
 /** Only structured error codes cross the analytics boundary, never messages. */
@@ -681,6 +909,8 @@ export function resolveAnalyticsRuntime({
 			installKind: ["npx", "global", "clone"].includes(runtime.installKind) ? runtime.installKind : "npx",
 			originKind: "local",
 			internalQa: runtime.internalQa === true,
+			// From the CLI's existing registry check; offline or opted-out is unknown.
+			updateStatus: UPDATE_STATUS_VALUES.includes(runtime.updateStatus) ? runtime.updateStatus : "unknown",
 		};
 	}
 	if (!env.VITE_POSTHOG_KEY) return { kind: "disabled", reason: "no key" };
@@ -699,6 +929,7 @@ export function resolveAnalyticsRuntime({
 		installKind: null,
 		originKind: "hosted",
 		internalQa: readStorage(INTERNAL_QA_KEY) === "1",
+		updateStatus: null,
 	};
 }
 
@@ -709,6 +940,7 @@ function analyticsGlobalProperties(resolved) {
 		origin_kind: resolved.originKind,
 		os: detectOs(),
 		...(resolved.installKind ? { install_kind: resolved.installKind } : {}),
+		...(resolved.updateStatus ? { update_status: resolved.updateStatus } : {}),
 		internal_qa: resolved.internalQa,
 	};
 }
@@ -785,6 +1017,8 @@ export async function initAnalytics() {
 			posthog.capture("$pageview");
 			sessionStartedAt = Date.now();
 			installSessionEndListeners(resolved, globalProperties);
+			installErrorListeners();
+			void recordDeviceProfile();
 			if (resolved.distribution === "npm") {
 				track("app:session_started");
 				// This follows the session marker so the two events form one
@@ -822,7 +1056,7 @@ export function track(event, props = {}) {
 	try {
 		if (getAnalyticsOptOut()) return;
 		const sanitized = sanitizeProps(event, props);
-		if (event !== "app:session_started" && event !== "app:session_ended" && event !== "install:first_launch") {
+		if (!PASSIVE_EVENTS.has(event)) {
 			sessionActionCount += 1;
 			if (event === "scene:created" || event === "scene:loaded") sessionScenesTouched += 1;
 		}
@@ -837,6 +1071,155 @@ export function trackFeature(name) {
 	featureNamesSeen.add(name);
 	track("feature:used", { name });
 	return true;
+}
+
+/** True while events would actually be sent. Callers use it to skip work that
+ * only exists for telemetry, such as classifying every authored edit. */
+export function analyticsActive() {
+	try {
+		return initialized && enabled && Boolean(posthog) && !getAnalyticsOptOut();
+	} catch {
+		return false;
+	}
+}
+
+/** The optional one-question use-case card: only while telemetry is on, and at
+ * most once per browser profile and origin, answered or dismissed. */
+export function shouldAskUseCase() {
+	return analyticsActive() && readStorage(USE_CASE_ASKED_KEY) !== "1";
+}
+
+export function recordUseCase(useCase, team) {
+	writeStorage(USE_CASE_ASKED_KEY, "1");
+	track("survey:use_case", {
+		use_case: USE_CASE_VALUES.includes(useCase) ? useCase : "skip",
+		team: TEAM_VALUES.includes(team) ? team : "skip",
+	});
+}
+
+function installErrorListeners() {
+	if (errorListenersInstalled || typeof window === "undefined" || typeof window.addEventListener !== "function") return;
+	errorListenersInstalled = true;
+	const report = (payload) => {
+		try {
+			const props = describeError(payload);
+			const signature = [props.error_kind, props.error_type, props.error_source, props.error_file, props.error_line, props.error_col].join("|");
+			if (errorSignaturesSeen.has(signature) || errorSignaturesSeen.size >= ERROR_SIGNATURE_LIMIT) return;
+			errorSignaturesSeen.add(signature);
+			track("app:error", props);
+		} catch {
+			// Error telemetry must never throw from inside an error handler.
+		}
+	};
+	window.addEventListener("error", (event) => {
+		try {
+			// The message is read locally only to drop a benign browser warning.
+			if (typeof event?.message === "string" && event.message.startsWith("ResizeObserver loop")) return;
+			// A muted cross-origin "Script error." has neither an error nor a script:
+			// nothing to fix, so it is not reported.
+			if (!event?.error && !event?.filename) return;
+			report({ error: event?.error, filename: event?.filename, lineno: event?.lineno, colno: event?.colno, kind: "error" });
+		} catch {
+			// Never interfere with the page's own error handling.
+		}
+	});
+	window.addEventListener("unhandledrejection", (event) => {
+		report({ error: event?.reason, kind: "unhandled_rejection" });
+	});
+}
+
+function probeWebGl() {
+	try {
+		const canvas = globalThis.document?.createElement?.("canvas");
+		if (!canvas?.getContext) return { webgl: "none", renderer: "" };
+		let gl = canvas.getContext("webgl2");
+		let webgl = gl ? "webgl2" : "none";
+		if (!gl) {
+			gl = canvas.getContext("webgl");
+			if (gl) webgl = "webgl1";
+		}
+		if (!gl) return { webgl, renderer: "" };
+		let renderer = "";
+		try {
+			const info = gl.getExtension("WEBGL_debug_renderer_info");
+			renderer = String(gl.getParameter(info ? info.UNMASKED_RENDERER_WEBGL : gl.RENDERER) ?? "");
+		} catch {
+			renderer = "";
+		}
+		try {
+			gl.getExtension("WEBGL_lose_context")?.loseContext();
+		} catch {
+			// The probe context is garbage either way.
+		}
+		return { webgl, renderer };
+	} catch {
+		return { webgl: "none", renderer: "" };
+	}
+}
+
+const FRAME_SAMPLE_DELAY_MS = 8000;
+const FRAME_SAMPLE_WINDOW_MS = 3000;
+const FRAME_SAMPLE_GIVE_UP_MS = 60_000;
+
+/** Frames the browser delivered during one 3 s visible window after startup:
+ * a smoothness proxy for the studio's render loop, not a GPU benchmark. */
+function measureFrameRate() {
+	return new Promise((resolve) => {
+		const raf = globalThis.requestAnimationFrame;
+		if (typeof raf !== "function") {
+			resolve(null);
+			return;
+		}
+		const hidden = () => globalThis.document?.visibilityState === "hidden";
+		const beganAt = Date.now();
+		const attempt = () => {
+			if (Date.now() - beganAt > FRAME_SAMPLE_GIVE_UP_MS) {
+				resolve(null);
+				return;
+			}
+			if (hidden()) {
+				setTimeout(attempt, 2000);
+				return;
+			}
+			let frames = 0;
+			let first = 0;
+			const step = (time) => {
+				if (hidden()) {
+					setTimeout(attempt, 2000);
+					return;
+				}
+				if (!first) first = time;
+				frames += 1;
+				if (time - first >= FRAME_SAMPLE_WINDOW_MS) {
+					resolve(((frames - 1) * 1000) / (time - first));
+					return;
+				}
+				raf(step);
+			};
+			raf(step);
+		};
+		setTimeout(attempt, FRAME_SAMPLE_DELAY_MS);
+	});
+}
+
+async function recordDeviceProfile() {
+	// Only a real rendering document has a GPU and a frame clock to describe.
+	if (deviceProfileStarted || typeof globalThis.document === "undefined" || typeof globalThis.requestAnimationFrame !== "function") return;
+	deviceProfileStarted = true;
+	try {
+		const { webgl, renderer } = probeWebGl();
+		const gpu = classifyGpu(renderer);
+		const fps = await measureFrameRate();
+		track("device:profile", {
+			...gpu,
+			webgl,
+			cpu_bucket: bucketCpu(globalThis.navigator?.hardwareConcurrency),
+			memory_bucket: bucketMemory(globalThis.navigator?.deviceMemory),
+			frame_rate_bucket: bucketFrameRate(fps),
+		});
+	} catch {
+		// Device capability is best effort and must never affect the studio.
+	}
 }
 
 function installSessionEndListeners(resolved, globalProperties) {
@@ -858,6 +1241,7 @@ function installSessionEndListeners(resolved, globalProperties) {
 					duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
 					action_count_bucket: bucketCount(sessionActionCount),
 					scenes_touched: Math.min(20, sessionScenesTouched),
+					...sessionEditBuckets(),
 				},
 			};
 			const body = JSON.stringify(payload);

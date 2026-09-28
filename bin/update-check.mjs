@@ -119,6 +119,21 @@ export async function checkForUpdate(currentVersion, stateDir) {
 	}
 }
 
+/**
+ * "latest", "outdated" or "unknown" for the running version, read from the
+ * cache checkForUpdate keeps. Synchronous and offline: the studio page asks on
+ * every load, and a launch whose first check has not landed yet is "unknown".
+ */
+export function readUpdateStatus(currentVersion, stateDir) {
+	try {
+		const latest = readCache(join(stateDir, "update-check.json"))?.latest;
+		if (typeof latest !== "string" || !/^\d+\.\d+\.\d+/.test(latest)) return "unknown";
+		return compareVersions(latest, currentVersion) > 0 ? "outdated" : "latest";
+	} catch {
+		return "unknown";
+	}
+}
+
 // npx/bunx runs from a temp dir, so there is no local install to upgrade in
 // place; `npm install -g` is the one command that is right either way.
 export function runUpdate() {
