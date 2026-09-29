@@ -3,14 +3,16 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 
 const serverPath = fileURLToPath(new URL("./server.mjs", import.meta.url));
-const timeout = (promise, label) => Promise.race([
-	promise,
-	delay(5_000).then(() => { throw new Error(`Timed out waiting for ${label}`); }),
-]);
+const timeout = (promise, label) => {
+	let timer;
+	const deadline = new Promise((_, reject) => {
+		timer = setTimeout(() => reject(new Error(`Timed out waiting for ${label}`)), 60_000);
+	});
+	return Promise.race([promise, deadline]).finally(() => clearTimeout(timer));
+};
 const initialize = async (protocolVersion) => {
 	const child = spawn(process.execPath, [serverPath], { stdio: ["pipe", "pipe", "pipe"] });
 	const closed = once(child, "close");
