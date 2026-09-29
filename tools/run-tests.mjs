@@ -46,6 +46,7 @@ const NODE_FILES = [
 	"test/verify-track-remote.mjs",
 	"test/verify-track-metrics.mjs",
 	"test/verify-track-study-2d.mjs",
+	"test/verify-track-masks.mjs",
 	"test/verify-obs-ladder.mjs",
 	"test/verify-obs-isolation.mjs",
 	"test/verify-scene-continuity.mjs",
