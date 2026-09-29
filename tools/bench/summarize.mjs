@@ -9,11 +9,15 @@
  * --csv writes the same columns as CSV (full precision).
  */
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 
 const mm = (m) => (m === null || m === undefined ? null : m * 1000);
 const cm = (m) => (m === null || m === undefined ? null : m * 100);
+const resultFor = (dir) => {
+	const file = join(dirname(resolve(dir)), "result.json");
+	return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
+};
 
 /** [header, unit note, value(score), markdown digits] */
 const COLUMNS = [
@@ -43,6 +47,10 @@ const COLUMNS = [
 	["box penetration pred", "cm, aligned", (s) => cm(s.contact?.predAligned?.maxPenetrationM), 1],
 	["box penetration GT", "cm", (s) => cm(s.contact?.gt?.maxPenetrationM), 1],
 	["npz frame-0 offset", "m", (s) => s.npz.frame0RootOffsetM, 3],
+	["runtimeS", "s", (s, dir) => resultFor(dir)?.runtimeS, 2],
+	["peakVramMB", "MB", (s, dir) => resultFor(dir)?.peakVramMB, 0],
+	["LR switches", "count", (s, dir) => resultFor(dir)?.lrSwitches, null],
+	["occluded frames", "frames", (s, dir) => resultFor(dir)?.occludedFrames, null],
 ];
 
 function main() {
