@@ -9,8 +9,8 @@
  *   (b) IoU ceiling: every truth motion scored as the prediction through
  *       tools/bench/score.mjs (the same scorer and field the gate uses)
  *   (c) camera fixedness: per fal clip, the median background-pixel shift vs
- *       frame 0 of a similarity warp fitted on the border band (10 % of the
- *       width), plus static truth renders as controls
+ *       frame 0 over textured border-band tiles (10 % of the width; SSD block
+ *       matching + Lucas-Kanade refinement), plus static truth renders as controls
  *   (d) 2D evidence: truth joints as the video shows them (the render's
  *       joints.json, verified to be the render of item.source) projected with
  *       camera.json vs the obs kp2d: per-joint pixel error split by box
@@ -20,8 +20,13 @@
  *
  *   node tools/track/study-2d.mjs [--stages 2d,stance,ceiling,camera,skin] [options]
  *
- * Each stage writes <out>/stages/<stage>.json; summary.json/summary.md merge
- * the latest result of every stage, so stages can be re-run one at a time.
+ * Each stage writes <out>/stages/<stage>.json keyed by `inputKey`, the sha256
+ * of everything it read (item list, input file hashes, obs root / baseline,
+ * and the analysis code). A stage named in --stages is always recomputed; any
+ * other stage is reused only when its stored inputKey equals the current one,
+ * recomputed when its inputs changed, and left out when it never ran.
+ * summary.json/summary.md merge the stages. Any item that is not ok (missing
+ * obs, failed scoring, bad provenance, ...) is listed and the exit code is 1.
  * Truth is read here for measurement only; nothing here feeds a tracker.
  */
 import { spawnSync } from "node:child_process";
@@ -53,6 +58,13 @@ export const SWAP_MIN_PAIRS = 2;
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const fileSha = (path) => sha256(readFileSync(path));
+/** sha256 of a file, or "missing" (a missing input is part of the key too). */
+const shaOrMissing = (path) => (path && existsSync(path) ? fileSha(path) : "missing");
+/** The analysis code every stage depends on, plus stage-specific repo files. */
+const CODE = ["tools/track/study-2d.mjs", "tools/track/metrics.mjs", "tools/bench/obs/extrinsics.mjs", "tools/kimodo/read-npz.mjs"];
+export const codeSha = (extra = []) => sha256([...CODE, ...extra].map((p) => `${p}:${fileSha(join(ROOT, p))}`).join("\n"));
+/** The cache key of a stage: sha256 of its JSON-described inputs. */
+export const inputKey = (inputs) => sha256(JSON.stringify(inputs));
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const putJson = (path, value) => { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, `${JSON.stringify(value, null, "\t")}\n`); };
 const round = (v, d = 3) => (v === null || v === undefined || !Number.isFinite(v) ? v ?? null : Math.round(v * 10 ** d) / 10 ** d);
@@ -247,11 +259,20 @@ export function stanceItem(item, baselineRun) {
 // ------------------------------------------------------------ (b) ceiling
 
 /** Score the truth motion as the prediction with score.mjs exactly as obs-bench does for gt/cube items. */
+/** What a truth-as-prediction score depends on (score.json is reused only while this is unchanged). */
+export function ceilingInputs(item) {
+	return {
+		item, source: shaOrMissing(item.source), scene: shaOrMissing(item.scene),
+		gt: ["camera.json", "joints.json"].map((f) => shaOrMissing(join(item.dir, item.variant, f))),
+		scorer: ["tools/bench/score.mjs", "tools/gt-render/render.mjs"].map((p) => shaOrMissing(join(ROOT, p))),
+	};
+}
+
 export function ceilingItem(item, outDir, { port, cdpPort, force }) {
 	const label = `${item.set}/${item.name}`, out = join(outDir, "gt-self", item.set, item.name);
-	const scorePath = join(out, "score.json");
+	const scorePath = join(out, "score.json"), keyPath = join(out, "inputs.json"), key = inputKey(ceilingInputs(item));
 	let reused = true;
-	if (force || !existsSync(scorePath) || readJson(scorePath).pred?.npz !== item.source) {
+	if (force || !existsSync(scorePath) || !existsSync(keyPath) || readJson(keyPath).inputKey !== key) {
 		reused = false;
 		mkdirSync(out, { recursive: true });
 		const args = [join(ROOT, "tools/bench/score.mjs"), "--gt", join(item.dir, item.variant), "--pred", item.source, "--out", out, "--port", String(port), "--cdp-port", String(cdpPort)];
@@ -261,6 +282,7 @@ export function ceilingItem(item, outDir, { port, cdpPort, force }) {
 			const run = spawnSync(process.execPath, args, { cwd: ROOT, stdio: ["ignore", fd, fd], timeout: 20 * 60000 });
 			if (run.status !== 0) return { item: label, status: "score-failed", code: run.status ?? run.signal, log: join(out, "score.log") };
 		} finally { closeSync(fd); }
+		putJson(keyPath, { inputKey: key, inputs: ceilingInputs(item) });
 	}
 	const s = readJson(scorePath);
 	return {
@@ -513,7 +535,8 @@ function markdown(summary) {
 
 export const USAGE = `usage: node tools/track/study-2d.mjs [options]
 
-  --stages 2d,stance,ceiling,camera,skin   stages to (re)compute (default all)
+  --stages 2d,stance,ceiling,camera,skin   stages to recompute (default all); other stages
+                          are reused only while their inputs are unchanged, else recomputed
   --approved <json>       shaded truth + fal items (default evidence/obs/approved.json)
   --approved-skin <json>  grey truth items (default evidence/obs/approved-skin.json)
   --write-approved-skin   write --approved-skin from --approved (refuses to replace a different file)
@@ -523,7 +546,9 @@ export const USAGE = `usage: node tools/track/study-2d.mjs [options]
   --items a,b             limit to these set/name items
   --out <dir>             default evidence/obs/study-2d
   --port 5504 --cdp-port 9504   scorer ports for the ceiling stage
-  --force                 re-score the ceiling even when score.json exists`;
+  --force                 re-score the ceiling even when score.json matches its inputs
+
+Exit code 1 when any item is not ok (missing obs, failed scoring, bad provenance, failed handoff).`;
 
 export function parseArgs(argv) {
 	const o = { stages: STAGES, approved: "evidence/obs/approved.json", approvedSkin: "evidence/obs/approved-skin.json", obsRoot: "evidence/obs/cache", baseline: "evidence/obs/run-492f", out: "evidence/obs/study-2d", port: 5504, cdpPort: 9504, force: false, writeApprovedSkin: false };
@@ -571,14 +596,24 @@ export async function main(argv = process.argv.slice(2)) {
 	const skinApproved = existsSync(o.approvedSkin) ? readJson(o.approvedSkin) : null;
 	const skinItems = skinApproved ? pick(skinApproved.items) : [];
 	const stageDir = join(o.out, "stages"), log = (line) => console.log(`[study-2d] ${line}`);
-	const stage = (name, fn) => {
-		const path = join(stageDir, `${name}.json`);
-		if (o.stages.includes(name)) { log(`stage ${name}`); const value = { createdAt: new Date().toISOString(), commit: commitId(), ...fn() }; putJson(path, value); return value; }
-		return existsSync(path) ? readJson(path) : null;
+	/** Run, reuse or skip one stage by its input key (see the header). */
+	const stage = async (name, inputs, fn) => {
+		const path = join(stageDir, `${name}.json`), key = inputKey(inputs);
+		const cached = existsSync(path) ? readJson(path) : null;
+		if (!o.stages.includes(name)) {
+			if (!cached) return null;
+			if (cached.inputKey === key) { log(`stage ${name}: reused (inputs unchanged since ${cached.createdAt})`); return cached; }
+			log(`stage ${name}: inputs changed since ${cached.createdAt}; recomputing`);
+		} else log(`stage ${name}`);
+		const value = { createdAt: new Date().toISOString(), commit: commitId(), inputKey: key, ...(await fn()) };
+		putJson(path, value);
+		return value;
 	};
+	const obsPathOf = (i) => join(o.obsRoot, i.set, i.name, "g5", "obs.npz");
+	const truthFiles = (i) => ({ item: i, source: shaOrMissing(i.source), scene: shaOrMissing(i.scene), ...Object.fromEntries(["camera.json", "joints.json", "meta.json"].map((f) => [f, shaOrMissing(join(i.dir, i.variant, f))])) });
 	const guard = (label, fn) => { try { return fn(); } catch (error) { log(`${label}: FAILED ${error.message}`); return { item: label, status: "failed", error: error.message }; } };
 
-	const study2d = stage("2d", () => {
+	const study2d = await stage("2d", { code: codeSha(), obsRoot: o.obsRoot, items: [...truthItems, ...skinItems].map((i) => ({ ...truthFiles(i), obs: shaOrMissing(obsPathOf(i)) })) }, () => {
 		const items = [...truthItems, ...skinItems].map((item) => guard(`${item.set}/${item.name}`, () => { const r = studyItem(item, o.obsRoot); log(`2d ${item.set}/${item.name} (${item.variant}): ${r.status}${r.status === "ok" ? ` visible median ${r.visible.medianPx} px, swaps arms ${r.swaps.counts.arms} legs ${r.swaps.counts.legs}` : ` ${r.obsPath}`}`); return r; }));
 		const perVariant = {}, pooledPerJoint = {};
 		for (const variant of ["shaded", "skin"]) {
@@ -602,13 +637,13 @@ export async function main(argv = process.argv.slice(2)) {
 		};
 	});
 
-	const stance = stage("stance", () => {
+	const stance = await stage("stance", { code: codeSha(), baseline: o.baseline, items: truthItems.map((i) => ({ item: i, source: shaOrMissing(i.source), gbest: shaOrMissing(join(o.baseline, i.set, i.name, "Gbest", "motion.npz")) })) }, () => {
 		const items = truthItems.map((item) => guard(`${item.set}/${item.name}`, () => { const r = stanceItem(item, o.baseline); log(`stance ${r.item}: ${r.status} truth ${r.truth?.cmPerS} Gbest ${r.gbest?.cmPerS} cm/s`); return r; }));
 		const ok = items.filter((r) => r.status === "ok");
 		return { baseline: o.baseline, rule: ok[0]?.rule ?? null, items, mean: { truthCmPerS: round(mean(ok.map((r) => r.truth.cmPerS))), gbestCmPerS: round(mean(ok.map((r) => r.gbest.cmPerS))), items: ok.length } };
 	});
 
-	const ceiling = stage("ceiling", () => {
+	const ceiling = await stage("ceiling", { code: codeSha(), out: o.out, items: truthItems.map((i) => ({ ...ceilingInputs(i), skin: ["camera.json", "joints.json"].map((f) => shaOrMissing(join(i.dir, "skin", f))) })) }, () => {
 		const items = truthItems.map((item) => guard(`${item.set}/${item.name}`, () => { log(`ceiling ${item.set}/${item.name}: scoring truth as prediction`); const r = ceilingItem(item, o.out, o); log(`ceiling ${r.item}: ${r.status} IoU raw ${r.maskIoURawMean}`); return r; }));
 		// The skin renders use a byte-identical camera.json/joints.json and the shared mask/, so the score of the truth is the same: verified, not assumed.
 		const skinSame = truthItems.map((item) => ({ item: `${item.set}/${item.name}`, same: ["camera.json", "joints.json"].every((f) => fileSha(join(item.dir, "shaded", f)) === fileSha(join(item.dir, "skin", f))) }));
@@ -629,28 +664,32 @@ export async function main(argv = process.argv.slice(2)) {
 		};
 	});
 
-	const camera = stage("camera", () => {
+	const cameraVideos = [...falItems.map((i) => [i.video, join(i.dir, i.variant, "camera.json")]), ...truthItems.map((i) => [join(i.dir, i.variant, "video.mp4"), join(i.dir, i.variant, "camera.json")])];
+	const camera = await stage("camera", { code: codeSha(), fal: falItems.map((i) => i.name), controls: truthItems.map((i) => `${i.set}/${i.name}`), files: cameraVideos.map(([v, c]) => [v, shaOrMissing(v), shaOrMissing(c)]) }, () => {
 		const probe = (label, video, width, height) => guard(label, () => { const t0 = Date.now(); const r = cameraProbe(label, video, width, height, log); log(`camera ${label}: median ${r.medianShiftPx} px, max ${r.maxShiftPx} px (${((Date.now() - t0) / 1000).toFixed(1)} s)`); return { status: "ok", ...r }; });
 		const clips = falItems.map((item) => { const cam = readJson(join(item.dir, item.variant, "camera.json")); return probe(item.name, item.video, cam.width, cam.height); });
 		const controls = truthItems.filter((i) => ["gt/walk", "cube/bump"].includes(`${i.set}/${i.name}`)).map((item) => { const cam = readJson(join(item.dir, item.variant, "camera.json")); return probe(`${item.set}/${item.name} (${item.variant} truth render, static camera)`, join(item.dir, item.variant, "video.mp4"), cam.width, cam.height); });
 		const ok = clips.filter((c) => c.status === "ok"), thresholdPx = 1;
 		const worst = ok.reduce((w, c) => (!w || c.medianShiftPx > w.medianShiftPx ? c : w), null);
 		return {
-			method: "frame 0 border band (pixels within 10 % of the width of any image edge; the person is mostly inside) split into 32 px tiles, keeping tiles whose structure-tensor min eigenvalue >= 2 grey^2 (no flat sky/floor, no single edges); per frame t each tile's translation vs frame 0 by SSD block matching (+-12 px, half-res coarse then full-res +-2 px with parabolic sub-pixel fit); the per-frame shift is the median tile shift magnitude (the moving person is a minority of the tiles). Per clip: median / p95 / max over frames 1..T-1. Controls are truth renders with a known static camera.",
+			method: "frame 0 border band (pixels within 10 % of the width of any image edge; the person is mostly inside) split into 32 px tiles, keeping tiles whose structure-tensor min eigenvalue >= 2 grey^2 (no flat sky/floor, no single edges); per frame t each tile's translation vs frame 0 by SSD block matching (+-12 px, half-res coarse then full-res +-2 px with parabolic sub-pixel fit) refined by Lucas-Kanade; the per-frame shift is the median tile shift magnitude (the moving person is a minority of the tiles). Per clip: median / p95 / max over frames 1..T-1. Controls are truth renders with a known static camera.",
 			thresholdPx, cameraFixed: ok.length === falItems.length && ok.length > 0 && ok.every((c) => c.medianShiftPx < thresholdPx), clipsOk: ok.length, clipsTotal: falItems.length,
 			worst: worst ? { clip: worst.clip, medianShiftPx: worst.medianShiftPx } : null, clips, controls,
 		};
 	});
 
-	// (e) needs an async import of obs-bench (three/FBXLoader), so it is not a stage() closure.
-	let skinSummary = null;
-	if (o.stages.includes("skin")) {
+	const shadedSetOf = { "gt-skin": "gt", "cube-skin": "cube" };
+	const skinInputs = {
+		code: codeSha(["tools/bench/obs-bench.mjs"]), approvedSkin: shaOrMissing(o.approvedSkin), approved: sha256(approvedBytes), obsRoot: o.obsRoot,
+		items: skinItems.map((i) => ({ item: i, ...Object.fromEntries(["obs.npz", "manifest.json"].map((f) => [f, shaOrMissing(join(o.obsRoot, i.set, i.name, "g5", f))])), skinVideo: shaOrMissing(join(i.dir, "skin", "video.mp4")), shadedVideo: shaOrMissing(join(i.dir, "shaded", "video.mp4")), shadedObs: shaOrMissing(join(o.obsRoot, shadedSetOf[i.set] ?? "-", i.name, "g5", "obs.npz")) })),
+		handoff: o.handoff ? { dir: o.handoff, files: skinItems.map((i) => ["bench.log", "obs-mannequin/manifest.json", "G5/result.json", "G5/score/score.json"].map((f) => shaOrMissing(join(o.handoff, i.set, i.name, f)))) } : null,
+	};
+	// (e) imports obs-bench (three/FBXLoader) only when the stage runs.
+	const skinSummary = await stage("skin", skinInputs, async () => {
 		if (!skinApproved) throw new Error(`${o.approvedSkin} does not exist (use --write-approved-skin)`);
 		const { selectItems, itemInputs } = await import("../bench/obs-bench.mjs");
 		const selected = selectItems(skinApproved);
-		const shadedSetOf = { "gt-skin": "gt", "cube-skin": "cube" };
-		skinSummary = {
-			createdAt: new Date().toISOString(), commit: commitId(),
+		const result = {
 			approvedSkin: {
 				path: o.approvedSkin, items: selected.length, sets: [...new Set(selected.map((i) => i.set))],
 				selectItemsOk: selected.every((i) => itemInputs(i, "/unused").detector === "yolo" && itemInputs(i, "/unused").video === join(i.dir, "skin", "video.mp4")),
@@ -660,10 +699,10 @@ export async function main(argv = process.argv.slice(2)) {
 			handoff: o.handoff ? skinItems.map((item) => guard(`${item.set}/${item.name}`, () => handoffCheck(item, o.handoff, o.obsRoot))) : null,
 			handoffRun: o.handoff ?? null,
 		};
-		for (const r of skinSummary.provenance) log(`skin provenance ${r.item}: ${r.status}`);
-		for (const r of skinSummary.handoff ?? []) log(`skin handoff ${r.item}: ${r.status}`);
-		putJson(join(stageDir, "skin.json"), skinSummary);
-	} else if (existsSync(join(stageDir, "skin.json"))) skinSummary = readJson(join(stageDir, "skin.json"));
+		for (const r of result.provenance) log(`skin provenance ${r.item}: ${r.status}`);
+		for (const r of result.handoff ?? []) log(`skin handoff ${r.item}: ${r.status}`);
+		return result;
+	});
 
 	const summary = {
 		tool: "tools/track/study-2d.mjs", createdAt: new Date().toISOString(), commit: commitId(),
@@ -675,10 +714,15 @@ export async function main(argv = process.argv.slice(2)) {
 	putJson(join(o.out, "summary.json"), summary);
 	writeFileSync(join(o.out, "summary.md"), markdown(summary));
 	log(`wrote ${join(o.out, "summary.json")} and summary.md`);
-	const failed = [...(study2d?.items ?? []), ...(stance?.items ?? []), ...(ceiling?.items ?? []), ...(camera?.clips ?? [])].filter((r) => r.status !== "ok");
-	if (failed.length) log(`${failed.length} item(s) not ok: ${failed.map((r) => `${r.item ?? r.clip}=${r.status}`).join(", ")}`);
+	const failed = [
+		...[["2d", study2d?.items], ["stance", stance?.items], ["ceiling", ceiling?.items], ["camera", camera?.clips], ["camera", camera?.controls], ["skin-provenance", skinSummary?.provenance], ["skin-handoff", skinSummary?.handoff]]
+			.flatMap(([name, rows]) => (rows ?? []).filter((r) => r.status !== "ok").map((r) => ({ stage: name, item: r.item ?? r.clip, status: r.status }))),
+		...(skinSummary && !(skinSummary.approvedSkin?.selectItemsOk && skinSummary.approvedSkin?.matchesGenerator) ? [{ stage: "skin", item: o.approvedSkin, status: "bad-approved-skin" }] : []),
+	];
+	if (failed.length) console.error(`[study-2d] ${failed.length} item(s) not ok: ${failed.map((r) => `${r.stage}:${r.item}=${r.status}`).join(", ")}`);
+	return { summary, failed };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-	main().catch((error) => { console.error(`study-2d: ${error.stack ?? error}`); process.exitCode = 1; });
+	main().then((result) => { if (result?.failed.length) process.exitCode = 1; }, (error) => { console.error(`study-2d: ${error.stack ?? error}`); process.exitCode = 1; });
 }

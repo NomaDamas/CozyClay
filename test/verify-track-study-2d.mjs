@@ -5,8 +5,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { motionArraysToNpzMembers, writeNpz } from "../tools/ardy/npz.mjs";
+import { STANCE_FEET } from "../tools/track/metrics.mjs";
 import { cameraFromJson, worldToPixel } from "../tools/bench/obs/extrinsics.mjs";
 import { analyzeClip, bandTiles, classifySwap, frameRuns, normalizeBox, percentile, segmentHitsBox, skinApprovedFrom, studyItem, tileShifts } from "../tools/track/study-2d.mjs";
 import { main as publishMain, publish } from "../tools/track/publish-obs.mjs";
@@ -165,6 +169,68 @@ try {
 	try { assert.equal(publishMain(["--run", run]), 2, "usage error"); } finally { console.error = quietErr; }
 } finally {
 	rmSync(scratch, { recursive: true, force: true });
+}
+
+// The CLI: stage caches are keyed by their inputs, and any item that is not ok gives exit 1.
+{
+	const dir = mkdtempSync(join(tmpdir(), "verify-track-study-2d-cli-"));
+	const STUDY = fileURLToPath(new URL("../tools/track/study-2d.mjs", import.meta.url));
+	try {
+		/** A cskel27 motion whose four foot joints follow footX(t); identity rotations. */
+		const writeMotion = (path, fps, frames, footX) => {
+			const posedJoints = new Float32Array(frames * 27 * 3), rotMats = new Float32Array(frames * 27 * 9);
+			for (let k = 0; k < frames; k += 1) {
+				for (const j of STANCE_FEET) posedJoints[(k * 27 + j) * 3] = footX(k / fps);
+				for (let j = 0; j < 27; j += 1) rotMats.set([1, 0, 0, 0, 1, 0, 0, 0, 1], (k * 27 + j) * 9);
+			}
+			mkdirSync(join(path, ".."), { recursive: true });
+			writeNpz(path, motionArraysToNpzMembers({ frames, fps, rotMats, rootPos: new Float32Array(frames * 3), posedJoints }));
+		};
+		const source = join(dir, "truth.npz"), gbest = join(dir, "baseline", "gt", "fake", "Gbest", "motion.npz");
+		writeMotion(source, 30, 60, (t) => (t < 1 ? 0 : t - 1));
+		writeMotion(gbest, 24, 48, (t) => 0.03 * t);
+		const approved = { items: [{ set: "gt", name: "fake", variant: "shaded", dir: join(dir, "render"), source, scene: null, scoring: "full" }] };
+		const approvedPath = join(dir, "approved.json"), skinPath = join(dir, "approved-skin.json");
+		writeFileSync(approvedPath, JSON.stringify(approved));
+		writeFileSync(skinPath, JSON.stringify(skinApprovedFrom(approved, approvedPath, createHash("sha256").update(readFileSync(approvedPath)).digest("hex"))));
+		const out = join(dir, "out"), stancePath = join(out, "stages", "stance.json");
+		const study = (...args) => spawnSync(process.execPath, [STUDY, "--approved", approvedPath, "--approved-skin", skinPath, "--obs-root", join(dir, "no-obs"), "--baseline", join(dir, "baseline"), "--out", out, ...args], { encoding: "utf8" });
+		const gbestSlide = () => JSON.parse(readFileSync(stancePath, "utf8")).items[0].gbest.cmPerS;
+
+		// All items ok -> exit 0; the stage records its input key.
+		let run = study("--stages", "stance");
+		assert.equal(run.status, 0, run.stderr);
+		close(gbestSlide(), 3, 0.01, "first Gbest slide");
+		const first = readFileSync(stancePath, "utf8");
+		assert.match(JSON.parse(first).inputKey, /^[0-9a-f]{64}$/);
+		// Unchanged inputs, stance not requested: reused byte for byte.
+		run = study("--stages", "");
+		assert.equal(run.status, 0, run.stderr);
+		assert.match(run.stdout, /stage stance: reused/);
+		assert.equal(readFileSync(stancePath, "utf8"), first);
+		// Regression: a changed input (the Gbest motion) recomputes the unrequested stage instead of reusing it.
+		writeMotion(gbest, 24, 48, (t) => 0.1 * t);
+		run = study("--stages", "");
+		assert.equal(run.status, 0, run.stderr);
+		assert.match(run.stdout, /stage stance: inputs changed .*; recomputing/);
+		close(gbestSlide(), 10, 0.01, "recomputed Gbest slide");
+		close(JSON.parse(readFileSync(join(out, "summary.json"), "utf8")).stance.items[0].gbest.cmPerS, 10, 0.01, "summary carries the recomputed stage");
+		assert.notEqual(JSON.parse(readFileSync(stancePath, "utf8")).inputKey, JSON.parse(first).inputKey);
+
+		// Regression: missing skin observations are reported per item AND fail the run (exit 1), after writing the summary.
+		run = study("--stages", "skin");
+		assert.equal(run.status, 1, `skin stage with missing obs must exit 1:\n${run.stdout}\n${run.stderr}`);
+		assert.match(run.stderr, /skin-provenance:gt-skin\/fake=missing-obs/);
+		assert.equal(JSON.parse(readFileSync(join(out, "summary.json"), "utf8")).skin.provenance[0].status, "missing-obs");
+		// The 2D stage keeps going past missing obs (shaded and skin) and still exits 1.
+		run = study("--stages", "2d");
+		assert.equal(run.status, 1);
+		assert.match(run.stderr, /2d:gt\/fake=missing-obs/);
+		assert.match(run.stderr, /2d:gt-skin\/fake=missing-obs/);
+		assert.deepEqual(JSON.parse(readFileSync(join(out, "summary.json"), "utf8")).study2d.items.map((r) => r.status), ["missing-obs", "missing-obs"]);
+	} finally {
+		rmSync(dir, { recursive: true, force: true });
+	}
 }
 
 console.log("verify-track-study-2d: ok");
