@@ -85,12 +85,12 @@ const SKINNING_MAP = CSKEL27_JOINTS.map((name) => {
 // Mixamo arm chains' authored local translations and retarget rotations only;
 // the rest of the body still uses ARDY positional skinning for root motion
 // and foot placement.
-const HIERARCHY_PRESERVED_JOINTS = new Set([
+export const HIERARCHY_PRESERVED_JOINTS = new Set([
 	"RightShoulder", "RightArm", "RightForeArm",
 	"LeftShoulder", "LeftArm", "LeftForeArm",
 ]);
 
-const ARDY_NEUTRAL_MIN_Y = -0.9544128; // toe depth under the hips-origin neutral pose
+export const ARDY_NEUTRAL_MIN_Y = -0.9544128; // toe depth under the hips-origin neutral pose
 
 /* No finger forcing: ARDY's cskel27 stops at the wrist, and the fingers
  * simply keep the rig's own bind pose at all times (the same presentation
@@ -141,7 +141,7 @@ function bindsOf(rig) {
  * pose and cached. */
 const rigPreps = new WeakMap();
 
-function prepOf(rig) {
+export function prepOf(rig) {
 	let prep = rigPreps.get(rig);
 	if (prep) return prep;
 	const binds = bindsOf(rig);
@@ -350,7 +350,7 @@ export function captureArdyRoot(rig) {
  *  floor-shifted the same way prepOf does, in rig units via prep.scale.
  *  Cached per (rig, boneScale array) — one take, one skeleton. */
 const scaledOffsetCache = new WeakMap();
-function scaledOffsets(prep, boneScale) {
+export function scaledOffsets(prep, boneScale) {
 	let cached = scaledOffsetCache.get(boneScale);
 	if (cached && cached.prep === prep) return cached.offsets;
 	const grown = new Array(CSKEL27_JOINTS.length);
@@ -383,7 +383,7 @@ function scaledOffsets(prep, boneScale) {
  *  rig's own bind bone is not the canonical length (Mixamo forearm 27.6 cm
  *  against cskel27's 23.3), so the factor is re-based onto the rig:
  *  performer / rigBind = boneScale * canonical / rigBind, all in rig units. */
-function boneStretch(prep, motion, j) {
+export function boneStretch(prep, motion, j) {
 	if (!motion.boneScale) return 1;
 	// The shoulder girdle is character geometry, like the neck: the rig's
 	// clavicle+arm-root (21 cm straight) is deliberately shorter than
@@ -397,7 +397,7 @@ function boneStretch(prep, motion, j) {
 	if (!(canonical > 1e-6) || !(rigBind > 1e-6)) return motion.boneScale[j];
 	return (motion.boneScale[j] * canonical) / rigBind;
 }
-const GIRDLE_JOINTS = new Set(["LeftShoulder", "RightShoulder", "LeftArm", "RightArm"]);
+export const GIRDLE_JOINTS = new Set(["LeftShoulder", "RightShoulder", "LeftArm", "RightArm"]);
 
 /* --- per-frame application -------------------------------------------------- */
 
