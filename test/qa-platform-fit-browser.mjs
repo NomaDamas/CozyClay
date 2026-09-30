@@ -113,13 +113,17 @@ if (!objectId) throw new Error("addSceneObject did not return an id");
 await evaluate(`window.__cozyclay.sceneObject.update({ id: ${JSON.stringify(objectId)}, scaleY: 0.2 })`);
 await wait(`window.__cozyclay.objects.some(o=>o.id===${JSON.stringify(objectId)} && Math.abs(o.height*o.scaleY-0.2)<1e-9)`);
 console.log("box", JSON.stringify(await evaluate(`window.__cozyclay.objects.find(o=>o.id===${JSON.stringify(objectId)})`)));
-await evaluate(`([...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Rig' || e.textContent.trim()==='리그'))?.click()`);
-await wait("!!document.querySelector('[data-testid=platform-fit-run]')?.getBoundingClientRect().width", 10000);
+await evaluate(`(()=>{const row=[...document.querySelectorAll('[role=treeitem][data-node-id]')].find(e=>/\.rig$/.test(e.dataset.nodeId)); if(row && row.getAttribute('aria-expanded')==='false') row.querySelector('.hierarchy-toggle')?.click(); row?.querySelector('button.hierarchy-row')?.click(); return !!row;})()`);
+await evaluate(`document.querySelector('[data-mode-key="2"]')?.click()`);
+await wait("window.__cozyclay.ikMode === true && !!document.querySelector('[data-testid=platform-fit-run]')?.getBoundingClientRect().width", 20000);
 await screenshot("before");
 
 await click('[data-testid="platform-fit-run"]');
-await wait("!window.__cozyclay.platformFit.running && !!window.__cozyclay.platformFit.last", 360000);
+await wait("!window.__cozyclay.platformFit.running && !!window.__cozyclay.platformFit.last && !!document.querySelector('[data-testid=platform-fit-apply]')", 360000);
 const fitLast = await evaluate("window.__cozyclay.platformFit.last");
+await screenshot("preview");
+await click('[data-testid="platform-fit-apply"]');
+await wait("window.__cozyclay.platformFit.applied===true && !document.querySelector('[data-testid=platform-fit-apply]')", 60000);
 console.log("fit-summary", JSON.stringify(fitLast.summary));
 console.log("fit-steps", JSON.stringify(fitLast.steps));
 await screenshot("after");
@@ -181,7 +185,9 @@ check("Undo returns feet to pre-fit heights below 0.002 m", undoMovement < 0.002
 
 // Fit again, then take it back with the panel's own "Remove platform fit" button.
 await click('[data-testid="platform-fit-run"]');
-await wait("!window.__cozyclay.platformFit.running && window.__cozyclay.platformFit.applied===true", 360000);
+await wait("!window.__cozyclay.platformFit.running && !!document.querySelector('[data-testid=platform-fit-apply]')", 360000);
+await click('[data-testid="platform-fit-apply"]');
+await wait("window.__cozyclay.platformFit.applied===true && !document.querySelector('[data-testid=platform-fit-apply]')", 60000);
 await wait("document.querySelector('[data-testid=platform-fit-remove]')?.disabled===false", 30000);
 await screenshot("remove-button");
 await click('[data-testid="platform-fit-remove"]');
@@ -201,7 +207,7 @@ await evaluate(`window.__cozyclay.sceneObject.update({ id: ${JSON.stringify(obje
 await wait(`window.__cozyclay.objects.some(o=>o.id===${JSON.stringify(objectId)} && Math.abs(o.height*o.scaleY-1.5)<1e-9)`);
 await screenshot("wall");
 await click('[data-testid="platform-fit-run"]');
-await wait("!window.__cozyclay.platformFit.running && !!window.__cozyclay.platformFit.last", 360000);
+await wait("!window.__cozyclay.platformFit.running && !!window.__cozyclay.platformFit.last && !!document.querySelector('[data-testid=platform-fit-preview]')", 360000);
 const wallLast = await evaluate("window.__cozyclay.platformFit.last");
 await sleep(300);
 await screenshot("wall-result");

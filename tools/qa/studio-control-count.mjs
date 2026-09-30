@@ -51,13 +51,14 @@ const states = [
   ["scene-char", async () => { await clickTab("Scene"); await ev(`(()=>{const el=[...document.querySelectorAll('.hierarchy-left [role=treeitem], .hierarchy-left button, .hierarchy-left li')].find(e=>/Alpha|Character|캐릭터|A\\b/.test(e.textContent));el?.click();return !!el;})()`); }],
   ["camera", async () => { await clickTab("Camera"); }],
   ["motion", async () => { await clickTab("Motion"); }],
+  ["pose", async () => { await clickTab("Pose"); await ev(`window.__cozyclay.ikMode || document.dispatchEvent(new KeyboardEvent("keydown", {key:"2", code:"Digit2", bubbles:true}))`); }],
 ];
 const out = {};
 for (const [name, setup] of states) {
   await setup(); await sleep(600);
   const shot = await send("Page.captureScreenshot", { format: "png" });
   fs.writeFileSync(`${process.env.OUT}-${name}.png`, Buffer.from(shot.data, "base64"));
-  out[name] = await ev(COUNT);
+  out[name] = name === "pose" ? await ev(`(()=>{const root=document.querySelector('.pose-details');if(!root)return {total:999,by:{}};const vis=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>2&&r.height>2&&s.display!=="none"&&s.visibility!=="hidden"};const all=[...root.querySelectorAll('button,select,input[type=range],input[type=checkbox]')].filter(vis);return {total:all.length,by:{pose:all.map(e=>(e.textContent||e.getAttribute('aria-label')||'').trim())}}})()`) : await ev(COUNT);
   console.log(name, out[name].total);
 }
 fs.writeFileSync(`${process.env.OUT}-counts.json`, JSON.stringify(out, null, 2));

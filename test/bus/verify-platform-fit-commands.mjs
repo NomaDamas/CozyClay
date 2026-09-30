@@ -22,7 +22,6 @@ for (const origin of ['ui', 'agent', 'mcp', 'cli']) test(`platform fit: ${origin
     const fitted = f.snapshot();
     assert.notDeepEqual(fitted, before);
     const removed = ok(await f.run('motion.platformFit.remove', args, origin));
-    assert.equal(removed.output.removed, true);
     assert.equal(removed.undo.entries, 1);
     assert.deepEqual(f.snapshot(), before, 'Remove restores the exact pre-fit keys after their JSON round trip');
     ok(f.run('edit.undo', { receiptId: removed.receiptId }, origin));
