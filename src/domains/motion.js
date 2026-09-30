@@ -2582,16 +2582,16 @@ export function useMotion(appContext) {
 		// the viewport to the matching ratio so what the user framed is what
 		// gets sent.
 		const captured = appContext.shared.captureLiveFraming({ output: FAL_MOTION_STILL_OUTPUT });
-		if (!captured?.dataUrl?.startsWith("data:image/")) throw new Error(ko("렌더러가 준비되지 않았어요.", "The shot renderer is not ready."));
+		if (!captured?.dataUrl?.startsWith("data:image/")) throw new Error(ko("The shot renderer is not ready.", "렌더러가 준비되지 않았어요."));
 		if (captured.width !== FAL_MOTION_STILL_OUTPUT.width || captured.height !== FAL_MOTION_STILL_OUTPUT.height) {
-			throw new Error(ko(`H3 480P 참조 캡처는 ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}이어야 해요.`, `The H3 480P reference must be captured at ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}.`));
+			throw new Error(ko(`The H3 480P reference must be captured at ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}.`, `H3 480P 참조 캡처는 ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}이어야 해요.`));
 		}
 		// H3 must see the same complete subject in both endpoints. A clipped
 		// foot or head makes the model invent the missing geometry during the
 		// transition, which is exactly the bad motion this flow is meant to avoid.
 		const rig = appContext.live.state.rigs?.[appContext.shared.activeChar.id];
 		const cam = appContext.shared.shotCamRef.current;
-		if (!rig || !cam) throw new Error(ko("전신 프레임을 확인할 수 없어 참조를 캡처할 수 없어요. 잠시 후 다시 시도하세요.", "The full-body frame is not ready yet. Wait a moment and try the reference capture again."));
+		if (!rig || !cam) throw new Error(ko("The full-body frame is not ready yet. Wait a moment and try the reference capture again.", "전신 프레임을 확인할 수 없어 참조를 캡처할 수 없어요. 잠시 후 다시 시도하세요."));
 		rig.updateWorldMatrix(true, true);
 		cam.updateMatrixWorld(true);
 		const bounds = new THREE.Box3().setFromObject(rig);
@@ -2611,12 +2611,12 @@ export function useMotion(appContext) {
 		);
 		if (clipped) {
 			throw new Error(ko(
-				"A/B 참조에 캐릭터 전신이 다 안 들어왔어요. 샷 시점에서 머리와 양발이 화면 안에 들어오도록 카메라를 뒤로 빼고 다시 캡처하세요.",
-				"The full character is not inside the A/B reference. In the shot view, pull the camera back until the head and both feet are visible, then capture again."
+				"The full character is not inside the A/B reference. In the shot view, pull the camera back until the head and both feet are visible, then capture again.",
+				"A/B 참조에 캐릭터 전신이 다 안 들어왔어요. 샷 시점에서 머리와 양발이 화면 안에 들어오도록 카메라를 뒤로 빼고 다시 캡처하세요."
 			));
 		}
 		if (!appContext.shared.falMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
-			throw new Error(ko("A/B 참조는 View에서 부위 색상 → 음영을 켜야 캡처할 수 있어요.", "Enable View → Body part colours → Shaded before capturing an A/B reference."));
+			throw new Error(ko("Enable View → Body part colours → Shaded before capturing an A/B reference.", "A/B 참조는 View에서 부위 색상 → 음영을 켜야 캡처할 수 있어요."));
 		}
 		return { ...captured, framing: appContext.shared.captureCurrentFraming() };
 	}
@@ -2630,7 +2630,7 @@ export function useMotion(appContext) {
 	function markFalPose(slot) {
 		try {
 			if (slot === "b" && falMotion.a && framingDistance(falMotion.a.framing, appContext.shared.captureCurrentFraming()) > 0.001) {
-				throw new Error(ko("A와 B 사이에서 카메라가 이동했어요. 같은 카메라 프레이밍으로 다시 캡처하세요.", "The camera moved between A and B. Capture both refs with the same camera framing."));
+				throw new Error(ko("The camera moved between A and B. Capture both refs with the same camera framing.", "A와 B 사이에서 카메라가 이동했어요. 같은 카메라 프레이밍으로 다시 캡처하세요."));
 			}
 			const still = captureFalStill();
 			// The capture is already on the Fal canvas; make the viewport agree so
@@ -2678,7 +2678,7 @@ export function useMotion(appContext) {
 	}
 	/** The Fal card's lock line: AI video motion is not enabled for this account. */
 	function showFalMotionLock() {
-		setFalMotion((current) => ({ ...current, error: ko("Fal 모션 생성은 QA 중 잠겨 있어요.", "Fal motion generation is locked during QA."), status: "error" }));
+		setFalMotion((current) => ({ ...current, error: ko("Fal motion generation is locked during QA.", "Fal 모션 생성은 QA 중 잠겨 있어요."), status: "error" }));
 	}
 	/** The Fal card shows every failure itself. For motion.generateFromVideo the
 	 * answer says what happened: `{ failed }` with the reason in English, or the
@@ -2698,15 +2698,15 @@ export function useMotion(appContext) {
 			}
 		}
 		if (kind === "interpolate" && (!source.a || !source.b)) {
-			setFalMotion((current) => ({ ...current, error: ko("A와 B 포즈를 먼저 캡처하세요.", "Capture both A and B poses first."), status: "error" }));
+			setFalMotion((current) => ({ ...current, error: ko("Capture both A and B poses first.", "A와 B 포즈를 먼저 캡처하세요."), status: "error" }));
 			return { failed: "Capture both A and B poses first." };
 		}
 		if (!source.a?.partColours || (kind === "interpolate" && !source.b?.partColours)) {
-			setFalMotion((current) => ({ ...current, error: ko("색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요.", "Recapture A/B refs with shaded body-part segmentation enabled."), status: "error" }));
+			setFalMotion((current) => ({ ...current, error: ko("Recapture A/B refs with shaded body-part segmentation enabled.", "색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요."), status: "error" }));
 			return { failed: "The captured pose frame has no shaded body-part segmentation; the user must recapture it in the Fal card with shaded part colours on." };
 		}
 		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
-			setFalMotion((current) => ({ ...current, error: ko("A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요.", "The camera changed between A and B. Capture both poses with the same camera."), status: "error" }));
+			setFalMotion((current) => ({ ...current, error: ko("The camera changed between A and B. Capture both poses with the same camera.", "A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요."), status: "error" }));
 			return { failed: "The camera changed between poses A and B; capture both with the same camera." };
 		}
 		// A hand-edited prompt wins verbatim; otherwise build from the description.
@@ -2728,7 +2728,7 @@ export function useMotion(appContext) {
 				duration: source.duration ?? FAL_MOTION_MIN_DURATION,
 			}, fetchImpl);
 			const id = submitted?.job?.id;
-			if (!id) throw Object.assign(new Error(ko("생성 작업 ID를 받지 못했어요.", "The server did not return a motion job ID.")), { reason: "The motion server did not return a job id." });
+			if (!id) throw Object.assign(new Error(ko("The server did not return a motion job ID.", "생성 작업 ID를 받지 못했어요.")), { reason: "The motion server did not return a job id." });
 			setFalMotion((current) => ({ ...current, status: "queued", job: submitted.job, dailyRemaining: submitted.dailyRemaining }));
 			const finished = await waitForFalMotionJob(id, {
 				fetchImpl,
@@ -2736,7 +2736,7 @@ export function useMotion(appContext) {
 			});
 			commandContext?.check();
 			const job = finished?.job;
-			if (job?.status !== "done") throw Object.assign(new Error(job?.error || ko("Fal 생성에 실패했어요.", "Fal motion generation failed.")), job?.error ? {} : { reason: "The AI video generation failed." });
+			if (job?.status !== "done") throw Object.assign(new Error(job?.error || ko("Fal motion generation failed.", "Fal 생성에 실패했어요.")), job?.error ? {} : { reason: "The AI video generation failed." });
 			setFalMotion((current) => ({ ...current, job, status: "done", dailyRemaining: finished.dailyRemaining }));
 			let footage = null;
 			if (job.video?.url) {
