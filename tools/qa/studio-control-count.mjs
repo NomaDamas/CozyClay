@@ -44,7 +44,8 @@ const COUNT = `(()=>{
   return {total:all.length,by};
 })()`;
 
-const clickTab = async (label) => ev(`(()=>{const b=[...document.querySelectorAll(".workflow-mode-switch button")].find(b=>b.textContent.trim()==="${label}");if(!b)return false;b.click();return true;})()`);
+const MODE_KEYS = { Scene: "1", Pose: "2", Camera: "3", Motion: "4" };
+const clickTab = async (label) => ev(`(()=>{const b=document.querySelector('[data-mode-key="${MODE_KEYS[label]}"]');if(!b)return false;b.click();return true;})()`);
 const states = [
   ["scene-none", async () => { await clickTab("Scene"); await ev("window.__cozyclay.selectHierarchy?.(null)").catch(()=>{}); }],
   ["scene-char", async () => { await clickTab("Scene"); await ev(`(()=>{const el=[...document.querySelectorAll('.hierarchy-left [role=treeitem], .hierarchy-left button, .hierarchy-left li')].find(e=>/Alpha|Character|캐릭터|A\\b/.test(e.textContent));el?.click();return !!el;})()`); }],

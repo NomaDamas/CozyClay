@@ -111,7 +111,8 @@ const armMode = (next) =>
 const modeSettled = () => evaluate("window.__modeChange");
 const clickModeTab = async (label) => {
 	await armMode(label.toLowerCase());
-	await clickAt(await centreOf(`[...document.querySelectorAll('.workflow-mode-switch button')].find((b) => b.textContent.trim().startsWith(${JSON.stringify(label)}))`));
+	const key = { Scene: "1", Pose: "2", Camera: "3", Motion: "4" }[label];
+	await clickAt(await centreOf(`document.querySelector('[data-mode-key="${key}"]')`));
 	return modeSettled();
 };
 
@@ -122,11 +123,17 @@ expect("Scene mode hides the camera bar's FOV control", (await fovVisible()) ===
 await armMode("camera");
 await clickAt(await centreOf("[...document.querySelectorAll('.hierarchy-left [role=treeitem], .hierarchy-left button, .hierarchy-left li')].find((el) => el.textContent.trim() === 'Camera')"));
 expect("clicking the Camera row enters Camera mode", (await modeSettled()) !== "timeout", String(await mode()));
+// The FOV slider lives in the Camera mode lens popover of the G1 toolbar.
+expect("Camera mode shows the lens value", await waitFor("!!document.querySelector('[data-testid=\"lens-value\"]')", 5000));
+await clickAt(await centreOf("document.querySelector('[data-testid=\"lens-value\"]')"));
 expect("the camera bar's FOV control is on screen", await waitFor(
 	`(() => { const el = document.querySelector('.viewport-titlebar .viewport-fov-control input[type=range]'); if (!el) return false;` +
 		" const r = el.getBoundingClientRect(); return r.width > 2 && r.height > 2; })()",
 	5000,
 ));
+// Recenter lives in the Perspective view list next to the framing presets.
+await clickAt(await centreOf("document.querySelector('[data-testid=\"view-camera-trigger\"]')"));
+await waitFor("!!document.querySelector('[aria-label=\"Recenter on subject\"]')", 5000);
 expect("Recenter has exactly one visible home", (await evaluate(
 	`[...document.querySelectorAll('[aria-label="Recenter on subject"], .btn')].filter((el) => {` +
 		" const r = el.getBoundingClientRect();" +

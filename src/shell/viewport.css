@@ -1,0 +1,451 @@
+@layer regions {
+	/* v2 viewport overlays (2a R-viewport, G1, G8, G10). The strip itself is
+	   pointer-transparent: only the pills take the pointer, so the stage keeps
+	   every click between them. */
+	.app:not([data-embed-mode]) .viewport {
+		/* 2a reference values that have no global token. */
+		--vp-toolbar-h: 32px;
+		--vp-inset-w: 300px;
+		--vp-divider: #2e2e33;
+		--vp-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+		--vp-font: 11px;
+	}
+	.app:not([data-embed-mode]) .viewport-titlebar {
+		position: absolute;
+		top: var(--sp-2, 12px);
+		left: var(--sp-2, 12px);
+		right: var(--sp-2, 12px);
+		z-index: 8;
+		display: grid;
+		grid-template-columns: minmax(max-content, 1fr) auto minmax(max-content, 1fr);
+		align-items: start;
+		column-gap: var(--sp-1, 8px);
+		height: var(--vp-toolbar-h);
+		min-width: 0;
+		overflow: visible;
+		padding: 0;
+		border: 0;
+		background: none;
+		pointer-events: none;
+		font-family: var(--sans);
+		font-size: var(--vp-font);
+		color: var(--text-1);
+	}
+	.app[data-embed-mode] .viewport-titlebar { display: none; }
+
+	.viewport-titlebar button { font-family: inherit; }
+	.viewport-titlebar button:focus-visible {
+		outline: 1px solid var(--select);
+		outline-offset: -1px;
+	}
+
+	.vp-overlay-left {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		min-width: 0;
+	}
+	.vp-overlay-right {
+		display: flex;
+		justify-content: flex-end;
+		min-width: 0;
+	}
+
+	/* 28px overlay pill: "+ Add", the view pill and the speed readout. */
+	.viewport-titlebar .vp-pill {
+		box-sizing: border-box;
+		display: inline-flex;
+		align-items: center;
+		height: var(--h-control, 28px);
+		border: 0;
+		border-radius: var(--r-2, 6px);
+		background: var(--overlay);
+		box-shadow: none;
+		color: var(--text-1);
+		font-size: var(--vp-font);
+		white-space: nowrap;
+		pointer-events: auto;
+	}
+	.viewport-titlebar .vp-add-trigger {
+		gap: 6px;
+		padding: 0 var(--sp-2, 12px) 0 10px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.viewport-titlebar .vp-add-trigger:hover,
+	.viewport-titlebar .vp-add-trigger[aria-expanded="true"] { background: var(--surface-raised); }
+	.vp-add-plus {
+		color: var(--text-2);
+		font-size: 14px;
+		line-height: 1;
+	}
+
+	.viewport-titlebar .vp-view-pill { padding: 0 4px; color: var(--text-row); }
+	.vp-pill-segment,
+	.viewport-titlebar .vp-pill-segment.view-menu-trigger {
+		position: relative;
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		height: 22px;
+		padding: 0 var(--sp-1, 8px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: none;
+		color: inherit;
+		font-size: var(--vp-font);
+		cursor: pointer;
+	}
+	.viewport-titlebar .vp-pill-segment.view-menu-trigger { color: var(--text-2); }
+	.vp-pill-segment:hover,
+	.vp-pill-segment[aria-expanded="true"],
+	.viewport-titlebar .vp-pill-segment.view-menu-trigger:hover,
+	.viewport-titlebar .vp-pill-segment.view-menu-trigger[aria-expanded="true"] {
+		background: var(--surface-raised);
+		color: var(--text-1);
+	}
+	.vp-pill-divider {
+		flex: none;
+		width: 1px;
+		height: 12px;
+		background: var(--vp-divider);
+	}
+	.viewport-titlebar .view-menu-dot {
+		width: 5px;
+		height: 5px;
+		border-radius: 50%;
+		background: var(--select);
+	}
+
+	.viewport-titlebar .vp-speed {
+		padding: 0 10px;
+		font-family: var(--mono);
+		color: var(--text-2);
+		cursor: default;
+	}
+
+	/* G1: one 32px pill, top-centre. The grid columns keep it centred until
+	   the left group needs the room, so it can never cover "+ Add". */
+	.vp-mode-toolbar {
+		box-sizing: border-box;
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		height: var(--vp-toolbar-h);
+		padding: 0 2px;
+		border-radius: var(--r-2, 6px);
+		background: var(--overlay);
+		pointer-events: auto;
+		white-space: nowrap;
+	}
+	.vp-mode-keys,
+	.vp-tool-keys,
+	.vp-values {
+		display: flex;
+		align-items: center;
+		gap: 2px;
+	}
+	.vp-mode-key,
+	.vp-tool-key {
+		box-sizing: border-box;
+		display: inline-grid;
+		place-items: center;
+		min-width: var(--h-control, 28px);
+		height: var(--h-control, 28px);
+		padding: 0;
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: none;
+		color: var(--text-2);
+		font: 500 var(--vp-font) var(--mono);
+		cursor: pointer;
+	}
+	.vp-mode-key:hover,
+	.vp-tool-key:hover { background: var(--surface-raised); color: var(--text-1); }
+	.vp-mode-key.active {
+		display: inline-flex;
+		gap: 7px;
+		padding: 0 10px 0 9px;
+		background: var(--surface-active);
+		color: var(--text-selected);
+	}
+	.vp-mode-key.active .vp-key-digit { color: var(--select); }
+	.vp-mode-name {
+		font-family: var(--sans);
+		font-size: var(--vp-font);
+		font-weight: 500;
+	}
+	.vp-tool-key.active,
+	.vp-tool-key.active:hover {
+		background: var(--select);
+		color: var(--on-select);
+	}
+	.vp-mode-key[aria-disabled="true"],
+	.vp-tool-key[aria-disabled="true"] {
+		color: var(--text-off);
+		cursor: not-allowed;
+	}
+	.vp-mode-key[aria-disabled="true"]:hover,
+	.vp-tool-key[aria-disabled="true"]:hover { background: none; color: var(--text-off); }
+	.vp-toolbar-divider {
+		flex: none;
+		width: 1px;
+		height: 14px;
+		margin: 0 6px;
+		background: var(--vp-divider);
+	}
+	.vp-value {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--sp-2, 12px);
+		height: var(--h-control, 28px);
+		padding: 0 var(--sp-1, 8px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: none;
+		color: var(--text-row);
+		font: var(--vp-font) var(--mono);
+		cursor: pointer;
+	}
+	.vp-value:hover,
+	.vp-value[aria-expanded="true"] { background: var(--surface-raised); color: var(--text-1); }
+	.vp-snap-value:not(.on) { color: var(--text-off); text-decoration: line-through; }
+
+	/* Overlay menus: in place under their pill, 24px rows on the deep field. */
+	.vp-menu-wrap,
+	.viewport-titlebar .view-menu-wrap { position: relative; display: inline-flex; }
+	.viewport-titlebar .vp-menu,
+	.viewport-titlebar .vp-menu.view-menu,
+	.viewport-titlebar .vp-menu.add-object-menu {
+		box-sizing: border-box;
+		position: absolute;
+		top: calc(100% + 6px);
+		left: 0;
+		right: auto;
+		z-index: 30;
+		display: flex;
+		flex-direction: column;
+		gap: 0;
+		width: max-content;
+		min-width: 180px;
+		max-height: calc(100vh - 180px);
+		margin: 0;
+		padding: 4px;
+		overflow: auto;
+		border: 1px solid var(--row-divider);
+		border-radius: var(--r-2, 6px);
+		background: var(--field-deep);
+		box-shadow: var(--vp-shadow);
+		color: var(--text-row);
+		font-family: var(--sans);
+		font-size: var(--vp-font);
+		text-align: left;
+		pointer-events: auto;
+		animation: none;
+	}
+	.vp-values .vp-menu { left: 50%; transform: translateX(-50%); }
+	.viewport-titlebar .vp-menu.add-object-menu { width: 236px; }
+
+	.viewport-titlebar .vp-menu-item,
+	.viewport-titlebar .view-menu .view-menu-item,
+	.viewport-titlebar .add-object-item {
+		box-sizing: border-box;
+		display: flex;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		width: 100%;
+		height: var(--h-row, 24px);
+		min-height: var(--h-row, 24px);
+		padding: 0 var(--sp-1, 8px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: none;
+		color: var(--text-row);
+		font-size: var(--vp-font);
+		text-align: left;
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.viewport-titlebar .vp-menu-item:hover,
+	.viewport-titlebar .view-menu .view-menu-item:hover,
+	.viewport-titlebar .add-object-item:hover,
+	.viewport-titlebar .add-object-item:focus-visible {
+		border: 0;
+		background: var(--surface-raised);
+		color: var(--text-1);
+	}
+	.viewport-titlebar .view-menu .view-menu-item.active { background: none; }
+	.viewport-titlebar .vp-menu-item:disabled { color: var(--text-off); cursor: not-allowed; }
+	.viewport-titlebar .vp-menu-mark,
+	.viewport-titlebar .view-menu-mark {
+		flex: none;
+		width: 12px;
+		color: var(--select);
+		font-size: var(--vp-font);
+		text-align: center;
+	}
+	.viewport-titlebar .vp-menu-label,
+	.viewport-titlebar .view-menu-label,
+	.viewport-titlebar .add-object-heading {
+		display: block;
+		padding: 6px var(--sp-1, 8px) 2px;
+		color: var(--text-3);
+		font-size: 10px;
+		font-weight: 500;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+	.viewport-titlebar .view-menu-group {
+		display: flex;
+		flex-direction: column;
+		margin: 4px 0 0;
+		padding: 4px 0 0;
+		border-top: 1px solid var(--row-divider);
+	}
+	.viewport-titlebar .add-object-group { display: grid; gap: 0; padding: 0 0 4px; }
+	.viewport-titlebar .add-object-item small {
+		margin-left: auto;
+		color: var(--text-off);
+		font-family: var(--mono);
+		font-size: 10px;
+	}
+	.viewport-titlebar .add-object-swatch {
+		box-sizing: border-box;
+		flex: none;
+		width: 12px;
+		height: 12px;
+		border: 1px solid var(--row-divider);
+		border-radius: 3px;
+	}
+	.viewport-titlebar .vp-add-swatch-cast { background: var(--chip-cast); }
+	.viewport-titlebar .vp-add-swatch-camera { background: var(--chip-camera); }
+
+	/* Framing selects and the lens slider inside the menus: 24px rows. */
+	.viewport-titlebar .viewport-toolbar-field,
+	.viewport-titlebar .viewport-fov-control {
+		display: grid;
+		grid-template-columns: 56px minmax(0, 1fr) auto;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		height: var(--h-row, 24px);
+		padding: 0 var(--sp-1, 8px);
+		color: var(--text-2);
+		font-size: var(--vp-font);
+	}
+	.viewport-titlebar .viewport-toolbar-field { grid-template-columns: 56px minmax(120px, 1fr); }
+	.viewport-titlebar .viewport-toolbar-field select {
+		height: 20px;
+		padding: 0 4px;
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: var(--field);
+		color: var(--text-1);
+		font: inherit;
+	}
+	.viewport-titlebar .viewport-fov-control output,
+	.vp-slider-popover output {
+		min-width: 32px;
+		color: var(--text-row);
+		font-family: var(--mono);
+		text-align: right;
+	}
+	.viewport-titlebar input[type="range"] { width: 120px; accent-color: var(--select); }
+	.viewport-titlebar .vp-slider-popover {
+		flex-direction: row;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		min-width: 0;
+		height: calc(var(--h-row, 24px) + 10px);
+		padding: 0 var(--sp-1, 8px);
+	}
+
+	/* Bottom-right camera preview inset: a 300px card with a 26px header. The
+	   body below the header stays transparent — the shot camera is drawn into
+	   it by DualRender (src/dualview.jsx reads --shot-preview-header). */
+	.app:not([data-embed-mode]) .vp-shot-preview {
+		--shot-preview-header: 26px;
+		top: auto;
+		right: var(--sp-2, 12px);
+		bottom: var(--sp-2, 12px);
+		width: var(--vp-inset-w);
+		min-width: 0;
+		max-width: none;
+		height: calc(var(--shot-preview-header) + var(--vp-inset-w) * 9 / 16);
+		aspect-ratio: auto;
+		border-radius: var(--r-2, 6px);
+		box-shadow: var(--vp-shadow);
+		animation: none;
+	}
+	.app:not([data-embed-mode]) .vp-shot-preview .shot-guides { top: var(--shot-preview-header); }
+	.app:not([data-embed-mode]) .vp-shot-preview-tag {
+		box-sizing: border-box;
+		position: absolute;
+		top: 0;
+		left: 0;
+		right: 0;
+		display: flex;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		height: var(--shot-preview-header);
+		padding: 0 6px 0 10px;
+		border: 0;
+		border-radius: var(--r-2, 6px) var(--r-2, 6px) 0 0;
+		background: var(--field-deep);
+		box-shadow: none;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+		color: var(--text-row);
+		/* App's literal "Shot" label gives way to the shot name below. */
+		font-size: 0;
+		font-weight: 400;
+		letter-spacing: 0;
+		text-transform: none;
+		cursor: default;
+	}
+	.app:not([data-embed-mode]) .vp-shot-preview .vp-rec-dot {
+		order: 0;
+		width: 6px;
+		height: 6px;
+		background: var(--camera);
+		box-shadow: none;
+	}
+	.vp-shot-preview-meta {
+		order: 1;
+		display: inline-flex;
+		align-items: baseline;
+		gap: var(--sp-1, 8px);
+		min-width: 0;
+		overflow: hidden;
+		font-size: var(--vp-font);
+		white-space: nowrap;
+	}
+	/* Embeds keep their compact legacy tag (literal "Shot"). */
+	.app[data-embed-mode] .vp-shot-preview-meta { display: none; }
+	.vp-shot-preview-name { overflow: hidden; text-overflow: ellipsis; }
+	.vp-shot-preview-lens { color: var(--text-3); font-family: var(--mono); }
+	.app:not([data-embed-mode]) .vp-shot-preview .vp-guide-cycle {
+		order: 2;
+		margin-left: auto;
+		padding: 4px;
+		color: var(--text-3);
+		font-size: var(--vp-font);
+	}
+	.app:not([data-embed-mode]) .vp-shot-preview .vp-guide-cycle.on { color: var(--select); }
+	.app:not([data-embed-mode]) .vp-shot-preview .vp-look-through {
+		order: 3;
+		height: 20px;
+		margin: 0;
+		padding: 0 6px;
+		opacity: 1;
+		color: var(--text-2);
+		font-size: 10.5px;
+		font-weight: 500;
+		letter-spacing: 0;
+		text-transform: none;
+	}
+	.app:not([data-embed-mode]) .vp-shot-preview .vp-guide-cycle:hover,
+	.app:not([data-embed-mode]) .vp-shot-preview .vp-look-through:hover {
+		background: var(--surface-raised);
+		color: var(--text-1);
+	}
+}

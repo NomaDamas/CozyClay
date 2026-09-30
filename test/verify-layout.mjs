@@ -61,7 +61,7 @@ expect(
 	app.includes('className="viewport-titlebar"') &&
 	css.includes(".viewport-titlebar") &&
 	css.includes("position: static") &&
-	app.includes('className="editor-toolbar scene-tools"') &&
+	app.includes('className="vp-mode-toolbar"') &&
 	!app.includes('className="pane-tabs"') &&
 	!css.includes(".pane-tabs"),
 );

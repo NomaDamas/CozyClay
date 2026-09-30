@@ -468,24 +468,17 @@ async function scrub(frame) {
 	await changeAndWait(`window.__cozyclay.tlFrame === ${frame}`, () => evaluate(`window.__cozyclay.scrub(${frame})`), `playhead ${frame}`);
 }
 async function aspect(value) {
-	const selector = 'select[aria-label="Output aspect ratio"]';
+	// The output ratio is the Camera mode value in the G1 toolbar; its list
+	// popover holds one item per aspect preset.
+	const trigger = '[data-testid="ratio-value"]';
+	const item = `[data-aspect="${value}"]`;
 	await menu(false);
-	if (!await evaluate(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().width`)) {
-		await changeAndWait(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().width > 0`,
-			() => click('.workflow-mode-switch [role="tab"]:nth-child(2)'), "camera toolbar visible");
+	if (!await evaluate(`!!document.querySelector(${JSON.stringify(trigger)})`)) {
+		await changeAndWait(`!!document.querySelector(${JSON.stringify(trigger)})`,
+			() => click('[data-mode-key="3"]'), "camera toolbar visible");
 	}
-	await changeAndWait(`window.__cozyclay.captureMeta().aspect === ${JSON.stringify(value)}`, async () => {
-		// Use the same native select/input/change semantics as selectOption().
-		// macOS's native popup does not consistently accept CDP Home/Arrow keys.
-		await evaluate(`(() => {
-			const select = document.querySelector(${JSON.stringify(selector)});
-			if (![...select.options].some(option => option.value === ${JSON.stringify(value)})) throw new Error("Missing output aspect option");
-			select.focus();
-			select.value = ${JSON.stringify(value)};
-			select.dispatchEvent(new Event("input", { bubbles: true }));
-			select.dispatchEvent(new Event("change", { bubbles: true }));
-		})()`);
-	}, `output aspect ${value}`);
+	await changeAndWait(`!!document.querySelector(${JSON.stringify(item)})`, () => click(trigger), "output aspect list open");
+	await changeAndWait(`window.__cozyclay.captureMeta().aspect === ${JSON.stringify(value)}`, () => click(item), `output aspect ${value}`);
 }
 const video = { kind: "video", format: "mp4" };
 const failedVideo = (code) => ({ ...video, terminal: "failed", code });

@@ -100,6 +100,9 @@ await addObject("Sphere");
 expect("the sphere owns the selection", (await selectedLabel()) === "Sphere", await selectedLabel());
 await typePosition(0, cubePos[0] + 1.2);
 await typePosition(2, cubePos[2]);
+// Recenter on subject lives in the viewport's Perspective list (G8).
+await evaluate("document.querySelector('[data-testid=\"view-camera-trigger\"]').click()");
+await waitFor("!!document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')");
 await evaluate(`(() => {
   window.__gizmoCamera = { previous: [...window.__cozyclay.activeCam.matrixWorld.elements] };
   document.querySelector('.viewport-titlebar [aria-label="Recenter on subject"]')?.click();

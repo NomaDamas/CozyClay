@@ -1,292 +1,618 @@
+import { useEffect, useLayoutEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
 import { PRESETS, SHOT_ASPECT_PRESETS } from "../app-stage.jsx";
 import { CAMERA_PRESETS } from "../camera-move.js";
+import { PRIME_SET } from "../shot.js";
+import { CatalogueEntries } from "../object-catalog.jsx";
+import { CHARACTER_MODEL_IDS } from "../scenes.js";
+import { elementByPath } from "../studio-elements.js";
 import { saveAutoColor } from "../auto-color.js";
 import { trackFeature } from "../analytics.js";
+import "./viewport.css";
+
+// G1: the single mode+tool pill. Keys 1-4 and W/E/R are bound in App's
+// keydown handler; these buttons are the same doors for the pointer.
+const MODES = [
+	{ id: "scene", key: "1", label: ko("Stage", "배치") },
+	{ id: "pose", key: "2", label: ko("Pose", "포즈") },
+	{ id: "camera", key: "3", label: ko("Camera", "카메라") },
+	{ id: "motion", key: "4", label: ko("Motion", "모션") },
+];
+
+// The gizmo's snap increments (TRANSLATE_SNAP / ROTATE_SNAP in
+// src/scene-objects.js). They are fixed, so the value group names them.
+const SNAP_MOVE = "5cm";
+const SNAP_TURN = "5°";
+
+// Editor lens range: shotsDomain.changeLens and the FOV slider take 14-90°.
+const FOV_MIN = 14;
+const FOV_MAX = 90;
+
+// "+ Add › Character" stands the new body one metre along X per existing
+// character, inside the same stage clamp the Content drag applies.
+const CHARACTER_BOUNDS = elementByPath("character.position").gizmo;
+const characterSpawnX = (count) => Math.min(CHARACTER_BOUNDS.max.x, Math.max(CHARACTER_BOUNDS.min.x, count));
+
+const trimNumber = (value, digits = 2) => String(Number(value.toFixed(digits)));
+
+/** One open overlay menu at a time; outside pointerdown or Escape closes it. */
+function useOverlayMenu() {
+	const [open, setOpen] = useState(null);
+	useEffect(() => {
+		if (!open) return undefined;
+		const onPointerDown = (event) => {
+			if (event.target instanceof Element && event.target.closest(`[data-vp-menu="${open}"]`)) return;
+			setOpen(null);
+		};
+		const onKeyDown = (event) => {
+			if (event.key !== "Escape") return;
+			document.querySelector(`[data-vp-menu="${open}"] > button`)?.focus();
+			setOpen(null);
+		};
+		document.addEventListener("pointerdown", onPointerDown);
+		window.addEventListener("keydown", onKeyDown);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown);
+			window.removeEventListener("keydown", onKeyDown);
+		};
+	}, [open]);
+	return {
+		open,
+		close: () => setOpen(null),
+		toggle: (id) => setOpen((current) => (current === id ? null : id)),
+	};
+}
+
+function MenuItem({ checked, role = "menuitemradio", className = "", children, ...props }) {
+	return (
+		<button type="button" role={role} aria-checked={checked} className={"vp-menu-item " + className} {...props}>
+			<span className="vp-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
+			{children}
+		</button>
+	);
+}
+
+/** The inset card's header (violet dot, shot name, lens) lives in App's
+ * `.vp-shot-preview-tag`; this region only fills in the words it shows. */
+function ShotPreviewHeader({ name, lens }) {
+	const [host, setHost] = useState(null);
+	useLayoutEffect(() => {
+		setHost(document.querySelector(".vp-shot-preview .vp-shot-preview-tag"));
+	}, []);
+	if (!host) return null;
+	return createPortal(
+		<span className="vp-shot-preview-meta" data-testid="shot-preview-header">
+			<span className="vp-shot-preview-name">{name}</span>
+			<span className="vp-shot-preview-lens">{lens}</span>
+		</span>,
+		host,
+	);
+}
 
 export default function ViewportToolbar() {
 	const {
-		workflowMode, selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled,
+		workflowMode, selectWorkflowMode, poseRefusal, gizmoMode, setGizmoMode, snapEnabled,
 		setSnapEnabled, preset, applyPreset, cameraPresetId, falMotionCameraLocked,
-		runStudioAction, shotAspectKey, fovDeg, shotsDomain, shot,
-		setNonce, workspaceLayout, viewMenuTriggerRef, viewMenuOpen, setViewMenuAnchor,
-		setViewMenuOpen, viewLooksActive, viewMenuAnchor, gridView, setGridView,
+		runStudioAction, shotAspectKey, fovDeg, shotsDomain, shot, shots, activeShot,
+		setNonce, workspaceLayout, viewMenuTriggerRef, viewMenuOpen,
+		setViewMenuOpen, viewLooksActive, gridView, setGridView,
 		autoColor, setAutoColor, isCharacterSelection, partColoursChoice, embedMode,
-		agentCollapsed,
+		agentCollapsed, addSceneObject, spawnCharacter, characters, flySpeed,
+		ikEditTool, setIkEditTool, showTrails, setShowTrails, motion, setRangePinPartPick,
+		trailFalloffS, setTrailFalloffS, lineEditMode, exitLineEditMode, enterRefineMode,
+		refineDisabledReason,
 	} = useStudioShell();
-	return (
-		<div className="viewport-titlebar">
-		<div className="workflow-mode-switch" role="tablist" aria-label={ko("Workflow", "작업 모드")}>
-			{[
-				["scene", ko("Scene", "장면"), ko("Place subjects and props", "인물과 소품 배치")],
-				["camera", ko("Camera", "카메라"), ko("Frame the shot", "샷 구도 설정")],
-				["motion", ko("Motion", "모션"), ko("Edit timing and movement", "타이밍과 움직임 편집")],
-				["pose", ko("Pose", "포즈"), ko("Edit the pose with IK", "IK로 포즈 편집")],
-			].map(([id, label, hint]) => (
-				<button
-					type="button"
-					role="tab"
-					key={id}
-					className={workflowMode === id ? "active" : ""}
-					aria-selected={workflowMode === id}
-					title={hint}
-					onClick={() => selectWorkflowMode(id)}
-				>
-					{label}
-				</button>
-			))}
-		</div>
-		<div className="editor-toolbar scene-tools" aria-label={ko("Scene tools", "장면 도구")}>
-			{workflowMode === "motion" && (
-				<span className="workflow-toolbar-hint" role="status">
-					{ko("Motion mode · edit the timeline below", "모션 모드 · 아래 타임라인에서 편집하세요")}
-				</span>
+	const menu = useOverlayMenu();
+
+	const setAutoColorOn = (next) => {
+		if (next === autoColor) return;
+		saveAutoColor(next);
+		trackFeature("auto_color");
+		setAutoColor(next);
+	};
+
+	const refineReason = lineEditMode ? null : refineDisabledReason();
+	const tools = {
+		scene: [
+			{ key: "W", id: "move", name: ko("Move", "이동"), active: gizmoMode === "move", pick: () => setGizmoMode("move") },
+			{ key: "E", id: "rotate", name: ko("Rotate", "회전"), active: gizmoMode === "rotate", pick: () => setGizmoMode("rotate") },
+			{ key: "R", id: "scale", name: ko("Scale", "크기"), active: gizmoMode === "scale", pick: () => setGizmoMode("scale") },
+		],
+		pose: [
+			{ key: "W", id: "ik", name: ko("Pose fix (IK parts)", "포즈 수정 (IK 파츠)"), active: ikEditTool === "ik", pick: () => setIkEditTool("ik") },
+			{
+				key: "E", id: "trail", name: ko("Path fix (motion trail)", "경로 수정 (궤적선)"), active: ikEditTool === "trail",
+				refused: showTrails ? null : ko("Turn Trails on in Show to edit the motion path", "경로를 수정하려면 표시에서 궤적선을 켜세요"),
+				pick: () => setIkEditTool("trail"),
+			},
+			{
+				key: "R", id: "pin", name: ko("Pin (range pin)", "고정 (범위 고정)"), active: ikEditTool === "pin",
+				refused: motion ? null : ko("Pinning needs a motion take", "고정하려면 모션 테이크가 필요해요"),
+				pick: () => { setIkEditTool("pin"); setRangePinPartPick(null); },
+			},
+		],
+		camera: [
+			{ key: "W", id: "move", name: ko("Move camera", "카메라 이동"), active: gizmoMode === "move", pick: () => setGizmoMode("move") },
+			{ key: "E", id: "rotate", name: ko("Rotate camera", "카메라 회전"), active: gizmoMode === "rotate", pick: () => setGizmoMode("rotate") },
+		],
+		motion: [
+			{
+				key: "W", id: "blocks", name: ko("Blocks (select and move prompt blocks)", "블록 (프롬프트 블록 선택·이동)"), active: !lineEditMode,
+				pick: () => { if (lineEditMode) exitLineEditMode(); },
+			},
+			{
+				key: "E", id: "refine", name: ko("Refine (edit the path line)", "다듬기 (경로선 편집)"), active: lineEditMode,
+				refused: refineReason, pick: () => { if (!lineEditMode) enterRefineMode(); },
+			},
+		],
+	}[workflowMode] ?? [];
+
+	// Lens choices are the real primes that fit the editor's FOV range, turned
+	// into a vertical FOV on the current filmback (the shot.js lens relation).
+	const lensChoices = PRIME_SET
+		.map((mm) => ({ mm, fov: (2 * Math.atan(shot.usedSensorHeightMm / (2 * mm)) * 180) / Math.PI }))
+		.filter(({ fov }) => fov >= FOV_MIN && fov <= FOV_MAX);
+	const aspectLabel = SHOT_ASPECT_PRESETS[shotAspectKey]?.label ?? shotAspectKey;
+
+	const valueGroup = workflowMode === "scene" ? (
+		<button
+			type="button"
+			className={"vp-value vp-snap-value" + (snapEnabled ? " on" : "")}
+			data-testid="snap-toggle"
+			aria-pressed={snapEnabled}
+			title={ko(
+				`Grid snapping ${snapEnabled ? "on" : "off"} (${SNAP_MOVE} · ${SNAP_TURN}) — click to toggle, hold Ctrl during a drag to invert`,
+				`그리드 스냅 ${snapEnabled ? "켜짐" : "꺼짐"} (${SNAP_MOVE} · ${SNAP_TURN}) — 클릭해 전환, 드래그 중 Ctrl을 누르면 반대로 작동`,
 			)}
-			{workflowMode === "pose" && (
-				<span className="workflow-toolbar-hint" role="status">
-					{ko("Pose mode · W IK parts · E motion trail · R range pin", "포즈 모드 · W IK 파츠 · E 궤적선 · R 범위 고정")}
-				</span>
-			)}
-				<span className="transform-toolbar-label workflow-scene-context">{ko("Transform", "변환")}</span>
-				<div className="tool-switch workflow-scene-context" role="group" aria-label={ko("Transform tools", "변환 도구")} data-transform-controls>
-					<button
-						type="button"
-						className={gizmoMode === "move" ? "active" : ""}
-						title={ko("Move tool (W)", "이동 도구 (W)")}
-						aria-pressed={gizmoMode === "move"}
-						onClick={() => setGizmoMode("move")}
-					>
-						<svg viewBox="0 0 16 16" aria-hidden="true" className="tool-icon"><path d="M8 1v14M1 8h14" stroke="currentColor" strokeWidth="1.4"/><path d="M8 1 6 3h4L8 1zM8 15l-2-2h4l-2 2zM1 8l2-2v4L1 8zM15 8l-2-2v4l2-2z" fill="currentColor"/></svg>
-						{ko("Move", "이동")}
-					</button>
-					<button
-						type="button"
-						className={gizmoMode === "rotate" ? "active" : ""}
-						title={ko("Rotate tool (E)", "회전 도구 (E)")}
-						aria-pressed={gizmoMode === "rotate"}
-						onClick={() => setGizmoMode("rotate")}
-					>
-						<svg viewBox="0 0 16 16" aria-hidden="true" className="tool-icon"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" strokeWidth="1.4"/><path d="M13.4 8l2-2v4l-2 2z" fill="currentColor" transform="rotate(45 13.4 8)"/></svg>
-						{ko("Rotate", "회전")}
-					</button>
-					<button
-						type="button"
-						className={gizmoMode === "scale" ? "active" : ""}
-						title={ko("Scale tool (R)", "크기 도구 (R)")}
-						aria-pressed={gizmoMode === "scale"}
-						onClick={() => setGizmoMode("scale")}
-					>
-						<svg viewBox="0 0 16 16" aria-hidden="true" className="tool-icon"><rect x="3" y="3" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4"/><path d="M13 13h-4M13 13V9M13 13l-3.5-3.5" stroke="currentColor" strokeWidth="1.4" fill="none"/></svg>
-						{ko("Scale", "크기")}
-					</button>
-				</div>
-				<button
-					type="button"
-					className={"snap-switch workflow-scene-context" + (snapEnabled ? " active" : "")}
-					title={ko("Grid snapping — hold Ctrl during a drag to invert", "그리드 스냅 — 드래그 중 Ctrl을 누르면 반대로 작동")}
-					aria-pressed={snapEnabled}
-					onClick={() => setSnapEnabled((v) => !v)}
-				>
-					{ko("Snap", "스냅")}
-				</button>
-				<span className="viewport-toolbar-separator settings-separator workflow-camera-context" aria-hidden="true" />
-				<label className="viewport-toolbar-field shot-field workflow-camera-context">
-					<span>{ko("Shot", "샷")}</span>
-					<select
-						aria-label={ko("Shot preset", "샷 프리셋")}
-						value={preset}
-						onChange={(event) => applyPreset(event.target.value)}
-					>
-						{Object.entries(PRESETS).map(([key, value]) => (
-							<option key={key} value={key}>{value.label}</option>
-						))}
-					</select>
-				</label>
-				<label className="viewport-toolbar-field ratio-field workflow-camera-context">
-					<span>{ko("Cam", "카메라")}</span>
-					<select
-						aria-label={ko("Camera preset", "카메라 프리셋")}
-						value={cameraPresetId ?? ""}
-						disabled={falMotionCameraLocked}
-						onChange={(event) => {
-							const id = event.target.value;
-							if (!id) { runStudioAction("stage.setFilmback", { cameraPresetId: null }); return; }
-							runStudioAction("shot.frame", { preset: id });
-						}}
-					>
-						<option value="">{ko("Free", "자유")}</option>
-						{Object.values(CAMERA_PRESETS).map((value) => (
-							<option key={value.id} value={value.id}>{value.label}</option>
-						))}
-					</select>
-				</label>
-				<label className="viewport-toolbar-field ratio-field workflow-camera-context">
-					<span>{ko("Ratio", "비율")}</span>
-					<select
-						aria-label={ko("Output aspect ratio", "출력 화면 비율")}
-						value={shotAspectKey}
-						onChange={(event) => runStudioAction("stage.setFilmback", { shotAspect: event.target.value })}
-					>
-						{Object.values(SHOT_ASPECT_PRESETS).map((value) => (
-							<option key={value.label} value={value.label}>{value.label}</option>
-						))}
-					</select>
-				</label>
-				<label className="viewport-fov-control workflow-camera-context">
-					<span>FOV</span>
+			onClick={() => setSnapEnabled((value) => !value)}
+		>
+			<span>{SNAP_MOVE}</span>
+			<span>{SNAP_TURN}</span>
+		</button>
+	) : workflowMode === "pose" ? (
+		<div className="vp-menu-wrap" data-vp-menu="influence">
+			<button
+				type="button"
+				className="vp-value"
+				aria-haspopup="dialog"
+				aria-expanded={menu.open === "influence"}
+				title={ko("Influence range — how far an edit blends into nearby frames", "영향 범위 — 수정이 주변 프레임에 섞이는 길이")}
+				onClick={() => menu.toggle("influence")}
+			>
+				{trimNumber(trailFalloffS)}s
+			</button>
+			{menu.open === "influence" && (
+				<div className="vp-menu vp-slider-popover" role="dialog" aria-label={ko("Influence range", "영향 범위")}>
 					<input
 						type="range"
-						min="14"
-						max="90"
-						step="1"
-						value={fovDeg}
-						disabled={falMotionCameraLocked}
-						onChange={(event) => shotsDomain.changeLens(Number(event.target.value))}
+						min={0.1}
+						max={2}
+						step={0.1}
+						value={trailFalloffS}
+						aria-label={ko("Influence range", "영향 범위")}
+						onChange={(event) => setTrailFalloffS(Number(event.target.value))}
 					/>
-					<output>{Math.round(fovDeg)}°</output>
-					<small>{shot.focalMm}mm</small>
-				</label>
-				<span className="viewport-toolbar-spacer workflow-camera-context" />
+					<output>{trimNumber(trailFalloffS)}s</output>
+				</div>
+			)}
+		</div>
+	) : workflowMode === "camera" ? (
+		<>
+			<div className="vp-menu-wrap" data-vp-menu="lens">
 				<button
 					type="button"
-					title={ko("Recenter on subject", "피사체 다시 맞추기")}
-					aria-label={ko("Recenter on subject", "피사체 다시 맞추기")}
-					className="workflow-camera-context"
-					onClick={() => setNonce((n) => n + 1)}
+					className="vp-value"
+					data-testid="lens-value"
+					aria-haspopup="menu"
+					aria-expanded={menu.open === "lens"}
+					title={ko("Lens — pick a prime or set the field of view", "렌즈 — 단렌즈를 고르거나 화각을 조절")}
+					onClick={() => menu.toggle("lens")}
 				>
-					◎
+					{shot.focalMm}mm
 				</button>
+				{menu.open === "lens" && (
+					<div className="vp-menu" role="menu" aria-label={ko("Lens", "렌즈")}>
+						{lensChoices.map(({ mm, fov }) => (
+							<MenuItem
+								key={mm}
+								data-lens={mm}
+								checked={shot.focalMm === mm}
+								disabled={falMotionCameraLocked}
+								onClick={() => { shotsDomain.changeLens(fov); menu.close(); }}
+							>
+								{mm}mm
+							</MenuItem>
+						))}
+						<label className="viewport-fov-control">
+							<span>FOV</span>
+							<input
+								type="range"
+								min={FOV_MIN}
+								max={FOV_MAX}
+								step="1"
+								value={fovDeg}
+								disabled={falMotionCameraLocked}
+								onChange={(event) => shotsDomain.changeLens(Number(event.target.value))}
+							/>
+							<output>{Math.round(fovDeg)}°</output>
+						</label>
+					</div>
+				)}
+			</div>
+			<div className="vp-menu-wrap" data-vp-menu="ratio">
 				<button
 					type="button"
-					aria-pressed={!workspaceLayout.insetCollapsed}
-					className="workflow-scene-context workflow-camera-context"
-					onClick={() => {
-						runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
-					}}
+					className="vp-value"
+					data-testid="ratio-value"
+					aria-haspopup="menu"
+					aria-expanded={menu.open === "ratio"}
+					title={ko("Output aspect ratio", "출력 화면 비율")}
+					onClick={() => menu.toggle("ratio")}
 				>
-					{ko("Top", "탑")} {workspaceLayout.insetCollapsed ? "▸" : "▾"}
+					{aspectLabel.replace(/:1$/, "")}
 				</button>
-				{/* One menu for every viewport-look toggle (R4), in every mode:
-				    what the stage LOOKS like is not a mode's business. The 27px
-				    bar clips its own overflow, so the panel is fixed to the
-				    viewport and anchored to the trigger, like the export menu.
-				    Items keep the menu open: these are toggles you compare, not
-				    commands you fire. */}
-				<div className="view-menu-wrap">
+				{menu.open === "ratio" && (
+					<div className="vp-menu" role="menu" aria-label={ko("Output aspect ratio", "출력 화면 비율")}>
+						{Object.entries(SHOT_ASPECT_PRESETS).map(([key, value]) => (
+							<MenuItem
+								key={key}
+								data-aspect={key}
+								checked={key === shotAspectKey}
+								title={value.title}
+								onClick={() => { runStudioAction("stage.setFilmback", { shotAspect: key }); menu.close(); }}
+							>
+								{value.label}
+							</MenuItem>
+						))}
+					</div>
+				)}
+			</div>
+		</>
+	) : null;
+
+	return (
+		<div className="viewport-titlebar" data-testid="viewport-overlays">
+			<div className="vp-overlay-left">
+				<div className="vp-menu-wrap" data-vp-menu="add">
 					<button
 						type="button"
-						className="view-menu-trigger"
-						data-testid="view-menu-trigger"
-						ref={viewMenuTriggerRef}
+						className="vp-pill vp-add-trigger add-object-trigger"
+						data-testid="viewport-add"
 						aria-haspopup="menu"
-						aria-expanded={viewMenuOpen}
-						title={ko("Viewport display toggles", "뷰포트 표시 토글")}
-						onClick={(event) => {
-							const box = event.currentTarget.getBoundingClientRect();
-							setViewMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
-							setViewMenuOpen((open) => !open);
-						}}
+						aria-expanded={menu.open === "add"}
+						title={ko("Add an object, a character or a camera", "오브젝트, 캐릭터, 카메라 추가")}
+						onClick={() => menu.toggle("add")}
 					>
-						{ko("View", "보기")}
-						<span className="caret">▾</span>
-						{viewLooksActive && <span className="view-menu-dot" data-testid="view-menu-dot" aria-hidden="true" />}
+						<span className="vp-add-plus" aria-hidden="true">+</span>
+						{ko("Add", "추가")}
 					</button>
-					{viewMenuOpen && (
-						<div
-							className="project-menu view-menu"
-							role="menu"
-							aria-label={ko("Viewport display", "뷰포트 표시")}
-							style={{ top: `${viewMenuAnchor.top}px`, right: `${viewMenuAnchor.right}px` }}
-						>
-							{/* aria-pressed rides along with aria-checked: the toggles
-							    published that state contract in their old homes and QA
-							    still reads it, so the move keeps the signpost (R9). */}
-							<button
-								type="button"
-								role="menuitemcheckbox"
-								className={"view-menu-item grid-view-switch" + (gridView ? " active" : "")}
-								aria-checked={gridView}
-								aria-pressed={gridView}
-								title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
-								onClick={() => setGridView((v) => !v)}
-							>
-								<span className="view-menu-mark" aria-hidden="true">{gridView ? "✓" : ""}</span>
-								{ko("Reference grid", "기준 그리드")}
-							</button>
-							<button
-								type="button"
-								role="menuitemcheckbox"
-								className={"view-menu-item auto-color-toggle" + (autoColor ? " active" : "")}
-								aria-checked={autoColor}
-								aria-pressed={autoColor}
-								title={ko(
-									"Distinct display colors per object — captures include them while on",
-									"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
-								)}
-								onClick={() => {
-									setAutoColor((on) => {
-										saveAutoColor(!on);
-										trackFeature("auto_color");
-										return !on;
-									});
-								}}
-							>
-								<span className="view-menu-mark" aria-hidden="true">{autoColor ? "✓" : ""}</span>
-								{ko("Auto Color", "자동 색")}
-							</button>
-							{/* Part colours repaint a BODY, so the section only exists
-							    while a character is selected (R2). */}
-							{isCharacterSelection && (
-								<div className="view-menu-group" role="group" aria-label={ko("Body part colours", "부위 색상")}>
-									<span className="view-menu-label" aria-hidden="true">{ko("Body part colours", "부위 색상")}</span>
-									{[
-										{ value: "off", label: ko("Off", "끕") },
-										{ value: "shaded", label: ko("Shaded", "음영") },
-										{ value: "flat", label: ko("Flat", "평면") },
-									].map((option) => {
-										const checked = option.value === partColoursChoice;
-										return (
-											<button
-												type="button"
-												key={option.value}
-												role="menuitemradio"
-												className={"view-menu-item part-colour-option" + (checked ? " active" : "")}
-												data-part-colours={option.value}
-												aria-checked={checked}
-												onClick={() => runStudioAction("view.setPartColours", { mode: option.value })}
-											>
-												<span className="view-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
-												{option.label}
-											</button>
-										);
-									})}
-								</div>
-							)}
-							{/* Panel visibility belongs to the same menu (R4): the
-							    agent column is something you show, not a mode, so it
-							    gets a checkmark here instead of a topbar button. */}
-							{!embedMode && (
-								<div className="view-menu-group" role="group" aria-label={ko("Panels", "패널")}>
-									<span className="view-menu-label" aria-hidden="true">{ko("Panels", "패널")}</span>
-									<button
-										type="button"
-										role="menuitemcheckbox"
-										className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
-										aria-checked={!agentCollapsed}
-										aria-pressed={!agentCollapsed}
-										title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
-										onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
-									>
-										<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
-										{ko("Agent panel", "에이전트 패널")}
-									</button>
-								</div>
-							)}
+					{menu.open === "add" && (
+						<div className="vp-menu add-object-menu" role="menu" aria-label={ko("Add", "추가")}>
+							<CatalogueEntries onPick={(kind) => { addSceneObject(kind); menu.close(); }} />
+							<div className="add-object-group">
+								<span className="add-object-heading">{ko("Scene", "장면")}</span>
+								<button
+									type="button"
+									role="menuitem"
+									className="add-object-item"
+									data-add="character"
+									onClick={() => { spawnCharacter(CHARACTER_MODEL_IDS[0], characterSpawnX(characters.length), 0); menu.close(); }}
+								>
+									<span className="add-object-swatch vp-add-swatch-cast" aria-hidden="true" />
+									<span>{ko("Character", "캐릭터")}</span>
+								</button>
+								<button
+									type="button"
+									role="menuitem"
+									className="add-object-item"
+									data-add="camera"
+									onClick={() => { runStudioAction("shot.create"); menu.close(); }}
+								>
+									<span className="add-object-swatch vp-add-swatch-camera" aria-hidden="true" />
+									<span>{ko("Camera", "카메라")}</span>
+								</button>
+							</div>
 						</div>
 					)}
 				</div>
+
+				<div className="vp-pill vp-view-pill">
+					<div className="vp-menu-wrap" data-vp-menu="camera-view">
+						<button
+							type="button"
+							className="vp-pill-segment"
+							data-testid="view-camera-trigger"
+							aria-haspopup="menu"
+							aria-expanded={menu.open === "camera-view"}
+							title={ko("Views and shot cameras", "보기와 샷 카메라")}
+							onClick={() => menu.toggle("camera-view")}
+						>
+							{ko("Perspective", "원근")}
+						</button>
+						{menu.open === "camera-view" && (
+							<div className="vp-menu" role="menu" aria-label={ko("Views and shot cameras", "보기와 샷 카메라")}>
+								<span className="vp-menu-label">{ko("View", "보기")}</span>
+								<MenuItem checked onClick={menu.close}>{ko("Perspective", "원근")}</MenuItem>
+								<MenuItem
+									role="menuitemcheckbox"
+									checked={!workspaceLayout.insetCollapsed}
+									title={ko("Show the Top-View inset", "탑뷰 인셋 표시")}
+									onClick={() => runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed })}
+								>
+									{ko("Top", "탑")}
+								</MenuItem>
+								{shots.length > 0 && <span className="vp-menu-label">{ko("Shot cameras", "샷 카메라")}</span>}
+								{shots.map((entry) => (
+									<MenuItem
+										key={entry.id}
+										checked={activeShot?.id === entry.id}
+										title={ko("Show this shot's camera in the preview", "이 샷의 카메라를 미리보기에 표시")}
+										onClick={() => { runStudioAction("view.select", { shotId: entry.id }); menu.close(); }}
+									>
+										{entry.name}
+									</MenuItem>
+								))}
+								<span className="vp-menu-label">{ko("Shot framing", "샷 구도")}</span>
+								<label className="viewport-toolbar-field shot-field">
+									<span>{ko("Shot", "샷")}</span>
+									<select
+										aria-label={ko("Shot preset", "샷 프리셋")}
+										value={preset}
+										onChange={(event) => applyPreset(event.target.value)}
+									>
+										{Object.entries(PRESETS).map(([key, value]) => (
+											<option key={key} value={key}>{value.label}</option>
+										))}
+									</select>
+								</label>
+								<label className="viewport-toolbar-field ratio-field">
+									<span>{ko("Cam", "카메라")}</span>
+									<select
+										aria-label={ko("Camera preset", "카메라 프리셋")}
+										value={cameraPresetId ?? ""}
+										disabled={falMotionCameraLocked}
+										onChange={(event) => {
+											const id = event.target.value;
+											if (!id) { runStudioAction("stage.setFilmback", { cameraPresetId: null }); return; }
+											runStudioAction("shot.frame", { preset: id });
+										}}
+									>
+										<option value="">{ko("Free", "자유")}</option>
+										{Object.values(CAMERA_PRESETS).map((value) => (
+											<option key={value.id} value={value.id}>{value.label}</option>
+										))}
+									</select>
+								</label>
+								<button
+									type="button"
+									role="menuitem"
+									className="vp-menu-item"
+									title={ko("Recenter on subject", "피사체 다시 맞추기")}
+									aria-label={ko("Recenter on subject", "피사체 다시 맞추기")}
+									onClick={() => { setNonce((n) => n + 1); menu.close(); }}
+								>
+									<span className="vp-menu-mark" aria-hidden="true">◎</span>
+									{ko("Recenter on subject", "피사체 다시 맞추기")}
+								</button>
+							</div>
+						)}
+					</div>
+					<span className="vp-pill-divider" aria-hidden="true" />
+					<div className="vp-menu-wrap" data-vp-menu="shading">
+						<button
+							type="button"
+							className="vp-pill-segment"
+							data-testid="shading-trigger"
+							aria-haspopup="menu"
+							aria-expanded={menu.open === "shading"}
+							title={ko("Shading", "셰이딩")}
+							onClick={() => menu.toggle("shading")}
+						>
+							{autoColor ? ko("Auto Color", "자동 색") : ko("Clay Lit", "클레이 조명")}
+						</button>
+						{menu.open === "shading" && (
+							<div className="vp-menu" role="menu" aria-label={ko("Shading", "셰이딩")}>
+								<MenuItem checked={!autoColor} onClick={() => { setAutoColorOn(false); menu.close(); }}>
+									{ko("Clay Lit", "클레이 조명")}
+								</MenuItem>
+								<MenuItem
+									checked={autoColor}
+									title={ko("Flat, distinct colour per object — captures include them while on", "오브젝트별 평면 구분 색 — 켜둔 동안 캡처에도 포함됩니다")}
+									onClick={() => { setAutoColorOn(true); menu.close(); }}
+								>
+									{ko("Auto Color", "자동 색")}
+								</MenuItem>
+							</div>
+						)}
+					</div>
+					<span className="vp-pill-divider" aria-hidden="true" />
+					{/* G8 "Show" = the View menu: every what-is-on-screen toggle, in
+					    every mode. Items keep the menu open: these are toggles you
+					    compare, not commands you fire. */}
+					<div className="view-menu-wrap">
+						<button
+							type="button"
+							className="vp-pill-segment view-menu-trigger"
+							data-testid="view-menu-trigger"
+							ref={viewMenuTriggerRef}
+							aria-haspopup="menu"
+							aria-expanded={viewMenuOpen}
+							title={ko("Viewport display toggles", "뷰포트 표시 토글")}
+							onClick={() => setViewMenuOpen((open) => !open)}
+						>
+							{ko("Show", "표시")}
+							{viewLooksActive && <span className="view-menu-dot" data-testid="view-menu-dot" aria-hidden="true" />}
+						</button>
+						{viewMenuOpen && (
+							<div
+								className="vp-menu view-menu"
+								role="menu"
+								aria-label={ko("Viewport display", "뷰포트 표시")}
+							>
+								{/* aria-pressed rides along with aria-checked: the toggles
+								    published that state contract in their old homes and QA
+								    still reads it, so the move keeps the signpost (R9). */}
+								<button
+									type="button"
+									role="menuitemcheckbox"
+									className={"view-menu-item grid-view-switch" + (gridView ? " active" : "")}
+									aria-checked={gridView}
+									aria-pressed={gridView}
+									title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
+									onClick={() => setGridView((v) => !v)}
+								>
+									<span className="view-menu-mark" aria-hidden="true">{gridView ? "✓" : ""}</span>
+									{ko("Reference grid", "기준 그리드")}
+								</button>
+								<button
+									type="button"
+									role="menuitemcheckbox"
+									className={"view-menu-item auto-color-toggle" + (autoColor ? " active" : "")}
+									aria-checked={autoColor}
+									aria-pressed={autoColor}
+									title={ko(
+										"Distinct display colors per object — captures include them while on",
+										"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
+									)}
+									onClick={() => setAutoColorOn(!autoColor)}
+								>
+									<span className="view-menu-mark" aria-hidden="true">{autoColor ? "✓" : ""}</span>
+									{ko("Auto Color", "자동 색")}
+								</button>
+								<button
+									type="button"
+									role="menuitemcheckbox"
+									className={"view-menu-item trails-toggle" + (showTrails ? " active" : "")}
+									aria-checked={showTrails}
+									aria-pressed={showTrails}
+									title={ko("Motion trails while posing", "포즈 편집 중 궤적선")}
+									onClick={() => {
+										if (showTrails && ikEditTool === "trail") setIkEditTool("ik");
+										setShowTrails(!showTrails);
+									}}
+								>
+									<span className="view-menu-mark" aria-hidden="true">{showTrails ? "✓" : ""}</span>
+									{ko("Trails", "궤적선")}
+								</button>
+								{/* Part colours repaint a BODY, so the section only exists
+								    while a character is selected (R2). */}
+								{isCharacterSelection && (
+									<div className="view-menu-group" role="group" aria-label={ko("Body part colours", "부위 색상")}>
+										<span className="view-menu-label" aria-hidden="true">{ko("Body part colours", "부위 색상")}</span>
+										{[
+											{ value: "off", label: ko("Off", "끕") },
+											{ value: "shaded", label: ko("Shaded", "음영") },
+											{ value: "flat", label: ko("Flat", "평면") },
+										].map((option) => {
+											const checked = option.value === partColoursChoice;
+											return (
+												<button
+													type="button"
+													key={option.value}
+													role="menuitemradio"
+													className={"view-menu-item part-colour-option" + (checked ? " active" : "")}
+													data-part-colours={option.value}
+													aria-checked={checked}
+													onClick={() => runStudioAction("view.setPartColours", { mode: option.value })}
+												>
+													<span className="view-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
+													{option.label}
+												</button>
+											);
+										})}
+									</div>
+								)}
+								{/* Panel visibility belongs to the same menu (R4): the
+								    agent column is something you show, not a mode, so it
+								    gets a checkmark here instead of a topbar button. */}
+								{!embedMode && (
+									<div className="view-menu-group" role="group" aria-label={ko("Panels", "패널")}>
+										<span className="view-menu-label" aria-hidden="true">{ko("Panels", "패널")}</span>
+										<button
+											type="button"
+											role="menuitemcheckbox"
+											className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
+											aria-checked={!agentCollapsed}
+											aria-pressed={!agentCollapsed}
+											title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
+											onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
+										>
+											<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
+											{ko("Agent panel", "에이전트 패널")}
+										</button>
+									</div>
+								)}
+							</div>
+						)}
+					</div>
+				</div>
 			</div>
+
+			<div className="vp-mode-toolbar" role="toolbar" data-testid="mode-toolbar" aria-label={ko("Mode and tools", "모드와 도구")}>
+				<div className="vp-mode-keys" role="tablist" aria-label={ko("Workflow", "작업 모드")}>
+					{MODES.map((mode) => {
+						const active = workflowMode === mode.id;
+						const refused = mode.id === "pose" ? poseRefusal : null;
+						return (
+							<button
+								type="button"
+								role="tab"
+								key={mode.id}
+								data-mode-key={mode.key}
+								data-mode={mode.id}
+								className={"vp-mode-key" + (active ? " active" : "")}
+								aria-selected={active}
+								aria-disabled={refused ? true : undefined}
+								aria-label={mode.label}
+								title={refused || `${mode.label} (${mode.key})`}
+								onClick={() => selectWorkflowMode(mode.id)}
+							>
+								<span className="vp-key-digit">{mode.key}</span>
+								{active && <span className="vp-mode-name">{mode.label}</span>}
+							</button>
+						);
+					})}
+				</div>
+				{tools.length > 0 && <span className="vp-toolbar-divider" aria-hidden="true" />}
+				<div className="vp-tool-keys" role="group" aria-label={ko("Tools", "도구")} data-transform-controls>
+					{tools.map((tool) => (
+						<button
+							type="button"
+							key={tool.key}
+							data-tool-key={tool.key}
+							data-tool={tool.id}
+							className={"vp-tool-key" + (tool.active ? " active" : "")}
+							aria-pressed={tool.active}
+							aria-disabled={tool.refused ? true : undefined}
+							aria-label={tool.name}
+							title={tool.refused || `${tool.name} (${tool.key})`}
+							onClick={() => { if (!tool.refused) tool.pick(); }}
+						>
+							{tool.key}
+						</button>
+					))}
+				</div>
+				{valueGroup && (
+					<>
+						<span className="vp-toolbar-divider" aria-hidden="true" />
+						<div className="vp-values">{valueGroup}</div>
+					</>
+				)}
+			</div>
+
+			<div className="vp-overlay-right">
+				<span
+					className="vp-pill vp-speed"
+					data-testid="fly-speed"
+					title={ko("Fly speed — scroll while right-dragging to change it", "비행 속도 — 오른쪽 드래그 중 스크롤로 조절")}
+				>
+					speed {trimNumber(flySpeed)}
+				</span>
+			</div>
+
+			<ShotPreviewHeader name={activeShot?.name ?? ko("Shot", "샷")} lens={`${shot.focalMm}mm`} />
 		</div>
 	);
 }
