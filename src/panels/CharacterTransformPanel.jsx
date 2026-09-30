@@ -13,7 +13,7 @@ export default function CharacterTransformPanel({ workflowMode, isCharacterSelec
 					title={workflowMode === "motion" ? ko("Placement", "배치") : ko("Transform", "변환")}
 				>
 					{workflowMode === "motion" ? (
-						<div className="placement-fields">
+						<div className="placement-fields v2-details-panel">
 							<p className="inspector-hint">
 								{ko("Stage position — does not change the take", "무대 위치 — 테이크는 바꾸지 않습니다")}
 							</p>

@@ -10,7 +10,7 @@ export default function SubjectsPanel({
 	const { run, begin, commit, cancel } = useCastTransaction();
 	return (
 <Foldout hidden={!isCharacterSelection} title={showB ? ko("Subjects", "인물들") : ko("Subject", "인물")}>
-						<div className={"subjects-row" + (showB ? "" : " single")} onBlur={commit} onPointerUp={commit} onPointerCancel={cancel}>
+						<div className={"subjects-row v2-details-subjects" + (showB ? "" : " single")} onBlur={commit} onPointerUp={commit} onPointerCancel={cancel}>
 							{characters.map((entry, index) => entry.hidden ? null : (
 								<SubjectBox
 									key={entry.id}

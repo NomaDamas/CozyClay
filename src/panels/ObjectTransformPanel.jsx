@@ -48,12 +48,11 @@ export default function ObjectTransformPanel({
 <Foldout hidden={!selectedSceneObject} title={ko("Transform", "변환")}>
 						{selectedSceneObject && (
 							<>
-								<p className="inspector-hint">
+								<p className="inspector-hint v2-details-hint">
 								{ko("Type a value and press Enter, or drag a number sideways to scrub (Shift for fine).", "값을 입력하고 Enter를 누르거나 숫자를 좌우로 끌어 조절하세요(Shift는 미세 조정).")}
 								</p>
-								<label className="check snap-toggle">
-									<input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
-								<span>
+								<label className="check snap-toggle details-toggle-row">
+									<span>
 									{isKo ? (
 										<>
 											그리드 스냅 — <kbd>Ctrl</kbd>을 누르면 반대로 작동
@@ -63,7 +62,8 @@ export default function ObjectTransformPanel({
 											Snap to grid — hold <kbd>Ctrl</kbd> to invert
 										</>
 									)}
-								</span>
+									</span>
+									<input type="checkbox" checked={snapEnabled} onChange={(event) => setSnapEnabled(event.target.checked)} />
 								</label>
 						<Field label={ko("Name", "이름")}>
 									<input
@@ -147,14 +147,14 @@ export default function ObjectTransformPanel({
 												onBlur={() => finish()} onKeyDown={endKey}
 											/>
 										</Field>
-										<label className="check">
+										<label className="check details-toggle-row">
+											<span>{ko("Clay", "클레이")}</span>
 											<input
 												type="checkbox"
 												data-field="mesh-clay"
 												checked={selectedSceneObject.clay === true}
 												onChange={(event) => run(...updateArgs({ clay: event.target.checked }))}
 											/>
-											<span>{ko("Clay", "클레이")}</span>
 										</label>
 									</>
 								)}

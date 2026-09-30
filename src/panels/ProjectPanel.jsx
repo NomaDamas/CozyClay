@@ -1,13 +1,14 @@
 import { ko } from "../locale.js";
 import ResourceStatus from "../resource-status.jsx";
 import { useBus } from "../app-context.js";
+import "./details.css";
 
 export default function ProjectPanel({
 	projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen, projectManifest,
 }) {
 	const { run } = useBus();
 	return (
-<div className="project-menu-wrap">
+<div className="project-menu-wrap v2-project-menu">
 					<button
 						type="button"
 						className="project-menu-trigger"

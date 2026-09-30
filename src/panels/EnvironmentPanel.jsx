@@ -8,9 +8,9 @@ export default function EnvironmentPanel(props) {
 	const { run, begin, commit } = useStageTransaction();
 	return (
 <Foldout hidden={props.selectedHierarchyId !== "environment"} title={ko("Environment", "환경")}>
-						<label className="check">
+						<label className="check details-toggle-row">
+							<span>{ko("I have an environment sheet", "환경 시트가 있어요")}</span>
 							<input type="checkbox" checked={props.hasEnvSheet} onChange={(event) => run("stage.setEnvironment", { hasEnvSheet: event.target.checked })} />
-						<span>{ko("I have an environment sheet", "환경 시트가 있어요")}</span>
 						</label>
 						{!props.hasEnvSheet && (
 						<Field label={ko("Environment description", "환경 설명")}>

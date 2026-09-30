@@ -10,7 +10,7 @@ export default function VideoCapturePanel({
 }) {
 	return (
 <Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Video capture", "영상 모캡")}>
-					<div className="multimodel-card">
+					<div className="multimodel-card v2-details-video-card">
 						<div className="multimodel-card-head">
 							<div>
 								<strong>{ko("Footage → motion", "영상 → 모션")}</strong>

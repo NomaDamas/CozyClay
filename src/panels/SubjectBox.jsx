@@ -2,7 +2,7 @@ import { ko, isKo } from "../locale.js";
 
 export default function SubjectBox({ label, value, onChange, onRemove, onPose, posing, color, onColorChange, onColorEditStart }) {
 	return (
-		<div className="subject-box">
+		<div className="subject-box v2-subject-box">
 			<div className="subject-box-head">
 				<span className="sb-name">{label}</span>
 				<div className="sb-actions">

@@ -37,7 +37,7 @@ export default function ReferenceImageField({ label, hint, value, alt, onPick, o
 	const inputRef = useRef(null);
 	const [error, setError] = useState("");
 	return (
-		<div className="reference-slot">
+		<div className="reference-slot v2-reference-slot">
 			<div className="reference-slot-head">
 				<span className="reference-slot-label">{label}</span>
 				{value && (
