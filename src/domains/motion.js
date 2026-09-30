@@ -1926,7 +1926,7 @@ export function useMotion(appContext) {
 		}
 	}
 
-	async function platformFitRun(id, context, { removal = false } = {}) {
+	async function platformFitRun(id, context, { removal = false, preview = false } = {}) {
 		const rig = appContext.shared.rigs[id], resolved = rig && resolveIkRig(rig), take = domain.motionFor(id);
 		if (!resolved || !take) throw new StudioProtocolError('TARGET_NOT_READY', 'Load a take and character rig first.');
 		if (platformFitRunning) throw new StudioProtocolError('TARGET_BUSY', 'A platform fit is already running.');
@@ -1961,6 +1961,12 @@ export function useMotion(appContext) {
 				if (result.changedFrames.length) context.commit(() => domain.setKeys(id, result.candidate.keys));
 				platformFitAppliedRef.current = null; setPlatformFitApplied(false); setPlatformFitLast(null);
 				return { ...last, removed: result.changedFrames.length > 0 };
+			}
+			if (!preview) {
+				if (result.changedFrames.length) context.commit(() => domain.setKeys(id, result.candidate.keys));
+				platformFitAppliedRef.current = { id, before: stacked?.before ?? sourceKeys, tracked: stacked?.tracked ?? sourceTracked, stamp: physicsKeyStamp(decodeMotionKeys(domain.layer(id).ikKeys)) };
+				setPlatformFitLast(last); setPlatformFitApplied(true);
+				return last;
 			}
 			platformFitAppliedRef.current = { preview: { id, sourceStamp: stamp, sourceKeys, sourceTracked, candidate: result.candidate, last }, before: stacked?.before ?? sourceKeys, tracked: stacked?.tracked ?? sourceTracked, stamp };
 			setPlatformFitLast({ ...last, candidate: result.candidate });

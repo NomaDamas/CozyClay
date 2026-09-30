@@ -27,7 +27,7 @@ const rangePins = [
 	mutation('motion.rangePin.remove', 'Remove range pin', { characterId: id, pinId: id }),
 ];
 const platformFit = [
-	{ id: 'motion.platformFit.run', label: 'Fit motion to platforms', description: 'Analyse scene platforms and prepare an IK correction preview.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id }, ['characterId']) },
+	{ id: 'motion.platformFit.run', label: 'Fit motion to platforms', description: 'Analyse scene platforms and prepare or apply an IK correction.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id, preview: { type: 'boolean', default: false } }, ['characterId']) },
 	{ id: 'motion.platformFit.remove', label: 'Remove platform fit', description: 'Apply or remove the reviewed platform-fit correction.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id, apply: { type: 'boolean', default: false } }, ['characterId']) },
 ];
 const edits = [
@@ -139,7 +139,7 @@ export function register(registry, ports) {
 	} });
 	registry.register({ ...platformFit[0], available: mounted, target: args => args.characterId, async run(args, context) {
 		characterOf(ports, args.characterId);
-		const output = await owner().platformFitRun(args.characterId, context);
+		const output = await owner().platformFitRun(args.characterId, context, { preview: args.preview === true });
 		return { affectedIds: [args.characterId], summary: platformFit[0].label, output };
 	} });
 	registry.register({ ...platformFit[1], available: mounted, target: args => args.characterId, run(args, context) {

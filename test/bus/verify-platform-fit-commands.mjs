@@ -15,21 +15,18 @@ for (const origin of ['ui', 'agent', 'mcp', 'cli']) test(`platform fit: ${origin
   try {
     const before = f.snapshot();
     const fit = ok(await f.run('motion.platformFit.run', args, origin));
-    assert.equal(fit.authored, false);
-    assert.equal(fit.undo?.entries ?? 0, 0);
+    assert.equal(fit.authored, true);
+    assert.equal(fit.undo.entries, 1);
     assert.equal(fit.output.summary.lifted, 2);
     assert.equal(fit.output.changedFrames.length, 24);
-    assert.deepEqual(f.snapshot(), before, 'Preview does not mutate authored keys');
-    const applied = ok(await f.run('motion.platformFit.remove', { ...args, apply: true }, origin));
-    assert.notDeepEqual(f.snapshot(), before);
-    assert.equal(applied.undo.entries, 1);
     const fitted = f.snapshot();
+    assert.notDeepEqual(fitted, before);
     const removed = ok(await f.run('motion.platformFit.remove', args, origin));
     assert.equal(removed.undo.entries, 1);
     assert.deepEqual(f.snapshot(), before, 'Remove restores the exact pre-fit keys after their JSON round trip');
     ok(f.run('edit.undo', { receiptId: removed.receiptId }, origin));
     assert.deepEqual(f.snapshot(), fitted, 'Remove itself is undoable');
-    ok(f.run('edit.undo', { receiptId: applied.receiptId }, origin));
+    ok(f.run('edit.undo', { receiptId: fit.receiptId }, origin));
     assert.deepEqual(f.snapshot(), before, 'Fit itself is undoable');
   } finally { f.dispose(); }
 });
