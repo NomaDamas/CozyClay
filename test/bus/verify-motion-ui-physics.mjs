@@ -49,7 +49,7 @@ test('motion: AutoPhysics previews real rig corrections, applies them atomically
   } finally { f.dispose(); }
 });
 test('motion: authored panel handlers dispatch semantic run commands', () => {
-  const source = ['panels/RigControlPanel.jsx', 'panels/TakeBarPanel.jsx', 'ardy/physics-panel.jsx'].map(path => readFileSync(new URL(`../../src/${path}`, import.meta.url), 'utf8')).join('\n');
+  const source = ['panels/RigControlPanel.jsx', 'panels/PromptBlocksPanel.jsx', 'ardy/physics-panel.jsx'].map(path => readFileSync(new URL(`../../src/${path}`, import.meta.url), 'utf8')).join('\n');
   const ids = new Set([...source.matchAll(/\brun\(['"](motion\.[^'"]+)['"]/g)].map(match => match[1]));
   for (const id of ['motion.fixCollisions', 'motion.autoPhysics', 'motion.applyPhysics', 'motion.loadVersion']) assert.ok(ids.has(id), id);
 });
