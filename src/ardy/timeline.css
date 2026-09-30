@@ -28,18 +28,18 @@
 	--tl-hint-width: 240px;
 	--tl-round: 50%;
 	--tl-transparent: transparent;
-	--tl-body-clip: #23402f;
-	--tl-body-clip-selected: #2e5a3f;
-	--tl-prompt-clip: #233149;
-	--tl-prompt-clip-text: #b9c9ea;
-	--tl-camera-clip: #3d3354;
-	--tl-camera-rail: #302a40;
-	--tl-chip-folder: #8a7a55;
-	--tl-chip-mesh: #7e8b99;
-	--tl-chip-cast: #5fb584;
-	--tl-chip-camera: #a78bfa;
-	--tl-chip-light: #d9b84a;
-	--tl-chip-motion: #6f93d6;
+	--tl-body-clip: var(--clip-body);
+	--tl-body-clip-selected: var(--clip-body-selected);
+	--tl-prompt-clip: var(--clip-prompt);
+	--tl-prompt-clip-text: var(--clip-prompt-text);
+	--tl-camera-clip: var(--clip-camera);
+	--tl-camera-rail: var(--clip-camera-alt);
+	--tl-chip-folder: var(--chip-folder);
+	--tl-chip-mesh: var(--chip-mesh);
+	--tl-chip-cast: var(--chip-cast);
+	--tl-chip-camera: var(--chip-camera);
+	--tl-chip-light: var(--chip-light);
+	--tl-chip-motion: var(--chip-motion);
 	--tl-focus: rgba(232, 163, 61, .72);
 	--tl-pin: rgba(232, 163, 61, .35);
 	--tl-overlay: rgba(12, 12, 13, .78);
@@ -71,25 +71,23 @@
 	min-height: var(--tl-collapsed-height, 34px);
 }
 
+/* One 36px row when it fits; on narrow windows (1280 wide leaves the
+ * Sequencer ~660px) the header wraps onto more rows instead of clipping its
+ * right-hand controls, so every control stays visible and clickable. */
 .v2-sequencer .tl-head {
+	position: relative;
 	flex: none;
-	height: var(--tl-header-height, 36px);
+	height: auto;
 	min-height: var(--tl-header-height, 36px);
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
-	gap: var(--sp-1, 8px);
-	padding: 0 var(--sp-2, 12px);
+	gap: var(--tl-head-row-gap, 4px) var(--sp-1, 8px);
+	padding: var(--tl-head-pad-y, 3px) calc(var(--sp-2, 12px) + var(--h-control, 28px) + var(--sp-1, 8px)) var(--tl-head-pad-y, 3px) var(--sp-2, 12px);
 	background: var(--surface-bar, #121214);
 	border-bottom: var(--tl-divider-width, 1px) solid var(--row-divider, #1d1d20);
 	color: var(--text-1, #e4e4e7);
-	overflow-x: auto;
-	overflow-y: hidden;
 	white-space: nowrap;
-	scrollbar-width: none;
-}
-
-.v2-sequencer .tl-head::-webkit-scrollbar {
-	display: none;
 }
 
 .v2-sequencer .tl-title {
@@ -255,7 +253,8 @@
 	white-space: nowrap;
 }
 
-.v2-sequencer .tl-btn.ik {
+.v2-sequencer .tl-btn.ik,
+.v2-sequencer .tl-btn.clear {
 	width: auto;
 	min-width: var(--h-control, 28px);
 	padding: 0 var(--sp-1, 8px);
@@ -316,6 +315,10 @@
 }
 
 .v2-sequencer .tl-toggle {
+	/* Pinned to the first row's right edge, clear of the wrapping controls. */
+	position: absolute;
+	top: calc((var(--tl-header-height, 36px) - var(--tl-divider-width, 1px) - var(--h-row, 24px)) / 2);
+	right: var(--sp-2, 12px);
 	flex: none;
 	margin-left: 0;
 	width: var(--h-control, 28px);
@@ -1041,6 +1044,10 @@
 }
 
 .v2-sequencer .tl-badge {
+	flex: none;
+	height: var(--h-row, 24px);
+	display: inline-flex;
+	align-items: center;
 	padding: 0 var(--sp-1, 8px);
 	border: 0;
 	border-radius: var(--r-1, 4px);

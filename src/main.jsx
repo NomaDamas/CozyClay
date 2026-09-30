@@ -1,8 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+// First stylesheet on the page: it fixes the cascade-layer order before any
+// component sheet (topbar.css, viewport.css, pose.css...) opens a layer.
+import "./styles/tokens.css";
 import App from "./App.jsx";
 import ErrorBoundary from "./error-boundary.jsx";
-import "./styles/tokens.css";
 import "./styles.css";
 import { registerPwa } from "./pwa.js";
 import { LOCALE } from "./locale.js";

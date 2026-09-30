@@ -7,7 +7,7 @@
 	.menubar-menu,
 	.menubar-dialog-backdrop {
 		--topbar-swatch-size: 20px;
-		--topbar-swatch: #cdb8a2;
+		--topbar-swatch: var(--project-swatch);
 		--topbar-dot: 6px;
 		--topbar-primary-height: 30px;
 		--topbar-primary-pad: 14px;

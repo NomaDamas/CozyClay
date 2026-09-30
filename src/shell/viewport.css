@@ -6,7 +6,7 @@
 		/* 2a reference values that have no global token. */
 		--vp-toolbar-h: 32px;
 		--vp-inset-w: 300px;
-		--vp-divider: #2e2e33;
+		--vp-divider: var(--divider-strong);
 		--vp-shadow: 0 8px 24px rgba(0, 0, 0, .45);
 		--vp-font: 11px;
 	}

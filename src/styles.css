@@ -97,41 +97,6 @@
 	font-family: var(--sans);
 	padding: 24px;
 }
-.crash-card {
-	max-width: 440px;
-	background: var(--panel);
-	border: 1px solid var(--line2);
-	border-radius: 10px;
-	padding: 28px;
-	color: var(--fg);
-	text-align: center;
-}
-.crash-card h1 { font-size: 20px; font-weight: 700; margin-bottom: 12px; }
-.crash-card p { color: var(--muted); font-size: 14px; line-height: 1.6; margin-bottom: 14px; }
-.crash-card code {
-	display: block;
-	background: var(--card);
-	border: 1px solid var(--line);
-	border-radius: 6px;
-	padding: 10px;
-	font-family: var(--mono);
-	font-size: 11px;
-	color: #e08a7a;
-	text-align: left;
-	word-break: break-all;
-	margin-bottom: 18px;
-}
-.crash-card button {
-	background: var(--accent);
-	color: #fff;
-	border: 0;
-	border-radius: 6px;
-	padding: 9px 22px;
-	font-size: 14px;
-	font-weight: 600;
-	cursor: pointer;
-}
-.crash-card button:hover { filter: brightness(1.12); }
 
 body,
 #root {
@@ -205,29 +170,6 @@ select {
 	animation-play-state: paused;
 }
 
-.logo {
-	display: flex;
-	align-items: center;
-	justify-self: start;
-}
-
-.topbar-actions {
-	grid-column: 3;
-	justify-self: end;
-	display: flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.project-actions {
-	display: inline-flex;
-	align-items: center;
-	gap: 5px;
-	margin-right: 4px;
-	padding-right: 10px;
-	border-right: 1px solid var(--line2);
-}
-
 .topbar-action {
 	min-height: 28px;
 	padding: 3px 10px;
@@ -254,17 +196,6 @@ select {
 .topbar-action:disabled {
 	opacity: .55;
 	cursor: not-allowed;
-}
-
-.project-save-action {
-	background: var(--primary);
-	border-color: var(--primary);
-	color: var(--on-accent);
-}
-
-.project-save-action:hover:not(:disabled) {
-	background: var(--camera);
-	border-color: var(--camera);
 }
 
 .project-export-action.recording {
@@ -423,84 +354,6 @@ select {
 	pointer-events: auto;
 	width: min(620px, 92vw);
 	box-shadow: 0 22px 80px rgba(0, 0, 0, .7);
-}
-
-.project-browser-intro {
-	margin: -4px 0 2px;
-	font-size: 12px;
-	line-height: 1.55;
-	color: var(--muted);
-}
-
-/* The first-run sheet gives a new author one obvious starting action and a
- * small mental model of the editor before the full studio is opened. */
-.beginner-start {
-	display: grid;
-	gap: 16px;
-	padding: 16px;
-	border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--line2));
-	border-radius: 12px;
-	background: color-mix(in srgb, var(--accent) 7%, var(--panel));
-}
-
-.beginner-start-actions {
-	display: flex;
-	gap: 10px;
-	align-items: center;
-}
-
-.beginner-create {
-	min-height: 42px;
-	padding-inline: 18px;
-	font-size: 13px;
-}
-
-.beginner-open {
-	min-height: 42px;
-}
-
-.beginner-step-grid {
-	display: grid;
-	grid-template-columns: repeat(3, minmax(0, 1fr));
-	gap: 10px;
-}
-
-.beginner-step {
-	display: grid;
-	grid-template-columns: auto 1fr;
-	column-gap: 8px;
-	row-gap: 2px;
-	padding: 10px;
-	border: 1px solid var(--line2);
-	border-radius: 9px;
-	background: color-mix(in srgb, var(--panel) 82%, transparent);
-}
-
-.beginner-step b {
-	grid-row: span 2;
-	display: grid;
-	place-items: center;
-	width: 22px;
-	height: 22px;
-	border-radius: 50%;
-	background: var(--accent);
-	color: #fff;
-	font-size: 11px;
-}
-
-.beginner-step strong {
-	font-size: 12px;
-}
-
-.beginner-step span {
-	font-size: 10.5px;
-	line-height: 1.35;
-	color: var(--muted);
-}
-
-@media (max-width: 620px) {
-	.beginner-step-grid { grid-template-columns: 1fr; }
-	.beginner-start-actions { flex-direction: column; align-items: stretch; }
 }
 
 .project-name-dialog-backdrop {
@@ -778,13 +631,6 @@ select {
 	}
 }
 
-.project-browser-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	font-size: 15px;
-}
-
 .project-browser-head .x {
 	background: none;
 	border: none;
@@ -800,82 +646,7 @@ select {
 	gap: 6px;
 }
 
-.project-browser-section-head {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	font-size: 11px;
-	font-weight: 700;
-	letter-spacing: .06em;
-	text-transform: uppercase;
-	color: var(--muted);
-}
-
-.project-browser-section-head .row-actions {
-	display: flex;
-	gap: 6px;
-}
-
-.project-browser-section-head button {
-	font-size: 10px;
-	padding: 2px 8px;
-	border-radius: 6px;
-	border: 1px solid var(--line2);
-	background: none;
-	color: var(--fg);
-	cursor: pointer;
-}
-
-.project-browser-empty {
-	font-size: 11px;
-	color: var(--muted2);
-	padding: 8px 10px;
-	background: var(--card2);
-	border-radius: 8px;
-}
-
-.project-browser-list {
-	list-style: none;
-	margin: 0;
-	padding: 0;
-	display: flex;
-	flex-direction: column;
-	gap: 3px;
-}
-
-.project-browser-list li {
-	display: flex;
-	align-items: stretch;
-	gap: 4px;
-}
-
-.project-browser-list li > button:first-child {
-	flex: 1;
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 10px;
-	padding: 8px 10px;
-	border: 1px solid var(--line);
-	border-radius: 8px;
-	background: var(--card2);
-	color: var(--fg);
-	font-size: 12px;
-	cursor: pointer;
-	text-align: left;
-}
-
-.project-browser-list li > button:first-child span {
-	font-size: 10px;
-	color: var(--muted2);
-	flex: none;
-}
-
 .project-browser-list li.active > button:first-child {
-	border-color: var(--accent);
-}
-
-.project-browser-list li > button:first-child:hover {
 	border-color: var(--accent);
 }
 
@@ -888,12 +659,6 @@ select {
 	font-size: 11px;
 }
 
-.project-browser-foot {
-	display: flex;
-	justify-content: space-between;
-	gap: 8px;
-}
-
 .project-browser-foot .btn {
 	flex: 1;
 }
@@ -903,10 +668,6 @@ select {
 	font-size: 10px;
 	color: var(--fg-dim, #9a9a9a);
 	font-variant-numeric: tabular-nums;
-}
-
-.toolbar-balance {
-	min-width: 0;
 }
 .wordmark {
 	font-family: var(--display);
@@ -957,118 +718,6 @@ select {
 .source-offer:focus-visible {
 	color: var(--fg);
 	text-decoration: underline;
-}
-
-.tagline {
-	font-size: 12.5px;
-	color: var(--muted);
-	position: relative;
-	padding-left: 17px;
-}
-.tagline:before {
-	content: "";
-	position: absolute;
-	left: 0;
-	top: 50%;
-	transform: translateY(-50%);
-	width: 1px;
-	height: 18px;
-	background: var(--line2);
-}
-
-.controls-menu {
-	position: relative;
-	justify-self: end;
-	z-index: 20;
-}
-
-.controls-menu summary {
-	height: 30px;
-	display: flex;
-	align-items: center;
-	gap: 7px;
-	padding: 0 10px 0 12px;
-	border: 1px solid rgba(255, 255, 255, .24);
-	border-radius: 6px;
-	background: #2c2c2c;
-	color: #52616b;
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: .02em;
-	cursor: pointer;
-	list-style: none;
-	user-select: none;
-}
-
-.controls-menu summary::-webkit-details-marker {
-	display: none;
-}
-
-.controls-menu summary span {
-	font-size: 12px;
-	line-height: 1;
-	transition: transform var(--fast) var(--ease);
-}
-
-.controls-menu[open] summary {
-	color: #d2d2d2;
-	border-color: #3a7cbf;
-	background: #383838;
-}
-
-.controls-menu[open] summary span {
-	transform: rotate(180deg);
-}
-
-.controls-popover {
-	position: absolute;
-	top: calc(100% + 8px);
-	right: 0;
-	width: 250px;
-	padding: 12px;
-	border: 1px solid rgba(255, 255, 255, .24);
-	border-radius: 8px;
-	background: #2c2c2c;
-	box-shadow: 0 12px 30px rgba(0, 0, 0, .16);
-}
-
-.controls-grid {
-	display: grid;
-	grid-template-columns: max-content 1fr;
-	align-items: center;
-	gap: 8px 12px;
-}
-
-.controls-grid kbd {
-	min-width: 46px;
-	padding: 3px 6px;
-	border: 1px solid rgba(255, 255, 255, .22);
-	border-bottom-width: 2px;
-	border-radius: 4px;
-	background: #232323;
-	color: #d2d2d2;
-	font: 650 9px var(--mono);
-	text-align: center;
-}
-
-.controls-grid span,
-.controls-popover p {
-	color: #9a9a9a;
-	font-size: 10.5px;
-	line-height: 1.35;
-}
-
-.controls-popover p {
-	margin: 0;
-}
-
-.controls-popover p strong {
-	display: block;
-	margin-bottom: 4px;
-	color: #d2d2d2;
-	font-size: 10px;
-	text-transform: uppercase;
-	letter-spacing: .08em;
 }
 
 .main {
@@ -1418,64 +1067,6 @@ select {
 	position: static;
 }
 
-.scene-loading {
-	position: absolute;
-	inset: auto 0 0 0;
-	z-index: 4;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 8px;
-	padding: 0 0 26px;
-	pointer-events: none;
-}
-.scene-loading-bar {
-	width: 180px;
-	height: 2px;
-	border-radius: 2px;
-	overflow: hidden;
-	background: var(--track);
-}
-.scene-loading-bar span {
-	display: block;
-	height: 100%;
-	background: var(--accent);
-	transition: width .25s var(--ease);
-}
-.scene-loading-label {
-	font-size: 11px;
-	letter-spacing: .06em;
-	text-transform: uppercase;
-	color: var(--muted);
-}
-
-.scene-error {
-	position: absolute;
-	top: 0;
-	right: 0;
-	bottom: 0;
-	left: 0;
-	z-index: 5;
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 10px;
-	text-align: center;
-	padding: 24px;
-	background: var(--bg);
-}
-.scene-error-title {
-	font-size: 15px;
-	font-weight: 600;
-	color: var(--fg);
-}
-.scene-error-hint {
-	font-size: 13px;
-	color: var(--muted);
-	max-width: 320px;
-}
-
 /* Composition guides (Blender's camera display guides): chrome over the shot
    frame, never over exported pixels. The SVG letterboxes itself via its
    viewBox, so no JS measures the frame rect. */
@@ -1564,22 +1155,6 @@ select {
 	-webkit-backdrop-filter: blur(14px) saturate(1.2);
 }
 
-.hud {
-	position: absolute;
-	left: 16px;
-	top: 15px;
-	z-index: 6;
-	font-size: 11.5px;
-	color: #eeeef2;
-	padding: 6px 12px;
-	border-radius: 9px;
-	font-weight: 500;
-	display: flex;
-	align-items: center;
-	gap: 7px;
-	animation: rise var(--med) var(--ease) both;
-}
-
 .caption {
 	position: absolute;
 	left: 50%;
@@ -1604,85 +1179,10 @@ select {
 	border-color: rgba(229, 72, 77, .5);
 	color: #ffc9cb;
 }
-
-.viewmode {
-	position: static;
-	justify-self: center;
-	display: flex;
-	gap: 2px;
-	padding: 3px;
-	border-radius: 7px;
-	animation: none;
-}
-.viewmode button {
-	background: none;
-	border: none;
-	color: #dcdce2;
-	cursor: pointer;
-	height: 26px;
-	padding: 0 12px;
-	border-radius: 5px;
-	font-size: 10px;
-	font-weight: 700;
-	transition: all .16s var(--ease);
-}
-.viewmode button:hover {
-	color: #fff;
-}
 .viewmode button.active {
 	background: var(--grad);
 	color: #fff;
 	box-shadow: 0 3px 12px #3346ff66;
-}
-
-.puck-label {
-	/* the plan board is a drag surface; a label that takes the pointer kills it */
-	pointer-events: none;
-	background: #0e0d10d9;
-	border: 1px solid var(--line2);
-	color: #fff;
-	padding: 3px 10px;
-	border-radius: 20px;
-	font-size: 11px;
-	font-weight: 600;
-	white-space: nowrap;
-	-webkit-user-select: none;
-	user-select: none;
-	font-family: var(--sans);
-	box-shadow: 0 2px 8px #0006;
-}
-
-.pose-fab {
-	font-family: var(--sans);
-	font-size: 12.5px;
-	font-weight: 600;
-	color: #fff;
-	background: var(--grad);
-	border: none;
-	padding: 8px 16px;
-	border-radius: 22px;
-	cursor: pointer;
-	white-space: nowrap;
-	box-shadow: var(--glow), 0 4px 14px #0006;
-	transition: transform .14s var(--spring), box-shadow .15s ease;
-	animation: fabPop .28s var(--spring) both;
-}
-.pose-fab:hover {
-	transform: translateY(-2px) scale(1.03);
-	box-shadow: 0 10px 30px #3346ff80;
-}
-.pose-fab:active {
-	transform: scale(.96);
-}
-
-.pose-bar {
-	display: flex;
-	gap: 8px;
-}
-.pose-btns {
-	display: flex;
-	flex-direction: column;
-	gap: 8px;
 }
 .pose-btns .btn.full {
 	margin-top: 0;
@@ -1792,69 +1292,15 @@ select {
 	pointer-events: none;
 }
 
-/* ARDY row: duration + seed side by side (Motion tab compacting). */
-.ardy-row {
-	display: flex;
-	gap: 8px;
-}
-
-.ardy-row > * {
-	flex: 1;
-	min-width: 0;
-}
-
-/* Per-character motion layer status in the Motion tab. */
-.gen-layers {
-	list-style: none;
-	margin: 0;
-	padding: 4px 6px;
-	display: flex;
-	flex-direction: column;
-	gap: 2px;
-	background: var(--card2, rgba(255,255,255,.04));
-	border: 1px solid var(--line);
-	border-radius: 8px;
-}
-
-.gen-layers li {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-	font-size: 11px;
-	color: var(--muted);
-	padding: 2px 4px;
-	border-radius: 5px;
-}
-
 .gen-layers li.active {
 	color: var(--fg);
 	background: var(--hover, rgba(255,255,255,.06));
-}
-
-.gen-layers-name {
-	font-weight: 700;
-	color: var(--cyan, #5a9bd4);
-	width: 22px;
-	flex: none;
-}
-
-.gen-layers-state {
-	flex: 1;
 }
 
 .gen-layers-state.running { color: #f5b453; }
 .gen-layers-state.queued { color: var(--muted2); }
 .gen-layers-state.error { color: #e06c6c; }
 .gen-layers-state.loaded { color: #7bc98b; }
-
-.gen-layers li button {
-	background: none;
-	border: none;
-	color: var(--muted2);
-	cursor: pointer;
-	font-size: 10px;
-	padding: 0 2px;
-}
 
 /* Timeline track owner chip: which character's layer a Prompts/2D Root
    track belongs to. */
@@ -2176,16 +1622,6 @@ select {
 	font-weight: 700;
 	letter-spacing: .16em;
 	text-transform: uppercase;
-}
-
-.hierarchy-frame-status {
-	flex: none;
-	padding: 3px 7px;
-	border: 1px solid rgba(126, 154, 255, .16);
-	border-radius: 999px;
-	background: rgba(87, 111, 221, .08);
-	color: #9aa9d8;
-	font-size: 8px;
 }
 
 /* Disclosures that keep a once-in-a-while control out of the permanent
@@ -2515,31 +1951,6 @@ select {
 	color: var(--muted);
 	font-size: 9px;
 	line-height: 1.55;
-}
-
-.inspector-status-grid {
-	display: grid;
-	/* `auto` let a long value push the row past the panel. Both tracks may now
-	   shrink, and the value wraps instead of demanding a width nothing has. */
-	grid-template-columns: minmax(0, 1fr) minmax(0, auto);
-	gap: 7px 12px;
-	margin: 0 0 12px;
-	padding: 9px 10px;
-	border: 1px solid rgba(255, 255, 255, .06);
-	border-radius: 6px;
-	background: rgba(0, 0, 0, .12);
-	font-size: 8px;
-}
-
-.inspector-status-grid span { color: var(--muted); min-width: 0; }
-.inspector-status-grid b {
-	color: #c7cde0;
-	font-weight: 600;
-	min-width: 0;
-	/* An id or a path has no spaces to break at; break it anywhere rather than
-	   let it decide the panel's width. */
-	overflow-wrap: anywhere;
-	text-align: right;
 }
 
 .inspector-list {
@@ -2913,10 +2324,6 @@ input[type=range]::-moz-range-thumb {
 .segmented button.active {
 	color: #fff;
 }
-
-.sheet-checks {
-	margin-bottom: 4px;
-}
 .sheet-checks .check {
 	margin-top: 9px;
 }
@@ -3020,43 +2427,6 @@ input[type=range]::-moz-range-thumb {
 }
 /* ------------------------------------------------------ ardy panel ------- */
 
-.ardy-meta {
-	margin: 0 0 4px;
-	font-size: 11px;
-	color: var(--muted2);
-	letter-spacing: .04em;
-}
-
-.ardy-hint {
-	margin: 0;
-	font-size: 11.5px;
-	line-height: 1.6;
-	color: var(--muted);
-}
-
-.ardy-hint + .ardy-hint {
-	margin-top: 6px;
-}
-
-.ardy-hint code,
-.ardy-outcome code {
-	padding: 1px 6px;
-	border-radius: 6px;
-	background: var(--card2);
-	border: 1px solid var(--line);
-	color: #dcdce2;
-	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-	font-size: 11px;
-	word-break: break-all;
-}
-
-.ardy-clamp {
-	display: block;
-	margin-top: 5px;
-	font-size: 10.5px;
-	color: var(--muted2);
-}
-
 .ardy-status {
 	margin: 10px 0 0;
 	font-size: 11.5px;
@@ -3067,45 +2437,6 @@ input[type=range]::-moz-range-thumb {
 .ardy-status:before {
 	content: "▸ ";
 	color: var(--cyan);
-}
-
-.ardy-report {
-	margin-top: 12px;
-	padding: 10px 12px;
-	border: 1px solid var(--line);
-	border-radius: 10px;
-	background: var(--card2);
-	animation: rise var(--med) var(--ease);
-}
-
-.ardy-report-grid {
-	display: grid;
-	grid-template-columns: 1fr auto;
-	gap: 4px 12px;
-	font-size: 11.5px;
-}
-
-.ardy-report-grid span {
-	color: var(--muted);
-}
-
-.ardy-report-grid b {
-	color: var(--fg);
-	font-weight: 600;
-	font-variant-numeric: tabular-nums;
-}
-
-.ardy-caveat {
-	margin: 8px 0 0;
-	font-size: 10.5px;
-	line-height: 1.55;
-	color: var(--muted2);
-}
-
-.ardy-outcome {
-	margin: 10px 0 0;
-	font-size: 11.5px;
-	line-height: 1.6;
 }
 
 .ardy-outcome.done {
@@ -4743,14 +4074,6 @@ input[type=range]::-moz-range-thumb {
 .tl-chip-handle.start { left: 0; }
 .tl-chip-handle.end { right: 0; }
 
-.tl-chip-text {
-	flex: 1;
-	min-width: 0;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-}
-
 /* No motion prompt yet: identical frame 0..end geometry, visually quiet. */
 .tl-chip.empty {
 	background: linear-gradient(103deg, #2a2d3a, #3b4050);
@@ -4800,25 +4123,6 @@ input[type=range]::-moz-range-thumb {
 	font-size: 9px;
 	font-style: italic;
 	text-align: center;
-}
-
-.tl-shot-empty-add {
-	flex: none;
-	padding: 4px 8px;
-	border: 1px solid #735ba0;
-	border-radius: 4px;
-	background: rgba(80, 63, 109, .72);
-	color: #e7d9ff;
-	font: inherit;
-	font-style: normal;
-	cursor: pointer;
-}
-
-.tl-shot-empty-add:hover,
-.tl-shot-empty-add:focus-visible {
-	background: #5b467b;
-	border-color: #b79be8;
-	color: #fff;
 }
 
 .tl-shot-block.active {
@@ -5054,27 +4358,6 @@ input[type=range]::-moz-range-thumb {
 	.tl-shot-camera-summary {
 		display: none;
 	}
-}
-.tl-crane-point {
-	box-sizing: border-box;
-	position: absolute;
-	width: 18px;
-	height: 18px;
-	padding: 0;
-	transform: translate(-50%, -50%);
-	border: 2px solid #211b31;
-	border-radius: 50%;
-	background: #a78bfa;
-	box-shadow: 0 0 0 1px rgba(203, 183, 255, .65), 0 0 8px rgba(167, 139, 250, .9);
-	cursor: ns-resize;
-	pointer-events: auto;
-	z-index: 5;
-}
-
-.tl-crane-point:hover,
-.tl-crane-point:focus-visible {
-	outline: 2px solid #fff;
-	outline-offset: 1px;
 }
 
 .tl-crane-point.selected {
@@ -5375,9 +4658,6 @@ input[type=range]::-moz-range-thumb {
 		aspect-ratio: auto;
 		max-height: none;
 	}
-	.tagline {
-		display: none;
-	}
 	.pose-studio {
 		top: 15%;
 		right: 8px;
@@ -5400,12 +4680,6 @@ input[type=range]::-moz-range-thumb {
 		padding: 0 14px;
 		gap: 10px;
 		height: 54px;
-	}
-	.kbd-hint {
-		display: none;
-	}
-	.wordmark {
-		font-size: 22px;
 	}
 	.viewport {
 		min-height: 46vh;
@@ -5685,14 +4959,6 @@ input[type=range]::-moz-range-thumb {
 		width: 2px;
 	}
 
-	.hierarchy-splitter {
-		position: relative;
-		z-index: 3;
-		height: 6px;
-		cursor: row-resize;
-		background: var(--panel);
-	}
-
 	.hierarchy-splitter:after,
 	.timeline-splitter:after {
 		left: 0;
@@ -5751,11 +5017,6 @@ input[type=range]::-moz-range-thumb {
 		user-select: none !important;
 	}
 
-	body.resize-sidebar,
-	body.resize-sidebar * {
-		cursor: col-resize !important;
-	}
-
 	body.resize-hierarchy,
 	body.resize-hierarchy *,
 	body.resize-timeline,
@@ -5797,12 +5058,6 @@ input[type=range]::-moz-range-thumb {
 .hierarchy-kicker,
 .inspector-heading > span {
 	color: #9a9a9a;
-}
-
-.hierarchy-frame-status {
-	border-color: rgba(58, 124, 191, .35);
-	background: rgba(58, 124, 191, .09);
-	color: #5a9bd4;
 }
 
 .hierarchy-row-wrap:before {
@@ -5898,16 +5153,6 @@ input[type=range]::-moz-range-thumb {
 .hint b,
 .ardy-hint code,
 .ardy-outcome code {
-	color: #d2d2d2;
-}
-
-.inspector-status-grid,
-.ardy-report {
-	border-color: rgba(255, 255, 255, .14);
-	background: rgba(255, 255, 255, .035);
-}
-
-.inspector-status-grid b {
 	color: #d2d2d2;
 }
 
@@ -6102,19 +5347,6 @@ input[type=range]::-moz-range-thumb {
 }
 
 .vp-inset-tag {
-	color: #d2d2d2;
-}
-
-.viewmode {
-	border-radius: 7px;
-}
-
-.viewmode button {
-	color: #52616b;
-	border-radius: 5px;
-}
-
-.viewmode button:hover {
 	color: #d2d2d2;
 }
 
@@ -6404,12 +5636,6 @@ input[type=range]::-moz-range-thumb {
 
 /* ----------------------------------------------- Cozy Clay typography ---- */
 
-.tagline {
-	font-size: 12px;
-	font-weight: 480;
-	letter-spacing: -.005em;
-}
-
 .hierarchy-heading strong,
 .inspector-heading strong {
 	font-family: var(--display);
@@ -6511,17 +5737,6 @@ input[type=range]::-moz-range-thumb {
 	font-size: 11px;
 	font-weight: 650;
 	letter-spacing: -.015em;
-}
-
-.kbd-hint {
-	font-size: 10.5px;
-	letter-spacing: -.015em;
-}
-
-.kbd-hint b {
-	font-size: 9.5px;
-	font-weight: 650;
-	letter-spacing: -.02em;
 }
 
 .caption {
@@ -6653,35 +5868,6 @@ input[type=range]::-moz-range-thumb {
 	flex-direction: column;
 }
 
-.right-panel-tabs {
-	display: grid;
-	flex: none;
-	grid-template-columns: 1fr 1fr;
-	gap: 4px;
-	padding: 8px;
-	border-bottom: 1px solid var(--line);
-	background: var(--panel);
-}
-
-.right-panel-tabs button {
-	height: 34px;
-	padding: 0 10px;
-	border: 1px solid transparent;
-	border-radius: 7px;
-	background: transparent;
-	color: var(--muted);
-	font: inherit;
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: .03em;
-	cursor: pointer;
-}
-
-.right-panel-tabs button:hover {
-	background: rgba(58, 124, 191, .08);
-	color: var(--fg);
-}
-
 .right-panel-tabs button.active {
 	border-color: rgba(58, 124, 191, .42);
 	background: #2d5c8a;
@@ -6693,19 +5879,6 @@ input[type=range]::-moz-range-thumb {
 .hierarchy-tab-pane,
 .inspector-pane {
 	min-height: 0;
-}
-
-.right-panel-view {
-	/* Vertical scrolling belongs to the pane inside; the horizontal axis has to
-	   be reachable here, because a wide row (a long id, a deep hierarchy path)
-	   was otherwise clipped with no way to scroll to it. */
-	overflow: hidden auto;
-	flex: 1 1 0;
-	min-width: 0;
-}
-
-.right-panel-view > [hidden] {
-	display: none !important;
 }
 
 .hierarchy-tab-pane,
@@ -6727,15 +5900,6 @@ input[type=range]::-moz-range-thumb {
 /* Create menu, gizmo tool switch and object swatches. The hierarchy's own
    heading is hidden in the tabbed panel, so the create action gets its own
    toolbar row above the tree. */
-
-.hierarchy-toolbar {
-	display: flex;
-	align-items: center;
-	justify-content: space-between;
-	gap: 8px;
-	padding: 8px 10px;
-	border-bottom: 1px solid var(--line);
-}
 
 .add-object {
 	position: relative;
@@ -6838,15 +6002,6 @@ input[type=range]::-moz-range-thumb {
 	width: auto;
 	margin-top: 6px;
 	box-shadow: none;
-}
-
-.gizmo-modes kbd {
-	margin-left: 5px;
-	padding: 1px 4px;
-	border: 1px solid rgba(255, 255, 255, .2);
-	border-radius: 4px;
-	font-family: var(--mono);
-	font-size: 8px;
 }
 
 .object-colors {
@@ -7012,13 +6167,6 @@ input[type=range]::-moz-range-thumb {
 }
 
 /* ------------------------------------------------ camera move A→B ------ */
-/* The move workspace: four small buttons in the field row, a derived slate
-   line underneath, and a two-up start/end pair in the result modal. */
-.move-ab {
-	display: flex;
-	flex-wrap: wrap;
-	gap: 6px;
-}
 
 .move-ab .btn {
 	flex: 1;
@@ -7164,35 +6312,6 @@ input[type=range]::-moz-range-thumb {
 	border-top: 1px solid var(--line);
 }
 
-.bottom-window-tabs {
-	flex: none;
-	display: flex;
-	gap: 2px;
-	padding: 3px 8px 0;
-	border-bottom: 1px solid var(--line);
-	background: var(--panel);
-}
-
-.bottom-window-tabs button {
-	height: 26px;
-	padding: 0 12px;
-	border: 1px solid transparent;
-	border-bottom: 0;
-	border-radius: 3px 3px 0 0;
-	background: transparent;
-	color: var(--muted);
-	font: inherit;
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: .03em;
-	cursor: pointer;
-}
-
-.bottom-window-tabs button:hover {
-	color: var(--fg);
-	background: var(--hover);
-}
-
 .bottom-window-tabs button.active {
 	background: var(--bg);
 	border-color: var(--line2);
@@ -7231,27 +6350,12 @@ input[type=range]::-moz-range-thumb {
 	background: var(--panel);
 }
 
-.assets-shelf {
-	display: grid;
-	grid-template-columns: 170px minmax(560px, 1fr) minmax(240px, .55fr);
-	align-items: start;
-	gap: 8px;
-}
-
 .assets-shelf:has(.asset-storage-manager) {
 	display: block;
 }
 
 .assets-shelf:has(.asset-storage-manager) .assets-shelf-toolbar {
 	margin-bottom: 6px;
-}
-
-.assets-shelf-toolbar {
-	display: flex;
-	align-items: center;
-	justify-content: flex-end;
-	grid-column: 1 / -1;
-	min-height: 24px;
 }
 
 .assets-manage-toggle,
@@ -7470,74 +6574,6 @@ input[type=range]::-moz-range-thumb {
 	cursor: pointer;
 }
 
-.assets-section {
-	--asset-group: 90, 155, 212;
-	display: flex;
-	flex-direction: column;
-	gap: 4px;
-	min-width: 0;
-	padding: 5px;
-	border: 1px solid var(--line2);
-	border-radius: 6px;
-	background: linear-gradient(180deg, rgba(var(--asset-group), .075), rgba(var(--asset-group), .025) 42px);
-}
-
-.assets-section:nth-of-type(1) {
-	--asset-group: 164, 126, 221;
-}
-
-.assets-section:nth-of-type(2) {
-	--asset-group: 72, 174, 184;
-}
-
-.assets-section:nth-of-type(3) {
-	--asset-group: 222, 159, 74;
-}
-
-/* Section headings mirror the add-object popover's group headings: structure
-   over count — no badges, no search, just where each kind of card lives. */
-.assets-section-title {
-	margin: 0 1px;
-	font-size: 10px;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.08em;
-	color: var(--muted2);
-}
-
-.assets-grid {
-	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(74px, 1fr));
-	gap: 6px;
-}
-
-.asset-card {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	justify-content: center;
-	gap: 3px;
-	min-width: 0;
-	min-height: 68px;
-	padding: 6px 4px 5px;
-	background: var(--panel2, #1d1d1f);
-	border: 1px solid var(--line);
-	border-radius: 5px;
-	color: var(--fg);
-	cursor: grab;
-	user-select: none;
-	touch-action: none;
-}
-
-.asset-card:hover {
-	border-color: var(--accent);
-	background: var(--hover);
-}
-
-.asset-card:active {
-	cursor: grabbing;
-}
-
 .asset-card-swatch {
 	width: 30px;
 	height: 30px;
@@ -7580,30 +6616,6 @@ input[type=range]::-moz-range-thumb {
 	border: 1px solid #d8d2c4;
 }
 
-.asset-card-label {
-	max-width: 100%;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 10px;
-	font-weight: 600;
-}
-
-.asset-card-kind {
-	font-size: 9px;
-	color: var(--muted2);
-}
-
-/* Imported-image cards wear the picture itself, letterboxed into the same
-   square the character swatch occupies so every card keeps one rhythm. */
-.asset-card-thumb {
-	width: 30px;
-	height: 30px;
-	border-radius: 7px;
-	object-fit: contain;
-	background: var(--card2, #161618);
-}
-
 /* Placeholders while a scan or a decode is in flight — the grid never blocks
    on a thumbnail, and the empty message never races the scan. */
 .asset-card-thumb-skeleton,
@@ -7615,25 +6627,6 @@ input[type=range]::-moz-range-thumb {
 .inspector-row-buttons .btn {
 	flex: 1 1 auto;
 	min-width: 84px;
-}
-
-/* A card whose bytes failed to decode: visible so it can be deleted from
-   Manage storage, clearly marked so nobody drags a broken image on stage. */
-.asset-card-failed {
-	opacity: .72;
-	border-color: #8a4a3a !important;
-	cursor: not-allowed;
-}
-.asset-card-failed .asset-card-kind { color: #e08a7a; }
-
-.asset-card-skeleton {
-	min-width: 0;
-	width: auto;
-	height: 68px;
-	padding: 0;
-	border: 1px solid var(--line);
-	border-radius: 5px;
-	background: var(--panel2, #1d1d1f);
 }
 
 @keyframes asset-skeleton {
@@ -7658,26 +6651,7 @@ input[type=range]::-moz-range-thumb {
 	line-height: 1.4;
 }
 
-@media (max-width: 1180px) {
-	.assets-shelf {
-		grid-template-columns: 170px minmax(480px, 1fr);
-	}
-
-	.assets-shelf-toolbar,
-	.assets-section:last-child {
-		grid-column: 1 / -1;
-	}
-}
-
 @media (max-width: 760px) {
-	.assets-shelf {
-		grid-template-columns: 1fr;
-	}
-
-	.assets-shelf-toolbar,
-	.assets-section:last-child {
-		grid-column: auto;
-	}
 
 	.asset-storage-list {
 		grid-template-columns: 1fr;
@@ -7736,51 +6710,9 @@ input[type=range]::-moz-range-thumb {
 	}
 }
 
-/* top toolbar: Unity-style tool switch + snap toggle */
-.editor-toolbar {
-	justify-self: center;
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-
-.tool-switch {
-	display: flex;
-	gap: 2px;
-	padding: 2px;
-	border: 1px solid var(--line);
-	border-radius: 5px;
-	background: var(--card2);
-}
-
-.tool-switch button,
-.snap-switch {
-	height: 24px;
-	padding: 0 10px;
-	border: 1px solid transparent;
-	border-radius: 3px;
-	background: transparent;
-	color: var(--muted);
-	font: inherit;
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: .03em;
-	cursor: pointer;
-}
-
-.tool-switch button:hover,
-.snap-switch:hover {
-	color: var(--fg);
-	background: var(--hover);
-}
-
 .tool-switch button.active {
 	background: var(--accent);
 	color: var(--on-accent);
-}
-
-.snap-switch {
-	border-color: var(--line);
 }
 
 .snap-switch.active {
@@ -7852,46 +6784,11 @@ input[type=range]::-moz-range-thumb {
 	background: var(--panel);
 	border-bottom: 1px solid var(--line);
 }
-
-/* Workflow-first navigation: operators choose the department before the
-   toolbar reveals its controls. This keeps the existing tools available while
-   removing the cockpit effect of showing every control at once. */
-.workflow-mode-switch {
-	flex: none;
-	display: flex;
-	align-items: stretch;
-	gap: 2px;
-	padding: 3px 4px;
-	border-right: 1px solid var(--line);
-	background: var(--panel);
-}
-.workflow-mode-switch button {
-	height: 21px;
-	min-width: 54px;
-	padding: 0 8px;
-	border: 1px solid transparent;
-	border-radius: 3px;
-	background: transparent;
-	color: var(--muted);
-	font: inherit;
-	font-size: 10px;
-	font-weight: 700;
-	cursor: pointer;
-}
-.workflow-mode-switch button:hover { color: var(--fg); background: var(--hover); }
 .workflow-mode-switch button.active {
 	color: #fff;
 	background: #2d5c8a;
 	border-color: #4b8bc4;
 	box-shadow: 0 0 0 1px rgba(75,139,196,.24);
-}
-.workflow-toolbar-hint {
-	align-self: center;
-	padding: 0 10px;
-	color: #9fb7cc;
-	font-size: 10px;
-	font-weight: 600;
-	white-space: nowrap;
 }
 /* Scene mode owns transform/grid tools; Camera mode owns framing controls.
    Motion mode intentionally leaves only its short instruction in the bar. */
@@ -8158,19 +7055,6 @@ input[type=range]::-moz-range-thumb {
 	border-radius: 2px;
 	backdrop-filter: none;
 	-webkit-backdrop-filter: none;
-}
-
-/* tool palette icons */
-.tool-switch button {
-	display: inline-flex;
-	align-items: center;
-	gap: 6px;
-}
-
-.tool-icon {
-	width: 13px;
-	height: 13px;
-	flex: none;
 }
 
 /* ------------------------------------------- Unity inspector density ------ */
@@ -8714,13 +7598,6 @@ input[type=range] {
 	margin-top: 6px;
 }
 
-.ardy-report,
-.inspector-status-grid {
-	padding: 6px 8px;
-	border-radius: 2px;
-	font-size: 10px;
-}
-
 .inspector-list button {
 	padding: 4px 8px;
 	font-size: 11px;
@@ -8754,71 +7631,6 @@ input[type=range] {
 }
 
 /* ------------------------------------------------ Unity scene title bar --- */
-/* View tabs and their context tools share one uninterrupted horizontal bar. */
-.editor-toolbar.scene-tools {
-	position: static;
-	flex: 1;
-	height: 27px;
-	display: flex;
-	justify-content: flex-start;
-	gap: 0;
-	min-width: 0;
-	overflow-x: auto;
-	overflow-y: hidden;
-	scrollbar-width: none;
-	background: var(--panel);
-}
-
-.editor-toolbar.scene-tools::-webkit-scrollbar { display: none; }
-
-.editor-toolbar.scene-tools .tool-switch {
-	flex: none;
-	border: 0;
-	border-radius: 0;
-	padding: 0;
-	background: transparent;
-}
-
-/* Direct manipulation and numeric fields share the Transform concept. Keep
-   the name visible beside the icon-only tool buttons so the beginner path has
-   one vocabulary for both ways of editing a selection. */
-.editor-toolbar.scene-tools .transform-toolbar-label {
-	align-self: center;
-	flex: none;
-	padding: 0 8px;
-	color: var(--muted);
-	font-size: 9px;
-	font-weight: 700;
-	letter-spacing: .04em;
-	text-transform: uppercase;
-}
-
-.editor-toolbar.scene-tools .tool-switch button,
-.editor-toolbar.scene-tools .snap-switch {
-	height: 26px;
-	border-radius: 0;
-	border: 0;
-	border-right: 1px solid var(--line);
-	background: transparent;
-}
-
-.editor-toolbar.scene-tools .tool-switch button {
-	width: 29px;
-	padding: 0;
-	gap: 0;
-	font-size: 0;
-	justify-content: center;
-}
-
-.editor-toolbar.scene-tools .tool-switch .tool-icon {
-	width: 14px;
-	height: 14px;
-}
-
-.editor-toolbar.scene-tools .snap-switch {
-	padding: 0 6px;
-	font-size: 8px;
-}
 
 .editor-toolbar.scene-tools .tool-switch button.active {
 	background: #2d5c8a;
@@ -8828,16 +7640,6 @@ input[type=range] {
 .editor-toolbar.scene-tools .snap-switch.active {
 	background: rgba(45, 92, 138, .35);
 	color: var(--fg);
-}
-
-.viewport-toolbar-separator {
-	flex: 0 0 1px;
-	align-self: stretch;
-	background: var(--line);
-}
-
-.editor-toolbar.scene-tools .settings-separator {
-	margin-left: auto;
 }
 
 .viewport-toolbar-field,
@@ -8888,29 +7690,6 @@ input[type=range] {
 	font-size: 9px;
 }
 
-.viewport-toolbar-spacer {
-	display: none;
-}
-
-.editor-toolbar.scene-tools > button {
-	flex: none;
-	height: 26px;
-	padding: 0 6px;
-	border: 0;
-	border-right: 1px solid var(--line);
-	background: transparent;
-	color: #bdbdbd;
-	font: inherit;
-	font-size: 9px;
-	cursor: pointer;
-	white-space: nowrap;
-}
-
-.editor-toolbar.scene-tools > button:hover {
-	background: #363636;
-	color: #fff;
-}
-
 /* The studio's one Export menu (#165, moved to the topbar in #193). It reuses
    the project menu's popover so the studio has a single dropdown language;
    the trigger is a plain .topbar-action. The panel stays fixed to the viewport
@@ -8943,15 +7722,6 @@ input[type=range] {
 	max-height: calc(100dvh - 90px);
 	overflow-y: auto;
 	z-index: 80;
-}
-
-.export-trigger-state {
-	font-size: 10px;
-	color: var(--muted2);
-}
-
-.export-trigger-state[data-phase="failed"] {
-	color: var(--fg);
 }
 
 .export-status {
@@ -9384,13 +8154,6 @@ input[type=range] {
 	margin: 0;
 	font-size: 11px;
 	color: var(--muted);
-}
-
-.ardy-clamp {
-	white-space: nowrap;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	display: block;
 }
 
 /* ------------------------------------------- Unity component sections ----- */
@@ -10199,35 +8962,9 @@ input[type=range] {
 	color: var(--muted, #9a9a9a);
 	font-size: 12px;
 }
-
-/* ------------------------------------------- preserve (inpainting) -------- */
-/* The "keep the current take" strength, in the Prompt Blocks panel. Same shape
-   as .trail-falloff-row — flat range plus a tabular readout — and, since round 2
-   allows preserving across a drawn root path, it has no disabled state left:
-   every state the control can be in is now a WORKING one, explained by the hint
-   lines under it rather than by graying.
-   Appended at the end on purpose: the global input[type=range] rules further up
-   the cascade (the Unity density and widget-material passes) would otherwise
-   win over anything written beside the trail row. */
-.preserve-strength-row {
-	display: flex;
-	align-items: center;
-	gap: 8px;
-}
-.preserve-strength-row input[type="range"] {
-	flex: 1;
-	min-width: 0;
-}
 .preserve-strength-value {
 	font-variant-numeric: tabular-nums;
 	opacity: .8;
-}
-/* Both poles on one line, each at the end it describes. */
-.preserve-strength-scale {
-	display: flex;
-	justify-content: space-between;
-	gap: 8px;
-	margin-top: 3px;
 }
 /* Which limbs the grouped mask will actually free. It reads as a continuation
    of the slider, not as a new paragraph, so it sits tighter to the row above
@@ -10344,12 +9081,6 @@ input[type=range] {
 	font-variant-numeric: tabular-nums;
 	white-space: nowrap;
 }
-/* Wave 2 has not landed: the mode is fully usable, only the send is waiting.
-   Stated in the panel's own quiet voice rather than by disabling the tool. */
-.line-edit-pending {
-	margin-top: 2px;
-	opacity: .85;
-}
 
 /* The view moved out from under a committed edit. A STATUS, not an error: the
    edit is intact and still on its way to the box, so this reads like the
@@ -10431,39 +9162,6 @@ input[type=range] {
 	background: var(--panel);
 }
 
-/* The two primaries. They sit first and they sit together, so the choice reads
-   as a pair — block the scene, or refine what is already blocked — rather than
-   as two unrelated buttons that happen to be nearby. */
-.take-modes {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-}
-
-.take-mode {
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-}
-
-.take-mode-btn {
-	height: 26px;
-	padding: 0 14px;
-	border: 1px solid var(--line2);
-	border-radius: 3px;
-	background: var(--bg);
-	color: var(--fg);
-	font: inherit;
-	font-size: 11px;
-	font-weight: 700;
-	letter-spacing: .02em;
-	cursor: pointer;
-}
-
-.take-mode-btn:hover {
-	background: var(--hover);
-}
-
 .take-mode-btn.active {
 	border-color: var(--accent);
 	box-shadow: inset 0 -2px var(--accent);
@@ -10478,36 +9176,6 @@ input[type=range] {
 	cursor: not-allowed;
 }
 
-.take-mode-hint,
-.take-mode-reason {
-	font-size: 10px;
-	line-height: 1.3;
-	max-width: 26ch;
-	color: var(--muted);
-}
-
-.take-mode-reason {
-	color: var(--warn, #ff9c6e);
-	opacity: .9;
-}
-
-/* The Scene entry's actions, revealed inline instead of in a popup: the strip
-   is already the place the artist is looking. */
-.take-scene-menu {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: flex-start;
-	gap: 6px 10px;
-	padding-left: 10px;
-	border-left: 1px solid var(--line2);
-}
-
-.take-scene-action {
-	display: flex;
-	flex-direction: column;
-	gap: 1px;
-}
-
 .take-scene-menu .btn {
 	height: 26px;
 	padding: 0 10px;
@@ -10515,73 +9183,10 @@ input[type=range] {
 	white-space: nowrap;
 }
 
-.take-scene-advanced {
-	min-width: 220px;
-	font-size: 11px;
-}
-
-.take-scene-advanced > summary {
-	cursor: pointer;
-	color: var(--muted);
-	font-size: 10px;
-	font-weight: 700;
-	letter-spacing: .03em;
-}
-
-.take-scene-advanced > summary:hover {
-	color: var(--fg);
-}
-
 .take-recipe-summary {
 	margin-top: 4px;
 	opacity: .8;
 	font-variant-numeric: tabular-nums;
-}
-
-/* The version strip. Numbered because the numbers are what the artist says out
-   loud ("go back to v2"); the label rides underneath so a chip explains what it
-   is without a hover, and the current take is the one with the accent under it. */
-.take-version-strip {
-	display: flex;
-	flex-wrap: wrap;
-	align-items: center;
-	gap: 4px;
-	margin-left: auto;
-}
-
-.take-version-chip {
-	display: flex;
-	flex-direction: column;
-	align-items: center;
-	gap: 0;
-	min-width: 34px;
-	max-width: 120px;
-	padding: 2px 7px;
-	border: 1px solid var(--line2);
-	border-radius: 3px;
-	background: var(--bg);
-	color: var(--muted);
-	font: inherit;
-	cursor: pointer;
-}
-
-.take-version-chip:hover {
-	background: var(--hover);
-	color: var(--fg);
-}
-
-.take-version-chip b {
-	font-size: 11px;
-	font-variant-numeric: tabular-nums;
-}
-
-.take-version-chip small {
-	max-width: 100%;
-	overflow: hidden;
-	text-overflow: ellipsis;
-	white-space: nowrap;
-	font-size: 9px;
-	opacity: .75;
 }
 
 .take-version-chip.current {
@@ -10618,35 +9223,9 @@ input[type=range] {
 		bottom: 12px;
 		right: 12px;
 	}
-
-	/* Make the title-bar hierarchy legible: manipulation tools, view toggles,
-	   and camera settings read as three groups instead of one long button row. */
-	.editor-toolbar.scene-tools .tool-switch {
-		margin: 2px 4px 2px 3px;
-		height: 23px;
-		border: 1px solid var(--line2);
-		border-radius: 3px;
-		background: rgba(0, 0, 0, .14);
-	}
-	.editor-toolbar.scene-tools .tool-switch button {
-		height: 21px;
-		border-right: 0;
-	}
-	.editor-toolbar.scene-tools .tool-switch button + button {
-		border-left: 1px solid var(--line);
-	}
-	.editor-toolbar.scene-tools > .snap-switch {
-		margin: 2px 0;
-		height: 23px;
-		border: 1px solid var(--line2);
-		border-radius: 3px;
-	}
 	.editor-toolbar.scene-tools .viewport-toolbar-field,
 	.editor-toolbar.scene-tools .viewport-fov-control {
 		background: rgba(0, 0, 0, .08);
-	}
-	.editor-toolbar.scene-tools .settings-separator {
-		margin-left: 5px;
 	}
 
 	/* Splitters are deliberately wider than their 1px visual rule so the
@@ -11529,7 +10108,6 @@ input[type=range] {
 .fal-motion-thumbs img { display: block; width: 148px; height: 84px; object-fit: cover; border-radius: 5px; border: 1px solid #42506a; background: #0c0f16; }
 .fal-motion-thumbs figcaption { margin-top: 4px; color: var(--muted, #a7afc2); font-size: 11px; }
 .fal-motion-instruction { width: 100%; min-height: 64px; margin-top: 10px; padding: 9px; resize: vertical; border: 1px solid #343b4d; border-radius: 6px; background: #11151e; color: inherit; font: inherit; font-size: 13px; }
-.fal-motion-prompt-note { margin-top: 8px; padding: 5px 6px; border-left: 2px solid #42506a; background: rgba(17, 21, 30, .65); }
 .fal-motion-inline-error { margin-top: 8px; }
 .fal-motion-segmentation.ready { color: #9fe6b8; }
 .fal-motion-video { display: block; width: 100%; margin-top: 10px; border-radius: 7px; background: #090b10; }

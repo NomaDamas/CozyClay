@@ -12,8 +12,10 @@
 // take lineage and not by a page-side fixture. Run it against a dev server
 // started WITHOUT CCLAY_KIMODO_HOST: the unavailable generation bridge is the
 // failure scenario.
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, watch, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { connectController, discoverEndpoint } from "../bin/live/client.mjs";
+import { liveEndpointPath, readLiveEndpoint } from "../bin/live-endpoint.mjs";
 
 const port = Number(process.env.CDP_PORT || 9681);
 const livePort = Number(process.env.COZYCLAY_LIVE_PORT || 6681);
@@ -27,6 +29,24 @@ const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
 const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
 if (!page) throw new Error("no page target on the QA browser");
 
+// The dev runner publishes its live hub lazily (on the studio's first agent
+// request), so a run that starts with a fresh server waits for the endpoint
+// file with a live owner pid instead of failing with NO_SERVER.
+const hubAlive = () => {
+	const record = readLiveEndpoint(livePort);
+	if (!record) return false;
+	try { process.kill(record.pid, 0); return true; } catch { return false; }
+};
+if (!hubAlive()) {
+	const directory = dirname(liveEndpointPath(livePort));
+	mkdirSync(directory, { recursive: true, mode: 0o700 });
+	await new Promise((resolve, reject) => {
+		const done = (error) => { watcher.close(); clearTimeout(timer); if (error) reject(error); else resolve(); };
+		const watcher = watch(directory, () => { if (hubAlive()) done(); });
+		const timer = setTimeout(() => done(new Error(`no live hub published on port ${livePort} within 60 s`)), 60_000);
+		if (hubAlive()) done();
+	});
+}
 const controller = await connectController(discoverEndpoint(livePort));
 const command = async (name, args, workspaceHandle) => {
 	const reply = await controller.request({ type: "cmd", name, args, workspaceHandle, timeoutMs: 30_000 }, { timeoutMs: 30_000 });
@@ -141,7 +161,8 @@ try {
 	expect("the studio loads the demo take", await waitFor("!!window.__cozyclay?.motion && window.__cozyclay.motion.frames > 0 && !!document.querySelector('[data-node-id=characterA] .hierarchy-row')", 60_000));
 
 	// ---- Motion mode, character selected ----
-	await evaluate(`[...document.querySelectorAll('.workflow-mode-switch [role=tab]')].find((tab) => tab.textContent.trim() === 'Motion')?.click(); true`);
+	// The v2 mode toolbar (#521/#524): key 4 is Motion.
+	await evaluate(`document.querySelector('[data-mode-key="4"]')?.click(); true`);
 	expect("Motion mode is active", await waitFor("document.querySelector('.app')?.dataset.workflowMode === 'motion'"));
 	await click("[data-node-id=characterA] .hierarchy-row");
 	expect("Details shows the Takes section with the loaded take", await waitFor(`document.querySelectorAll(${JSON.stringify(takeRows)}).length === 1`));

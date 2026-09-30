@@ -1,3 +1,7 @@
+/* The one layer order. Imported first by main.jsx, so a component sheet that
+   opens @layer regions early cannot move regions below shell (#548 did). */
+@layer tokens, legacy, shell, regions;
+
 @layer tokens {
 	:root {
 		/* V2 surfaces: brightness steps separate regions without borders. */
@@ -10,6 +14,8 @@
 		--field-deep: #0c0c0d;
 		--row-divider: #1d1d20;
 		--overlay: rgba(12,12,13,.78);
+		/* Hairline between viewport toolbar pills; brighter than --row-divider. */
+		--divider-strong: #2e2e33;
 
 		/* V2 text scale. */
 		--text-1: #e4e4e7;
@@ -30,6 +36,8 @@
 		--axis-y: #4fbf7a;
 		--axis-z: #4c8dff;
 		--ok: #4fbf7a;
+		/* The top bar's clay-coloured project swatch. */
+		--project-swatch: #cdb8a2;
 
 		/* Track chips and sequencer clip fills. */
 		--chip-folder: #8a7a55;
