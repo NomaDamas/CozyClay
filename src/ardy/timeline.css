@@ -572,44 +572,41 @@
 
 .v2-sequencer .tl-track-chip {
 	min-width: 0;
-	max-width: calc(100% - var(--sp-1, 8px));
+	flex: 0 1 auto;
 	height: var(--tl-chip-height, 16px);
-	padding: 0 var(--tl-control-gap, 2px);
 	display: inline-flex;
 	align-items: center;
-	border-radius: var(--r-1, 4px);
-	color: var(--text-1, #e4e4e7);
+	gap: 6px;
+	overflow: hidden;
+	color: var(--text-row, #c9c9ce);
 	font-size: var(--tl-font-secondary, 11px);
 	font-weight: 500;
-	line-height: 1;
 	white-space: nowrap;
-	overflow: hidden;
 	text-overflow: ellipsis;
+	--tl-chip-dot: var(--text-3, #636369);
+}
+
+/* v2 track tree: a 6 px colour chip before the name, never a filled label. */
+.v2-sequencer .tl-track-chip::before {
+	content: "";
+	flex: none;
+	width: 6px;
+	height: 6px;
+	border-radius: 2px;
+	background: var(--tl-chip-dot);
 }
 
 .v2-sequencer .tl-track-chip.prompt,
-.v2-sequencer .tl-track-chip.body {
-	background: var(--tl-chip-motion, #6f93d6);
-	color: var(--on-select, #1a1204);
-}
+.v2-sequencer .tl-track-chip.body { --tl-chip-dot: var(--tl-chip-motion, #6f93d6); }
 
 .v2-sequencer .tl-track-chip.pins,
-.v2-sequencer .tl-track-chip.ik {
-	background: var(--select, #e8a33d);
-	color: var(--on-select, #1a1204);
-}
+.v2-sequencer .tl-track-chip.ik { --tl-chip-dot: var(--select, #e8a33d); }
 
 .v2-sequencer .tl-track-chip.camera,
 .v2-sequencer .tl-track-chip.rail,
-.v2-sequencer .tl-track-chip.crane {
-	background: var(--camera, #a78bfa);
-	color: var(--field-deep, #0c0c0d);
-}
+.v2-sequencer .tl-track-chip.crane { --tl-chip-dot: var(--camera, #a78bfa); }
 
-.v2-sequencer .tl-track-chip.root {
-	background: var(--tl-chip-cast, #5fb584);
-	color: var(--field-deep, #0c0c0d);
-}
+.v2-sequencer .tl-track-chip.root { --tl-chip-dot: var(--tl-chip-cast, #5fb584); }
 
 .v2-sequencer .tl-track-owner,
 .v2-sequencer .tl-path-speed {
