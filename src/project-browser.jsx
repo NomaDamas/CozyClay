@@ -137,6 +137,13 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 		if (startup) nameInputRef.current?.focus();
 	}, [startup]);
 
+	// File › New reaches this screen with unsaved work, so Create can be refused
+	// by the discard confirmation. A name left behind then must not seed a later
+	// Save's name dialog once the screen closes.
+	useEffect(() => () => {
+		pendingProjectName = null;
+	}, []);
+
 	const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) ?? templates[0];
 	const visibleTemplates = category === "All"
 		? templates

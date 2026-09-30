@@ -174,7 +174,7 @@ export default function MenuBar({ preferences }) {
 		exportShotIdRef, setExportMenuOpen, shots, exportKeyframePacks, hasCameraKeys, motion,
 		exportRenderPasses, exportDepthVideo, exportStoryboard, downloadOtioCutList,
 		castDomain, preferencesOpen, setPreferencesOpen, agentOpen, toggleAgent,
-		setToast, embedMode,
+		setToast, embedMode, setProjectStartupOpen, setProjectBrowserOpen,
 	} = shell;
 	const [open, setOpen] = useState(null);
 	const [focusFirst, setFocusFirst] = useState(false);
@@ -281,7 +281,9 @@ export default function MenuBar({ preferences }) {
 	const content = {
 		file: (
 			<>
-				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => runStudioAction("project.new"))}>
+				{/* New opens the 2b start screen, the same one first launch shows. Its
+				    Create runs project.new, which still asks before discarding unsaved changes. */}
+				<button type="button" role="menuitem" className="menubar-item" data-testid="menubar-new" onClick={item(() => { setProjectBrowserOpen(false); setProjectStartupOpen(true); })}>
 					<span className="menubar-item-label">{ko("New", "새로 만들기")}</span>
 				</button>
 				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => runStudioAction("project.browse"))}>

@@ -191,8 +191,8 @@ expect("IK-edited blocks use the motion edit session", app.includes("const edite
 expect("IK regeneration inherits loaded clip duration", app.includes("motion && ikFrames.length ? motion.frames / motion.fps"));
 expect("motion edits send only tracked pending joints", app.includes("ikKeys.get(at)?.keys()") && app.includes("tracks:"));
 expect("successful motion edits commit and clear pending IK", app.includes("setCommittedIkEdits") && app.includes("job.ikState.keys.clear()") && app.includes("job.ikState.tracked.clear()"));
-expect("pending IK clears only after exact commit verification", app.includes("editCommitReport?.commit_verified !== true") && app.includes("ARDY returned motion without verified authored IK keys"));
-expect("failed key verification leaves pending IK intact", app.indexOf("ARDY returned motion without verified authored IK keys") < app.indexOf("job.ikState.keys.clear()"));
+expect("pending IK clears only after exact commit verification", app.includes("editCommitReport?.commit_verified !== true") && app.includes("The generated motion came back without verified authored pose keys"));
+expect("failed key verification leaves pending IK intact", app.indexOf("The generated motion came back without verified authored pose keys") < app.indexOf("job.ikState.keys.clear()"));
 expect(
 	"inactive live motion and its prompt clips commit in one character update",
 	app.includes('commitLoadedTake(targetCharacter.id, loaded, { recipe, job, promptClips: targetPromptClips, scale })') &&
@@ -268,11 +268,11 @@ expect(
 	planview.includes("lineWidth={3}") && planview.includes("lineWidth={live ? 2.5 : 3.5}"),
 );
 expect(
-	"Top-View shows ARDY player endpoints and direction while composing a rail",
+	"Top-View shows path endpoints and direction while composing a rail",
 	planview.includes("function SubjectMovementGuide") &&
 	planview.includes("directionTriangle") &&
-	planview.includes('ko("ARDY START", "ARDY 시작")') &&
-	planview.includes('ko("ARDY END", "ARDY 끝")') &&
+	planview.includes('ko("PATH START", "경로 시작")') &&
+	planview.includes('ko("PATH END", "경로 끝")') &&
 	planview.includes("point.x.toFixed(1)") &&
 	planview.includes('ko("PLAYER STILL", "플레이어 정지")') &&
 	planview.includes("(railDraw || cameraRailPoints) && <SubjectMovementGuide"),
