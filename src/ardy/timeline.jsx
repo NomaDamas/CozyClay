@@ -8,6 +8,7 @@ import { buildRail, craneHeightAt } from "../camera-follow.js";
 import { pathMetrics } from "../object-path.js";
 import { flatTiming, timingIsFlat, envelopeDrag, insertCut, removeCut, CUT_MIN_GAP } from "../speed-envelope.js";
 import { checkShotAgainstPreset, presetById } from "../model-presets.js";
+import "./timeline.css";
 
 /**
  * ARDY Viser-style animation timeline — the live motion workspace.
@@ -46,10 +47,10 @@ const TRACKS = [
 	"Shots",
 ];
 const TRACK_LABELS_KO = {
-	Prompts: ko("Prompts", "프롬프트"),
-	"Full-Body": ko("Full-Body", "전신"),
-	"2D Root": ko("2D Root", "2D 루트"),
-	Shots: ko("Shots", "샷"),
+	Prompts: ko("Prompt", "프롬프트"),
+	"Full-Body": ko("Body", "바디"),
+	"2D Root": ko("Root path", "루트 경로"),
+	Shots: ko("Camera Cuts", "카메라 컷"),
 };
 
 /** IK keys live on the Full-Body lane: one marker per keyed frame, holding
@@ -70,19 +71,6 @@ const framePct = (f, count) => (count > 1 ? f / (count - 1) : 0);
 // the readout honest at any loaded fps (the final frame is just shy of the
 // displayed total duration, as it is in an actual frame sequence).
 const formatTimelineSeconds = (seconds) => `${Math.max(0, Number(seconds) || 0).toFixed(2)}s`;
-
-// Keep related timeline controls visually together without another stylesheet
-// dependency. The head is a single flex row, so each group reads like one
-// instrument instead of a string of unrelated buttons.
-const TL_HEAD_GROUP_STYLE = {
-	display: "inline-flex",
-	alignItems: "center",
-	gap: 5,
-	padding: "2px 4px",
-	border: "1px solid var(--line)",
-	borderRadius: 6,
-	background: "rgba(0, 0, 0, .12)",
-};
 
 const CAMERA_BLOCK_DEFAULTS = {
 	distance: 3,
@@ -972,6 +960,7 @@ export default function Timeline({
 	motion = null, // { frames, label } | null
 	ikFrames = [], // sorted full-body key frames
 	rangePins = [], // active character's inclusive pin ranges
+	previewRanges = [], // amber preview spans shown under the Body track
 	selectedPinId = null,
 	pendingPinRange = null,
 	footSnap = true, // feet stay planted while the body moves
@@ -1726,6 +1715,8 @@ export default function Timeline({
 	// The motion-layer track tools (Prompts +, the Full-Body Cut, the trim and
 	// retime grips) edit the take, so Scene and Camera never render them.
 	const motionTools = workflowMode === "motion";
+	const activeShotForCut = shots[activeShotIdx] ?? null;
+	const canCutShot = Boolean(activeShotForCut && frame > activeShotForCut.startFrame && frame <= activeShotForCut.endFrame);
 	// A trim or retime grip edits ONE segment: it belongs to the segment the
 	// playhead selects. The trim preview clip carries the live gesture, so it
 	// keeps its grips while the pointer is down.
@@ -1736,10 +1727,11 @@ export default function Timeline({
 	};
 
 	return (
-		<section className={"timeline" + (expanded ? "" : " collapsed") + (!shots.length ? " empty-shots" : "")} aria-label={ko("Animation timeline", "애니메이션 타임라인")}>
+		<section className={"timeline v2-sequencer" + (expanded ? "" : " collapsed") + (!shots.length ? " empty-shots" : "")} data-testid="sequencer" aria-label={ko("Animation timeline", "애니메이션 타임라인")}>
 			{expanded ? (
 				<>
 					<div className="tl-head">
+						<strong className="tl-title">{ko("Sequencer", "시퀀서")}</strong>
 						<div className="tl-transport" aria-label={ko("Playback transport", "재생 컨트롤")}>
 							<button
 								type="button"
@@ -1768,11 +1760,74 @@ export default function Timeline({
 							>
 								›
 							</button>
-							<span className="tl-readout" aria-live="polite">
-								<b>{frame}</b> / {Math.max(0, frameCount - 1)} · {formatTimelineSeconds(frame / Math.max(1, fps))} / {formatTimelineSeconds(frameCount / Math.max(1, fps))} · {fps} fps · {playbackSpeed.toFixed(2)}×
+							<span className="tl-readout" data-testid="sequencer-frame-readout" aria-live="polite">
+								<b>{String(Math.max(0, frame)).padStart(4, "0")}</b><span> / {String(Math.max(0, frameCount)).padStart(4, "0")} · {fps}fps</span>
 							</span>
 						</div>
-						<div className="tl-head-group tl-view-tools" role="group" aria-label={ko("Timeline view tools", "타임라인 보기 도구")} style={TL_HEAD_GROUP_STYLE}>
+						<div className="tl-sequencer-actions" role="group" aria-label={ko("Sequencer actions", "시퀀서 작업")}>
+							{motionTools ? (<>
+								<button
+									type="button"
+									className="tl-seq-action cut"
+									data-testid="sequencer-cut"
+									disabled={!selectedMotionSegment || frame <= 0 || frame >= motion.frames}
+									title={ko("Cut the Body clip at the playhead", "재생 헤드에서 바디 클립 자르기")}
+									onClick={() => handlers.current.onMotionCut?.()}
+								>
+									{ko("Cut", "컷")}
+								</button>
+								<button
+									type="button"
+									className="tl-seq-action"
+									data-testid="sequencer-add-block"
+									title={ko("Add a prompt block at the playhead", "재생 헤드에 프롬프트 블록 추가")}
+									onClick={() => handlers.current.onPromptAdd?.(frame)}
+								>
+									{ko("+ Block", "+ 블록")}
+								</button>
+							</>) : workflowMode === "pose" || ikMode ? (
+								<button
+									type="button"
+									className="tl-seq-action cut"
+									data-testid="sequencer-cut"
+									disabled={!selectedMotionSegment || frame <= 0 || frame >= (motion?.frames ?? 0)}
+									onClick={() => handlers.current.onMotionCut?.()}
+								>
+									{ko("Cut", "컷")}
+								</button>
+							) : (<>
+								<button
+									type="button"
+									className="tl-seq-action cut"
+									data-testid="sequencer-cut"
+									disabled={!canCutShot}
+									title={ko("Split the selected Camera Cut at the playhead", "선택한 카메라 컷을 재생 헤드에서 나눕니다")}
+									onClick={() => activeShotForCut && handlers.current.onShotSplit?.(activeShotForCut.id)}
+								>
+									{ko("Cut", "컷")}
+								</button>
+								<button
+									type="button"
+									className="tl-seq-action rail"
+									data-testid="sequencer-draw-rail"
+									title={ko("Draw or redraw the selected camera rail", "선택한 카메라 레일을 그리거나 다시 그립니다")}
+									onClick={() => handlers.current.onCameraRailDrawToggle?.()}
+								>
+									{ko("Draw rail", "레일 그리기")}
+								</button>
+								<button
+									type="button"
+									className="tl-seq-action"
+									data-testid="sequencer-add-track"
+									disabled={shotCutDisabled}
+									title={ko("Add a Camera Cut track block", "카메라 컷 트랙 블록 추가")}
+									onClick={() => handlers.current.onShotCut?.()}
+								>
+									{ko("+ Track", "+ 트랙")}
+								</button>
+							</>) }
+						</div>
+						<div className="tl-head-group tl-view-tools" role="group" aria-label={ko("Timeline view tools", "타임라인 보기 도구")}>
 							<button
 								type="button"
 								className={"tl-btn zoom" + (zoom !== ZOOM_DEFAULT ? " on" : "")}
@@ -1793,7 +1848,7 @@ export default function Timeline({
 								{isKo ? `웨이포인트 ${waypointMode ? "켜짐" : "꺼짐"}` : `Waypoint ${waypointMode ? "on" : "off"}`}
 							</button>
 						</div>
-						<div className="tl-head-group tl-pose-tools" role="group" aria-label={ko("Pose correction tools", "포즈 보정 도구")} style={TL_HEAD_GROUP_STYLE}>
+						<div className="tl-head-group tl-pose-tools" role="group" aria-label={ko("Pose correction tools", "포즈 보정 도구")}>
 							{/* No rig, no pose editing: the group says why instead of
 							    offering a button that cannot do anything (R3). */}
 							{ikDisabled && !ikMode ? (
@@ -1837,7 +1892,7 @@ export default function Timeline({
 							</>)}
 						</div>
 						{(selectedMotionSegment || onClearMotion) && (
-							<div className="tl-head-group tl-motion-tools" role="group" aria-label={ko("Motion controls", "모션 컨트롤")} style={TL_HEAD_GROUP_STYLE}>
+							<div className="tl-head-group tl-motion-tools" role="group" aria-label={ko("Motion controls", "모션 컨트롤")}>
 								{selectedMotionSegment && (
 									<label className="tl-motion-speed-editor">
 										<span>{ko(`Segment ${motionSegments.indexOf(selectedMotionSegment) + 1} speed`, `구간 ${motionSegments.indexOf(selectedMotionSegment) + 1} 배율`)}</span>
@@ -1979,9 +2034,23 @@ export default function Timeline({
 								onTimingGestureEnd={() => handlers.current.onObjectTimingGestureEnd?.()}
 							/>
 						) : TRACKS.map((name) => (
-							<div className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} key={name}>
-								<span className="tl-track-label">
-									{TRACK_LABELS_KO[name]}
+							<div className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} data-track-id={name} key={name}>
+								<span className="tl-track-label tl-track-tree">
+									{name === IK_LANE ? (
+										<span className="tl-track-label-stack">
+											<span className="tl-track-subrow"><span className="tl-track-chip body" data-lane-label="Body">{ko("Body", "바디")}</span></span>
+											<span className="tl-track-subrow indent"><span className="tl-track-chip pins" data-lane-label="Pins">{ko("Pins", "핀")}</span></span>
+											<span className="tl-track-subrow indent"><span className="tl-track-chip ik" data-lane-label="IK keys">{ko("IK keys", "IK 키")}</span></span>
+										</span>
+									) : name === SHOTS_LANE ? (
+										<span className="tl-track-label-stack">
+											<span className="tl-track-subrow"><span className="tl-track-chip camera" data-lane-label="Camera Cuts">{ko("Camera Cuts", "카메라 컷")}</span></span>
+											<span className="tl-track-subrow indent"><span className="tl-track-chip rail" data-lane-label="Rail">{ko("Rail", "레일")}</span></span>
+											<span className="tl-track-subrow indent"><span className="tl-track-chip crane" data-lane-label="Crane">{ko("Crane", "크레인")}</span></span>
+										</span>
+									) : (
+										<span className="tl-track-subrow"><span className={"tl-track-chip " + (name === "2D Root" ? "root" : "prompt")} data-lane-label={TRACK_LABELS_KO[name]}>{TRACK_LABELS_KO[name]}</span></span>
+									)}
 									{trackOwner && (name === "Prompts" || name === "2D Root") && <em className="tl-track-owner">{trackOwner}</em>}
 									{name === "2D Root" && pathSpeed && (
 										<em
@@ -2043,6 +2112,13 @@ export default function Timeline({
 									{gridFrames.map((f) => (
 										<i key={f} className="tl-grid" style={{ "--tl-f": framePct(f, displayFrameCount) }} aria-hidden="true" />
 									))}
+									{name === IK_LANE && previewRanges.map((range, index) => {
+										const startFrame = Number.isFinite(Number(range?.startFrame)) ? Number(range.startFrame) : Number(range?.start ?? 0);
+										const endFrame = Number.isFinite(Number(range?.endFrame)) ? Number(range.endFrame) : Number(range?.end ?? startFrame);
+										const start = Math.max(0, Math.min(displayFrameCount - 1, Math.round(startFrame)));
+										const end = Math.max(start, Math.min(displayFrameCount - 1, Math.round(endFrame)));
+										return <span key={`preview:${index}`} className="tl-preview-range" style={{ "--tl-f-start": framePct(start, displayFrameCount), "--tl-f-end": framePct(end, displayFrameCount) }} aria-label={ko(`Preview range ${start}–${end}`, `미리보기 범위 ${start}–${end}`)} />;
+									})}
 									{name === SHOTS_LANE && shots.length === 0 && (
 										<div className="tl-shot-empty">
 											<span>{ko("No shots yet — use + Add shot in the lane header to create one.", "아직 샷이 없습니다 — 레인 헤더의 + 샷 추가로 만들어 보세요.")}</span>
@@ -2241,7 +2317,6 @@ export default function Timeline({
 										);
 									})}
 									{name === IK_LANE && pinBands.map(({ pin, geometry }) => {
-						const hand = pin.track === "leftHand" || pin.track === "rightHand";
 						return (
 							<button
 								key={`pin:${pin.id}`}
@@ -2252,7 +2327,7 @@ export default function Timeline({
 									"--tl-f-end": geometry.endPct,
 									"--tl-pin-ramp-start": geometry.rampStartPct,
 									"--tl-pin-ramp-end": geometry.rampEndPct,
-									"--tl-pin-color": hand ? "var(--range-pin-hand)" : "var(--range-pin-foot)",
+									"--tl-pin-color": "var(--select, #e8a33d)",
 								}}
 								title={ko(`${pin.track} pin · frames ${pin.startFrame}–${pin.endFrame}`, `${pin.track} 고정 · ${pin.startFrame}–${pin.endFrame}프레임`)}
 								onPointerDown={(event) => {
