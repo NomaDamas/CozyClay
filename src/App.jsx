@@ -1,23 +1,12 @@
 import { useMotion } from "./domains/motion.js";
-import TakeBarPanel from "./panels/TakeBarPanel.jsx";
-import RigControlPanel from "./panels/RigControlPanel.jsx";
-import VideoCapturePanel from "./panels/VideoCapturePanel.jsx";
 import { useCast } from "./domains/cast.js";
-import PromptBlocksPanel from "./panels/PromptBlocksPanel.jsx";
-import PosePanel from "./panels/PosePanel.jsx";
-import RigPanel from "./panels/RigPanel.jsx";
-import CharacterTransformPanel from "./panels/CharacterTransformPanel.jsx";
-import SubjectsPanel from "./panels/SubjectsPanel.jsx";
 import { useShots } from "./domains/shots.js";
-import CameraPanel from "./panels/CameraPanel.jsx";
 import { useObjects } from "./domains/objects.js";
-import ObjectTransformPanel from "./panels/ObjectTransformPanel.jsx";
-import PropsPanel from "./panels/PropsPanel.jsx";
 import { useScenes } from "./domains/scenes.js";
-import ProjectPanel from "./panels/ProjectPanel.jsx";
 import { useStage } from "./domains/stage.js";
-import LightPanel from "./panels/LightPanel.jsx";
-import EnvironmentPanel from "./panels/EnvironmentPanel.jsx";
+import StudioShell from "./shell/StudioShell.jsx";
+import ViewportToolbar from "./shell/ViewportToolbar.jsx";
+import { StudioShellContext } from "./shell/studio-shell-context.js";
 
 import {
 	useCallback,
@@ -43,11 +32,6 @@ import {
 import { motionUrlFromQuery } from "./ardy/motion-url.js";
 
 import {
-	createMotionEdit,
-	motionEditLayout,
-} from "./ardy/motion-edit.js";
-
-import {
 	applyMotionFrame,
 	restorePlaybackBones,
 	snapshotPlaybackBones,
@@ -58,8 +42,6 @@ import {
 	jointTrailPoints,
 	worldPointToClip,
 } from "./motion-trail.js";
-
-import Timeline from "./ardy/timeline.jsx";
 
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
 import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
@@ -76,9 +58,9 @@ import { createStudioAppActions } from "./commands/index.js";
 import { createStudioAppBinding } from "./studio-app-binding.js";
 import { AppContext, createAppContext } from "./app-context.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
-import HierarchyPanel from "./hierarchy-panel.jsx";
+
 import { PlanBoard } from "./planview.jsx";
-import { autoColorHex, loadAutoColor, saveAutoColor } from "./auto-color.js";
+import { autoColorHex, loadAutoColor } from "./auto-color.js";
 import { DualRender, fitAspect, GIZMO_LAYER } from "./dualview.jsx";
 import { GridFloor } from "./grid-floor.jsx";
 import { GRID_BACKGROUND, GRID_FOG, readStoredGridView, writeStoredGridView } from "./grid-view.js";
@@ -129,7 +111,6 @@ import {
 import {
 	RAIL_SCHEDULE_LEGACY,
 	RAIL_SCHEDULE_RANGE,
-	defaultRailRange,
 	resolveRailSchedule,
 } from "./camera-rail-schedule.js";
 import { SetProps } from "./props.jsx";
@@ -142,7 +123,6 @@ import {
 } from "./scene-objects.js";
 
 import {
-	ASSET_IMAGE_TYPES,
 	assetGraphSignature,
 	assetUsageCounts,
 	deleteAsset,
@@ -185,7 +165,7 @@ import { CameraTutorial } from "./camera-tutorial.jsx";
 import { createTutorialAnalytics } from "./tutorial-analytics.js";
 import { cameraTutorialSuppressed, createFirstShotHandoff, rememberCameraTutorialTerminal } from "./first-shot-handoff.js";
 import ObjectGizmo from "./object-gizmo.jsx";
-import AssetPane from "./asset-pane.jsx";
+
 import {
 	SaveBlockedDialog,
 } from "./resource-status.jsx";
@@ -194,11 +174,9 @@ import ResultModal from "./result-modal.jsx";
 import {
 	FalMotionModal,
 } from "./fal-motion-studio.jsx";
-import SettingsMenu from "./settings-menu.jsx";
+
 import { demoSeedGate, hasLineEditCapability, motionReadiness } from "./motion-readiness.js";
-import {
-	MotionSetup,
-} from "./motion-readiness-ui.jsx";
+
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
@@ -226,7 +204,6 @@ import {
 import {
 	IkHandles,
 	PoseHandles,
-	PoseStudioPanel,
 	RangePinMarker,
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
@@ -256,7 +233,7 @@ import {
 	Toast,
 } from "./ui.jsx";
 import { useRenderActivity } from "./use-render-activity.js";
-import SourceOffer from "./source-offer.jsx";
+
 import {
 	CUSTOM_MOVE,
 	IMAGE_MODELS,
@@ -265,7 +242,7 @@ import {
 	deriveShot,
 	fovToFocalMm,
 } from "./shot.js";
-import { CAMERA_PRESETS, captureFraming, classifyMove, moveSequenceSlate, moveSequencePhrase } from "./camera-move.js";
+import { captureFraming, classifyMove, moveSequenceSlate, moveSequencePhrase } from "./camera-move.js";
 import { sampleAt } from "./sample-at.js";
 import { exportOffscreenVideo } from "./offscreen-export.js";
 import { parseRigNodeId } from "./hierarchy-model.js";
@@ -302,13 +279,11 @@ import {
 	CraneHandles,
 	DEFAULT_CAMERA_POSITION,
 	DEFAULT_DURATION_S,
-	DEFAULT_PLAYBACK_SPEED,
 	DEMO_MOTION_PROMPT,
 	DEMO_MOTION_URL,
 	EditorCamSeed,
 	FollowCamRig,
 	GIZMO_HOTKEYS,
-	HIERARCHY_INSPECTOR_TITLES,
 	KeyLightPuck,
 	LINE_CURVE_MARKER_STRIDE,
 	LINE_CURVE_REFUSALS,
@@ -321,7 +296,6 @@ import {
 	MoveRig,
 	OBJECT_DELETE_UNDO_MS,
 	ObjectPathHandles,
-	PRESETS,
 	RIG_HIERARCHY_FOCUS,
 	RenderLoopController,
 	SHOT_ASPECT_PRESETS,
@@ -342,7 +316,6 @@ import {
 	loadWorkspaceLayout,
 	moveSequenceSlateKo,
 	preserveTracksSummary,
-	sceneObjectNameDisplayKo,
 	slateLineKo,
 	useStageFilesDrop,
 } from "./app-stage.jsx";
@@ -903,7 +876,14 @@ export default function App() {
 		return () => pane.removeEventListener("wheel", onWheel);
 	}, []);
 
+	const [preferencesOpen, setPreferencesOpen] = useState(false);
+	const [statusText, setStatusText] = useState("");
+	const [previewRanges, setPreviewRanges] = useState([]);
+	const [flySpeed, setFlySpeed] = useState(1);
 	const workspaceStyle = {
+		"--shell-right-width": workspaceLayout.shellSidebarWidth && `${workspaceLayout.shellSidebarWidth}px`,
+		"--shell-outliner-height": workspaceLayout.shellOutlinerHeight && `${workspaceLayout.shellOutlinerHeight}px`,
+		"--shell-dock-height": workspaceLayout.shellDockHeight && `${workspaceLayout.shellDockHeight}px`,
 		"--hierarchy-width": `${workspaceLayout.hierarchyWidth}px`,
 		"--sidebar-width": `${workspaceLayout.sidebarWidth}px`,
 		"--timeline-height": `${workspaceLayout.timelineHeight}px`,
@@ -917,7 +897,11 @@ export default function App() {
 		e.stopPropagation();
 		const startX = e.clientX;
 		const startY = e.clientY;
-		const start = workspaceLayout;
+		const shell = e.currentTarget.closest(".app");
+		const sidebarWidth = shell.querySelector(".studio-right-column").getBoundingClientRect().width;
+		const hierarchyHeight = shell.querySelector(".hierarchy-left").getBoundingClientRect().height;
+		const mainHeight = shell.querySelector(".workspace").getBoundingClientRect().height;
+		const dockHeight = shell.querySelector(".bottom-window").getBoundingClientRect().height;
 		const onMove = (ev) => {
 			const dx = ev.clientX - startX;
 			const dy = ev.clientY - startY;
@@ -925,18 +909,18 @@ export default function App() {
 				if (kind === "sidebar") {
 					return {
 						...current,
-						sidebarWidth: Math.max(280, Math.min(window.innerWidth * 0.5, start.sidebarWidth - dx)),
+						shellSidebarWidth: Math.max(280, Math.min(window.innerWidth * 0.5, sidebarWidth - dx)),
 					};
 				}
 				if (kind === "hierarchy") {
 					return {
 						...current,
-						hierarchyWidth: Math.max(220, Math.min(window.innerWidth * 0.4, start.hierarchyWidth + dx)),
+						shellOutlinerHeight: Math.max(120, Math.min(mainHeight - 120, hierarchyHeight + dy)),
 					};
 				}
 				return {
 					...current,
-					timelineHeight: Math.max(110, Math.min(window.innerHeight * 0.58, start.timelineHeight - dy)),
+					shellDockHeight: Math.max(110, Math.min(window.innerHeight * 0.58, dockHeight - dy)),
 				};
 			});
 		};
@@ -6629,507 +6613,109 @@ export default function App() {
 					? ko("Unsaved changes", "저장되지 않은 변경사항")
 					: ko("Saved", "저장됨");
 
+	// The single shell snapshot keeps subsequent region work out of App.
+	const shellContext = {
+		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
+		requestNewProject, setProjectStartupOpen, setProjectBrowserOpen, runStudioAction, saveProject,
+		projectManifest, projectSaveState, recState, exportMenuTriggerRef, exportMenuOpen,
+		exportShotIdRef, setExportMenuAnchor, setExportMenuOpen, exportPhaseLabel,
+		exportMenuAnchor, resultOpen, exportFeedback, shots, exportKeyframePacks,
+		hasCameraKeys, motion, exportRenderPasses, exportDepthVideo, exportStoryboard,
+		downloadOtioCutList, projectStatus, liveWorkspaceHandle, selectedHierarchyId, selectHierarchy,
+		aimEditorAtKeyLight, characters, showB, ikFrames, ikMode,
+		rowIdForCharIndex, activeCharIndex, waypoints, sceneObjects, scenes,
+		activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi, renameSceneDocumentFromUi,
+		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection,
+		toggleHierarchyHidden, propsDrop, hierarchyReparent, agentTouchedRows, workflowMode,
+		selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
+		preset, applyPreset, cameraPresetId, falMotionCameraLocked, shotAspectKey,
+		fovDeg, shotsDomain, shot, setNonce, workspaceLayout,
+		viewMenuTriggerRef, viewMenuOpen, setViewMenuAnchor, setViewMenuOpen, viewLooksActive,
+		viewMenuAnchor, gridView, setGridView, autoColor, setAutoColor,
+		isCharacterSelection, partColoursChoice, embedMode, agentCollapsed, sceneSaveError,
+		studioAgentError, studioAgentMode, setStudioAgentMode, AgentPanel, setAgentCollapsed,
+		buildStudioAgentContext, highlightAgentTargets, generateFalMotionFromUi, selectedSceneObject, rigSelection,
+		inspectorActionsOpen, setInspectorActionsOpen, deleteSelectedSceneObject, inspectorHasContent, keyLightSelected,
+		keyLight, changeKeyLight, resetKeyLight, isCameraSelection, moveSequence,
+		cameraKeys, activeShot, changeShotTargetModel, updateCharacterAt, openStudio,
+		posing, removeCharacter, setShowB, activeChar, changeInspectorCharacter,
+		falMotionModel, falMotionActions, setFalMotionStudioOpen, selectablePoses, ikApplyPoseAsKey,
+		setStudioPick, appContext, removePose, setPhotoPoseError, photoPoseFileRef,
+		photoPoseState, photoPoseError, activeRig, saveCurrentPose, multiModelStatus,
+		multiModelStage, multiModelFileRef, chooseMultiModelFile, multiModelSource, multiModelUrl,
+		setMultiModelUrl, useMultiModelUrl, pasteMultiModelUrl, multiModelProgress, multiModelError,
+		multiModelFootage, extractMultiModelMotion, multiModelExtract, multiModelTake, multiModelExtractProgress,
+		multiModelExtractError, bridge, promptBlocksReveal, promptClips, selectedPromptId,
+		setSelectedPromptId, setArdyPrompt, setTlFrame, tlFrameCount, changePromptClip,
+		ardySeed, changeArdySeed, lineEditMode, toggleLineEditMode, linePreviewUrl,
+		lineCurve, lineDrifted, lineTrack, setLineTrack, linePinMode,
+		setLinePinMode, linePins, lineClipFrames, lineEditRange, setLineRange,
+		lineRadius, changeLineRadius, lineCurveDirty, lineEditFrom, lineEditTo,
+		lineCurvePointCount, lineDriftHint, lineCurveHidden, linePreviewBusy, linePreviewMs,
+		linePreviewError, generationBusy, bridgeChecking, lineReadinessState, runLineEdit,
+		openMotionSetup, recheckMotionHealth, resetLineCurve, exitLineEditMode, readinessState,
+		ardyRunning, cancelArdy, ardyStatus, ardyOutcome, addPromptClip,
+		tlFrame, isRigSelection, ikChains, ikFocus, footSnap,
+		collisionCleanupSupported, runFixCollisions, runFixCollisionsRange, autoPhysicsRunning, physicsProgress,
+		physicsPreview, physicsShow, physicsOptions, platformFitRunning, platformFitProgress,
+		platformFitLast, platformFitApplied, changePhysicsOptions, runAutoPhysics, showPhysicsPreview,
+		applyPhysicsPreview, cancelPhysicsPreview, ikEditTool, setIkEditTool, showTrails,
+		setShowTrails, trailFalloffS, setTrailFalloffS, trailEdit, runTrailRegeneration,
+		trailReadinessState, rangePins, rangePinResiduals, rangePinSelection, rangePinPartPick,
+		rangePinPreview, setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft,
+		deleteRangePin, hasEnvSheet, environment, style, environmentImage,
+		inspectorDrop, cutoutInputRef, meshInputRef, importCutout, importMesh,
+		changeSceneObject, attachTargetLabel, store, beginSceneTransaction, endSceneTransaction,
+		matteCanvasRef, matteStats, matteMode, setMatteMode, matteEditorRef,
+		matteTolerance, setMatteTolerance, matteBrush, setMatteBrush, matteShrink,
+		setMatteShrink, matteFeather, setMatteFeather, matteBusy, applyMatte,
+		recentObjectColors, rememberSceneObjectColor, objectColorDraft, setObjectColorDraft, posePhotoFile,
+		posingIndex, posingChar, charA, allPoses, studioPick,
+		posingClosing, closeStudio, castDomain, setToast, savePose,
+		bottomTab, setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
+		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
+		projectAssetGraphSignature, assetTrash, deleteUnusedAsset, undoDeletedAsset, deletingAssetId,
+		takeSourceUrl, sceneDisabledReason, sceneMenuOpen, setSceneMenuOpen, refineDisabledReason,
+		enterRefineMode, sceneGenerateDisabledReason, runArdy, sceneAgainDisabledReason, runSceneAgain,
+		addSceneBlock, preserveStrength, setPreserveStrength, waypointMode, preserveTracksLine,
+		takeRecipe, takeVersions, loadTakeVersion, replayNotices, craneSelectedIndex,
+		addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFps, ghostLayers,
+		pathSpeed, tlPlaying, pendingWaypointFrame, stateBadge, applyMotionTrim,
+		resetMotionTrim, cutMotionAtPlayhead, changeMotionSegmentSpeed, removeMotionSegmentById, bodyContact,
+		activeShotIdx, railDraw, pathDraw, setPathDraw, setRailDraw,
+		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe,
+		setBodyContact, setFootSnap, advanceFrame, stepFrame, cameraPreviewEndRef,
+		manualCameraOverrideRef, setTlPlaying, toggleWaypointMode, setWaypointMode, selectActiveCharacterInHierarchy,
+		setActiveWaypointId, setPendingWaypointFrame, removeWaypoint, queueRootWaypointFrame, revealPromptBlocks,
+		resizePromptClip, movePromptClip, removePromptClip, setSelectedHierarchyId, addCameraKeyframe,
+		moveCameraKeyframe, removeCameraKeyframe, syncActiveCameraFraming, activeCamera, activeShotDuration,
+		changeActiveCamera, cameraRail, previewCameraShot, toggleCameraRailDraw, deleteCameraRail,
+		selectTimelineShot, clearMotion,
+		spawnCharacter, exportShotVideo, stopShotRecording, retryExport, poseRefusal,
+		beginWorkspaceResize, motionSetupReveal, motionSetupKind,
+		preferencesOpen, setPreferencesOpen, statusText, setStatusText, previewRanges, setPreviewRanges,
+		flySpeed, liveHubStatus: liveWorkspaceHandle ? "connected" : "disconnected",
+		agentOpen: !agentCollapsed,
+		toggleAgent: () => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle")),
+		saveStatus: { state: projectSaveState, text: projectStatus, dirty: projectDirty, name: projectName },
+		exportStatus: exportStatus && { ...exportStatus, cancel: stopShotRecording, retry: retryExport },
+		subscribeToasts: (listener) => { toastSinkRef.current.add(listener); return () => toastSinkRef.current.delete(listener); },
+	};
+
 	return (
 		<AppContext.Provider value={appContext}>
-		<div className={"app" + (renderActive ? "" : " render-idle")} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}>
-			<header className="topbar">
-				<div className="logo">
-					<span className="wordmark">
-						Cozy <span>Clay</span>
-					</span>
-				</div>
-				<ProjectPanel
-					projectMenuOpen={projectMenuOpen}
-					setProjectMenuOpen={setProjectMenuOpen}
-					projectDirty={projectDirty}
-					projectName={projectName}
-					projectStartupOpen={projectStartupOpen}
-					requestNewProject={requestNewProject}
-					setProjectStartupOpen={setProjectStartupOpen}
-					setProjectBrowserOpen={setProjectBrowserOpen}
-					runStudioAction={runStudioAction}
-					saveProject={saveProject}
-					projectManifest={projectManifest}
-				/>
-				<div className="topbar-actions">
-					<a className="topbar-action workflow-topbar-link" href="/workflow/" aria-label={ko("Open Workflow", "워크플로 열기")}>{ko("Workflow", "워크플로우")}</a>
-					<div className="project-actions" aria-label={ko("Project actions", "프로젝트 작업")}>
-						<button
-							type="button"
-							className="topbar-action project-save-action"
-							data-testid="topbar-save"
-							disabled={projectSaveState === "saving"}
-							onClick={() => void runStudioAction("project.save")}
-						>
-							{projectSaveState === "saving" ? ko("Saving…", "저장 중…") : ko("Save", "저장")}
-						</button>
-						{/* One Export menu for every delivery this studio makes (#193,
-						    R4). The keyframe pack leads because it is the pack an AI video
-						    tool is fed; items whose precondition is missing are not
-						    rendered disabled — the footer line says what to author first. */}
-						{/* One element cannot carry two data-testids: the topbar contract
-						    keeps the attribute, the menu contract gets the same handle as an
-						    id, so both selectors still reach this one trigger. */}
-						<div className="export-menu-wrap">
-							<button
-								type="button"
-								className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
-								data-testid="topbar-export"
-								id="export-menu-trigger"
-								ref={exportMenuTriggerRef}
-								aria-expanded={exportMenuOpen}
-								aria-haspopup="menu"
-								title={ko("Exports: keyframe pack, video, passes, storyboard, cut list", "내보내기: 키프레임 팩·영상·패스·스토리보드·컷 목록")}
-								onClick={(event) => {
-									exportShotIdRef.current = null;
-									// The panel is fixed to the viewport and anchored to this
-									// trigger in JS, the way it was in the PlayView bar: one
-									// popover geometry for the studio's export menu wherever
-									// its trigger lives.
-									const box = event.currentTarget.getBoundingClientRect();
-									const menuWidth = Math.min(340, window.innerWidth - 16);
-									setExportMenuAnchor({
-										top: box.bottom + 6,
-										right: Math.min(Math.max(8, window.innerWidth - box.right), Math.max(8, window.innerWidth - menuWidth - 8)),
-									});
-									setExportMenuOpen((open) => !open);
-								}}
-							>
-								{ko("Export", "내보내기")}
-								{exportStatus && <span className="export-trigger-state" data-phase={exportStatus.phase}>{exportPhaseLabel(exportStatus.phase)}</span>}
-								<span className="caret">▾</span>
-							</button>
-							{exportMenuOpen && (
-								<div
-									className="project-menu export-menu"
-									role="menu"
-									style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
-								>
-									{!(resultOpen && exportStatus?.kind === "frame") && exportFeedback()}
-									<button
-										type="button"
-										role="menuitem"
-										className="export-menu-primary"
-										data-testid="export-keyframe-pack"
-										disabled={!shots.length || recState === "recording"}
-										data-disabled-reason={shots.length ? undefined : "no-shots"}
-										title={shots.length
-											? ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")
-											: ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다")}
-										onClick={(event) => void exportKeyframePacks(event.shiftKey, exportShotIdRef.current)}
-									>
-										{ko("Keyframe pack (zip)", "키프레임 팩 (zip)")}
-										<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
-									</button>
-									{(shots.length > 0 || hasCameraKeys || motion) && (
-										<button
-											type="button"
-											role="menuitem"
-											data-testid="export-video"
-											disabled={recState === "recording"}
-											title={ko("Render the shot to an MP4 — camera move and character motion, no editor chrome", "샷을 MP4로 렌더링합니다 — 카메라 움직임과 캐릭터 모션만, 편집 UI는 제외")}
-											onClick={() => void runStudioAction("export.shotVideo", exportShotIdRef.current ? { shotId: exportShotIdRef.current } : {})}
-										>
-											{ko("Video (mp4)", "영상 (mp4)")}
-										</button>
-									)}
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-render-passes"
-										disabled={recState === "recording"}
-										title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
-										onClick={exportRenderPasses}
-									>
-										{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-depth-video"
-										disabled={!shots.length || recState === "recording"}
-										data-disabled-reason={shots.length ? undefined : "no-shots"}
-										title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
-										onClick={() => void exportDepthVideo(exportShotIdRef.current)}
-									>
-										{ko("Depth (mp4)", "뎁스 (mp4)")}
-									</button>
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-storyboard"
-										disabled={!shots.length || recState === "recording"}
-										data-disabled-reason={shots.length ? undefined : "no-shots"}
-										title={shots.length
-											? ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")
-											: ko("Add a shot first — a storyboard is one row per shot", "샷을 먼저 추가하세요 — 스토리보드는 샷마다 한 줄입니다")}
-										onClick={() => void exportStoryboard()}
-									>
-										{ko("Storyboard (PNG)", "스토리보드 (PNG)")}
-									</button>
-									{shots.length > 0 && (
-										<button
-											type="button"
-											role="menuitem"
-											data-testid="export-otio"
-											title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
-											onClick={downloadOtioCutList}
-										>
-											{ko("OTIO cut list", "OTIO 컷 목록")}
-										</button>
-									)}
-									{!shots.length && (
-										<p className="export-menu-hint">
-											{hasCameraKeys || motion
-												? ko("Add a shot to export OTIO", "OTIO를 내보내려면 샷을 추가하세요")
-												: ko("Add a shot to export video or OTIO", "영상·OTIO를 내보내려면 샷을 추가하세요")}
-										</p>
-									)}
-								</div>
-							)}
-						</div>
-						<span
-							className={"project-save-status status-" + projectSaveState}
-							data-testid="project-save-status"
-							role="status"
-							aria-live="polite"
-						>
-							{projectStatus}
-						</span>
-					</div>
-					{liveWorkspaceHandle && (
-						<span className="live-workspace-handle" data-live-workspace={liveWorkspaceHandle} title={liveWorkspaceHandle}>
-							{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
-						</span>
-					)}
-					<SettingsMenu
-						motionSetupReveal={motionSetupReveal}
-						motionSetup={<MotionSetup state={motionSetupKind === "trail" ? trailReadinessState : motionSetupKind === "line" ? lineReadinessState : readinessState} checking={bridgeChecking} onRetry={recheckMotionHealth} />}
-					/>
-				</div>
-			</header>
-
-			<div className="main" style={workspaceStyle}>
-			<div className="workspace">
-				<aside className="panel hierarchy-left" aria-label={ko("Hierarchy", "계층")}>
-				{/* Project > Scene: the project is the document root, scenes live
-				    inside it — the picker sits at the top of the hierarchy column. */}
-				<div className="hierarchy-project" data-dirty={projectDirty || undefined}>
-					<span className="hierarchy-project-label">{ko("Project", "프로젝트")}</span>
-					<strong>{projectName ?? (projectStartupOpen ? ko("Choose Project", "프로젝트 선택") : ko("Untitled", "제목 없음"))}</strong>
-					{projectDirty && <i className="project-dirty-dot" aria-label={ko("Unsaved changes", "저장되지 않은 변경사항")} />}
-				</div>
-				<HierarchyPanel
-					selectedId={selectedHierarchyId}
-					onSelect={(id) => {
-						selectHierarchy(id);
-						if (id === "light") aimEditorAtKeyLight();
-					}}
-					characters={characters}
-					showB={showB}
-					motionFrames={motion?.frames ?? 0}
-					ikFrames={ikFrames.length}
-					ikMode={ikMode}
-					ikRowId={rowIdForCharIndex(activeCharIndex)}
-					waypointCount={waypoints.length}
-					sceneObjects={sceneObjects}
-					scenes={scenes}
-					activeSceneId={activeSceneId}
-					onSceneSelect={selectSceneDocument}
-					onSceneCreate={createSceneDocumentFromUi}
-					onSceneDuplicate={duplicateSceneDocumentFromUi}
-					onSceneRename={renameSceneDocumentFromUi}
-					onSceneDelete={deleteSceneDocumentFromUi}
-					onAddObject={addSceneObject}
-					onRenameObject={renameSceneObject}
-					onDuplicateObject={(objectId) => runStudioAction("object.duplicate", objectId ? { objectId } : {})}
-					onDeleteObject={deleteSceneObject}
-					onFrameObject={frameSelection}
-					onToggleHidden={toggleHierarchyHidden}
-					propsDrop={propsDrop}
-					reparent={hierarchyReparent}
-					touchedIds={agentTouchedRows}
-				/>
-				</aside>
-				<div
-					className="workspace-splitter workspace-splitter-vertical"
-					role="separator"
-					aria-label={ko("Resize hierarchy panel", "계층 패널 크기 조절")}
-					onPointerDown={(event) => beginWorkspaceResize("hierarchy", event)}
-				/>
-				<div className="viewport" data-drop={viewportDrop.over ? "over" : undefined} {...viewportDrop.handlers}>
-				<div className="viewport-titlebar">
-				<div className="workflow-mode-switch" role="tablist" aria-label={ko("Workflow", "작업 모드")}>
-					{[
-						["scene", ko("Scene", "장면"), ko("Place subjects and props", "인물과 소품 배치")],
-						["camera", ko("Camera", "카메라"), ko("Frame the shot", "샷 구도 설정")],
-						["motion", ko("Motion", "모션"), ko("Edit timing and movement", "타이밍과 움직임 편집")],
-						["pose", ko("Pose", "포즈"), ko("Edit the pose with IK", "IK로 포즈 편집")],
-					].map(([id, label, hint]) => (
-						<button
-							type="button"
-							role="tab"
-							key={id}
-							className={workflowMode === id ? "active" : ""}
-							aria-selected={workflowMode === id}
-							title={hint}
-							onClick={() => selectWorkflowMode(id)}
-						>
-							{label}
-						</button>
-					))}
-				</div>
-				<div className="editor-toolbar scene-tools" aria-label={ko("Scene tools", "장면 도구")}>
-					{workflowMode === "motion" && (
-						<span className="workflow-toolbar-hint" role="status">
-							{ko("Motion mode · edit the timeline below", "모션 모드 · 아래 타임라인에서 편집하세요")}
-						</span>
-					)}
-					{workflowMode === "pose" && (
-						<span className="workflow-toolbar-hint" role="status">
-							{ko("Pose mode · W IK parts · E motion trail · R range pin", "포즈 모드 · W IK 파츠 · E 궤적선 · R 범위 고정")}
-						</span>
-					)}
-						<span className="transform-toolbar-label workflow-scene-context">{ko("Transform", "변환")}</span>
-						<div className="tool-switch workflow-scene-context" role="group" aria-label={ko("Transform tools", "변환 도구")} data-transform-controls>
-							<button
-								type="button"
-								className={gizmoMode === "move" ? "active" : ""}
-								title={ko("Move tool (W)", "이동 도구 (W)")}
-								aria-pressed={gizmoMode === "move"}
-								onClick={() => setGizmoMode("move")}
-							>
-								<svg viewBox="0 0 16 16" aria-hidden="true" className="tool-icon"><path d="M8 1v14M1 8h14" stroke="currentColor" strokeWidth="1.4"/><path d="M8 1 6 3h4L8 1zM8 15l-2-2h4l-2 2zM1 8l2-2v4L1 8zM15 8l-2-2v4l2-2z" fill="currentColor"/></svg>
-								{ko("Move", "이동")}
-							</button>
-							<button
-								type="button"
-								className={gizmoMode === "rotate" ? "active" : ""}
-								title={ko("Rotate tool (E)", "회전 도구 (E)")}
-								aria-pressed={gizmoMode === "rotate"}
-								onClick={() => setGizmoMode("rotate")}
-							>
-								<svg viewBox="0 0 16 16" aria-hidden="true" className="tool-icon"><circle cx="8" cy="8" r="5.4" fill="none" stroke="currentColor" strokeWidth="1.4"/><path d="M13.4 8l2-2v4l-2 2z" fill="currentColor" transform="rotate(45 13.4 8)"/></svg>
-								{ko("Rotate", "회전")}
-							</button>
-							<button
-								type="button"
-								className={gizmoMode === "scale" ? "active" : ""}
-								title={ko("Scale tool (R)", "크기 도구 (R)")}
-								aria-pressed={gizmoMode === "scale"}
-								onClick={() => setGizmoMode("scale")}
-							>
-								<svg viewBox="0 0 16 16" aria-hidden="true" className="tool-icon"><rect x="3" y="3" width="7" height="7" fill="none" stroke="currentColor" strokeWidth="1.4"/><path d="M13 13h-4M13 13V9M13 13l-3.5-3.5" stroke="currentColor" strokeWidth="1.4" fill="none"/></svg>
-								{ko("Scale", "크기")}
-							</button>
-						</div>
-						<button
-							type="button"
-							className={"snap-switch workflow-scene-context" + (snapEnabled ? " active" : "")}
-							title={ko("Grid snapping — hold Ctrl during a drag to invert", "그리드 스냅 — 드래그 중 Ctrl을 누르면 반대로 작동")}
-							aria-pressed={snapEnabled}
-							onClick={() => setSnapEnabled((v) => !v)}
-						>
-							{ko("Snap", "스냅")}
-						</button>
-						<span className="viewport-toolbar-separator settings-separator workflow-camera-context" aria-hidden="true" />
-						<label className="viewport-toolbar-field shot-field workflow-camera-context">
-							<span>{ko("Shot", "샷")}</span>
-							<select
-								aria-label={ko("Shot preset", "샷 프리셋")}
-								value={preset}
-								onChange={(event) => applyPreset(event.target.value)}
-							>
-								{Object.entries(PRESETS).map(([key, value]) => (
-									<option key={key} value={key}>{value.label}</option>
-								))}
-							</select>
-						</label>
-						<label className="viewport-toolbar-field ratio-field workflow-camera-context">
-							<span>{ko("Cam", "카메라")}</span>
-							<select
-								aria-label={ko("Camera preset", "카메라 프리셋")}
-								value={cameraPresetId ?? ""}
-								disabled={falMotionCameraLocked}
-								onChange={(event) => {
-									const id = event.target.value;
-									if (!id) { runStudioAction("stage.setFilmback", { cameraPresetId: null }); return; }
-									runStudioAction("shot.frame", { preset: id });
-								}}
-							>
-								<option value="">{ko("Free", "자유")}</option>
-								{Object.values(CAMERA_PRESETS).map((value) => (
-									<option key={value.id} value={value.id}>{value.label}</option>
-								))}
-							</select>
-						</label>
-						<label className="viewport-toolbar-field ratio-field workflow-camera-context">
-							<span>{ko("Ratio", "비율")}</span>
-							<select
-								aria-label={ko("Output aspect ratio", "출력 화면 비율")}
-								value={shotAspectKey}
-								onChange={(event) => runStudioAction("stage.setFilmback", { shotAspect: event.target.value })}
-							>
-								{Object.values(SHOT_ASPECT_PRESETS).map((value) => (
-									<option key={value.label} value={value.label}>{value.label}</option>
-								))}
-							</select>
-						</label>
-						<label className="viewport-fov-control workflow-camera-context">
-							<span>FOV</span>
-							<input
-								type="range"
-								min="14"
-								max="90"
-								step="1"
-								value={fovDeg}
-								disabled={falMotionCameraLocked}
-								onChange={(event) => shotsDomain.changeLens(Number(event.target.value))}
-							/>
-							<output>{Math.round(fovDeg)}°</output>
-							<small>{shot.focalMm}mm</small>
-						</label>
-						<span className="viewport-toolbar-spacer workflow-camera-context" />
-						<button
-							type="button"
-							title={ko("Recenter on subject", "피사체 다시 맞추기")}
-							aria-label={ko("Recenter on subject", "피사체 다시 맞추기")}
-							className="workflow-camera-context"
-							onClick={() => setNonce((n) => n + 1)}
-						>
-							◎
-						</button>
-						<button
-							type="button"
-							aria-pressed={!workspaceLayout.insetCollapsed}
-							className="workflow-scene-context workflow-camera-context"
-							onClick={() => {
-								runStudioAction("view.setInset", { collapsed: !workspaceLayout.insetCollapsed });
-							}}
-						>
-							{ko("Top", "탑")} {workspaceLayout.insetCollapsed ? "▸" : "▾"}
-						</button>
-						{/* One menu for every viewport-look toggle (R4), in every mode:
-						    what the stage LOOKS like is not a mode's business. The 27px
-						    bar clips its own overflow, so the panel is fixed to the
-						    viewport and anchored to the trigger, like the export menu.
-						    Items keep the menu open: these are toggles you compare, not
-						    commands you fire. */}
-						<div className="view-menu-wrap">
-							<button
-								type="button"
-								className="view-menu-trigger"
-								data-testid="view-menu-trigger"
-								ref={viewMenuTriggerRef}
-								aria-haspopup="menu"
-								aria-expanded={viewMenuOpen}
-								title={ko("Viewport display toggles", "뷰포트 표시 토글")}
-								onClick={(event) => {
-									const box = event.currentTarget.getBoundingClientRect();
-									setViewMenuAnchor({ top: box.bottom + 6, right: Math.max(8, window.innerWidth - box.right) });
-									setViewMenuOpen((open) => !open);
-								}}
-							>
-								{ko("View", "보기")}
-								<span className="caret">▾</span>
-								{viewLooksActive && <span className="view-menu-dot" data-testid="view-menu-dot" aria-hidden="true" />}
-							</button>
-							{viewMenuOpen && (
-								<div
-									className="project-menu view-menu"
-									role="menu"
-									aria-label={ko("Viewport display", "뷰포트 표시")}
-									style={{ top: `${viewMenuAnchor.top}px`, right: `${viewMenuAnchor.right}px` }}
-								>
-									{/* aria-pressed rides along with aria-checked: the toggles
-									    published that state contract in their old homes and QA
-									    still reads it, so the move keeps the signpost (R9). */}
-									<button
-										type="button"
-										role="menuitemcheckbox"
-										className={"view-menu-item grid-view-switch" + (gridView ? " active" : "")}
-										aria-checked={gridView}
-										aria-pressed={gridView}
-										title={ko("Blender-style viewport — dark void with a reference grid instead of the deck", "Blender식 뷰포트 — 데크 대신 어두운 배경과 기준 그리드")}
-										onClick={() => setGridView((v) => !v)}
-									>
-										<span className="view-menu-mark" aria-hidden="true">{gridView ? "✓" : ""}</span>
-										{ko("Reference grid", "기준 그리드")}
-									</button>
-									<button
-										type="button"
-										role="menuitemcheckbox"
-										className={"view-menu-item auto-color-toggle" + (autoColor ? " active" : "")}
-										aria-checked={autoColor}
-										aria-pressed={autoColor}
-										title={ko(
-											"Distinct display colors per object — captures include them while on",
-											"오브젝트별 구분 색 — 켜둔 동안 캡처에도 포함됩니다",
-										)}
-										onClick={() => {
-											setAutoColor((on) => {
-												saveAutoColor(!on);
-												trackFeature("auto_color");
-												return !on;
-											});
-										}}
-									>
-										<span className="view-menu-mark" aria-hidden="true">{autoColor ? "✓" : ""}</span>
-										{ko("Auto Color", "자동 색")}
-									</button>
-									{/* Part colours repaint a BODY, so the section only exists
-									    while a character is selected (R2). */}
-									{isCharacterSelection && (
-										<div className="view-menu-group" role="group" aria-label={ko("Body part colours", "부위 색상")}>
-											<span className="view-menu-label" aria-hidden="true">{ko("Body part colours", "부위 색상")}</span>
-											{[
-												{ value: "off", label: ko("Off", "끕") },
-												{ value: "shaded", label: ko("Shaded", "음영") },
-												{ value: "flat", label: ko("Flat", "평면") },
-											].map((option) => {
-												const checked = option.value === partColoursChoice;
-												return (
-													<button
-														type="button"
-														key={option.value}
-														role="menuitemradio"
-														className={"view-menu-item part-colour-option" + (checked ? " active" : "")}
-														data-part-colours={option.value}
-														aria-checked={checked}
-														onClick={() => runStudioAction("view.setPartColours", { mode: option.value })}
-													>
-														<span className="view-menu-mark" aria-hidden="true">{checked ? "✓" : ""}</span>
-														{option.label}
-													</button>
-												);
-											})}
-										</div>
-									)}
-									{/* Panel visibility belongs to the same menu (R4): the
-									    agent column is something you show, not a mode, so it
-									    gets a checkmark here instead of a topbar button. */}
-									{!embedMode && (
-										<div className="view-menu-group" role="group" aria-label={ko("Panels", "패널")}>
-											<span className="view-menu-label" aria-hidden="true">{ko("Panels", "패널")}</span>
-											<button
-												type="button"
-												role="menuitemcheckbox"
-												className={"view-menu-item agent-panel-toggle" + (agentCollapsed ? "" : " active")}
-												aria-checked={!agentCollapsed}
-												aria-pressed={!agentCollapsed}
-												title={ko("Show the agent chat column (Cmd/Ctrl+B)", "에이전트 채팅 열 표시 (Cmd/Ctrl+B)")}
-												onClick={() => window.dispatchEvent(new CustomEvent("cozyclay:agent-panel-toggle"))}
-											>
-												<span className="view-menu-mark" aria-hidden="true">{agentCollapsed ? "" : "✓"}</span>
-												{ko("Agent panel", "에이전트 패널")}
-											</button>
-										</div>
-									)}
-								</div>
-							)}
-						</div>
-					</div>
-				</div>
+		<StudioShellContext.Provider value={shellContext}>
+		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}
+			viewport={
+				<div className="viewport" data-drop={viewportDrop.over ? "over" : undefined} {...viewportDrop.handlers}
+					onWheel={(event) => {
+						// Read-only UI mirror of FlyControls' persistent wheel multiplier.
+						// Its native canvas listener handles navigation before this bubbles.
+						if (flyingRef.current && event.target.tagName === "CANVAS") {
+							setFlySpeed((speed) => THREE.MathUtils.clamp(speed * (event.deltaY > 0 ? 0.9 : 1.1), 0.15, 6));
+						}
+					}}>
+				<ViewportToolbar />
 
 					{/* Sits under the mode tabs and left of the Top-View inset, over the
 					    stage it is teaching. The overlay itself never takes the pointer
@@ -7791,659 +7377,8 @@ export default function App() {
 
 						</div>
 					</div>
-
-				<div
-					className="workspace-splitter workspace-splitter-vertical"
-					role="separator"
-					aria-label={ko("Resize hierarchy and inspector panel", "계층 및 속성 패널 크기 조절")}
-					onPointerDown={(event) => beginWorkspaceResize("sidebar", event)}
-				/>
-				<aside className="panel hierarchy-sidebar inspector-sidebar" data-inspector={selectedHierarchyId}>
-					{/* Save failures live above the tab content, not inside the Props
-					    card: that card is hidden whenever any hierarchy node is
-					    selected, and saves fire exactly while objects are being
-					    edited — the one case where a failure line inside it is
-					    invisible. As a sibling of the tab panes this line stays
-					    on screen for every selection and every tab until the
-					    next successful write clears it (plan §8.4); the one-shot
-					    toast still announces each failure episode. */}
-					{sceneSaveError && (
-						<p className="scene-save-error" role="status">
-							{sceneSaveError}
-						</p>
-					)}
-					{studioAgentError && <p className="scene-save-error" role="alert">{studioAgentError}</p>}
-					{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
-						<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
-						<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
-							sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
-							buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
-							onFalAction={(instruction) => void generateFalMotionFromUi(instruction)} />
-					</div>}
-					<section className="inspector-pane" hidden={studioAgentMode}>
-					<div className="inspector-heading">
-						<strong>{ko("Inspector", "속성")}</strong>
-						<button type="button" className="inspector-agent-switch" aria-pressed={studioAgentMode} onClick={() => setStudioAgentMode(true)}>{ko("Agent", "에이전트")}</button>
-						<span className="inspector-heading-selection">{selectedSceneObject ? sceneObjectNameDisplayKo(selectedSceneObject.name) : HIERARCHY_INSPECTOR_TITLES[rigSelection?.token ?? selectedHierarchyId] ?? ko("Selection", "선택 항목")}</span>
-						{selectedSceneObject && (
-							<div className="inspector-actions-wrap">
-								<button
-									type="button"
-									className="inspector-actions-trigger"
-									aria-label={ko("Object actions", "오브젝트 작업")}
-									aria-expanded={inspectorActionsOpen}
-									onClick={() => setInspectorActionsOpen((open) => !open)}
-								>
-									⋮
-								</button>
-								{inspectorActionsOpen && (
-									<div className="inspector-actions-menu" role="menu">
-										<button type="button" role="menuitem" onClick={() => { runStudioAction("object.duplicate"); setInspectorActionsOpen(false); }}>
-											{ko("Duplicate", "복제")}
-										</button>
-										<button type="button" role="menuitem" onClick={() => { deleteSelectedSceneObject(); setInspectorActionsOpen(false); }}>
-											{ko("Delete", "삭제")}
-										</button>
-									</div>
-								)}
-							</div>
-						)}
-					</div>
-					<div className="inspector-scroll">
-				{/* Nothing is selected that owns settings — say so rather than
-				    showing an empty column the user has to interpret. */}
-				{!inspectorHasContent && (
-					<p className="inspector-empty" data-inspector-empty role="status">
-						{ko(
-							"Select something in the hierarchy — the scene, the camera, a character, the environment or a prop — and its settings appear here.",
-							"계층에서 항목을 고르면 — 씨, 카메라, 캐릭터, 환경, 소품 — 그 설정이 여기 나타납니다.",
-						)}
-					</p>
-				)}
-				{/* Shot TYPE presets live in the viewport toolbar dropdown — not
-					    duplicated here. */}
-
-					{/* Camera animation is authored against the same playhead as motion,
-					    so keep its controls beside the Motion tools as well as Shot setup. */}
-					<LightPanel keyLightSelected={keyLightSelected} keyLight={keyLight} changeKeyLight={changeKeyLight} resetKeyLight={resetKeyLight} />
-					{/* Lens, Recenter and Record used to live here as well as in the
-					    viewport camera bar and the topbar Export menu. One home each
-					    (#193, R1): framing is the bar's job, delivery is Export's, and
-					    selecting the camera now switches to Camera mode so the bar's
-					    controls are on screen when this panel opens. */}
-					<CameraPanel isCameraSelection={isCameraSelection} shot={shot} moveSequence={moveSequence} cameraKeys={cameraKeys} activeShot={activeShot} changeShotTargetModel={changeShotTargetModel} />
-
-				<SubjectsPanel
-					isCharacterSelection={isCharacterSelection}
-					showB={showB}
-					characters={characters}
-					updateCharacterAt={updateCharacterAt}
-					openStudio={openStudio}
-					posing={posing}
-					removeCharacter={removeCharacter}
-					setShowB={setShowB}
-				/>
-
-				{/* Scene mode: the viewport gizmo and Move/Rotate/Scale are the primary
-				    path, so the numeric form starts folded (R5). Motion mode hides
-				    those tools, so the same foldout becomes the open Placement row —
-				    where the body stands on stage, which is all Motion can restage.
-				    Foldout reads defaultOpen once, so the key remounts it per mode. */}
-				<CharacterTransformPanel
-					workflowMode={workflowMode}
-					isCharacterSelection={isCharacterSelection}
-					activeChar={activeChar}
-					changeInspectorCharacter={changeInspectorCharacter}
-				/>
-
-				{/* Rig and Pose are chosen once when a character is cast and then left
-				    alone, so they open on demand — Subject and Prompt are the panels
-				    you actually work in. */}
-				<RigPanel
-					isCharacterSelection={isCharacterSelection}
-					activeChar={activeChar}
-					updateCharacterAt={updateCharacterAt}
-					activeCharIndex={activeCharIndex}
-				/>
-
-				<PosePanel
-					isCharacterSelection={isCharacterSelection}
-					activeCharIndex={activeCharIndex}
-					falMotionModel={falMotionModel}
-					falMotionActions={falMotionActions}
-					setFalMotionStudioOpen={setFalMotionStudioOpen}
-					selectablePoses={selectablePoses}
-					activeChar={activeChar}
-					ikMode={ikMode}
-					ikApplyPoseAsKey={ikApplyPoseAsKey}
-					motion={motion}
-					updateCharacterAt={updateCharacterAt}
-					setStudioPick={setStudioPick}
-					setToast={appContext.notify}
-					removePose={removePose}
-					setPhotoPoseError={setPhotoPoseError}
-					photoPoseFileRef={photoPoseFileRef}
-					photoPoseState={photoPoseState}
-					photoPoseError={photoPoseError}
-					activeRig={activeRig}
-					saveCurrentPose={saveCurrentPose}
-				/>
-
-				<VideoCapturePanel
-					isCharacterSelection={isCharacterSelection}
-					multiModelStatus={multiModelStatus}
-					multiModelStage={multiModelStage}
-					multiModelFileRef={multiModelFileRef}
-					chooseMultiModelFile={chooseMultiModelFile}
-					multiModelSource={multiModelSource}
-					multiModelUrl={multiModelUrl}
-					setMultiModelUrl={setMultiModelUrl}
-					useMultiModelUrl={useMultiModelUrl}
-					pasteMultiModelUrl={pasteMultiModelUrl}
-					multiModelProgress={multiModelProgress}
-					multiModelError={multiModelError}
-					multiModelFootage={multiModelFootage}
-					extractMultiModelMotion={extractMultiModelMotion}
-					multiModelExtract={multiModelExtract}
-					multiModelTake={multiModelTake}
-					multiModelExtractProgress={multiModelExtractProgress}
-					multiModelExtractError={multiModelExtractError}
-					activeChar={activeChar}
-					bridge={bridge}
-				/>
-				<PromptBlocksPanel
-					isCharacterSelection={isCharacterSelection}
-					promptBlocksReveal={promptBlocksReveal}
-					promptClips={promptClips}
-					selectedPromptId={selectedPromptId}
-					setSelectedPromptId={setSelectedPromptId}
-					setArdyPrompt={setArdyPrompt}
-					setTlFrame={setTlFrame}
-					tlFrameCount={tlFrameCount}
-					changePromptClip={changePromptClip}
-					ardySeed={ardySeed}
-					changeArdySeed={changeArdySeed}
-					motion={motion}
-					lineEditMode={lineEditMode}
-					toggleLineEditMode={toggleLineEditMode}
-					linePreviewUrl={linePreviewUrl}
-					lineCurve={lineCurve}
-					lineDrifted={lineDrifted}
-					lineTrack={lineTrack}
-					setLineTrack={setLineTrack}
-					linePinMode={linePinMode}
-					setLinePinMode={setLinePinMode}
-					linePins={linePins}
-					lineClipFrames={lineClipFrames}
-					lineEditRange={lineEditRange}
-					setLineRange={setLineRange}
-					lineRadius={lineRadius}
-					changeLineRadius={changeLineRadius}
-					lineCurveDirty={lineCurveDirty}
-					lineEditFrom={lineEditFrom}
-					lineEditTo={lineEditTo}
-					lineCurvePointCount={lineCurvePointCount}
-					lineDriftHint={lineDriftHint}
-					lineCurveHidden={lineCurveHidden}
-					linePreviewBusy={linePreviewBusy}
-					linePreviewMs={linePreviewMs}
-					linePreviewError={linePreviewError}
-					generationBusy={generationBusy}
-					bridgeChecking={bridgeChecking}
-					bridge={bridge}
-					lineReadinessState={lineReadinessState}
-					runLineEdit={runLineEdit}
-					openMotionSetup={openMotionSetup}
-					recheckMotionHealth={recheckMotionHealth}
-					resetLineCurve={resetLineCurve}
-					exitLineEditMode={exitLineEditMode}
-					readinessState={readinessState}
-					runStudioAction={runStudioAction}
-					ardyRunning={ardyRunning}
-					cancelArdy={cancelArdy}
-					ardyStatus={ardyStatus}
-					ardyOutcome={ardyOutcome}
-					addPromptClip={addPromptClip}
-					tlFrame={tlFrame}
-				/>
-
-					<RigControlPanel
-						isRigSelection={isRigSelection}
-						rigSelection={rigSelection}
-						ikChains={ikChains}
-						ikFocus={ikFocus}
-						footSnap={footSnap}
-						ikMode={ikMode}
-						collisionCleanupSupported={collisionCleanupSupported}
-						runFixCollisions={runFixCollisions}
-						runFixCollisionsRange={runFixCollisionsRange}
-						motion={motion}
-						autoPhysicsRunning={autoPhysicsRunning}
-						physicsProgress={physicsProgress}
-						physicsPreview={physicsPreview}
-						physicsShow={physicsShow}
-						physicsOptions={physicsOptions}
-						platformFitRunning={platformFitRunning}
-						platformFitProgress={platformFitProgress}
-						platformFitLast={platformFitLast}
-						platformFitApplied={platformFitApplied}
-						tlFrame={tlFrame}
-						changePhysicsOptions={changePhysicsOptions}
-						runAutoPhysics={runAutoPhysics}
-						showPhysicsPreview={showPhysicsPreview}
-						applyPhysicsPreview={applyPhysicsPreview}
-						cancelPhysicsPreview={cancelPhysicsPreview}
-						setTlFrame={setTlFrame}
-						ikEditTool={ikEditTool}
-						setIkEditTool={setIkEditTool}
-						showTrails={showTrails}
-						setShowTrails={setShowTrails}
-						trailFalloffS={trailFalloffS}
-						setTrailFalloffS={setTrailFalloffS}
-						trailEdit={trailEdit}
-						generationBusy={generationBusy}
-						bridgeChecking={bridgeChecking}
-						bridge={bridge}
-						runTrailRegeneration={runTrailRegeneration}
-						trailReadinessState={trailReadinessState}
-						openMotionSetup={openMotionSetup}
-						recheckMotionHealth={recheckMotionHealth}
-						rangePins={rangePins}
-						rangePinResiduals={rangePinResiduals}
-						rangePinSelection={rangePinSelection}
-						rangePinPartPick={rangePinPartPick}
-						rangePinPreview={rangePinPreview}
-						objects={sceneObjects}
-						setRangePinSelection={setRangePinSelection}
-						setRangePinPartPick={setRangePinPartPick}
-						previewRangePinDraft={previewRangePinDraft}
-						applyRangePinDraft={applyRangePinDraft}
-						deleteRangePin={deleteRangePin}
-					/>
-
-				<EnvironmentPanel
-					selectedHierarchyId={selectedHierarchyId}
-					hasEnvSheet={hasEnvSheet}
-					environment={environment}
-					style={style}
-					environmentImage={environmentImage}
-					setToast={appContext.notify}
-				/>
-
-				<PropsPanel
-					selectedHierarchyId={selectedHierarchyId}
-					inspectorDrop={inspectorDrop}
-					addSceneObject={addSceneObject}
-					cutoutInputRef={cutoutInputRef}
-					meshInputRef={meshInputRef}
-					importCutout={importCutout}
-					importMesh={importMesh}
-					sceneObjects={sceneObjects}
-					selectHierarchy={selectHierarchy}
-				/>
-
-				<ObjectTransformPanel
-					selectedSceneObject={selectedSceneObject}
-					snapEnabled={snapEnabled}
-					setSnapEnabled={setSnapEnabled}
-					changeSceneObject={changeSceneObject}
-					attachTargetLabel={attachTargetLabel}
-					hierarchyReparent={hierarchyReparent}
-					store={store}
-					sceneObjects={sceneObjects}
-					beginSceneTransaction={beginSceneTransaction}
-					endSceneTransaction={endSceneTransaction}
-					matteCanvasRef={matteCanvasRef}
-					matteStats={matteStats}
-					matteMode={matteMode}
-					setMatteMode={setMatteMode}
-					matteEditorRef={matteEditorRef}
-					matteTolerance={matteTolerance}
-					setMatteTolerance={setMatteTolerance}
-					matteBrush={matteBrush}
-					setMatteBrush={setMatteBrush}
-					matteShrink={matteShrink}
-					setMatteShrink={setMatteShrink}
-					matteFeather={matteFeather}
-					setMatteFeather={setMatteFeather}
-					setToast={appContext.notify}
-					matteBusy={matteBusy}
-					applyMatte={applyMatte}
-					autoColor={autoColor}
-					recentObjectColors={recentObjectColors}
-					rememberSceneObjectColor={rememberSceneObjectColor}
-					objectColorDraft={objectColorDraft}
-					setObjectColorDraft={setObjectColorDraft}
-				/>
-					</div>
-					{selectedSceneObject && (
-						<div className="inspector-footer">
-							<span>{ko("Delete or Backspace to remove", "Delete 또는 Backspace로 삭제")}</span>
-						</div>
-					)}
-					</section>
-					{/* The reference-photo picker sits outside the panel so re-mounting
-					    the studio cannot cancel an in-flight read. */}
-					<input
-						ref={photoPoseFileRef}
-						className="multimodel-file-input"
-						type="file"
-						accept={ASSET_IMAGE_TYPES.join(",")}
-						data-pose-photo-input
-						onChange={(event) => {
-							const file = event.target.files?.[0];
-							event.target.value = ""; // the same photo must be re-pickable after an error
-							if (file) posePhotoFile(file);
-						}}
-					/>
-					{/* Pose Studio docks under the inspector instead of floating over
-					    the shot: the viewport keeps the posed character unobstructed. */}
-					{posing && (
-						<PoseStudioPanel
-							docked
-							subject={posingIndex >= 0 ? posingIndex + 1 : 1}
-							model={posingChar?.model ?? charA.model}
-							poses={allPoses}
-							selectedId={studioPick}
-							closing={posingClosing}
-							motionActive={Boolean(motion)}
-							ikCorrection={ikMode && Boolean(motion) && posingChar?.id === activeChar.id}
-							onSelect={setStudioPick}
-							onApply={(selectedPoseId) => {
-								const pose = selectablePoses.find((p) => p.id === selectedPoseId);
-								if (pose) {
-									// IK mode over a take, on the active character: key the
-									// pose as a correction instead of erasing the motion.
-									if (ikMode && posingChar?.id === activeChar.id && ikApplyPoseAsKey(pose)) {
-										closeStudio();
-										return;
-									}
-									const hadMotion = Boolean(motion);
-									if (posingChar) castDomain.run('character.setPose', { characterId: posingChar.id, pose: pose.id, clearMotion: hadMotion });
-									closeStudio();
-									setToast(hadMotion ? ko("Cleared the current motion and applied the pose", "현재 모션을 지우고 포즈를 적용했어요") : ko("Pose applied", "포즈를 적용했어요"));
-								} else {
-									setToast(ko("Couldn't find the selected pose — pick again", "선택한 포즈를 찾지 못했어요. 다시 골라 주세요"));
-								}
-							}}
-							onReset={() => {
-								if (posingChar) castDomain.run('character.setPose', { characterId: posingChar.id, pose: DEFAULT_POSE.id, clearMotion: Boolean(motion) });
-								setStudioPick(DEFAULT_POSE.id);
-								setToast(ko("Back to the default pose", "기본 포즈로 돌아왔어요"));
-							}}
-							onSave={savePose}
-							onPhoto={() => {
-								setPhotoPoseError("");
-								photoPoseFileRef.current?.click();
-							}}
-							photoState={photoPoseState}
-							photoError={photoPoseError}
-							onDelete={removePose}
-							onClose={closeStudio}
-						/>
-					)}
-				</aside>
-
-			</div>
-
-			<div
-				className="workspace-splitter timeline-splitter"
-				role="separator"
-				aria-label={ko("Resize frame monitor", "프레임 모니터 크기 조절")}
-				onPointerDown={(event) => beginWorkspaceResize("timeline", event)}
-			/>
-			<div className="bottom-window">
-				<nav className="bottom-window-tabs" aria-label={ko("Bottom window", "하단 창")}>
-					<button
-						type="button"
-						className={bottomTab === "timeline" ? "active" : ""}
-						aria-pressed={bottomTab === "timeline"}
-						onClick={() => setBottomTab("timeline")}
-					>
-						{ko("Animation", "애니메이션")}
-					</button>
-					<button
-						type="button"
-						className={bottomTab === "assets" ? "active" : ""}
-						aria-pressed={bottomTab === "assets"}
-						onClick={() => setBottomTab("assets")}
-					>
-						{ko("Assets", "에셋")}
-					</button>
-				</nav>
-				<div className="assets-pane" hidden={bottomTab !== "assets"}>
-					<AssetPane
-						onAssetGrab={beginAssetDrag}
-						imageAssetIds={shelfImageIds}
-						meshAssetIds={shelfMeshIds}
-						manageStorage={manageAssetStorage}
-						onManageStorageToggle={() => setManageAssetStorage((current) => !current)}
-						unusedAssetIds={unusedAssetIds}
-						usedAssetIds={usedAssetIds}
-						usageCounts={usageCounts}
-						graphSignature={projectAssetGraphSignature}
-						trashCount={assetTrash.length}
-						onDeleteUnusedAsset={deleteUnusedAsset}
-						onUndoDelete={undoDeletedAsset}
-						deletingAssetId={deletingAssetId}
-						resourceManifest={projectManifest}
-					/>
-				</div>
-				<div className="bottom-timeline" hidden={bottomTab !== "timeline"}>
-				{/* ==================== the take bar (contract C12) ====================
-				    Two primary edit entries, the take's version strip, and whatever the
-				    last replay had to say — all directly above the take they act on,
-				    because a feature the artist has to go hunting for in a collapsed
-				    foldout is a feature they do not have. */}
-				{/* The preview flag lives here TOO, on a node that exists whether or not
-			    the Inspector is scrolled to the line-edit panel — it is the stable
-			    handle for "the viewport is showing a draft, not the take". */}
-			<TakeBarPanel
-				linePreviewUrl={linePreviewUrl}
-				takeSourceUrl={takeSourceUrl}
-				sceneDisabledReason={sceneDisabledReason}
-				sceneMenuOpen={sceneMenuOpen}
-				setSceneMenuOpen={setSceneMenuOpen}
-				refineDisabledReason={refineDisabledReason}
-				lineEditMode={lineEditMode}
-				enterRefineMode={enterRefineMode}
-				readinessState={readinessState}
-				bridgeChecking={bridgeChecking}
-				openMotionSetup={openMotionSetup}
-				recheckMotionHealth={recheckMotionHealth}
-				sceneGenerateDisabledReason={sceneGenerateDisabledReason}
-				runArdy={runArdy}
-				sceneAgainDisabledReason={sceneAgainDisabledReason}
-				runSceneAgain={runSceneAgain}
-				tlFrame={tlFrame}
-				addSceneBlock={addSceneBlock}
-				setToast={appContext.notify}
-				motion={motion}
-				preserveStrength={preserveStrength}
-				setPreserveStrength={setPreserveStrength}
-				waypointMode={waypointMode}
-				preserveTracksLine={preserveTracksLine}
-				takeRecipe={takeRecipe}
-				takeVersions={takeVersions}
-				loadTakeVersion={loadTakeVersion}
-				replayNotices={replayNotices}
-			/>
-				<Timeline
-					frame={tlFrame}
-					craneSelectedIndex={craneSelectedIndex}
-					cameraSelected={isCameraSelection}
-					onCranePointAdd={addActiveCranePoint}
-					onCranePointDelete={deleteSelectedCranePoint}
-					onCranePointSelect={setCraneSelectedIndex}
-					frameCount={tlFrameCount}
-					fps={tlFps}
-					playbackSpeed={DEFAULT_PLAYBACK_SPEED}
-				trackOwner={characters.length > 1 ? `S${activeCharIndex + 1}` : null}
-				ghostLayers={ghostLayers}
-				pathSpeed={pathSpeed}
-				playing={tlPlaying}
-				workflowMode={workflowMode === "pose" ? "motion" : workflowMode}
-				waypointMode={waypointMode}
-				waypoints={waypoints}
-				pathSpeed={pathSpeed}
-				pendingWaypointFrame={pendingWaypointFrame}
-				promptClips={promptClips}
-				selectedPromptId={selectedPromptId}
-				badge={stateBadge}
-				ikMode={ikMode}
-				ikDisabled={!ikChains}
-				motion={motion ? {
-					frames: motion.frames,
-					label: motion.prompt || ko("Loaded take", "불러온 테이크"),
-					segments: motionEditLayout(motion.editSegments ?? createMotionEdit(motion.frames)),
-				} : null}
-				onMotionTrim={applyMotionTrim}
-				onMotionTrimReset={resetMotionTrim}
-				onMotionCut={cutMotionAtPlayhead}
-				onMotionSpeedChange={changeMotionSegmentSpeed}
-				onMotionSegmentRemove={removeMotionSegmentById}
-				ikFrames={ikFrames}
-				rangePins={rangePins}
-				selectedPinId={rangePinSelection}
-				pendingPinRange={ikMode && ikEditTool === "pin" ? rangePinPreview?.draft ?? null : null}
-				footSnap={footSnap}
-				bodyContact={bodyContact}
-					shots={shots}
-					shotAspect={shotAspectKey}
-					activeShotIdx={activeShotIdx}
-					railDraw={railDraw}
-					pathDraw={pathDraw}
-					pathObject={selectedSceneObject ? { id: selectedSceneObject.id, name: sceneObjectNameDisplayKo(selectedSceneObject.name), path: selectedSceneObject.path } : null}
-					onObjectPathDrawToggle={() => {
-						setPathDraw((current) => !current);
-						if (!pathDraw) setRailDraw(false);
-						setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
-					}}
-					onObjectPathChange={(path) => {
-						if (selectedSceneObject) changeSceneObject(selectedSceneObject.id, { path }, timingTokenRef.current ?? undefined);
-					}}
-					onObjectPathClear={() => {
-						if (!selectedSceneObject) return;
-						const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-						changeSceneObject(selectedSceneObject.id, { path: null }, token);
-						endSceneTransaction(token, { commit: true });
-					}}
-					onObjectTimingGestureStart={() => {
-						timingTokenRef.current = beginSceneTransaction({ owner: "object-timing", cancel: () => { timingTokenRef.current = null; } });
-					}}
-					onObjectTimingGestureEnd={() => {
-						if (timingTokenRef.current != null) endSceneTransaction(timingTokenRef.current, { commit: true });
-						timingTokenRef.current = null;
-					}}
-					cameraRailLength={railCurve?.length ?? null}
-				shotCutDisabled={!!posing || ikMode || waypointMode}
-				onIkKeyframeAdd={ikAddKeyframe}
-				onIkKeyframeRemove={ikDeleteKeyframe}
-				onPinSelect={(id) => { setRangePinSelection(id); setIkEditTool("pin"); }}
-				onBodyContactToggle={() => {
-					setBodyContact((v) => {
-						setToast(v ? ko("Body contact off — floor constraints are disabled", "바닥 접촉 꺼짐 — 바닥 제약이 비활성화됩니다") : ko("Body contact on — body markers stay above the floor", "바닥 접촉 켜짐 — 신체 접촉점이 바닥 아래로 내려가지 않습니다"));
-						return !v;
-					});
-				}}
-				onFootSnapToggle={() => {
-					setFootSnap((v) => {
-				setToast(v ? ko("Foot snap off — the feet follow the body", "발 스냅 꺼짐 — 발이 몸을 따라갑니다") : ko("Foot snap on — the feet stay planted while the body moves", "발 스냅 켜짐 — 몸이 움직여도 발은 바닥에 고정됩니다"));
-						return !v;
-					});
-				}}
-				onScrub={(frame) => { trackFeature("timeline_scrub"); setTlFrame(frame); }}
-				onAdvance={advanceFrame}
-				onStep={stepFrame}
-				onPlayToggle={() => {
-					cameraPreviewEndRef.current = null;
-					manualCameraOverrideRef.current = false;
-					setTlPlaying((v) => !v);
-				}}
-				onWaypointToggle={toggleWaypointMode}
-				onMarkerSelect={(id) => {
-					const waypoint = waypoints.find((entry) => entry.id === id);
-					if (!waypoint) throw new Error(`Unknown waypoints ID: ${id}`);
-					setTlFrame(Math.min(waypoint.frame, tlFrameCount - 1));
-					setWaypointMode(true);
-					selectActiveCharacterInHierarchy();
-					setActiveWaypointId(id);
-					setPendingWaypointFrame(null);
-				}}
-				onMarkerRemove={removeWaypoint}
-				onRootKeyframeAdd={queueRootWaypointFrame}
-				onPromptAdd={(frame) => {
-					addPromptClip(frame);
-					selectActiveCharacterInHierarchy();
-					revealPromptBlocks();
-				}}
-				onPromptSelect={(id) => {
-					setSelectedPromptId(id);
-					setArdyPrompt(promptClips.find((clip) => clip.id === id)?.text ?? "");
-					selectActiveCharacterInHierarchy();
-					revealPromptBlocks();
-				}}
-				onPromptChange={changePromptClip}
-				onPromptResize={resizePromptClip}
-				onPromptMove={movePromptClip}
-				onPromptRemove={removePromptClip}
-				onCameraMoveSelect={() => {
-					setSelectedHierarchyId("camera");
-					if (workflowMode !== "camera") selectWorkflowMode("camera");
-				}}
-				onCameraKeyframeAdd={addCameraKeyframe}
-				onCameraKeyframeMove={moveCameraKeyframe}
-					onCameraKeyframeRemove={removeCameraKeyframe}
-					onCameraBlockSelect={(shotId) => {
-						const selected = shots.find((entry) => entry.id === shotId);
-						if (!selected) throw new Error(`Unknown shots ID: ${shotId}`);
-						setTlFrame(selected.startFrame);
-						setSelectedHierarchyId("camera");
-						if (workflowMode !== "camera") selectWorkflowMode("camera");
-					}}
-					onCameraBlockChange={(patch, shotId) => {
-						if (patch.mode === "follow") syncActiveCameraFraming();
-						const nextPatch = patch.mode === "rail" && activeCamera.railFollow?.mode === "off"
-							? { ...patch, railFollow: defaultRailRange(activeShotDuration) }
-							: patch;
-						// The embedded dolly graph edits the shot it sits in; the
-						// camera bar above edits the selected one.
-						changeActiveCamera(nextPatch, shotId);
-						if (patch.mode === "follow" && !motion) {
-							setToast(ko(
-								"Follow rides the subject's motion — without a loaded motion the camera composes a static frame",
-								"팔로우 카메라는 인물 모션을 따라 움직입니다 — 모션이 없으면 카메라는 정지 구도를 유지합니다",
-							));
-						}
-						if (patch.mode === "rail" && !cameraRail) {
-							setRailDraw(true);
-							setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
-							setToast(ko("Draw this Camera Block's rail in the Top-View", "탑뷰에서 이 카메라 블록의 레일을 그리세요"));
-						}
-					}}
-					onCameraPreview={previewCameraShot}
-					onCameraRailDrawToggle={toggleCameraRailDraw}
-					onCameraRailDelete={deleteCameraRail}
-				onShotSelect={selectTimelineShot}
-				onShotBoundaryMove={shotsDomain.resizeTimelineShot}
-				onShotRename={shotsDomain.renameTimelineShot}
-				onShotRemove={(shotId) => runStudioAction("shot.remove", { shotId })}
-				onShotDuplicate={(shotId) => runStudioAction("shot.duplicate", { shotId })}
-				onShotCut={() => runStudioAction("shot.create")}
-				onShotSplit={(shotId) => runStudioAction("shot.split", { shotId })}
-				onShotMove={(shotId, targetFrame) => runStudioAction("shot.reorder", { shotId, startFrame: Math.max(0, Math.round(targetFrame)) })}
-				onClearMotion={motion ? clearMotion : null}
-			/>
-				</div>
-			</div>
-		</div>
-
-			<footer className="brandbar">
-				<span className="wordmark">
-					Cozy <span>Clay</span>
-				</span>
-				<SourceOffer />
-			</footer>
+			}
+		>
 
 			{falMotionStudioOpen && <FalMotionModal model={falMotionModel} actions={falMotionActions} onClose={() => setFalMotionStudioOpen(false)} />}
 			{result && resultOpen && (
@@ -8563,7 +7498,8 @@ export default function App() {
 					<span>{assetDrag.payload.label}</span>
 				</div>
 			)}
-		</div>
+		</StudioShell>
+		</StudioShellContext.Provider>
 		</AppContext.Provider>
 	);
 }

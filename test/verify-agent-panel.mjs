@@ -11,7 +11,7 @@ const panel = readFileSync(new URL("../src/workflow/AgentPanel.jsx", import.meta
 const client = readFileSync(new URL("../src/workflow/agent-client.js", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/workflow/agent-panel.css", import.meta.url), "utf8");
 const builder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
-const studio = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+const studio = ["../src/App.jsx", "../src/shell/DetailsSlot.jsx", "../src/shell/ViewportToolbar.jsx", "../src/shell/TopBar.jsx"].map(path => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
 const studioCss = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const { STUDIO_TOOLS, validateReceipt } = await import("../src/studio-agent-protocol.js");
 const { createAgentChatStore } = await import("../src/workflow/agent-client.js");
