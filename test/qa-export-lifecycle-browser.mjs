@@ -95,6 +95,10 @@ async function changeAndWait(expression, action, label) {
 	await evaluate("window.__qaExport.pendingState");
 }
 async function exportMenu(testId, modifiers = 0) {
+	// #523: Export is File › Export ▸.
+	if (!await evaluate("!!document.querySelector('#export-menu-trigger')")) {
+		await changeAndWait("!!document.querySelector('#export-menu-trigger')", () => click("[data-testid=menu-file]"), "File menu open");
+	}
 	if (!await evaluate("!!document.querySelector('.export-menu')")) {
 		await changeAndWait("!!document.querySelector('.export-menu')", () => click("#export-menu-trigger"), "Export menu open");
 	}
@@ -270,7 +274,7 @@ async function runAttempt(label, contract, action, { downloads = 0, extension = 
 	})()`);
 	await action();
 	await evaluate("window.__qaExport.terminal");
-	await waitState("!document.querySelector('#export-menu-trigger.recording')", "export renderer returned idle");
+	await waitState("document.querySelector('.topbar')?.dataset.recState !== 'recording'", "export renderer returned idle");
 	const proof = assertAttempt(telemetry.slice(offset), contract);
 	const files = await saveDownloads(label, from, downloads, extension);
 	pass(label, { ...proof, files });

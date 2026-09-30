@@ -97,8 +97,9 @@ const pressToggleShortcut = async () => {
 
 expect("the top bar carries no agent button", await evaluate("document.querySelectorAll('.agent-topbar-toggle').length === 0"));
 expect(
-	"nothing agent-shaped was added to .topbar-actions",
-	await evaluate("![...document.querySelectorAll('.topbar-actions button, .topbar-actions a')].some((el) => /agent/i.test(el.className + ' ' + el.textContent))"),
+	// #523: the 2a bar has no .topbar-actions row; Agent lives in Window › Agent.
+	"nothing agent-shaped was added to the top bar",
+	await evaluate("!!document.querySelector('header.topbar') && ![...document.querySelectorAll('header.topbar button, header.topbar a')].some((el) => /agent/i.test(el.className + ' ' + el.textContent))"),
 );
 
 /* ---------------------------------------------- the panel boots collapsed - */

@@ -214,25 +214,27 @@ const implementations = {
           };
           const intersection = (a, b) => Math.max(0, Math.min(a.right, b.right) - Math.max(a.left, b.left)) * Math.max(0, Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top));
           const handle = box('.live-workspace-handle');
+          // #523: the 2a top bar is project, File/Edit/Window/Help, MCP state
+          // and Generate Motion; Settings, Export and Workflow live in its menus.
           const targets = {
-            settings: box('[data-testid="settings-menu-trigger"]'),
-            export: box('[data-testid="topbar-export"]'),
+            generate: box('.topbar-generate'),
+            help: box('[data-testid="menu-help"]'),
             inspectorAgentSwitch: box('.studio-agent-inspector .inspector-agent-switch'),
             viewMenu: box('.view-menu-wrap'),
             project: box('.project-menu-trigger'),
-            workflow: box('.workflow-topbar-link'),
+            file: box('[data-testid="menu-file"]'),
           };
           return {
             topbar: box('.topbar'),
             handle,
             targets,
             overlaps: {
-              'handle/settings': intersection(handle, targets.settings),
-              'handle/export': intersection(handle, targets.export),
+              'handle/generate': intersection(handle, targets.generate),
+              'handle/help': intersection(handle, targets.help),
               'handle/inspector-switch': intersection(handle, targets.inspectorAgentSwitch),
-              'settings/inspector-switch': intersection(targets.settings, targets.inspectorAgentSwitch),
-              'export/view-menu': intersection(targets.export, targets.viewMenu),
-              'project/workflow': intersection(targets.project, targets.workflow),
+              'generate/inspector-switch': intersection(targets.generate, targets.inspectorAgentSwitch),
+              'generate/view-menu': intersection(targets.generate, targets.viewMenu),
+              'project/file': intersection(targets.project, targets.file),
             },
             title: document.querySelector('.live-workspace-handle').title,
             workspace: document.querySelector('.live-workspace-handle').dataset.liveWorkspace,

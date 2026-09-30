@@ -2,8 +2,9 @@
 // Issue #193: the analytics opt-out and the language choice moved off the
 // topbar into one labelled `Settings` menu. GDPR 7(3) asks that withdrawing
 // consent be as easy as giving it, so this suite proves the opt-out is still
-// two interactions away — including from the keyboard — and that turning it
-// off still wipes the PostHog storage the old toggle wiped.
+// reachable from the top bar (Edit › Preferences…, #523) — including from the
+// keyboard — and that turning it off still wipes the PostHog storage the old
+// toggle wiped.
 //
 // Run: `npm run dev:ui` in one shell, then
 //   QA_URL=http://127.0.0.1:5180/app/ node tools/qa-browser.mjs -- \
@@ -101,11 +102,19 @@ const armPressedFlip = () =>
 		const t = setTimeout(() => { obs.disconnect(); resolve('timeout'); }, 8000);
 	}), true`);
 
-expect("the studio topbar renders a labelled Settings trigger", await waitFor(`!!document.querySelector('${TRIGGER}')`, 30000));
+// #523 (G8): Settings opens from the top bar's Edit › Preferences…; the
+// popover's own trigger stays mounted but is not part of the 2a bar.
+const EDIT = "[data-testid=menu-edit]";
+const PREFERENCES = "[data-testid=menu-preferences]";
+expect("the studio top bar renders the Edit menu", await waitFor(`!!document.querySelector('${EDIT}') && !!document.querySelector('${TRIGGER}')`, 30000));
+await clickAt(await rectCentre(EDIT));
+expect("Edit offers the Preferences item", await waitFor(`!!document.querySelector('${PREFERENCES}')`));
 expect(
-	"the trigger carries a text label, never an icon alone",
-	/[A-Za-z\uAC00-\uD7AF]/.test(await evaluate(`document.querySelector('${TRIGGER}').textContent`)),
+	"the item carries a text label, never an icon alone",
+	/[A-Za-z\uAC00-\uD7AF]/.test(await evaluate(`document.querySelector('${PREFERENCES}').textContent`)),
 );
+await clickAt(await rectCentre(EDIT));
+expect("clicking Edit again closes it", await waitFor("!document.querySelector('.menubar-menu')"));
 
 // A stale PostHog blob and an opted-in state, so the opt-out has something to
 // clear and something to flip.
@@ -115,10 +124,14 @@ await evaluate(`(() => {
 })()`);
 
 /* ------------------------------------------- keyboard reachability ---- */
+await evaluate(`document.querySelector('${EDIT}').focus()`);
+await pressKey("ArrowDown", "ArrowDown", 40);
+expect("ArrowDown on the focused Edit trigger opens Edit with focus inside", await waitFor("document.activeElement?.closest('.menubar-menu[data-menu=edit]') != null"));
+await pressKey("End", "End", 35);
+expect("End reaches Preferences…", await waitFor(`document.activeElement === document.querySelector('${PREFERENCES}')`));
 await armMenu("open");
-await evaluate(`document.querySelector('${TRIGGER}').focus()`);
 await pressKey("Enter", "Enter", 13, "\r");
-expect("Enter on the focused trigger opens Settings", (await menuSettled()) !== "timeout");
+expect("Enter on Preferences… opens Settings", (await menuSettled()) !== "timeout");
 expect("Settings offers both languages and the analytics item", (await evaluate(
 	`[...document.querySelectorAll('.settings-menu button[data-testid^="settings-locale"], .settings-menu button[data-testid="settings-analytics"]')].map((b) => b.dataset.testid).join(",")`,
 )) === "settings-locale-en,settings-locale-ko,settings-analytics");
@@ -131,14 +144,16 @@ await armMenu("closed");
 await pressKey("Escape", "Escape", 27);
 expect("Escape closes Settings", (await menuSettled()) !== "timeout");
 expect(
-	"Escape returns focus to the trigger",
-	(await evaluate(`document.activeElement === document.querySelector('${TRIGGER}')`)) === true,
+	"Escape returns focus to the Edit menu that opened Settings",
+	await waitFor(`document.activeElement === document.querySelector('${EDIT}')`, 3000),
 );
 
 /* ------------------------------------------------ analytics opt-out --- */
+await clickAt(await rectCentre(EDIT));
+await waitFor(`!!document.querySelector('${PREFERENCES}')`);
 await armMenu("open");
-await clickAt(await rectCentre(TRIGGER));
-expect("clicking the trigger reopens Settings", (await menuSettled()) !== "timeout");
+await clickAt(await rectCentre(PREFERENCES));
+expect("clicking Edit › Preferences… reopens Settings", (await menuSettled()) !== "timeout");
 const before = await evaluate(`document.querySelector('${ANALYTICS}').getAttribute('aria-pressed')`);
 expect("analytics reads as on before the opt-out", before === "true", String(before));
 

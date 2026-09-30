@@ -107,18 +107,22 @@ const openMenu = async () => {
 
 // Boot: wait for the studio topbar; the app document may still be loading.
 expect("the topbar renders the project menu trigger", await waitFor("!!document.querySelector('.project-menu-trigger')", 30000));
-expect("the topbar renders a direct Save action", await waitFor("!!document.querySelector('[data-testid=topbar-save]')"));
-// #193: the topbar Export action became the Export ▾ menu trigger. It keeps
-// the data-testid and carries the menu handle as an id, and — R3 — it is never
+// #523 (G7): Save and Export moved into the top bar's File menu.
+await clickAt(await rectCentre("[data-testid=menu-file]"));
+expect("File › Save is the direct Save action", await waitFor("!!document.querySelector('.menubar-menu [data-testid=topbar-save]')"));
+// #193: the Export action is the Export ▸ menu trigger. It keeps the
+// data-testid and carries the menu handle as an id, and — R3 — it is never
 // disabled: a project without shots simply gets a shorter menu.
-expect("the topbar renders the Export menu trigger", await waitFor("!!document.querySelector('[data-testid=topbar-export]#export-menu-trigger')"));
+expect("File renders the Export menu trigger", await waitFor("!!document.querySelector('[data-testid=topbar-export]#export-menu-trigger')"));
 expect(
 	"the Export trigger is enabled in a fresh project",
 	(await evaluate("document.querySelector('[data-testid=topbar-export]').disabled")) === false,
 );
+await clickAt(await rectCentre("[data-testid=menu-file]"));
+expect("clicking File again closes it", await waitFor("!document.querySelector('.menubar-menu')"));
 expect(
-	"the topbar exposes an understandable save status",
-	Boolean(await evaluate("document.querySelector('[data-testid=project-save-status]')?.textContent.trim()")),
+	"the status bar exposes an understandable save status",
+	Boolean(await evaluate("document.querySelector('.v2-statusbar [data-testid=project-save-status]')?.textContent.trim()")),
 );
 expect("the menu starts closed", !(await menuOpen()));
 
@@ -131,7 +135,7 @@ expect("Escape closes the menu", (await menuGone()) === "closed");
 /* -------------------------------------- outside pointerdown closes --- */
 expect("the menu reopens after Escape", (await openMenu()) === "open");
 await armMenuGone();
-const outside = await rectCentre(".topbar .logo");
+const outside = await rectCentre(".topbar .topbar-swatch");
 await mouse("mousePressed", outside.x, outside.y);
 expect("a pointerdown outside .project-menu-wrap closes the menu", (await menuGone()) === "closed");
 await mouse("mouseReleased", outside.x, outside.y);

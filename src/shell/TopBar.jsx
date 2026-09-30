@@ -1,190 +1,122 @@
+import { useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import ProjectPanel from "../panels/ProjectPanel.jsx";
-import { ko } from "../locale.js";
+import MenuBar, { MenuPopover } from "./MenuBar.jsx";
+import { ko, isKo } from "../locale.js";
+import "./topbar.css";
 
+// 2a top bar: project, File/Edit/Window/Help, then only the MCP state and the
+// one primary action. Save and Export live in File (G7); their state is shown
+// by the status bar.
 export default function TopBar({ preferences }) {
 	const {
 		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
 		requestNewProject, setProjectStartupOpen, setProjectBrowserOpen, runStudioAction, saveProject,
-		projectManifest, projectSaveState, recState, exportMenuTriggerRef, exportMenuOpen,
-		exportShotIdRef, setExportMenuAnchor, setExportMenuOpen, exportStatus, exportPhaseLabel,
-		exportMenuAnchor, resultOpen, exportFeedback, shots, exportKeyframePacks,
-		hasCameraKeys, motion, exportRenderPasses, exportDepthVideo, exportStoryboard,
-		downloadOtioCutList, projectStatus, liveWorkspaceHandle,
+		projectManifest, recState, liveHubStatus, liveWorkspaceHandle,
 	} = useStudioShell();
+	const connected = liveHubStatus === "connected";
 	return (
-		<header className="topbar">
-			<div className="logo">
-				<span className="wordmark">
-					Cozy <span>Clay</span>
-				</span>
+		<header className="topbar v2-topbar" data-rec-state={recState}>
+			<div className="topbar-project">
+				<span className="topbar-swatch" aria-hidden="true" />
+				<ProjectPanel
+					projectMenuOpen={projectMenuOpen}
+					setProjectMenuOpen={setProjectMenuOpen}
+					projectDirty={projectDirty}
+					projectName={projectName}
+					projectStartupOpen={projectStartupOpen}
+					requestNewProject={requestNewProject}
+					setProjectStartupOpen={setProjectStartupOpen}
+					setProjectBrowserOpen={setProjectBrowserOpen}
+					runStudioAction={runStudioAction}
+					saveProject={saveProject}
+					projectManifest={projectManifest}
+				/>
 			</div>
-			<ProjectPanel
-				projectMenuOpen={projectMenuOpen}
-				setProjectMenuOpen={setProjectMenuOpen}
-				projectDirty={projectDirty}
-				projectName={projectName}
-				projectStartupOpen={projectStartupOpen}
-				requestNewProject={requestNewProject}
-				setProjectStartupOpen={setProjectStartupOpen}
-				setProjectBrowserOpen={setProjectBrowserOpen}
-				runStudioAction={runStudioAction}
-				saveProject={saveProject}
-				projectManifest={projectManifest}
-			/>
-			<div className="topbar-actions">
-				<a className="topbar-action workflow-topbar-link" href="/workflow/" aria-label={ko("Open Workflow", "워크플로 열기")}>{ko("Workflow", "워크플로우")}</a>
-				<div className="project-actions" aria-label={ko("Project actions", "프로젝트 작업")}>
-					<button
-						type="button"
-						className="topbar-action project-save-action"
-						data-testid="topbar-save"
-						disabled={projectSaveState === "saving"}
-						onClick={() => void runStudioAction("project.save")}
-					>
-						{projectSaveState === "saving" ? ko("Saving…", "저장 중…") : ko("Save", "저장")}
-					</button>
-					{/* One Export menu for every delivery this studio makes (#193,
-					    R4). The keyframe pack leads because it is the pack an AI video
-					    tool is fed; items whose precondition is missing are not
-					    rendered disabled — the footer line says what to author first. */}
-					{/* One element cannot carry two data-testids: the topbar contract
-					    keeps the attribute, the menu contract gets the same handle as an
-					    id, so both selectors still reach this one trigger. */}
-					<div className="export-menu-wrap">
+			<MenuBar preferences={preferences} />
+			<div className="topbar-spacer" />
+			<span
+				className={"topbar-mcp" + (liveWorkspaceHandle ? " live-workspace-handle" : "")}
+				data-state={connected ? "connected" : "disconnected"}
+				data-live-workspace={liveWorkspaceHandle || undefined}
+				title={liveWorkspaceHandle || ko("No MCP client is attached to this studio", "이 스튜디오에 연결된 MCP 클라이언트가 없어요")}
+			>
+				<i className="topbar-mcp-dot" aria-hidden="true" />
+				<span className="topbar-mcp-text">{connected ? ko("MCP connected", "MCP 연결됨") : ko("MCP offline", "MCP 꺼짐")}</span>
+			</span>
+			<GenerateMotion />
+		</header>
+	);
+}
+
+// "Generate Motion" is today's Scene generate (G6). The caret holds the take
+// bar's Scene actions; a refused action says why in place and in a toast (R3).
+function GenerateMotion() {
+	const {
+		runArdy, sceneGenerateDisabledReason, sceneAgainDisabledReason, runSceneAgain,
+		addSceneBlock, tlFrame, setToast, ardyRunning,
+	} = useStudioShell();
+	const [open, setOpen] = useState(false);
+	const caretRef = useRef(null);
+	const reason = sceneGenerateDisabledReason();
+	const actions = [
+		{ id: "new", label: ko("Start over", "새로 만들기"), reason, run: () => runArdy({ fresh: true }) },
+		{ id: "again", label: ko("Take it again", "다시 뽑기"), reason: sceneAgainDisabledReason(), run: runSceneAgain },
+		{ id: "block", label: isKo ? `프레임 ${tlFrame}에 블록 추가` : `Add block at frame ${tlFrame}`, reason: "", run: addSceneBlock },
+	];
+	return (
+		<div className="topbar-generate" role="group" aria-label={ko("Generate Motion", "모션 생성")}>
+			<button
+				type="button"
+				className="topbar-generate-main"
+				data-testid="topbar-generate"
+				aria-disabled={reason ? "true" : undefined}
+				data-disabled-reason={reason || undefined}
+				title={reason || ko("Generate motion from the prompt and blocks", "프롬프트와 블록으로 모션을 생성합니다")}
+				onClick={() => (reason ? setToast(reason) : runArdy())}
+			>
+				{ardyRunning ? ko("Generating…", "생성 중…") : (
+					<>
+						<span className="topbar-generate-full">{ko("Generate Motion", "모션 생성")}</span>
+						<span className="topbar-generate-short">{ko("Generate", "생성")}</span>
+					</>
+				)}
+			</button>
+			<button
+				type="button"
+				className="topbar-generate-caret"
+				data-testid="topbar-generate-menu"
+				ref={caretRef}
+				aria-haspopup="menu"
+				aria-expanded={open}
+				aria-label={ko("More generate actions", "생성 작업 더 보기")}
+				onClick={() => setOpen((value) => !value)}
+			>
+				<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+			</button>
+			{open && (
+				<MenuPopover anchorRef={caretRef} align="end" onClose={() => setOpen(false)} label={ko("Generate actions", "생성 작업")}>
+					{actions.map((action) => (
 						<button
 							type="button"
-							className={"topbar-action project-export-action" + (recState === "recording" ? " recording" : "")}
-							data-testid="topbar-export"
-							id="export-menu-trigger"
-							ref={exportMenuTriggerRef}
-							aria-expanded={exportMenuOpen}
-							aria-haspopup="menu"
-							title={ko("Exports: keyframe pack, video, passes, storyboard, cut list", "내보내기: 키프레임 팩·영상·패스·스토리보드·컷 목록")}
-							onClick={(event) => {
-								exportShotIdRef.current = null;
-								// The panel is fixed to the viewport and anchored to this
-								// trigger in JS, the way it was in the PlayView bar: one
-								// popover geometry for the studio's export menu wherever
-								// its trigger lives.
-								const box = event.currentTarget.getBoundingClientRect();
-								const menuWidth = Math.min(340, window.innerWidth - 16);
-								setExportMenuAnchor({
-									top: box.bottom + 6,
-									right: Math.min(Math.max(8, window.innerWidth - box.right), Math.max(8, window.innerWidth - menuWidth - 8)),
-								});
-								setExportMenuOpen((open) => !open);
+							role="menuitem"
+							key={action.id}
+							className="menubar-item"
+							data-generate-action={action.id}
+							aria-disabled={action.reason ? "true" : undefined}
+							data-disabled-reason={action.reason || undefined}
+							onClick={() => {
+								setOpen(false);
+								if (action.reason) setToast(action.reason);
+								else action.run();
 							}}
 						>
-							{ko("Export", "내보내기")}
-							{exportStatus && <span className="export-trigger-state" data-phase={exportStatus.phase}>{exportPhaseLabel(exportStatus.phase)}</span>}
-							<span className="caret">▾</span>
+							<span className="menubar-item-label">{action.label}</span>
+							{action.reason && <small className="menubar-item-reason">{action.reason}</small>}
 						</button>
-						{exportMenuOpen && (
-							<div
-								className="project-menu export-menu"
-								role="menu"
-								style={{ top: `${exportMenuAnchor.top}px`, right: `${exportMenuAnchor.right}px` }}
-							>
-								{!(resultOpen && exportStatus?.kind === "frame") && exportFeedback()}
-								<button
-									type="button"
-									role="menuitem"
-									className="export-menu-primary"
-									data-testid="export-keyframe-pack"
-									disabled={!shots.length || recState === "recording"}
-									data-disabled-reason={shots.length ? undefined : "no-shots"}
-									title={shots.length
-										? ko("First/last frames, clip, camera and prompt as one zip — hold Shift for every shot", "첫/마지막 프레임·클립·카메라·프롬프트를 zip 하나로 — Shift를 누르면 모든 샷")
-										: ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다")}
-									onClick={(event) => void exportKeyframePacks(event.shiftKey, exportShotIdRef.current)}
-								>
-									{ko("Keyframe pack (zip)", "키프레임 팩 (zip)")}
-									<small>{ko("Shift: every shot", "Shift: 모든 샷")}</small>
-								</button>
-								{(shots.length > 0 || hasCameraKeys || motion) && (
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-video"
-										disabled={recState === "recording"}
-										title={ko("Render the shot to an MP4 — camera move and character motion, no editor chrome", "샷을 MP4로 렌더링합니다 — 카메라 움직임과 캐릭터 모션만, 편집 UI는 제외")}
-										onClick={() => void runStudioAction("export.shotVideo", exportShotIdRef.current ? { shotId: exportShotIdRef.current } : {})}
-									>
-										{ko("Video (mp4)", "영상 (mp4)")}
-									</button>
-								)}
-								<button
-									type="button"
-									role="menuitem"
-									data-testid="export-render-passes"
-									disabled={recState === "recording"}
-									title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
-									onClick={exportRenderPasses}
-								>
-									{ko("Depth + normal passes", "뎁스 + 노멀 패스")}
-								</button>
-								<button
-									type="button"
-									role="menuitem"
-									data-testid="export-depth-video"
-									disabled={!shots.length || recState === "recording"}
-									data-disabled-reason={shots.length ? undefined : "no-shots"}
-									title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
-									onClick={() => void exportDepthVideo(exportShotIdRef.current)}
-								>
-									{ko("Depth (mp4)", "뎁스 (mp4)")}
-								</button>
-								<button
-									type="button"
-									role="menuitem"
-									data-testid="export-storyboard"
-									disabled={!shots.length || recState === "recording"}
-									data-disabled-reason={shots.length ? undefined : "no-shots"}
-									title={shots.length
-										? ko("Contact sheet of every shot with its prompt", "모든 샷과 프롬프트를 담은 콘택트 시트")
-										: ko("Add a shot first — a storyboard is one row per shot", "샷을 먼저 추가하세요 — 스토리보드는 샷마다 한 줄입니다")}
-									onClick={() => void exportStoryboard()}
-								>
-									{ko("Storyboard (PNG)", "스토리보드 (PNG)")}
-								</button>
-								{shots.length > 0 && (
-									<button
-										type="button"
-										role="menuitem"
-										data-testid="export-otio"
-										title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
-										onClick={downloadOtioCutList}
-									>
-										{ko("OTIO cut list", "OTIO 컷 목록")}
-									</button>
-								)}
-								{!shots.length && (
-									<p className="export-menu-hint">
-										{hasCameraKeys || motion
-											? ko("Add a shot to export OTIO", "OTIO를 내보내려면 샷을 추가하세요")
-											: ko("Add a shot to export video or OTIO", "영상·OTIO를 내보내려면 샷을 추가하세요")}
-									</p>
-								)}
-							</div>
-						)}
-					</div>
-					<span
-						className={"project-save-status status-" + projectSaveState}
-						data-testid="project-save-status"
-						role="status"
-						aria-live="polite"
-					>
-						{projectStatus}
-					</span>
-				</div>
-				{liveWorkspaceHandle && (
-					<span className="live-workspace-handle" data-live-workspace={liveWorkspaceHandle} title={liveWorkspaceHandle}>
-						{ko("Live workspace", "라이브 작업공간")} {liveWorkspaceHandle}
-					</span>
-				)}
-				{preferences}
-			</div>
-		</header>
+					))}
+				</MenuPopover>
+			)}
+		</div>
 	);
 }

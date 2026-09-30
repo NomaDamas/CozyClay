@@ -279,6 +279,15 @@ async function recheck(state, expected, control = "[data-testid=motion-health-re
 async function openSetup() {
 	await changeAndWait("!!document.querySelector('[data-testid=motion-setup]')", () => click("[data-testid=motion-readiness-action]"), "contextual action opens setup");
 }
+// #523 (G8): Settings opens from Edit › Preferences…; Export is File › Export ▸.
+async function openSettings(label) {
+	await changeAndWait("!!document.querySelector('[data-testid=menu-preferences]')", () => click("[data-testid=menu-edit]"), "Edit menu");
+	await changeAndWait("!!document.querySelector('.settings-menu')", () => click("[data-testid=menu-preferences]"), label);
+}
+async function openExport() {
+	await changeAndWait("!!document.querySelector('#export-menu-trigger')", () => click("[data-testid=menu-file]"), "File menu");
+	await changeAndWait("!!document.querySelector('.export-menu')", () => click("#export-menu-trigger"), "Export menu");
+}
 async function closeSetup() { await changeAndWait("!document.querySelector('.settings-menu')", escape, "setup closes without reload"); }
 
 try {
@@ -318,7 +327,7 @@ try {
 	await captureBoth("no-backend-camera", ".tl-shot-key-surface");
 	pass("no backend: actual camera key authoring", { keys: cameraKeys + 1 });
 
-	await changeAndWait("!!document.querySelector('.export-menu')", () => click("#export-menu-trigger"), "Export menu");
+	await openExport();
 	const download = once("Browser.downloadWillBegin"), completed = once("Browser.downloadProgress", event => event.state === "completed");
 	const exportOffset = (await records()).length;
 	try {
@@ -349,7 +358,7 @@ try {
 
 	// One unconstrained prompt can be ready locally while trail regeneration
 	// is unsupported. Settings must retain the originating request on retry.
-	await changeAndWait("!!document.querySelector('.settings-menu')", () => click("[data-testid=settings-menu-trigger]"), "open route settings");
+	await openSettings("open route settings");
 	await recheck("unavailable", "unavailable");
 	await recheck("local", "ready"); await closeSetup();
 	await changeAndWait("!!document.querySelector('.trail-regenerate')", async () => {
@@ -375,7 +384,7 @@ try {
 	// flag alone. Local MLX/cpp must refuse the sequence before any generation HTTP.
 	await changeAndWait("document.querySelectorAll('.tl-track.prompts .tl-chip-input').length === 2", () => click(".tl-track.prompts .tl-track-add"), "add second sequence block");
 	await changeAndWait("document.querySelectorAll('.tl-track.prompts .tl-chip-input')[1]?.value === 'PRIVATE_PROMPT_277 turns left'", () => typeInto('input[placeholder="describe this motion block"]', "PRIVATE_PROMPT_277 turns left"), "second block prompt");
-	await changeAndWait("!!document.querySelector('.settings-menu')", () => click("[data-testid=settings-menu-trigger]"), "Settings opens from topbar");
+	await openSettings("Settings opens from the Edit menu");
 	await recheck("local", "unsupported_route"); await closeSetup();
 	await captureBoth("unsupported-route"); await blocked("unsupported_route");
 	const sequence = await authoredState();
