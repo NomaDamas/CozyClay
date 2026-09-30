@@ -73,6 +73,15 @@
 	box-shadow: inset 0 0 0 var(--details-focus-width, 1px) var(--select, #e8a33d);
 }
 
+/* Legacy card chrome draws a 10 px bordered box after the header button (the
+   "checkbox" look) and a 2 px blue rule after the card. A v2 section header is
+   only the arrow and the 11 px title, with no card rule. */
+.v2-details-section.v2-details-section .foldout-head::after,
+.v2-details-section.v2-details-section::after {
+	content: none;
+	display: none;
+}
+
 .v2-details-section.v2-details-section .foldout-arrow {
 	box-sizing: border-box;
 	display: inline-flex;
