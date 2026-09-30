@@ -17,6 +17,18 @@ from scene import (SceneBoxes, camera_center, foot_points, penetration_loss,
 # Face landmarks have no cskel27 counterpart and receive zero data weight.
 COCO_JOINTS = [5, 5, 5, 5, 5, 14, 9, 15, 10, 16, 11, 23, 19, 24, 20, 25, 21]
 
+# --track-ablate levels. Each level adds one component to the previous one;
+# keypoints and priors (acceleration, limits, endpoints, nuisance) are always
+# on, and weights/schedule are identical at every level. 'occlusion' is the
+# ray/box visibility of keypoints and surface samples in the fit.
+ABLATIONS = {
+    'kp-only': frozenset(),
+    'silhouette': frozenset({'silhouette'}),
+    'viterbi': frozenset({'silhouette', 'viterbi'}),
+    'contacts': frozenset({'silhouette', 'viterbi', 'contacts'}),
+    'full': frozenset({'silhouette', 'viterbi', 'contacts', 'occlusion'}),
+}
+
 
 def huber(x, delta=1.0):
     return torch.where(x <= delta, 0.5 * x.square(), delta * (x - 0.5 * delta))
@@ -116,8 +128,9 @@ def surface_samples(rig, count=2000):
 
 
 class ClipObjective:
-    def __init__(self, rig, bone_scale, camera, boxes, masks, kp, fps, delta_px, endpoints):
+    def __init__(self, rig, bone_scale, camera, boxes, masks, kp, fps, delta_px, endpoints, components=ABLATIONS['full']):
         self.rig, self.bone_scale = rig, bone_scale
+        self.components = components
         self.camera = camera_tensors(camera, rig.neutral.device)
         self.camera_pos = camera_center(camera)
         self.boxes, self.masks, self.kp = boxes, masks, kp
@@ -140,22 +153,30 @@ class ClipObjective:
 
     def __call__(self, state, nuisance, start, end, assigned, stance, penetration_weight):
         joints, vertices = self.geometry(state, nuisance)
-        samples = (vertices[:, self.faces] * self.bary[None, :, :, None]).sum(-2)
         boxes = slice_boxes(self.boxes, start, end)
+        occlusion = 'occlusion' in self.components
         projected, depth = project(joints[:, COCO_JOINTS], self.camera, nuisance)
-        hidden = ray_occlusion(joints[:, COCO_JOINTS], self.camera_pos, boxes)
-        weights = assigned[..., 2] * (~hidden & (depth > 0)).float()
+        seen = depth > 0
+        if occlusion:
+            seen = ~ray_occlusion(joints[:, COCO_JOINTS], self.camera_pos, boxes) & seen
+        weights = assigned[..., 2] * seen.float()
         residual = (projected - assigned[..., :2]).norm(dim=-1) / self.delta
         kp_loss = (huber(residual) * weights).sum() / weights.sum().clamp_min(1)
-        uv, sz = project(samples, self.camera, nuisance)
-        visible = ~ray_occlusion(samples, self.camera_pos, boxes) & (sz > 0)
-        dt, target, valid, ratio = self.masks
-        uv = uv * ratio
-        d = bilinear_dt(dt, uv).relu() / (self.delta * ratio.mean())
-        active = visible & valid[:, None]
-        boundary = (huber(d) * active).sum() / active.sum().clamp_min(1)
-        coverage = coverage_loss(uv, visible, target, valid, self.delta * ratio.mean())
-        silhouette = (boundary + coverage) / 2
+        zero = kp_loss * 0
+        silhouette = zero
+        if 'silhouette' in self.components:
+            samples = (vertices[:, self.faces] * self.bary[None, :, :, None]).sum(-2)
+            uv, sz = project(samples, self.camera, nuisance)
+            visible = sz > 0
+            if occlusion:
+                visible = ~ray_occlusion(samples, self.camera_pos, boxes) & visible
+            dt, target, valid, ratio = self.masks
+            uv = uv * ratio
+            d = bilinear_dt(dt, uv).relu() / (self.delta * ratio.mean())
+            active = visible & valid[:, None]
+            boundary = (huber(d) * active).sum() / active.sum().clamp_min(1)
+            coverage = coverage_loss(uv, visible, target, valid, self.delta * ratio.mean())
+            silhouette = (boundary + coverage) / 2
         # Second differences at the clip's sampling rate, robust above 3 m/s^2;
         # no velocity damping of freely moving limbs.
         if len(joints) > 2:
@@ -166,13 +187,15 @@ class ClipObjective:
         rotations = state.local_rot_mats()
         cos = ((rotations.diagonal(dim1=-2, dim2=-1).sum(-1) - 1) / 2).clamp(-1 + 1e-6, 1 - 1e-6)
         limits = (cos.acos() - self.caps).relu().square().mean()
-        feet = foot_points(joints)
-        skate = skate_loss(feet, stance, self.fps) / max(1, (end - start - 1) * 4)
-        pen = penetration_loss(vertices, boxes)
-        # Metres -> a 1 cm residual; normalise by points rather than active
-        # collisions, so there is no discontinuity when a vertex exits a solid.
-        penetration = (pen['box'] + pen['floor']) / (vertices.shape[0] * vertices.shape[1] * 0.01 ** 2)
-        endpoint = kp_loss * 0
+        skate = penetration = zero
+        if 'contacts' in self.components:
+            feet = foot_points(joints)
+            skate = skate_loss(feet, stance, self.fps) / max(1, (end - start - 1) * 4)
+            pen = penetration_loss(vertices, boxes)
+            # Metres -> a 1 cm residual; normalise by points rather than active
+            # collisions, so there is no discontinuity when a vertex exits a solid.
+            penetration = (pen['box'] + pen['floor']) / (vertices.shape[0] * vertices.shape[1] * 0.01 ** 2)
+        endpoint = zero
         for frame, pose in self.endpoints.items():
             if start <= frame < end:
                 i = frame - start
@@ -181,6 +204,11 @@ class ClipObjective:
         terms = dict(keypoints=kp_loss, silhouette=silhouette, acceleration=acceleration,
                      limits=limits, skate=skate, penetration=penetration,
                      endpoints=endpoint, nuisance=nuisance_prior)
+        # Disabled terms are not evaluated, so they are not reported as zeros.
+        if 'silhouette' not in self.components:
+            del terms['silhouette']
+        if 'contacts' not in self.components:
+            del terms['skate'], terms['penetration']
         # Silhouette depth is the only strong root-Z cue when the pelvis keypoint is absent.
         total = kp_loss + 6.0 * silhouette + 0.05 * acceleration + 0.1 * limits + skate + penetration_weight * penetration + 0.2 * endpoint + nuisance_prior
         return total, terms

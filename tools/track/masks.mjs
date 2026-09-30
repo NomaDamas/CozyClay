@@ -13,7 +13,10 @@
  * Provenance: the masks must be computed from the video the obs was extracted
  * from. The obs manifest chain is followed (copy manifests via `source`, checked
  * against `sourceSha256`) to the original obs; when that records `videoSha256`
- * the video used here must have exactly that sha (else `obs-video-mismatch`).
+ * the video used here must have exactly that sha (else `obs-video-mismatch`),
+ * and the masks manifest carries the origin's own label unchanged: "recorded"
+ * (hashed at extraction; the default when the origin has no label) or
+ * "backfilled-path" (hashed later by tools/track/backfill-provenance.mjs).
  * Sweep obs without a manifest (tools' serial sweep) record nothing: the item's
  * sweep input path is used (fal: the approved clip `item.video`) and a video
  * written after the obs is rejected (`obs-video-newer`); such manifests say
@@ -81,11 +84,16 @@ export function cacheState(manifest, key, files) {
  * Check the video against what the obs records about its own extraction video.
  * `origin` = the original obs manifest (after following copies) or null.
  */
+export const HASHED_PROVENANCE = ["recorded", "backfilled-path"];
 export function checkObsVideo({ origin, videoSha256, obsSha256, videoPath, videoMtimeMs, obsMtimeMs }) {
+	const label = origin?.provenance;
+	if (label !== undefined && label !== "path-only" && !HASHED_PROVENANCE.includes(label)) throw new Error(`obs-provenance-unknown: obs manifest provenance ${JSON.stringify(label)} is not ${[...HASHED_PROVENANCE, "path-only"].join("|")}`);
+	if (HASHED_PROVENANCE.includes(label) && !origin.videoSha256) throw new Error(`obs-provenance-invalid: obs manifest says ${label} but records no videoSha256`);
 	if (origin?.videoSha256) {
+		if (label === "path-only") throw new Error("obs-provenance-invalid: obs manifest says path-only but records a videoSha256");
 		if (origin.videoSha256 !== videoSha256) throw new Error(`obs-video-mismatch: the obs was extracted from video sha256 ${origin.videoSha256} (${origin.video ?? "?"}), not ${videoSha256} (${videoPath})`);
 		if (origin.obsSha256 && origin.obsSha256 !== obsSha256) throw new Error(`obs-sha-mismatch: obs sha256 ${obsSha256} differs from its manifest's ${origin.obsSha256}`);
-		return { provenance: "recorded", recordedVideoSha256: origin.videoSha256, recordedVideo: origin.video ?? null };
+		return { provenance: label ?? "recorded", recordedVideoSha256: origin.videoSha256, recordedVideo: origin.video ?? null };
 	}
 	if (videoMtimeMs > obsMtimeMs) throw new Error(`obs-video-newer: ${videoPath} was written after the obs it would pair with; it cannot be the extraction video`);
 	return { provenance: "path-only", recordedVideoSha256: null, recordedVideo: origin?.video ?? null };

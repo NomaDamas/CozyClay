@@ -179,6 +179,8 @@ def test_synthetic_recovery_determinism_and_runtime(small_case, tmp_path):
                                initialMPJPE=small_case['initialMPJPE'], runtime=first['runtime'], repeatRuntime=second['runtime'],
                                maskIoU=first['stageLosses']['sampleMaskIoUMean'], lrStates=first['lrState'])
     assert first['failure'] is None
+    assert first['stageLosses']['ablation.full'] == 1.0
+    assert first['stageLosses']['input.confidenceAboveOne'] == 0
     assert mpjpe <= 0.020 and root <= 0.020, MEASUREMENTS['124']
     assert abs(first['nuisance']['scale'] - 1) < 0.005
     assert difference <= 1e-4
@@ -227,13 +229,50 @@ def test_zero_iterations_exact_init(small_case, tmp_path):
     assert maximum < 1e-5 and diag['failure'] is None
 
 
-def test_no_evidence_and_malformed_input(small_case, tmp_path):
+def own_obs(small_case, tmp_path):
+    """Inputs identical to small_case except for a writable obs.npz."""
     source = small_case['directory']
     d = tmp_path / 'inputs'; d.mkdir()
     for name in ['init.npz', 'camera.json', 'scene.json', 'masks.npz', 'video.mp4']:
         (d / name).symlink_to(source / name)
     with np.load(source / 'obs.npz') as z:
         obs = {k: z[k].copy() for k in z.files}
+    return d, obs
+
+
+def test_confidence_sanitized_and_counted(small_case, tmp_path):
+    d, obs = own_obs(small_case, tmp_path)
+    # Real ViTPose heatmap peaks reach 1.0385 on the Gate-2 items.
+    obs['kp2d'][3, 6, 2] = 1.3
+    obs['kp2d'][4, 7, 2] = np.nan
+    obs['kp2d'][5, 8, 2] = np.inf
+    obs['kp2d'][6, 9, 2] = -0.2
+    np.savez(d / 'obs.npz', **obs)
+    diag, motion, result = invoke(dict(small_case, directory=d), tmp_path / 'out', '--iterations', '0', timeout=60)
+    counts = {k: v for k, v in diag['stageLosses'].items() if k.startswith('input.')}
+    MEASUREMENTS['confidenceSanitized'] = counts
+    assert counts == {'input.confidenceNonFinite': 2, 'input.confidenceAboveOne': 1, 'input.confidenceBelowZero': 1}
+    assert diag['failure'] is None and motion is not None
+    assert '[track] sanitized keypoint confidences' in result.stdout
+
+
+def test_ablation_switch(small_case, tmp_path):
+    diag, _, _ = invoke(small_case, tmp_path / 'kp-only', '--track-ablate', 'kp-only', '--iterations', '13', timeout=120)
+    losses = diag['stageLosses']
+    MEASUREMENTS['ablationKpOnly'] = dict(failure=diag['failure'], stageLosses=losses)
+    assert losses['ablation.kp-only'] == 1.0 and 'ablation.full' not in losses
+    assert 'refine.keypoints' in losses and 'refine.acceleration' in losses
+    assert not any(k.split('.')[-1] in ('silhouette', 'skate', 'penetration') for k in losses)
+    # Without Viterbi the detector labels are used as given, despite injected swaps.
+    assert set(diag['lrState']) == {'identity'} and not any(diag['ambiguous'])
+    command = [sys.executable, str(HERE / 'track.py'), '--track-ablate', 'everything']
+    for key in ('video', 'obs', 'masks', 'init', 'camera', 'scene', 'rig', 'out'):
+        command.extend(['--' + key, str(tmp_path)])
+    assert subprocess.run(command, capture_output=True, timeout=60).returncode == 2
+
+
+def test_no_evidence_and_malformed_input(small_case, tmp_path):
+    d, obs = own_obs(small_case, tmp_path)
     obs['kp2d'][..., 2] = 0
     np.savez(d / 'obs.npz', **obs)
     case = dict(small_case, directory=d)
@@ -244,6 +283,10 @@ def test_no_evidence_and_malformed_input(small_case, tmp_path):
     obs['kp2d'][0, 5, 0] = np.nan
     np.savez(d / 'obs.npz', **obs)
     diag, _, _ = invoke(case, tmp_path / 'malformed', expected_code=2, timeout=30)
+    assert diag['failure'] == 'bad-input'
+    obs['kp2d'] = obs['kp2d'][..., :2]
+    np.savez(d / 'obs.npz', **obs)
+    diag, _, _ = invoke(case, tmp_path / 'bad-shape', expected_code=2, timeout=30)
     assert diag['failure'] == 'bad-input'
     MEASUREMENTS['failureCodes'] = {'no-evidence': 3, 'bad-input': 2}
 

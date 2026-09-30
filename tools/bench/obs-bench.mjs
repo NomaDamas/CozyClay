@@ -36,7 +36,7 @@ import { ladderStep, restInfo, STEPS } from "./obs/ladder.mjs";
 import { extractObs } from "./obs/remote.mjs";
 import { ensureMasks } from "../../tools/track/masks.mjs";
 import { fallbackStep } from "../../tools/track/fallback.mjs";
-import { runTracker } from "../../tools/track/remote.mjs";
+import { runTracker, TRACK_ABLATIONS } from "../../tools/track/remote.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "../..");
@@ -62,6 +62,7 @@ export const USAGE = `usage: node tools/bench/obs-bench.mjs --approved <approved
   --gpu-wait-min 60    with --extract: wait this long for a busy GPU before failing the item
   --force-obs          with --extract: re-extract even when the manifest matches
   --character <model>  character rig (public/models/<model>.fbx) whose standing ankle height is the G3 floor plane (default y-bot-tpose)
+  --track-ablate full  T1 fit components, one of ${TRACK_ABLATIONS.join(",")} (cumulative; default full)
   --force              rebuild and rescore steps whose result.json says ok
   --help               this text
 
@@ -70,8 +71,8 @@ reused while video, K, betas and the wrapper are unchanged. One GPU
 extraction at a time; items run serially.`;
 
 export function parseArgs(argv) {
-	const options = { steps: [...OBS_BENCH_STEPS], host: "yun@ubuntu-baremetal", port: 5198, cdpPort: 9238, gpuWaitMin: 60, force: false, forceObs: false, obsRoot: DEFAULT_OBS_ROOT, extract: false, character: "y-bot-tpose" };
-	const names = { "--approved": "approved", "--out": "out", "--items": "items", "--steps": "steps", "--host": "host", "--rest-cache": "restCache", "--port": "port", "--cdp-port": "cdpPort", "--gpu-wait-min": "gpuWaitMin", "--obs-root": "obsRoot", "--character": "character" };
+	const options = { steps: [...OBS_BENCH_STEPS], host: "yun@ubuntu-baremetal", port: 5198, cdpPort: 9238, gpuWaitMin: 60, force: false, forceObs: false, obsRoot: DEFAULT_OBS_ROOT, extract: false, character: "y-bot-tpose", trackAblate: "full" };
+	const names = { "--approved": "approved", "--out": "out", "--items": "items", "--steps": "steps", "--host": "host", "--rest-cache": "restCache", "--port": "port", "--cdp-port": "cdpPort", "--gpu-wait-min": "gpuWaitMin", "--obs-root": "obsRoot", "--character": "character", "--track-ablate": "trackAblate" };
 	for (let i = 0; i < argv.length; i++) {
 		const flag = argv[i];
 		if (flag === "--help" || flag === "-h") { options.help = true; continue; }
@@ -89,6 +90,7 @@ export function parseArgs(argv) {
 	const unknown = options.steps.filter((s) => !OBS_BENCH_STEPS.includes(s));
 	if (unknown.length || !options.steps.length) throw new Error(`unknown steps ${unknown.join(",")}; known: ${OBS_BENCH_STEPS.join(",")}`);
 	options.steps = OBS_BENCH_STEPS.filter((s) => options.steps.includes(s));
+	if (!TRACK_ABLATIONS.includes(options.trackAblate)) throw new Error(`--track-ablate must be one of ${TRACK_ABLATIONS.join(",")}`);
 	if (typeof options.items === "string") options.items = options.items.split(",").map((s) => s.trim()).filter(Boolean);
 	for (const key of ["port", "cdpPort", "gpuWaitMin"]) {
 		options[key] = Number(options[key]);
@@ -346,6 +348,8 @@ export async function runT1({ item, inputs, itemDir, stepDir, options, endpoints
 	}]));
 	const cameraPath = join(stepDir, "camera.json");
 	mkdirSync(stepDir, { recursive: true });
+	// Only this attempt's tracker diagnostics may describe the step.
+	rmSync(join(stepDir, "diagnostics.json"), { force: true });
 	writeFileSync(cameraPath, `${JSON.stringify({ ...readJson(inputs.camera), tracker: { ...(readJson(inputs.camera).tracker ?? {}), endpoints: endpointConfig } }, null, "\t")}\n`);
 	const attemptDir = join(stepDir, `tracker-${Date.now()}-${process.pid}`);
 	mkdirSync(attemptDir, { recursive: true });
@@ -372,6 +376,7 @@ export async function runT1({ item, inputs, itemDir, stepDir, options, endpoints
 					scenePath,
 					rigPath: rigPath,
 					outDir: attemptDir,
+					ablate: options.trackAblate,
 					onLine: (line) => log(`T1: ${line}`),
 				});
 				break;
@@ -381,7 +386,7 @@ export async function runT1({ item, inputs, itemDir, stepDir, options, endpoints
 				await sleep(30000);
 			}
 		}
-		if (result.diagnostics?.failure) throw new Error(`tracker failure: ${result.diagnostics.failure}`);
+		if (result.diagnostics?.failure) throw Object.assign(new Error(`tracker failure: ${result.diagnostics.failure}`), { diagnostics: result.diagnostics, diagnosticsPath: result.diagnosticsPath });
 		copyFileSync(result.motionPath, join(stepDir, "motion.npz"));
 		copyFileSync(result.diagnosticsPath, join(stepDir, "diagnostics.json"));
 		return { diagnostics: result.diagnostics, fallback: null, trackerError: null };
@@ -394,7 +399,10 @@ export async function runT1({ item, inputs, itemDir, stepDir, options, endpoints
 		const details = error instanceof AggregateError && error.errors?.length
 			? error.errors.map((cause) => cause?.message ?? String(cause)).join(" | ")
 			: error.message;
-		return { diagnostics: null, fallback: step, trackerError: { message: details } };
+		// A failed fit still reports why (e.g. keypoint-residual) beside the fallback.
+		const diagnostics = error.diagnostics && error.diagnosticsPath && existsSync(error.diagnosticsPath) ? error.diagnostics : null;
+		if (diagnostics) copyFileSync(error.diagnosticsPath, join(stepDir, "diagnostics.json"));
+		return { diagnostics, fallback: step, trackerError: { message: details, failure: diagnostics?.failure ?? null } };
 	} finally {
 		rmSync(attemptDir, { recursive: true, force: true });
 	}
@@ -453,6 +461,7 @@ async function runItem(item, options, commit) {
 				}
 				const tracker = await runT1({ item, inputs, itemDir, stepDir, options, endpoints, g5MotionPath: g5Path, obsPath: t1ObsPath, log });
 				result.fallback = tracker.fallback;
+				result.trackAblate = options.trackAblate;
 				if (tracker.trackerError) result.trackerError = tracker.trackerError;
 				if (tracker.diagnostics) {
 					result.diagnostics = tracker.diagnostics;

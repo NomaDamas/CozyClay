@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /** Remote execution boundary for the known-character tracker. */
-import { mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { runBox } from "./run-box.mjs";
 import { trackerBudgetMs } from "./budget.mjs";
@@ -20,6 +20,9 @@ export function parseProgressLine(line) {
 	}
 	return null;
 }
+
+/** track.py --track-ablate levels, cumulative from kp-only to full (the default fit). */
+export const TRACK_ABLATIONS = Object.freeze(["kp-only", "silhouette", "viterbi", "contacts", "full"]);
 
 export const trackerInputNames = Object.freeze(["video", "obs", "masks", "init", "camera", "scene", "rig"]);
 export function trackerUploadPlan({ video, obsPath, masksPath, initMotionPath, cameraPath, scenePath, rigPath } = {}) {
@@ -48,8 +51,9 @@ function withTimeout(promise, timeoutMs) {
  * caller-owned data transfer entries are the seven declared tracker inputs;
  * run-box separately uploads the Python implementation.
  */
-export async function runTracker({ host, video, obsPath, masksPath, initMotionPath, cameraPath, scenePath, rigPath, outDir, onLine, transport } = {}) {
+export async function runTracker({ host, video, obsPath, masksPath, initMotionPath, cameraPath, scenePath, rigPath, outDir, onLine, transport, ablate } = {}) {
 	if (typeof host !== "string" || !host.trim()) throw new Error("host is required");
+	if (ablate !== undefined && !TRACK_ABLATIONS.includes(ablate)) throw new Error(`ablate must be one of ${TRACK_ABLATIONS.join(",")}`);
 	const files = trackerUploadPlan({ video, obsPath, masksPath, initMotionPath, cameraPath, scenePath, rigPath });
 	for (const [name, path] of Object.entries(files)) requiredFile(path, name);
 	if (typeof outDir !== "string" || !outDir) throw new Error("outDir is required");
@@ -66,8 +70,24 @@ export async function runTracker({ host, video, obsPath, masksPath, initMotionPa
 	const frames = await inferFrames(obsPath);
 	const args = [
 		"--video", "video", "--obs", "obs", "--masks", "masks", "--init", "init", "--camera", "camera", "--scene", "scene", "--rig", "rig", "--out", ".",
+		...(ablate === undefined ? [] : ["--track-ablate", ablate]),
 	];
-	await withTimeout(Promise.resolve(runner({ entry: "track.py", args, hostName: host, onLine: lineParser(onLine, progress), upload, fetch })), trackerBudgetMs(frames));
+	try {
+		await withTimeout(Promise.resolve(runner({ entry: "track.py", args, hostName: host, onLine: lineParser(onLine, progress), upload, fetch })), trackerBudgetMs(frames));
+	} catch (error) {
+		// track.py exits 2/3 with diagnostics only; hand them to the caller on the
+		// original error. Unreadable diagnostics never replace that error.
+		if (existsSync(diagnosticsPath)) {
+			try {
+				error.diagnostics = validateDiagnostics(JSON.parse(readFileSync(diagnosticsPath, "utf8")));
+				error.diagnosticsPath = diagnosticsPath;
+			} catch (diagnosticsError) {
+				error.diagnosticsError = diagnosticsError.message;
+			}
+		}
+		error.progress = progress;
+		throw error;
+	}
 	const diagnostics = JSON.parse(readFileSync(diagnosticsPath, "utf8"));
 	validateDiagnostics(diagnostics);
 	return { motionPath, diagnosticsPath, diagnostics, progress };

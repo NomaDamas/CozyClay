@@ -58,6 +58,30 @@ try {
 	assert.ok(commands[0].args.every(arg => !/--keypoints|--palette|--hybrid/.test(arg)));
 	assert.ok(result.progress.some(progress => progress.stage === "fit"));
 	assert.deepEqual(JSON.parse(readFileSync(result.diagnosticsPath, "utf8")), fakeDiagnostics);
+
+	// A failed track.py (exit 3) leaves diagnostics only; they ride on the original error.
+	const failedRun = (diagnosticsText) => ({
+		runBox: async options => {
+			const diagnosticsFetch = options.fetch.find(item => item.remoteRelPath === "diagnostics.json");
+			if (diagnosticsText !== undefined) writeFileSync(diagnosticsFetch.localPath, diagnosticsText);
+			throw Object.assign(new Error("ssh exited 3: [track] keypoint-residual"), { fetched: diagnosticsText === undefined ? [] : [diagnosticsFetch.localPath] });
+		},
+	});
+	const trackerArgs = { host: "fake-host", video: paths.video, obsPath: paths.obs, masksPath: paths.masks, initMotionPath: paths.init, cameraPath: paths.camera, scenePath: paths.scene, rigPath: paths.rig };
+	const rejected = { ...valid, failure: "keypoint-residual" };
+	const failure = await runTracker({ ...trackerArgs, outDir: join(root, "failed"), transport: failedRun(JSON.stringify(rejected)) }).then(() => null, error => error);
+	assert.match(failure.message, /^ssh exited 3/);
+	assert.equal(failure.diagnostics.failure, "keypoint-residual");
+	assert.equal(failure.diagnosticsPath, join(root, "failed", "diagnostics.json"));
+	assert.deepEqual(JSON.parse(readFileSync(failure.diagnosticsPath, "utf8")), rejected);
+	const malformed = await runTracker({ ...trackerArgs, outDir: join(root, "malformed"), transport: failedRun("{\"version\":1}") }).then(() => null, error => error);
+	assert.match(malformed.message, /^ssh exited 3/, "invalid diagnostics never mask the tracker error");
+	assert.equal(malformed.diagnostics, undefined);
+	assert.match(malformed.diagnosticsError, /diagnostics: missing/);
+	const absent = await runTracker({ ...trackerArgs, outDir: join(root, "absent"), transport: failedRun(undefined) }).then(() => null, error => error);
+	assert.match(absent.message, /^ssh exited 3/);
+	assert.equal(absent.diagnostics, undefined);
+	assert.equal(absent.diagnosticsError, undefined);
 } finally { rmSync(root, { recursive: true, force: true }); }
 
 // The CI registry must contain these Node tests, but must not register box/python execution.
@@ -65,4 +89,4 @@ const registry = readFileSync(join(process.cwd(), "tools/run-tests.mjs"), "utf8"
 assert.match(registry, /test\/verify-track-gate\.mjs/);
 assert.match(registry, /test\/verify-track-remote\.mjs/);
 assert.doesNotMatch(registry, /run-box-tests\.mjs|pytest\s/);
-console.log("verify-track-remote: boundary uploads, progress parser, fallback, budget, schema and registry checks passed");
+console.log("verify-track-remote: boundary uploads, progress parser, fallback, budget, schema, failed-run diagnostics and registry checks passed");

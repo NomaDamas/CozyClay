@@ -95,14 +95,21 @@ export function normalizeTransfers(items = [], kind) {
   });
 }
 
-export async function runBox({ entry, args = [], hostName = host, onLine, upload = [], fetch = [] } = {}) {
+/**
+ * Upload, run and fetch. When the remote command fails, every requested output
+ * that exists is still fetched (a failed tracker writes diagnostics.json), and
+ * the command's own error is rethrown with `fetched` = local paths retrieved.
+ * A missing output on a failed run never replaces that error. `spawnCommand`
+ * is the (program, args, {onLine}) -> Promise<output> seam for tests.
+ */
+export async function runBox({ entry, args = [], hostName = host, onLine, upload = [], fetch = [], spawnCommand = exec } = {}) {
   if (!entry) throw new Error("usage: run-box.mjs <entry.py> [args...]");
   if (entry !== "pytest" && !/^[A-Za-z0-9_.-]+\.py$/.test(entry)) throw new Error(`invalid Python entry: ${entry}`);
   const uploads = normalizeTransfers(upload, "upload");
   const fetches = normalizeTransfers(fetch, "fetch");
   const remote = `/tmp/cozyfit-${Date.now()}-${randomBytes(5).toString("hex")}`;
-  const ssh = (command, options = {}) => exec("ssh", [...sshFlags, hostName, command], options);
-  const scp = (source, destination, options = {}) => exec("scp", [...scpFlags, source, destination], options);
+  const ssh = (command, options = {}) => spawnCommand("ssh", [...sshFlags, hostName, command], options);
+  const scp = (source, destination, options = {}) => spawnCommand("scp", [...scpFlags, source, destination], options);
   const stream = { onLine };
   let failure, output;
   try {
@@ -112,12 +119,28 @@ export async function runBox({ entry, args = [], hostName = host, onLine, upload
       await ssh(`mkdir -p ${quote(join(remote, item.remoteRelPath, ".."))}`, stream);
       await scp(item.localPath, `${hostName}:${join(remote, item.remoteRelPath)}`);
     }
-    output = await ssh(buildRemoteCommand(remote, entry, args), stream);
+    let runError;
+    try { output = await ssh(buildRemoteCommand(remote, entry, args), stream); }
+    catch (error) { runError = error; }
+    const fetched = [];
     for (const item of fetches) {
       mkdirSync(join(item.localPath, ".."), { recursive: true });
-      await scp(`${hostName}:${join(remote, item.remoteRelPath)}`, item.localPath);
+      if (!runError) {
+        await scp(`${hostName}:${join(remote, item.remoteRelPath)}`, item.localPath);
+        fetched.push(item.localPath);
+        continue;
+      }
+      // Best effort after a failed command: absent outputs are expected.
+      try {
+        await scp(`${hostName}:${join(remote, item.remoteRelPath)}`, item.localPath);
+        fetched.push(item.localPath);
+      } catch { /* the command error below is the reported failure */ }
     }
-    return fetches.length ? { output, fetched: fetches.map(item => item.localPath) } : output;
+    if (runError) {
+      runError.fetched = fetched;
+      throw runError;
+    }
+    return fetches.length ? { output, fetched } : output;
   } catch (error) {
     failure = error;
     throw error;

@@ -38,6 +38,36 @@ foreground Chamfer supplies coverage. Rejection IoU is a named half-resolution
 point-splat occupancy estimate (`sampleMaskIoUMean`), not a rasterizer or the
 independent benchmark score. Benchmark scoring remains the quality authority.
 
+Keypoint confidence is sanitized at the input boundary, not rejected: ViTPose
+confidence is the raw flip-averaged heatmap peak of a height-1 Gaussian
+regression (GVHMR `VitPoseExtractor` -> mmpose `keypoints_from_heatmaps`
+`maxvals`), not a probability, and overshoots 1 (up to 1.0385 on the Gate-2 r0
+obs cache). Non-finite confidence becomes 0, then values are clipped to [0,1].
+The counts are reported as `stageLosses` entries `input.confidenceNonFinite`,
+`input.confidenceAboveOne` and `input.confidenceBelowZero`. Keypoint
+coordinates, the kp2d shape and every other input remain strictly validated
+(exit 2).
+
+`--track-ablate` selects cumulative fit components for the Gate-2 ablation
+table; weights and schedule are identical at every level, and keypoints plus
+priors (acceleration, limits, endpoints, nuisance) are always on:
+
+| level | adds |
+|---|---|
+| `kp-only` | keypoint reprojection with detector left/right labels as given |
+| `silhouette` | signed-DT boundary + coverage Chamfer |
+| `viterbi` | latent L/R Viterbi assignment |
+| `contacts` | stance skate + floor/box penetration |
+| `full` (default) | ray/box occlusion of keypoints and surface samples in the fit |
+
+Disabled terms are not evaluated and are absent from `stageLosses`; the level
+is recorded as `stageLosses["ablation.<level>"] = 1`. Diagnostics (occlusion
+flags, stance, penetration, sample IoU, visible keypoint residual) and the
+rejection rules are computed identically at every level, so an ablated fit is
+rejected by the same policy as the full one. Without Viterbi, `lrState` is
+`identity` with zero margin and not ambiguous. obs-bench forwards
+`--track-ablate <level>` through `runTracker({ablate})`.
+
 Exit 3 returns diagnostics and no motion for no evidence, non-finite fits,
 resource exhaustion, excessive visible reprojection error or mask mismatch.
 Exit 2 is malformed input. A zero-iteration request preserves every initializer

@@ -39,6 +39,16 @@ assert.throws(() => checkObsVideo({ origin: recorded, videoSha256: sha("f"), obs
 assert.throws(() => checkObsVideo({ origin: recorded, videoSha256: sha("a"), obsSha256: sha("f"), videoPath: "v", videoMtimeMs: 0, obsMtimeMs: 1 }), /obs-sha-mismatch/);
 assert.equal(checkObsVideo({ origin: null, videoSha256: sha("a"), obsSha256: sha("b"), videoPath: "v", videoMtimeMs: 1, obsMtimeMs: 2 }).provenance, "path-only");
 assert.throws(() => checkObsVideo({ origin: null, videoSha256: sha("a"), obsSha256: sha("b"), videoPath: "re-encode.mp4", videoMtimeMs: 3, obsMtimeMs: 2 }), /obs-video-newer/);
+// Regression (todo 22 follow-up): the origin's label is carried through unchanged, never upgraded to "recorded".
+const check = (origin) => checkObsVideo({ origin, videoSha256: sha("a"), obsSha256: sha("b"), videoPath: "v", videoMtimeMs: 1, obsMtimeMs: 2 });
+assert.equal(check({ ...recorded, provenance: "recorded" }).provenance, "recorded");
+assert.deepEqual(check({ ...recorded, provenance: "backfilled-path", backfilledAt: "2026-09-30T00:00:00.000Z" }), { provenance: "backfilled-path", recordedVideoSha256: sha("a"), recordedVideo: recorded.video });
+assert.throws(() => checkObsVideo({ origin: { ...recorded, provenance: "backfilled-path" }, videoSha256: sha("f"), obsSha256: sha("b"), videoPath: "v", videoMtimeMs: 1, obsMtimeMs: 2 }), /obs-video-mismatch/, "a backfilled sha is enforced like a recorded one");
+assert.equal(check({ video: "/e/v.mp4", provenance: "path-only" }).provenance, "path-only");
+assert.throws(() => checkObsVideo({ origin: { provenance: "path-only" }, videoSha256: sha("a"), obsSha256: sha("b"), videoPath: "v", videoMtimeMs: 3, obsMtimeMs: 2 }), /obs-video-newer/);
+assert.throws(() => check({ ...recorded, provenance: "path-only" }), /obs-provenance-invalid/);
+assert.throws(() => check({ video: "/e/v.mp4", provenance: "backfilled-path" }), /obs-provenance-invalid/, "a hashed label without a sha is not silently downgraded");
+assert.throws(() => check({ ...recorded, provenance: "guessed" }), /obs-provenance-unknown/);
 
 // Copy manifests (obs-bench's obs-mannequin/manifest.json) lead back to the source obs.
 const dir = mkdtempSync(join(tmpdir(), "verify-track-masks-"));
@@ -54,6 +64,10 @@ try {
 	assert.equal(origin.obs, join(dir, "cache/g5/obs.npz"));
 	assert.equal(origin.manifest.videoSha256, sha("a"), "the recorded sha comes from the source obs, not the copy's video path");
 	assert.deepEqual(origin.copies, [join(dir, "run/obs-mannequin/obs.npz")]);
+	// A backfill-provenance.mjs manifest on the origin reaches the masks manifest as backfilled-path through the copy chain.
+	writeFileSync(join(dir, "cache/g5/manifest.json"), JSON.stringify({ ...recorded, obsSha256: fileSha(join(dir, "cache/g5/obs.npz")), provenance: "backfilled-path", backfilledAt: "2026-09-30T00:00:00.000Z" }));
+	const backfilled = resolveObsOrigin(join(dir, "run/obs-mannequin/obs.npz"));
+	assert.equal(checkObsVideo({ origin: backfilled.manifest, videoSha256: sha("a"), obsSha256: fileSha(backfilled.obs), videoPath: "v", videoMtimeMs: 1, obsMtimeMs: 2 }).provenance, "backfilled-path");
 	writeFileSync(join(dir, "run/obs-mannequin/obs.npz"), "TAMPERED");
 	assert.throws(() => resolveObsOrigin(join(dir, "run/obs-mannequin/obs.npz")), /obs-copy-mismatch/);
 	// A fetched masks.npz that is not a valid mask archive is rejected before it reaches the cache.

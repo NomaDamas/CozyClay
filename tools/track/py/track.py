@@ -25,7 +25,7 @@ import numpy as np
 import torch
 
 from lr_viterbi import STATE_NAMES, solve_lr_viterbi
-from objective import (COCO_JOINTS, ClipObjective, MaskEvidence,
+from objective import (ABLATIONS, COCO_JOINTS, ClipObjective, MaskEvidence,
                        project, slice_boxes)
 from rig import RigError, State, cskel27_fk, load_rig
 from scene import (SceneError, box_tensors, foot_points, load_scene,
@@ -54,9 +54,16 @@ def read_inputs(args):
         if kp.ndim != 3 or kp.shape[1:] != (17, 3) or len(kp) < 1:
             raise TrackError('bad-input', 'kp2d must be nonempty T x 17 x 3')
         frames = len(kp)
-        kp = finite_array(kp, (frames, 17, 3), 'kp2d')
-        if ((kp[..., 2] < 0) | (kp[..., 2] > 1)).any():
-            raise TrackError('bad-input', 'confidence must lie in [0,1]')
+        finite_array(kp[..., :2], (frames, 17, 2), 'kp2d coordinates')
+        # ViTPose confidence is the raw (flip-averaged) heatmap peak, a Gaussian
+        # regression target of height 1, not a probability: it can overshoot 1.
+        # Only the weight is repaired; coordinates stay strictly validated.
+        conf = kp[..., 2]
+        finite = np.isfinite(conf)
+        sanitized = {'input.confidenceNonFinite': int((~finite).sum()),
+                     'input.confidenceAboveOne': int((finite & (conf > 1)).sum()),
+                     'input.confidenceBelowZero': int((finite & (conf < 0)).sum())}
+        kp[..., 2] = np.clip(np.where(finite, conf, 0), 0, 1)
         fps = float(np.asarray(z['fps']).item())
         if not np.isfinite(fps) or fps <= 0 or not fps.is_integer():
             raise TrackError('bad-input', 'fps must be a positive integer')
@@ -110,7 +117,7 @@ def read_inputs(args):
             endpoints[frame] = (finite_array(e['rootPos'], (3,), f'{name}.rootPos'),
                                 finite_array(np.asarray(e['rotMats']).reshape(27, 3, 3), (27, 3, 3), f'{name}.rotMats'))
     kp[:, :5, 2] = 0
-    return kp, fps, motion, bone_scale, camera, prob, delta, fixed, endpoints
+    return kp, fps, motion, bone_scale, camera, prob, delta, fixed, endpoints, sanitized
 
 
 def blank_diagnostics(frames=1, fps=24):
@@ -145,14 +152,28 @@ def schedule(iterations):
     return tuple((name, n, lr, pen) for (name, _, lr, pen), n in zip(SCHEDULE, lengths))
 
 
+def identity_labels(frames):
+    """The detector's own left/right labelling, used when Viterbi is ablated."""
+    return dict(path=np.full(frames, STATE_NAMES.index('identity')),
+                assignments=np.tile(np.arange(17), (frames, 1)),
+                margins=np.zeros(frames), ambiguous=np.zeros(frames, dtype=bool))
+
+
 @torch.no_grad()
 def labels(objective, state, nuisance, kp, start, end):
     joints, _ = cskel27_fk(state, objective.bone_scale, objective.rig)
     joints = state.transl[:, None] + (joints - state.transl[:, None]) * (1 + nuisance[0])
     uv, depth = project(joints[:, COCO_JOINTS], objective.camera, nuisance)
+    # Geometric box occlusion is always reported; the fit uses it only when
+    # the 'occlusion' component is enabled.
     hidden = ray_occlusion(joints, objective.camera_pos, slice_boxes(objective.boxes, start, end))
-    visible = ~hidden[:, COCO_JOINTS] & (depth > 0)
-    result = solve_lr_viterbi(kp, uv.cpu().numpy(), visibility=visible.cpu().numpy(), deltaPx=objective.delta)
+    visible = depth > 0
+    if 'occlusion' in objective.components:
+        visible = ~hidden[:, COCO_JOINTS] & visible
+    if 'viterbi' in objective.components:
+        result = solve_lr_viterbi(kp, uv.cpu().numpy(), visibility=visible.cpu().numpy(), deltaPx=objective.delta)
+    else:
+        result = identity_labels(end - start)
     assigned = kp[np.arange(end - start)[:, None], result['assignments']]
     stance = stance_hmm(foot_points(joints).cpu(), objective.fps, slice_boxes(objective.boxes, start, end))
     return (torch.as_tensor(assigned, device=joints.device),
@@ -279,6 +300,8 @@ def run(args):
     # A failed request cannot leave a previous successful motion behind.
     (out / 'motion.npz').unlink(missing_ok=True)
     diagnostics = blank_diagnostics()
+    ablation = {f'ablation.{args.track_ablate}': 1.0}
+    diagnostics['stageLosses'].update(ablation)
     code = 0
     try:
         random.seed(0)
@@ -289,8 +312,11 @@ def run(args):
         torch.backends.cuda.matmul.allow_tf32 = False
         torch.backends.cudnn.allow_tf32 = False
         torch.backends.cudnn.benchmark = False
-        kp, fps, motion, bone_scale, camera, prob, delta, fixed, endpoints = read_inputs(args)
+        kp, fps, motion, bone_scale, camera, prob, delta, fixed, endpoints, sanitized = read_inputs(args)
         diagnostics = blank_diagnostics(len(kp), fps)
+        diagnostics['stageLosses'].update(ablation, **sanitized)
+        if any(sanitized.values()):
+            print('[track] sanitized keypoint confidences ' + json.dumps(sanitized), flush=True)
         if not (kp[..., 2] > 0).any():
             raise TrackError('no-evidence', 'no confident body observations')
         device = 'cuda' if torch.cuda.is_available() and args.device != 'cpu' else 'cpu'
@@ -306,7 +332,8 @@ def run(args):
         masks = MaskEvidence(prob, camera['width'], camera['height'])
         endpoints = {t: tuple(torch.as_tensor(p, device=device) for p in pose) for t, pose in endpoints.items()}
         nuisance = torch.zeros(4, device=device, requires_grad=not fixed)
-        objective = ClipObjective(rig, bone_scale, camera, boxes, None, kp, fps, delta, endpoints)
+        objective = ClipObjective(rig, bone_scale, camera, boxes, None, kp, fps, delta, endpoints,
+                                  components=ABLATIONS[args.track_ablate])
         optimize(objective, state, nuisance, kp, masks, fixed, args.iterations, diagnostics, started)
         posed = finish(objective, state, nuisance, kp, masks, diagnostics)
         if args.iterations == 0:
@@ -360,6 +387,8 @@ def parse_args(argv=None):
     parser.add_argument('--iterations', type=int, default=None)
     parser.add_argument('--delta-px', type=float)
     parser.add_argument('--device', choices=('auto', 'cpu', 'cuda'), default='auto')
+    parser.add_argument('--track-ablate', choices=tuple(ABLATIONS), default='full',
+                        help='fit components: kp-only < silhouette < viterbi < contacts < full')
     args = parser.parse_args(argv)
     if args.iterations is not None and args.iterations < 0:
         parser.error('--iterations must be nonnegative')

@@ -5,14 +5,22 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readNpz } from "../kimodo/read-npz.mjs";
-import { hiddenJointError, occlusionAgreement, pelvisStepsDeg, truthStanceSlideCmPerS } from "./metrics.mjs";
+import { cameraFromJson } from "../bench/obs/extrinsics.mjs";
+import { resolveObsOrigin } from "./masks.mjs";
+import { hiddenJointError, occlusionAgreement, pelvisStepsDeg, resampleMotion, truthStanceSlideCmPerS } from "./metrics.mjs";
 import { validateDiagnostics } from "./remote.mjs";
+import { jointOccluded } from "./study-2d.mjs";
 
 const USAGE = "usage: node tools/track/gate.mjs --run <dir> --baseline <dir> [--ceiling <summary.json>]";
 const TRUTH_SETS = new Set(["gt", "cube", "gt-skin", "cube-skin"]);
 const HIDDEN_SETS = new Set(["cube", "cube-skin"]);
 const HIDDEN_NAMES = new Set(["bump", "sit"]);
 const SHADED_DETECTOR = ["p", "alette"].join("");
+/** Score fields per scorer: tools/bench/score.mjs for truth sets, obs-bench scoreFal for fal. */
+const TRUTH_SCORE_FIELDS = ["pose.paMpjpeM", "trajectory.rootErrorRawM.rmse", "trajectory.ateAlignedM.rmse", "overlap.maskIoURawMean"];
+const FAL_SCORE_FIELDS = ["overlapIoU", "endpointFirstM", "endpointLastM", "maxPenetrationM"];
+/** Obs manifest provenance the gate accepts: hashed at extraction, or hashed later from the path the sweep used. */
+const ACCEPTED_PROVENANCE = ["recorded", "backfilled-path"];
 
 function parseArgs(argv) {
 	const out = {};
@@ -83,7 +91,7 @@ function loadStep(item, step, { strict = true } = {}) {
 	const diagnostics = isFile(diagnosticsPath) ? readJson(diagnosticsPath) : null;
 	if (strict && !score) errors.push(`${keyOf(item)}/${step}: missing score.json`);
 	if (strict && score) {
-		const required = TRUTH_SETS.has(item.set) ? ["pose.paMpjpeM", "trajectory.rootErrorRawM.rmse", "trajectory.ateAlignedM.rmse", "overlap.maskIoURawMean"] : ["overlap.maskIoURawMean"];
+		const required = TRUTH_SETS.has(item.set) ? TRUTH_SCORE_FIELDS : FAL_SCORE_FIELDS;
 		for (const path of required) if (!finite(field(score, path))) errors.push(`${keyOf(item)}/${step}: missing score field ${path}`);
 	}
 	if (strict && !motion) errors.push(`${keyOf(item)}/${step}: missing or invalid motion.npz`);
@@ -108,22 +116,52 @@ function scoreValue(record, path) { const value = field(record.score, path); ret
 function variantOf(record) { return record.result?.item?.variant ?? (record.set.endsWith("-skin") ? "skin" : "shaded"); }
 function isHiddenItem(record) { return HIDDEN_SETS.has(record.set) && HIDDEN_NAMES.has(record.name); }
 
-function visibilityFor(record) {
-	const values = [field(record.result, "truthVisibility"), field(record.result, "item.truthVisibility"), field(record.diagnostics, "truthVisibility")];
-	for (const value of values) if (Array.isArray(value)) return value;
-	for (const path of [join(record.dir, "truth-visibility.json"), join(record.dir, "visibility.json")]) if (isFile(path)) return readJson(path);
-	return null;
+/**
+ * Truth visibility on the prediction's timeline: truth joints (spline-resampled
+ * to pred fps/frames) tested along the camera ray against the item's scene
+ * boxes, the same segment test the tracker's `occluded` flags use (true = visible).
+ */
+function truthVisibility(record, truthOnPred) {
+	const cameraPath = field(record.result, "inputs.camera.path"), scenePath = field(record.result, "item.scene") ?? field(record.result, "inputs.scene");
+	if (!truthOnPred || !isFile(cameraPath) || !isFile(scenePath)) return null;
+	const centre = cameraFromJson(readJson(cameraPath)).t_c2w;
+	const scene = readJson(scenePath);
+	const boxes = Array.isArray(scene) ? scene : [scene];
+	const joints = truthOnPred.posedJoints.length / (truthOnPred.frames * 3);
+	return Array.from({ length: truthOnPred.frames }, (_, t) => Array.from({ length: joints }, (_, j) => {
+		const o = (t * joints + j) * 3;
+		return !jointOccluded(centre, [truthOnPred.posedJoints[o], truthOnPred.posedJoints[o + 1], truthOnPred.posedJoints[o + 2]], boxes);
+	}));
 }
+const sha256File = path => createHash("sha256").update(readFileSync(path)).digest("hex");
+/**
+ * The obs the step consumed, traced to its original manifest (run copies are
+ * followed via `source`/`sourceSha256`, as masks.mjs does). Passes when that
+ * manifest's provenance is recorded|backfilled-path, its detector matches the
+ * appearance, the obs still has the recorded sha, and the item's extraction
+ * video (item.video for fal, else inputs.video) hashes to videoSha256.
+ */
 function provenance(record) {
-	const manifest = field(record.result, "inputs.obs.manifest") ?? field(record.result, "obs.manifest") ?? (isFile(join(record.dir, "obs-mannequin", "manifest.json")) ? readJson(join(record.dir, "obs-mannequin", "manifest.json")) : null);
-	const video = field(record.result, "inputs.video") ?? field(record.result, "item.video");
-	if (!manifest || !video || !isFile(video) || typeof manifest.detector !== "string" || !manifest.detector) return false;
-	const variant = variantOf(record);
-	if (variant === "skin" && manifest.detector !== "yolo") return false;
-	if (variant !== "skin" && manifest.detector !== SHADED_DETECTOR) return false;
-	const expected = createHash("sha256").update(readFileSync(video)).digest("hex");
-	const declared = manifest.videoSha256 ?? manifest.video_sha256 ?? manifest.sha256;
-	return typeof declared === "string" && declared.length > 0 && declared === expected;
+	const fail = reason => ({ ok: false, kind: null, reason });
+	const obs = field(record.result, "inputs.obs");
+	let manifest = obs?.manifest ?? null, originObs = null;
+	if (isFile(obs?.obs)) {
+		try { ({ manifest, obs: originObs } = resolveObsOrigin(obs.obs)); }
+		catch (error) { return fail(error.message); }
+	} else if (manifest?.source) return fail(`obs copy ${obs?.obs ?? "?"} is missing`);
+	if (!manifest) return fail("no obs manifest");
+	const kind = manifest.provenance ?? "recorded";
+	if (!ACCEPTED_PROVENANCE.includes(kind)) return fail(`provenance ${kind} is not ${ACCEPTED_PROVENANCE.join("|")}`);
+	if (typeof manifest.videoSha256 !== "string" || !manifest.videoSha256) return fail("manifest has no videoSha256");
+	if (kind === "backfilled-path" && (typeof manifest.backfilledAt !== "string" || typeof manifest.obsSha256 !== "string")) return fail("backfilled manifest lacks backfilledAt/obsSha256");
+	if (typeof manifest.detector !== "string" || !manifest.detector) return fail("manifest has no detector");
+	const wanted = variantOf(record) === "skin" ? "yolo" : SHADED_DETECTOR;
+	if (manifest.detector !== wanted) return fail(`detector ${manifest.detector}, expected ${wanted}`);
+	if (originObs && manifest.obsSha256 && sha256File(originObs) !== manifest.obsSha256) return fail(`${originObs} changed after its manifest was written`);
+	const video = field(record.result, "item.video") ?? field(record.result, "inputs.video");
+	if (!isFile(video)) return fail(`video ${video ?? "?"} is missing`);
+	if (sha256File(video) !== manifest.videoSha256) return fail(`video ${video} does not hash to the manifest's videoSha256`);
+	return { ok: true, kind, reason: null };
 }
 function ceilingFor(ceiling, set) {
 	const perSet = ceiling?.iouCeiling?.perSet?.[set];
@@ -135,26 +173,29 @@ function metric(record) {
 	const truth = truthMotion(record), motion = record.motion, diagnostics = record.diagnostics;
 	const out = {
 		record, truth, motion, diagnostics,
-		pa: scoreValue(record, "pose.paMpjpeM"), root: scoreValue(record, "trajectory.rootErrorRawM.rmse"), ate: scoreValue(record, "trajectory.ateAlignedM.rmse"), iou: scoreValue(record, "overlap.maskIoURawMean"),
-		stance: null, steps: null, agreement: null, hidden: null, g5Hidden: null, g5: null,
+		pa: scoreValue(record, "pose.paMpjpeM"), root: scoreValue(record, "trajectory.rootErrorRawM.rmse"), ate: scoreValue(record, "trajectory.ateAlignedM.rmse"),
+		iou: scoreValue(record, record.set === "fal" ? "overlapIoU" : "overlap.maskIoURawMean"),
+		endpointA: scoreValue(record, "endpointFirstM"), endpointB: scoreValue(record, "endpointLastM"),
+		scorerPenetrationCm: record.set === "fal" && finite(field(record.score, "maxPenetrationM")) ? record.score.maxPenetrationM * 100 : null,
+		stance: null, steps: null, agreement: null, hidden: null, g5Hidden: null, g5: null, hiddenError: null,
 	};
 	if (motion) out.steps = Array.from(pelvisStepsDeg(motion.rotMats, motion.frames)).filter(value => value > 20).length;
 	if (truth && motion) out.stance = truthStanceSlideCmPerS(motion, truth).meanCmPerS;
 	if (isHiddenItem(record) && diagnostics && motion && truth) {
-		const visibility = visibilityFor(record);
-		if (visibility) {
-			try { out.agreement = occlusionAgreement(diagnostics.occluded, visibility).agreement; }
-			catch { out.agreement = null; }
-		}
-		const g5 = loadG5(record);
-		out.g5 = g5;
-		if (g5.motion) {
-			try {
-				out.hidden = hiddenJointError(nestedJoints(motion), nestedJoints(truth), diagnostics.occluded).meanM;
-				out.g5Hidden = hiddenJointError(nestedJoints(g5.motion), nestedJoints(truth), diagnostics.occluded).meanM;
-			} catch { out.hidden = null; out.g5Hidden = null; }
-		}
+		try {
+			// Truth is compared on the prediction's timeline (e.g. 30 fps truth vs a 24 fps T1).
+			const truthOnPred = resampleMotion(truth, motion.fps, motion.frames);
+			const visibility = truthVisibility(record, truthOnPred);
+			if (!visibility) throw new Error("no truth visibility: item needs inputs.camera.path and item.scene");
+			out.agreement = occlusionAgreement(diagnostics.occluded, visibility).agreement;
+			const g5 = loadG5(record);
+			out.g5 = g5;
+			if (!g5.motion) throw new Error("no same-run G5 motion");
+			out.hidden = hiddenJointError(nestedJoints(motion), nestedJoints(truthOnPred), diagnostics.occluded).meanM;
+			out.g5Hidden = hiddenJointError(nestedJoints(g5.motion), nestedJoints(truthOnPred), diagnostics.occluded).meanM;
+		} catch (error) { out.hiddenError = error.message; }
 	}
+	out.provenance = provenance(record);
 	return out;
 }
 function invalidDetails(metrics) { return metrics.flatMap(m => m.record.errors).join("; ") || "none"; }
@@ -189,13 +230,15 @@ function evaluate(runRecords, baselineRecords, ceiling) {
 
 	const falIou = fal.map(m => m.iou), falComparisons = fal.map(m => [m.iou, baseline.get(keyOf(m.record))?.iou]);
 	const falPass = !invalid.length && (!fal.length || (allFinite(falIou) && average(falIou) >= 0.4 && falComparisons.every(([value, base]) => finite(base) && value >= base - 0.02)));
-	rows.push(row("fal.overlapIoU", falPass, !fal.length ? "no fal items" : `mean ${average(falIou) ?? "missing"} >= 0.4; every item >= Gbest-0.02`));
+	const falItems = fal.map(m => `${keyOf(m.record)} IoU ${m.iou ?? "missing"} (Gbest ${baseline.get(keyOf(m.record))?.iou ?? "missing"}) A ${m.endpointA ?? "missing"} m B ${m.endpointB ?? "missing"} m pen ${m.scorerPenetrationCm ?? "missing"} cm`).join("; ");
+	rows.push(row("fal.overlapIoU", falPass, !fal.length ? "no fal items" : `mean ${average(falIou) ?? "missing"} >= 0.4; every item >= Gbest-0.02 [${falItems}]`));
 
 	const stance = truth.map(m => m.stance), baselineStance = truth.map(m => baseline.get(keyOf(m.record))?.stance);
 	const stancePass = !invalid.length && allFinite(stance) && allFinite(baselineStance) && average(stance) <= 2.5 && average(stance) <= average(baselineStance);
 	rows.push(row("truthStanceSlideCmPerS", stancePass, invalidText !== "none" ? invalidText : `${average(stance) ?? "missing"} cm/s <= 2.5 and Gbest mean ${average(baselineStance) ?? "missing"}`));
 
-	const boxPen = metrics.map(m => m.diagnostics?.penetration?.maxBoxCm), floorPen = metrics.map(m => m.diagnostics?.penetration?.maxFloorCm);
+	// Fal items also carry the scorer's independent box penetration; the larger of the two counts.
+	const boxPen = metrics.map(m => { const own = m.diagnostics?.penetration?.maxBoxCm; return finite(own) && finite(m.scorerPenetrationCm) ? Math.max(own, m.scorerPenetrationCm) : own; }), floorPen = metrics.map(m => m.diagnostics?.penetration?.maxFloorCm);
 	rows.push(row("penetration.maxBoxCm", !invalid.length && allFinite(boxPen) && boxPen.every(value => value <= 1), invalidText !== "none" ? invalidText : `${maximum(boxPen) ?? "missing"} cm <= 1 cm`));
 	rows.push(row("penetration.maxFloorCm", !invalid.length && allFinite(floorPen) && floorPen.every(value => value <= 1), invalidText !== "none" ? invalidText : `${maximum(floorPen) ?? "missing"} cm <= 1 cm`));
 
@@ -205,12 +248,15 @@ function evaluate(runRecords, baselineRecords, ceiling) {
 
 	const hidden = metrics.filter(m => isHiddenItem(m.record));
 	const visibilityPass = !invalid.length && hidden.every(m => finite(m.agreement) && m.agreement >= 0.9);
-	rows.push(row("occlusionAgreement", visibilityPass, hidden.length ? hidden.map(m => `${keyOf(m.record)}: ${m.agreement ?? "missing"} >= 0.9`).join(", ") : "no cube occlusion items"));
+	rows.push(row("occlusionAgreement", visibilityPass, hidden.length ? hidden.map(m => `${keyOf(m.record)}: ${m.agreement ?? `missing (${m.hiddenError ?? "no T1 diagnostics/motion/truth"})`} >= 0.9`).join(", ") : "no cube occlusion items"));
 	const hiddenPass = !invalid.length && hidden.every(m => finite(m.hidden) && finite(m.g5Hidden) && m.hidden <= m.g5Hidden);
 	rows.push(row("hiddenJointErrorT1<=G5", hiddenPass, hidden.length ? hidden.map(m => `${keyOf(m.record)}: T1 ${m.hidden ?? "missing"} <= G5 ${m.g5Hidden ?? "missing"} on T1 flags`).join(", ") : "no cube occlusion items"));
 
-	const provenancePass = !invalid.length && metrics.every(m => provenance(m.record));
-	rows.push(row("obsProvenance", provenancePass, provenancePass ? "manifest video hash and detector match" : metrics.filter(m => !provenance(m.record)).map(m => `${keyOf(m.record)}: mismatch or missing detector/hash`).join(", ") || invalidText));
+	// Input provenance is a property of the obs, independent of whether T1 itself fell back.
+	const provenancePass = metrics.length > 0 && metrics.every(m => m.provenance.ok);
+	const byKind = ACCEPTED_PROVENANCE.map(kind => [kind, metrics.filter(m => m.provenance.ok && m.provenance.kind === kind).map(m => keyOf(m.record))]).filter(([, items]) => items.length);
+	const provenanceText = [...byKind.map(([kind, items]) => `${kind} ${items.length} (${items.join(", ")})`), ...metrics.filter(m => !m.provenance.ok).map(m => `${keyOf(m.record)}: ${m.provenance.reason}`)].join("; ");
+	rows.push(row("obsProvenance", provenancePass, provenanceText || "no items"));
 	const runtimes = metrics.map(m => m.diagnostics?.runtime?.trackerSeconds), vram = metrics.map(m => m.diagnostics?.runtime?.peakReservedMiB);
 	const runtimePass = !invalid.length && allFinite(runtimes) && runtimes.every((value, index) => value <= ((metrics[index].motion?.frames ?? 0) <= 124 ? 180 : 540));
 	rows.push(row("runtime.trackerSeconds", runtimePass, invalidText !== "none" ? invalidText : `${maximum(runtimes) ?? "missing"} s`));
