@@ -500,3 +500,19 @@
 	z-index: 2;
 }
 }
+
+@layer regions {
+.range-pin-panel { display: grid; gap: 4px; }
+.range-pin-panel-head { min-height: 24px; margin: 0; align-items: center; }
+.range-pin-panel-head strong { font-size: 12px; font-weight: 500; }
+.range-pin-panel-head span { font-size: 10px; }
+.range-pin-form-label { margin: 4px 0 0; font-size: 10px; letter-spacing: 0; text-transform: none; }
+.range-pin-part, .range-pin-target-option, .range-pin-frame-field input, .range-pin-object-select select { min-height: 24px; height: 24px; padding-block: 0; border: 0; border-radius: var(--r-1, 4px); background: var(--field, #0f0f11); }
+.range-pin-part-grid, .range-pin-targets, .range-pin-frame-actions { gap: 4px; }
+.range-pin-target-option { grid-template-columns: 15px minmax(0, 1fr); align-items: center; padding-inline: 8px; }
+.range-pin-target-option small { display: none; }
+.range-pin-frame-field { align-items: center; grid-template-columns: auto minmax(0, 1fr); gap: 4px; }
+.range-pin-frame-field input { width: 100%; }
+.range-pin-frame-actions { margin-top: 0; }
+.range-pin-shortcut-hint { margin: 0; }
+}

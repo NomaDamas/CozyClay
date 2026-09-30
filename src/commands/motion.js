@@ -27,8 +27,8 @@ const rangePins = [
 	mutation('motion.rangePin.remove', 'Remove range pin', { characterId: id, pinId: id }),
 ];
 const platformFit = [
-	{ id: 'motion.platformFit.run', label: 'Fit motion to platforms', description: 'Analyse scene platforms, lift climbable steps and apply the resulting IK correction keys.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id }, ['characterId']) },
-	{ id: 'motion.platformFit.remove', label: 'Remove platform fit', description: 'Restore the pre-fit keys, or re-seat edited corrections on the floor.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id }, ['characterId']) },
+	{ id: 'motion.platformFit.run', label: 'Fit motion to platforms', description: 'Analyse scene platforms and prepare an IK correction preview.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id }, ['characterId']) },
+	{ id: 'motion.platformFit.remove', label: 'Remove platform fit', description: 'Apply or remove the reviewed platform-fit correction.', kind: 'job', domain: 'motion', timeoutMs: 300000, input: input({ characterId: id, apply: { type: 'boolean', default: false } }, ['characterId']) },
 ];
 const edits = [
 	{ ...mutation('motion.set', 'Set take fields', {}), input: setInput },
@@ -144,9 +144,8 @@ export function register(registry, ports) {
 	} });
 	registry.register({ ...platformFit[1], available: mounted, target: args => args.characterId, run(args, context) {
 		characterOf(ports, args.characterId);
-		const finish = output => ({ affectedIds: [args.characterId], summary: platformFit[1].label, ...(output ? { output } : {}) });
-		const output = owner().platformFitRemove(args.characterId, context);
-		return output?.then ? output.then(finish) : finish(output);
+		const output = owner().platformFitRemove(args.characterId, context, { apply: args.apply === true });
+		return { affectedIds: [args.characterId], summary: platformFit[1].label, ...(output ? { output } : {}) };
 	} });
 	registerElementSet({ register(entry) { registry.register({ ...entry, available: mounted, run(args) {
 		for (const op of args.ops ?? [args]) take(op.id);
