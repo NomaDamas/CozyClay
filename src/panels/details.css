@@ -1045,3 +1045,127 @@
 	color: var(--text-1, #e4e4e7);
 	outline: none;
 }
+
+/* Details panel head (2a, #552): the same 36 px strip as the Outliner head,
+   no rule under it. With the agent open it becomes a Details | Agent tab strip
+   drawn like the Content | Log tabs. */
+.inspector-sidebar.inspector-sidebar .details-panel-head {
+	box-sizing: border-box;
+	display: flex;
+	flex: none;
+	align-items: center;
+	justify-content: flex-start;
+	gap: var(--sp-3, 16px);
+	height: var(--details-head-height, 36px);
+	min-height: var(--details-head-height, 36px);
+	margin: 0;
+	padding: 0 var(--sp-2, 12px);
+	border: 0;
+	background: var(--surface-panel, #151517);
+	color: var(--text-1, #e4e4e7);
+	font-family: var(--sans, 'IBM Plex Sans');
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-title {
+	display: block;
+	flex: 1 1 auto;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	color: var(--text-1, #e4e4e7);
+	font-size: var(--details-ui-size, 12px);
+	font-weight: 500;
+	letter-spacing: 0;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-head .inspector-agent-switch {
+	box-sizing: border-box;
+	flex: none;
+	height: var(--h-row, 24px);
+	margin: 0;
+	padding: 0 var(--sp-1, 8px);
+	border: 0;
+	border-radius: var(--r-1, 4px);
+	background: transparent;
+	color: var(--text-3, #636369);
+	font-family: inherit;
+	font-size: var(--details-secondary-size, 11px);
+	font-weight: 500;
+	cursor: pointer;
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-head .inspector-agent-switch:hover,
+.inspector-sidebar.inspector-sidebar .details-panel-head .inspector-agent-switch[aria-pressed="true"] {
+	background: var(--surface-raised, #1e1e21);
+	color: var(--text-1, #e4e4e7);
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-head .details-panel-tab {
+	height: var(--h-row, 24px);
+	margin: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 0;
+	background: transparent;
+	color: var(--text-3, #636369);
+	font-family: inherit;
+	font-size: var(--details-ui-size, 12px);
+	font-weight: 400;
+	cursor: pointer;
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-head .details-panel-tab:hover {
+	background: transparent;
+	color: var(--text-2, #9b9ba1);
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-head .details-panel-tab[aria-selected="true"] {
+	color: var(--text-1, #e4e4e7);
+	font-weight: 500;
+	cursor: default;
+}
+
+.inspector-sidebar.inspector-sidebar .details-panel-head .inspector-agent-switch:focus-visible,
+.inspector-sidebar.inspector-sidebar .details-panel-head .details-panel-tab:focus-visible {
+	outline: var(--details-focus-width, 1px) solid var(--select, #e8a33d);
+	outline-offset: var(--details-focus-offset, 1px);
+}
+
+/* Selection header (2a): the selected item's name over its "Kind · detail"
+   line, fixed above the scrolling sections. */
+.inspector-sidebar.inspector-sidebar .details-selection {
+	box-sizing: border-box;
+	display: flex;
+	flex: none;
+	flex-direction: column;
+	gap: var(--details-selection-gap, 2px);
+	padding: 0 var(--sp-2, 12px) var(--details-selection-bottom, 14px);
+	background: var(--surface-panel, #151517);
+	font-family: var(--sans, 'IBM Plex Sans');
+}
+
+.inspector-sidebar.inspector-sidebar .details-selection-name,
+.inspector-sidebar.inspector-sidebar .details-selection-type {
+	display: block;
+	min-width: 0;
+	margin: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.inspector-sidebar.inspector-sidebar .details-selection-name {
+	color: var(--text-selected, #fff);
+	font-size: var(--details-title-size, 15px);
+	font-weight: 600;
+	line-height: var(--details-title-line-height, 1.3);
+}
+
+.inspector-sidebar.inspector-sidebar .details-selection-type {
+	color: var(--text-3, #636369);
+	font-size: var(--details-secondary-size, 11px);
+	font-weight: 400;
+	line-height: var(--details-hint-line-height, 1.4);
+}

@@ -230,6 +230,70 @@ expect("a non-numeric Location X entry reverts", reverted?.x === 1.5 && reverted
 
 await screenshot("task-12-details");
 
+/* #552: the right column matches 2a. The panel head reads Details, the
+   selection header carries the name in 15/600 white over an 11 px type line,
+   the Outliner has no project row, and the open agent shows Details | Agent
+   tabs. */
+const readSelection = () => evaluate(`(() => {
+	const head = document.querySelector('.inspector-pane .details-panel-head');
+	const box = document.querySelector('.inspector-pane [data-testid="details-selection"]');
+	const name = box?.querySelector('.details-selection-name');
+	const type = box?.querySelector('.details-selection-type');
+	const style = (node) => node ? { size: getComputedStyle(node).fontSize, weight: getComputedStyle(node).fontWeight, color: getComputedStyle(node).color } : null;
+	return {
+		title: head?.querySelector('.details-panel-title')?.textContent.trim() ?? null,
+		headHeight: head?.getBoundingClientRect().height ?? null,
+		inspectorHeading: [...document.querySelectorAll('.inspector-sidebar .inspector-heading strong')].some((node) => node.textContent.trim() === 'Inspector'),
+		name: name?.textContent.trim() ?? null,
+		type: type?.textContent.trim() ?? null,
+		nameStyle: style(name),
+		typeStyle: style(type),
+	};
+})()`);
+const selectRow = async (nodeId, condition) => {
+	await subscribe(condition);
+	await evaluate(`document.querySelector('[data-node-id="${nodeId}"] .hierarchy-row').click(); true`);
+	return resolveSubscribed();
+};
+const cubeHeader = await readSelection();
+expect("the Details panel head reads Details at 36 px, with no Inspector heading", cubeHeader.title === "Details" && cubeHeader.headHeight === 36 && !cubeHeader.inspectorHeading, JSON.stringify(cubeHeader));
+expect("the cube's selection header reads Cube / Prop · Mesh", cubeHeader.name === "Cube" && cubeHeader.type === "Prop · Mesh", JSON.stringify(cubeHeader));
+expect("the selection name is 15px/600 white", cubeHeader.nameStyle?.size === "15px" && cubeHeader.nameStyle.weight === "600" && cubeHeader.nameStyle.color === "rgb(255, 255, 255)", JSON.stringify(cubeHeader.nameStyle));
+expect("the selection type line is 11px #636369", cubeHeader.typeStyle?.size === "11px" && cubeHeader.typeStyle.color === "rgb(99, 99, 105)", JSON.stringify(cubeHeader.typeStyle));
+const outlinerTop = await evaluate(`(() => {
+	const column = document.querySelector('.hierarchy-left');
+	const head = column?.querySelector('.v2-outliner .hierarchy-heading');
+	return {
+		projectRow: !!column?.querySelector('.hierarchy-project, .hierarchy-project-label'),
+		first: column?.firstElementChild?.className ?? null,
+		headHeight: head?.getBoundingClientRect().height ?? null,
+		count: head?.querySelector('[data-testid="outliner-count"]')?.textContent.trim() ?? null,
+	};
+})()`);
+expect("the Outliner has no project row and keeps its 36 px head with a count", !outlinerTop.projectRow && outlinerTop.headHeight === 36 && /^\d+$/.test(outlinerTop.count ?? ""), JSON.stringify(outlinerTop));
+await screenshot("task-22-cube");
+
+expect("selecting Character 1 retitles the header", await selectRow("characterA", "document.querySelector('.inspector-pane .details-selection-name')?.textContent.trim() === 'Character 1'"));
+const characterHeader = await readSelection();
+expect("the character type line names its rig", /^Character · \S/.test(characterHeader.type ?? ""), JSON.stringify(characterHeader));
+await screenshot("task-22-character");
+
+expect("selecting the Camera retitles the header", await selectRow("camera", "document.querySelector('.inspector-pane .details-selection-name')?.textContent.trim() === 'Camera'"));
+const cameraHeader = await readSelection();
+expect("the camera type line carries the focal length", /^Camera · \d+mm$/.test(cameraHeader.type ?? ""), JSON.stringify(cameraHeader));
+await screenshot("task-22-camera");
+
+await subscribe("document.querySelector('.studio-agent-inspector')?.hidden === false");
+await evaluate("window.dispatchEvent(new CustomEvent('cozyclay:agent-panel-toggle')); true");
+expect("the agent toggle opens the agent pane", await resolveSubscribed());
+const agentTabs = await evaluate(`[...document.querySelectorAll('.studio-agent-inspector .details-panel-head[role="tablist"] [role="tab"]')]
+	.map((tab) => ({ text: tab.textContent.trim(), selected: tab.getAttribute('aria-selected') }))`);
+expect("the open agent shows Details | Agent tabs with Agent selected", JSON.stringify(agentTabs) === JSON.stringify([{ text: "Details", selected: "false" }, { text: "Agent", selected: "true" }]), JSON.stringify(agentTabs));
+await screenshot("task-22-agent-tabs");
+await subscribe("document.querySelector('.studio-agent-inspector')?.hidden === true && document.querySelector('.inspector-pane')?.hidden === false");
+await evaluate("document.querySelector('.studio-agent-inspector [role=\"tab\"][aria-selected=\"false\"]').click(); true");
+expect("the Details tab closes the agent and returns to Details", await resolveSubscribed());
+
 /* The reference is rendered by the same QA browser, so this second capture is
    the direct visual comparison source used in the PR evidence. */
 const referenceLoaded = new Promise((resolve) => {
@@ -254,7 +318,12 @@ const artifact = {
 	moved,
 	reverted,
 	revertedInput,
-	screenshots: [`${out}/task-12-props-add.png`, `${out}/task-12-details.png`, `${out}/task-12-compare.png`],
+	cubeHeader,
+	characterHeader,
+	cameraHeader,
+	outlinerTop,
+	agentTabs,
+	screenshots: [`${out}/task-12-props-add.png`, `${out}/task-12-details.png`, `${out}/task-22-cube.png`, `${out}/task-22-character.png`, `${out}/task-22-camera.png`, `${out}/task-22-agent-tabs.png`, `${out}/task-12-compare.png`],
 	pageErrors,
 	consoleErrors,
 	failures,

@@ -1,6 +1,7 @@
 import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
-import { sceneObjectNameDisplayKo, HIERARCHY_INSPECTOR_TITLES } from "../app-stage.jsx";
+import { sceneObjectNameDisplayKo, HIERARCHY_INSPECTOR_TITLES, CHARACTER_MODEL_LABELS } from "../app-stage.jsx";
+import { CUTOUT_KIND } from "../scene-objects.js";
 import LightPanel from "../panels/LightPanel.jsx";
 import CameraPanel from "../panels/CameraPanel.jsx";
 import SubjectsPanel from "../panels/SubjectsPanel.jsx";
@@ -16,6 +17,41 @@ import ObjectTransformPanel from "../panels/ObjectTransformPanel.jsx";
 import { ASSET_IMAGE_TYPES } from "../scene-assets.js";
 import { PoseStudioPanel } from "../posestudio.jsx";
 import { DEFAULT_POSE } from "../poses.js";
+import "../panels/details.css";
+
+const characterIndexForRow = (rowId, characters) => rowId === "characterA" ? 0
+	: rowId === "characterB" ? 1
+		: characters.findIndex((entry) => `character:${entry.id}` === rowId);
+const characterTitle = (index) => ko(`Character ${index + 1}`, `인물 ${index + 1}`);
+
+/** The 2a selection header: the selected item's name and a "Kind · detail"
+ * type line. Null when nothing that owns settings is selected. */
+function detailsSelection({ selectedHierarchyId: id, selectedSceneObject, rigSelection, characters, shot, inspectorHasContent }) {
+	if (!inspectorHasContent) return null;
+	if (selectedSceneObject) {
+		const kind = selectedSceneObject.renderer === CUTOUT_KIND ? ko("Cutout", "컷아웃") : ko("Mesh", "메시");
+		return { name: sceneObjectNameDisplayKo(selectedSceneObject.name), type: `${ko("Prop", "소품")} · ${kind}` };
+	}
+	if (rigSelection) {
+		const index = characterIndexForRow(rigSelection.rowId, characters);
+		const kind = rigSelection.token === "rig" ? ko("Rig", "리그") : ko("Bone", "본");
+		return { name: HIERARCHY_INSPECTOR_TITLES[rigSelection.token] ?? kind, type: index >= 0 ? `${kind} · ${characterTitle(index)}` : kind };
+	}
+	if (id === "camera") return { name: HIERARCHY_INSPECTOR_TITLES.camera, type: `${ko("Camera", "카메라")} · ${shot.focalMm}mm` };
+	if (id === "characterA" || id === "characterB" || id.startsWith("character:")) {
+		const index = characterIndexForRow(id, characters);
+		const model = CHARACTER_MODEL_LABELS[characters[index]?.model];
+		return { name: characterTitle(Math.max(index, 0)), type: model ? `${ko("Character", "인물")} · ${model}` : ko("Character", "인물") };
+	}
+	const types = {
+		shot: ko("Scene", "장면"),
+		light: ko("Light", "조명"),
+		characters: ko("Folder", "폴더"),
+		environment: ko("Environment", "환경"),
+		props: ko("Folder", "폴더"),
+	};
+	return { name: HIERARCHY_INSPECTOR_TITLES[id] ?? ko("Selection", "선택 항목"), type: types[id] ?? "" };
+}
 
 export default function DetailsSlot() {
 	const {
@@ -64,6 +100,7 @@ export default function DetailsSlot() {
 		studioPick, posingClosing, closeStudio, castDomain, setToast,
 		savePose,
 	} = useStudioShell();
+	const selection = detailsSelection({ selectedHierarchyId, selectedSceneObject, rigSelection, characters, shot, inspectorHasContent });
 	return (
 		<aside className="panel hierarchy-sidebar inspector-sidebar" data-inspector={selectedHierarchyId}>
 			{/* Save failures live above the tab content, not inside the Props
@@ -81,17 +118,21 @@ export default function DetailsSlot() {
 			)}
 			{studioAgentError && <p className="scene-save-error" role="alert">{studioAgentError}</p>}
 			{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
-				<div className="inspector-heading"><strong>{ko("Agent", "에이전트")}</strong><button type="button" className="inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Inspector", "속성")}</button></div>
+				{/* G9: with the agent open the panel head is a Details | Agent tab
+				    strip; the Details tab closes the agent exactly as before. */}
+				<div className="inspector-heading details-panel-head" role="tablist" aria-label={ko("Details and Agent", "세부 정보와 에이전트")}>
+					<button type="button" role="tab" aria-selected="false" className="details-panel-tab inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Details", "세부 정보")}</button>
+					<button type="button" role="tab" aria-selected="true" className="details-panel-tab">{ko("Agent", "에이전트")}</button>
+				</div>
 				<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
 					sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
 					buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
 					onFalAction={(instruction) => void generateFalMotionFromUi(instruction)} />
 			</div>}
 			<section className="inspector-pane" hidden={studioAgentMode}>
-			<div className="inspector-heading">
-				<strong>{ko("Inspector", "속성")}</strong>
+			<div className="inspector-heading details-panel-head">
+				<strong className="details-panel-title">{ko("Details", "세부 정보")}</strong>
 				<button type="button" className="inspector-agent-switch" aria-pressed={studioAgentMode} onClick={() => setStudioAgentMode(true)}>{ko("Agent", "에이전트")}</button>
-				<span className="inspector-heading-selection">{selectedSceneObject ? sceneObjectNameDisplayKo(selectedSceneObject.name) : HIERARCHY_INSPECTOR_TITLES[rigSelection?.token ?? selectedHierarchyId] ?? ko("Selection", "선택 항목")}</span>
 				{selectedSceneObject && (
 					<div className="inspector-actions-wrap">
 						<button
@@ -116,6 +157,12 @@ export default function DetailsSlot() {
 					</div>
 				)}
 			</div>
+			{selection && (
+				<div className="details-selection" data-testid="details-selection">
+					<span className="details-selection-name inspector-heading-selection">{selection.name}</span>
+					{selection.type && <span className="details-selection-type">{selection.type}</span>}
+				</div>
+			)}
 			<div className="inspector-scroll">
 		{/* Nothing is selected that owns settings — say so rather than
 		    showing an empty column the user has to interpret. */}

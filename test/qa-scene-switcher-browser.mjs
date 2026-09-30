@@ -120,7 +120,7 @@ await evaluate(`(() => {
 })()`);
 await send("Page.reload");
 expect("the studio comes up", await waitFor("!!window.__cozyclay?.rigA", 60_000));
-expect("the hierarchy column carries no second Projects… button", await evaluate(`![...document.querySelectorAll(".hierarchy-project button")].length`));
+expect("the hierarchy column carries no second Projects… button", await evaluate(`![...document.querySelectorAll(".hierarchy-left button")].some((button) => /Projects/.test(button.textContent))`));
 expect("the tree root row carries the scene pill", await waitFor(`!!document.querySelector("${PILL}")`));
 expect("the pill says which scene is open", await pillLabel() === "SCENE 01", String(await pillLabel()));
 expect("the pill announces itself as the scene selector", await evaluate(`document.querySelector("${PILL}").getAttribute("aria-label")`) === "Select scene");
