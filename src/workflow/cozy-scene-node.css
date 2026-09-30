@@ -1,3 +1,4 @@
+@layer legacy {
 .cozy-scene-node {
 	position: relative;
 	width: 318px;
@@ -61,3 +62,4 @@
 .cozy-scene-reactflow-handle-motion { top: 115px !important; }
 .cozy-scene-reactflow-handle-render { top: 108px !important; }
 .cozy-scene-reactflow-handle-scene { top: 140px !important; }
+}

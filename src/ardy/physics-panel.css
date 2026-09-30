@@ -1,3 +1,4 @@
+@layer legacy {
 .physics-review { border-top: 1px solid var(--border, #40444c); margin-top: 12px; padding-top: 12px; }
 .physics-review h4 { margin: 0 0 8px; font-size: 13px; }
 .physics-review h4 small { font-weight: 400; opacity: .7; }
@@ -17,3 +18,4 @@
 .physics-review th:first-child, .physics-review td:first-child { text-align: left; }
 .physics-list { max-height: 170px; overflow: auto; }
 .physics-warning { padding: 8px; border: 1px solid #cc924e; border-radius: 5px; font-size: 11px; margin-top: 8px; }
+}

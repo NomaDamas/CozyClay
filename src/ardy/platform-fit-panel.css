@@ -1,3 +1,4 @@
+@layer legacy {
 /* Inspector scale: 4 px spacing, 13 px section headings, shared flat buttons.
    Success matches the existing completed-guide marker; warning/error use theme tokens. */
 .platform-fit {
@@ -58,4 +59,6 @@
 	display: block;
 	margin: var(--platform-fit-space) 0 0;
 	font-weight: normal;
+}
+
 }

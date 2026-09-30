@@ -92,7 +92,9 @@ expect(
 	"letterbox bars are painted in the editor's tone, not the sky",
 	dualview.includes('export const LETTERBOX = new THREE.Color("#1e1e1e");') &&
 	dualview.includes("gl.setClearColor(LETTERBOX, 1);") &&
-	css.includes("--bg: #1e1e1e"),
+	// v2 tokens: the editor background is --bg (mapped to --surface-0); the
+	// letterbox keeps the viewport tone the renderer clears with.
+	css.includes("--bg: var(--surface-0)"),
 );
 expect(
 	"the scene draw is scissored to the image so the bars survive it",

@@ -62,6 +62,7 @@ const NODE_FILES = [
 	"test/ardy/verify-motion-cors.mjs",
 	"test/ardy/verify-timeline-coordinates.mjs",
 	"test/ardy/verify-timeline-resize.mjs",
+	"test/verify-tokens.mjs",
 	"test/demo/verify-demo-pages.mjs",
 	"test/demo/verify-motion-api.mjs",
 	"test/demo/verify-motion-url-allowlist.mjs",
