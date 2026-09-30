@@ -1,0 +1,435 @@
+/* v2 top bar, menus and status bar (2a R-top / R-status, G7, G8). Region
+   geometry that has no global token is named once here, beside the values of
+   docs/design/v2-reference.html it reproduces. */
+@layer regions {
+	.v2-topbar,
+	.v2-statusbar,
+	.menubar-menu,
+	.menubar-dialog-backdrop {
+		--topbar-swatch-size: 20px;
+		--topbar-swatch: #cdb8a2;
+		--topbar-dot: 6px;
+		--topbar-primary-height: 30px;
+		--topbar-primary-pad: 14px;
+		--topbar-caret-width: 22px;
+		--menubar-trigger-pad: 5px 8px;
+		--menubar-trigger-line: 16px;
+		--menu-pad: 4px;
+		--menu-width: 220px;
+		--menu-shadow: 0 8px 24px rgba(0, 0, 0, .45);
+		--ui-size: 12px;
+		--secondary-size: 11px;
+		--status-size: 10.5px;
+		--status-button-height: 18px;
+		--status-progress-width: 56px;
+		--status-progress-height: 4px;
+	}
+
+	/* ---------------------------------------------------------- top bar */
+	.app:not([data-embed-mode]) .v2-topbar {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-3, 16px);
+		padding: 0 var(--sp-2, 12px);
+		color: var(--text-1, #e4e4e7);
+		font-family: var(--sans);
+		font-size: var(--ui-size);
+	}
+	.v2-topbar .topbar-project {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: 10px;
+		min-width: 0;
+	}
+	.v2-topbar .topbar-swatch {
+		flex: none;
+		width: var(--topbar-swatch-size);
+		height: var(--topbar-swatch-size);
+		border-radius: var(--r-2, 6px);
+		background: var(--topbar-swatch);
+	}
+	/* The project name is the project menu's trigger: plain name, dirty dot after.
+	   The trigger's 8px inline padding (details.css) is pulled back so the
+	   name sits 10px after the swatch, as in 2a. */
+	.v2-topbar .project-menu-wrap { margin: 0 0 0 -8px; }
+	.v2-topbar .project-menu-trigger {
+		gap: 10px;
+		max-width: 240px;
+		padding: 0 4px;
+		font-weight: 600;
+	}
+	.v2-topbar .project-menu-trigger .project-dirty-dot { order: 1; }
+	.v2-topbar .project-menu-trigger .caret { display: none; }
+	.v2-topbar .topbar-spacer { flex: 1 1 auto; min-width: 0; }
+
+	.v2-topbar .topbar-mcp {
+		display: inline-flex;
+		flex: 0 1 auto;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		min-width: 0;
+		max-width: none;
+		overflow: hidden;
+		color: var(--text-2, #9b9ba1);
+		font-size: var(--secondary-size);
+		white-space: nowrap;
+	}
+	.v2-topbar .topbar-mcp-dot {
+		flex: none;
+		width: var(--topbar-dot);
+		height: var(--topbar-dot);
+		border-radius: 50%;
+		background: var(--text-off, #4f4f55);
+	}
+	.v2-topbar .topbar-mcp[data-state="connected"] .topbar-mcp-dot { background: var(--ok, #4fbf7a); }
+	.v2-topbar .topbar-mcp-text { overflow: hidden; text-overflow: ellipsis; }
+
+	/* Generate Motion: the one violet primary, with its caret joined on. */
+	.v2-topbar .topbar-generate { display: flex; flex: none; }
+	.v2-topbar .topbar-generate button {
+		height: var(--topbar-primary-height);
+		border: 0;
+		background: var(--primary, #7258a0);
+		color: var(--text-selected, #fff);
+		font: 500 var(--ui-size) var(--sans);
+		cursor: pointer;
+	}
+	.v2-topbar .topbar-generate-main {
+		padding: 0 var(--topbar-primary-pad);
+		border-radius: var(--r-1, 4px) 0 0 var(--r-1, 4px);
+		white-space: nowrap;
+	}
+	.v2-topbar .topbar-generate-caret {
+		display: grid;
+		place-items: center;
+		width: var(--topbar-caret-width);
+		padding: 0;
+		border-radius: 0 var(--r-1, 4px) var(--r-1, 4px) 0;
+		box-shadow: inset 1px 0 0 var(--surface-bar, #121214);
+	}
+	.v2-topbar .topbar-generate-caret svg,
+	.menubar-dialog-close svg {
+		width: 12px;
+		height: 12px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.5;
+		stroke-linecap: round;
+		stroke-linejoin: round;
+	}
+	.v2-topbar .topbar-generate button:hover,
+	.v2-topbar .topbar-generate-caret[aria-expanded="true"] {
+		background: color-mix(in srgb, var(--primary, #7258a0) 86%, var(--text-selected, #fff));
+	}
+	.v2-topbar .topbar-generate-main[aria-disabled="true"] { color: color-mix(in srgb, var(--text-selected, #fff) 62%, transparent); }
+	.v2-topbar .topbar-generate button:focus-visible,
+	.v2-topbar .menubar-trigger:focus-visible {
+		outline: 1px solid var(--select, #e8a33d);
+		outline-offset: 1px;
+	}
+	.v2-topbar .topbar-generate-short { display: none; }
+
+	/* ---------------------------------------------------------- menu bar */
+	.v2-topbar .menubar {
+		display: flex;
+		flex: none;
+		align-items: center;
+		gap: 2px;
+	}
+	.v2-topbar .menubar-slot { position: relative; display: flex; }
+	.v2-topbar .menubar-trigger {
+		padding: var(--menubar-trigger-pad);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: transparent;
+		color: var(--text-2, #9b9ba1);
+		font: 400 var(--ui-size) / var(--menubar-trigger-line) var(--sans);
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.v2-topbar .menubar-trigger:hover,
+	.v2-topbar .menubar-trigger[aria-expanded="true"] {
+		background: var(--surface-raised, #1e1e21);
+		color: var(--text-1, #e4e4e7);
+	}
+
+	/* Edit › Preferences… opens the Preferences dialog (a body portal). The
+	   Settings trigger that owns it stays mounted for its state and focus
+	   contract, but it is not part of the 2a bar. */
+	.v2-topbar .menubar-preferences-host {
+		position: absolute;
+		inset: 0 auto 0 0;
+		display: flex;
+	}
+	.v2-topbar .menubar-preferences-host .settings-menu-wrap { position: static; }
+	.v2-topbar .menubar-preferences-host .settings-menu-trigger { display: none; }
+
+	/* ---------------------------------------------------- menu popovers */
+	.menubar-menu {
+		box-sizing: border-box;
+		z-index: 90;
+		display: flex;
+		flex-direction: column;
+		min-width: var(--menu-width);
+		width: max-content;
+		max-width: calc(100vw - 16px);
+		padding: var(--menu-pad);
+		overflow-y: auto;
+		border: 1px solid var(--row-divider, #1d1d20);
+		border-radius: var(--r-2, 6px);
+		background: var(--surface-raised, #1e1e21);
+		box-shadow: var(--menu-shadow);
+		color: var(--text-1, #e4e4e7);
+		font-family: var(--sans);
+		font-size: var(--ui-size);
+		outline: none;
+	}
+	.menubar-menu .export-menu-wrap { display: contents; }
+	.menubar-menu .menubar-item,
+	.menubar-menu.export-menu .menubar-item {
+		box-sizing: border-box;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 0 var(--sp-3, 16px);
+		width: 100%;
+		min-height: var(--h-control, 28px);
+		padding: 0 var(--sp-1, 8px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: transparent;
+		color: var(--text-1, #e4e4e7);
+		font: 400 var(--ui-size) / 1.2 var(--sans);
+		text-align: left;
+		text-decoration: none;
+		cursor: pointer;
+	}
+	.menubar-menu .menubar-item:hover:not(:disabled),
+	.menubar-menu .menubar-item:focus-visible,
+	.menubar-menu .menubar-item[aria-expanded="true"] {
+		background: var(--surface-active, #26262a);
+		outline: none;
+	}
+	.menubar-menu .menubar-item:disabled,
+	.menubar-menu .menubar-item[aria-disabled="true"] {
+		opacity: 1;
+		color: var(--text-off, #4f4f55);
+		background: transparent;
+		cursor: default;
+	}
+	.menubar-menu .menubar-item-label { flex: 1 1 auto; }
+	.menubar-menu .menubar-item-key,
+	.menubar-menu .menubar-item-sub {
+		flex: none;
+		margin-left: auto;
+		color: var(--text-3, #636369);
+		font: 400 var(--secondary-size) var(--mono);
+	}
+	.menubar-menu .menubar-item-reason {
+		flex: 1 0 100%;
+		padding-bottom: 4px;
+		color: var(--text-3, #636369);
+		font-size: var(--secondary-size);
+		white-space: normal;
+	}
+	.menubar-menu [role="menuitemcheckbox"]::before {
+		content: "";
+		width: 12px;
+		margin-right: calc(var(--sp-1, 8px) - var(--sp-3, 16px));
+		color: var(--select, #e8a33d);
+	}
+	.menubar-menu [role="menuitemcheckbox"][aria-checked="true"]::before { content: "✓"; }
+	.menubar-menu .menubar-separator {
+		width: 100%;
+		height: 1px;
+		margin: var(--menu-pad) 0;
+		border: 0;
+		background: var(--row-divider, #1d1d20);
+	}
+	.menubar-menu.export-menu {
+		z-index: 91;
+		width: max-content;
+		min-width: var(--menu-width);
+	}
+	.menubar-menu.export-menu .export-menu-primary { font-weight: 500; }
+	.menubar-menu.export-menu .export-menu-hint {
+		max-width: var(--menu-width);
+		margin: var(--menu-pad) 0 0;
+		padding: 6px var(--sp-1, 8px) 2px;
+		border-top: 1px solid var(--row-divider, #1d1d20);
+		color: var(--text-3, #636369);
+		font-size: var(--secondary-size);
+		line-height: 1.4;
+	}
+
+	/* --------------------------------------------- Help dialogs (G8) */
+	.menubar-dialog-backdrop {
+		position: fixed;
+		inset: 0;
+		z-index: 95;
+		display: grid;
+		place-items: center;
+		padding: var(--sp-3, 16px);
+		background: var(--overlay, rgba(12, 12, 13, .78));
+	}
+	.menubar-dialog {
+		box-sizing: border-box;
+		width: min(420px, 100%);
+		max-height: 100%;
+		overflow-y: auto;
+		border-radius: var(--r-2, 6px);
+		background: var(--surface-panel, #151517);
+		box-shadow: var(--menu-shadow);
+		color: var(--text-1, #e4e4e7);
+		font: 400 var(--ui-size) var(--sans);
+	}
+	.menubar-dialog-head {
+		display: flex;
+		align-items: center;
+		height: 36px;
+		padding: 0 var(--sp-1, 8px) 0 var(--sp-2, 12px);
+		background: var(--surface-bar, #121214);
+	}
+	.menubar-dialog-head h2 { flex: 1; margin: 0; font-size: 15px; font-weight: 600; }
+	.menubar-dialog-close {
+		display: grid;
+		place-items: center;
+		width: var(--h-row, 24px);
+		height: var(--h-row, 24px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: transparent;
+		color: var(--text-2, #9b9ba1);
+		cursor: pointer;
+	}
+	.menubar-dialog-close:hover { background: var(--surface-raised, #1e1e21); color: var(--text-1, #e4e4e7); }
+	.menubar-dialog-body { margin: 0; padding: var(--sp-2, 12px); }
+	.menubar-dialog-body p { margin: 0 0 var(--sp-1, 8px); color: var(--text-2, #9b9ba1); }
+	.menubar-dialog-meta { font-family: var(--mono); font-size: var(--secondary-size); }
+	.menubar-dialog-body .source-offer { margin: 0; color: var(--camera, #a78bfa); font-size: var(--secondary-size); }
+	.menubar-shortcut {
+		display: flex;
+		align-items: center;
+		min-height: var(--h-row, 24px);
+		border-bottom: 1px solid var(--row-divider, #1d1d20);
+	}
+	.menubar-shortcut:last-child { border-bottom: 0; }
+	.menubar-shortcut dt { flex: 1; color: var(--text-row, #c9c9ce); }
+	.menubar-shortcut dd { margin: 0; }
+	.menubar-shortcut kbd {
+		padding: 1px 6px;
+		border-radius: var(--r-1, 4px);
+		background: var(--field, #0f0f11);
+		color: var(--text-2, #9b9ba1);
+		font: 400 var(--secondary-size) var(--mono);
+	}
+
+	/* -------------------------------------------------------- status bar */
+	.app:not([data-embed-mode]) .v2-statusbar {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-3, 16px);
+		min-width: 0;
+		padding: 0 var(--sp-2, 12px);
+		color: var(--text-3, #636369);
+		font: 400 var(--status-size) var(--mono);
+		white-space: nowrap;
+	}
+	.v2-statusbar .statusbar-left {
+		display: flex;
+		flex: 1 1 auto;
+		align-items: center;
+		min-width: 0;
+	}
+	.v2-statusbar .statusbar-text { overflow: hidden; text-overflow: ellipsis; }
+	.v2-statusbar .statusbar-fps,
+	.v2-statusbar .project-save-status {
+		flex: none;
+		min-width: 0;
+		color: var(--text-3, #636369);
+		font-size: var(--status-size);
+	}
+	.v2-statusbar .project-save-status.status-dirty,
+	.v2-statusbar .project-save-status.status-error { color: var(--select, #e8a33d); }
+	.v2-statusbar .source-offer {
+		flex: none;
+		margin: 0;
+		color: var(--text-3, #636369);
+		font-size: var(--status-size);
+	}
+	.v2-statusbar .source-offer:hover,
+	.v2-statusbar .source-offer:focus-visible { color: var(--text-2, #9b9ba1); }
+
+	/* Export progress, retry and cancel take the status text slot (G7). */
+	.v2-statusbar .export-status {
+		display: flex;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		min-width: 0;
+		margin: 0;
+		padding: 0;
+		overflow: hidden;
+		border: 0;
+		color: var(--text-2, #9b9ba1);
+		font: 400 var(--secondary-size) / 1 var(--mono);
+		overflow-wrap: normal;
+	}
+	.v2-statusbar .export-status strong {
+		display: block;
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		color: var(--text-1, #e4e4e7);
+		font-weight: 500;
+		text-overflow: ellipsis;
+	}
+	.v2-statusbar .export-status[data-phase="failed"] strong { color: var(--danger, #e5484d); }
+	.v2-statusbar .export-status[data-phase="completed"] strong { color: var(--ok, #4fbf7a); }
+	.v2-statusbar .export-status progress {
+		flex: none;
+		width: var(--status-progress-width);
+		height: var(--status-progress-height);
+		margin: 0;
+		accent-color: var(--select, #e8a33d);
+	}
+	.v2-statusbar .statusbar-export-count { flex: none; }
+	.v2-statusbar .statusbar-export-message {
+		flex: 0 1 auto;
+		min-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.v2-statusbar .statusbar-action {
+		flex: none;
+		height: var(--status-button-height);
+		padding: 0 var(--sp-1, 8px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: var(--surface-raised, #1e1e21);
+		color: var(--text-1, #e4e4e7);
+		font: 500 var(--secondary-size) var(--sans);
+		cursor: pointer;
+	}
+	.v2-statusbar .statusbar-action:hover:not(:disabled) { background: var(--surface-active, #26262a); }
+	.v2-statusbar .statusbar-action:disabled { color: var(--text-off, #4f4f55); cursor: default; }
+
+	/* ------------------------------------------------ narrow windows (G11) */
+	@media (max-width: 720px) {
+		.app:not([data-embed-mode]) .v2-topbar { gap: var(--sp-1, 8px); }
+		.v2-topbar .topbar-mcp-text { display: none; }
+		.v2-topbar .project-menu-trigger { max-width: 96px; }
+		.v2-topbar { --menubar-trigger-pad: 5px 6px; }
+		.v2-statusbar .statusbar-fps { display: none; }
+	}
+	@media (max-width: 520px) {
+		.app:not([data-embed-mode]) .v2-topbar { padding: 0 var(--sp-1, 8px); }
+		.v2-topbar .project-menu-wrap,
+		.v2-topbar .topbar-mcp { display: none; }
+		.v2-topbar .topbar-generate-full { display: none; }
+		.v2-topbar .topbar-generate-short { display: inline; }
+		.v2-statusbar .source-offer,
+		.v2-statusbar .export-status progress { display: none; }
+		.app:not([data-embed-mode]) .v2-statusbar { gap: var(--sp-1, 8px); padding: 0 var(--sp-1, 8px); }
+	}
+}

@@ -84,7 +84,11 @@ await evaluate(`(() => {
 await send("Page.navigate", { url: `${origin}/app/` });
 expect("the keyless static shot loads", await waitFor("!!window.__cozyclay?.rigA && !!document.querySelector('.tl-shot-block')"));
 expect("the project has no motion, so the timeline extent would fall back to 360", (await evaluate("window.__cozyclay.motion ?? null")) === null);
-expect("the topbar Export trigger is enabled anyway", (await evaluate("document.querySelector('[data-testid=topbar-export]').disabled")) === false);
+// #523: Export is File › Export ▸ in the top bar.
+await evaluate("document.querySelector('[data-testid=menu-file]').click()");
+expect("File › Export opens", await waitFor("!!document.querySelector('[data-testid=topbar-export]')", 5000));
+expect("the File › Export trigger is enabled anyway", (await evaluate("document.querySelector('[data-testid=topbar-export]').disabled")) === false);
+await evaluate("document.querySelector('[data-testid=menu-file]').click()");
 
 // The Export menu's Video item, minus the file download (same closure).
 const result = await evaluate("window.__cozyclay.exportShotVideo({ download: false })");
@@ -97,7 +101,7 @@ expect("the preflight materialized one framing key on the shot", await waitFor(
 	"JSON.parse(localStorage.getItem('cozyclay.scenes.v4')).scenes[0].shotDocument.shots[0].cameraKeys.length === 1",
 	10000,
 ));
-expect("the export leaves the recorder idle", await waitFor("!document.querySelector('[data-testid=topbar-export].recording')", 5000));
+expect("the export leaves the recorder idle", await waitFor("document.querySelector('.topbar')?.dataset.recState !== 'recording'", 5000));
 expect("browser run has no uncaught page errors", pageErrors.length === 0, pageErrors.join(" | "));
 
 ws.close();

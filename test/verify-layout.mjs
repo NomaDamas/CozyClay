@@ -77,10 +77,10 @@ expect(
 	!css.includes(".viewport-readout"),
 );
 expect(
-	"one topbar Export menu leads with the keyframe pack",
+	"one File › Export menu leads with the keyframe pack",
 	app.includes('data-testid="topbar-export"') &&
 	app.includes('id="export-menu-trigger"') &&
-	app.includes('className="export-menu-primary"') &&
+	app.includes('className="menubar-item export-menu-primary"') &&
 	app.includes('data-testid="export-video"') &&
 	app.includes('data-testid="export-otio"'),
 );
@@ -344,8 +344,8 @@ expect(
 	!app.includes("advanced-toggle") && !app.includes("cozyclay.advanced"),
 );
 expect(
-	"the Studio topbar returns to Workflow",
-	app.includes('className="topbar-action workflow-topbar-link" href="/workflow/"'),
+	"the Studio's Window menu returns to Workflow",
+	app.includes('className="menubar-item workflow-topbar-link" href="/workflow/"'),
 );
 expect(
 	"expert foldouts stay enabled in the always-advanced Studio",

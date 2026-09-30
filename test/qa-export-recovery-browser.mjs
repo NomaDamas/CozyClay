@@ -88,9 +88,18 @@ async function click(selector, { modifiers = 0, disabled = false } = {}) {
 	})()`);
 	for (const type of ["mousePressed", "mouseReleased"]) await send("Input.dispatchMouseEvent", { type, ...box, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1, modifiers });
 }
+// #523: Export is File › Export ▸. Opening walks File then Export; closing
+// clicks File again, which dismisses File and its Export flyout together.
 async function menu(open = true) {
 	if (await evaluate("!!document.querySelector('.export-menu')") === open) return;
-	await changeAndWait(`!!document.querySelector('.export-menu') === ${open}`, () => click("#export-menu-trigger"), `Export menu ${open ? "open" : "closed"}`);
+	if (!open) {
+		await changeAndWait("!document.querySelector('.menubar-menu')", () => click("[data-testid=menu-file]"), "File menu closed");
+		return;
+	}
+	if (!await evaluate("!!document.querySelector('#export-menu-trigger')")) {
+		await changeAndWait("!!document.querySelector('#export-menu-trigger')", () => click("[data-testid=menu-file]"), "File menu open");
+	}
+	await changeAndWait("!!document.querySelector('.export-menu')", () => click("#export-menu-trigger"), "Export menu open");
 }
 async function exportMenu(testid, modifiers = 0) {
 	await menu();
@@ -398,7 +407,7 @@ async function arm(label) {
 }
 async function finish(attempt, contract, count = 0) {
 	await evaluate("window.__qaRecovery.terminal");
-	await wait("!document.querySelector('#export-menu-trigger.recording')", "export renderer returned idle");
+	await wait("document.querySelector('.topbar')?.dataset.recState !== 'recording'", "export renderer returned idle");
 	const result = assertAttempt(telemetry.slice(attempt.eventOffset), contract);
 	const files = await handoffs(attempt.label, attempt.downloadOffset, count, contract.format);
 	pass(attempt.label, { ...result, files });
