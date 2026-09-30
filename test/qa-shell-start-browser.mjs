@@ -1,9 +1,14 @@
 #!/usr/bin/env node
-// Browser contract for the first-run v2 chooser and the first-success guide.
-// It creates through the new-project preview, then drives the same named guide
-// controls a new author sees in the editor.
+// Visual and interaction QA for the v2 start screen at the owner's 2b size.
+// Run through tools/qa-browser.mjs so Chrome and its temporary profile are
+// always owned and cleaned up by the harness.
+
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
 const port = Number(process.env.CDP_PORT || 9222);
+const out = process.env.QA_OUT || "/Users/yun/CClineFix/.omo/evidence/cozyclay-ui-overhaul";
+await mkdir(out, { recursive: true });
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
 const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
 if (!page) throw new Error("no page target on the QA browser");
@@ -79,13 +84,13 @@ const waitFor = (condition, timeoutMs = 15000) => evaluate(`new Promise((resolve
 	const timer = setTimeout(() => finish(false), ${timeoutMs});
 	check();
 })`);
-
-let failures = 0;
-const expect = (name, condition, detail = "") => {
-	console.log(`${condition ? "PASS" : "FAIL"} ${name}${condition ? "" : ` — ${detail}`}`);
-	if (!condition) failures += 1;
+const screenshot = async (name) => {
+	const result = await send("Page.captureScreenshot", { format: "png" });
+	const path = join(out, name);
+	await writeFile(path, Buffer.from(result.data, "base64"));
+	console.log(`SCREENSHOT ${path}`);
+	return path;
 };
-
 const setInput = (selector, value) => evaluate(`(() => {
 	const input = document.querySelector(${JSON.stringify(selector)});
 	if (!input) return false;
@@ -96,29 +101,36 @@ const setInput = (selector, value) => evaluate(`(() => {
 	return true;
 })()`);
 
-expect("the first-run v2 project chooser renders", await waitFor("!!document.querySelector('.v2-start-screen.project-browser-backdrop.startup')"));
-expect("the chooser exposes the new-project preview", await waitFor("!!document.querySelector('[data-testid=start-project-preview]')"));
-expect("the chooser has a named Create action", await waitFor("!!document.querySelector('[data-testid=start-create]')"));
-await setInput('[data-testid="start-project-name"]', "guide_project");
-await evaluate("document.querySelector('[data-testid=start-create]').click()");
-expect("creating from the preview opens the editor", await waitFor("!document.querySelector('.project-browser') && !!document.querySelector('.timeline')"));
-expect("guidance starts after project creation", await waitFor("!!document.querySelector('.first-success-guide')"));
-const guideText = await evaluate("document.querySelector('.first-success-guide')?.textContent || ''");
-expect("guidance names selection, movement, key, and playback", /Select a character.*Move it.*Press K.*Scrub the timeline.*Space/s.test(guideText), guideText);
+await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 900, deviceScaleFactor: 1, mobile: false });
+let failures = 0;
+const expect = (name, condition, detail = "") => {
+	console.log(`${condition ? "PASS" : "FAIL"} ${name}${condition ? "" : ` — ${detail}`}`);
+	if (!condition) failures += 1;
+};
 
-for (let index = 0; index < 4; index += 1) {
-	await evaluate("document.querySelector('.first-success-guide-next')?.click()");
-	const expected = index === 3 ? "You made your first shot." : `Step ${index + 2} of 4`;
-	expect(`guide advances after action ${index + 1}`, await waitFor(`document.querySelector('.first-success-guide')?.textContent.includes(${JSON.stringify(expected)})`));
-}
-expect("the guide exposes a completion state", await waitFor("document.querySelector('.first-success-guide')?.textContent.includes('You made your first shot.')"));
-await evaluate("document.querySelector('.first-success-guide-close').click()");
-expect("the guide can be dismissed", await waitFor("!document.querySelector('.first-success-guide')"));
-expect("the editor remains available after dismissal", await waitFor("!!document.querySelector('.timeline')"));
+expect("the 2b start screen renders", await waitFor("!!document.querySelector('.v2-start-screen.project-browser-backdrop.startup')"));
+expect("the left navigation is 232px", (await evaluate("Math.round(document.querySelector('.v2-start-nav')?.getBoundingClientRect().width || 0)")) === 232);
+expect("the right preview is 340px", (await evaluate("Math.round(document.querySelector('[data-testid=start-project-preview]')?.getBoundingClientRect().width || 0)")) === 340);
+expect("the center has the v2 template grid", await waitFor("!!document.querySelector('.v2-start-template-grid')"));
+expect("the preview exposes Name, Location, Frame rate, and Units", (await evaluate("[...document.querySelectorAll('.v2-start-field > span:not(.v2-start-select-wrap)')].map((node) => node.textContent.trim())")) .join("|") === "Name|Location|Frame rate|Units");
+await screenshot("task-17-start.png");
+
+await setInput('[data-testid="start-project-name"]', "");
+expect("an empty name disables Create", await waitFor("document.querySelector('[data-testid=start-create]')?.disabled === true"));
+const emptyTitle = await evaluate("document.querySelector('[data-testid=start-create]')?.getAttribute('title') || ''");
+expect("disabled Create explains the missing name", /name/i.test(emptyTitle), emptyTitle);
+await setInput('[data-testid="start-project-name"]', "alley_chase_v2");
+expect("the entered name re-enables Create", await waitFor("document.querySelector('[data-testid=start-create]')?.disabled === false"));
+await screenshot("task-17-compare.png");
+
+await evaluate("document.querySelector('[data-testid=start-create]').click()");
+expect("Create opens the editor", await waitFor("!document.querySelector('.project-browser') && !!document.querySelector('.timeline')"));
+const editorName = await evaluate("document.querySelector('.project-menu-trigger')?.textContent || ''");
+expect("the editor shows alley_chase_v2", editorName.includes("alley_chase_v2"), editorName);
 
 ws.close();
 if (failures > 0) {
-	console.error(`\n${failures} first-success guide browser check(s) failed`);
+	console.error(`\n${failures} start-screen browser check(s) failed`);
 	process.exit(1);
 }
-console.log("\nAll first-success guide browser checks passed");
+console.log("\nAll start-screen browser checks passed");

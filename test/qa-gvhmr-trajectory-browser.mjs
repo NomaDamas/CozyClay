@@ -19,11 +19,9 @@ await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1050, de
 // the project chooser is NOT a valid visual comparison.
 await send("Page.navigate", { url: "http://127.0.0.1:5180/app/" });
 await wait("!!window.__cozyclay?.rigA");
-if (await ev("!!document.querySelector('.project-browser.startup')")) {
-	await ev("[...document.querySelectorAll('.project-browser button')].find(b=>b.textContent==='New Project')?.click()");
-	await wait("!!document.querySelector('.project-name-dialog')");
-	await ev("document.querySelector('.project-name-dialog').requestSubmit()");
-	await wait("!document.querySelector('.project-browser-backdrop,.project-name-dialog-backdrop')");
+if (await ev("!!document.querySelector('.project-browser-backdrop.startup')")) {
+	await ev("document.querySelector('[data-testid=start-create]')?.click()");
+	await wait("!document.querySelector('.project-browser-backdrop.startup')");
 }
 const frames = (process.env.QA_FRAMES || "0,120,240,276,284,290,294,300,306,312,324,348").split(",").map(Number);
 const models = (process.env.QA_MODELS || "x-bot-tpose,y-bot-tpose").split(",");
