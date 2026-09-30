@@ -1,4 +1,4 @@
-import React, { useState, useSyncExternalStore } from "react";
+import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { SUPPORT_SITES } from "./physics-review.js";
 import { useMotionCommands } from '../domains/motion.js';
 import "./physics-panel.css";
@@ -26,8 +26,18 @@ export function PhysicsPanel({ ko, disabled, running, progress: progressStore, p
 	};
 	const cm = (x) => `${(x * 100).toFixed(2)} cm`;
 	const warning = (r) => ({ unsupported: ko("Unexplained body support", "몸을 지탱하는 접촉 미확인"), floor: ko("Floor penetration", "바닥 관통"), float: ko("Contact floats", "접지점 뜸"), slide: ko("Contact drift", "접지점 밀림"), "knee-pop": ko("Knee speed jump", "무릎 튐"), "knee-acceleration": ko("Knee acceleration increased", "무릎 가속도 증가"), "root-acceleration": ko("Root acceleration increased", "골반 가속도 증가"), replay: ko("Playback mismatch", "재생 불일치") }[r] ?? r);
-	return <section className="physics-review" data-testid="physics-panel" aria-label="AutoPhysics">
-		<h4>AutoPhysics <small>{ko("review before applying", "확인 후 적용")}</small></h4>
+	useEffect(() => {
+		if (!preview) return undefined;
+		const onKeyDown = (event) => {
+			if (event.metaKey || event.ctrlKey || event.altKey) return;
+			if (event.key === "Escape") { event.preventDefault(); onCancel?.(); }
+			if (event.key === "Enter") { event.preventDefault(); onApply?.(); }
+		};
+		window.addEventListener("keydown", onKeyDown);
+		return () => window.removeEventListener("keydown", onKeyDown);
+	}, [preview, onApply, onCancel]);
+	return <section className="physics-review" data-testid="physics-panel" aria-label={ko("Physics cleanup", "물리 정리")}>
+		<h4>{ko("Physics cleanup", "물리 정리")} <small>{ko("review before applying", "확인 후 적용")}</small></h4>
 		<p className="inspector-hint">{ko("Floor-support hypotheses → force + moment check → pelvis + limbs. Flight is preserved; uncertain support stays flagged. Original stays unchanged until Apply.", "바닥 지지 후보 → 힘·회전 검사 → 골반·팔다리를 보정합니다. 비행은 보존하고, 불명확한 지지는 표시해요. 적용 전까지 원본은 바뀌지 않아요.")}</p>
 		<fieldset disabled={disabled || running}>
 			<label>{ko("Correction strength", "보정 강도")} <output>{Math.round(options.strength * 100)}%</output>
@@ -72,7 +82,7 @@ export function PhysicsPanel({ ko, disabled, running, progress: progressStore, p
 				{!!preview.skippedAir?.length && <p>{ko(`${preview.skippedAir.length} flight spans skipped`, `공중 ${preview.skippedAir.length}구간 보류`)}</p>}
 				{!!preview.contacts.rejected.length && <button className="btn full" onClick={() => onFrame(preview.contacts.rejected[0].start)}>{ko(`${preview.contacts.rejected.length} moving support intervals rejected`, `움직이는 접지 ${preview.contacts.rejected.length}구간 제외`)}</button>}
 			</div>
-			<div className="physics-actions"><button data-testid="physics-cancel" className="btn" onClick={onCancel}>{ko("Cancel", "취소")}</button><button data-testid="physics-apply" className="btn primary" disabled={!preview.changedFrames.length || preview.strength === 0} onClick={() => run('motion.applyPhysics')}>{ko("Apply", "적용")}</button></div>
+			<div className="physics-actions"><button data-testid="physics-cancel" className="btn" onClick={onCancel}>{ko("Cancel", "취소")}</button><button data-testid="physics-apply" className="btn primary" disabled={!preview.changedFrames.length || preview.strength === 0} onClick={() => run('motion.applyPhysics')}>{ko("Apply", "적용")}</button></div><small className="pose-keyhint">{ko("Enter applies · Esc cancels", "Enter 적용 · Esc 취소")}</small>
 		</div>}
 	</section>;
 }

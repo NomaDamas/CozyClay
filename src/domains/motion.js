@@ -1956,24 +1956,40 @@ export function useMotion(appContext) {
 			});
 			check();
 			const last = { summary: result.summary, steps: result.steps, changedFrames: result.changedFrames };
-			setPlatformFitLast(last);
 			if (removal) {
+				setPlatformFitLast(last);
 				if (result.changedFrames.length) context.commit(() => domain.setKeys(id, result.candidate.keys));
 				platformFitAppliedRef.current = null; setPlatformFitApplied(false); setPlatformFitLast(null);
 				return { ...last, removed: result.changedFrames.length > 0 };
 			}
-			if (!result.changedFrames.length) return last;
-			context.commit(() => domain.setKeys(id, result.candidate.keys));
-			platformFitAppliedRef.current = { id, before: stacked?.before ?? sourceKeys, tracked: stacked?.tracked ?? sourceTracked, stamp: physicsKeyStamp(decodeMotionKeys(domain.layer(id).ikKeys)) };
-			setPlatformFitApplied(true);
+			platformFitAppliedRef.current = { preview: { id, sourceStamp: stamp, sourceKeys, sourceTracked, candidate: result.candidate, last }, before: stacked?.before ?? sourceKeys, tracked: stacked?.tracked ?? sourceTracked, stamp };
+			setPlatformFitLast({ ...last, candidate: result.candidate });
+			setPlatformFitApplied(false);
 			return last;
 		} finally {
 			if (platformFitJobRef.current === job) { restore(); setPlatformFitRunning(false); }
 		}
 	}
 
-	function platformFitRemove(id, context) {
+	function platformFitApply(id, context) {
+		const preview = platformFitAppliedRef.current?.preview;
+		if (!preview || preview.id !== id || platformFitRunning) return { applied: false };
+		const current = physicsKeyStamp(decodeMotionKeys(domain.layer(id).ikKeys));
+		if (current !== preview.sourceStamp) throw new StudioProtocolError('STALE_TARGET', 'The platform preview is out of date. Analyse this take again before applying.');
+		context.commit(() => domain.setKeys(id, copyPhysicsKeys(preview.candidate.keys)));
+		platformFitAppliedRef.current = { id, before: preview.sourceKeys, tracked: preview.sourceTracked, stamp: physicsKeyStamp(decodeMotionKeys(domain.layer(id).ikKeys)) };
+		setPlatformFitApplied(true);
+		setPlatformFitLast({ ...preview.last, candidate: undefined });
+		return { applied: true, changedFrames: preview.last.changedFrames };
+	}
+
+	function platformFitRemove(id, context, { apply = false } = {}) {
+		if (apply) return platformFitApply(id, context);
 		const applied = platformFitAppliedRef.current;
+		if (applied?.preview?.id === id) {
+			platformFitAppliedRef.current = null; setPlatformFitLast(null); setPlatformFitApplied(false);
+			return { removed: false, cancelled: true };
+		}
 		if (!applied || applied.id !== id || platformFitRunning) return { removed: false };
 		const current = physicsKeyStamp(decodeMotionKeys(domain.layer(id).ikKeys));
 		if (current === applied.stamp) {
@@ -3162,7 +3178,7 @@ export function useMotion(appContext) {
 		changeMotionSegmentSpeed, removeMotionSegmentById, poseOtherCastMembers, toggleIkMode, ikSolve,
 		ikDragEnd, ikAddKeyframe, externalBlockers, runFixCollisions, runFixCollisionsRange,
 		changePhysicsOptions, showPhysicsPreview, cancelPhysicsPreview, applyPhysicsPreview, runAutoPhysics,
-		platformFitRun, platformFitRemove, platformFitRunning, platformFitLast, platformFitProgress, platformFitApplied,
+		platformFitRun, platformFitApply, platformFitRemove, platformFitRunning, platformFitLast, platformFitProgress, platformFitApplied,
 		ikDeleteKeyframe, ikApplyPoseAsKey, recheckMotionHealth, changeArdySeed, takeSeed,
 		runLineEdit: () => domain.run('motion.commitLineEdit', { characterId: appContext.shared.activeChar.id }),
 		runAllPromptBlocks, runArdy, onTrailDragStart, onTrailDragPreview, onTrailDragEnd,
