@@ -247,7 +247,7 @@ export function Slider({ label, min, max, step, value, unit = "", onChange, comp
 	);
 	if (compact) {
 		return (
-			<div className="cslider">
+			<div className="cslider v2-details-compact-slider">
 				<div className={"cslider-head" + (softMax ? " scrub" : "")} {...scrubProps}>
 					<span>{label}</span>
 					<span className="val">
@@ -260,8 +260,8 @@ export function Slider({ label, min, max, step, value, unit = "", onChange, comp
 		);
 	}
 	return (
-		<div className="row">
-			<span>{label}</span>
+		<div className="row v2-details-row">
+			<span className="v2-details-row-label">{label}</span>
 			{input}
 			<span className="val">
 				{text}
@@ -273,7 +273,7 @@ export function Slider({ label, min, max, step, value, unit = "", onChange, comp
 
 export function Field({ label, children }) {
 	return (
-		<div className="field">
+		<div className="field v2-details-field">
 			<label>{label}</label>
 			{children}
 		</div>
@@ -460,13 +460,13 @@ export function NumberField({ label, value, step, precision = 2, scrubRange, onC
 
 	return (
 		<span
-			className={`number-field${focused ? " editing" : ""}`}
+			className={`number-field v2-details-number-field${focused ? " editing" : ""}`}
 			title={title}
 			onPointerDown={onFieldPointerDown}
 			onPointerUp={endFieldDrag}
 			onPointerCancel={endFieldDrag}
 		>
-			<span className="axis">{label}</span>
+			<span className="axis" data-axis={label}>{label}</span>
 			<input
 				ref={inputRef}
 				type="text"
@@ -485,8 +485,8 @@ export function NumberField({ label, value, step, precision = 2, scrubRange, onC
 // per axis. `fields` entries are `{ axis, value, step, precision, onChange }`.
 export function Vector3Row({ label, fields }) {
 	return (
-		<div className="vec3-row">
-			<span className="vec3-label">{label}</span>
+		<div className="vec3-row v2-details-transform-row">
+			<span className="vec3-label v2-details-transform-label">{label}</span>
 			{fields.map((field) => (
 				<NumberField
 					key={field.axis}

@@ -20,7 +20,7 @@ export default function PosePanel({
 					    name worth reading — it is recognisable only as a shape. This
 					    is the same grid the studio shows, applied to whichever
 					    character the hierarchy has selected. */}
-					<p className="inspector-hint">
+					<p className="inspector-hint v2-details-hint">
 						{isKo ? `인물 ${activeCharIndex + 1}의 자세입니다.` : `The pose on Subject ${activeCharIndex + 1}.`}
 					</p>
 					<FalMotionCaptureCard model={falMotionModel} actions={falMotionActions} onOpen={() => setFalMotionStudioOpen(true)} />
@@ -57,7 +57,7 @@ export default function PosePanel({
 					    good mid-clip moment becomes a reusable library pose. */}
 					<button
 						type="button"
-						className="btn full"
+						className="btn full v2-details-pose-action"
 						data-save-current-pose
 						disabled={!activeRig}
 						title={ko(

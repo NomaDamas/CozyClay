@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import "./details.css";
 
 export default function Foldout({ title, hidden, defaultOpen = true, openSignal = 0, children }) {
 	const [open, setOpen] = useState(defaultOpen);
@@ -18,14 +19,14 @@ export default function Foldout({ title, hidden, defaultOpen = true, openSignal 
 		return () => cancelAnimationFrame(raf);
 	}, [openSignal]);
 	return (
-		<section ref={cardRef} className={"card foldout" + (open ? " open" : "")} hidden={hidden}>
+		<section ref={cardRef} className={"card foldout v2-details-section" + (open ? " open" : "")} hidden={hidden}>
 			<h3>
-				<button type="button" className="foldout-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
-					<span className="foldout-arrow" aria-hidden="true">{open ? "\u25BE" : "\u25B8"}</span>
-					<span className="foldout-title">{title}</span>
+				<button type="button" className="foldout-head v2-details-foldout-head" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+					<span className="foldout-arrow v2-details-foldout-arrow" data-open={open ? "true" : "false"} aria-hidden="true" />
+					<span className="foldout-title v2-details-foldout-title">{title}</span>
 				</button>
 			</h3>
-			{open && <div className="foldout-body">{children}</div>}
+			{open && <div className="foldout-body v2-details-foldout-body">{children}</div>}
 		</section>
 	);
 }
