@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#1e1e20;font-family:'IBM Plex Sans',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+a{color:#a78bfa;text-decoration:none}a:hover{color:#c4b1ff}
+.dv-turn{padding:48px 56px 40px;border-bottom:1px solid rgba(255,255,255,.06)}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 8px}
+.dv-tid{font:600 10px 'JetBrains Mono',monospace;padding:3px 7px;background:#a78bfa;color:#140f1f;border-radius:4px}
+.dv-tname{font:600 15px/1.2 'IBM Plex Sans',sans-serif;color:#eee}
+.dv-notes{max-width:980px;margin:0 0 28px;font:13px/1.6 'IBM Plex Sans',sans-serif;color:#9a9aa0}
+.dv-opts{display:flex;flex-wrap:wrap;gap:48px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:10px}
+.dv-oid{font:600 10.5px 'JetBrains Mono',monospace;padding:3px 7px;background:rgba(255,255,255,.1);color:#eee;border-radius:5px}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:12px/1.3 'IBM Plex Sans',sans-serif;color:#9a9aa0}
+.dv-card{background:#0c0c0d;border-radius:8px;box-shadow:0 0 0 1px #000,0 24px 64px rgba(0,0,0,.45);overflow:hidden}
+.dv-next{margin:28px 0 0;font:12px/1.5 'IBM Plex Sans',sans-serif;color:#7c7c82}
+</style>
+</helmet>
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">정돈 버전 — 1a–1c 정리</span></div>
+<p class="dv-notes">모드(배치·포즈·카메라·모션)를 W/E/R 툴바 안으로 통합(숫자키 1–4, 활성 모드만 이름 표시). 새 영역 추가 없음, 상단바는 파일·상태·생성만. Place 패널 제거 → 추가는 뷰포트 좌상단 <b style="color:#e4e4e7">+ Add</b>와 하단 Content(Basic Shapes 폴더 포함) 두 경로로 통일. 줄인 것: 구분선 대신 표면 명도 단계로 영역 구분, 탭 색 띠·필터 칩·단축키 힌트·중복 상태 배지 제거, 한글 보조 라벨은 모드 전환에만. 통일한 것: 높이 28/24px, 모서리 4/6px, 간격 8·12·16, 텍스트 3단계(#e4 / #9b / #63). 색은 선택=앰버, 카메라·주요 액션=바이올렛 두 가지만.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>메인 에디터 — 1920×1080</div>
+<div class="dv-card" style="width:1920px;height:1080px;display:flex;flex-direction:column;gap:1px;background:#070708;color:#e4e4e7;font-size:12px">
+
+<div style="height:44px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;background:#121214">
+<div style="display:flex;align-items:center;gap:10px;padding-right:4px"><div style="width:20px;height:20px;border-radius:6px;background:#cdb8a2"></div><span style="font-weight:600;color:#e4e4e7">alley_chase</span><span style="width:5px;height:5px;border-radius:50%;background:#e8a33d"></span></div>
+<div style="display:flex;gap:2px;color:#9b9ba1"><span style="padding:5px 8px">File</span><span style="padding:5px 8px">Edit</span><span style="padding:5px 8px">Window</span><span style="padding:5px 8px">Help</span></div>
+<div style="flex:1"></div>
+<div style="display:flex;align-items:center;gap:8px;font-size:11px;color:#9b9ba1"><span style="width:6px;height:6px;border-radius:50%;background:#4fbf7a"></span>MCP connected</div>
+<div style="height:30px;padding:0 14px;display:flex;align-items:center;border-radius:4px;background:#7258a0;color:#fff;font-weight:500">Generate Motion</div>
+</div>
+
+<div style="flex:1;min-height:0;display:flex;gap:1px">
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:1px">
+<div style="flex:1;min-height:0;display:flex;gap:1px">
+
+<div style="flex:1;min-width:0;position:relative;overflow:hidden;background:linear-gradient(#26272a,#1d1e20 46%,#18191a)">
+<div style="position:absolute;left:-60%;right:-60%;top:46%;height:130%;background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:56px 56px;transform:perspective(620px) rotateX(71deg);transform-origin:top center;-webkit-mask-image:linear-gradient(transparent,#000 25%);mask-image:linear-gradient(transparent,#000 25%)"></div>
+<div style="position:absolute;left:70px;top:150px;width:210px;height:290px;background:#303235;box-shadow:inset -40px 0 0 #292a2d"></div>
+<div style="position:absolute;left:800px;top:356px;width:120px;height:96px;background:#56595e;box-shadow:inset 0 14px 0 #686b70,inset -26px 0 0 #4a4d52"></div>
+<div style="position:absolute;left:470px;top:342px;width:52px;height:64px;background:#665443"></div>
+<div style="position:absolute;left:466px;top:400px;width:60px;height:12px;background:#786350"></div>
+<div style="position:absolute;left:470px;top:410px;width:6px;height:36px;background:#574839"></div><div style="position:absolute;left:516px;top:410px;width:6px;height:36px;background:#574839"></div>
+<div style="position:absolute;left:1010px;top:318px;width:22px;height:22px;border-radius:50%;background:#bfae9c"></div>
+<div style="position:absolute;left:1004px;top:342px;width:34px;height:84px;border-radius:17px;background:#b6a592"></div>
+
+<div style="position:absolute;left:560px;top:262px;width:28px;height:28px;border-radius:50%;background:#d8c3ad"></div>
+<div style="position:absolute;left:553px;top:292px;width:42px;height:112px;border-radius:21px;background:#cdb8a2;box-shadow:inset -8px 0 0 #b9a38d"></div>
+<div style="position:absolute;left:547px;top:256px;width:54px;height:154px;border:1.5px solid #e8a33d;border-radius:8px"></div>
+<div style="position:absolute;left:574px;top:340px;width:10px;height:10px;margin:-5px 0 0 -5px;border-radius:50%;background:#fff"></div>
+<div style="position:absolute;left:574px;top:339px;width:90px;height:2px;background:#e5484d"></div>
+<div style="position:absolute;left:662px;top:334px;width:0;height:0;border-left:12px solid #e5484d;border-top:6px solid transparent;border-bottom:6px solid transparent"></div>
+<div style="position:absolute;left:573px;top:252px;width:2px;height:88px;background:#4c8dff"></div>
+<div style="position:absolute;left:568px;top:240px;width:0;height:0;border-bottom:12px solid #4c8dff;border-left:6px solid transparent;border-right:6px solid transparent"></div>
+<div style="position:absolute;left:574px;top:340px;width:64px;height:2px;background:#4fbf7a;transform:rotate(145deg);transform-origin:left"></div>
+
+<div style="position:absolute;left:150px;top:584px;width:560px;border-top:1.5px dashed rgba(167,139,250,.8);transform:rotate(-7deg);transform-origin:left"></div>
+<div style="position:absolute;left:145px;top:579px;width:10px;height:10px;background:#a78bfa;transform:rotate(45deg)"></div>
+<div style="position:absolute;left:421px;top:546px;width:10px;height:10px;background:#a78bfa;transform:rotate(45deg)"></div>
+<div style="position:absolute;left:701px;top:511px;width:10px;height:10px;background:#a78bfa;transform:rotate(45deg)"></div>
+<div style="position:absolute;left:300px;top:520px;width:40px;height:26px;border:1.5px solid #a78bfa;border-radius:3px;background:rgba(114,88,160,.25)"></div>
+<div style="position:absolute;left:340px;top:523px;width:0;height:0;border-left:14px solid #a78bfa;border-top:10px solid transparent;border-bottom:10px solid transparent"></div>
+
+<div style="position:absolute;left:12px;top:12px;display:flex;gap:6px">
+<div style="height:28px;padding:0 12px 0 10px;display:flex;align-items:center;gap:6px;border-radius:6px;background:rgba(12,12,13,.78);font-size:11px;font-weight:500;color:#e4e4e7"><span style="font-size:14px;line-height:1;color:#9b9ba1">+</span>Add</div>
+<div style="display:flex;align-items:center;height:28px;padding:0 4px;border-radius:6px;background:rgba(12,12,13,.78);font-size:11px;color:#c9c9ce">
+<span style="padding:0 8px">Perspective</span><span style="width:1px;height:12px;background:#2e2e33"></span><span style="padding:0 8px">Clay Lit</span><span style="width:1px;height:12px;background:#2e2e33"></span><span style="padding:0 8px;color:#9b9ba1">Show</span>
+</div>
+</div>
+<div style="position:absolute;left:50%;top:12px;transform:translateX(-50%);display:flex;align-items:center;gap:2px;height:32px;padding:0 2px;border-radius:6px;background:rgba(12,12,13,.78)">
+<div style="height:28px;padding:0 10px 0 9px;display:flex;align-items:center;gap:7px;border-radius:4px;background:#26262a;color:#fff;font-size:11px;font-weight:500"><span style="font:500 11px 'JetBrains Mono',monospace;color:#e8a33d">1</span>Stage</div><div style="width:28px;height:28px;border-radius:4px;color:#9b9ba1;display:grid;place-items:center;font:500 11px 'JetBrains Mono',monospace">2</div><div style="width:28px;height:28px;border-radius:4px;color:#9b9ba1;display:grid;place-items:center;font:500 11px 'JetBrains Mono',monospace">3</div><div style="width:28px;height:28px;border-radius:4px;color:#9b9ba1;display:grid;place-items:center;font:500 11px 'JetBrains Mono',monospace">4</div>
+<span style="width:1px;height:14px;background:#2e2e33;margin:0 6px"></span>
+<div style="width:28px;height:28px;border-radius:4px;background:#e8a33d;color:#1a1204;display:grid;place-items:center;font:500 11px 'JetBrains Mono',monospace">W</div>
+<div style="width:28px;height:28px;border-radius:4px;color:#9b9ba1;display:grid;place-items:center;font:500 11px 'JetBrains Mono',monospace">E</div>
+<div style="width:28px;height:28px;border-radius:4px;color:#9b9ba1;display:grid;place-items:center;font:500 11px 'JetBrains Mono',monospace">R</div>
+<span style="width:1px;height:14px;background:#2e2e33;margin:0 6px"></span>
+<span style="padding:0 8px;font:11px 'JetBrains Mono',monospace;color:#c9c9ce">10cm</span>
+<span style="padding:0 8px 0 0;font:11px 'JetBrains Mono',monospace;color:#c9c9ce">15°</span>
+</div>
+<div style="position:absolute;right:12px;top:12px;display:flex;align-items:center;height:28px;padding:0 10px;border-radius:6px;background:rgba(12,12,13,.78);font:11px 'JetBrains Mono',monospace;color:#9b9ba1">speed 3</div>
+<div style="position:absolute;left:18px;bottom:18px;width:44px;height:44px">
+<div style="position:absolute;left:0;bottom:0;width:30px;height:2px;background:#e5484d"></div>
+<div style="position:absolute;left:0;bottom:0;width:2px;height:30px;background:#4c8dff"></div>
+<div style="position:absolute;left:0;bottom:0;width:22px;height:2px;background:#4fbf7a;transform:rotate(-40deg);transform-origin:left"></div>
+</div>
+<div style="position:absolute;right:12px;bottom:12px;width:300px;border-radius:6px;overflow:hidden;background:#0c0c0d;box-shadow:0 8px 24px rgba(0,0,0,.45)">
+<div style="height:26px;display:flex;align-items:center;gap:8px;padding:0 10px;font-size:11px;color:#c9c9ce"><span style="width:6px;height:6px;border-radius:50%;background:#a78bfa"></span>Shot_A<span style="color:#636369">24mm · f/2.8</span></div>
+<div style="height:150px;position:relative;background:repeating-linear-gradient(135deg,#161618 0 8px,#1a1a1d 8px 16px)">
+<div style="position:absolute;inset:0;border-top:16px solid #000;border-bottom:16px solid #000"></div>
+<div style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);font:10px 'JetBrains Mono',monospace;color:#636369">camera preview</div>
+</div>
+</div>
+</div>
+</div>
+
+<div style="height:330px;flex:none;display:flex;gap:1px">
+<div style="width:620px;flex:none;display:flex;flex-direction:column;background:#151517">
+<div style="height:36px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px">
+<span style="font-weight:500">Content</span><span style="color:#636369">Log</span>
+<div style="display:flex;align-items:center;gap:6px;font-size:11px;color:#636369;margin-left:8px">Sets<span>/</span><span style="color:#9b9ba1">Alley</span></div>
+<div style="margin-left:auto;width:160px;height:24px;display:flex;align-items:center;padding:0 10px;background:#0f0f11;border-radius:4px;color:#636369;font-size:11px">Search</div>
+</div>
+<div style="flex:1;min-height:0;display:flex">
+<div style="width:140px;flex:none;padding:4px 0">
+<sc-for list="{{ folders }}" as="f" hint-placeholder-count="8">
+<div style="height:26px;display:flex;align-items:center;padding:0 12px 0 {{ f.pad }}px;margin:0 6px;border-radius:4px;background:{{ f.bg }};color:{{ f.fg }};font-size:11.5px">{{ f.n }}</div>
+</sc-for>
+</div>
+<div style="flex:1;min-width:0;padding:4px 12px 12px 4px;display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:10px 8px;align-content:start">
+<sc-for list="{{ assets }}" as="a" hint-placeholder-count="12">
+<div style="display:flex;flex-direction:column;gap:6px">
+<div style="aspect-ratio:1;border-radius:4px;background:repeating-linear-gradient(135deg,#19191c 0 6px,#1e1e21 6px 12px);box-shadow:{{ a.sh }}"></div>
+<div style="display:flex;flex-direction:column;gap:1px;padding:0 2px"><span style="font-size:11px;color:#c9c9ce;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ a.n }}</span><span style="font-size:10px;color:#636369">{{ a.t }}</span></div>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#151517">
+<div style="height:36px;flex:none;display:flex;align-items:center;gap:10px;padding:0 12px">
+<span style="font-weight:500">Sequencer</span>
+<div style="display:flex;align-items:center;gap:2px;margin-left:8px">
+<div style="width:26px;height:24px;border-radius:4px;display:grid;place-items:center;color:#9b9ba1;font-size:9px">|◀</div>
+<div style="width:26px;height:24px;border-radius:4px;display:grid;place-items:center;background:#26262a"><div style="width:0;height:0;border-left:8px solid #e4e4e7;border-top:5px solid transparent;border-bottom:5px solid transparent"></div></div>
+<div style="width:26px;height:24px;border-radius:4px;display:grid;place-items:center;color:#9b9ba1;font-size:9px">▶|</div>
+</div>
+<span style="font:500 12px 'JetBrains Mono',monospace;color:#e8a33d">0092</span><span style="font:11px 'JetBrains Mono',monospace;color:#636369">/ 0240 · 24fps</span>
+<div style="margin-left:auto;display:flex;gap:6px">
+<div style="height:24px;padding:0 10px;display:flex;align-items:center;border-radius:4px;background:#1e1e21;color:#c9c9ce">Cut</div>
+<div style="height:24px;padding:0 10px;display:flex;align-items:center;border-radius:4px;background:#1e1e21;color:#c9c9ce">Draw rail</div>
+<div style="height:24px;padding:0 10px;display:flex;align-items:center;border-radius:4px;background:#1e1e21;color:#c9c9ce">+ Track</div>
+</div>
+</div>
+<div style="flex:1;min-height:0;display:flex">
+<div style="width:190px;flex:none">
+<div style="height:24px"></div>
+<sc-for list="{{ tracks }}" as="t" hint-placeholder-count="6">
+<div style="height:38px;display:flex;align-items:center;gap:10px;padding:0 12px 0 {{ t.pad }}px">
+<div style="width:6px;height:6px;border-radius:2px;background:{{ t.c }}"></div>
+<span style="font-size:11.5px;color:{{ t.fg }};white-space:nowrap">{{ t.n }}</span>
+</div>
+</sc-for>
+</div>
+<div style="flex:1;min-width:0;position:relative;background:#121214;margin:0 12px 12px 0;border-radius:6px;overflow:hidden">
+<div style="height:24px;position:relative">
+<sc-for list="{{ ticks }}" as="k" hint-placeholder-count="11">
+<div style="position:absolute;left:{{ k.l }}%;top:0;bottom:0;padding-left:5px;font:9.5px/24px 'JetBrains Mono',monospace;color:#4f4f55;border-left:1px solid #1d1d20">{{ k.n }}</div>
+</sc-for>
+</div>
+<sc-for list="{{ tracks }}" as="t" hint-placeholder-count="6">
+<div style="height:38px;position:relative;border-top:1px solid #18181b">
+<sc-for list="{{ t.clips }}" as="c" hint-placeholder-count="0">
+<div style="position:absolute;left:{{ c.l }}%;width:{{ c.w }}%;top:7px;bottom:7px;padding:0 1px;box-sizing:border-box"><div style="height:100%;border-radius:4px;background:{{ c.bg }};display:flex;align-items:center;padding:0 8px;font-size:10.5px;color:{{ c.fg }};overflow:hidden;white-space:nowrap">{{ c.label }}</div></div>
+</sc-for>
+<sc-for list="{{ t.keys }}" as="k" hint-placeholder-count="0">
+<div style="position:absolute;left:{{ k.l }}%;top:15px;width:8px;height:8px;margin-left:-4px;background:{{ k.c }};transform:rotate(45deg)"></div>
+</sc-for>
+</div>
+</sc-for>
+<div style="position:absolute;left:38.33%;top:0;bottom:0;border-left:1px solid #e8a33d"></div>
+<div style="position:absolute;left:38.33%;top:0;width:10px;height:10px;margin-left:-5px;background:#e8a33d;clip-path:polygon(0 0,100% 0,50% 100%)"></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+<div style="width:340px;flex:none;display:flex;flex-direction:column;gap:1px">
+<div style="height:420px;flex:none;display:flex;flex-direction:column;background:#151517">
+<div style="height:36px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 12px"><span style="font-weight:500">Outliner</span><span style="font-size:11px;color:#636369">14</span></div>
+<div style="padding:0 12px 6px"><div style="height:28px;display:flex;align-items:center;padding:0 10px;background:#0f0f11;border-radius:4px;color:#636369">Search</div></div>
+<div style="flex:1;min-height:0;overflow:hidden;padding:0 6px">
+<sc-for list="{{ outliner }}" as="r" hint-placeholder-count="12">
+<div style="height:24px;display:flex;align-items:center;gap:8px;padding:0 8px 0 {{ r.pad }}px;border-radius:4px;background:{{ r.bg }};color:{{ r.fg }}">
+<span style="width:8px;font-size:8px;color:#636369">{{ r.chev }}</span><div style="width:6px;height:6px;border-radius:2px;background:{{ r.c }}"></div><span style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{{ r.n }}</span><span style="font-size:10.5px;color:#4f4f55">{{ r.t }}</span>
+</div>
+</sc-for>
+</div>
+</div>
+
+<div style="flex:1;min-height:0;display:flex;flex-direction:column;background:#151517">
+<div style="height:36px;flex:none;display:flex;align-items:center;padding:0 12px;font-weight:500">Details</div>
+<div style="padding:0 12px 14px;display:flex;flex-direction:column;gap:2px">
+<span style="font-size:15px;font-weight:600;color:#fff">Detective</span><span style="font-size:11px;color:#636369">Character · ARDY Humanoid</span>
+</div>
+<div style="flex:1;min-height:0;overflow:hidden">
+<div style="padding:10px 12px 6px;font-size:11px;color:#636369">Transform</div>
+<div style="padding:0 12px 4px;display:flex;flex-direction:column;gap:4px">
+<sc-for list="{{ xform }}" as="x" hint-placeholder-count="3">
+<div style="display:grid;grid-template-columns:64px repeat(3,minmax(0,1fr));gap:4px;align-items:center">
+<span style="font-size:11.5px;color:#9b9ba1">{{ x.n }}</span>
+<sc-for list="{{ x.v }}" as="v" hint-placeholder-count="3">
+<div style="height:24px;display:flex;align-items:center;gap:6px;padding:0 8px;background:#0f0f11;border-radius:4px"><span style="font:10px 'JetBrains Mono',monospace;color:{{ v.c }}">{{ v.a }}</span><span style="flex:1;text-align:right;font:11px 'JetBrains Mono',monospace;color:#e4e4e7">{{ v.val }}</span></div>
+</sc-for>
+</div>
+</sc-for>
+</div>
+<sc-for list="{{ details }}" as="s" hint-placeholder-count="2">
+<div style="padding:16px 12px 6px;font-size:11px;color:#636369">{{ s.title }}</div>
+<div style="padding:0 12px;display:flex;flex-direction:column;gap:4px">
+<sc-for list="{{ s.rows }}" as="p" hint-placeholder-count="3">
+<div style="min-height:24px;display:grid;grid-template-columns:100px minmax(0,1fr);gap:8px;align-items:center">
+<span style="font-size:11.5px;color:#9b9ba1">{{ p.n }}</span>
+<sc-if value="{{ p.isField }}" hint-placeholder-val="{{ true }}"><div style="height:24px;display:flex;align-items:center;justify-content:space-between;padding:0 8px;background:#0f0f11;border-radius:4px;font-size:11.5px;color:#e4e4e7">{{ p.v }}<span style="color:#4f4f55;font-size:8px">{{ p.caret }}</span></div></sc-if>
+<sc-if value="{{ p.isToggle }}" hint-placeholder-val="{{ false }}"><div style="width:28px;height:16px;border-radius:8px;background:{{ p.tbg }};display:flex;justify-content:{{ p.tj }};padding:2px;box-sizing:border-box"><div style="width:12px;height:12px;border-radius:50%;background:#fff"></div></div></sc-if>
+<sc-if value="{{ p.isText }}" hint-placeholder-val="{{ false }}"><div style="padding:7px 8px;background:#0f0f11;border-radius:4px;font-size:11.5px;line-height:1.5;color:#e4e4e7">{{ p.v }}</div></sc-if>
+</div>
+</sc-for>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+
+<div style="height:24px;flex:none;display:flex;align-items:center;gap:16px;padding:0 12px;background:#121214;font:10.5px 'JetBrains Mono',monospace;color:#636369">
+<span>Ready</span><span style="margin-left:auto">60 fps</span><span>Autosaved 2 min ago</span>
+</div>
+</div>
+</div>
+
+<div style="display:flex;flex-direction:column;gap:48px">
+<div class="dv-opt" id="2b">
+<div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>시작 / 프로젝트 — 1440×900</div>
+<div class="dv-card" style="width:1440px;height:900px;display:flex;gap:1px;background:#070708;color:#e4e4e7;font-size:12px">
+<div style="width:232px;flex:none;display:flex;flex-direction:column;background:#121214">
+<div style="padding:24px 20px 28px;display:flex;align-items:center;gap:10px"><div style="width:26px;height:26px;border-radius:7px;background:#cdb8a2"></div><span style="font-weight:600;font-size:14px">CozyClay</span></div>
+<div style="display:flex;flex-direction:column;gap:2px;padding:0 10px">
+<div style="height:32px;display:flex;align-items:center;padding:0 12px;border-radius:4px;color:#9b9ba1">Recent</div>
+<div style="height:32px;display:flex;align-items:center;padding:0 12px;border-radius:4px;background:#1e1e21;color:#fff;font-weight:500">New Project</div>
+<div style="height:32px;display:flex;align-items:center;padding:0 12px;border-radius:4px;color:#9b9ba1">Samples</div>
+<div style="height:32px;display:flex;align-items:center;padding:0 12px;border-radius:4px;color:#9b9ba1">Learn</div>
+</div>
+<div style="margin-top:auto;padding:16px 20px;font:10.5px 'JetBrains Mono',monospace;color:#4f4f55">v0.14.2</div>
+</div>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#151517;padding:32px 36px;gap:28px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<span style="font-size:20px;font-weight:600;color:#fff">New Project</span>
+<div style="display:flex;gap:20px;font-size:12px"><span style="color:#fff;padding-bottom:8px;box-shadow:inset 0 -1.5px 0 #e8a33d">All</span><span style="color:#636369">Film</span><span style="color:#636369">Dialogue</span><span style="color:#636369">Action</span><span style="color:#636369">Vehicle</span></div>
+</div>
+<div style="display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px">
+<sc-for list="{{ templates }}" as="tp" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="aspect-ratio:16/10;border-radius:6px;background:repeating-linear-gradient(135deg,#19191c 0 8px,#1e1e21 8px 16px);box-shadow:{{ tp.sh }};display:grid;place-items:end start;padding:8px"><span style="font:10px 'JetBrains Mono',monospace;color:#4f4f55">{{ tp.ph }}</span></div>
+<div style="display:flex;flex-direction:column;gap:3px"><span style="font-weight:500;color:{{ tp.fg }}">{{ tp.n }}</span><span style="font-size:11px;color:#636369">{{ tp.m }}</span></div>
+</div>
+</sc-for>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px">
+<span style="font-weight:500;color:#9b9ba1">Recent</span>
+<div>
+<sc-for list="{{ recent }}" as="rc" hint-placeholder-count="4">
+<div style="height:40px;display:grid;grid-template-columns:minmax(0,1fr) 120px 60px;align-items:center;gap:12px;border-top:1px solid #1d1d20">
+<div style="display:flex;flex-direction:column;gap:1px;min-width:0"><span style="color:#e4e4e7">{{ rc.n }}</span></div>
+<span style="color:#636369">{{ rc.d }}</span><span style="font:11px 'JetBrains Mono',monospace;color:#636369;text-align:right">{{ rc.s }} shots</span>
+</div>
+</sc-for>
+</div>
+</div>
+</div>
+<div style="width:340px;flex:none;display:flex;flex-direction:column;background:#121214">
+<div style="aspect-ratio:16/9;background:repeating-linear-gradient(135deg,#19191c 0 8px,#1e1e21 8px 16px);display:grid;place-items:center"><span style="font:10.5px 'JetBrains Mono',monospace;color:#4f4f55">template preview</span></div>
+<div style="padding:20px;display:flex;flex-direction:column;gap:6px"><span style="font-size:15px;font-weight:600;color:#fff">Alley Chase</span><span style="font-size:11.5px;line-height:1.55;color:#9b9ba1">골목 세트, 캐릭터 2명, 레일 카메라 2대가 배치된 샘플.</span></div>
+<div style="padding:4px 20px;display:flex;flex-direction:column;gap:14px">
+<sc-for list="{{ newFields }}" as="nf" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:6px"><span style="font-size:11px;color:#636369">{{ nf.n }}</span><div style="height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 10px;background:#0c0c0d;border-radius:4px;font-size:12px;color:#e4e4e7">{{ nf.v }}<span style="color:#4f4f55;font-size:8px">{{ nf.caret }}</span></div></div>
+</sc-for>
+</div>
+<div style="margin-top:auto;padding:16px 20px;display:flex;justify-content:flex-end;gap:8px">
+<div style="height:32px;padding:0 16px;display:flex;align-items:center;border-radius:4px;color:#9b9ba1">Cancel</div>
+<div style="height:32px;padding:0 18px;display:flex;align-items:center;border-radius:4px;background:#7258a0;color:#fff;font-weight:500">Create</div>
+</div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="2c">
+<div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>설정 — 1280×820</div>
+<div class="dv-card" style="width:1280px;height:820px;display:flex;gap:1px;background:#070708;color:#e4e4e7;font-size:12px">
+<div style="width:232px;flex:none;display:flex;flex-direction:column;padding:16px 10px;background:#121214">
+<div style="padding:0 10px 14px;font-weight:600;font-size:14px">Preferences</div>
+<div style="height:28px;display:flex;align-items:center;padding:0 10px;margin:0 0 8px;background:#0c0c0d;border-radius:4px;color:#636369">Search</div>
+<sc-for list="{{ prefNav }}" as="pg" hint-placeholder-count="4">
+<div style="padding:14px 10px 4px;font-size:11px;color:#4f4f55">{{ pg.g }}</div>
+<sc-for list="{{ pg.items }}" as="pi" hint-placeholder-count="3">
+<div style="height:30px;display:flex;align-items:center;padding:0 10px;border-radius:4px;background:{{ pi.bg }};color:{{ pi.fg }}">{{ pi.n }}</div>
+</sc-for>
+</sc-for>
+</div>
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;background:#151517;padding:28px 40px;gap:8px;overflow:hidden">
+<div style="display:flex;align-items:center;justify-content:space-between;padding-bottom:8px"><span style="font-size:18px;font-weight:600;color:#fff">Input &amp; Camera</span><span style="font-size:11.5px;color:#9b9ba1">Reset to defaults</span></div>
+<sc-for list="{{ prefSections }}" as="ps" hint-placeholder-count="2">
+<div style="padding:16px 0 6px;font-size:11px;color:#636369">{{ ps.t }}</div>
+<sc-for list="{{ ps.rows }}" as="pr" hint-placeholder-count="3">
+<div style="min-height:44px;display:grid;grid-template-columns:minmax(0,1fr) 240px;gap:24px;align-items:center;border-top:1px solid #1d1d20">
+<div style="display:flex;flex-direction:column;gap:2px"><span style="color:#e4e4e7">{{ pr.n }}</span><span style="font-size:11px;color:#636369">{{ pr.d }}</span></div>
+<div style="display:flex;justify-content:flex-end;align-items:center;gap:12px">
+<sc-if value="{{ pr.isToggle }}" hint-placeholder-val="{{ false }}"><div style="width:30px;height:16px;border-radius:8px;background:{{ pr.tbg }};display:flex;justify-content:{{ pr.tj }};padding:2px;box-sizing:border-box"><div style="width:12px;height:12px;border-radius:50%;background:#fff"></div></div></sc-if>
+<sc-if value="{{ pr.isSlider }}" hint-placeholder-val="{{ false }}"><div style="flex:1;height:3px;border-radius:2px;background:#26262a;position:relative"><div style="position:absolute;left:0;top:0;bottom:0;width:{{ pr.pct }}%;background:#a78bfa;border-radius:2px"></div><div style="position:absolute;left:{{ pr.pct }}%;top:-5px;width:12px;height:12px;margin-left:-6px;border-radius:50%;background:#e4e4e7"></div></div></sc-if>
+<sc-if value="{{ pr.isValue }}" hint-placeholder-val="{{ true }}"><div style="min-width:64px;height:26px;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 10px;background:#0f0f11;border-radius:4px;font:11px 'JetBrains Mono',monospace;color:#e4e4e7">{{ pr.v }}<span style="font-family:'IBM Plex Sans';color:#4f4f55;font-size:8px">{{ pr.caret }}</span></div></sc-if>
+</div>
+</div>
+</sc-for>
+</sc-for>
+<div style="padding:16px 0 6px;font-size:11px;color:#636369">Hotkeys</div>
+<div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));column-gap:24px">
+<sc-for list="{{ hotkeys }}" as="hk" hint-placeholder-count="6">
+<div style="height:36px;display:flex;align-items:center;justify-content:space-between;border-top:1px solid #1d1d20"><span style="color:#c9c9ce">{{ hk.n }}</span><span style="font:11px 'JetBrains Mono',monospace;color:#9b9ba1">{{ hk.k }}</span></div>
+</sc-for>
+</div>
+</div>
+</div>
+</div>
+</div>
+
+</div>
+<p class="dv-next">Try next: "<a class="dv-oid" href="#2a">2a</a> 라이트 테마 버전" · "<a class="dv-oid" href="#2a">2a</a>에서 Place 패널 접기" · "<a class="dv-oid" href="#2c">2c</a> 다른 카테고리 화면"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const C = { folder:'#8a7a55', mesh:'#7e8b99', cast:'#5fb584', cam:'#a78bfa', light:'#d9b84a', motion:'#6f93d6' };
+    const place = [
+      { title:'Basic', items:[['Cube',C.mesh],['Sphere',C.mesh],['Plane',C.mesh]] },
+      { title:'Cast', items:[['Humanoid',C.cast]] },
+      { title:'Set', items:[['Chair',C.mesh],['Table',C.mesh],['Car Body',C.mesh]] },
+      { title:'Camera & Light', items:[['Cine Camera',C.cam],['Dolly Rail',C.cam],['Area Light',C.light]] },
+    ].map(g => ({ title:g.title, items:g.items.map(([n,c]) => ({ n, c })) }));
+    const outliner = [
+      ['Alley_Set','',0,'▾',C.folder],['Ground_Plane','Mesh',1,'',C.mesh],['Wall_Brick_L','Mesh',1,'',C.mesh],['Crate_01','Mesh',1,'',C.mesh],['Chair_Wood','Mesh',1,'',C.mesh],
+      ['Cast','',0,'▾',C.folder],['Detective','Character',1,'',C.cast,1],['Courier','Character',1,'',C.cast],
+      ['Cameras','',0,'▾',C.folder],['Shot_A','Camera',1,'',C.cam],['Dolly_Rail_A','Rail',2,'',C.cam],['Shot_B','Camera',1,'',C.cam],
+      ['Key_Light','Light',0,'',C.light],
+    ].map(([n,t,d,chev,c,sel]) => ({ n, t, chev, c, pad: 6 + d*14, bg: sel ? 'rgba(232,163,61,.14)' : 'transparent', fg: sel ? '#fff' : '#c9c9ce' }));
+    const folders = [['Basic Shapes',0],['Characters',0],['Sets',0],['Alley',1,1],['Office',1],['Props',0],['Cameras',0],['Motions',0]]
+      .map(([n,d,a]) => ({ n, pad: 10 + d*12, bg: a ? '#1e1e21' : 'transparent', fg: a ? '#fff' : '#9b9ba1' }));
+    const assets = [['Alley_Set','Level'],['Brick_Wall','Mesh'],['Dumpster','Mesh'],['Crate_01','Mesh',1],['Chair_Wood','Mesh'],['Streetlamp','Mesh'],['Detective','Character'],['Courier','Character'],['Pose_Seated','Pose'],['Pose_Sprint','Pose'],['Motion_Trip','Motion'],['Shot_A','Camera']]
+      .map(([n,t,s]) => ({ n, t, sh: s ? '0 0 0 1.5px #e8a33d' : 'none' }));
+    const P = f => +(f/240*100).toFixed(2);
+    const clip = (a,b,label,bg,fg='#e4e4e7') => ({ l:P(a), w:P(b-a), label, bg, fg });
+    const cam = '#3d3354', camB = '#302a40', body = '#23402f', bodyS = '#2e5a3f', pr = '#233149';
+    const tracks = [
+      { n:'Camera Cuts', c:C.cam, pad:12, clips:[clip(0,96,'Shot_A',cam),clip(96,168,'Shot_B',camB),clip(168,240,'Shot_A',cam)], keys:[] },
+      { n:'Rail', c:C.cam, pad:28, clips:[], keys:[0,60,96,168,240].map(f=>({l:P(f),c:'#a78bfa'})) },
+      { n:'Crane', c:'#e8a33d', pad:28, clips:[], keys:[0,48,96,200].map(f=>({l:P(f),c:'#c98a2e'})) },
+      { n:'Detective', c:C.cast, pad:12, clips:[clip(0,60,'Stand up',body),clip(60,150,'Sprint · 1.2×',bodyS,'#fff'),clip(150,240,'Trip',body)], keys:[] },
+      { n:'Prompt', c:C.motion, pad:28, clips:[clip(0,60,'stand up from the chair',pr,'#b9c9ea'),clip(60,150,'sprint toward camera',pr,'#b9c9ea'),clip(150,240,'trip and fall forward',pr,'#b9c9ea')], keys:[] },
+      { n:'Courier', c:C.cast, pad:12, clips:[clip(24,200,'Walk past, look back',body)], keys:[] },
+    ].map(t => ({ fg: t.pad > 12 ? '#9b9ba1' : '#e4e4e7', ...t }));
+    const ticks = Array.from({length:11}, (_,i) => ({ l: i*10, n: String(i*24) }));
+    const ax = [['X','#e5484d'],['Y','#4fbf7a'],['Z','#4c8dff']];
+    const xform = [['Location',['120.0','-45.0','0.0']],['Rotation',['0°','0°','35°']],['Scale',['1.00','1.00','1.00']]]
+      .map(([n,v]) => ({ n, v: v.map((val,i) => ({ val, a: ax[i][0], c: ax[i][1] })) }));
+    const F = (n,v,caret='') => ({ n, v, caret, isField:true, isToggle:false, isText:false });
+    const T = (n,on) => ({ n, isField:false, isToggle:true, isText:false, tbg: on ? '#7258a0' : '#26262a', tj: on ? 'flex-end' : 'flex-start' });
+    const X = (n,v) => ({ n, v, isField:false, isToggle:false, isText:true });
+    const details = [
+      { title:'Character', rows:[F('Rig','ARDY Humanoid','▼'),F('Start pose','Pose_Seated','▼'),F('Root path','3 waypoints')] },
+      { title:'Motion', rows:[X('Prompt','stand up from the chair → sprint toward camera → trip and fall forward'),F('Speed','1.2×'),T('IK correction',true)] },
+    ];
+    const templates = [['Blank Stage','Empty · 1 cam','empty'],['Alley Chase','2 cast · 2 cams','alley chase',1],['Dialogue','2 cast · 3 cams','dialogue'],['Car Interior','2 cast · 2 cams','car interior']]
+      .map(([n,m,ph,s]) => ({ n, m, ph, sh: s ? '0 0 0 1.5px #e8a33d' : 'none', fg: s ? '#fff' : '#c9c9ce' }));
+    const recent = [['alley_chase','2 min ago','6'],['rooftop_standoff','Yesterday','11'],['ep03_diner','Sep 24','18'],['test_crane','Sep 19','2']].map(([n,d,s]) => ({ n, d, s }));
+    const newFields = [['Name','alley_chase_v2',''],['Location','~/Previs',''],['Frame rate','24 fps','▼'],['Units','Centimeters','▼']].map(([n,v,caret]) => ({ n, v, caret }));
+    const prefNav = [
+      { g:'General', items:[['Appearance'],['Viewport'],['Input & Camera',1],['Hotkeys']] },
+      { g:'Motion', items:[['ARDY Connection'],['IK Correction']] },
+      { g:'Integrations', items:[['MCP Server']] },
+      { g:'Project', items:[['Units & Frame rate'],['Autosave']] },
+    ].map(g => ({ g:g.g, items:g.items.map(([n,a]) => ({ n, bg: a ? '#1e1e21' : 'transparent', fg: a ? '#fff' : '#9b9ba1' })) }));
+    const R = (n,d,o) => ({ n, d, isToggle:false, isSlider:false, isValue:false, caret:'', ...o });
+    const tg = on => ({ isToggle:true, tbg: on ? '#7258a0' : '#26262a', tj: on ? 'flex-end' : 'flex-start' });
+    const prefSections = [
+      { t:'Camera', rows:[
+        R('Fly speed','RMB + WASD', { isSlider:true, isValue:true, pct:40, v:'3' }),
+        R('Mouse sensitivity','', { isSlider:true, isValue:true, pct:55, v:'0.55' }),
+        R('Orbit around selection','Alt + drag', tg(true)),
+        R('Invert Y','', tg(false)),
+      ]},
+      { t:'Snapping', rows:[
+        R('Grid size','', { isValue:true, v:'10 cm', caret:'▼' }),
+        R('Rotation step','', { isValue:true, v:'15°', caret:'▼' }),
+        R('Ctrl inverts snapping','드래그 중 일시 반전', tg(true)),
+      ]},
+    ];
+    const hotkeys = [['Move','W'],['Rotate','E'],['Scale','R'],['Frame','F'],['Duplicate','Ctrl D'],['Drop to floor','End']].map(([n,k]) => ({ n, k }));
+    return { placeGroups:place, outliner, folders, assets, tracks, ticks, xform, details, templates, recent, newFields, prefNav, prefSections, hotkeys };
+  }
+}
+</script>
+</body>
+</html>

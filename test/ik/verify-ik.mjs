@@ -120,17 +120,25 @@ check("seeding changes no bone", arm.bones[0].quaternion.angleTo(quatBefore) < 1
 
 /* --- generated positional playback → authored FK chain ------------------- */
 // ARDY playback can write each mapped bone's local translation independently.
-// Once IK owns the rotations, the edited chain must return to its captured
-// Mixamo bind translations or the arm segments no longer describe one FK pose.
+// IK must use those lengths without resetting the clip to a different body.
 arm.bones[0].position.add(new THREE.Vector3(0.04, -0.02, 0.03));
 arm.bones[1].position.multiplyScalar(1.35);
 arm.bones[2].position.multiplyScalar(0.7);
 rig.updateMatrixWorld(true);
-solveIk(arm, wristStart.clone().add(new THREE.Vector3(-0.25, 0.3, 0.1)));
+const clipLocals = arm.bones.map((bone) => bone.position.clone());
+const clipTarget = wristStart.clone().add(new THREE.Vector3(-0.25, 0.3, 0.1));
+solveIk(arm, clipTarget);
 check(
-	"IK solve restores positional-playback chain translations to bind",
-	arm.bones.every((bone, index) => bone.position.distanceTo(arm.bindPositions[index]) < 1e-9)
+	"IK solve preserves positional-playback chain translations",
+	arm.bones.every((bone, index) => bone.position.equals(clipLocals[index]))
 );
+check("IK reaches the target using the clip's segment lengths", arm.bones[2].getWorldPosition(v()).distanceTo(clipTarget) < 1e-6);
+// The following bind-rig checks still exercise the original 30 cm segments.
+arm.bones.forEach((bone, index) => {
+	bone.position.copy(arm.bindPositions[index]);
+	bone.quaternion.identity();
+});
+rig.updateMatrixWorld(true);
 
 /* --- direct solve: pull the left wrist up/back, reachable ---------------- */
 const target = wristStart.clone().add(new THREE.Vector3(-0.25, 0.3, 0.1));
@@ -790,18 +798,10 @@ check("no plants → planted solve does nothing", lLeg.bones[2].getWorldPosition
 	};
 
 	/** Bake a 1 cm ankle lift at `frame`, optionally recording the clip's own
-	 * rotations so the key becomes a delta.
-	 *
-	 * The bind-translation reset mirrors what fixCollisions now does at entry,
-	 * and it is load-bearing: solveIk's segment lengths were measured at bind, so
-	 * a target picked off the clip's own (slightly different) limb makes the
-	 * solve spend most of its rotation on length compensation rather than on the
-	 * push — and a partially-weighted blend of THAT wanders three times the
-	 * correction. Normalising first makes the delta the push. */
+	 * rotations so the key becomes a delta. Read the target on the same clip
+	 * translations the solver preserves, as the collision driver does. */
 	const bakeCorrection = (take, state, frame, withBase) => {
 		take.poseClip(frame);
-		take.leg.bones.forEach((bone, index) => bone.position.copy(take.leg.bindPositions[index]));
-		take.rig.updateMatrixWorld(true);
 		const baseQuats = new Map([["leftFoot", take.leg.bones.map((b) => b.quaternion.clone())]]);
 		const lifted = take.leg.bones[2].getWorldPosition(v()).add(new THREE.Vector3(0, 0.010, 0));
 		solveIk(take.leg, lifted);
@@ -966,6 +966,44 @@ check("no plants → planted solve does nothing", lLeg.bones[2].getWorldPosition
 		return restWorldPosition(bare, bone, v()).distanceTo(bone.getWorldPosition(v())) < 1e-12;
 	})());
 }
+
+/* --- exactHinge: one solve reaches a reachable target from a BENT chain -- */
+// The continuity hinge uses the elbow's raw offset from the new line point,
+// which keeps an along-line part; p1 leaves the l0 sphere and the hand lands
+// short, converging only over repeated solves. exactHinge (range pins) drops
+// that part; the default stays as fix-collisions is tuned on.
+{
+	const run = (options) => {
+		const bentRig = makeRig();
+		const bent = resolveIkRig(bentRig).chains.get("rightHand");
+		bent.bones[0].quaternion.setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.9);
+		bent.bones[1].quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), -1.1);
+		bentRig.updateMatrixWorld(true);
+		const root = bent.bones[0].getWorldPosition(v());
+		const elbowBefore = bent.bones[1].getWorldPosition(v());
+		let worst = 0;
+		let sideKept = true;
+		for (const offset of [[0, -0.08, 0.05], [0.1, 0.02, 0], [0, 0.12, -0.06], [-0.05, -0.1, 0.1]]) {
+			const target = bent.bones[2].getWorldPosition(v()).add(new THREE.Vector3(...offset));
+			const elbow = bent.bones[1].getWorldPosition(v()).sub(root);
+			const line = target.clone().sub(root).normalize();
+			const sideBefore = elbow.addScaledVector(line, -elbow.dot(line));
+			solveIk(bent, target, options);
+			worst = Math.max(worst, bent.bones[2].getWorldPosition(v()).distanceTo(target));
+			const after = bent.bones[1].getWorldPosition(v()).sub(root);
+			if (after.addScaledVector(line, -after.dot(line)).dot(sideBefore) <= 0) sideKept = false;
+		}
+		return { worst, sideKept, moved: bent.bones[1].getWorldPosition(v()).distanceTo(elbowBefore) };
+	};
+	const exact = run({ exactHinge: true });
+	const legacy = run(undefined);
+	check("fixture: the default hinge lands short from a bent chain (> 1 mm)", legacy.worst > 0.001, `worst=${(legacy.worst * 1000).toFixed(3)}mm`);
+	check("exactHinge reaches each reachable target in ONE solve (< 1e-6 m)", exact.worst < 1e-6, `worst=${(exact.worst * 1000).toFixed(3)}mm`);
+	check("exactHinge keeps the elbow on its side of the line", exact.sideKept && exact.moved > 0.01);
+}
+
+// Keep the measured translation-step regression in the registered IK suite.
+await import("./translation-step.mjs");
 
 if (failures) {
 	console.log(`${failures} FAIL`);

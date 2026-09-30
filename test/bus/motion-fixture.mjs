@@ -4,6 +4,7 @@ import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import { castFixture } from './cast-fixture.mjs';
+import { motionCache } from './history-owners.mjs';
 import { freeReferences } from './verify-domain-modules.mjs';
 import { createStudioAppActions } from '../../src/commands/index.js';
 import { createMotionEdit } from '../../src/ardy/motion-edit.js';
@@ -33,8 +34,8 @@ const server = await createServer({ configFile: false, server: { middlewareMode:
     if (id.endsWith('/src/app-stage.jsx')) return stageSubset;
     if (id.endsWith('/src/motion-store.js')) return `export * from '../test/bus/motion-cache-fixture.mjs';`;
   } }] });
-let useMotion, motionCache;
-try { ({ useMotion } = await server.ssrLoadModule('/src/domains/motion.js')); motionCache = await server.ssrLoadModule('/test/bus/motion-cache-fixture.mjs'); }
+let useMotion;
+try { ({ useMotion } = await server.ssrLoadModule('/src/domains/motion.js')); }
 finally { await server.close(); }
 
 export function seedMotion(frames = 48) {

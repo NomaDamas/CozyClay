@@ -24,7 +24,7 @@ import {
 	serializeSceneDocument,
 } from "../src/scenes.js";
 import { createProjectDocument, readProjectDocument } from "../src/project.js";
-import { createSceneHistoryStore } from "../src/scene-history.js";
+import { createSceneHistoryStore } from "../src/document-store.js";
 import { copyPhysicsKeys } from "../src/ardy/physics-review.js";
 import { HISTORY_LIMIT } from "../src/history.js";
 import { createAppContext } from "../src/app-context.js";
@@ -62,11 +62,12 @@ function visit(value) {
 	for (const [key, child] of Object.entries(value)) if (key !== "parent") Array.isArray(child) ? child.forEach(visit) : visit(child);
 }
 visit(parsed.program);
+assert.equal(declarations.has('restoreCast'), false, 'native cast restoration is retired; only owned history restores documents');
 
 // The App functions this suite drives. Missing ones are a failure, not a skip:
 // the RED state of #345 is exactly "no such recording seam exists".
 const APP_FUNCTIONS = [
-	"snapshotIkKeys", "recordCharacterUndo", "recordSessionUndo", "restoreCast", "undoScene", "redoScene",
+	"snapshotIkKeys", "undoScene", "redoScene",
 	"updateCharacterAt", "beginGestureUndo", "endGestureUndo", "changeKeyLight", "resetKeyLight",
 	"changeKeyLightFromGizmo", "changeInspectorCharacter", "changeEnvironmentImage",
 ];
@@ -174,6 +175,7 @@ const COMMAND_INPUTS = {
 	'character.changePromptBlock': { characterId: 'actor', id: 'block', text: 'Changed' },
 	'character.removePromptBlock': { characterId: 'actor', id: 'block' },
 	'motion.clear': { characterId: 'actor' },
+	'motion.setVideoDraft': { instruction: 'Draft', duration: 10 },
 	"character.addWaypoint": { characterId: "actor", position: { x: 0, z: 2 }, frame: 40 },
 	"character.moveWaypoint": { characterId: "actor", position: { x: 0, z: 1.1 }, frame: 24 },
 	"character.removeWaypoint": { characterId: "actor", frame: 24 }, "character.clearWaypoints": { characterId: "actor" },
@@ -187,6 +189,8 @@ const COMMAND_INPUTS = {
 	"object.group": { parent: "group-2", children: ["object-1"] }, "object.ungroup": { children: ["object-1"] },
 	"objects.arrange": { ops: [{ op: "remove", id: "object-1" }] }, "objects.replace": { objects: [createSceneObject("cone")] },
 	"view.setPartColours": { mode: "flat" }, "view.setGuideMode": { mode: "thirds" }, "view.setInset": { collapsed: true },
+	"view.select": { selection: { kind: 'character', id: 'actor' } }, "timeline.seek": { frame: 12 }, "timeline.play": { playing: true },
+	"view.setMode": { mode: 'camera' }, "view.update": { frame: 8, playing: false, mode: 'motion' },
 	"scene.create": {}, "scene.duplicate": { sceneId: "scene-1" }, "scene.rename": { sceneId: "scene-1", name: "Renamed" },
 	"scene.delete": { sceneId: "scene-2" }, "scene.switch": { sceneId: "scene-2" }, "project.save": {},
 	"scene.set": { id: "scene-1", set: { name: "Generic" } }, "scene.reorder": { sceneId: "scene-1", order: 1 },
@@ -214,6 +218,9 @@ function commandFixture({ frame = 8 } = {}) {
 	const answers = {
 		// Like the editor's, every read is a fresh snapshot of the document.
 		state: () => ({ ...state }),
+		readView: () => ({ ...state, host, selection: state.selection ?? null,
+			view: state.view ?? { mode: 'scene', frame, playing: false, lookThrough: false, grid: false, autoColor: false } }),
+		publishView: value => Object.assign(state, value),
 		storeDomain: name => name === 'objects' ? objectDomain : name === 'scenes' ? sceneDomain : name === 'shot' ? shotDomain : name === 'cast' ? castDomain : name === 'motion' ? motionDomain : undefined,
 		writeCharacters: rows => { state.characters = rows; },
 		writeCastState: next => { Object.assign(state, next); },
@@ -236,7 +243,7 @@ function commandFixture({ frame = 8 } = {}) {
 		afterRender: async () => {},
 	};
 	const ports = new Proxy({}, {
-		get: (_, name) => ["state", "storeDomain"].includes(name) ? answers[name] : (...args) => {
+		get: (_, name) => ["state", "storeDomain", "readView"].includes(name) ? answers[name] : (...args) => {
 			writes.push({ name, inside: recording });
 			// A write republishes the document, so a diff of rows sees the edit.
 			state.shots = state.shots.map(row => ({ ...row }));
@@ -284,6 +291,7 @@ function commandFixture({ frame = 8 } = {}) {
 		loadScenes: args => ports.loadScenes(args),
 	};
 	motionDomain = motionHygieneDomain(ports);
+	motionDomain.setVideoDraft = patch => { state.falMotion = { ...state.falMotion, ...patch }; };
 	const registries = Object.fromEntries(Object.entries(COMMAND_MODULES).map(([name, module]) => [name, createStudioAppActions(ports, { [name]: module })]));
 	const journal = createStudioCommandJournal({ host });
 	const bus = registry => createCommandBus({ registry, ports: {
@@ -317,7 +325,7 @@ const cases = {
 	},
 	async "every command mutation writes inside one entry of its undo domain"() {
 		const mutations = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => entry.kind === "mutation");
-		assert.equal(mutations.length, 77);
+		assert.equal(mutations.length, 79);
 		for (const declaration of mutations) {
 			// A new shot needs free room at the playhead; the others act inside shot-1.
 			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8 }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));
@@ -331,7 +339,7 @@ const cases = {
 	},
 	async "transient and document actions never open an undo entry"() {
 		const outside = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => ["transient", "document"].includes(entry.kind));
-		assert.deepEqual(outside.map(entry => entry.id).sort(), Object.keys(COMMAND_INPUTS).filter(id => (/^(view|scene|project)\./.test(id) || ['load_scenes', 'motion.commitLineEdit', 'motion.regenerateTrail'].includes(id)) && !['scene.set', 'scene.rename', 'scene.reorder', 'project.rename'].includes(id)).sort());
+		assert.deepEqual(outside.map(entry => entry.id).sort(), Object.keys(COMMAND_INPUTS).filter(id => (/^(view|timeline|scene|project)\./.test(id) || ['load_scenes', 'motion.commitLineEdit', 'motion.regenerateTrail', 'motion.setVideoDraft'].includes(id)) && !['scene.set', 'scene.rename', 'scene.reorder', 'project.rename'].includes(id)).sort());
 		for (const declaration of outside) {
 			const f = commandFixture(), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));
 			const receipt = await f.bus(f.registries[name]).run(declaration.id, COMMAND_INPUTS[declaration.id]);

@@ -1246,5 +1246,57 @@
       "count": 6,
       "uniques": 5
     }
+  ],
+  "2026-09-30": [
+    {
+      "referrer": "github.com",
+      "count": 253,
+      "uniques": 156
+    },
+    {
+      "referrer": "Google",
+      "count": 153,
+      "uniques": 78
+    },
+    {
+      "referrer": "t.co",
+      "count": 137,
+      "uniques": 49
+    },
+    {
+      "referrer": "cozyclay.org",
+      "count": 97,
+      "uniques": 65
+    },
+    {
+      "referrer": "l.threads.com",
+      "count": 95,
+      "uniques": 74
+    },
+    {
+      "referrer": "chatgpt.com",
+      "count": 58,
+      "uniques": 28
+    },
+    {
+      "referrer": "ruanyifeng.com",
+      "count": 20,
+      "uniques": 17
+    },
+    {
+      "referrer": "reddit.com",
+      "count": 8,
+      "uniques": 6
+    },
+    {
+      "referrer": "Baidu",
+      "count": 6,
+      "uniques": 5
+    },
+    {
+      "referrer": "Bing",
+      "count": 5,
+      "uniques": 4
+    }
   ]
 }

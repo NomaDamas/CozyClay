@@ -1206,23 +1206,14 @@ const NO_PUSH = Object.freeze({ ran: false, moved: false });
  * limb's rest pose by escapeVector — see the REST-BIASED ESCAPE note there for
  * why the raw separation normal is not enough on a deep hit.
  */
-function pushCapsule(capsule, chains, push, ikState, { onlyChains = null, floorY = 0, normalise = null } = {}) {
+function pushCapsule(capsule, chains, push, ikState, { onlyChains = null, floorY = 0 } = {}) {
 	const target = capsule.def.movable;
 	if (!target) return NO_PUSH;
 	if (onlyChains && !onlyChains.has(target.chain)) return NO_PUSH;
 	const chain = chains?.get(target.chain);
 	if (!chain) return NO_PUSH;
-	// BIND TRANSLATIONS, HERE, FOR THIS CHAIN ONLY. solveIk resets them anyway —
-	// its segment lengths were measured at bind and its law of cosines is exact
-	// only there — so the reset happens either way; doing it HERE means the push
-	// target is read on the same skeleton the solver will produce, which keeps
-	// the baked delta the push rather than the length compensation, while every
-	// chain this run does not solve keeps the clip's own translations. Doing it
-	// to the WHOLE rig up front (what this used to do) meant detecting on a
-	// skeleton the caller never sees: phantom pairs on limbs the readout calls
-	// clean, and leg chains keyed — and snapped to bind length — for penetrations
-	// that only existed at bind.
-	if (normalise) normalise(target.chain, chain);
+	// Detection, target and solve all use the clip's current translations.
+	// A bind reset here would reintroduce length compensation into the key.
 	const rotations = chain.bones.map((bone) => bone.quaternion.clone());
 	const driven = target.joint === "mid" ? chain.bones[1] : chain.bones[2];
 	const before = driven.getWorldPosition(new THREE.Vector3());
@@ -1288,24 +1279,10 @@ function pushCapsule(capsule, chains, push, ikState, { onlyChains = null, floorY
  * pose on the rig at entry is used, which is exact whenever no earlier key is
  * already blending into this frame.
  *
- * BIND TRANSLATIONS, PER CHAIN, AT SOLVE TIME. solveIk resets a chain to its
- * bind translations the moment it runs — its segment lengths were measured at
- * bind and its law of cosines is exact only there — so the push target is read
- * AFTER that reset, on the same skeleton the solver will produce. That is what
- * keeps the baked delta the push rather than the LENGTH COMPENSATION: aiming at
- * a clip-length limb's wrist with a bind-length one turned a 15 mm lift into an
- * 11.8 ° knee swing whose components cancel only at full weight, and a partly
- * weighted blend of that wandered 31 mm.
- *
- * What this must NOT do — and used to — is normalise every chain up front,
- * before the first capsule is built. That made the pass detect on a skeleton the
- * caller never sees: on a real clip (~19 mm off bind per bone) it reported pairs
- * the UI's own readout calls clean, keyed limbs for penetrations that exist only
- * at bind (whole-clip runs moved a leg 142 mm on frames with no leg pair at all,
- * and put a toe 17 mm under the floor), and made a second press of the button
- * put an arm back inside the crate the first press took it out of. Detection now
- * reads the pose as handed over; only a chain being solved is normalised, and a
- * chain this run does not key gets its clip translations back untouched.
+ * CLIP TRANSLATIONS THROUGHOUT. The solvers measure each frame's segment
+ * lengths without changing its locals. Detection, pushes and warm starts must
+ * therefore leave those translations alone too; the bake records them so the
+ * pose measured here is the one playback reproduces.
  */
 export function fixCollisions(rig, chains, {
 	radii = null,
@@ -1328,33 +1305,6 @@ export function fixCollisions(rig, chains, {
 	const bases = baseQuats ?? new Map(
 		[...chains].map(([id, chain]) => [id, chain.bones.map((bone) => bone.quaternion.clone())]),
 	);
-	/** Bind translations, once, for a chain that is about to be solved — see
-	 * pushCapsule. Nothing else on the rig is touched, so DETECTION always reads
-	 * the pose the caller handed over (plus whatever this run has already
-	 * solved), which is the same pose detectPenetrations reports to the UI. */
-	const clipTranslations = [];
-	const normalised = new Set();
-	const normaliseChain = (id, chain) => {
-		if (normalised.has(id) || !chain?.bindPositions) return;
-		normalised.add(id);
-		chain.bones.forEach((bone, index) => {
-			clipTranslations.push([id, bone, bone.position.clone()]);
-			bone.position.copy(chain.bindPositions[index]);
-		});
-		rig.updateMatrixWorld(true);
-	};
-	/** Give the clip its translations back on every chain this pass did not
-	 * actually key. Only a keyed chain owes the bind pose its rotations were
-	 * solved in; the rest are the clip's business and are handed back untouched. */
-	const restoreTranslations = (keptIds = null) => {
-		let restored = false;
-		for (const [id, bone, position] of clipTranslations) {
-			if (keptIds?.has(id)) continue;
-			bone.position.copy(position);
-			restored = true;
-		}
-		if (restored) rig.updateMatrixWorld(true);
-	};
 	const touched = new Set();
 	let poseDirty = false;
 	/**
@@ -1377,7 +1327,7 @@ export function fixCollisions(rig, chains, {
 		const chainId = capsule.def.movable?.chain;
 		if (allowedChains && chainId && !allowedChains.has(chainId)) return false;
 		const outcome = pushCapsule(capsule, chains, vector, ikState, {
-			onlyChains, floorY, normalise: normaliseChain,
+			onlyChains, floorY,
 		});
 		if (outcome.ran) {
 			touched.add(capsule.def.movable.chain);
@@ -1549,7 +1499,6 @@ export function fixCollisions(rig, chains, {
 	for (; pass < maxIterations; pass += 1) {
 		const capsules = buildCollisionCapsules(rig, radii);
 		if (!capsules) {
-			if (!changed) restoreTranslations();
 			return { supported: false, changed, passes: pass, residual, touched: [...touched], baseQuats: bases };
 		}
 		// `changed` is cumulative across passes, so it can never report what
@@ -1803,7 +1752,6 @@ export function fixCollisions(rig, chains, {
 			&& afterFoot < Math.min(entryFoot, floorY + PUSH_FLOOR_CLEARANCE) - 1e-6;
 		if (!improved || buried) {
 			frameRestore(entryPose);
-			restoreTranslations();
 			return {
 				supported: true,
 				changed: false,
@@ -1816,8 +1764,6 @@ export function fixCollisions(rig, chains, {
 		}
 	}
 
-	// Hand the pose back as it arrived everywhere this pass did not key.
-	restoreTranslations(changed ? touched : null);
 	// Final measurement for an honest residual report.
 	if (changed) {
 		const capsules = buildCollisionCapsules(rig, radii);
@@ -2043,16 +1989,14 @@ export function fixCollisionsRange({
 		}
 		return deltas;
 	};
-	/** Seed `ids` with the previous frame's correction: bind translations (the
-	 * pose a keyed chain is evaluated at, so it is the pose worth measuring) and
-	 * this frame's rotations composed with that frame's delta. */
+	/** Seed `ids` with the previous frame's rotation correction on this frame's
+	 * own translations, the same solve space used by the fresh attempts. */
 	const applyWarmStart = (ids, deltas) => {
 		for (const id of ids) {
 			const chain = chains.get(id);
 			const delta = deltas.get(id);
 			if (!chain || !delta) continue;
 			chain.bones.forEach((bone, index) => {
-				if (chain.bindPositions) bone.position.copy(chain.bindPositions[index]);
 				if (delta[index]) bone.quaternion.multiply(delta[index]);
 			});
 		}

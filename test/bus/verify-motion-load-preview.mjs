@@ -31,7 +31,7 @@ test('motion: URL replacement decodes real NPZ, commits one entry, persists its 
     assert.equal(receipt.undo.entries, 1); assert.equal(f.motion.documentStore.depths().past, 1);
     const cached = await event.promise; assert.ok(f.motionCache.records.has(cached.motionId));
     ok(f.run('edit.undo', { receiptId: receipt.receiptId })); assert.deepEqual(f.snapshot(), before);
-    assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.deepEqual(f.motion.documentStore.depths(), { past: 0, future: 1 }, 'replacement undoes exactly one store entry');
   } finally { event.cancel(); globalThis.fetch = fetch; f.dispose(); }
 });
 test('motion: draft take preview is a runtime projection, not an authored replacement', () => {
@@ -69,7 +69,7 @@ test('motion: extra performer delivery owns its take and cast placement in one u
     assert.equal(f.motion.motionFor('actor-b')?.frames, 48);
     assert.equal(f.motion.layer('actor-b').takeVersions.length, 1);
     assert.equal(f.motion.motionFor('actor-a'), null);
-    assert.equal(f.motion.documentStore.depths().past, 1); assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.equal(f.motion.documentStore.depths().past, 1); assert.equal(f.cast.documentStore.depths().past, 1, 'placement is one member of the take composition');
     f.actual.undoScene(); assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.cast.read(), characters);
   } finally { globalThis.fetch = fetch; f.dispose(); }
 });

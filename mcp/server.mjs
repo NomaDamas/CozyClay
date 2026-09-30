@@ -48,7 +48,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { ErrorCode, InitializeRequestSchema, LATEST_PROTOCOL_VERSION, McpError } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
 
-import { LiveMutationUncertainError, MotionJobRegistry, startLiveHub } from "./live-hub.mjs";
+import { startLiveHub } from "./live-hub.mjs";
 import {
 	cleanupCaptureArtifacts,
 	createToolHandlers,
@@ -61,7 +61,6 @@ import {
 
 /* ------------------------------ process ---------------------------------- */
 
-const motionJobs = new MotionJobRegistry();
 sweepCaptureArtifacts();
 process.once("exit", cleanupCaptureArtifacts);
 for (const signal of ["SIGINT", "SIGTERM"]) process.once(signal, () => { cleanupCaptureArtifacts(); process.exit(128 + (signal === "SIGINT" ? 2 : 15)); });
@@ -70,73 +69,6 @@ const projectRootPromise = realpath(configuredProjectRoot).then((root) => {
 	process.chdir(root);
 	return root;
 });
-
-/* ----------------------------- motion jobs ------------------------------- */
-
-const motionJobEvent = (job) => ({
-	...motionJobs.task(job),
-	...(job.outcome === null ? {} : { outcome: job.outcome }),
-});
-
-const sendMotionJobEvent = (job) => {
-	try {
-		if (liveHub?.sendEvent(job.workspaceId, "motion_job", motionJobEvent(job)) > 0) {
-			job.deliveredWorkspaceIds.add(job.workspaceId);
-		}
-	} catch (error) {
-		console.error(`[motion_job] lifecycle event delivery failed: ${error instanceof Error ? error.message : String(error)}`);
-	}
-};
-
-const publishMotionJob = async (job) => {
-	if (job.deliveredWorkspaceIds.has(job.workspaceId)) return;
-	const outcome = job.outcome;
-	if (!liveHub || job.status !== "completed" || typeof outcome?.motionUrl !== "string") {
-		sendMotionJobEvent(job);
-		return;
-	}
-	const installationState = job.installationStates.get(job.workspaceId);
-	if (installationState === "installing") return;
-	if (installationState === "installed") {
-		sendMotionJobEvent(job);
-		return;
-	}
-	const handle = liveHub.handleForWorkspaceId(job.workspaceId);
-	if (!handle) return;
-	job.installationStates.set(job.workspaceId, "installing");
-	try {
-		await liveHub.command("load_motion", {
-			url: outcome.motionUrl,
-			prompt: outcome.prompt ?? "",
-			blocks: outcome.blocks ?? [],
-			drop: outcome.drop ?? null,
-			characterId: outcome.targetCharacterId,
-		}, handle);
-	} catch (error) {
-		const uncertain = error instanceof LiveMutationUncertainError;
-		job.installationStates.set(job.workspaceId, uncertain ? "uncertain" : "failed");
-		motionJobs.transition(job, "failed", {
-			message: uncertain
-				? "The editor connection was lost while installing the completed take. Installation may have applied, so it will not be retried."
-				: `The editor rejected the completed take: ${error instanceof Error ? error.message : String(error)}`,
-		});
-		sendMotionJobEvent(job);
-		return;
-	}
-	job.installationStates.set(job.workspaceId, "installed");
-	// Generation already succeeded. Application is a separate, acknowledged
-	// editor mutation; rejected or uncertain installation never reaches here.
-	job.motionRequest?.apply();
-	sendMotionJobEvent(job);
-};
-
-const cancelMotionJob = ({ workspaceId, payload }) => {
-	if (typeof payload.taskId !== "string") return;
-	const task = motionJobs.cancel(payload.taskId, workspaceId);
-	if (!task) return;
-	const job = motionJobs.jobs.get(task.taskId);
-	if (job) void publishMotionJob(job);
-};
 
 /* ------------------------------- server ---------------------------------- */
 
@@ -215,7 +147,7 @@ const serveRegistryTool = (name, args, workspaceHandle) => {
 // The tools themselves live in tool-handlers.mjs so an in-process agent can run
 // them without an MCP server; registration order is the registry's order, which
 // is the order tools/list reports.
-for (const handler of createToolHandlers({ projectRootPromise, motionJobs, publishMotionJob })) registerTool(handler);
+for (const handler of createToolHandlers({ projectRootPromise })) registerTool(handler);
 
 /* -------------------------------- start ---------------------------------- */
 
@@ -236,12 +168,7 @@ const configureLiveHub = (hub, token) => {
 	// only place its token exists.
 	publishLiveEndpoint({ port: hub.port, token, owner: "mcp" });
 	hub.server?.once("close", () => removeLiveEndpoint(hub.port));
-	hub.onEvent = ({ workspaceId, name, payload }) => {
-		if (name === "motion_job_cancel") cancelMotionJob({ workspaceId, payload });
-	};
-	hub.onWorkspaceConnected = ({ workspaceId }) => {
-		for (const job of motionJobs.forWorkspace(workspaceId)) void publishMotionJob(job);
-	};
+
 };
 
 // stdio is the default because that is how an MCP client launches a local

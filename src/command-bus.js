@@ -44,7 +44,7 @@ export const isBusRunActive = () => activeRunDepth > 0;
 
 export function createCommandBus({ registry, ports }) {
   const pending = new Map(), transactions = new Map(), jobs = new Map(), listeners = new Set();
-  const confirmations = new Map();
+  const confirmations = new Map(), historyReceipts = new Map();
   function exposure(entry, args, request) {
     if (request.origin === 'ui') return;
     if (entry.exposure === 'ui-only') fail('CAPABILITY_MISSING', 'This command is available only from the Studio UI.');
@@ -67,7 +67,8 @@ export function createCommandBus({ registry, ports }) {
     'run.cancel': object({ txId: identifier }),
     'job.await': { ...object({ jobId: identifier }), properties: { jobId: identifier, timeoutMs: { type: 'integer', minimum: 1, maximum: 300_000, default: 30_000 } } },
     'job.cancel': object({ jobId: identifier }),
-    'edit.undo': object({ receiptId: identifier }),
+    'edit.undo': { ...object({ receiptId: identifier }), required: [] },
+    'edit.redo': { ...object({ receiptId: identifier }), required: [] },
   };
   const clear = timer => (ports.clearTimeout ?? clearTimeout)(timer);
   function cancelTransaction(tx, expired = false, reason = new StudioProtocolError('CANCELLED', 'Transaction was cancelled.')) {
@@ -80,19 +81,27 @@ export function createCommandBus({ registry, ports }) {
     tx.timer = (ports.setTimeout ?? setTimeout)(() => cancelTransaction(tx, true), ports.transactionIdleMs ?? 30_000);
   }
   function control(id, args, request, before) {
-    if (id === 'edit.undo') {
-      const previous = ports.receipt(args.receiptId);
+    if (id === 'edit.undo' || id === 'edit.redo') {
+      const redo = id === 'edit.redo', historyEntryId = ports.history?.(redo);
+      const previous = args.receiptId ? ports.receipt(args.receiptId) : historyReceipts.get(historyEntryId)
+        ?? (historyEntryId ? { receiptId: historyEntryId, host: before.host, affectedIds: [before.host.sceneId],
+          undo: { historyEntryId, entries: 1, canUndoDirect: true } } : null);
+      if (!args.receiptId && !previous) return validateReceipt({ ok: true, status: 'noop', action: id,
+        commandId: request.commandId, receiptId: crypto.randomUUID(), host: before.host, authored: false, mutated: false,
+        revision: { before: before.revision, after: before.revision }, affectedIds: [], delta: [],
+        checks: { coverage: 'native-history-restoration' }, undo: null, warnings: [] });
       if (!previous?.undo || !ports.isRetained(previous)) fail('UNDO_EXPIRED', 'The receipt no longer has a retained history entry.');
       if (!same(previous.host, before.host)) fail('STALE_SCENE', 'The receipt belongs to another document.');
-      if (!ports.canUndo(previous)) fail('UNDO_CONFLICT', 'A newer edit owns native Undo.');
-      ports.undo();
+      if (redo ? historyEntryId !== previous.undo.historyEntryId : !ports.canUndo(previous)) fail('UNDO_CONFLICT', 'Another edit owns the history boundary.');
+      (redo ? ports.redo : ports.undo)();
       const after = ports.read(), ids = previous.affectedIds;
       const restoredTargets = ids.map(targetId => ({ ...before.host, targetId, token: ports.readTarget?.(targetId) ?? `removed-${crypto.randomUUID()}` }));
-      return validateReceipt({ ok: true, status: 'undone', commandId: request.commandId, receiptId: crypto.randomUUID(), host: before.host,
+      return validateReceipt({ ok: true, status: redo ? 'applied' : 'undone', commandId: request.commandId, receiptId: crypto.randomUUID(), host: before.host,
         authored: true, revision: { before: before.revision, after: after.revision }, affectedIds: ids,
         delta: ids.slice(0, 8).map(targetId => ({ id: targetId, after: { token: restoredTargets.find(t => t.targetId === targetId).token } })),
-        checks: { coverage: 'native-history-restoration' }, undo: { ...previous.undo, canUndoDirect: false }, warnings: [],
-        undoneReceiptId: previous.receiptId, restoredTargets, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
+        checks: { coverage: 'native-history-restoration' }, undo: { ...previous.undo, canUndoDirect: redo }, warnings: [],
+        ...(redo ? { action: id, mutated: true } : { undoneReceiptId: previous.receiptId, restoredTargets }),
+        ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
     }
     if (id.startsWith('job.')) {
       const job = jobs.get(args.jobId);
@@ -186,6 +195,7 @@ export function createCommandBus({ registry, ports }) {
   }
   function executeRun(id, args = {}, options = {}) {
     const request = { origin: 'ui', commandId: crypto.randomUUID(), ...options };
+    if (request.origin === 'ui' && (id === 'edit.undo' || id === 'edit.redo')) ports.finishHistoryGesture?.();
     const before = ports.read(), journal = ports.journal();
     let begun = false, releaseToasts, timer, foregroundTimer, job, applied = false, committedHistoryId;
     const controller = new AbortController();
@@ -201,7 +211,10 @@ export function createCommandBus({ registry, ports }) {
         journal.begin(commandId);
         value = validateReceipt({ ...value, commandId, jobId: job.id });
       }
-      const recorded = journal.record(value); ports.remember?.(recorded); return recorded;
+      const recorded = journal.record(value);
+      if (recorded.undo?.canUndoDirect && !id.startsWith('edit.')) historyReceipts.set(recorded.undo.historyEntryId, recorded);
+      for (const [key, receipt] of historyReceipts) if (ports.isRetained?.(receipt) === false) historyReceipts.delete(key);
+      ports.remember?.(recorded); return recorded;
     };
     const rejected = error => {
       clearTimer();

@@ -2,6 +2,8 @@
 // fields and persistence normalizer; no UI or runtime resources live here.
 import { patchValueSchema, validateStudioSchema, StudioProtocolError, StudioSchemas, utf8ByteLength } from '../studio-agent-protocol.js';
 
+import { isSettableElement } from '../studio-elements.js';
+
 const kinds = new Map();
 // Each kind registers its declared elements and persistence normalizer once.
 // Its command port supplies read()/write(); all schemas and path aliases use
@@ -11,7 +13,7 @@ export function registerElementKind(kind, spec) {
   kinds.set(kind, { documentKey: kind, ...spec });
 }
 const projectionKind = key => [...kinds].find(([, spec]) => spec.documentKey === key)?.[0] ?? key;
-const patchElements = kind => kinds.get(kind).elements.filter(row => row.agentExposure === 'patch');
+const patchElements = kind => kinds.get(kind).elements.filter(isSettableElement);
 const object = () => ({ type: 'object', properties: {}, required: [], additionalProperties: false });
 // String mappings retain the single-document schema. Component mappings use
 // the logical field in set args and fan out only at the storage boundary.

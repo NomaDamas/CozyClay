@@ -193,27 +193,27 @@ expect("pending IK clears only after exact commit verification", app.includes("e
 expect("failed key verification leaves pending IK intact", app.indexOf("ARDY returned motion without verified authored IK keys") < app.indexOf("job.ikState.keys.clear()"));
 expect(
 	"inactive live motion and its prompt clips commit in one character update",
-	app.includes("targetPromptClips =") &&
-		app.includes("sessionMotion: loaded,") &&
-		app.includes("promptClips: targetPromptClips"),
+	app.includes('commitLoadedTake(targetCharacter.id, loaded, { recipe, job, promptClips: targetPromptClips, scale })') &&
+		app.includes('owned.replace(characterId, take, { recipe: imported, versions })') &&
+		app.includes('layer: promptClips ? { ...row.layer, promptClips } : row.layer'),
 );
 expect(
 	"a deleted inactive motion target cannot clear the active editing motion",
-	app.includes("if (targetCharacterId === appContext.shared.loadedLayerCharRef.current && !commandContext && !appContext.storeDomain('motion')) setMotion(null);"),
+	app.includes('if (!targetStillExists) throw new Error(`Motion target ${targetCharacterId} no longer exists.`)') && !/\bsetMotion\(/.test(app),
 );
 // Given B owns a completed motion while A becomes the editing buffer during
 // decode or the B-rig wait, when completion resumes, then B keeps both its
 // take and prompt schedule without installing either into A.
 expect(
 	"a B completion after selection changes retains B ownership through decode and rig waits",
-	app.includes("const targetCharacter = appContext.live.characters.find((entry) => entry.id === targetCharacterId);") && app.includes("const targetStillExists = appContext.live.characters.some((entry) => entry.id === targetCharacter.id);") && app.includes("const bufferOwnsTarget = targetCharacter.id === appContext.shared.loadedLayerCharRef.current;") && app.includes("if (bufferOwnsTarget) {") && app.includes("setPromptClips(targetPromptClips);"),
+	app.includes("const targetCharacter = appContext.live.characters.find((entry) => entry.id === targetCharacterId);") && app.includes("const targetStillExists = appContext.live.characters.some((entry) => entry.id === targetCharacter.id);") && app.includes("const bufferOwnsTarget = targetCharacter.id === appContext.shared.loadedLayerCharRef.current;") && app.includes("if (bufferOwnsTarget) {") && app.includes('commitLoadedTake(targetCharacter.id, loaded, { recipe, job, promptClips: targetPromptClips, scale })'),
 );
 // Given A starts a completion and B becomes active before it settles, when
 // the target-owned completion resumes, then B's editing buffer receives B's
 // clip and prompts and an A failure cannot clear B's motion.
 expect(
 	"an active B receives its own completion after an A to B selection interleaving",
-	app.includes("const targetCharacterId = args.characterId ?? appContext.live.state.activeCharacterId;") && app.includes("const targetPromptClips = clips;") && app.includes("targetCharacterId,") && app.includes("if (targetCharacterId === appContext.shared.loadedLayerCharRef.current && !commandContext && !appContext.storeDomain('motion')) setMotion(null);"),
+	app.includes("domain.loadRemote = async (args, context) => {") && app.includes("args.drop ?? null, args.characterId, clips, { commandContext, recipe: entry?.recipe }") && !/\bsetMotion\(/.test(app),
 );
 expect("individual block generation action is removed", !app.includes("Generate selected block"));
 expect("Prompt Block edits stay synced with ARDY input", app.includes("run('character.changePromptBlock', { characterId, id: selectedPromptId, text: event.target.value })") && app.includes("setArdyPrompt(event.target.value)"));
@@ -394,7 +394,7 @@ expect(
 expect(
 	"stature survives the save: only the session clip is stripped from the stage",
 	app.includes("characters: characters.map(({ sessionMotion, ...entry }) => entry)") &&
-	app.includes("scale: characterScaleFor(decoded, item.scale ?? 1)"),
+	app.includes("appContext.storeDomain('motion').hydrate(entry.id, clip, entry.motionRef)"),
 );
 expect(
 	"extra takes land on their OWN layer, not through the editing buffer",
@@ -406,21 +406,20 @@ expect(
 expect(
 	"trim composes from the per-character full-take map",
 	app.includes("const motionFullRef = useRef(new Map());") &&
-	app.includes("const full = appContext.shared.motionFullRef.current.get(appContext.shared.activeChar.id);") &&
-	// The trim reads its previous edit once so pin migration (#79) and the
-	// slice compose from the same segments.
-	app.includes("trimMotionEdit(previous, start, end)") &&
-	app.includes("const sliced = renderMotionEdit(full, segments);"),
+	app.includes("const full = fullMotionFor(id), take = motionFor(id);") &&
+	app.includes("const previous = take.editSegments, rendered = { ...renderMotionEdit(full, segments), url: null };") &&
+	app.includes("edit('motion.trim', { characterId: appContext.shared.activeChar.id, start, end })"),
 );
 expect(
-	"a cut take drops its source url and clears the IK keys authored on the old frames",
-	app.includes("setMotion({ ...sliced, url: null });") &&
-	app.includes("ikStateRef.current.keys.clear();"),
+	"a cut take drops its source url and migrates retained IK keys",
+	app.includes("rendered = { ...renderMotionEdit(full, segments), url: null }") &&
+	app.includes("remapFrameKeyMap(decodeMotionKeys(layer(id).ikKeys), previous, segments)"),
 );
 expect(
 	"an extracted take is trimmable too",
-	app.indexOf("motionFullRef.current.set(targetCharacter.id, loaded);") > 0 &&
-	(app.match(/motionFullRef\.current\.set\(/g) ?? []).length >= 3,
+	app.includes('function replace(id, take, { fullTake = take') &&
+	app.includes('take: snapshotTake(take), fullTake: snapshotTake(fullTake)') &&
+	app.includes('owned.replace(characterId, take, { recipe: imported, versions })'),
 );
 expect(
 	"the timeline receives the active take, both trim handlers, and the department it draws for",

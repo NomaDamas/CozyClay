@@ -3,7 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { scanTree } from "./verify-bus-coverage.mjs";
+import { scanTree, scanSource } from "./verify-bus-coverage.mjs";
+import { handlerCoverage } from './handler-coverage.mjs';
 import { COMMAND_MODULES } from "../../src/commands/index.js";
 const STUDIO_ACTIONS = Object.values(COMMAND_MODULES).flatMap(module => module.declarations);
 import { fixture, result } from "./fixture.mjs";
@@ -42,7 +43,7 @@ function executeParity({ run, snapshot, command, args = { value: 1 }, raw = run 
 function pendingErrors(previous, current) {
   return current.filter(id => !previous.includes(id)).map(id => `${id}: newly pending`);
 }
-function readParityPending(directory = new URL('./parity-pending/', import.meta.url)) {
+function readParityPending(directory = new URL('./parity-pending/', import.meta.url), { allowPending = false } = {}) {
   const root = directory instanceof URL ? fileURLToPath(directory) : directory;
   return readdirSync(root).sort().flatMap(file => {
     assert.ok(file.endsWith('.json'), `Unexpected pending file: ${file}`);
@@ -53,6 +54,7 @@ function readParityPending(directory = new URL('./parity-pending/', import.meta.
     // a shared manifest edit when the five migrations run in parallel.
     assert.ok(Array.isArray(pending) && pending.length <= 1);
     assert.deepEqual(pendingErrors([domain], pending), []);
+    if (!allowPending) assert.deepEqual(pending, [], `${domain}: parity migration is complete; pending rows cannot return`);
     return pending;
   });
 }
@@ -66,15 +68,17 @@ function sourceFiles(root) {
   walk(root);
   return files;
 }
-function coverageMetrics() {
-  const sources = sourceFiles(fileURLToPath(new URL("../../src", import.meta.url)));
-  const text = sources.map(file => readFileSync(file, "utf8"));
-  const handlerTotal = text.reduce((total, source) => total + [...source.matchAll(/on[A-Z][A-Za-z]+\s*=\s*\{/g)].length, 0);
-  const handlerSites = text.reduce((total, source) => total + [...source.matchAll(/on[A-Z][A-Za-z]+[\s\S]{0,240}?\brun\s*\(/g)].length, 0);
+function coverageMetrics(fixtures = null) {
+  const root = fileURLToPath(new URL('../../src', import.meta.url));
+  const sources = fixtures ?? sourceFiles(root).map(file => ({ file, source: readFileSync(file, 'utf8') }));
+  const handlers = sources.map(({ source, file }) => handlerCoverage(source, file, STUDIO_ACTIONS));
+  const handlerTotal = handlers.reduce((total, sites) => total + sites.handlerTotal, 0);
+  const handlerSites = handlers.reduce((total, sites) => total + sites.handlerSites, 0);
+  const writerReferences = fixtures ? fixtures.flatMap(({ source, file }) => scanSource(source, file).references).length : scanTree(root).length;
   const registeredCommands = STUDIO_ACTIONS.filter(action => action.exposure !== "ui-only").length;
-  const metrics = { writerReferences: scanTree(fileURLToPath(new URL("../../src", import.meta.url))).length, handlerSites, handlerTotal, registeredCommands, commandOriginRows: registeredCommands * ORIGINS.length };
+  const metrics = { writerReferences, handlerSites, handlerTotal, registeredCommands, commandOriginRows: registeredCommands * ORIGINS.length };
   console.log(`BUS COVERAGE (a) document-writer references outside commands: ${metrics.writerReferences}`);
-  console.log(`BUS COVERAGE (b) document-mutating UI handler sites that reach run: ${metrics.handlerSites} of ${metrics.handlerTotal}`);
+  console.log(`BUS COVERAGE (b) document-mutating UI handler sites that reach run: ${metrics.handlerSites} of ${metrics.handlerTotal} (${metrics.handlerTotal ? 100 * metrics.handlerSites / metrics.handlerTotal : 100}%)`);
   console.log(`BUS COVERAGE (c) registered commands exposed to agents: ${metrics.registeredCommands} of ${metrics.registeredCommands}`);
   return metrics;
 }
@@ -105,6 +109,34 @@ test("parity pending ids may only shrink", () => {
   console.log(`BUS PARITY pending rows: ${pending.length * ORIGINS.length * CHECKS.length}`);
 });
 
+test('#496.2 only document-mutating handlers enter the denominator', () => {
+  const metrics = coverageMetrics([{ file: 'fixture.jsx', source: `function Panel() {
+    const change = () => run('stage.setStyle', { style: 'film' });
+    const alias = change;
+    return <Child onChange={alias} onClick={() => run('character.update', {})}
+      onMouseOver={() => setToast('hover')} onFocus={() => run('view.select', {})}
+      onBlur={() => setSelectedHierarchyId('camera')} />;
+  }` }]);
+  assert.equal(metrics.handlerTotal, 2);
+  assert.equal(metrics.handlerSites, 2);
+});
+
+test('#496.2 a direct-writing fixture handler makes the coverage gate red', () => {
+  for (const writer of ['setStyle(\'film\')', 'change(\'film\')', 'controls.setStyle(\'film\')']) {
+    const metrics = coverageMetrics([{ file: 'fixture.jsx', source: `function Panel() {
+      const change = setStyle;
+      return <Child onChange={() => ${writer}} onClick={() => run('stage.setStyle', {})} />;
+    }` }]);
+    assert.equal(metrics.handlerTotal, 2);
+    assert.equal(metrics.handlerSites, 1);
+    assert.throws(() => assert.equal(metrics.handlerSites, metrics.handlerTotal), assert.AssertionError);
+  }
+  const mixed = coverageMetrics([{ file: 'fixture.jsx', source: `function Panel() {
+    return <Child onChange={() => { run('stage.setStyle', {}); setStyle('film'); }} />;
+  }` }]);
+  assert.equal(mixed.handlerTotal, 1); assert.equal(mixed.handlerSites, 0);
+});
+
 test("coverage metrics are measured from the source and registered actions", () => {
   const f = fixture();
   const metrics = coverageMetrics();
@@ -117,6 +149,8 @@ test("coverage metrics are measured from the source and registered actions", () 
   assert.ok(metrics.writerReferences <= floor.writerReferences);
   assert.ok(metrics.handlerSites >= floor.handlerSites && metrics.handlerTotal >= floor.handlerTotal);
   assert.ok(metrics.registeredCommands >= floor.registeredCommands);
+  assert.ok(metrics.handlerTotal > 0);
+  assert.equal(metrics.handlerSites, metrics.handlerTotal, '#496.2 every document-mutating handler reaches run without a direct write');
 });
 
 test("registered mutations execute receipt and undo checks through the real bus", () => {

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { STUDIO_ELEMENTS, elementByPath, elementsFor } from "../src/studio-elements.js";
+import { STUDIO_ELEMENTS, elementByPath, elementsFor, isSettableElement } from "../src/studio-elements.js";
 import { buildPatchSchema, patchValueSchema, STUDIO_PATCHABLE_PATHS, STUDIO_PATCH_KINDS, validateStudioSchema } from "../src/studio-agent-protocol.js";
 import { createCharacterEntry, createSceneStage } from "../src/scenes.js";
 import { normalizeSceneObject, updateSceneObject } from "../src/scene-objects.js";
@@ -14,7 +14,6 @@ const normalizers = {
 	repairCamera: (camera) => createShotAuthoringDocument({ frameCount: 96, shots: [{ id: "shot-test", startFrame: 0, endFrame: 95, camera }] }).shots[0].camera,
 };
 const allowedTypes = new Set(["number", "string", "boolean", "vec3", "color", "enum", "id", "image", "array"]);
-const allowedExposure = new Set(["patch", "action", "composite", "readonly", "todo"]);
 const allowedDomains = new Set(["cast", "objects", "shot", "stage", null]);
 const allowedNormalizers = new Set([...Object.keys(normalizers), null]);
 
@@ -26,13 +25,13 @@ function validate(entries) {
 		paths.add(entry.path);
 		assert.ok(allowedTypes.has(entry.type), `unknown type: ${entry.path}`);
 		assert.equal(typeof entry.persisted, "boolean", entry.path);
-		assert.ok(allowedExposure.has(entry.agentExposure), `unknown agent exposure: ${entry.path}`);
+		assert.equal(Object.hasOwn(entry, "agentExposure"), false, `no separate agent allowlist: ${entry.path}`);
 		assert.ok(allowedDomains.has(entry.undoDomain), `unknown undo domain: ${entry.path}`);
 		assert.ok(allowedNormalizers.has(entry.normalizer), `unknown normalizer: ${entry.normalizer}`);
 		if (entry.type === "enum") assert.ok(Array.isArray(entry.enum) && entry.enum.length > 0, entry.path);
 		// An element the agent reaches through the action registry names the
 		// registered action ids that edit it; no other exposure lists actions.
-		if (entry.agentExposure === "action") {
+		if (entry.actions !== undefined) {
 			assert.ok(Array.isArray(entry.actions) && entry.actions.length > 0, `action element without actions: ${entry.path}`);
 			for (const id of entry.actions) assert.ok(STUDIO_ACTION_IDS.includes(id), `unregistered action ${id} on ${entry.path}`);
 		} else assert.equal(entry.actions, undefined, `actions on a non-action element: ${entry.path}`);
@@ -56,7 +55,7 @@ assert.throws(() => validate([{ ...STUDIO_ELEMENTS[0], normalizer: "unknown" }])
 assert.throws(() => validate([{ ...STUDIO_ELEMENTS[0], undoDomain: "unknown" }]), /unknown undo domain/);
 assert.throws(() => validate([{ ...elementByPath("shot.crud"), actions: ["shot.teleport"] }]), /unregistered action/);
 assert.throws(() => validate([{ ...elementByPath("shot.crud"), actions: [] }]), /without actions/);
-assert.equal(elementByPath("shot.crud").agentExposure, "action");
+assert.equal(isSettableElement(elementByPath("shot.crud")), false);
 assert.deepEqual([...elementByPath("shot.crud").actions].sort(), ["shot.create", "shot.duplicate", "shot.remove", "shot.reorder", "shot.setRange", "shot.split"]);
 // The capabilities that were agent exposure gaps now run through registered actions.
 const exposedThroughActions = {
@@ -70,7 +69,7 @@ const exposedThroughActions = {
 	"object.cutout": ["asset.import"],
 };
 for (const [path, actions] of Object.entries(exposedThroughActions)) {
-	assert.equal(elementByPath(path).agentExposure, "action", `${path} is exposed through actions`);
+	assert.equal(isSettableElement(elementByPath(path)), false, `${path} is owned by commands`);
 	assert.deepEqual([...elementByPath(path).actions].sort(), actions, `${path} actions`);
 }
 assert.ok(Object.isFrozen(STUDIO_ELEMENTS));
@@ -199,13 +198,8 @@ const expected = new Map([
 ]);
 
 let verified = 0;
-let todo = 0;
 for (const entry of STUDIO_ELEMENTS) {
-	if (entry.agentExposure === "todo") {
-		todo += 1;
-		console.log(`TODO ${entry.path}`);
-	}
-	if (!entry.persisted || entry.agentExposure === "todo" || !entry.normalizer) continue;
+	if (!entry.persisted || !entry.normalizer) continue;
 	const testCase = makeCase(entry);
 	assert.ok(testCase, `no fixture for ${entry.path}`);
 	const expectedValue = expected.get(entry.path);
@@ -235,7 +229,7 @@ const sample = {
 let patchable = 0;
 for (const entry of STUDIO_ELEMENTS) {
 	const kind = STUDIO_PATCH_KINDS.find((candidate) => entry.path.startsWith(`${candidate}.`));
-	if (entry.agentExposure !== "patch") {
+	if (!isSettableElement(entry)) {
 		if (kind) assert.equal(STUDIO_PATCHABLE_PATHS[kind].includes(entry.path), false, `${entry.path} is not exposed for patching`);
 		continue;
 	}
@@ -249,7 +243,7 @@ for (const entry of STUDIO_ELEMENTS) {
 	patchable += 1;
 }
 for (const kind of STUDIO_PATCH_KINDS) {
-	for (const path of STUDIO_PATCHABLE_PATHS[kind]) assert.equal(elementByPath(path)?.agentExposure, "patch", `${path} is published without a patch declaration`);
+	for (const path of STUDIO_PATCHABLE_PATHS[kind]) assert.equal(isSettableElement(elementByPath(path)), true, `${path} is published without a patch declaration`);
 }
 
 /* Transform bounds are one contract: every editor envelope is declared, and
@@ -378,6 +372,5 @@ assert.equal(cameraKeyFrame(4), 5, "camera key frame below shot range clamps to 
 assert.equal(cameraKeyFrame(7), 7, "camera key frame midpoint survives exactly");
 assert.equal(cameraKeyFrame(11), 10, "camera key frame above shot range clamps to shot end");
 
-console.log(`elements=${STUDIO_ELEMENTS.length} persisted-verified=${verified} patchable=${patchable} todo=${todo}`);
-// Every authored capability reaches the agent: no exposure gap is left.
-assert.equal(todo, 0, "no element is left agentExposure todo");
+console.log(`elements=${STUDIO_ELEMENTS.length} persisted-verified=${verified} patchable=${patchable}`);
+// Every generic writable field is tested above; composite fields name commands.

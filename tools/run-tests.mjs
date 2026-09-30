@@ -86,7 +86,14 @@ const NODE_FILES = [
 	"test/ik/verify-physics-support.mjs",
 	"test/ik/verify-physics-surface.mjs",
 	"test/ik/verify-ik.mjs",
+	"test/ik/translation-step.mjs",
+	"test/ik/verify-ik-drag-delta.mjs",
+	"test/ik/verify-ik-blend-range.mjs",
+	"test/ik/verify-range-pin.mjs",
+	"test/ik/verify-range-pin-ui.mjs",
+	"test/ik/verify-range-pin-object-transform.mjs",
 	"test/verify-ik-camera-performance.mjs",
+	"test/verify-ik-entry-camera.mjs",
 	"test/process/verify-bridge-launch.mjs",
 	"test/process/verify-lifecycle.mjs",
 	"test/process/verify-mcp-package-isolation.mjs",
@@ -149,6 +156,13 @@ const NODE_FILES = [
 	"test/verify-kimodo-runner.mjs",
 	"test/verify-kimodo-setup.mjs",
 	"test/verify-motion-trail.mjs",
+	"test/verify-motion-trail-limb.mjs",
+	"test/verify-trail-key-conflicts.mjs",
+	"test/verify-motion-trail-orientation.mjs",
+	"test/verify-trail-pick.mjs",
+	"test/verify-trail-rendered-geometry.mjs",
+	"test/verify-motion-trail-overreach.mjs",
+	"test/verify-motion-trail-persistence.mjs",
 	"test/verify-kimodo-waypoints.mjs",
 	"test/verify-keyframe-pack.mjs",
 	"test/verify-keyframe-pack-request.mjs",
@@ -299,7 +313,7 @@ const BROWSER_FILES = [
 // The inventory sweep only picks up `verify*.mjs`; a browser suite named for
 // the QA runner it needs is listed here so it still shows up in the manifest
 // (as an EXCLUDE with its reason) instead of going unmentioned.
-const EXTRA_INVENTORY = ["test/qa-studio-agent-browser.mjs", "test/qa-agent-scenarios-browser.mjs", "test/qa-execution-outcomes-browser.mjs", "test/qa-motion-readiness-browser.mjs", "test/qa-export-recovery-browser.mjs", "test/qa-agent-view-toggle-browser.mjs", "test/qa-camera-tutorial-browser.mjs", "test/qa-first-shot-handoff-browser.mjs", "test/qa-tutorial-analytics-browser.mjs", "test/qa-camera-pointer-lock-browser.mjs", "test/qa-first-edit-browser.mjs", "test/qa-ia-tail-browser.mjs", "test/qa-keyframe-pack-browser.mjs", "test/qa-preview-browser.mjs", "test/qa-project-resources-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-playback-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs", "test/qa-view-menu-browser.mjs", "test/qa-agent-activity-browser.mjs", "test/qa-live-reconnect-browser.mjs"];
+const EXTRA_INVENTORY = ["test/ik/translation-step.mjs", "test/qa-studio-agent-browser.mjs", "test/qa-agent-scenarios-browser.mjs", "test/qa-execution-outcomes-browser.mjs", "test/qa-motion-readiness-browser.mjs", "test/qa-export-recovery-browser.mjs", "test/qa-agent-view-toggle-browser.mjs", "test/qa-camera-tutorial-browser.mjs", "test/qa-first-shot-handoff-browser.mjs", "test/qa-tutorial-analytics-browser.mjs", "test/qa-camera-pointer-lock-browser.mjs", "test/qa-first-edit-browser.mjs", "test/qa-ia-tail-browser.mjs", "test/qa-keyframe-pack-browser.mjs", "test/qa-preview-browser.mjs", "test/qa-project-resources-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-playback-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs", "test/qa-view-menu-browser.mjs", "test/qa-agent-activity-browser.mjs", "test/qa-live-reconnect-browser.mjs"];
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })

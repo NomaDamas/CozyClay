@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
+import { Line } from "@react-three/drei";
 import * as THREE from "three";
 import { POSE_BONES, normalizeBoneName, primeBindPose } from "./poses.js";
 import { poseThumbnail, warmThumbnailModels } from "./pose-thumbs.js";
@@ -282,7 +283,7 @@ const FK_ROTATE_SPEED = 5;
  * Every drag move calls `onSolve(kind, trackId, targetWorld)`; the drag end
  * calls `onDragEnd(trackId)` so the caller can key it.
  */
-export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, onSolve, onDragEnd }) {
+export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, onSolve, onDragEnd, selectionOnly = false, onPartPick }) {
 	const { camera, gl, raycaster, scene } = useThree();
 	const handleRefs = useRef({}); // id -> mesh (all sphere handles)
 	const handleMetaRef = useRef(new Map()); // id -> { track, radius }
@@ -304,6 +305,8 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 	const solveRef = useRef(onSolve);
 	const endRef = useRef(onDragEnd);
 	const focusRef = useRef(onFocus);
+	const partPickRef = useRef(onPartPick);
+	partPickRef.current = onPartPick;
 	// The pointerdown handler filters picks through the CURRENT focus: while
 	// a joint is focused, only that joint (sphere + its gizmo arrows) is
 	// interactive — unfocused handles are inert, so they can never shadow a
@@ -887,6 +890,12 @@ const CLICK_PX = 4;
 			if (kind === "body") dragRef.current.startLocalPos = fkJoints.get(track.id).bone.position.clone();
 		}
 		focusRef.current?.(track.id);
+		if (selectionOnly) {
+			partPickRef.current?.(track.id);
+			dragRef.current = null;
+			gl.domElement.style.cursor = "";
+			return;
+		}
 		gl.domElement.style.cursor = "grabbing";
 		window.addEventListener("pointermove", handlersRef.current.onMove);
 		window.addEventListener("pointerup", handlersRef.current.onUp);
@@ -911,8 +920,9 @@ const CLICK_PX = 4;
 				handleRefs.current[p.track.id]?.visible &&
 				handleRefs.current[p.track.id]?.userData.ikExposed !== false
 			);
-			if (focused) picks = picks.filter((p) => p.track.id === focused);
-			else picks = picks.filter((p) => !p.axisDir); // spheres only
+			if (focused && !selectionOnly) picks = picks.filter((p) => p.track.id === focused);
+		else picks = picks.filter((p) => !p.axisDir); // spheres only
+			if (selectionOnly) picks = picks.filter((p) => !p.axisDir);
 			if (!picks.length) {
 				if (focused) beginDrag("empty", { id: "empty" }, null, null, downXY);
 				return;
@@ -1097,6 +1107,51 @@ const CLICK_PX = 4;
 					</mesh>
 				</group>
 			)}
+		</group>
+	);
+}
+
+/** A poser-only target marker for the active range pin. The target is supplied
+ * in world space; the line is rebuilt every render frame so object travel and
+ * the effector's keyed pose stay visually connected while the playhead moves. */
+export function RangePinMarker({ chains, track, target = null, enabled = false }) {
+	const markerRef = useRef(null);
+	const lineRef = useRef(null);
+	const effector = useRef(new THREE.Vector3()).current;
+	const targetVector = useRef(new THREE.Vector3()).current;
+	const markerColor = track?.endsWith("Hand") ? "#ff8a3d" : "#4dd2ff";
+
+	useFrame(() => {
+		if (!enabled || !track || !target) return;
+		const chain = chains?.get(track);
+		if (!chain || !markerRef.current || !lineRef.current) return;
+		targetVector.fromArray(target);
+		markerRef.current.position.copy(targetVector);
+		chain.bones[2].getWorldPosition(effector);
+		lineRef.current.geometry.setPositions([...effector.toArray(), ...targetVector.toArray()]);
+	});
+
+	return (
+		<group visible={enabled} renderOrder={1001}>
+			<mesh ref={(mesh) => {
+				markerRef.current = mesh;
+				if (mesh) mesh.layers.set(POSER_LAYER);
+			}}>
+				<sphereGeometry args={[0.035, 12, 8]} />
+				<meshBasicMaterial color={markerColor} transparent opacity={0.95} depthTest={false} depthWrite={false} />
+			</mesh>
+			<Line
+				ref={(line) => {
+					lineRef.current = line;
+					if (line) line.layers.set(POSER_LAYER);
+				}}
+				points={[[0, 0, 0], [0, 0, 0]]}
+				color={markerColor}
+				lineWidth={1.2}
+				transparent
+				opacity={0.72}
+				depthTest={false}
+			/>
 		</group>
 	);
 }

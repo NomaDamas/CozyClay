@@ -140,7 +140,8 @@ test('6: the facade alias is gone; direct shots writes throw; scene load is non-
     owned(f); assert.equal(f.scope.appContext.recordShotUndo, undefined);
     assert.throws(() => f.shots.setShots([]), /requires a bus run/);
     f.run('shot.remove', { shotId: 'shot-a' });
-    f.scope.appContext.loadStoreDomains({ shot: { shots: [seedShot()], frameCount: 240 } });
+    f.scope.appContext.loadStoreDomains({ shot: { shots: [seedShot()], frameCount: 240 },
+      objects: f.store.current.objects, cast: f.characterRef.current, stage: f.live.current.stage });
     assert.equal(f.shots.documentStore.depths().past, 0);
     assert.equal(f.live.current.timeline.frameCount, 240);
     assert.deepEqual(f.live.current.shots, createShotAuthoringDocument({ shots: [seedShot()], frameCount: 240 }).shots);

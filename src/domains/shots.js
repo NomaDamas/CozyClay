@@ -254,8 +254,7 @@ export function useShots(appContext) {
   function beginCameraFramingGesture() { if (!appContext.shared.ikMode && !appContext.shared.playMode) domain.beginGesture(); }
   function beginTimelineEditGesture(kind, id) {
     if (['camera-key', 'rail', 'shot-boundary'].includes(kind)) return domain.beginGesture();
-    if (kind === 'prompt-move' || kind === 'prompt-resize') return appContext.shared.recordCharacterUndo();
-    if (kind === 'prompt-text') return appContext.shared.recordSessionUndo(appContext.shared.promptTextSessionRef, `prompt-text:${id}`);
+    if (['prompt-move', 'prompt-resize', 'prompt-text'].includes(kind)) return appContext.storeDomain('cast').beginGesture();
   }
   function setShotCameraRail(shotId, points) { return appContext.storeDomain('shot').run('shot.setCameraRail', { shotId, points }); }
   function clearShotCameraRail(shotId) { return appContext.storeDomain('shot').run('shot.clearCameraRail', { shotId }); }

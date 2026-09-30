@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { createDocumentStore } from '../../src/document-store.js';
 import { registerElementKind, registerElementSet, elementSetSchema } from '../../src/commands/elements.js';
-import { stageFixture } from './stage-fixture.mjs';
+import { objectsFixture } from './objects-fixture.mjs';
 for (const kind of ['fixtureEarly', 'fixtureLate']) registerElementKind(kind, {
   elements: [{ path: `${kind}.amount`, type: 'number', agentExposure: 'patch' }], normalize: value => value,
 });
 for (const surface of ['keyboard', 'receipt']) {
-  const f = stageFixture(), app = f.scope.appContext, domains = [], releases = [];
+  const f = objectsFixture([]), app = f.scope.appContext, domains = [], releases = [];
   try {
     for (const kind of ['fixtureEarly', 'fixtureLate']) {
       const store = createDocumentStore({ owned: { [kind]: { amount: 0 } } });

@@ -6,7 +6,7 @@ import { randomUUID } from "node:crypto";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
 import { startLiveHub } from "../mcp/live-hub.mjs";
-import { STUDIO_TOOL_FAMILIES } from "../src/studio-agent-protocol.js";
+import { STUDIO_TOOL_FAMILIES, STUDIO_TOOLS } from "../src/studio-agent-protocol.js";
 import { studioToolSchemas, studioToolResult } from "../bin/agent/studio-tools.mjs";
 import { createFakeModel } from "./fixtures/fake-model.mjs";
 import { fauxAssistantMessage, fauxToolCall, fauxText } from "@earendil-works/pi-ai/providers/faux";
@@ -157,7 +157,8 @@ if (shouldRun("stale-scene-readmits-any-family")) {
 if (shouldRun("studio-tool-catalogue")) {
   const { createStudioTools, studioToolSchemas } = await import("../bin/agent/studio-tools.mjs");
   const families = ["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"];
-  assert.deepEqual([...STUDIO_TOOL_FAMILIES], families, "the Studio panel sees exactly these ten families");
+  assert.deepEqual([...STUDIO_TOOL_FAMILIES], ["inspect_studio", "run_action", "verify_result"]);
+  assert.deepEqual([...STUDIO_TOOLS], families, "the primary tools and compatibility aliases remain callable");
   assert.deepEqual(studioToolSchemas().map(tool => tool.name), families);
   const sent = [];
   const tools = createStudioTools({ liveHub: { command: async (name, payload) => { sent.push({ name, payload }); return { ok: true, commandId: payload.commandId, receiptId: "receipt-1", status: "applied", revision: { before: 1, after: 2 } }; } }, workspaceHandle: "handle-1",
@@ -378,7 +379,7 @@ if (shouldRun("surface-context-and-images")) {
   const commands = []; let failImage = false;
   const live = await liveFixture({ command: async (name, args) => { commands.push({ name, args }); if (name === "read_studio_context") return { context: context(host(live.handle)) }; if (name === "verify_result") return { ok: true, receiptId: "receipt-1", revision: { scene: 1, physics: 1, view: 1 }, visualRefs: [{ imageId: "capture-1" }] }; if (name === "resolve_studio_image") return failImage ? {} : { imageId: "capture-1", dataUrl: png, revision: { scene: 1 }, receiptId: "receipt-1" }; return { ok: true, commandId: args.commandId ?? "cmd-1", receiptId: "receipt-1", affectedIds: [], status: "applied" }; } });
   const calls = []; let phase = 0;
-  const modelResponse = ({ input, tools }) => { calls.push(input); assert.deepEqual(tools.map(t => t.name), STUDIO_TOOL_FAMILIES); const turn = phase++; if (turn === 0) return streamOf([{ type: "function_call", call_id: "arrange-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "cube" }] }) }]); if (turn === 2 || turn === 4) return streamOf([{ type: "function_call", call_id: `visual-${turn}`,  name: "verify_result", arguments: JSON.stringify({ targets: ["char-alex"], checks: ["framing"], visual: "frame" }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
+  const modelResponse = ({ input, tools }) => { calls.push(input); assert.deepEqual(tools.map(t => t.name), STUDIO_TOOLS); const turn = phase++; if (turn === 0) return streamOf([{ type: "function_call", call_id: "arrange-1", name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "remove", id: "cube" }] }) }]); if (turn === 2 || turn === 4) return streamOf([{ type: "function_call", call_id: `visual-${turn}`,  name: "verify_result", arguments: JSON.stringify({ targets: ["char-alex"], checks: ["framing"], visual: "frame" }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
   const liveHttp = await httpFixture({ modelResponse, live }); const first = envelope(host(live.handle)); const result = await liveHttp.post(first); assert.equal(result.response.status, 200); assert.ok(result.text.split("\n").some(line => line.startsWith("data: "))); assert.ok(!result.text.includes("data: {\\\"")); assert.equal(commands[1].name, "arrange_objects"); assert.equal(typeof commands[1].args.commandId, "string"); assert.deepEqual(commands[1].args.host, { workspaceId: "tab-7", documentEpoch: "doc-3", sceneId: "scene-main", sceneEpoch: "scene-open-4" });
   const imageTurn = envelope(host(live.handle), "check the frame"); const imageResult = await liveHttp.post(imageTurn, result.cookie); assert.equal(imageResult.response.status, 200); assert.ok(calls.some(input => input.some(item => item.content?.some(part => part.type === "input_image" && part.image_url === png)))); assert.ok(!calls.flat().filter(item => item.type === "function_call_output").some(item => JSON.stringify(item).includes(png))); assert.match(imageResult.text, /visualStatus/);
   failImage = true; const failedImage = await liveHttp.post(envelope(host(live.handle), "check again"), imageResult.cookie); assert.equal(failedImage.response.status, 200); assert.match(failedImage.text, /unavailable/); assert.ok(!calls.at(-1).some(item => item.content?.some(part => part.type === "input_image")));
@@ -452,7 +453,7 @@ if (shouldRun("sequential-same-target-token-rotation")) {
     const before = sceneRevision; sceneRevision++; tokens.set("cube-1", `cube-1:${++tokenSequence}`);
     return { ok: true, commandId: args.commandId, receiptId: `receipt-${before}`, host: host(live.handle), status: "applied", authored: true, mutated: true, revision: { before, after: sceneRevision }, affectedIds: ["cube-1"], delta: [], checks: { coverage: "fixture" }, undo: { historyEntryId: `history-${before}`, entries: 1, canUndoDirect: true }, warnings: [] };
   } });
-  let callNumber = 0; const modelResponse = ({ tools }) => { assert.deepEqual(tools.map(tool => tool.name), STUDIO_TOOL_FAMILIES); callNumber++; if (callNumber <= 2) return streamOf([{ type: "function_call", call_id: `same-target-${callNumber}`, name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "update", id: "cube-1", position: { world: { x: callNumber, y: 0, z: 0 } } }] }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
+  let callNumber = 0; const modelResponse = ({ tools }) => { assert.deepEqual(tools.map(tool => tool.name), STUDIO_TOOLS); callNumber++; if (callNumber <= 2) return streamOf([{ type: "function_call", call_id: `same-target-${callNumber}`, name: "arrange_objects", arguments: JSON.stringify({ ops: [{ op: "update", id: "cube-1", position: { world: { x: callNumber, y: 0, z: 0 } } }] }) }]); return streamOf([{ type: "message", role: "assistant", content: [{ type: "output_text", text: "done" }] }]); };
   const liveHttp = await httpFixture({ modelResponse, live });
   const turn = envelope(host(live.handle), "update the same object twice"); turn.context = objectContext(host(live.handle), 1);
   const result = await liveHttp.post(turn); const applied = commands.filter(command => command.name === "arrange_objects");

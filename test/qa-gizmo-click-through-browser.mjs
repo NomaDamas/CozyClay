@@ -7,6 +7,7 @@
 // then click the Cube's body straight through. Driven over CDP through the
 // QA browser wrapper. Standalone on purpose: the check must not wait on
 // the long verify-object-gizmo suite to reach its last section.
+import { waitForFrameState } from './bus/browser-frame-state.mjs';
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
 const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
@@ -39,15 +40,7 @@ const evaluate = async (expression) => {
 	if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "evaluate failed");
 	return result.result.value;
 };
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitFor = async (expression, timeoutMs = 15000) => {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (await evaluate(expression).catch(() => false)) return true;
-		await sleep(120);
-	}
-	return false;
-};
+const waitFor = (expression, timeoutMs = 15000) => waitForFrameState(evaluate, expression, timeoutMs);
 let failures = 0;
 const expect = (name, condition, detail = "") => {
 	console.log(`${condition ? "PASS" : "FAIL"} ${name}${condition ? "" : ` — ${detail}`}`);
@@ -65,7 +58,7 @@ const addObject = async (label) => {
 	await evaluate("document.querySelector('.add-object-trigger').click()");
 	await waitFor("document.querySelectorAll('.add-object-item').length > 0");
 	await evaluate(`[...document.querySelectorAll('.add-object-item')].find(b => b.textContent.startsWith('${label}'))?.click()`);
-	await waitFor("window.__gizmoHandles().length > 0");
+	await waitFor("(window.__gizmoHandles?.().length ?? 0) > 0");
 };
 /** commit one Position field through the inspector, the way a user types it */
 const typePosition = async (index, value) => {
@@ -76,7 +69,7 @@ const typePosition = async (index, value) => {
 			" input.dispatchEvent(new Event('input', { bubbles: true }));" +
 			" input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); })()",
 	);
-	await sleep(250);
+	expect('position edit settles in the renderer', await waitFor(`window.__sceneHistory?.().settled && [...document.querySelectorAll('.inspector-pane .vec3-row')].filter(r => !r.closest('.subject-box')).find(r => r.querySelector('.vec3-label').textContent === 'Position')?.querySelectorAll('input')[${index}]?.value == ${value}`));
 };
 const selectedLabel = () => evaluate("document.querySelector('.hierarchy-row-wrap.selected .hierarchy-label')?.textContent ?? 'nothing selected'");
 
@@ -102,8 +95,17 @@ await addObject("Sphere");
 expect("the sphere owns the selection", (await selectedLabel()) === "Sphere", await selectedLabel());
 await typePosition(0, cubePos[0] + 1.2);
 await typePosition(2, cubePos[2]);
-await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
-await sleep(1200); // the shot camera eases onto the sphere: scan when it lands
+await evaluate(`(() => {
+  window.__gizmoCamera = { previous: [...window.__cozyclay.activeCam.matrixWorld.elements] };
+  document.querySelector('.viewport-titlebar [aria-label="Recenter on subject"]')?.click();
+})()`);
+expect('recenter presents a settled camera and selected gizmo', await waitFor(`(() => {
+  const state = window.__gizmoCamera, current = [...window.__cozyclay.activeCam.matrixWorld.elements];
+  const delta = Math.max(...current.map((value, index) => Math.abs(value - state.previous[index])));
+  state.previous = current;
+  // Recenter may already be at its target; that is a settled no-op too.
+  return delta < 1e-6 && (window.__gizmoHandles?.().length ?? 0) > 0;
+})()`));
 
 // A pixel that is unambiguously the Cube's body while the Sphere owns the
 // cage — exactly the press the blanket veto used to swallow. The spiral

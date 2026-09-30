@@ -251,7 +251,7 @@ expect(
 	"every IK shutdown clears mode and stale control focus",
 	appSource.includes("function leaveIkMode()") &&
 		appSource.includes("setIkMode(false);\n\t\tsetIkFocus(null);") &&
-		(appSource.match(/leaveIkMode\(\);/g) ?? []).length === 5, // incl. the character-switch and line-edit-entry shutdowns
+		(appSource.match(/leaveIkMode\(\);/g) ?? []).length === 4, // the unreachable native character-switch fallback is retired
 );
 for (const prop of ["scenes={scenes}", "activeSceneId={activeSceneId}", "onSceneSelect={selectSceneDocument}", "onSceneCreate={createSceneDocumentFromUi}", "onSceneDuplicate={duplicateSceneDocumentFromUi}", "onSceneRename={renameSceneDocumentFromUi}", "onSceneDelete={deleteSceneDocumentFromUi}"]) {
 	expect(`App wires ${prop.split("=")[0]}`, appSource.includes(prop));

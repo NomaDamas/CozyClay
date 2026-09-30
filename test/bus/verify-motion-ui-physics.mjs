@@ -12,7 +12,7 @@ test('motion: the shipped IK drag handler records the pre-drag rig, not its alre
     f.rigs['actor-a'].getObjectByName('mixamorigHead').quaternion.setFromAxisAngle({ x: 0, y: 1, z: 0 }, 0.25);
     hook.ikDragEnd(); hook.finishGesture();
     assert.equal(hook.layer('actor-a').ikKeys.length, 1);
-    assert.equal(hook.documentStore.depths().past, 1); assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.deepEqual(hook.documentStore.depths(), { past: 1, future: 0 }); assert.equal(f.cast.documentStore.depths().past, 0, 'IK does not duplicate history in cast');
     f.actual.undoScene();
     assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.actual.snapshotExportRig(f.rigs['actor-a']), rig);
   } finally { f.dispose(); }
@@ -22,7 +22,7 @@ test('motion: a shipped trail drag commits its deformed take once without native
   try {
     f.motion.load([{ id: 'actor-a', take: seedMotion() }]);
     const hook = f.renderMotion(), before = f.snapshot();
-    hook.onTrailDragStart(); assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    hook.onTrailDragStart(); assert.deepEqual(hook.documentStore.depths(), { past: 0, future: 0 });
     const input = { track: 'hips', grabFrame: 12, delta: { x: 0.2, y: 0, z: 0 } };
     hook.onTrailDragPreview(input); assert.deepEqual(f.snapshot(), before);
     hook.onTrailDragEnd(input); assert.equal(hook.documentStore.depths().past, 1);

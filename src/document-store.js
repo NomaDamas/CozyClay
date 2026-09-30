@@ -1,114 +1,74 @@
-// Incremental document ownership: only explicitly supplied `owned` slices live
-// here. Bus ports bind beginAction/recordAction; no Studio domain opts in here.
+// Each domain owns immutable authored slices here. The facade composes sessions
+// across stores; neither this store nor its callers restore native snapshots.
 import { createHistory, pushHistory, undoHistory, redoHistory } from './history.js';
 import { StudioProtocolError } from './studio-agent-protocol.js';
 import { copyAuthoredIntent, deepFreeze } from './store/authored-intent.js';
 
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 
-export function createDocumentStore({ owned = {}, legacy, dev = import.meta.env?.DEV ?? true } = {}) {
+export function createDocumentStore({ owned = {}, dev = import.meta.env?.DEV ?? true, copyIntent = copyAuthoredIntent } = {}) {
   const freeze = value => dev ? deepFreeze(value) : value;
-  const copy = value => freeze(copyAuthoredIntent(value));
+  const copy = value => freeze(copyIntent(value));
   let slices = copy(owned);
   let snapshot = freeze({ revision: 0, domainRevisions: Object.fromEntries(Object.keys(owned).map(domain => [domain, 0])), slices });
   let history = createHistory({ historyEntryId: null, snapshot: slices });
-  let active = null, running = 0, batching = false;
-  const pendingDomains = new Set();
+  let active = null, running = 0;
   const listeners = new Set();
   const owns = domain => Object.hasOwn(slices, domain);
-  const releaseLegacy = legacy?.subscribe(domain => { if (!owns(domain)) publish(slices, [domain]); });
-  const releaseGuard = legacy?.guardWrites(domain => {
-    if (owns(domain)) throw new TypeError(`Domain ${domain} is store-owned; write through the document store inside a bus run.`);
-    if (active) {
-      if (!running) fail('TARGET_BUSY', 'A document transaction owns native history.');
-      active.touch(domain);
-    }
-  });
-  const releaseHistory = legacy?.subscribeHistory(handle => append([handle], handle.historyEntryId));
-  function append(handles = [], historyEntryId = crypto.randomUUID()) {
-    history = pushHistory(history, { historyEntryId, snapshot: slices, handles });
-    return { historyEntryId };
+  function requireOwner(domain) {
+    if (!owns(domain)) fail('CAPABILITY_MISSING', `No document slice is owned for ${domain}.`);
   }
-  function publish(next, changed = Object.keys(slices).filter(domain => slices[domain] !== next[domain])) {
+  function publish(next) {
+    const changed = Object.keys(slices).filter(domain => slices[domain] !== next[domain]);
     if (!changed.length) return;
-    if (batching) {
-      slices = freeze(next);
-      for (const domain of changed) pendingDomains.add(domain);
-      return;
-    }
     const domainRevisions = { ...snapshot.domainRevisions };
-    for (const domain of changed) domainRevisions[domain] = (domainRevisions[domain] ?? 0) + 1;
+    for (const domain of changed) domainRevisions[domain]++;
     slices = freeze(next);
     snapshot = freeze({ revision: snapshot.revision + 1, domainRevisions, slices });
     for (const listener of listeners) listener();
   }
-  // History restoration is one bus revision even when several native owners
-  // and owned slices participate. Domain fences still advance independently.
-  function restoreTogether(fn) {
-    batching = true;
-    try { return fn(); }
-    finally {
-      batching = false;
-      const changed = [...pendingDomains]; pendingDomains.clear();
-      publish(slices, changed);
-    }
-  }
-  function beginAction(domain, targetId) {
+  function beginAction(domain) {
+    requireOwner(domain);
     if (active) fail('TARGET_BUSY', 'A document transaction is already open.');
-    const before = slices, nativeSessions = new Map();
+    const before = slices;
     const check = () => { if (active !== session) fail('STALE_TARGET', 'Document transaction is no longer current.'); };
     const session = {
       // Permission ends at the synchronous publication boundary, not when an
-      // async preparation finishes. Jobs publish through context.commit; a
-      // retained session can explicitly re-enter with update after an await.
-      run(fn) {
-        check(); running++;
-        try { return [...nativeSessions.values()].reduceRight((run, native) => () => native.run(run), fn)(); }
-        finally { running--; }
-      },
-      touch(domain, targetId) {
-        check();
-        if (!owns(domain) && !nativeSessions.has(domain)) nativeSessions.set(domain, legacy.beginAction(domain, targetId, { notify: false }));
-      },
+      // async preparation finishes. Jobs explicitly re-enter through commit.
+      run(fn) { check(); running++; try { return fn(); } finally { running--; } },
+      touch(domain) { check(); requireOwner(domain); },
       update(domain, update) { return session.run(() => write(domain, update)); },
       cancel({ restore = true } = {}) {
         if (active !== session) return false;
         active = null;
-        restoreTogether(() => {
-          for (const native of [...nativeSessions.values()].reverse()) native.cancel({ restore });
-          if (restore) publish(before);
-        });
+        if (restore) publish(before);
         return true;
       },
       commit() {
-        check();
-        const handles = [...nativeSessions.values()].map(native => native.commit().handle).filter(Boolean);
-        active = null;
-        const changed = Object.keys(slices).some(key => slices[key] !== before[key]);
-        if (!changed && !handles.length) return { historyEntryId: null };
-        return append(handles, !changed && handles.length === 1 ? handles[0].historyEntryId : undefined);
+        check(); active = null;
+        if (!Object.keys(slices).some(key => slices[key] !== before[key])) return { historyEntryId: null };
+        const historyEntryId = crypto.randomUUID();
+        history = pushHistory(history, { historyEntryId, snapshot: slices });
+        return { historyEntryId };
       },
     };
     active = session;
-    try { session.touch(domain, targetId); } catch (error) { session.cancel(); throw error; }
     return session;
   }
   function recordAction(domain, fn, targetId = null, nested = false) {
     if (nested && active) {
-      active.touch(domain, targetId);
+      active.touch(domain);
       const result = active.run(fn);
       return result?.then ? result.then(result => ({ result, historyEntryId: null })) : { result, historyEntryId: null };
     }
-    const session = beginAction(domain, targetId);
+    const session = beginAction(domain);
     const done = result => ({ result, ...session.commit() });
     const failed = error => { session.cancel(); throw error; };
-    try {
-      const result = session.run(fn);
-      return result?.then ? result.then(done, failed) : done(result);
-    } catch (error) { return failed(error); }
+    try { const result = session.run(fn); return result?.then ? result.then(done, failed) : done(result); }
+    catch (error) { return failed(error); }
   }
   function write(domain, update) {
-    if (!owns(domain)) return legacy.write(domain, update);
+    requireOwner(domain);
     if (dev && !running) throw new TypeError(`A store-owned ${domain} write requires a bus run.`);
     if (!active) return recordAction(domain, () => write(domain, update)).result;
     if (!running) fail('TARGET_BUSY', 'A document transaction owns this write.');
@@ -116,43 +76,69 @@ export function createDocumentStore({ owned = {}, legacy, dev = import.meta.env?
     if (next !== slices[domain]) publish({ ...slices, [domain]: copy(next) });
     return slices[domain];
   }
-  // An id labels a transition INTO a snapshot. The oldest snapshot has no
-  // retained pre-image, so merely finding its id is not enough to promise Undo.
+  // The oldest snapshot has no retained pre-image. Its id cannot promise Undo.
   const retainedEntries = () => [...(history.past.length ? [...history.past.slice(1), history.present] : []), ...history.future];
-  const retained = entry => (entry.handles ?? []).every(handle => handle.isRetained());
-  function nativeReady(entry, redo) {
-    const seen = new Set(), handles = entry.handles ?? [];
-    return (redo ? handles : [...handles].reverse()).every(handle => {
-      if (seen.has(handle.owner)) return true;
-      seen.add(handle.owner);
-      return redo ? handle.canRedo() : handle.canUndo();
-    });
-  }
   function step(redo) {
     if (active) fail('TARGET_BUSY', 'Finish the document transaction before traversing history.');
     const entry = redo ? history.future[0] : history.present;
     const next = (redo ? redoHistory : undoHistory)(history);
     if (!next) return null;
-    if (!retained(entry)) fail('UNDO_EXPIRED', 'Native history no longer retains this entry.');
-    if (!nativeReady(entry, redo)) fail('UNDO_CONFLICT', 'A newer native edit owns history.');
-    const handles = entry.handles ?? [];
-    restoreTogether(() => {
-      for (const handle of redo ? handles : [...handles].reverse()) (redo ? handle.redo : handle.undo)();
-      history = next;
-      publish(history.present.snapshot);
-    });
+    history = next; publish(history.present.snapshot);
     return entry;
   }
   return {
-    owns, read: domain => owns(domain) ? slices[domain] : legacy.read(domain), write, beginAction, recordAction,
-    dispose() { active?.cancel(); releaseLegacy?.(); releaseGuard?.(); releaseHistory?.(); listeners.clear(); },
+    owns, read: domain => { requireOwner(domain); return slices[domain]; }, write, beginAction, recordAction,
+    dispose() { active?.cancel(); listeners.clear(); },
     undo: () => step(false), redo: () => step(true),
-    canUndo: id => !active && history.past.length > 0 && (id === undefined || history.present.historyEntryId === id) && retained(history.present) && nativeReady(history.present, false),
-    canRedo: () => !active && history.future.length > 0 && retained(history.future[0]) && nativeReady(history.future[0], true),
+    canUndo: id => !active && history.past.length > 0 && (id === undefined || history.present.historyEntryId === id),
+    canRedo: () => !active && history.future.length > 0,
     getSnapshot: () => snapshot,
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    isRetained: id => Boolean(id && retainedEntries().some(entry => entry.historyEntryId === id && retained(entry))),
+    isRetained: id => Boolean(id && retainedEntries().some(entry => entry.historyEntryId === id)),
     history: () => freeze(history),
     depths: () => ({ past: history.past.length, future: history.future.length }),
+  };
+}
+
+// Compatibility for object producers with token-based drags. There is no
+// separate object history: every preview, cancellation and traversal uses the
+// document store. Immutable producer arrays retain their reference contract.
+export function createSceneHistoryStore(initialObjects, { onObjects, onCommit } = {}) {
+  const store = createDocumentStore({ owned: { objects: initialObjects }, dev: false, copyIntent: value => value });
+  const read = () => store.read('objects');
+  store.subscribe(() => onObjects?.(read()));
+  let active = null, sequence = 0;
+  function close(commit, notify = true) {
+    const current = active; active = null;
+    if (commit) {
+      current.session.commit();
+      if (notify) onCommit?.(current.before, read());
+    } else current.session.cancel();
+  }
+  function settle(notify = true) {
+    if (!active) return;
+    const cancel = active.cancel;
+    close(true, notify); cancel?.();
+  }
+  return {
+    get objects() { return read(); },
+    present: () => store.history().present.snapshot.objects,
+    applyAtomic(fn) {
+      settle();
+      const before = read();
+      store.recordAction('objects', () => store.write('objects', fn));
+      if (before !== read()) onCommit?.(before, read());
+    },
+    begin(owner, cancel) {
+      settle();
+      active = { token: ++sequence, owner, cancel, before: read(), session: store.beginAction('objects') };
+      return active.token;
+    },
+    applyIn(token, fn) { if (active?.token === token) active.session.update('objects', fn); },
+    end(token, { commit }) { if (active?.token !== token) return false; close(commit); return true; },
+    settle,
+    undo() { settle(false); return store.undo() ? read() : null; },
+    redo() { settle(false); return store.redo() ? read() : null; },
+    canUndo: store.canUndo, canRedo: store.canRedo, depths: store.depths,
   };
 }

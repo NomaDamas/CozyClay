@@ -148,21 +148,23 @@ function registerTests() {
 			{ name: "undo_edit", args: { receiptId: "r-1" } },
 			{ name: "run_action", args: { action: "shot.create" } },
 		];
-		assert.deepEqual(commands.map(command => command.name), [...protocol.STUDIO_TOOL_FAMILIES]);
+		assert.deepEqual(commands.map(command => command.name).sort(), [...protocol.STUDIO_TOOLS].sort());
 		const normalized = commands.map(command => protocol.validateStudioCommand(command));
 		assert.equal(normalized[0].args.limit, 12); assert.equal(normalized[2].args.collisionPolicy, "report"); assert.equal(normalized[6].args.repair, "bounded"); assert.equal(normalized[7].args.visual, "none"); assert.equal(normalized[7].args.range, "whole_clip");
 		assert.equal(commands[0].args.limit, undefined, "normalization does not edit caller input");
 		rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args: { ops: [createOp("Same"), createOp("Same")] } }), "DUPLICATE_NAME");
 	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
-		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 10);
-		assert.ok(protocol.STUDIO_TOOL_FAMILIES.includes("patch_elements"));
+		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 3);
+		assert.ok(protocol.STUDIO_TOOL_ALIASES.includes("patch_elements"));
 		assert.ok(protocol.STUDIO_CATALOGUE.some(tool => tool.name === "patch_elements"));
 		// Every family must fit the context capability list.
 		const c = contextFixture(); c.capabilities.tools = [...protocol.STUDIO_TOOL_FAMILIES]; protocol.validateStudioContext(c);
+		// Existing v1 clients can still advertise the compatibility aliases.
+		c.capabilities.tools = [...protocol.STUDIO_TOOLS]; protocol.validateStudioContext(c);
 		// Derived, not hand-written: an element added to the table appears in the
 		// schema with its declared bounds, and a removed one disappears.
-		const table = [...STUDIO_ELEMENTS, { path: "stage.spotlight", type: "number", persisted: true, undoDomain: "stage", agentExposure: "patch", normalizer: "createSceneStage", min: -2, max: 7 }];
+		const table = [...STUDIO_ELEMENTS, { path: "stage.spotlight", type: "number", persisted: true, undoDomain: "stage", normalizer: "createSceneStage", min: -2, max: 7 }];
 		const derived = protocol.buildPatchSchema(table);
 		assert.deepEqual(derived.stage.properties.spotlight, { type: "number", minimum: -2, maximum: 7 });
 		assert.equal(protocol.STUDIO_PATCH_SET_SCHEMAS.stage.properties.spotlight, undefined);
@@ -170,7 +172,7 @@ function registerTests() {
 		assert.deepEqual(derived.character.properties.model.enum, ["y-bot-tpose", "x-bot-tpose"]);
 		assert.equal(derived.character.properties.scale.minimum, 0.2);
 		assert.equal(derived.character.properties.scale.maximum, 3);
-		const hidden = protocol.buildPatchSchema(STUDIO_ELEMENTS.map(entry => entry.path === "character.tint" ? { ...entry, agentExposure: "todo" } : entry));
+		const hidden = protocol.buildPatchSchema(STUDIO_ELEMENTS.map(entry => entry.path === "character.tint" ? { ...entry, readOnly: true } : entry));
 		assert.equal(hidden.character.properties.tint, undefined);
 		for (const kind of protocol.STUDIO_PATCH_KINDS) assert.equal(protocol.STUDIO_PATCH_SET_SCHEMAS[kind].additionalProperties, false);
 		// An unknown path answers with the vocabulary that does exist.
@@ -397,7 +399,7 @@ function registerTests() {
 	test("run_action names one registered action; inspect_studio scope actions discovers them", () => {
 		assert.ok(protocol.STUDIO_TOOL_FAMILIES.includes("run_action"));
 		assert.equal(typeof protocol.STUDIO_TOOL_LABELS.run_action, "string");
-		assert.ok(protocol.STUDIO_VARIANTS.inspectScopes.includes("actions"));
+		assert.ok(protocol.STUDIO_VARIANTS.inspectionScopes.includes("actions"));
 		assert.deepEqual(protocol.validateStudioCommand({ name: "inspect_studio", args: { scope: "actions" } }).args, { scope: "actions", limit: 12 });
 		// The action's own schema validates its arguments in the editor; the
 		// family carries them as one JSON object, detached from the caller's.

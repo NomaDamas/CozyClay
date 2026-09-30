@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { createAgentTools } from "../bin/agent/agent-tools.mjs";
 import { createStudioTools } from "../bin/agent/studio-tools.mjs";
-import { STUDIO_TOOL_FAMILIES, STUDIO_TOOL_SCHEMAS } from "../src/studio-agent-protocol.js";
+import { STUDIO_TOOLS, STUDIO_TOOL_SCHEMAS } from "../src/studio-agent-protocol.js";
 import { toAgentTools } from "../bin/agent/pi-tools.mjs";
 
 const liveHub = {
@@ -20,7 +20,7 @@ const workflowTools = createAgentTools({
 });
 const studioAdapterInputs = studioTools.map((tool) => ({ ...tool, handler: async () => ({ ok: true }) }));
 const allTools = toAgentTools([...studioAdapterInputs, ...workflowTools]);
-assert.equal(studioTools.map((tool) => tool.name).join(","), STUDIO_TOOL_FAMILIES.join(","));
+assert.equal(studioTools.map((tool) => tool.name).join(","), STUDIO_TOOLS.join(","));
 assert.ok(allTools.length >= 17);
 assert.ok(allTools.every((tool) => typeof tool.execute === "function" && tool.parameters));
 assert.equal(allTools.find((tool) => tool.name === "inspect_studio").label, "Read the scene");

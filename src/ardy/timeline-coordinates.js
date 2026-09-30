@@ -63,3 +63,29 @@ export function groupKeyRuns(frames) {
 	}
 	return runs;
 }
+
+/** Inclusive range-pin geometry for the Full-Body lane. The visible band uses
+ * the exact keyed endpoints; the ramp endpoints extend by the pin's blend
+ * window and are clamped to the displayed timeline. */
+export function rangePinBandGeometry(pin, frameCount, displayFrameCount = frameCount) {
+	if (!pin || !Number.isInteger(pin.startFrame) || !Number.isInteger(pin.endFrame) || pin.startFrame > pin.endFrame) return null;
+	const count = Math.max(1, Math.round(Number(frameCount) || 0));
+	const displayed = Math.max(1, Math.round(Number(displayFrameCount) || count));
+	const maxFrame = count - 1;
+	const startFrame = Math.max(0, Math.min(maxFrame, pin.startFrame));
+	const endFrame = Math.max(startFrame, Math.min(maxFrame, pin.endFrame));
+	const blend = Math.max(0, Math.round(Number(pin.blend) || 0));
+	const rampStartFrame = Math.max(0, startFrame - blend);
+	const rampEndFrame = Math.min(maxFrame, endFrame + blend);
+	const denominator = Math.max(1, displayed - 1);
+	return {
+		startFrame,
+		endFrame,
+		rampStartFrame,
+		rampEndFrame,
+		startPct: startFrame / denominator,
+		endPct: endFrame / denominator,
+		rampStartPct: rampStartFrame / denominator,
+		rampEndPct: rampEndFrame / denominator,
+	};
+}

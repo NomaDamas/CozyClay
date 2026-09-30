@@ -39,8 +39,8 @@ for (const action of STUDIO_ACTIONS.filter(entry => entry.kind === 'mutation')) 
   }
   const oldState = f.actionHandlers.current.state;
   f.actionHandlers.current.state = () => ({ ...oldState(), frame: action.id === 'shot.create' ? 24 : 8 });
-  if (action.id.startsWith('character.') && action.undoDomain === 'cast') f.actual.addCharacterWaypoint('actor-a', { x: 0, z: 1 }, 24);
-  if (['character.removeIkKey', 'character.clearIkKeys'].includes(action.id)) f.actual.setCharacterIkKey('actor-a', 12, { head: { q: [unit] } });
+  if (action.id.startsWith('character.') && action.undoDomain === 'cast') assert.equal(f.binding.bus.run('character.addWaypoint', { characterId: 'actor-a', position: { x: 0, z: 1 }, frame: 24 }).ok, true);
+  if (['character.removeIkKey', 'character.clearIkKeys'].includes(action.id)) assert.equal(f.binding.bus.run('character.setIkKey', { characterId: 'actor-a', frame: 12, tracks: { head: { q: [unit] } } }).ok, true);
   const snapshot = () => action.undoDomain === 'objects' ? f.store.current.objects : f.actual.snapshotStudioDomain(action.undoDomain, 'actor-a');
   const before = snapshot();
   const receipt = await f.actual.runStudioAction(action.id, inputs[action.id]);

@@ -5,6 +5,7 @@
 import { DEFAULT_SENSOR_FORMAT, SENSOR_FORMATS } from "./shot.js";
 import { normalizeStableItems } from "./stable-items.js";
 import { normalizeMotionCalibration } from "./ardy/motion-calibration.js";
+import { normalizeTrailEdits } from "./motion-trail.js";
 import { elementByPath } from "./studio-elements.js";
 import { wrapAngle } from "./scene-objects.js";
 
@@ -214,6 +215,7 @@ function normalizeMotionRef(ref) {
 	// boundary for a later scene reload. cloneValue also strips non-finite values
 	// and recursively owns the object, so a caller cannot mutate the saved stage.
 	if (plainObject(ref.calibration)) normalized.calibration = normalizeMotionCalibration(ref.calibration);
+	if (ref.trailEdits != null) normalized.trailEdits = normalizeTrailEdits(ref.trailEdits);
 	// An agent-installed take keeps the Studio take id its receipts name, so a
 	// reload still reports the same take. Optional, like calibration.
 	if (typeof ref.studioTakeId === "string" && ref.studioTakeId) normalized.studioTakeId = ref.studioTakeId;

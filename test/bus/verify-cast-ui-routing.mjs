@@ -22,8 +22,7 @@ test('cast UI gestures and legacy mutators use retained commands without creatin
     f.cast.beginGesture();
     for (const x of [0.5, 1, 1.5]) ok(f.cast.updateCharacterAt(0, { x }));
     const receipt = ok(f.cast.finishGesture());
-    assert.equal(f.cast.documentStore.depths().past, 1);
-    assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.deepEqual(f.cast.documentStore.depths(), { past: 1, future: 0 }, 'the scrub has exactly one store entry');
     ok(f.run('edit.undo', { receiptId: receipt.receiptId })); assert.deepEqual(f.snapshot(), before);
     const handlers = f.cast.createLegacyCastHandlers((args, keys) => Object.fromEntries(keys.filter(key => args[key] !== undefined).map(key => [key, args[key]])),
       (rows, ref) => rows.find(row => row.id === ref));
@@ -32,7 +31,7 @@ test('cast UI gestures and legacy mutators use retained commands without creatin
     handlers.update_character({ ref: added.id, subject: 'Updated from legacy' });
     assert.equal(f.cast.read().find(row => row.id === added.id).subject, 'Updated from legacy');
     handlers.remove_character({ ref: added.id }); assert.deepEqual(f.snapshot(), before);
-    assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.deepEqual(f.cast.documentStore.depths(), { past: 3, future: 0 }, 'add, update and remove each own one entry');
   } finally { f.dispose(); }
 });
 

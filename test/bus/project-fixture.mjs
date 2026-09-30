@@ -29,7 +29,8 @@ export function projectFixture({ singleScene = false } = {}) {
   const storage = new Map([[PROJECT_SESSION_KEY, JSON.stringify({ name: 'Heist' })]]);
   globalThis.localStorage = { getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value), removeItem: key => storage.delete(key) };
   const f = objectsFixture(), app = f.scope.appContext;
-  app.updatePorts({ read: f.actual.readStudioState, bounds: f.actual.studioBounds, revision: f.revision });
+  app.updatePorts({ read: f.actual.readStudioState, bounds: f.actual.studioBounds, revision: f.revision, poses: () => f.poses,
+    recordAction: f.actual.recordStudioAction, beginAction: f.actual.beginStudioAction });
   const stage = createSceneStage({ ...f.stage.read(), characters: f.characterRef.current });
   const scenes = [
     { id: 'scene', name: singleScene ? 'Fixture' : 'First', objects: f.objects.read(), shotDocument: null, stage },

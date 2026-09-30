@@ -20,23 +20,25 @@ try {
   assert.equal(duplicate.ok, true, JSON.stringify(duplicate));
   assert.equal(duplicate.affectedIds.length, 1);
   assert.equal(f.objects.read().find(row => row.id === duplicate.affectedIds[0]).x, 5.5);
-  const legacy = f.objects.createLegacyObjectHandlers((args, keys) => Object.fromEntries(keys.filter(key => args[key] !== undefined).map(key => [key, args[key]])));
-  const placed = legacy.place_object({ kind: 'capsule' });
+  const placed = { id: f.run('object.add', { kind: 'capsule' }).affectedIds[0] };
   assert.ok(f.objects.read().some(row => row.id === placed.id));
   const depth = f.objects.store.depths().past;
-  const batch = legacy.apply_batch({ atomic: true, ops: [
+  const batchReceipt = await f.run('objects.batch', { atomic: true, ops: [
     { name: 'update_object', args: { id: 'cube', x: 7 } },
     { name: 'remove_object', args: { id: 'chair' } },
     { name: 'group_objects', args: { parent: 'sphere', children: [placed.id] } },
   ] });
+  const batch = batchReceipt.output;
+  assert.equal(batchReceipt.ok, true, JSON.stringify(batchReceipt));
   assert.deepEqual(batch.applied, [1, 2, 3]);
   assert.equal(batch.rolledBack, false);
   assert.equal(f.objects.store.depths().past, depth + 1);
   const saved = structuredClone(f.objects.read());
-  const rollback = legacy.apply_batch({ atomic: true, ops: [
+  const rollbackReceipt = await f.run('objects.batch', { atomic: true, ops: [
     { name: 'update_object', args: { id: 'cube', x: 9 } },
     { name: 'remove_object', args: { id: 'missing' } },
   ] });
+  const rollback = rollbackReceipt.output;
   assert.equal(rollback.rolledBack, true);
   assert.deepEqual(f.objects.read(), saved);
   console.log('PASS real UI add/rename/group, planner alias/replay, duplication and atomic legacy batches');

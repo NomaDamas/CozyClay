@@ -117,10 +117,12 @@ test('cast: every patchable path matches patch_elements normalization and field 
 test('cast: raw setters are guarded and scene load resets history without authoring', () => {
   const f = castFixture();
   try {
-    owned(f); assert.throws(() => f.cast.setCharacters([]), /requires a bus run/);
+    owned(f); assert.equal(f.cast.setCharacters, undefined, 'the raw hook setter is retired');
+    assert.throws(() => f.cast.write([]), /requires a bus run/);
     ok(f.run('character.update', { characterId: 'actor-a', patch: { x: 1 } }));
     const incoming = [createCharacterEntry({ id: 'loaded', layer: { waypoints: [], promptClips: [block] } })];
-    f.scope.appContext.loadStoreDomains({ cast: incoming });
+    f.scope.appContext.loadStoreDomains({ cast: incoming, objects: f.store.current.objects,
+      stage: f.live.current.stage, shot: f.scope.shotsDomain.state() });
     assert.deepEqual(f.cast.read(), incoming); assert.equal(f.cast.documentStore.depths().past, 0);
     assert.deepEqual(f.buffer.current.promptClips, [block]);
   } finally { f.dispose(); }

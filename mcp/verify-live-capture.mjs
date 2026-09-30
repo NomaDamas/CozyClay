@@ -114,9 +114,9 @@ const verifyRejectedCapture = async ({ value, error, expected }) => {
 	}
 };
 
-const vitePort = await reservePort();
-const livePort = await reservePort();
-const cdpPort = await reservePort();
+const vitePort = Number(process.env.QA_VITE_PORT) || await reservePort();
+const livePort = Number(process.env.COZYCLAY_LIVE_PORT) || await reservePort();
+const cdpPort = Number(process.env.CDP_PORT) || await reservePort();
 const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
 	cwd: root, env: { ...process.env, COZYCLAY_LIVE_PORT: String(livePort) }, stdio: ["ignore", "pipe", "pipe"],
 });
@@ -222,7 +222,9 @@ try {
 	const ratio = 0.55;
 	const placed = await call("place_object", { kind: "cube", x: camera.x * (1 - ratio), z: camera.z * (1 - ratio), name: "G007 Occluder" });
 	assert.equal(placed.isError, undefined, JSON.stringify(placed));
-	const objectId = placed.content[0].text.match(/as (\S+)\./)?.[1];
+	const placement = JSON.parse(placed.content[0].text);
+	assert.equal(placement.action, 'object.add'); assert.equal(placement.ok, true);
+	const objectId = placement.affectedIds[0];
 	assert.ok(objectId, placed.content[0].text);
 	const scaled = await call("update_object", { id: objectId, scale_x: 2.4, scale_y: 3, scale_z: 0.8 });
 	assert.equal(scaled.isError, undefined, JSON.stringify(scaled));

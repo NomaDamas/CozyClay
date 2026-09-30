@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { createDocumentStore } from '../../src/document-store.js';
-import { createLegacyAdapter } from '../../src/store/legacy-adapter.js';
 import { documentFixture } from './document-store-fixture.mjs';
 import { deferred } from './fixture.mjs';
 
@@ -31,15 +30,12 @@ try {
   const production = createDocumentStore({ owned: { stage: { intensity: 0 } }, dev: false });
   assert.doesNotThrow(() => production.write('stage', { intensity: 1 }));
   assert.equal(Object.isFrozen(production.read('stage')), false);
-  let value = 0;
-  const historyRef = { current: { past: [], future: [] } };
-  const port = { read: () => value, write: next => { value = next; }, historyRef,
-    recordUndo: () => historyRef.current.past.push({ snapshot: value }) };
-  const legacy = createLegacyAdapter({ cast: port, stage: port });
-  const mixed = createDocumentStore({ owned: { stage: {} }, legacy, dev: true });
-  assert.doesNotThrow(() => mixed.write('cast', 1));
-  assert.throws(() => legacy.write('stage', 2), /store-owned/);
-  assert.equal(value, 1);
-  mixed.dispose(); legacy.dispose();
+  const owned = createDocumentStore({ owned: { stage: {}, cast: 0 }, dev: true });
+  assert.throws(() => owned.write('cast', 1), /bus run/);
+  assert.doesNotThrow(() => owned.recordAction('cast', () => owned.write('cast', 1)));
+  assert.throws(() => owned.write('stage', 2), /bus run/);
+  assert.equal(owned.read('cast'), 1);
+  assert.throws(() => owned.beginAction('unknown'), { code: 'CAPABILITY_MISSING' });
+  owned.dispose();
 } finally { bus.dispose(); }
 console.log('PASS document store 5: per-domain bus guard, immutable dev snapshots and no async permission leak');

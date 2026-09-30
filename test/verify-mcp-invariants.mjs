@@ -77,10 +77,10 @@ function toolBlocks(source, keyword = "registerTool") {
 }
 
 function liveHandlers(app) {
-	const start = app.indexOf("liveHandlersRef.current = {");
+	const start = app.indexOf("const liveQueries = {");
 	if (start < 0) return [];
-	const body = app.slice(start, app.indexOf("\n\t\t};", start));
-	return [...body.matchAll(/^\s{3}([a-z][a-z0-9_]*)\s*(?::|,)/gm)].map((match, index, all) => ({
+	const body = app.slice(start, app.indexOf("\n\t};", start));
+	return [...body.matchAll(/^\t{2,3}([a-z][a-z0-9_]*)\s*(?::|,)/gm)].map((match, index, all) => ({
 		name: match[1],
 		line: lineAt(app, start + match.index),
 		body: body.slice(match.index, all[index + 1]?.index),
@@ -143,10 +143,12 @@ function verifyG010(sources) {
 		}
 	}
 	const requiredPath = [
-		["mcp/server.mjs", "liveHub.command("],
+		["mcp/server.mjs", "createToolHandlers("],
+		["mcp/tool-handlers.mjs", 'liveHub.command("run_action",'],
 		["mcp/live-hub.mjs", 'type: "cmd"'],
 		["src/live-control.js", "dispatchLiveFrame"],
-		["src/App.jsx", "liveHandlersRef.current = {"],
+		["src/App.jsx", "handlers: { ...liveQueries, ...studioBindingRef.current.handlers }"],
+		["src/studio-app-binding.js", "commandBus().run("],
 	];
 	for (const [path, token] of requiredPath) {
 		if (!sources[path]?.includes(token)) failures.push(`G010 mutation path is missing ${path} -> ${token}`);
@@ -255,7 +257,7 @@ const [g009, g010, g012, g013, g014, executableEntrypoints] = runChecks(sources,
 const failures = [g009, g010, g012, g013, g014, executableEntrypoints].flatMap((check) => check.failures);
 console.log(`G009 MCP tools scanned=${g009.tools.length} across ${[...new Set(g009.tools.map((tool) => tool.path))].join(", ")}: ${g009.tools.map((tool) => tool.name).join(", ")}`);
 console.log(`G009 live handlers scanned=${g009.handlers.length}: ${g009.handlers.map((handler) => handler.name).join(", ")}`);
-console.log("G010 agent mutation path: MCP tool -> appliedLiveMutation/liveHub.command -> WebSocket cmd frame -> dispatchLiveFrame -> App liveHandlersRef React-state handlers");
+console.log("G010 agent mutation path: MCP registry -> tool handler -> run_action WebSocket frame -> dispatchLiveFrame -> Studio binding -> command bus");
 console.log(`G010 source files scanned=${Object.keys(sources).length}; CRDT/OT imports=0`);
 console.log(`G012 MCP source files scanned=${Object.keys(sources).filter((path) => path.startsWith("mcp/")).length}; unsupported protocol constructs=0`);
 console.log(`G013 root runtime dependencies allow-list=${Object.keys(ROOT_DEPENDENCY_ALLOWLIST).join(", ")}; MCP baseline=${JSON.stringify(MCP_DEPENDENCY_BASELINE)}`);

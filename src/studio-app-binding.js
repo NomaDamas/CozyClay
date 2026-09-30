@@ -7,7 +7,7 @@ import { physicsKeyStamp } from "./ardy/physics-review.js";
 import { shotAtFrame } from "./cuts.js";
 import { CUTOUT_KIND, MESH_KIND, OBJECT_LIBRARY, supportHeightForObject } from "./scene-objects.js";
 import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
-import { createStudioCommands, createStudioCommandJournal, framingChecks, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
+import { createStudioCommandJournal, framingChecks, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { verifyInstalledTake } from "./studio-agent-motion.js";
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateReceipt, validateStudioCommand, validateStudioIdentity } from "./studio-agent-protocol.js";
 import { CONTACT_SHEET_LAYOUT, buildContactSheet, sampleContactSheetFrames } from "./studio-contact-sheet.js";
@@ -37,7 +37,7 @@ export function createStudioAppBinding(ports) {
 	};
 	const calibrationContentKey = value => value && typeof value === "object" ? JSON.stringify(value) : null;
 	const tokens = new Map(), receipts = new Map(), images = new Map();
-	let owner = null, commands = null, journal = null, actionBus = null;
+	let owner = null, journal = null, actionBus = null;
 	const domainKeys = new Map(), domainRevisions = {};
 	let authoredKey, physicsKey, viewKey, observedSceneRevision = ports.revision.current;
 	let physicsRevision = 0, viewRevision = 0;
@@ -49,7 +49,6 @@ export function createStudioAppBinding(ports) {
 			owner = host; tokens.clear(); receipts.clear(); images.clear();
 			authoredKey = physicsKey = viewKey = undefined;
 			journal = createStudioCommandJournal({ host, isRetained: receipt => ports.isRetained(receipt) });
-			commands = createStudioCommands({ read: readCommand, guard, bounds: ports.bounds, commit: ports.commit, poses: ports.poses, journal });
 		}
 		const characters = raw.characters.map(character => {
 			const target = raw.targets.get(character.id);
@@ -129,40 +128,6 @@ export function createStudioAppBinding(ports) {
 			parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
 	}
 	const frameRange = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
-	// Scope-specific inspection: each scope answers with the authored detail the
-	// compact context only counts, in the shapes patch_elements writes back.
-	const inspectScopes = {
-		scene: s => ({
-			stage: { environment: s.stage.environment ?? null, style: s.stage.style ?? null, hasEnvironmentImage: Boolean(s.stage.environmentImage),
-				hasEnvSheet: s.stage.hasEnvSheet === true, keyLight: { ...s.stage.keyLight },
-				camera: { presetId: s.stage.cameraPresetId ?? null, aspect: s.stage.shotAspect, sensorId: s.stage.sensorId } },
-			counts: { characters: s.characters.length, objects: s.objects.length, shots: s.shots.length, frames: s.frameCount, assets: assetList(s).length },
-		}),
-		shot: (s, wanted) => {
-			const shots = s.shots.filter(wanted).map(row => ({ id: row.id, name: row.name, range: frameRange(row), mode: row.camera?.mode ?? "keys",
-				cameraKeys: row.cameraKeys.map(({ frame, framing }) => ({ frame, framing: { pos: { ...framing.pos }, yaw: framing.yaw, pitch: framing.pitch, fovDeg: framing.fovDeg } })),
-				rail: row.camera?.cameraRail?.map(({ x, z }) => ({ x, z })) ?? null }));
-			return { shots, total: shots.length };
-		},
-		motion: (s, wanted) => {
-			const characters = s.characters.map(c => ({ ...c, name: c.subject || c.id })).filter(wanted).map(c => {
-				const t = s.targets.get(c.id);
-				return { id: c.id, name: c.name, takeId: t?.motion?.studioTakeId ?? null, frames: t?.motion?.frames ?? 0,
-					promptBlocks: (c.layer?.promptClips ?? []).map(({ startFrame, endFrame, text }) => ({ startFrame, endFrame, text })),
-					waypoints: (c.layer?.waypoints ?? []).map(p => ({ frame: p.frame, position: { x: p.x, y: p.y ?? 0, z: p.z } })),
-					ikKeyFrames: [...(t?.ikState?.keys?.keys() ?? [])].sort((a, b) => a - b) };
-			});
-			return { characters, total: characters.length };
-		},
-		selection: s => {
-			const id = ["object", "character", "rig"].includes(s.selection?.kind) ? s.selection.id : null;
-			const row = id ? entityProjection(s).find(entry => entry.id === id) : null;
-			const o = row?.kind === "object" ? s.objects.find(entry => entry.id === id) : null, c = row?.kind === "character" ? s.characters.find(entry => entry.id === id) : null;
-			const entity = !row ? null : o ? { ...row, hidden: o.hidden === true, path: o.path ? structuredClone(o.path) : null }
-				: { ...row, hidden: c.hidden === true, poseId: c.pose?.id ?? null };
-			return { selection: s.selection ?? null, entity };
-		},
-	};
 	function assetList(s) {
 		const catalogue = studioObjectCatalogue().objects.map(({ kind }) => {
 			const entry = OBJECT_LIBRARY.find(row => row.kind === kind);
@@ -222,6 +187,8 @@ export function createStudioAppBinding(ports) {
 			const target = elementTarget(kind, value, id, s.host.sceneId);
 			return target ? elementReadback(kind, target) : [];
 		});
+		if (id === s.host.sceneId) return { selection: s.selection, activeCharacterId: s.activeCharacterId, shotId: s.selectedShotId, view: s.view,
+			...(patched.length ? { patched } : {}) };
 		if (patched.length) return { patched };
 		const shot = s.shots.find(row => row.id === id);
 		if (shot) return { name: shot.name || shot.id, range: { startFrame: shot.startFrame, endFrameExclusive: shot.endFrame + 1 } };
@@ -244,13 +211,16 @@ export function createStudioAppBinding(ports) {
 				} };
 			}, recordAction: (...args) => ports.recordAction(...args), beginAction: (...args) => ports.beginAction(...args),
 			readback: actionReadback, remember, receipt: id => receipts.get(id), isRetained: receipt => ports.isRetained(receipt),
-			canUndo: receipt => ports.canUndo(receipt), undo: () => ports.undo(), readTarget: id => { refresh(); return tokens.get(id)?.token; },
+			canUndo: receipt => ports.canUndo(receipt), undo: () => ports.undo(), redo: () => ports.redo(),
+			history: redo => ports.history?.(redo), finishHistoryGesture: () => ports.finishHistoryGesture?.(),
+			readTarget: id => { refresh(); return tokens.get(id)?.token; },
 			captureToasts: listener => ports.captureToasts?.(listener), showRefusal: message => ports.showRefusal?.(message), emit: event => ports.emitCommandEvent?.(event),
 		} });
 		return actionBus;
 	}
 	function runAction(request, args) {
-		const result = commandBus().run(args.action, args.args, { ...request, origin: "agent", confirmationToken: args.confirmationToken ?? request.confirmationToken });
+		const { name: _name, args: _args, ...options } = request;
+		const result = commandBus().run(args.action, args.args, { ...options, origin: "agent", confirmationToken: args.confirmationToken ?? request.confirmationToken });
 		const answer = receipt => receipt.nextHost ? { ...receipt, host: receipt.nextHost } : receipt;
 		return result?.then ? result.then(answer) : answer(result);
 	}
@@ -259,25 +229,17 @@ export function createStudioAppBinding(ports) {
 		if (request.name === "run_action") return runAction(request, validateStudioCommand({ name: request.name, args: request.args }).args);
 		const alias = ports.actions?.().toolAlias?.(request.name);
 		if (alias) {
-			try { return runAction(request, { action: alias.action, args: alias.args(request.args) }); }
+			try { return runAction(request, { action: typeof alias.action === 'function' ? alias.action(request.args) : alias.action, args: alias.args(request.args) }); }
 			catch (error) { return rejection(request, error); }
 		}
 		const patchKind = request.name === "patch_elements" && request.args?.ops?.[0]?.target?.kind;
-		const registry = patchKind ? ports.actions?.() : null;
-		const setAction = registry?.ids().includes(`${patchKind}.set`) && registry.get(`${patchKind}.set`);
-		if (setAction && ports.storeDomain?.(setAction.undoDomain ?? patchKind)) {
+		if (patchKind) {
 			try {
 				const args = elementPatchArgs(patchKind, request.args);
 				patchRequests.set(request.commandId, request);
-				return commandBus().run(`${patchKind}.set`, args, { ...request, origin: "agent" });
+				return runAction(request, { action: `${patchKind}.set`, args });
 			} catch (error) { return rejection(request, error); }
 			finally { patchRequests.delete(request.commandId); }
-		}
-		if (["arrange_objects", "arrange_characters", "frame_shot", "patch_elements"].includes(request.name)) {
-			// Arrangements and framing are fenced by the exact scene revision, the
-			// gesture flag and the document identity inside the command module; they
-			// carry no per-entity tokens, so a turn may edit one entity twice.
-			return remember(commands.execute(request));
 		}
 		const signature = JSON.stringify(request);
 		if (!same(request.host, owner)) return rejection(request, new StudioProtocolError("STALE_SCENE", "Document changed."));
@@ -286,29 +248,6 @@ export function createStudioAppBinding(ports) {
 			// Verification only observes: the document identity (checked above) is
 			// its whole fence, so a later edit never refuses it.
 			const { args } = validateStudioCommand({ name: request.name, args: request.args }), s = request.name === "verify_result" ? refresh() : admit(request);
-			if (request.name === "operate_studio") {
-				ports.operate(args, s); const after = refresh();
-				return journal.record(validateReceipt({ ok: true, status: "transient", authored: false, commandId: request.commandId,
-					receiptId: crypto.randomUUID(), host: s.host, revision: { before: s.revision, after: s.revision },
-					view: { before: s.viewRevision, after: after.viewRevision }, affectedIds: [s.host.sceneId],
-					delta: [{ id: s.host.sceneId, after: { selection: after.selection, activeCharacterId: after.activeCharacterId, shotId: after.selectedShotId, view: after.view } }],
-					checks: { coverage: "editor-view-state" }, undo: null, warnings: [] }));
-			}
-			if (request.name === "undo_edit") {
-				const previous = receipts.get(args.receiptId);
-				if (!previous || !ports.canUndo(previous)) fail("UNDO_CONFLICT", "A newer edit owns native Undo.");
-				ports.undo(); const after = refresh();
-				const ids = previous.affectedIds;
-				// Removed creations have no live guard; their retired incarnation is
-				// still identified by a fresh restoration token in the undo receipt.
-				const restoredTargets = ids.map(id => ({ ...s.host, targetId: id, token: tokens.get(id)?.token ?? `removed-${++tokenSequence}` }));
-				const result = validateReceipt({ ok: true, status: "undone", authored: true, commandId: request.commandId, receiptId: crypto.randomUUID(), host: s.host,
-					revision: { before: s.revision, after: after.revision }, affectedIds: ids,
-					delta: ids.slice(0, 8).map(id => ({ id, after: { token: restoredTargets.find(t => t.targetId === id).token } })),
-					checks: { coverage: "native-history-restoration" }, undo: { historyEntryId: previous.undo.historyEntryId, entries: 1, canUndoDirect: false },
-					warnings: [], undoneReceiptId: previous.receiptId, restoredTargets, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
-				return remember(journal.record(result));
-			}
 			if (request.name === "verify_result") {
 				const receipt = args.receiptId ? receipts.get(args.receiptId) : null;
 				if (args.receiptId && !receipt) fail("STALE_TARGET", "Receipt is not retained in this document.");
@@ -387,7 +326,12 @@ export function createStudioAppBinding(ports) {
 			}
 			const s = refresh();
 			const wanted = row => (!args.ids || args.ids.includes(row.id)) && (!args.query || Boolean(row.name?.includes(args.query)));
-			if (inspectScopes[command.args.scope]) return { context: c, scope: command.args.scope, ...inspectScopes[command.args.scope](s, wanted) };
+			if (["scene", "shot", "motion", "selection"].includes(command.args.scope)) {
+				const select = { shot: ["shot"], motion: ["motion", "character"] }[command.args.scope];
+				const ids = args.ids ?? (command.args.scope === "selection" ? [s.selection?.id ?? s.host.sceneId]
+					: args.query && select ? (command.args.scope === "shot" ? s.shots : entityProjection(s).filter(row => row.kind === "character")).filter(wanted).map(row => row.id) : undefined);
+				return { context: c, scope: "document", ...readElementDocument(s.document, { ...command.args, ids, select }, c.host.sceneId) };
+			}
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
 			// Stable id order, so an offset cursor survives unrelated edits.
@@ -401,9 +345,9 @@ export function createStudioAppBinding(ports) {
 		arrange_characters: request => execute({ ...request, name: "arrange_characters" }),
 		patch_elements: request => execute({ ...request, name: "patch_elements" }),
 		frame_shot: request => execute({ ...request, name: "frame_shot" }),
-		generate_motion: () => fail("CAPABILITY_MISSING", "Use the server-owned Studio generation route."),
+		generate_motion: request => execute({ ...request, name: "generate_motion" }),
 		verify_result: request => execute({ ...request, name: "verify_result" }),
-		undo_edit: request => execute({ ...request, name: "undo_edit" }),
+		undo_edit: request => runAction(request, { action: "edit.undo", args: request.args }),
 		run_action: request => execute({ ...request, name: "run_action" }),
 		resolve_studio_image(request) {
 			refresh(); const image = images.get(request.imageId);

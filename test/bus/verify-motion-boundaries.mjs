@@ -11,13 +11,13 @@ test('motion: generated publication, pose clear and receipt undo use only owned 
     f.scope.shotsDomain.load({ ...f.scope.shotsDomain.state(), camera: f.actual.readStudioCamera() });
     prepareGeneration(f);
     const before = snapshot(f), installed = ok(await install(f));
-    assert.ok(f.motion.motionFor('actor-a')); assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.ok(f.motion.motionFor('actor-a')); assert.deepEqual(f.motion.documentStore.depths(), { past: 1, future: 0 });
     ok(f.run('edit.undo', { receiptId: installed.receiptId })); assert.deepEqual(snapshot(f), before);
     ok(await install(f)); const loaded = snapshot(f);
     const posed = ok(f.run('character.setPose', { characterId: 'actor-a', pose: 'pose-wave', clearMotion: true }));
     assert.equal(f.motion.motionFor('actor-a'), null); assert.equal(f.cast.read()[0].pose.id, 'pose-wave');
     ok(f.run('edit.undo', { receiptId: posed.receiptId })); assert.deepEqual(snapshot(f), loaded);
-    assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.deepEqual(f.motion.documentStore.depths(), { past: 1, future: 1 }, 'pose undo leaves exactly the installed take and one redo');
   } finally { f.dispose(); }
 });
 test('motion: selection switches runtime take and IK projections without rewriting document intent', async () => {

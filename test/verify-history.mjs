@@ -13,7 +13,7 @@ import {
 	endTransaction,
 	settleTransaction,
 } from "../src/history.js";
-import { createSceneHistoryStore } from "../src/scene-history.js";
+import { createSceneHistoryStore } from "../src/document-store.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {

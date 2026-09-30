@@ -55,15 +55,7 @@ export async function studio({ projectRoot, withCast = false } = {}) {
 			document: { version: SCENES_VERSION, activeSceneId: f.scope.activeSceneIdRef.current, scenes: f.scope.scenesRef.current },
 		});
 	};
-	const legacy = f.objects.createLegacyObjectHandlers((args, keys) => Object.fromEntries(keys.filter(key => args[key] !== undefined).map(key => [key, args[key]])));
-	const castLegacy = withCast ? f.cast.createLegacyCastHandlers(
-		(args, keys) => Object.fromEntries(keys.filter(key => args[key] !== undefined).map(key => [key, args[key]])),
-		(rows, ref) => rows.find(row => row.id === ref) ?? rows[/^[A-Za-z]$/.test(ref) ? ref.toUpperCase().charCodeAt(0) - 65 : Number(ref) - 1],
-	) : {};
-	const handlers = { ...f.binding.handlers, ...legacy, ...castLegacy, describe,
-		set_camera: args => f.scope.shotsDomain.setLiveCamera(args),
-		load_scenes: args => f.project.loadLiveScenes(args),
-	};
+	const handlers = { ...f.binding.handlers, describe };
 	const socket = new WebSocket(`ws://127.0.0.1:${hub.port}/live`);
 	const welcomed = Promise.withResolvers();
 	socket.on("message", async raw => {

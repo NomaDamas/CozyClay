@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { parseSync } from 'rolldown/experimental';
 import { createAppContext } from '../../src/app-context.js';
+import { createDocumentStore } from '../../src/document-store.js';
 
 const root = new URL('../../', import.meta.url);
 const read = path => readFileSync(new URL(path, root), 'utf8');
@@ -190,11 +191,13 @@ function verify() {
   assert.equal(first.notify, second.notify, 'all domains share the stable App-owned notifier');
   first.notify('visible', 'receipt');
   assert.deepEqual(notices, [['visible', 'receipt']], 'notification arguments are forwarded without reinterpretation');
-  first.recordCharacterUndo({ characters: [] });
+  const store = createDocumentStore({ owned: { cast: [] } });
+  first.registerStoreDomain('cast', { documentStore: store, beginAction: () => store.beginAction('cast') });
+  first.recordAction('cast', () => store.write('cast', [{ id: 'actor' }]));
   assert.equal(second.recordShotUndo, undefined, 'shots use their registered document owner');
-  assert.equal(first.castHistory, second.castHistory);
-  assert.deepEqual(facade.castHistory.past.map(entry => entry.tick), [1]);
-  assert.equal(facade.undoClock, 1, 'render projections never fork the undo clock');
+  assert.equal(first.historyEntry(), second.historyEntry());
+  assert.equal(facade.nextStoreHistory(false), first.storeDomain('cast'));
+  assert.equal(facade.undoClock, 1, 'render projections never fork committed history');
   console.log('PASS domain facade: render closure lifetime and shared interleaved undo clock');
 }
 if (resolve(process.argv[1] ?? '') === fileURLToPath(import.meta.url)) verify();

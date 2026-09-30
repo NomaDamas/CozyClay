@@ -70,9 +70,9 @@ const terminate = async (child) => {
 	await withTimeout(exited, "child cleanup", 5_000).catch(() => child.kill("SIGKILL"));
 };
 
-const vitePort = await reservePort();
-const livePort = await reservePort();
-const cdpPort = await reservePort();
+const vitePort = Number(process.env.QA_VITE_PORT) || await reservePort();
+const livePort = Number(process.env.COZYCLAY_LIVE_PORT) || await reservePort();
+const cdpPort = Number(process.env.CDP_PORT) || await reservePort();
 const vite = spawn(process.execPath, ["node_modules/vite/bin/vite.js", "--host", "127.0.0.1", "--port", String(vitePort), "--strictPort"], {
 	cwd: root,
 	env: { ...process.env, COZYCLAY_LIVE_PORT: String(livePort) },
@@ -148,7 +148,18 @@ try {
 		if (frame.method === "Fetch.requestPaused") heldModelRequests.push(frame.params.requestId);
 	});
 	await send("Page.enable");
-	await send("Page.navigate", { url: `http://127.0.0.1:${vitePort}/app/` });
+	// Subscribe before navigation: the fixture installs a real startup take
+	// asynchronously, and that authored publication must precede admission.
+	await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+		window.__initialTakeReady = new Promise(resolve => {
+			let state;
+			Object.defineProperty(window, '__cozyclay', { configurable: true,
+				get: () => state,
+				set: value => { state = value; if (value?.motion?.frames > 0) resolve(true); },
+			});
+		});
+	` });
+	await send("Page.navigate", { url: `http://127.0.0.1:${vitePort}/app/?motion=/demo/walk-then-stop.npz` });
 
 	client = new Client({ name: "cozyclay-live-editor-model-verify", version: "1.0.0" });
 	await client.connect(new StdioClientTransport({ command: process.execPath, args: [serverPath, "--live-port", String(livePort)] }));
@@ -169,6 +180,15 @@ try {
 		"shot camera mount",
 	);
 
+	// Initial rig hydration can publish authored cast state after the canvas
+	// mounts. Admit the first edit only once that exact rig is ready.
+	await evaluate(
+		`window.__cozyclayMcpRigReady?.includes('char-a') ? true : new Promise(resolve => window.addEventListener('cozyclay:mcp-rig-ready', event => event.detail === 'char-a' && resolve(true)))`,
+		"initial character rig readiness",
+	);
+
+	await evaluate('window.__initialTakeReady', 'initial authored take publication');
+
 	// From here the x-bot mesh is held at the network layer until this suite
 	// releases it. A cast model that is still downloading suspends the R3F
 	// scene graph and remounts every sibling rig when it resolves; that order is
@@ -185,7 +205,7 @@ try {
 	await withTimeout(xBotRequest, "x-bot mesh request", 5_000);
 	const described = await client.callTool({ name: "describe_scene", arguments: {} });
 	// Then the real editor loads and reports X Bot through the live describe frame.
-	assert.equal(added.isError, undefined, JSON.stringify(added));
+	assert.equal(added.isError, undefined, JSON.stringify({ added, editorFrames }));
 	const describedFrames = editorFrames.filter((frame) => frame.type === "result" && frame.value?.characters);
 	assert.ok(describedFrames.some((frame) => frame.value.characters.some((character) => character.model === "x-bot-tpose")), JSON.stringify(describedFrames));
 	assert.match(described.content[0].text, /\[x-bot-tpose\]/, described.content[0].text);

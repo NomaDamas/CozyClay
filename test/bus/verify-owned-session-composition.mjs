@@ -20,11 +20,6 @@ function composite(f, id = 'fixture.ownedComposite', domain = 'shot', withNative
     return { affectedIds: shot.affectedIds, summary: 'Composed edit.' };
   });
 }
-function nativePort(f) {
-  return { beginAction: f.actual.beginNativeStudioAction,
-    isRetained: id => f.actual.isNativeStudioHistoryRetained({ undo: { historyEntryId: id } }),
-    stepHistory: f.actual.stepNativeStudioHistory };
-}
 
 test('nested same-store commands join the outer owned session through actual App routing', () => {
   const f = objectsFixture();
@@ -39,7 +34,7 @@ test('nested same-store commands join the outer owned session through actual App
     const receipt = ok(f.run('fixture.sameStore'));
     assert.equal(receipt.undo.entries, 1);
     assert.equal(domain.documentStore.depths().past, depth + 1);
-    assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    assert.equal(f.scope.appContext.storeDomain('cast').documentStore.depths().past, 0, 'nested shots do not duplicate history in cast');
     assert.equal(f.run('edit.undo', { receiptId: receipt.receiptId }).status, 'undone');
     assert.deepEqual(snapshot(f), before);
   } finally { f.dispose(); }
@@ -116,14 +111,14 @@ test('evicting one member expires the composite receipt instead of promising par
   } finally { f.dispose(); }
 });
 
-for (const rootDomain of ['shot', 'cast']) test(`facade composition enlists native history with an ${rootDomain} root`, () => {
+for (const rootDomain of ['shot', 'cast']) test(`facade composition enlists owned cast history with an ${rootDomain} root`, () => {
   const f = objectsFixture();
   try {
-    const app = f.scope.appContext, native = nativePort(f);
-    // Exercise the facade bridge directly over the shipped stores and native
-    // history. verify-app-session-composition also covers App's delegation.
+    const app = f.scope.appContext;
+    // Exercise composition directly over the shipped owners. App's delegation
+    // is also covered by verify-app-session-composition.
     assert.equal(typeof app.recordAction, 'function');
-    f.ports.recordAction = (domain, run, targetId, nested) => app.recordAction(domain, run, targetId, nested, native);
+    f.ports.recordAction = (domain, run, targetId, nested) => app.recordAction(domain, run, targetId, nested);
     composite(f, 'fixture.mixedComposite', rootDomain, true);
     const before = snapshot(f), receipt = ok(f.run('fixture.mixedComposite')), after = snapshot(f);
     assert.equal(receipt.undo.entries, 1);

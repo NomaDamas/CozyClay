@@ -13,7 +13,7 @@ const css = readFileSync(new URL("../src/workflow/agent-panel.css", import.meta.
 const builder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
 const studio = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
 const studioCss = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-const { STUDIO_TOOL_FAMILIES, validateReceipt } = await import("../src/studio-agent-protocol.js");
+const { STUDIO_TOOLS, validateReceipt } = await import("../src/studio-agent-protocol.js");
 const { createAgentChatStore } = await import("../src/workflow/agent-client.js");
 
 let failures = 0;
@@ -283,9 +283,9 @@ expect("the empty ready state offers exactly three suggestion chips", module_.SU
 	expect("the Studio offers three previs chips of its own", studioPresentation.suggestions.length === 3
 		&& studioPresentation.suggestions.every((chip) => typeof chip === "string" && chip.length > 8)
 		&& studioPresentation.suggestions.every((chip) => !module_.SUGGESTION_CHIPS.includes(chip)));
-	expect("every Studio family reads as an action", STUDIO_TOOL_FAMILIES.every((family) => typeof studioPresentation.toolLabels[family] === "string" && studioPresentation.toolLabels[family].length > 3),
+	expect("every Studio tool and alias reads as an action", STUDIO_TOOLS.every((family) => typeof studioPresentation.toolLabels[family] === "string" && studioPresentation.toolLabels[family].length > 3),
 		JSON.stringify(Object.keys(studioPresentation.toolLabels)));
-	expect("no Studio tool reads as a function name", STUDIO_TOOL_FAMILIES.every((family) => !studioPresentation.toolLabels[family].includes("_")));
+	expect("no Studio tool reads as a function name", STUDIO_TOOLS.every((family) => !studioPresentation.toolLabels[family].includes("_")));
 	expect("the families a mechanical label would mangle are named properly", ["inspect_studio", "operate_studio", "patch_elements", "verify_result", "undo_edit", "frame_shot"]
 		.every((family) => module_.resolveToolLabel({ name: family }, studioPresentation.toolLabels) !== module_.toolCallLabel({ name: family })));
 	expect("the label map is the panel's, not the server's", module_.resolveToolLabel({ name: "arrange_objects", label: "arrange objects" }, studioPresentation.toolLabels) === studioPresentation.toolLabels.arrange_objects);
@@ -317,7 +317,7 @@ expect("the scripted turn ends with an image, a quota and done", types.includes(
 const studioMock = [];
 await module_.createMockTransport({ state: "ready", speed: 60, surface: "studio" }).turn({}, (event) => studioMock.push(event));
 const studioStarts = studioMock.filter((event) => event.type === "tool.start");
-expect("the Studio mock runs Studio families only", studioStarts.length > 0 && studioStarts.every((event) => STUDIO_TOOL_FAMILIES.includes(event.name)), studioStarts.map((event) => event.name).join(","));
+expect("the Studio mock runs Studio families only", studioStarts.length > 0 && studioStarts.every((event) => STUDIO_TOOLS.includes(event.name)), studioStarts.map((event) => event.name).join(","));
 expect("every Studio mock tool.start carries label and args", studioStarts.every((event) => typeof event.label === "string" && event.args));
 expect("every Studio mock tool.done states its elapsed time", studioMock.filter((event) => event.type === "tool.done").every((event) => Number.isFinite(event.elapsedMs)));
 expect("the Studio mock never generates an image", !studioMock.some((event) => event.type === "image"));

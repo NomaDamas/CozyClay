@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { frameFromClientX, groupKeyRuns, KEY_RUN_MIN, motionTrimRange, promptMoveStartFrame, shotBlockGeometry } from "./timeline-coordinates.js";
+import { frameFromClientX, groupKeyRuns, KEY_RUN_MIN, motionTrimRange, promptMoveStartFrame, rangePinBandGeometry, shotBlockGeometry } from "./timeline-coordinates.js";
 import { motionSegmentSpeedForFrames } from "./motion-edit.js";
 import { createPlaybackClock } from "./playback-clock.js";
 import { promptResizeFrame } from "./timeline-resize.js";
@@ -971,6 +971,9 @@ export default function Timeline({
 	// Full-Body lane. Frames are already on the timeline's 24 fps clock.
 	motion = null, // { frames, label } | null
 	ikFrames = [], // sorted full-body key frames
+	rangePins = [], // active character's inclusive pin ranges
+	selectedPinId = null,
+	pendingPinRange = null,
 	footSnap = true, // feet stay planted while the body moves
 	bodyContact = true, // body markers stay above the floor
 	shots = [],
@@ -999,6 +1002,7 @@ export default function Timeline({
 	onIkToggle,
 	onIkKeyframeAdd,
 	onIkKeyframeRemove,
+	onPinSelect,
 	onFootSnapToggle,
 	onBodyContactToggle,
 	onCameraMoveSelect,
@@ -1064,7 +1068,7 @@ export default function Timeline({
 	// The window key/interval handlers register once; the latest callbacks
 	// are read through a ref so they never go stale mid-playback.
 	const handlers = useRef({});
-	handlers.current = { onScrub, onAdvance, onStep, onPlayToggle, onWaypointToggle, onMarkerSelect, onMarkerRemove, onRootKeyframeAdd, onPromptAdd, onPromptSelect, onPromptChange, onPromptResize, onPromptMove, onPromptRemove, onIkToggle, onIkKeyframeAdd, onIkKeyframeRemove, onFootSnapToggle, onBodyContactToggle, onCameraMoveSelect, onCameraKeyframeAdd, onCameraKeyframeMove, onCameraKeyframeRemove, onCameraBlockSelect, onCameraBlockChange, onCameraPreview, onCameraRailDrawToggle, onCameraRailDelete, onObjectPathDrawToggle, onObjectPathChange, onObjectPathClear, onObjectTimingGestureStart, onObjectTimingGestureEnd, onShotSelect, onShotBoundaryMove, onShotRename, onShotRemove, onShotDuplicate, onShotCut, onShotSplit, onShotMove, onMotionTrim, onMotionTrimReset, onMotionCut, onMotionSpeedChange, onMotionSegmentRemove, onEditGestureStart };
+	handlers.current = { onScrub, onAdvance, onStep, onPlayToggle, onWaypointToggle, onMarkerSelect, onMarkerRemove, onRootKeyframeAdd, onPromptAdd, onPromptSelect, onPromptChange, onPromptResize, onPromptMove, onPromptRemove, onIkToggle, onIkKeyframeAdd, onIkKeyframeRemove, onPinSelect, onFootSnapToggle, onBodyContactToggle, onCameraMoveSelect, onCameraKeyframeAdd, onCameraKeyframeMove, onCameraKeyframeRemove, onCameraBlockSelect, onCameraBlockChange, onCameraPreview, onCameraRailDrawToggle, onCameraRailDelete, onObjectPathDrawToggle, onObjectPathChange, onObjectPathClear, onObjectTimingGestureStart, onObjectTimingGestureEnd, onShotSelect, onShotBoundaryMove, onShotRename, onShotRemove, onShotDuplicate, onShotCut, onShotSplit, onShotMove, onMotionTrim, onMotionTrimReset, onMotionCut, onMotionSpeedChange, onMotionSegmentRemove, onEditGestureStart };
 
 	// Trackpad/wheel zoom over the FRAME ruler lane only. React registers
 	// onWheel as passive, so a synthetic onWheel could never preventDefault —
@@ -1212,6 +1216,10 @@ export default function Timeline({
 	// the raw list draws a wall of diamonds. Collapse consecutive frames into
 	// runs first; only runs shorter than KEY_RUN_MIN stay diamonds.
 	const ikRuns = useMemo(() => groupKeyRuns(ikFrames), [ikFrames]);
+	const pinBands = useMemo(() => rangePins.map((pin) => ({
+		pin,
+		geometry: rangePinBandGeometry(pin, frameCount, displayFrameCount),
+	})).filter((entry) => entry.geometry), [displayFrameCount, frameCount, rangePins]);
 	const moveRef = useRef(null);
 	const suppressPromptClickRef = useRef(false);
 	const resizeRef = useRef(null);
@@ -2232,7 +2240,43 @@ export default function Timeline({
 											</div>
 										);
 									})}
-									{name === IK_LANE && displayMotionSegments.map((segment, index) => (
+									{name === IK_LANE && pinBands.map(({ pin, geometry }) => {
+						const hand = pin.track === "leftHand" || pin.track === "rightHand";
+						return (
+							<button
+								key={`pin:${pin.id}`}
+								type="button"
+								className={`tl-pin-band${selectedPinId === pin.id ? " selected" : ""}`}
+								style={{
+									"--tl-f-start": geometry.startPct,
+									"--tl-f-end": geometry.endPct,
+									"--tl-pin-ramp-start": geometry.rampStartPct,
+									"--tl-pin-ramp-end": geometry.rampEndPct,
+									"--tl-pin-color": hand ? "var(--range-pin-hand)" : "var(--range-pin-foot)",
+								}}
+								title={ko(`${pin.track} pin · frames ${pin.startFrame}–${pin.endFrame}`, `${pin.track} 고정 · ${pin.startFrame}–${pin.endFrame}프레임`)}
+								onPointerDown={(event) => {
+									if (event.button !== 0) return;
+									event.stopPropagation();
+									handlers.current.onPinSelect?.(pin.id);
+								}}
+							>
+								<i className="tl-pin-band-ramp start" aria-hidden="true" />
+								<i className="tl-pin-band-core" aria-hidden="true" />
+								<i className="tl-pin-band-ramp end" aria-hidden="true" />
+							</button>
+						);
+					})}
+					{name === IK_LANE && pendingPinRange && (() => {
+						const geometry = rangePinBandGeometry(pendingPinRange, frameCount, displayFrameCount);
+						if (!geometry) return null;
+						return <span
+							className="tl-pin-pending"
+							style={{ "--tl-f-start": geometry.startPct, "--tl-f-end": geometry.endPct }}
+							aria-label={ko(`Pending pin range ${geometry.startFrame}–${geometry.endFrame}`, `대기 중인 고정 범위 ${geometry.startFrame}–${geometry.endFrame}`)}
+						/>;
+					})()}
+					{name === IK_LANE && displayMotionSegments.map((segment, index) => (
 										<div
 											key={segment.id}
 											className={"tl-motion-clip" + (trimPreview ? " trimming" : "") + (segment.previewSpeed !== undefined ? " retiming" : "") + (selectedMotionSegment?.id === segment.id ? " selected" : "")}

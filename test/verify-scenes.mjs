@@ -380,7 +380,7 @@ assert.match(
 	/actorStageRef\.current = \{[\s\S]{0,280}shotAspect: shotAspectKey,[\s\S]{0,80}sensorId,/,
 	"the outgoing scene snapshots actor state, shot aspect and filmback"
 );
-assert.match(appSource, /setCharacters\(stage\.characters\)/, "opening a scene restores its cast");
+assert.match(appSource, /loadStoreDomains\(\{[^\n]*cast: stage\.characters \}\)/, "opening a scene restores its cast through the owned load boundary");
 const openSceneBody = /function openScene\(scene, nextScenes\) \{([\s\S]*?)\n\t\}/.exec(appSource)?.[1] ?? "";
 assert.doesNotMatch(
 	openSceneBody,

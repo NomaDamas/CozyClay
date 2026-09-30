@@ -4,6 +4,7 @@
 // button is visible, removes the authored rail, and persists Follow mode.
 import { writeFileSync } from "node:fs";
 import { afterPageLoad } from "./bus/browser-navigation.mjs";
+import { waitForFrameState } from './bus/browser-frame-state.mjs';
 
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -36,15 +37,7 @@ const evaluate = async (expression) => {
 	if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "evaluate failed");
 	return result.result.value;
 };
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitFor = async (expression, timeoutMs = 10000) => {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (await evaluate(expression).catch(() => false)) return true;
-		await sleep(100);
-	}
-	return false;
-};
+const waitFor = (expression, timeoutMs = 10000) => waitForFrameState(evaluate, expression, timeoutMs);
 
 // Ctrl+Shift+Z on a fresh load has an empty redo stack: a toast with no edit.
 const pressRedo = async () => {
@@ -89,6 +82,7 @@ await evaluate(`(() => {
 	};
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
+	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "Rail QA", updatedAt: Date.now() }));
 	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(scene));
 })()`);
 await send("Page.navigate", { url: studioUrl });

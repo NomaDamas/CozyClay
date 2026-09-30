@@ -2,6 +2,8 @@
 // solver, take arrays and runtime projections are exercised by motion-fixture.
 import { createMotionEdit, splitMotionEdit } from '../../src/ardy/motion-edit.js';
 export const motionCommandInputs = {
+  'motion.rangePin.apply': { characterId: 'actor', pin: { id: 'pin', track: 'leftFoot', startFrame: 1, endFrame: 1, blend: 1, target: { space: 'world', position: [0, 0, 0] } } },
+  'motion.rangePin.remove': { characterId: 'actor', pinId: 'pin' },
   'motion.set': { id: 'actor', set: { take: { anchorX: 2 } } },
   'motion.trim': { characterId: 'actor', start: 4, end: 39 },
   'motion.resetTrim': { characterId: 'actor' },
@@ -30,6 +32,8 @@ export function motionHygieneDomain(ports) {
     editSegments: (_id, editSegments) => patch({ take: { ...rows[0].take, editSegments } }),
     fix: corrected, applyPhysics: corrected, keyPose: corrected,
     editTrail: () => patch({ take: { ...rows[0].take, anchorX: 0.2 } }),
+    bakeRangePin: (_id, pin) => patch({ ikPins: [pin], ikKeys: [{ frame: pin.startFrame, tracks: { [pin.track]: { p: { x: 0, y: 0, z: 0 }, pin: pin.id } } }] }),
+    removePin: () => patch({ ikPins: [], ikKeys: [] }),
     applyPrepared: () => patch({ take: { ...rows[0].take, anchorX: 1 } }),
     requestLineEdit: () => ports.queueMotion('line'), requestTrailRegeneration: () => ports.queueMotion('trail'),
   };

@@ -6,13 +6,9 @@ import { createKeyLight } from '../scenes.js';
 import { shotAspectRatio } from '../shot.js';
 import { normalizeStage } from '../commands/stage.js';
 
-// Stage is the first owned slice. Native cast/object histories remain native;
-// their retained boundaries decide when this slice is next in editor Undo.
+// The facade composes this store's sessions with the other document owners.
 export function createStageDomain(appContext) {
   const documentStore = createSceneStageStore(normalizeStage(appContext.shared.startupStage));
-  const anchors = new Map();
-  const anchor = () => [appContext.castHistory.past.at(-1)?.tick ?? 0, appContext.shared.objects];
-  const current = saved => saved?.every((value, index) => value === anchor()[index]);
   const read = () => documentStore.read('stage');
   const publish = () => {
     if (appContext.live.state) appContext.patchLive({ stage: { ...appContext.live.state.stage, ...read() },
@@ -21,15 +17,7 @@ export function createStageDomain(appContext) {
     if (persisted?.current) persisted.current = { ...persisted.current, ...read() };
   };
   const release = documentStore.subscribe(publish);
-  function beginAction() {
-    const session = documentStore.beginAction('stage');
-    return { ...session, commit() {
-      const result = session.commit();
-      if (result.historyEntryId) anchors.set(result.historyEntryId, anchor());
-      for (const id of anchors.keys()) if (!documentStore.isRetained(id)) anchors.delete(id);
-      return result;
-    } };
-  }
+  function beginAction() { return documentStore.beginAction('stage'); }
   function recordAction(fn) {
     const session = beginAction();
     try { const result = session.run(fn); return { result, ...session.commit() }; }
@@ -41,20 +29,15 @@ export function createStageDomain(appContext) {
       return JSON.stringify(before) === JSON.stringify(next) ? before : next;
     });
   }
-  const canUndo = id => documentStore.canUndo(id) && current(anchors.get(documentStore.history().present.historyEntryId));
-  function stepHistory(redo) {
-    const entry = redo ? documentStore.history().future[0] : documentStore.history().present;
-    if (!(redo ? documentStore.canRedo() : canUndo()) || !current(anchors.get(entry?.historyEntryId))) return false;
-    (redo ? documentStore.redo : documentStore.undo)();
-    return true;
-  }
+  const canUndo = id => documentStore.canUndo(id);
+  function stepHistory(redo) { return Boolean((redo ? documentStore.redo : documentStore.undo)()); }
   const setters = Object.fromEntries(Object.entries({ 'setKeyLight': 'keyLight', 'setEnvironmentImage': 'environmentImage', 'setEnvironment': 'environment',
     'setStyle': 'style', 'setHasEnvSheet': 'hasEnvSheet', 'setShotAspectKey': 'shotAspect', 'setCameraPresetId': 'cameraPresetId', 'setSensorFormat': 'sensorId' })
     .map(([name, key]) => [name, value => write(before => ({ ...before, [key]: typeof value === 'function' ? value(before[key]) : value }))]));
   const document = () => ({ stage: { ...appContext.shared.actorStageRef.current, ...read() } });
   const domain = { documentStore, document, read, write, beginAction, recordAction, canUndo, stepHistory, ...setters,
     publish: state => write(state.stage), commitDraft: write,
-    load(stage) { anchors.clear(); documentStore.load(normalizeStage(stage)); },
+    load(stage) { documentStore.load(normalizeStage(stage)); },
     dispose() { unregister(); release(); documentStore.dispose(); },
   };
   const unregister = appContext.registerStoreDomain('stage', domain);
@@ -103,16 +86,8 @@ export function useStage(appContext) {
   }
   function resetKeyLight() { return appContext.bus.run('stage.setKeyLight', { keyLight: createKeyLight(null) }); }
   function changeEnvironmentImage(environmentImage) { return appContext.bus.run('stage.setEnvironment', { environmentImage }); }
-  // Native restoration remains available to the legacy adapter. In the live
-  // editor registration always selects the owned stage write.
   function publishStudioStage(stage) {
-    const owned = appContext.storeDomain('stage');
-    if (owned) { owned.write(stage); return; }
-    const stageDomain = appContext.shared.stageDomain;
-    appContext.patchLive({ stage });
-    stageDomain.setKeyLight(stage.keyLight); stageDomain.setEnvironmentImage(stage.environmentImage ?? null);
-    stageDomain.setEnvironment(stage.environment); stageDomain.setStyle(stage.style); stageDomain.setHasEnvSheet(stage.hasEnvSheet === true);
-    stageDomain.setShotAspectKey(stage.shotAspect); stageDomain.setCameraPresetId(stage.cameraPresetId ?? null); stageDomain.setSensorFormat(stage.sensorId);
+    return appContext.storeDomain('stage').write(stage);
   }
   return { ...domain, ...stage, shotAspectKey: stage.shotAspect, preset, setPreset, changeKeyLight, resetKeyLight, changeEnvironmentImage, finishGesture, publishStudioStage };
 }

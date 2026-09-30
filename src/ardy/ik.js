@@ -529,16 +529,21 @@ export function resolveIkRig(rig) {
  * root→effector reach with a soft clamp: past the cap the effector approaches
  * it asymptotically and never exceeds it, so a locked foot cannot straighten
  * the leg past the extension the source pose actually had.
+ *
+ * `exactHinge` makes the one-step claim hold for a BENT chain too: without it
+ * the continuity hinge keeps an along-line component and a solve from a bent
+ * pose lands short of a reachable target, converging only over repeated calls.
  */
-export function solveIk(chain, targetWorld, { maxExtension = null, softening = 0.01 } = {}) {
-	restoreChainPositions(chain);
-	const { bones, lengths, poleLocal, rig } = chain;
+export function solveIk(chain, targetWorld, { maxExtension = null, softening = 0.01, exactHinge = false } = {}) {
+	// Playback owns translations. Measure this frame's lengths rather than
+	// resetting to bind, which turns a small target move into length compensation.
+	const { bones, poleLocal, rig } = chain;
 	const [b0, b1, b2] = bones;
 	const p0 = b0.getWorldPosition(new THREE.Vector3());
 	const p1cur = b1.getWorldPosition(new THREE.Vector3());
 	const t = targetWorld.clone();
-	const l0 = lengths[0];
-	const l1 = lengths[1];
+	const l0 = p0.distanceTo(p1cur);
+	const l1 = p1cur.distanceTo(b2.getWorldPosition(new THREE.Vector3()));
 	let d = p0.distanceTo(t);
 
 	const dir = t.clone().sub(p0);
@@ -595,6 +600,10 @@ export function solveIk(chain, targetWorld, { maxExtension = null, softening = 0
 	if (isBent) {
 		// Continuity: reuse the elbow's current offset from the line.
 		bend = p1cur.clone().sub(linePoint);
+		// Only the part perpendicular to dir is a side; the along-dir remainder
+		// puts p1 off the l0 sphere and the effector misses (up to cm). Opt-in:
+		// fix-collisions and its fixtures are tuned on the legacy result.
+		if (exactHinge) bend.addScaledVector(dir, -bend.dot(dir));
 	}
 	if (!bend || bend.lengthSq() < 1e-8) {
 		// Straight chain — no side to continue; use the pole hint.
@@ -700,8 +709,7 @@ export function solveHipsTranslateToFloor(joint, worldDelta, startLocalPos, floo
 }
 
 export function solveMidJoint(chain, midTargetWorld) {
-	restoreChainPositions(chain);
-	const { bones, lengths } = chain;
+	const { bones } = chain;
 	const [b0, b1, b2] = bones;
 	const p0 = b0.getWorldPosition(new THREE.Vector3());
 	const p1cur = b1.getWorldPosition(new THREE.Vector3());
@@ -710,12 +718,12 @@ export function solveMidJoint(chain, midTargetWorld) {
 	const dir = midTargetWorld.clone().sub(p0);
 	if (dir.lengthSq() < 1e-12) dir.copy(p1cur).sub(p0);
 	dir.normalize();
-	const p1 = p0.clone().addScaledVector(dir, lengths[0]);
+	const p1 = p0.clone().addScaledVector(dir, p0.distanceTo(p1cur));
 	// Forearm keeps its current world direction; the wrist/ankle follows.
 	const foreDir = p2cur.clone().sub(p1cur);
 	if (foreDir.lengthSq() < 1e-12) foreDir.copy(dir);
 	foreDir.normalize();
-	const p2 = p1.clone().addScaledVector(foreDir, lengths[1]);
+	const p2 = p1.clone().addScaledVector(foreDir, p1cur.distanceTo(p2cur));
 	aimChain(bones, [p0, p1, p2]);
 	return p1; // the clamped position the caller should snap the handle to
 }
@@ -855,7 +863,9 @@ export function ikRestore(rig, snapshot, fkJoints) {
  * (b0, b1, b2) for chains, the single bone for FK joints — and the hips' LOCAL
  * POSITION when the body root was moved. Entries are uniform
  * { q: [...quats], p: localPos | null, basePos? }. Local values are
- * character-position independent, so keys need no re-anchoring ever.
+ * character-position independent, so keys need no re-anchoring ever. New chain
+ * keys keep clip translations. Absolute keys also capture chainP; delta keys
+ * need it only when an earlier layer changed translations at this frame.
  *
  * `onlyIds` (Set or array) bakes EXACTLY those ids instead of the whole tracked
  * set, and touches them into `tracked` on the way. Without it a fix to a leg at
@@ -922,6 +932,16 @@ export function ikBakeKeyframe(rig, ikState, frame, fkJoints, onlyIds = null, ba
 		if (!q && !p) continue;
 		if (!entry) ikState.keys.set(frame, (entry = new Map()));
 		const key = { q, p };
+		if (chain) {
+			const clip = chainClipPositions.get(chain);
+			// A rotation-only correction must not freeze the keyed frame's bone
+			// lengths onto its neighbours. Preserve explicit translations only
+			// for absolute authoring or an edit over a translation-changing key.
+			if (!baseQ || (clip?.frame === frame && chain.bones.some((bone, i) => !bone.position.equals(clip.positions[i])))) {
+				key.chainP = chain.bones.map((bone) => bone.position.clone());
+			}
+			key.keepTranslations = true;
+		}
 		if (basePos) key.basePos = basePos;
 		if (baseQ && q) key.baseQ = baseQ;
 		entry.set(id, key);
@@ -1036,25 +1056,32 @@ export function ikKeyframes(ikState) {
  * `blendWindow` > 0 turns the layer into a LOCAL correction (used when a
  * generated motion plays underneath): the correction holds full strength
  * across each ISLAND of keys and eases to zero over that many frames outside
- * it (see correctionWeight), blending against whatever pose is already on the
+ * it, or over an edge key's own `blend` when it stores one (see
+ * correctionWeight), blending against whatever pose is already on the
  * bone (the motion). With the default 0 the keys hold forever (constant
  * extrapolation), the no-motion authoring behaviour.
  */
 const deltaPos = new THREE.Vector3();
 const identityQuat = new THREE.Quaternion();
 const easedDelta = new THREE.Quaternion();
+// Raw locals under the layer, used when a drag re-keys a legacy bind-space
+// correction. Solvers no longer translate, but that existing layer might.
+const chainClipPositions = new WeakMap();
 
 export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 	if (!rig) return;
+	for (const chain of rig.values()) {
+		chainClipPositions.set(chain, { frame, positions: chain.bones.map((bone) => bone.position.clone()) });
+	}
 	for (const id of ikState.tracked) {
-		const sampled = sampleChain(ikState.keys, id, frame);
-		if (!sampled) continue;
 		const chain = rig.get(id);
+		const sampled = sampleChain(ikState.keys, id, frame, chain);
+		if (!sampled) continue;
 		const joint = fkJoints?.get(id);
 		const w = blendWindow > 0 ? correctionWeight(ikState.keys, id, frame, blendWindow) : 1;
 		if (w <= 0) continue;
 		if (chain) {
-			if (sampled.chainP) chain.bones.forEach((bone, i) => { if (sampled.chainP[i]) bone.position.lerp(sampled.chainP[i], w); });
+			if (sampled.chainP) chain.bones.forEach((bone, i) => { if (sampled.chainP[i]) bone.position.lerp(sampled.chainP[i], w * (sampled.chainPWeight ?? 1)); });
 			// DELTA blend for chain rotations, the mirror of basePos for the hips
 			// and for exactly the same reason. Easing a bone toward the key's
 			// ABSOLUTE rotation makes the smear proportional to how different the
@@ -1068,10 +1095,9 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 			// which is the only thing the key ever claimed.
 			const deltas = blendWindow > 0 ? sampled.deltaQ : null;
 			if (deltas) {
-				// Translations stay on the CLIP until the correction has full
-				// authority. See restoreChainPositions for why this is a step and
-				// not a ramp.
-				if (w >= 1 && !sampled.keepTranslations) restoreChainPositions(chain, 1);
+				// Ease the translations with the rotations: switching to bind only
+				// at w = 1 tears the otherwise continuous correction at island edges.
+				if (!sampled.keepTranslations) restoreChainPositions(chain, w);
 				for (let index = 0; index < chain.bones.length && index < deltas.length; index += 1) {
 					if (!deltas[index]) continue;
 					easedDelta.copy(deltas[index]);
@@ -1128,30 +1154,15 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
 }
 
 /**
- * ARDY playback positions mapped joints independently. Once IK authors a
- * chain's rotations, those generated translations no longer describe the
- * same FK pose and can visually separate the limb. Return the edited chain
- * to its Mixamo bind translations before applying IK rotations so parent
- * rotation and fixed segment lengths own all descendants.
- *
- * WHY THE DELTA PATH CALLS THIS ONLY AT FULL WEIGHT. The bind restore is not a
- * small adjustment — on a generated clip the per-bone translations sit ~19 mm
- * off bind — and, unlike a rotation, it cannot be expressed as a delta: the
- * authored pose is defined AT bind translations (solveIk resets them before it
- * aims, and the chain's segment lengths were measured there), so any partial
- * value is a pose nobody authored. Ramping it by `weight` therefore injects up
- * to 16 mm of segment-length change into frames whose only claim on the layer is
- * a fractional rotation delta — several times the correction itself, and enough
- * on its own to blow a 1 cm budget.
- *
- * So: a frame the correction fully owns (a key, or an unkeyed frame inside a key
- * island) gets bind translations, because it must reproduce the authored pose. A
- * frame on the ease ramp keeps the CLIP's translations untouched and receives
- * only the eased rotation delta. The cost is a step of up to that ~19 mm at each
- * island edge instead of a ramp spread over the whole window; the benefit is
- * that every frame outside an island deviates from the clip by the correction
- * and nothing else. Removing the step outright means solving in clip-translation
- * space, which is a change to solveIk's contract and to every drag path with it.
+ * Legacy keys were solved at bind translations and must still replay there.
+ * New correction keys keep clip translations; explicit poses carry chainP.
+ * On a legacy key's ease ramp, interpolate the ENTIRE local transform:
+ * p = clipP + (bindP - clipP) * weight,
+ * alongside the eased rotation delta. This keeps both endpoints exact and is
+ * continuous at full weight; withholding the translation until then made a
+ * 1 cm correction jump 50.5 mm on a chain whose locals were 2 cm off bind.
+ * Partial weights deliberately interpolate segment lengths too, just as the
+ * absolute-key path does. They are transition poses, not fresh IK solves.
  */
 function restoreChainPositions(chain, weight = 1) {
 	if (!chain?.bindPositions) return;
@@ -1166,39 +1177,48 @@ function restoreChainPositions(chain, weight = 1) {
 
 /**
  * A track's key ISLANDS: runs of keys close enough together to be one
- * correction, as [firstFrame, lastFrame] pairs in ascending order. Two
- * consecutive keys belong to the same island while the gap between them is no
- * wider than `blendWindow`; a wider gap starts a new island.
+ * correction, as [firstFrame, lastFrame, firstBlend, lastBlend] in ascending
+ * order. Two consecutive keys belong to the same island while the gap between
+ * them is no wider than the larger of their two blend ranges; a wider gap
+ * starts a new island.
  *
- * The window is the right ruler because it is exactly how far a correction is
- * allowed to reach: keys closer together than that overlap anyway, and keys
- * further apart are, by the layer's own definition, separate local fixes with
- * clip in between.
+ * A key's blend range is its own `blend` (frames, stored by a Pose fix drag
+ * made with a wider or narrower correction range) or, for every key without
+ * one, `blendWindow`. The range is the right ruler because it is exactly how
+ * far a correction is allowed to reach: keys closer together than that overlap
+ * anyway, and keys further apart are, by the layer's own definition, separate
+ * local fixes with clip in between. The larger of the pair decides because the
+ * wider key already reaches its neighbour.
  */
 function trackIslands(keys, trackId, blendWindow) {
 	const frames = [];
-	for (const [f, entry] of keys) if (entry.has(trackId)) frames.push(f);
+	for (const [f, entry] of keys) {
+		const key = entry.get(trackId);
+		if (key) frames.push([f, key.blend ?? blendWindow]);
+	}
 	if (!frames.length) return [];
-	frames.sort((a, b) => a - b);
+	frames.sort((a, b) => a[0] - b[0]);
 	const islands = [];
-	let first = frames[0];
-	let prev = frames[0];
+	let [first, firstBlend] = frames[0];
+	let [prev, prevBlend] = frames[0];
 	for (let index = 1; index < frames.length; index += 1) {
-		const f = frames[index];
-		if (f - prev > blendWindow) {
-			islands.push([first, prev]);
+		const [f, blend] = frames[index];
+		if (f - prev > Math.max(prevBlend, blend)) {
+			islands.push([first, prev, firstBlend, prevBlend]);
 			first = f;
+			firstBlend = blend;
 		}
 		prev = f;
+		prevBlend = blend;
 	}
-	islands.push([first, prev]);
+	islands.push([first, prev, firstBlend, prevBlend]);
 	return islands;
 }
 
 /**
  * Correction strength at `frame` for one track: 1 on a key and anywhere inside
- * a key ISLAND, easing 1 → 0 across `blendWindow` frames outward from the
- * nearest island edge, 0 beyond every island.
+ * a key ISLAND, easing 1 → 0 outward from each island edge across that edge
+ * key's blend range (its `blend`, else `blendWindow`), 0 beyond every island.
  *
  * This used to be "1 everywhere between the track's first and last key", which
  * quietly made every sparse correction a whole-clip rewrite: two collision
@@ -1213,13 +1233,12 @@ function trackIslands(keys, trackId, blendWindow) {
  * boundary pins, a fully baked pose — is one island, so full-strength playback
  * of authored ranges is unchanged too.
  */
-function correctionWeight(keys, trackId, frame, blendWindow) {
+export function correctionWeight(keys, trackId, frame, blendWindow) {
 	const islands = trackIslands(keys, trackId, blendWindow);
 	let best = 0;
-	for (const [first, last] of islands) {
+	for (const [first, last, firstBlend, lastBlend] of islands) {
 		if (frame >= first && frame <= last) return 1;
-		const distance = frame < first ? first - frame : frame - last;
-		const weight = 1 - distance / blendWindow;
+		const weight = frame < first ? 1 - (first - frame) / firstBlend : 1 - (frame - last) / lastBlend;
 		if (weight > best) best = weight;
 	}
 	return Math.max(0, best);
@@ -1247,7 +1266,7 @@ function withDeltas(entry) {
 	return entry?.baseQ ? { ...entry, deltaQ: keyDeltas(entry) } : entry;
 }
 
-function sampleChain(keys, trackId, frame) {
+function sampleChain(keys, trackId, frame, chain) {
 	let prevFrame = null;
 	let nextFrame = null;
 	for (const f of keys.keys()) {
@@ -1263,9 +1282,14 @@ function sampleChain(keys, trackId, frame) {
 	const t = (frame - prevFrame) / (nextFrame - prevFrame);
 	const deltasA = keyDeltas(a);
 	const deltasB = keyDeltas(b);
+	// Missing chainP means raw clip for a new key, bind for a legacy key.
+	// A mixed pair must ease between those policies, not switch at an endpoint.
+	const positionsA = a.chainP ?? (a.keepTranslations ? null : chain?.bindPositions);
+	const positionsB = b.chainP ?? (b.keepTranslations ? null : chain?.bindPositions);
 	return {
-		keepTranslations: a.keepTranslations === true && b.keepTranslations === true,
-		chainP: a.chainP && b.chainP ? a.chainP.map((p, i) => p.clone().lerp(b.chainP[i], t)) : null,
+		keepTranslations: Boolean(chain) || (a.keepTranslations === true && b.keepTranslations === true),
+		chainP: positionsA && positionsB ? positionsA.map((p, i) => p.clone().lerp(positionsB[i], t)) : (positionsA ?? positionsB),
+		chainPWeight: positionsA && positionsB ? 1 : (positionsA ? 1 - t : t),
 		// Between two based keys the DELTAS interpolate, not the absolute
 		// rotations and their bases separately: each key's delta is a statement
 		// about its own frame's clip pose, and interpolating those statements is

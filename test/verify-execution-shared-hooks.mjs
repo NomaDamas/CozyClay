@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createFirstEditTracker, createSemanticState } from "../src/semantic-edit.js";
 import { createAppContext } from "../src/app-context.js";
 import { createSceneObject } from "../src/scene-objects.js";
-import { createSceneHistoryStore } from "../src/scene-history.js";
+import { createSceneHistoryStore } from "../src/document-store.js";
 import { dispatchLiveFrame } from "../src/live-control.js";
 import { startExportAttempt, startMotionRequest } from "../src/analytics.js";
 import { readFileSync } from "node:fs";

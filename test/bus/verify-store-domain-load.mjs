@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { createSceneStage } from '../../src/scenes.js';
-import { createSceneHistoryStore } from '../../src/scene-history.js';
+import { createSceneHistoryStore } from '../../src/document-store.js';
 import { withCommandHistory } from '../../src/command-bus.js';
 import { createIkState } from '../../src/ardy/ik.js';
 import { stageFixture } from './stage-fixture.mjs';
@@ -9,9 +9,14 @@ const f = stageFixture(), app = f.scope.appContext;
 const calls = [], releases = [];
 try {
   const original = f.store.current;
-  for (const name of ['objects', 'shot', 'cast', 'fixture']) releases.push(app.registerStoreDomain(name, {
-    load: slice => calls.push([name, slice]),
-  }));
+  for (const name of ['objects', 'shot', 'cast', 'fixture']) {
+    const owner = app.storeDomain(name);
+    if (owner) {
+      const load = owner.load;
+      owner.load = slice => { calls.push([name, slice]); return load(slice); };
+      releases.push(() => { owner.load = load; });
+    } else releases.push(app.registerStoreDomain(name, { load: slice => calls.push([name, slice]) }));
+  }
   Object.assign(f.scope, { tutorialProjectEpochRef: { current: 0 }, tutorialSeedEpochRef: { current: null }, exportShotIdRef: { current: null } });
   for (const name of ['setTutorialSeedPending', 'setCameraTutorial', 'setCameraTutorialHandoff', 'setRigMountEpoch', 'setHasCharSheet', 'setSelectedPromptId', 'setRailDraw', 'setActiveWaypointId', 'setPendingWaypointFrame']) f.scope[name] = () => {};
   f.scope.setSceneObjects = () => { throw new Error('owned objects must publish through load'); };

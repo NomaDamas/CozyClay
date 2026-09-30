@@ -128,7 +128,7 @@ IK/물리/Prompt Blocks/Video capture/Rig Control/OTIO/Depth·normal/Storyboard/
 
 PR4가 새 집을 먼저 세우고 PR5/6이 옛 집을 허문다(R9). 완료 후 `tools/qa/studio-control-count.mjs`를 main에서 재실행해 §1 표의 "목표" 열을 실측으로 바꾼다.
 
-## 8. 미해결
+## 9. 미해결
 - 로드된 테이크에서 배치(Placement) 드래그가 clip.anchor가 아니라 entry.x/z만 바꾸는 기존 함정(App 4184-4214 vs 1045-1054) — #201에서 발견, 미수정.
 - `test/verify-object-gizmo.mjs` 스토리지 섹션이 레거시 키 `cozyclay.scene.v1`을 시드하는데 scenes.js는 9d7ea8e부터 `cozyclay.scenes.v4`를 쓴다 — observation 티어 스위트의 기존 실패, #202가 :356 셀렉터만 고침.
 - Full-Body 레인의 IK 키 `+`는 IK를 켠 채 Scene/Camera로 가면 여전히 렌더된다(#198에서 보고).
@@ -136,3 +136,32 @@ PR4가 새 집을 먼저 세우고 PR5/6이 옛 집을 허문다(R9). 완료 후
 - 카메라 바 Follow 하위 필드(거리/시작점/스무딩/look-ahead) `Follow ▾` 접기 — 샷 선택 Camera 47이 문제로 판단될 때만.
 - 분석 계측: FEATURE_NAMES 누락 3건, featureNamesSeen 원샷 게이트(페이지 로드당 1회 도달 지표), 18개 UI 모듈 미계측 — 별도 이슈.
 - Carroll 1984 1차 논문·Blender 2.8 설계 문서·Jensen Harris 리본 강연 원문 미회수(archive.org 429). 본문 수치는 2차 출처 표기.
+
+## 8. v2 shell
+
+The v2 shell has one mode toolbar with four modes. Key `1` is **Stage**
+(`workflowMode: "scene"`), `2` is **Pose** (`"pose"`, the IK mode), `3` is
+**Camera** (`"camera"`), and `4` is **Motion** (`"motion"`). W/E/R select the
+current mode's tools; the active mode shows its name and inactive modes show
+only their digit.
+
+The menu map follows G7/G8. **File** holds New, Open…, Save, Save As… and
+Export ▸ (Keyframe pack, Video, Depth + normal, Storyboard and conditional
+OTIO). **Edit** holds Undo, Redo and Preferences…. **Window** holds Agent,
+Content and Log. **Help** holds Tutorial, Keyboard shortcuts and About. The
+viewport **Show** pill owns Reference grid, Auto Color, Body part colours and
+Trails; Perspective owns camera selection and Clay Lit owns shading. Language,
+Analytics and Motion setup live in Preferences under General › Appearance and
+Motion › ARDY Connection.
+
+G10 leaves exactly two visible add routes: viewport **+ Add** (the object
+catalogue plus Character and Camera) and **Content › Basic Shapes** (drag or
+double-click a primitive). The Outliner right-click **Create ▸** accelerator
+remains available.
+
+The removed controls are the old take-bar Scene/Refine cards and their duplicate
+IK toggles (`IK on/off`, Foot snap and Body contact in the old header), the
+hierarchy `AddObjectMenu` / **+ Add object** button, and the Props inspector
+`AddObjectMenu` / **+ Add** button. Their actions live in the mode toolbar,
+Pose Details, Generate Motion/File menus, viewport + Add, Content, or the
+Outliner context menu as defined above.

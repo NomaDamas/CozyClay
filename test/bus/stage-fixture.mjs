@@ -7,7 +7,7 @@ import { appFixture } from './app-fixture.mjs';
 // Mount the shipped hook, then use the shipped App native functions, registry
 // and binding. Only React rendering and renderer hardware are supplied here.
 const defaults = readFileSync(new URL('../../src/app-stage.jsx', import.meta.url), 'utf8').match(/export const DEFAULT_ENVIRONMENT = .*;/)[0];
-const server = await createServer({ configFile: false, server: { middlewareMode: true }, appType: 'custom',
+const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom',
   plugins: [{ name: 'stage-default-without-renderer', enforce: 'pre',
     load(id) { if (id.endsWith('/src/app-stage.jsx')) return defaults; } }],
 });

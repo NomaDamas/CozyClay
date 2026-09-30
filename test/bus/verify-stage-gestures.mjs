@@ -1,15 +1,12 @@
 import assert from 'node:assert/strict';
 import { stageFixture } from './stage-fixture.mjs';
-import { readStudioFunction } from './verify-domain-modules.mjs';
 export function elements(tree) {
   if (!tree || typeof tree !== 'object') return [];
   return [tree, ...[tree.props?.children].flat(Infinity).flatMap(elements)];
 }
 const f = stageFixture();
 try {
-  const recordSessionUndo = new Function('appContext', 'castDomain', `${readStudioFunction('recordSessionUndo')}\nreturn recordSessionUndo;`)(f.scope.appContext, f.scope.castDomain);
-  const tree = f.panel('EnvironmentPanel', { ...f.stage, selectedHierarchyId: 'environment',
-    recordSessionUndo, environmentTextSessionRef: { current: null }, recordCharacterUndo: f.actual.recordCharacterUndo });
+  const tree = f.panel('EnvironmentPanel', { ...f.stage, selectedHierarchyId: 'environment' });
   const input = elements(tree).find(node => node.type === 'input' && node.props.type === 'text');
   const before = structuredClone(f.stage.read());
   for (const value of ['R', 'Ro', 'Room']) input.props.onChange({ target: { value } });

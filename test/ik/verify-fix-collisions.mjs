@@ -429,14 +429,10 @@ function identicalPose(rig, snapshot) {
 		wristY >= 0.9 + PUSH_FLOOR_CLEARANCE - 1e-6, `wristY=${wristY.toFixed(4)}`);
 }
 
-/* --- detect and solve on the SAME skeleton (bind translations) ------------- */
-/* ARDY positional playback writes per-bone translations, so the clip's limbs
- * are not bind length. solveIk can only work at bind — its segment lengths were
- * measured there — so a pass that detected on the clip's skeleton and solved on
- * bind produced a key whose rotation delta was mostly LENGTH COMPENSATION, and
- * a partially-weighted blend of that wandered three times the correction.
- * Normalising up front makes the two agree; a pass that changes nothing puts
- * the translations back. */
+/* --- detect and solve on the SAME skeleton (clip translations) ------------- */
+/* Positional playback can change limb lengths. Both detection and the solver
+ * now use the clip's skeleton, so no bind reset or length compensation belongs
+ * in the baked correction, even on a chain the pass actually fixes. */
 {
 	const wobble = (rig, factor) => {
 		for (const name of ["mixamorigLeftLeg", "mixamorigLeftFoot", "mixamorigLeftForeArm", "mixamorigLeftHand"]) {
@@ -495,6 +491,7 @@ function identicalPose(rig, snapshot) {
 		const clipRot = chain.bones.map((b) => b.quaternion.clone());
 		const clipWrist = chain.bones[2].getWorldPosition(new THREE.Vector3());
 		const result = fixCollisions(rig, chains, { radii: RADII });
+		const keepsTranslations = chain.bones.every((bone, i) => bone.position.equals(clipPos[i]));
 		const base = result.baseQuats.get("leftHand");
 		const keyed = chain.bones.map((b) => b.quaternion.clone());
 		const full = chain.bones[2].getWorldPosition(new THREE.Vector3()).distanceTo(clipWrist);
@@ -511,6 +508,7 @@ function identicalPose(rig, snapshot) {
 		});
 		return {
 			changed: result.changed,
+			keepsTranslations,
 			angles: chain.bones.map((b, i) => base[i].angleTo(keyed[i])),
 			full,
 			partial,
@@ -520,6 +518,8 @@ function identicalPose(rig, snapshot) {
 	const stretched = [1.03, 1.06].map(bakedDelta);
 	check("the wobbled skeletons still get fixed",
 		atBind.changed && stretched.every((d) => d.changed));
+	check("even a corrected chain keeps its clip translations",
+		[atBind, ...stretched].every((d) => d.keepsTranslations));
 	check("no partial weight of the baked delta outruns the whole correction",
 		[atBind, ...stretched].every((d) => d.partial.every((drift) => drift < d.full)
 			&& d.partial.every((drift, i) => i === 0 || drift > d.partial[i - 1])),
@@ -1786,10 +1786,9 @@ function identicalPose(rig, snapshot) {
 	check("and the feet keep the clearance they arrived with",
 		Math.abs(Math.min(...legBones.map((bone) => bone.getWorldPosition(new THREE.Vector3()).y)) - footBefore) < 1e-9);
 
-	// The chain that DID solve is at bind translations, which is the contract
-	// solveIk and ikEvaluate share — stated here so the asymmetry is deliberate.
+	// This arm arrived at bind, so preserving its locals leaves it there.
 	const arm = chains.get("leftHand");
-	check("the chain that solved is at bind translations, as the solver requires",
+	check("the solved bind-length arm keeps its original translations",
 		arm.bones.every((bone, index) => bone.position.distanceTo(arm.bindPositions[index]) < 1e-9));
 }
 

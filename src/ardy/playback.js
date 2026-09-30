@@ -37,6 +37,8 @@
  * their parents). Bones the map does not touch keep their bind transforms.
  * Shoulder and arm chains keep their Mixamo bind translations and consume
  * ARDY rotations only, avoiding clavicle shear between incongruent rigs.
+ * Path-fix takes opt into a reference-pose correction: edited wrists retain
+ * their rendered orientation and edited legs retain their rendered lengths.
  */
 
 import * as THREE from "three";
@@ -268,6 +270,8 @@ export function prepOf(rig) {
 		if (bone) {
 			const bind = binds.get(bone);
 			stretchedLeaves.push({ bone, joint: CSKEL27_JOINTS.indexOf(name), bindLocalPos: bindPositionOf(bone).clone(),
+				bindWorldQuat: new THREE.Quaternion().setFromRotationMatrix(worldByNode.get(bone)),
+				parentBindQuat: new THREE.Quaternion().setFromRotationMatrix(worldByNode.get(bone.parent)),
 				bindLocalQuat: bind ? new THREE.Quaternion(bind.x, bind.y, bind.z, bind.w) : bone.quaternion.clone() });
 		}
 	}
@@ -423,6 +427,54 @@ const qDecomp = new THREE.Quaternion();
 const vDecompScale = new THREE.Vector3();
 const desiredWorld = new Array(CSKEL27_JOINTS.length).fill(null);
 
+function rotationsAt(motion, f) {
+	for (let j = 0; j < frameLocals.length; j += 1) {
+		const o = (f * frameLocals.length + j) * 9;
+		const L = frameLocals[j];
+		for (let r = 0; r < 3; r += 1) for (let c = 0; c < 3; c += 1) L[r][c] = motion.rotMats[o + r * 3 + c];
+	}
+	return globalRotations(frameLocals);
+}
+
+function rotationQuat(G, target = new THREE.Quaternion()) {
+	mGlobal.set(...G[0], ...G[1], ...G[2]);
+	return target.setFromRotationMatrix(mWorld.setFromMatrix3(mGlobal));
+}
+
+/** Reference corrections need FK and a few transforms, not a second rig pose. */
+function trailReference(prep, { base, chains }, f) {
+	const globals = rotationsAt(base, f);
+	const offsets = base.boneScale ? scaledOffsets(prep, base.boneScale) : prep.offsets;
+	const anchor = Math.max(0, Math.min(base.anchorFrame || 0, base.frames - 1)) * 27 * 3;
+	const worlds = new Map(), positions = new Map(), wrists = new Map();
+	const world = (j) => {
+		if (!worlds.has(j)) {
+			const q = rotationQuat(globals[j]);
+			const p = new THREE.Vector3().fromArray(base.posedJoints, (f * 27 + j) * 3);
+			p.x -= base.posedJoints[anchor]; p.z -= base.posedJoints[anchor + 2];
+			p.multiplyScalar(prep.scale).add(offsets[j].clone().applyQuaternion(q));
+			worlds.set(j, new THREE.Matrix4().compose(p, q.multiply(prep.bindQuat[j]), prep.bindScale[j]));
+		}
+		return worlds.get(j);
+	};
+	for (const track of chains) {
+		const side = track.startsWith("left") ? "Left" : "Right";
+		if (track.endsWith("Hand")) {
+			const leaf = prep.stretchedLeaves.find((item) => CSKEL27_JOINTS[item.joint] === `${side}Hand`);
+			if (leaf) wrists.set(leaf.bone, rotationQuat(globals[CSKEL27_PARENTS[leaf.joint]]).multiply(leaf.bindWorldQuat));
+		} else {
+			for (const suffix of ["UpLeg", "Leg", "Foot", "ToeBase"]) {
+				const j = CSKEL27_JOINTS.indexOf(side + suffix), bone = prep.bones[j];
+				if (!bone) continue;
+				const parent = prep.chainParent[j];
+				const parentWorld = parent < 0 ? prep.parentBindWorld[j].clone() : world(parent).clone().multiply(prep.chainRel[j]);
+				positions.set(bone, new THREE.Vector3().setFromMatrixPosition(world(j)).applyMatrix4(parentWorld.invert()));
+			}
+		}
+	}
+	return { positions, wrists };
+}
+
 /**
  * Apply one motion frame to the rig with positional skinning: every mapped
  * bone's rig-space world transform is set to
@@ -439,18 +491,9 @@ export function applyMotionFrame(rig, motion, frame) {
 	const f = Math.max(0, Math.min(Math.round(frame) || 0, motion.frames - 1));
 	const prep = prepOf(rig);
 	const joints = CSKEL27_JOINTS.length;
-	const base = f * joints * 9;
-
-	// Global (world) rotations of every cskel27 joint at this frame: FK over
-	// the npz local rotations down the parent chain.
-	for (let j = 0; j < joints; j += 1) {
-		const o = base + j * 9;
-		const L = frameLocals[j];
-		L[0][0] = motion.rotMats[o]; L[0][1] = motion.rotMats[o + 1]; L[0][2] = motion.rotMats[o + 2];
-		L[1][0] = motion.rotMats[o + 3]; L[1][1] = motion.rotMats[o + 4]; L[1][2] = motion.rotMats[o + 5];
-		L[2][0] = motion.rotMats[o + 6]; L[2][1] = motion.rotMats[o + 7]; L[2][2] = motion.rotMats[o + 8];
-	}
-	const globals = globalRotations(frameLocals);
+	// Opt-in only; unedited takes keep their existing retargeting policy.
+	const trail = motion.trailRetarget ? trailReference(prep, motion.trailRetarget, f) : null;
+	const globals = rotationsAt(motion, f);
 
 	// Anchor: the anchor frame's root stays at the rig origin (the Character
 	// group sits at the scene anchor); height stays floor-absolute.
@@ -513,7 +556,11 @@ export function applyMotionFrame(rig, motion, frame) {
 			mParentInv.copy(prep.parentBindWorld[j]);
 		}
 
-		if (HIERARCHY_PRESERVED_JOINTS.has(CSKEL27_JOINTS[j])) {
+		if (trail?.positions.has(bone)) {
+			// Swing the original rendered segment, rather than re-placing its
+			// endpoints with different rotated bind offsets (which stretches it).
+			vWorld.copy(trail.positions.get(bone)).applyMatrix4(mParentInv);
+		} else if (HIERARCHY_PRESERVED_JOINTS.has(CSKEL27_JOINTS[j])) {
 			// A mocap take carries the performer's bone lengths (boneScale, see
 			// npz.js). Positionally skinned bones already sit where the scaled
 			// posedJoints put them; the arm chain rides its own bind
@@ -532,9 +579,108 @@ export function applyMotionFrame(rig, motion, frame) {
 	}
 	for (const leaf of prep.stretchedLeaves) {
 		leaf.bone.position.copy(leaf.bindLocalPos).multiplyScalar(boneStretch(prep, motion, leaf.joint));
-		leaf.bone.quaternion.copy(leaf.bindLocalQuat);
+		const orientation = trail?.wrists.get(leaf.bone);
+		if (orientation) {
+			// Work below the rig root: placement, yaw and export clones must
+			// not leak into the wrist's local compensation.
+			rotationQuat(globals[CSKEL27_PARENTS[leaf.joint]], qGlobal).multiply(leaf.parentBindQuat);
+			leaf.bone.quaternion.copy(qGlobal.invert().multiply(orientation));
+		} else leaf.bone.quaternion.copy(leaf.bindLocalQuat);
 	}
 	rig.updateMatrixWorld(true);
+}
+
+/* --- read-only sampling ---------------------------------------------------- */
+
+/** Bones-only copy of a rig for off-screen sampling, keyed to the live rig.
+ *  It carries the live rig's bind snapshot, so its prep is the live prep. */
+const samplerCopies = new WeakMap();
+
+function samplerCopyOf(rig) {
+	let copy = samplerCopies.get(rig);
+	if (copy) return copy;
+	// Never create the live rig's fallback here: that would freeze its bind
+	// at whatever pose it holds now. Unprimed rigs read the current rotations.
+	const binds = rig.userData?.poseBind ?? bindFallback.get(rig) ?? new Map();
+	const copyBinds = new Map();
+	const hasBone = (node) => node.isBone || node.children.some(hasBone);
+	const clone = (node) => {
+		const out = node.isBone ? new THREE.Bone() : new THREE.Object3D();
+		out.name = node.name;
+		out.position.copy(node.position);
+		out.quaternion.copy(node.quaternion);
+		out.scale.copy(node.scale);
+		const bind = node.isBone ? binds.get(node) : null;
+		const q = node.quaternion;
+		// Without a recorded bind position the copied live position stands in,
+		// exactly as bindPositionOf does for the live rig.
+		if (node.isBone) copyBinds.set(out, bind ?? { x: q.x, y: q.y, z: q.z, w: q.w });
+		for (const child of node.children) if (hasBone(child)) out.add(clone(child));
+		return out;
+	};
+	// The root stays identity: samples are in rig space, below the root.
+	copy = new THREE.Object3D();
+	for (const child of rig.children) if (hasBone(child)) copy.add(clone(child));
+	copy.userData.poseBind = copyBinds;
+	samplerCopies.set(rig, copy);
+	return copy;
+}
+
+/** Per (rig, motion) cache of rendered joint positions. */
+const jointSamples = new WeakMap();
+
+/** Pose the sampler copy at frame f and write every driven bone's rig-space
+ *  position into out[offset..offset+81] (NaN where no bone is driven). */
+function sampleFrame(rig, motion, f, out, offset) {
+	const copy = samplerCopyOf(rig);
+	const prep = prepOf(copy);
+	if (!prep.driven) {
+		prep.driven = CSKEL27_JOINTS.map((_, j) => prep.bones[j] ?? prep.stretchedLeaves.find((leaf) => leaf.joint === j)?.bone ?? null);
+	}
+	applyMotionFrame(copy, motion, f);
+	for (let j = 0; j < prep.driven.length; j += 1) {
+		const bone = prep.driven[j];
+		const o = offset + j * 3;
+		if (!bone) {
+			out[o] = out[o + 1] = out[o + 2] = NaN;
+			continue;
+		}
+		const e = bone.matrixWorld.elements;
+		out[o] = e[12];
+		out[o + 1] = e[13];
+		out[o + 2] = e[14];
+	}
+}
+
+/** One frame of motionJointPositions (uncached): Float32Array(27*3), rig space. */
+export function motionJointPositionsAt(rig, motion, frame) {
+	if (!rig || !motion?.rotMats || !(motion.frames > 0)) return null;
+	const out = new Float32Array(CSKEL27_JOINTS.length * 3);
+	sampleFrame(rig, motion, Math.max(0, Math.min(Math.round(frame) || 0, motion.frames - 1)), out, 0);
+	return out;
+}
+
+/**
+ * Rig-space position of every driven cskel27 joint's bone at every frame,
+ * exactly as applyMotionFrame places it, without touching the live rig.
+ * Returns { positions: Float32Array(frames*27*3) } (NaN where no bone is
+ * driven). Cached per rig + motion; treat as read-only.
+ */
+export function motionJointPositions(rig, motion) {
+	if (!rig || !motion?.rotMats || !(motion.frames > 0)) return null;
+	let byRig = jointSamples.get(motion);
+	if (!byRig) {
+		byRig = new WeakMap();
+		jointSamples.set(motion, byRig);
+	}
+	const cached = byRig.get(rig);
+	if (cached) return cached;
+	const joints = CSKEL27_JOINTS.length;
+	const positions = new Float32Array(motion.frames * joints * 3);
+	for (let f = 0; f < motion.frames; f += 1) sampleFrame(rig, motion, f, positions, f * joints * 3);
+	const result = { positions };
+	byRig.set(rig, result);
+	return result;
 }
 
 /* --- snapshot / restore ----------------------------------------------------- */

@@ -13,12 +13,13 @@ test('motion: cast pose application clears the named inactive character, not the
     ok(f.run('edit.undo', { receiptId: receipt.receiptId })); assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.cast.read(), cast);
   } finally { f.dispose(); }
 });
-test('motion: native cast gesture recording delegates to the owner without a second history', () => {
+test('motion: owned gesture recording needs no native cast history', () => {
   const f = motionFixture();
   try {
     f.motion.load([{ id: 'actor-a', take: seedMotion() }]);
-    f.cast.recordCharacterUndo();
-    assert.equal(f.scope.appContext.castHistory.past.length, 0);
+    f.motion.beginGesture();
+    assert.deepEqual(f.motion.documentStore.depths(), { past: 0, future: 0 }, 'arming a gesture records nothing');
+    assert.equal(f.cast.recordCharacterUndo, undefined);
     f.motion.finishGesture(true);
   } finally { f.dispose(); }
 });

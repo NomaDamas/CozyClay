@@ -227,6 +227,7 @@ import {
 	IkHandles,
 	PoseHandles,
 	PoseStudioPanel,
+	RangePinMarker,
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
 
@@ -706,8 +707,7 @@ export default function App() {
 		get motionPos() { return motionPos; },
 		get playMode() { return playMode; },
 		get promptTextSessionRef() { return promptTextSessionRef; },
-		get recordCharacterUndo() { return castDomain.recordCharacterUndo; },
-		get recordSessionUndo() { return recordSessionUndo; },
+
 		get runStudioAction() { return runStudioAction; },
 		get selectWorkflowMode() { return selectWorkflowMode; },
 		get setSelectedHierarchyId() { return setSelectedHierarchyId; },
@@ -1093,7 +1093,6 @@ export default function App() {
 		get motionFullRef() { return motionFullRef; },
 		get promptTextSessionRef() { return promptTextSessionRef; },
 		get publishStudioCharacters() { return publishStudioCharacters; },
-		get recordSessionUndo() { return recordSessionUndo; },
 		get rigReportersRef() { return rigReportersRef; },
 		get rigWaitersRef() { return rigWaitersRef; },
 		get runStudioAction() { return runStudioAction; },
@@ -1101,7 +1100,6 @@ export default function App() {
 		get setArdyPrompt() { return setArdyPrompt; },
 		get setCommittedIkEdits() { return setCommittedIkEdits; },
 		get setIkTick() { return setIkTick; },
-		get setMotion() { return motionDomain.setMotion; },
 		get setSelectedHierarchyId() { return setSelectedHierarchyId; },
 		get setShots() { return setShots; },
 		get setTlFrame() { return setTlFrame; },
@@ -1118,9 +1116,7 @@ export default function App() {
 		get editShots() { return editShots; },
 		get publishStudioCamera() { return publishStudioCamera; },
 		get publishStudioDomain() { return publishStudioDomain; },
-		get publishStudioMotion() { return publishStudioMotion; },
 		get publishStudioStage() { return publishStudioStage; },
-		get recordStudioHistory() { return recordStudioHistory; },
 		get sceneRevisionRef() { return sceneRevisionRef; },
 		get snapshotCast() { return snapshotCast; },
 		get snapshotStudioDomain() { return snapshotStudioDomain; },
@@ -1147,7 +1143,7 @@ export default function App() {
 		updateCharacterAt, setShowB, moveCharacter, removeCharacter, reportRig, spawnCharacter,
 		charKeyToHierarchyId, charIdFromHierarchyId, activeCharacterId, setActiveCharacterId, rowIdForCharIndex,
 		activeChar, selectActiveCharacterInHierarchy, activeCharIndex, activeRig, waitForRig, ghostLayers,
-		snapshotCast, changeInspectorCharacter, restoreCast, hasCharSheet, setHasCharSheet, promptBlocksReveal,
+		snapshotCast, changeInspectorCharacter, hasCharSheet, setHasCharSheet, promptBlocksReveal,
 		setPromptBlocksReveal, revealPromptBlocks, waypointMode, setWaypointMode, waypoints, setWaypoints,
 		activeWaypointId, setActiveWaypointId, pendingWaypointFrame, setPendingWaypointFrame, promptClips,
 		setPromptClips, editPromptClips, selectedPromptId, setSelectedPromptId, photoPoseState, photoPoseError,
@@ -1158,7 +1154,7 @@ export default function App() {
 		addPromptClip, changePromptClip, PROMPT_BLOCK_MAX_FRAMES, resizePromptClip, movePromptClip,
 		removePromptClip,
 	} = castDomain;
-	const { publishStudioCharacters, syncStudioLayerBuffer, undoScene, redoScene, recordStudioHistory, snapshotStudioDomain } = castDomain;
+	const { publishStudioCharacters, syncStudioLayerBuffer, undoScene, redoScene, snapshotStudioDomain } = castDomain;
 	// The cast as of this render, for async handlers: an extraction that
 	// started three renders ago must place its takes against the CURRENT cast,
 	// not the one its closure captured.
@@ -1238,6 +1234,7 @@ export default function App() {
 	}
 
 	const motionDomain = useMotion(appContext.forRender({
+		get attachFrameRef() { return attachFrameRef; },
 		get PROMPT_BLOCK_MAX_FRAMES() { return PROMPT_BLOCK_MAX_FRAMES; },
 		get activeChar() { return activeChar; },
 		get activeCharIndex() { return activeCharIndex; },
@@ -1322,11 +1319,10 @@ export default function App() {
 		get enterShotLook() { return enterShotLook; },
 		get falMotionEnabled() { return falMotionEnabled; },
 		get falMotionSegmentationReady() { return falMotionSegmentationReady; },
-		get liveHandlersRef() { return liveHandlersRef; },
+		get captureLiveFraming() { return liveQueries.capture_framing_png; },
 		get lookThroughShot() { return lookThroughShot; },
 		get motionEncodingCacheRef() { return motionEncodingCacheRef; },
 		get readStudioState() { return readStudioState; },
-		get recordStudioHistory() { return recordStudioHistory; },
 		get restoreExportRig() { return restoreExportRig; },
 		get setCameraPos() { return setCameraPos; },
 		get setFalMotionCameraUnlocked() { return setFalMotionCameraUnlocked; },
@@ -1344,6 +1340,7 @@ export default function App() {
 		physicsPreview, setPhysicsPreview, physicsShow, physicsProgress, physicsOptions, setPhysicsOptions,
 		ikTick, setIkTick, committedIkEdits, setCommittedIkEdits, trailFalloffS, setTrailFalloffS, showTrails,
 		setShowTrails, ikEditTool, setIkEditTool, trailEdit, trailFalloffFrames, focusIkHandle, snapshotIkKeys,
+		rangePins, rangePinResiduals, rangePinSelection, setRangePinSelection, rangePinPartPick, setRangePinPartPick, rangePinPreview, previewRangePinDraft, applyRangePinDraft, deleteRangePin,
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, bridge, setBridge, bridgeChecking,
 		motionSetupReveal, motionSetupKind, setArdyPrompt, setArdyDuration, ardySeed, preserveStrength,
 		setPreserveStrength, takeRecipe, takeVersions, replayNotices, sceneMenuOpen, setSceneMenuOpen,
@@ -1362,7 +1359,7 @@ export default function App() {
 		generationBusy, openMotionSetup, refineDisabledReason, sceneDisabledReason, sceneGenerateDisabledReason,
 		sceneAgainDisabledReason, enterRefineMode, runSceneAgain, addSceneBlock, restoreMotionRefs, cancelArdy,
 	} = motionDomain;
-	const { falMotion, captureFalStill, enterFalFraming, markFalPose, clearFalPose, clearFalMotion, restoreFalCamera, framingDistance, showFalMotionLock, generateFalMotion, falMotionUnavailable, generateFalMotionFromUi, publishStudioMotion } = motionDomain;
+	const { falMotion, captureFalStill, enterFalFraming, markFalPose, clearFalPose, clearFalMotion, restoreFalCamera, framingDistance, showFalMotionLock, generateFalMotion, falMotionUnavailable, generateFalMotionFromUi } = motionDomain;
 	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
 	const [partColoursMode, setPartColoursMode] = useState("shaded");
 
@@ -1420,7 +1417,6 @@ export default function App() {
 
 	const objectsDomain = useObjects(appContext.forRender({
 		get animatedSceneObjects() { return animatedSceneObjects; },
-		get attachFrameRef() { return attachFrameRef; },
 		get castMemberOf() { return castMemberOf; },
 		get charIdFromHierarchyId() { return charIdFromHierarchyId; },
 		get characters() { return characters; },
@@ -1489,17 +1485,13 @@ export default function App() {
 		get setActiveWaypointId() { return setActiveWaypointId; },
 		get setCameraTutorial() { return setCameraTutorial; },
 		get setCameraTutorialHandoff() { return setCameraTutorialHandoff; },
-		get setCharacters() { return castDomain.setCharacters; },
-		get setCustomPoses() { return castDomain.setCustomPoses; },
 		get setFirstSuccessGuideOpen() { return setFirstSuccessGuideOpen; },
 		get setHasCharSheet() { return setHasCharSheet; },
-		get setMotion() { return motionDomain.setMotion; },
 		get setMovePlaying() { return setMovePlaying; },
 		get setPendingWaypointFrame() { return setPendingWaypointFrame; },
 		get setPromptClips() { return setPromptClips; },
 		get setRailDraw() { return setRailDraw; },
 		get setRigMountEpoch() { return setRigMountEpoch; },
-		get setSceneObjects() { return objectsDomain.setSceneObjects; },
 		get setSelectedHierarchyId() { return setSelectedHierarchyId; },
 		get setSelectedPromptId() { return setSelectedPromptId; },
 		get setShots() { return setShots; },
@@ -1700,22 +1692,6 @@ export default function App() {
 		camera.rotation.set(angles.pitch, angles.yaw, 0);
 	}
 
-	/** One Ctrl+Z entry per EDITING SESSION rather than per event, for the
-	 * streams that fire continuously: per-keystroke text and per-pointermove
-	 * camera framing. The session is open while the entry it pushed is still
-	 * the newest one on the stack and the key (clip id, gesture name) has not
-	 * changed; any other edit, undo or redo in between closes it, so the next
-	 * keystroke or drag opens a fresh entry. `sessionRef` is a plain ref of
-	 * `{ key, tick }`. */
-	function recordSessionUndo(sessionRef, key, record = castDomain.recordCharacterUndo) {
-		const past = appContext.castHistory.past;
-		const open = sessionRef.current
-			&& sessionRef.current.key === key
-			&& past[past.length - 1]?.tick === sessionRef.current.tick;
-		if (open) return;
-		record();
-		sessionRef.current = { key, tick: past[past.length - 1].tick };
-	}
 	// Prompt-block text (inspector field AND the timeline chip both land in
 	// changePromptClip) and viewport/plan camera framing are the two streams
 	// that would otherwise push an entry per keystroke / per pointermove.
@@ -1753,10 +1729,9 @@ export default function App() {
 
 	/** True while a framing capture for `shotId` is the newest history entry. */
 	function framingSessionOpen(shotId) {
-		const past = appContext.castHistory.past;
 		return Boolean(framingSessionRef.current)
 			&& framingSessionRef.current.key === `framing:${shotId}`
-			&& past[past.length - 1]?.tick === framingSessionRef.current.tick;
+			&& appContext.historyEntry() === framingSessionRef.current.historyEntryId;
 	}
 
 	function undoObjectDeletion() {
@@ -1905,7 +1880,6 @@ export default function App() {
 	const [subjectVisible, setSubjectVisible] = useState(true);
 	const mcpCaptureRef = useRef(null);
 	const liveControlRef = useRef(null);
-	const liveHandlersRef = useRef(null);
 	const [liveWorkspaceHandle, setLiveWorkspaceHandle] = useState(null);
 	const liveWorkspaceHandleRef = useRef(null);
 	// One identity per tab, kept in sessionStorage so a reload reconnects as the
@@ -2744,7 +2718,6 @@ export default function App() {
 		objects: sceneObjects,
 		rigs,
 		commitManualCameraFraming,
-		recordCharacterUndo: castDomain.recordCharacterUndo,
 		removeCharacter,
 		persistScenes,
 		openScene,
@@ -2769,25 +2742,9 @@ export default function App() {
 		generate,
 		shots,
 	});
-	if (!liveHandlersRef.current) {
-		const finitePatch = (args, fields) => {
-			const patch = {};
-			for (const field of fields) {
-				if (args[field] === undefined) continue;
-				if (!Number.isFinite(args[field])) throw new Error(`Invalid ${field}`);
-				patch[field] = args[field];
-			}
-			return patch;
-		};
-		const characterForRef = (characters, ref) => {
-			if (typeof ref === "number" && Number.isInteger(ref)) return characters[ref - 1] ?? null;
-			if (typeof ref !== "string" || !ref) return null;
-			if (/^\d+$/.test(ref)) return characters[Number(ref) - 1] ?? null;
-			if (ref.toUpperCase() === "A") return characters[0] ?? null;
-			if (ref.toUpperCase() === "B") return characters[1] ?? null;
-			return characters.find((entry) => entry.id === ref) ?? null;
-		};
-		const describe = () => {
+	const liveQueries = {
+		ping: () => ({ pong: true }),
+		describe: () => {
 			const live = appContext.live.state;
 			return {
 				document: {
@@ -2809,74 +2766,11 @@ export default function App() {
 				stage: live.stage,
 				timeline: live.timeline,
 				activeCharacterId: live.activeCharacterId,
-				// y rides too: a character standing on a roof must survive the
-				// same save/open round trip a renamed object just learned to.
-				characters: live.characters.map((entry) => {
-					const layer = entry.id === live.activeCharacterId
-						? { waypoints: live.waypoints ?? [], promptClips: live.promptClips ?? [] }
-						: entry.layer ?? { waypoints: [], promptClips: [] };
-					return {
-						id: entry.id, model: entry.model, subject: entry.subject,
-						x: entry.x, y: entry.y ?? 0, z: entry.z, rot: entry.rot, hidden: entry.hidden,
-						pose: entry.pose ?? null, tint: entry.tint ?? null, scale: entry.scale ?? 1,
-						motionRef: entry.motionRef ?? null, layer,
-					};
-				}),
-				// Scale and the library footprint travel with each object: the server
-				// reports real sizes from them, and without them every prop reads as
-				// 1x1x1 no matter how it was actually built.
-				objects: live.objects.map((object) => ({
-					id: object.id, name: object.name,
-					// The kind travels with the report: a renamed object ("Building A")
-					// can no longer be recognised by its name, and a record that loses
-					// its renderer round-trips into something the set cannot draw.
-					renderer: object.renderer,
-					x: object.x, y: object.y, z: object.z, rot: object.rot,
-					rotX: object.rotX ?? 0, rotZ: object.rotZ ?? 0, color: object.color ?? null,
-					hidden: object.hidden === true,
-					scaleX: object.scaleX, scaleY: object.scaleY, scaleZ: object.scaleZ,
-					parent: object.parent ?? null,
-					footprint: object.footprint, height: object.height,
-				})),
+				characters: castDomain.read(),
+				objects: objectsDomain.read(),
 			};
-		};
-		const castLive = castDomain.createLegacyCastHandlers(finitePatch, characterForRef);
-		const objectLive = objectsDomain.createLegacyObjectHandlers(finitePatch);
-		liveHandlersRef.current = {
-			ping: () => ({ pong: true }),
-			describe,
-			// Camera moves are not undoable in the UI. This is the free-camera and
-			// Top-View path: drive the shot camera, lens state, then manual ownership.
-			set_camera: rawArgs => shotsDomain.setLiveCamera(rawArgs, finitePatch),
-			add_character: castLive.add_character,
-			update_character: castLive.update_character,
-			remove_character: castLive.remove_character,
-			place_object: objectLive.place_object,
-			// Agent-side image import through the Studio's own pipeline:
-			// importImageFile validates and downscales, rememberAsset stores the
-			// content-addressed bytes, and the card enters React state through the
-			// object history store — ONE applyAtomic is the whole gesture, so one
-			// Ctrl+Z removes it. That is the point: the Workflow-tab sync writes
-			// the document without touching undo; this must not repeat that.
-			import_asset: objectLive.import_asset,
-			update_object: objectLive.update_object,
-			remove_object: objectLive.remove_object,
-			// Replacing a document follows the existing project-open path and clears
-			// its per-scene histories, so load_scenes is deliberately not undoable.
-			load_scenes: scenesDomain.loadLiveScenes,
-			// Loads a bridge-generated take onto the active character — the same
-			// path the demo seed and the Motion panel use. Replacing a take is not
-			// undoable in the UI either, so this is deliberately not undoable.
-			// Grouping is an editing convenience: the parent carries its children
-			// when it moves, so a set piece built from primitives is dragged once.
-			group_objects: objectLive.group_objects,
-			ungroup_objects: objectLive.ungroup_objects,
-			apply_batch: objectLive.apply_batch,
-			// Authoring blocks is not generating: a director writes the beats and
-			// their ranges first, then generates when the schedule reads right.
-			// Frames arrive on the timeline's own 24 fps clock.
-			set_prompt_blocks: castLive.set_prompt_blocks,
-			capture_frame: async () => {
+		},
+		capture_frame: async () => {
 				const live = appContext.live.state;
 				return captureMcpFrame({
 					partColours: live.partColours,
@@ -2925,9 +2819,7 @@ export default function App() {
 					references: live.captureShotReferences(),
 				};
 			},
-			load_motion: motionDomain.loadLiveMotion,
-		};
-	}
+	};
 
 	useEffect(() => {
 		const enabled = import.meta.env.DEV || window.__COZYCLAY_LIVE__ === true;
@@ -2937,7 +2829,7 @@ export default function App() {
 		const timer = setTimeout(() => {
 			if (!liveControlRef.current) {
 				liveControlRef.current = createLiveControl({
-					handlers: liveHandlersRef.current,
+					handlers: { ...liveQueries, ...studioBindingRef.current.handlers },
 					workspaceId: liveWorkspaceIdRef.current,
 					meta: {
 						project: projectName ?? "Untitled",
@@ -2950,7 +2842,7 @@ export default function App() {
 						// Which live commands this editor answers. A stale tab from an
 						// older build (or a different app on the same port) answers a
 						// different set; the agent picks a workspace that has what it needs.
-						commands: Object.keys(liveHandlersRef.current ?? {}),
+						commands: [...Object.keys(liveQueries), ...Object.keys(studioBindingRef.current.handlers)],
 					},
 					// The shared client intentionally has no disconnect UI callback.
 					// Observe only this owned socket; a stale handle must never be sent.
@@ -4127,6 +4019,14 @@ export default function App() {
 	window.__cozyclay = {
 			runArdy: (options) => appContext.live.state.runArdy(options),
 			rigA: activeRig, motion, tlFrame, frameCount: tlFrameCount, playing: tlPlaying, ikMode, ikChains, ikFocus, contactRadii: ikChains?.values().next().value?.contactRadii ?? null, ik: ikStateRef.current,
+			rangePins, rangePinResiduals,
+			rangePinApplySpec: motionDomain.rangePinApplySpec,
+			rangePinEffector: (track) => {
+				const chain = ikChains?.get(track), bone = chain?.bones?.[2];
+				if (!bone) return null;
+				const point = new THREE.Vector3(); bone.getWorldPosition(point);
+				return point.toArray();
+			},
 			committedIkEdits, waypoints,
 			// the camera the main view renders through (poser in IK mode) — QA
 			// projections must use this one, not the frozen shot camera
@@ -4161,9 +4061,9 @@ export default function App() {
 				runStudioAction("stage.setEnvironment", { environmentImage: normalizeReferenceImage(dataUrl) });
 				return true;
 			},
-			captureWithReferences: () => liveHandlersRef.current.capture_framing_png({}),
-			importAsset: (args) => liveHandlersRef.current.import_asset(args),
-			sceneObject: { place: (args) => liveHandlersRef.current.place_object(args), update: (args) => liveHandlersRef.current.update_object(args) },
+			captureWithReferences: () => liveQueries.capture_framing_png({}),
+			importAsset: async ({ dataUrl: source, ...args }) => (await appContext.bus.run("asset.import", { source, ...args })).output,
+			sceneObject: { place: ({ kind, name, parent, ...placement }) => ({ id: appContext.bus.run("object.add", { kind, ...(name === undefined ? {} : { name }), ...(parent === undefined ? {} : { parent }), placement }).affectedIds[0] }), update: ({ id, scale, ...patch }) => appContext.bus.run("object.update", { id, patch: { ...(scale === undefined ? {} : { scaleX: scale, scaleY: scale, scaleZ: scale }), ...patch } }) },
 			// QA-only reference exports (#165): the production builders without the
 			// download, so a headless run can unzip a real pack and diff the passes
 			// instead of driving a file dialog. Same liveStateRef reasoning as
@@ -4276,7 +4176,7 @@ export default function App() {
 		// close over them: a stale closure would report the set as it was two
 		// edits ago — and, after an undo that removes a subject, would keep
 		// reporting the ghost's capsules.
-	}, [activeRig, motion, tlFrame, ikMode, ikChains, ikFocus, ikTick, charA, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, preview, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning]);
+	}, [activeRig, motion, tlFrame, tlFrameCount, ikMode, ikChains, ikFocus, ikTick, charA, rangePins, rangePinResiduals, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, preview, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning]);
 	// QA hook (plan §6.5): exposes history depth and the present === objects
 	// invariant so the browser suite can assert undo entry counts directly.
 	// Reads live store state at call time; re-registered after every render.
@@ -6445,55 +6345,42 @@ export default function App() {
 	 * as one body: the live read model first, so the next synchronous read sees
 	 * it, then the React state the foldouts and the save path own. */
 
-	/** Run one registry action for the agent and bind the native history entry
-	 * it pushed to a journal id, so undo_edit (and Ctrl+Z) can revert it. Shot,
-	 * cast and motion entries gain the Studio restore state (a motion entry the
-	 * one character `targetId` names), which republishes the live read model
-	 * synchronously; object entries are the store's own. */
+	/** All surfaces share the facade's owned sessions and store histories. */
 	function beginStudioAction(domain, targetId = null) {
-		return appContext.beginAction(domain, targetId, {
-			beginAction: castDomain.beginNativeStudioAction,
-			isRetained: historyEntryId => castDomain.isNativeStudioHistoryRetained({ undo: { historyEntryId } }),
-			stepHistory: (redo, historyEntryId) => studioHistoryRef.current.get(historyEntryId)?.depth !== undefined
-				? objectsDomain.stepObjectHistory(redo) !== null : castDomain.stepNativeStudioHistory(redo),
-		});
+		return appContext.beginAction(domain, targetId);
 	}
 	function recordStudioAction(domain, run, targetId = null, nested = false) {
-		return appContext.recordAction(domain, run, targetId, nested, {
-			beginAction: castDomain.beginNativeStudioAction,
-			isRetained: historyEntryId => castDomain.isNativeStudioHistoryRetained({ undo: { historyEntryId } }),
-			stepHistory: (redo, historyEntryId) => studioHistoryRef.current.get(historyEntryId)?.depth !== undefined
-				? objectsDomain.stepObjectHistory(redo) !== null : castDomain.stepNativeStudioHistory(redo),
-		});
+		return appContext.recordAction(domain, run, targetId, nested);
 	}
 	function publishStudioDomain(domain, targetId, state) {
-		const owned = appContext.storeDomain(domain);
-		return owned ? owned.publish(state, targetId) : castDomain.publishNativeStudioDomain(domain, targetId, state);
+		return appContext.storeDomain(domain).publish(state, targetId);
 	}
 	function canUndoStudioReceipt(receipt) {
 		const owned = appContext.storeDomainForReceipt(receipt);
-		const next = appContext.nextStoreHistory(false, storeRef.current.objects);
-		if (owned) return next === owned && owned.canUndo(receipt.undo.historyEntryId);
-		if (next || !castDomain.isNativeStudioHistoryRetained(receipt)) return false;
-		const top = appContext.castHistory.past.at(-1), id = receipt.undo.historyEntryId;
-		const entry = studioHistoryRef.current.get(id);
-		// A later store edit followed by Undo changes the revision, but does
-		// not retire this native entry. Compare retained history identities.
-		return entry.depth !== undefined
-			? entry.depth === storeRef.current.depths().past && entry.tick >= (top?.tick ?? 0)
-			: top?.studio?.historyEntryId === id && top.studio.objects === storeRef.current.objects;
+		return Boolean(owned && appContext.nextStoreHistory(false) === owned && owned.canUndo(receipt.undo.historyEntryId));
 	}
 	function isStudioHistoryRetained(receipt) {
-		return Boolean(appContext.storeDomainForReceipt(receipt)) || castDomain.isNativeStudioHistoryRetained(receipt);
+		return Boolean(appContext.storeDomainForReceipt(receipt));
 	}
 
+	function finishStudioHistoryGesture() {
+		for (const owner of appContext.storeDomains()) { owner.finishGesture?.(); owner.settle?.(); }
+	}
 	function stepStudioHistory(redo) {
-		const owned = appContext.nextStoreHistory(redo, storeRef.current.objects);
-		return owned ? owned.stepHistory(redo) : castDomain.stepNativeStudioHistory(redo);
+		const before = storeRef.current.objects;
+		const owned = appContext.nextStoreHistory(redo);
+		if (!owned?.stepHistory(redo)) return false;
+		const restored = storeRef.current.objects;
+		if (before !== restored) {
+			if (!redo && objectDeleteUndo?.id && restored.some(object => object.id === objectDeleteUndo.id)) {
+				setSelectedHierarchyId(`object:${objectDeleteUndo.id}`); setObjectDeleteUndo(null);
+			} else if (selectedSceneObjectId && !restored.some(object => object.id === selectedSceneObjectId)) setSelectedHierarchyId("props");
+		}
+		setToast(redo ? ko("Redone", "다시 실행됨") : ko("Undone", "실행 취소됨"));
+		return true;
 	}
 	function commitStudioDraft(payload) {
 		const owned = appContext.storeDomain(payload.domain);
-		if (!owned) return castDomain.commitNativeStudioDraft(payload);
 		const session = owned.beginAction();
 		try { session.run(() => owned.commitDraft(payload.draft)); return session.commit(); }
 		catch (error) { session.cancel(); throw error; }
@@ -6548,20 +6435,9 @@ export default function App() {
 			for (const skeleton of skeletons) skeleton.dispose(); parent.remove(rig);
 		}
 	}
-	function operateStudio(args, state) {
-		let selection = args.selection === undefined ? state.selection : args.selection;
-		if (selection) {
-			const found = selection.kind === "scene" ? selection.id === state.host.sceneId : selection.kind === "camera" ? selection.id === "camera" :
-				(selection.kind === "object" ? state.objects : state.characters).some(row => row.id === selection.id);
-			if (!found) throw new StudioProtocolError("STALE_TARGET", "Selection is not present in this document.");
-		}
-		const shot = args.shotId === undefined ? null : state.shots.find(s => s.id === args.shotId);
-		if (args.shotId !== undefined && !shot) throw new StudioProtocolError("STALE_TARGET", "Shot is not present in this document.");
-		const frame = args.frame ?? shot?.startFrame ?? state.view.frame;
-		if (frame >= state.frameCount) throw new StudioProtocolError("INVALID_RANGE", "Frame is outside the timeline.");
-		const view = { ...state.view, ...args.view, frame, mode: args.mode ?? state.view.mode, playing: args.playing ?? state.view.playing };
-		const live = appContext.live.state; appContext.patchLive({ studioSelection: selection }); appContext.patchLive({ studioView: view });
-		appContext.patchLive({ studioShotId: args.shotId ?? shotAtFrame(state.shots, frame)?.id ?? null });
+	function operateStudio({ selection, view, shotId }) {
+		const { frame } = view;
+		appContext.patchLive({ studioSelection: selection, studioView: view, studioShotId: shotId });
 		appContext.patchTimeline({ currentFrame: frame }); tlFrameRef.current = frame;
 		if (selection && ["character", "rig"].includes(selection.kind)) { appContext.patchLive({ activeCharacterId: selection.id }); setActiveCharacterId(selection.id); }
 		setSelectedHierarchyId(selection ? selection.kind === "object" ? `object:${selection.id}` : ["character", "rig"].includes(selection.kind) ? `character:${selection.id}` : selection.kind === "camera" ? "camera" : "shot" : "");
@@ -6588,7 +6464,9 @@ export default function App() {
 	});
 	appContext.updatePorts({
 		read: readStudioState, revision: sceneRevisionRef, bounds: studioBounds, commit: commitStudioDraft,
-		operate: operateStudio, undo: undoScene, stepHistory: stepStudioHistory, capture: () => liveHandlersRef.current.capture_framing_png({}),
+		operate: operateStudio, undo: () => stepStudioHistory(false), redo: () => stepStudioHistory(true),
+		history: redo => appContext.historyEntry(redo), finishHistoryGesture: finishStudioHistoryGesture,
+		stepHistory: stepStudioHistory, capture: () => liveQueries.capture_framing_png({}),
 		// One shot frame as raw read-back pixels (rows bottom-up), from the export
 		// path captureShotFramePng uses; an export in flight renders at its output.
 		renderFrameBuffer: frame => {
@@ -6646,10 +6524,11 @@ export default function App() {
 		addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints, setWaypointMode,
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, attachSceneObject, setShotCameraRail, clearShotCameraRail,
 		choosePartColours, setGuideMode, setInsetCollapsed, exportShotVideo,
+		readView: readStudioState, publishView: operateStudio,
 		switchSceneDocument, addSceneDocument, duplicateSceneDocument, renameSceneDocument, deleteSceneDocument,
 		afterRender: () => new Promise(resolve => renderWaitersRef.current.push(resolve)),
 		saveProject, projectFileGranted: async () => (await queryHandlePermission(projectHandleRef.current)) === "granted",
-		importAsset: (args, context) => liveHandlersRef.current.import_asset(args, context), fetchImportSource,
+		importAsset: (args, context) => objectsDomain.importAsset(args, context), fetchImportSource,
 		setAiShotMode: setMode, setAiImageModel: setImageModel, generate, generateFalMotion,
 	});
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(appContext.actionPorts);
@@ -6680,7 +6559,6 @@ export default function App() {
 			if (domain === "shots") appContext.patchLive({ shots: after });
 			if (domain === "promptClips") bufferRef.current.promptClips = after;
 		};
-		Object.assign(liveHandlersRef.current, studioBindingRef.current.handlers);
 	}
 	useEffect(() => () => studioBindingRef.current?.dispose(), []);
 	// Every commit releases the actions waiting for React to render their edit
@@ -7016,7 +6894,7 @@ export default function App() {
 								onChange={(event) => {
 									const id = event.target.value;
 									if (!id) { runStudioAction("stage.setFilmback", { cameraPresetId: null }); return; }
-									liveHandlersRef.current?.set_camera({ preset: id });
+									runStudioAction("shot.frame", { preset: id });
 								}}
 							>
 								<option value="">{ko("Free", "자유")}</option>
@@ -7456,11 +7334,19 @@ export default function App() {
 								chains={ikChains}
 								fkJoints={ikFkJoints}
 								ikState={ikStateRef.current}
-								enabled={ikMode && ikEditTool === "ik" && !posing && !playMode}
+								enabled={ikMode && (ikEditTool === "ik" || ikEditTool === "pin") && !posing && !playMode}
+								selectionOnly={ikEditTool === "pin"}
+								onPartPick={(track) => { setRangePinPartPick(track); setRangePinSelection(null); }}
 								focus={ikFocus}
 								onFocus={focusIkHandle}
 								onSolve={ikSolve}
 								onDragEnd={ikDragEnd}
+							/>
+							<RangePinMarker
+								chains={ikChains}
+								track={rangePinPreview?.track}
+								target={rangePinPreview?.target}
+								enabled={ikMode && ikEditTool === "pin" && Boolean(rangePinPreview?.target)}
 							/>
 							{/* The tutorial's top view is the landing playground's: camera, cast
 							    and the rail only, so the line the Rail step asks for is drawn on
@@ -7646,10 +7532,12 @@ export default function App() {
 							{ikMode && motion && (
 								<MotionTrails
 									motion={motion}
+									rig={activeRig}
 									baseY={activeChar.y ?? 0}
 									charScale={activeChar.scale ?? 1}
 									ikFocus={ikFocus}
 									falloffFrames={trailFalloffFrames}
+									playheadFrame={tlFrame}
 									pendingEdit={trailEdit}
 									enabled={ikMode && ikEditTool === "trail" && showTrails && !posing && !playMode}
 									visible={showTrails}
@@ -8084,6 +7972,17 @@ export default function App() {
 						trailReadinessState={trailReadinessState}
 						openMotionSetup={openMotionSetup}
 						recheckMotionHealth={recheckMotionHealth}
+						rangePins={rangePins}
+						rangePinResiduals={rangePinResiduals}
+						rangePinSelection={rangePinSelection}
+						rangePinPartPick={rangePinPartPick}
+						rangePinPreview={rangePinPreview}
+						objects={sceneObjects}
+						setRangePinSelection={setRangePinSelection}
+						setRangePinPartPick={setRangePinPartPick}
+						previewRangePinDraft={previewRangePinDraft}
+						applyRangePinDraft={applyRangePinDraft}
+						deleteRangePin={deleteRangePin}
 					/>
 
 				<EnvironmentPanel
@@ -8328,6 +8227,9 @@ export default function App() {
 				onMotionSpeedChange={changeMotionSegmentSpeed}
 				onMotionSegmentRemove={removeMotionSegmentById}
 				ikFrames={ikFrames}
+				rangePins={rangePins}
+				selectedPinId={rangePinSelection}
+				pendingPinRange={ikMode && ikEditTool === "pin" ? rangePinPreview?.draft ?? null : null}
 				footSnap={footSnap}
 				bodyContact={bodyContact}
 					shots={shots}
@@ -8362,6 +8264,7 @@ export default function App() {
 				onIkToggle={toggleIkMode}
 				onIkKeyframeAdd={ikAddKeyframe}
 				onIkKeyframeRemove={ikDeleteKeyframe}
+				onPinSelect={(id) => { setRangePinSelection(id); setIkEditTool("pin"); }}
 				onBodyContactToggle={() => {
 					setBodyContact((v) => {
 						setToast(v ? ko("Body contact off — floor constraints are disabled", "바닥 접촉 꺼짐 — 바닥 제약이 비활성화됩니다") : ko("Body contact on — body markers stay above the floor", "바닥 접촉 켜짐 — 신체 접촉점이 바닥 아래로 내려가지 않습니다"));

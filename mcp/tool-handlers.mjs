@@ -31,8 +31,7 @@ import { z } from "zod";
 import { MAX_COMMAND_TIMEOUT_MS } from "./live-hub.mjs";
 import { readMeshFromPath } from "./mesh-file.mjs";
 import { DEFAULT_POSE } from "../src/poses.js";
-import { readMotionStream } from "../bin/agent/motion-runtime.mjs";
-import { motionPreflightReason, startMotionRequest } from "../src/analytics.js";
+import { generationArgs } from '../src/motion/generation.js';
 import { BLOCK_MAX_SECONDS, PROMPT_GUIDE, normalizePhases, splitLongBeat, tileClipFrames } from "./ardy-prompts.mjs";
 
 import {
@@ -193,7 +192,7 @@ const executeStudioCommand = async ({ action, args, expectedRevision, commandId,
 		commandId: commandId ?? randomUUID(),
 		host: Object.fromEntries(STUDIO_IDENTITY_KEYS.map((key) => [key, context.host[key]])),
 		expectedRevision: expectedRevision ?? context.revision.scene,
-	}, workspaceHandle, { timeoutMs: timeoutMs ?? declared?.timeoutMs });
+	}, workspaceHandle, { timeoutMs: timeoutMs ?? (declared?.timeoutMs === undefined ? undefined : Math.min(MAX_COMMAND_TIMEOUT_MS, declared.timeoutMs + (declared.generation ? 5000 : 0))) });
 	return receipt;
 };
 // A refusal is the editor's receipt: its code and recovery are the answer.
@@ -490,7 +489,7 @@ function shotReport() {
 const studioAliasTools = new Set([
 	"set_camera", "frame_shot", "place_object", "update_object", "remove_object",
 	"import_mesh", "group_objects", "add_scene", "switch_scene", "apply_batch", "open_project",
-	"add_character", "place_character", "remove_character", "set_prompt_blocks",
+	"add_character", "place_character", "remove_character", "set_prompt_blocks", "load_motion", "generate_motion",
 ]);
 const studioAdmissionSchema = {
 	expectedRevision: z.number().int().min(0).optional().describe("scene revision to admit against; defaults to the inspected revision"),
@@ -517,14 +516,9 @@ const tool = (name, config, handler) => ({
  * @param {Promise<string>} [deps.projectRootPromise] the resolved directory
  *   `open_project`/`save_project` confine themselves to; the owner resolves it
  *   because doing so chdirs the process.
- * @param {object} [deps.motionJobs] the MotionJobRegistry `generate_motion`
- *   records work in.
- * @param {(job: object) => Promise<void>} [deps.publishMotionJob] delivers a
- *   finished job to its workspace; the owner holds it because the live hub's
- *   reconnect and cancel paths publish jobs too.
  * @returns {Array<{name: string, title: string, description: string, inputSchema: object, annotations: object, live: boolean, handler: Function}>}
  */
-export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMotionJob } = {}) => {
+export const createToolHandlers = ({ projectRootPromise } = {}) => {
 	const resolveProjectPath = async (path, { existing }) => {
 		if (!path.endsWith(".cclayproject")) throw new Error("Project path must end in .cclayproject.");
 		const root = await projectRootPromise;
@@ -1219,23 +1213,10 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 				if (!motionUrlPattern.test(args.url)) {
 					throw new Error(`Unsupported motion url "${args.url}". Use /ardy/motions/<id> or /ardy/assembled/<name>.npz.`);
 				}
-				const workspaceHandle = liveWorkspace.getStore() ?? liveHub.resolveWorkspace("load_motion", args.workspace_handle);
-				// Without an explicit target the editor installs onto ITS active character,
-				// which silently stacks multi-cast loads onto one rig — the generate path
-				// always names its target, so the load path must be able to as well.
-				let characterId;
-				if (args.character !== undefined) {
-					try {
-						await refreshLiveDescription();
-					} catch (error) {
-						return liveError(error);
-					}
-					const target = findCharacter(args.character);
-					if (!target) return text(`No character "${args.character}". ${castHint()}`);
-					characterId = target.id;
-				}
-				await liveHub.command("load_motion", { url: args.url, prompt: args.prompt ?? "", ...(characterId ? { characterId } : {}) }, workspaceHandle);
-				return text(`Motion installed from ${args.url}${characterId ? ` onto ${characterId}` : ""}.`);
+				return runStudioCommand({ ...args, action: 'motion.replace', args: async context => ({
+					characterId: args.character === undefined ? context.activeCharacterId : await liveCharacterId(args.character),
+					url: args.url, prompt: args.prompt ?? '',
+				}) });
 			},
 		),
 
@@ -1244,9 +1225,8 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 			{
 				title: "Generate character motion (Kimodo)",
 				description:
-					"Start a multi-phase Kimodo motion job for the connected live editor and return immediately with its " +
-					"task-shaped identity. Completion, failure, or cancellation arrives as the live socket's motion_job event; " +
-					"the MCP model does not poll task state. A completed event loads the active character's timeline.\n\n" +
+					"Alias for motion.generate in the editor. Returns its bus receipt; started jobs carry jobId for studio_run job.await or job.cancel. " +
+					"The installed take is undoable with studio_run edit.undo.\n\n" +
 					PROMPT_GUIDE,
 				inputSchema: {
 					phases: z
@@ -1293,203 +1273,16 @@ export const createToolHandlers = ({ projectRootPromise, motionJobs, publishMoti
 						),
 				},
 			},
-			async ({ phases: rawPhases, seconds, seed, motion_url, drop }) => {
-				const phases = rawPhases.map((p) => (typeof p === "string" ? p : p.text));
-				const phaseSeconds = rawPhases.map((p) => (typeof p === "string" ? null : p.seconds));
-				const timed = phaseSeconds.some((s) => s !== null);
-				const bridge = (process.env.COZYCLAY_BRIDGE_ORIGIN ?? process.env.COZYCLAY_BRIDGE ?? "http://127.0.0.1:5181").replace(/\/$/, "");
-
-				// Every phase is rewritten into ARDY's own sentence shape before it is ever
-				// sent. One input beat stays one phase: the caller's phase list is the
-				// sequence, so a composite beat is theirs to split, not ours to re-cut.
-				const normalized = normalizePhases(phases);
-				// Keep notes beside the prompt they belong to: a blank beat normalises to
-				// "" and is dropped, which would otherwise slide every later note onto the
-				// wrong prompt in the rewrite report.
-				const kept = normalized.texts
-					.map((t, i) => ({ text: t, notes: normalized.notes[i], source: normalized.sources[i] }))
-					.filter((p) => p.text);
-				const prompts = kept.map((p) => p.text);
-				// One complete beat is a legitimate clip — ARDY's own examples are single
-				// prompts ("A person walks in a circle."), so a valid one-phase request must
-				// not fail merely for being one phase. Only an empty request is refused.
-				if (prompts.length === 0) return text("Give at least one motion beat.");
-
-				// ARDY Core is 20 fps; segments must tile 0..clipFrames exactly, and each
-				// one needs at least 3 frames.
-				const ARDY_FPS =
-					(process.env.CCLAY_MOTION_BACKEND || "kimodo").trim().toLowerCase() === "kimodo" ? 24 : 20;
-				let segments;
-				let clipFrames;
-				let chained = 0;
-				if (timed) {
-					// A beat that became several blocks shares its time between them, so an
-					// explicit "6 seconds of walking" stays 6 seconds however it was phrased.
-					const pieceCount = kept.reduce((acc, piece) => {
-						acc[piece.source] = (acc[piece.source] ?? 0) + 1;
-						return acc;
-					}, {});
-					segments = [];
-					let cursor = 0;
-					for (const { text: prompt, source } of kept) {
-						const whole = phaseSeconds[source] ?? seconds / phases.length;
-						const share = whole / pieceCount[source];
-						// The studio caps a block at BLOCK_MAX_SECONDS and refuses to generate
-						// a longer one, so a long beat becomes consecutive blocks here rather
-						// than something the UI would reject.
-						const spans = splitLongBeat(share);
-						if (spans.length > 1) chained += spans.length - 1;
-						for (const span of spans) {
-							const startFrame = cursor;
-							cursor += Math.max(3, Math.round(span * ARDY_FPS));
-							segments.push({ startFrame, endFrame: cursor, prompt });
-						}
-					}
-					clipFrames = cursor;
-				} else {
-					clipFrames = Math.floor(seconds * ARDY_FPS);
-					// Even division must also respect the cap: enough blocks that no single
-					// one exceeds it, distributed evenly across the clip.
-					const perPhase = seconds / prompts.length;
-					const piecesPer = Math.ceil(perPhase / BLOCK_MAX_SECONDS);
-					if (piecesPer > 1) chained = prompts.length * (piecesPer - 1);
-					const total = prompts.length * piecesPer;
-					const per = Math.floor(clipFrames / total);
-					segments = [];
-					for (const [i, prompt] of prompts.entries()) {
-						for (let k = 0; k < piecesPer; k += 1) {
-							const index = i * piecesPer + k;
-							segments.push({
-								startFrame: index * per,
-								endFrame: index === total - 1 ? clipFrames : (index + 1) * per,
-								prompt,
-							});
-						}
-					}
-				}
-				const clipSeconds = clipFrames / ARDY_FPS;
-				// A single beat has no sequence to chain: send it as a plain prompt;
-				// composite physical wording remains intact in the normalized text.
-				// Long single prompts are the exception: split the actual clip length
-				// into equal Kimodo blocks so every wire segment stays within the cap.
-				const singlePromptNeedsChain = prompts.length === 1 && clipSeconds > BLOCK_MAX_SECONDS;
-				if (prompts.length === 1) {
-					if (singlePromptNeedsChain) {
-						segments = tileClipFrames(clipFrames, clipSeconds).map((b) => ({ ...b, prompt: prompts[0] }));
-						chained = segments.length - 1;
-					} else {
-						chained = 0;
-					}
-				}
-				const rewrites = kept
-					.map(({ text: prompt, notes }, i) => (notes.length ? `  ${i + 1}. ${prompt}  ← ${notes.join("; ")}` : null))
-					.filter(Boolean);
-				const chainNote = chained > 0 ? `\n  (${chained} block(s) chained to keep every block within ${BLOCK_MAX_SECONDS}s)` : "";
-				// A drop is reported on its own account: a caller can send nine already-perfect
-				// phases, which produces no rewrite and no chaining yet still loses the ninth
-				// to the schema's 8-phase limit, and silence there would hide a lost beat.
-				const dropNote =
-					normalized.dropped > 0 ? `\n  (${normalized.dropped} beat(s) past the 8-phase limit were dropped)` : "";
-				const promptNote =
-					rewrites.length || chainNote || dropNote
-						? (rewrites.length ? `\n\nRewritten for ARDY:\n${rewrites.join("\n")}` : "\n") + dropNote + chainNote
-						: "";
-
-				if (!liveHub?.connected) return text(noLiveEditor("generate_motion requires a connected CozyClay editor so completion can be delivered over its live socket."));
-				const workspaceHandle = liveWorkspace.getStore() ?? liveHub.resolveWorkspace("generate_motion");
-				const workspaceId = liveHub.workspaceId(workspaceHandle);
-				// Reusing an existing take is installation, not generation demand. The
-				// shared lifecycle sanitizes before the targeted live transport sees it;
-				// disconnected events are omitted, never reconstructed on reconnect.
-				const motionRequest = motion_url ? null : startMotionRequest({ surface: "mcp", input_mode: "prompt" }, {
-					capture: (event, props) => liveHub?.sendEvent(workspaceId, "motion_telemetry", { event, props }),
-				});
-				try {
-					await refreshLiveDescription();
-				} catch (error) {
-					return liveError(error);
-				}
-				const targetCharacterId = stage().characters.find((character) => character.id === state.focus)?.id ?? stage().characters[0]?.id ?? null;
-				let job;
-				try {
-					job = motionJobs.create(workspaceId);
-					job.motionRequest = motionRequest;
-				} catch (error) {
-					return liveError(error);
-				}
-				const body =
-					prompts.length === 1 && !singlePromptNeedsChain
-						? { prompt: prompts[0], duration: clipSeconds, posePin: false }
-						: { prompt: prompts.join(" "), duration: clipSeconds, segments, posePin: false };
-				if (seed !== undefined) body.seed = seed;
-
-				// Abort tears down the HTTP stream. The bridge owns the child process group
-				// and kills it on disconnect, so cancellation stops generator work before a
-				// terminal cancelled event is sent; it never reaches editor installation.
-				const run = async () => {
-					if (job.status === "cancelled") return;
-					const controller = new AbortController();
-					const deadline = setTimeout(() => controller.abort(new Error("Motion generation exceeded the 5 minute deadline.")), 5 * 60_000);
-					deadline.unref?.();
-					job.cancel = () => {
-						controller.abort();
-						motionRequest?.fail(null, "aborted");
-					};
-					try {
-						let motionUrl = motion_url;
-						if (!motionUrl) {
-							let health;
-							try {
-								const response = await fetch(`${bridge}/ardy/health`, {
-									signal: AbortSignal.any([controller.signal, AbortSignal.timeout(5_000)]),
-								});
-								const payload = await response.json();
-								health = { ...payload, ok: response.ok && payload?.ok !== false };
-							} catch (error) {
-								if (controller.signal.aborted) throw error;
-								health = { ok: false };
-							}
-							if (job.status === "cancelled") return;
-							// Readiness controls execution independently of best-effort telemetry.
-							const reason = motionPreflightReason(health, { body });
-							motionRequest?.preflight(health, { body });
-							if (reason) {
-								motionJobs.transition(job, "failed", { message: `Motion generation preflight blocked: ${reason}.` });
-								await publishMotionJob(job);
-								return;
-							}
-							motionJobs.transition(job, "running");
-							motionRequest?.start();
-							const res = await fetch(`${bridge}/ardy/generate`, {
-								method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body), signal: controller.signal,
-							});
-							motionUrl = await readMotionStream(res);
-						}
-						if (job.status === "cancelled") return;
-						if (typeof motionUrl !== "string") throw new Error("Generation ended without a motion.");
-						if (!motionUrlPattern.test(motionUrl)) throw new Error("Generator returned an invalid motion URL.");
-						motionRequest?.succeed();
-						motionJobs.transition(job, "completed", {
-							motionUrl, prompt: prompts.join(" "), blocks: segments, drop, targetCharacterId,
-							summary: `${clipSeconds.toFixed(1)}s / ${clipFrames} frames${promptNote}`,
-						});
-						await publishMotionJob(job);
-					} catch (error) {
-						if (job.status === "cancelled" || controller.signal.aborted || error?.name === "AbortError") {
-							motionRequest?.fail(error, "aborted");
-							if (job.status !== "cancelled") motionJobs.transition(job, "cancelled", { message: "Generation cancelled before editor delivery." });
-						} else {
-							motionRequest?.fail(error);
-							motionJobs.transition(job, "failed", { message: error instanceof Error ? error.message : "Motion generation failed." });
-						}
-						await publishMotionJob(job);
-					} finally {
-						clearTimeout(deadline);
-						job.cancel = null;
-					}
-				};
-				queueMicrotask(run);
-				return text(JSON.stringify(motionJobs.task(job)));
+			async ({ phases, seconds = 9, seed, motion_url, drop, ...admission }) => {
+				if (!liveHub?.connected) return text(noLiveEditor("Motion requires a connected CozyClay editor."));
+				const normalized = normalizePhases(phases.map(phase => typeof phase === 'string' ? phase : phase.text));
+				const beats = normalized.texts.map((text, index) => ({ text, seconds: phases[normalized.sources[index]]?.seconds ?? seconds / phases.length })).filter(beat => beat.text);
+				return runStudioCommand({ ...admission, action: motion_url ? 'motion.replace' : 'motion.generate', args: context => {
+					const generated = generationArgs({ characterId: context.activeCharacterId, source: { kind: 'generate', beats, ...(seed === undefined ? {} : { seed }) } });
+					return motion_url ? { characterId: generated.characterId, url: motion_url, prompt: beats.map(beat => beat.text).join(' '),
+						blocks: generated.blocks.map(({ startFrame, endFrame, text: prompt }) => ({ startFrame, endFrame, prompt })), ...(drop ? { drop } : {}) }
+						: { ...generated, ...(drop ? { drop } : {}) };
+				} });
 			},
 		),
 

@@ -24,10 +24,15 @@ export function attachStageHistory(scope) {
   const host = { workspaceId: 'workspace', documentEpoch: 'document', sceneId: 'scene', sceneEpoch: 'epoch' };
   const registry = createStudioActionRegistry();
   register(registry, { ...scope.appContext.actionPorts, state: () => ({ activeSceneId: host.sceneId }) });
-  const journal = createStudioCommandJournal({ host });
+  const journal = createStudioCommandJournal({ host }), receipts = new Map();
   bus = createCommandBus({ registry, ports: {
     read: () => ({ host, revision: domain.documentStore.getSnapshot().revision }), journal: () => journal,
-    recordAction: (_kind, fn) => domain.recordAction(fn), beginAction: () => domain.beginAction(),
+    recordAction: (_kind, fn) => scope.appContext.recordAction('stage', fn), beginAction: () => domain.beginAction(),
+    remember: receipt => receipts.set(receipt.receiptId, receipt), receipt: id => receipts.get(id),
+    history: redo => scope.appContext.historyEntry(redo),
+    isRetained: receipt => Boolean(scope.appContext.storeDomainForReceipt(receipt)),
+    canUndo: receipt => scope.appContext.historyEntry() === receipt.undo?.historyEntryId,
+    undo: () => domain.stepHistory(false), redo: () => domain.stepHistory(true), finishHistoryGesture: domain.finishGesture,
   } });
   scope.run = (...args) => bus.run(...args);
   scope.studioBindingRef.current = { stepHistory: domain.stepHistory };

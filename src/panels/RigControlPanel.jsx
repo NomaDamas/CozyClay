@@ -5,6 +5,7 @@ import { HIERARCHY_INSPECTOR_TITLES } from "../app-stage.jsx";
 import { PhysicsPanel } from "../ardy/physics-panel.jsx";
 import { Field } from "../ui.jsx";
 import { MotionReadiness } from "../motion-readiness-ui.jsx";
+import { RangePinPanel } from "../range-pin-panel.jsx";
 
 export default function RigControlPanel({
 	isRigSelection, rigSelection, ikChains, ikFocus, footSnap, ikMode, toggleIkMode,
@@ -13,6 +14,9 @@ export default function RigControlPanel({
 	runAutoPhysics, showPhysicsPreview, applyPhysicsPreview, cancelPhysicsPreview, setTlFrame, ikEditTool,
 	setIkEditTool, showTrails, setShowTrails, trailFalloffS, setTrailFalloffS, trailEdit, generationBusy,
 	bridgeChecking, bridge, runTrailRegeneration, trailReadinessState, openMotionSetup, recheckMotionHealth,
+	rangePins = [], rangePinResiduals = new Map(), rangePinSelection = null, rangePinPartPick = null, rangePinPreview = null,
+	objects = [],
+	setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft, deleteRangePin,
 }) {
 	const { run } = useMotionCommands();
 	return (
@@ -58,10 +62,10 @@ export default function RigControlPanel({
 							onApply={applyPhysicsPreview} onCancel={cancelPhysicsPreview} onFrame={setTlFrame} />
 						{/* Motion trail editing: falloff radius + confirm-to-regenerate.
 						    Only meaningful with IK mode on and a loaded take. */}
-						{ikMode && motion && (
+						{ikMode && (
 							<>
 								<div className="segmented ik-edit-tools" data-active={ikEditTool}>
-									<button
+										<button
 										type="button"
 										className={ikEditTool === "ik" ? "active" : ""}
 										aria-pressed={ikEditTool === "ik"}
@@ -73,17 +77,50 @@ export default function RigControlPanel({
 										type="button"
 										className={ikEditTool === "trail" ? "active" : ""}
 										aria-pressed={ikEditTool === "trail"}
-										disabled={!showTrails}
-										onClick={() => setIkEditTool("trail")}
-									>
-										{ko("궤적선 편집", "Motion trail")}
-									</button>
+											disabled={!showTrails}
+											onClick={() => setIkEditTool("trail")}
+										>
+											{ko("궤적선 편집", "Motion trail")}
+										</button>
+										<button
+											type="button"
+											data-testid="range-pin-tool"
+											className={ikEditTool === "pin" ? "active" : ""}
+											aria-pressed={ikEditTool === "pin"}
+											disabled={!motion}
+											onClick={() => { setIkEditTool("pin"); setRangePinPartPick?.(null); }}
+										>
+											{ko("Range pin", "범위 고정")}
+										</button>
 								</div>
 								<p className="inspector-hint">
-									{ikEditTool === "ik"
+								{ikEditTool === "ik"
 										? ko("파츠를 직접 잡아 손·발·팔꿈치·무릎을 세밀하게 수정합니다. 궤적선은 안내선으로만 표시됩니다.", "Grab a body part for detailed IK editing. Trails are guides only.")
-										: ko("궤적선을 잡아 여러 프레임의 이동을 함께 수정합니다. 파츠 핸들은 잠시 잠겨 겹침을 막습니다.", "Grab a trail to edit a range of frames. IK handles are locked to avoid overlapping picks.")}
-								</p>
+									: ikEditTool === "pin" ? ko("Choose a hand or foot and the frame range to pin.", "손이나 발과 프레임 범위를 선택해 고정합니다.")
+									: ko("궤적선을 잡아 여러 프레임의 이동을 함께 수정합니다. 파츠 핸들은 잠시 잠겨 겹침을 막습니다.", "Grab a trail to edit a range of frames. IK handles are locked to avoid overlapping picks.")}
+							</p>
+							{ikEditTool === "pin" && (
+								<RangePinPanel
+									active={ikMode && ikEditTool === "pin"}
+									motion={motion}
+									frame={tlFrame}
+									frameCount={motion?.frames ?? 1}
+									fps={motion?.fps ?? 24}
+									pins={rangePins}
+									residuals={rangePinResiduals}
+									objects={objects}
+									selectedPinId={rangePinSelection}
+									partPick={rangePinPartPick}
+									conflictFrames={rangePinPreview?.conflictFrames ?? []}
+									overlapError={rangePinPreview?.overlapError ?? ""}
+									onSelectPin={(id) => { setRangePinSelection?.(id); if (id) setIkEditTool("pin"); }}
+									onApply={applyRangePinDraft}
+									onCancel={() => { setRangePinSelection?.(null); setIkEditTool("ik"); }}
+									onDelete={deleteRangePin}
+									onPreviewTarget={previewRangePinDraft}
+								/>
+							)}
+								{ikEditTool !== "pin" && <>
 								<button
 									type="button"
 									className={"btn full" + (!showTrails ? " muted" : "")}
@@ -128,6 +165,7 @@ export default function RigControlPanel({
 										"궤적선의 아무 지점이나 잡아 끌면 영향 범위 안의 주변 프레임이 함께 따라와요. 재생성을 누르면 그 구간을 Kimodo가 다시 생성하고, 명시적으로 잡은 IK 키는 정확히 고정됩니다.",
 									)}
 								</p>
+								</>}
 							</>
 						)}
 					</Foldout>

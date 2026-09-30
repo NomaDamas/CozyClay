@@ -646,7 +646,7 @@ for (const event of ["craft:first_edit", "playground:first_edit"]) {
 
 const { createFirstEditTracker, createSemanticState, semanticEditKind } = await import("../src/semantic-edit.js");
 const { createSceneObject, createCutoutObject, updateSceneObject } = await import("../src/scene-objects.js");
-const { createSceneHistoryStore } = await import("../src/scene-history.js");
+const { createSceneHistoryStore } = await import("../src/document-store.js");
 const { createCameraBlock, updateCameraBlock } = await import("../src/camera-block.js");
 const { dispatchLiveFrame } = await import("../src/live-control.js");
 const { addShotAtFrame, resizeShot, renameShot, moveCameraKey } = await import("../src/cuts.js");

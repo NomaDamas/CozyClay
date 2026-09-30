@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { parseSync } from 'rolldown/experimental';
+import { createSceneObject } from '../../src/scene-objects.js';
+import { createDocumentStore } from '../../src/document-store.js';
 
 const { createAppContext } = await import('../../src/app-context.js');
 const ref = current => ({ current });
@@ -9,18 +11,23 @@ function test(name, run) {
   console.log(`PASS AppContext ${name}`);
 }
 
-test('acceptance 1: exposes the App-owned clock, cast history, live projections and ports', () => {
+test('acceptance 1: composes owned history and exposes live projections and ports', () => {
   const clock = ref(0), history = ref({ past: [], future: [] });
   const characters = ref([{ id: 'actor' }]), scenes = ref([{ id: 'scene' }]), motion = ref({ frames: 48 });
   const state = ref({ shots: [], timeline: { frameCount: 48 } });
   const context = createAppContext({ clock, history, characters, scenes, motion, state });
-  assert.equal(context.nextTick(), 1);
-  assert.equal(clock.current, 1);
-  assert.equal(context.undoClock, 1);
-  assert.equal(context.castHistory, history.current);
-  context.recordCharacterUndo({ characters: characters.current });
+  assert.equal(context.undoClock, 0);
+  assert.equal(context.castHistory, undefined, 'there is no native snapshot history');
+  assert.equal(context.recordCharacterUndo, undefined);
   assert.equal(context.recordShotUndo, undefined, 'shots own their document history');
-  assert.deepEqual(history.current.past.map(entry => entry.tick), [2]);
+  assert.equal(clock.current, 0, 'native clock cells are not used');
+  assert.deepEqual(history.current, { past: [], future: [] });
+  const store = createDocumentStore({ owned: { cast: [] } });
+  context.registerStoreDomain('cast', { documentStore: store, beginAction: () => store.beginAction('cast') });
+  context.recordAction('cast', () => store.write('cast', characters.current));
+  assert.deepEqual(store.depths(), { past: 1, future: 0 });
+  assert.equal(context.historyEntry(), store.history().present.historyEntryId);
+  assert.equal(context.undoClock, 1, 'committed store sessions advance the project checkpoint');
   assert.equal(context.live.characters, characters.current);
   assert.equal(context.live.scenes, scenes.current);
   assert.equal(context.live.motion, motion.current);
@@ -104,29 +111,13 @@ test('acceptance 3: synchronous publications and later renders reach retained re
   assert.equal(read().motion.frames, 120);
 });
 
-const { createSceneHistoryStore } = await import('../../src/scene-history.js');
 const { appFixture } = await import('./app-fixture.mjs');
-test('acceptance 4: both App object-store callbacks join the facade clock', () => {
+test('acceptance 4: App has no native object-clock callbacks', () => {
   const callbacks = [];
   walk(parsed.program, node => {
     if (node.type === 'Property' && node.key.name === 'onObjects') callbacks.push(node.value);
   });
-  assert.equal(callbacks.length, 1, 'only the native scene-load fallback retains an onObjects callback');
-  for (const callback of callbacks) {
-    const context = createAppContext().forRender({ setSceneObjects: () => {} });
-    const onObjects = new Function('appContext', 'setSceneObjects', `return (${app.slice(callback.start, callback.end)});`)(context, () => {});
-    const store = createSceneHistoryStore([], { onObjects });
-    store.applyAtomic(() => [{ id: 'object' }]);
-    assert.equal(context.undoClock, 1);
-    assert.equal(context.objectClock, 1);
-    context.recordCharacterUndo({ characters: [] });
-    store.applyAtomic(rows => [...rows, { id: 'second' }]);
-    assert.equal(context.undoClock, 3);
-    assert.equal(context.objectClock, 3);
-    context.suppressObjectClock = true;
-    store.undo();
-    assert.equal(context.undoClock, 3, 'history traversal does not double-count');
-  }
+  assert.equal(callbacks.length, 0, 'scene loads also use the registered object owner');
 });
 test('acceptance 4: real App undo and redo traverse interleaved object and cast edits in reverse order', () => {
   const f = appFixture();
@@ -137,13 +128,13 @@ test('acceptance 4: real App undo and redo traverse interleaved object and cast 
     };
     const snapshots = [state()];
     for (let index = 1; index <= 3; index++) {
-      f.actual.commitStudioDraft({ domain: 'objects', draft: [{ id: `object-${index}`, x: index }] });
+      f.actual.commitStudioDraft({ domain: 'objects', draft: [{ ...createSceneObject('cube'), id: `object-${index}`, x: index }] });
       snapshots.push(state());
       f.actual.commitStudioDraft({ domain: 'cast', draft: f.characterRef.current.map(c => ({ ...c, x: index })) });
       snapshots.push(state());
     }
     assert.equal(f.scope.appContext.undoClock, 6);
-    assert.equal(f.scope.appContext.objectClock, 5, 'the last object edit shares the cast clock');
+    assert.equal(f.scope.appContext.objectClock, undefined, 'objects need no independent arbitration clock');
     for (let index = snapshots.length - 2; index >= 0; index--) {
       f.actual.undoScene();
       assert.deepEqual(state(), snapshots[index], `undo ${index}`);
@@ -152,10 +143,10 @@ test('acceptance 4: real App undo and redo traverse interleaved object and cast 
       f.actual.redoScene();
       assert.deepEqual(state(), snapshots[index], `redo ${index}`);
     }
-    const history = f.scope.appContext.castHistory;
-    f.scope.appContext.resetCastHistory();
-    assert.notEqual(f.scope.appContext.castHistory, history);
-    assert.deepEqual(f.scope.appContext.castHistory, { past: [], future: [] });
+    f.scope.appContext.storeDomain('cast').load(f.characterRef.current);
+    f.scope.appContext.storeDomain('objects').load([]);
+    assert.equal(f.scope.appContext.nextStoreHistory(false), undefined);
+    assert.equal(f.scope.appContext.nextStoreHistory(true), undefined);
   } finally { f.dispose(); }
 });
 

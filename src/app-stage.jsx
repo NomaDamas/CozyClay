@@ -21,9 +21,9 @@ import {
 	TRAIL_TRACKS,
 	falloffWeight,
 	jointTrailPoints,
-	nearestFrameToRay,
 	trailEditRange,
 } from "./motion-trail.js";
+import { pickTrailPoint } from "./trail-pick.js";
 import Timeline from "./ardy/timeline.jsx";
 import { FlyControls, aimAt } from "./controls.jsx";
 import { GIZMO_LAYER } from "./dualview.jsx";
@@ -2671,7 +2671,7 @@ export function loadSceneStartup() {
  * re-drawn on top as a bright highlight. Grabbing any point of a line starts
  * a drag on a camera-facing plane through the grab point; the caller deforms
  * the take (motion-trail.js falloff math) so the preview updates live. */
-export const MotionTrails = memo(function MotionTrails({ motion, baseY, charScale, ikFocus, falloffFrames, pendingEdit, enabled, visible = true, onDragStart, onDragPreview, onDragEnd }) {
+export const MotionTrails = memo(function MotionTrails({ motion, rig = null, baseY, charScale, ikFocus, falloffFrames, playheadFrame, pendingEdit, enabled, visible = true, onDragStart, onDragPreview, onDragEnd }) {
 	const { camera, gl, invalidate } = useThree();
 	const [drag, setDrag] = useState(null);
 	const callbacksRef = useRef({ onDragStart, onDragPreview, onDragEnd });
@@ -2682,14 +2682,16 @@ export const MotionTrails = memo(function MotionTrails({ motion, baseY, charScal
 		for (let index = 0; index + 2 < flat.length; index += 3) out.push([flat[index], flat[index + 1], flat[index + 2]]);
 		return out;
 	};
-	// Every trail track (root + IK endpoints + head) in its handle colour.
+	// Every trail track (root + IK endpoints + head) in its handle colour,
+	// sampled where playback renders each bone on this rig (not the clip's
+	// own joints, which sit 4-15 cm off the body), so draw and pick agree.
 	const tracks = useMemo(
 		() => TRAIL_TRACKS.map((track) => {
-			const flat = jointTrailPoints(motion, track.joint, { baseY, scale: charScale });
+			const flat = jointTrailPoints(motion, track.joint, { baseY, scale: charScale, rig });
 			return flat ? { ...track, flat, points: toTriples(flat) } : null;
 		}).filter(Boolean),
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-		[motion, baseY, charScale],
+		[motion, rig, baseY, charScale],
 	);
 	const trackById = (id) => tracks.find((track) => track.id === id) ?? null;
 	// The falloff window rides whichever line is being (or was last) grabbed.
@@ -2713,7 +2715,7 @@ export const MotionTrails = memo(function MotionTrails({ motion, baseY, charScal
 	// A single pointerdown listener that measures point-to-ray distance against
 	// the cached trail arrays costs nothing while the mouse merely moves.
 	const pickRef = useRef(null);
-	pickRef.current = { tracks, enabled, falloffFrames };
+	pickRef.current = { tracks, enabled, falloffFrames, playheadFrame };
 	// Line2 instances for in-place geometry rewrites during a drag.
 	const lineRefs = useRef({});
 	const highlightRef = useRef(null);
@@ -2731,21 +2733,16 @@ export const MotionTrails = memo(function MotionTrails({ motion, baseY, charScal
 			);
 			raycaster.setFromCamera(ndc, camera);
 			const { origin, direction } = raycaster.ray;
-			// TRAIL_TRACKS order is limbs-first, hips last: an overlapping grab
-			// prefers the finer limb target, and among candidates within the
-			// threshold the closest line wins.
-			let track = null;
-			let grabFrame = 0;
-			let bestDistance = Infinity;
-			for (const candidate of pick.tracks) {
-				const near = nearestFrameToRay(candidate.flat, origin, direction, 0.2);
-				if (near && near.distance < bestDistance) {
-					track = candidate.id;
-					grabFrame = near.frame;
-					bestDistance = near.distance;
-				}
-			}
-			if (!track) return;
+			const picked = pickTrailPoint({
+				tracks: pick.tracks,
+				playheadFrame: pick.playheadFrame,
+				falloffFrames: pick.falloffFrames,
+				rayOrigin: origin,
+				rayDirection: direction,
+				maxDistance: 0.2,
+			});
+			if (!picked) return;
+			const { track, grabFrame } = picked;
 			// The grab wins over the camera controls listening in the bubble phase.
 			event.stopPropagation();
 			event.preventDefault();
@@ -2851,10 +2848,12 @@ export const MotionTrails = memo(function MotionTrails({ motion, baseY, charScal
 	);
 }, (previous, next) => (
 	previous.motion === next.motion &&
+	previous.rig === next.rig &&
 	previous.baseY === next.baseY &&
 	previous.charScale === next.charScale &&
 	previous.ikFocus === next.ikFocus &&
 	previous.falloffFrames === next.falloffFrames &&
+	previous.playheadFrame === next.playheadFrame &&
 	previous.pendingEdit === next.pendingEdit &&
 	previous.enabled === next.enabled &&
 	previous.visible === next.visible

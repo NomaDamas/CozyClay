@@ -114,13 +114,22 @@ const startEntry = app.slice(app.indexOf("async function startCameraTutorial("),
 const markEntry = app.slice(app.indexOf("const markSemanticEdit ="), app.indexOf("const craftActionTrackedRef"));
 const seedEnd = "}, [tutorialSeedPending, activeRig, motionBusy]);";
 const seedEntry = app.slice(app.indexOf("\tuseEffect(() => {", app.indexOf("// The camera tutorial's seed (#209)")), app.indexOf(seedEnd) + seedEnd.length);
-const motionEntry = readStudioFunction('loadMotion');
+const { motionFixture, seedMotion } = await import('./bus/motion-fixture.mjs');
+const { motionArraysToNpzMembers, writeNpz } = await import('../tools/ardy/npz.mjs');
+const { mkdtempSync, rmSync } = await import('node:fs');
+const { tmpdir } = await import('node:os');
+const { join } = await import('node:path');
+const dir = mkdtempSync(join(tmpdir(), 'handoff-motion-'));
+let bytes;
+try { const file = join(dir, 'seed.npz'); writeNpz(file, motionArraysToNpzMembers(seedMotion(432))); bytes = readFileSync(file); }
+finally { rmSync(dir, { recursive: true, force: true }); }
 for (const timing of ["before-rig", "during-load", "unchanged"]) {
 	let effect, loading, release;
 	const calls = [];
-	const character = { id: "sample-character", x: 0, z: 0, rot: 0 };
-	const rig = {};
-	const context = {
+	const f = motionFixture(), previousFetch = globalThis.fetch;
+	const character = f.scope.activeChar, rig = f.scope.activeRig;
+	const context = f.scope;
+	Object.assign(context, {
 		window: {}, embedMode: false, playgroundMode: false, startupCreatedScene: true,
 		projectName: null, projectDirty: false, cameraTutorialSuppressed: () => false,
 		tutorialLoadingRef: { current: false }, tutorialStarterRef: { current: false },
@@ -128,10 +137,7 @@ for (const timing of ["before-rig", "during-load", "unchanged"]) {
 		tutorialProjectEpochRef: { current: 2 }, tutorialSeedEpochRef: { current: null },
 		firstEditRef: { current: () => true }, tutorialSeedPending: false,
 		activeRig: null, motionBusy: false, frame: 0, frameCount: 72, motion: null,
-		activeChar: character, charA: character, charactersRef: { current: [character] },
-		rigs: { "sample-character": rig }, loadedLayerCharRef: { current: "sample-character" },
-		motionFullRef: { current: new Map() }, liveStateRef: { current: {} },
-		ikStateRef: { current: { keys: new Map() } }, demoSeeded: { current: false },
+		demoSeeded: { current: false },
 		DEMO_MOTION_URL: "/demo/walk-then-stop.npz", DEMO_MOTION_PROMPT: "walk", TIMELINE_FPS: 24, isKo: false,
 		openStarterScene: async () => true, exitPreview() {}, setProjectStartupOpen() {}, setFirstSuccessGuideOpen() {},
 		setCameraTutorialHandoff() {}, createFirstShotHandoff: () => ({}),
@@ -139,21 +145,17 @@ for (const timing of ["before-rig", "during-load", "unchanged"]) {
 		setCameraTutorialAttempt() {}, setCameraTutorial() {}, cameraTutorialCompletedRef: { current: false },
 		setTutorialSeedPending(value) { context.tutorialSeedPending = value; },
 		useEffect(callback) { effect = callback; }, setMotionBusy(value) { context.motionBusy = value; },
-		setMotionError() {}, retimeMotion: (value) => value,
-		loadMotionFromUrl: () => new Promise((resolve) => { release = resolve; }),
-		normalizeMotionCalibration: () => ({ yawDeg: 0, offsetX: 0, offsetZ: 0 }),
-		applyMotionCalibration: (value) => ({ motion: value }), characterScaleFor: () => 1,
-		authoredSupportDescriptors: () => [], applySupportRise: (value) => value,
-		autoRoofDrop: () => null, applyAutoFall: (value) => value, beginPlaybackOn() {}, createMotionEdit: () => [],
-		publishStudioCharacters(fn) { context.charactersRef.current = fn(context.charactersRef.current); },
-		setMotion(value) { context.motion = value; }, setTlFrameCount(value) { context.frameCount = value; },
+		setTlFrameCount(value) { context.frameCount = value; },
 		setTlFrame(value) { context.frame = value; }, setTlFps() {}, setTlPlaying() {},
 		setCommittedIkEdits() {}, setToast() {}, ko: (en) => en,
+	});
+	globalThis.fetch = async url => {
+		assert.equal(url, context.DEMO_MOTION_URL);
+		return new Promise(resolve => { release = () => resolve(new Response(bytes)); });
 	};
-	context.appContext = createAppContext({ characters: context.charactersRef, state: context.liveStateRef, notify: (...args) => context.setToast(...args) }).forRender(context);
-	context.castDomain = context;
+	try {
 	await runInNewContext(`(${startEntry})()`, context);
-	const actualLoad = runInNewContext(`(${motionEntry})`, context);
+	const actualLoad = f.motion.loadMotion;
 	const edit = runInNewContext(`${markEntry}; markSemanticEdit`, context);
 	context.loadMotion = (...args) => { calls.push(args[6].tutorialEpoch); loading = actualLoad(...args); return loading; };
 	runInNewContext(seedEntry, context);
@@ -165,16 +167,17 @@ for (const timing of ["before-rig", "during-load", "unchanged"]) {
 	runInNewContext(seedEntry, context);
 	effect();
 	if (timing === "during-load") edit("shots", [], [{ id: "user-shot" }]);
-	if (loading) { release({ frames: 432, fps: 24 }); await loading; }
+	if (loading) { release(); await loading; }
 	if (timing === "unchanged") {
 		assert.deepEqual(calls, [2]);
 		assert.equal(context.frame, 0);
-		assert.equal(context.motion.frames, 432);
+		assert.equal(f.motion.motionFor(character.id).frames, 432);
 	} else {
 		assert.equal(context.frame, 90, `${timing}: stale seed must preserve the user's playhead`);
 		assert.equal(context.frameCount, 72, `${timing}: stale seed must preserve the authored duration`);
-		assert.equal(context.motion, null, `${timing}: stale seed must not replace the motion`);
+		assert.equal(f.motion.motionFor(character.id), null, `${timing}: stale seed must not replace the motion`);
 	}
+	} finally { globalThis.fetch = previousFetch; f.dispose(); }
 }
 console.log("PASS seed authorization survives rig-readiness and motion-load interleavings");
 console.log("all first-shot handoff checks PASS");

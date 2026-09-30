@@ -1,12 +1,13 @@
 // Shared by the browser and sidecar. No Node, React, renderer or provider imports.
-import { STUDIO_ELEMENTS } from "./studio-elements.js";
+import { STUDIO_ELEMENTS, isSettableElement } from "./studio-elements.js";
 
 export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
 // Sized for the compact index of up to 400 entities (~100 bytes each) beside
 // 24 detailed rows; a small scene stays far below it.
 export const STUDIO_CONTEXT_MAX_BYTES = 64 * 1024;
 export const STUDIO_CONTEXT_LIMITS = Object.freeze({ entities: 24, entityIndex: 400, shots: 8, assets: 48, recentReceipts: 3, jobs: 8 });
-export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "verify_result", "undo_edit", "run_action"]);
+export const STUDIO_TOOL_FAMILIES = Object.freeze(["inspect_studio", "run_action", "verify_result"]);
+export const STUDIO_TOOL_ALIASES = Object.freeze(["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "generate_motion", "undo_edit"]);
 export const STUDIO_TOOL_LABELS = Object.freeze({
 	inspect_studio: "Read the scene",
 	operate_studio: "Selection and view",
@@ -19,6 +20,7 @@ export const STUDIO_TOOL_LABELS = Object.freeze({
 	undo_edit: "Undo an edit",
 	run_action: "Run an editor action",
 });
+export const STUDIO_TOOLS = Object.freeze(Object.keys(STUDIO_TOOL_LABELS));
 /** One patch target kind per authored commit domain: character→cast,
  * object→objects, shot→shot, stage→stage. */
 export const STUDIO_PATCH_KINDS = Object.freeze(["character", "object", "shot", "stage"]);
@@ -35,7 +37,7 @@ export const STUDIO_VARIANTS = freezeStudioData({
 	framingViews: ["front", "front three-quarter", "profile", "rear three-quarter", "back"], framingLevels: ["ground", "low", "hip", "eye", "high", "overhead"],
 	framingSides: ["left", "right"], positionSides: ["left", "right", "front", "behind"], positionBases: ["world", "subject", "shot_camera"], collisionPolicies: ["report", "avoid"],
 	objectOps: ["create", "update", "remove", "group", "ungroup"], characterOps: ["create", "update", "remove"],
-	inspectScopes: ["selection", "scene", "entities", "shot", "motion", "catalogue", "actions", "document"], receiptStatuses: ["applied", "partial", "noop", "transient", "installed", "undone"],
+	inspectionScopes: ["selection", "scene", "entities", "shot", "motion", "catalogue", "actions", "document"], receiptStatuses: ["applied", "partial", "noop", "transient", "installed", "undone"],
 	opStatuses: ["applied", "partial", "noop"],
 	jobStates: ["queued", "generating", "preparing", "verifying", "repairing", "committing", "reconciling", "installed", "review_required", "failed", "cancelled", "stale_target", "stale_environment"],
 });
@@ -109,7 +111,7 @@ const source = union(generateSource, object({ kind: literal("reuse"), artifactId
 /* ----------------------------------------------- element patches ----
  * The accepted fields of `patch_elements` are DERIVED from the element
  * declaration table (src/studio-elements.js): one property per element whose
- * agentExposure is "patch", keyed by the path inside its kind, typed by the
+ * document field is settable, keyed by the path inside its kind, typed by the
  * declared type and bounded by the declared min/max/enum. Structured values
  * (schedules, routes, pictures) declare their shape here, because the table
  * records what an element IS, not how JSON carries it. */
@@ -149,7 +151,7 @@ export function patchValueSchema(element) {
  * derived from the same declaration table as `patchValueSchema` so the two
  * can never drift apart. */
 export function buildPatchDescriptors(elements) {
-	return elements.filter(element => element.agentExposure === "patch").map(({ path, type, min, max, enum: enumValues, gizmo, note }) => ({
+	return elements.filter(isSettableElement).map(({ path, type, min, max, enum: enumValues, gizmo, note }) => ({
 		path, type,
 		...(gizmo?.min !== undefined ? { min: { ...gizmo.min } } : min !== undefined ? { min: min && typeof min === "object" ? { ...min } : min } : {}),
 		...(gizmo?.max !== undefined ? { max: { ...gizmo.max } } : max !== undefined ? { max: max && typeof max === "object" ? { ...max } : max } : {}),
@@ -164,7 +166,7 @@ export function buildPatchSchema(elements) {
 	for (const kind of STUDIO_PATCH_KINDS) {
 		const properties = {};
 		for (const element of elements) {
-			if (element.agentExposure !== "patch" || !element.path.startsWith(`${kind}.`)) continue;
+			if (!isSettableElement(element) || !element.path.startsWith(`${kind}.`)) continue;
 			const schema = patchValueSchema(element);
 			if (schema) properties[element.path.slice(kind.length + 1)] = schema;
 		}
@@ -182,7 +184,7 @@ const patchOp = union(
 	object({ target: object({ kind: literal("stage") }), set: STUDIO_PATCH_SET_SCHEMAS.stage }),
 );
 const toolSchemas = {
-	inspect_studio: object({ scope: choices(STUDIO_VARIANTS.inspectScopes) }, { ids: ids(32), select: ids(32), query: name, cursor: text(512), limit: { ...integer(1, 32), default: 12 } }),
+	inspect_studio: object({ scope: choices(STUDIO_VARIANTS.inspectionScopes) }, { ids: ids(32), select: ids(32), query: name, cursor: text(512), limit: { ...integer(1, 32), default: 12 } }),
 	operate_studio: object({}, { selection, shotId: id, frame: integer(), playing: bool, mode: choices(STUDIO_VARIANTS.modes), view: object({}, { lookThrough: bool, grid: bool, autoColor: bool }) }),
 	arrange_objects: object({ ops: array(objectOp, 100, 1) }, { collisionPolicy: { ...choices(STUDIO_VARIANTS.collisionPolicies), default: "report" } }),
 	arrange_characters: object({ ops: array(characterOp, 8, 1) }),
@@ -194,7 +196,7 @@ const toolSchemas = {
 	run_action: object({ action: id }, { args: openObject, confirmationToken: id }),
 };
 export const STUDIO_TOOL_SCHEMAS = freezeStudioData(toolSchemas);
-export const STUDIO_CATALOGUE = freezeStudioData(STUDIO_TOOL_FAMILIES.map(name => ({ name, slice: 1, parameters: toolSchemas[name] })));
+export const STUDIO_CATALOGUE = freezeStudioData(STUDIO_TOOLS.map(name => ({ name, slice: 1, parameters: toolSchemas[name] })));
 
 // Bounded observations, never a document/pose/asset transport. Every nested
 // object is closed. Null distinguishes unavailable data from measured zero.
@@ -227,7 +229,7 @@ const contextSchema = object({
 	entities: array(entity, 24), entityPage: object({ returned: integer(0, 24), total: integer(), truncated: bool, nextCursor: nullable(text(512)) }),
 	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, STUDIO_CONTEXT_LIMITS.assets),
 	recentReceipts: array(object({ id, summary: name, canUndoDirect: bool }), 3), jobs: array(jobSummary, 8),
-	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOL_FAMILIES), STUDIO_TOOL_FAMILIES.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
+	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOLS), STUDIO_TOOLS.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
 }, { entityIndex: array(indexRow, STUDIO_CONTEXT_LIMITS.entityIndex), actionIndex: array(actionIndexRow, 512) });
 const guardSchema = object({ ...identityFields, targetId: id, token: id });
 const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -451,9 +453,9 @@ function validatePatchPaths(args) {
 	if (kinds.size > 1) fail("INVALID_ARGUMENT", "One domain per patch: split character, object, shot and stage edits into separate commands.");
 }
 export function validateStudioCommand(command) {
-	if (!record(command) || !STUDIO_TOOL_FAMILIES.includes(command.name)) fail("UNKNOWN_TOOL", "Unsupported Studio tool.");
+	if (!record(command) || !STUDIO_TOOLS.includes(command.name)) fail("UNKNOWN_TOOL", "Unsupported Studio tool.");
 	if (command.name === "patch_elements") validatePatchPaths(command.args);
-	const { args } = validateStudioSchema(object({ name: choices(STUDIO_TOOL_FAMILIES), args: toolSchemas[command.name] }), command);
+	const { args } = validateStudioSchema(object({ name: choices(STUDIO_TOOLS), args: toolSchemas[command.name] }), command);
 	if (command.name === "inspect_studio" && args.ids && args.query !== undefined) fail("INVALID_ARGUMENT", "IDs and query are exclusive.");
 	if (command.name === "operate_studio" && (!Object.keys(args).length || (args.view && !Object.keys(args.view).length))) fail("INVALID_ARGUMENT", "Transient operation must specify an action.");
 	if (args.ops) {

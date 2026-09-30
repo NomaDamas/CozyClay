@@ -211,14 +211,27 @@ function linearMotion(frames) {
 
 /* --------------------------- App wiring pins --------------------------- */
 {
-	const { readFileSync } = await import("node:fs");
-	const app = readFileSync(new URL("../src/domains/motion.js", import.meta.url), "utf8");
-	assert.ok(app.includes("migrateTimelinePins(motion.editSegments ?? createMotionEdit(full.frames), edit, rendered.frames)"), "segment edits migrate timeline pins");
-	assert.ok(app.includes("migrateTimelinePins(previous, segments, sliced.frames)"), "trims migrate pins instead of clearing them");
-	assert.ok(app.includes("migrateTimelinePins(motion.editSegments ?? createMotionEdit(full.frames), createMotionEdit(full.frames), full.frames)"), "restoring the full take rides keys home");
-	assert.ok(app.includes("ikStateRef.current.keys = remapFrameKeyMap("), "IK keys migrate through the shared mapping");
-	assert.ok(!app.includes("IK keys keyed to the old frames were cleared"), "the clear-everything fallback is gone");
-	pass("App routes every segment-timing commit through migrateTimelinePins");
+	const { motionFixture, seedMotion } = await import('./bus/motion-fixture.mjs');
+	const f = motionFixture();
+	const ok = receipt => { assert.equal(receipt.ok, true, JSON.stringify(receipt)); return receipt; };
+	try {
+		f.motion.load([{ id: 'actor-a', take: seedMotion(48) }]);
+		ok(f.run('ik.setKey', { characterId: 'actor-a', frame: 24, tracks: { head: { q: [{ x: 0, y: 0, z: 0, w: 1 }] } } }));
+		ok(f.run('character.setPromptBlocks', { characterId: 'actor-a', blocks: [{ id: 'pin', startFrame: 12, endFrame: 36, text: 'Pinned' }] }));
+		const frames = () => f.motion.layer('actor-a').ikKeys.map(row => row.frame);
+		const clips = () => f.cast.read()[0].layer.promptClips;
+		ok(f.motion.applyMotionTrim(12, 47));
+		assert.deepEqual(frames(), [12], 'trims migrate keys instead of clearing them');
+		assert.equal(clips()[0].startFrame, 0); assert.equal(clips()[0].endFrame, 24);
+		ok(f.motion.resetMotionTrim());
+		assert.deepEqual(frames(), [24], 'reset rides surviving keys home');
+		assert.equal(clips()[0].startFrame, 12); assert.equal(clips()[0].endFrame, 36);
+		const segment = f.motion.motionFor('actor-a').editSegments[0];
+		ok(f.motion.changeMotionSegmentSpeed(segment.id, 0.5));
+		assert.deepEqual(frames(), [49], 'segment speed maps frame 24 of [0,47] onto [0,95]');
+		assert.equal(clips()[0].startFrame, 24); assert.equal(clips()[0].endFrame, 73);
+		pass('UI trim, reset and segment speed retain IK keys and prompt pins through owned commands');
+	} finally { f.dispose(); }
 }
 
 console.log("verify-motion-edit: all checks passed");

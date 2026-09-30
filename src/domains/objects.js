@@ -64,19 +64,10 @@ export function createObjectsDomain(appContext, initial) {
 	}
 	const publish = () => { if (appContext.live.state) appContext.patchLive({ objects: read() }); };
 	const unsubscribe = documentStore.subscribe(publish);
-	function beginAction() {
-		const session = documentStore.beginAction("objects");
-		return { ...session, commit() {
-			const result = session.commit();
-			if (result.historyEntryId) appContext.advanceObjectClock();
-			return result;
-		} };
-	}
+	function beginAction() { return documentStore.beginAction("objects"); }
 	function stepHistory(redo) {
 		domain.settle?.();
-		const result = (redo ? documentStore.redo : documentStore.undo)();
-		if (result) appContext.advanceObjectClock();
-		return Boolean(result);
+		return Boolean((redo ? documentStore.redo : documentStore.undo)());
 	}
 	const domain = { documentStore, read, write, beginAction, canUndo: id => documentStore.canUndo(id), stepHistory,
 		document: () => ({ objects: read() }), publish: state => write(state.objects), commitDraft: write,
@@ -376,7 +367,7 @@ export function useObjects(appContext) {
 			return args.placeAs === "mesh" ? importMesh(file, context) : importCutout(file, context);
 		}
 		if (args.assetId) return args.placeAs === "mesh" ? spawnMeshAt(args.assetId, args.placement, context) : spawnCutoutAt(args.assetId, args.placement, context);
-		return createLegacyObjectHandlers().import_asset(args, context);
+		return importCommandAsset(args, context);
 	};
 	domain.applyMatte = applyMatte;
 
@@ -633,17 +624,117 @@ export function useObjects(appContext) {
 			return placeSceneObject(next, id, placement);
 		});
 	}
-	function createLegacyObjectHandlers(finitePatch) {
-		let batchObjects = null;
+	async function importCommandAsset(args, commandContext) {
 		const IMPORT_BACKDROP_DISTANCE_M = 12, IMPORT_BACKDROP_HEIGHT_M = 5;
-		function syncObjects() { appContext.patchLive({ objects: storeRef.current.objects }); }
-		function applyObjectMutation(mutation) { if (batchObjects === null) domain.write(mutation); else batchObjects = mutation(batchObjects); }
-		const liveObjects = () => ({ ...appContext.live.state, objects: batchObjects ?? domain.read() });
-		function placeObject(args) {
-			if (batchObjects === null) {
-				const receipt = run("object.add", { kind: args.kind, placement: finitePatch(args, ["x", "y", "z", "rot"]), ...(args.name === undefined ? {} : { name: args.name }), ...(args.parent === undefined ? {} : { parent: args.parent }) });
-				return { id: receipt.affectedIds[0] };
+		if (typeof args.name !== "string" || !args.name.trim()) throw new Error("Invalid name");
+		if (args.placeAs === "mesh") {
+			const dataUrl = args.dataUrl;
+			if (typeof dataUrl !== "string") throw new Error("dataUrl must be a 3D model data URL");
+			const nameLower = String(args.name).toLowerCase();
+			const headerMime = dataUrl.slice(5, dataUrl.search(/[;,]/)).toLowerCase();
+			const mime = (typeof args.mimeType === "string" && args.mimeType
+				? args.mimeType
+				: headerMime).toLowerCase();
+			const objPlain = mime === "text/plain" && nameLower.endsWith(".obj");
+			const fbxPlain = mime === "text/plain" && nameLower.endsWith(".fbx");
+			const headerOk = dataUrl.startsWith("data:model/gltf-binary")
+				|| dataUrl.startsWith("data:application/octet-stream")
+				|| dataUrl.startsWith("data:model/obj")
+				|| dataUrl.startsWith("data:model/fbx")
+				|| (dataUrl.startsWith("data:text/plain") && (nameLower.endsWith(".obj") || nameLower.endsWith(".fbx")));
+			const mimeOk = mime === "model/gltf-binary" || mime === "application/octet-stream"
+				|| mime === "model/obj" || mime === "model/fbx" || objPlain || fbxPlain;
+			if (!headerOk && !mimeOk) throw new Error("dataUrl must be a 3D model data URL");
+			const bytes = await (await fetch(dataUrl)).arrayBuffer();
+			const fileType = mime || headerMime || "application/octet-stream";
+			const file = new File([bytes], args.name, { type: fileType });
+			const { asset, height, footprint } = await importMeshFile(file);
+			const db = await openAssetDb();
+			try {
+				await putAsset(db, asset);
+			} finally {
+				db.close?.();
 			}
+			const live = appContext.live.state;
+			const camera = appContext.shared.shotCamRef.current;
+			const hasFloor = Number.isFinite(args.x) || Number.isFinite(args.z);
+			const placement = hasFloor
+				? {
+					x: Number.isFinite(args.x) ? args.x : 0,
+					z: Number.isFinite(args.z) ? args.z : 0,
+				}
+				: camera
+					? placementInFront({ x: camera.position.x, z: camera.position.z }, appContext.shared.look.current.yaw)
+					: {};
+			if (Number.isFinite(args.rot)) placement.rot = args.rot;
+			let object = createMeshObject(
+				{
+					assetId: asset.id,
+					height,
+					footprint,
+					name: args.name,
+					clay: args.clay === true,
+				},
+				live.objects,
+				placement,
+			);
+			if (!object) throw new Error("Could not create the mesh object");
+			// Inspector height edits scale the stored footprint. Do the same
+			// here so a 50 cm import is a smaller cube, not a squat 1×1×0.5 box.
+			if (Number.isFinite(args.height) && args.height > 0) {
+				object = updateSceneObject([object], object.id, { height: args.height })[0];
+			}
+			if (Number.isFinite(args.y)) object.y = args.y;
+			commandContext.commit(() => domain.write((objects) => [...objects, object]));
+			return { assetId: asset.id, objectId: object.id };
+		}
+		if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout", "backdrop" or "mesh"');
+		if (typeof args.dataUrl !== "string" || !args.dataUrl.startsWith("data:image/")) throw new Error("dataUrl must be an image data URL");
+		const mime = typeof args.mimeType === "string" && args.mimeType
+			? args.mimeType
+			: args.dataUrl.slice(5, args.dataUrl.search(/[;,]/));
+		const bytes = await (await fetch(args.dataUrl)).arrayBuffer();
+		const file = new File([bytes], args.name, { type: mime });
+		const live = appContext.live.state;
+		const asset = await rememberAsset(await importImageFile(file));
+		const backdrop = args.placeAs === "backdrop";
+		const camera = appContext.shared.shotCamRef.current;
+		const placement = camera
+			? placementInFront(
+				{ x: camera.position.x, z: camera.position.z },
+				appContext.shared.look.current.yaw,
+				backdrop ? IMPORT_BACKDROP_DISTANCE_M : undefined,
+			)
+			: {};
+		if (backdrop) {
+			// The card's face is its +z; rotate by the camera's own yaw so the
+			// plate faces the lens instead of standing edge-on to it.
+			placement.rot = (appContext.shared.look.current.yaw * 180) / Math.PI;
+		}
+		const object = createCutoutObject(
+			{
+				assetId: asset.id,
+				aspect: assetAspect(asset) ?? 1,
+				height: backdrop ? IMPORT_BACKDROP_HEIGHT_M : CUTOUT_DEFAULT_HEIGHT,
+				name: args.name,
+			},
+			live.objects,
+			placement,
+		);
+		if (!object) throw new Error("Could not create the cutout object");
+		commandContext.commit(() => domain.write((objects) => [...objects, object]));
+		return { assetId: asset.id, objectId: object.id };
+	}
+	function applyObjectBatch(args) {
+		let batchObjects = domain.read();
+		const finitePatch = (args, fields) => Object.fromEntries(fields.filter(field => args[field] !== undefined).map(field => {
+			if (!Number.isFinite(args[field])) throw new Error(`Invalid ${field}`);
+			return [field, args[field]];
+		}));
+		function syncObjects() { appContext.patchLive({ objects: storeRef.current.objects }); }
+		function applyObjectMutation(mutation) { batchObjects = mutation(batchObjects); }
+		const liveObjects = () => ({ ...appContext.live.state, objects: batchObjects });
+		function placeObject(args) {
 			if (typeof args.kind !== "string") throw new Error("Invalid kind");
 			const live = liveObjects();
 			// The parent is checked before anything is created: a bad id must
@@ -670,116 +761,7 @@ export function useObjects(appContext) {
 			});
 			return { id: placed.id };
 		}
-		async function importAsset(args, commandContext) {
-			if (!commandContext) {
-				const { dataUrl: source, ...options } = args;
-				return (await run("asset.import", { source, ...options })).output;
-			}
-			if (typeof args.name !== "string" || !args.name.trim()) throw new Error("Invalid name");
-			if (args.placeAs === "mesh") {
-				const dataUrl = args.dataUrl;
-				if (typeof dataUrl !== "string") throw new Error("dataUrl must be a 3D model data URL");
-				const nameLower = String(args.name).toLowerCase();
-				const headerMime = dataUrl.slice(5, dataUrl.search(/[;,]/)).toLowerCase();
-				const mime = (typeof args.mimeType === "string" && args.mimeType
-					? args.mimeType
-					: headerMime).toLowerCase();
-				const objPlain = mime === "text/plain" && nameLower.endsWith(".obj");
-				const fbxPlain = mime === "text/plain" && nameLower.endsWith(".fbx");
-				const headerOk = dataUrl.startsWith("data:model/gltf-binary")
-					|| dataUrl.startsWith("data:application/octet-stream")
-					|| dataUrl.startsWith("data:model/obj")
-					|| dataUrl.startsWith("data:model/fbx")
-					|| (dataUrl.startsWith("data:text/plain") && (nameLower.endsWith(".obj") || nameLower.endsWith(".fbx")));
-				const mimeOk = mime === "model/gltf-binary" || mime === "application/octet-stream"
-					|| mime === "model/obj" || mime === "model/fbx" || objPlain || fbxPlain;
-				if (!headerOk && !mimeOk) throw new Error("dataUrl must be a 3D model data URL");
-				const bytes = await (await fetch(dataUrl)).arrayBuffer();
-				const fileType = mime || headerMime || "application/octet-stream";
-				const file = new File([bytes], args.name, { type: fileType });
-				const { asset, height, footprint } = await importMeshFile(file);
-				const db = await openAssetDb();
-				try {
-					await putAsset(db, asset);
-				} finally {
-					db.close?.();
-				}
-				const live = appContext.live.state;
-				const camera = appContext.shared.shotCamRef.current;
-				const hasFloor = Number.isFinite(args.x) || Number.isFinite(args.z);
-				const placement = hasFloor
-					? {
-						x: Number.isFinite(args.x) ? args.x : 0,
-						z: Number.isFinite(args.z) ? args.z : 0,
-					}
-					: camera
-						? placementInFront({ x: camera.position.x, z: camera.position.z }, appContext.shared.look.current.yaw)
-						: {};
-				if (Number.isFinite(args.rot)) placement.rot = args.rot;
-				let object = createMeshObject(
-					{
-						assetId: asset.id,
-						height,
-						footprint,
-						name: args.name,
-						clay: args.clay === true,
-					},
-					live.objects,
-					placement,
-				);
-				if (!object) throw new Error("Could not create the mesh object");
-				// Inspector height edits scale the stored footprint. Do the same
-				// here so a 50 cm import is a smaller cube, not a squat 1×1×0.5 box.
-				if (Number.isFinite(args.height) && args.height > 0) {
-					object = updateSceneObject([object], object.id, { height: args.height })[0];
-				}
-				if (Number.isFinite(args.y)) object.y = args.y;
-				commandContext.commit(() => domain.write((objects) => [...objects, object]));
-				return { assetId: asset.id, objectId: object.id };
-			}
-			if (args.placeAs !== "cutout" && args.placeAs !== "backdrop") throw new Error('placeAs must be "cutout", "backdrop" or "mesh"');
-			if (typeof args.dataUrl !== "string" || !args.dataUrl.startsWith("data:image/")) throw new Error("dataUrl must be an image data URL");
-			const mime = typeof args.mimeType === "string" && args.mimeType
-				? args.mimeType
-				: args.dataUrl.slice(5, args.dataUrl.search(/[;,]/));
-			const bytes = await (await fetch(args.dataUrl)).arrayBuffer();
-			const file = new File([bytes], args.name, { type: mime });
-			const live = appContext.live.state;
-			const asset = await rememberAsset(await importImageFile(file));
-			const backdrop = args.placeAs === "backdrop";
-			const camera = appContext.shared.shotCamRef.current;
-			const placement = camera
-				? placementInFront(
-					{ x: camera.position.x, z: camera.position.z },
-					appContext.shared.look.current.yaw,
-					backdrop ? IMPORT_BACKDROP_DISTANCE_M : undefined,
-				)
-				: {};
-			if (backdrop) {
-				// The card's face is its +z; rotate by the camera's own yaw so the
-				// plate faces the lens instead of standing edge-on to it.
-				placement.rot = (appContext.shared.look.current.yaw * 180) / Math.PI;
-			}
-			const object = createCutoutObject(
-				{
-					assetId: asset.id,
-					aspect: assetAspect(asset) ?? 1,
-					height: backdrop ? IMPORT_BACKDROP_HEIGHT_M : CUTOUT_DEFAULT_HEIGHT,
-					name: args.name,
-				},
-				live.objects,
-				placement,
-			);
-			if (!object) throw new Error("Could not create the cutout object");
-			commandContext.commit(() => domain.write((objects) => [...objects, object]));
-			return { assetId: asset.id, objectId: object.id };
-		}
 		function updateObject(args) {
-			if (batchObjects === null) {
-				const { id, scale, ...patch } = args;
-				run("object.update", { id, patch: { ...(scale === undefined ? {} : { scaleX: scale, scaleY: scale, scaleZ: scale }), ...patch } });
-				return { id };
-			}
 			const live = liveObjects();
 			if (typeof args.id !== "string" || !live.objects.some((object) => object.id === args.id)) throw new Error("Object not found");
 			const patch = finitePatch(args, ["x", "y", "z", "rot", "rotX", "rotZ"]);
@@ -814,14 +796,12 @@ export function useObjects(appContext) {
 			return { id: args.id };
 		}
 		function removeObject(args) {
-			if (batchObjects === null) { run("object.remove", { ids: [args.id] }); return { id: args.id }; }
 			const live = liveObjects();
 			if (typeof args.id !== "string" || !live.objects.some((object) => object.id === args.id)) throw new Error("Object not found");
 			applyObjectMutation((objects) => removeSceneObject(objects, args.id));
 			return { id: args.id };
 		}
 		function groupObjects(args) {
-			if (batchObjects === null) { run("object.group", args); return { parent: args.parent, children: args.children.length }; }
 			const live = liveObjects();
 			if (typeof args.parent !== "string" || !live.objects.some((o) => o.id === args.parent)) {
 				throw new Error("Parent object not found");
@@ -836,7 +816,6 @@ export function useObjects(appContext) {
 			return { parent: args.parent, children: args.children.length };
 		}
 		function ungroupObjects(args) {
-			if (batchObjects === null) { run("object.ungroup", args); return { children: args.children.length }; }
 			const live = liveObjects();
 			if (!Array.isArray(args.children) || !args.children.length) throw new Error("No children given");
 			for (const child of args.children) {
@@ -847,9 +826,7 @@ export function useObjects(appContext) {
 			);
 			return { children: args.children.length };
 		}
-		function applyObjectBatch(args, inside = false) {
-			if (!inside) return run("objects.batch", args).output;
-			if (batchObjects !== null) throw new Error("Nested batches are not supported");
+		function executeBatch(args) {
 			if (!Array.isArray(args.ops)) throw new Error("Invalid batch operations");
 			if (args.ops.length > 100) throw new Error("A batch may contain at most 100 operations");
 			if (args.atomic !== undefined && typeof args.atomic !== "boolean") throw new Error("Invalid atomic flag");
@@ -888,10 +865,10 @@ export function useObjects(appContext) {
 			syncObjects();
 			return { label: args.label?.trim() || "MCP batch", applied, failed, rolledBack };
 		}
-		const handlers = { place_object: placeObject, import_asset: importAsset, update_object: updateObject, remove_object: removeObject, group_objects: groupObjects, ungroup_objects: ungroupObjects, apply_batch: applyObjectBatch };
-		domain.batch = args => applyObjectBatch(args, true);
-		return handlers;
+		const handlers = { place_object: placeObject, update_object: updateObject, remove_object: removeObject, group_objects: groupObjects, ungroup_objects: ungroupObjects };
+		return executeBatch(args);
 	}
+	domain.batch = applyObjectBatch;
 	function canReparentSceneObject(sourceRowId, targetRowId) {
 		const id = sceneObjectIdFromHierarchy(String(sourceRowId ?? ""));
 		if (!id || sourceRowId === targetRowId) return false;
@@ -938,15 +915,10 @@ export function useObjects(appContext) {
 	function applyExternalObjects(objects) {
 		return run("objects.replace", { objects: Array.isArray(objects) ? objects : [] });
 	}
-	function commitStudioObjects(draft, historyEntryId) {
-		const before = storeRef.current.objects;
-		storeRef.current.applyAtomic(() => draft);
-		appContext.patchLive({ objects: storeRef.current.objects });
-		appContext.shared.studioHistoryRef.current.set(historyEntryId, { domain: "objects", before, tick: appContext.objectClock, depth: storeRef.current.depths().past });
-	}
+
 	return {
-		...domain, run, beginStudioObjectAction, stepObjectHistory, applyExternalObjects, commitStudioObjects,
-		createLegacyObjectHandlers, canReparentSceneObject, reparentSceneObject, settleObjects,
+		...domain, run, beginStudioObjectAction, stepObjectHistory, applyExternalObjects,
+		canReparentSceneObject, reparentSceneObject, settleObjects,
 		recentObjectColors, objectColorDraft, setObjectColorDraft, rememberSceneObjectColor, objectDeleteUndo,
 		setObjectDeleteUndo, sceneObjects, storeRef, store, selectedSceneObjectId,
 		selectedSceneObject, beginSceneTransaction, endSceneTransaction, changeSceneObject,

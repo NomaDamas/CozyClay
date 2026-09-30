@@ -5,14 +5,27 @@ import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/motion.js';
 import './elements/character.js';
 import { generationArgs } from '../motion/generation.js';
+import { applyRootDrop, normalizeRootDrop } from '../ardy/root-drop.js';
+import { characterScaleFor } from '../ardy/npz.js';
+import { FAL_MOTION_DURATIONS } from '../fal-motion-client.js';
 import { createMotionEdit, trimMotionEdit, splitMotionEdit, setMotionSegmentSpeed, removeMotionSegment } from '../ardy/motion-edit.js';
 const id = { type: 'string', minLength: 1 }, frame = { type: 'integer', minimum: 0 };
 const input = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required, additionalProperties: false });
+const drop = { oneOf: [{ type: 'null' }, input({ from_s: { type: 'number', minimum: 0 }, to_s: { type: 'number', exclusiveMinimum: 0 }, meters: { type: 'number', exclusiveMinimum: 0, maximum: 30 } })] };
 const mutation = (id, label, properties, required) => ({ id, label, description: label, kind: 'mutation', undoDomain: 'motion', input: input(properties, required) });
 const setInput = elementSetSchema('motion');
 // A collection transaction has no single native character target. Normalize
 // that scope explicitly so begin/update carry the same target sentinel.
 for (const variant of setInput.oneOf) variant.properties.characterId = { type: 'null', default: null };
+const vector3 = { type: 'array', items: { type: 'number' }, minItems: 3, maxItems: 3 };
+const rangePin = input({ id: { ...id, maxLength: 64 }, track: { type: 'string', enum: ['leftHand', 'rightHand', 'leftFoot', 'rightFoot'] },
+	startFrame: frame, endFrame: frame, blend: { type: 'integer', minimum: 1, maximum: 240 }, reach: { type: 'string', enum: ['limb', 'body'] },
+	target: { oneOf: [input({ space: { const: 'world' }, position: vector3 }), input({ space: { const: 'object' }, objectId: id, local: vector3 })] },
+}, ['id', 'track', 'startFrame', 'endFrame', 'blend', 'target']);
+const rangePins = [
+	mutation('motion.rangePin.apply', 'Apply range pin', { characterId: id, pin: rangePin, replaceExisting: { type: 'boolean', default: false } }, ['characterId', 'pin']),
+	mutation('motion.rangePin.remove', 'Remove range pin', { characterId: id, pinId: id }),
+];
 const edits = [
 	{ ...mutation('motion.set', 'Set take fields', {}), input: setInput },
 	mutation('motion.trim', 'Trim motion', { characterId: id, start: frame, end: frame }),
@@ -24,16 +37,19 @@ const edits = [
 ];
 const generate = { id: 'motion.generate', label: 'Generate motion', description: 'Generate the named character through the editor pipeline, following its prompt blocks, root path, pose pins and take lineage.',
 	kind: 'job', domain: 'motion', generation: 'motion', background: true, timeoutMs: 1000,
-	input: input({ characterId: id, blocks: elementSetSchema('character').properties.set.properties.layer.properties.promptClips,
+	input: input({ characterId: id, drop, blocks: elementSetSchema('character').properties.set.properties.layer.properties.promptClips,
 		durationSeconds: { type: 'number', minimum: 1, maximum: 1200 }, seed: { type: 'integer', minimum: 0, maximum: 2147483647 } }, ['characterId']) };
 const prepared = { ...mutation('motion.applyPrepared', 'Apply prepared motion edit', { characterId: id, token: id }), exposure: 'ui-only' };
 const loads = [
-	{ id: 'motion.replace', label: 'Replace take', input: input({ characterId: id, url: id, prompt: { type: 'string', default: '' } }, ['characterId', 'url']) },
+	{ id: 'motion.replace', label: 'Replace take', input: input({ characterId: id, url: id, prompt: { type: 'string', default: '' },
+		blocks: { type: 'array', maxItems: 120, items: input({ startFrame: frame, endFrame: { ...frame, minimum: 1 }, prompt: { type: 'string' } }) },
+		drop,
+	}, ['characterId', 'url']) },
 	{ id: 'motion.loadVersion', label: 'Restore take version', input: input({ characterId: id, motionUrl: id }) },
 ].map(entry => ({ ...entry, description: entry.label, kind: 'job', domain: 'motion' }));
 const tools = [
 	mutation('motion.applyPhysics', 'Apply reviewed physics', { characterId: id }),
-	mutation('motion.editTrail', 'Edit motion trail', { characterId: id, grabFrame: frame, radiusFrames: { ...frame, minimum: 1 }, delta: input({ x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }) }),
+	mutation('motion.editTrail', 'Edit motion trail', { characterId: id, track: { type: 'string', enum: ['hips', 'leftFoot', 'rightFoot', 'leftHand', 'rightHand', 'head'], default: 'hips' }, grabFrame: frame, radiusFrames: { ...frame, minimum: 1 }, delta: input({ x: { type: 'number' }, y: { type: 'number' }, z: { type: 'number' } }) }, ['characterId', 'grabFrame', 'radiusFrames', 'delta']),
 	mutation('ik.applyPose', 'Key full-body pose', { characterId: id, frame, pose: { type: 'object', properties: { bones: { type: 'object', properties: {}, required: [], additionalProperties: true }, rootY: { type: 'number' } }, required: ['bones'], additionalProperties: true } }),
 ];
 const physics = { id: 'motion.autoPhysics', label: 'Review motion physics', description: 'Analyse real rig motion and optionally apply one retained correction.', kind: 'job', domain: 'motion',
@@ -52,18 +68,33 @@ const ik = legacyIk.map((entry, index) => ({ ...entry, id: ['ik.setKey', 'ik.rem
 
 const clear = { id: 'motion.clear', label: 'Clear motion', description: 'Clear the active take, its corrections and take-owned cast fields.',
 	kind: 'mutation', undoDomain: 'motion', input: { type: 'object', properties: { characterId: { type: 'string' } }, required: ['characterId'], additionalProperties: false } };
-export const declarations = Object.freeze([generate, ...queued, prepared, ...loads, physics, ...tools, ...edits, ...legacyIk, ...ik, clear, ...["motion.generateAllBlocks", "motion.generateFromVideo"].map(studioActionDeclaration)]);
+const videoDraft = { id: 'motion.setVideoDraft', label: 'Set video motion draft', description: 'Set the uncommitted AI-video form without changing the project or its history.', kind: 'transient',
+	input: input({ instruction: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, promptOverride: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, duration: { oneOf: FAL_MOTION_DURATIONS.map(value => ({ const: value })) } }, []) };
+export const declarations = Object.freeze([videoDraft, generate, ...queued, prepared, ...loads, physics, ...tools, ...rangePins, ...edits, ...legacyIk, ...ik, clear, ...["motion.generateAllBlocks", "motion.generateFromVideo"].map(studioActionDeclaration)]);
 
 export function register(registry, ports) {
 	const owner = () => ports.storeDomain('motion');
 	const mounted = () => Boolean(ports.storeDomain?.('motion')) || 'The motion owner is not mounted.';
 	const take = characterId => { characterOf(ports, characterId); return owner().motionFor(characterId) ?? fail('TARGET_NOT_READY', 'Load a take for this character first.'); };
+	registry.register({ ...videoDraft, available: mounted, run(args) {
+		owner().setVideoDraft(args);
+		return { affectedIds: [], summary: videoDraft.label };
+	} });
 	registry.registerToolAlias('generate_motion', generate.id, generationArgs);
 	registry.register({ ...generate, available: mounted, target: args => args.characterId, async run(args, context) {
 		characterOf(ports, args.characterId);
 		if (owner().isGenerating()) fail('TARGET_BUSY', 'A motion generation is already running.');
+		if (args.drop && !normalizeRootDrop(args.drop)) fail('INVALID_ARGUMENT', 'Invalid drop.');
 		if (args.blocks) context.run('character.setPromptBlocks', { characterId: args.characterId, blocks: args.blocks });
-		await owner().generate(args, context);
+		const generationContext = !args.drop ? context : { ...context, commit: apply => context.commit(() => {
+			const result = apply(), take = owner().motionFor(args.characterId), layer = owner().layer(args.characterId);
+			owner().replace(args.characterId, applyRootDrop(take, args.drop, { worldScale: characterScaleFor(take) }), {
+				recipe: layer.takeRecipe, versions: layer.takeVersions, ikKeys: layer.ikKeys,
+			});
+			owner().writeLayer(args.characterId, { committedIkEdits: layer.committedIkEdits });
+			return result;
+		}) };
+		await owner().generate(args, generationContext);
 		return { affectedIds: [args.characterId], summary: 'Generated motion.' };
 	} });
 	for (const declaration of queued) registry.register({ ...declaration, available: mounted, run({ characterId }) {
@@ -94,6 +125,13 @@ export function register(registry, ports) {
 			owner().keyPose(args.characterId, args.frame, args.pose);
 		}
 		return { affectedIds: [args.characterId], summary: declaration.label };
+	} });
+	for (const declaration of rangePins) registry.register({ ...declaration, available: mounted, run(args) {
+		characterOf(ports, args.characterId);
+		const output = declaration.id === 'motion.rangePin.apply'
+			? owner().bakeRangePin(args.characterId, args.pin, args.replaceExisting)
+			: owner().removePin(args.characterId, args.pinId);
+		return { affectedIds: [args.characterId], summary: declaration.label, ...(output ? { output } : {}) };
 	} });
 	registerElementSet({ register(entry) { registry.register({ ...entry, available: mounted, run(args) {
 		for (const op of args.ops ?? [args]) take(op.id);

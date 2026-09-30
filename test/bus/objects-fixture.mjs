@@ -7,7 +7,7 @@ import { createSceneObject } from '../../src/scene-objects.js';
 import { stageFixture } from './stage-fixture.mjs';
 const source = readFileSync(new URL('../../src/app-stage.jsx', import.meta.url), 'utf8');
 const carried = source.slice(source.indexOf('export const ATTACH_BONE_ROWS'), source.indexOf('export const CAMERA_MOVE_LABELS_KO'));
-const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false }, appType: 'custom', plugins: [{
+const server = await createServer({ configFile: false, server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom', plugins: [{
   name: 'objects-without-renderer', enforce: 'pre', load(id) {
     if (id.endsWith('/src/scene-assets.js')) return `export * from './scene-assets.js?real';
       import { db } from '../test/bus/objects-asset-db.mjs';
@@ -34,19 +34,21 @@ try {
 export function objectsFixture(initial = ['cube', 'sphere', 'chair'].map(kind => createSceneObject(kind))) {
   const f = stageFixture(), app = f.scope.appContext;
   let objects;
-  app.updatePorts({ read: f.actual.readStudioState, bounds: f.actual.studioBounds });
+  app.updatePorts({ read: f.actual.readStudioState, bounds: f.actual.studioBounds, revision: f.revision, poses: () => f.poses,
+    recordAction: f.actual.recordStudioAction, beginAction: f.actual.beginStudioAction });
   Object.assign(f.scope, { startupScene: { objects: initial }, selectedHierarchyId: 'object:cube',
     editorCamRef: f.scope.shotCamRef, editorLook: f.scope.look, lookThroughShot: true,
     markCraftAction: () => {}, setInspectorActionsOpen: () => {}, matteEditorRef: { current: null },
     characters: f.characterRef.current, charIdFromHierarchyId: id => id.startsWith('character:') ? id.slice(10) : null,
   });
+  app.storeDomain('objects').load(initial);
   function Mount() { objects = useObjects(app); return null; }
   renderToStaticMarkup(createElement(Mount));
   f.store.current = objects.store;
   f.scope.store = objects.store;
   f.scope.objectsDomain = objects;
-  const legacy = objects.createLegacyObjectHandlers((args, keys) => Object.fromEntries(keys.filter(key => args[key] !== undefined).map(key => [key, args[key]])));
-  Object.assign(f.actionHandlers.current, app.actionPorts, { duplicateSelectedSceneObject: objects.duplicateSelectedSceneObject, attachSceneObject: objects.attachSceneObject, importAsset: legacy.import_asset });
+
+  Object.assign(f.actionHandlers.current, app.actionPorts, { duplicateSelectedSceneObject: objects.duplicateSelectedSceneObject, attachSceneObject: objects.attachSceneObject, importAsset: objects.importAsset });
   // Production constructs the registry after mounting its domain hooks.
   const registry = createStudioAppActions(f.actionHandlers.current);
   f.ports.actions = () => registry;

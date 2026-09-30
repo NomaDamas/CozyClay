@@ -1,0 +1,500 @@
+.range-pin-panel {
+	min-width: 0;
+}
+
+.range-pin-panel-head {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 10px;
+}
+
+.range-pin-panel-head > div {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+/* .btn is full-width in the Inspector; keep the header action compact. */
+.range-pin-panel-head > .btn.ghost {
+	flex: 0 0 auto;
+	width: auto;
+}
+
+.range-pin-panel-head strong {
+	display: block;
+	font-size: 11.5px;
+	font-weight: 700;
+	color: var(--fg);
+}
+
+.range-pin-panel-head span {
+	display: block;
+	margin-top: 2px;
+	color: var(--muted);
+	font-size: 9px;
+	line-height: 1.45;
+}
+
+.range-pin-form {
+	min-width: 0;
+}
+
+.range-pin-form[aria-disabled="true"] {
+	opacity: .68;
+}
+
+.range-pin-form-label {
+	margin: 11px 0 6px;
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+}
+
+.range-pin-part-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 5px;
+}
+
+.range-pin-part {
+	min-width: 0;
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 6px 7px;
+	border: 1px solid var(--line2);
+	border-radius: 5px;
+	background: var(--card2);
+	color: var(--muted);
+	font: inherit;
+	font-size: 10px;
+	text-align: left;
+	cursor: pointer;
+}
+
+.range-pin-part:hover:not(:disabled),
+.range-pin-part:focus-visible {
+	background: var(--hover);
+	color: var(--fg);
+}
+
+.range-pin-part.selected {
+	background: color-mix(in srgb, var(--range-pin-color) 16%, var(--card2));
+	border-color: var(--line2);
+	color: var(--fg);
+}
+
+.range-pin-part:disabled {
+	cursor: not-allowed;
+}
+
+.range-pin-part-dot {
+	width: 7px;
+	height: 7px;
+	flex: none;
+	border-radius: 50%;
+	background: var(--range-pin-color, var(--muted2));
+	box-shadow: 0 0 0 1px color-mix(in srgb, var(--range-pin-color, var(--muted2)) 42%, transparent);
+}
+
+.range-pin-frame-row {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+	align-items: end;
+	gap: 7px;
+}
+
+.range-pin-frame-field {
+	display: grid;
+	gap: 4px;
+	min-width: 0;
+	color: var(--muted);
+	font-size: 9px;
+}
+
+.range-pin-frame-field input {
+	width: 100%;
+	min-width: 0;
+	height: 27px;
+	padding: 0 7px;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--card2);
+	color: var(--fg);
+	font: inherit;
+	font-size: 11px;
+	font-variant-numeric: tabular-nums;
+}
+
+.range-pin-frame-field input:focus {
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.range-pin-frame-dash {
+	padding-bottom: 6px;
+	color: var(--muted2);
+	font-size: 11px;
+}
+
+.range-pin-frame-actions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 5px;
+	margin-top: 6px;
+}
+
+.range-pin-frame-actions .btn {
+	min-width: 0;
+	padding-inline: 5px;
+	font-size: 9px;
+}
+
+.range-pin-shortcut-hint {
+	margin: 5px 0 0;
+	color: var(--muted2);
+	font-size: 8.5px;
+}
+
+.range-pin-targets {
+	display: grid;
+	gap: 5px;
+}
+
+.range-pin-target-option {
+	display: grid;
+	grid-template-columns: 15px minmax(0, 1fr);
+	align-items: start;
+	gap: 7px;
+	padding: 7px;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--card2);
+	cursor: pointer;
+}
+
+.range-pin-target-option:has(input:checked) {
+	background: var(--hover);
+	border-color: var(--line2);
+}
+
+.range-pin-target-option input {
+	margin: 2px 0 0;
+	accent-color: var(--accent);
+}
+
+.range-pin-target-option b,
+.range-pin-target-option small {
+	display: block;
+}
+
+.range-pin-target-option b {
+	color: var(--fg);
+	font-size: 10px;
+	font-weight: 600;
+}
+
+.range-pin-target-option small {
+	margin-top: 2px;
+	color: var(--muted);
+	font-size: 8.5px;
+	line-height: 1.35;
+}
+
+.range-pin-object-select {
+	display: grid;
+	gap: 4px;
+	margin-top: 7px;
+	color: var(--muted);
+	font-size: 9px;
+}
+
+.range-pin-object-select select {
+	width: 100%;
+	height: 27px;
+	padding: 0 7px;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--card2);
+	color: var(--fg);
+	font: inherit;
+	font-size: 10px;
+}
+
+.range-pin-object-select select:focus {
+	outline: none;
+	border-color: var(--accent);
+	box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.range-pin-object-readout,
+.range-pin-empty-hint {
+	margin: 6px 0 0;
+	color: var(--muted2);
+	font-size: 8.5px;
+	line-height: 1.4;
+}
+
+.range-pin-blend-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.range-pin-blend-row input[type="range"] {
+	min-width: 0;
+}
+
+.range-pin-blend-row .trail-falloff-value {
+	min-width: 67px;
+	color: var(--muted);
+	font-size: 9px;
+	text-align: right;
+}
+
+.range-pin-validation {
+	margin: 8px 0 0;
+	padding: 6px 7px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--range-pin-warning) 10%, transparent);
+	color: var(--range-pin-warning);
+	font-size: 9px;
+	line-height: 1.4;
+}
+
+.range-pin-replace-warning {
+	display: grid;
+	gap: 6px;
+	margin: 8px 0 0;
+	padding: 7px;
+	border-radius: 4px;
+	background: color-mix(in srgb, var(--range-pin-warning) 10%, transparent);
+	color: var(--range-pin-warning);
+	font-size: 9px;
+	line-height: 1.4;
+}
+
+.range-pin-replace-warning .btn {
+	justify-self: start;
+}
+
+.range-pin-actions {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+	gap: 6px;
+	margin-top: 9px;
+}
+
+.range-pin-actions .btn {
+	min-width: 0;
+}
+
+.range-pin-list-head {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	margin: 16px 0 6px;
+	padding-top: 10px;
+	border-top: 1px solid var(--line);
+	color: var(--muted);
+	font-size: 10px;
+	font-weight: 650;
+	letter-spacing: .04em;
+	text-transform: uppercase;
+}
+
+.range-pin-list-head small {
+	min-width: 16px;
+	padding: 1px 4px;
+	border-radius: 999px;
+	background: var(--card2);
+	color: var(--muted2);
+	font-size: 8px;
+	font-variant-numeric: tabular-nums;
+	text-align: center;
+}
+
+.range-pin-list {
+	display: grid;
+	gap: 5px;
+}
+
+.range-pin-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 25px;
+	min-width: 0;
+	border: 1px solid var(--line);
+	border-radius: 5px;
+	background: var(--card2);
+}
+
+.range-pin-item.selected {
+	background: color-mix(in srgb, var(--range-pin-color) 10%, var(--card2));
+}
+
+.range-pin-item-main {
+	min-width: 0;
+	display: grid;
+	gap: 3px;
+	padding: 7px 8px;
+	border: 0;
+	background: transparent;
+	color: var(--fg);
+	font: inherit;
+	text-align: left;
+	cursor: pointer;
+}
+
+.range-pin-item-main:hover,
+.range-pin-item-main:focus-visible {
+	background: var(--hover);
+}
+
+.range-pin-item-top,
+.range-pin-item-target {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.range-pin-item-top {
+	display: flex;
+	align-items: center;
+	gap: 5px;
+	font-size: 10px;
+}
+
+.range-pin-item-top b {
+	margin-left: auto;
+	color: var(--muted);
+	font-size: 9px;
+	font-variant-numeric: tabular-nums;
+	font-weight: 500;
+}
+
+.range-pin-item-target {
+	padding-left: 12px;
+	color: var(--muted);
+	font-size: 8.5px;
+}
+
+.range-pin-warning {
+	justify-self: start;
+	max-width: 100%;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	padding: 2px 4px;
+	border-radius: 3px;
+	background: color-mix(in srgb, var(--range-pin-warning) 12%, transparent);
+	color: var(--range-pin-warning);
+	font-size: 8px;
+	font-weight: 650;
+}
+
+.range-pin-delete {
+	align-self: stretch;
+	border: 0;
+	border-left: 1px solid var(--line);
+	background: transparent;
+	color: var(--muted2);
+	font-size: 15px;
+	cursor: pointer;
+}
+
+.range-pin-delete:hover,
+.range-pin-delete:focus-visible {
+	background: color-mix(in srgb, var(--danger) 12%, transparent);
+	color: var(--danger-ink);
+}
+
+.range-pin-panel .btn.small {
+	min-height: 24px;
+	padding: 3px 7px;
+	font-size: 9px;
+}
+
+@media (max-width: 620px) {
+	.range-pin-part-grid,
+	.range-pin-frame-actions,
+	.range-pin-actions {
+		grid-template-columns: 1fr;
+	}
+
+	.range-pin-frame-actions .btn {
+		text-align: left;
+	}
+}
+ :root {
+	--range-pin-hand: #ff8a3d;
+	--range-pin-foot: #4dd2ff;
+	--range-pin-warning: #f5b453;
+	--danger: #e5484d;
+	--danger-ink: #ffc9cb;
+}
+
+/* Range pin bands belong to the range-pin region, including their timeline
+   affordance. Keeping them here prevents the legacy global stylesheet from
+   owning the feature's visual contract. */
+.tl-pin-band {
+	position: absolute;
+	top: 50%;
+	left: calc(var(--tl-f-start) * 100%);
+	width: calc((var(--tl-f-end) - var(--tl-f-start)) * 100%);
+	min-width: 8px;
+	height: 8px;
+	padding: 0;
+	transform: translateY(-50%);
+	border: 0;
+	border-radius: 4px;
+	background: transparent;
+	cursor: pointer;
+	z-index: 3;
+}
+
+.tl-pin-band:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.tl-pin-band-core,
+.tl-pin-band-ramp { position: absolute; top: 1px; bottom: 1px; pointer-events: none; }
+.tl-pin-band-core {
+	left: 0;
+	right: 0;
+	border-radius: 3px;
+	background: var(--tl-pin-color);
+	opacity: .76;
+	box-shadow: 0 0 7px color-mix(in srgb, var(--tl-pin-color) 40%, transparent);
+}
+.tl-pin-band-ramp { width: 18%; background: var(--tl-pin-color); opacity: .24; }
+.tl-pin-band-ramp.start {
+	left: -18%; border-radius: 3px 0 0 3px;
+	mask-image: linear-gradient(90deg, transparent, #000);
+	-webkit-mask-image: linear-gradient(90deg, transparent, #000);
+}
+.tl-pin-band-ramp.end {
+	right: -18%; border-radius: 0 3px 3px 0;
+	mask-image: linear-gradient(90deg, #000, transparent);
+	-webkit-mask-image: linear-gradient(90deg, #000, transparent);
+}
+.tl-pin-band.selected .tl-pin-band-core {
+	opacity: .95;
+	box-shadow: 0 0 0 2px color-mix(in srgb, var(--tl-pin-color) 24%, transparent), 0 0 10px color-mix(in srgb, var(--tl-pin-color) 60%, transparent);
+}
+.tl-pin-band:hover .tl-pin-band-core { opacity: .92; }
+.tl-pin-pending {
+	position: absolute;
+	top: 50%;
+	left: calc(var(--tl-f-start) * 100%);
+	width: calc((var(--tl-f-end) - var(--tl-f-start)) * 100%);
+	min-width: 8px;
+	height: 15px;
+	transform: translateY(-50%);
+	border: 1px dashed rgba(255, 255, 255, .58);
+	border-radius: 4px;
+	background: rgba(255, 255, 255, .05);
+	pointer-events: none;
+	z-index: 2;
+}

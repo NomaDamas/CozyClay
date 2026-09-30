@@ -88,7 +88,7 @@ const handle = (name, args) => {
 				? { ...description, characters: description.characters.map(({ model, ...character }) => character) }
 				: description;
 		case "inspect_studio":
-			return { context: { host, revision: { scene: revision } }, actions: [] };
+			return { context: { host, revision: { scene: revision }, activeCharacterId: 'char-a' }, actions: [] };
 		case "run_action": {
 			assert.deepEqual(args.host, host);
 			assert.equal(args.expectedRevision, revision);
@@ -98,6 +98,14 @@ const handle = (name, args) => {
 				expectedTargets: [], currentTargets: [], mutated: false, preserved: { authoredState: "unchanged" },
 				recovery: { action: "inspect", retryAllowed: false }, message: `Character not found: ${input.characterId}`,
 			};
+			if (action === 'motion.replace') {
+				assert.equal(input.characterId, 'char-a');
+				editor.characters[0].motionRef = { url: input.url };
+				const before = revision++;
+				return { ok: true, status: 'completed', kind: 'job', action, commandId: args.commandId, receiptId: `receipt-${revision}`, host,
+					authored: true, revision: { before, after: revision }, affectedIds: ['char-a'], delta: [{ id: 'char-a', after: { takeId: input.url } }],
+					checks: { coverage: 'studio-action:motion.replace' }, warnings: [], undo: { historyEntryId: `history-${revision}`, entries: 1, canUndoDirect: true } };
+			}
 			assert.equal(action, "character.add");
 			if (rejectAfterMutation) { rejectDescribe = true; rejectAfterMutation = false; }
 			const character = input.character;
@@ -111,9 +119,6 @@ const handle = (name, args) => {
 				delta: [{ id, after: { model: character.model ?? "y-bot-tpose" } }], checks: {}, warnings: [],
 				undo: { historyEntryId: `history-${revision}`, entries: 1, canUndoDirect: true } };
 		}
-		case "load_motion":
-			rejectDescribe = true;
-			return { loaded: true };
 		default:
 			throw new Error(`Unknown command ${name}`);
 	}
@@ -257,14 +262,17 @@ try {
 	assert.equal(lifecycle[1].props.outcome, "succeeded");
 
 	// Given an already-generated take
-	// When generate_motion schedules its internal job
+	// When generate_motion aliases the registered replacement command
 	const motionJob = await call("generate_motion", {
 		phases: ["A person walks forward.", "A person stops."],
 		motion_url: "/ardy/motions/123456-abcdef",
 	});
-	// Then it returns promptly with a push-only task identity.
+	// Then the server returns the editor's bus receipt, not its retired task id.
 	assert.equal(motionJob.isError, undefined, JSON.stringify(motionJob));
-	assert.deepEqual(Object.keys(JSON.parse(motionJob.content[0].text)).sort(), ["createdAt", "lastUpdatedAt", "pollIntervalMs", "status", "taskId", "ttlMs"]);
+	const motionReceipt = JSON.parse(motionJob.content[0].text);
+	assert.equal(motionReceipt.action, 'motion.replace'); assert.equal(motionReceipt.status, 'completed');
+	assert.equal(motionReceipt.undo.entries, 1);
+	assert.equal(editor.characters[0].motionRef.url, '/ardy/motions/123456-abcdef');
 
 	// Losing the command receipt is still uncertain even if the editor applied
 	// the mutation. Do not substitute a retry or a legacy describe handshake.

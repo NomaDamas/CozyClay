@@ -5,12 +5,12 @@ import { registerElementKind } from '../elements.js';
 registerElementKind('scene', {
   collection: true, documentKey: 'scenes',
   elements: [
-    { path: 'scene.name', type: 'string', agentExposure: 'patch' },
-    { path: 'scene.order', type: 'number', agentExposure: 'patch' },
+    { path: 'scene.name', type: 'string' },
+    { path: 'scene.order', type: 'number' },
   ],
   normalize: scene => ({ ...scene, name: scene.name.trim(), order: Math.max(0, Math.round(scene.order)) }),
 });
 registerElementKind('project', {
-  elements: [{ path: 'project.name', type: 'string', agentExposure: 'patch' }],
+  elements: [{ path: 'project.name', type: 'string' }],
   normalize: project => project,
 });

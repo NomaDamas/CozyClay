@@ -4,6 +4,7 @@ import { objectsFixture } from './objects-fixture.mjs';
 import { createSceneObject } from '../../src/scene-objects.js';
 const native = appFixture();
 try {
+  native.scope.appContext.storeDomain('objects').dispose();
   const listing = native.registry.list();
   assert.equal(listing.find(row => row.id === 'object.add').available, false);
   assert.ok(listing.find(row => row.id === 'object.add').reason);

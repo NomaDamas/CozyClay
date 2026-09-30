@@ -9,14 +9,16 @@ assert.equal(existsSync(new URL('./parity-pending.json', import.meta.url)), fals
 assert.deepEqual(readdirSync(directory).sort(), ['cast.json', 'motion.json', 'objects.json', 'project.json', 'shots.json']);
 const { readParityPending, pendingErrors } = await import('./verify-parity-matrix.mjs');
 const current = readParityPending(directory);
+assert.deepEqual(current, [], '#496.3 every domain has completed the parity matrix');
 assert.deepEqual(pendingErrors(['shots', 'objects', 'cast', 'motion', 'project'], current), []);
 const fixture = mkdtempSync(join(tmpdir(), 'cozyclay-parity-pending-'));
 const write = (domain, pending) => writeFileSync(join(fixture, `${domain}.json`), JSON.stringify({ version: 1, pending }));
 try {
   write('shots', ['shots']); write('cast', ['cast']);
-  const before = readParityPending(fixture);
+  assert.throws(() => readParityPending(fixture), assert.AssertionError, '#496.3 reintroducing even known parity debt must fail');
+  const before = readParityPending(fixture, { allowPending: true });
   write('shots', []);
-  const after = readParityPending(fixture);
+  const after = readParityPending(fixture, { allowPending: true });
   assert.deepEqual(after, ['cast']);
   assert.deepEqual(pendingErrors(before, after), []);
   assert.deepEqual(pendingErrors(after, before), ['shots: newly pending']);
