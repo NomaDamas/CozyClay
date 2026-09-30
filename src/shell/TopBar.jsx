@@ -11,7 +11,6 @@ import "./topbar.css";
 export default function TopBar({ preferences }) {
 	const {
 		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
-		requestNewProject, setProjectStartupOpen, setProjectBrowserOpen, runStudioAction, saveProject,
 		projectManifest, recState, liveHubStatus, liveWorkspaceHandle,
 	} = useStudioShell();
 	const connected = liveHubStatus === "connected";
@@ -25,11 +24,6 @@ export default function TopBar({ preferences }) {
 					projectDirty={projectDirty}
 					projectName={projectName}
 					projectStartupOpen={projectStartupOpen}
-					requestNewProject={requestNewProject}
-					setProjectStartupOpen={setProjectStartupOpen}
-					setProjectBrowserOpen={setProjectBrowserOpen}
-					runStudioAction={runStudioAction}
-					saveProject={saveProject}
 					projectManifest={projectManifest}
 				/>
 			</div>
