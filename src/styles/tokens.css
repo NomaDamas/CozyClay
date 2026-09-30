@@ -1,3 +1,7 @@
+/* The one layer order. Imported first by main.jsx, so a component sheet that
+   opens @layer regions early cannot move regions below shell (#548 did). */
+@layer tokens, legacy, shell, regions;
+
 @layer tokens {
 	:root {
 		/* V2 surfaces: brightness steps separate regions without borders. */

@@ -169,7 +169,11 @@ const closeState = waitForDom(`!document.querySelector(${JSON.stringify(dialog)}
 await pressEscape();
 await closeState;
 expect("Escape closes the Preferences dialog", !(await evaluate(`!!document.querySelector(${JSON.stringify(dialog)})`)));
-expect("Escape returns focus to the Settings trigger", await evaluate(`document.activeElement === document.querySelector(${JSON.stringify(trigger)})`));
+// #548: the 2a top bar opens Preferences from Edit › Preferences…; the
+// Settings trigger stays mounted as the dialog's programmatic handle but is
+// not shown, so focus returns to the visible opener, the Edit menu trigger.
+expect("the Settings trigger is not part of the 2a top bar", await evaluate(`(() => { const r = document.querySelector(${JSON.stringify(trigger)})?.getBoundingClientRect(); return !r || r.width < 1 || r.height < 1; })()`));
+expect("Escape returns focus to the Edit menu trigger", await evaluate(`document.activeElement === document.querySelector('[data-testid=menu-edit]')`));
 
 // Switching locale reloads the real page. Check the dialog's own labels, not
 // the mode toolbar, which belongs to the parallel shell toolbar change.
