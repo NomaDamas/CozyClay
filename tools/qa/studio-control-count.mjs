@@ -1,14 +1,23 @@
-// Count the Studio's simultaneously visible controls per workflow mode,
-// screenshot each state, and enforce the v2 mode budgets behind
-// docs/studio-ui-ia.md §1: Stage <=35 / Pose <=45 / Camera <=38 / Motion <=52.
+// Count what the Studio shows at once per workflow mode, screenshot each
+// state, and hold the "controls" count to the v2 budgets (docs/studio-ui-ia.md §1).
 //
 //   QA_URL=http://127.0.0.1:5180/app/?motion=/demo/walk-then-stop.npz CDP_PORT=9241 OUT=/tmp/studio-count \
 //     node tools/qa-browser.mjs -- node tools/qa/studio-control-count.mjs
 //
 // Writes <OUT>-<state>.png and <OUT>-counts.json (default OUT /tmp/studio-count)
-// and exits 1 when any state is over its budget. A "control" is a rendered
-// button/select/range/checkbox/a.topbar-action with a non-zero box anywhere on
-// screen; CSS display:none does not count, hover-revealed chevrons do.
+// and exits 1 when any state has more controls than its budget.
+//
+// Every rendered button/select/range/checkbox/a.topbar-action with a non-zero
+// box is counted (CSS display:none does not count, hover-revealed chevrons do)
+// and split in two:
+//   items    - data, which grows with the project: Outliner tree rows and their
+//              disclosure carets, Content asset tiles and Content category rows;
+//   controls - everything else (chrome). Only controls have a budget.
+// "total" (= controls + items) is the pre-v2 metric the R6 targets used.
+
+// v2 baseline measured on 40767ed; the pre-v2 R6 targets were 35/45/38/52 (docs/studio-ui-ia.md §1).
+const BUDGETS = { "stage-none": 37, "stage-char": 45, pose: 58, camera: 39, motion: 55 };
+
 import { writeFileSync } from "node:fs";
 
 const OUT = process.env.OUT || "/tmp/studio-count";
@@ -39,6 +48,8 @@ await ev("window.__cozyclay.pause?.(); true");
 const COUNT = `(()=>{
   const vis=(el)=>{const r=el.getBoundingClientRect();if(r.width<2||r.height<2)return false;const s=getComputedStyle(el);return s.visibility!=="hidden"&&s.display!=="none"&&s.opacity!=="0";};
   const all=[...document.querySelectorAll("button, select, input[type=range], input[type=checkbox], a.topbar-action")].filter(vis);
+  const isItem=(el)=>(!!el.closest("[role=treeitem]")&&(el.classList.contains("hierarchy-row")||el.classList.contains("hierarchy-toggle")))
+    ||el.matches("[data-testid=content-asset], [data-testid^=content-folder-]");
   const region=(el)=>{
     if(el.closest("header.topbar"))return "topbar";
     if(el.closest(".v2-outliner, .hierarchy-left"))return "outliner";
@@ -49,26 +60,26 @@ const COUNT = `(()=>{
     if(el.closest(".viewport"))return "viewport";
     return "other:"+(el.closest("aside, section, div[class]")?.className||"").toString().slice(0,30);
   };
-  const by={};for(const el of all){const k=region(el);(by[k]??=[]).push((el.getAttribute("aria-label")||el.textContent||el.tagName).trim().replace(/\\s+/g," ").slice(0,24));}
-  return {total:all.length,by};
+  const name=(el)=>(el.getAttribute("aria-label")||el.textContent||el.tagName).trim().replace(/\\s+/g," ").slice(0,24);
+  const by={controls:{},items:{}};let controls=0,items=0;
+  for(const el of all){const kind=isItem(el)?"items":"controls";if(kind==="items")items+=1;else controls+=1;(by[kind][region(el)]??=[]).push(name(el));}
+  const pose=document.querySelector(".pose-details");
+  const poseDetails=pose?[...pose.querySelectorAll("button,select,input[type=range],input[type=checkbox]")].filter(vis).length:null;
+  return {controls,items,total:all.length,poseDetails,by};
 })()`;
 
-// Pose is measured as #545 (qa-shell-pose-browser) defines it: the controls
-// of the Pose Details panel, the surface Pose mode owns.
-const POSE_COUNT = `(()=>{const root=document.querySelector('.pose-details');if(!root)return {total:999,by:{}};const vis=e=>{const r=e.getBoundingClientRect(),s=getComputedStyle(e);return r.width>2&&r.height>2&&s.display!=="none"&&s.visibility!=="hidden"};const all=[...root.querySelectorAll('button,select,input[type=range],input[type=checkbox]')].filter(vis);return {total:all.length,by:{pose:all.map(e=>(e.textContent||e.getAttribute('aria-label')||'').trim())}}})()`;
-
-const BUDGETS = { "stage-none": 35, "stage-char": 35, pose: 45, camera: 38, motion: 52 };
 const mode = async (key) => {
   await ev(`document.querySelector('[data-mode-key="${key}"]').click(); true`);
   await waitFor(`document.querySelector('[data-mode-key="${key}"]')?.getAttribute('aria-selected') === 'true'`);
 };
 const selectCharacter = async () => {
   await ev("document.querySelector('[data-node-id=characterA] .hierarchy-row').click(); true");
-  await waitFor("document.querySelector('[data-node-id=characterA] .hierarchy-row')?.getAttribute('aria-selected') === 'true' || !!document.querySelector('[data-node-id=characterA] .hierarchy-row.selected')", 5000).catch(() => {});
+  await waitFor("document.querySelector('[data-node-id=characterA]')?.getAttribute('aria-selected') === 'true'", 5000);
 };
 const states = [
   ["stage-none", async () => { await mode("1"); await ev("window.__cozyclay.selectHierarchy?.(null); true"); }],
   ["stage-char", async () => { await mode("1"); await selectCharacter(); }],
+  // Pose as #545 measures it: press 2, IK turns on, Pose Details renders.
   ["pose", async () => { await mode("2"); await waitFor("window.__cozyclay.ikMode === true && !!document.querySelector('.pose-details')"); }],
   ["camera", async () => { await mode("3"); }],
   ["motion", async () => { await mode("4"); await selectCharacter(); }],
@@ -79,10 +90,10 @@ for (const [name, setup] of states) {
   await setup(); await settle();
   const shot = await send("Page.captureScreenshot", { format: "png" });
   writeFileSync(`${OUT}-${name}.png`, Buffer.from(shot.data, "base64"));
-  out[name] = { ...await ev(name === "pose" ? POSE_COUNT : COUNT), budget: BUDGETS[name] };
-  const ok = out[name].total <= BUDGETS[name];
+  out[name] = { ...await ev(COUNT), budget: BUDGETS[name] };
+  const ok = out[name].controls <= BUDGETS[name];
   if (!ok) over.push(name);
-  console.log(`${ok ? "PASS" : "FAIL"} ${name} ${out[name].total} <= ${BUDGETS[name]}`);
+  console.log(`${ok ? "PASS" : "FAIL"} ${name} controls ${out[name].controls} <= ${BUDGETS[name]} (items ${out[name].items}, total ${out[name].total})`);
 }
 writeFileSync(`${OUT}-counts.json`, JSON.stringify(out, null, 2));
 ws.close();

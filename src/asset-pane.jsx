@@ -629,6 +629,7 @@ export default function AssetPane({
 					className="content-collapse"
 					data-testid="content-collapse"
 					aria-expanded={!collapsed}
+					aria-label={collapsed ? ko("Expand content", "콘텐츠 펼치기") : ko("Collapse content", "콘텐츠 접기")}
 					title={collapsed ? ko("Expand Content", "콘텐츠 펼치기") : ko("Collapse Content — the Sequencer takes the full width", "콘텐츠 접기 — 시퀀서가 전체 너비를 씁니다")}
 					onClick={() => onCollapsedChange(!collapsed)}
 				>

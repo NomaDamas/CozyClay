@@ -15,6 +15,20 @@ STATUS: 구현 완료 — IA PR 6개(#196 #198 #197 #200 #201 #204) + 꼬리 #20
 
 e384d00에서 남은 초과분은 세 모드 모두 같은 세 컨트롤이었다: 씬 루트 행의 접기 캐럿, `Characters` 그룹 행과 그 캐럿, 블록이 0개일 때도 렌더되는 `Generate all 0 blocks`(R3 위반). 꼬리 PR #205가 이 셋을 처리해 df1640d에서 R6 예산을 전부 충족한다(같은 스크립트·같은 시나리오, `tools/qa/studio-control-count.mjs`). 추정치(32/37/44)와 실측이 어긋난 이유: 트리 캐럿은 3개가 아니라 4개였고 씬 선택 필이 새 버튼으로 잡히며(계층 16→14, 12가 아님), QA 프로젝트는 로드된 Full-Body 세그먼트를 자동 선택해 Motion 모드에 세그먼트 도구 6개가 렌더된다.
 
+### v2 기준선 (40767ed, #533)
+
+오너의 v2 디자인(`docs/design/v2-reference.html`)이 R6를 대체했다: 항상 보이는 Content 브라우저와 버튼으로 렌더되는 Outliner 행을 더하므로, 옛 지표(보이는 컨트롤 전부)는 더 이상 같은 것을 재지 않는다. 그래서 `tools/qa/studio-control-count.mjs`는 이제 **controls**(크롬)와 **items**(데이터: Outliner 트리 행과 그 펼침 캐럿, Content 에셋 타일, Content 카테고리 행)를 나눠 세고, 예산은 controls에만 건다(40767ed에서 잰 값 그대로, 여유 없음; 넘으면 exit 1). 같은 시나리오(1600×1000, 캐릭터 1 + `walk-then-stop` 432프레임, 샷 없음):
+
+| 상태 | 옛 R6 목표 | 옛 지표 합계 | v2 controls (= 예산) | v2 items |
+|---|---|---|---|---|
+| Stage, 선택 없음 | ≤35 | 59 | **37** | 22 |
+| Stage, 캐릭터 선택 | ≤35 | 67 | **45** | 22 |
+| Pose (2, IK 켜짐) | ≤45 | 90 | **58** | 32 |
+| Camera | ≤38 | 71 | **39** | 32 |
+| Motion (캐릭터 선택) | ≤52 | 87 | **55** | 32 |
+
+Pose Details 패널만 세면 13개다(#545의 `qa-shell-pose-browser` 지표, ≤45). 계측 JSON에는 영역별 내역(`by.controls`, `by.items`)이 함께 남는다.
+
 마지막으로 수치를 잰 정리는 `bf76a89`(08-27, 65/64/66/76 → 62/52/44/63)였고, 그 뒤 12일 동안 Export 메뉴·Part colours·Target model·Workflow 링크 등이 얹히며 다시 늘었다.
 
 핵심 원인 4가지:
@@ -39,6 +53,29 @@ e384d00에서 남은 초과분은 세 모드 모두 같은 세 컨트롤이었�
 ## 3. 컨트롤별 결정표
 
 범례: 유지 / 이동 / 접기 / 삭제. "새 라벨"에는 단축키를 함께 쓴다.
+
+### v2 새 위치 (#533 기준 main)
+
+아래 결정표는 v2 이전 기록이다. v2 셸에서 각 기능의 최종 집은 다음과 같다(§8 참고).
+
+| 기능 | v2 집 |
+|---|---|
+| New / Open… / Save / Save As… | 상단바 **File** 메뉴; 저장 상태는 하단 상태 바 |
+| Export ▾ (Keyframe pack, Video, Depth + normal, Storyboard, OTIO) | **File › Export ▸**, ⌘E = Keyframe pack; 진행률은 상태 바 |
+| Settings (Language, Analytics) | **Edit › Preferences…** › General / Appearance; 모션 설정은 Preferences › ARDY Connection |
+| View ▾ (Reference grid, Auto Color, Body part colours) | 뷰포트 **Show** 필 (+ Trails) |
+| 카메라 선택 / 셰이딩 | 뷰포트 **Perspective** 필 / **Clay Lit** 필 |
+| 모드 탭 Scene/Camera/Motion | 뷰포트 모드 툴바 **1 Stage / 2 Pose / 3 Camera / 4 Motion**, 모드별 도구 W/E/R |
+| IK on/off | **Pose 모드(2)** 진입이 IK를 켜고, 나가면 끈다 |
+| Foot snap / Body contact | Pose 모드 동안 시퀀서 헤더 |
+| 자동 수정(Pose fix, Path fix, Pin, Fit to platforms) | **Pose Details** (W Pose fix / E Path fix / R Pin), 미리보기 → Apply/Cancel |
+| 테이크 바 Scene/Refine 카드 | 상단바 **Generate Motion** + 캐럿(Start over / Take it again / Add block); Refine = Motion 도구 E |
+| 테이크 버전 목록 | **Details › Takes** |
+| + Add object (계층), Props + Add | 뷰포트 **+ Add**, **Content › Basic Shapes**; Outliner 우클릭 Create ▸ |
+| Agent / Workflow | **Window** 메뉴 (Agent ⌘B) |
+| Content / Log | 하단 독 탭 (Content는 접기 가능) |
+| Root path (Waypoint, P) | 시퀀서 헤더 "Waypoint on/off" (라벨 "Root path") |
+| Tutorial / Keyboard shortcuts / About | **Help** 메뉴 |
 
 ### 상단바 (7 → 5)
 | 컨트롤 | 현재 | 결정 | 새 위치 / 라벨 | 규칙 | 영향 테스트 |
