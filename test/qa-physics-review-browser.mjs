@@ -77,7 +77,7 @@ if (process.env.QA_FULL) {
 	// Camera/framing only. The same original-root reference is used for both
 	// variants; no image modification is used to conceal mesh penetration.
 	await ev("document.querySelector('[aria-label=\"Collapse inset view\"]')?.click()");
-	await click('.workflow-mode-switch [title="Edit timing and movement"]');
+	await click('[data-mode-key="4"]');
 	await ev(`([...document.querySelectorAll('button')].find(e=>e.textContent.trim()==='Rig' || e.textContent.trim()==='리그'))?.click()`); await sleep(100);
 	const selectFrame = async (f) => { await ev(`window.__cozyclay.scrub(${f})`); await wait(`window.__cozyclay.tlFrame===${f}`); await sleep(60); };
 	const frames = [...new Set([0, 42, 86, 120, 159, 176, 210, 226, 245, 270, 283, 330, ...summary.warnings.map((w) => w.frame)])].sort((a, b) => a - b);

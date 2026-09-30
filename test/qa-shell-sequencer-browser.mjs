@@ -116,7 +116,7 @@ expect("Sequencer renders", await waitFor("!!document.querySelector('.v2-sequenc
 expect("demo motion is loaded", await waitFor("!!window.__cozyclay?.motion && window.__cozyclay.motion.frames > 0"));
 await evaluate("window.__cozyclay.pause?.()");
 await waitFor("!document.querySelector('.tl-btn.play.on')");
-await click(".workflow-mode-switch [role='tab']:nth-child(3)");
+await click('[data-mode-key="4"]');
 expect("Motion mode exposes Body actions", await waitFor("document.querySelector('.v2-sequencer [data-testid=sequencer-add-block]') && document.querySelector('.v2-sequencer [data-testid=sequencer-cut]')"));
 
 const geometry = await evaluate(`(() => {

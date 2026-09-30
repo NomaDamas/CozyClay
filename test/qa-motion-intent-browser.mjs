@@ -306,7 +306,7 @@ try {
 	assert.ok(requests.health > 0, "no-backend health fixture was consumed");
 	await assertNoDemand("startup has no explicit generation demand");
 
-	await changeAndWait("document.querySelector('.app')?.dataset.workflowMode === 'motion'", () => click(".workflow-mode-switch [role='tab']:nth-child(3)"), "Motion workflow selected");
+	await changeAndWait("document.querySelector('.app')?.dataset.workflowMode === 'motion'", () => click('[data-mode-key="4"]'), "Motion workflow selected");
 	const beforeCount = await evaluate("document.querySelectorAll('.tl-track.prompts .tl-chip-input').length");
 	await changeAndWait(`document.querySelectorAll('.tl-track.prompts .tl-chip-input').length === ${beforeCount + 1} && !!document.querySelector('input[placeholder="describe this motion block"]')`, () => click(".tl-track.prompts .tl-track-add"), "real Add prompt block commits and reveals inspector");
 	await assertNoDemand("actual timeline Add prompt block is authoring only");

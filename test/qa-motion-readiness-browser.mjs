@@ -186,7 +186,7 @@ function installBrowserFixture(documentSeed, deadline) {
 	};
 	// Read-only observation of the existing QA surface, never a state override.
 	// Subscribe during document initialization, before the application's modules run.
-	qa.studio = qa.wait(() => !!document.querySelector('.workflow-mode-switch'), 'studio controls mounted');
+	qa.studio = qa.wait(() => !!document.querySelector('[data-mode-key]'), 'studio controls mounted');
 	qa.studio.catch(() => {});
 	let cozyclay;
 	Object.defineProperty(window, "__cozyclay", { configurable: true, get: () => cozyclay, set(value) { cozyclay = value; qa.signal(); } });
@@ -298,7 +298,7 @@ try {
 	await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1100, deviceScaleFactor: 1, mobile: false });
 	await navigate(url.href);
 	await evaluate("window.__qaReadiness.studio");
-	await changeAndWait(`document.querySelector('.app')?.dataset.workflowMode === 'motion' && ${readyState("loading")}`, () => click(".workflow-mode-switch [role=tab]:nth-child(3)"), "Motion workflow and loading readiness mounted");
+	await changeAndWait(`document.querySelector('.app')?.dataset.workflowMode === 'motion' && ${readyState("loading")}`, () => click('[data-mode-key="4"]'), "Motion workflow and loading readiness mounted");
 	assert.ok(await evaluate(readyState("loading")), "Initial health probe must render loading readiness at the generation entry point");
 	await captureBoth("loading");
 	await changeAndWait(`${readyState("not_configured")} && !!window.__cozyclay.motion`, async () => { holdHealth = false; await Promise.all(heldHealth.splice(0).map(answerHealth)); }, "unconfigured health and real shipped sample decoded");
@@ -312,7 +312,7 @@ try {
 	await changeAndWait(`window.__cozyclay.playing && window.__cozyclay.tlFrame !== ${frameBefore}`, () => click('[aria-label="Play playback"]'), "sample advances through real Play");
 	await changeAndWait("!!document.querySelector('[aria-label=\"Play playback\"]')", () => click('[aria-label="Pause playback"]'), "sample paused through real Pause");
 	pass("no backend: actual sample playback controls advance motion");
-	await changeAndWait("document.querySelector('.app')?.dataset.workflowMode === 'camera'", () => click(".workflow-mode-switch [role=tab]:nth-child(2)"), "Camera workflow");
+	await changeAndWait("document.querySelector('.app')?.dataset.workflowMode === 'camera'", () => click('[data-mode-key="3"]'), "Camera workflow");
 	const cameraKeys = await evaluate("document.querySelectorAll('.tl-marker.cam').length");
 	await changeAndWait(`document.querySelectorAll('.tl-marker.cam').length === ${cameraKeys + 1}`, () => click(".tl-shot-key-surface"), "camera key authored through timeline");
 	await captureBoth("no-backend-camera", ".tl-shot-key-surface");
@@ -331,7 +331,7 @@ try {
 		pass("no backend: native browser MP4 download completed", { name: started.suggestedFilename, bytes: bytes.length });
 	} finally { download.cancel(); completed.cancel(); }
 	await escape();
-	await changeAndWait("document.querySelector('.app')?.dataset.workflowMode === 'motion'", () => click(".workflow-mode-switch [role=tab]:nth-child(3)"), "return to Motion");
+	await changeAndWait("document.querySelector('.app')?.dataset.workflowMode === 'motion'", () => click('[data-mode-key="4"]'), "return to Motion");
 	await changeAndWait("!!document.querySelector('input[placeholder=\"describe this motion block\"]')", () => click(".tl-track.prompts .tl-track-add"), "Add prompt block is authoring only");
 	const text = "PRIVATE_PROMPT_277 walks forward";
 	await changeAndWait(`document.querySelector('.tl-track.prompts .tl-chip-input')?.value === ${JSON.stringify(text)}`, () => typeInto('input[placeholder="describe this motion block"]', text), "prompt edit commits");

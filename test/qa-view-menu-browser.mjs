@@ -71,7 +71,7 @@ const selectRow = async (nodeId) => {
 	return waitFor(`document.querySelector('[data-node-id="${nodeId}"]').getAttribute('aria-selected') === 'true'`, 8000);
 };
 const clickMode = async (label) => {
-	await evaluate(`[...document.querySelectorAll('.workflow-mode-switch button')].find((b) => b.textContent.trim() === ${JSON.stringify(label)}).click()`);
+	await evaluate(`document.querySelector('[data-mode-key="${({ Scene: "1", Pose: "2", Camera: "3", Motion: "4" })[label]}"]').click()`);
 	return waitFor(`document.querySelector('.app').dataset.workflowMode === ${JSON.stringify(label.toLowerCase())}`, 8000);
 };
 const openMenu = async () => {

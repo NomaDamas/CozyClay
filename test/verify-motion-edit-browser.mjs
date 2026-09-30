@@ -60,7 +60,7 @@ expect("app becomes ready", await waitFor("!!window.__cozyclay?.rigA"));
 // The Full-Body track tools (Cut, trim, retime) and the segment-speed editor
 // belong to Motion mode (#191): pick the department before editing the take.
 expect("Motion mode is selectable", await evaluate(`(() => {
-	const tab = [...document.querySelectorAll('.workflow-mode-switch button')].find((item) => ['Motion', '\ubaa8\uc158'].includes(item.textContent.trim()));
+	const tab = document.querySelector('[data-mode-key="4"]');
 	if (!tab) return false;
 	tab.click();
 	return true;

@@ -46,7 +46,7 @@ const click = async (selector) => {
 	await wait(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});return !!el && !el.disabled && el.getClientRects().length>0})()`);
 	await ev(`(()=>{const el=document.querySelector(${JSON.stringify(selector)});el.scrollIntoView({block:'nearest'});el.click()})()`);
 };
-const motionTab = '.workflow-mode-switch [role="tab"][title="Edit timing and movement"], .workflow-mode-switch [role="tab"][title="타이밍과 움직임 편집"]';
+const motionTab = '[data-mode-key="4"]';
 await click(motionTab);
 await wait(`document.querySelector(${JSON.stringify(motionTab)})?.getAttribute('aria-selected') === 'true'`);
 const characterRow = '[role="treeitem"][aria-selected="true"][data-node-id]';

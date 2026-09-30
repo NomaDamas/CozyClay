@@ -37,7 +37,7 @@ for (const model of models) for (const variant of variants) {
 		await wait("!!window.__cozyclay.rigA && window.__cozyclay.rigA !== window.__qaOldRig && !!window.__cozyclay.ikChains");
 	}
 	await delay(700);
-	await ev("document.querySelector('.workflow-mode-switch [title=\"Edit timing and movement\"]')?.click()");
+	await ev("document.querySelector('[data-mode-key=\"4\"]')?.click()");
 	await delay(150);
 	await ev("(async()=>{window.__qaSurface=(await import('/src/ardy/physics-review.js')).createSupportSampler(window.__cozyclay.rigA)})()");
 	await ev("document.querySelector('[aria-label=\"Collapse inset view\"]')?.click()");

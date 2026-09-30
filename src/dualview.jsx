@@ -413,7 +413,12 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 			const previewEl = shotPreviewRef?.current;
 			if (previewEl && !previewEl.hidden && (!navigatingCamera || redrawFrozenPanes)) {
 				const previewRect = rectOf(previewEl);
-				if (previewRect.w >= 2) {
+				// The inset card's header strip (src/shell/viewport.css) is chrome:
+				// the frame is drawn into the card body below it.
+				const header = parseFloat(getComputedStyle(previewEl).getPropertyValue("--shot-preview-header")) || 0;
+				previewRect.y += header;
+				previewRect.h -= header;
+				if (previewRect.w >= 2 && previewRect.h >= 2) {
 					const previewMask = shotCam.layers.mask;
 					shotCam.layers.disable(GIZMO_LAYER);
 					draw(shotCam, previewRect, fitAspect(previewRect, shotAspect), !navigatingCamera);
