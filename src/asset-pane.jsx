@@ -1,14 +1,16 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ko } from "./locale.js";
 import { CHARACTER_MODEL_IDS } from "./scenes.js";
 import { OBJECT_LIBRARY } from "./scene-objects.js";
-import { displayObjectGroupName, displayObjectLabel } from "./object-catalog.jsx";
+import { displayObjectLabel } from "./object-catalog.jsx";
 import { assetAspect, isMeshAssetId, isSupportedMeshType } from "./scene-assets.js";
 import { assetKind, formatAssetBytes } from "./asset-shelf.js";
 import { assetRecord } from "./scene-asset-cache.js";
 import ResourceStatus from "./resource-status.jsx";
+import { logStore } from "./shell/log-store.js";
+import "./asset-pane.css";
 
-/** Casting assets offered in the bottom Assets tab. `id` doubles as the FBX
+/** Casting assets offered in the Content browser's Characters folder. `id` doubles as the FBX
  * file stem and the ARDY wire rig name (see scenes.js). */
 export const CHARACTER_ASSETS = CHARACTER_MODEL_IDS.map((id) => ({
 	id,
@@ -171,81 +173,6 @@ function grabProps(onAssetGrab, payload) {
 	};
 }
 
-/** One imported picture. The card renders immediately as a skeleton and the
- * thumbnail lands when the decode does — the grid never waits on a decode. */
-function ImageAssetCard({ id, onAssetGrab }) {
-	// null = decoding (skeleton), undefined = record gone, object = ready. A
-	// cached thumb still starts null for one microtask; no frame is lost.
-	const [thumb, setThumb] = useState(null);
-	useEffect(() => {
-		let alive = true;
-		loadThumb(id).then((result) => {
-			if (alive) setThumb(result ?? undefined);
-		});
-		return () => {
-			alive = false;
-		};
-	}, [id]);
-	// undefined = the record is gone (another tab swept it); show nothing
-	// rather than a card that spawns a blank quad. null = the record is
-	// there but its bytes did not decode — the card MUST stay visible, or
-	// the failure leaves garbage the storage manager cannot even show.
-	if (thumb === undefined) return null;
-	const label = thumb?.name?.replace(/\.[^.]+$/, "") || ko("Image", "이미지");
-	const failed = thumb === null;
-	return (
-		<button
-			type="button"
-			className={"asset-card" + (failed ? " asset-card-failed" : "")}
-			title={failed
-				? ko(`${label} — could not decode; delete it from Manage storage`, `${label} — 불러오지 못했어요. 저장소 관리에서 삭제할 수 있어요`)
-				: ko(`Drag ${label} into the scene`, `${label}을(를) 씬에 드래그하세요`)}
-			{...(failed ? {} : grabProps(onAssetGrab, { kind: "image", assetId: id, label, aspect: thumb?.aspect ?? 1, thumb: thumb?.url ?? null }))}
-		>
-			{thumb ? (
-				<img className="asset-card-thumb" src={thumb.url} alt="" draggable={false} />
-			) : (
-				<span className="asset-card-thumb asset-card-thumb-skeleton" aria-hidden="true" />
-			)}
-			<span className="asset-card-label">{label}</span>
-			<span className="asset-card-kind">{failed ? ko("Unreadable", "읽을 수 없음") : ko("Image", "이미지")}</span>
-		</button>
-	);
-}
-
-function MeshAssetCard({ id, onAssetGrab }) {
-	const [thumb, setThumb] = useState(null);
-	useEffect(() => {
-		let alive = true;
-		loadThumb(id).then((result) => {
-			if (alive) setThumb(result ?? undefined);
-		});
-		return () => {
-			alive = false;
-		};
-	}, [id]);
-	if (thumb === undefined) return null;
-	const label = thumb?.name?.replace(/\.[^.]+$/, "") || ko("Model", "모델");
-	const failed = thumb === null;
-	return (
-		<button
-			type="button"
-			className={"asset-card" + (failed ? " asset-card-failed" : "")}
-			title={failed
-				? ko(`${label} — could not read; delete it from Manage storage`, `${label} — 불러오지 못했어요. 저장소 관리에서 삭제할 수 있어요`)
-				: ko(`Drag ${label} into the scene`, `${label}을(를) 씬에 드래그하세요`)}
-			{...(failed ? {} : grabProps(onAssetGrab, { kind: "mesh", assetId: id, label }))}
-		>
-			{failed ? (
-				<span className="asset-card-thumb asset-card-thumb-skeleton" aria-hidden="true" />
-			) : (
-				<MeshPreview />
-			)}
-			<span className="asset-card-label">{label}</span>
-			<span className="asset-card-kind">{failed ? ko("Unreadable", "읽을 수 없음") : ko("Model", "모델")}</span>
-		</button>
-	);
-}
 
 function StorageAssetRow({ id, onDelete, deleting, usageCount = 0, graphSignature }) {
 	const [thumb, setThumb] = useState(null);
@@ -349,106 +276,431 @@ function StorageManager({ unusedAssetIds, usedAssetIds, usageCounts, graphSignat
 	);
 }
 
+
+/** The Content grid's one tile grammar: a square thumbnail, an 11px name and
+ * a 10px type line. Click selects (amber ring), a left-button press starts the
+ * App-owned drag, double-click places the asset at the origin. */
+function ContentTile({ assetKey, label, type, title, preview, selected, onSelect, grab, onPlace, failed = false }) {
+	return (
+		<button
+			type="button"
+			className={"content-tile" + (failed ? " is-failed" : "")}
+			data-testid="content-asset"
+			data-asset-key={assetKey}
+			aria-pressed={selected}
+			title={title}
+			{...(grab ?? {})}
+			onClick={() => onSelect(assetKey)}
+			onDoubleClick={onPlace ? () => onPlace() : undefined}
+		>
+			<span className="content-tile-thumb">{preview}</span>
+			<span className="content-tile-name">{label}</span>
+			<span className="content-tile-type">{type}</span>
+		</button>
+	);
+}
+
+function useThumb(id) {
+	// null = decoding (skeleton), undefined = record gone, object = ready.
+	const [thumb, setThumb] = useState(null);
+	useEffect(() => {
+		let alive = true;
+		loadThumb(id).then((result) => {
+			if (alive) setThumb(result ?? undefined);
+		});
+		return () => {
+			alive = false;
+		};
+	}, [id]);
+	return thumb;
+}
+
+/** One imported picture. The tile renders immediately as a skeleton and the
+ * thumbnail lands when the decode does; the grid never waits on a decode. */
+function ImageAssetTile({ id, onAssetGrab, onAssetPlace, selectedKey, onSelect, query }) {
+	const thumb = useThumb(id);
+	// undefined = another tab swept the record: show nothing. null = the bytes
+	// did not decode: the tile MUST stay visible so storage can delete it.
+	if (thumb === undefined) return null;
+	const label = thumb?.name?.replace(/\.[^.]+$/, "") || ko("Image", "이미지");
+	if (!matchesQuery(label, query)) return null;
+	const failed = thumb === null;
+	const payload = { kind: "image", assetId: id, label, aspect: thumb?.aspect ?? 1, thumb: thumb?.url ?? null };
+	const key = `image:${id}`;
+	return (
+		<ContentTile
+			assetKey={key}
+			label={label}
+			type={failed ? ko("Unreadable", "읽을 수 없음") : ko("Image", "이미지")}
+			failed={failed}
+			title={failed
+				? ko(`${label} — could not decode; delete it from Manage storage`, `${label} — 불러오지 못했어요. 저장소 관리에서 삭제할 수 있어요`)
+				: ko(`Drag ${label} into the scene, or double-click to place it at the origin`, `${label}을(를) 씬에 드래그하거나 더블클릭해 원점에 놓으세요`)}
+			preview={thumb
+				? <img className="content-tile-img" src={thumb.url} alt="" draggable={false} />
+				: <span className="content-tile-skeleton" aria-hidden="true" />}
+			selected={selectedKey === key}
+			onSelect={onSelect}
+			grab={failed ? null : grabProps(onAssetGrab, payload)}
+			onPlace={failed ? null : () => onAssetPlace?.(payload)}
+		/>
+	);
+}
+
+function MeshAssetTile({ id, onAssetGrab, onAssetPlace, selectedKey, onSelect, query }) {
+	const thumb = useThumb(id);
+	if (thumb === undefined) return null;
+	const label = thumb?.name?.replace(/\.[^.]+$/, "") || ko("Model", "모델");
+	if (!matchesQuery(label, query)) return null;
+	const failed = thumb === null;
+	const payload = { kind: "mesh", assetId: id, label };
+	const key = `mesh:${id}`;
+	return (
+		<ContentTile
+			assetKey={key}
+			label={label}
+			type={failed ? ko("Unreadable", "읽을 수 없음") : ko("Model", "모델")}
+			failed={failed}
+			title={failed
+				? ko(`${label} — could not read; delete it from Manage storage`, `${label} — 불러오지 못했어요. 저장소 관리에서 삭제할 수 있어요`)
+				: ko(`Drag ${label} into the scene, or double-click to place it at the origin`, `${label}을(를) 씬에 드래그하거나 더블클릭해 원점에 놓으세요`)}
+			preview={failed ? <span className="content-tile-skeleton" aria-hidden="true" /> : <MeshPreview />}
+			selected={selectedKey === key}
+			onSelect={onSelect}
+			grab={failed ? null : grabProps(onAssetGrab, payload)}
+			onPlace={failed ? null : () => onAssetPlace?.(payload)}
+		/>
+	);
+}
+
+function CameraPreview() {
+	return (
+		<svg className="asset-card-preview content-glyph is-camera" viewBox="0 0 48 48" aria-hidden="true">
+			<rect x="7" y="16" width="24" height="18" rx="3" />
+			<path d="m31 22 10-5v16l-10-5Z" />
+			<circle cx="14" cy="11" r="4" />
+			<circle cx="24" cy="11" r="4" />
+		</svg>
+	);
+}
+
+function MotionPreview() {
+	return (
+		<svg className="asset-card-preview content-glyph is-motion" viewBox="0 0 48 48" aria-hidden="true">
+			<path d="M6 32c6 0 7-14 13-14s7 14 13 14 6-10 10-10" />
+			<circle cx="6" cy="32" r="2.5" />
+			<circle cx="42" cy="22" r="2.5" />
+		</svg>
+	);
+}
+
+function matchesQuery(label, query) {
+	return !query || String(label).toLowerCase().includes(query);
+}
+
+/** Folder ids in display order. Basic Shapes and Sets split the object
+ * catalogue by its own groups; Props holds what the user imported. */
+const FOLDERS = [
+	{ id: "basic", label: () => ko("Basic Shapes", "기본 도형") },
+	{ id: "characters", label: () => ko("Characters", "인물") },
+	{ id: "sets", label: () => ko("Sets", "세트") },
+	{ id: "props", label: () => ko("Props", "소품") },
+	{ id: "cameras", label: () => ko("Cameras", "카메라") },
+	{ id: "motions", label: () => ko("Motions", "모션") },
+	{ id: "poses", label: () => ko("Poses", "포즈") },
+];
+
+function catalogueTile(entry, props) {
+	const label = displayObjectLabel(entry.label);
+	const key = `object:${entry.kind}`;
+	const payload = { kind: "object", objectKind: entry.kind, label, color: entry.color };
+	return (
+		<ContentTile
+			key={key}
+			assetKey={key}
+			label={label}
+			type={entry.group === "Primitives" ? ko("Shape", "도형") : ko("Set piece", "세트 소품")}
+			title={ko(`Drag ${entry.label} into the scene, or double-click to place it at the origin`, `${label}을(를) 씬에 드래그하거나 더블클릭해 원점에 놓으세요`)}
+			preview={<ObjectPreview kind={entry.kind} color={entry.color} />}
+			selected={props.selectedKey === key}
+			onSelect={props.onSelect}
+			grab={grabProps(props.onAssetGrab, payload)}
+			onPlace={() => props.onAssetPlace?.(payload)}
+		/>
+	);
+}
+
+function EmptyNote({ children }) {
+	return <p className="content-empty">{children}</p>;
+}
+
+function FolderGrid({ folder, query, ...props }) {
+	const { imageAssetIds, meshAssetIds, shots = [], takeVersions = [], poses = [], onShotOpen, onTakeOpen, selectedKey, onSelect } = props;
+	let tiles = [];
+	let empty = null;
+	if (folder === "basic" || folder === "sets") {
+		const group = folder === "basic" ? "Primitives" : "Set pieces";
+		tiles = OBJECT_LIBRARY
+			.filter((entry) => entry.group === group && matchesQuery(displayObjectLabel(entry.label), query))
+			.map((entry) => catalogueTile(entry, props));
+	} else if (folder === "characters") {
+		tiles = CHARACTER_ASSETS.filter((asset) => matchesQuery(asset.label, query)).map((asset) => {
+			const key = `character:${asset.id}`;
+			const payload = { kind: "character", id: asset.id, label: asset.label };
+			return (
+				<ContentTile
+					key={key}
+					assetKey={key}
+					label={asset.label}
+					type={ko("Character", "인물")}
+					title={ko(`Drag ${asset.label} into the scene, or double-click to place it at the origin`, `${asset.label}을(를) 씬에 드래그하거나 더블클릭해 원점에 놓으세요`)}
+					preview={<CharacterPreview model={asset.id} />}
+					selected={selectedKey === key}
+					onSelect={onSelect}
+					grab={grabProps(props.onAssetGrab, payload)}
+					onPlace={() => props.onAssetPlace?.(payload)}
+				/>
+			);
+		});
+	} else if (folder === "props") {
+		if (imageAssetIds === null || meshAssetIds === null) {
+			tiles = [0, 1, 2].map((n) => (
+				<span className="content-tile is-loading" key={`loading-${n}`} aria-hidden="true">
+					<span className="content-tile-thumb"><span className="content-tile-skeleton" /></span>
+				</span>
+			));
+		} else {
+			tiles = [
+				...imageAssetIds.map((id) => <ImageAssetTile key={`image:${id}`} id={id} query={query} {...props} />),
+				...meshAssetIds.map((id) => <MeshAssetTile key={`mesh:${id}`} id={id} query={query} {...props} />),
+			];
+			if (!tiles.length) empty = ko(
+				"No imported props yet. Drop or paste a picture, or drop a .glb, .obj or .fbx into the studio.",
+				"아직 가져온 소품이 없어요. 이미지를 드래그하거나 붙여넣고, .glb·.obj·.fbx 파일을 스튜디오에 끌어다 놓으세요.",
+			);
+		}
+	} else if (folder === "cameras") {
+		tiles = shots.filter((shot) => matchesQuery(shot.name ?? shot.id, query)).map((shot) => {
+			const key = `shot:${shot.id}`;
+			const label = shot.name || shot.id;
+			return (
+				<ContentTile
+					key={key}
+					assetKey={key}
+					label={label}
+					type={ko("Camera", "카메라")}
+					title={ko(`${label} — double-click to open it in Camera mode`, `${label} — 더블클릭하면 카메라 모드에서 엽니다`)}
+					preview={<CameraPreview />}
+					selected={selectedKey === key}
+					onSelect={onSelect}
+					onPlace={onShotOpen ? () => onShotOpen(shot.id) : null}
+				/>
+			);
+		});
+		if (!shots.length) empty = ko("No shot cameras yet. Use + Add › Camera in the viewport.", "아직 샷 카메라가 없어요. 뷰포트의 + Add › 카메라를 사용하세요.");
+	} else if (folder === "motions") {
+		tiles = takeVersions.map((entry, index) => ({ entry, index, label: `v${index + 1}${entry.label ? ` · ${entry.label}` : ""}` }))
+			.filter(({ label }) => matchesQuery(label, query))
+			.map(({ entry, index, label }) => {
+				const key = `take:${index}`;
+				return (
+					<ContentTile
+						key={key}
+						assetKey={key}
+						label={label}
+						type={ko("Motion", "모션")}
+						title={ko(`${label} — double-click to load this take`, `${label} — 더블클릭하면 이 테이크를 불러옵니다`)}
+						preview={<MotionPreview />}
+						selected={selectedKey === key}
+						onSelect={onSelect}
+						onPlace={onTakeOpen ? () => onTakeOpen(entry) : null}
+					/>
+				);
+			});
+		if (!takeVersions.length) empty = ko("No takes for this character yet. Generate Motion creates one.", "이 인물의 테이크가 아직 없어요. Generate Motion으로 만들 수 있어요.");
+	} else if (folder === "poses") {
+		tiles = poses.map((pose, index) => ({ pose, index, label: pose?.name || pose?.label || ko(`Pose ${index + 1}`, `포즈 ${index + 1}`) }))
+			.filter(({ label }) => matchesQuery(label, query))
+			.map(({ pose, index, label }) => {
+				const key = `pose:${pose?.id ?? index}`;
+				return (
+					<ContentTile
+						key={key}
+						assetKey={key}
+						label={label}
+						type={ko("Pose", "포즈")}
+						title={label}
+						preview={<CharacterPreview model="y-bot-tpose" />}
+						selected={selectedKey === key}
+						onSelect={onSelect}
+					/>
+				);
+			});
+		if (!poses.length) empty = ko("No saved poses yet. Save one from the pose studio.", "저장된 포즈가 아직 없어요. 포즈 스튜디오에서 저장하세요.");
+	}
+	if (empty) return <EmptyNote>{empty}</EmptyNote>;
+	if (query && folder !== "props" && !tiles.length) return <EmptyNote>{ko("Nothing matches this search.", "검색 결과가 없어요.")}</EmptyNote>;
+	return <div className="content-grid" role="list">{tiles}</div>;
+}
+
+const LOG_KIND_LABEL = {
+	toast: () => ko("Note", "알림"),
+	generation: () => ko("Generate", "생성"),
+	export: () => ko("Export", "내보내기"),
+	info: () => ko("Info", "정보"),
+};
+
+function formatLogTime(at) {
+	const date = new Date(at);
+	return [date.getHours(), date.getMinutes(), date.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+/** The Log tab: every session event the log store collected, newest last,
+ * pinned to the bottom while new events arrive. */
+function LogView({ query }) {
+	const entries = useSyncExternalStore(logStore.subscribe, logStore.getEntries, logStore.getEntries);
+	const listRef = useRef(null);
+	const visible = query ? entries.filter((entry) => entry.text.toLowerCase().includes(query)) : entries;
+	useLayoutEffect(() => {
+		const list = listRef.current;
+		if (list) list.scrollTop = list.scrollHeight;
+	}, [visible.length, visible[visible.length - 1]?.text]);
+	if (!entries.length) return <EmptyNote>{ko("No events yet this session. Notices, generation jobs and exports appear here.", "이번 세션의 기록이 아직 없어요. 알림, 생성 작업, 내보내기가 여기에 표시됩니다.")}</EmptyNote>;
+	if (!visible.length) return <EmptyNote>{ko("Nothing matches this search.", "검색 결과가 없어요.")}</EmptyNote>;
+	return (
+		<ol className="content-log" ref={listRef} data-testid="content-log" aria-live="polite">
+			{visible.map((entry) => (
+				<li className="content-log-row" key={entry.id} data-kind={entry.kind} data-testid="content-log-entry">
+					<time className="content-log-time" dateTime={new Date(entry.at).toISOString()}>{formatLogTime(entry.at)}</time>
+					<span className="content-log-kind">{(LOG_KIND_LABEL[entry.kind] ?? LOG_KIND_LABEL.info)()}</span>
+					<span className="content-log-text" title={entry.text}>{entry.text}</span>
+				</li>
+			))}
+		</ol>
+	);
+}
+
+function Chevron({ open }) {
+	return (
+		<svg className="content-chevron" viewBox="0 0 12 12" aria-hidden="true" data-open={open || undefined}>
+			<path d="m4 2.5 3.5 3.5L4 9.5" />
+		</svg>
+	);
+}
+
 /**
- * Bottom-window asset shelf: everything placeable, one grid — the cast, the
- * object catalogue and the user's imported pictures, each under its own
- * heading. The drag itself is owned by App (ghost overlay + ground raycast on
- * drop); the pane only reports the grab with a discriminated payload.
+ * The bottom dock's Content | Log pane (v2 2a, G10/G11).
+ *
+ * Content lists everything placeable under seven folders; the drag itself is
+ * owned by App (ghost overlay + ground raycast on drop), the pane only reports
+ * the grab with a discriminated payload, and double-click hands the same
+ * payload to `onAssetPlace` for an origin placement.
  *
  * `imageAssetIds` / `meshAssetIds` are null while App's asset scan is in
- * flight, then the SOURCE ids (see asset-shelf.js) — derived mattes and cut
- * renders never reach this component. Mesh ids are the imported GLBs.
+ * flight, then the SOURCE ids (see asset-shelf.js). `onShelfVisibleChange`
+ * tells App when the imported-asset folder is on screen so it scans only then.
  */
-export default function AssetPane({ onAssetGrab, imageAssetIds, meshAssetIds = null, manageStorage, onManageStorageToggle, unusedAssetIds, usedAssetIds, usageCounts, graphSignature, trashCount, onDeleteUnusedAsset, onUndoDelete, deletingAssetId, resourceManifest }) {
+export default function AssetPane({
+	onAssetGrab, onAssetPlace, imageAssetIds, meshAssetIds = null, manageStorage, onManageStorageToggle,
+	unusedAssetIds, usedAssetIds, usageCounts, graphSignature, trashCount, onDeleteUnusedAsset, onUndoDelete,
+	deletingAssetId, resourceManifest, shots, takeVersions, poses, onShotOpen, onTakeOpen,
+	collapsed, onCollapsedChange, onShelfVisibleChange,
+}) {
+	const [tab, setTab] = useState("content");
+	const [folder, setFolder] = useState("basic");
+	const [search, setSearch] = useState("");
+	const [selectedKey, setSelectedKey] = useState(null);
+	const query = search.trim().toLowerCase();
+	const shelfVisible = !collapsed && tab === "content" && (folder === "props" || manageStorage);
+	useEffect(() => {
+		onShelfVisibleChange?.(shelfVisible);
+	}, [shelfVisible, onShelfVisibleChange]);
+	const folderLabel = manageStorage ? ko("Manage storage", "저장 공간 관리") : FOLDERS.find((entry) => entry.id === folder).label();
+	const openFolder = (id) => {
+		setFolder(id);
+		setSelectedKey(null);
+		if (manageStorage) onManageStorageToggle();
+	};
 	return (
-		<div className="assets-shelf">
-			{resourceManifest ? <ResourceStatus manifest={resourceManifest} compact /> : null}
-			<div className="assets-shelf-toolbar">
-				<button type="button" className="assets-manage-toggle" aria-pressed={manageStorage} onClick={onManageStorageToggle}>
-					{manageStorage ? ko("Back to assets", "에셋으로 돌아가기") : ko("Manage storage", "저장 공간 관리")}
+		<section className="content-browser" data-testid="content-browser" data-collapsed={collapsed || undefined} aria-label={ko("Content", "콘텐츠")}>
+			<header className="content-head">
+				<button
+					type="button"
+					className="content-collapse"
+					data-testid="content-collapse"
+					aria-expanded={!collapsed}
+					title={collapsed ? ko("Expand Content", "콘텐츠 펼치기") : ko("Collapse Content — the Sequencer takes the full width", "콘텐츠 접기 — 시퀀서가 전체 너비를 씁니다")}
+					onClick={() => onCollapsedChange(!collapsed)}
+				>
+					<Chevron open={!collapsed} />
 				</button>
-			</div>
-			{manageStorage ? (
-				<StorageManager unusedAssetIds={unusedAssetIds} usedAssetIds={usedAssetIds} usageCounts={usageCounts} graphSignature={graphSignature} trashCount={trashCount} onDelete={onDeleteUnusedAsset} onUndo={onUndoDelete} deletingAssetId={deletingAssetId} />
-			) : <>
-				<section className="assets-section">
-					<h3 className="assets-section-title">{ko("Characters", "인물")}</h3>
-					<div className="assets-grid">
-						{CHARACTER_ASSETS.map((asset) => (
+				<div className="content-tabs" role="tablist" aria-label={ko("Content and Log", "콘텐츠와 로그")}>
+					<button type="button" role="tab" data-testid="content-tab-content" aria-selected={tab === "content"} onClick={() => { setTab("content"); if (collapsed) onCollapsedChange(false); }}>{ko("Content", "콘텐츠")}</button>
+					<button type="button" role="tab" data-testid="content-tab-log" aria-selected={tab === "log"} onClick={() => { setTab("log"); if (collapsed) onCollapsedChange(false); }}>{ko("Log", "로그")}</button>
+				</div>
+				<nav className="content-breadcrumb" aria-label={ko("Location", "위치")}>
+					{tab === "content" ? <>
+						<span>{ko("Content", "콘텐츠")}</span><span aria-hidden="true">/</span><span className="is-leaf">{folderLabel}</span>
+					</> : <>
+						<span>{ko("Log", "로그")}</span><span aria-hidden="true">/</span><span className="is-leaf">{ko("This session", "이번 세션")}</span>
+					</>}
+				</nav>
+				<input
+					type="search"
+					className="content-search"
+					data-testid="content-search"
+					value={search}
+					placeholder={ko("Search", "검색")}
+					aria-label={tab === "content" ? ko(`Search ${folderLabel}`, `${folderLabel} 검색`) : ko("Search the log", "로그 검색")}
+					onChange={(event) => setSearch(event.target.value)}
+				/>
+			</header>
+			{collapsed ? null : tab === "log" ? (
+				<div className="content-body is-log"><LogView query={query} /></div>
+			) : (
+				<div className="content-body">
+					<nav className="content-folders" aria-label={ko("Folders", "폴더")}>
+						{FOLDERS.map((entry) => (
 							<button
 								type="button"
-								className="asset-card"
-								key={asset.id}
-								title={ko(`Drag ${asset.label} into the scene`, `${asset.label}을(를) 씬에 드래그하세요`)}
-								{...grabProps(onAssetGrab, { kind: "character", id: asset.id, label: asset.label })}
+								key={entry.id}
+								className="content-folder"
+								data-testid={`content-folder-${entry.id}`}
+								aria-current={!manageStorage && folder === entry.id ? "true" : undefined}
+								onClick={() => openFolder(entry.id)}
 							>
-								<CharacterPreview model={asset.id} />
-								<span className="asset-card-label">{asset.label}</span>
-								<span className="asset-card-kind">{ko("Character", "인물")}</span>
+								{entry.label()}
 							</button>
 						))}
+						<button type="button" className="content-folder is-utility" aria-pressed={manageStorage} onClick={onManageStorageToggle}>
+							{ko("Manage storage", "저장 공간 관리")}
+						</button>
+					</nav>
+					<div className="content-main">
+						{/* Only a project that carries resources has totals worth a line. */}
+						{resourceManifest?.items?.length ? <ResourceStatus manifest={resourceManifest} compact /> : null}
+						{manageStorage ? (
+							<StorageManager unusedAssetIds={unusedAssetIds} usedAssetIds={usedAssetIds} usageCounts={usageCounts} graphSignature={graphSignature} trashCount={trashCount} onDelete={onDeleteUnusedAsset} onUndo={onUndoDelete} deletingAssetId={deletingAssetId} />
+						) : (
+							<FolderGrid
+								folder={folder}
+								query={query}
+								onAssetGrab={onAssetGrab}
+								onAssetPlace={onAssetPlace}
+								imageAssetIds={imageAssetIds}
+								meshAssetIds={meshAssetIds}
+								shots={shots}
+								takeVersions={takeVersions}
+								poses={poses}
+								onShotOpen={onShotOpen}
+								onTakeOpen={onTakeOpen}
+								selectedKey={selectedKey}
+								onSelect={setSelectedKey}
+							/>
+						)}
 					</div>
-				</section>
-				<section className="assets-section">
-					<h3 className="assets-section-title">{ko("Objects", "오브젝트")}</h3>
-					<div className="assets-grid">
-						{OBJECT_LIBRARY.map((entry) => (
-							<button
-								type="button"
-								className="asset-card"
-								key={entry.kind}
-								title={ko(
-									`Drag ${entry.label} into the scene`,
-									`${displayObjectLabel(entry.label)}을(를) 씬에 드래그하세요`,
-								)}
-								{...grabProps(onAssetGrab, { kind: "object", objectKind: entry.kind, label: displayObjectLabel(entry.label), color: entry.color })}
-							>
-								<ObjectPreview kind={entry.kind} color={entry.color} />
-								<span className="asset-card-label">{displayObjectLabel(entry.label)}</span>
-								<span className="asset-card-kind">{displayObjectGroupName(entry.group)}</span>
-							</button>
-						))}
-					</div>
-				</section>
-				<section className="assets-section">
-					<h3 className="assets-section-title">{ko("My images", "내 이미지")}</h3>
-					{imageAssetIds === null ? (
-						<div className="assets-grid" aria-busy="true">
-							{[0, 1, 2].map((n) => <span className="asset-card asset-card-skeleton" key={n} aria-hidden="true" />)}
-						</div>
-					) : imageAssetIds.length === 0 ? (
-						<p className="assets-empty">
-							{ko(
-								"No imported images yet. Use \u201cImport image as cutout\u201d in the Props inspector, or drop or paste a picture into the studio.",
-								"아직 가져온 이미지가 없어요. 소품 인스펙터의 \u201c이미지를 컷아웃으로 가져오기\u201d를 사용하거나, 이미지를 스튜디오에 드래그하거나 붙여넣으세요.",
-							)}
-						</p>
-					) : (
-						<div className="assets-grid">
-							{imageAssetIds.map((id) => <ImageAssetCard key={id} id={id} onAssetGrab={onAssetGrab} />)}
-						</div>
-					)}
-				</section>
-				<section className="assets-section">
-					<h3 className="assets-section-title">{ko("My models", "내 모델")}</h3>
-					{meshAssetIds === null ? (
-						<div className="assets-grid" aria-busy="true">
-							{[0, 1, 2].map((n) => <span className="asset-card asset-card-skeleton" key={n} aria-hidden="true" />)}
-						</div>
-					) : meshAssetIds.length === 0 ? (
-						<p className="assets-empty">
-							{ko(
-								"No imported models yet. Use \u201cImport 3D object\u201d in the Props inspector, or drop a .glb, .obj or .fbx into the studio.",
-								"아직 가져온 모델이 없어요. 소품 인스펙터의 \u201c3D 오브젝트 가져오기\u201d를 사용하거나, .glb, .obj 또는 .fbx 파일을 스튜디오에 끌어다 놓으세요.",
-							)}
-						</p>
-					) : (
-						<div className="assets-grid">
-							{meshAssetIds.map((id) => <MeshAssetCard key={id} id={id} onAssetGrab={onAssetGrab} />)}
-						</div>
-					)}
-				</section>
-			</>}
-		</div>
+				</div>
+			)}
+		</section>
 	);
 }
