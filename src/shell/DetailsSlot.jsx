@@ -59,11 +59,11 @@ export default function DetailsSlot() {
 		setStudioAgentMode, AgentPanel, setAgentCollapsed, scenes, activeSceneId,
 		buildStudioAgentContext, highlightAgentTargets, generateFalMotionFromUi, selectedSceneObject, rigSelection,
 		inspectorActionsOpen, setInspectorActionsOpen, runStudioAction, deleteSelectedSceneObject, inspectorHasContent,
-		keyLightSelected, keyLight, changeKeyLight, resetKeyLight, isCameraSelection,
-		shot, moveSequence, cameraKeys, activeShot, changeShotTargetModel,
-		isCharacterSelection, showB, characters, updateCharacterAt, openStudio,
-		posing, removeCharacter, setShowB, workflowMode, activeChar,
-		changeInspectorCharacter, activeCharIndex, falMotionModel, falMotionActions, setFalMotionStudioOpen,
+		keyLightSelected, keyLight, isCameraSelection,
+		shot, moveSequence, cameraKeys, activeShot,
+		isCharacterSelection, showB, characters, openStudio,
+		posing, workflowMode, activeChar,
+		activeCharIndex, falMotionModel, falMotionActions, setFalMotionStudioOpen,
 		selectablePoses, ikMode, ikApplyPoseAsKey, motion, setStudioPick,
 		appContext, removePose, setPhotoPoseError, photoPoseFileRef, photoPoseState,
 		photoPoseError, activeRig, saveCurrentPose, multiModelStatus, multiModelStage,
@@ -89,12 +89,12 @@ export default function DetailsSlot() {
 		rangePins, rangePinResiduals, rangePinSelection, rangePinPartPick, rangePinPreview,
 		sceneObjects, setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft,
 		deleteRangePin, hasEnvSheet, environment, style, environmentImage,
-		inspectorDrop, addSceneObject, cutoutInputRef, meshInputRef, importCutout,
-		importMesh, selectHierarchy, snapEnabled, setSnapEnabled, changeSceneObject,
-		attachTargetLabel, hierarchyReparent, store, beginSceneTransaction, endSceneTransaction,
+		inspectorDrop, cutoutInputRef, meshInputRef, importCutout,
+		importMesh, selectHierarchy, snapEnabled, setSnapEnabled,
+		attachTargetLabel, beginSceneTransaction, endSceneTransaction,
 		matteCanvasRef, matteStats, matteMode, setMatteMode, matteEditorRef,
 		matteTolerance, setMatteTolerance, matteBrush, setMatteBrush, matteShrink,
-		setMatteShrink, matteFeather, setMatteFeather, matteBusy, applyMatte,
+		setMatteShrink, matteFeather, setMatteFeather, matteBusy,
 		autoColor, recentObjectColors, rememberSceneObjectColor, objectColorDraft, setObjectColorDraft,
 		posePhotoFile, posingIndex, posingChar, charA, allPoses,
 		studioPick, posingClosing, closeStudio, castDomain, setToast,
@@ -179,23 +179,20 @@ export default function DetailsSlot() {
 
 			{/* Camera animation is authored against the same playhead as motion,
 			    so keep its controls beside the Motion tools as well as Shot setup. */}
-			<LightPanel keyLightSelected={keyLightSelected} keyLight={keyLight} changeKeyLight={changeKeyLight} resetKeyLight={resetKeyLight} />
+			<LightPanel keyLightSelected={keyLightSelected} keyLight={keyLight} />
 			{/* Lens, Recenter and Record used to live here as well as in the
 			    viewport camera bar and the topbar Export menu. One home each
 			    (#193, R1): framing is the bar's job, delivery is Export's, and
 			    selecting the camera now switches to Camera mode so the bar's
 			    controls are on screen when this panel opens. */}
-			<CameraPanel isCameraSelection={isCameraSelection} shot={shot} moveSequence={moveSequence} cameraKeys={cameraKeys} activeShot={activeShot} changeShotTargetModel={changeShotTargetModel} />
+			<CameraPanel isCameraSelection={isCameraSelection} shot={shot} moveSequence={moveSequence} cameraKeys={cameraKeys} activeShot={activeShot} />
 
 		<SubjectsPanel
 			isCharacterSelection={isCharacterSelection}
 			showB={showB}
 			characters={characters}
-			updateCharacterAt={updateCharacterAt}
 			openStudio={openStudio}
 			posing={posing}
-			removeCharacter={removeCharacter}
-			setShowB={setShowB}
 		/>
 
 		{/* Scene mode: the viewport gizmo and Move/Rotate/Scale are the primary
@@ -207,7 +204,6 @@ export default function DetailsSlot() {
 			workflowMode={workflowMode}
 			isCharacterSelection={isCharacterSelection}
 			activeChar={activeChar}
-			changeInspectorCharacter={changeInspectorCharacter}
 		/>
 
 		{/* Rig and Pose are chosen once when a character is cast and then left
@@ -216,8 +212,6 @@ export default function DetailsSlot() {
 		<RigPanel
 			isCharacterSelection={isCharacterSelection}
 			activeChar={activeChar}
-			updateCharacterAt={updateCharacterAt}
-			activeCharIndex={activeCharIndex}
 		/>
 
 		<PosePanel
@@ -231,7 +225,6 @@ export default function DetailsSlot() {
 			ikMode={ikMode}
 			ikApplyPoseAsKey={ikApplyPoseAsKey}
 			motion={motion}
-			updateCharacterAt={updateCharacterAt}
 			setStudioPick={setStudioPick}
 			setToast={appContext.notify}
 			removePose={removePose}
@@ -381,7 +374,6 @@ export default function DetailsSlot() {
 		<PropsPanel
 			selectedHierarchyId={selectedHierarchyId}
 			inspectorDrop={inspectorDrop}
-			addSceneObject={addSceneObject}
 			cutoutInputRef={cutoutInputRef}
 			meshInputRef={meshInputRef}
 			importCutout={importCutout}
@@ -394,10 +386,7 @@ export default function DetailsSlot() {
 			selectedSceneObject={selectedSceneObject}
 			snapEnabled={snapEnabled}
 			setSnapEnabled={setSnapEnabled}
-			changeSceneObject={changeSceneObject}
 			attachTargetLabel={attachTargetLabel}
-			hierarchyReparent={hierarchyReparent}
-			store={store}
 			sceneObjects={sceneObjects}
 			beginSceneTransaction={beginSceneTransaction}
 			endSceneTransaction={endSceneTransaction}
@@ -414,9 +403,7 @@ export default function DetailsSlot() {
 			setMatteShrink={setMatteShrink}
 			matteFeather={matteFeather}
 			setMatteFeather={setMatteFeather}
-			setToast={appContext.notify}
 			matteBusy={matteBusy}
-			applyMatte={applyMatte}
 			autoColor={autoColor}
 			recentObjectColors={recentObjectColors}
 			rememberSceneObjectColor={rememberSceneObjectColor}
