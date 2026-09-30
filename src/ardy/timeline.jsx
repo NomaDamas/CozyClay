@@ -1841,7 +1841,7 @@ export default function Timeline({
 								className={"tl-btn wp" + (waypointMode ? " on" : "")}
 								aria-pressed={waypointMode}
 								aria-label={ko("Root path mode", "루트 경로 모드")}
-								title={ko("Enable or disable 2D Root path constraints (P)", "2D 루트 경로 제약 켜기/끄기 (P)")}
+								title={ko("Enable or disable root path constraints (P)", "루트 경로 제약 켜기/끄기 (P)")}
 								onClick={() => handlers.current.onWaypointToggle?.()}
 							>
 								{isKo ? `웨이포인트 ${waypointMode ? "켜짐" : "꺼짐"}` : `Waypoint ${waypointMode ? "on" : "off"}`}

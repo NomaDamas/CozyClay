@@ -43,7 +43,7 @@ export function MotionSetup({ state, checking, onRetry }) {
 				"Motion generation is optional. Sample motion, camera editing and exports work without it. Your scene and prompt blocks stay here while you set it up.",
 				"모션 생성은 선택 사항이에요. 연결 없이도 샘플 모션, 카메라 편집, 내보내기를 쓸 수 있어요. 설정하는 동안 씬과 프롬프트 블록은 그대로 유지됩니다.",
 			)}</p>
-			<p>{ko("Use an existing Kimodo host, then restart your local launcher with:", "기존 Kimodo 호스트를 사용하려면 로컬 실행기에 다음 환경변수를 설정하세요:")}</p>
+			<p>{ko("Use an existing motion generation host, then restart your local launcher with:", "기존 모션 생성 호스트를 사용하려면 로컬 실행기에 다음 환경변수를 설정하세요:")}</p>
 			<code>{`CCLAY_KIMODO_HOST=user@your-gpu-box npx cozyclay --port ${port} --no-open`}</code>
 			<p>{localStudio ? ko(
 				"Keep this tab open. After restarting the bridge on the same port, retry the connection below.",
@@ -53,11 +53,11 @@ export function MotionSetup({ state, checking, onRetry }) {
 				"새 모션 생성은 로컬 Studio에서 실행해요. 여기서 프로젝트를 저장하고 로컬 Studio에서 그 파일을 열면 편집 내용을 이어갈 수 있어요.",
 			)}</p>
 			<p>{ko(
-				"Local MLX/cpp supports one unconstrained prompt. Sequencing, pinned poses, paths and preserve need the CUDA/SSH route. Line editing needs a configured ProjFlow route.",
-				"로컬 MLX/cpp는 제약 없는 단일 프롬프트를 지원해요. 블록 연결, 포즈 고정, 경로, 테이크 보존에는 CUDA/SSH가 필요하고, 라인 편집에는 ProjFlow 설정이 필요해요.",
+				"Local MLX/cpp supports one unconstrained prompt. Sequencing, pinned poses, paths and preserve need the CUDA/SSH route. Line editing needs a configured line-edit route.",
+				"로컬 MLX/cpp는 제약 없는 단일 프롬프트를 지원해요. 블록 연결, 포즈 고정, 경로, 테이크 보존에는 CUDA/SSH가 필요하고, 라인 편집에는 라인 편집 경로 설정이 필요해요.",
 			)}</p>
 			<a href="https://github.com/NomaDamas/CozyClay/blob/main/docs/kimodo-setup.md" target="_blank" rel="noreferrer">
-				{ko("Kimodo setup and route guide", "Kimodo 설정 및 경로 안내")}
+				{ko("Motion generation setup and route guide", "모션 생성 설정 및 경로 안내")}
 			</a>
 			<button type="button" className="btn" data-testid="motion-health-retry" disabled={checking} onClick={onRetry}>
 				{checking ? ko("Checking…", "확인 중…") : ko("Recheck connection", "연결 다시 확인")}

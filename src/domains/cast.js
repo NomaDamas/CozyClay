@@ -632,11 +632,11 @@ export function useCast(appContext) {
 		setWaypointMode(next);
 		if (!next) {
 			setPendingWaypointFrame(null);
-			appContext.notify(ko("2D Root path constraints off", "2D 루트 경로 제약 꺼짐"));
+			appContext.notify(ko("Root path constraints off", "루트 경로 제약 꺼짐"));
 			return;
 		}
 
-		appContext.notify(ko("2D Root path on — click the set floor in the Shot view to drop waypoints; Subject 1 is the frame 0 start", "2D 루트 경로 켜짐 — 샷 뷰의 세트 바닥을 클릭해 웨이포인트를 놓으세요. 인물 1이 0프레임 시작점입니다"));
+		appContext.notify(ko("Root path on — click the set floor in the Shot view to drop waypoints; Subject 1 is the frame 0 start", "루트 경로 켜짐 — 샷 뷰의 세트 바닥을 클릭해 웨이포인트를 놓으세요. 인물 1이 0프레임 시작점입니다"));
 	}
 
 	function openStudio(charId) {
