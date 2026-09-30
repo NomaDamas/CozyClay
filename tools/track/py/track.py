@@ -31,7 +31,7 @@ from rig import RigError, State, cskel27_fk, load_rig
 from scene import (SceneError, box_tensors, foot_points, load_scene,
                    penetration_stats, ray_occlusion, stance_hmm)
 
-SCHEDULE = (('root', 150, 1e-2, 10), ('pose', 300, 5e-3, 10), ('refine', 200, 2e-3, 30))
+SCHEDULE = (('root', 150, 1e-2, 10), ('pose', 300, 5e-3, 10), ('refine', 200, 1e-3, 30))
 MAX_RESERVED_MIB = 5632
 
 
@@ -190,13 +190,21 @@ def optimize(objective, state, nuisance, kp, masks, fixed, iterations, diagnosti
         chunks = windows(frames)
         total_steps = steps * len(chunks)
         print(f'[track] stage {stage} 0/{total_steps}', flush=True)
-        assigned_all, stance_all, _, _ = labels(objective, state, nuisance, kp, 0, frames)
+        assigned_all, stance_all, _, hidden = labels(objective, state, nuisance, kp, 0, frames)
+        articulation_all = None if stage == 'root' else objective.articulation_observation(
+            state, nuisance, assigned_all)
+        support_all = None
+        if stage != 'root' and 'contacts' in objective.components:
+            support_all = objective.support_observation(state, nuisance, assigned_all, stance_all, hidden)
+            diagnostics['stageLosses'][f'{stage}.supportFootFramesTotal'] = float(support_all[1].sum())
         for window_index, (start, end) in enumerate(chunks):
             local = State(*(getattr(state, name)[start:end].detach().clone().requires_grad_(True)
                             for name in ('transl', 'root6d', 'local6d')))
             local.local6d.requires_grad_(stage != 'root')
             objective.masks = masks.window(start, end, state.transl.device)
             assigned, stance = assigned_all[start:end], stance_all[start:end]
+            support = None if support_all is None else tuple(x[start:end] for x in support_all)
+            articulation = None if articulation_all is None else tuple(x[start:end] for x in articulation_all)
             params = [local.transl, local.root6d]
             if stage != 'root':
                 params.append(local.local6d)
@@ -205,7 +213,11 @@ def optimize(objective, state, nuisance, kp, masks, fixed, iterations, diagnosti
             optimizer = torch.optim.Adam(params, lr=lr)
             for iteration in range(steps):
                 optimizer.zero_grad(set_to_none=True)
-                loss, terms = objective(local, nuisance, start, end, assigned, stance, pen)
+                trust_weight = 0.0 if stage == 'root' else 0.1
+                if stage == 'refine':
+                    trust_weight *= 1 - iteration / max(1, steps - 1)
+                loss, terms = objective(local, nuisance, start, end, assigned, stance, pen,
+                                        trust_weight, support=support, articulation=articulation)
                 if not torch.isfinite(loss):
                     raise TrackError('non-finite', 'objective is not finite')
                 loss.backward()
@@ -332,7 +344,7 @@ def run(args):
         masks = MaskEvidence(prob, camera['width'], camera['height'])
         endpoints = {t: tuple(torch.as_tensor(p, device=device) for p in pose) for t, pose in endpoints.items()}
         nuisance = torch.zeros(4, device=device, requires_grad=not fixed)
-        objective = ClipObjective(rig, bone_scale, camera, boxes, None, kp, fps, delta, endpoints,
+        objective = ClipObjective(rig, bone_scale, camera, boxes, None, kp, fps, delta, endpoints, state,
                                   components=ABLATIONS[args.track_ablate])
         optimize(objective, state, nuisance, kp, masks, fixed, args.iterations, diagnostics, started)
         posed = finish(objective, state, nuisance, kp, masks, diagnostics)

@@ -19,13 +19,29 @@ already in the initializer's coordinate frame. Defaults are the measured Gate-0
 (scale 1, yaw/pitch/focal deltas zero). Otherwise their bounds and Gaussian
 priors are those in todo 10. No root anchoring is added or removed.
 
-The continuous schedule is exactly 150 root-only Adam steps at 0.01, 300 full
-steps at 0.005, then 200 full steps at 0.002 with triple penetration weight.
-The implemented objective weights silhouette at 6.0 relative to keypoints: with
-pelvis observations intentionally absent, silhouette DT/coverage is the primary
-root-depth cue and the lower historical 0.5 weight leaves the fit in a depth
-local minimum. The stronger weight also keeps the root-depth solution inside the
-20 mm gate across the checked fixture seeds and the long-clip window path.
+Gate-2 round 1 keeps 150 root-only Adam steps at 0.01 and 300 full steps at
+0.005, then uses 200 full steps at 0.001 with triple penetration weight.
+Silhouette weight remains 6.0 and keypoint weight 1. Reducing pose/refine
+silhouette to 1.25 failed seed-102 synthetic acceptance even without the added
+temporal term (21.65 mm root error), while the controlled 6.0 candidate
+recovered 17.40 mm. The round therefore retains depth support and uses the
+bounded initializer prior below to discourage unsupported articulation.
+
+A bounded G5 trust-region prior is off during root initialization, weighted
+0.1 during pose, and linearly annealed from 0.1 to zero during refine. The
+squared root-path deviation is centred within each optimization window (free
+rigid placement correction), normalized by 25 cm, and bounded as d2/(1+d2).
+Rotation uses squared chord distance normalized to a 30-degree rotation, with
+the same bound. Root-path weight is 2; root-rotation weight is 2; shoulder,
+upper-arm, forearm and hand rotation weights are 4; other joints are 1.
+Only the supplied initializer is used, never truth or a learned prior.
+
+The existing 0.05 whole-body acceleration term remains unchanged. An added
+0.075 proximal acceleration term was rejected after a controlled synthetic
+comparison isolated a depth bias: removing only that term reduced seed-102
+root error from 21.34 to 17.40 mm; removing trust or restoring the old learning
+rate did not fix it. Interim silhouette increases and translation-only polish
+were also discarded. No acceptance threshold was changed.
 Assignments and stance are re-estimated at block boundaries. Clips through 240
 frames are whole batches; longer clips use 120-frame windows with 16-frame
 linear overlaps. Each coverage query participates; 64-query nearest-neighbour

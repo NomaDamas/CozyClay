@@ -18,7 +18,7 @@ import torch
 from scipy.spatial.transform import Rotation
 
 from lr_viterbi import state_permutation
-from objective import COCO_JOINTS, bilinear_dt, camera_tensors, project
+from objective import COCO_JOINTS, bilinear_dt, camera_tensors, project, trust_region_loss
 from rig import State, cskel27_fk, load_rig, studio_skin
 from track import windows
 
@@ -289,6 +289,32 @@ def test_no_evidence_and_malformed_input(small_case, tmp_path):
     diag, _, _ = invoke(case, tmp_path / 'bad-shape', expected_code=2, timeout=30)
     assert diag['failure'] == 'bad-input'
     MEASUREMENTS['failureCodes'] = {'no-evidence': 3, 'bad-input': 2}
+
+
+def test_trust_region_invariance_weighting_and_gradients():
+    initial = State.identity(5)
+    rotations = initial.local_rot_mats()
+    assert trust_region_loss(initial.transl, rotations, initial.transl, rotations).item() == 0
+    # Placement correction is free; a bent mid-clip trajectory is not.
+    shifted = initial.transl + torch.tensor([0.5, 0.0, -0.75])
+    assert trust_region_loss(shifted, rotations, initial.transl, rotations).item() == 0
+    shifted[2, 0] += 0.25
+    shifted.requires_grad_()
+    path = trust_region_loss(shifted, rotations, initial.transl, rotations)
+    assert 0 < path.item() < 2
+    path.backward()
+    assert torch.isfinite(shifted.grad).all() and shifted.grad[2, 0] > 0
+    turn = torch.tensor(Rotation.from_rotvec([0, 0.5, 0]).as_matrix(), dtype=torch.float32)
+    arm, leg = rotations.clone(), rotations.clone()
+    arm[:, 9], leg[:, 19] = turn, turn
+    arm.requires_grad_()
+    arm_loss = trust_region_loss(initial.transl, arm, initial.transl, rotations)
+    leg_loss = trust_region_loss(initial.transl, leg, initial.transl, rotations)
+    assert arm_loss.item() == pytest.approx(4 * leg_loss.item())
+    arm_loss.backward()
+    assert torch.isfinite(arm.grad).all() and arm.grad.abs().max() > 0
+    far = initial.transl.clone(); far[2] = 1e6
+    assert trust_region_loss(far, arm.detach(), initial.transl, rotations).item() < 4
 
 
 def test_windows_and_dt_gradients():
