@@ -31,12 +31,14 @@ export default function RigControlPanel({
   const physics = physicsPreview && !preview;
   if (preview) {
    shell?.setStatusText?.(ko("Platform fit preview — review before applying", "발판 맞춤 미리보기 — 적용 전에 확인하세요"));
-   shell?.setPreviewRanges?.((platformFitLast.steps ?? []).map((step) => ({ start: step.start, end: step.end, kind: "body" })));
+   const next = (platformFitLast.steps ?? []).map((step) => ({ start: step.start, end: step.end, kind: "body" }));
+   shell?.setPreviewRanges?.((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
   } else if (physics) {
    shell?.setStatusText?.(ko("Physics cleanup preview — review before applying", "물리 정리 미리보기 — 적용 전에 확인하세요"));
-   shell?.setPreviewRanges?.((physicsPreview.changedFrames ?? []).map((frame) => ({ start: frame, end: frame, kind: "body" })));
+   const next = (physicsPreview.changedFrames ?? []).map((frame) => ({ start: frame, end: frame, kind: "body" }));
+   shell?.setPreviewRanges?.((current) => JSON.stringify(current) === JSON.stringify(next) ? current : next);
   } else if (!platformFitRunning) {
-   shell?.setStatusText?.(""); shell?.setPreviewRanges?.([]);
+   shell?.setStatusText?.(""); shell?.setPreviewRanges?.((current) => current.length ? [] : current);
   }
  }, [platformFitLast, platformFitApplied, platformFitRunning, physicsPreview, shell]);
  const activeTool = ikEditTool === "trail" ? "Path fix" : ikEditTool === "pin" ? "Pin" : "IK";
