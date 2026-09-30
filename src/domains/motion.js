@@ -1612,8 +1612,8 @@ export function useMotion(appContext) {
 			}
 			setIkMode(true);
 			appContext.notify(motion
-				? ko("IK mode — correct the motion; drag end keys the fix at this frame", "IK 모드 — 모션을 보정합니다. 드래그를 끝내면 이 프레임에 보정 키가 찍혀요")
-				: ko("IK mode — drag handles in the main view; the shot camera stays frozen in the inset", "IK 모드 — 메인 뷰에서 핸들을 드래그하세요. 샷 카메라는 인셋에 고정됩니다"));
+				? ko("Pose mode — correct the motion; drag end keys the fix at this frame", "포즈 모드 — 모션을 보정합니다. 드래그를 끝내면 이 프레임에 보정 키가 찍혀요")
+				: ko("Pose mode — drag handles in the main view; the shot camera stays frozen in the inset", "포즈 모드 — 메인 뷰에서 핸들을 드래그하세요. 샷 카메라는 인셋에 고정됩니다"));
 			return;
 		}
 		// Exit: the keyed pose stays — the evaluate effect re-applies the
@@ -1621,7 +1621,7 @@ export function useMotion(appContext) {
 		// the user authored is lost by toggling. Untracked/unkeyed parts keep
 		// their current (FK) pose.
 		leaveIkMode();
-		appContext.notify(ko("IK mode off — keyed poses keep playing", "IK 모드 꺼짐 — 키로 찍은 포즈는 계속 재생됩니다"));
+		appContext.notify(ko("Pose mode off — keyed poses keep playing", "포즈 모드 꺼짐 — 키로 찍은 포즈는 계속 재생됩니다"));
 	}
 
 	// Drag solve, routed by handle kind: chain targets solve the two-bone
@@ -2072,7 +2072,7 @@ export function useMotion(appContext) {
 		a.click();
 		a.remove();
 		URL.revokeObjectURL(url);
-		appContext.notify(ko("ARDY pose exported", "ARDY 포즈 내보내기 완료"));
+		appContext.notify(ko("Pose exported", "포즈 내보내기 완료"));
 	}
 
 	function recheckMotionHealth() {
@@ -2482,7 +2482,7 @@ export function useMotion(appContext) {
 					)
 				)
 			) {
-				throw new Error(ko("ARDY returned motion without verified authored IK keys", "ARDY가 검증된 수동 IK 키 없이 모션을 반환했어요"));
+				throw new Error(ko("The generated motion came back without verified authored pose keys", "생성된 모션에 검증된 수동 포즈 키가 없어요"));
 			}
 			job.commandContext?.check();
 			if (!done.motionUrl) throw generationRefusal('TARGET_NOT_READY', 'The generator finished without a motion artifact.');
@@ -2506,7 +2506,7 @@ export function useMotion(appContext) {
 				job.ikState.plants.clear();
 				setIkTick((value) => value + 1);
 			}
-			appContext.notify((isKo, ko) => isKo ? `인물 ${job.charIndex + 1} ARDY 모션 생성됨` : `ARDY motion generated for Subject ${job.charIndex + 1}`);
+			appContext.notify((isKo, ko) => isKo ? `인물 ${job.charIndex + 1} 모션 생성됨` : `Motion generated for Subject ${job.charIndex + 1}`);
 		} catch (err) {
 			// Wave-2 gate, second line of defence. The capability preflight
 			// normally stops a line edit before it is sent, but a bridge that
@@ -2744,7 +2744,7 @@ export function useMotion(appContext) {
 		return sceneDisabledReason()
 			|| (ardyPrompt.trim() || appContext.shared.promptClips.some((clip) => clip.text.trim())
 				? ""
-				: ko("Describe the motion first", "먼저 어떤 동작인지 적어 주세요"));
+				: ko("Describe the motion first — press 4 and add a prompt with + on the Prompt lane", "먼저 어떤 동작인지 적어 주세요 — 4를 누르고 프롬프트 레인의 +로 프롬프트를 추가하세요"));
 	}
 
 	/** Taking it AGAIN needs no fresh wording: the loaded take already knows what

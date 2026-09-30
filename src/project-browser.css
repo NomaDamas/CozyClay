@@ -781,12 +781,25 @@
 
 /* ------------------------------------------------------- first-success --- */
 
+/* The card sits in the viewport's bottom-left corner, just above the Content
+   dock, so the Outliner and Inspector column on the right stays uncovered.
+   The offsets follow the shell grid in shell/shell.css: a 44px top bar, the
+   dock row (--shell-dock-height), a 24px status bar, and 1px gaps; the
+   viewport's own 32px toolbar caps the height from above. */
 .v2-first-success-guide {
+	--guide-topbar-h: 44px;
+	--guide-statusbar-h: 24px;
+	--guide-grid-gap: 1px;
+	--guide-vp-toolbar-h: 32px;
+	--guide-dock-h: var(--shell-dock-height, var(--shell-dock-default, 0px));
+	--guide-right-col: var(--shell-right-width, var(--shell-right-default, 0px));
 	position: fixed;
-	right: var(--guide-right, 18px);
-	bottom: var(--guide-bottom, 208px);
+	left: var(--sp-2, 12px);
+	bottom: calc(var(--guide-statusbar-h) + var(--guide-dock-h) + 2 * var(--guide-grid-gap) + var(--sp-2, 12px));
 	z-index: var(--guide-z-index, 70);
-	width: min(var(--guide-width, 330px), calc(100vw - var(--guide-edge, 36px)));
+	width: min(var(--guide-width, 330px), calc(100vw - var(--guide-right-col) - var(--guide-grid-gap) - 2 * var(--sp-2, 12px)));
+	max-height: calc(100vh - var(--guide-topbar-h) - var(--guide-vp-toolbar-h) - var(--guide-dock-h) - var(--guide-statusbar-h) - 3 * var(--guide-grid-gap) - 3 * var(--sp-2, 12px));
+	overflow-y: auto;
 	display: flex;
 	flex-direction: column;
 	padding: var(--sp-3, 16px);

@@ -344,8 +344,8 @@ export function judgeAuthoredPath(rootPath, fps, clipFrames, { chained = false }
 	if (!chained && clipFrames / fps > PATH_LIMITS.clipMaxS) {
 		errors.push(
 			isKo
-				? `이동 경로는 전체 클립을 한 번의 모델 호출로 만들어요. ARDY가 학습한 길이는 ${PATH_LIMITS.clipMaxS}초까지예요 — 클립을 ${PATH_LIMITS.clipMaxS}초로 줄이거나 프롬프트를 블록으로 나눠 이어 만들기를 사용해 주세요`
-				: `a root path generates the whole clip in one model call, and ARDY's trained window is ${PATH_LIMITS.clipMaxS} s — shorten the clip to ${PATH_LIMITS.clipMaxS} s, or split the prompt into blocks so the path rides a chained rollout`,
+				? `이동 경로는 전체 클립을 한 번의 모델 호출로 만들어요. 모션 모델이 학습한 길이는 ${PATH_LIMITS.clipMaxS}초까지예요 — 클립을 ${PATH_LIMITS.clipMaxS}초로 줄이거나 프롬프트를 블록으로 나눠 이어 만들기를 사용해 주세요`
+				: `a root path generates the whole clip in one model call, and the motion model's trained window is ${PATH_LIMITS.clipMaxS} s — shorten the clip to ${PATH_LIMITS.clipMaxS} s, or split the prompt into blocks so the path rides a chained rollout`,
 		);
 	}
 	const tail = (clipFrames - 1 - (ordered[ordered.length - 1]?.frame ?? 0)) / fps;

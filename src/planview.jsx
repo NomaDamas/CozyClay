@@ -253,8 +253,8 @@ function SubjectMovementGuide({ track }) {
 				</mesh>
 			)}
 			{[
-				{ point: guide.start, label: ko("ARDY START", "ARDY 시작") },
-				{ point: guide.end, label: ko("ARDY END", "ARDY 끝") },
+				{ point: guide.start, label: ko("PATH START", "경로 시작") },
+				{ point: guide.end, label: ko("PATH END", "경로 끝") },
 			].map(({ point, label }) => (
 				<group key={label} position={[point.x, 0, point.z]}>
 					<mesh position={[0, 0.055, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={11}>

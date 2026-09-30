@@ -128,6 +128,66 @@ expect("Create opens the editor", await waitFor("!document.querySelector('.proje
 const editorName = await evaluate("document.querySelector('.project-menu-trigger')?.textContent || ''");
 expect("the editor shows alley_chase_v2", editorName.includes("alley_chase_v2"), editorName);
 
+// #551: the first-run guide names the Outliner and sits in the viewport's
+// bottom-left, above the Content dock, clear of the Outliner/Inspector column.
+expect("the first-run guide opens after Create", await waitFor("!!document.querySelector('.v2-first-success-guide')"));
+const layout = await evaluate(`(() => {
+	const box = (selector) => {
+		const rect = document.querySelector(selector)?.getBoundingClientRect();
+		return rect ? { left: rect.left, top: rect.top, right: rect.right, bottom: rect.bottom } : null;
+	};
+	return {
+		guide: box('.v2-first-success-guide'),
+		viewport: box('.workspace > .viewport') || box('.viewport'),
+		side: box('.studio-right-column'),
+		dock: box('.studio-dock-slot'),
+		text: document.querySelector('.v2-first-success-guide')?.textContent || '',
+	};
+})()`);
+const { guide, viewport, side, dock } = layout;
+expect("the guide names the Outliner", /Outliner/.test(layout.text) && !/Hierarchy panel/.test(layout.text), layout.text);
+expect("the guide stays inside the viewport", !!(guide && viewport) && guide.left >= viewport.left && guide.right <= viewport.right && guide.top >= viewport.top && guide.bottom <= viewport.bottom, JSON.stringify(layout));
+expect("the guide leaves the Outliner/Inspector column uncovered", !!(guide && side) && guide.right <= side.left, JSON.stringify(layout));
+expect("the guide is anchored bottom-left above the Content dock", !!(guide && viewport && dock) && guide.left - viewport.left <= 16 && dock.top - guide.bottom >= 0 && dock.top - guide.bottom <= 20, JSON.stringify(layout));
+await screenshot("task-21-guide.png");
+await evaluate("document.querySelector('.v2-first-success-guide-close').click()");
+expect("the guide dismisses", await waitFor("!document.querySelector('.v2-first-success-guide')"));
+
+// #551: File › New opens the same 2b start screen as first launch, not the
+// legacy Project name modal, and Create still asks before discarding work.
+const fileNew = async () => {
+	await evaluate("document.querySelector('[data-testid=menu-file]').click()");
+	expect("File shows New", await waitFor("!!document.querySelector('[data-testid=menubar-new]')"));
+	await evaluate("document.querySelector('[data-testid=menubar-new]').click()");
+};
+const confirmAnswer = (answer) => evaluate(`(() => {
+	window.__qaConfirms = window.__qaConfirms || [];
+	window.confirm = (message) => { window.__qaConfirms.push(String(message)); return ${answer ? "true" : "false"}; };
+	return true;
+})()`);
+await confirmAnswer(false);
+await fileNew();
+expect("File › New shows the start screen's Create", await waitFor("!!document.querySelector('.v2-start-screen [data-testid=start-create]')"));
+expect("File › New does not open the legacy Project name modal", await evaluate("!document.querySelector('.project-name-dialog-backdrop, .project-name-dialog')"));
+await screenshot("task-21-file-new.png");
+await evaluate("document.querySelector('.v2-start-cancel').click()");
+expect("Cancel returns to the editor", await waitFor("!document.querySelector('.v2-start-screen') && !!document.querySelector('.timeline')"));
+
+await evaluate("window.__cozyclay.sceneObject.place({ kind: 'cube', x: 0, z: 0 })");
+expect("placing an object leaves unsaved changes", await waitFor("!!document.querySelector('.project-dirty-dot')"));
+await fileNew();
+expect("File › New with unsaved work still shows the start screen", await waitFor("!!document.querySelector('.v2-start-screen [data-testid=start-create]')"));
+await setInput('[data-testid="start-project-name"]', "issue551_fresh");
+await evaluate("document.querySelector('[data-testid=start-create]').click()");
+const refused = await evaluate("window.__qaConfirms.slice()");
+expect("Create asks before discarding unsaved changes", refused.length === 1 && /unsaved/i.test(refused[0]), JSON.stringify(refused));
+expect("declining keeps the start screen and the project", await evaluate("!!document.querySelector('.v2-start-screen') && !document.querySelector('.project-name-dialog') && document.querySelector('.project-menu-trigger')?.textContent.includes('alley_chase_v2')"));
+await confirmAnswer(true);
+await evaluate("document.querySelector('[data-testid=start-create]').click()");
+expect("accepting creates the new project", await waitFor("!document.querySelector('.v2-start-screen') && !!document.querySelector('.timeline') && (document.querySelector('.project-menu-trigger')?.textContent || '').includes('issue551_fresh')"));
+expect("the discard confirmation ran once per Create", (await evaluate("window.__qaConfirms.length")) === 2);
+await screenshot("task-21-file-new-created.png");
+
 ws.close();
 if (failures > 0) {
 	console.error(`\n${failures} start-screen browser check(s) failed`);

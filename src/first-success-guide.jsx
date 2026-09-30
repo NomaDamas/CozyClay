@@ -3,8 +3,8 @@ import { ko } from "./locale.js";
 
 const STEPS = [
 	{
-		en: "Select a character in the Hierarchy panel.",
-		ko: "계층 패널에서 캐릭터를 선택하세요.",
+		en: "Select a character in the Outliner.",
+		ko: "아웃라이너에서 캐릭터를 선택하세요.",
 		hintEn: "Click Character 1 (or its row) to make it active.",
 		hintKo: "캐릭터 1(또는 캐릭터 행)을 클릭하면 활성화됩니다.",
 	},
