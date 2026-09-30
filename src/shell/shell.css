@@ -8,7 +8,7 @@
 		gap: 1px;
 		height: 100vh;
 		min-height: 0;
-		background: #070708;
+		background: var(--surface-0);
 	}
 
 	.app:not([data-embed-mode]) > .main { display: contents; }
@@ -50,7 +50,7 @@
 		gap: 1px;
 		min-height: 0;
 		min-width: 0;
-		background: #070708;
+		background: var(--surface-0);
 	}
 	.studio-right-column > .panel {
 		width: 100%;
@@ -74,7 +74,7 @@
 		column-gap: 1px;
 		height: 100%;
 		border: 0;
-		background: #070708;
+		background: var(--surface-0);
 	}
 	.app:not([data-embed-mode]) .bottom-window-tabs { grid-column: 1 / -1; }
 	.app:not([data-embed-mode]) .assets-pane {
