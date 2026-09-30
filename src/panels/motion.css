@@ -1,0 +1,232 @@
+/* v2 Motion Details (G6): prompt blocks, the scene take actions, Motion ›
+   Advanced and the Takes section. Rooted like details.css so these rules beat
+   the legacy inspector material without editing src/styles.css. */
+
+/* The selected block's range, a read-only value box in the Field grid. */
+.v2-details-section.v2-details-section .motion-block-range {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	height: var(--h-row, 24px);
+	padding: 0 var(--sp-1, 8px);
+	border-radius: var(--r-1, 4px);
+	background: var(--field, #0f0f11);
+	color: var(--text-1, #e4e4e7);
+	font-family: var(--mono, 'JetBrains Mono');
+	font-size: var(--details-mono-size, 11px);
+	font-variant-numeric: tabular-nums;
+}
+
+/* A full-width button that is a Field's control sits on the label's row. */
+/* biome-ignore lint/style/noDescendingSpecificity: the repeated region root is intentional to beat legacy inspector rules */
+.v2-details-section.v2-details-section .field > .btn.full {
+	margin-top: 0;
+}
+
+/* Start over / Take it again: two equal buttons, each with its refusal said
+   on the line under it. */
+.v2-details-section.v2-details-section .motion-scene-actions {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: var(--details-gap, 4px);
+	margin-top: var(--sp-1, 8px);
+}
+
+.v2-details-section.v2-details-section .motion-scene-action {
+	display: flex;
+	flex-direction: column;
+	gap: var(--details-group-gap, 2px);
+	min-width: 0;
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: the repeated region root is intentional to beat legacy inspector rules */
+.v2-details-section.v2-details-section .motion-scene-action .btn {
+	width: 100%;
+}
+
+/* Unavailable, and saying so: dimmed but still focusable and hoverable so the
+   pointer can land on it and read why. */
+/* biome-ignore lint/style/noDescendingSpecificity: the repeated region root is intentional to beat legacy inspector rules */
+.v2-details-section.v2-details-section .btn.disabled {
+	color: var(--text-off, #4f4f55);
+	cursor: not-allowed;
+}
+
+.v2-details-section.v2-details-section .motion-action-reason {
+	color: var(--text-3, #636369);
+	font-size: var(--details-meta-size, 10px);
+	line-height: var(--details-hint-line-height, 1.4);
+}
+
+/* Readiness sits inline under Generate in the same quiet hint voice. */
+.v2-details-section.v2-details-section .motion-readiness {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: var(--sp-1, 8px);
+	min-height: var(--h-row, 24px);
+	margin: var(--details-gap, 4px) 0 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--text-2, #9b9ba1);
+	font-size: var(--details-secondary-size, 11px);
+}
+
+/* biome-ignore lint/style/noDescendingSpecificity: the repeated region root is intentional to beat legacy inspector rules */
+.v2-details-section.v2-details-section .motion-readiness .btn {
+	flex: none;
+	width: auto;
+	height: var(--h-row, 24px);
+	min-height: var(--h-row, 24px);
+	line-height: var(--h-row, 24px);
+}
+
+.v2-details-section.v2-details-section .ardy-status {
+	margin: 0;
+	color: var(--text-2, #9b9ba1);
+	font-size: var(--details-secondary-size, 11px);
+}
+
+/* Motion › Advanced: a collapsed subsection with the same arrow grammar as a
+   section head, one step indented by living inside the section body. */
+.v2-details-section.v2-details-section .motion-advanced {
+	margin-top: var(--sp-1, 8px);
+	border-top: var(--details-border-width, 1px) solid var(--row-divider, #1d1d20);
+}
+
+.v2-details-section.v2-details-section .motion-advanced-head {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: var(--sp-1, 8px);
+	width: 100%;
+	height: var(--h-row, 24px);
+	margin: 0;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	color: var(--text-3, #636369);
+	font-family: var(--sans, 'IBM Plex Sans');
+	font-size: var(--details-secondary-size, 11px);
+	font-weight: 500;
+	text-align: left;
+	cursor: pointer;
+}
+
+.v2-details-section.v2-details-section .motion-advanced-head:hover,
+.v2-details-section.v2-details-section .motion-advanced-head:focus-visible {
+	color: var(--text-1, #e4e4e7);
+	outline: none;
+}
+
+.v2-details-section.v2-details-section .motion-advanced-head:focus-visible {
+	box-shadow: inset 0 0 0 var(--details-focus-width, 1px) var(--select, #e8a33d);
+}
+
+.v2-details-section.v2-details-section .motion-advanced-body {
+	display: flex;
+	flex-direction: column;
+	gap: var(--details-gap, 4px);
+}
+
+.v2-details-section.v2-details-section .motion-preserve-scale {
+	display: flex;
+	justify-content: space-between;
+	gap: var(--sp-1, 8px);
+	padding-left: calc(var(--details-label-width, 100px) + var(--sp-1, 8px));
+	font-size: var(--details-meta-size, 10px);
+}
+
+/* Takes: one 24 px row per version. The current take wears the amber
+   selection tint, the same one the Outliner uses for a selected row. */
+.v2-details-section.v2-details-section .motion-takes {
+	display: flex;
+	flex-direction: column;
+	gap: var(--details-gap, 4px);
+}
+
+.v2-details-section.v2-details-section .motion-take-list {
+	display: grid;
+	gap: var(--details-group-gap, 2px);
+}
+
+.v2-details-section.v2-details-section .motion-take-row {
+	box-sizing: border-box;
+	display: grid;
+	grid-template-columns: var(--motion-take-index-width, 28px) minmax(0, 1fr) auto;
+	align-items: center;
+	column-gap: var(--sp-1, 8px);
+	width: 100%;
+	height: var(--h-row, 24px);
+	min-height: var(--h-row, 24px);
+	margin: 0;
+	padding: 0 var(--sp-1, 8px);
+	border: 0;
+	border-radius: var(--r-1, 4px);
+	background: transparent;
+	color: var(--text-row, #c9c9ce);
+	font-family: var(--sans, 'IBM Plex Sans');
+	font-size: var(--details-secondary-size, 11px);
+	line-height: var(--h-row, 24px);
+	text-align: left;
+	cursor: pointer;
+}
+
+.v2-details-section.v2-details-section .motion-take-row:hover,
+.v2-details-section.v2-details-section .motion-take-row:focus-visible {
+	background: var(--surface-raised, #1e1e21);
+	color: var(--text-1, #e4e4e7);
+	outline: none;
+}
+
+.v2-details-section.v2-details-section .motion-take-row:focus-visible {
+	box-shadow: inset 0 0 0 var(--details-focus-width, 1px) var(--select, #e8a33d);
+}
+
+.v2-details-section.v2-details-section .motion-take-row.current {
+	background: var(--select-tint, rgba(232,163,61,.14));
+	color: var(--text-selected, #fff);
+}
+
+.v2-details-section.v2-details-section .motion-take-index {
+	color: var(--text-2, #9b9ba1);
+	font-family: var(--mono, 'JetBrains Mono');
+	font-size: var(--details-mono-size, 11px);
+	font-variant-numeric: tabular-nums;
+}
+
+.v2-details-section.v2-details-section .motion-take-row.current .motion-take-index {
+	color: var(--select, #e8a33d);
+}
+
+.v2-details-section.v2-details-section .motion-take-label {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.v2-details-section.v2-details-section .motion-take-time {
+	color: var(--text-3, #636369);
+	font-family: var(--mono, 'JetBrains Mono');
+	font-size: var(--details-meta-size, 10px);
+	font-variant-numeric: tabular-nums;
+}
+
+.v2-details-section.v2-details-section .replay-notice {
+	color: var(--select, #e8a33d);
+}
+
+/* The recipe summary is the section's footer line. */
+.v2-details-section.v2-details-section .motion-takes-footer {
+	box-sizing: border-box;
+	margin: 0;
+	padding: var(--details-gap, 4px) 0 0;
+	border-top: var(--details-border-width, 1px) solid var(--row-divider, #1d1d20);
+	color: var(--text-3, #636369);
+	font-family: var(--mono, 'JetBrains Mono');
+	font-size: var(--details-meta-size, 10px);
+	font-variant-numeric: tabular-nums;
+	line-height: var(--details-hint-line-height, 1.4);
+}

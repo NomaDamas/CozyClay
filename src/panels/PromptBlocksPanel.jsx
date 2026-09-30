@@ -1,10 +1,14 @@
+import { useState } from "react";
 import Foldout from "./Foldout.jsx";
 import { ko, isKo } from "../locale.js";
 import { Field, Dropdown } from "../ui.jsx";
-import { LINE_EDIT_TRACK_OPTIONS, MIN_CURVE_POINTS } from "../app-stage.jsx";
+import { LINE_EDIT_TRACK_OPTIONS, MIN_CURVE_POINTS, lineTrackLabel } from "../app-stage.jsx";
 import { LINE_EDIT_PINS_MAX, DRAG_RADIUS_MIN, DRAG_RADIUS_MAX, MAX_LINE_POINTS, PINNED_CURVE_ENDS } from "../line-edit.js";
 import { motionReadinessMessage, MotionReadiness } from "../motion-readiness-ui.jsx";
 import { useCastTransaction } from '../domains/cast.js';
+import { useMotionCommands } from '../domains/motion.js';
+import { useStudioShell } from '../shell/studio-shell-context.js';
+import "./motion.css";
 
 export default function PromptBlocksPanel({
 	isCharacterSelection, promptBlocksReveal, promptClips, selectedPromptId, setSelectedPromptId,
@@ -14,10 +18,24 @@ export default function PromptBlocksPanel({
 	lineCurveDirty, lineEditFrom, lineEditTo, lineCurvePointCount, lineDriftHint, lineCurveHidden,
 	linePreviewBusy, linePreviewMs, linePreviewError, generationBusy, bridgeChecking, bridge,
 	lineReadinessState, runLineEdit, openMotionSetup, recheckMotionHealth, resetLineCurve, exitLineEditMode,
-	readinessState, runStudioAction, ardyRunning, cancelArdy, ardyStatus, ardyOutcome, addPromptClip, tlFrame,
+	readinessState, runStudioAction, ardyRunning, cancelArdy, ardyStatus, ardyOutcome, tlFrame,
 }) {
 	const { run, begin, commit, characterId } = useCastTransaction();
+	const {
+		runArdy, runSceneAgain, addSceneBlock, sceneDisabledReason, sceneGenerateDisabledReason, sceneAgainDisabledReason,
+		refineDisabledReason, setToast, workflowMode,
+	} = useStudioShell();
+	const selectedClip = promptClips.find((clip) => clip.id === selectedPromptId) ?? null;
+	const sceneReason = sceneDisabledReason();
+	const refineReason = refineDisabledReason();
+	// The take bar's Scene actions until the top-bar Generate Motion menu owns
+	// them. Each refusal is said in place, before the click.
+	const sceneActions = [
+		{ id: "new", label: ko("Start over", "새로 만들기"), reason: sceneGenerateDisabledReason(), onClick: () => runArdy({ fresh: true }) },
+		{ id: "again", label: ko("Take it again", "다시 뽑기"), reason: sceneAgainDisabledReason(), onClick: runSceneAgain },
+	];
 	return (
+<>
 <Foldout hidden={!isCharacterSelection} defaultOpen={false} openSignal={promptBlocksReveal} title={ko("Prompt Blocks", "프롬프트 블록")}>
 					<p className="inspector-hint">{ko("Blocks define what ARDY generates over each frame range. Selecting one also moves editing context to that prompt.", "블록은 각 프레임 범위에서 ARDY가 생성할 내용을 정합니다. 블록을 선택하면 편집 기준도 해당 프롬프트로 이동합니다.")}</p>
 						<div className="inspector-list">
@@ -37,8 +55,15 @@ export default function PromptBlocksPanel({
 								</button>
 							))}
 						</div>
+						{selectedClip && (
+							<Field label={ko("Range", "구간")}>
+								<span className="motion-block-range" data-block-range={`${selectedClip.startFrame}-${selectedClip.endFrame}`}>
+									{selectedClip.startFrame}–{selectedClip.endFrame} f
+								</span>
+							</Field>
+						)}
 						{selectedPromptId && (
-						<Field label={ko("Selected block prompt", "선택한 블록 프롬프트")}>
+						<Field label={ko("Prompt", "프롬프트")}>
 								<input
 									type="text"
 									value={promptClips.find((clip) => clip.id === selectedPromptId)?.text ?? ""}
@@ -75,9 +100,13 @@ export default function PromptBlocksPanel({
 						    rather than present and inert. */}
 						{motion?.url && (
 							<Field label={ko("Line editing", "라인 편집")}>
+								{/* Refine: the take bar's second entry, until it becomes motion tool E. */}
 								<button
 									type="button"
 									className={"btn full" + (lineEditMode ? " primary" : "")}
+									data-take-mode="refine"
+									data-disabled-reason={refineReason || undefined}
+									aria-pressed={lineEditMode}
 									title={ko(
 										"The joint's own path is drawn on the viewport — grab a point on it and pull, or draw a new path on empty space; the joint then follows it exactly. The view still orbits normally (Alt+drag).",
 										"관절이 지나가는 궤적이 뷰포트에 그려집니다 — 궤적 위의 점을 잡아 끌거나, 빈 곳에 새 궤적을 그리면 관절이 그 경로를 정확히 따라갑니다. 시점은 평소처럼 돌릴 수 있어요 (Alt+드래그).",
@@ -311,9 +340,160 @@ export default function PromptBlocksPanel({
 						{ardyRunning && ardyStatus && <p className="ardy-status" role="status">{ardyStatus}</p>}
 						{!ardyRunning && ardyOutcome?.ok === false && <p className="ardy-status" role="alert">{ardyOutcome.message}</p>}
 						{!ardyRunning && ardyOutcome?.ok === true && <p className="ardy-status" role="status">{ko("Motion generation complete", "모션 생성 완료")}</p>}
-						<button type="button" className="btn ghost full" onClick={() => addPromptClip(tlFrame)}>
+						<div
+							className="motion-scene-actions"
+							role="group"
+							aria-label={ko("Scene takes", "장면 테이크")}
+							data-take-mode="scene"
+							data-disabled-reason={sceneReason || undefined}
+						>
+							{sceneActions.map((action) => (
+								<div className="motion-scene-action" key={action.id}>
+									<button
+										type="button"
+										className={"btn" + (action.reason ? " disabled" : "")}
+										data-scene-action={action.id}
+										data-disabled-reason={action.reason || undefined}
+										aria-disabled={action.reason ? "true" : undefined}
+										title={action.reason || undefined}
+										onClick={() => (action.reason ? setToast(action.reason) : action.onClick())}
+									>
+										{action.label}
+									</button>
+									{action.reason && <span className="motion-action-reason">{action.reason}</span>}
+								</div>
+							))}
+						</div>
+						<button type="button" className="btn ghost full" data-scene-action="block" onClick={addSceneBlock}>
 						{isKo ? `프레임 ${tlFrame}에 블록 추가` : `Add block at frame ${tlFrame}`}
 						</button>
+						{motion?.url && <MotionAdvanced />}
 					</Foldout>
+					<TakesSection hidden={!isCharacterSelection || workflowMode === "scene" || workflowMode === "camera"} />
+</>
+	);
+}
+
+/* Motion › Advanced: the dials that decide how much of the loaded take a
+   regeneration keeps. Folded away because the default (half preserved, whole
+   body free) is right almost always. */
+function MotionAdvanced() {
+	const { preserveStrength, setPreserveStrength, waypointMode, preserveTracksLine } = useStudioShell();
+	const [open, setOpen] = useState(false);
+	return (
+		<div className="motion-advanced">
+			<button type="button" className="motion-advanced-head" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+				<span className="v2-details-foldout-arrow foldout-arrow" data-open={open ? "true" : "false"} aria-hidden="true" />
+				{ko("Advanced", "고급")}
+			</button>
+			{open && (
+				<div className="motion-advanced-body">
+					<label className="row">
+						<span>{ko("Keep current take", "현재 테이크 유지")}</span>
+						<input
+							type="range"
+							data-preserve-strength
+							min={0}
+							max={1}
+							step={0.05}
+							value={preserveStrength}
+							title={ko(
+								"How hard the regeneration holds the loaded take outside the frames you edited.",
+								"수정하지 않은 프레임에서 로드된 테이크를 얼마나 강하게 유지할지 정합니다.",
+							)}
+							onChange={(event) => setPreserveStrength(Number(event.target.value))}
+						/>
+						<span className="val preserve-strength-value">{Math.round(preserveStrength * 100)}%</span>
+					</label>
+					{/* The slider value IS the preserve strength: 0 (left) is a fresh
+					    take and 1 (right) holds the original hardest. */}
+					<p className="inspector-hint motion-preserve-scale">
+						<span>{ko("generate fresh", "새로 생성")}</span>
+						<span>{ko("keep original", "원본 유지")}</span>
+					</p>
+					{waypointMode && preserveStrength > 0 && (
+						<p className="inspector-hint">
+							{ko(
+								"the drawn path replaces the root; the body keeps the take's style",
+								"경로는 새로 그려지고, 동작 스타일은 원본을 유지해요",
+							)}
+						</p>
+					)}
+					{preserveStrength > 0 && preserveTracksLine && (
+						<p className="inspector-hint preserve-tracks-summary">{preserveTracksLine}</p>
+					)}
+				</div>
+			)}
+		</div>
+	);
+}
+
+/* Takes (G6): every successful run leaves a checkpoint. Clicking a row loads
+   that take back and restores the recipe it was saved with; loading never
+   drops a row, so an experiment can always be walked back. */
+function TakesSection({ hidden }) {
+	const { run } = useMotionCommands();
+	const { takeVersions, takeSourceUrl, takeRecipe, replayNotices, linePreviewUrl } = useStudioShell();
+	return (
+		<Foldout hidden={hidden} title={ko("Takes", "테이크")}>
+			<div
+				className="motion-takes"
+				data-take-source={takeSourceUrl || undefined}
+				// The draft's url beside the take's own, so "the viewport swapped but
+				// the take did not" is one comparison rather than an inference.
+				data-line-preview={linePreviewUrl ? "true" : undefined}
+				data-line-preview-url={linePreviewUrl || undefined}
+			>
+				{takeVersions.length > 0 ? (
+					<div className="motion-take-list" role="group" aria-label={ko("Take versions", "테이크 버전")}>
+						{takeVersions.map((entry, index) => {
+							const current = entry.motionUrl === takeSourceUrl;
+							return (
+								<button
+									type="button"
+									key={entry.motionUrl}
+									className={"motion-take-row" + (current ? " current" : "")}
+									data-version-url={entry.motionUrl}
+									data-version-current={current ? "true" : undefined}
+									aria-pressed={current}
+									title={`${entry.label} · ${new Date(entry.savedAt).toLocaleTimeString()}`}
+									onClick={() => run('motion.loadVersion', { motionUrl: entry.motionUrl })}
+								>
+									<span className="motion-take-index">v{index + 1}</span>
+									<span className="motion-take-label">{entry.label}</span>
+									<span className="motion-take-time">
+										{new Date(entry.savedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hourCycle: "h23" })}
+									</span>
+								</button>
+							);
+						})}
+					</div>
+				) : (
+					<p className="inspector-hint">{ko("No takes yet. Generate creates one.", "아직 테이크가 없어요. 생성하면 하나가 생깁니다.")}</p>
+				)}
+				{/* C10's per-entry replay verdict. Non-blocking: the take is loaded,
+				    one refinement just did not survive the trip onto it. */}
+				{replayNotices.map((entry) => (
+					<p className="inspector-hint replay-notice" key={`${entry.index}-${entry.track}`} data-replay-index={entry.index} data-replay-track={entry.track}>
+						{entry.ok === false
+							? (isKo
+								? `다듬기 ${entry.index + 1}(${lineTrackLabel(entry.track)})은 다시 적용되지 않았어요 — 나머지는 그대로 이어졌습니다${entry.error ? ` (${entry.error})` : ""}`
+								: `Refinement ${entry.index + 1} (${lineTrackLabel(entry.track)}) was not re-applied — the rest carried over${entry.error ? ` (${entry.error})` : ""}`)
+							: (isKo
+								? `다듬기 ${entry.index + 1}(${lineTrackLabel(entry.track)})은 블록 경계에 걸쳐 있어요 — 결과가 이전과 조금 다를 수 있습니다`
+								: `Refinement ${entry.index + 1} (${lineTrackLabel(entry.track)}) straddles a block boundary — the result may differ slightly from before`)}
+					</p>
+				))}
+				{/* A seedless recipe is an IMPORTED take: it reloads but cannot be
+				    rebuilt, so the footer says so rather than printing "seed null". */}
+				{takeRecipe && (
+					<p className="motion-takes-footer take-recipe-summary">
+						{isKo
+							? `시드 ${Number.isInteger(takeRecipe.seed) ? takeRecipe.seed : "알 수 없음(불러온 테이크)"} · 블록 ${takeRecipe.blocks.length}개 · 다듬기 ${takeRecipe.lineEdits.length}개`
+							: `Seed ${Number.isInteger(takeRecipe.seed) ? takeRecipe.seed : "unknown (imported take)"} · ${takeRecipe.blocks.length} block(s) · ${takeRecipe.lineEdits.length} refinement(s)`}
+					</p>
+				)}
+			</div>
+		</Foldout>
 	);
 }

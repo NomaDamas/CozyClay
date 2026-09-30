@@ -4,7 +4,6 @@ import { logStore } from "./log-store.js";
 import "./dock.css";
 import { ko } from "../locale.js";
 import AssetPane from "../asset-pane.jsx";
-import TakeBarPanel from "../panels/TakeBarPanel.jsx";
 import Timeline from "../ardy/timeline.jsx";
 import { DEFAULT_PLAYBACK_SPEED, sceneObjectNameDisplayKo } from "../app-stage.jsx";
 import { motionEditLayout, createMotionEdit } from "../ardy/motion-edit.js";
@@ -55,12 +54,8 @@ export default function BottomDock() {
 		setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
 		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
 		projectAssetGraphSignature, assetTrash, deleteUnusedAsset, undoDeletedAsset, deletingAssetId,
-		projectManifest, linePreviewUrl, takeSourceUrl, sceneDisabledReason, sceneMenuOpen,
-		setSceneMenuOpen, refineDisabledReason, lineEditMode, enterRefineMode, readinessState,
-		bridgeChecking, openMotionSetup, recheckMotionHealth, sceneGenerateDisabledReason, runArdy,
-		sceneAgainDisabledReason, runSceneAgain, tlFrame, addSceneBlock, appContext,
-		motion, preserveStrength, setPreserveStrength, waypointMode, preserveTracksLine,
-		takeRecipe, takeVersions, loadTakeVersion, replayNotices, craneSelectedIndex,
+		projectManifest, tlFrame, motion, waypointMode,
+		takeVersions, loadTakeVersion, craneSelectedIndex,
 		isCameraSelection, addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFrameCount,
 		tlFps, characters, activeCharIndex, ghostLayers, pathSpeed,
 		tlPlaying, workflowMode, waypoints, pendingWaypointFrame, promptClips,
@@ -240,44 +235,6 @@ export default function BottomDock() {
 				/>
 			</div>
 			<div className="bottom-timeline">
-			{/* ==================== the take bar (contract C12) ====================
-			    Two primary edit entries, the take's version strip, and whatever the
-			    last replay had to say — all directly above the take they act on,
-			    because a feature the artist has to go hunting for in a collapsed
-			    foldout is a feature they do not have. */}
-			{/* The preview flag lives here TOO, on a node that exists whether or not
-		    the Inspector is scrolled to the line-edit panel — it is the stable
-		    handle for "the viewport is showing a draft, not the take". */}
-		<TakeBarPanel
-			linePreviewUrl={linePreviewUrl}
-			takeSourceUrl={takeSourceUrl}
-			sceneDisabledReason={sceneDisabledReason}
-			sceneMenuOpen={sceneMenuOpen}
-			setSceneMenuOpen={setSceneMenuOpen}
-			refineDisabledReason={refineDisabledReason}
-			lineEditMode={lineEditMode}
-			enterRefineMode={enterRefineMode}
-			readinessState={readinessState}
-			bridgeChecking={bridgeChecking}
-			openMotionSetup={openMotionSetup}
-			recheckMotionHealth={recheckMotionHealth}
-			sceneGenerateDisabledReason={sceneGenerateDisabledReason}
-			runArdy={runArdy}
-			sceneAgainDisabledReason={sceneAgainDisabledReason}
-			runSceneAgain={runSceneAgain}
-			tlFrame={tlFrame}
-			addSceneBlock={addSceneBlock}
-			setToast={appContext.notify}
-			motion={motion}
-			preserveStrength={preserveStrength}
-			setPreserveStrength={setPreserveStrength}
-			waypointMode={waypointMode}
-			preserveTracksLine={preserveTracksLine}
-			takeRecipe={takeRecipe}
-			takeVersions={takeVersions}
-			loadTakeVersion={loadTakeVersion}
-			replayNotices={replayNotices}
-		/>
 			<Timeline
 				frame={tlFrame}
 				craneSelectedIndex={craneSelectedIndex}

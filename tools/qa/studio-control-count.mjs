@@ -36,7 +36,7 @@ const COUNT = `(()=>{
     if(el.closest(".viewport-titlebar"))return "viewport-bar";
     if(el.closest(".hierarchy-left"))return "hierarchy";
     if(el.closest(".inspector, .panel.right, aside.right, .inspector-panel"))return "inspector";
-    if(el.closest(".timeline, .tl-surface, .take-bar, footer"))return "timeline";
+    if(el.closest(".timeline, .tl-surface, footer"))return "timeline";
     if(el.closest(".asset-pane, .assets"))return "assets";
     return "other:"+(el.closest("aside, section, div[class]")?.className||"").toString().slice(0,30);
   };
