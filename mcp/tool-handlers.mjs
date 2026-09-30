@@ -1147,7 +1147,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				description:
 					"Write Prompt Blocks onto the timeline WITHOUT generating — the beats and their frame " +
 					"ranges, so a schedule can be read and revised before any GPU time is spent. Hit " +
-					"'Generate all N blocks' in the studio, or call generate_motion, when it reads right.\n\n" +
+					"the studio's top-bar Generate Motion button, or call generate_motion, when it reads right.\n\n" +
 					PROMPT_GUIDE,
 				inputSchema: {
 					beats: z

@@ -1,5 +1,5 @@
-/* v2 Motion Details (G6): prompt blocks, the scene take actions, Motion ›
-   Advanced and the Takes section. Rooted like details.css so these rules beat
+/* v2 Motion Details (G6): prompt blocks, line editing, Motion › Advanced and
+   the Takes section. The generate actions live in the top bar (R1). Rooted like details.css so these rules beat
    the legacy inspector material without editing src/styles.css. */
 
 /* The selected block's range, a read-only value box in the Field grid. */
@@ -23,42 +23,7 @@
 	margin-top: 0;
 }
 
-/* Start over / Take it again: two equal buttons, each with its refusal said
-   on the line under it. */
-.v2-details-section.v2-details-section .motion-scene-actions {
-	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
-	gap: var(--details-gap, 4px);
-	margin-top: var(--sp-1, 8px);
-}
-
-.v2-details-section.v2-details-section .motion-scene-action {
-	display: flex;
-	flex-direction: column;
-	gap: var(--details-group-gap, 2px);
-	min-width: 0;
-}
-
-/* biome-ignore lint/style/noDescendingSpecificity: the repeated region root is intentional to beat legacy inspector rules */
-.v2-details-section.v2-details-section .motion-scene-action .btn {
-	width: 100%;
-}
-
-/* Unavailable, and saying so: dimmed but still focusable and hoverable so the
-   pointer can land on it and read why. */
-/* biome-ignore lint/style/noDescendingSpecificity: the repeated region root is intentional to beat legacy inspector rules */
-.v2-details-section.v2-details-section .btn.disabled {
-	color: var(--text-off, #4f4f55);
-	cursor: not-allowed;
-}
-
-.v2-details-section.v2-details-section .motion-action-reason {
-	color: var(--text-3, #636369);
-	font-size: var(--details-meta-size, 10px);
-	line-height: var(--details-hint-line-height, 1.4);
-}
-
-/* Readiness sits inline under Generate in the same quiet hint voice. */
+/* Readiness sits inline under the Prompt Blocks controls in the same quiet hint voice. */
 .v2-details-section.v2-details-section .motion-readiness {
 	display: flex;
 	align-items: center;

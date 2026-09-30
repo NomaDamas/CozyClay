@@ -49,13 +49,17 @@ export default function TopBar({ preferences }) {
 	);
 }
 
-// "Generate Motion" is today's Scene generate (G6). The caret holds the take
-// bar's Scene actions; a refused action says why in place and in a toast (R3).
+// "Generate Motion" is today's Scene generate (G6) and the one home for
+// generation (IS-2): with authored prompt blocks it runs them all, as the
+// removed Details "Generate all blocks" did; otherwise it runs the prompt.
+// The caret holds the take bar's Scene actions; a refused action says why in
+// place and in a toast (R3).
 function GenerateMotion() {
 	const {
 		runArdy, sceneGenerateDisabledReason, sceneAgainDisabledReason, runSceneAgain,
-		addSceneBlock, tlFrame, setToast, ardyRunning,
+		addSceneBlock, tlFrame, setToast, ardyRunning, promptClips, runStudioAction,
 	} = useStudioShell();
+	const hasBlocks = promptClips.some((clip) => clip.text.trim());
 	const [open, setOpen] = useState(false);
 	const caretRef = useRef(null);
 	const reason = sceneGenerateDisabledReason();
@@ -73,7 +77,7 @@ function GenerateMotion() {
 				aria-disabled={reason ? "true" : undefined}
 				data-disabled-reason={reason || undefined}
 				title={reason || ko("Generate motion from the prompt and blocks", "프롬프트와 블록으로 모션을 생성합니다")}
-				onClick={() => (reason ? setToast(reason) : runArdy())}
+				onClick={() => (reason ? setToast(reason) : hasBlocks ? runStudioAction("motion.generateAllBlocks") : runArdy())}
 			>
 				{ardyRunning ? ko("Generating…", "생성 중…") : (
 					<>

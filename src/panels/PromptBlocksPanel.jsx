@@ -18,26 +18,18 @@ export default function PromptBlocksPanel({
 	lineCurveDirty, lineEditFrom, lineEditTo, lineCurvePointCount, lineDriftHint, lineCurveHidden,
 	linePreviewBusy, linePreviewMs, linePreviewError, generationBusy, bridgeChecking, bridge,
 	lineReadinessState, runLineEdit, openMotionSetup, recheckMotionHealth, resetLineCurve, exitLineEditMode,
-	readinessState, runStudioAction, ardyRunning, cancelArdy, ardyStatus, ardyOutcome, tlFrame,
+	readinessState, ardyRunning, cancelArdy, ardyStatus, ardyOutcome,
 }) {
 	const { run, begin, commit, characterId } = useCastTransaction();
-	const {
-		runArdy, runSceneAgain, addSceneBlock, sceneDisabledReason, sceneGenerateDisabledReason, sceneAgainDisabledReason,
-		refineDisabledReason, setToast, workflowMode,
-	} = useStudioShell();
+	const { refineDisabledReason, workflowMode } = useStudioShell();
 	const selectedClip = promptClips.find((clip) => clip.id === selectedPromptId) ?? null;
-	const sceneReason = sceneDisabledReason();
 	const refineReason = refineDisabledReason();
-	// The take bar's Scene actions until the top-bar Generate Motion menu owns
-	// them. Each refusal is said in place, before the click.
-	const sceneActions = [
-		{ id: "new", label: ko("Start over", "새로 만들기"), reason: sceneGenerateDisabledReason(), onClick: () => runArdy({ fresh: true }) },
-		{ id: "again", label: ko("Take it again", "다시 뽑기"), reason: sceneAgainDisabledReason(), onClick: runSceneAgain },
-	];
+	// Generate, Start over, Take it again and Add block live in the top bar's
+	// Generate Motion button and its caret menu, their one home (R1).
 	return (
 <>
 <Foldout hidden={!isCharacterSelection} defaultOpen={false} openSignal={promptBlocksReveal} title={ko("Prompt Blocks", "프롬프트 블록")}>
-					<p className="inspector-hint">{ko("Blocks define what ARDY generates over each frame range. Selecting one also moves editing context to that prompt.", "블록은 각 프레임 범위에서 ARDY가 생성할 내용을 정합니다. 블록을 선택하면 편집 기준도 해당 프롬프트로 이동합니다.")}</p>
+					<p className="inspector-hint">{ko("Blocks define what is generated over each frame range. Selecting one also moves editing context to that prompt.", "블록은 각 프레임 범위에서 생성될 내용을 정합니다. 블록을 선택하면 편집 기준도 해당 프롬프트로 이동합니다.")}</p>
 						<div className="inspector-list">
 							{promptClips.map((clip) => (
 								<button
@@ -309,28 +301,6 @@ export default function PromptBlocksPanel({
 								)}
 							</Field>
 						)}
-						{/* Nothing to generate yet is not a disabled button: with no blocks
-						    the panel's own "Add block at frame N" and its hint already say
-						    what comes next, so the action stays absent until there is at
-						    least one block to run (docs/studio-ui-ia.md R3). */}
-						{promptClips.length >= 1 && (
-						<button
-							type="button"
-							className="btn primary full generate prompt-block-generate"
-							disabled={generationBusy || bridgeChecking || bridge === null || !promptClips.some((clip) => clip.text.trim())}
-							title={generationBusy ? ko("A generation is already running", "이미 생성이 돌고 있어요")
-								: !promptClips.some((clip) => clip.text.trim())
-									? ko("Add a prompt block and describe its motion first", "프롬프트 블록을 추가하고 동작을 먼저 적어 주세요")
-									: motionReadinessMessage(readinessState)}
-							onClick={() => runStudioAction("motion.generateAllBlocks")}
-						>
-							{generationBusy
-								? ko("Generating motion…", "모션 생성 중…")
-								: isKo
-									? `${promptClips.length}개 블록 모두 생성`
-									: `Generate all ${promptClips.length} blocks`}
-						</button>
-						)}
 						{ardyRunning && (
 							<button type="button" className="btn ghost full" onClick={cancelArdy}>
 								{ko("Cancel run", "실행 취소")}
@@ -340,33 +310,6 @@ export default function PromptBlocksPanel({
 						{ardyRunning && ardyStatus && <p className="ardy-status" role="status">{ardyStatus}</p>}
 						{!ardyRunning && ardyOutcome?.ok === false && <p className="ardy-status" role="alert">{ardyOutcome.message}</p>}
 						{!ardyRunning && ardyOutcome?.ok === true && <p className="ardy-status" role="status">{ko("Motion generation complete", "모션 생성 완료")}</p>}
-						<div
-							className="motion-scene-actions"
-							role="group"
-							aria-label={ko("Scene takes", "장면 테이크")}
-							data-take-mode="scene"
-							data-disabled-reason={sceneReason || undefined}
-						>
-							{sceneActions.map((action) => (
-								<div className="motion-scene-action" key={action.id}>
-									<button
-										type="button"
-										className={"btn" + (action.reason ? " disabled" : "")}
-										data-scene-action={action.id}
-										data-disabled-reason={action.reason || undefined}
-										aria-disabled={action.reason ? "true" : undefined}
-										title={action.reason || undefined}
-										onClick={() => (action.reason ? setToast(action.reason) : action.onClick())}
-									>
-										{action.label}
-									</button>
-									{action.reason && <span className="motion-action-reason">{action.reason}</span>}
-								</div>
-							))}
-						</div>
-						<button type="button" className="btn ghost full" data-scene-action="block" onClick={addSceneBlock}>
-						{isKo ? `프레임 ${tlFrame}에 블록 추가` : `Add block at frame ${tlFrame}`}
-						</button>
 						{motion?.url && <MotionAdvanced />}
 					</Foldout>
 					<TakesSection hidden={!isCharacterSelection || workflowMode === "scene" || workflowMode === "camera"} />

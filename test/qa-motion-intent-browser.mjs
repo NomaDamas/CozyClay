@@ -339,8 +339,8 @@ try {
 	assert.equal(await evaluate("window.__cozyclay.motion === window.__qaMotion.baselineMotion"), true, "authoring never replaced the loaded take");
 
 	const generateControl = await evaluate(`(() => {
-		const button = document.querySelector('.prompt-block-generate');
-		if (!button) throw new Error('Prompt Blocks Generate control is missing after authoring');
+		const button = document.querySelector('[data-testid=topbar-generate]');
+		if (!button) throw new Error('top-bar Generate Motion control is missing after authoring');
 		return { disabled: button.disabled || button.getAttribute('aria-disabled') === 'true', label: button.textContent.trim(), title: button.title };
 	})()`);
 	const requestSurface = generateControl.disabled ? "__cozyclay.runArdy" : "actual Generate button";
@@ -350,7 +350,7 @@ try {
 	}
 	const requestGeneration = generateControl.disabled
 		? () => evaluate(`window.__cozyclay.runArdy({promptOverride: ${JSON.stringify(liveText)}, durationOverride: 2, promptClipsOverride: []})`)
-		: () => click(".prompt-block-generate");
+		: () => click("[data-testid=topbar-generate]");
 	const ids = [];
 	for (let attempt = 0; attempt < 2; attempt += 1) {
 		const offset = (await records()).length;

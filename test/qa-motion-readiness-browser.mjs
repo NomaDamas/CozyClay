@@ -266,7 +266,7 @@ function assertLifecycle(events, terminal, reason) {
 	if (terminal === "failed") assert.equal(funnel.at(-1).properties.error_code, "generation_failed");
 	return id;
 }
-async function blocked(reason, control = ".prompt-block-generate") {
+async function blocked(reason, control = "[data-testid=topbar-generate]") {
 	const offset = (await records()).length, http = requests.generate.length;
 	await changeAndWait(`window.__qaReadiness.events.slice(${offset}).some(e => e.event === 'motion:preflight_blocked')`, () => click(control), `blocked ${reason}`);
 	assert.equal(requests.generate.length, http);
@@ -377,7 +377,7 @@ try {
 	await closeSetup();
 	await assertPreserved(authored, "trail-origin setup retains its route and preserves edits through recovery");
 	await pressDigit(4);
-	await changeAndWait("!!document.querySelector('.prompt-block-generate')",
+	await changeAndWait("!!document.querySelector('[data-testid=topbar-generate]') && !!document.querySelector('input[placeholder=\"describe this motion block\"]')",
 		() => click('[data-node-id="characterA"] .hierarchy-row'), "return to prompt generation");
 
 	// A second distinct block is a real selected local sequence, not a capability
@@ -395,14 +395,14 @@ try {
 	for (const terminal of ["failed", "succeeded"]) {
 		const offset = (await records()).length, count = requests.generate.length;
 		const job = eventOnce(fixture, "job", { signal: AbortSignal.timeout(timeoutMs) }); job.catch(() => {});
-		await changeAndWait("[...document.querySelectorAll('.ardy-status')].some(e => e.textContent.includes('40%')) && document.querySelector('.prompt-block-generate')?.disabled", () => click(".prompt-block-generate"), `real streamed ${terminal} job progress`);
+		await changeAndWait("[...document.querySelectorAll('.ardy-status')].some(e => e.textContent.includes('40%')) && document.querySelector('[data-testid=topbar-generate]')?.getAttribute('aria-disabled') === 'true'", () => click("[data-testid=topbar-generate]"), `real streamed ${terminal} job progress`);
 		await job;
 		await captureBoth(`job-${terminal}-progress`, ".ardy-status");
 		// Dispatch actual pointer input onto the now-disabled visible control.
-		// Its disabled property is observed, never removed. A second HTTP request
+		// Its aria-disabled state is observed, never removed. A second HTTP request
 		// or requested event fails the exact lifecycle assertion after completion.
-		await click(".prompt-block-generate", { allowDisabled: true });
-		await changeAndWait(`window.__qaReadiness.events.slice(${offset}).some(e => e.event === '${terminal === "succeeded" ? "motion:result_applied" : "motion:job_failed"}') && !document.querySelector('.prompt-block-generate')?.disabled`, async () => {
+		await click("[data-testid=topbar-generate]", { allowDisabled: true });
+		await changeAndWait(`window.__qaReadiness.events.slice(${offset}).some(e => e.event === '${terminal === "succeeded" ? "motion:result_applied" : "motion:job_failed"}') && document.querySelector('[data-testid=topbar-generate]')?.getAttribute('aria-disabled') !== 'true'`, async () => {
 			assert.ok(jobResponse);
 			jobResponse.end(`${JSON.stringify(terminal === "succeeded" ? { event: "done", output: "qa-readiness.npz", bytes: sample.length, motionUrl: "/ardy/motions/qa-readiness.npz" } : { event: "error", message: "PRIVATE_JOB_FAILURE_277" })}\n`);
 			jobResponse = null;
