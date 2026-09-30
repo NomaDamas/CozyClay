@@ -221,11 +221,11 @@ await click("[data-testid=menu-edit]");
 await waitFor("!!document.querySelector('.menubar-menu[data-menu=edit]')");
 expect("Edit holds Undo, Redo, Preferences…", (await evaluate("[...document.querySelectorAll('.menubar-menu[data-menu=edit] [role=menuitem]')].map((i) => i.textContent).join('|')")).replace(/[⌘⇧]|Ctrl\+|Shift\+/g, "").replace(/Z/g, "") === "Undo|Redo|Preferences…");
 await click("[data-testid=menu-preferences]");
-expect("Edit › Preferences… opens the settings", await waitFor("!!document.querySelector('.settings-menu')").catch(() => false));
-await screenshot("task-9-preferences.png", { x: 0, y: 0, width: 760, height: 520 });
+expect("Edit › Preferences… opens the Preferences dialog", await waitFor("!!document.querySelector('.v2-preferences__dialog')").catch(() => false));
+await screenshot("task-9-preferences.png");
 await send("Input.dispatchKeyEvent", { type: "rawKeyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
 await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
-expect("Escape closes the settings", await waitFor("!document.querySelector('.settings-menu')").catch(() => false));
+expect("Escape closes the Preferences dialog", await waitFor("!document.querySelector('.v2-preferences__dialog')").catch(() => false));
 expect("focus returns to the Edit menu", await waitFor("document.activeElement === document.querySelector('[data-testid=menu-edit]')", 3000).catch(() => false));
 
 await click("[data-testid=menu-window]");
@@ -261,6 +261,12 @@ await click(".v2-statusbar [data-testid=export-cancel]");
 expect("the status bar shows the cancel state", await waitFor("document.querySelector('.v2-statusbar [data-testid=export-status]')?.dataset.phase === 'cancelled'", 30000).catch(() => false));
 console.log(`STATUS cancelled ${JSON.stringify(await evaluate("document.querySelector('.v2-statusbar [data-testid=export-status]').innerText"))}`);
 await screenshot("task-9-cancel.png", { x: 0, y: 1056, width: 1920, height: 24 });
+// G7: export progress is also a Log entry (the dock's Content | Log tab).
+await click("[data-testid=content-tab-log]");
+expect("the cancelled export is a Log entry", await waitFor("[...document.querySelectorAll('[data-testid=content-log-entry][data-kind=export]')].some((row) => /Cancelled/.test(row.textContent))", 10000).catch(() => false));
+console.log(`LOG ${JSON.stringify(await evaluate("[...document.querySelectorAll('[data-testid=content-log-entry][data-kind=export]')].map((row) => row.querySelector('.content-log-text').textContent)"))}`);
+await screenshot("task-9-log.png", { x: 0, y: 700, width: 900, height: 380 });
+await click("[data-testid=content-tab-content]");
 
 /* ------------------------------------------------------ narrow window --- */
 await send("Emulation.setDeviceMetricsOverride", { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });

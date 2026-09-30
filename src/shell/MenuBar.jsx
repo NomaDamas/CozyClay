@@ -174,7 +174,7 @@ export default function MenuBar({ preferences }) {
 		exportShotIdRef, setExportMenuOpen, shots, exportKeyframePacks, hasCameraKeys, motion,
 		exportRenderPasses, exportDepthVideo, exportStoryboard, downloadOtioCutList,
 		castDomain, preferencesOpen, setPreferencesOpen, agentOpen, toggleAgent,
-		bottomTab, setBottomTab, setToast, embedMode,
+		setToast, embedMode,
 	} = shell;
 	const [open, setOpen] = useState(null);
 	const [focusFirst, setFocusFirst] = useState(false);
@@ -210,8 +210,8 @@ export default function MenuBar({ preferences }) {
 	const focusedFirst = useRef(() => setFocusFirst(false)).current;
 	const focusedFlyout = useRef(() => setFlyoutFocus(false)).current;
 
-	// The Settings popover's own trigger is not part of the 2a bar; when it
-	// closes with focus nowhere, focus returns to the Edit menu that opened it.
+	// The Preferences dialog's own Settings trigger is not part of the 2a bar;
+	// when the dialog closes with focus nowhere, focus returns to Edit.
 	const preferencesWasOpen = useRef(preferencesOpen);
 	useEffect(() => {
 		const was = preferencesWasOpen.current;
@@ -451,9 +451,6 @@ export default function MenuBar({ preferences }) {
 				<button type="button" role="menuitemcheckbox" aria-checked={agentOpen} className="menubar-item" data-testid="menu-agent" onClick={item(toggleAgent)}>
 					<span className="menubar-item-label">{ko("Agent", "에이전트")}</span>
 					<Shortcut keys={`${MOD}B`} />
-				</button>
-				<button type="button" role="menuitemcheckbox" aria-checked={bottomTab === "assets"} className="menubar-item" onClick={item(() => setBottomTab("assets"))}>
-					<span className="menubar-item-label">{ko("Content", "콘텐츠")}</span>
 				</button>
 				<hr className="menubar-separator" />
 				<a role="menuitem" className="menubar-item workflow-topbar-link" href="/workflow/" aria-label={ko("Open Workflow", "워크플로 열기")}>

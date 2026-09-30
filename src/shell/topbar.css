@@ -154,9 +154,9 @@
 		color: var(--text-1, #e4e4e7);
 	}
 
-	/* Until the Preferences dialog lands, Edit › Preferences… opens today's
-	   Settings popover. Its own trigger is not part of the 2a bar, so the
-	   popover hangs from the Edit menu instead. */
+	/* Edit › Preferences… opens the Preferences dialog (a body portal). The
+	   Settings trigger that owns it stays mounted for its state and focus
+	   contract, but it is not part of the 2a bar. */
 	.v2-topbar .menubar-preferences-host {
 		position: absolute;
 		inset: 0 auto 0 0;
@@ -164,11 +164,6 @@
 	}
 	.v2-topbar .menubar-preferences-host .settings-menu-wrap { position: static; }
 	.v2-topbar .menubar-preferences-host .settings-menu-trigger { display: none; }
-	.v2-topbar .menubar-preferences-host .settings-menu {
-		top: calc(100% + 4px);
-		left: 0;
-		right: auto;
-	}
 
 	/* ---------------------------------------------------- menu popovers */
 	.menubar-menu {
