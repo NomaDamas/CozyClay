@@ -565,7 +565,9 @@ async function closeTutorial() {
 	await change("!document.querySelector('[data-testid=camera-tutorial]')", () => click('[data-testid="camera-tutorial-close"]'), true);
 }
 async function restart() {
-	await change("!!document.querySelector('[data-testid=settings-camera-tutorial]')", () => click('[data-testid="settings-menu-trigger"]'), true);
+	// #523 (G8): Settings opens from Edit › Preferences… in the top bar.
+	await change("!!document.querySelector('[data-testid=menu-preferences]')", () => click('[data-testid="menu-edit"]'), true);
+	await change("!!document.querySelector('[data-testid=settings-camera-tutorial]')", () => click('[data-testid="menu-preferences"]'), true);
 	await change("document.querySelector('[data-testid=camera-tutorial-step][data-kind=fly]')?.dataset.current === '1'", () => click('[data-testid="settings-camera-tutorial"]'), true);
 	await frame();
 }
@@ -635,7 +637,7 @@ async function handoffScreenshots() {
 		await viewport(width, height);
 		if (surface === 'playground') await evaluate("document.querySelector('#tutorial-done').scrollIntoView({block:'center',behavior:'instant'})");
 		await layout(`${surface}-handoff-${name}-${width}x${height}`, surface === 'studio'
-			? [handoffSelector, '[data-testid="camera-tutorial-handoff-export"]', '[data-testid="camera-tutorial-handoff-dismiss"]', '#export-menu-trigger']
+			? [handoffSelector, '[data-testid="camera-tutorial-handoff-export"]', '[data-testid="camera-tutorial-handoff-dismiss"]', '[data-testid="menu-file"]']
 			: ['#tutorial-done', '#playground-download', '#playground-handoff-dismiss', '#playground-close'], surface === 'studio');
 	}
 	await viewport(1440, 1000);
@@ -693,7 +695,7 @@ async function studioExport() {
 	await evaluate('window.__qaTutorial.installNative(); true');
 	const from = report.events.length;
 	try {
-		await change("window.__qaTutorial.events.some(({event}) => event === 'export:attempt_succeeded') && window.__qaTutorial.downloads.length === 1 && !document.querySelector('#export-menu-trigger.recording')", () => click('[data-testid="export-video"]'));
+		await change("window.__qaTutorial.events.some(({event}) => event === 'export:attempt_succeeded') && window.__qaTutorial.downloads.length === 1 && document.querySelector('.topbar')?.dataset.recState !== 'recording'", () => click('[data-testid="export-video"]'));
 		const proof = await evaluate('window.__qaTutorial.native.proof()');
 		await writeFile(join(out, 'studio-native-capture.json'), JSON.stringify({ target, ...proof }, null, 2));
 		const count = target.endFrame-target.startFrame+1;
