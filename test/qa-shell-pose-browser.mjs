@@ -11,7 +11,7 @@ const wait = async (expression, timeout = 60000) => { const deadline = Date.now(
 const checks = []; const check = (name, pass, detail = "") => { checks.push({ name, pass: !!pass, detail }); console.log(`${pass ? "PASS" : "FAIL"} ${name}${detail ? ` — ${detail}` : ""}`); };
 await send("Runtime.enable"); await send("Page.enable"); await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1100, deviceScaleFactor: 1, mobile: false });
 await wait("!!window.__cozyclay?.motion && !!window.__cozyclay?.ikChains", 120000);
-const clickMode = async () => evaluate(`[...document.querySelectorAll('.workflow-mode-switch button')].find((button) => /Pose|포즈/.test(button.textContent))?.click()`);
+const clickMode = async () => evaluate(`document.querySelector('[data-mode-key="2"]')?.click()`);
 await clickMode(); await wait("document.querySelector('.app')?.dataset.workflowMode === 'pose' && window.__cozyclay.ikMode === true");
 const rigRow = await evaluate("document.querySelector('[role=treeitem][aria-selected=true][data-node-id]')?.dataset.nodeId");
 check("pose mode is active", await evaluate("document.querySelector('.app')?.dataset.workflowMode === 'pose'"));
@@ -26,12 +26,16 @@ if (toe) {
  const objectId = await evaluate(`window.__cozyclay.sceneObject.place({kind:'cube',x:${toe.x},z:${toe.z}}).id`);
  await evaluate(`window.__cozyclay.sceneObject.update({id:${JSON.stringify(objectId)},scaleY:0.2})`);
  const beforeKeys = await evaluate("window.__cozyclay.ik.keys.size");
- await evaluate("window.__cozyclay.platformFit.run()");
+ // The UI Run button previews; window.__cozyclay.platformFit.run() is the
+// agent path and commits directly, so the preview flow must go through the button.
+await evaluate("document.querySelector('[data-testid=platform-fit-run]')?.click()");
  await wait("!!window.__cozyclay.platformFit.last && !!document.querySelector('[data-testid=platform-fit-cancel]')", 360000);
  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true}))");
  await wait("!window.__cozyclay.platformFit.last && !window.__cozyclay.platformFit.running", 10000);
  check("Esc cancels the preview without changing motion", await evaluate(`window.__cozyclay.ik.keys.size === ${beforeKeys}`));
- await evaluate("window.__cozyclay.platformFit.run()");
+ // The UI Run button previews; window.__cozyclay.platformFit.run() is the
+// agent path and commits directly, so the preview flow must go through the button.
+await evaluate("document.querySelector('[data-testid=platform-fit-run]')?.click()");
  await wait("!!window.__cozyclay.platformFit.last && !!document.querySelector('[data-testid=platform-fit-apply]')", 360000);
  await evaluate("window.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
  await wait("window.__cozyclay.platformFit.applied === true", 60000);

@@ -114,7 +114,7 @@ await evaluate(`window.__cozyclay.sceneObject.update({ id: ${JSON.stringify(obje
 await wait(`window.__cozyclay.objects.some(o=>o.id===${JSON.stringify(objectId)} && Math.abs(o.height*o.scaleY-0.2)<1e-9)`);
 console.log("box", JSON.stringify(await evaluate(`window.__cozyclay.objects.find(o=>o.id===${JSON.stringify(objectId)})`)));
 await evaluate(`(()=>{const row=[...document.querySelectorAll('[role=treeitem][data-node-id]')].find(e=>/\.rig$/.test(e.dataset.nodeId)); if(row && row.getAttribute('aria-expanded')==='false') row.querySelector('.hierarchy-toggle')?.click(); row?.querySelector('button.hierarchy-row')?.click(); return !!row;})()`);
-await evaluate(`[...document.querySelectorAll('.workflow-mode-switch button')].find(e=>/Pose|포즈/.test(e.textContent))?.click()`);
+await evaluate(`document.querySelector('[data-mode-key="2"]')?.click()`);
 await wait("window.__cozyclay.ikMode === true && !!document.querySelector('[data-testid=platform-fit-run]')?.getBoundingClientRect().width", 20000);
 await screenshot("before");
 
