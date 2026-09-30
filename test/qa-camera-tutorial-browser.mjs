@@ -105,7 +105,9 @@ const key = async (code, keyName, virtualKeyCode) => {
 /** The shipped walk take's length on the production clock (24 fps): the
  * transport counts 0 … 431 and the hierarchy says "432 frames". */
 const WALK_FRAMES = 432;
-const projectLabel = `document.querySelector('.hierarchy-project strong')?.textContent.trim()`;
+// #552: the project name lives in the top bar's project menu trigger, beside
+// its unsaved dot and caret; its own text node is the name.
+const projectLabel = `[...(document.querySelector('.project-menu-trigger')?.childNodes ?? [])].filter((node) => node.nodeType === Node.TEXT_NODE).map((node) => node.textContent).join('').trim()`;
 const propCount = `Number(document.querySelector('[data-node-id="props"] .hierarchy-badge')?.textContent ?? -1)`;
 /** window.confirm is a page-level dialog CDP would have to answer out of band;
  * override it in the page instead, record every question, and answer `true`. */
@@ -404,7 +406,7 @@ expect(
 	await waitFor(`${propCount} === ${propsBefore + 1}`),
 	String(await evaluate(propCount)),
 );
-expect("the project reads as unsaved", await waitFor("!!document.querySelector('.hierarchy-project .project-dirty-dot')"));
+expect("the project reads as unsaved", await waitFor("!!document.querySelector('.project-menu-trigger .project-dirty-dot')"));
 
 // Open the tutorial from Settings ▾ with the confirm answered in the page.
 expect("window.confirm is armed for this scenario", await armConfirm(true));
