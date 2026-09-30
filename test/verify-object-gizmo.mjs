@@ -136,6 +136,12 @@ const transform = () =>
 		"Object.fromEntries([...document.querySelectorAll('.inspector-pane .vec3-row')].filter(r => !r.closest('.subject-box')).map(r => [r.querySelector('.vec3-label').textContent, [...r.querySelectorAll('input')].map(i => parseFloat(i.value))]))",
 	);
 const click = (selectorExpression) => evaluate(`${selectorExpression}.click()`);
+// Recenter on subject lives in the viewport's Perspective list (G8): open the
+// list and wait for the command; clicking it closes the list again.
+const openRecenter = async () => {
+	await click("document.querySelector('[data-testid=\"view-camera-trigger\"]')");
+	await waitFor("!!document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')");
+};
 const openCreateMenu = async () => {
 	await evaluate(`(() => {
 		const row = document.querySelector('.v2-outliner [data-node-id="light"]');
@@ -219,7 +225,7 @@ expect("an X drag leaves the other axes alone", afterMove.Position[1] === before
 /* --------------------------------------------------- rotate gizmo ---- */
 
 await pressKey("e", "KeyE");
-expect("E selects the rotate tool", await evaluate("[...document.querySelectorAll('.tool-switch button')].find(b => b.classList.contains('active')).textContent.startsWith('Rotate')"));
+expect("E selects the rotate tool", await evaluate("document.querySelector('[data-tool-key].active')?.dataset.tool === 'rotate'"));
 await sleep(1200);
 const rings = await evaluate("window.__gizmoHandles()");
 expect("rotate mode shows one ring per axis plus the screen ring", ["x", "y", "z", "screen"].every((axis) => rings.some((handle) => handle.axis === axis)), JSON.stringify(rings));
@@ -287,7 +293,7 @@ if (screenGrab) {
 }
 
 await pressKey("w", "KeyW");
-expect("W returns to the move tool", await evaluate("[...document.querySelectorAll('.tool-switch button')].find(b => b.classList.contains('active')).textContent.startsWith('Move')"));
+expect("W returns to the move tool", await evaluate("document.querySelector('[data-tool-key].active')?.dataset.tool === 'move'"));
 
 /* ---------------------------------------------------- scale gizmo ---- */
 
@@ -309,7 +315,7 @@ await evaluate("document.activeElement?.blur()");
 await sleep(400);
 
 await pressKey("r", "KeyR");
-expect("R selects the scale tool", await evaluate("[...document.querySelectorAll('.tool-switch button')].find(b => b.classList.contains('active')).textContent.startsWith('Scale')"));
+expect("R selects the scale tool", await evaluate("document.querySelector('[data-tool-key].active')?.dataset.tool === 'scale'"));
 await sleep(1200);
 const knobs = await evaluate("window.__gizmoHandles()");
 expect("scale mode exposes three axis knobs", new Set(knobs.map((handle) => handle.axis)).size >= 3, JSON.stringify(knobs));
@@ -398,6 +404,7 @@ expect("dragging the object body does NOT fly the camera", (await gizmoPose()) =
 // The fly/pan/orbit section leaves the camera wherever the gestures took it —
 // possibly right on top of the cube, where every pixel picks the body. Reset
 // to the shot preset first so empty floor is actually on screen.
+await openRecenter();
 await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 // empty floor near the canvas lower-left, clear of the overlay toolbar and the subject
@@ -447,6 +454,7 @@ expect("navigation never edits the object", JSON.stringify(await transform()) ==
 // The camera section leaves the pose wherever fly/pan/orbit took it; at a
 // grazing angle to the floor the XZ plane turns pixels into metres of travel
 // and the object leaves the frame. Reset to the shot preset first.
+await openRecenter();
 await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 
@@ -905,6 +913,7 @@ await waitFor(`${positionInput(1)} === 1`);
 // it; the Chair's gizmo can project under the bird's-eye inset pane, where a
 // real press never reaches the canvas. Reset to the shot preset, then park
 // the inset in the stage's lower-left so it cannot occlude the handle.
+await openRecenter();
 await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 globalThis.insetTag = await evaluate("(() => { const t = document.querySelector('.vp-inset-tag'); if (!t) return null; const r = t.getBoundingClientRect(); return { x: Math.round(r.left + r.width / 2), y: Math.round(r.top + r.height / 2) }; })()");
@@ -1166,6 +1175,7 @@ for (const [index, value] of [[0, 0.5], [2, 0.5]]) {
 	);
 }
 await evaluate("document.activeElement?.blur()");
+await openRecenter();
 await evaluate("document.querySelector('.viewport-titlebar [aria-label=\"Recenter on subject\"]')?.click()");
 await sleep(600);
 for (let i = 0; i < 20; i++) {

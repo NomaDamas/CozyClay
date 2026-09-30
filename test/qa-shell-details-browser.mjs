@@ -128,41 +128,42 @@ await evaluate("localStorage.removeItem('cozyclay.scene.v1'); localStorage.remov
 await pageReload();
 expect("the studio exposes its Details QA seams", await waitFor("!!window.__cozyclay?.sceneObject && !!window.__cozyclayProject && !!document.querySelector('.hierarchy-row-wrap')", 40_000));
 
-/* Use the retained Props route, not the hierarchy Add button that the
-   Outliner PR removes before the viewport Add route lands. */
-await subscribe("document.querySelector('.props-drop .add-object-trigger')?.getBoundingClientRect().height > 0");
+/* The catalogue's one visible Add route is the viewport "+ Add" pill (G10);
+   Props keeps only its picture and model import pickers. */
+await subscribe("document.querySelector('.props-drop')?.getBoundingClientRect().height > 0");
 await evaluate(`document.querySelector('[data-node-id="props"] .hierarchy-row').click(); true`);
-expect("selecting Props exposes its retained Add control", await resolveSubscribed());
+expect("selecting Props exposes its import controls", await resolveSubscribed());
 const propsAdd = await evaluate(`(() => {
 	const panel = document.querySelector('.props-drop');
-	const trigger = panel.querySelector('.add-object-trigger');
+	const trigger = document.querySelector('[data-testid="viewport-add"]');
 	return {
 		height: trigger.getBoundingClientRect().height,
 		background: getComputedStyle(trigger).backgroundColor,
 		radius: getComputedStyle(trigger).borderRadius,
+		propsAdd: !!panel.querySelector('.add-object-trigger'),
 		imports: [...panel.querySelectorAll('input[type="file"]')].map((input) => input.accept),
 	};
 })()`);
-expect("the Props Add control uses v2 height, surface and radius", propsAdd.height === 28 && propsAdd.background === "rgb(30, 30, 33)" && propsAdd.radius === "4px", JSON.stringify(propsAdd));
+expect("the viewport Add control uses the v2 pill height, overlay surface and radius, and Props has no Add button", propsAdd.height === 28 && propsAdd.background === "rgba(12, 12, 13, 0.78)" && propsAdd.radius === "6px" && !propsAdd.propsAdd, JSON.stringify(propsAdd));
 expect("Props retains both image and model import pickers", propsAdd.imports.length === 2 && propsAdd.imports.some((accept) => accept.includes('image/')) && propsAdd.imports.some((accept) => accept.includes('.glb')), JSON.stringify(propsAdd.imports));
 
-await subscribe("document.querySelector('.props-drop .add-object-trigger')?.getAttribute('aria-expanded') === 'true' && !!document.querySelector('.props-drop .add-object-swatch.cube')");
-await evaluate("document.querySelector('.props-drop .add-object-trigger').click(); true");
-expect("the Props Add menu opens with the cube catalogue entry", await resolveSubscribed());
+await subscribe("document.querySelector('[data-testid=\"viewport-add\"]')?.getAttribute('aria-expanded') === 'true' && !!document.querySelector('.viewport-titlebar .add-object-swatch.cube')");
+await evaluate("document.querySelector('[data-testid=\"viewport-add\"]').click(); true");
+expect("the viewport Add menu opens with the cube catalogue entry", await resolveSubscribed());
 const catalogue = await evaluate(`(() => {
-	const panel = document.querySelector('.props-drop');
-	const menu = panel.querySelector('.add-object-menu');
+	const viewport = document.querySelector('.viewport');
+	const menu = document.querySelector('.viewport-titlebar .add-object-menu');
 	return {
 		background: getComputedStyle(menu).backgroundColor,
 		rows: [...menu.querySelectorAll('.add-object-item')].map((item) => item.getBoundingClientRect().height),
-		fits: menu.getBoundingClientRect().right <= panel.getBoundingClientRect().right,
+		fits: menu.getBoundingClientRect().right <= viewport.getBoundingClientRect().right && menu.getBoundingClientRect().bottom <= viewport.getBoundingClientRect().bottom,
 	};
 })()`);
-expect("the Props catalogue has 24 px rows and fits the panel", catalogue.rows.length > 0 && catalogue.rows.every((height) => height === 24) && catalogue.fits && catalogue.background === 'rgb(12, 12, 13)', JSON.stringify(catalogue));
+expect("the Add catalogue has 24 px rows and fits the viewport", catalogue.rows.length > 0 && catalogue.rows.every((height) => height === 24) && catalogue.fits && catalogue.background === 'rgb(12, 12, 13)', JSON.stringify(catalogue));
 await screenshot("task-12-props-add");
 await subscribe("document.querySelector('.inspector-sidebar')?.dataset.inspector?.startsWith('object:') && document.querySelectorAll('.v2-details-section:not([hidden]) .vec3-row').length === 3");
-await evaluate("document.querySelector('.props-drop .add-object-swatch.cube').closest('button').click(); true");
-expect("adding a cube from Props opens its Details panel", await resolveSubscribed());
+await evaluate("document.querySelector('.viewport-titlebar .add-object-swatch.cube').closest('button').click(); true");
+expect("adding a cube from the viewport Add opens its Details panel", await resolveSubscribed());
 
 const details = await evaluate(`(() => {
 	const visible = [...document.querySelectorAll('.v2-details-section:not([hidden])')]

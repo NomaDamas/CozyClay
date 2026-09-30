@@ -83,9 +83,12 @@ const rowDepth = (id) => evaluate(`(() => {
 	return row ? Number(getComputedStyle(row).getPropertyValue("--hierarchy-depth")) : null;
 })()`);
 const rowLabels = () => evaluate(`[...document.querySelectorAll(".hierarchy-tree .hierarchy-row")].map((node) => (node.getAttribute("aria-label") ?? node.textContent).trim())`);
+// G1 mode keys: 1 Stage, 2 Pose, 3 Camera, 4 Motion.
+const MODE_KEYS = { Scene: "1", Stage: "1", Pose: "2", Camera: "3", Motion: "4" };
 const clickMode = async (label) => {
-	await evaluate(`[...document.querySelectorAll(".workflow-mode-switch button")].find((node) => node.textContent.trim() === "${label}")?.click()`);
-	return waitFor(`[...document.querySelectorAll(".workflow-mode-switch button")].find((node) => node.textContent.trim() === "${label}")?.getAttribute("aria-selected") === "true"`);
+	const key = MODE_KEYS[label];
+	await evaluate(`document.querySelector('[data-mode-key="${key}"]')?.click()`);
+	return waitFor(`document.querySelector('[data-mode-key="${key}"]')?.getAttribute("aria-selected") === "true"`);
 };
 // The Prompt Blocks card, found by its heading rather than by index: the
 // inspector column reorders as foldouts show and hide.
