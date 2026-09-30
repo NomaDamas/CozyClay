@@ -1,3 +1,4 @@
+@layer legacy {
 .auto-fix-group {
 	--auto-fix-space: 4px;
 	display: grid;
@@ -102,4 +103,6 @@
 
 .ik-tool-panel {
 	min-width: 0;
+}
+
 }

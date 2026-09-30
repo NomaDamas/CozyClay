@@ -1,0 +1,86 @@
+#!/usr/bin/env node
+import { existsSync, readFileSync, statSync } from "node:fs";
+
+const css = readFileSync(new URL("../src/styles/tokens.css", import.meta.url), "utf8");
+const declarations = new Map(
+	[...css.matchAll(/--([a-z0-9-]+)\s*:\s*([^;]+);/g)].map(([, name, value]) => [name, value.replace(/\s+/g, " ").trim()]),
+);
+
+const expected = {
+	"surface-0": "#070708",
+	"surface-bar": "#121214",
+	"surface-panel": "#151517",
+	"surface-raised": "#1e1e21",
+	"surface-active": "#26262a",
+	field: "#0f0f11",
+	"field-deep": "#0c0c0d",
+	"row-divider": "#1d1d20",
+	overlay: "rgba(12,12,13,.78)",
+	"text-1": "#e4e4e7",
+	"text-2": "#9b9ba1",
+	"text-3": "#636369",
+	"text-row": "#c9c9ce",
+	"text-off": "#4f4f55",
+	"text-selected": "#fff",
+	select: "#e8a33d",
+	"select-tint": "rgba(232,163,61,.14)",
+	"on-select": "#1a1204",
+	primary: "#7258a0",
+	camera: "#a78bfa",
+	danger: "#e5484d",
+	"axis-x": "#e5484d",
+	"axis-y": "#4fbf7a",
+	"axis-z": "#4c8dff",
+	ok: "#4fbf7a",
+	"chip-folder": "#8a7a55",
+	"chip-mesh": "#7e8b99",
+	"chip-cast": "#5fb584",
+	"chip-camera": "#a78bfa",
+	"chip-light": "#d9b84a",
+	"chip-motion": "#6f93d6",
+	"clip-camera": "#3d3354",
+	"clip-camera-alt": "#302a40",
+	"clip-body": "#23402f",
+	"clip-body-selected": "#2e5a3f",
+	"clip-prompt": "#233149",
+	"clip-prompt-text": "#b9c9ea",
+	"h-control": "28px",
+	"h-row": "24px",
+	"r-1": "4px",
+	"r-2": "6px",
+	"sp-1": "8px",
+	"sp-2": "12px",
+	"sp-3": "16px",
+	sans: '"IBM Plex Sans", "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif',
+	mono: '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+};
+
+let failures = 0;
+function expect(name, condition, detail = "") {
+	console.log(`${condition ? "PASS" : "FAIL"} ${name}${condition ? "" : ` — ${detail}`}`);
+	if (!condition) failures += 1;
+}
+
+for (const [name, value] of Object.entries(expected)) {
+	expect(`token --${name} has the v2 value`, declarations.get(name) === value, `expected ${value}, got ${declarations.get(name) ?? "<missing>"}`);
+}
+
+for (const file of [
+	"public/fonts/ibm-plex-sans-400-latin.woff2",
+	"public/fonts/ibm-plex-sans-500-latin.woff2",
+	"public/fonts/ibm-plex-sans-600-latin.woff2",
+	"public/fonts/jetbrains-mono-400-latin.woff2",
+	"public/fonts/jetbrains-mono-500-latin.woff2",
+	"public/fonts/IBM-Plex-Sans-OFL.txt",
+	"public/fonts/JetBrains-Mono-OFL.txt",
+]) {
+	const path = new URL(`../${file}`, import.meta.url);
+	expect(`${file} is bundled`, existsSync(path) && statSync(path).size > 0);
+}
+
+const readme = readFileSync(new URL("../public/fonts/README.md", import.meta.url), "utf8");
+expect("font README records IBM Plex Sans release", readme.includes("@ibm/plex-sans@1.1.0"));
+expect("font README records JetBrains Mono release", readme.includes("v2.304"));
+
+if (failures) process.exit(1);
+console.log(`all ${Object.keys(expected).length} v2 token checks PASS`);

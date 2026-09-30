@@ -1,3 +1,4 @@
+@layer legacy {
 .range-pin-panel {
 	min-width: 0;
 }
@@ -497,4 +498,5 @@
 	background: rgba(255, 255, 255, .05);
 	pointer-events: none;
 	z-index: 2;
+}
 }

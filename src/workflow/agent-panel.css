@@ -1,3 +1,4 @@
+@layer legacy {
 /* Agent panel (#126).
  *
  * workflow.css is shipped minified on one line, so the panel keeps its own
@@ -1168,4 +1169,5 @@
 	}
 
 	.agent-resize { display: none; }
+}
 }

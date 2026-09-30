@@ -16,17 +16,17 @@ const room = readFileSync(new URL("../src/room.jsx", import.meta.url), "utf8");
 
 expect("header brand is Cozy Clay", app.includes("Cozy <span>Clay</span>"));
 expect("browser title names the studio", /<title>[^<]*Cozy\s?Clay[^<]*<\/title>/.test(html));
-expect("Inter is the only bundled active UI family", css.includes("@font-face{font-family:Inter") && !css.includes("Instrument Serif"));
-expect("display and UI roles both use Inter", css.includes('--display: "Inter"') && css.includes('--sans: "Inter"'));
-expect("numeric editing data has a monospace role", css.includes("--mono: ui-monospace") && css.includes("font-family: var(--mono)"));
+expect("IBM Plex Sans is the only active studio UI family", css.includes('@font-face {\n\tfont-family: "IBM Plex Sans";') && !css.includes("font-family:Inter"));
+expect("display and UI roles both use IBM Plex Sans", css.includes("--display: var(--sans)") && css.includes('--sans: "IBM Plex Sans"'));
+expect("numeric editing data has a JetBrains Mono role", css.includes('--mono: "JetBrains Mono"') && css.includes("font-family: var(--mono)"));
 expect("wordmark uses a modern heavy display treatment", css.includes("font-weight: 750") && css.includes("letter-spacing: -.045em"));
-expect("chrome backdrop token matches Unity dark", css.includes("--bg: #1e1e1e"));
-expect("chrome foreground token is light on dark", css.includes("--fg: #d2d2d2"));
-expect("chrome panel token matches Unity dark chrome", css.includes("--panel: #2c2c2c"));
-expect("chrome accent token matches Unity selection blue family", css.includes("--accent: #3a7cbf"));
-expect("timeline lanes sit on a dark surface", css.includes("background-color: #282828"));
-expect("IK uses pencil red", css.includes(".tl-marker.ik") && css.includes("background: #d65f55"));
-expect("current frame uses lightbox amber", css.includes(".tl-frame-box") && css.includes("background: #e7b557"));
+expect("chrome backdrop token uses the v2 surface", css.includes("--bg: var(--surface-0)"));
+expect("chrome foreground token uses the v2 text scale", css.includes("--fg: var(--text-1)"));
+expect("chrome panel token uses the v2 panel surface", css.includes("--panel: var(--surface-panel)"));
+expect("chrome accent token uses the v2 selection role", css.includes("--accent: var(--select)"));
+expect("timeline lanes use the v2 panel surface", css.includes("background-color: var(--surface-panel)"));
+expect("IK uses the v2 danger token", css.includes(".tl-marker.ik") && css.includes("background: var(--danger)"));
+expect("current frame uses the v2 selection token", css.includes(".tl-frame-box") && css.includes("background: var(--select)"));
 // The bright stage stays the default; grid view may swap in the dark void.
 expect("Canvas uses a bright neutral toon background", app.includes('args={[gridView ? GRID_BACKGROUND : "#eef4f3"]}'));
 expect("Character uses bright ivory clay", app.includes('const CLAY = "#f2eee6"'));
