@@ -40,15 +40,16 @@ const evaluate = async (expression) => {
 	if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "evaluate failed");
 	return result.result.value;
 };
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const waitFor = async (expression, timeoutMs = 20000) => {
-	const deadline = Date.now() + timeoutMs;
-	while (Date.now() < deadline) {
-		if (await evaluate(expression).catch(() => false)) return true;
-		await sleep(100);
-	}
-	return false;
-};
+const waitFor = async (expression, timeoutMs = 20000) => evaluate(`new Promise((resolve) => {
+	const ready = () => Boolean(${expression});
+	if (ready()) { resolve(true); return; }
+	const observer = new MutationObserver(() => {
+		if (!ready()) return;
+		observer.disconnect(); clearTimeout(timer); resolve(true);
+	});
+	observer.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true });
+	const timer = setTimeout(() => { observer.disconnect(); resolve(false); }, ${timeoutMs});
+})`).catch(() => false);
 
 let failures = 0;
 const expect = (name, condition, detail = "") => {
@@ -79,7 +80,7 @@ const ANALYTICS = "[data-testid=settings-analytics]";
 // Subscribe to the exact DOM change BEFORE acting, then await it (bounded).
 const armMenu = (state) =>
 	evaluate(`window.__settingsMenu = new Promise((resolve) => {
-		const has = () => !!document.querySelector('.settings-menu');
+		const has = () => !!document.querySelector('.v2-preferences__dialog');
 		if (has() === ${state === "open"}) { resolve('already'); return; }
 		const obs = new MutationObserver(() => {
 			if (has() === ${state === "open"}) { obs.disconnect(); clearTimeout(t); resolve(${JSON.stringify(state)}); }
@@ -119,7 +120,7 @@ await evaluate(`document.querySelector('${TRIGGER}').focus()`);
 await pressKey("Enter", "Enter", 13, "\r");
 expect("Enter on the focused trigger opens Settings", (await menuSettled()) !== "timeout");
 expect("Settings offers both languages and the analytics item", (await evaluate(
-	`[...document.querySelectorAll('.settings-menu button')].map((b) => b.dataset.testid).join(",")`,
+	`[...document.querySelectorAll('.settings-menu button[data-testid^="settings-locale"], .settings-menu button[data-testid="settings-analytics"]')].map((b) => b.dataset.testid).join(",")`,
 )) === "settings-locale-en,settings-locale-ko,settings-analytics");
 expect(
 	"the stored language is marked pressed",
@@ -150,7 +151,7 @@ expect(
 	"opting out clears every ph_* key",
 	(await evaluate("Object.keys(localStorage).filter((key) => key.startsWith('ph_'))")).length === 0,
 );
-expect("the panel stays open after the toggle, so the state is readable", await evaluate("!!document.querySelector('.settings-menu')"));
+expect("the dialog stays open after the toggle, so the state is readable", await evaluate("!!document.querySelector('.v2-preferences__dialog')"));
 
 ws.close();
 if (failures) process.exit(1);
