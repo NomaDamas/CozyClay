@@ -43,7 +43,7 @@ assert.ok(floor.includes("mesh.layers.set(layer)"), "the grid can be confined to
 assert.ok(floor.includes("receiveShadow={false}"), "a reference overlay joins no light transport");
 
 // --- App wiring pins -------------------------------------------------------
-const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+const app = ["../src/App.jsx", "../src/shell/ViewportToolbar.jsx"].map(path => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
 assert.ok(app.includes("{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}"), "grid replaces the deck on the export-stripped gizmo layer");
 assert.ok(app.includes('args={[gridView ? GRID_BACKGROUND : "#eef4f3"]}'), "the background swaps to the void colour");
 assert.ok(app.includes("writeStoredGridView(globalThis.localStorage, gridView)"), "the preference persists per browser");

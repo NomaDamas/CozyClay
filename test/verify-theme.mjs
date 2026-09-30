@@ -8,7 +8,7 @@ function expect(name, condition, detail = "") {
 }
 
 // The studio source spans App.jsx and app-stage.jsx (module-level extraction); pin against both.
-const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8")
+const app = ["../src/App.jsx", "../src/shell/TopBar.jsx"].map(path => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n")
 	+ readFileSync(new URL("../src/app-stage.jsx", import.meta.url), "utf8");
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");

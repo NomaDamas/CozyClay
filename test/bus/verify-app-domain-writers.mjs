@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { parseSync } from 'rolldown/experimental';
 
 // Authored domain state (including native load/restore setters), not transient
@@ -47,8 +47,12 @@ function scan(source) {
 }
 assert.equal(scan('function App(){ setShots([]); storeRef.current.applyAtomic(x=>x); const alias=setMotion; alias(null); }').length, 3);
 assert.equal(scan('function App(){ shotsDomain.renameTimelineShot(id, name); appContext.patchLive({shots: []}); }').length, 0);
-const source = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
-const calls = scan(source);
-console.log(`APP DOMAIN WRITER CALLS: ${calls.length}`);
-assert.deepEqual(calls, [], 'all authored setters and native store writers belong to named domain functions');
-console.log('PASS App domain writer AST: zero direct calls');
+const paths = ['src/App.jsx', ...readdirSync(new URL('../../src/shell/', import.meta.url), { recursive: true })
+  .filter(path => /\.(js|jsx)$/.test(path)).sort().map(path => `src/shell/${path}`)];
+for (const path of paths) {
+  const source = readFileSync(new URL(`../../${path}`, import.meta.url), 'utf8');
+  const calls = scan(source);
+  console.log(`${path === 'src/App.jsx' ? 'APP' : path} DOMAIN WRITER CALLS: ${calls.length}`);
+  assert.deepEqual(calls, [], `${path}: all authored setters and native store writers belong to named domain functions`);
+}
+console.log('PASS App and shell domain writer AST: zero direct calls');

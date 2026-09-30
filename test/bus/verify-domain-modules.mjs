@@ -41,7 +41,7 @@ const domains = {
 // Existing source-driven integration fixtures follow the moved implementation,
 // not a copy of it. Keep source text intact except for the extra default exports.
 export function readStudioSource() {
-  const paths = ['src/App.jsx', ...['domains', 'panels'].flatMap(directory =>
+  const paths = ['src/App.jsx', ...['domains', 'panels', 'shell'].flatMap(directory =>
     readdirSync(new URL(`src/${directory}/`, root)).filter(name => /\.(js|jsx)$/.test(name)).map(name => `src/${directory}/${name}`))];
   return paths.map(path => read(path).replace(/export default /g, '')).join('\n');
 }
@@ -118,7 +118,8 @@ export function freeReferences(rootNode) {
 }
 
 function verify() {
-  const app = parse('src/App.jsx');
+  const app = { type: 'Program', body: ['src/App.jsx', ...readdirSync(new URL('src/shell/', root))
+    .filter(name => /\.(js|jsx)$/.test(name)).map(name => `src/shell/${name}`)].map(parse) };
   for (const [domain, { states, panels }] of Object.entries(domains)) {
     const path = `src/domains/${domain}.js`;
     assert(existsSync(new URL(path, root)), `acceptance 1: ${path} owns its domain state`);

@@ -1,0 +1,145 @@
+@layer shell {
+	/* Only the frame changes here. Region controls retain their legacy styles. */
+	.app:not([data-embed-mode]) {
+		--shell-right-default: 340px;
+		--shell-dock-default: clamp(220px, 30vh, 330px);
+		display: grid;
+		grid-template-rows: 44px minmax(0, 1fr) var(--shell-dock-height, var(--shell-dock-default)) 24px;
+		gap: 1px;
+		height: 100vh;
+		min-height: 0;
+		background: #070708;
+	}
+
+	.app:not([data-embed-mode]) > .main { display: contents; }
+	.app:not([data-embed-mode]) .topbar {
+		grid-row: 1;
+		height: 44px;
+		border: 0;
+		background: var(--surface-bar);
+	}
+	.app:not([data-embed-mode]) .brandbar {
+		grid-row: 4;
+		height: 24px;
+		border: 0;
+		background: var(--surface-bar);
+	}
+	.app:not([data-embed-mode]) .brandbar::before { display: none; }
+
+	.app:not([data-embed-mode]) .workspace {
+		position: relative;
+		grid-row: 2;
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) var(--shell-right-width, var(--shell-right-default));
+		gap: 1px;
+		min-width: 0;
+		min-height: 0;
+	}
+	.app:not([data-embed-mode]) .viewport {
+		width: 100%;
+		height: 100%;
+		min-height: 0;
+		padding: 0;
+	}
+	.app:not([data-embed-mode]) .stage { border: 0; }
+	.studio-right-column {
+		--outliner-height: var(--shell-outliner-height, min(420px, 62%));
+		position: relative;
+		display: grid;
+		grid-template-rows: minmax(0, var(--outliner-height)) minmax(0, 1fr);
+		gap: 1px;
+		min-height: 0;
+		min-width: 0;
+		background: #070708;
+	}
+	.studio-right-column > .panel {
+		width: 100%;
+		min-width: 0;
+		max-width: none;
+		min-height: 0;
+		max-height: none;
+		padding: 0;
+		border: 0;
+		overflow: hidden;
+		background: var(--surface-panel);
+	}
+	.studio-right-column > .hierarchy-left { grid-row: 1; }
+	.studio-right-column > .inspector-sidebar { grid-row: 2; }
+
+	.studio-dock-slot { position: relative; grid-row: 3; min-height: 0; min-width: 0; }
+	.app:not([data-embed-mode]) .bottom-window {
+		display: grid;
+		grid-template-columns: 620px minmax(0, 1fr);
+		grid-template-rows: auto minmax(0, 1fr);
+		column-gap: 1px;
+		height: 100%;
+		border: 0;
+		background: #070708;
+	}
+	.app:not([data-embed-mode]) .bottom-window-tabs { grid-column: 1 / -1; }
+	.app:not([data-embed-mode]) .assets-pane {
+		grid-column: 1;
+		grid-row: 2;
+		height: auto;
+		min-height: 0;
+		max-height: none;
+		min-width: 0;
+	}
+	.app:not([data-embed-mode]) .assets-shelf { grid-template-columns: minmax(0, 1fr); }
+	.app:not([data-embed-mode]) .bottom-timeline {
+		grid-column: 2;
+		grid-row: 2;
+		min-width: 0;
+		overflow: auto;
+		background: var(--surface-panel);
+	}
+	.app:not([data-embed-mode]) .timeline:not(.collapsed) {
+		flex: 1 1 auto;
+		height: 0;
+		min-height: 0;
+		max-height: none;
+	}
+
+	/* Keep the original resize gestures, with hit areas over the 1px gaps. */
+	.shell-sidebar-splitter {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: calc(var(--shell-right-width, var(--shell-right-default)) - 3px);
+		width: 7px;
+		margin: 0;
+	}
+	.shell-outliner-splitter {
+		position: absolute;
+		top: calc(var(--outliner-height) - 3px);
+		left: 0;
+		right: 0;
+		height: 7px;
+		margin: 0;
+		cursor: row-resize;
+	}
+	.shell-outliner-splitter::after { inset: 3px 0; width: auto; height: 1px; }
+	.studio-dock-slot > .timeline-splitter {
+		position: absolute;
+		top: -4px;
+		left: 0;
+		right: 0;
+		height: 7px;
+		margin: 0;
+	}
+	.preferences-slot { display: contents; }
+
+	/* 30vh is 324px at 1080. The reference/acceptance explicitly specifies
+	   330px there; retain the fluid clamp below that reference height. */
+	@media (min-height: 1080px) {
+		.app:not([data-embed-mode]) { --shell-dock-default: 330px; }
+	}
+	@media (max-width: 1440px) {
+		.app:not([data-embed-mode]) { --shell-right-default: 300px; }
+	}
+
+	/* Embeds still use the existing viewport-only / compact transport layout. */
+	.app[data-embed-mode] .studio-right-column { display: none; }
+	.app[data-embed-mode="playview"] .studio-dock-slot { display: none; }
+	.app[data-embed-mode="playground"] .assets-pane { display: none; }
+}
