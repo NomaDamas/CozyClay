@@ -11,7 +11,7 @@ import { hiddenJointError, occlusionAgreement, pelvisStepsDeg, resampleMotion, t
 import { validateDiagnostics } from "./remote.mjs";
 import { jointOccluded } from "./study-2d.mjs";
 
-const USAGE = "usage: node tools/track/gate.mjs --run <dir> --baseline <dir> [--ceiling <summary.json>]";
+const USAGE = "usage: node tools/track/gate.mjs --run <dir> [--baseline <dir>] [--ceiling <summary.json>]\n  Gbest comparisons use --run's own Gbest step. --baseline, if given, must be a run dir with item\n  directories; no row reads values from it (historical run-492f comparisons live in study-2d / todo 14 tables).";
 const TRUTH_SETS = new Set(["gt", "cube", "gt-skin", "cube-skin"]);
 const HIDDEN_SETS = new Set(["cube", "cube-skin"]);
 const HIDDEN_NAMES = new Set(["bump", "sit"]);
@@ -33,8 +33,7 @@ function parseArgs(argv) {
 		out[key.slice(2)] = value;
 	}
 	if (!out.run) throw new Error("--run is required");
-	if (!out.baseline) throw new Error("--baseline is required");
-	return { run: resolve(out.run), baseline: resolve(out.baseline), ceiling: out.ceiling ? resolve(out.ceiling) : null };
+	return { run: resolve(out.run), baseline: out.baseline ? resolve(out.baseline) : null, ceiling: out.ceiling ? resolve(out.ceiling) : null };
 }
 const readJson = path => JSON.parse(readFileSync(path, "utf8"));
 const isFile = path => Boolean(path && existsSync(path) && statSync(path).isFile());
@@ -59,16 +58,29 @@ function itemDirs(root) {
 	return out;
 }
 
-function readMotion(path) {
-	if (!isFile(path)) return null;
+/**
+ * { motion } or { motion: null, error }. Every measured series (pelvis angles,
+ * stance slide, joint errors) derives from posed_joints / local_rot_mats, so a
+ * non-finite value there makes the motion unmeasurable here, at the file
+ * boundary: downstream counts such as `angles.filter(v => v > 20)` would
+ * otherwise silently drop NaN and report a clean 0.
+ */
+function readMotionChecked(path) {
+	if (!isFile(path)) return { motion: null, error: "missing" };
 	const members = readNpz(path);
 	const joints = members.posed_joints;
 	const rotations = members.local_rot_mats ?? members.rotMats;
-	if (!joints?.data || JSON.stringify(joints.shape?.slice(1)) !== "[27,3]") return null;
+	if (!joints?.data || JSON.stringify(joints.shape?.slice(1)) !== "[27,3]") return { motion: null, error: "posed_joints is not [T,27,3]" };
 	const frames = joints.shape[0], fps = members.fps?.data?.[0] ?? 24;
-	if (!Number.isInteger(frames) || frames < 1 || !finite(fps) || fps <= 0 || !rotations?.data) return null;
-	return { frames, fps, posedJoints: joints.data, rotMats: rotations.data };
+	if (!Number.isInteger(frames) || frames < 1 || !finite(fps) || fps <= 0) return { motion: null, error: "bad frame count or fps" };
+	if (!rotations?.data || rotations.data.length !== frames * 27 * 9) return { motion: null, error: "local_rot_mats is not [T,27,3,3]" };
+	for (const [name, data] of [["posed_joints", joints.data], ["local_rot_mats", rotations.data]]) {
+		const bad = data.findIndex(value => !Number.isFinite(value));
+		if (bad >= 0) return { motion: null, error: `non-finite ${name}[${bad}] = ${data[bad]}` };
+	}
+	return { motion: { frames, fps, posedJoints: joints.data, rotMats: rotations.data }, error: null };
 }
+function readMotion(path) { return readMotionChecked(path).motion; }
 function nestedJoints(motion) {
 	return Array.from({ length: motion.frames }, (_, frame) => Array.from({ length: 27 }, (_, joint) => Array.from(motion.posedJoints.slice((frame * 27 + joint) * 3, (frame * 27 + joint + 1) * 3))));
 }
@@ -87,14 +99,14 @@ function loadStep(item, step, { strict = true } = {}) {
 		if (result?.diagnostics?.failure) errors.push(`${keyOf(item)}/${step}: diagnostics.failure=${result.diagnostics.failure}`);
 	}
 	const score = isFile(scorePath) ? readJson(scorePath) : null;
-	const motion = readMotion(motionPath);
+	const { motion, error: motionError } = readMotionChecked(motionPath);
 	const diagnostics = isFile(diagnosticsPath) ? readJson(diagnosticsPath) : null;
 	if (strict && !score) errors.push(`${keyOf(item)}/${step}: missing score.json`);
 	if (strict && score) {
 		const required = TRUTH_SETS.has(item.set) ? TRUTH_SCORE_FIELDS : FAL_SCORE_FIELDS;
 		for (const path of required) if (!finite(field(score, path))) errors.push(`${keyOf(item)}/${step}: missing score field ${path}`);
 	}
-	if (strict && !motion) errors.push(`${keyOf(item)}/${step}: missing or invalid motion.npz`);
+	if (strict && !motion) errors.push(`${keyOf(item)}/${step}: motion.npz ${motionError}`);
 	if (strict && !diagnostics) errors.push(`${keyOf(item)}/${step}: missing diagnostics.json`);
 	if (strict && diagnostics) {
 		try { validateDiagnostics(diagnostics); }
@@ -103,12 +115,12 @@ function loadStep(item, step, { strict = true } = {}) {
 	}
 	if (strict && TRUTH_SETS.has(item.set)) {
 		const source = field(result, "item.source") ?? field(result, "truthPath");
-		if (!readMotion(source)) errors.push(`${keyOf(item)}/${step}: missing or invalid truth motion`);
+		const truth = readMotionChecked(source);
+		if (!truth.motion) errors.push(`${keyOf(item)}/${step}: truth motion ${source ?? "?"} ${truth.error}`);
 	}
-	return { ...item, itemDir, step, dir, result, score, motion, motionPath, diagnostics, errors, valid: errors.length === 0 };
+	return { ...item, itemDir, step, dir, result, score, motion, motionError, motionPath, diagnostics, errors, valid: errors.length === 0 };
 }
 function loadT1(item) { return loadStep(item, "T1", { strict: true }); }
-function loadBaseline(item) { return loadStep(item, "Gbest", { strict: false }); }
 function loadG5(item) { return loadStep({ ...item, dir: item.itemDir ?? item.dir }, "G5", { strict: false }); }
 function truthPath(record) { return field(record.result, "item.source") ?? field(record.result, "truthPath"); }
 function truthMotion(record) { return readMotion(truthPath(record)); }
@@ -181,6 +193,7 @@ function metric(record) {
 	};
 	if (motion) out.steps = Array.from(pelvisStepsDeg(motion.rotMats, motion.frames)).filter(value => value > 20).length;
 	if (truth && motion) out.stance = truthStanceSlideCmPerS(motion, truth).meanCmPerS;
+	if (record.step === "T1") Object.assign(out, sameRunGbest(record, truth));
 	if (isHiddenItem(record) && diagnostics && motion && truth) {
 		try {
 			// Truth is compared on the prediction's timeline (e.g. 30 fps truth vs a 24 fps T1).
@@ -190,7 +203,7 @@ function metric(record) {
 			out.agreement = occlusionAgreement(diagnostics.occluded, visibility).agreement;
 			const g5 = loadG5(record);
 			out.g5 = g5;
-			if (!g5.motion) throw new Error("no same-run G5 motion");
+			if (!g5.motion) throw new Error(`same-run G5 motion.npz ${g5.motionError}`);
 			out.hidden = hiddenJointError(nestedJoints(motion), nestedJoints(truthOnPred), diagnostics.occluded).meanM;
 			out.g5Hidden = hiddenJointError(nestedJoints(g5.motion), nestedJoints(truthOnPred), diagnostics.occluded).meanM;
 		} catch (error) { out.hiddenError = error.message; }
@@ -198,13 +211,52 @@ function metric(record) {
 	out.provenance = provenance(record);
 	return out;
 }
+/**
+ * Every "<= its Gbest" comparison in the IS table (IS-1 fal IoU and pelvis steps,
+ * IS-2 PA +5 mm, IS-4 stance slide re-measured with the same metric) uses the
+ * Gbest step of the SAME run dir, scored by the same scorer on the same obs;
+ * --baseline may not even hold this appearance set. Each value that cannot be
+ * read comes with a concrete `<name>Reason` instead.
+ */
+function sameRunGbest(record, truth) {
+	const gbest = loadStep({ ...record, dir: record.itemDir ?? record.dir }, "Gbest", { strict: false });
+	const why = text => `${keyOf(record)}: ${text}`;
+	// Only a genuine Gbest result can be the comparator: a declared fallback or another step's
+	// result under Gbest/ (e.g. G5 standing in) would make a weaker baseline look like Gbest.
+	const declared = gbest.result, declaredItem = declared?.item;
+	const blocked = !declared ? why("no same-run Gbest/result.json")
+		: declared.ok !== true ? why("same-run Gbest result.ok is not true")
+		: declared.step !== "Gbest" ? why(`same-run Gbest/result.json declares step ${JSON.stringify(declared.step ?? null)}, not "Gbest"`)
+		: declared.fallback != null ? why(`same-run Gbest declares fallback=${declared.fallback}; not a Gbest comparator`)
+		: declaredItem && (declaredItem.set !== record.set || declaredItem.name !== record.name) ? why(`same-run Gbest/result.json is for ${declaredItem.set}/${declaredItem.name}`)
+		: null;
+	const out = {};
+	const put = (name, value, reason) => {
+		if (!blocked && finite(value)) { out[name] = value; out[`${name}Reason`] = null; }
+		else { out[name] = null; out[`${name}Reason`] = blocked ?? why(reason); }
+	};
+	put("gbestPa", scoreValue(gbest, "pose.paMpjpeM"), `same-run Gbest ${gbest.score ? "score.json has no pose.paMpjpeM" : "score/score.json missing"}`);
+	const iouField = record.set === "fal" ? "overlapIoU" : "overlap.maskIoURawMean";
+	put("gbestIou", scoreValue(gbest, iouField), `same-run Gbest ${gbest.score ? `score.json has no ${iouField}` : "score/score.json missing"}`);
+	const motionReason = `same-run Gbest motion.npz ${gbest.motionError}`;
+	put("gbestSteps", gbest.motion ? Array.from(pelvisStepsDeg(gbest.motion.rotMats, gbest.motion.frames)).filter(value => value > 20).length : null, motionReason);
+	const stance = gbest.motion && truth ? truthStanceSlideCmPerS(gbest.motion, truth).meanCmPerS : null;
+	put("gbestStance", stance, !gbest.motion ? motionReason : !truth ? "truth motion missing or invalid" : "same-run Gbest has no truth-stance samples");
+	return out;
+}
+/** Per-item "vs same-run Gbest" sub-check: missing Gbest values and violations are named, never compared as NaN. */
+function gbestCheck(items, name, holds, describe) {
+	const missing = items.filter(m => !finite(m[name])).map(m => m[`${name}Reason`]);
+	const failing = items.filter(m => finite(m[name]) && !holds(m)).map(describe);
+	const problems = [...failing, ...missing];
+	return { pass: problems.length === 0, text: problems.length ? `[FAIL: ${problems.join("; ")}]` : "[ok]" };
+}
 function invalidDetails(metrics) { return metrics.flatMap(m => m.record.errors).join("; ") || "none"; }
 function row(name, pass, detail) { return { name, pass: Boolean(pass), detail }; }
 function allFinite(values) { return values.length > 0 && values.every(finite); }
 
-function evaluate(runRecords, baselineRecords, ceiling) {
+function evaluate(runRecords, ceiling) {
 	const metrics = runRecords.map(metric);
-	const baseline = new Map(baselineRecords.map(record => [keyOf(record), metric(record)]));
 	const truth = metrics.filter(m => TRUTH_SETS.has(m.record.set));
 	const fal = metrics.filter(m => m.record.set === "fal");
 	const invalid = metrics.filter(m => !m.record.valid);
@@ -213,9 +265,10 @@ function evaluate(runRecords, baselineRecords, ceiling) {
 
 	const truthPa = truth.map(m => m.pa), truthRoot = truth.map(m => m.root), truthAte = truth.map(m => m.ate), truthIou = truth.map(m => m.iou);
 	const paGroups = [...new Set(truth.map(m => m.record.set))].map(set => ({ set, values: truth.filter(m => m.record.set === set).map(m => m.pa) }));
-	const paComparisons = truth.map(m => [m.pa, baseline.get(keyOf(m.record))?.pa]);
-	const paPass = !invalid.length && paGroups.length > 0 && paGroups.every(group => allFinite(group.values) && average(group.values) <= 0.05) && paComparisons.every(([value, baselineValue]) => finite(baselineValue) && value <= baselineValue + 0.005);
-	rows.push(row("pose.paMpjpeM", paPass, invalidText !== "none" ? invalidText : `${paGroups.map(group => `${group.set} mean ${(average(group.values) ?? Infinity) * 1000} mm`).join(", ")} <= 50 mm per appearance set; each <= Gbest+5 mm`));
+	const paGbest = gbestCheck(truth, "gbestPa", m => finite(m.pa) && m.pa <= m.gbestPa + 0.005, m => `${keyOf(m.record)} ${finite(m.pa) ? m.pa * 1000 : "missing"} mm > Gbest ${m.gbestPa * 1000}+5 mm`);
+	const paMeanPass = paGroups.length > 0 && paGroups.every(group => allFinite(group.values) && average(group.values) <= 0.05);
+	const paPass = !invalid.length && paMeanPass && paGbest.pass;
+	rows.push(row("pose.paMpjpeM", paPass, invalidText !== "none" ? invalidText : `${paGroups.map(group => `${group.set} mean ${(average(group.values) ?? Infinity) * 1000} mm`).join(", ")} <= 50 mm per appearance set [${paMeanPass ? "ok" : "FAIL"}]; each <= same-run Gbest+5 mm ${paGbest.text}`));
 	rows.push(row("trajectory.rootErrorRawM", !invalid.length && allFinite(truthRoot) && average(truthRoot) <= 0.15, invalidText !== "none" ? invalidText : `${average(truthRoot) ?? "missing"} m <= 0.15 m`));
 	rows.push(row("trajectory.ateAlignedM", !invalid.length && allFinite(truthAte) && average(truthAte) <= 0.15, invalidText !== "none" ? invalidText : `${average(truthAte) ?? "missing"} m <= 0.15 m`));
 
@@ -228,23 +281,31 @@ function evaluate(runRecords, baselineRecords, ceiling) {
 	const iouPass = !invalid.length && setIoU.length > 0 && setIoU.every(group => allFinite(group.values) && finite(group.threshold) && group.value >= group.threshold);
 	rows.push(row("overlap.maskIoURawMean", iouPass, !ceiling ? "missing --ceiling truth IoU measurements" : setIoU.map(group => `${group.set}: ${group.value ?? "missing"} >= ${group.threshold ?? "missing"}`).join(", ")));
 
-	const falIou = fal.map(m => m.iou), falComparisons = fal.map(m => [m.iou, baseline.get(keyOf(m.record))?.iou]);
-	const falPass = !invalid.length && (!fal.length || (allFinite(falIou) && average(falIou) >= 0.4 && falComparisons.every(([value, base]) => finite(base) && value >= base - 0.02)));
-	const falItems = fal.map(m => `${keyOf(m.record)} IoU ${m.iou ?? "missing"} (Gbest ${baseline.get(keyOf(m.record))?.iou ?? "missing"}) A ${m.endpointA ?? "missing"} m B ${m.endpointB ?? "missing"} m pen ${m.scorerPenetrationCm ?? "missing"} cm`).join("; ");
-	rows.push(row("fal.overlapIoU", falPass, !fal.length ? "no fal items" : `mean ${average(falIou) ?? "missing"} >= 0.4; every item >= Gbest-0.02 [${falItems}]`));
+	const falIou = fal.map(m => m.iou);
+	const falGbest = gbestCheck(fal, "gbestIou", m => finite(m.iou) && m.iou >= m.gbestIou - 0.02, m => `${keyOf(m.record)} IoU ${m.iou ?? "missing"} < Gbest ${m.gbestIou}-0.02`);
+	const falMeanPass = allFinite(falIou) && average(falIou) >= 0.4;
+	const falPass = !invalid.length && (!fal.length || (falMeanPass && falGbest.pass));
+	const falItems = fal.map(m => `${keyOf(m.record)} IoU ${m.iou ?? "missing"} (Gbest ${m.gbestIou ?? "missing"}) A ${m.endpointA ?? "missing"} m B ${m.endpointB ?? "missing"} m pen ${m.scorerPenetrationCm ?? "missing"} cm`).join("; ");
+	rows.push(row("fal.overlapIoU", falPass, !fal.length ? "no fal items" : `mean ${average(falIou) ?? "missing"} >= 0.4 [${falMeanPass ? "ok" : "FAIL"}]; every item >= same-run Gbest-0.02 ${falGbest.text} [${falItems}]`));
 
-	const stance = truth.map(m => m.stance), baselineStance = truth.map(m => baseline.get(keyOf(m.record))?.stance);
-	const stancePass = !invalid.length && allFinite(stance) && allFinite(baselineStance) && average(stance) <= 2.5 && average(stance) <= average(baselineStance);
-	rows.push(row("truthStanceSlideCmPerS", stancePass, invalidText !== "none" ? invalidText : `${average(stance) ?? "missing"} cm/s <= 2.5 and Gbest mean ${average(baselineStance) ?? "missing"}`));
+	const stance = truth.map(m => m.stance), gbestStance = truth.map(m => m.gbestStance);
+	const stanceMissing = truth.filter(m => !finite(m.stance)).map(m => `${keyOf(m.record)}: T1 has no truth-stance samples`);
+	const gbestMissing = truth.filter(m => !finite(m.gbestStance)).map(m => m.gbestStanceReason);
+	const stanceMean = stanceMissing.length ? null : average(stance), gbestMean = gbestMissing.length ? null : average(gbestStance);
+	const capPass = finite(stanceMean) && stanceMean <= 2.5, gbestPass = finite(stanceMean) && finite(gbestMean) && stanceMean <= gbestMean;
+	const stanceText = `${stanceMean ?? `missing (${stanceMissing.join("; ") || "no truth items"})`} cm/s <= 2.5 [${capPass ? "ok" : "FAIL"}]; <= same-run Gbest mean ${gbestMean ?? `missing (${gbestMissing.join("; ") || "no truth items"})`} [${gbestPass ? "ok" : "FAIL"}]`;
+	rows.push(row("truthStanceSlideCmPerS", !invalid.length && capPass && gbestPass, invalidText !== "none" ? invalidText : stanceText));
 
 	// Fal items also carry the scorer's independent box penetration; the larger of the two counts.
 	const boxPen = metrics.map(m => { const own = m.diagnostics?.penetration?.maxBoxCm; return finite(own) && finite(m.scorerPenetrationCm) ? Math.max(own, m.scorerPenetrationCm) : own; }), floorPen = metrics.map(m => m.diagnostics?.penetration?.maxFloorCm);
 	rows.push(row("penetration.maxBoxCm", !invalid.length && allFinite(boxPen) && boxPen.every(value => value <= 1), invalidText !== "none" ? invalidText : `${maximum(boxPen) ?? "missing"} cm <= 1 cm`));
 	rows.push(row("penetration.maxFloorCm", !invalid.length && allFinite(floorPen) && floorPen.every(value => value <= 1), invalidText !== "none" ? invalidText : `${maximum(floorPen) ?? "missing"} cm <= 1 cm`));
 
-	const truthSteps = truth.map(m => m.steps), falSteps = fal.map(m => [m.steps, baseline.get(keyOf(m.record))?.steps]);
-	const pelvisPass = !invalid.length && allFinite(truthSteps) && truthSteps.every(value => value === 0) && falSteps.every(([value, base]) => Number.isInteger(value) && Number.isInteger(base) && value <= base);
-	rows.push(row("pelvisSteps>20", pelvisPass, invalidText !== "none" ? invalidText : `${maximum(truthSteps) ?? "missing"} truth frames; Fal within Gbest`));
+	const truthSteps = truth.map(m => m.steps);
+	const truthStepsPass = allFinite(truthSteps) && truthSteps.every(value => value === 0);
+	const falSteps = gbestCheck(fal, "gbestSteps", m => Number.isInteger(m.steps) && m.steps <= m.gbestSteps, m => `${keyOf(m.record)} ${m.steps ?? "missing"} frames > Gbest ${m.gbestSteps}`);
+	const pelvisPass = !invalid.length && truthStepsPass && falSteps.pass;
+	rows.push(row("pelvisSteps>20", pelvisPass, invalidText !== "none" ? invalidText : `${maximum(truthSteps) ?? "missing"} truth frames == 0 [${truthStepsPass ? "ok" : "FAIL"}]; Fal <= same-run Gbest ${fal.length ? falSteps.text : "[no fal items]"}`));
 
 	const hidden = metrics.filter(m => isHiddenItem(m.record));
 	const visibilityPass = !invalid.length && hidden.every(m => finite(m.agreement) && m.agreement >= 0.9);
@@ -265,10 +326,12 @@ function evaluate(runRecords, baselineRecords, ceiling) {
 }
 
 export function runGate(options) {
-	const runItems = itemDirs(options.run), baselineItems = itemDirs(options.baseline);
-	const runRecords = runItems.map(loadT1), baselineRecords = baselineItems.map(loadBaseline);
+	const runRecords = itemDirs(options.run).map(loadT1);
+	// --baseline stays accepted (the plan's gate command passes run-492f) but no IS row compares to
+	// it: every Gbest comparison uses the run's own Gbest step (sameRunGbest).
+	if (options.baseline) itemDirs(options.baseline);
 	const ceiling = options.ceiling ? readJson(options.ceiling) : null;
-	return evaluate(runRecords, baselineRecords, ceiling);
+	return evaluate(runRecords, ceiling);
 }
 export { evaluate };
 
