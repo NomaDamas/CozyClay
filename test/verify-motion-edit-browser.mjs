@@ -91,7 +91,7 @@ expect("scrubbing enables Cut at frame 1", await evaluate(`(() => {
 	slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }));
 	return true;
 })()`));
-expect("frame 1 is reached", await waitFor("document.querySelector('.tl-readout')?.textContent.includes('1 /')"));
+expect("frame 1 is reached", await waitFor("document.querySelector('.tl-readout')?.textContent.includes('0001 /')"));
 expect("Cut enables away from the edges", await evaluate("document.querySelector('.tl-track-add.motion-cut')?.disabled === false"));
 expect("clicking Cut produces two Full-Body segments", await evaluate(`(() => {
 	document.querySelector('.tl-track-add.motion-cut').click();
@@ -110,7 +110,7 @@ expect("the playhead can return to the one-frame segment", await evaluate(`(() =
 	const slider = document.querySelector('.tl-ruler-lane');
 	slider.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
 	return true;
-})()`) && await waitFor("document.querySelector('.tl-readout')?.textContent.includes('0 /')"));
+})()`) && await waitFor("document.querySelector('.tl-readout')?.textContent.includes('0000 /')"));
 
 expect("the external numeric editor accepts 0.7x on the tiny segment", await evaluate(`(() => {
 	const input = document.querySelector('.tl-motion-speed-editor input[type="number"]');
@@ -149,7 +149,7 @@ expect("the wide segment offers a right-click target", !!clipSpot);
 await send("Input.dispatchMouseEvent", { type: "mousePressed", x: clipSpot.x, y: clipSpot.y, button: "right", buttons: 2, clickCount: 1 });
 await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: clipSpot.x, y: clipSpot.y, button: "right", buttons: 0, clickCount: 1 });
 expect("right-clicking a segment deletes it", await waitFor("document.querySelectorAll('.tl-motion-clip').length === 1"));
-const shrunkReadout = await waitFor("document.querySelector('.tl-readout')?.textContent.includes('/ 0')");
+const shrunkReadout = await waitFor("document.querySelector('.tl-readout')?.textContent.includes('/ 0000')");
 expect("deleting the long segment shrinks the timeline range", shrunkReadout, await evaluate("document.querySelector('.tl-readout')?.textContent"));
 await send("Input.dispatchKeyEvent", { type: "keyDown", key: "z", code: "KeyZ", modifiers: 2, windowsVirtualKeyCode: 90 });
 await send("Input.dispatchKeyEvent", { type: "keyUp", key: "z", code: "KeyZ", modifiers: 2, windowsVirtualKeyCode: 90 });

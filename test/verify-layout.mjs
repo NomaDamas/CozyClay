@@ -150,7 +150,7 @@ expect("recording uses WebCodecs with explicit timestamps and frame count", offs
 expect("recording no longer uses MediaRecorder or a wall-clock capture loop", !app.includes("MediaRecorder") && !offscreenExport.includes("performance.now()") && !app.includes("captureStream"));
 expect("pre-motion timeline initializes to 15 seconds", app.includes("const DEFAULT_DURATION_S = 15"));
 expect("motion preview stays at native 1x speed", app.includes("const DEFAULT_PLAYBACK_SPEED = 1") && app.includes("playbackSpeed={DEFAULT_PLAYBACK_SPEED}"));
-expect("timeline cadence and readout expose native preview speed", timeline.includes("fps * playbackSpeed") && timeline.includes("playbackSpeed.toFixed(2)"));
+expect("timeline cadence and v2 readout expose native preview speed", timeline.includes("fps * playbackSpeed") && timeline.includes('data-testid="sequencer-frame-readout"') && timeline.includes('padStart(4, "0")'));
 expect("legacy greeting demo migration is removed", !app.includes("GREETING_DEMO_MIGRATION_KEY") && !app.includes('id: "demo-rise"'));
 expect("batch generation spans through the final block frame", app.includes("Math.ceil(Math.max(...blocks.map(clip => clip.endFrame)) / TIMELINE_FPS)"));
 expect("batch generation forwards all prompt clips", app.includes("const input = { character, prompt, blocks, seed,") && app.includes("hasPromptSchedule"));
