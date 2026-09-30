@@ -127,7 +127,7 @@ expect(
 expect("selection routing is derived once, not repeated per foldout", app.includes("const isCharacterSelection = selectedHierarchyId ===") && app.includes("const inspectorHasContent ="));
 expect("an unowned selection explains itself instead of showing a blank column", app.includes("data-inspector-empty") && css.includes(".inspector-empty"));
 expect("the heavy motion pipeline starts collapsed", app.includes("function Foldout({ title, hidden, defaultOpen = true, openSignal = 0, children })") && app.includes("useState(defaultOpen)"));
-expect("Prompt Block panel exposes one batch generation action", app.includes("prompt-block-generate") && app.includes("Generate all ${promptClips.length} blocks"));
+expect("the top bar is the one batch generation action", app.includes('data-testid="topbar-generate"') && !app.includes("prompt-block-generate") && !app.includes("Generate all ${promptClips.length} blocks"));
 expect("new sessions start without prompt blocks", app.includes("const DEFAULT_PROMPT_CLIPS = [];") && app.includes("useState(null)"));
 expect("new sessions start with an empty motion prompt", app.includes('const [ardyPrompt, setArdyPrompt] = useState("");'));
 expect(
@@ -154,7 +154,8 @@ expect("timeline cadence and v2 readout expose native preview speed", timeline.i
 expect("legacy greeting demo migration is removed", !app.includes("GREETING_DEMO_MIGRATION_KEY") && !app.includes('id: "demo-rise"'));
 expect("batch generation spans through the final block frame", app.includes("Math.ceil(Math.max(...blocks.map(clip => clip.endFrame)) / TIMELINE_FPS)"));
 expect("batch generation forwards all prompt clips", app.includes("const input = { character, prompt, blocks, seed,") && app.includes("hasPromptSchedule"));
-expect("normal motion generation excludes the prompt block schedule", app.includes("promptClipsOverride = []"));
+// v2 removed the Details "Generate all blocks" button, so the top bar is the only generate home and runs the blocks when any has text.
+expect("normal motion generation excludes the prompt block schedule unless the top bar runs the authored blocks", app.includes("promptClipsOverride = []") && app.includes('hasBlocks ? runStudioAction("motion.generateAllBlocks") : runArdy()'));
 // The pin decision moved into ardy/pose-pin.js so it can be tested directly
 // (test/ardy/verify-pose-pin.mjs); the call site only has to route it.
 expect(
@@ -245,11 +246,11 @@ expect(
 	app.includes("window.clearInterval(id);"),
 );
 expect(
-	"Prompt Block generation has request-specific readiness and a nearby recovery path",
-	app.includes("motionReadinessMessage(readinessState)") &&
+	"top-bar generation says its refusal, and Prompt Blocks keeps readiness and a nearby recovery path",
+	app.includes("onClick={() => (reason ? setToast(reason) : hasBlocks ? ") &&
 	app.includes("<MotionReadiness state={readinessState}") &&
 	app.includes("onSetup={openMotionSetup} onRetry={recheckMotionHealth}") &&
-	app.includes("!promptClips.some((clip) => clip.text.trim())"),
+	app.includes("appContext.shared.promptClips.some((clip) => clip.text.trim())"),
 );
 expect("generated motion anchors frame zero at the target character", app.includes("anchorX: targetCharacter.x") && app.includes("anchorZ: targetCharacter.z") && app.includes("anchorFrame: 0"));
 expect("returned playback has no CozyClay root coordinate warp", !app.includes("warpMotionRootToPath"));

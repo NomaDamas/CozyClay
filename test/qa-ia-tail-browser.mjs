@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Browser QA for the last three controls docs/studio-ui-ia.md budgets against
 // (§1 R6, #189): the scene ROOT has no fold caret, the Characters GROUP row is
-// gone (the cast sits directly under the root), and Prompt Blocks' "Generate
-// all" stays absent until there is a block to generate (R3). Drives the real
+// gone (the cast sits directly under the root), and Prompt Blocks never grows
+// its own "Generate all": since #550 the top-bar Generate Motion button and its
+// caret menu are the one home for generating and adding blocks. Drives the real
 // studio over CDP and screenshots both surfaces, because "the count went down"
 // and "the panel still reads right" are two claims.
 //
@@ -154,17 +155,18 @@ expect("Motion mode opens", await clickMode("Motion"));
 expect("Motion lands on a character row, not the vanished group", await waitFor(`["characterA", "characterB"].some((id) => document.querySelector("[data-node-id='" + id + "']")?.classList.contains("selected"))`));
 expect("the Prompt Blocks panel is open", await waitFor(`!!(${PROMPT_CARD})?.querySelector(".foldout-body")`));
 expect("with no blocks there is no Generate all button", (await generateAllLabels())?.length === 0, JSON.stringify(await generateAllLabels()));
-expect("the next step is still spelled out", await evaluate(`[...(${PROMPT_CARD}).querySelectorAll("button")].some((node) => node.textContent.trim().startsWith("Add block at frame"))`));
 expect("the empty Prompt Blocks screenshot has bytes", (await shotOf("prompt-blocks-zero", PROMPT_CARD)) > 2000);
+await evaluate(`document.querySelector("[data-testid=topbar-generate-menu]").click()`);
+expect("the next step is still spelled out, in the top-bar Generate menu", await waitFor(`document.querySelector("[data-generate-action=block]")?.textContent.trim().startsWith("Add block at frame")`));
 
-await evaluate(`[...(${PROMPT_CARD}).querySelectorAll("button")].find((node) => node.textContent.trim().startsWith("Add block at frame"))?.click()`);
-expect("adding the first block brings the action back", await waitFor(`[...(${PROMPT_CARD}).querySelectorAll("button")].some((node) => node.textContent.trim().startsWith("Generate all"))`));
+await evaluate(`document.querySelector("[data-generate-action=block]").click()`);
+expect("adding the first block leaves the top-bar Generate Motion as its action", await waitFor(`document.querySelectorAll(".tl-track.prompts .tl-chip-input").length === 1 && !!document.querySelector("[data-testid=topbar-generate]")`));
 const withBlock = await generateAllLabels();
-expect("the action counts the block it would run", withBlock?.[0] === "Generate all 1 blocks", JSON.stringify(withBlock));
+expect("the block's action is the top bar's, not a Details Generate all", withBlock?.length === 0, JSON.stringify(withBlock));
 
 writeFileSync(`${out}/summary.json`, JSON.stringify({ labels, cameraDepth, characterDepth, withBlock }, null, 2));
 expect("browser run has no uncaught page errors", pageErrors.length === 0, pageErrors.join(" | "));
 
 ws.close();
 if (failures) { console.error(`${failures} FAILURES`); process.exit(1); }
-console.log(`PASS IA tail — no root caret, no Characters group row, Generate all gated on a block; evidence in ${out}`);
+console.log(`PASS IA tail — no root caret, no Characters group row, generate lives in the top bar; evidence in ${out}`);

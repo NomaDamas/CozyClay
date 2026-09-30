@@ -94,10 +94,10 @@ try {
   await send('Page.navigate', { url: origin + '/app/' }); await loaded;
   await bounded(connected.promise, 'live editor handshake');
   await transition(`window.__cozyclay?.rigA && [...document.querySelectorAll('.foldout-title')].some(node => node.textContent === 'Prompt Blocks')`);
-  await transition(`document.querySelector('.prompt-block-generate') && !document.querySelector('.prompt-block-generate').disabled`, `[...document.querySelectorAll('.foldout-title')].find(node => node.textContent === 'Prompt Blocks').closest('button').click()`);
-  await transition(`window.__cozyclay.motion?.frames === 96`, `document.querySelector('.prompt-block-generate').click()`);
+  await transition(`document.querySelector('[data-testid=topbar-generate]') && !document.querySelector('[data-testid=topbar-generate]').dataset.disabledReason`);
+  await transition(`window.__cozyclay.motion?.frames === 96`, `document.querySelector('[data-testid=topbar-generate]').click()`);
   assert.equal(requests.length, 1); assert.equal(requests[0].segments.length, 2); assert.equal(requests[0].waypoints.at(-1).frame, 72);
-  console.log('PASS browser generation: the real Generate all blocks button sends segments and root path and installs a take');
+  console.log('PASS browser generation: the top-bar Generate Motion button sends segments and root path and installs a take');
   await transition(`!window.__cozyclay.motion`, `window.dispatchEvent(new KeyboardEvent('keydown',{key:'z',code:'KeyZ',metaKey:true,bubbles:true}))`);
   console.log('PASS browser generation: one keyboard undo removes the generated take');
   const receipt = await evaluate(`window.__cozyclay.runArdy({promptOverride:'Walk forward',durationOverride:4})`);

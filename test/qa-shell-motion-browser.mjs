@@ -208,44 +208,55 @@ try {
 	const after = await evaluate("document.querySelector('.motion-takes').dataset.takeSource");
 	expect("v1 is the demo take", after === "/demo/walk-then-stop.npz", after);
 
-	// ---- Actions that left the take bar still have a visible home ----
+	// ---- Actions that left the take bar have one visible home: the top bar (#550) ----
 	await evaluate(`(() => {
 		const head = [...document.querySelectorAll('.v2-details-section:not([hidden]) .foldout-head')].find((button) => button.textContent.trim() === 'Prompt Blocks');
 		if (head?.getAttribute('aria-expanded') === 'false') head.click();
 		return true;
 	})()`);
-	expect("Prompt Blocks is open", await waitFor("!!document.querySelector('[data-scene-action=block]')"));
+	expect("Prompt Blocks is open", await waitFor("[...document.querySelectorAll('.inspector-sidebar .inspector-hint')].some((node) => node.textContent.startsWith('Blocks define what is generated'))"));
+	await click("[data-testid=topbar-generate-menu]");
+	await waitFor("!!document.querySelector('[data-generate-action=block]')");
 	const homes = await evaluate(`(() => {
 		const visible = (selector) => { const node = document.querySelector(selector); if (!node) return false; const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
 		return {
-			scene: visible('.hierarchy-sidebar [data-take-mode=scene]'),
+			scene: visible('.topbar [data-testid=topbar-generate]'),
 			refine: visible('.hierarchy-sidebar [data-take-mode=refine]'),
-			startOver: visible('.hierarchy-sidebar [data-scene-action=new]'),
-			again: visible('.hierarchy-sidebar [data-scene-action=again]'),
-			block: visible('.hierarchy-sidebar [data-scene-action=block]'),
+			startOver: visible('[data-generate-action=new]'),
+			again: visible('[data-generate-action=again]'),
+			block: visible('[data-generate-action=block]'),
 		};
 	})()`);
-	expect("Scene, Refine, Start over, Take it again and Add block are all visible in Details", Object.values(homes).every(Boolean), JSON.stringify(homes));
+	expect("Generate Motion with Start over, Take it again and Add block in its caret menu are visible in the top bar, Refine in Details", Object.values(homes).every(Boolean), JSON.stringify(homes));
+	const detailsGenerate = await evaluate(`[...document.querySelectorAll('.inspector-sidebar [data-scene-action], .inspector-sidebar .prompt-block-generate')].filter((node) => { const r = node.getBoundingClientRect(); return r.width > 0 && r.height > 0; }).length`);
+	expect("Details shows no generate action of its own", detailsGenerate === 0, String(detailsGenerate));
+	await send("Input.dispatchKeyEvent", { type: "keyDown", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+	await send("Input.dispatchKeyEvent", { type: "keyUp", key: "Escape", code: "Escape", windowsVirtualKeyCode: 27 });
+	expect("Escape closes the Generate menu", await waitFor("!document.querySelector('[data-generate-action]')"));
 	expect("Motion › Advanced starts collapsed", await evaluate("document.querySelector('.motion-advanced-head')?.getAttribute('aria-expanded') === 'false' && !document.querySelector('[data-preserve-strength]')"));
 	await click(".motion-advanced-head");
 	expect("Motion › Advanced reveals preserve strength", await waitFor("!!document.querySelector('.motion-advanced [data-preserve-strength]')"));
 
 	// ---- Failure path: generation bridge unavailable ----
 	const clipsBefore = await evaluate("document.querySelectorAll('.tl-track.prompts .tl-chip-input').length");
-	await click("[data-scene-action=block]");
+	await click("[data-testid=topbar-generate-menu]");
+	await waitFor("!!document.querySelector('[data-generate-action=block]')");
+	await click("[data-generate-action=block]");
 	expect("Add block adds a prompt block", await waitFor(`document.querySelectorAll('.tl-track.prompts .tl-chip-input').length === ${clipsBefore + 1} && !!document.querySelector('input[placeholder="describe this motion block"]')`));
 	await evaluate(`(() => { const input = document.querySelector('input[placeholder="describe this motion block"]'); input.focus(); input.select(); return true; })()`);
 	await send("Input.insertText", { text: "walk forward and stop" });
 	expect("the selected block shows its range and prompt", await waitFor(`!!document.querySelector('.motion-block-range') && document.querySelector('input[placeholder="describe this motion block"]').value === 'walk forward and stop'`));
-	expect("Generate is on screen", await waitFor("!!document.querySelector('.prompt-block-generate')"));
+	expect("Generate is on screen", await waitFor("!!document.querySelector('[data-testid=topbar-generate]')"));
 	const readiness = await evaluate(`(() => {
-		const generate = document.querySelector('.prompt-block-generate');
+		const generate = document.querySelector('[data-testid=topbar-generate]');
 		const status = document.querySelector('.hierarchy-sidebar .motion-readiness');
-		return { disabled: generate.disabled, title: generate.title, state: status?.dataset.state ?? null, text: status?.querySelector('[role=status]')?.textContent ?? null };
+		return { disabledReason: generate.dataset.disabledReason ?? null, title: generate.title, state: status?.dataset.state ?? null, text: status?.querySelector('[role=status]')?.textContent ?? null };
 	})()`);
-	expect("the readiness reason is said inline under Generate", readiness.state && readiness.state !== "ready" && readiness.text && readiness.text === readiness.title, JSON.stringify(readiness));
+	// The top-bar button stays live so its click reaches the pipeline's refusal;
+	// the readiness reason is said inline beside the blocks in Details.
+	expect("the readiness reason is said inline in Details while top-bar Generate stays clickable", readiness.state && readiness.state !== "ready" && readiness.text && !readiness.disabledReason, JSON.stringify(readiness));
 	const motionBefore = await evaluate("window.__cozyclay.motion?.url ?? null");
-	const busyBefore = await evaluate("document.querySelector('.prompt-block-generate').textContent");
+	const busyBefore = await evaluate("document.querySelector('[data-testid=topbar-generate]').textContent");
 	// The refusal is the signal: subscribed before the click, it arrives as the
 	// generation pipeline's TARGET_NOT_READY toast.
 	await evaluate(`(() => {
@@ -257,9 +268,9 @@ try {
 		});
 		return true;
 	})()`);
-	await click(".prompt-block-generate");
+	await click("[data-testid=topbar-generate]");
 	expect("Generate is refused with the readiness reason", await evaluate("window.__qaRefusal"));
-	const afterClick = await evaluate("({ label: document.querySelector('.prompt-block-generate').textContent, url: window.__cozyclay.motion?.url ?? null, cancel: [...document.querySelectorAll('.hierarchy-sidebar button')].some((button) => button.textContent.trim() === 'Cancel run') })");
+	const afterClick = await evaluate("({ label: document.querySelector('[data-testid=topbar-generate]').textContent, url: window.__cozyclay.motion?.url ?? null, cancel: [...document.querySelectorAll('.hierarchy-sidebar button')].some((button) => button.textContent.trim() === 'Cancel run') })");
 	expect("no generation job starts without a bridge", afterClick.label === busyBefore && afterClick.url === motionBefore && !afterClick.cancel, JSON.stringify({ busyBefore, motionBefore, afterClick }));
 	await evaluate("document.activeElement?.blur(); true");
 	await screenshot("task-16-failure");

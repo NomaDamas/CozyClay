@@ -15,8 +15,8 @@
 //   controls - everything else (chrome). Only controls have a budget.
 // "total" (= controls + items) is the pre-v2 metric the R6 targets used.
 
-// v2 baseline measured on 40767ed; the pre-v2 R6 targets were 35/45/38/52 (docs/studio-ui-ia.md §1).
-const BUDGETS = { "stage-none": 37, "stage-char": 45, pose: 58, camera: 39, motion: 55 };
+// v2 baseline measured on 40767ed (motion 55 -> 52 after #550 moved generate to the top bar); the pre-v2 R6 targets were 35/45/38/52 (docs/studio-ui-ia.md §1).
+const BUDGETS = { "stage-none": 37, "stage-char": 45, pose: 58, camera: 39, motion: 52 };
 
 import { writeFileSync } from "node:fs";
 

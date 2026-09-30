@@ -78,7 +78,7 @@ await sleep(6000);
 
 // Prompt Blocks replaced the old single "Generate motion" field. Select the
 // first character, open the Prompt Blocks foldout, then add a block before
-// looking for its prompt input and batch Generate action.
+// looking for its prompt input and the top-bar Generate Motion action.
 await evaluate(tab, `(() => {
 	const character = [...document.querySelectorAll('.hierarchy-row')].find((row) => /Character 1|Subject 1|인물 1/.test(row.textContent));
 	character?.click();
@@ -92,8 +92,8 @@ await sleep(400);
 const state0 = await evaluate(tab, `(() => {
 	const seed = document.querySelector('input[placeholder="empty = random"]');
 	const promptEl = document.querySelector('input[placeholder*="motion block"], input[placeholder*="모션 블록"]');
-	const gen = document.querySelector('button.prompt-block-generate');
-	return { seedValue: seed?.value ?? null, hasGenerate: !!gen, generateDisabled: !!gen?.disabled, hasPrompt: !!promptEl };
+	const gen = document.querySelector('[data-testid=topbar-generate]');
+	return { seedValue: seed?.value ?? null, hasGenerate: !!gen, generateDisabled: gen?.getAttribute('aria-disabled') === 'true', hasPrompt: !!promptEl };
 })()`);
 console.log("initial:", JSON.stringify(state0));
 
@@ -119,8 +119,8 @@ for (const key of ["a", " ", "p", "e", "r", "s", "o", "n", " ", "w", "a", "l", "
 await sleep(300);
 await shot(tab, "01-before-generate");
 const clicked = await evaluate(tab, `(() => {
-const gen = document.querySelector('button.prompt-block-generate');
-	if (!gen || gen.disabled) return false;
+const gen = document.querySelector('[data-testid=topbar-generate]');
+	if (!gen || gen.getAttribute('aria-disabled') === 'true') return false;
 	gen.click();
 	return true;
 })()`);
