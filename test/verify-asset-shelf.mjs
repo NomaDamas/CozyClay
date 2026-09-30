@@ -2,6 +2,7 @@
 // The Assets shelf must show what the user IMPORTED and hide what the matte
 // pipeline DERIVED. This suite pins that split as pure data-in/data-out.
 import { assetKind, derivedAssetIds, formatAssetBytes, sourceAssetIds } from "../src/asset-shelf.js";
+import { LOG_LIMIT, logStore } from "../src/shell/log-store.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -115,6 +116,29 @@ expect(
 	JSON.stringify(sourceAssetIds(["not-an-id", null, SOURCE], [null, {}, { objects: "x" }])) === JSON.stringify([SOURCE]),
 );
 expect("no stored ids means an empty shelf", sourceAssetIds([], scenes).length === 0 && sourceAssetIds(null, scenes).length === 0);
+
+// The Content pane's Log tab reads the session log store: an immutable array
+// plus subscribe, with keyed progress coalescing and a bounded tail.
+logStore.clear();
+let notified = 0;
+const unsubscribe = logStore.subscribe(() => { notified += 1; });
+const before = logStore.getEntries();
+logStore.push({ kind: "toast", text: "Cube added" });
+expect("a push publishes a new array to subscribers", notified === 1 && logStore.getEntries() !== before && logStore.getEntries().length === 1);
+expect("entries keep kind and text", logStore.getEntries()[0].kind === "toast" && logStore.getEntries()[0].text === "Cube added");
+expect("blank text is ignored", logStore.push({ text: "  " }) === null && logStore.getEntries().length === 1);
+logStore.push({ kind: "export", key: "export:mp4:encoding", text: "Encoding 1/10" });
+logStore.push({ kind: "export", key: "export:mp4:encoding", text: "Encoding 2/10" });
+expect("the same key as the newest entry updates it in place", logStore.getEntries().length === 2 && logStore.getEntries()[1].text === "Encoding 2/10");
+logStore.push({ kind: "export", key: "export:mp4:completed", text: "Completed" });
+expect("a new phase key adds a row", logStore.getEntries().length === 3);
+for (let i = 0; i < LOG_LIMIT + 5; i += 1) logStore.push({ text: `event ${i}` });
+expect("the log keeps a bounded tail", logStore.getEntries().length === LOG_LIMIT && logStore.getEntries().at(-1).text === `event ${LOG_LIMIT + 4}`);
+unsubscribe();
+const quiet = notified;
+logStore.push({ text: "after unsubscribe" });
+expect("unsubscribe stops notifications", notified === quiet);
+logStore.clear();
 
 if (failures) {
 	console.error(`\n${failures} failure(s)`);

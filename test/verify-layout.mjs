@@ -109,7 +109,7 @@ expect("body double-click skips tag-started gestures", app.includes("Date.now() 
 expect("workspace has a dedicated left hierarchy window", app.includes('className="panel hierarchy-left"') && app.includes('beginWorkspaceResize("hierarchy"'));
 expect("inspector is always visible beside the scene", app.includes("inspector-sidebar") && !app.includes("rightPanelTab"));
 expect("legacy hierarchy/inspector splitter is removed", !app.includes("hierarchy-splitter"));
-expect("bottom window exposes only Animation and Assets tabs", app.includes("bottom-window-tabs") && app.includes('bottomTab === "assets"') && !app.includes("console-pane") && !app.includes('bottomTab === "console"'));
+expect("bottom dock drops the Animation/Assets tab strip for the Content pane", !app.includes("bottom-window-tabs") && app.includes('setBottomTab(visible ? "assets" : "timeline")') && !app.includes("console-pane") && !app.includes('bottomTab === "console"'));
 expect("ARDY status stays inline without a console history surface", app.includes("reportArdyStatus") && !app.includes("consoleLines"));
 // The sidebar has no tabs: one Inspector, driven by the hierarchy selection,
 // so every panel is reached by selecting the thing that owns it.

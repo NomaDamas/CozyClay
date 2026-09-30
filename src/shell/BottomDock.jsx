@@ -1,4 +1,7 @@
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
+import { logStore } from "./log-store.js";
+import "./dock.css";
 import { ko } from "../locale.js";
 import AssetPane from "../asset-pane.jsx";
 import TakeBarPanel from "../panels/TakeBarPanel.jsx";
@@ -8,9 +11,48 @@ import { motionEditLayout, createMotionEdit } from "../ardy/motion-edit.js";
 import { trackFeature } from "../analytics.js";
 import { defaultRailRange } from "../camera-rail-schedule.js";
 
+// G11: the dock resizes within [220, 480] px, and never so far that the 3D
+// viewport drops under 480 px (top bar 44 + status bar 24 + three 1 px gaps).
+export const DOCK_MIN_HEIGHT = 220;
+export const DOCK_MAX_HEIGHT = 480;
+const VIEWPORT_MIN_HEIGHT = 480;
+const SHELL_FIXED_ROWS = 44 + 24 + 3;
+const DOCK_HEIGHT_KEY = "cozyclay.dock.height.v1";
+const CONTENT_COLLAPSED_KEY = "cozyclay.dock.content-collapsed.v1";
+
+function clampDockHeight(height) {
+	const roomy = Math.min(DOCK_MAX_HEIGHT, window.innerHeight - SHELL_FIXED_ROWS - VIEWPORT_MIN_HEIGHT);
+	return Math.round(Math.min(Math.max(DOCK_MIN_HEIGHT, roomy), Math.max(DOCK_MIN_HEIGHT, height)));
+}
+
+function readStored(key) {
+	try {
+		return globalThis.localStorage?.getItem(key) ?? null;
+	} catch {
+		return null;
+	}
+}
+
+function writeStored(key, value) {
+	try {
+		globalThis.localStorage?.setItem(key, value);
+	} catch (error) {
+		console.warn(`[cozyclay] could not store ${key}`, error);
+	}
+}
+
+function readDockHeight() {
+	const stored = Number(readStored(DOCK_HEIGHT_KEY));
+	return Number.isFinite(stored) && stored > 0 ? stored : null;
+}
+
+function readContentCollapsed() {
+	return readStored(CONTENT_COLLAPSED_KEY) === "1";
+}
+
 export default function BottomDock() {
 	const {
-		bottomTab, setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
+		setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
 		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
 		projectAssetGraphSignature, assetTrash, deleteUnusedAsset, undoDeletedAsset, deletingAssetId,
 		projectManifest, linePreviewUrl, takeSourceUrl, sceneDisabledReason, sceneMenuOpen,
@@ -37,31 +79,143 @@ export default function BottomDock() {
 		selectWorkflowMode, addCameraKeyframe, moveCameraKeyframe, removeCameraKeyframe, syncActiveCameraFraming,
 		activeCamera, activeShotDuration, changeActiveCamera, cameraRail, previewCameraShot,
 		toggleCameraRailDraw, deleteCameraRail, selectTimelineShot, shotsDomain, runStudioAction,
-		clearMotion,
+		clearMotion, subscribeToasts, exportStatus, exportPhaseLabel, ardyRunning, ardyStatus,
+		ardyOutcome, spawnCharacter, addSceneObject, allPoses,
 	} = useStudioShell();
+	const dockRef = useRef(null);
+	const [contentCollapsed, setContentCollapsed] = useState(readContentCollapsed);
+	const [dockHeight, setDockHeight] = useState(readDockHeight);
+	const dockHeightRef = useRef(dockHeight);
+	dockHeightRef.current = dockHeight;
+
+	// The dock height is the shell row's --shell-dock-height. null keeps the
+	// shell's responsive default; a stored size is re-clamped on every window
+	// resize so the viewport never drops under its minimum height.
+	useLayoutEffect(() => {
+		const app = dockRef.current?.closest(".app");
+		if (!app) return undefined;
+		const apply = () => {
+			if (dockHeightRef.current === null) app.style.removeProperty("--shell-dock-height");
+			else app.style.setProperty("--shell-dock-height", `${clampDockHeight(dockHeightRef.current)}px`);
+		};
+		apply();
+		window.addEventListener("resize", apply);
+		return () => window.removeEventListener("resize", apply);
+	}, [dockHeight]);
+
+	function commitDockHeight(next) {
+		const height = clampDockHeight(next);
+		setDockHeight(height);
+		writeStored(DOCK_HEIGHT_KEY, String(height));
+	}
+
+	function beginDockResize(event) {
+		if (event.button !== 0) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const startY = event.clientY;
+		const startHeight = dockRef.current.getBoundingClientRect().height;
+		let latest = startHeight;
+		const onMove = (move) => {
+			latest = clampDockHeight(startHeight - (move.clientY - startY));
+			setDockHeight(latest);
+		};
+		const onUp = () => {
+			document.body.classList.remove("is-resizing", "resize-timeline");
+			window.removeEventListener("pointermove", onMove);
+			window.removeEventListener("pointerup", onUp);
+			window.removeEventListener("pointercancel", onUp);
+			commitDockHeight(latest);
+		};
+		document.body.classList.add("is-resizing", "resize-timeline");
+		window.addEventListener("pointermove", onMove);
+		window.addEventListener("pointerup", onUp);
+		window.addEventListener("pointercancel", onUp);
+	}
+
+	function onDockResizeKey(event) {
+		const step = event.shiftKey ? 48 : 16;
+		const current = dockRef.current.getBoundingClientRect().height;
+		if (event.key === "ArrowUp") commitDockHeight(current + step);
+		else if (event.key === "ArrowDown") commitDockHeight(current - step);
+		else if (event.key === "Home") commitDockHeight(DOCK_MIN_HEIGHT);
+		else if (event.key === "End") commitDockHeight(DOCK_MAX_HEIGHT);
+		else return;
+		event.preventDefault();
+	}
+
+	function changeContentCollapsed(next) {
+		setContentCollapsed(next);
+		writeStored(CONTENT_COLLAPSED_KEY, next ? "1" : "0");
+	}
+
+	// App scans imported assets only while they are on screen.
+	const changeShelfVisible = useCallback((visible) => setBottomTab(visible ? "assets" : "timeline"), [setBottomTab]);
+
+	// Session Log: every toast (App fans each one out to subscribeToasts),
+	// generation jobs and export phases. The toast sink set lives for the
+	// whole session, so one subscription on mount is enough.
+	useEffect(() => subscribeToasts((toast) => logStore.push({ kind: "toast", text: toast.uiMessage })),
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+		[]);
+	const generationWasRunning = useRef(false);
+	useEffect(() => {
+		if (ardyRunning && !generationWasRunning.current) logStore.push({ kind: "generation", text: ko("Motion generation started", "모션 생성을 시작했어요") });
+		generationWasRunning.current = ardyRunning;
+	}, [ardyRunning]);
+	useEffect(() => {
+		if (ardyRunning && ardyStatus) logStore.push({ kind: "generation", key: "generation:status", text: ardyStatus });
+	}, [ardyRunning, ardyStatus]);
+	useEffect(() => {
+		if (!ardyOutcome) return;
+		logStore.push({ kind: "generation", text: ardyOutcome.ok
+			? ko("Motion generation finished", "모션 생성을 마쳤어요")
+			: ko(`Motion generation failed — ${ardyOutcome.message}`, `모션 생성 실패 — ${ardyOutcome.message}`) });
+	}, [ardyOutcome]);
+	const exportPhase = exportStatus?.phase, exportLabel = exportStatus?.label, exportMessage = exportStatus?.message;
+	const exportDone = exportStatus?.completedFrames, exportTotal = exportStatus?.frameCount;
+	useEffect(() => {
+		if (!exportPhase) return;
+		const progress = exportPhase === "encoding" && exportTotal ? ` ${exportDone ?? 0}/${exportTotal}` : "";
+		const detail = ["completed", "failed", "cancelled"].includes(exportPhase) && exportMessage ? ` — ${exportMessage}` : "";
+		logStore.push({
+			kind: "export",
+			key: `export:${exportLabel}:${exportPhase}`,
+			text: `${ko("Export", "내보내기")} ${exportPhaseLabel(exportPhase)}${exportLabel ? ` · ${exportLabel}` : ""}${progress}${detail}`,
+		});
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [exportPhase, exportLabel, exportMessage, exportDone, exportTotal]);
+
+	// Double-click in Content: the same payloads the drag carries, placed at
+	// the origin through the named domain actions.
+	function placeAssetAtOrigin(payload) {
+		const origin = { x: 0, z: 0 };
+		if (payload.kind === "character") spawnCharacter(payload.id, origin.x, origin.z);
+		else if (payload.kind === "object") addSceneObject(payload.objectKind, origin);
+		else if (payload.kind === "image" || payload.kind === "mesh") {
+			runStudioAction("asset.import", { assetId: payload.assetId, placeAs: payload.kind === "mesh" ? "mesh" : "cutout", placement: origin });
+		}
+	}
+
 	return (
-		<div className="bottom-window">
-			<nav className="bottom-window-tabs" aria-label={ko("Bottom window", "하단 창")}>
-				<button
-					type="button"
-					className={bottomTab === "timeline" ? "active" : ""}
-					aria-pressed={bottomTab === "timeline"}
-					onClick={() => setBottomTab("timeline")}
-				>
-					{ko("Animation", "애니메이션")}
-				</button>
-				<button
-					type="button"
-					className={bottomTab === "assets" ? "active" : ""}
-					aria-pressed={bottomTab === "assets"}
-					onClick={() => setBottomTab("assets")}
-				>
-					{ko("Assets", "에셋")}
-				</button>
-			</nav>
+		<div className="bottom-window v2-dock" ref={dockRef} data-content-collapsed={contentCollapsed || undefined}>
+			<div
+				className="v2-dock-resize"
+				data-testid="dock-resize-handle"
+				role="separator"
+				tabIndex={0}
+				aria-orientation="horizontal"
+				aria-label={ko("Resize bottom dock", "하단 도크 크기 조절")}
+				aria-valuemin={DOCK_MIN_HEIGHT}
+				aria-valuemax={DOCK_MAX_HEIGHT}
+				aria-valuenow={dockHeight ?? undefined}
+				onPointerDown={beginDockResize}
+				onKeyDown={onDockResizeKey}
+			/>
 			<div className="assets-pane">
 				<AssetPane
 					onAssetGrab={beginAssetDrag}
+					onAssetPlace={placeAssetAtOrigin}
 					imageAssetIds={shelfImageIds}
 					meshAssetIds={shelfMeshIds}
 					manageStorage={manageAssetStorage}
@@ -75,6 +229,14 @@ export default function BottomDock() {
 					onUndoDelete={undoDeletedAsset}
 					deletingAssetId={deletingAssetId}
 					resourceManifest={projectManifest}
+					shots={shots}
+					takeVersions={takeVersions}
+					poses={allPoses}
+					onShotOpen={selectTimelineShot}
+					onTakeOpen={loadTakeVersion}
+					collapsed={contentCollapsed}
+					onCollapsedChange={changeContentCollapsed}
+					onShelfVisibleChange={changeShelfVisible}
 				/>
 			</div>
 			<div className="bottom-timeline">

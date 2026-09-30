@@ -157,12 +157,13 @@ try {
 	})()`);
 	expect("the inspector can set height to 0.5 m", resized !== null && Math.abs(resized - 0.5) < 0.02, JSON.stringify(resized));
 
-	await evaluate("[...document.querySelectorAll('button')].find((button) => /^(Assets|에셋)$/.test(button.textContent.trim()))?.click()");
+	// Imported models live in the Content browser's Props folder (#527).
+	await evaluate("document.querySelector('[data-testid=content-tab-content]')?.click(); document.querySelector('[data-testid=content-folder-props]')?.click()");
 	const onShelf = await waitFor(
-		"[...document.querySelectorAll('.assets-section-title, .asset-card-label')].some((node) => /My models|내 모델|unit-cube/.test(node.textContent))",
+		"[...document.querySelectorAll('[data-testid=content-asset] .content-tile-name')].some((node) => /unit-cube/.test(node.textContent))",
 		{ timeoutMs: 8000 },
 	);
-	expect("the Assets tab lists the imported model under My models", onShelf);
+	expect("the Content Props folder lists the imported model", onShelf);
 
 	await sleep(600);
 	await send("Page.reload");

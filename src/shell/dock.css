@@ -1,0 +1,93 @@
+/* Restate the global layer order: this sheet can load before styles.css. */
+@layer tokens, legacy, shell, regions;
+
+@layer regions {
+	/* v2 bottom dock (G10/G11): Content | Log on the left at 620 px, the
+	   Sequencer filling the rest. Collapsing Content leaves its 36 px header as
+	   a full-width row and hands the Sequencer the whole width. */
+	.app:not([data-embed-mode]) .bottom-window.v2-dock {
+		--dock-content-width: 620px;
+		--dock-header-height: 36px;
+		--dock-handle-hit: 7px;
+		--dock-handle-line: 1px;
+		position: relative;
+		display: grid;
+		grid-template-columns: var(--dock-content-width) minmax(0, 1fr);
+		grid-template-rows: minmax(0, 1fr);
+		gap: var(--dock-handle-line);
+		height: 100%;
+		border: 0;
+		background: var(--surface-0, #070708);
+	}
+
+	.app:not([data-embed-mode]) .v2-dock > .assets-pane {
+		grid-column: 1;
+		grid-row: 1;
+		height: auto;
+		min-height: 0;
+		max-height: none;
+		min-width: 0;
+		padding: 0;
+		overflow: hidden;
+		background: var(--surface-panel, #151517);
+	}
+
+	/* The Sequencer follows the dock's height instead of its own 330 px
+	   floor, so a resized dock keeps the transport in view and the lanes
+	   scroll inside it. */
+	.app:not([data-embed-mode]) .v2-dock > .bottom-timeline {
+		--timeline-height: 100%;
+		--tl-v2-height: 0px;
+		grid-column: 2;
+		grid-row: 1;
+	}
+
+	.app:not([data-embed-mode]) .v2-dock[data-content-collapsed] {
+		grid-template-columns: minmax(0, 1fr);
+		grid-template-rows: var(--dock-header-height) minmax(0, 1fr);
+	}
+
+	.app:not([data-embed-mode]) .v2-dock[data-content-collapsed] > .bottom-timeline {
+		grid-column: 1;
+		grid-row: 2;
+	}
+
+	/* The dock owns its resize edge now; the shell's older splitter used a
+	   [110 px, 58vh] range and would fight this one over the same pixels. */
+	.app:not([data-embed-mode]) .studio-dock-slot > .timeline-splitter {
+		display: none;
+	}
+
+	.app:not([data-embed-mode]) .v2-dock-resize {
+		position: absolute;
+		z-index: 8;
+		top: calc(var(--dock-handle-hit) / -2);
+		left: 0;
+		right: 0;
+		height: var(--dock-handle-hit);
+		cursor: row-resize;
+		touch-action: none;
+		outline: none;
+	}
+
+	.app:not([data-embed-mode]) .v2-dock-resize::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: calc((var(--dock-handle-hit) - var(--dock-handle-line)) / 2);
+		height: var(--dock-handle-line);
+		background: transparent;
+		transition: background-color .12s ease;
+	}
+
+	.app:not([data-embed-mode]) .v2-dock-resize:hover::after,
+	.app:not([data-embed-mode]) .v2-dock-resize:focus-visible::after,
+	body.resize-timeline .app:not([data-embed-mode]) .v2-dock-resize::after {
+		background: var(--select, #e8a33d);
+	}
+
+	.app[data-embed-mode] .v2-dock-resize {
+		display: none;
+	}
+}
