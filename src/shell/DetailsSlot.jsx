@@ -71,7 +71,7 @@ export default function DetailsSlot() {
 		useMultiModelUrl, pasteMultiModelUrl, multiModelProgress, multiModelError, multiModelFootage,
 		extractMultiModelMotion, multiModelExtract, multiModelTake, multiModelExtractProgress, multiModelExtractError,
 		bridge, promptBlocksReveal, promptClips, selectedPromptId, setSelectedPromptId,
-		setArdyPrompt, setTlFrame, tlFrameCount, changePromptClip, ardySeed,
+		setArdyPrompt, setTlFrame, tlFrameCount, ardySeed,
 		changeArdySeed, lineEditMode, toggleLineEditMode, linePreviewUrl, lineCurve,
 		lineDrifted, lineTrack, setLineTrack, linePinMode, setLinePinMode,
 		linePins, lineClipFrames, lineEditRange, setLineRange, lineRadius,
@@ -79,9 +79,9 @@ export default function DetailsSlot() {
 		lineDriftHint, lineCurveHidden, linePreviewBusy, linePreviewMs, linePreviewError,
 		generationBusy, bridgeChecking, lineReadinessState, runLineEdit, openMotionSetup,
 		recheckMotionHealth, resetLineCurve, exitLineEditMode, readinessState, ardyRunning,
-		cancelArdy, ardyStatus, ardyOutcome, addPromptClip, tlFrame,
+		cancelArdy, ardyStatus, ardyOutcome, tlFrame,
 		isRigSelection, ikChains, ikFocus, footSnap, collisionCleanupSupported,
-		runFixCollisions, runFixCollisionsRange, autoPhysicsRunning, physicsProgress, physicsPreview,
+		autoPhysicsRunning, physicsProgress, physicsPreview,
 		physicsShow, physicsOptions, platformFitRunning, platformFitProgress, platformFitLast,
 		platformFitApplied, changePhysicsOptions, runAutoPhysics, showPhysicsPreview, applyPhysicsPreview,
 		cancelPhysicsPreview, ikEditTool, setIkEditTool, showTrails, setShowTrails,
@@ -274,7 +274,6 @@ export default function DetailsSlot() {
 			setArdyPrompt={setArdyPrompt}
 			setTlFrame={setTlFrame}
 			tlFrameCount={tlFrameCount}
-			changePromptClip={changePromptClip}
 			ardySeed={ardySeed}
 			changeArdySeed={changeArdySeed}
 			motion={motion}
@@ -312,13 +311,10 @@ export default function DetailsSlot() {
 			resetLineCurve={resetLineCurve}
 			exitLineEditMode={exitLineEditMode}
 			readinessState={readinessState}
-			runStudioAction={runStudioAction}
 			ardyRunning={ardyRunning}
 			cancelArdy={cancelArdy}
 			ardyStatus={ardyStatus}
 			ardyOutcome={ardyOutcome}
-			addPromptClip={addPromptClip}
-			tlFrame={tlFrame}
 		/>
 
 			<RigControlPanel
@@ -329,8 +325,6 @@ export default function DetailsSlot() {
 				footSnap={footSnap}
 				ikMode={ikMode}
 				collisionCleanupSupported={collisionCleanupSupported}
-				runFixCollisions={runFixCollisions}
-				runFixCollisionsRange={runFixCollisionsRange}
 				motion={motion}
 				autoPhysicsRunning={autoPhysicsRunning}
 				physicsProgress={physicsProgress}
