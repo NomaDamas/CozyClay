@@ -5,8 +5,8 @@ import HierarchyPanel from "../hierarchy-panel.jsx";
 export default function OutlinerSlot() {
 	const {
 		selectedHierarchyId, selectHierarchy,
-		aimEditorAtKeyLight, characters, showB, motion, ikFrames,
-		ikMode, rowIdForCharIndex, activeCharIndex, waypoints, sceneObjects,
+		aimEditorAtKeyLight, characters, showB, motion,
+		ikMode, rowIdForCharIndex, activeCharIndex, sceneObjects,
 		scenes, activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi,
 		renameSceneDocumentFromUi, deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, runStudioAction,
 		deleteSceneObject, frameSelection, toggleHierarchyHidden, propsDrop, hierarchyReparent,
@@ -25,10 +25,8 @@ export default function OutlinerSlot() {
 			characters={characters}
 			showB={showB}
 			motionFrames={motion?.frames ?? 0}
-			ikFrames={ikFrames.length}
 			ikMode={ikMode}
 			ikRowId={rowIdForCharIndex(activeCharIndex)}
-			waypointCount={waypoints.length}
 			sceneObjects={sceneObjects}
 			scenes={scenes}
 			activeSceneId={activeSceneId}
