@@ -1,5 +1,142 @@
 # Changelog
 
+## 2.0.0
+
+CozyClay 2.0 is the v2 editor: a floating-glass shell with light and dark
+themes, one four-mode Studio (Stage, Pose, Camera, Motion on keys 1-4), and
+the v2 Outliner, Sequencer, start screen, Details panels and Preferences.
+Under it, every document edit, whether it comes from the UI, the Agent panel,
+MCP or the CLI, now runs through one command bus on a document store with one
+undo history, so anything the editor can do is callable by an agent without
+separate wiring. The Studio Agent panel in the npm package works again
+(#576). **No MCP tool or CLI command was removed**: legacy MCP tools are
+aliases of bus commands and answer the editor's receipts.
+
+Studio
+
+- Floating-glass shell: the viewport fills the window and the top bar, both
+  columns, the dock and the status strip float over it. Light and dark
+  themes, and the stage follows the theme live. The dock runs Animation |
+  Assets tabs sized to the Sequencer's lanes, with the shot preview docked at
+  its right end; the standing status row is gone and live export status
+  floats in the viewport. (#570, #572, #519)
+- One four-mode switch, Stage, Pose, Camera and Motion, on keys 1-4. Pose
+  mode is the single way into IK (W/E/R pick ik, trail and pin there); the
+  timeline IK toggle and the Rig Control IK buttons are gone, and leaving
+  Pose ends IK. (#521)
+- v2 Outliner: 36 px header with the item count, search, typed rows, amber
+  selection; right-click Create replaces the toolbar's + Add object. (#525)
+- v2 Sequencer: header, readout and actions, a 190 px track tree, clip
+  fills, amber playhead, keys and pin bands, scrollable camera, rail and
+  crane rows. (#528)
+- v2 start screen: project nav, template categories, recent rows, the
+  browser project store and a project preview; File › New opens the same
+  screen. (#531, #551)
+- v2 Details panels and primitives: pose tools with an auto-fix preview,
+  motion details with takes, the viewport toolbar and overlays, the top bar,
+  menus and status bar, the content browser and log, and the Preferences
+  dialog. (#522, #523, #524, #526, #527, #529, #530, #532)
+- Generate actions have one home: the top-bar Generate Motion button runs
+  every prompt block when any block has text. Copy follows v2: "ARDY" leaves
+  the user-facing text, pose toasts say "Pose mode", path endpoints read
+  PATH START / PATH END, the first-run guide says Outliner. (#550, #551)
+- Top-View props recede so the camera, cast and rail read first. (#566)
+- When WebGL is unavailable the stage says so instead of staying blank. (#518)
+- 194 dead CSS rules are gone and the v2 information architecture is
+  recorded in `docs/studio-ui-ia.md`; Details, Outliner and top-bar props
+  that were never read are dropped. (#533, #552, #556, #558, #560, #562)
+- Korean UI: 56 reversed `ko()` argument pairs in the motion card are fixed
+  (#505, by @romanr), as are the VideoCapturePanel quality-gate messages
+  (#565).
+
+IK and motion
+
+- IK and motion trails on the split architecture: delta IK drag baking over
+  the raw clip, per-key blend persistence, a remembered IK camera entry,
+  trail picking against the rendered rig, limb, head and root trail edits
+  with conflict warnings. (#511)
+- Range pin with an exact hinge solve and body reach compensation, carried
+  through persistence, undo/redo, timeline bands and preview markers. (#515)
+- Fit to platforms with Fit / Remove controls and a stable knee bend side,
+  verified over 784 cases with no reverse bends. (#517)
+- One motion generation pipeline on the job contract: `motion.generate`
+  serves the UI, the Agent and MCP alike, with concurrent-edit parity (a
+  stale job publishes nothing, an unrelated object edit still installs),
+  Stop and cancel, reconnect, and receipt undo. The agent-only motion
+  pipeline is deleted. (#444, #452)
+- Image-to-video motion is named `i2v` in code and "AI motion" in the UI;
+  "fal" names only the provider adapter. Command ids, analytics values and
+  persisted values are unchanged. (#509)
+
+Command bus and document store
+
+- Every document mutation runs through one command bus: wire transactions,
+  a scoped job fence, receipts, refusals and exposure. Action registrations,
+  the agent binding and the domain writers moved out of App.jsx. (#435,
+  #437, #459, #460, #477)
+- A document store owns stage, objects, shots, cast, motion and IK, and
+  project and scenes, each routed through the bus, with collection element
+  kinds and cross-domain undo order. (#449, #447, #445, #441, #442, #448,
+  #461, #480)
+- One store-owned undo history; the per-domain history owners are gone.
+  (#494) Duplicate agent paths are removed: `inspect_studio`, `run_action`
+  and `verify_result` are the three tool families, `operate_studio` is an
+  alias, and selection, playhead and view changes add no undo entries.
+  (#495) The writer baseline is zero and parity is complete: all 62
+  document-mutating UI handlers reach `run`, enforced by ratchet tests and
+  a generated parity matrix. (#436, #496)
+
+Agent
+
+- The Studio agent pane reaches the whole Studio through the action
+  registry the UI dispatches through, and every bus command is discoverable
+  and callable through agent `run_action`, MCP `studio_commands` /
+  `studio_run` and `cclay live commands` / `cclay live run` with no
+  agent-specific wiring. (#423, #438)
+- Motion failures are visible and routable, `verify_result` reports
+  honestly, and a failed attempt no longer uses up the message's one
+  generation. (#426)
+- Minimal Studio Agent panel: an icon-only head, the account under the ⋯
+  menu, one-line notices, an empty state with suggestion chips; it sits
+  under Details in the right column instead of replacing it. (#574, #570)
+- In the npm package the Studio Agent panel loads its live tools from the
+  staged MCP runtime that `cclay mcp` installs once per version, so the live
+  hub starts and the pane works; `mcp/mesh-file.mjs` ships with the package
+  and `cclay mcp` starts again. A runtime that cannot be installed is
+  reported on the launcher's terminal. (#576)
+
+MCP
+
+- Legacy tools are thin aliases of bus commands and return the editor's JSON
+  receipts: revision before and after, retained undo and refusal codes.
+  `apply_batch` maps to `objects.batch` and keeps `atomic`, `stopOnError`
+  and one undo entry; replacing scene ids needs a Studio-issued confirmation
+  token. (#446)
+- `initialize` waits the SDK's default 60 s. (#502)
+
+Analytics
+
+- Builder telemetry: pose edits, i2v motion A→B, `$exception`, a device
+  profile (GPU and frame rate), the install source from
+  `npx cozyclay --via`, use case and update status. (#466)
+
+Tools
+
+- A mocap research bench under `tools/bench/` and `tools/gt-render/`:
+  ground-truth part-colour renders with camera truths (#428), a GVHMR
+  extraction bench (#430), a scorer for pose, trajectory, endpoints, overlap
+  and contact (#431), 3D fit stages F0-F5 (#432), a cube-contact scenario
+  (#454), the observation-driven GVHMR tuning ladder G0-G5 (#462, #488,
+  #492) and the known-character tracker T1 (#500).
+
+Housekeeping
+
+- The camera-rail browser test waits for the delete toast, which exposed and
+  fixed a stale-toast dismissal bug (#470, #483); the lifecycle test waits
+  for the grandchild to disappear (#479).
+- The owner's v2 editor design contract is adopted in the docs (#512).
+- Repository traffic is archived to the `metrics` branch twice a week.
+
 ## 1.10.0
 
 Props and characters can now be hidden without being deleted, the Studio top
