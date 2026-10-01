@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cozyclay.org/schemas/track-diagnostics.json",
+  "title": "Known-character tracker diagnostics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "frames", "fps", "occluded", "lrState", "lrMargin", "ambiguous", "stance", "penetration", "nuisance", "stageLosses", "runtime", "failure"],
+  "properties": {
+    "version": { "type": "integer", "const": 1 },
+    "frames": { "type": "integer", "minimum": 1 },
+    "fps": { "type": "number", "exclusiveMinimum": 0 },
+    "occluded": {
+      "type": "array",
+      "items": { "type": "array", "items": { "type": "boolean" }, "minItems": 27, "maxItems": 27 }
+    },
+    "lrState": { "type": "array", "items": { "type": "string" } },
+    "lrMargin": { "type": "array", "items": { "type": "number" } },
+    "ambiguous": { "type": "array", "items": { "type": "boolean" } },
+    "stance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["left", "right"],
+      "properties": {
+        "left": { "type": "array", "items": { "type": "boolean" } },
+        "right": { "type": "array", "items": { "type": "boolean" } }
+      }
+    },
+    "penetration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxBoxCm", "maxFloorCm", "frames"],
+      "properties": {
+        "maxBoxCm": { "type": "number", "minimum": 0 },
+        "maxFloorCm": { "type": "number", "minimum": 0 },
+        "frames": { "type": "array", "items": { "type": "integer", "minimum": 0 } }
+      }
+    },
+    "nuisance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scale", "cameraDeltaDeg", "fovDeltaPct"],
+      "properties": {
+        "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "cameraDeltaDeg": { "type": "array", "prefixItems": [{ "type": "number" }, { "type": "number" }], "items": false },
+        "fovDeltaPct": { "type": "number" }
+      }
+    },
+    "stageLosses": { "type": "object", "additionalProperties": { "type": "number" } },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trackerSeconds", "peakReservedMiB"],
+      "properties": {
+        "trackerSeconds": { "type": "number", "minimum": 0 },
+        "peakReservedMiB": { "type": "number", "minimum": 0 }
+      }
+    },
+    "failure": { "type": ["null", "string"] }
+  }
+}

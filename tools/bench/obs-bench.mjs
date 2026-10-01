@@ -20,7 +20,7 @@
  */
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, closeSync, copyFileSync, existsSync, mkdirSync, openSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -34,6 +34,9 @@ import { readEndpoints, regenerateJoints } from "./fit/motion.mjs";
 import { maskIoU, mean, meanJointError } from "./metrics.mjs";
 import { ladderStep, restInfo, STEPS } from "./obs/ladder.mjs";
 import { extractObs } from "./obs/remote.mjs";
+import { ensureMasks } from "../../tools/track/masks.mjs";
+import { fallbackStep } from "../../tools/track/fallback.mjs";
+import { runTracker, TRACK_ABLATIONS } from "../../tools/track/remote.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "../..");
@@ -41,13 +44,14 @@ const WRAPPER = join(HERE, "cclay_bench_extract_obs.py");
 const REST_SCRIPT = join(HERE, "obs/rest_joints.py");
 const MANNEQUIN = join(HERE, "obs/mannequin-betas.json");
 const SSH = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=15", ...(process.env.CCLAY_EXTRACT_SSH_PORT ? ["-p", process.env.CCLAY_EXTRACT_SSH_PORT] : [])];
-const MANNEQUIN_STEPS = new Set(["G5", "Gbest"]);
+const MANNEQUIN_STEPS = new Set(["G5", "Gbest", "T1"]);
+export const OBS_BENCH_STEPS = Object.freeze([...STEPS, "T1"]);
 export const DEFAULT_OBS_ROOT = process.env.COZYCLAY_OBS_ROOT ?? "evidence/obs/cache";
 
 export const USAGE = `usage: node tools/bench/obs-bench.mjs --approved <approved.json> --out <dir> [options]
 
   --items a,b          item names (or set/name); default: every approved item
-  --steps G0,...       any of ${STEPS.join(",")} (default: all)
+  --steps G0,...       any of ${OBS_BENCH_STEPS.join(",")} (default: all)
   --host <ssh-dest>    GPU box (default yun@ubuntu-baremetal)
   --rest-cache <dir>   SMPL rest-joint cache (default: <out>/../rest)
   --port 5198          Vite port for the scorers
@@ -58,6 +62,7 @@ export const USAGE = `usage: node tools/bench/obs-bench.mjs --approved <approved
   --gpu-wait-min 60    with --extract: wait this long for a busy GPU before failing the item
   --force-obs          with --extract: re-extract even when the manifest matches
   --character <model>  character rig (public/models/<model>.fbx) whose standing ankle height is the G3 floor plane (default y-bot-tpose)
+  --track-ablate full  T1 fit components, one of ${TRACK_ABLATIONS.join(",")} (cumulative; default full)
   --force              rebuild and rescore steps whose result.json says ok
   --help               this text
 
@@ -66,8 +71,8 @@ reused while video, K, betas and the wrapper are unchanged. One GPU
 extraction at a time; items run serially.`;
 
 export function parseArgs(argv) {
-	const options = { steps: [...STEPS], host: "yun@ubuntu-baremetal", port: 5198, cdpPort: 9238, gpuWaitMin: 60, force: false, forceObs: false, obsRoot: DEFAULT_OBS_ROOT, extract: false, character: "y-bot-tpose" };
-	const names = { "--approved": "approved", "--out": "out", "--items": "items", "--steps": "steps", "--host": "host", "--rest-cache": "restCache", "--port": "port", "--cdp-port": "cdpPort", "--gpu-wait-min": "gpuWaitMin", "--obs-root": "obsRoot", "--character": "character" };
+	const options = { steps: [...OBS_BENCH_STEPS], host: "yun@ubuntu-baremetal", port: 5198, cdpPort: 9238, gpuWaitMin: 60, force: false, forceObs: false, obsRoot: DEFAULT_OBS_ROOT, extract: false, character: "y-bot-tpose", trackAblate: "full" };
+	const names = { "--approved": "approved", "--out": "out", "--items": "items", "--steps": "steps", "--host": "host", "--rest-cache": "restCache", "--port": "port", "--cdp-port": "cdpPort", "--gpu-wait-min": "gpuWaitMin", "--obs-root": "obsRoot", "--character": "character", "--track-ablate": "trackAblate" };
 	for (let i = 0; i < argv.length; i++) {
 		const flag = argv[i];
 		if (flag === "--help" || flag === "-h") { options.help = true; continue; }
@@ -82,9 +87,10 @@ export function parseArgs(argv) {
 	if (options.help) return options;
 	for (const key of ["approved", "out"]) if (!options[key]) throw new Error(`--${key} is required`);
 	if (typeof options.steps === "string") options.steps = options.steps.split(",").map((s) => s.trim()).filter(Boolean);
-	const unknown = options.steps.filter((s) => !STEPS.includes(s));
-	if (unknown.length || !options.steps.length) throw new Error(`unknown steps ${unknown.join(",")}; known: ${STEPS.join(",")}`);
-	options.steps = STEPS.filter((s) => options.steps.includes(s));
+	const unknown = options.steps.filter((s) => !OBS_BENCH_STEPS.includes(s));
+	if (unknown.length || !options.steps.length) throw new Error(`unknown steps ${unknown.join(",")}; known: ${OBS_BENCH_STEPS.join(",")}`);
+	options.steps = OBS_BENCH_STEPS.filter((s) => options.steps.includes(s));
+	if (!TRACK_ABLATIONS.includes(options.trackAblate)) throw new Error(`--track-ablate must be one of ${TRACK_ABLATIONS.join(",")}`);
 	if (typeof options.items === "string") options.items = options.items.split(",").map((s) => s.trim()).filter(Boolean);
 	for (const key of ["port", "cdpPort", "gpuWaitMin"]) {
 		options[key] = Number(options[key]);
@@ -317,6 +323,91 @@ export function scoreFal({ item, inputs, motionPath, stepDir, options }) {
 	return { endpointFirstM: score.endpointFirstM, endpointLastM: score.endpointLastM, minDistanceM: score.minDistanceM, maxPenetrationM: score.maxPenetrationM, iou: score.overlapIoU };
 }
 
+export function trackerRigPath(character = "y-bot-tpose") {
+	return join(ROOT, "node_modules", ".cache", "cozyfit", `rig-${character}.npz`);
+}
+
+function ensureTrackerRig(character, log) {
+	const path = trackerRigPath(character);
+	if (existsSync(path)) return path;
+	mkdirSync(dirname(path), { recursive: true });
+	const run = spawnSync(process.execPath, [join(ROOT, "tools/track/export-rig.mjs"), "--model", character, "--out", path], { cwd: ROOT, encoding: "utf8" });
+	if (run.status !== 0 || !existsSync(path)) throw new Error(`tracker rig export failed: ${run.stderr || run.stdout}`);
+	log(`T1: exported rig ${path}`);
+	return path;
+}
+
+export async function runT1({ item, inputs, itemDir, stepDir, options, endpoints, g5MotionPath, obsPath, log, trackerRunner = runTracker, masksRunner = ensureMasks } = {}) {
+	if (!g5MotionPath || !existsSync(g5MotionPath)) throw new Error("T1: G5 initializer is missing");
+	const rigPath = ensureTrackerRig(options.character, log);
+	const scenePath = inputs.scene ?? join(itemDir, "empty-scene.json");
+	if (!inputs.scene) writeFileSync(scenePath, "[]\n");
+	const endpointConfig = Object.fromEntries(endpoints.slice(0, 2).map((endpoint, index) => [index === 0 ? "a" : "b", {
+		rootPos: Array.from(endpoint.rootPos),
+		rotMats: Array.from(endpoint.rotMats),
+	}]));
+	const cameraPath = join(stepDir, "camera.json");
+	mkdirSync(stepDir, { recursive: true });
+	// Only this attempt's tracker diagnostics may describe the step.
+	rmSync(join(stepDir, "diagnostics.json"), { force: true });
+	writeFileSync(cameraPath, `${JSON.stringify({ ...readJson(inputs.camera), tracker: { ...(readJson(inputs.camera).tracker ?? {}), endpoints: endpointConfig } }, null, "\t")}\n`);
+	const attemptDir = join(stepDir, `tracker-${Date.now()}-${process.pid}`);
+	mkdirSync(attemptDir, { recursive: true });
+	try {
+		const sourceVideo = item.set === "fal" ? inputs.rawVideo : inputs.video;
+		const masks = await masksRunner({
+			video: sourceVideo,
+			obs: obsPath,
+			outDir: join(options.obsRoot ?? itemDir, item.set, item.name, "masks"),
+			host: options.host,
+			log: (line) => log(`T1 masks: ${line}`),
+		});
+		const deadline = Date.now() + options.gpuWaitMin * 60000;
+		let result;
+		for (;;) {
+			try {
+				result = await trackerRunner({
+					host: options.host,
+					video: sourceVideo,
+					obsPath,
+					masksPath: masks.path,
+					initMotionPath: g5MotionPath,
+					cameraPath,
+					scenePath,
+					rigPath: rigPath,
+					outDir: attemptDir,
+					ablate: options.trackAblate,
+					onLine: (line) => log(`T1: ${line}`),
+				});
+				break;
+			} catch (error) {
+				if (!/gpu-busy/.test(String(error.message)) || Date.now() > deadline) throw error;
+				log(`T1: GPU busy; waiting 30 s (${String(error.message).split("\\n").find((line) => /gpu-busy/.test(line))?.trim() ?? error.message})`);
+				await sleep(30000);
+			}
+		}
+		if (result.diagnostics?.failure) throw Object.assign(new Error(`tracker failure: ${result.diagnostics.failure}`), { diagnostics: result.diagnostics, diagnosticsPath: result.diagnosticsPath });
+		copyFileSync(result.motionPath, join(stepDir, "motion.npz"));
+		copyFileSync(result.diagnosticsPath, join(stepDir, "diagnostics.json"));
+		return { diagnostics: result.diagnostics, fallback: null, trackerError: null };
+	} catch (error) {
+		const step = fallbackStep(endpoints);
+		const fallbackDir = join(itemDir, step);
+		const fallbackMotion = join(fallbackDir, "motion.npz");
+		if (!existsSync(fallbackMotion)) throw new Error(`T1 tracker failed and ${step} motion is unavailable: ${error.message}`);
+		copyFileSync(fallbackMotion, join(stepDir, "motion.npz"));
+		const details = error instanceof AggregateError && error.errors?.length
+			? error.errors.map((cause) => cause?.message ?? String(cause)).join(" | ")
+			: error.message;
+		// A failed fit still reports why (e.g. keypoint-residual) beside the fallback.
+		const diagnostics = error.diagnostics && error.diagnosticsPath && existsSync(error.diagnosticsPath) ? error.diagnostics : null;
+		if (diagnostics) copyFileSync(error.diagnosticsPath, join(stepDir, "diagnostics.json"));
+		return { diagnostics, fallback: step, trackerError: { message: details, failure: diagnostics?.failure ?? null } };
+	} finally {
+		rmSync(attemptDir, { recursive: true, force: true });
+	}
+}
+
 async function runItem(item, options, commit) {
 	const itemDir = join(options.out, item.set, item.name);
 	mkdirSync(itemDir, { recursive: true });
@@ -342,6 +433,7 @@ async function runItem(item, options, commit) {
 	};
 	if (pending.some((s) => !MANNEQUIN_STEPS.has(s))) ctx.base = await load("base");
 	if (pending.some((s) => MANNEQUIN_STEPS.has(s))) ctx.mannequin = await load("mannequin");
+	const t1ObsPath = ctx.mannequin ? provenance.mannequin.obs : null;
 	let failed = 0;
 	for (const step of pending) {
 		const stepDir = join(itemDir, step), motionPath = join(stepDir, "motion.npz");
@@ -353,11 +445,39 @@ async function runItem(item, options, commit) {
 				obs: MANNEQUIN_STEPS.has(step) ? provenance.mannequin : provenance.base },
 		};
 		try {
-			const built = ladderStep(step, ctx);
-			writeNpz(motionPath, motionArraysToNpzMembers(built.motion));
-			result.motion = { path: motionPath, frames: built.motion.frames, fps: built.motion.fps };
-			result.ladder = built.diagnostics;
-			log(`${step}: built ${built.motion.frames} frames; scoring`);
+			if (step === "T1") {
+				const g5Path = join(itemDir, "G5", "motion.npz");
+				const buildStep = ladderStep;
+				if (!existsSync(g5Path)) {
+					const g5 = buildStep("G5", ctx);
+					mkdirSync(dirname(g5Path), { recursive: true });
+					writeNpz(g5Path, motionArraysToNpzMembers(g5.motion));
+				}
+				const fallbackName = fallbackStep(endpoints), fallbackPath = join(itemDir, fallbackName, "motion.npz");
+				if (!existsSync(fallbackPath)) {
+					const fallbackBuilt = buildStep(fallbackName, ctx);
+					mkdirSync(dirname(fallbackPath), { recursive: true });
+					writeNpz(fallbackPath, motionArraysToNpzMembers(fallbackBuilt.motion));
+				}
+				const tracker = await runT1({ item, inputs, itemDir, stepDir, options, endpoints, g5MotionPath: g5Path, obsPath: t1ObsPath, log });
+				result.fallback = tracker.fallback;
+				result.trackAblate = options.trackAblate;
+				if (tracker.trackerError) result.trackerError = tracker.trackerError;
+				if (tracker.diagnostics) {
+					result.diagnostics = tracker.diagnostics;
+					result.runtimeS = tracker.diagnostics.runtime.trackerSeconds;
+					result.peakVramMB = tracker.diagnostics.runtime.peakReservedMiB;
+					result.lrSwitches = tracker.diagnostics.lrState.slice(1).filter((v, i) => v !== tracker.diagnostics.lrState[i]).length;
+					result.occludedFrames = tracker.diagnostics.occluded.filter((row) => row.some(Boolean)).length;
+				}
+				result.motion = { path: motionPath };
+			} else {
+				const built = ladderStep(step, ctx);
+				writeNpz(motionPath, motionArraysToNpzMembers(built.motion));
+				result.motion = { path: motionPath, frames: built.motion.frames, fps: built.motion.fps };
+				result.ladder = built.diagnostics;
+			}
+			log(`${step}: scoring`);
 			result.score = item.set === "fal" ? scoreFal({ item, inputs, motionPath, stepDir, options }) : scoreAgainstGt({ item, inputs, motionPath, stepDir, options });
 			result.ok = true;
 			log(`${step}: ok ${JSON.stringify(result.score, (k, v) => (typeof v === "number" ? Number(v.toFixed(4)) : v))}`);

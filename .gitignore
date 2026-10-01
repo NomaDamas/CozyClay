@@ -19,6 +19,8 @@ public/demo/qa-h3-*.npz
 *.log
 __pycache__/
 *.pyc
+tools/track/**/*.npz
+tools/track/**/*.pt
 
 # MCP server local install
 mcp/node_modules/
