@@ -26,11 +26,26 @@ import * as THREE from "three";
 // compensate for the shading the lambert term now applies, so the deck keeps
 // the same on-screen brightness it had while unlit.
 const FLOOR = "#5b5d63";
+// The light theme's deck: the cyclorama floor. Tone mapping caps a lit
+// white deck near #d4, a dull grey under a white sky, so it also glows a
+// little (FLOOR_LIGHT_GLOW): it renders about #dedede near the camera and
+// fades into the sky (grid-view.js STAGE_BACKGROUND_LIGHT) with distance.
+// The key's contact shadow still reads, since the glow is only a fifth.
+const FLOOR_LIGHT = "#ffffff";
+const FLOOR_LIGHT_GLOW = 0.2;
 
 export const STAGE_SIZE = 500;
 
-/** Metres per grid tile; one heavy line per tile, minor lines every metre. */
+/** Metres between the heavy lines; minor lines every metre. */
 const TILE_M = 10;
+
+// Line ink per theme: how far a line darkens the lit deck. The light deck
+// needs as much ink as the dark one to read: its lines are thin dark marks on
+// a bright floor, and anything fainter vanished into it.
+const GRID_INK = Object.freeze({
+	dark: { minor: 0.22, major: 0.42 },
+	light: { minor: 0.38, major: 0.5 },
+});
 
 /**
  * The measuring grid, drawn INTO the deck rather than floating above it.
@@ -38,47 +53,57 @@ const TILE_M = 10;
  * A GridHelper is a separate object a couple of millimetres over a 500 m
  * plane, and at that separation it loses to the floor across almost the whole
  * frame — it survives only where the surface is grazed near the horizon, which
- * is exactly where it is useless. Baking the lines into the floor's own map
+ * is exactly where it is useless. Drawing the lines in the floor's own shader
  * ends the contest: the marks ARE the surface, so they cannot z-fight with it,
- * cannot be sorted behind it, and shade and fog exactly as the deck does.
+ * cannot be sorted behind it, and shade, shadow and fog exactly as the deck
+ * does.
+ *
+ * Computed per pixel from the world position, not baked into a tiled texture:
+ * a texture blurred its lines up close and mip-averaged them into a grey
+ * moire toward the horizon. Here every line is ~1 px wide at any distance
+ * (fwidth), and a line family fades out once its spacing drops under a few
+ * pixels, so the far deck is clean floor instead of a band of noise.
  */
-function makeGridTexture() {
-	const PX = 1024;
-	const pxPerM = PX / TILE_M;
-	const canvas = document.createElement("canvas");
-	canvas.width = PX;
-	canvas.height = PX;
-	const ctx = canvas.getContext("2d");
-	ctx.fillStyle = "#ffffff";
-	ctx.fillRect(0, 0, PX, PX);
-	ctx.strokeStyle = "rgba(40, 42, 48, 0.22)";
-	ctx.lineWidth = 2;
-	for (let m = 1; m < TILE_M; m += 1) {
-		const p = Math.round(m * pxPerM) + 0.5;
-		ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, PX); ctx.stroke();
-		ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(PX, p); ctx.stroke();
-	}
-	// The ten-metre lines carry the scale read, so they stay heavier.
-	ctx.strokeStyle = "rgba(24, 26, 30, 0.42)";
-	ctx.lineWidth = 4;
-	ctx.strokeRect(0, 0, PX, PX);
-	const texture = new THREE.CanvasTexture(canvas);
-	texture.wrapS = THREE.RepeatWrapping;
-	texture.wrapT = THREE.RepeatWrapping;
-	texture.repeat.set(STAGE_SIZE / TILE_M, STAGE_SIZE / TILE_M);
-	texture.anisotropy = 8;
-	texture.colorSpace = THREE.SRGBColorSpace;
-	return texture;
+function makeDeckMaterial(light) {
+	const ink = light ? GRID_INK.light : GRID_INK.dark;
+	const material = new THREE.MeshLambertMaterial({
+		color: light ? FLOOR_LIGHT : FLOOR,
+		emissive: light ? FLOOR_LIGHT : "#000000",
+		emissiveIntensity: light ? FLOOR_LIGHT_GLOW : 0,
+	});
+	material.onBeforeCompile = (shader) => {
+		shader.uniforms.gridInk = { value: new THREE.Vector2(ink.minor, ink.major) };
+		shader.vertexShader = shader.vertexShader
+			.replace("#include <common>", "#include <common>\nvarying vec2 vGridXZ;")
+			.replace("#include <begin_vertex>", "#include <begin_vertex>\nvGridXZ = (modelMatrix * vec4(transformed, 1.0)).xz;");
+		shader.fragmentShader = shader.fragmentShader
+			.replace("#include <common>", `#include <common>
+varying vec2 vGridXZ;
+uniform vec2 gridInk;
+// 0..1 coverage of the lines every \`spacing\` metres, \`width\` px wide.
+float gridLines(float spacing, float width) {
+	vec2 cell = vGridXZ / spacing;
+	vec2 perPx = fwidth(cell);
+	vec2 dist = abs(fract(cell - 0.5) - 0.5) / max(perPx, vec2(1e-5));
+	float line = 1.0 - clamp(min(dist.x, dist.y) - (width - 1.0) * 0.5, 0.0, 1.0);
+	// Cells under ~5 px would alias: fade the family out before they do.
+	float fade = 1.0 - smoothstep(0.08, 0.2, max(perPx.x, perPx.y));
+	return line * fade;
+}`)
+			.replace("#include <opaque_fragment>", `outgoingLight *= 1.0 - max(gridLines(1.0, 1.0) * gridInk.x, gridLines(${TILE_M.toFixed(1)}, 1.6) * gridInk.y);
+#include <opaque_fragment>`);
+	};
+	material.customProgramCacheKey = () => `deck-grid-${light ? "light" : "dark"}`;
+	return material;
 }
 
-export function Room() {
-	const grid = useMemo(() => makeGridTexture(), []);
-	useEffect(() => () => grid.dispose(), [grid]);
+export function Room({ light = false }) {
+	const material = useMemo(() => makeDeckMaterial(light), [light]);
+	useEffect(() => () => material.dispose(), [material]);
 	return (
 		<group>
-			<mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
+			<mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow userData={{ noInk: true }} material={material}>
 				<planeGeometry args={[STAGE_SIZE, STAGE_SIZE]} />
-				<meshLambertMaterial color={FLOOR} map={grid} />
 			</mesh>
 		</group>
 	);
@@ -105,15 +130,17 @@ export function keyLightColor(warmth = 0.5) {
  * and the ambient is lifted so authored colours stay saturated without any
  * pretend floor.
  */
-export function StageLights({ keyLight = { x: 6, y: 9, z: 4, intensity: 1.12, warmth: 0.5 }, neutral = false }) {
+export function StageLights({ keyLight = { x: 6, y: 9, z: 4, intensity: 1.12, warmth: 0.5 }, neutral = false, light = false }) {
 	const dim = keyLight.intensity / 1.12;
 	return (
 		<>
 			<hemisphereLight
-				args={neutral ? ["#ffffff", "#3a3d42", 0.9] : ["#ffffff", "#5a5d64", 0.9]}
+				args={neutral ? ["#ffffff", "#3a3d42", 0.9] : ["#ffffff", light ? "#d6d8de" : "#5a5d64", 0.9]}
 				intensity={0.9 * Math.min(1, 0.35 + 0.65 * dim)}
 			/>
-			<ambientLight intensity={(neutral ? 0.34 : 0.18) * Math.min(1, 0.35 + 0.65 * dim)} />
+			{/* The light stage is a bright room: more ambient, so the clay's shaded
+			    side stays soft grey instead of going charcoal against white. */}
+			<ambientLight intensity={(neutral ? 0.34 : light ? 0.32 : 0.18) * Math.min(1, 0.35 + 0.65 * dim)} />
 			{/* Only the key casts: one soft, unambiguous contact shadow reads as
 			    ground contact, while three overlapping shadows read as noise. The
 			    map covers the blocking area rather than the whole 500 m deck — a

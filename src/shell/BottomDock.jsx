@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import { logStore } from "./log-store.js";
 import "./dock.css";
+import LibrarySlot from "./LibrarySlot.jsx";
 import { ko } from "../locale.js";
 import Timeline from "../ardy/timeline.jsx";
 import { DEFAULT_PLAYBACK_SPEED, SHOT_ASPECT_PRESETS, sceneObjectNameDisplayKo } from "../app-stage.jsx";
@@ -11,13 +12,15 @@ import { defaultRailRange } from "../camera-rail-schedule.js";
 
 // G11: the dock resizes within [220, 480] px, and never so far that the 3D
 // viewport drops under 480 px (top bar 44 + status bar 24 + three 1 px gaps).
-// Never below the sequencer's own grid (shell.css --shell-dock-default): a
-// shorter dock would have to scroll its lanes.
-export const DOCK_MIN_HEIGHT = 324;
+// Never below the sequencer's own grid (shell.css --shell-dock-default, 276
+// px): a shorter dock would have to scroll its lanes.
+export const DOCK_MIN_HEIGHT = 276;
 export const DOCK_MAX_HEIGHT = 480;
 const VIEWPORT_MIN_HEIGHT = 480;
 const SHELL_FIXED_ROWS = 44 + 24 + 3;
-const DOCK_HEIGHT_KEY = "cozyclay.dock.height.v1";
+// v2: v1 heights were clamped to a 324px floor that left an empty band under
+// the lanes; they are dropped so the dock opens at its real grid height.
+const DOCK_HEIGHT_KEY = "cozyclay.dock.height.v2";
 
 function clampDockHeight(height) {
 	const roomy = Math.min(DOCK_MAX_HEIGHT, window.innerHeight - SHELL_FIXED_ROWS - VIEWPORT_MIN_HEIGHT);
@@ -45,7 +48,14 @@ function readDockHeight() {
 	return Number.isFinite(stored) && stored > 0 ? stored : null;
 }
 
-export default function BottomDock() {
+const DOCK_TABS = [
+	{ key: "animation", label: () => ko("Animation", "애니메이션") },
+	{ key: "assets", label: () => ko("Assets", "에셋") },
+];
+
+/** Animation | Assets: both stay mounted, so switching keeps the Sequencer's
+ * scroll and zoom and the Library's folder and search. */
+export default function BottomDock({ tab = "animation", onTabChange, embedded = false }) {
 	const {
 		tlFrame, motion, waypointMode, craneSelectedIndex,
 		isCameraSelection, addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFrameCount,
@@ -179,7 +189,22 @@ export default function BottomDock() {
 				onPointerDown={beginDockResize}
 				onKeyDown={onDockResizeKey}
 			/>
-			<div className="bottom-timeline">
+			{!embedded && <div className="dock-tabs" role="tablist" aria-label={ko("Dock", "도크")}>
+				{DOCK_TABS.map((entry) => (
+					<button
+						type="button"
+						role="tab"
+						key={entry.key}
+						data-testid={`dock-tab-${entry.key}`}
+						aria-selected={tab === entry.key}
+						onClick={() => onTabChange?.(entry.key)}
+					>
+						{entry.label()}
+					</button>
+				))}
+			</div>}
+			{!embedded && <LibrarySlot active={tab === "assets"} />}
+			<div className="bottom-timeline" hidden={tab !== "animation"}>
 			<Timeline
 				frame={tlFrame}
 				craneSelectedIndex={craneSelectedIndex}
@@ -347,7 +372,7 @@ export default function BottomDock() {
 			onClearMotion={motion ? clearMotion : null}
 		/>
 			</div>
-			<ShotCard />
+			{tab === "animation" && <ShotCard />}
 		</div>
 	);
 }
@@ -365,7 +390,7 @@ const CARD_RATIOS = [
  * into the stage canvas under `.vp-shot-preview`, which sits over the card's
  * frame slot (see glass.css); the card holds its title, ratio and look-through. */
 function ShotCard() {
-	const { activeShot, shot, shotAspectKey, runStudioAction, enterShotLook, tlFps, embedMode } = useStudioShell();
+	const { activeShot, shot, shotAspectKey, runStudioAction, enterShotLook, exitShotLook, lookThroughShot, tlFps, embedMode } = useStudioShell();
 	if (embedMode) return null;
 	const ratio = SHOT_ASPECT_PRESETS[shotAspectKey]?.label?.replace(/:1$/, "") ?? shotAspectKey;
 	const frames = activeShot && Number.isFinite(activeShot.startFrame) && Number.isFinite(activeShot.endFrame)
@@ -378,7 +403,17 @@ function ShotCard() {
 				<span className="dock-shot-title">{ko("Shot Camera", "샷 카메라")}</span>
 				<span className="dock-shot-meta">{shot.focalMm} mm · {ratio}</span>
 			</header>
-			<div className="dock-shot-frame" aria-hidden="true" />
+			{/* While the main view looks through this camera the card has nothing
+			    of its own to show (the preview pass is off): it says where the
+			    picture went instead of leaving a hole onto the stage. */}
+			<div className="dock-shot-frame" aria-hidden={!lookThroughShot || undefined}>
+				{lookThroughShot && (
+					<span className="dock-shot-live">
+						<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z M8 6.25a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 1 1 0-3.5z" /></svg>
+						{ko("Viewing in the main view", "메인 뷰에서 보는 중")}
+					</span>
+				)}
+			</div>
 			<div className="dock-shot-ratios" role="radiogroup" aria-label={ko("Shot aspect ratio", "샷 화면 비율")}>
 				{CARD_RATIOS.map((entry) => (
 					<button
@@ -398,10 +433,17 @@ function ShotCard() {
 					{activeShot?.name ?? ko("No shot yet", "샷 없음")}
 					{frames && <span className="dock-shot-range"> · {frames}</span>}
 				</span>
-				<button type="button" className="dock-shot-look" onClick={enterShotLook} title={ko("Look through the shot camera (Esc returns)", "샷 카메라 시점으로 보기 (Esc로 복귀)")}>
-					<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z M8 6.25a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 1 1 0-3.5z" /></svg>
-					{ko("Look through", "샷 시점")}
-				</button>
+				{lookThroughShot ? (
+					<button type="button" className="dock-shot-look" data-active="true" aria-pressed="true" onClick={exitShotLook} title={ko("Back to the editor view (Esc)", "편집 시점으로 돌아가기 (Esc)")}>
+						{ko("Exit", "나가기")}
+						<kbd>Esc</kbd>
+					</button>
+				) : (
+					<button type="button" className="dock-shot-look" aria-pressed="false" onClick={enterShotLook} title={ko("Look through the shot camera (Esc returns)", "샷 카메라 시점으로 보기 (Esc로 복귀)")}>
+						<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z M8 6.25a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 1 1 0-3.5z" /></svg>
+						{ko("Look through", "샷 시점")}
+					</button>
+				)}
 			</footer>
 		</section>
 	);

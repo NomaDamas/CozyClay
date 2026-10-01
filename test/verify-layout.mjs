@@ -108,7 +108,8 @@ expect("double-clicking the inset body folds it", app.includes('event.target.clo
 expect("the tag strip works like a foldout header", app.includes("if (!moved && ev.detail <= 1) {") && app.includes("insetToggledAtRef"));
 expect("one fold per gesture, even on a double-click", app.includes("if (e.detail > 1) return;") && app.includes("ev.detail <= 1"));
 expect("body double-click skips tag-started gestures", app.includes("Date.now() - insetToggledAtRef.current < 450"));
-expect("workspace has a dedicated left hierarchy window", app.includes('className="panel hierarchy-left"') && app.includes('beginWorkspaceResize("hierarchy"'));
+expect("workspace has a dedicated left hierarchy window", app.includes('className="panel hierarchy-left"') && !app.includes("<LibrarySlot />"));
+expect("the dock switches between Animation and Assets", app.includes('data-testid={`dock-tab-${entry.key}`}') && app.includes('<LibrarySlot active={tab === "assets"} />'));
 expect("inspector is always visible beside the scene", app.includes("inspector-sidebar") && !app.includes("rightPanelTab"));
 expect("legacy hierarchy/inspector splitter is removed", !app.includes("hierarchy-splitter"));
 expect("bottom dock drops the Animation/Assets tab strip for the Content pane", !app.includes("bottom-window-tabs") && app.includes('setBottomTab(visible ? "assets" : "timeline")') && !app.includes("console-pane") && !app.includes('bottomTab === "console"'));

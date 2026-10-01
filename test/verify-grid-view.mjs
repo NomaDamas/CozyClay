@@ -44,8 +44,8 @@ assert.ok(floor.includes("receiveShadow={false}"), "a reference overlay joins no
 
 // --- App wiring pins -------------------------------------------------------
 const app = ["../src/App.jsx", "../src/shell/ViewportToolbar.jsx"].map(path => readFileSync(new URL(path, import.meta.url), "utf8")).join("\n");
-assert.ok(app.includes("{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}"), "grid replaces the deck on the export-stripped gizmo layer");
-assert.ok(app.includes('args={[gridView ? GRID_BACKGROUND : STAGE_BACKGROUND]}'), "the background is the void colour in both modes");
+assert.ok(app.includes('{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room light={uiTheme === "light"} />}'), "grid replaces the deck on the export-stripped gizmo layer");
+assert.ok(app.includes('args={[gridView ? GRID_BACKGROUND : stageBackground(uiTheme)]}'), "the grid view keeps the void colour; the stage follows the UI theme");
 assert.ok(app.includes("writeStoredGridView(globalThis.localStorage, gridView)"), "the preference persists per browser");
 assert.ok(app.includes('ko("Reference grid", "기준 그리드")'), "the View menu offers a bilingual toggle");
 assert.ok(

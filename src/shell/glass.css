@@ -42,11 +42,6 @@
 	   dock's glass leaves a hole where the card sits: the fill and inner
 	   shading live on a masked ::before, the outer shadow on the slot. */
 	.app[data-shell="glass"]:not([data-embed-mode]) .studio-dock-slot {
-		/* The shot card (BottomDock's ShotCard): 48px head, the frame, then the
-		   ratio row and the footer, 84px in all under the frame. */
-		--shot-card-w: calc(var(--shell-camera) - 28px);
-		--shot-card-h: max(60px, calc(var(--shell-dock) - 132px));
-		--shot-card-under: 84px;
 		overflow: visible;
 		background: none;
 		-webkit-backdrop-filter: none;
@@ -68,15 +63,21 @@
 		backdrop-filter: var(--glass-blur);
 		box-shadow: var(--panel-shadow-inset);
 		-webkit-mask: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
-		-webkit-mask-size: 100% 100%, var(--shot-card-w) var(--shot-card-h);
-		-webkit-mask-position: 0 0, right 14px bottom calc(var(--shell-status-h) + var(--shot-card-under));
+		-webkit-mask-size: 100% 100%, var(--shot-pic-w) var(--shot-pic-h);
+		-webkit-mask-position: 0 0, right var(--shot-pic-right) bottom calc(var(--shell-status-h) + var(--shot-pic-bottom));
 		-webkit-mask-repeat: no-repeat;
 		-webkit-mask-composite: xor;
 		mask: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
-		mask-size: 100% 100%, var(--shot-card-w) var(--shot-card-h);
-		mask-position: 0 0, right 14px bottom calc(var(--shell-status-h) + var(--shot-card-under));
+		mask-size: 100% 100%, var(--shot-pic-w) var(--shot-pic-h);
+		mask-position: 0 0, right var(--shot-pic-right) bottom calc(var(--shell-status-h) + var(--shot-pic-bottom));
 		mask-repeat: no-repeat;
 		mask-composite: exclude;
+	}
+	/* The Assets tab has no shot card: the glass is whole. */
+	.app[data-shell="glass"][data-dock-tab="assets"]:not([data-embed-mode]) .studio-dock-slot::before,
+	.app[data-shell="glass"][data-shot-look]:not([data-embed-mode]) .studio-dock-slot::before {
+		-webkit-mask-size: 100% 100%, 0 0;
+		mask-size: 100% 100%, 0 0;
 	}
 	.app[data-shell="glass"]:not([data-embed-mode]) .studio-dock-slot > .bottom-window {
 		border-radius: inherit;
@@ -96,6 +97,15 @@
 		margin-right: var(--shell-camera);
 		background: none;
 	}
+	/* Assets: the Library fills the dock in the Sequencer's place. */
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock > .studio-library {
+		grid-column: 1;
+		grid-row: 1;
+		display: flex;
+		flex-direction: column;
+		background: none;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock > [hidden] { display: none; }
 
 	/* Agent under Details, a card of its own; its own header stays. */
 	.app[data-shell="glass"] .studio-agent-inspector > .agent-panel { flex: 1 1 auto; min-height: 0; background: none; }
@@ -352,29 +362,36 @@
 		align-items: center;
 		height: 40px;
 		margin: 0;
-		padding: 0 4px;
+		padding: 0 5px;
 		border: 0;
 		border-radius: 20px;
 		transform: translateX(-50%);
 	}
-	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-keys { display: flex; gap: 2px; }
+	/* A quiet segmented switch: words only (the icons return when the names
+	   fold away on narrower windows), small type, and the current mode is a
+	   raised pill in the ordinary ink rather than an accent-coloured label. */
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-keys { display: flex; gap: 0; }
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key {
 		display: flex;
 		align-items: center;
-		gap: 7px;
+		gap: 6px;
 		width: auto;
-		height: 32px;
-		padding: 0 14px 0 12px;
+		height: 30px;
+		padding: 0 14px;
 		border: 0;
-		border-radius: 16px;
+		border-radius: 15px;
 		background: transparent;
-		color: var(--text-soft);
-		font: 400 13px var(--sans);
+		color: var(--text-2);
+		font: 500 12px var(--sans);
+		letter-spacing: -.005em;
+		transition: color .12s ease, background-color .12s ease;
 	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key .vp-icon { display: none; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key:hover:not(.active) { background: none; color: var(--text-1); }
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key.active {
 		background: var(--seg-on);
 		box-shadow: var(--seg-on-shadow);
-		color: var(--seg-on-text);
+		color: var(--text-1);
 		font-weight: 600;
 	}
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key .vp-key-digit { display: none; }
@@ -546,13 +563,14 @@
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-shot-preview {
 		--shot-preview-header: 0px;
 		z-index: 15;
-		right: calc(var(--shell-center-right) + 14px);
-		bottom: calc(var(--shell-dock-bottom) + var(--shell-status-h) + 84px);
-		width: calc(var(--shell-camera) - 28px);
-		height: max(60px, calc(var(--shell-dock) - 132px));
+		right: calc(var(--shell-center-right) + var(--shot-pic-right));
+		bottom: calc(var(--shell-dock-bottom) + var(--shell-status-h) + var(--shot-pic-bottom));
+		width: var(--shot-pic-w);
+		height: var(--shot-pic-h);
 		border-radius: 10px;
 		background: none;
-		box-shadow: none;
+		/* The picture's own hairline (the card's slot around it is bare). */
+		box-shadow: inset 0 0 0 1px var(--hairline);
 	}
 	/* The tag rides on the frame: the rec dot and shot name top-left, the
 	   guide toggle top-right. Look through lives in the card's footer. */
@@ -585,7 +603,7 @@
 		overflow: hidden;
 	}
 
-	/* ------------------------------------- library in the left column */
+	/* ------------------------------------------ library (dock's Assets) */
 	.app[data-shell="glass"] .studio-library .content-browser { background: none; }
 	.app[data-shell="glass"] .studio-library .content-head {
 		flex-wrap: wrap;
@@ -631,13 +649,17 @@
 	}
 
 	/* ------------------------------------------------------ status bar */
-	/* The dock's last row: no surface of its own, a hairline above it. */
+	/* A capsule over the stage, like the viewport rails. */
 	.app[data-shell="glass"]:not([data-embed-mode]) .v2-statusbar {
 		box-sizing: border-box;
-		padding: 0 16px;
-		border-radius: 0 0 var(--float-radius, 20px) var(--float-radius, 20px);
-		background: none;
-		box-shadow: inset 0 1px 0 var(--row-divider);
+		padding: 0 6px 0 14px;
+		border-radius: 16px;
+		background: var(--glass-capsule);
+		-webkit-backdrop-filter: var(--capsule-blur);
+		backdrop-filter: var(--capsule-blur);
+		box-shadow: var(--capsule-shadow);
+		color: var(--text-2);
+		font: 400 12px var(--sans);
 		overflow: hidden;
 	}
 
@@ -647,6 +669,7 @@
 	   then Generate shortens. */
 	@media (max-width: 1500px) {
 		.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key { padding: 0 9px; }
+		.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key .vp-icon { display: block; }
 		.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key .vp-mode-name {
 			position: absolute;
 			width: 1px;

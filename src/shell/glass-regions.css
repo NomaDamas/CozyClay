@@ -560,6 +560,11 @@
 	width: 1.5px;
 	background: var(--primary-fill, var(--select));
 }
+/* The line runs through the lanes only: it starts under the ruler, at the
+   Prompt row's top, so it never stands taller than the track names. The frame
+   pill in the ruler is its head; the legacy triangle cap goes. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-playhead { top: var(--tl-ruler-height); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-playhead::before { display: none; }
 .app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track { border: 0; }
 .app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-label { border: 0; background: none; }
 .app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-subrow { padding: 0 8px 0 16px; }
@@ -626,11 +631,9 @@
 .app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-frame {
 	flex: 1 1 auto;
 	min-height: 60px;
-	border-radius: 10px;
+	/* Only reserves the slot: the picture (.vp-shot-preview, glass.css) is
+	   the shot aspect fitted into it, and carries its own hairline. */
 	background: none;
-	/* The frame is a hole onto the stage canvas; a hairline ring makes it
-	   read as a framed picture on the card, not a dark patch in it. */
-	box-shadow: inset 0 0 0 1px var(--hairline);
 }
 .app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios {
 	flex: none;
@@ -786,3 +789,216 @@
 .app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-head > .content-search { grid-column: 1 / -1; }
 .app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker { justify-self: end; max-width: 100%; }
 .app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker select { max-width: 100%; }
+
+/* ----------------------------------------------- Dock: Animation | Assets */
+/* The switch sits at the head's left end, where the Sequencer's transport
+   and the Library's Content | Log row start after it. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock { --dock-tabs-w: 176px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-tabs {
+	position: absolute;
+	z-index: 3;
+	top: 9px;
+	left: 16px;
+	box-sizing: border-box;
+	display: grid;
+	grid-template-columns: 1fr 1fr;
+	gap: 2px;
+	width: var(--dock-tabs-w);
+	height: 30px;
+	padding: 2px;
+	border-radius: 15px;
+	background: var(--field-fill);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-tabs button {
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	border-radius: 13px;
+	background: none;
+	color: var(--text-2);
+	font: 500 12px var(--sans);
+	cursor: pointer;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-tabs button:hover { color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-tabs button[aria-selected="true"] {
+	background: var(--seg-on);
+	box-shadow: var(--seg-on-shadow);
+	color: var(--seg-on-text);
+	font-weight: 600;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-tabs button:focus-visible { outline: 2px solid var(--select); outline-offset: -2px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .v2-sequencer .tl-head { padding-left: calc(16px + var(--dock-tabs-w) + 16px); }
+
+/* The Library in the dock: one 48px head row (Content | Log, folder, search),
+   then a wide tile grid. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-browser {
+	display: flex;
+	flex-direction: column;
+	height: 100%;
+	min-height: 0;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-head {
+	display: flex;
+	flex-wrap: nowrap;
+	align-items: center;
+	gap: 8px;
+	height: 48px;
+	min-height: 48px;
+	padding: 0 16px 0 calc(16px + var(--dock-tabs-w) + 16px);
+	box-shadow: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-folder-picker { margin-left: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-head > .content-search {
+	order: 0;
+	flex: 0 1 240px;
+	margin: 0 0 0 auto;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-body { flex: 1 1 auto; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-main { padding: 4px 16px 8px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-grid {
+	grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+	gap: 12px 10px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-tile-thumb { max-width: 96px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock .studio-library .content-hint { padding: 0 16px 8px; }
+
+/* Rail shot label: the legacy rule (styles.css .has-dolly) shadows the text
+   for a dark violet clip; on the shell's tinted clip that shadow read as a
+   blur. The text sits on the clip in the theme's ink, and the state chip is
+   a quiet pill instead of a 7.5px boxed stamp. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-label b,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-label small,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-camera-summary > b,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-camera-summary > small {
+	background: none;
+	text-shadow: none;
+	letter-spacing: 0;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-label b { color: var(--text-1); font: 600 12px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-label small { color: var(--text-2); font: 400 11px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-camera-summary > b { color: var(--camera); font: 600 11px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-camera-summary > small { color: var(--text-2); font: 400 11px var(--sans); text-transform: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-camera-block-state {
+	padding: 1px 6px;
+	border: 0;
+	border-radius: 7px;
+	background: var(--chip-fill);
+	color: var(--text-2);
+	font: 600 9.5px var(--sans);
+	letter-spacing: .02em;
+	text-shadow: none;
+}
+
+/* ------------------------------------------------- Outliner, quieter pass */
+/* Same restraint as the mode switch: smaller type, the selection as a soft
+   tint in the ordinary ink (not a solid accent bar), type words only where the
+   pointer or the selection is, and the default drop folder unmarked until a
+   drag is actually over it. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner { --h-row: 28px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-label { font-size: 12.5px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected { background: var(--select-tint); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .hierarchy-label { color: var(--text-1); font-weight: 600; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .v2-outliner-chip { color: var(--select); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .hierarchy-toggle { color: var(--text-3); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-type { opacity: 0; transition: opacity .12s ease; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap:hover .v2-outliner-type,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .v2-outliner-type { opacity: 1; color: var(--text-3); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap[data-drop="target"] { border: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap[data-drop="over"] { border: 0; box-shadow: inset 0 0 0 1px var(--select); background: var(--select-tint); }
+
+/* Transport: the step arrows are bare glyphs either side of the play button,
+   not a grey capsule the play button sinks into. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport { gap: 2px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn:first-child,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn:nth-child(3) {
+	width: 26px;
+	padding: 0;
+	border-radius: 13px;
+	background: none;
+	color: var(--text-2);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn:hover:not(.play) { background: var(--chip-fill); color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn.play {
+	width: 30px;
+	height: 30px;
+	margin: 0;
+	border-radius: 15px;
+	background: var(--seg-on);
+	box-shadow: var(--seg-on-shadow);
+	color: var(--text-1);
+}
+/* Every row's highlight spans the same width: depth indents the content
+   inside the row, not the row itself (staggered pills read as clutter). Icons
+   are a size down and in the label grey, so the names carry the tree. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-tree { padding: 0 8px; gap: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap {
+	margin-left: 0;
+	padding-left: calc(4px + var(--hierarchy-depth, 0) * 14px);
+	border-radius: 7px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap:hover:not(.selected) { background: var(--field-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-fold-space { flex-basis: 14px; width: 14px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle:not(.placeholder)::before { width: 8px; height: 8px; -webkit-mask-size: 8px; mask-size: 8px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip {
+	flex: 0 0 14px;
+	width: 14px;
+	height: 14px;
+	color: var(--text-3);
+	-webkit-mask-size: 14px;
+	mask-size: 14px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row:not(.icon-only) { gap: 8px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-label { font-weight: 400; }
+/* The scene switch heads the tree: its name in the section-label style. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap .hierarchy-scene-pill .trigger {
+	height: 28px;
+	padding: 0 4px;
+	color: var(--text-2);
+	font: 600 11px var(--sans);
+	letter-spacing: .02em;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle:not(.placeholder) { display: flex; align-items: center; justify-content: center; color: var(--text-3); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle:not(.placeholder)::before { width: 10px; height: 10px; margin: 0; -webkit-mask-size: 10px; mask-size: 10px; }
+
+/* Shot card while the main view looks through it: the slot holds a quiet
+   note instead of a hole onto the stage, and the footer button is Exit. */
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-frame { display: flex; align-items: center; justify-content: center; }
+.app[data-shell="glass"][data-shot-look]:not([data-embed-mode]) .dock-shot-frame {
+	border-radius: 10px;
+	background: var(--field-fill);
+	box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-live {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	color: var(--text-2);
+	font: 500 12px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-live svg { width: 14px; height: 14px; stroke: var(--select); }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look[data-active="true"] {
+	gap: 8px;
+	padding: 0 6px 0 12px;
+	background: var(--select);
+	color: var(--on-select);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look kbd {
+	padding: 1px 5px;
+	border-radius: 5px;
+	background: rgba(255,255,255,.2);
+	color: inherit;
+	font: 500 10px var(--sans);
+}
+/* A narrow card folds Look through to its icon; Exit folds to its Esc key. */
+@container (max-width: 240px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look[data-active="true"] { width: auto; padding: 0 4px; gap: 0; }
+}
+
+/* Pose panel buttons in the narrow right column: a fixed two-column grid cut
+   long labels ("Body collisions · Frame") to 94px. They wrap instead: short
+   tools share a row, long actions take a row of their own. */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .pose-details .pose-actions { display: flex; flex-wrap: wrap; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .pose-details .pose-actions > .btn { flex: 1 1 auto; min-width: max-content; }

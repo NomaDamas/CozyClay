@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useEffect, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
 import AssetPane from "../asset-pane.jsx";
@@ -21,9 +21,9 @@ function writeContentCollapsed(value) {
 	}
 }
 
-// #570: the object library (Content | Log) sits under the Outliner in the
-// left column, so picking an object and placing it happen on the same side.
-export default function LibrarySlot() {
+// #570: the object library (Content | Log) is the dock's Assets tab. It stays
+// mounted while the Animation tab is up, hidden.
+export default function LibrarySlot({ active = true }) {
 	const {
 		setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
 		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
@@ -32,9 +32,13 @@ export default function LibrarySlot() {
 		spawnCharacter, addSceneObject, runStudioAction,
 	} = useStudioShell();
 	const [collapsed, setCollapsed] = useState(readContentCollapsed);
+	const [shelfShown, setShelfShown] = useState(false);
 
 	// App scans imported assets only while they are on screen.
-	const changeShelfVisible = useCallback((visible) => setBottomTab(visible ? "assets" : "timeline"), [setBottomTab]);
+	useEffect(() => {
+		const visible = active && shelfShown;
+		setBottomTab(visible ? "assets" : "timeline");
+	}, [active, shelfShown, setBottomTab]);
 
 	// Double-click in Content: the same payloads the drag carries, placed at
 	// the origin through the named domain actions.
@@ -48,7 +52,7 @@ export default function LibrarySlot() {
 	}
 
 	return (
-		<section className="assets-pane studio-library" aria-label={ko("Library", "라이브러리")} data-content-collapsed={collapsed || undefined}>
+		<section className="assets-pane studio-library" aria-label={ko("Library", "라이브러리")} data-content-collapsed={collapsed || undefined} hidden={!active}>
 			<AssetPane
 				onAssetGrab={beginAssetDrag}
 				onAssetPlace={placeAssetAtOrigin}
@@ -75,7 +79,7 @@ export default function LibrarySlot() {
 					setCollapsed(next);
 					writeContentCollapsed(next);
 				}}
-				onShelfVisibleChange={changeShelfVisible}
+				onShelfVisibleChange={setShelfShown}
 			/>
 		</section>
 	);

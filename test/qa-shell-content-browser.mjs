@@ -188,11 +188,11 @@ expect("Content expands back to 620 px", await waitFor("Math.abs(document.queryS
 // ---- Dock resize within [220, 480], persisted ----
 const handle = await rectOf("[data-testid=dock-resize-handle]");
 await drag({ x: handle.x, y: handle.y }, { x: handle.x, y: handle.y - 400 });
-const tall = await evaluate("({ height: document.querySelector('.v2-dock').getBoundingClientRect().height, stored: localStorage.getItem('cozyclay.dock.height.v1') })");
+const tall = await evaluate("({ height: document.querySelector('.v2-dock').getBoundingClientRect().height, stored: localStorage.getItem('cozyclay.dock.height.v2') })");
 expect("dragging the top edge up caps the dock at 480 px", Math.abs(tall.height - 480) < 0.5 && tall.stored === "480", JSON.stringify(tall));
 const handleTall = await rectOf("[data-testid=dock-resize-handle]");
 await drag({ x: handleTall.x, y: handleTall.y }, { x: handleTall.x, y: handleTall.y + 500 });
-const short = await evaluate("({ height: document.querySelector('.v2-dock').getBoundingClientRect().height, stored: localStorage.getItem('cozyclay.dock.height.v1') })");
+const short = await evaluate("({ height: document.querySelector('.v2-dock').getBoundingClientRect().height, stored: localStorage.getItem('cozyclay.dock.height.v2') })");
 expect("dragging the top edge down floors the dock at 220 px", Math.abs(short.height - 220) < 0.5 && short.stored === "220", JSON.stringify(short));
 await send("Page.reload");
 expect("the dock size survives a reload", await waitFor("!!document.querySelector('.v2-dock') && Math.abs(document.querySelector('.v2-dock').getBoundingClientRect().height - 220) < 0.5"));
@@ -203,7 +203,7 @@ expect("the Sequencer follows a 220 px dock", await evaluate("Math.abs(document.
 // Leave the tallest stored size behind for the small-screen check below.
 const handleAfter = await rectOf("[data-testid=dock-resize-handle]");
 await drag({ x: handleAfter.x, y: handleAfter.y }, { x: handleAfter.x, y: handleAfter.y - 400 });
-await waitFor("localStorage.getItem('cozyclay.dock.height.v1') === '480'");
+await waitFor("localStorage.getItem('cozyclay.dock.height.v2') === '480'");
 expect("the Sequencer follows a 480 px dock", await evaluate("Math.abs(document.querySelector('.v2-sequencer').getBoundingClientRect().height - document.querySelector('.bottom-timeline').clientHeight) < 1"),
 	JSON.stringify(await evaluate("[document.querySelector('.v2-sequencer').getBoundingClientRect().height, document.querySelector('.bottom-timeline').clientHeight]")));
 
@@ -215,7 +215,7 @@ await waitFor("document.querySelector('.viewport').getBoundingClientRect().heigh
 await waitFor("(() => { const canvas = document.querySelector('.viewport canvas'); return canvas && canvas.height === Math.round(canvas.getBoundingClientRect().height * devicePixelRatio); })()");
 const small = await evaluate(`(() => {
 	const box = (selector) => { const node = document.querySelector(selector); if (!node) return null; const r = node.getBoundingClientRect(); return { width: Math.round(r.width * 10) / 10, height: Math.round(r.height * 10) / 10, top: Math.round(r.top * 10) / 10 }; };
-	return { viewportSize: [innerWidth, innerHeight], viewport: box('.viewport'), canvas: box('.viewport canvas'), dock: box('.v2-dock'), content: box('.v2-dock > .assets-pane'), storedDock: localStorage.getItem('cozyclay.dock.height.v1') };
+	return { viewportSize: [innerWidth, innerHeight], viewport: box('.viewport'), canvas: box('.viewport canvas'), dock: box('.v2-dock'), content: box('.v2-dock > .assets-pane'), storedDock: localStorage.getItem('cozyclay.dock.height.v2') };
 })()`);
 writeFileSync(`${outputDir}/task-13-1280.json`, `${JSON.stringify(small, null, 2)}\n`);
 console.log(`QA_EVIDENCE ${outputDir}/task-13-1280.json ${JSON.stringify(small)}`);
@@ -229,7 +229,7 @@ await screenshot("task-13-1280");
 // ---- Compare: our dock beside the owner's 2a dock ----
 await setViewport(1920, 1080);
 await waitFor("innerWidth === 1920 && Math.abs(document.querySelector('.v2-dock').getBoundingClientRect().height - 480) < 0.5");
-await evaluate("localStorage.removeItem('cozyclay.dock.height.v1')");
+await evaluate("localStorage.removeItem('cozyclay.dock.height.v2')");
 await send("Page.reload");
 await waitFor("!!document.querySelector('.v2-dock') && Math.abs(document.querySelector('.v2-dock').getBoundingClientRect().height - 330) < 0.5");
 await click("[data-testid=content-folder-basic]");
