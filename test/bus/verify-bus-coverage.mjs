@@ -15,7 +15,7 @@ const WRITER_NAMES = new Set([
 // These cells are absent from project serialization and owned undo slices.
 // Selection has view.select; the uncommitted video form has motion.setVideoDraft.
 // Toasts are feedback captured in receipts, not an agent-editable capability.
-export const TRANSIENT_WRITERS = Object.freeze({ setToast: 'toast', setSelectedHierarchyId: 'selectedHierarchyId', setFalMotion: 'falMotion' });
+export const TRANSIENT_WRITERS = Object.freeze({ setToast: 'toast', setSelectedHierarchyId: 'selectedHierarchyId', setI2vMotion: 'i2vMotion' });
 const writerName = name => WRITER_NAMES.has(name) || /^record.*Undo$/.test(name);
 const isRunCall = node => node?.type === "CallExpression" && ((node.callee?.type === "Identifier" && node.callee.name === "run") || (node.callee?.type === "MemberExpression" && node.callee.property?.name === "run"));
 const functionName = node => node?.id?.name ?? "<anonymous>";

@@ -57,13 +57,13 @@ export default function DetailsSlot() {
 	const {
 		selectedHierarchyId, sceneSaveError, studioAgentError, embedMode, studioAgentMode,
 		setStudioAgentMode, AgentPanel, setAgentCollapsed, scenes, activeSceneId,
-		buildStudioAgentContext, highlightAgentTargets, generateFalMotionFromUi, selectedSceneObject, rigSelection,
+		buildStudioAgentContext, highlightAgentTargets, generateI2vMotionFromUi, selectedSceneObject, rigSelection,
 		inspectorActionsOpen, setInspectorActionsOpen, runStudioAction, deleteSelectedSceneObject, inspectorHasContent,
 		keyLightSelected, keyLight, isCameraSelection,
 		shot, moveSequence, cameraKeys, activeShot,
 		isCharacterSelection, showB, characters, openStudio,
 		posing, workflowMode, activeChar,
-		activeCharIndex, falMotionModel, falMotionActions, setFalMotionStudioOpen,
+		activeCharIndex, i2vMotionModel, i2vMotionActions, setI2vMotionStudioOpen,
 		selectablePoses, ikMode, ikApplyPoseAsKey, motion, setStudioPick,
 		appContext, removePose, setPhotoPoseError, photoPoseFileRef, photoPoseState,
 		photoPoseError, activeRig, saveCurrentPose, multiModelStatus, multiModelStage,
@@ -127,7 +127,7 @@ export default function DetailsSlot() {
 				<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
 					sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
 					buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
-					onFalAction={(instruction) => void generateFalMotionFromUi(instruction)} />
+					onI2vAction={(instruction) => void generateI2vMotionFromUi(instruction)} />
 			</div>}
 			<section className="inspector-pane" hidden={studioAgentMode}>
 			<div className="inspector-heading details-panel-head">
@@ -217,9 +217,9 @@ export default function DetailsSlot() {
 		<PosePanel
 			isCharacterSelection={isCharacterSelection}
 			activeCharIndex={activeCharIndex}
-			falMotionModel={falMotionModel}
-			falMotionActions={falMotionActions}
-			setFalMotionStudioOpen={setFalMotionStudioOpen}
+			i2vMotionModel={i2vMotionModel}
+			i2vMotionActions={i2vMotionActions}
+			setI2vMotionStudioOpen={setI2vMotionStudioOpen}
 			selectablePoses={selectablePoses}
 			activeChar={activeChar}
 			ikMode={ikMode}

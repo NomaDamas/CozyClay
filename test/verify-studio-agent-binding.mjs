@@ -37,7 +37,7 @@ import { createStudioAppActions, commandDeclarations } from '../src/commands/ind
 import { HISTORY_LIMIT } from '../src/history.js';
 import { focalMmToFov, fovToFocalMm, IMAGE_MODELS, CUSTOM_MOVE, SUBJECT_HEIGHT_M, composePrompt, deriveShot } from '../src/shot.js';
 import { PART_COLOURS } from '../src/part-colours.js';
-import { buildH3MotionPrompt } from '../src/fal-motion-client.js';
+import { buildH3MotionPrompt } from '../src/i2v-motion-client.js';
 import { objectTransformAt } from '../src/object-path.js';
 import { dispatchLiveFrame } from '../src/live-control.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
@@ -119,10 +119,10 @@ function fixture(options={}) {
   navigator:{clipboard:{writeText:async text=>{clipboard.push(text);}}}};
  // The hosted AI-video (Fal) service and the footage ingest behind it, as
  // stand-ins; the pose capture answers the 480P still the Fal canvas renders.
- const falScope={buildH3MotionPrompt,FAL_MOTION_MIN_DURATION:5,startMotionRequest,
-  captureFalStill:()=>{if(stand.captureError)throw new Error(stand.captureError);return {dataUrl:'data:image/png;base64,QQ==',width:1664,height:960,partColours:[{part:'head'}],framing:keyA};},
-  submitFalMotion:async request=>{stand.falSubmits.push(request);if(stand.falSubmitError)throw new Error(stand.falSubmitError);return {job:{id:'fal-job-1',status:'queued'},dailyRemaining:3};},
-  waitForFalMotionJob:async(id,{onUpdate})=>{onUpdate({id,status:'running'});return structuredClone(stand.falFinished);},
+ const falScope={buildH3MotionPrompt,I2V_MOTION_MIN_DURATION:5,startMotionRequest,
+  captureI2vStill:()=>{if(stand.captureError)throw new Error(stand.captureError);return {dataUrl:'data:image/png;base64,QQ==',width:1664,height:960,partColours:[{part:'head'}],framing:keyA};},
+  submitMotionJob:async request=>{stand.falSubmits.push(request);if(stand.falSubmitError)throw new Error(stand.falSubmitError);return {job:{id:'fal-job-1',status:'queued'},dailyRemaining:3};},
+  waitForMotionJob:async(id,{onUpdate})=>{onUpdate({id,status:'running'});return structuredClone(stand.falFinished);},
   ingestFootage:async source=>{stand.ingested.push(source);return stand.ingestResult;}};
  const scope={THREE,cloneSkeleton,createCommandBus,HISTORY_LIMIT,...protocol,...context,...commands,...objects,...ik,...playback,verifyInstalledTake:studioMotion.verifyInstalledTake,copyPhysicsKeys,physicsKeyStamp,sampleAt,shotAtFrame,focalMmToFov,fovToFocalMm,objectTransformAt,aimAt,forwardFrom,
  liveStateRef:live,sceneRevisionRef:revision,charactersRef:characterRef,loadedLayerCharRef:ref(a.id),bufferRef:buffer,ikStateRef:state,ikStatesRef:layers,storeRef:store,
@@ -148,9 +148,9 @@ function fixture(options={}) {
  // App's render-time choice for the Send-to-AI package (its mode/imageModel state).
  Object.assign(scope,aiScope,{mode:'image',imageModel:'gpt_image_2'});
  // App's Fal state: locked for this account until a test enables it.
- Object.assign(scope,falScope,{falMotionEnabled:false,falMotion:{a:null,b:null,job:null,status:'idle',error:'',instruction:'',dailyRemaining:null}});
- for(const name of ['setMultiModelSource','setFalMotionStudioOpen'])scope[name]=noPublish(name);
- scope.setFalMotion=value=>{renderState.falMotion=typeof value==='function'?value(renderState.falMotion):value;};
+ Object.assign(scope,falScope,{i2vMotionEnabled:false,i2vMotion:{a:null,b:null,job:null,status:'idle',error:'',instruction:'',dailyRemaining:null}});
+ for(const name of ['setMultiModelSource','setI2vMotionStudioOpen'])scope[name]=noPublish(name);
+ scope.setI2vMotion=value=>{renderState.i2vMotion=typeof value==='function'?value(renderState.i2vMotion):value;};
  scope.setMotion=value=>{noPublish('setMotion')(value);for(const done of motionSet.splice(0))done(value);};
  scope.setScenes=noPublish('setScenes');
  scope.openScene=(scene,nextScenes)=>{scope.scenesRef.current=nextScenes;live.current.scenes=nextScenes;scope.activeSceneIdRef.current=scene.id;scope.studioSceneEpochRef.current=crypto.randomUUID();};
@@ -159,7 +159,7 @@ function fixture(options={}) {
   'validateWaypointAt','castMemberOf','readCharacterWaypoints','writeCharacterWaypoints','addCharacterWaypoint','moveCharacterWaypoint','removeCharacterWaypoint','clearCharacterWaypoints',
   'switchSceneDocument','addSceneDocument','duplicateSceneDocument','renameSceneDocument','deleteSceneDocument',
   'selectSceneDocument','createSceneDocumentFromUi','duplicateSceneDocumentFromUi','renameSceneDocumentFromUi','deleteSceneDocumentFromUi',
-  'generate','copyPrompt','framingDistance','showFalMotionLock','generateFalMotion','generateFalMotionFromUi','falMotionUnavailable'];
+  'generate','copyPrompt','framingDistance','showI2vMotionLock','generateI2vMotion','generateI2vMotionFromUi','i2vMotionUnavailable'];
  // The extracted App functions now reach these same fixture-owned cells through the facade.
  scope.appContext=createAppContext({characters:characterRef,state:live,scenes:scope.scenesRef,getBus:()=>scope.studioBindingRef.current.bus,notify:(...args)=>scope.setToast(...args)}).forRender(scope);
  scope.stageDomain=scope;
@@ -173,8 +173,8 @@ function fixture(options={}) {
  Object.assign(scope,actual);
  // React re-renders App with the state it committed: these functions close
  // over render-time state, so every commit is a fresh evaluation of them.
- const renderNames=['generate','copyPrompt','framingDistance','showFalMotionLock','generateFalMotion','generateFalMotionFromUi','falMotionUnavailable'];
- const renderState={mode:scope.mode,imageModel:scope.imageModel,falMotionEnabled:scope.falMotionEnabled,falMotion:scope.falMotion},committed={...renderState};
+ const renderNames=['generate','copyPrompt','framingDistance','showI2vMotionLock','generateI2vMotion','generateI2vMotionFromUi','i2vMotionUnavailable'];
+ const renderState={mode:scope.mode,imageModel:scope.imageModel,i2vMotionEnabled:scope.i2vMotionEnabled,i2vMotion:scope.i2vMotion},committed={...renderState};
  const renderApp=()=>{const s={...scope,...committed,runStudioAction:actual.runStudioAction};s.appContext=scope.appContext.forRender(s);return new Function(...Object.keys(s),renderNames.map(n=>declarations.get(n)).join('\n')+`\nreturn {${renderNames.join(',')}};`)(...Object.values(s));};
  let rendered=renderApp();
  let binding; const stamps=new Map();
@@ -196,8 +196,8 @@ function fixture(options={}) {
    exporting:stand.exporting,canExportVideo:live.current.shots.length>0,
    scenes:scope.scenesRef.current.map(({id,name})=>({id,name})),activeSceneId:scope.activeSceneIdRef.current,project:{...stand.project},
    aiShot:{mode:committed.mode,imageModel:committed.imageModel},
-   falMotion:{enabled:committed.falMotionEnabled,status:committed.falMotion.status,dailyRemaining:committed.falMotion.dailyRemaining}}),
-  generateFalMotion:(...args)=>rendered.generateFalMotion(...args),
+   i2vMotion:{enabled:committed.i2vMotionEnabled,status:committed.i2vMotion.status,dailyRemaining:committed.i2vMotion.dailyRemaining}}),
+  generateI2vMotion:(...args)=>rendered.generateI2vMotion(...args),
   setAiShotMode:value=>{renderState.mode=value;},setAiImageModel:value=>{renderState.imageModel=value;},generate:()=>rendered.generate(),
   saveProject:async saveAs=>{stand.saves.push(saveAs);return stand.saveOutcome;},
   projectFileGranted:async()=>stand.granted,
@@ -984,18 +984,18 @@ const implementations={
   assert.equal(locked?.available,false,JSON.stringify(locked));assert.match(locked.reason,/not enabled/);
   await refused({instruction:'wave'},'TARGET_NOT_READY',/not enabled/);
   // The agent panel's Generate motion chip dispatches the same action. Locked,
-  // it shows no toast, and the Fal card shows the lock generateFalMotion shows.
+  // it shows no toast, and the AI motion card shows the lock generateI2vMotion shows.
   f.values.setToast=undefined;
-  assert.equal(f.rendered().generateFalMotionFromUi('wave'),null);
+  assert.equal(f.rendered().generateI2vMotionFromUi('wave'),null);
   assert.equal(f.values.setToast,undefined,'the chip stays toast-silent');
-  const shownLock={error:f.renderState.falMotion.error,status:f.renderState.falMotion.status};
-  f.render({falMotion:{...f.renderState.falMotion,error:'',status:'idle'}});
-  await f.rendered().generateFalMotion('act','wave');
-  assert.deepEqual(shownLock,{error:f.renderState.falMotion.error,status:'error'},'the chip shows the same lock line as the Fal card path');
+  const shownLock={error:f.renderState.i2vMotion.error,status:f.renderState.i2vMotion.status};
+  f.render({i2vMotion:{...f.renderState.i2vMotion,error:'',status:'idle'}});
+  await f.rendered().generateI2vMotion('act','wave');
+  assert.deepEqual(shownLock,{error:f.renderState.i2vMotion.error,status:'error'},'the chip shows the same lock line as the AI motion card path');
   assert.deepEqual(f.stand.falSubmits,[]);
   // Enabled: the act path captures pose A itself, sends it with the
   // instruction, waits for the clip and ingests it.
-  f.render({falMotionEnabled:true,falMotion:{...f.renderState.falMotion,error:'',status:'idle',dailyRemaining:3}});
+  f.render({i2vMotionEnabled:true,i2vMotion:{...f.renderState.i2vMotion,error:'',status:'idle',dailyRemaining:3}});
   assert.equal((await listed())['motion.generateFromVideo']?.available,true);
   const before=f.binding.refresh().revision;
   const done=await run({instruction:'wave both hands'});
@@ -1008,41 +1008,41 @@ const implementations={
   assert.equal(sent.prompt,buildH3MotionPrompt('wave both hands'));
   assert.deepEqual(f.stand.ingested,[{kind:'url',url:'https://cdn.example.test/fal-act.mp4',name:'Fal H3 Max Turbo · 480P'}]);
   assert.equal(f.values.setResultOpen,true);assert.equal(f.values.setResult.videoUrl,'https://cdn.example.test/fal-act.mp4');
-  assert.equal(f.renderState.falMotion.status,'done');assert.equal(f.renderState.falMotion.a?.dataUrl,'data:image/png;base64,QQ==');
-  assert.match(f.values.setToast,/Fal video is ready/,'the success toast is the Fal card\'s');
+  assert.equal(f.renderState.i2vMotion.status,'done');assert.equal(f.renderState.i2vMotion.a?.dataUrl,'data:image/png;base64,QQ==');
+  assert.match(f.values.setToast,/AI video is ready/,'the success toast is the AI motion card\'s');
   assert.equal(f.binding.refresh().revision,before,'nothing is authored');assert.equal(f.history.current.past.length,0);
   // Busy, or out of today's quota: unavailable with the reason.
-  f.render({falMotion:{...f.renderState.falMotion,status:'queued'}});
+  f.render({i2vMotion:{...f.renderState.i2vMotion,status:'queued'}});
   assert.match((await listed())['motion.generateFromVideo'].reason,/already running/);
   // The chip clears the typed instruction when clicked, so a refusal says why.
   const submitsBusy=f.stand.falSubmits.length;f.values.setToast=undefined;
-  assert.equal(f.rendered().generateFalMotionFromUi('wave again'),null);
+  assert.equal(f.rendered().generateI2vMotionFromUi('wave again'),null);
   assert.equal(f.values.setToast,'A generation is already running','a busy chip click says a generation is running');
-  assert.equal(f.renderState.falMotion.status,'queued','the running job keeps its status');
+  assert.equal(f.renderState.i2vMotion.status,'queued','the running job keeps its status');
   assert.equal(f.stand.falSubmits.length,submitsBusy,'a busy chip click sends nothing');
-  f.render({falMotion:{...f.renderState.falMotion,status:'done',dailyRemaining:0}});
+  f.render({i2vMotion:{...f.renderState.i2vMotion,status:'done',dailyRemaining:0}});
   assert.match((await listed())['motion.generateFromVideo'].reason,/daily/);
   f.values.setToast=undefined;
-  assert.equal(f.rendered().generateFalMotionFromUi('wave again'),null);
+  assert.equal(f.rendered().generateI2vMotionFromUi('wave again'),null);
   assert.equal(f.values.setToast,'No AI video motion generations left today','an out-of-quota chip click says so');
   assert.equal(f.stand.falSubmits.length,submitsBusy,'an out-of-quota chip click sends nothing');
-  // Failures reach the model in English; the Fal card keeps the line it showed.
-  f.render({falMotion:{...f.renderState.falMotion,a:null,status:'idle',dailyRemaining:2}});
+  // Failures reach the model in English; the AI motion card keeps the line it showed.
+  f.render({i2vMotion:{...f.renderState.i2vMotion,a:null,status:'idle',dailyRemaining:2}});
   f.stand.captureError='캡처할 수 없어요';
   await refused({instruction:'jump'},'TARGET_NOT_READY',/pose frame/);
-  assert.deepEqual({error:f.renderState.falMotion.error,status:f.renderState.falMotion.status},{error:'캡처할 수 없어요',status:'error'});
+  assert.deepEqual({error:f.renderState.i2vMotion.error,status:f.renderState.i2vMotion.status},{error:'캡처할 수 없어요',status:'error'});
   f.stand.captureError=null;f.render();f.stand.falSubmitError='Daily motion limit reached.';
   await refused({instruction:'jump'},'TARGET_NOT_READY',/Daily motion limit reached/);
-  assert.equal(f.renderState.falMotion.status,'error');
-  f.stand.falSubmitError=null;f.render({falMotion:{...f.renderState.falMotion,status:'idle'}});
+  assert.equal(f.renderState.i2vMotion.status,'error');
+  f.stand.falSubmitError=null;f.render({i2vMotion:{...f.renderState.i2vMotion,status:'idle'}});
   f.stand.falFinished={job:{id:'fal-job-1',status:'failed',error:'content policy'},dailyRemaining:2};
   await refused({instruction:'jump'},'TARGET_NOT_READY',/content policy/);
   assert(!f.stand.falSubmits.slice(1).some(request=>hangul.test(request.prompt)));
   await refused({instruction:''},'INVALID_ARGUMENT',/.+/);
   // The chip, enabled, runs the action to its end like the agent.
   f.stand.falFinished={job:{id:'fal-job-2',status:'done',video:{url:'https://cdn.example.test/fal-spin.mp4'},resolution:'480P',duration:5},dailyRemaining:1};
-  f.render({falMotion:{...f.renderState.falMotion,status:'idle'}});
-  const ui=f.rendered().generateFalMotionFromUi('spin around');
+  f.render({i2vMotion:{...f.renderState.i2vMotion,status:'idle'}});
+  const ui=f.rendered().generateI2vMotionFromUi('spin around');
   assert.equal(typeof ui?.then,'function');
   assert.equal((await ui).output.videoUrl,'https://cdn.example.test/fal-spin.mp4');
   assert.equal(f.stand.falSubmits.at(-1).prompt,buildH3MotionPrompt('spin around'));

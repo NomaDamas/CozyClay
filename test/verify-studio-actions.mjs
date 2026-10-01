@@ -9,7 +9,7 @@ import { FK_TRACKS, IK_TRACKS } from "../src/ardy/ik.js";
 import { SCENE_ATTACH_BONES } from "../src/scene-objects.js";
 import { GUIDE_MODES } from "../src/shot-guides.js";
 import { IMAGE_MODELS } from "../src/shot.js";
-import { buildH3MotionPrompt } from "../src/fal-motion-client.js";
+import { buildH3MotionPrompt } from "../src/i2v-motion-client.js";
 
 const code = expected => error => error?.code === expected;
 

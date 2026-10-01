@@ -211,7 +211,7 @@ function commandFixture({ frame = 8 } = {}) {
 		promptBlockCount: 0, generating: false, motionReady: true, exporting: false, canExportVideo: true,
 		scenes: [{ id: "scene-1", name: "ONE" }, { id: "scene-2", name: "TWO" }], activeSceneId: "scene-1",
 		project: { name: "Heist", hasFile: true, fileAccess: false, gesture: false },
-		aiShot: { mode: "image", imageModel: "gpt_image_2" }, falMotion: { enabled: false, status: "idle", dailyRemaining: null },
+		aiShot: { mode: "image", imageModel: "gpt_image_2" }, i2vMotion: { enabled: false, status: "idle", dailyRemaining: null },
 	};
 	const entries = [], writes = [];
 	let recording = null, revision = 0, objectDomain, sceneDomain, shotDomain, castDomain, motionDomain;
@@ -291,7 +291,7 @@ function commandFixture({ frame = 8 } = {}) {
 		loadScenes: args => ports.loadScenes(args),
 	};
 	motionDomain = motionHygieneDomain(ports);
-	motionDomain.setVideoDraft = patch => { state.falMotion = { ...state.falMotion, ...patch }; };
+	motionDomain.setVideoDraft = patch => { state.i2vMotion = { ...state.i2vMotion, ...patch }; };
 	const registries = Object.fromEntries(Object.entries(COMMAND_MODULES).map(([name, module]) => [name, createStudioAppActions(ports, { [name]: module })]));
 	const journal = createStudioCommandJournal({ host });
 	const bus = registry => createCommandBus({ registry, ports: {

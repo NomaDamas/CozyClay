@@ -1,7 +1,7 @@
 import {
-	FAL_MOTION_STILL_OUTPUT, FAL_MOTION_SHOT_ASPECT, FAL_MOTION_MIN_DURATION,
-	waitForFalMotionJob, submitFalMotion, buildH3MotionPrompt,
-} from "../fal-motion-client.js";
+	I2V_MOTION_STILL_OUTPUT, I2V_MOTION_SHOT_ASPECT, I2V_MOTION_MIN_DURATION,
+	waitForMotionJob, submitMotionJob, buildH3MotionPrompt,
+} from "../i2v-motion-client.js";
 import { useState, useEffect, useSyncExternalStore, useContext, useRef, useMemo } from "react";
 import { AppContext } from '../app-context.js';
 import { createDocumentStore } from '../document-store.js';
@@ -540,7 +540,7 @@ export function useMotion(appContext) {
 		const start = () => domain.beginGesture(); window.addEventListener('pointerdown', start, true);
 		return () => { window.removeEventListener('pointerdown', start, true); domain.finishGesture(true); };
 	}, [domain, appContext.shared.activeChar.id]);
-	const [falMotion, setFalMotion] = useState({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", dailyRemaining: null });
+	const [i2vMotion, setI2vMotion] = useState({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", dailyRemaining: null });
 	/* ------------------------------ IK layer ------------------------------ */
 	// IK posing for Subject 1: dragging a wrist/ankle handle FOCUSES that
 	// joint and solves its chain backward (two-bone analytic IK) on top of
@@ -2914,15 +2914,15 @@ export function useMotion(appContext) {
 	function cancelArdy() {
 		appContext.shared.ardyAbortRef.current?.abort();
 	}
-	function captureFalStill() {
+	function captureI2vStill() {
 		// H3 480P renders 832x480. The still is captured at exactly that canvas
-		// (x2) regardless of the Studio's shot ratio; markFalPose also switches
+		// (x2) regardless of the Studio's shot ratio; markI2vPose also switches
 		// the viewport to the matching ratio so what the user framed is what
 		// gets sent.
-		const captured = appContext.shared.captureLiveFraming({ output: FAL_MOTION_STILL_OUTPUT });
+		const captured = appContext.shared.captureLiveFraming({ output: I2V_MOTION_STILL_OUTPUT });
 		if (!captured?.dataUrl?.startsWith("data:image/")) throw new Error(ko("The shot renderer is not ready.", "렌더러가 준비되지 않았어요."));
-		if (captured.width !== FAL_MOTION_STILL_OUTPUT.width || captured.height !== FAL_MOTION_STILL_OUTPUT.height) {
-			throw new Error(ko(`The H3 480P reference must be captured at ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}.`, `H3 480P 참조 캡처는 ${FAL_MOTION_STILL_OUTPUT.width}×${FAL_MOTION_STILL_OUTPUT.height}이어야 해요.`));
+		if (captured.width !== I2V_MOTION_STILL_OUTPUT.width || captured.height !== I2V_MOTION_STILL_OUTPUT.height) {
+			throw new Error(ko(`The H3 480P reference must be captured at ${I2V_MOTION_STILL_OUTPUT.width}×${I2V_MOTION_STILL_OUTPUT.height}.`, `H3 480P 참조 캡처는 ${I2V_MOTION_STILL_OUTPUT.width}×${I2V_MOTION_STILL_OUTPUT.height}이어야 해요.`));
 		}
 		// H3 must see the same complete subject in both endpoints. A clipped
 		// foot or head makes the model invent the missing geometry during the
@@ -2953,7 +2953,7 @@ export function useMotion(appContext) {
 				"A/B 참조에 캐릭터 전신이 다 안 들어왔어요. 샷 시점에서 머리와 양발이 화면 안에 들어오도록 카메라를 뒤로 빼고 다시 캡처하세요."
 			));
 		}
-		if (!appContext.shared.falMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
+		if (!appContext.shared.i2vMotionSegmentationReady || !Array.isArray(captured.partColours) || captured.partColours.length === 0) {
 			throw new Error(ko("Enable View → Body part colours → Shaded before capturing an A/B reference.", "A/B 참조는 View에서 부위 색상 → 음영을 켜야 캡처할 수 있어요."));
 		}
 		return { ...captured, framing: appContext.shared.captureCurrentFraming() };
@@ -2961,36 +2961,36 @@ export function useMotion(appContext) {
 	/** Put the viewport on the Fal canvas and hand the fly controls to the
 	 * shot camera, so the user composes the A/B reference on exactly the
 	 * 832x480 frame the clip will have. Idempotent; capture does not need it. */
-	function enterFalFraming() {
-		appContext.shared.runStudioAction("stage.setFilmback", { shotAspect: FAL_MOTION_SHOT_ASPECT });
+	function enterI2vFraming() {
+		appContext.shared.runStudioAction("stage.setFilmback", { shotAspect: I2V_MOTION_SHOT_ASPECT });
 		if (!appContext.shared.lookThroughShot) appContext.shared.enterShotLook();
 	}
-	function markFalPose(slot) {
+	function markI2vPose(slot) {
 		try {
-			if (slot === "b" && falMotion.a && framingDistance(falMotion.a.framing, appContext.shared.captureCurrentFraming()) > 0.001) {
+			if (slot === "b" && i2vMotion.a && framingDistance(i2vMotion.a.framing, appContext.shared.captureCurrentFraming()) > 0.001) {
 				throw new Error(ko("The camera moved between A and B. Capture both refs with the same camera framing.", "A와 B 사이에서 카메라가 이동했어요. 같은 카메라 프레이밍으로 다시 캡처하세요."));
 			}
-			const still = captureFalStill();
+			const still = captureI2vStill();
 			// The capture is already on the Fal canvas; make the viewport agree so
 			// the user sees the frame that was just sent.
-			appContext.shared.runStudioAction("stage.setFilmback", { shotAspect: FAL_MOTION_SHOT_ASPECT });
-			setFalMotion((current) => ({ ...current, [slot]: still, status: "idle", error: "" }));
-			if (slot === "a") appContext.shared.setFalMotionCameraUnlocked(false);
+			appContext.shared.runStudioAction("stage.setFilmback", { shotAspect: I2V_MOTION_SHOT_ASPECT });
+			setI2vMotion((current) => ({ ...current, [slot]: still, status: "idle", error: "" }));
+			if (slot === "a") appContext.shared.setI2vMotionCameraUnlocked(false);
 			appContext.notify(isKo ? `포즈 ${slot.toUpperCase()} 캡처됨 · ${still.width}×${still.height}` : `Pose ${slot.toUpperCase()} captured · ${still.width}×${still.height}`);
 		} catch (error) {
-			setFalMotion((current) => ({ ...current, error: error.message, status: "error" }));
+			setI2vMotion((current) => ({ ...current, error: error.message, status: "error" }));
 		}
 	}
-	function clearFalPose(slot) {
-		setFalMotion((current) => ({ ...current, [slot]: null, status: "idle", error: "", job: null }));
-		if (slot === "a") appContext.shared.setFalMotionCameraUnlocked(false);
+	function clearI2vPose(slot) {
+		setI2vMotion((current) => ({ ...current, [slot]: null, status: "idle", error: "", job: null }));
+		if (slot === "a") appContext.shared.setI2vMotionCameraUnlocked(false);
 	}
-	function clearFalMotion() {
-		setFalMotion({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", promptOverride: "", duration: FAL_MOTION_MIN_DURATION, dailyRemaining: null });
-		appContext.shared.setFalMotionCameraUnlocked(false);
+	function clearI2vMotion() {
+		setI2vMotion({ a: null, b: null, job: null, status: "idle", error: "", instruction: "", promptOverride: "", duration: I2V_MOTION_MIN_DURATION, dailyRemaining: null });
+		appContext.shared.setI2vMotionCameraUnlocked(false);
 	}
-	function restoreFalCamera() {
-		const framing = falMotion.a?.framing;
+	function restoreI2vCamera() {
+		const framing = i2vMotion.a?.framing;
 		const camera = appContext.shared.shotCamRef.current;
 		if (!framing || !camera) return;
 		camera.position.set(framing.pos.x, framing.pos.y, framing.pos.z);
@@ -3003,8 +3003,8 @@ export function useMotion(appContext) {
 		appContext.shared.shotCameraPosRef.current = { ...framing.pos };
 		appContext.shared.setCameraPos({ ...framing.pos });
 		appContext.shared.setFovDeg(framing.fovDeg);
-		appContext.shared.setFalMotionCameraUnlocked(false);
-		setFalMotion((current) => ({ ...current, error: "", status: "idle" }));
+		appContext.shared.setI2vMotionCameraUnlocked(false);
+		setI2vMotion((current) => ({ ...current, error: "", status: "idle" }));
 		appContext.notify(isKo ? "A 캡처 카메라로 복원했어요." : "Restored the camera used for A.");
 	}
 	function framingDistance(a, b) {
@@ -3014,48 +3014,48 @@ export function useMotion(appContext) {
 			Math.abs(a.yaw - b.yaw), Math.abs(a.pitch - b.pitch), Math.abs(a.fovDeg - b.fovDeg),
 		);
 	}
-	/** The Fal card's lock line: AI video motion is not enabled for this account. */
-	function showFalMotionLock() {
-		setFalMotion((current) => ({ ...current, error: ko("Fal motion generation is locked during QA.", "Fal 모션 생성은 QA 중 잠겨 있어요."), status: "error" }));
+	/** The AI motion card's lock line: AI video motion is not enabled for this account. */
+	function showI2vMotionLock() {
+		setI2vMotion((current) => ({ ...current, error: ko("AI motion generation is locked during QA.", "AI 모션 생성은 QA 중 잠겨 있어요."), status: "error" }));
 	}
-	/** The Fal card shows every failure itself. For motion.generateFromVideo the
+	/** The AI motion card shows every failure itself. For motion.generateFromVideo the
 	 * answer says what happened: `{ failed }` with the reason in English, or the
 	 * finished job, the footage it was ingested as (null when ingest failed) and
 	 * the account's daily generations left. */
-	async function generateFalMotion(kind = "interpolate", instructionOverride = null, commandContext = null) {
+	async function generateI2vMotion(kind = "interpolate", instructionOverride = null, commandContext = null) {
 		// One explicit request on the motion:* contract (#466). While the route is
 		// gated, the lock itself is the demand signal. Telemetry never decides.
 		const motionRequest = startMotionRequest({
 			surface: !commandContext ? "fal_card" : commandContext.origin === "mcp" || commandContext.origin === "live" ? "mcp" : "agent",
 			input_mode: kind === "interpolate" ? "a_to_b" : "still",
 		});
-		if (!appContext.shared.falMotionEnabled) {
+		if (!appContext.shared.i2vMotionEnabled) {
 			motionRequest.block("locked");
-			showFalMotionLock();
+			showI2vMotionLock();
 			return { failed: "AI video motion (Fal) is not enabled for this account." };
 		}
-		let source = falMotion;
+		let source = i2vMotion;
 		if (kind === "act" && !source.a) {
-			try { source = { ...source, a: captureFalStill() }; setFalMotion((current) => ({ ...current, a: source.a })); }
+			try { source = { ...source, a: captureI2vStill() }; setI2vMotion((current) => ({ ...current, a: source.a })); }
 			catch (error) {
 				motionRequest.block("missing_input");
-				setFalMotion((current) => ({ ...current, error: error.message, status: "error" }));
+				setI2vMotion((current) => ({ ...current, error: error.message, status: "error" }));
 				return { failed: "Could not capture the character's pose frame: the full body must be inside the shot frame, shaded part colours must be on (view.setPartColours { mode: \"shaded\" }), and the renderer and rig must be ready." };
 			}
 		}
 		if (kind === "interpolate" && (!source.a || !source.b)) {
 			motionRequest.block("missing_input");
-			setFalMotion((current) => ({ ...current, error: ko("Capture both A and B poses first.", "A와 B 포즈를 먼저 캡처하세요."), status: "error" }));
+			setI2vMotion((current) => ({ ...current, error: ko("Capture both A and B poses first.", "A와 B 포즈를 먼저 캡처하세요."), status: "error" }));
 			return { failed: "Capture both A and B poses first." };
 		}
 		if (!source.a?.partColours || (kind === "interpolate" && !source.b?.partColours)) {
 			motionRequest.block("missing_input");
-			setFalMotion((current) => ({ ...current, error: ko("Recapture A/B refs with shaded body-part segmentation enabled.", "색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요."), status: "error" }));
+			setI2vMotion((current) => ({ ...current, error: ko("Recapture A/B refs with shaded body-part segmentation enabled.", "색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요."), status: "error" }));
 			return { failed: "The captured pose frame has no shaded body-part segmentation; the user must recapture it in the Fal card with shaded part colours on." };
 		}
 		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
 			motionRequest.block("missing_input");
-			setFalMotion((current) => ({ ...current, error: ko("The camera changed between A and B. Capture both poses with the same camera.", "A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요."), status: "error" }));
+			setI2vMotion((current) => ({ ...current, error: ko("The camera changed between A and B. Capture both poses with the same camera.", "A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요."), status: "error" }));
 			return { failed: "The camera changed between poses A and B; capture both with the same camera." };
 		}
 		// A hand-edited prompt wins verbatim; otherwise build from the description.
@@ -3065,31 +3065,31 @@ export function useMotion(appContext) {
 		const prompt = source.promptOverride?.trim()
 			? source.promptOverride.trim()
 			: buildH3MotionPrompt(description || (kind === "interpolate" ? "" : "Make the character perform the requested action."), { interpolate: kind === "interpolate" });
-		setFalMotion((current) => ({ ...current, status: "submitting", error: "", job: null }));
+		setI2vMotion((current) => ({ ...current, status: "submitting", error: "", job: null }));
 		motionRequest.pass("fal");
 		motionRequest.start();
 		try {
 			const fetchImpl = commandContext ? (url, options) => fetch(url, { ...options, signal: commandContext.signal }) : undefined;
-			const submitted = await submitFalMotion({
+			const submitted = await submitMotionJob({
 				kind,
 				stillA: source.a?.dataUrl,
 				stillB: source.b?.dataUrl,
 				still: source.a?.dataUrl,
 				prompt,
-				duration: source.duration ?? FAL_MOTION_MIN_DURATION,
+				duration: source.duration ?? I2V_MOTION_MIN_DURATION,
 			}, fetchImpl);
 			const id = submitted?.job?.id;
 			if (!id) throw Object.assign(new Error(ko("The server did not return a motion job ID.", "생성 작업 ID를 받지 못했어요.")), { reason: "The motion server did not return a job id." });
-			setFalMotion((current) => ({ ...current, status: "queued", job: submitted.job, dailyRemaining: submitted.dailyRemaining }));
-			const finished = await waitForFalMotionJob(id, {
+			setI2vMotion((current) => ({ ...current, status: "queued", job: submitted.job, dailyRemaining: submitted.dailyRemaining }));
+			const finished = await waitForMotionJob(id, {
 				fetchImpl,
-				onUpdate: (job) => setFalMotion((current) => ({ ...current, job, status: job?.status ?? current.status })),
+				onUpdate: (job) => setI2vMotion((current) => ({ ...current, job, status: job?.status ?? current.status })),
 			});
 			commandContext?.check();
 			const job = finished?.job;
-			if (job?.status !== "done") throw Object.assign(new Error(job?.error || ko("Fal motion generation failed.", "Fal 생성에 실패했어요.")), job?.error ? {} : { reason: "The AI video generation failed." });
+			if (job?.status !== "done") throw Object.assign(new Error(job?.error || ko("AI motion generation failed.", "AI 모션 생성에 실패했어요.")), job?.error ? {} : { reason: "The AI video generation failed." });
 			motionRequest.succeed();
-			setFalMotion((current) => ({ ...current, job, status: "done", dailyRemaining: finished.dailyRemaining }));
+			setI2vMotion((current) => ({ ...current, job, status: "done", dailyRemaining: finished.dailyRemaining }));
 			let footage = null;
 			if (job.video?.url) {
 				const motionSource = { kind: "url", url: job.video.url, name: `Fal H3 Max Turbo · ${job.resolution}` };
@@ -3118,8 +3118,8 @@ export function useMotion(appContext) {
 				// Applied = the clip is in the Studio, ready for GVHMR extraction.
 				motionRequest.apply();
 				// The result modal and the studio modal are both z-30; never stack them.
-				appContext.shared.setFalMotionStudioOpen(false);
-				appContext.notify((isKo, ko) => isKo ? "Fal 영상이 준비됐어요 · 추출 패널에서 GVHMR을 실행하세요" : "Fal video is ready · run GVHMR from the extraction panel");
+				appContext.shared.setI2vMotionStudioOpen(false);
+				appContext.notify((isKo, ko) => isKo ? "AI 영상이 준비됐어요 · 추출 패널에서 GVHMR을 실행하세요" : "AI video is ready · run GVHMR from the extraction panel");
 			}
 			return { job, footage, dailyRemaining: finished.dailyRemaining ?? null };
 		} catch (error) {
@@ -3127,32 +3127,32 @@ export function useMotion(appContext) {
 			// 429 is the account's daily cap (workers/api daily_cap).
 			motionRequest.fail(error, cancelled ? "aborted" : error?.status === 429 ? "quota" : "generation_failed");
 			if (cancelled) throw error;
-			setFalMotion((current) => ({ ...current, status: "error", error: error.message || String(error) }));
+			setI2vMotion((current) => ({ ...current, status: "error", error: error.message || String(error) }));
 			return { failed: error.reason ?? `The AI video generation failed: ${error.message || error}` };
 		}
 	}
 	/** Why the chip cannot start an AI video motion now, as the user reads it:
-	 * one already running, or none left today. The lock has its own Fal card line. */
-	function falMotionUnavailable() {
-		if (!["idle", "done", "error", "failed"].includes(falMotion.status)) return ko("A generation is already running", "이미 생성이 돌고 있어요");
-		if (falMotion.dailyRemaining === 0) return ko("No AI video motion generations left today", "오늘 남은 AI 영상 모션 생성이 없어요");
+	 * one already running, or none left today. The lock has its own AI motion card line. */
+	function i2vMotionUnavailable() {
+		if (!["idle", "done", "error", "failed"].includes(i2vMotion.status)) return ko("A generation is already running", "이미 생성이 돌고 있어요");
+		if (i2vMotion.dailyRemaining === 0) return ko("No AI video motion generations left today", "오늘 남은 AI 영상 모션 생성이 없어요");
 		return null;
 	}
-	function generateFalMotionFromUi(instruction) {
-		if (!appContext.shared.falMotionEnabled) {
+	function generateI2vMotionFromUi(instruction) {
+		if (!appContext.shared.i2vMotionEnabled) {
 			// Locked, the action's availability check refuses before
-			// generateFalMotion runs, so the chip records its own lock (#466).
+			// generateI2vMotion runs, so the chip records its own lock (#466).
 			startMotionRequest({ surface: "agent", input_mode: "still" }).block("locked");
-			showFalMotionLock();
+			showI2vMotionLock();
 		} else {
 			// The chip clears the typed instruction when clicked, so a refusal says why.
-			const reason = falMotionUnavailable();
+			const reason = i2vMotionUnavailable();
 			if (reason) { appContext.notify(reason); return null; }
 		}
 		return appContext.shared.runStudioAction("motion.generateFromVideo", { instruction });
 	}
-	function updateFalMotionQuota(dailyRemaining) { setFalMotion((current) => ({ ...current, dailyRemaining })); }
-	domain.setVideoDraft = patch => setFalMotion(current => ({ ...current, ...patch }));
+	function updateI2vMotionQuota(dailyRemaining) { setI2vMotion((current) => ({ ...current, dailyRemaining })); }
+	domain.setVideoDraft = patch => setI2vMotion(current => ({ ...current, ...patch }));
 	domain.requestLineEdit = runLineEdit;
 	domain.requestTrailRegeneration = runTrailRegeneration;
 	domain.generate = generateMotion;
@@ -3184,7 +3184,7 @@ export function useMotion(appContext) {
 	appContext.updateActionPorts({ clearMotionNative: clearMotion, setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys });
 	return {
 		...domain,
-		falMotion, setFalMotion, captureFalStill, enterFalFraming, markFalPose, clearFalPose, clearFalMotion, restoreFalCamera, framingDistance, showFalMotionLock, generateFalMotion, falMotionUnavailable, generateFalMotionFromUi, updateFalMotionQuota,
+		i2vMotion, setI2vMotion, captureI2vStill, enterI2vFraming, markI2vPose, clearI2vPose, clearI2vMotion, restoreI2vCamera, framingDistance, showI2vMotionLock, generateI2vMotion, i2vMotionUnavailable, generateI2vMotionFromUi, updateI2vMotionQuota,
 		ikMode, ikChains, setIkChains, ikFkJoints, setIkFkJoints, ikFocus, setIkFocus, footSnap, setFootSnap,
 		bodyContact, setBodyContact, IK_CORRECTION_BLEND_FRAMES, autoPhysicsRunning, setAutoPhysicsRunning,
 		physicsPreview, setPhysicsPreview, physicsShow, physicsProgress, physicsOptions, setPhysicsOptions,

@@ -94,7 +94,7 @@ function ShotPreviewHeader({ name, lens }) {
 export default function ViewportToolbar() {
 	const {
 		workflowMode, selectWorkflowMode, poseRefusal, gizmoMode, setGizmoMode, snapEnabled,
-		setSnapEnabled, preset, applyPreset, cameraPresetId, falMotionCameraLocked,
+		setSnapEnabled, preset, applyPreset, cameraPresetId, i2vMotionCameraLocked,
 		runStudioAction, shotAspectKey, fovDeg, shotsDomain, shot, shots, activeShot,
 		setNonce, workspaceLayout, viewMenuTriggerRef, viewMenuOpen,
 		setViewMenuOpen, viewLooksActive, gridView, setGridView,
@@ -219,7 +219,7 @@ export default function ViewportToolbar() {
 								key={mm}
 								data-lens={mm}
 								checked={shot.focalMm === mm}
-								disabled={falMotionCameraLocked}
+								disabled={i2vMotionCameraLocked}
 								onClick={() => { shotsDomain.changeLens(fov); menu.close(); }}
 							>
 								{mm}mm
@@ -233,7 +233,7 @@ export default function ViewportToolbar() {
 								max={FOV_MAX}
 								step="1"
 								value={fovDeg}
-								disabled={falMotionCameraLocked}
+								disabled={i2vMotionCameraLocked}
 								onChange={(event) => shotsDomain.changeLens(Number(event.target.value))}
 							/>
 							<output>{Math.round(fovDeg)}°</output>
@@ -372,7 +372,7 @@ export default function ViewportToolbar() {
 									<select
 										aria-label={ko("Camera preset", "카메라 프리셋")}
 										value={cameraPresetId ?? ""}
-										disabled={falMotionCameraLocked}
+										disabled={i2vMotionCameraLocked}
 										onChange={(event) => {
 											const id = event.target.value;
 											if (!id) { runStudioAction("stage.setFilmback", { cameraPresetId: null }); return; }

@@ -11,7 +11,7 @@ assert.deepEqual(Object.keys(COMMAND_MODULES), ['shot', 'cast', 'motion', 'objec
 const state = { shots: [], objects: [], characters: [], frame: 0, frameCount: 48, selectedObjectId: null, activeCharacterId: null, promptBlockCount: 0,
  generating: false, motionReady: true, exporting: false, canExportVideo: false, scenes: [{ id: 'scene', name: 'ONE' }], activeSceneId: 'scene',
  project: { name: null, hasFile: false, fileAccess: false, gesture: false }, aiShot: { mode: 'image', imageModel: 'gpt_image_2' },
- falMotion: { enabled: false, status: 'idle', dailyRemaining: null } };
+ i2vMotion: { enabled: false, status: 'idle', dailyRemaining: null } };
 const registry = createStudioAppActions({ state: () => state });
 assert.equal(registry.ids().length, 120, 'the registry includes owned cast, motion and IK actions');
 assert.deepEqual([...registry.ids()].sort(), [...new Set([...STUDIO_ACTION_IDS, ...['stage', 'objects', 'scene', 'project', 'shot', 'cast', 'motion', 'view'].flatMap(name => COMMAND_MODULES[name].declarations.map(entry => entry.id))])].sort(), 'legacy ids plus the owned domain commands');

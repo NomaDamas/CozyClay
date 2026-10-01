@@ -1,16 +1,16 @@
-export const FAL_MOTION_MODEL = "minimax/h3-max-turbo/image-to-video";
-export const FAL_MOTION_RESOLUTION = "480P";
-export const FAL_MOTION_MIN_DURATION = 5;
-export const FAL_MOTION_MAX_DURATION = 15;
-// The durations the Fal card offers. 15 s (362 frames) is the measured upper
+export const I2V_MOTION_MODEL = "minimax/h3-max-turbo/image-to-video";
+export const I2V_MOTION_RESOLUTION = "480P";
+export const I2V_MOTION_MIN_DURATION = 5;
+export const I2V_MOTION_MAX_DURATION = 15;
+// The durations the AI motion card offers. 15 s (362 frames) is the measured upper
 // end the H3 endpoint accepts and the extractor handles (#380 sit-to-bench).
-export const FAL_MOTION_DURATIONS = Object.freeze([5, 10, 15]);
+export const I2V_MOTION_DURATIONS = Object.freeze([5, 10, 15]);
 // H3's 480P output is 832x480. The reference still is captured at exactly
 // twice that canvas, and the Studio switches its viewport to the matching
 // "fal 480P" ratio when A is captured, so the user composes the shot on the
 // canvas the clip will have.
-export const FAL_MOTION_STILL_OUTPUT = Object.freeze({ width: 1664, height: 960 });
-export const FAL_MOTION_SHOT_ASPECT = "fal 480P";
+export const I2V_MOTION_STILL_OUTPUT = Object.freeze({ width: 1664, height: 960 });
+export const I2V_MOTION_SHOT_ASPECT = "fal 480P";
 
 export function motionApiOrigin(location = globalThis.location) {
   const configured = globalThis.__COZYCLAY_MOTION_API__;
@@ -51,24 +51,24 @@ async function request(path, body, fetchImpl = fetch) {
   return payload;
 }
 
-export function submitFalMotion(input, fetchImpl = fetch) {
+export function submitMotionJob(input, fetchImpl = fetch) {
   const kind = input?.kind === "interpolate" ? "interpolate" : "act";
   const body = {
     ...(kind === "interpolate" ? { stillA: input.stillA, stillB: input.stillB } : { still: input.still }),
     prompt: input.prompt,
-    duration: Number(input.duration ?? FAL_MOTION_MIN_DURATION),
+    duration: Number(input.duration ?? I2V_MOTION_MIN_DURATION),
   };
   return request(`/v1/motion/${kind}`, body, fetchImpl);
 }
 
-export function getFalMotionJob(id, fetchImpl = fetch) {
+export function getMotionJob(id, fetchImpl = fetch) {
   return request(`/v1/motion/jobs/${encodeURIComponent(id)}`, undefined, fetchImpl);
 }
 
-export async function waitForFalMotionJob(id, { intervalMs = 500, timeoutMs = 120_000, fetchImpl = fetch, onUpdate } = {}) {
+export async function waitForMotionJob(id, { intervalMs = 500, timeoutMs = 120_000, fetchImpl = fetch, onUpdate } = {}) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    const payload = await getFalMotionJob(id, fetchImpl);
+    const payload = await getMotionJob(id, fetchImpl);
     const job = payload?.job ?? null;
     onUpdate?.(job, payload);
     if (job?.status === "done" || job?.status === "failed") return payload;

@@ -4,7 +4,7 @@
 // turns and made the motion stiff); and tempo words are never injected (the
 // user measured "slow / deliberate" as the source of awkward motion).
 import assert from "node:assert/strict";
-import { buildH3MotionPrompt } from "../src/fal-motion-client.js";
+import { buildH3MotionPrompt } from "../src/i2v-motion-client.js";
 
 const TEMPO = /\b(slow|slowly|deliberate|deliberately|unhurried)\b/i;
 
@@ -19,4 +19,4 @@ for (const interpolate of [false, true]) {
 }
 // A caller's own tempo word is theirs; the builder adds none of its own.
 assert.doesNotMatch(buildH3MotionPrompt("").replace(/^.*\n/, ""), TEMPO);
-console.log("verify-fal-motion-prompt: ok");
+console.log("verify-i2v-motion-prompt: ok");

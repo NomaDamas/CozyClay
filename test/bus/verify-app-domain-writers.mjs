@@ -8,7 +8,7 @@ const setters = new Set([
   'setShots', 'editShots', 'setFovDeg', 'setCameraMove', 'setCustomMove', 'setTlFrameCount', 'setTlFps',
   'setCharacters', 'editCharacters', 'setWaypoints', 'editWaypoints', 'setPromptClips', 'editPromptClips', 'setCustomPoses', 'setHasCharSheet',
   'setScenes', 'setActiveSceneId', 'setProjectName', 'setProjectDirty', 'setSceneObjects',
-  'setMotion', 'setFalMotion', 'setKeyLight', 'setEnvironmentImage', 'setEnvironment', 'setStyle', 'setHasEnvSheet',
+  'setMotion', 'setI2vMotion', 'setKeyLight', 'setEnvironmentImage', 'setEnvironment', 'setStyle', 'setHasEnvSheet',
   'setShotAspectKey', 'setCameraPresetId', 'setSensorFormat',
 ]);
 const storeWriters = new Set(['write', 'load', 'begin', 'beginCommand', 'end', 'applyAtomic', 'applyIn', 'undo', 'redo', 'settle']);

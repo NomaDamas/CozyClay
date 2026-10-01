@@ -8,8 +8,8 @@ import { deferred } from './fixture.mjs';
 test('#444.7: paid video remains confirmation-gated for every non-UI origin', async () => {
   const f = generationFixture(); let calls = 0;
   const state = f.actionHandlers.current.state;
-  f.actionHandlers.current.state = () => ({ ...state(), falMotion: { enabled: true, status: 'idle', dailyRemaining: 2 } });
-  f.actionHandlers.current.generateFalMotion = async () => { calls++; return { job: { video: { url: 'https://video.invalid/take.mp4' } } }; };
+  f.actionHandlers.current.state = () => ({ ...state(), i2vMotion: { enabled: true, status: 'idle', dailyRemaining: 2 } });
+  f.actionHandlers.current.generateI2vMotion = async () => { calls++; return { job: { video: { url: 'https://video.invalid/take.mp4' } } }; };
   try {
     assert.equal(f.registry.get('motion.generateFromVideo').exposure, 'confirm');
     for (const origin of ['agent', 'mcp', 'cli']) assert.equal((await f.run('motion.generateFromVideo', { instruction: 'Walk' }, origin)).code, 'CONFIRMATION_REQUIRED');
