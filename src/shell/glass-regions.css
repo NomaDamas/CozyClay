@@ -447,8 +447,12 @@
 .app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer {
 	--tl-header-height: 48px;
 	--tl-ruler-height: 24px;
-	--tl-track-row-height: 26px;
-	--tl-track-group-height: 78px;
+	--tl-track-row-height: 22px;
+	--tl-track-group-height: 66px;
+	/* The surface is exactly its rows (ruler + 2 lanes + 2 lane groups), so it
+	   never asks the body for more height than the dock gives it. */
+	--tl-surface-height: calc(var(--tl-ruler-height) + var(--tl-track-row-height) * 2 + var(--tl-track-group-height) * 2);
+	--tl-camera-bar-height: 28px;
 	--tl-track-tree-width: 170px;
 	--tl-clip-inset: 4px;
 	--tl-font-title: 15px;
@@ -728,7 +732,29 @@
 .app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios button { min-width: 0; padding: 0; font-size: 11px; }
 
 /* Ruler labels thin out instead of running together. */
-.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-body { scrollbar-width: thin; }
+/* The dock is sized to the lane grid (shell.css), so the body only ever
+   scrolls sideways with the zoom; a vertical bar here would mean a lane is
+   off screen, which the shell does not allow. The body is pinned to the
+   surface height: the camera bar above it has its own reserved row and can
+   never take height from the lanes. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-body {
+	flex: 0 0 var(--tl-surface-height);
+	height: var(--tl-surface-height);
+	min-height: var(--tl-surface-height);
+	overflow-y: hidden;
+	scrollbar-width: thin;
+}
+/* The camera bar's row is always there: empty when no shot is selected, so
+   selecting one changes what the row shows, not where the lanes sit. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head { margin-bottom: var(--tl-camera-bar-height); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-camera-editor {
+	flex: 0 0 var(--tl-camera-bar-height);
+	min-height: var(--tl-camera-bar-height);
+	max-height: var(--tl-camera-bar-height);
+	margin-top: calc(-1 * var(--tl-camera-bar-height));
+	border: 0;
+	background: none;
+}
 @container (max-width: 900px) {
 	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick:nth-child(2n of .tl-tick) { color: transparent; }
 }

@@ -11,7 +11,9 @@ import { defaultRailRange } from "../camera-rail-schedule.js";
 
 // G11: the dock resizes within [220, 480] px, and never so far that the 3D
 // viewport drops under 480 px (top bar 44 + status bar 24 + three 1 px gaps).
-export const DOCK_MIN_HEIGHT = 220;
+// Never below the sequencer's own grid (shell.css --shell-dock-default): a
+// shorter dock would have to scroll its lanes.
+export const DOCK_MIN_HEIGHT = 324;
 export const DOCK_MAX_HEIGHT = 480;
 const VIEWPORT_MIN_HEIGHT = 480;
 const SHELL_FIXED_ROWS = 44 + 24 + 3;

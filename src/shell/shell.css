@@ -9,7 +9,11 @@
 		--shell-left-default: 260px;
 		--shell-right-default: 300px;
 		--shell-dock: var(--shell-dock-height, var(--shell-dock-default));
-		--shell-dock-default: clamp(220px, 30vh, 300px);
+		/* The sequencer's fixed grid: 48px head + 28px camera bar (always
+		   reserved, see glass-regions.css) + 24px ruler + the lane rows
+		   (22 + 66 + 22 + 66 = 176) = 324px. The dock is exactly that tall, so
+		   every lane is on screen and the body never scrolls vertically. */
+		--shell-dock-default: 324px;
 		/* The shot card never takes more than 36 % of the dock, so the
 		   Sequencer keeps room on narrow windows. */
 		--shell-camera: min(var(--shell-camera-width, 340px), calc((100vw - var(--shell-center-left) - var(--shell-center-right)) * .36));
