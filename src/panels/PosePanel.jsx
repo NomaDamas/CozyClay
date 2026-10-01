@@ -6,6 +6,7 @@ import { DEFAULT_POSE } from "../poses.js";
 import { poseLabelKo } from "../app-stage.jsx";
 import ReferenceImageField from "./ReferenceImageField.jsx";
 import { useBus } from '../app-context.js';
+import { trackFeature } from "../analytics.js";
 
 export default function PosePanel({
 	isCharacterSelection, activeCharIndex, falMotionModel, falMotionActions, setFalMotionStudioOpen,
@@ -23,7 +24,12 @@ export default function PosePanel({
 					<p className="inspector-hint v2-details-hint">
 						{isKo ? `인물 ${activeCharIndex + 1}의 자세입니다.` : `The pose on Subject ${activeCharIndex + 1}.`}
 					</p>
-					<FalMotionCaptureCard model={falMotionModel} actions={falMotionActions} onOpen={() => setFalMotionStudioOpen(true)} />
+					<FalMotionCaptureCard model={falMotionModel} actions={falMotionActions} onOpen={() => {
+						// While the route is locked its Generate button is disabled, so opening
+						// the authoring modal is the card's demand signal (#466).
+						trackFeature("fal_motion_open");
+						setFalMotionStudioOpen(true);
+					}} />
 					<PoseTileGrid
 						poses={selectablePoses}
 						model={activeChar.model}

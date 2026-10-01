@@ -661,7 +661,9 @@ export function useCast(appContext) {
 	 * character: a running take must survive having its best frame bottled. */
 	function saveCurrentPose() {
 		if (!activeRig) return;
-		trackFeature("pose_edit");
+		// Saving to the library, not editing: real bone edits are `pose_edit`
+		// from the semantic boundary (#466).
+		trackFeature("pose_save");
 		const pose = {
 			id: `custom_${Date.now()}`,
 			label: isKo ? `내 포즈 ${customPoses.length + 1}` : `My Pose ${customPoses.length + 1}`,
@@ -682,7 +684,7 @@ export function useCast(appContext) {
 	function savePose() {
 		const rig = posedRig();
 		if (!rig) return;
-		trackFeature("pose_edit");
+		trackFeature("pose_save");
 		const pose = {
 			id: `custom_${Date.now()}`,
 		label: isKo ? `내 포즈 ${customPoses.length + 1}` : `My Pose ${customPoses.length + 1}`,

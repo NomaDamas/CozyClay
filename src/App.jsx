@@ -45,7 +45,7 @@ import {
 
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
 import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
-import { createFirstEditTracker } from "./semantic-edit.js";
+import { createFirstEditTracker, semanticEditKind } from "./semantic-edit.js";
 
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import { StudioProtocolError } from "./studio-agent-protocol.js";
@@ -161,6 +161,7 @@ import {
 } from "./project.js";
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
 import FirstSuccessGuide from "./first-success-guide.jsx";
+import UseCaseQuestion from "./use-case-question.jsx";
 import { CameraTutorial } from "./camera-tutorial.jsx";
 import { createTutorialAnalytics } from "./tutorial-analytics.js";
 import { cameraTutorialSuppressed, createFirstShotHandoff, rememberCameraTutorialTerminal } from "./first-shot-handoff.js";
@@ -186,7 +187,11 @@ import {
 	MAX_PATH_POINTS,
 } from "./object-path.js";
 import {
+	analyticsActive,
 	exportFailureCode,
+	recordSemanticEdit,
+	recordUseCase,
+	shouldAskUseCase,
 	startExportAttempt,
 	track,
 	trackActivation,
@@ -606,6 +611,16 @@ export default function App() {
 			if (before !== after) sceneRevisionRef.current += 1;
 			studioBindingRef.current?.invalidate(domain, before, after);
 			studioBindingRef.current?.publishSemantic(domain, after);
+			// Every authored edit is counted by its closed kind for the session
+			// summary (#466); classification only runs while telemetry is on.
+			if (before !== after && analyticsActive()) {
+				try {
+					const kind = semanticEditKind(domain, before, after);
+					if (kind) recordSemanticEdit(kind);
+				} catch {
+					// Telemetry classification must never affect editing.
+				}
+			}
 			return firstEdit(surface, domain, before, after);
 		};
 	}
@@ -2426,6 +2441,7 @@ export default function App() {
 	};
 
 	const [firstSuccessGuideOpen, setFirstSuccessGuideOpen] = useState(false);
+	const [useCaseAskOpen, setUseCaseAskOpen] = useState(false);
 
 	// Dismissal mirrors the inspector-actions menu: only listen while open,
 	// ignore presses inside the wrap (the trigger's own click keeps toggling),
@@ -3253,6 +3269,13 @@ export default function App() {
 				if (request.kind === "frame") {
 					track("export:blocking_frame_succeeded", { format: "png" });
 					trackFeature("export_frame"); trackActivation("export");
+				}
+				// A real deliverable is the moment the use-case question is worth
+				// asking; never in embeds, and only while telemetry is on.
+				try {
+					if (!embedMode && !playgroundMode && ["video", "frame", "depth_video"].includes(request.kind) && shouldAskUseCase()) setUseCaseAskOpen(true);
+				} catch {
+					// The optional question can never turn a finished export into a failure.
 				}
 			}
 			return output;
@@ -7429,6 +7452,14 @@ export default function App() {
 				}}
 			/>
 			<FirstSuccessGuide open={firstSuccessGuideOpen} onDismiss={() => setFirstSuccessGuideOpen(false)} />
+			<UseCaseQuestion
+				open={useCaseAskOpen}
+				isKo={isKo}
+				onAnswer={(useCase, team) => {
+					recordUseCase(useCase, team);
+					setUseCaseAskOpen(false);
+				}}
+			/>
 			{saveBlockedReasons && <SaveBlockedDialog reasons={saveBlockedReasons} onClose={() => setSaveBlockedReasons(null)} />}
 			<Toast message={toast} onDone={() => showToast((current) => current === toast ? "" : current)} />
 			{pwaUpdate && (
