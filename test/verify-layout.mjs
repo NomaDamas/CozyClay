@@ -269,6 +269,13 @@ expect(
 	planview.includes("lineWidth={3}") && planview.includes("lineWidth={live ? 2.5 : 3.5}"),
 );
 expect(
+	"Top-View props recede so the camera, cast and rail read first",
+	planview.includes('const OBJECT_COLOR = "#f3f0ea"') &&
+	planview.includes("const capY = (object.y ?? 0) + height + 0.02") &&
+	planview.includes("muted={!selected}") &&
+	planview.includes("<CastRing color={color} />"),
+);
+expect(
 	"Top-View shows path endpoints and direction while composing a rail",
 	planview.includes("function SubjectMovementGuide") &&
 	planview.includes("directionTriangle") &&
