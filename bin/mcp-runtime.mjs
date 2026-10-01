@@ -90,30 +90,45 @@ function installMcpRuntime() {
 	});
 }
 
-export async function runMcp(rest) {
+/** The staged runtime root, installing it on first use. Every failure is an
+ * Error whose `code` names the stage (`MISSING_RUNTIME`, `INSTALL_FAILED`,
+ * `INCOMPLETE_RUNTIME`) and whose `lines` are the launcher's diagnostics; the
+ * Studio hub loader reports them and keeps serving, `cclay mcp` exits. */
+export async function ensureMcpRuntime() {
 	if (!existsSync(join(PKG_ROOT, "mcp", "server.mjs")) || !existsSync(join(MCP_RUNTIME_SOURCE, "package-lock.json"))) {
-		console.error("cozyclay: this build does not include the MCP server runtime.");
+		throw Object.assign(new Error("this build does not include the MCP server runtime."), { code: "MISSING_RUNTIME" });
+	}
+	try {
+		probeMcpRuntime();
+		return MCP_RUNTIME;
+	} catch {
+		// Installed below.
+	}
+	console.error("cozyclay: installing MCP server dependencies (one-time per CozyClay version)...");
+	const result = await installMcpRuntime();
+	if (result.code !== 0) {
+		throw Object.assign(
+			new Error(`npm ci failed${result.error ? `: ${result.error.message}` : ` (exit ${result.code})`}. Check your network connection and retry.`),
+			{ code: "INSTALL_FAILED", lines: [`the published package was not changed; remove ${JSON.stringify(MCP_RUNTIME)} before retrying a damaged cache.`] },
+		);
+	}
+	try {
+		probeMcpRuntime();
+	} catch (error) {
+		throw Object.assign(new Error(`MCP runtime is incomplete after npm ci: ${error.message}`), { code: "INCOMPLETE_RUNTIME" });
+	}
+	return MCP_RUNTIME;
+}
+
+export async function runMcp(rest) {
+	let runtime;
+	try {
+		runtime = await ensureMcpRuntime();
+	} catch (error) {
+		console.error(`cozyclay: ${error.message}`);
+		for (const line of error.lines ?? []) console.error(`cozyclay: ${line}`);
 		process.exit(1);
 	}
-
-	let server;
-	try {
-		server = probeMcpRuntime();
-	} catch {
-		console.error("cozyclay: installing MCP server dependencies (one-time per CozyClay version)...");
-		const result = await installMcpRuntime();
-		if (result.code !== 0) {
-			console.error(`cozyclay: npm ci failed${result.error ? `: ${result.error.message}` : ` (exit ${result.code})`}. Check your network connection and retry.`);
-			console.error(`cozyclay: the published package was not changed; remove ${JSON.stringify(MCP_RUNTIME)} before retrying a damaged cache.`);
-			process.exit(1);
-		}
-		try {
-			server = probeMcpRuntime();
-		} catch (error) {
-			console.error(`cozyclay: MCP runtime is incomplete after npm ci: ${error.message}`);
-			process.exit(1);
-		}
-	}
-	const child = spawn(process.execPath, [server, ...rest], { stdio: "inherit" });
+	const child = spawn(process.execPath, [join(runtime, "mcp", "server.mjs"), ...rest], { stdio: "inherit" });
 	child.on("exit", (code, signal) => process.exit(signal ? 1 : (code ?? 0)));
 }

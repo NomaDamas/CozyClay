@@ -26,7 +26,7 @@ import { homedir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
-import { runMcp } from "./mcp-runtime.mjs";
+import { ensureMcpRuntime, runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { checkForUpdate, readUpdateStatus, runUpdate } from "./update-check.mjs";
 import { handleOAuthRequest } from "./codex-auth.mjs";
@@ -441,7 +441,9 @@ if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 // substitute an environment/default port for a sidecar this launcher owns.
 const getBridgeOrigin = () => bridge && bridgePort !== null && bridge.exitCode === null && bridge.signalCode === null
 	? `http://127.0.0.1:${bridgePort}` : null;
-const agentHandler = createAgentHandler({ port: () => opts.port, getBridgeOrigin });
+// A source checkout has mcp/node_modules; the package loads the Studio's live
+// tools from the staged MCP runtime that `cclay mcp` also uses (#576).
+const agentHandler = createAgentHandler({ port: () => opts.port, getBridgeOrigin, ...(SOURCE_CHECKOUT ? {} : { mcpRuntime: { ensure: ensureMcpRuntime } }) });
 server = createServer((req, res) => {
 	const url = new URL(req.url ?? "/", "http://127.0.0.1");
 	if (/^\/oauth\/(start|status|logout)$/.test(url.pathname)) {

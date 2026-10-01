@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import * as defaultAuth from "../codex-auth.mjs";
 import { publishLiveEndpoint, removeLiveEndpoint } from "../live-endpoint.mjs";
 import { createCodexClient } from "./codex-client.mjs";
@@ -230,10 +231,22 @@ function defaultClient(auth, requestContext) {
 const liveHubOwner = () => process.env.COZYCLAY_LIVE_OWNER
 	|| (basename(process.argv[1] ?? "") === "dev-full.mjs" ? "dev-full" : "cozyclay");
 
+/** The two live-tool modules. A source checkout resolves them from the
+ * repository, where mcp/ has its own node_modules. The published package
+ * ships mcp/ without zod, three or ws, so the launcher passes an `mcpRuntime`
+ * whose ensure() installs the staged runtime (bin/mcp-runtime.mjs) once per
+ * version and the modules are imported from that root instead (#576). */
+async function liveToolsModules(mcpRuntime) {
+	if (!mcpRuntime) return Promise.all([import("../../mcp/tool-handlers.mjs"), import("../../mcp/live-hub.mjs")]);
+	const root = await mcpRuntime.ensure();
+	const staged = (file) => pathToFileURL(join(root, "mcp", file)).href;
+	return Promise.all([import(staged("tool-handlers.mjs")), import(staged("live-hub.mjs"))]);
+}
+
 /** Start the optional registry/live dependencies without making signed-out
  * startup depend on an MCP dependency install. Failures remain visible on use. */
-function liveToolsRuntime() {
-	return Promise.all([import("../../mcp/tool-handlers.mjs"), import("../../mcp/live-hub.mjs")]).then(async ([registry, { startLiveHub }]) => {
+function liveToolsRuntime(mcpRuntime) {
+	return liveToolsModules(mcpRuntime).then(async ([registry, { startLiveHub }]) => {
 		const owner = liveHubOwner();
 		const token = randomBytes(32).toString("hex");
 		const liveHub = await startLiveHub(Number(process.env.COZYCLAY_LIVE_PORT ?? 5184), { token, owner });
@@ -258,13 +271,19 @@ function liveToolsRuntime() {
 			liveHub.server?.once("close", () => removeLiveEndpoint(liveHub.port));
 		}
 		return { liveHub, handlers };
-	}).catch((error) => ({ error }));
+	}).catch((error) => {
+		// The pane answers CAPABILITY_MISSING on use; the reason belongs on the
+		// launcher's terminal rather than nowhere.
+		console.error(`cozyclay: Studio live tools unavailable: ${error?.message ?? error}`);
+		for (const line of error?.lines ?? []) console.error(`cozyclay: ${line}`);
+		return { error };
+	});
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, cliproxyBaseUrl, env, fauxProvider, handlers, liveHub, port, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
+export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, cliproxyBaseUrl, env, fauxProvider, handlers, liveHub, mcpRuntime, port, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
-	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime();
+	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime(mcpRuntime);
 	const renderGuidance = async (environment) => {
 		try {
 			const { handlers: tools, liveHub: hub } = await runtime;
