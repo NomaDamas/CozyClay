@@ -7,7 +7,7 @@ import './elements/character.js';
 import { generationArgs } from '../motion/generation.js';
 import { applyRootDrop, normalizeRootDrop } from '../ardy/root-drop.js';
 import { characterScaleFor } from '../ardy/npz.js';
-import { FAL_MOTION_DURATIONS } from '../fal-motion-client.js';
+import { I2V_MOTION_DURATIONS } from '../i2v-motion-client.js';
 import { createMotionEdit, trimMotionEdit, splitMotionEdit, setMotionSegmentSpeed, removeMotionSegment } from '../ardy/motion-edit.js';
 const id = { type: 'string', minLength: 1 }, frame = { type: 'integer', minimum: 0 };
 const input = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required, additionalProperties: false });
@@ -73,7 +73,7 @@ const ik = legacyIk.map((entry, index) => ({ ...entry, id: ['ik.setKey', 'ik.rem
 const clear = { id: 'motion.clear', label: 'Clear motion', description: 'Clear the active take, its corrections and take-owned cast fields.',
 	kind: 'mutation', undoDomain: 'motion', input: { type: 'object', properties: { characterId: { type: 'string' } }, required: ['characterId'], additionalProperties: false } };
 const videoDraft = { id: 'motion.setVideoDraft', label: 'Set video motion draft', description: 'Set the uncommitted AI-video form without changing the project or its history.', kind: 'transient',
-	input: input({ instruction: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, promptOverride: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, duration: { oneOf: FAL_MOTION_DURATIONS.map(value => ({ const: value })) } }, []) };
+	input: input({ instruction: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, promptOverride: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, duration: { oneOf: I2V_MOTION_DURATIONS.map(value => ({ const: value })) } }, []) };
 export const declarations = Object.freeze([videoDraft, generate, ...queued, prepared, ...loads, physics, ...tools, ...rangePins, ...platformFit, ...edits, ...legacyIk, ...ik, clear, ...["motion.generateAllBlocks", "motion.generateFromVideo"].map(studioActionDeclaration)]);
 
 export function register(registry, ports) {
@@ -210,15 +210,15 @@ export function register(registry, ports) {
 			if (!ports.state().generating) fail("TARGET_NOT_READY", shown.length ? `Generation not started: ${shown.at(-1)}` : "The editor did not start the generation; check the active character's rig and prompt blocks.");
 			return { affectedIds: activeCharacterId ? [activeCharacterId] : [], summary: `Started generating the active character's motion from ${promptBlockCount} prompt block${promptBlockCount === 1 ? "" : "s"}.` };
 		} });
-	// AI-video motion: the agent panel's Generate motion (generateFalMotion
-	// "act"), awaited to its clip. The Fal card shows every failure it meets, so
+	// AI-video motion: the agent panel's Generate motion (generateI2vMotion
+	// "act"), awaited to its clip. The AI motion card shows every failure it meets, so
 	// a refusal is silent in the UI and tells the model the reason in English.
 	registry.register({ ...studioActionDeclaration("motion.generateFromVideo"), domain: "motion", target: () => ports.state().activeCharacterId,
-		available: ({ falMotion }) => !falMotion.enabled ? "AI video motion (Fal) is not enabled for this account."
-			: !["idle", "done", "error", "failed"].includes(falMotion.status) ? "An AI video motion generation is already running; wait for it to finish."
-				: falMotion.dailyRemaining === 0 ? "The account's daily AI video generations are used up." : true,
+		available: ({ i2vMotion }) => !i2vMotion.enabled ? "AI video motion (Fal) is not enabled for this account."
+			: !["idle", "done", "error", "failed"].includes(i2vMotion.status) ? "An AI video motion generation is already running; wait for it to finish."
+				: i2vMotion.dailyRemaining === 0 ? "The account's daily AI video generations are used up." : true,
 		run: async ({ instruction }, context) => {
-			const outcome = await ports.generateFalMotion("act", instruction, context);
+			const outcome = await ports.generateI2vMotion("act", instruction, context);
 			if (outcome.failed) fail("TARGET_NOT_READY", outcome.failed);
 			const { job, footage, dailyRemaining } = outcome;
 			if (!job.video?.url) fail("TARGET_NOT_READY", "The AI video model finished without returning a video.");

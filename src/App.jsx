@@ -173,8 +173,8 @@ import {
 
 import ResultModal from "./result-modal.jsx";
 import {
-	FalMotionModal,
-} from "./fal-motion-studio.jsx";
+	I2vMotionModal,
+} from "./i2v-motion-studio.jsx";
 
 import { demoSeedGate, hasLineEditCapability, motionReadiness } from "./motion-readiness.js";
 
@@ -266,7 +266,7 @@ import { buildZip } from "./zip-store.js";
 import { composeStoryboard } from "./storyboard.js";
 import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
 
-import { motionApiOrigin, FAL_MOTION_SHOT_ASPECT } from "./fal-motion-client.js";
+import { motionApiOrigin, I2V_MOTION_SHOT_ASPECT } from "./i2v-motion-client.js";
 import { serializeOtio } from "./otio.js";
 import "./shell/mode.css";
 import {
@@ -1160,9 +1160,9 @@ export default function App() {
 	// not the one its closure captured.
 	appContext.publishCharacters(characters);
 
-	const [falMotionEnabled, setFalMotionEnabled] = useState(false);
-	const [falMotionMode, setFalMotionMode] = useState("interpolate");
-	const [falMotionCameraUnlocked, setFalMotionCameraUnlocked] = useState(false);
+	const [i2vMotionEnabled, setI2vMotionEnabled] = useState(false);
+	const [i2vMotionMode, setI2vMotionMode] = useState("interpolate");
+	const [i2vMotionCameraUnlocked, setI2vMotionCameraUnlocked] = useState(false);
 
 	useEffect(() => {
 		let cancelled = false;
@@ -1170,10 +1170,10 @@ export default function App() {
 			.then((response) => response.ok ? response.json() : null)
 			.then((payload) => {
 				if (cancelled || !payload) return;
-				setFalMotionEnabled(payload.enabled === true);
-				if (Number.isFinite(payload.dailyRemaining)) motionDomain.updateFalMotionQuota(payload.dailyRemaining);
+				setI2vMotionEnabled(payload.enabled === true);
+				if (Number.isFinite(payload.dailyRemaining)) motionDomain.updateI2vMotionQuota(payload.dailyRemaining);
 			})
-			.catch(() => { if (!cancelled) setFalMotionEnabled(false); });
+			.catch(() => { if (!cancelled) setI2vMotionEnabled(false); });
 		return () => { cancelled = true; };
 	}, []);
 
@@ -1317,16 +1317,16 @@ export default function App() {
 		get waypoints() { return waypoints; },
 		get captureCurrentFraming() { return captureCurrentFraming; },
 		get enterShotLook() { return enterShotLook; },
-		get falMotionEnabled() { return falMotionEnabled; },
-		get falMotionSegmentationReady() { return falMotionSegmentationReady; },
+		get i2vMotionEnabled() { return i2vMotionEnabled; },
+		get i2vMotionSegmentationReady() { return i2vMotionSegmentationReady; },
 		get captureLiveFraming() { return liveQueries.capture_framing_png; },
 		get lookThroughShot() { return lookThroughShot; },
 		get motionEncodingCacheRef() { return motionEncodingCacheRef; },
 		get readStudioState() { return readStudioState; },
 		get restoreExportRig() { return restoreExportRig; },
 		get setCameraPos() { return setCameraPos; },
-		get setFalMotionCameraUnlocked() { return setFalMotionCameraUnlocked; },
-		get setFalMotionStudioOpen() { return setFalMotionStudioOpen; },
+		get setI2vMotionCameraUnlocked() { return setI2vMotionCameraUnlocked; },
+		get setI2vMotionStudioOpen() { return setI2vMotionStudioOpen; },
 		get setFovDeg() { return setFovDeg; },
 		get setResult() { return setResult; },
 		get setResultOpen() { return setResultOpen; },
@@ -1360,7 +1360,7 @@ export default function App() {
 		generationBusy, openMotionSetup, refineDisabledReason, sceneDisabledReason, sceneGenerateDisabledReason,
 		sceneAgainDisabledReason, enterRefineMode, runSceneAgain, addSceneBlock, restoreMotionRefs, cancelArdy,
 	} = motionDomain;
-	const { falMotion, captureFalStill, enterFalFraming, markFalPose, clearFalPose, clearFalMotion, restoreFalCamera, framingDistance, showFalMotionLock, generateFalMotion, falMotionUnavailable, generateFalMotionFromUi } = motionDomain;
+	const { i2vMotion, captureI2vStill, enterI2vFraming, markI2vPose, clearI2vPose, clearI2vMotion, restoreI2vCamera, framingDistance, showI2vMotionLock, generateI2vMotion, i2vMotionUnavailable, generateI2vMotionFromUi } = motionDomain;
 	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
 	const [partColoursMode, setPartColoursMode] = useState("shaded");
 
@@ -1931,7 +1931,7 @@ export default function App() {
 	const liveWorkspaceIdRef = useRef("");
 	if (!liveWorkspaceIdRef.current) liveWorkspaceIdRef.current = loadLiveWorkspaceId();
 	const [result, setResult] = useState(null);
-	const [falMotionStudioOpen, setFalMotionStudioOpen] = useState(false);
+	const [i2vMotionStudioOpen, setI2vMotionStudioOpen] = useState(false);
 	const [resultOpen, setResultOpen] = useState(false);
 	const [copied, setCopied] = useState(false);
 	const [recordedVideoName, setRecordedVideoName] = useState(null);
@@ -3789,7 +3789,7 @@ export default function App() {
 
 	/** The agent panel's Generate motion chip: the motion.generateFromVideo
 	 * action. Locked, the action is unavailable and never runs, so the chip shows
-	 * the Fal card's lock line itself, as it always did. */
+	 * the AI motion card's lock line itself, as it always did. */
 
 	// What a framing capture says about the shot it came from: lens, delivery
 	// aspect, cast, cut range and the video model the shot is aimed at. Both
@@ -3846,39 +3846,39 @@ export default function App() {
 	const partColoursChoice = partColoursEnabled ? partColoursMode : "off";
 	// Shaded part colours keep the stable per-part hues while preserving the
 	// surface lighting H3 uses to infer the character's volume and pose.
-	const falMotionSegmentationReady = partColoursEnabled && partColoursMode === "shaded";
-	const falMotionHasA = Boolean(falMotion.a);
-	const falMotionHasB = Boolean(falMotion.b);
-	const falMotionCameraMatch = falMotionHasA && falMotionHasB && framingDistance(falMotion.a.framing, falMotion.b.framing) <= 0.001;
-	const falMotionCameraLocked = falMotionHasA && !falMotionCameraUnlocked;
-	const falMotionCurrentCameraMatch = !falMotionHasA || framingDistance(falMotion.a.framing, captureCurrentFraming()) <= 0.001;
-	const falMotionStep = !falMotionSegmentationReady ? 1 : !falMotionHasA ? 2 : falMotionMode === "interpolate" && !falMotionHasB ? 3 : 4;
-	// The Fal workflow is split into a viewport-side capture card and a wide
-	// authoring modal (fal-motion-studio.jsx); both render from this one model
+	const i2vMotionSegmentationReady = partColoursEnabled && partColoursMode === "shaded";
+	const i2vMotionHasA = Boolean(i2vMotion.a);
+	const i2vMotionHasB = Boolean(i2vMotion.b);
+	const i2vMotionCameraMatch = i2vMotionHasA && i2vMotionHasB && framingDistance(i2vMotion.a.framing, i2vMotion.b.framing) <= 0.001;
+	const i2vMotionCameraLocked = i2vMotionHasA && !i2vMotionCameraUnlocked;
+	const i2vMotionCurrentCameraMatch = !i2vMotionHasA || framingDistance(i2vMotion.a.framing, captureCurrentFraming()) <= 0.001;
+	const i2vMotionStep = !i2vMotionSegmentationReady ? 1 : !i2vMotionHasA ? 2 : i2vMotionMode === "interpolate" && !i2vMotionHasB ? 3 : 4;
+	// The AI motion workflow is split into a viewport-side capture card and a wide
+	// authoring modal (i2v-motion-studio.jsx); both render from this one model
 	// and action set so they cannot drift.
-	const falMotionModel = {
-		falMotion,
-		mode: falMotionMode,
-		enabled: falMotionEnabled,
-		segmentationReady: falMotionSegmentationReady,
-		step: falMotionStep,
-		hasA: falMotionHasA,
-		hasB: falMotionHasB,
-		cameraMatch: falMotionCameraMatch,
-		cameraUnlocked: falMotionCameraUnlocked,
-		currentCameraMatch: falMotionCurrentCameraMatch,
-		framingActive: lookThroughShot && shotAspectKey === FAL_MOTION_SHOT_ASPECT,
+	const i2vMotionModel = {
+		i2vMotion,
+		mode: i2vMotionMode,
+		enabled: i2vMotionEnabled,
+		segmentationReady: i2vMotionSegmentationReady,
+		step: i2vMotionStep,
+		hasA: i2vMotionHasA,
+		hasB: i2vMotionHasB,
+		cameraMatch: i2vMotionCameraMatch,
+		cameraUnlocked: i2vMotionCameraUnlocked,
+		currentCameraMatch: i2vMotionCurrentCameraMatch,
+		framingActive: lookThroughShot && shotAspectKey === I2V_MOTION_SHOT_ASPECT,
 	};
-	const falMotionActions = {
-		setFalMotion: motionDomain.setFalMotion,
-		setMode: setFalMotionMode,
-		enterFraming: enterFalFraming,
-		markPose: markFalPose,
-		clearPose: clearFalPose,
-		clear: clearFalMotion,
-		toggleCameraLock: () => setFalMotionCameraUnlocked((value) => !value),
-		restoreCamera: restoreFalCamera,
-		generate: (kind) => void generateFalMotion(kind),
+	const i2vMotionActions = {
+		setI2vMotion: motionDomain.setI2vMotion,
+		setMode: setI2vMotionMode,
+		enterFraming: enterI2vFraming,
+		markPose: markI2vPose,
+		clearPose: clearI2vPose,
+		clear: clearI2vMotion,
+		toggleCameraLock: () => setI2vMotionCameraUnlocked((value) => !value),
+		restoreCamera: restoreI2vCamera,
+		generate: (kind) => void generateI2vMotion(kind),
 		enableShaded: () => runStudioAction("view.setPartColours", { mode: "shaded" }),
 	};
 	const viewLooksActive = gridView || autoColor || partColoursEnabled;
@@ -6577,7 +6577,7 @@ export default function App() {
 			aiShot: { mode, imageModel },
 			// AI-video motion: the account's Fal access, the card's job state and
 			// the daily generations left (null until the server says).
-			falMotion: { enabled: falMotionEnabled, status: falMotion.status, dailyRemaining: falMotion.dailyRemaining ?? null },
+			i2vMotion: { enabled: i2vMotionEnabled, status: i2vMotion.status, dailyRemaining: i2vMotion.dailyRemaining ?? null },
 		}),
 		addTimelineShot, splitTimelineShot, duplicateTimelineShot, removeTimelineShot, setTimelineShotRange, moveTimelineShot,
 		runAllPromptBlocks,
@@ -6590,7 +6590,7 @@ export default function App() {
 		afterRender: () => new Promise(resolve => renderWaitersRef.current.push(resolve)),
 		saveProject, projectFileGranted: async () => (await queryHandlePermission(projectHandleRef.current)) === "granted",
 		importAsset: (args, context) => objectsDomain.importAsset(args, context), fetchImportSource,
-		setAiShotMode: setMode, setAiImageModel: setImageModel, generate, generateFalMotion,
+		setAiShotMode: setMode, setAiImageModel: setImageModel, generate, generateI2vMotion,
 	});
 	if (!studioActionsRef.current) studioActionsRef.current = createStudioAppActions(appContext.actionPorts);
 	/** UI door into the shared registry. Refusal messages are written for the
@@ -6651,18 +6651,18 @@ export default function App() {
 		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection,
 		toggleHierarchyHidden, propsDrop, hierarchyReparent, agentTouchedRows, workflowMode,
 		selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
-		preset, applyPreset, cameraPresetId, falMotionCameraLocked, shotAspectKey,
+		preset, applyPreset, cameraPresetId, i2vMotionCameraLocked, shotAspectKey,
 		fovDeg, shotsDomain, shot, setNonce, workspaceLayout,
 		viewMenuTriggerRef, viewMenuOpen, setViewMenuAnchor, setViewMenuOpen, viewLooksActive,
 		viewMenuAnchor, gridView, setGridView, autoColor, setAutoColor,
 		isCharacterSelection, partColoursChoice, embedMode, agentCollapsed, sceneSaveError,
 		studioAgentError, studioAgentMode, setStudioAgentMode, AgentPanel, setAgentCollapsed,
-		buildStudioAgentContext, highlightAgentTargets, generateFalMotionFromUi, selectedSceneObject, rigSelection,
+		buildStudioAgentContext, highlightAgentTargets, generateI2vMotionFromUi, selectedSceneObject, rigSelection,
 		inspectorActionsOpen, setInspectorActionsOpen, deleteSelectedSceneObject, inspectorHasContent, keyLightSelected,
 		keyLight, changeKeyLight, resetKeyLight, isCameraSelection, moveSequence,
 		cameraKeys, activeShot, changeShotTargetModel, updateCharacterAt, openStudio,
 		posing, removeCharacter, setShowB, activeChar, changeInspectorCharacter,
-		falMotionModel, falMotionActions, setFalMotionStudioOpen, selectablePoses, ikApplyPoseAsKey,
+		i2vMotionModel, i2vMotionActions, setI2vMotionStudioOpen, selectablePoses, ikApplyPoseAsKey,
 		setStudioPick, appContext, removePose, setPhotoPoseError, photoPoseFileRef,
 		photoPoseState, photoPoseError, activeRig, saveCurrentPose, multiModelStatus,
 		multiModelStage, multiModelFileRef, chooseMultiModelFile, multiModelSource, multiModelUrl,
@@ -6977,7 +6977,7 @@ export default function App() {
 							    and the wheel dollies without wrecking the framing. */}
 							<FlyControls
 								enabled={!posing && !playMode}
-								cameraLocked={lookThroughShot && falMotionCameraLocked}
+								cameraLocked={lookThroughShot && i2vMotionCameraLocked}
 								camRef={ikMode ? poserCamRef : lookThroughShot ? shotCamRef : editorCamRef}
 								look={ikMode ? poserLook : lookThroughShot ? look : editorLook}
 								getPivot={() => {
@@ -7403,7 +7403,7 @@ export default function App() {
 			}
 		>
 
-			{falMotionStudioOpen && <FalMotionModal model={falMotionModel} actions={falMotionActions} onClose={() => setFalMotionStudioOpen(false)} />}
+			{i2vMotionStudioOpen && <I2vMotionModal model={i2vMotionModel} actions={i2vMotionActions} onClose={() => setI2vMotionStudioOpen(false)} />}
 			{result && resultOpen && (
 				<ResultModal
 					result={result}

@@ -29,7 +29,7 @@ const NODE_FILES = [
 	"test/ardy/verify-motion-calibration.mjs",
 	"test/ardy/verify-palette-segmentation.mjs",
 	"test/verify-motion-stabilize.mjs",
-	"test/verify-fal-motion-prompt.mjs",
+	"test/verify-i2v-motion-prompt.mjs",
 	"test/verify-facing-marks.mjs",
 	"test/ardy/verify-gvhmr-floor.mjs",
 	"test/verify-gvhmr-detector-flag.mjs",

@@ -3,7 +3,7 @@ import { ko, isKo } from "./locale.js";
 export default function ResultModal({ result, copied, recordedVideoName, onClose, onCopy, onDownload, downloadDisabled = false, exportFeedback = null }) {
 	const isVideo = result.mode === "video";
 	const motionVideo = result.motion?.videoUrl ?? null;
-	const isFalMotion = Boolean(motionVideo);
+	const isI2vMotion = Boolean(motionVideo);
 	const modelLabel = result.modelLabel ?? (isVideo ? ko("your AI video tool", "AI 영상 도구") : ko("your selected image model", "선택한 이미지 모델"));
 	const hasFrame = Boolean(result.frame);
 
@@ -42,12 +42,12 @@ export default function ResultModal({ result, copied, recordedVideoName, onClose
 		<div className="modal-overlay" onClick={onClose}>
 			<div className="modal result-modal" role="dialog" aria-modal="true" aria-labelledby="result-title" onClick={(event) => event.stopPropagation()}>
 				<div className="modal-head">
-				<h3 id="result-title">{isFalMotion ? ko("Your motion is ready", "모션이 준비됐어요") : ko("Your shot is ready", "장면이 준비됐어요")}</h3>
+				<h3 id="result-title">{isI2vMotion ? ko("Your motion is ready", "모션이 준비됐어요") : ko("Your shot is ready", "장면이 준비됐어요")}</h3>
 					<button type="button" className="x" onClick={onClose} aria-label={ko("Close the result", "결과 닫기")}>
 						✕
 					</button>
 				</div>
-				{isFalMotion ? (
+				{isI2vMotion ? (
 					<video className="preview result-motion-video" src={motionVideo} controls playsInline preload="metadata" />
 				) : result.frameB ? (
 					<div className="move-frames">
@@ -69,7 +69,7 @@ export default function ResultModal({ result, copied, recordedVideoName, onClose
 						<small>{ko("Camera move made from timeline keyframes", "타임라인 키프레임으로 만든 카메라 움직임")}</small>
 					</div>
 				)}
-				{isFalMotion && result.motion && <div className="result-motion-meta">
+				{isI2vMotion && result.motion && <div className="result-motion-meta">
 					<span>{result.motion.resolution || "480P"}</span>
 					{result.motion.width && result.motion.height && <span>{result.motion.width}×{result.motion.height}</span>}
 					{result.motion.fps && <span>{result.motion.fps} fps</span>}
@@ -90,7 +90,7 @@ export default function ResultModal({ result, copied, recordedVideoName, onClose
 				</div>
 
 				{exportFeedback}
-				{isFalMotion ? <section className="result-next" aria-labelledby="result-next-title">
+				{isI2vMotion ? <section className="result-next" aria-labelledby="result-next-title">
 					<span className="result-next-kicker">{ko("Next · CozyClay motion source", "다음 · CozyClay 모션 소스")}</span>
 					<h4 id="result-next-title">{ko("Use this video for mocap extraction", "이 영상을 모캡 추출에 사용하세요")}</h4>
 					<div className="result-next-intro"><p>{ko("The fixed-camera H3 Max Turbo video is attached to the extraction panel as a motion source. Run GVHMR there, then review the resulting take in the timeline.", "고정 카메라 H3 Max Turbo 영상이 추출 패널의 모션 소스로 연결됐어요. 거기서 GVHMR을 실행한 뒤 타임라인의 테이크를 확인하세요.")}</p></div>
