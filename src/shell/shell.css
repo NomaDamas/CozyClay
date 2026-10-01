@@ -11,17 +11,31 @@
 		--shell-dock: var(--shell-dock-height, var(--shell-dock-default));
 		/* The sequencer's fixed grid: 48px head + 28px camera bar (always
 		   reserved, see glass-regions.css) + 24px ruler + the lane rows
-		   (22 + 66 + 22 + 66 = 176) = 324px. The dock is exactly that tall, so
-		   every lane is on screen and the body never scrolls vertically. */
-		--shell-dock-default: 324px;
+		   (22 + 66 + 22 + 66 = 176) = 276px. The dock is exactly that tall, so
+		   every lane is on screen, the body never scrolls vertically, and no
+		   empty band sits under the last lane. */
+		--shell-dock-default: 276px;
 		/* The shot card never takes more than 36 % of the dock, so the
 		   Sequencer keeps room on narrow windows. */
 		--shell-camera: min(var(--shell-camera-width, 340px), calc((100vw - var(--shell-center-left) - var(--shell-center-right)) * .36));
-		--shell-status-h: 28px;
+		/* No standing status row (StatusBar.jsx): live status floats instead. */
+		--shell-status-h: 0px;
 		--shell-dock-bottom: var(--shell-gap);
 		--shell-center-left: calc(var(--shell-left) + var(--shell-gap) * 2);
 		--shell-center-right: calc(var(--shell-right) + var(--shell-gap) * 2);
 		--shell-center-bottom: calc(var(--shell-dock) + var(--shell-status-h) + var(--shell-dock-bottom) + var(--shell-gap));
+		/* The shot card's picture. The slot is the room the card leaves between
+		   its 48px head and the 84px of ratios + footer under it; the picture is
+		   the shot aspect fitted into that slot and centred in it, so the stage
+		   shows exactly the frame, with no letterbox bars above or below.
+		   Offsets are from the dock's right edge and from its bottom edge
+		   (above the status row). --shot-aspect comes from App. */
+		--shot-slot-w: calc(var(--shell-camera) - 28px);
+		--shot-slot-h: max(60px, calc(var(--shell-dock) - 132px));
+		--shot-pic-w: min(var(--shot-slot-w), calc(var(--shot-slot-h) * var(--shot-aspect, 1.7778)));
+		--shot-pic-h: calc(var(--shot-pic-w) / var(--shot-aspect, 1.7778));
+		--shot-pic-right: calc(14px + (var(--shot-slot-w) - var(--shot-pic-w)) / 2);
+		--shot-pic-bottom: calc(84px + (var(--shot-slot-h) - var(--shot-pic-h)) / 2);
 		position: relative;
 		display: block;
 		height: 100vh;
@@ -85,8 +99,11 @@
 		min-height: 0;
 		overflow: hidden;
 	}
+	/* The left column stops above the dock, which runs under it to the
+	   window's left edge. */
 	.app:not([data-embed-mode]) .studio-left-column {
 		left: var(--shell-gap);
+		bottom: var(--shell-center-bottom);
 		width: var(--shell-left);
 	}
 	.app:not([data-embed-mode]) .studio-right-column {
@@ -94,8 +111,7 @@
 		width: var(--shell-right);
 	}
 	.studio-left-column > .panel,
-	.studio-right-column > .panel,
-	.studio-left-column > .studio-library {
+	.studio-right-column > .panel {
 		width: 100%;
 		min-width: 0;
 		max-width: none;
@@ -107,13 +123,7 @@
 		background: none;
 	}
 	.studio-left-column > .hierarchy-left {
-		flex: 0 0 auto;
-		height: var(--shell-outliner-height, 46%);
-	}
-	.studio-left-column > .studio-library {
 		flex: 1 1 auto;
-		display: flex;
-		flex-direction: column;
 	}
 	.studio-right-column > .inspector-sidebar {
 		flex: 1 1 auto;
@@ -139,7 +149,7 @@
 	.app:not([data-embed-mode]) .studio-dock-slot {
 		position: absolute;
 		z-index: 12;
-		left: var(--shell-center-left);
+		left: var(--shell-gap);
 		right: var(--shell-center-right);
 		bottom: var(--shell-dock-bottom);
 		height: calc(var(--shell-dock) + var(--shell-status-h));
@@ -162,14 +172,15 @@
 		max-height: none;
 	}
 
-	/* The status line sits inside the dock's panel as its bottom row. */
+	/* Live status floats in the viewport window's bottom-left corner, a
+	   gutter in from its edges, like the rails. */
 	.app:not([data-embed-mode]) .brandbar {
 		position: absolute;
 		z-index: 13;
-		left: var(--shell-center-left);
-		right: var(--shell-center-right);
-		bottom: var(--shell-dock-bottom);
-		height: var(--shell-status-h);
+		left: calc(var(--shell-center-left) + var(--shell-gap));
+		bottom: calc(var(--shell-center-bottom) + var(--shell-gap));
+		max-width: calc(100% - var(--shell-center-left) - var(--shell-center-right) - var(--shell-gap) * 2);
+		height: 32px;
 		border: 0;
 	}
 	.app:not([data-embed-mode]) .brandbar::before { display: none; }
@@ -184,7 +195,7 @@
 	}
 	.app:not([data-embed-mode]) .shell-left-splitter {
 		top: var(--shell-gap);
-		bottom: var(--shell-gap);
+		bottom: var(--shell-center-bottom);
 		left: calc(var(--shell-gap) + var(--shell-left));
 		width: var(--shell-gap);
 		cursor: col-resize;
@@ -195,12 +206,6 @@
 		right: calc(var(--shell-gap) + var(--shell-right));
 		width: var(--shell-gap);
 		cursor: col-resize;
-	}
-	.app:not([data-embed-mode]) .shell-outliner-splitter {
-		position: relative;
-		flex: 0 0 auto;
-		height: 12px;
-		cursor: row-resize;
 	}
 	.app:not([data-embed-mode]) .shell-agent-splitter {
 		position: absolute;
@@ -220,11 +225,13 @@
 	/* The stage canvas is full-bleed (the shot preview is drawn into it under
 	   the dock's card), but the scene is only meant to be SEEN in two places:
 	   the open viewport between the panels and that preview card. Everywhere
-	   else — the 12px gutters, the window margins, the band between the top
-	   pills — a raw slice of floor and horizon read as a crack in the UI. This
+	   else — the gutters, the window margins, the band between the top pills,
+	   and under the panels' glass — a raw slice of floor and horizon read as a
+	   crack in the UI (and tinted the dock grey next to the columns). This
 	   frame paints all of that in the shell surface, with the viewport window
-	   and the dock cut out as rounded rects (same 20px radius as the panels),
-	   so the stage sits in a window of the UI instead of leaking around it. */
+	   (20px round, as the panels) and the shot card's frame (10px round) cut
+	   out, so the stage sits in a window of the UI instead of leaking around it.
+	   The Assets tab has no shot card, so its hole closes. */
 	.app:not([data-embed-mode]) .workspace::after {
 		content: "";
 		position: absolute;
@@ -234,29 +241,35 @@
 		/* The panel tone, not the window tone: the dock and the columns blur
 		   this frame through their glass, and on the darker --surface-0 they
 		   went a step darker than designed. */
-		background: var(--surface-panel);
+		background: var(--shell-frame, var(--surface-panel));
 		--shell-view-top: calc(var(--shell-gap) * 2 + 40px);
 		--shell-cut-w: calc(100% - var(--shell-center-left) - var(--shell-center-right));
 		--shell-view-h: max(0px, calc(100% - var(--shell-view-top) - var(--shell-center-bottom)));
-		--shell-dock-h: calc(var(--shell-dock) + var(--shell-status-h));
+		--shell-shot-w: var(--shot-pic-w);
+		--shell-shot-h: var(--shot-pic-h);
 		/* An SVG without a viewBox keeps rx in CSS pixels at any mask-size, so
 		   the cut-outs stay 20px-round however the panels are resized. rx is the
 		   panels' --float-radius (themes.css); a data URI cannot read the token. */
 		--shell-round-cut: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' rx='20'/%3E%3C/svg%3E");
-		-webkit-mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-round-cut);
-		mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-round-cut);
-		-webkit-mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-cut-w) var(--shell-dock-h);
-		mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-cut-w) var(--shell-dock-h);
-		/* The dock cut-out is placed from the bottom edge: a percentage in
-		   mask-position is relative to (box - mask size), so calc(100% - ...)
-		   would land it hundreds of px too high. */
-		-webkit-mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), left var(--shell-center-left) bottom var(--shell-dock-bottom);
-		mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), left var(--shell-center-left) bottom var(--shell-dock-bottom);
+		--shell-shot-cut: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' rx='10'/%3E%3C/svg%3E");
+		-webkit-mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-shot-cut);
+		mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-shot-cut);
+		-webkit-mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-shot-w) var(--shell-shot-h);
+		mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-shot-w) var(--shell-shot-h);
+		/* The shot cut-out is placed from the bottom-right edges: a percentage
+		   in mask-position is relative to (box - mask size), so calc(100% - ...)
+		   would land it hundreds of px off. Same spot as .vp-shot-preview. */
+		-webkit-mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), right calc(var(--shell-center-right) + var(--shot-pic-right)) bottom calc(var(--shell-dock-bottom) + var(--shell-status-h) + var(--shot-pic-bottom));
+		mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), right calc(var(--shell-center-right) + var(--shot-pic-right)) bottom calc(var(--shell-dock-bottom) + var(--shell-status-h) + var(--shot-pic-bottom));
 		-webkit-mask-repeat: no-repeat;
 		mask-repeat: no-repeat;
 		-webkit-mask-composite: xor;
 		mask-composite: exclude;
 	}
+	.app[data-dock-tab="assets"]:not([data-embed-mode]) .workspace::after,
+	.app[data-shot-look]:not([data-embed-mode]) .workspace::after { --shell-shot-w: 0px; --shell-shot-h: 0px; }
+	.app[data-dock-tab="assets"]:not([data-embed-mode]) .vp-shot-preview,
+	.app[data-dock-tab="assets"]:not([data-embed-mode]) .shell-camera-splitter { display: none; }
 
 	.preferences-slot { display: contents; }
 

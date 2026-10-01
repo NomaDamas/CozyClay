@@ -4,6 +4,19 @@ export const THEMES = ["dark", "light"];
 export const THEME_KEY = "cozyclay.theme.v1";
 export const DEFAULT_THEME = "dark";
 
+import { useEffect, useState } from "react";
+
+/** The theme on <html data-theme>, following Preferences' live switch. */
+export function useUiTheme() {
+	const [theme, setTheme] = useState(() => globalThis.document?.documentElement.dataset.theme ?? readTheme());
+	useEffect(() => {
+		const onChange = (event) => setTheme(event.detail);
+		globalThis.addEventListener("cozyclay:theme-change", onChange);
+		return () => globalThis.removeEventListener("cozyclay:theme-change", onChange);
+	}, []);
+	return theme;
+}
+
 export function readTheme() {
 	try {
 		const stored = globalThis.localStorage?.getItem(THEME_KEY);

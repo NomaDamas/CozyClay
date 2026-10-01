@@ -28,16 +28,18 @@ const room = readFileSync(new URL("../src/room.jsx", import.meta.url), "utf8");
 
 // A helper two millimetres above a 500 m plane loses to the floor across the
 // whole frame and survives only at the grazed horizon, which is where it is
-// useless. Baking the lines into the floor's own map ends that contest.
-expect("the deck carries a grid texture", room.includes("function makeGridTexture()") && room.includes("map={grid}"));
-expect("the grid tiles in metres across the whole deck", room.includes("texture.repeat.set(STAGE_SIZE / TILE_M, STAGE_SIZE / TILE_M);") && room.includes("const TILE_M = 10;"));
-expect("the grid wraps rather than stretching once", room.includes("THREE.RepeatWrapping"));
-expect("the texture is released with the room", room.includes("grid.dispose()"));
+// useless. Drawing the lines in the floor's own shader ends that contest; the
+// lines are computed per pixel (fwidth), so they stay ~1 px at any distance
+// and fade out before they alias into a moire band.
+expect("the deck draws its grid in its own shader", room.includes("function makeDeckMaterial(light)") && room.includes("material.onBeforeCompile") && room.includes("material={material}"));
+expect("the grid has metre lines and heavier ten-metre lines", room.includes("gridLines(1.0, 1.0)") && room.includes("gridLines(${TILE_M.toFixed(1)}, 1.6)") && room.includes("const TILE_M = 10;"));
+expect("the grid lines are pixel-wide and fade before they alias", room.includes("fwidth(cell)") && room.includes("1.0 - smoothstep(0.08, 0.2,"));
+expect("the material is released with the room", room.includes("material.dispose()"));
 expect("no floating grid helper is layered over the deck", !app.includes("new THREE.GridHelper"));
 
 /* --- the floor shades with distance and takes a contact shadow ------------- */
 
-expect("the deck is lit rather than flat-filled", room.includes("<meshLambertMaterial color={FLOOR} map={grid} />"));
+expect("the deck is lit rather than flat-filled", room.includes("new THREE.MeshLambertMaterial({") && room.includes("color: light ? FLOOR_LIGHT : FLOOR,"));
 expect("the deck receives shadow", room.includes("receiveShadow"));
 expect("the key light casts one shadow", room.includes("castShadow") && room.includes("shadow-mapSize-width={2048}"));
 expect(
@@ -65,7 +67,7 @@ expect(
 	"the viewport fog is untouched",
 	// Clay stage keeps its tuned values; grid view swaps to the void fog whose
 	// far plane also sits below CAPTURE_FOG_NEAR, so the capture trick holds.
-	app.includes('args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [STAGE_BACKGROUND, 18, 54]}'),
+	app.includes('args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [stageBackground(uiTheme), 18, 54]}'),
 );
 const captureFog = app.indexOf("fog.near = CAPTURE_FOG_NEAR;");
 const restoreFog = app.indexOf("fog.near = fogNear;");

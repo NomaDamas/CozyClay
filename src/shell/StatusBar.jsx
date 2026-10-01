@@ -9,10 +9,25 @@ const BUSY = ["preparing", "encoding", "finalizing"];
 // 2a status bar: status text on the left (export progress, retry and cancel
 // take that slot while an export runs, G7); fps and the source offer on the
 // right. #570: the save state sits under the project name (ProjectHead).
-export default function StatusBar() {
+// In the studio shell there is no standing row: a fixed "Ready", the fps the
+// Sequencer already shows and a source link Help › About already carries were
+// a band of noise under the dock. Only a live status (an export, or a status
+// message) shows, as a capsule floating in the viewport's bottom-left corner.
+// Embeds have no menu bar, so they keep the full row and its source offer.
+export default function StatusBar({ embedded = false }) {
 	const { statusText, exportStatus, exportPhaseLabel, resultOpen, recState, tlFps } = useStudioShell();
 	// A frame export's status is already shown inside its result dialog.
 	const exportShown = exportStatus && !(resultOpen && exportStatus.kind === "frame");
+	if (!embedded) {
+		if (!exportShown && !statusText) return null;
+		return (
+			<footer className="brandbar v2-statusbar statusbar-float">
+				{exportShown
+					? <ExportStatus status={exportStatus} label={exportPhaseLabel} recording={recState === "recording"} />
+					: <span className="statusbar-text">{statusText}</span>}
+			</footer>
+		);
+	}
 	return (
 		<footer className="brandbar v2-statusbar">
 			<div className="statusbar-left">

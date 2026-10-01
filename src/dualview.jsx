@@ -345,9 +345,14 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 				// used to trace an empty frame around every pasted image — the
 				// "border that will not go away". Hiding the card from the prepass
 				// leaves the wall behind it continuous, so no edge is drawn.
+				// The deck takes no ink either (userData.noInk, room.jsx): seen at a
+				// grazing angle its depth runs away fast enough that the depth
+				// kernel inked the whole far floor as a dark band under the
+				// horizon. Without it in the prepass, figures still outline
+				// against the cleared depth behind them.
 				const cutouts = [];
 				scene.traverse((node) => {
-					if (node.userData?.cutoutTexture !== undefined && node.visible) {
+					if ((node.userData?.cutoutTexture !== undefined || node.userData?.noInk) && node.visible) {
 						cutouts.push(node);
 						node.visible = false;
 					}

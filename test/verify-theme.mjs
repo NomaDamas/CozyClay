@@ -29,9 +29,9 @@ expect("chrome accent token uses the v2 selection role", css.includes("--accent:
 expect("timeline lanes use the v2 panel surface", css.includes("background-color: var(--surface-panel)"));
 expect("IK uses the v2 danger token", css.includes(".tl-marker.ik") && css.includes("background: var(--danger)"));
 expect("current frame uses the v2 selection token", css.includes(".tl-frame-box") && css.includes("background: var(--select)"));
-// The stage is the grey workbench everywhere (editor, preview, exports, both
-// UI themes); grid view only trades the deck for the reference grid.
-expect("Canvas uses the grey workbench background", app.includes('args={[gridView ? GRID_BACKGROUND : STAGE_BACKGROUND]}'));
+// The stage is the grey workbench (editor, preview, exports), dark or light
+// with the UI theme; grid view only trades the deck for the reference grid.
+expect("Canvas uses the grey workbench background", app.includes('args={[gridView ? GRID_BACKGROUND : stageBackground(uiTheme)]}'));
 expect("Character uses neutral grey clay", app.includes('const CLAY = "#bdbec3"'));
 expect("Room uses a grey deck a step above the sky", room.includes('const FLOOR = "#5b5d63"'));
 // The walls are gone on purpose: the set is an open deck, so a shot can stage a
@@ -45,8 +45,8 @@ expect(
 	// The key is user-movable now: the tuned rig survives as the keyLight
 	// DEFAULTS, so an untouched stage still renders the same high-key look.
 	// grid view may swap in the neutral studio rig; the clay values stay the default arm
-	room.includes('["#ffffff", "#5a5d64", 0.9]') &&
-		room.includes("neutral ? 0.34 : 0.18") &&
+	room.includes('["#ffffff", light ? "#d6d8de" : "#5a5d64", 0.9]') &&
+		room.includes("neutral ? 0.34 : light ? 0.32 : 0.18") &&
 		// the key colour is now the user's warmth dial, defaulting to the
 		// tuned warm value — the default keyLight shape carries it
 		room.includes("{ x: 6, y: 9, z: 4, intensity: 1.12, warmth: 0.5 }"),

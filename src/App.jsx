@@ -63,7 +63,8 @@ import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor } from "./auto-color.js";
 import { DualRender, fitAspect, GIZMO_LAYER } from "./dualview.jsx";
 import { GridFloor } from "./grid-floor.jsx";
-import { GRID_BACKGROUND, GRID_FOG, STAGE_BACKGROUND, readStoredGridView, writeStoredGridView } from "./grid-view.js";
+import { GRID_BACKGROUND, GRID_FOG, stageBackground, readStoredGridView, writeStoredGridView } from "./grid-view.js";
+import { useUiTheme } from "./theme.js";
 import {
 	CURVE_GRAB_RADIUS_PX,
 	DRAG_RADIUS_DEFAULT,
@@ -750,6 +751,8 @@ export default function App() {
 	// Blender-style grid viewport: dark void + reference grid instead of the
 	// clay deck. A viewer preference like the guides — never scene data.
 	const [gridView, setGridView] = useState(() => readStoredGridView(globalThis.localStorage));
+	// The stage follows the UI theme (grid-view.js stageBackground).
+	const uiTheme = useUiTheme();
 	useEffect(() => {
 		writeStoredGridView(globalThis.localStorage, gridView);
 	}, [gridView]);
@@ -902,6 +905,7 @@ export default function App() {
 		"--shell-left-width": workspaceLayout.shellLeftWidth && `${workspaceLayout.shellLeftWidth}px`,
 		"--shell-agent-height": workspaceLayout.shellAgentHeight && `${workspaceLayout.shellAgentHeight}px`,
 		"--shell-camera-width": workspaceLayout.shellCameraWidth && `${workspaceLayout.shellCameraWidth}px`,
+		"--shot-aspect": shotOutput.aspect,
 		"--hierarchy-width": `${workspaceLayout.hierarchyWidth}px`,
 		"--sidebar-width": `${workspaceLayout.sidebarWidth}px`,
 		"--timeline-height": `${workspaceLayout.timelineHeight}px`,
@@ -6740,12 +6744,13 @@ export default function App() {
 		exportStatus: exportStatus && { ...exportStatus, cancel: stopShotRecording, retry: retryExport },
 		subscribeToasts: (listener) => { toastSinkRef.current.add(listener); return () => toastSinkRef.current.delete(listener); },
 		enterShotLook,
+		lookThroughShot, exitShotLook: exitPreview,
 	};
 
 	return (
 		<AppContext.Provider value={appContext}>
 		<StudioShellContext.Provider value={shellContext}>
-		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined} data-plan-draw={railDraw || pathDraw || waypointMode ? 1 : undefined}
+		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined} data-shot-look={lookThroughShot && !embedMode ? 1 : undefined} data-plan-draw={railDraw || pathDraw || waypointMode ? 1 : undefined}
 			viewport={
 				<div className="viewport" data-drop={viewportDrop.over ? "over" : undefined} {...viewportDrop.handlers}
 					onWheel={(event) => {
@@ -6816,7 +6821,7 @@ export default function App() {
 								timelineHeight={workspaceLayout.timelineHeight}
 								planZoom={workspaceLayout.planZoom}
 							/>
-							<color attach="background" args={[gridView ? GRID_BACKGROUND : STAGE_BACKGROUND]} />
+							<color attach="background" args={[gridView ? GRID_BACKGROUND : stageBackground(uiTheme)]} />
 							{/* The open stage runs 500 m; without a falloff the whole deck
 							    reads at once and the horizon sits a kilometre away. Blender's
 							    viewport answer is a clip distance that lets the neutral void
@@ -6824,8 +6829,8 @@ export default function App() {
 							    same idea — it fades the floor INTO the background colour, so
 							    past ~120 m the deck simply ceases to exist with no horizon
 							    line, no clip edge and no tone break. */}
-							<fog attach="fog" args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [STAGE_BACKGROUND, 18, 54]} />
-							<StageLights keyLight={keyLight} neutral={gridView} />
+							<fog attach="fog" args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [stageBackground(uiTheme), 18, 54]} />
+							<StageLights keyLight={keyLight} neutral={gridView} light={uiTheme === "light"} />
 							<KeyLightPuck
 								keyLight={keyLight}
 								selected={keyLightSelected}
@@ -6838,7 +6843,7 @@ export default function App() {
 								onChange={(patch) => changeKeyLight("puck", patch)}
 								onDragEnd={endGestureUndo}
 							/>
-							{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room />}
+							{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room light={uiTheme === "light"} />}
 							<SetProps
 								objects={stageSceneObjects}
 								selectedId={selectedSceneObjectId}

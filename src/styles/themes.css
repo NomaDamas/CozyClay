@@ -114,13 +114,18 @@
 		--clip-prompt: #e9efea;
 		--clip-prompt-text: #3a5241;
 
+		/* The shell frame (shell.css, the gutters around the panels) sits a
+		   step under the panels, so their edges read against it. */
+		--shell-frame: #e8e9ed;
 		--glass-panel: rgba(250,250,252,.74);
 		--glass-text-panel: rgba(250,250,252,.82);
 		--glass-text-panel-flat: rgba(250,250,252,.82);
 		--glass-capsule: rgba(252,252,253,.38);
 		--glass-blur: blur(40px) saturate(1.6);
 		--capsule-blur: blur(14px) saturate(1.3);
-		--panel-shadow-outer: 0 0 0 .5px rgba(30,32,40,.1), 0 1px 1px rgba(30,32,40,.03), 0 20px 50px -14px rgba(30,32,40,.2);
+		/* A crisp hairline and a short shadow: on the near-white frame a wide,
+		   faint shadow left every panel edge a blur. */
+		--panel-shadow-outer: 0 0 0 1px rgba(30,32,40,.09), 0 1px 2px rgba(30,32,40,.06), 0 6px 18px -10px rgba(30,32,40,.18);
 		--panel-shadow-inset: inset 0 .5px 0 rgba(255,255,255,.95);
 		--panel-shadow: var(--panel-shadow-outer), var(--panel-shadow-inset);
 		--capsule-shadow: 0 0 0 .5px rgba(30,32,40,.08), inset 0 .5px 0 rgba(255,255,255,.55);
