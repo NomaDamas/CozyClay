@@ -37,6 +37,15 @@ function assertKoPairsHaveBothSides(path) {
 	}
 }
 
+function assertKoEnglishDefaults(path, text = source(path)) {
+	const calls = [...text.matchAll(/ko\(\s*(?:"((?:\\.|[^"\\])*)"|'((?:\\.|[^'\\])*)'|`((?:\\.|[^`\\])*)`)\s*,/g)];
+	assert.ok(calls.length > 0, `${path} has no literal ko() defaults to verify`);
+	for (const call of calls) {
+		const english = call[1] ?? call[2] ?? call[3];
+		assert.doesNotMatch(english, /[\uAC00-\uD7AF]/, `${path} has Korean text as the English ko() default: ${english}`);
+	}
+}
+
 // Korean may only appear inside ko(...) calls, isKo branches, or the
 // *_KO mapping tables — never as bare Korean in JSX or strings.
 function assertKoreanInsideLocaleConstructs(path) {
@@ -112,6 +121,23 @@ assert.equal(koLocale.LOCALE, "ko");
 assert.equal(koLocale.isKo, true);
 assert.equal(koLocale.ko("Frame", "프레임"), "프레임");
 assert.equal(koLocale.ko("Collapse timeline", "타임라인 접기"), "타임라인 접기");
+
+const falMotionDomain = source("src/domains/motion.js");
+const falMotionDomainStart = falMotionDomain.indexOf("function captureFalStill()");
+assert.notEqual(falMotionDomainStart, -1, "Fal motion capture domain is present");
+const falMotionDomainSource = falMotionDomain.slice(falMotionDomainStart);
+for (const [english, korean] of [
+	["Fal motion", "Fal 모션 생성"],
+	["Shaded", "음영"],
+	["The shot renderer is not ready.", "렌더러가 준비되지 않았어요."],
+]) {
+	assert.equal(enLocale.ko(english, korean), english, "Fal motion uses English labels in English locale");
+	assert.equal(koLocale.ko(english, korean), korean, "Fal motion uses Korean labels in Korean locale");
+}
+assertKoPairsHaveBothSides("src/fal-motion-studio.jsx");
+assertKoEnglishDefaults("src/fal-motion-studio.jsx");
+assertKoPairsHaveBothSides("src/domains/motion.js", falMotionDomainSource);
+assertKoEnglishDefaults("src/domains/motion.js", falMotionDomainSource);
 
 // Files converted to the English-default + Korean-option pattern.
 for (const path of ["src/result-modal.jsx", "src/hierarchy-panel.jsx", "src/object-catalog.jsx", "src/error-boundary.jsx"]) {
