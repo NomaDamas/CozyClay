@@ -407,6 +407,23 @@ export default function DetailsSlot() {
 				</div>
 			)}
 			</section>
+			{/* #570: the Agent always sits at the foot of the right column.
+			    Collapsed it is one 44px bar; Window › Agent, Cmd/Ctrl+B and
+			    the bar's own chevron fold it open and shut. */}
+			{!embedMode && !studioAgentMode && (
+				<button
+					type="button"
+					className="studio-agent-bar"
+					data-testid="studio-agent-bar"
+					aria-expanded="false"
+					title={ko("Open Agent (Cmd/Ctrl+B)", "에이전트 열기 (Cmd/Ctrl+B)")}
+					onClick={() => setStudioAgentMode(true)}
+				>
+					<span className="studio-agent-bar-title">{ko("Agent", "에이전트")}</span>
+					<span className="studio-agent-bar-hint">{ko("Ask the agent…", "에이전트에게 요청하기…")}</span>
+					<svg viewBox="0 0 10 10" aria-hidden="true"><path d="m2.5 6 2.5-2.5L7.5 6" /></svg>
+				</button>
+			)}
 			{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
 				<div
 					className="workspace-splitter shell-splitter shell-agent-splitter"
@@ -415,6 +432,16 @@ export default function DetailsSlot() {
 					aria-label={ko("Resize Details and Agent", "세부 정보와 에이전트 크기 조절")}
 					onPointerDown={(event) => beginWorkspaceResize("agent", event)}
 				/>
+				<button
+					type="button"
+					className="studio-agent-collapse"
+					aria-expanded="true"
+					aria-label={ko("Collapse Agent", "에이전트 접기")}
+					title={ko("Collapse Agent (Cmd/Ctrl+B)", "에이전트 접기 (Cmd/Ctrl+B)")}
+					onClick={() => setStudioAgentMode(false)}
+				>
+					<svg viewBox="0 0 10 10" aria-hidden="true"><path d="m2.5 4 2.5 2.5L7.5 4" /></svg>
+				</button>
 				<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
 					sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
 					buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}

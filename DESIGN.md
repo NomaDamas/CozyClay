@@ -190,9 +190,10 @@ Motion › ARDY Connection). UI copy contains no Kimodo, ProjFlow or 2D Root.
 
 ### G9 — Agent pane
 
-Window › Agent docks the Agent under Details in the right column (#570); it no
-longer replaces Details. A 12 px handle between them resizes the split
-(160 px minimum each side). Closing it gives Details the full column.
+The Agent always sits at the foot of the right column (#570), under Details;
+it no longer replaces Details. Collapsed it is a 44 px bar (the default);
+Window › Agent, Cmd/Ctrl+B, the bar and the chevron in its header fold it
+open and shut. Open, a 12 px handle above it resizes the split.
 
 ### G10 — adding things
 
@@ -256,6 +257,8 @@ panel with 12 px gutters and a 20 px radius:
   end (340 px). The dock's glass is masked where the preview card sits,
   because the shot camera is drawn into the stage canvas beneath it.
 - **Status strip:** 28 px, under the dock between the columns.
+- **Top-View:** hidden until something is drawn on it — a camera rail, an
+  object path or root waypoints — then it opens under the overlay row.
 
 Every panel boundary resizes from its gutter: left width (200–30 % of the
 window), right width (280–50 %), dock height, Outliner/Library split,
