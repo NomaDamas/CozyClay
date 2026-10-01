@@ -18,8 +18,14 @@ const HANDLE_GRAB = 0.5;
 const CAMERA_COLOR = "#007f9e";
 const SUBJECT_ONE_COLOR = "#2457d6";
 const SUBJECT_TWO_COLOR = "#d63b55";
-const OBJECT_COLOR = "#c14f2c";
+// Props are the plan's backdrop: a pale wash, a hairline edge and a muted
+// name, so the camera, the cast and the rail are what reads first.
+const OBJECT_COLOR = "#f3f0ea";
+const PROP_EDGE_COLOR = "#a19b91";
+const PROP_LABEL_COLOR = "#8a847b";
 const SELECTED_COLOR = "#b77900";
+const CAST_RING_INNER = 0.62;
+const CAST_RING_OUTER = 0.8;
 
 /** yaw that makes the character's local +Z face the given direction */
 const yawToward = (dx, dz) => Math.atan2(dx, dz);
@@ -149,19 +155,19 @@ function Puck({ color, dragging, turning, showBody = true, handleDist = HANDLE_D
  * Short by design: full names ran into each other the moment two actors stood
  * closer than the width of the word, which in a two-shot is always.
  */
-function PlanLabel({ text, color, offset = -0.72 }) {
+function PlanLabel({ text, color, offset = -0.72, muted = false }) {
 	return (
 		<Text
 			position={[0, 0.05, offset]}
 			rotation={[-Math.PI / 2, 0, 0]}
-			fontSize={0.32}
+			fontSize={muted ? 0.26 : 0.32}
 			color={color}
 			anchorX="center"
 			anchorY="middle"
-			outlineWidth={0.045}
+			outlineWidth={muted ? 0 : 0.045}
 			outlineColor="#0e0d10"
 			outlineOpacity={0.92}
-			renderOrder={12}
+			renderOrder={muted ? 8 : 12}
 			depthOffset={-1}
 		>
 			{text}
@@ -169,36 +175,58 @@ function PlanLabel({ text, color, offset = -0.72 }) {
 	);
 }
 
+/** A ring around a character's real mesh in its role colour: the cast reads
+ * first on a busy plan without the mesh itself being covered. */
+function CastRing({ color }) {
+	return (
+		<mesh position={[0, 0.05, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={11}>
+			<ringGeometry args={[CAST_RING_INNER, CAST_RING_OUTER, 40]} />
+			<meshBasicMaterial color={color} transparent opacity={0.9} depthWrite={false} depthTest={false} />
+		</mesh>
+	);
+}
+
 function SceneObjectFootprint({ object, selected, dragging, turning }) {
-	const { width, depth } = objectSize(object);
+	const { width, height, depth } = objectSize(object);
 	const objectLabel = displayObjectLabel(object.name).slice(0, 8);
 	const handleDist = depth / 2 + 0.65;
 	const rotation = (object.rot * Math.PI) / 180;
+	// An unselected prop is washed where it stands: a pale cap just above its
+	// top, depth-tested, so its own colours fade while a character beside or on
+	// it still shows through. Selection keeps the loud amber footprint.
+	const capY = (object.y ?? 0) + height + 0.02;
+	const edge = useMemo(() => {
+		const x = width / 2;
+		const z = depth / 2;
+		return [[-x, capY, -z], [x, capY, -z], [x, capY, z], [-x, capY, z], [-x, capY, -z]];
+	}, [width, depth, capY]);
 	return (
 		<group position={[object.x, 0, object.z]} rotation={[0, rotation, 0]}>
-			<mesh position={[0, 0.032, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={10}>
-				<planeGeometry args={[width, depth]} />
-				{/* Auto-color mode stamps `autoColor` on displayed objects; the board
-				    agrees with the viewport so "the teal box" means the same thing in
-				    both panes. Selection still wins. */}
-				<meshBasicMaterial
-					color={selected ? SELECTED_COLOR : object.autoColor ?? OBJECT_COLOR}
-					transparent
-					opacity={selected ? 0.58 : 0.34}
-					depthWrite={false}
-					depthTest={false}
-				/>
-			</mesh>
-			<mesh position={[0, 0.04, 0]} renderOrder={11}>
-				<boxGeometry args={[width, 0.02, depth]} />
-				<meshBasicMaterial color={selected ? SELECTED_COLOR : object.autoColor ?? OBJECT_COLOR} wireframe depthTest={false} />
-			</mesh>
+			{selected ? (
+				<>
+					<mesh position={[0, 0.032, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={10}>
+						<planeGeometry args={[width, depth]} />
+						<meshBasicMaterial color={SELECTED_COLOR} transparent opacity={0.58} depthWrite={false} depthTest={false} />
+					</mesh>
+					<mesh position={[0, 0.04, 0]} renderOrder={11}>
+						<boxGeometry args={[width, 0.02, depth]} />
+						<meshBasicMaterial color={SELECTED_COLOR} wireframe depthTest={false} />
+					</mesh>
+				</>
+			) : (
+				<>
+					{/* Auto-color mode stamps `autoColor` on displayed objects; the board
+					    agrees with the viewport so "the teal box" means the same thing in
+					    both panes. */}
+					<mesh position={[0, capY, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={6}>
+						<planeGeometry args={[width, depth]} />
+						<meshBasicMaterial color={object.autoColor ?? OBJECT_COLOR} transparent opacity={0.72} depthWrite={false} />
+					</mesh>
+					<Line points={edge} color={PROP_EDGE_COLOR} lineWidth={1} transparent opacity={0.7} depthWrite={false} renderOrder={7} />
+				</>
+			)}
 			<group position={[0, 0, depth / 2 + 0.45]} rotation={[0, -rotation, 0]}>
-				<PlanLabel
-					text={objectLabel}
-					color={selected ? SELECTED_COLOR : OBJECT_COLOR}
-					offset={0}
-				/>
+				<PlanLabel text={objectLabel} color={selected ? SELECTED_COLOR : PROP_LABEL_COLOR} offset={0} muted={!selected} />
 			</group>
 			{selected && <Puck color={SELECTED_COLOR} showBody={false} handleDist={handleDist} dragging={dragging} turning={turning} />}
 		</group>
@@ -874,7 +902,8 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 				const color = listIndex === 0 ? SUBJECT_ONE_COLOR : SUBJECT_TWO_COLOR;
 				return (
 					<group key={entry.id} position={[entry.x, 0, entry.z]}>
-						<PlanLabel text={ko(`S${listIndex + 1}`, `인물 ${listIndex + 1}`)} color={color} />
+						<PlanLabel text={ko(`S${listIndex + 1}`, `인물 ${listIndex + 1}`)} color={color} offset={-(CAST_RING_OUTER + 0.3)} />
+						<CastRing color={color} />
 						<group rotation={[0, (entry.rot * Math.PI) / 180, 0]}>
 							{/* The real character mesh already renders in Top-View. Keep only
 							    its facing stem/handle instead of covering it with a hex puck. */}
