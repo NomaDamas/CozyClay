@@ -676,7 +676,7 @@ if (runs("failed-action-and-reconnect")) {
 	});
 
 	await group("the composer states what the button will do (#379)", () => {
-		expect("Send is the idle label", /className="agent-send" disabled=\{composerDisabled \|\| !draft\.trim\(\)\}[\s\S]{0,80}>Send</.test(panelSource));
+		expect("Send is the idle label", /className="agent-send" aria-label="Send"[^>]*disabled=\{composerDisabled \|\| !draft\.trim\(\)\}/.test(panelSource));
 		expect("a running turn keeps Stop and adds Steer where steering is supported", /\{streaming[\s\S]{0,200}agent-send stop agent-stop"[\s\S]{0,40}>Stop<[\s\S]{0,120}presentation\.steer && <button[\s\S]{0,160}agent-steer"[\s\S]{0,80}>Steer</.test(panelSource));
 		expect("Steer is disabled without something to say", /agent-steer" disabled=\{!draft\.trim\(\)\}/.test(panelSource));
 		expect("the refusal is shown to the author, not swallowed", panelSource.includes("setSteerNotice(result.message") && panelSource.includes('className="agent-toast alert agent-steer-notice"'));
