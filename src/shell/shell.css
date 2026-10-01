@@ -10,10 +10,10 @@
 		--shell-dock-default: clamp(220px, 30vh, 300px);
 		--shell-camera: var(--shell-camera-width, 340px);
 		--shell-status-h: 28px;
-		--shell-dock-bottom: calc(var(--shell-gap) + var(--shell-status-h) + 6px);
+		--shell-dock-bottom: var(--shell-gap);
 		--shell-center-left: calc(var(--shell-left) + var(--shell-gap) * 2);
 		--shell-center-right: calc(var(--shell-right) + var(--shell-gap) * 2);
-		--shell-center-bottom: calc(var(--shell-dock) + var(--shell-dock-bottom) + var(--shell-gap));
+		--shell-center-bottom: calc(var(--shell-dock) + var(--shell-status-h) + var(--shell-dock-bottom) + var(--shell-gap));
 		position: relative;
 		display: block;
 		height: 100vh;
@@ -123,12 +123,13 @@
 		left: var(--shell-center-left);
 		right: var(--shell-center-right);
 		bottom: var(--shell-dock-bottom);
-		height: var(--shell-dock);
+		height: calc(var(--shell-dock) + var(--shell-status-h));
 		min-width: 0;
 		min-height: 0;
 	}
+	/* The status line is the dock's own last row (see .brandbar below). */
 	.app:not([data-embed-mode]) .bottom-window {
-		height: 100%;
+		height: calc(100% - var(--shell-status-h));
 		border: 0;
 	}
 	.app:not([data-embed-mode]) .bottom-timeline {
@@ -142,13 +143,13 @@
 		max-height: none;
 	}
 
-	/* The status strip runs under the dock, between the two columns. */
+	/* The status line sits inside the dock's panel as its bottom row. */
 	.app:not([data-embed-mode]) .brandbar {
 		position: absolute;
 		z-index: 13;
 		left: var(--shell-center-left);
 		right: var(--shell-center-right);
-		bottom: var(--shell-gap);
+		bottom: var(--shell-dock-bottom);
 		height: var(--shell-status-h);
 		border: 0;
 	}

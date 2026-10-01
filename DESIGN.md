@@ -256,7 +256,8 @@ panel with 12 px gutters and a 20 px radius:
 - **Bottom dock:** the Sequencer, with the shot preview docked into its right
   end (340 px). The dock's glass is masked where the preview card sits,
   because the shot camera is drawn into the stage canvas beneath it.
-- **Status strip:** 28 px, under the dock between the columns.
+- **Status line:** the dock's own 28 px bottom row (status, fps, save state,
+  source link), separated by a hairline rather than floating on its own.
 - **Top-View:** hidden until something is drawn on it — a camera rail, an
   object path or root waypoints — then it opens under the overlay row.
 

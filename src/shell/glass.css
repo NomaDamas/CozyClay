@@ -44,12 +44,12 @@
 		box-shadow: var(--panel-shadow-inset);
 		-webkit-mask: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
 		-webkit-mask-size: 100% 100%, var(--shot-card-w) var(--shot-card-h);
-		-webkit-mask-position: 0 0, right 14px bottom 12px;
+		-webkit-mask-position: 0 0, right 14px bottom calc(var(--shell-status-h) + 12px);
 		-webkit-mask-repeat: no-repeat;
 		-webkit-mask-composite: xor;
 		mask: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
 		mask-size: 100% 100%, var(--shot-card-w) var(--shot-card-h);
-		mask-position: 0 0, right 14px bottom 12px;
+		mask-position: 0 0, right 14px bottom calc(var(--shell-status-h) + 12px);
 		mask-repeat: no-repeat;
 		mask-composite: exclude;
 	}
@@ -63,6 +63,7 @@
 	   right end (positioned below), so the lanes stop short of it. */
 	.app[data-shell="glass"]:not([data-embed-mode]) .bottom-window.v2-dock {
 		grid-template-columns: minmax(0, 1fr);
+		height: calc(100% - var(--shell-status-h));
 		background: none;
 	}
 	.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock > .bottom-timeline {
@@ -241,7 +242,7 @@
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-shot-preview {
 		z-index: 15;
 		right: calc(var(--shell-center-right) + 14px);
-		bottom: calc(var(--shell-dock-bottom) + 12px);
+		bottom: calc(var(--shell-dock-bottom) + var(--shell-status-h) + 12px);
 		width: calc(var(--shell-camera) - 28px);
 		height: min(calc(var(--shot-preview-header) + (var(--shell-camera) - 28px) * 9 / 16), calc(var(--shell-dock) - 24px));
 		border-radius: 12px;
@@ -303,14 +304,13 @@
 	}
 
 	/* ------------------------------------------------------ status bar */
+	/* The dock's last row: no surface of its own, a hairline above it. */
 	.app[data-shell="glass"]:not([data-embed-mode]) .v2-statusbar {
 		box-sizing: border-box;
-		padding: 0 12px;
-		border-radius: 14px;
-		background: var(--glass-capsule);
-		-webkit-backdrop-filter: var(--capsule-blur);
-		backdrop-filter: var(--capsule-blur);
-		box-shadow: var(--capsule-shadow);
+		padding: 0 16px;
+		border-radius: 0 0 var(--float-radius, 20px) var(--float-radius, 20px);
+		background: none;
+		box-shadow: inset 0 1px 0 var(--row-divider);
 		overflow: hidden;
 	}
 }
