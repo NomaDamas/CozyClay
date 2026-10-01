@@ -37,7 +37,7 @@ expect("inset view collapses to its tag pill", app.includes("insetCollapsed") &&
 expect("collapse toggle lives inside the tag strip", !app.includes("vp-inset-collapse\"") && css.includes(".vp-inset-caret"));
 expect("the tag drags the inset in both states", app.includes("onPointerDown={beginInsetDrag}"));
 expect("inset collapse state persists with the workspace layout", app.includes("insetCollapsed: false") && app.includes("WORKSPACE_LAYOUT_KEY"));
-expect("collapsed inset skips its render pass", dualview.includes("insetCollapsed = false") && dualview.includes("if (!insetCollapsed) draw("));
+expect("collapsed inset skips its render pass", dualview.includes("insetCollapsed = false") && dualview.includes("const insetOff = insetCollapsed ||") && dualview.includes("if (!insetOff) draw("));
 expect("resize handle hides while collapsed", app.includes("{!workspaceLayout.insetCollapsed && ("));
 expect("resize grip is visible on the clay viewport", css.includes(".vp-inset-resize:before,") && css.includes("rgba(255, 252, 247, .85)"));
 expect("Top-View plan zooms with the wheel over the inset", app.includes('pane.addEventListener("wheel", onWheel, { passive: false })') && app.includes("current.planZoom * Math.pow"));
@@ -91,7 +91,9 @@ expect(
 expect(
 	"letterbox bars are painted in the editor's tone, not the sky",
 	dualview.includes('export const LETTERBOX = new THREE.Color("#1e1e1e");') &&
-	dualview.includes("gl.setClearColor(LETTERBOX, 1);") &&
+	dualview.includes('export const LETTERBOX_LIGHT = new THREE.Color("#dcdde1");') &&
+	dualview.includes('uiTheme === "light" ? LETTERBOX_LIGHT : LETTERBOX') &&
+	dualview.includes("gl.setClearColor(letterbox, 1);") &&
 	// v2 tokens: the editor background is --bg (mapped to --surface-0); the
 	// letterbox keeps the viewport tone the renderer clears with.
 	css.includes("--bg: var(--surface-0)"),

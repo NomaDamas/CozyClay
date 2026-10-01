@@ -7244,6 +7244,9 @@ export default function App() {
 								planCamRef={planCamRef}
 								poserCamRef={poserCamRef}
 								editorCamRef={editorCamRef}
+								// The studio hides the facing marks on screen; embeds show the
+								// scene as exported.
+								editorLook={!embedMode && !playgroundMode}
 								ikMode={ikMode}
 								planIsMain={planIsMain}
 								// Preview IS PlayView's render path: DualRender tests this branch
