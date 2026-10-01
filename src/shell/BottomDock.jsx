@@ -4,7 +4,7 @@ import { logStore } from "./log-store.js";
 import "./dock.css";
 import { ko } from "../locale.js";
 import Timeline from "../ardy/timeline.jsx";
-import { DEFAULT_PLAYBACK_SPEED, sceneObjectNameDisplayKo } from "../app-stage.jsx";
+import { DEFAULT_PLAYBACK_SPEED, SHOT_ASPECT_PRESETS, sceneObjectNameDisplayKo } from "../app-stage.jsx";
 import { motionEditLayout, createMotionEdit } from "../ardy/motion-edit.js";
 import { trackFeature } from "../analytics.js";
 import { defaultRailRange } from "../camera-rail-schedule.js";
@@ -345,6 +345,62 @@ export default function BottomDock() {
 			onClearMotion={motion ? clearMotion : null}
 		/>
 			</div>
+			<ShotCard />
 		</div>
+	);
+}
+
+// #570: the ratios offered on the card; the rest stay in Camera mode's menu.
+const CARD_RATIOS = [
+	{ key: "16:9", label: "16:9" },
+	{ key: "2.39:1", label: "2.39" },
+	{ key: "4:3", label: "4:3" },
+	{ key: "1:1", label: "1:1" },
+	{ key: "9:16", label: "9:16" },
+];
+
+/** The shot camera's card at the dock's right end. The camera itself is drawn
+ * into the stage canvas under `.vp-shot-preview`, which sits over the card's
+ * frame slot (see glass.css); the card holds its title, ratio and look-through. */
+function ShotCard() {
+	const { activeShot, shot, shotAspectKey, runStudioAction, enterShotLook, tlFps, embedMode } = useStudioShell();
+	if (embedMode) return null;
+	const ratio = SHOT_ASPECT_PRESETS[shotAspectKey]?.label?.replace(/:1$/, "") ?? shotAspectKey;
+	const frames = activeShot && Number.isFinite(activeShot.startFrame) && Number.isFinite(activeShot.endFrame)
+		? `${activeShot.startFrame}–${activeShot.endFrame} · ${((activeShot.endFrame - activeShot.startFrame + 1) / (tlFps || 24)).toFixed(1)}s`
+		: null;
+	return (
+		<section className="dock-shot-card" aria-label={ko("Shot Camera", "샷 카메라")}>
+			<header className="dock-shot-head">
+				<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5.75A1.5 1.5 0 0 1 3.5 4.25h6A1.5 1.5 0 0 1 11 5.75v4.5a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 2 10.25z M11 7l3-1.5v5L11 9" /></svg>
+				<span className="dock-shot-title">{ko("Shot Camera", "샷 카메라")}</span>
+				<span className="dock-shot-meta">{shot.focalMm} mm · {ratio}</span>
+			</header>
+			<div className="dock-shot-frame" aria-hidden="true" />
+			<div className="dock-shot-ratios" role="radiogroup" aria-label={ko("Shot aspect ratio", "샷 화면 비율")}>
+				{CARD_RATIOS.map((entry) => (
+					<button
+						type="button"
+						role="radio"
+						key={entry.key}
+						data-aspect={entry.key}
+						aria-checked={shotAspectKey === entry.key}
+						onClick={() => runStudioAction("stage.setFilmback", { shotAspect: entry.key })}
+					>
+						{entry.label}
+					</button>
+				))}
+			</div>
+			<footer className="dock-shot-foot">
+				<span className="dock-shot-name">
+					{activeShot?.name ?? ko("No shot yet", "샷 없음")}
+					{frames && <span className="dock-shot-range"> · {frames}</span>}
+				</span>
+				<button type="button" className="dock-shot-look" onClick={enterShotLook} title={ko("Look through the shot camera (Esc returns)", "샷 카메라 시점으로 보기 (Esc로 복귀)")}>
+					<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z M8 6.25a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 1 1 0-3.5z" /></svg>
+					{ko("Look through", "샷 시점")}
+				</button>
+			</footer>
+		</section>
 	);
 }

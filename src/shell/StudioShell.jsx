@@ -1,6 +1,6 @@
 import { ko } from "../locale.js";
 import { useStudioShell } from "./studio-shell-context.js";
-import TopBar from "./TopBar.jsx";
+import TopBar, { ProjectHead } from "./TopBar.jsx";
 import OutlinerSlot from "./OutlinerSlot.jsx";
 import LibrarySlot from "./LibrarySlot.jsx";
 import DetailsSlot from "./DetailsSlot.jsx";
@@ -9,6 +9,7 @@ import StatusBar from "./StatusBar.jsx";
 import PreferencesSlot from "./PreferencesSlot.jsx";
 import "./shell.css";
 import "./glass.css";
+import "./glass-regions.css";
 
 // #570 floating-glass shell: the viewport fills the window and every region
 // floats over it. Left: Outliner over Library. Right: Details over Agent.
@@ -22,6 +23,7 @@ export default function StudioShell({ viewport, children, ...props }) {
 				<div className="workspace">
 					{viewport}
 					<div className="studio-left-column">
+						<ProjectHead />
 						<OutlinerSlot />
 						<div
 							className="workspace-splitter shell-splitter shell-outliner-splitter"

@@ -121,8 +121,14 @@ export default function DetailsSlot() {
 			    the right column, and Window › Agent folds it away again. */}
 			<section className="inspector-pane">
 			<div className="inspector-heading details-panel-head">
-				<strong className="details-panel-title">{ko("Details", "세부 정보")}</strong>
-				<button type="button" className="inspector-agent-switch" aria-pressed={studioAgentMode} onClick={() => setStudioAgentMode(true)}>{ko("Agent", "에이전트")}</button>
+				{/* #570: the selection is the panel's title; "Details" only
+				    names an empty panel. */}
+				{selection ? (
+					<div className="details-selection" data-testid="details-selection">
+						<span className="details-selection-name inspector-heading-selection">{selection.name}</span>
+						{selection.type && <span className="details-selection-type">{selection.type}</span>}
+					</div>
+				) : <strong className="details-panel-title">{ko("Details", "세부 정보")}</strong>}
 				{selectedSceneObject && (
 					<div className="inspector-actions-wrap">
 						<button
@@ -147,12 +153,6 @@ export default function DetailsSlot() {
 					</div>
 				)}
 			</div>
-			{selection && (
-				<div className="details-selection" data-testid="details-selection">
-					<span className="details-selection-name inspector-heading-selection">{selection.name}</span>
-					{selection.type && <span className="details-selection-type">{selection.type}</span>}
-				</div>
-			)}
 			<div className="inspector-scroll">
 		{/* Nothing is selected that owns settings — say so rather than
 		    showing an empty column the user has to interpret. */}
@@ -419,6 +419,7 @@ export default function DetailsSlot() {
 					title={ko("Open Agent (Cmd/Ctrl+B)", "에이전트 열기 (Cmd/Ctrl+B)")}
 					onClick={() => setStudioAgentMode(true)}
 				>
+					<svg className="studio-agent-spark" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 2.25c.4 2.9 1.85 4.35 4.75 4.75-2.9.4-4.35 1.85-4.75 4.75-.4-2.9-1.85-4.35-4.75-4.75 2.9-.4 4.35-1.85 4.75-4.75z M12.75 11.5v2.5 M11.5 12.75H14" /></svg>
 					<span className="studio-agent-bar-title">{ko("Agent", "에이전트")}</span>
 					<span className="studio-agent-bar-hint">{ko("Ask the agent…", "에이전트에게 요청하기…")}</span>
 					<svg viewBox="0 0 10 10" aria-hidden="true"><path d="m2.5 6 2.5-2.5L7.5 6" /></svg>

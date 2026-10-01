@@ -185,7 +185,7 @@
 	}
 	.app:not([data-embed-mode]) .shell-agent-splitter {
 		position: absolute;
-		top: -6px;
+		top: calc(var(--shell-gap) * -1);
 		left: 0;
 		right: 0;
 		height: 12px;

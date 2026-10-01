@@ -247,17 +247,29 @@ snapping and a read-only hotkeys list.
 The viewport fills the window. Every other region floats over it as a glass
 panel with 12 px gutters and a 20 px radius:
 
-- **Left column (260 px):** Outliner over the object Library (Content | Log).
-  The Library is a 3-column grid with its folders as a row of pills.
-- **Right column (300 px):** Details over the Agent (G9).
-- **Top row:** project, menus, MCP and Generate Motion as 40 px capsules
-  between the two columns. The viewport overlay row (Add, view pills, mode and
-  tool toolbar, fly speed) sits 12 px under it as 36 px capsules.
-- **Bottom dock:** the Sequencer, with the shot preview docked into its right
-  end (340 px). The dock's glass is masked where the preview card sits,
-  because the shot camera is drawn into the stage canvas beneath it.
-- **Status line:** the dock's own 28 px bottom row (status, fps, save state,
-  source link), separated by a hairline rather than floating on its own.
+- **Left column (260 px):** the project name with its save state as the
+  panel's title, then the Outliner, then the object Library (Content | Log).
+  Outliner rows are 30 px with a 16 px line icon per type; the selected row is
+  a filled accent row. The Library picks its folder from a dropdown and draws
+  objects as line glyphs in a 3-column grid of 12 px-radius tiles.
+- **Right column (300 px):** Details and the Agent as two separate cards with
+  a 12 px gap (G9). Details is titled by the selection (name, then kind); each
+  section is an 11 px label over a rounded card.
+- **Top row:** menus left, the mode switch (Stage, Pose, Camera, Motion, each
+  with its icon) centred, then one capsule with the MCP state and Generate
+  Motion. All 40 px capsules between the two columns.
+- **Viewport rails:** a 44 px vertical rail on the left (Add, the mode's tools,
+  its value such as snap) and one on the right (view, shading, Show, fly
+  speed). Rail controls are 36 px round buttons with 16 px line icons; their
+  menus open beside the rail.
+- **Bottom dock:** the Sequencer (48 px head: transport capsule, frame count,
+  actions; 26 px rows, 170 px track column, no lane grid) and the Shot Camera
+  card at its right end (340 px): title and lens, the frame, a ratio switch
+  (16:9, 2.39, 4:3, 1:1, 9:16) and Look through. The dock's glass is masked
+  over the frame, because the shot camera is drawn into the stage canvas
+  beneath it.
+- **Status line:** the dock's own 28 px bottom row (status, fps, source link),
+  separated by a hairline rather than floating on its own.
 - **Top-View:** hidden until something is drawn on it — a camera rail, an
   object path or root waypoints — then it opens under the overlay row.
 
@@ -278,6 +290,10 @@ and the legacy `:root` aliases):
 - **Light:** a `#eaeaed` window, translucent white glass (74 %, Details and
   Agent 82 % for reading), system blue accent (`--select #0a6ee0`, tint
   `rgba(0,122,255,.14)`), text `#1d1d1f / #6e6e73 / #86868b`.
+
+Panel interiors are styled in `src/shell/glass-regions.css`, unlayered like
+the Outliner, Sequencer and Details sheets it restyles and loaded after them.
+Numbers use the UI font with tabular figures; the shell sets no monospace.
 
 Both themes use the system UI font first (`-apple-system`, SF Pro), with IBM
 Plex Sans and the Korean families as fallbacks. Hard-coded legacy colours in

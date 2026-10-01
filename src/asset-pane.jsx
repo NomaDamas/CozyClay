@@ -29,71 +29,29 @@ function CharacterPreview({ model }) {
 	);
 }
 
-function ObjectPreview({ kind, color }) {
-	const fill = color || "#b8bec3";
-	const common = { fill, stroke: "#d7dde0", strokeWidth: 1.2, strokeLinejoin: "round" };
-	let shape;
-	switch (kind) {
-		case "cube":
-			shape = <>
-				<path {...common} d="m9 16 15-8 15 8-15 8Z" />
-				<path {...common} d="m9 16 15 8v16L9 31Z" opacity=".82" />
-				<path {...common} d="m39 16-15 8v16l15-9Z" opacity=".62" />
-			</>;
-			break;
-		case "sphere":
-			shape = <>
-				<circle {...common} cx="24" cy="24" r="16" />
-				<path className="preview-detail" d="M11 24h26M24 8c8 8 8 24 0 32M24 8c-8 8-8 24 0 32" />
-			</>;
-			break;
-		case "capsule":
-			shape = <>
-				<rect {...common} x="14" y="5" width="20" height="38" rx="10" />
-				<path className="preview-detail" d="M15 17h18M15 31h18" />
-			</>;
-			break;
-		case "cylinder":
-			shape = <>
-				<path {...common} d="M11 14c0-4 26-4 26 0v20c0 5-26 5-26 0Z" />
-				<ellipse cx="24" cy="14" rx="13" ry="5" fill={fill} stroke="#d7dde0" strokeWidth="1.2" />
-				<path className="preview-detail" d="M11 34c0 5 26 5 26 0" />
-			</>;
-			break;
-		case "cone":
-			shape = <>
-				<path {...common} d="m24 6 14 31H10Z" />
-				<ellipse cx="24" cy="37" rx="14" ry="4" fill={fill} stroke="#d7dde0" strokeWidth="1.2" />
-			</>;
-			break;
-		case "plane":
-			shape = <>
-				<path {...common} d="M7 28 29 14l12 7-22 14Z" />
-				<path className="preview-detail" d="m7 28 12 7 22-14" />
-			</>;
-			break;
-		case "chair":
-			shape = <>
-				<path {...common} d="M13 8h18v17H13Z" />
-				<path {...common} d="M12 25h24v8H12Z" />
-				<path className="preview-limb" d="M15 33v10m18-10v10M13 25V8" />
-			</>;
-			break;
-		case "car":
-			shape = <>
-				<path {...common} d="M7 27h5l5-9h15l7 9h3v9H7Z" />
-				<path className="preview-detail" d="M17 18h15l4 9H13Z" />
-				<circle cx="15" cy="36" r="4" fill="#181a1c" stroke="#d7dde0" />
-				<circle cx="35" cy="36" r="4" fill="#181a1c" stroke="#d7dde0" />
-			</>;
-			break;
-		case "small-plane":
-			shape = <path {...common} d="M22 5h4l3 15 13 8v4l-13-3-2 12 5 3v2l-8-2-8 2v-2l5-3-2-12-13 3v-4l13-8Z" />;
-			break;
-		default:
-			shape = <rect {...common} x="10" y="10" width="28" height="28" rx="4" />;
-	}
-	return <svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true">{shape}</svg>;
+// #570: catalogue objects are drawn as line glyphs on a 24 grid, the same
+// stroke family as the shell's icons; the tile tints them on selection.
+const OBJECT_GLYPHS = {
+	cube: "M12 3.5 19.5 7.75v8.5L12 20.5l-7.5-4.25v-8.5z M4.5 7.75 12 12l7.5-4.25 M12 12v8.5",
+	sphere: "M12 4a8 8 0 1 1 0 16 8 8 0 1 1 0-16z M4 12c0 1.66 3.58 3 8 3s8-1.34 8-3",
+	capsule: "M8 8a4 4 0 0 1 8 0v8a4 4 0 0 1-8 0z M8 9.5c0 1 1.8 1.6 4 1.6s4-.6 4-1.6",
+	cylinder: "M5 7c0-1.38 3.13-2.5 7-2.5s7 1.12 7 2.5-3.13 2.5-7 2.5S5 8.38 5 7z M5 7v10c0 1.38 3.13 2.5 7 2.5s7-1.12 7-2.5V7",
+	cone: "M12 3.5 5 17 M12 3.5 19 17 M5 17c0 1.38 3.13 2.5 7 2.5s7-1.12 7-2.5",
+	plane: "M12 7.5 21 12l-9 4.5L3 12z",
+	chair: "M7 3.5h10v8.5H7z M5.5 12h13v3h-13z M7 15v5.5 M17 15v5.5",
+	car: "M3 15.5v-3l2.5-.5 2.5-4h8l3 4 2 .5v3z M6 15.5a1.75 1.75 0 1 0 3.5 0 M14.5 15.5a1.75 1.75 0 1 0 3.5 0 M8 12h10",
+	"small-plane": "M12 3v18 M3 11.5l9-2 9 2v2l-9-1-9 1z M8.5 19.5 12 18.5l3.5 1",
+};
+
+const STORAGE_FOLDER = "__storage";
+
+function ObjectPreview({ kind }) {
+	const d = OBJECT_GLYPHS[kind] ?? "M5 5h14v14H5z";
+	return (
+		<svg className="asset-card-preview content-object-glyph" viewBox="0 0 24 24" aria-hidden="true">
+			<path d={d} />
+		</svg>
+	);
 }
 
 /** Generic isometric cube: a GLB has no cheap thumbnail, and inventing one
@@ -639,6 +597,23 @@ export default function AssetPane({
 					<button type="button" role="tab" data-testid="content-tab-content" aria-selected={tab === "content"} onClick={() => { setTab("content"); if (collapsed) onCollapsedChange(false); }}>{ko("Content", "콘텐츠")}</button>
 					<button type="button" role="tab" data-testid="content-tab-log" aria-selected={tab === "log"} onClick={() => { setTab("log"); if (collapsed) onCollapsedChange(false); }}>{ko("Log", "로그")}</button>
 				</div>
+				{tab === "content" && !collapsed && (
+					<label className="content-folder-picker" title={ko("Folder", "폴더")}>
+						<select
+							data-testid="content-folder-picker"
+							aria-label={ko("Folder", "폴더")}
+							value={manageStorage ? STORAGE_FOLDER : folder}
+							onChange={(event) => {
+								if (event.target.value === STORAGE_FOLDER) { if (!manageStorage) onManageStorageToggle(); }
+								else openFolder(event.target.value);
+							}}
+						>
+							{FOLDERS.map((entry) => <option key={entry.id} value={entry.id}>{entry.label()}</option>)}
+							<option value={STORAGE_FOLDER}>{ko("Manage storage", "저장 공간 관리")}</option>
+						</select>
+						<svg viewBox="0 0 10 10" aria-hidden="true"><path d="m2.5 4 2.5 2.5L7.5 4" /></svg>
+					</label>
+				)}
 				<nav className="content-breadcrumb" aria-label={ko("Location", "위치")}>
 					{tab === "content" ? <>
 						<span>{ko("Content", "콘텐츠")}</span><span aria-hidden="true">/</span><span className="is-leaf">{folderLabel}</span>
@@ -651,7 +626,7 @@ export default function AssetPane({
 					className="content-search"
 					data-testid="content-search"
 					value={search}
-					placeholder={ko("Search", "검색")}
+					placeholder={tab === "content" ? ko("Search objects", "오브젝트 검색") : ko("Search", "검색")}
 					aria-label={tab === "content" ? ko(`Search ${folderLabel}`, `${folderLabel} 검색`) : ko("Search the log", "로그 검색")}
 					onChange={(event) => setSearch(event.target.value)}
 				/>
@@ -700,6 +675,7 @@ export default function AssetPane({
 							/>
 						)}
 					</div>
+					{!manageStorage && <p className="content-hint">{ko("Drag into the scene to place", "장면으로 끌어 놓으세요")}</p>}
 				</div>
 			)}
 		</section>

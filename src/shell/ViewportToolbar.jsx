@@ -21,6 +21,37 @@ const MODES = [
 	{ id: "motion", key: "4", label: ko("Motion", "모션") },
 ];
 
+// #570 line icons (16px, 1.3 stroke) for the floating rails.
+const ICON = {
+	scene: "M8 2 13.25 5v6L8 14 2.75 11V5z M2.75 5 8 8l5.25-3 M8 8v6",
+	pose: "M8 2.25a1.5 1.5 0 1 1 0 3 1.5 1.5 0 1 1 0-3z M5 7.25h6 M8 7.25v3.5 M6.25 13.75 8 10.75l1.75 3",
+	camera: "M2 5.75A1.5 1.5 0 0 1 3.5 4.25h6A1.5 1.5 0 0 1 11 5.75v4.5a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 2 10.25z M11 7l3-1.5v5L11 9",
+	motion: "M1.75 9.5c1.5 0 2-4 3.25-4s1.75 5 3 5 1.75-5 3-5 1.75 4 3.25 4",
+	move: "M8 2v12 M2 8h12 M6.25 3.75 8 2l1.75 1.75 M6.25 12.25 8 14l1.75-1.75 M3.75 6.25 2 8l1.75 1.75 M12.25 6.25 14 8l-1.75 1.75",
+	rotate: "M13.25 8A5.25 5.25 0 1 1 11.7 4.3 M13.25 2.5v2.75H10.5",
+	scale: "M2.5 8.5v4a1 1 0 0 0 1 1h4 M8.5 2.5h5v5 M13.5 2.5 7.5 8.5",
+	ik: "M2.5 13.5 6.5 9l3 2.2 4-7.7 M6.5 9h.01 M9.5 11.2h.01",
+	trail: "M2 12.5c3 0 3-9 6-9s3 9 6 9",
+	pin: "M8 14.5v-4 M5 2h6 M6.2 2v3.6L4.5 10.5h7L9.8 5.6V2",
+	blocks: "M2 3.5h7.5v3.5H2z M6.5 9h7.5v3.5H6.5z",
+	refine: "M10.5 2.5l3 3L6 13H3v-3z",
+	plus: "M8 3.25v9.5 M3.25 8h9.5",
+	grid: "M2.5 5.75h11 M2.5 10.25h11 M5.75 2.5v11 M10.25 2.5v11",
+	angle: "M2.5 13.5h11 M2.5 13.5 11 5 M7 13.5a4.5 4.5 0 0 0-1.3-3.2",
+	view: "M2.75 5 8 2.5 13.25 5v6L8 13.5 2.75 11z M8 8v5.5 M2.75 5 8 8l5.25-3",
+	shading: "M8 2.5a5.5 5.5 0 1 1 0 11 5.5 5.5 0 1 1 0-11z M4.5 5.5a4 4 0 0 1 3-1.5",
+	show: "M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z M8 6.25a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 1 1 0-3.5z",
+	speed: "M2.5 11a5.5 5.5 0 1 1 11 0 M8 11l2.5-3",
+};
+
+function RailIcon({ name, size = 16 }) {
+	return (
+		<svg className="vp-icon" width={size} height={size} viewBox="0 0 16 16" aria-hidden="true">
+			<path d={ICON[name]} />
+		</svg>
+	);
+}
+
 // The gizmo's snap increments (TRANSLATE_SNAP / ROTATE_SNAP in
 // src/scene-objects.js). They are fixed, so the value group names them.
 const SNAP_MOVE = "5cm";
@@ -168,8 +199,8 @@ export default function ViewportToolbar() {
 			)}
 			onClick={() => setSnapEnabled((value) => !value)}
 		>
-			<span>{SNAP_MOVE}</span>
-			<span>{SNAP_TURN}</span>
+			<span className="vp-value-part"><RailIcon name="grid" size={14} />{SNAP_MOVE}</span>
+			<span className="vp-value-part"><RailIcon name="angle" size={14} />{SNAP_TURN}</span>
 		</button>
 	) : workflowMode === "pose" ? (
 		<div className="vp-menu-wrap" data-vp-menu="influence">
@@ -285,8 +316,8 @@ export default function ViewportToolbar() {
 						title={ko("Add an object, a character or a camera", "오브젝트, 캐릭터, 카메라 추가")}
 						onClick={() => menu.toggle("add")}
 					>
-						<span className="vp-add-plus" aria-hidden="true">+</span>
-						{ko("Add", "추가")}
+						<span className="vp-add-plus" aria-hidden="true"><RailIcon name="plus" /></span>
+						<span className="vp-label">{ko("Add", "추가")}</span>
 					</button>
 					{menu.open === "add" && (
 						<div className="vp-menu add-object-menu" role="menu" aria-label={ko("Add", "추가")}>
@@ -318,6 +349,63 @@ export default function ViewportToolbar() {
 					)}
 				</div>
 
+				{tools.length > 0 && <span className="vp-toolbar-divider" aria-hidden="true" />}
+				<div className="vp-tool-keys" role="group" aria-label={ko("Tools", "도구")} data-transform-controls>
+					{tools.map((tool) => (
+						<button
+							type="button"
+							key={tool.key}
+							data-tool-key={tool.key}
+							data-tool={tool.id}
+							className={"vp-tool-key" + (tool.active ? " active" : "")}
+							aria-pressed={tool.active}
+							aria-disabled={tool.refused ? true : undefined}
+							aria-label={tool.name}
+							title={tool.refused || `${tool.name} (${tool.key})`}
+							onClick={() => { if (!tool.refused) tool.pick(); }}
+						>
+							<RailIcon name={tool.id} />
+							<span className="vp-tool-letter">{tool.key}</span>
+						</button>
+					))}
+				</div>
+				{valueGroup && (
+					<>
+						<span className="vp-toolbar-divider" aria-hidden="true" />
+						<div className="vp-values">{valueGroup}</div>
+					</>
+				)}
+			</div>
+
+			<div className="vp-mode-toolbar" role="toolbar" data-testid="mode-toolbar" aria-label={ko("Mode and tools", "모드와 도구")}>
+				<div className="vp-mode-keys" role="tablist" aria-label={ko("Workflow", "작업 모드")}>
+					{MODES.map((mode) => {
+						const active = workflowMode === mode.id;
+						const refused = mode.id === "pose" ? poseRefusal : null;
+						return (
+							<button
+								type="button"
+								role="tab"
+								key={mode.id}
+								data-mode-key={mode.key}
+								data-mode={mode.id}
+								className={"vp-mode-key" + (active ? " active" : "")}
+								aria-selected={active}
+								aria-disabled={refused ? true : undefined}
+								aria-label={mode.label}
+								title={refused || `${mode.label} (${mode.key})`}
+								onClick={() => selectWorkflowMode(mode.id)}
+							>
+								<RailIcon name={mode.id} />
+								<span className="vp-key-digit">{mode.key}</span>
+								<span className="vp-mode-name">{mode.label}</span>
+							</button>
+						);
+					})}
+				</div>
+			</div>
+
+			<div className="vp-overlay-right">
 				<div className="vp-pill vp-view-pill">
 					<div className="vp-menu-wrap" data-vp-menu="camera-view">
 						<button
@@ -329,7 +417,8 @@ export default function ViewportToolbar() {
 							title={ko("Views and shot cameras", "보기와 샷 카메라")}
 							onClick={() => menu.toggle("camera-view")}
 						>
-							{ko("Perspective", "원근")}
+							<RailIcon name="view" />
+							<span className="vp-label">{ko("Perspective", "원근")}</span>
 						</button>
 						{menu.open === "camera-view" && (
 							<div className="vp-menu" role="menu" aria-label={ko("Views and shot cameras", "보기와 샷 카메라")}>
@@ -410,7 +499,8 @@ export default function ViewportToolbar() {
 							title={ko("Shading", "셰이딩")}
 							onClick={() => menu.toggle("shading")}
 						>
-							{autoColor ? ko("Auto Color", "자동 색") : ko("Clay Lit", "클레이 조명")}
+							<RailIcon name="shading" />
+							<span className="vp-label">{autoColor ? ko("Auto Color", "자동 색") : ko("Clay Lit", "클레이 조명")}</span>
 						</button>
 						{menu.open === "shading" && (
 							<div className="vp-menu" role="menu" aria-label={ko("Shading", "셰이딩")}>
@@ -442,7 +532,8 @@ export default function ViewportToolbar() {
 							title={ko("Viewport display toggles", "뷰포트 표시 토글")}
 							onClick={() => setViewMenuOpen((open) => !open)}
 						>
-							{ko("Show", "표시")}
+							<RailIcon name="show" />
+							<span className="vp-label">{ko("Show", "표시")}</span>
 							{viewLooksActive && <span className="view-menu-dot" data-testid="view-menu-dot" aria-hidden="true" />}
 						</button>
 						{viewMenuOpen && (
@@ -548,67 +639,14 @@ export default function ViewportToolbar() {
 						)}
 					</div>
 				</div>
-			</div>
-
-			<div className="vp-mode-toolbar" role="toolbar" data-testid="mode-toolbar" aria-label={ko("Mode and tools", "모드와 도구")}>
-				<div className="vp-mode-keys" role="tablist" aria-label={ko("Workflow", "작업 모드")}>
-					{MODES.map((mode) => {
-						const active = workflowMode === mode.id;
-						const refused = mode.id === "pose" ? poseRefusal : null;
-						return (
-							<button
-								type="button"
-								role="tab"
-								key={mode.id}
-								data-mode-key={mode.key}
-								data-mode={mode.id}
-								className={"vp-mode-key" + (active ? " active" : "")}
-								aria-selected={active}
-								aria-disabled={refused ? true : undefined}
-								aria-label={mode.label}
-								title={refused || `${mode.label} (${mode.key})`}
-								onClick={() => selectWorkflowMode(mode.id)}
-							>
-								<span className="vp-key-digit">{mode.key}</span>
-								{active && <span className="vp-mode-name">{mode.label}</span>}
-							</button>
-						);
-					})}
-				</div>
-				{tools.length > 0 && <span className="vp-toolbar-divider" aria-hidden="true" />}
-				<div className="vp-tool-keys" role="group" aria-label={ko("Tools", "도구")} data-transform-controls>
-					{tools.map((tool) => (
-						<button
-							type="button"
-							key={tool.key}
-							data-tool-key={tool.key}
-							data-tool={tool.id}
-							className={"vp-tool-key" + (tool.active ? " active" : "")}
-							aria-pressed={tool.active}
-							aria-disabled={tool.refused ? true : undefined}
-							aria-label={tool.name}
-							title={tool.refused || `${tool.name} (${tool.key})`}
-							onClick={() => { if (!tool.refused) tool.pick(); }}
-						>
-							{tool.key}
-						</button>
-					))}
-				</div>
-				{valueGroup && (
-					<>
-						<span className="vp-toolbar-divider" aria-hidden="true" />
-						<div className="vp-values">{valueGroup}</div>
-					</>
-				)}
-			</div>
-
-			<div className="vp-overlay-right">
+				<span className="vp-rail-divider" aria-hidden="true" />
 				<span
 					className="vp-pill vp-speed"
 					data-testid="fly-speed"
 					title={ko("Fly speed — scroll while right-dragging to change it", "비행 속도 — 오른쪽 드래그 중 스크롤로 조절")}
 				>
-					speed {trimNumber(flySpeed)}
+					<RailIcon name="speed" size={14} />
+					<span className="vp-speed-value">{trimNumber(flySpeed, 1)}×</span>
 				</span>
 			</div>
 

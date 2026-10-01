@@ -39,6 +39,29 @@
 		--capsule-shadow: 0 0 0 .5px rgba(255,255,255,.08), inset 0 1px 0 rgba(255,255,255,.12), inset 0 -1px 0 rgba(0,0,0,.4);
 		--grip: rgba(255,255,255,.14);
 		--grip-hover: rgba(255,255,255,.4);
+
+		/* Panel interiors (glass-regions.css). */
+		--label: #8e8e96;
+		--text-soft: #c9c9ce;
+		--field-fill: rgba(255,255,255,.05);
+		--card-fill: rgba(255,255,255,.05);
+		--card-ring: 0 0 0 .5px rgba(255,255,255,.08);
+		--chip-fill: rgba(255,255,255,.06);
+		--hairline: rgba(255,255,255,.07);
+		--seg-on: rgba(255,255,255,.14);
+		--seg-on-shadow: 0 1px 2px rgba(0,0,0,.45), 0 0 0 .5px rgba(255,255,255,.06);
+		--seg-on-text: #e08a55;
+		--row-sel-bg: rgba(184,84,29,.16);
+		--row-sel-text: #fff;
+		--row-sel-icon: #b8541d;
+		--row-sel-meta: #c98f70;
+		--tile-fill: rgba(255,255,255,.04);
+		--tile-sel-fill: rgba(184,84,29,.16);
+		--tile-sel-ring: inset 0 0 0 1.5px #b8541d;
+		--tile-stroke: #c9c9ce;
+		--tile-label: #9b9ba1;
+		--snap-on-fill: rgba(184,84,29,.16);
+		--frame-well: #131315;
 	}
 
 	/* Light: translucent glass over a neutral window, system-blue accent. */
@@ -100,6 +123,28 @@
 		--capsule-shadow: 0 0 0 .5px rgba(30,32,40,.08), inset 0 .5px 0 rgba(255,255,255,.55);
 		--grip: rgba(30,32,40,.14);
 		--grip-hover: rgba(30,32,40,.4);
+
+		--label: #86868b;
+		--text-soft: #3a3a3c;
+		--field-fill: rgba(30,32,40,.05);
+		--card-fill: rgba(255,255,255,.62);
+		--card-ring: 0 0 0 .5px rgba(30,32,40,.08);
+		--chip-fill: rgba(30,32,40,.06);
+		--hairline: rgba(30,32,40,.07);
+		--seg-on: #fff;
+		--seg-on-shadow: 0 1px 2px rgba(30,32,40,.12), 0 0 0 .5px rgba(30,32,40,.06);
+		--seg-on-text: #0060d6;
+		--row-sel-bg: #0a6ee0;
+		--row-sel-text: #fff;
+		--row-sel-icon: #fff;
+		--row-sel-meta: rgba(255,255,255,.75);
+		--tile-fill: rgba(30,32,40,.04);
+		--tile-sel-fill: rgba(0,122,255,.08);
+		--tile-sel-ring: inset 0 0 0 1.5px #007aff;
+		--tile-stroke: #3a3a3c;
+		--tile-label: #6e6e73;
+		--snap-on-fill: rgba(0,122,255,.1);
+		--frame-well: #131315;
 
 		/* Legacy literals in styles.css read these (dark keeps each fallback). */
 		--lg-ink-rgb: 30,32,40;

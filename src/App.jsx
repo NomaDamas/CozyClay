@@ -6739,6 +6739,7 @@ export default function App() {
 		saveStatus: { state: projectSaveState, text: projectStatus, dirty: projectDirty, name: projectName },
 		exportStatus: exportStatus && { ...exportStatus, cancel: stopShotRecording, retry: retryExport },
 		subscribeToasts: (listener) => { toastSinkRef.current.add(listener); return () => toastSinkRef.current.delete(listener); },
+		enterShotLook,
 	};
 
 	return (
