@@ -98,7 +98,7 @@ export default function DetailsSlot() {
 		autoColor, recentObjectColors, rememberSceneObjectColor, objectColorDraft, setObjectColorDraft,
 		posePhotoFile, posingIndex, posingChar, charA, allPoses,
 		studioPick, posingClosing, closeStudio, castDomain, setToast,
-		savePose,
+		savePose, beginWorkspaceResize,
 	} = useStudioShell();
 	const selection = detailsSelection({ selectedHierarchyId, selectedSceneObject, rigSelection, characters, shot, inspectorHasContent });
 	return (
@@ -117,19 +117,9 @@ export default function DetailsSlot() {
 				</p>
 			)}
 			{studioAgentError && <p className="scene-save-error" role="alert">{studioAgentError}</p>}
-			{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
-				{/* G9: with the agent open the panel head is a Details | Agent tab
-				    strip; the Details tab closes the agent exactly as before. */}
-				<div className="inspector-heading details-panel-head" role="tablist" aria-label={ko("Details and Agent", "세부 정보와 에이전트")}>
-					<button type="button" role="tab" aria-selected="false" className="details-panel-tab inspector-agent-switch" onClick={() => setStudioAgentMode(false)}>{ko("Details", "세부 정보")}</button>
-					<button type="button" role="tab" aria-selected="true" className="details-panel-tab">{ko("Agent", "에이전트")}</button>
-				</div>
-				<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
-					sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
-					buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
-					onI2vAction={(instruction) => void generateI2vMotionFromUi(instruction)} />
-			</div>}
-			<section className="inspector-pane" hidden={studioAgentMode}>
+			{/* #570: the Agent no longer replaces Details. It docks under it in
+			    the right column, and Window › Agent folds it away again. */}
+			<section className="inspector-pane">
 			<div className="inspector-heading details-panel-head">
 				<strong className="details-panel-title">{ko("Details", "세부 정보")}</strong>
 				<button type="button" className="inspector-agent-switch" aria-pressed={studioAgentMode} onClick={() => setStudioAgentMode(true)}>{ko("Agent", "에이전트")}</button>
@@ -417,6 +407,19 @@ export default function DetailsSlot() {
 				</div>
 			)}
 			</section>
+			{!embedMode && <div className="studio-agent-inspector" hidden={!studioAgentMode}>
+				<div
+					className="workspace-splitter shell-splitter shell-agent-splitter"
+					role="separator"
+					aria-orientation="horizontal"
+					aria-label={ko("Resize Details and Agent", "세부 정보와 에이전트 크기 조절")}
+					onPointerDown={(event) => beginWorkspaceResize("agent", event)}
+				/>
+				<AgentPanel embedded hidden={!studioAgentMode} surface="studio" defaultCollapsed onCollapsedChange={setAgentCollapsed}
+					sceneName={scenes.find((entry) => entry.id === activeSceneId)?.name ?? ko("Untitled Scene", "제목 없는 씬")}
+					buildContext={buildStudioAgentContext} onReceipt={highlightAgentTargets}
+					onI2vAction={(instruction) => void generateI2vMotionFromUi(instruction)} />
+			</div>}
 			{/* The reference-photo picker sits outside the panel so re-mounting
 			    the studio cannot cancel an in-flight read. */}
 			<input

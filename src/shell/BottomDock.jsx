@@ -1,9 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import { logStore } from "./log-store.js";
 import "./dock.css";
 import { ko } from "../locale.js";
-import AssetPane from "../asset-pane.jsx";
 import Timeline from "../ardy/timeline.jsx";
 import { DEFAULT_PLAYBACK_SPEED, sceneObjectNameDisplayKo } from "../app-stage.jsx";
 import { motionEditLayout, createMotionEdit } from "../ardy/motion-edit.js";
@@ -17,7 +16,6 @@ export const DOCK_MAX_HEIGHT = 480;
 const VIEWPORT_MIN_HEIGHT = 480;
 const SHELL_FIXED_ROWS = 44 + 24 + 3;
 const DOCK_HEIGHT_KEY = "cozyclay.dock.height.v1";
-const CONTENT_COLLAPSED_KEY = "cozyclay.dock.content-collapsed.v1";
 
 function clampDockHeight(height) {
 	const roomy = Math.min(DOCK_MAX_HEIGHT, window.innerHeight - SHELL_FIXED_ROWS - VIEWPORT_MIN_HEIGHT);
@@ -45,17 +43,9 @@ function readDockHeight() {
 	return Number.isFinite(stored) && stored > 0 ? stored : null;
 }
 
-function readContentCollapsed() {
-	return readStored(CONTENT_COLLAPSED_KEY) === "1";
-}
-
 export default function BottomDock() {
 	const {
-		setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
-		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
-		projectAssetGraphSignature, assetTrash, deleteUnusedAsset, undoDeletedAsset, deletingAssetId,
-		projectManifest, tlFrame, motion, waypointMode,
-		takeVersions, loadTakeVersion, craneSelectedIndex,
+		tlFrame, motion, waypointMode, craneSelectedIndex,
 		isCameraSelection, addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFrameCount,
 		tlFps, characters, activeCharIndex, ghostLayers, pathSpeed,
 		tlPlaying, workflowMode, waypoints, pendingWaypointFrame, promptClips,
@@ -75,10 +65,9 @@ export default function BottomDock() {
 		activeCamera, activeShotDuration, changeActiveCamera, cameraRail, previewCameraShot,
 		toggleCameraRailDraw, deleteCameraRail, selectTimelineShot, shotsDomain, runStudioAction,
 		clearMotion, subscribeToasts, exportStatus, exportPhaseLabel, ardyRunning, ardyStatus,
-		ardyOutcome, spawnCharacter, addSceneObject, allPoses,
+		ardyOutcome,
 	} = useStudioShell();
 	const dockRef = useRef(null);
-	const [contentCollapsed, setContentCollapsed] = useState(readContentCollapsed);
 	const [dockHeight, setDockHeight] = useState(readDockHeight);
 	const dockHeightRef = useRef(dockHeight);
 	dockHeightRef.current = dockHeight;
@@ -139,14 +128,6 @@ export default function BottomDock() {
 		event.preventDefault();
 	}
 
-	function changeContentCollapsed(next) {
-		setContentCollapsed(next);
-		writeStored(CONTENT_COLLAPSED_KEY, next ? "1" : "0");
-	}
-
-	// App scans imported assets only while they are on screen.
-	const changeShelfVisible = useCallback((visible) => setBottomTab(visible ? "assets" : "timeline"), [setBottomTab]);
-
 	// Session Log: every toast (App fans each one out to subscribeToasts),
 	// generation jobs and export phases. The toast sink set lives for the
 	// whole session, so one subscription on mount is enough.
@@ -181,19 +162,8 @@ export default function BottomDock() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [exportPhase, exportLabel, exportMessage, exportDone, exportTotal]);
 
-	// Double-click in Content: the same payloads the drag carries, placed at
-	// the origin through the named domain actions.
-	function placeAssetAtOrigin(payload) {
-		const origin = { x: 0, z: 0 };
-		if (payload.kind === "character") spawnCharacter(payload.id, origin.x, origin.z);
-		else if (payload.kind === "object") addSceneObject(payload.objectKind, origin);
-		else if (payload.kind === "image" || payload.kind === "mesh") {
-			runStudioAction("asset.import", { assetId: payload.assetId, placeAs: payload.kind === "mesh" ? "mesh" : "cutout", placement: origin });
-		}
-	}
-
 	return (
-		<div className="bottom-window v2-dock" ref={dockRef} data-content-collapsed={contentCollapsed || undefined}>
+		<div className="bottom-window v2-dock" ref={dockRef}>
 			<div
 				className="v2-dock-resize"
 				data-testid="dock-resize-handle"
@@ -207,33 +177,6 @@ export default function BottomDock() {
 				onPointerDown={beginDockResize}
 				onKeyDown={onDockResizeKey}
 			/>
-			<div className="assets-pane">
-				<AssetPane
-					onAssetGrab={beginAssetDrag}
-					onAssetPlace={placeAssetAtOrigin}
-					imageAssetIds={shelfImageIds}
-					meshAssetIds={shelfMeshIds}
-					manageStorage={manageAssetStorage}
-					onManageStorageToggle={() => setManageAssetStorage((current) => !current)}
-					unusedAssetIds={unusedAssetIds}
-					usedAssetIds={usedAssetIds}
-					usageCounts={usageCounts}
-					graphSignature={projectAssetGraphSignature}
-					trashCount={assetTrash.length}
-					onDeleteUnusedAsset={deleteUnusedAsset}
-					onUndoDelete={undoDeletedAsset}
-					deletingAssetId={deletingAssetId}
-					resourceManifest={projectManifest}
-					shots={shots}
-					takeVersions={takeVersions}
-					poses={allPoses}
-					onShotOpen={selectTimelineShot}
-					onTakeOpen={loadTakeVersion}
-					collapsed={contentCollapsed}
-					onCollapsedChange={changeContentCollapsed}
-					onShelfVisibleChange={changeShelfVisible}
-				/>
-			</div>
 			<div className="bottom-timeline">
 			<Timeline
 				frame={tlFrame}

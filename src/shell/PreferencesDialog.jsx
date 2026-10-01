@@ -5,6 +5,7 @@ import { loadAutoColor, saveAutoColor } from "../auto-color.js";
 import { motionReadinessMessage } from "../motion-readiness-ui.jsx";
 import { ko, LOCALE, setLocale } from "../locale.js";
 import { readStoredGridView, writeStoredGridView } from "../grid-view.js";
+import { readTheme, saveTheme } from "../theme.js";
 import "./preferences.css";
 
 const LANGUAGES = [
@@ -203,6 +204,30 @@ function MotionConnection({ state, checking, onRetry }) {
 	);
 }
 
+function ThemeControls() {
+	const [theme, setTheme] = useState(readTheme);
+	const options = [
+		{ id: "dark", label: ko("Dark", "다크") },
+		{ id: "light", label: ko("Light", "라이트") },
+	];
+	return (
+		<div className="v2-preferences__language-controls" role="group" aria-label={ko("Theme", "테마")}>
+			{options.map((option) => (
+				<button
+					type="button"
+					key={option.id}
+					className={"v2-preferences__language" + (theme === option.id ? " is-selected" : "")}
+					data-testid={`settings-theme-${option.id}`}
+					aria-pressed={theme === option.id}
+					onClick={() => setTheme(saveTheme(option.id))}
+				>
+					{option.label}
+				</button>
+			))}
+		</div>
+	);
+}
+
 function preferenceSection(section, props) {
 	const {
 		autoColor, setAutoColor, analyticsOptOut, setAnalyticsOptOutState,
@@ -238,6 +263,9 @@ function preferenceSection(section, props) {
 					<PreferenceSection title={ko("Language", "언어")}>
 						<PreferenceRow title={ko("Language", "언어")} description={ko("Choose the labels used throughout the editor.", "에디터에서 사용할 언어를 선택하세요.")}>
 							{languageControls}
+						</PreferenceRow>
+						<PreferenceRow title={ko("Theme", "테마")} description={ko("Dark keeps the studio dim around the stage; Light uses bright glass panels.", "다크는 무대 주변을 어둡게, 라이트는 밝은 유리 패널을 써요.")}>
+							<ThemeControls />
 						</PreferenceRow>
 					</PreferenceSection>
 					<PreferenceSection title={ko("Editor", "에디터")}>

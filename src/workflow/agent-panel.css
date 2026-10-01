@@ -216,14 +216,14 @@
 	height: 58px;
 	padding: 0 var(--agent-space-4);
 	border-bottom: 1px solid var(--agent-border);
-	background: #171921;
+	background: var(--agent-chrome, #171921);
 }
 
 .agent-title {
 	margin: 0;
 	font-size: var(--agent-font-xl);
 	font-weight: 700;
-	color: #f5f7ff;
+	color: var(--agent-text-strong, #f5f7ff);
 }
 
 .agent-header-spacer { flex: 1; }
@@ -235,8 +235,8 @@
 	gap: var(--agent-space-1);
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-md);
-	background: #20232d;
-	color: #c8ccdb;
+	background: var(--agent-panel, #20232d);
+	color: var(--agent-text-soft, #c8ccdb);
 	padding: var(--agent-space-2) var(--agent-space-3);
 	font: inherit;
 	font-size: var(--agent-font-md);
@@ -247,9 +247,9 @@
 
 .agent-icon-button:hover,
 .agent-ghost-button:hover {
-	border-color: #606b9a;
-	background: #2b3040;
-	color: #f5f7ff;
+	border-color: var(--agent-border-strong, #606b9a);
+	background: var(--agent-hover, #2b3040);
+	color: var(--agent-text-strong, #f5f7ff);
 }
 
 .agent-ghost-button[disabled],
@@ -279,7 +279,7 @@
 	border: 0;
 	border-radius: var(--agent-radius-sm);
 	background: transparent;
-	color: #c8ccdb;
+	color: var(--agent-text-soft, #c8ccdb);
 	padding: var(--agent-space-2) var(--agent-space-3);
 	font: inherit;
 	font-size: var(--agent-font-md);
@@ -287,7 +287,7 @@
 	cursor: pointer;
 }
 
-.agent-menu button:hover { background: #2b3040; color: #f5f7ff; }
+.agent-menu button:hover { background: var(--agent-hover, #2b3040); color: var(--agent-text-strong, #f5f7ff); }
 
 /* --- account strip ----------------------------------------------------- */
 
@@ -314,7 +314,7 @@
 	padding: 2px var(--agent-space-2);
 	border: 1px solid var(--agent-accent-edge);
 	border-radius: var(--agent-radius-pill);
-	color: #cfd5ff;
+	color: var(--agent-text-strong, #cfd5ff);
 	font-size: var(--agent-font-xs);
 	letter-spacing: 0.06em;
 	text-transform: uppercase;
@@ -463,7 +463,7 @@
 .agent-bubble {
 	max-width: 86%;
 	padding: var(--agent-space-3) var(--agent-space-4);
-	border: 1px solid #343b58;
+	border: 1px solid var(--agent-border-strong, #343b58);
 	border-radius: var(--agent-radius-lg);
 	background: var(--agent-bubble);
 	color: var(--agent-text);
@@ -474,7 +474,7 @@
 }
 
 .agent-assistant-text {
-	color: #dfe3f2;
+	color: var(--agent-text-soft, #dfe3f2);
 	font-size: var(--agent-font-lg);
 	line-height: 1.6;
 	white-space: pre-wrap;
@@ -496,7 +496,7 @@
 .agent-card {
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-lg);
-	background: #20232d;
+	background: var(--agent-panel, #20232d);
 	overflow: hidden;
 }
 
@@ -505,7 +505,7 @@
 	align-items: center;
 	gap: var(--agent-space-3);
 	padding: var(--agent-space-3) var(--agent-space-4);
-	color: #ccd1e2;
+	color: var(--agent-text-soft, #ccd1e2);
 	font-size: var(--agent-font-md);
 	cursor: pointer;
 	list-style: none;
@@ -519,9 +519,9 @@
 .agent-tool-detail {
 	margin: 0;
 	padding: var(--agent-space-3) var(--agent-space-4);
-	border-top: 1px solid #2c3140;
+	border-top: 1px solid var(--agent-border, #2c3140);
 	background: var(--agent-bg-sunken);
-	color: #98a0b8;
+	color: var(--agent-text-muted, #98a0b8);
 	font: var(--agent-font-sm) ui-monospace, monospace;
 	white-space: pre-wrap;
 	word-break: break-all;
@@ -557,7 +557,7 @@
 	flex-wrap: wrap;
 	gap: var(--agent-space-2);
 	padding: var(--agent-space-3);
-	border-top: 1px solid #2c3140;
+	border-top: 1px solid var(--agent-border, #2c3140);
 }
 
 .agent-image-actions button,
@@ -567,8 +567,8 @@
 	gap: var(--agent-space-1);
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-sm);
-	background: #292d39;
-	color: #ccd1e2;
+	background: var(--agent-hover, #292d39);
+	color: var(--agent-text-soft, #ccd1e2);
 	padding: var(--agent-space-2) var(--agent-space-3);
 	font: inherit;
 	font-size: var(--agent-font-sm);
@@ -579,18 +579,18 @@
 .agent-image-actions button.primary {
 	border-color: var(--agent-accent-edge);
 	background: var(--agent-accent-deep);
-	color: #e6e9ff;
+	color: var(--agent-text-strong, #e6e9ff);
 }
 
 .agent-image-actions button:hover,
-.agent-image-actions a:hover { border-color: #606b9a; }
+.agent-image-actions a:hover { border-color: var(--agent-border-strong, #606b9a); }
 
 .agent-placed {
 	display: flex;
 	align-items: center;
 	gap: var(--agent-space-2);
 	padding: var(--agent-space-3);
-	border-top: 1px solid #2c3140;
+	border-top: 1px solid var(--agent-border, #2c3140);
 	color: var(--agent-ok);
 	font-size: var(--agent-font-md);
 }
@@ -599,8 +599,8 @@
 	margin-left: auto;
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-sm);
-	background: #292d39;
-	color: #ccd1e2;
+	background: var(--agent-hover, #292d39);
+	color: var(--agent-text-soft, #ccd1e2);
 	padding: var(--agent-space-1) var(--agent-space-3);
 	font: inherit;
 	font-size: var(--agent-font-sm);
@@ -645,7 +645,7 @@
 	display: flex;
 	align-items: center;
 	gap: var(--agent-space-2);
-	color: #ccd1e2;
+	color: var(--agent-text-soft, #ccd1e2);
 }
 
 .agent-job-label { font-weight: 600; }
@@ -779,7 +779,7 @@
 	margin: 0;
 	font-size: var(--agent-font-xl);
 	font-weight: 700;
-	color: #f5f7ff;
+	color: var(--agent-text-strong, #f5f7ff);
 }
 
 .agent-state-card p {
@@ -794,7 +794,7 @@
 	border: 1px solid var(--agent-accent-edge);
 	border-radius: var(--agent-radius-md);
 	background: var(--agent-accent-deep);
-	color: #e6e9ff;
+	color: var(--agent-text-strong, #e6e9ff);
 	padding: var(--agent-space-3) var(--agent-space-5);
 	font: inherit;
 	font-size: var(--agent-font-lg);
@@ -857,7 +857,7 @@
 .agent-chip {
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-pill);
-	background: #20232d;
+	background: var(--agent-panel, #20232d);
 	color: #bcc2d4;
 	padding: var(--agent-space-2) var(--agent-space-4);
 	font: inherit;
@@ -866,7 +866,7 @@
 	cursor: pointer;
 }
 
-.agent-chip:hover { border-color: #606b9a; background: #2b3040; color: #f5f7ff; }
+.agent-chip:hover { border-color: var(--agent-border-strong, #606b9a); background: var(--agent-hover, #2b3040); color: var(--agent-text-strong, #f5f7ff); }
 
 /* --- activity line ------------------------------------------------------ */
 
@@ -1049,7 +1049,7 @@
 	gap: var(--agent-space-2);
 	border: 1px solid var(--agent-border-strong);
 	border-radius: var(--agent-radius-pill);
-	background: #20232d;
+	background: var(--agent-panel, #20232d);
 	color: #b6bcd0;
 	padding: var(--agent-space-1) var(--agent-space-3);
 	font: inherit;
@@ -1060,7 +1060,7 @@
 .agent-attach-chip[aria-pressed="true"] {
 	border-color: var(--agent-accent-edge);
 	background: var(--agent-accent-deep);
-	color: #e6e9ff;
+	color: var(--agent-text-strong, #e6e9ff);
 }
 
 .agent-attach-thumb {
@@ -1106,7 +1106,7 @@
 	border: 1px solid var(--agent-accent-edge);
 	border-radius: var(--agent-radius-md);
 	background: var(--agent-accent-deep);
-	color: #e6e9ff;
+	color: var(--agent-text-strong, #e6e9ff);
 	padding: var(--agent-space-2) var(--agent-space-5);
 	font: inherit;
 	font-size: var(--agent-font-md);

@@ -899,6 +899,9 @@ export default function App() {
 		"--shell-right-width": workspaceLayout.shellSidebarWidth && `${workspaceLayout.shellSidebarWidth}px`,
 		"--shell-outliner-height": workspaceLayout.shellOutlinerHeight && `${workspaceLayout.shellOutlinerHeight}px`,
 		"--shell-dock-height": workspaceLayout.shellDockHeight && `${workspaceLayout.shellDockHeight}px`,
+		"--shell-left-width": workspaceLayout.shellLeftWidth && `${workspaceLayout.shellLeftWidth}px`,
+		"--shell-agent-height": workspaceLayout.shellAgentHeight && `${workspaceLayout.shellAgentHeight}px`,
+		"--shell-camera-width": workspaceLayout.shellCameraWidth && `${workspaceLayout.shellCameraWidth}px`,
 		"--hierarchy-width": `${workspaceLayout.hierarchyWidth}px`,
 		"--sidebar-width": `${workspaceLayout.sidebarWidth}px`,
 		"--timeline-height": `${workspaceLayout.timelineHeight}px`,
@@ -914,13 +917,26 @@ export default function App() {
 		const startY = e.clientY;
 		const shell = e.currentTarget.closest(".app");
 		const sidebarWidth = shell.querySelector(".studio-right-column").getBoundingClientRect().width;
+		const leftWidth = shell.querySelector(".studio-left-column")?.getBoundingClientRect().width ?? 0;
 		const hierarchyHeight = shell.querySelector(".hierarchy-left").getBoundingClientRect().height;
 		const mainHeight = shell.querySelector(".workspace").getBoundingClientRect().height;
 		const dockHeight = shell.querySelector(".bottom-window").getBoundingClientRect().height;
+		const agentHeight = shell.querySelector(".studio-agent-inspector")?.getBoundingClientRect().height ?? 0;
+		const rightHeight = shell.querySelector(".studio-right-column").getBoundingClientRect().height;
+		const cameraWidth = Number.parseFloat(getComputedStyle(shell).getPropertyValue("--shell-camera-width")) || 340;
 		const onMove = (ev) => {
 			const dx = ev.clientX - startX;
 			const dy = ev.clientY - startY;
 			setWorkspaceLayout((current) => {
+				if (kind === "left") {
+					return { ...current, shellLeftWidth: Math.max(200, Math.min(window.innerWidth * 0.3, leftWidth + dx)) };
+				}
+				if (kind === "agent") {
+					return { ...current, shellAgentHeight: Math.max(160, Math.min(rightHeight - 200, agentHeight - dy)) };
+				}
+				if (kind === "camera") {
+					return { ...current, shellCameraWidth: Math.max(240, Math.min(560, cameraWidth - dx)) };
+				}
 				if (kind === "sidebar") {
 					return {
 						...current,

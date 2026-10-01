@@ -1,0 +1,252 @@
+/* #570 glass surfaces for the floating shell. Loaded after every region
+   sheet the shell imports; the [data-shell="glass"] attribute keeps these
+   ahead of region rules of equal weight that load later. Colours come from
+   the theme tokens in src/styles/themes.css. */
+@layer regions {
+	/* ------------------------------------------------- floating panels */
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-left-column,
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column,
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-dock-slot {
+		/* Region fills inside a panel read --surface-panel; the glass shows
+		   through instead. Raised and field surfaces stay opaque. */
+		--surface-panel: transparent;
+		--outliner-header-height: var(--float-head, 48px);
+		--details-head-height: var(--float-head, 48px);
+		border-radius: var(--float-radius, 20px);
+		background: var(--glass-panel);
+		-webkit-backdrop-filter: var(--glass-blur);
+		backdrop-filter: var(--glass-blur);
+		box-shadow: var(--panel-shadow);
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column { background: var(--glass-text-panel); }
+
+	/* The shot camera is drawn into the stage canvas under its card, so the
+	   dock's glass leaves a hole where the card sits: the fill and inner
+	   shading live on a masked ::before, the outer shadow on the slot. */
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-dock-slot {
+		--shot-card-w: calc(var(--shell-camera) - 28px);
+		--shot-card-h: min(calc(26px + (var(--shell-camera) - 28px) * 9 / 16), calc(var(--shell-dock) - 24px));
+		overflow: visible;
+		background: none;
+		-webkit-backdrop-filter: none;
+		backdrop-filter: none;
+		box-shadow: var(--panel-shadow-outer);
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-dock-slot::before {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: -1;
+		border-radius: inherit;
+		background: var(--glass-panel);
+		-webkit-backdrop-filter: var(--glass-blur);
+		backdrop-filter: var(--glass-blur);
+		box-shadow: var(--panel-shadow-inset);
+		-webkit-mask: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+		-webkit-mask-size: 100% 100%, var(--shot-card-w) var(--shot-card-h);
+		-webkit-mask-position: 0 0, right 14px bottom 12px;
+		-webkit-mask-repeat: no-repeat;
+		-webkit-mask-composite: xor;
+		mask: linear-gradient(#000 0 0), linear-gradient(#000 0 0);
+		mask-size: 100% 100%, var(--shot-card-w) var(--shot-card-h);
+		mask-position: 0 0, right 14px bottom 12px;
+		mask-repeat: no-repeat;
+		mask-composite: exclude;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .studio-dock-slot > .bottom-window {
+		border-radius: inherit;
+		overflow: hidden;
+		background: none;
+	}
+
+	/* The bottom dock is the Sequencer alone; the shot preview docks into its
+	   right end (positioned below), so the lanes stop short of it. */
+	.app[data-shell="glass"]:not([data-embed-mode]) .bottom-window.v2-dock {
+		grid-template-columns: minmax(0, 1fr);
+		background: none;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock > .bottom-timeline {
+		grid-column: 1;
+		margin-right: var(--shell-camera);
+		background: none;
+	}
+
+	/* Agent under Details: a hairline above it; its own header stays. */
+	.app[data-shell="glass"] .studio-agent-inspector {
+		box-shadow: inset 0 1px 0 var(--row-divider);
+	}
+	.app[data-shell="glass"] .studio-agent-inspector > .agent-panel { flex: 1 1 auto; min-height: 0; background: none; }
+	.app[data-shell="glass"] .studio-right-column .inspector-pane,
+	.app[data-shell="glass"] .studio-right-column .inspector-scroll { background: none; }
+
+	/* ----------------------------------------------------- resize grips */
+	.app[data-shell="glass"] .shell-splitter::after {
+		content: "";
+		position: absolute;
+		top: 50%;
+		left: 50%;
+		width: 4px;
+		height: 32px;
+		border-radius: 2px;
+		background: var(--grip);
+		transform: translate(-50%, -50%);
+		transition: background-color .12s ease, height .12s ease;
+	}
+	.app[data-shell="glass"] .shell-outliner-splitter::after,
+	.app[data-shell="glass"] .shell-agent-splitter::after { width: 32px; height: 4px; }
+	.app[data-shell="glass"] .shell-splitter:hover::after { background: var(--grip-hover); }
+	.app[data-shell="glass"] .shell-splitter:active::after { background: var(--select); }
+
+	/* -------------------------------------------------------- top bar */
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar {
+		gap: 10px;
+		padding: 0;
+		background: none;
+		font-size: 13px;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-project,
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .menubar,
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-mcp,
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate {
+		box-sizing: border-box;
+		height: 40px;
+		padding: 0 4px;
+		border-radius: var(--capsule-radius, 20px);
+		background: var(--glass-capsule);
+		-webkit-backdrop-filter: var(--capsule-blur);
+		backdrop-filter: var(--capsule-blur);
+		box-shadow: var(--capsule-shadow);
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-project { padding: 0 6px 0 14px; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-swatch {
+		width: 8px;
+		height: 8px;
+		border-radius: 4px;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .menubar-trigger {
+		height: 32px;
+		padding: 0 11px;
+		border-radius: 16px;
+		color: var(--text-1);
+		font-size: 13px;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-mcp { padding: 0 14px; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate { padding: 4px; gap: 1px; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate button {
+		height: 32px;
+		background: var(--primary-fill, var(--primary));
+		color: #fff;
+		font-size: 13px;
+		font-weight: 600;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate-main { padding: 0 14px; border-radius: 16px 4px 4px 16px; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate-caret { width: 28px; border-radius: 4px 16px 16px 4px; box-shadow: none; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate button:hover,
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate-caret[aria-expanded="true"] {
+		background: var(--primary-fill, var(--primary));
+		filter: brightness(1.08);
+	}
+
+	/* -------------------------------------------- viewport overlay row */
+	.app[data-shell="glass"]:not([data-embed-mode]) .viewport-titlebar {
+		top: calc(var(--shell-gap) * 2 + 40px);
+		left: var(--shell-center-left);
+		right: var(--shell-center-right);
+		height: 36px;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .viewport-titlebar .vp-pill,
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-toolbar {
+		height: 36px;
+		padding: 0 4px;
+		border-radius: 18px;
+		background: var(--glass-capsule);
+		-webkit-backdrop-filter: var(--capsule-blur);
+		backdrop-filter: var(--capsule-blur);
+		box-shadow: var(--capsule-shadow);
+		font-size: 12px;
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-tool-key,
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-value,
+	.app[data-shell="glass"]:not([data-embed-mode]) .viewport-titlebar .vp-pill-segment { border-radius: 14px; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-tool-key.active {
+		background: var(--select);
+		color: var(--on-select);
+	}
+
+	/* ----------------------------------- shot preview, docked in the dock */
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-shot-preview {
+		z-index: 15;
+		right: calc(var(--shell-center-right) + 14px);
+		bottom: calc(var(--shell-dock-bottom) + 12px);
+		width: calc(var(--shell-camera) - 28px);
+		height: min(calc(var(--shot-preview-header) + (var(--shell-camera) - 28px) * 9 / 16), calc(var(--shell-dock) - 24px));
+		border-radius: 12px;
+		box-shadow: 0 0 0 .5px var(--row-divider);
+	}
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-shot-preview-tag { border-radius: 12px 12px 0 0; }
+
+	/* The Top-View inset keeps to the open stage under the overlay row. */
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-inset {
+		top: calc(var(--shell-gap) * 3 + 40px + 36px);
+		left: calc(var(--shell-center-left) + 2px);
+		border-radius: 14px;
+		overflow: hidden;
+	}
+
+	/* ------------------------------------- library in the left column */
+	.app[data-shell="glass"] .studio-library .content-browser { background: none; }
+	.app[data-shell="glass"] .studio-library .content-head {
+		flex-wrap: wrap;
+		height: auto;
+		gap: 8px;
+		padding: 8px 12px 8px 6px;
+	}
+	.app[data-shell="glass"] .studio-library .content-breadcrumb { display: none; }
+	.app[data-shell="glass"] .studio-library .content-search {
+		order: 9;
+		flex: 1 0 100%;
+		width: auto;
+		height: 30px;
+		margin-left: 6px;
+		border-radius: 15px;
+	}
+	.app[data-shell="glass"] .studio-library .content-body:not(.is-log) { flex-direction: column; }
+	.app[data-shell="glass"] .studio-library .content-folders {
+		flex-direction: row;
+		flex-wrap: nowrap;
+		gap: 4px;
+		width: auto;
+		padding: 0 12px 10px;
+		overflow-x: auto;
+		overflow-y: hidden;
+		scrollbar-width: none;
+	}
+	.app[data-shell="glass"] .studio-library .content-folder {
+		height: 26px;
+		margin: 0;
+		padding: 0 11px;
+		border-radius: 13px;
+	}
+	.app[data-shell="glass"] .studio-library .content-folder.is-utility { margin-top: 0; margin-left: auto; }
+	.app[data-shell="glass"] .studio-library .content-main { padding: 0 12px 12px; }
+	.app[data-shell="glass"] .studio-library .content-grid {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+		gap: 12px 8px;
+	}
+	.app[data-shell="glass"] .studio-library .content-tile-thumb {
+		border-radius: 12px;
+		background: color-mix(in srgb, var(--text-1) 5%, transparent);
+	}
+
+	/* ------------------------------------------------------ status bar */
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-statusbar {
+		box-sizing: border-box;
+		padding: 0 12px;
+		border-radius: 14px;
+		background: var(--glass-capsule);
+		-webkit-backdrop-filter: var(--capsule-blur);
+		backdrop-filter: var(--capsule-blur);
+		box-shadow: var(--capsule-shadow);
+		overflow: hidden;
+	}
+}

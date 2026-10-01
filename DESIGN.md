@@ -190,8 +190,9 @@ Motion › ARDY Connection). UI copy contains no Kimodo, ProjFlow or 2D Root.
 
 ### G9 — Agent pane
 
-Window › Agent changes the right column's lower header to Details | Agent in
-the same style as Content | Log. Closing it restores Details.
+Window › Agent docks the Agent under Details in the right column (#570); it no
+longer replaces Details. A 12 px handle between them resizes the split
+(160 px minimum each side). Closing it gives Details the full column.
 
 ### G10 — adding things
 
@@ -203,10 +204,9 @@ Props inspector `AddObjectMenu` are removed.
 
 ### G11 — responsive shell
 
-The bottom dock is `clamp(220px, 30vh, 330px)` with a drag handle. Content can
-collapse to its 36 px header so Sequencer takes the width. At ≤1440 px the right
-column is 300 px. At 1280×800 the viewport remains at least 480 px tall and
-900 px wide.
+Superseded by §6 (#570): the bottom dock holds only the Sequencer and the shot
+preview, `clamp(220px, 30vh, 300px)` tall by default, and every panel edge has
+a drag handle.
 
 ### G12 — start and Preferences
 
@@ -240,3 +240,43 @@ snapping and a read-only hotkeys list.
   announcements, visible keyboard focus and immediate state changes.
 - `.camera-tutorial-handoff`: the contextual action row inside the existing
   tutorial; it wraps at narrow widths and has visible keyboard focus.
+
+## 6. Floating-glass shell and themes (#570)
+
+The viewport fills the window. Every other region floats over it as a glass
+panel with 12 px gutters and a 20 px radius:
+
+- **Left column (260 px):** Outliner over the object Library (Content | Log).
+  The Library is a 3-column grid with its folders as a row of pills.
+- **Right column (300 px):** Details over the Agent (G9).
+- **Top row:** project, menus, MCP and Generate Motion as 40 px capsules
+  between the two columns. The viewport overlay row (Add, view pills, mode and
+  tool toolbar, fly speed) sits 12 px under it as 36 px capsules.
+- **Bottom dock:** the Sequencer, with the shot preview docked into its right
+  end (340 px). The dock's glass is masked where the preview card sits,
+  because the shot camera is drawn into the stage canvas beneath it.
+- **Status strip:** 28 px, under the dock between the columns.
+
+Every panel boundary resizes from its gutter: left width (200–30 % of the
+window), right width (280–50 %), dock height, Outliner/Library split,
+Details/Agent split and Sequencer/shot-preview split (240–560 px). Sizes
+persist with the workspace layout.
+
+Themes live on `<html data-theme>` (Preferences › Appearance › Theme) and are
+declared in `src/styles/themes.css` (shell layer, so they outrank `tokens.css`
+and the legacy `:root` aliases):
+
+- **Dark (default):** the v2 surfaces in §2 with a deep clay-orange accent
+  (`--select #b8541d`, tint `rgba(184,84,29,.18)`, tinted text `#e08a55`,
+  white text on the accent). Panels carry a soft top light and a darker bottom
+  edge; the accent bleeds 7 % into the top of each panel; primary buttons use
+  a `#c8622a → #a84a17` fill. The stage itself gets no tint.
+- **Light:** a `#eaeaed` window, translucent white glass (74 %, Details and
+  Agent 82 % for reading), system blue accent (`--select #0a6ee0`, tint
+  `rgba(0,122,255,.14)`), text `#1d1d1f / #6e6e73 / #86868b`.
+
+Both themes use the system UI font first (`-apple-system`, SF Pro), with IBM
+Plex Sans and the Korean families as fallbacks. Hard-coded legacy colours in
+`styles.css` and the Agent stylesheet read `--lg-*` / `--agent-*` variables
+whose fallbacks are the original dark values, so only the light theme
+overrides them.
