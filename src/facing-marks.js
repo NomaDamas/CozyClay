@@ -66,6 +66,9 @@ export function addFacingMarks(clone) {
 		if (spec.rotation) mesh.rotation.set(...spec.rotation);
 		mesh.castShadow = true;
 		mesh.frustumCulled = false;
+		// The marks are for the exported frame (the model's heading cue); the
+		// studio's editor panes hide them per draw (dualview.jsx) by this tag.
+		mesh.userData.facingMark = true;
 		// The head bone's local +Z is the face direction on both rigs.
 		head.add(mesh);
 	}

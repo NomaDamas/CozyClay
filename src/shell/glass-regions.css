@@ -1,0 +1,788 @@
+/* #570 floating-glass interiors. Unlayered on purpose: the Outliner,
+   Sequencer and Details sheets they restyle are unlayered too, and this file
+   loads after them (StudioShell imports it last). Every rule is rooted at the
+   glass shell, so embeds keep their own look. Values follow the canvas
+   mockups (light C2, dark C3) through the theme tokens in themes.css. */
+
+.app[data-shell="glass"]:not([data-embed-mode]) {
+	--mono: var(--sans);
+	font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------ Outliner */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner {
+	--h-row: 30px;
+	--h-control: 30px;
+	--outliner-header-height: 28px;
+	--outliner-ui-size: 13px;
+	--outliner-indent: 16px;
+	--outliner-chip-size: 16px;
+	--outliner-chevron-slot: 16px;
+	background: none;
+	font-size: 13px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-heading {
+	height: 28px;
+	min-height: 28px;
+	padding: 0 14px 0 18px;
+	border: 0;
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-heading strong {
+	color: var(--label);
+	font-size: 11px;
+	font-weight: 600;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-count { color: var(--label); font-size: 11px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-search-wrap {
+	height: 30px;
+	min-height: 30px;
+	margin: 2px 12px 8px;
+	border-radius: 15px;
+	background: var(--field-fill);
+	color: var(--label);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-search-icon {
+	left: 10px;
+	width: 14px;
+	height: 14px;
+	font-size: 0;
+	background: currentColor;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 2.75a4.25 4.25 0 1 1 0 8.5 4.25 4.25 0 1 1 0-8.5z M10.25 10.25l3 3'/%3E%3C/svg%3E") center / 14px no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 2.75a4.25 4.25 0 1 1 0 8.5 4.25 4.25 0 1 1 0-8.5z M10.25 10.25l3 3'/%3E%3C/svg%3E") center / 14px no-repeat;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-search {
+	height: 30px;
+	padding-left: 30px;
+	border: 0;
+	background: none;
+	color: var(--text-1);
+	font-size: 13px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-tree { padding: 0 10px; gap: 1px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap { border-radius: 8px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap:hover { background: var(--chip-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected { background: var(--row-sel-bg); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .hierarchy-label { color: var(--row-sel-text); font-weight: 500; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .v2-outliner-chip { color: var(--row-sel-icon); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .v2-outliner-type,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap.selected .hierarchy-toggle { color: var(--row-sel-meta); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row { color: var(--text-1); font-size: 13px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row:not(.icon-only) { gap: 6px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-label { color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-type { color: var(--text-3); font-size: 11px; }
+/* Type marks are line icons, not colour chips. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip {
+	flex: 0 0 16px;
+	width: 16px;
+	height: 16px;
+	border-radius: 0;
+	color: var(--label);
+	background: currentColor;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5a1.25 1.25 0 0 1 1.25-1.25h2.5l1.5 1.5h5.5A1.25 1.25 0 0 1 14 6.5v5.25A1.25 1.25 0 0 1 12.75 13H3.25A1.25 1.25 0 0 1 2 11.75z'/%3E%3C/svg%3E") center / 16px no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5a1.25 1.25 0 0 1 1.25-1.25h2.5l1.5 1.5h5.5A1.25 1.25 0 0 1 14 6.5v5.25A1.25 1.25 0 0 1 12.75 13H3.25A1.25 1.25 0 0 1 2 11.75z'/%3E%3C/svg%3E") center / 16px no-repeat;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip.folder { background: currentColor; -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5a1.25 1.25 0 0 1 1.25-1.25h2.5l1.5 1.5h5.5A1.25 1.25 0 0 1 14 6.5v5.25A1.25 1.25 0 0 1 12.75 13H3.25A1.25 1.25 0 0 1 2 11.75z'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5a1.25 1.25 0 0 1 1.25-1.25h2.5l1.5 1.5h5.5A1.25 1.25 0 0 1 14 6.5v5.25A1.25 1.25 0 0 1 12.75 13H3.25A1.25 1.25 0 0 1 2 11.75z'/%3E%3C/svg%3E"); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip.mesh { background: currentColor; -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2 13.25 5v6L8 14 2.75 11V5z M2.75 5 8 8l5.25-3 M8 8v6'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2 13.25 5v6L8 14 2.75 11V5z M2.75 5 8 8l5.25-3 M8 8v6'/%3E%3C/svg%3E"); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip.cast { background: currentColor; -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.25a1.5 1.5 0 1 1 0 3 1.5 1.5 0 1 1 0-3z M5 7.25h6 M8 7.25v3.5 M6.25 13.75 8 10.75l1.75 3'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.25a1.5 1.5 0 1 1 0 3 1.5 1.5 0 1 1 0-3z M5 7.25h6 M8 7.25v3.5 M6.25 13.75 8 10.75l1.75 3'/%3E%3C/svg%3E"); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip.cam { background: currentColor; -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5.75A1.5 1.5 0 0 1 3.5 4.25h6A1.5 1.5 0 0 1 11 5.75v4.5a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 2 10.25z M11 7l3-1.5v5L11 9'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 5.75A1.5 1.5 0 0 1 3.5 4.25h6A1.5 1.5 0 0 1 11 5.75v4.5a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 2 10.25z M11 7l3-1.5v5L11 9'/%3E%3C/svg%3E"); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .v2-outliner-chip.light { background: currentColor; -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 1 1 0-5z M8 1.75v1.5 M8 12.75v1.5 M1.75 8h1.5 M12.75 8h1.5 M3.6 3.6l1 1 M11.4 11.4l1 1 M3.6 12.4l1-1 M11.4 4.6l1-1'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 5.5a2.5 2.5 0 1 1 0 5 2.5 2.5 0 1 1 0-5z M8 1.75v1.5 M8 12.75v1.5 M1.75 8h1.5 M12.75 8h1.5 M3.6 3.6l1 1 M11.4 11.4l1 1 M3.6 12.4l1-1 M11.4 4.6l1-1'/%3E%3C/svg%3E"); }
+/* The toggles draw the same chevron as the rest of the shell. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle:not(.placeholder) {
+	font-size: 0;
+	color: var(--text-3);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle:not(.placeholder)::before {
+	content: "";
+	display: block;
+	width: 10px;
+	height: 10px;
+	margin: auto;
+	background: currentColor;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4 5 6.5 7.5 4'/%3E%3C/svg%3E") center / 10px no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4 5 6.5 7.5 4'/%3E%3C/svg%3E") center / 10px no-repeat;
+	transition: transform .12s ease;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-toggle[aria-expanded="false"]::before { transform: rotate(-90deg); }
+/* The scene switch reads as the tree's root row. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row.icon-only .v2-outliner-chip { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 5.5 8 2.75l5.5 2.75L8 8.25z M2.5 8.25 8 11l5.5-2.75 M2.5 11 8 13.75 13.5 11'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 5.5 8 2.75l5.5 2.75L8 8.25z M2.5 8.25 8 11l5.5-2.75 M2.5 11 8 13.75 13.5 11'/%3E%3C/svg%3E"); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row.icon-only .v2-outliner-type { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap .hierarchy-scene-pill { margin: 0 4px 0 2px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap .hierarchy-scene-pill .trigger {
+	height: 30px;
+	padding: 0 6px;
+	border-radius: 8px;
+	background: none;
+	color: var(--text-1);
+	font-size: 13px;
+	text-transform: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap .hierarchy-scene-pill .trigger:hover,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-outliner .hierarchy-row-wrap .hierarchy-scene-pill .dropdown.open .trigger { background: var(--chip-fill); }
+
+/* ------------------------------------------------------------- Library */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 6px 4px;
+	height: auto;
+	padding: 6px 8px 10px 12px;
+	border: 0;
+	box-shadow: inset 0 .5px 0 var(--divider-strong);
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-collapse { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tabs { display: flex; flex: 1 1 auto; gap: 2px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tabs button {
+	height: 26px;
+	padding: 0 6px;
+	border: 0;
+	border-radius: 13px;
+	background: none;
+	box-shadow: none;
+	color: var(--label);
+	font: 600 11px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tabs button[aria-selected="true"] { color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tabs button:hover { color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker {
+	position: relative;
+	display: flex;
+	align-items: center;
+	height: 26px;
+	border-radius: 13px;
+	color: var(--text-soft);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker:hover { background: var(--chip-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker select {
+	-webkit-appearance: none;
+	appearance: none;
+	height: 26px;
+	padding: 0 22px 0 10px;
+	border: 0;
+	background: none;
+	color: inherit;
+	font: 400 12px var(--sans);
+	cursor: pointer;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker svg {
+	position: absolute;
+	right: 8px;
+	width: 10px;
+	height: 10px;
+	fill: none;
+	stroke: var(--label);
+	stroke-width: 1.3;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	pointer-events: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-search {
+	order: 9;
+	flex: 1 0 100%;
+	box-sizing: border-box;
+	width: auto;
+	height: 30px;
+	margin: 4px 0 0;
+	padding: 0 10px 0 30px;
+	border: 0;
+	border-radius: 15px;
+	background: var(--field-fill) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%238e8e96' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 2.75a4.25 4.25 0 1 1 0 8.5 4.25 4.25 0 1 1 0-8.5z M10.25 10.25l3 3'/%3E%3C/svg%3E") 10px center / 14px no-repeat;
+	color: var(--text-1);
+	font: 400 13px var(--sans);
+	box-shadow: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-body { display: flex; flex-direction: column; min-height: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folders { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-main { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 14px 8px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-grid {
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 12px 8px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	gap: 5px;
+	padding: 0;
+	border: 0;
+	background: none;
+	box-shadow: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile-thumb {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 100%;
+	aspect-ratio: 1;
+	height: auto;
+	border: 0;
+	border-radius: 12px;
+	background: var(--tile-fill);
+	box-shadow: none;
+	color: var(--tile-stroke);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile:hover .content-tile-thumb { background: var(--chip-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile[aria-pressed="true"] .content-tile-thumb {
+	background: var(--tile-sel-fill);
+	box-shadow: var(--tile-sel-ring);
+	color: var(--seg-on-text);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile .asset-card-preview {
+	width: 30px;
+	height: 30px;
+	color: inherit;
+	filter: none;
+	opacity: 1;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile .asset-card-preview * {
+	fill: none;
+	stroke: currentColor;
+	stroke-width: 1.25px;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+	opacity: 1;
+	vector-effect: non-scaling-stroke;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile-name {
+	width: 100%;
+	color: var(--tile-label);
+	font: 400 11px var(--sans);
+	text-align: center;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile[aria-pressed="true"] .content-tile-name { color: var(--seg-on-text); font-weight: 600; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tile-type { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-hint {
+	flex: none;
+	margin: 0;
+	padding: 8px 18px 14px;
+	color: var(--text-3);
+	font-size: 11px;
+}
+
+/* ------------------------------------------------------------- Details */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .inspector-pane { overflow: hidden; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .details-panel-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 48px;
+	min-height: 48px;
+	padding: 0 8px 0 16px;
+	border: 0;
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .details-panel-title { flex: 1 1 auto; color: var(--text-1); font: 600 14px var(--sans); letter-spacing: -.01em; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .details-selection {
+	flex: 1 1 auto;
+	display: flex;
+	align-items: baseline;
+	gap: 8px;
+	min-width: 0;
+	padding: 0;
+	border: 0;
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .details-selection-name {
+	overflow: hidden;
+	color: var(--text-1);
+	font: 600 14px var(--sans);
+	letter-spacing: -.01em;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .details-selection-type {
+	flex: none;
+	color: var(--label);
+	font: 400 12px var(--sans);
+	white-space: nowrap;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .inspector-actions-trigger {
+	width: 30px;
+	height: 30px;
+	border: 0;
+	border-radius: 15px;
+	background: none;
+	color: var(--text-2);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .inspector-actions-trigger:hover { background: var(--chip-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .inspector-scroll { padding: 0 0 14px; }
+/* Sections: an 11px label, then the body as one rounded card. */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section {
+	padding: 0;
+	border: 0;
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-head {
+	height: 30px;
+	padding: 8px 18px 0;
+	gap: 6px;
+	background: none;
+	color: var(--label);
+	font: 600 11px var(--sans);
+	line-height: 22px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-head:hover { background: none; color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-title { order: 1; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-arrow {
+	order: 2;
+	width: 10px;
+	height: 22px;
+	opacity: 0;
+	transition: opacity .12s ease;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-head:hover .foldout-arrow,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-arrow[data-open="false"] { opacity: 1; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-arrow::before {
+	width: 10px;
+	height: 10px;
+	border: 0;
+	background: currentColor;
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4 5 6.5 7.5 4'/%3E%3C/svg%3E") center / 10px no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 4 5 6.5 7.5 4'/%3E%3C/svg%3E") center / 10px no-repeat;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .foldout-body {
+	gap: 2px;
+	margin: 6px 12px 0;
+	padding: 6px 10px 8px 12px;
+	border-radius: 12px;
+	background: var(--card-fill);
+	box-shadow: var(--card-ring);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .row,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .row.v2-details-row {
+	min-height: 32px;
+	color: var(--text-1);
+	font-size: 13px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .row > span:first-child,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .vec3-label,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .field > label {
+	color: var(--text-soft);
+	font-size: 12px;
+	text-transform: none;
+	letter-spacing: 0;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .vec3-row { min-height: 32px; gap: 5px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .number-field {
+	height: 24px;
+	border: 0;
+	border-radius: 6px;
+	background: var(--field-fill);
+	font-size: 12px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .number-field .axis { font-size: 10px; font-weight: 600; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .field > input[type="text"],
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .field > input[type="number"],
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .field > select,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .field > textarea,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .field > .dropdown .trigger {
+	border: 0;
+	border-radius: 8px;
+	background: var(--field-fill);
+	font-size: 12px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .inspector-hint,
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section.v2-details-section .hint { color: var(--label); font-size: 11.5px; line-height: 1.4; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section .btn {
+	height: 26px;
+	border: 0;
+	border-radius: 13px;
+	background: var(--chip-fill);
+	box-shadow: none;
+	color: var(--text-1);
+	font: 500 12px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section .btn.primary { background: var(--primary-fill, var(--primary)); color: #fff; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section .add-subject {
+	height: 30px;
+	border: 0;
+	border-radius: 8px;
+	background: none;
+	color: var(--select-text);
+	font: 500 12px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section .add-subject:hover { background: var(--chip-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .v2-details-section .subject-box {
+	border: 0;
+	border-radius: 8px;
+	background: var(--field-fill);
+}
+
+/* --------------------------------------------------------------- Agent */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .studio-agent-inspector { overflow: hidden; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-header {
+	height: 48px;
+	min-height: 48px;
+	padding: 0 44px 0 16px;
+	border: 0;
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-title { font: 600 13px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-status-dot { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-header::before {
+	content: "";
+	flex: none;
+	width: 16px;
+	height: 16px;
+	margin-right: 8px;
+	background: var(--seg-on-text);
+	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.25c.4 2.9 1.85 4.35 4.75 4.75-2.9.4-4.35 1.85-4.75 4.75-.4-2.9-1.85-4.35-4.75-4.75 2.9-.4 4.35-1.85 4.75-4.75z M12.75 11.5v2.5 M11.5 12.75H14'/%3E%3C/svg%3E") center / 16px no-repeat;
+	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.25c.4 2.9 1.85 4.35 4.75 4.75-2.9.4-4.35 1.85-4.75 4.75-.4-2.9-1.85-4.35-4.75-4.75 2.9-.4 4.35-1.85 4.75-4.75z M12.75 11.5v2.5 M11.5 12.75H14'/%3E%3C/svg%3E") center / 16px no-repeat;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-ghost-button {
+	height: 28px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 14px;
+	background: none;
+	color: var(--text-2);
+	font: 500 12px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-ghost-button:hover { background: var(--chip-fill); color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .studio-agent-collapse { top: 10px; }
+
+/* ----------------------------------------------------------- Sequencer */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer {
+	--tl-header-height: 48px;
+	--tl-ruler-height: 24px;
+	--tl-track-row-height: 22px;
+	--tl-track-group-height: 66px;
+	/* The surface is exactly its rows (ruler + 2 lanes + 2 lane groups), so it
+	   never asks the body for more height than the dock gives it. */
+	--tl-surface-height: calc(var(--tl-ruler-height) + var(--tl-track-row-height) * 2 + var(--tl-track-group-height) * 2);
+	--tl-camera-bar-height: 28px;
+	--tl-track-tree-width: 170px;
+	--tl-clip-inset: 4px;
+	--tl-font-title: 15px;
+	background: none;
+	border: 0;
+	font-family: var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head {
+	height: 48px;
+	min-height: 48px;
+	gap: 12px;
+	padding: 0 16px;
+	border: 0;
+	background: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-title { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport { gap: 12px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn {
+	width: 30px;
+	height: 30px;
+	margin: 0;
+	border: 0;
+	border-radius: 0;
+	background: var(--field-fill);
+	color: var(--text-soft);
+	font-size: 13px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn:first-child { border-radius: 15px 0 0 15px; padding-left: 4px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn.play {
+	width: 34px;
+	margin: 0 -12px;
+	position: relative;
+	z-index: 1;
+	border-radius: 13px;
+	background: var(--seg-on);
+	box-shadow: var(--seg-on-shadow), 0 0 0 2px var(--field-fill);
+	color: var(--text-1);
+	font-size: 11px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-transport > .tl-btn:nth-child(3) { border-radius: 0 15px 15px 0; padding-right: 4px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-readout { display: flex; align-items: baseline; gap: 6px; margin-left: 0; font-family: var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-readout b { color: var(--text-1); font: 600 15px var(--sans); letter-spacing: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-readout span { color: var(--label); font: 400 12px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-sequencer-actions,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head-group {
+	height: 30px;
+	gap: 2px;
+	padding: 0 2px;
+	border-radius: 15px;
+	background: var(--field-fill);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-seq-action,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head-group .tl-btn {
+	height: 26px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 13px;
+	background: none;
+	box-shadow: none;
+	color: var(--text-soft);
+	font: 500 12px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-seq-action:hover:not(:disabled),
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head-group .tl-btn:hover:not(:disabled) { background: var(--chip-fill); color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-seq-action:disabled { opacity: .4; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-btn.wp.on { background: var(--seg-on); box-shadow: var(--seg-on-shadow); color: var(--seg-on-text); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-badge {
+	height: 22px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 11px;
+	background: none;
+	color: var(--label);
+	font: 500 11px var(--sans);
+	letter-spacing: 0;
+	text-transform: none;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-toggle {
+	width: 28px;
+	height: 28px;
+	border: 0;
+	border-radius: 14px;
+	background: none;
+	color: var(--label);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-toggle:hover { background: var(--chip-fill); color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-body,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-surface { background: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-ruler { background: none; border: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-ruler-label { border: 0; background: none; color: transparent; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick { color: var(--text-3); font: 400 10px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick i { height: 4px; background: var(--hairline); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-frame-box {
+	top: 3px;
+	height: 18px;
+	min-width: 0;
+	padding: 0 7px;
+	border-radius: 9px;
+	background: var(--primary-fill, var(--select));
+	color: #fff;
+	font: 600 10px var(--sans);
+	transform: translateX(-50%);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-playhead {
+	width: 1.5px;
+	background: var(--primary-fill, var(--select));
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track { border: 0; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-label { border: 0; background: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-subrow { padding: 0 8px 0 16px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-subrow.indent { padding-left: 30px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-chip {
+	color: var(--text-1);
+	font: 500 12px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-subrow.indent .tl-track-chip { color: var(--label); font-size: 11.5px; font-weight: 400; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-chip::before { width: 6px; height: 6px; border-radius: 3px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-subrow.indent .tl-track-chip::before { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-add {
+	height: 22px;
+	padding: 0 8px;
+	border: 0;
+	border-radius: 11px;
+	background: var(--chip-fill);
+	color: var(--text-soft);
+	font: 500 11px var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-lane { background: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-lane:hover { background: var(--tile-fill); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-grid { display: none; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-motion-clip,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-prompt-clip,
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot { border-radius: 5px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-shot-empty { color: var(--text-3); font: 400 11.5px var(--sans); }
+
+/* ----------------------------------------------------------- Shot card */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-dock { position: relative; }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-card {
+	position: absolute;
+	top: 0;
+	right: 0;
+	bottom: 0;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	width: var(--shell-camera);
+	padding: 0 14px 12px;
+	box-shadow: inset .5px 0 0 var(--divider-strong);
+	color: var(--text-1);
+	font-family: var(--sans);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-head {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 48px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-card svg {
+	flex: none;
+	width: 16px;
+	height: 16px;
+	fill: none;
+	stroke: var(--text-2);
+	stroke-width: 1.3;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-title { flex: 1 1 auto; font: 600 12px var(--sans); }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-meta { color: var(--label); font-size: 11px; }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-frame {
+	flex: 1 1 auto;
+	min-height: 60px;
+	border-radius: 10px;
+	background: none;
+	/* The frame is a hole onto the stage canvas; a hairline ring makes it
+	   read as a framed picture on the card, not a dark patch in it. */
+	box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios {
+	flex: none;
+	box-sizing: border-box;
+	display: grid;
+	grid-template-columns: repeat(5, minmax(0, 1fr));
+	gap: 2px;
+	height: 28px;
+	margin-top: 8px;
+	padding: 2px;
+	border-radius: 14px;
+	background: var(--chip-fill);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios button {
+	border: 0;
+	border-radius: 12px;
+	background: none;
+	color: var(--text-2);
+	font: 400 11.5px var(--sans);
+	cursor: pointer;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios button:hover { color: var(--text-1); }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios button[aria-checked="true"] {
+	background: var(--seg-on);
+	box-shadow: var(--seg-on-shadow);
+	color: var(--text-1);
+	font-weight: 600;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-foot {
+	flex: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	height: 28px;
+	margin-top: 8px;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-name {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+	color: var(--text-2);
+	font-size: 12px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-range { color: var(--text-3); }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	height: 28px;
+	padding: 0 12px 0 10px;
+	border: 0;
+	border-radius: 14px;
+	background: var(--chip-fill);
+	color: var(--text-1);
+	font: 500 12px var(--sans);
+	cursor: pointer;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look:hover { filter: brightness(1.15); }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look svg { width: 14px; height: 14px; stroke: currentColor; }
+
+/* ------------------------------------------------------------- fix-ups */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-project-head .project-menu-wrap {
+	align-self: flex-start;
+	margin: 0;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .details-selection { flex-direction: row; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .inspector-sidebar { gap: var(--shell-gap); }
+/* "+ Add shot" in the narrow track column: a round plus at its right edge. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-add {
+	right: 8px;
+	width: 22px;
+	min-width: 22px;
+	padding: 0;
+	font-size: 0;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-track-add::before {
+	content: "+";
+	font-size: 14px;
+	line-height: 22px;
+}
+
+/* The Sequencer head drops its secondary groups as the dock narrows. */
+.app[data-shell="glass"]:not([data-embed-mode]) .bottom-timeline { container-type: inline-size; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head { overflow: hidden; }
+@container (max-width: 760px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-badge { display: none; }
+}
+@container (max-width: 620px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-view-tools { display: none; }
+}
+@container (max-width: 580px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-sequencer-actions { display: none; }
+}
+@container (max-width: 480px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-readout span { display: none; }
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios button { min-width: 0; padding: 0; font-size: 11px; }
+
+/* Ruler labels thin out instead of running together. */
+/* The dock is sized to the lane grid (shell.css), so the body only ever
+   scrolls sideways with the zoom; a vertical bar here would mean a lane is
+   off screen, which the shell does not allow. The body is pinned to the
+   surface height: the camera bar above it has its own reserved row and can
+   never take height from the lanes. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-body {
+	flex: 0 0 var(--tl-surface-height);
+	height: var(--tl-surface-height);
+	min-height: var(--tl-surface-height);
+	overflow-y: hidden;
+	scrollbar-width: thin;
+}
+/* The camera bar's row is always there: empty when no shot is selected, so
+   selecting one changes what the row shows, not where the lanes sit. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head { margin-bottom: var(--tl-camera-bar-height); }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-camera-editor {
+	flex: 0 0 var(--tl-camera-bar-height);
+	min-height: var(--tl-camera-bar-height);
+	max-height: var(--tl-camera-bar-height);
+	margin-top: calc(-1 * var(--tl-camera-bar-height));
+	border: 0;
+	background: none;
+}
+@container (max-width: 900px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick:nth-child(2n of .tl-tick) { color: transparent; }
+}
+@container (max-width: 560px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick:not(:nth-child(4n + 1 of .tl-tick)) { color: transparent; }
+}
+/* Library head stays one line: tabs left, folder picker right. */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tabs { flex: 0 0 auto; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker { min-width: 0; margin-left: auto; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker select {
+	field-sizing: content;
+	max-width: 132px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* A narrow shot card keeps Look through as its icon. */
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-card { container-type: inline-size; }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look { flex: none; white-space: nowrap; }
+@container (max-width: 240px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look { width: 28px; padding: 0; justify-content: center; font-size: 0; gap: 0; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-meta { display: none; }
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-head {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: center;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-head > .content-search { grid-column: 1 / -1; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker { justify-self: end; max-width: 100%; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker select { max-width: 100%; }

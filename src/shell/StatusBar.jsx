@@ -7,9 +7,10 @@ import "./topbar.css";
 const BUSY = ["preparing", "encoding", "finalizing"];
 
 // 2a status bar: status text on the left (export progress, retry and cancel
-// take that slot while an export runs, G7); fps and save state on the right.
+// take that slot while an export runs, G7); fps and the source offer on the
+// right. #570: the save state sits under the project name (ProjectHead).
 export default function StatusBar() {
-	const { statusText, exportStatus, exportPhaseLabel, resultOpen, recState, tlFps, saveStatus } = useStudioShell();
+	const { statusText, exportStatus, exportPhaseLabel, resultOpen, recState, tlFps } = useStudioShell();
 	// A frame export's status is already shown inside its result dialog.
 	const exportShown = exportStatus && !(resultOpen && exportStatus.kind === "frame");
 	return (
@@ -20,7 +21,6 @@ export default function StatusBar() {
 					: <span className="statusbar-text">{statusText || ko("Ready", "준비")}</span>}
 			</div>
 			<span className="statusbar-fps" title={ko("Timeline frame rate", "타임라인 프레임 레이트")}>{tlFps} fps</span>
-			<SaveState status={saveStatus} />
 			<SourceOffer />
 		</footer>
 	);
@@ -78,7 +78,7 @@ function relativeTime(ms) {
 
 // "Saved 2 min ago" once a save completes in this session; otherwise the
 // project's own save state (Unsaved changes, Saving…, Save failed, Not saved).
-function SaveState({ status }) {
+export function SaveState({ status }) {
 	const [savedAt, setSavedAt] = useState(null);
 	const [now, setNow] = useState(() => Date.now());
 	const previous = useRef(status.state);

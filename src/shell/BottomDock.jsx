@@ -1,23 +1,23 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import { logStore } from "./log-store.js";
 import "./dock.css";
 import { ko } from "../locale.js";
-import AssetPane from "../asset-pane.jsx";
 import Timeline from "../ardy/timeline.jsx";
-import { DEFAULT_PLAYBACK_SPEED, sceneObjectNameDisplayKo } from "../app-stage.jsx";
+import { DEFAULT_PLAYBACK_SPEED, SHOT_ASPECT_PRESETS, sceneObjectNameDisplayKo } from "../app-stage.jsx";
 import { motionEditLayout, createMotionEdit } from "../ardy/motion-edit.js";
 import { trackFeature } from "../analytics.js";
 import { defaultRailRange } from "../camera-rail-schedule.js";
 
 // G11: the dock resizes within [220, 480] px, and never so far that the 3D
 // viewport drops under 480 px (top bar 44 + status bar 24 + three 1 px gaps).
-export const DOCK_MIN_HEIGHT = 220;
+// Never below the sequencer's own grid (shell.css --shell-dock-default): a
+// shorter dock would have to scroll its lanes.
+export const DOCK_MIN_HEIGHT = 324;
 export const DOCK_MAX_HEIGHT = 480;
 const VIEWPORT_MIN_HEIGHT = 480;
 const SHELL_FIXED_ROWS = 44 + 24 + 3;
 const DOCK_HEIGHT_KEY = "cozyclay.dock.height.v1";
-const CONTENT_COLLAPSED_KEY = "cozyclay.dock.content-collapsed.v1";
 
 function clampDockHeight(height) {
 	const roomy = Math.min(DOCK_MAX_HEIGHT, window.innerHeight - SHELL_FIXED_ROWS - VIEWPORT_MIN_HEIGHT);
@@ -45,17 +45,9 @@ function readDockHeight() {
 	return Number.isFinite(stored) && stored > 0 ? stored : null;
 }
 
-function readContentCollapsed() {
-	return readStored(CONTENT_COLLAPSED_KEY) === "1";
-}
-
 export default function BottomDock() {
 	const {
-		setBottomTab, beginAssetDrag, shelfImageIds, shelfMeshIds,
-		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
-		projectAssetGraphSignature, assetTrash, deleteUnusedAsset, undoDeletedAsset, deletingAssetId,
-		projectManifest, tlFrame, motion, waypointMode,
-		takeVersions, loadTakeVersion, craneSelectedIndex,
+		tlFrame, motion, waypointMode, craneSelectedIndex,
 		isCameraSelection, addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFrameCount,
 		tlFps, characters, activeCharIndex, ghostLayers, pathSpeed,
 		tlPlaying, workflowMode, waypoints, pendingWaypointFrame, promptClips,
@@ -75,10 +67,9 @@ export default function BottomDock() {
 		activeCamera, activeShotDuration, changeActiveCamera, cameraRail, previewCameraShot,
 		toggleCameraRailDraw, deleteCameraRail, selectTimelineShot, shotsDomain, runStudioAction,
 		clearMotion, subscribeToasts, exportStatus, exportPhaseLabel, ardyRunning, ardyStatus,
-		ardyOutcome, spawnCharacter, addSceneObject, allPoses,
+		ardyOutcome,
 	} = useStudioShell();
 	const dockRef = useRef(null);
-	const [contentCollapsed, setContentCollapsed] = useState(readContentCollapsed);
 	const [dockHeight, setDockHeight] = useState(readDockHeight);
 	const dockHeightRef = useRef(dockHeight);
 	dockHeightRef.current = dockHeight;
@@ -139,14 +130,6 @@ export default function BottomDock() {
 		event.preventDefault();
 	}
 
-	function changeContentCollapsed(next) {
-		setContentCollapsed(next);
-		writeStored(CONTENT_COLLAPSED_KEY, next ? "1" : "0");
-	}
-
-	// App scans imported assets only while they are on screen.
-	const changeShelfVisible = useCallback((visible) => setBottomTab(visible ? "assets" : "timeline"), [setBottomTab]);
-
 	// Session Log: every toast (App fans each one out to subscribeToasts),
 	// generation jobs and export phases. The toast sink set lives for the
 	// whole session, so one subscription on mount is enough.
@@ -181,19 +164,8 @@ export default function BottomDock() {
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [exportPhase, exportLabel, exportMessage, exportDone, exportTotal]);
 
-	// Double-click in Content: the same payloads the drag carries, placed at
-	// the origin through the named domain actions.
-	function placeAssetAtOrigin(payload) {
-		const origin = { x: 0, z: 0 };
-		if (payload.kind === "character") spawnCharacter(payload.id, origin.x, origin.z);
-		else if (payload.kind === "object") addSceneObject(payload.objectKind, origin);
-		else if (payload.kind === "image" || payload.kind === "mesh") {
-			runStudioAction("asset.import", { assetId: payload.assetId, placeAs: payload.kind === "mesh" ? "mesh" : "cutout", placement: origin });
-		}
-	}
-
 	return (
-		<div className="bottom-window v2-dock" ref={dockRef} data-content-collapsed={contentCollapsed || undefined}>
+		<div className="bottom-window v2-dock" ref={dockRef}>
 			<div
 				className="v2-dock-resize"
 				data-testid="dock-resize-handle"
@@ -207,33 +179,6 @@ export default function BottomDock() {
 				onPointerDown={beginDockResize}
 				onKeyDown={onDockResizeKey}
 			/>
-			<div className="assets-pane">
-				<AssetPane
-					onAssetGrab={beginAssetDrag}
-					onAssetPlace={placeAssetAtOrigin}
-					imageAssetIds={shelfImageIds}
-					meshAssetIds={shelfMeshIds}
-					manageStorage={manageAssetStorage}
-					onManageStorageToggle={() => setManageAssetStorage((current) => !current)}
-					unusedAssetIds={unusedAssetIds}
-					usedAssetIds={usedAssetIds}
-					usageCounts={usageCounts}
-					graphSignature={projectAssetGraphSignature}
-					trashCount={assetTrash.length}
-					onDeleteUnusedAsset={deleteUnusedAsset}
-					onUndoDelete={undoDeletedAsset}
-					deletingAssetId={deletingAssetId}
-					resourceManifest={projectManifest}
-					shots={shots}
-					takeVersions={takeVersions}
-					poses={allPoses}
-					onShotOpen={selectTimelineShot}
-					onTakeOpen={loadTakeVersion}
-					collapsed={contentCollapsed}
-					onCollapsedChange={changeContentCollapsed}
-					onShelfVisibleChange={changeShelfVisible}
-				/>
-			</div>
 			<div className="bottom-timeline">
 			<Timeline
 				frame={tlFrame}
@@ -402,6 +347,62 @@ export default function BottomDock() {
 			onClearMotion={motion ? clearMotion : null}
 		/>
 			</div>
+			<ShotCard />
 		</div>
+	);
+}
+
+// #570: the ratios offered on the card; the rest stay in Camera mode's menu.
+const CARD_RATIOS = [
+	{ key: "16:9", label: "16:9" },
+	{ key: "2.39:1", label: "2.39" },
+	{ key: "4:3", label: "4:3" },
+	{ key: "1:1", label: "1:1" },
+	{ key: "9:16", label: "9:16" },
+];
+
+/** The shot camera's card at the dock's right end. The camera itself is drawn
+ * into the stage canvas under `.vp-shot-preview`, which sits over the card's
+ * frame slot (see glass.css); the card holds its title, ratio and look-through. */
+function ShotCard() {
+	const { activeShot, shot, shotAspectKey, runStudioAction, enterShotLook, tlFps, embedMode } = useStudioShell();
+	if (embedMode) return null;
+	const ratio = SHOT_ASPECT_PRESETS[shotAspectKey]?.label?.replace(/:1$/, "") ?? shotAspectKey;
+	const frames = activeShot && Number.isFinite(activeShot.startFrame) && Number.isFinite(activeShot.endFrame)
+		? `${activeShot.startFrame}–${activeShot.endFrame} · ${((activeShot.endFrame - activeShot.startFrame + 1) / (tlFps || 24)).toFixed(1)}s`
+		: null;
+	return (
+		<section className="dock-shot-card" aria-label={ko("Shot Camera", "샷 카메라")}>
+			<header className="dock-shot-head">
+				<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 5.75A1.5 1.5 0 0 1 3.5 4.25h6A1.5 1.5 0 0 1 11 5.75v4.5a1.5 1.5 0 0 1-1.5 1.5h-6A1.5 1.5 0 0 1 2 10.25z M11 7l3-1.5v5L11 9" /></svg>
+				<span className="dock-shot-title">{ko("Shot Camera", "샷 카메라")}</span>
+				<span className="dock-shot-meta">{shot.focalMm} mm · {ratio}</span>
+			</header>
+			<div className="dock-shot-frame" aria-hidden="true" />
+			<div className="dock-shot-ratios" role="radiogroup" aria-label={ko("Shot aspect ratio", "샷 화면 비율")}>
+				{CARD_RATIOS.map((entry) => (
+					<button
+						type="button"
+						role="radio"
+						key={entry.key}
+						data-aspect={entry.key}
+						aria-checked={shotAspectKey === entry.key}
+						onClick={() => runStudioAction("stage.setFilmback", { shotAspect: entry.key })}
+					>
+						{entry.label}
+					</button>
+				))}
+			</div>
+			<footer className="dock-shot-foot">
+				<span className="dock-shot-name">
+					{activeShot?.name ?? ko("No shot yet", "샷 없음")}
+					{frames && <span className="dock-shot-range"> · {frames}</span>}
+				</span>
+				<button type="button" className="dock-shot-look" onClick={enterShotLook} title={ko("Look through the shot camera (Esc returns)", "샷 카메라 시점으로 보기 (Esc로 복귀)")}>
+					<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.75 8S4 3.75 8 3.75 14.25 8 14.25 8 12 12.25 8 12.25 1.75 8 1.75 8z M8 6.25a1.75 1.75 0 1 1 0 3.5 1.75 1.75 0 1 1 0-3.5z" /></svg>
+					{ko("Look through", "샷 시점")}
+				</button>
+			</footer>
+		</section>
 	);
 }

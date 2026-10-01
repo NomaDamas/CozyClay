@@ -28,6 +28,8 @@ export const SHOT_ASPECT = 16 / 9;
  * styles.css) rather than the scene's sky. Kept in sync by eye: a mismatch
  * here reads as a seam around the frame, not as a wrong colour. */
 export const LETTERBOX = new THREE.Color("#1e1e1e");
+// The light theme's bars take the light panel tone, not a black slab.
+export const LETTERBOX_LIGHT = new THREE.Color("#dcdde1");
 /** half-height of the plan frustum, in metres — covers the full camera throw */
 export const PLAN_EXTENT = 12.4;
 
@@ -113,7 +115,7 @@ export function fitAspect(rect, aspect) {
 	return { x: rect.x + (rect.w - w) / 2, y: rect.y + (rect.h - h) / 2, w, h };
 }
 
-export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCamRef, planCamRef, poserCamRef, editorCamRef, ikMode = false, planIsMain, playMode = false, lookThrough = false, insetCollapsed = false, planZoom = 1, shotAspect = SHOT_ASPECT }) {
+export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCamRef, planCamRef, poserCamRef, editorCamRef, ikMode = false, planIsMain, playMode = false, lookThrough = false, insetCollapsed = false, planZoom = 1, shotAspect = SHOT_ASPECT, editorLook = false }) {
 	const invalidate = useThree((state) => state.invalidate);
 	const lastPoserPose = useRef({ position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), valid: false });
 	const interactivePixelRatio = useRef({ base: null, reduced: false, needsFrozenRedraw: false });
@@ -129,6 +131,22 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 			cancelAnimationFrame(f2);
 		};
 	}, [invalidate]);
+	// The theme is read per frame, but a demand-mode canvas draws nothing after
+	// a toggle unless something asks for a frame.
+	useEffect(() => {
+		window.addEventListener("cozyclay:theme-change", invalidate);
+		return () => window.removeEventListener("cozyclay:theme-change", invalidate);
+	}, [invalidate]);
+	// Likewise when the preview card is resized (the dock handle changes
+	// --shell-dock): the dock's glass hole grows at once, and without a new
+	// frame it shows whatever the canvas last drew there.
+	useEffect(() => {
+		const card = shotPreviewRef?.current;
+		if (!card || typeof ResizeObserver === "undefined") return undefined;
+		const observer = new ResizeObserver(() => invalidate());
+		observer.observe(card);
+		return () => observer.disconnect();
+	}, [shotPreviewRef, invalidate]);
 	const { gl, scene, size } = useThree();
 	const edgePass = useMemo(() => {
 		const target = new THREE.WebGLRenderTarget(1, 1, {
@@ -230,7 +248,11 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 		// A collapsed inset is just its tag pill: skip the whole inset pass
 		// instead of drawing a squished viewport into it.
 		const insetRect = insetCollapsed ? { x: 0, y: 0, w: 0, h: 0 } : rectOf(insetRef.current);
-		if (mainRect.w < 2 || (!playMode && !insetCollapsed && insetRect.w < 2)) return;
+		// The glass shell hides the plan/shot inset with CSS (display: none), which
+		// leaves it 0x0. That skips the inset pass like a collapsed one; it must not
+		// skip the main pane, or the stage stays blank.
+		const insetOff = insetCollapsed || (!playMode && insetRect.w < 2);
+		if (mainRect.w < 2) return;
 
 		const planPane = planIsMain ? mainRect : insetRect;
 		const shotPane = planIsMain ? insetRect : mainRect;
@@ -292,11 +314,13 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 		// rather than information. They take the editor's own tone instead, and
 		// the scene draw is scissored to the image so the sky inside the frame is
 		// untouched.
+		const uiTheme = typeof document !== "undefined" ? document.documentElement.dataset.theme : undefined;
+		const letterbox = uiTheme === "light" ? LETTERBOX_LIGHT : LETTERBOX;
 		const draw = (camera, pane, imageRect, ink = true) => {
 			const glY = size.height - (pane.y + pane.h);
 			gl.setScissorTest(true);
 			gl.setScissor(pane.x, glY, pane.w, pane.h);
-			gl.setClearColor(LETTERBOX, 1);
+			gl.setClearColor(letterbox, 1);
 			gl.clear(true, true, false);
 			const img = imageRect ?? pane;
 			const imgY = size.height - (img.y + img.h);
@@ -350,9 +374,38 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 				gl.autoClear = true;
 			}
 		};
+		// The stage is the grey workbench in every pane and in every capture
+		// (STAGE_BACKGROUND, room.jsx), so an editor pane is a plain draw.
+		const drawEditorPane = draw;
 		const drawVisibleInset = (...args) => {
-			if (!insetCollapsed) draw(...args);
+			if (!insetOff) draw(...args);
 		};
+		// The shot card. Every main-pane draw above covers the whole canvas,
+		// including the pixels under the card, so the card is repainted every
+		// frame — a camera drag used to leave the editor's pixels showing through
+		// it. Only the ink pass waits for the gesture to settle.
+		const drawPreviewCard = () => {
+			const previewEl = shotPreviewRef?.current;
+			if (!previewEl || previewEl.hidden) return;
+			const previewRect = rectOf(previewEl);
+			// The inset card's header strip (src/shell/viewport.css) is chrome:
+			// the frame is drawn into the card body below it.
+			const header = parseFloat(getComputedStyle(previewEl).getPropertyValue("--shot-preview-header")) || 0;
+			previewRect.y += header;
+			previewRect.h -= header;
+			if (previewRect.w < 2 || previewRect.h < 2) return;
+			const previewMask = shotCam.layers.mask;
+			shotCam.layers.disable(GIZMO_LAYER);
+			draw(shotCam, previewRect, fitAspect(previewRect, shotAspect), !navigatingCamera);
+			shotCam.layers.mask = previewMask;
+		};
+		// The heads' facing marks are the exported frame's heading cue, not
+		// something to look at: the studio hides them in every on-screen draw and
+		// puts them back before the frame ends, so captures (which render outside
+		// this loop) still carry them.
+		const marks = [];
+		if (editorLook) scene.traverse((node) => { if (node.userData.facingMark) marks.push(node); });
+		for (const mark of marks) mark.visible = false;
 
 		gl.autoClear = true;
 		shotCam.aspect = shotAspect;
@@ -378,65 +431,58 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 		// tested first, so the Workflow embed and the playground rail land HERE —
 		// the framed player — and never in the editing draw below that keeps the
 		// gizmo layer, the plan inset, and fly controls on the shot camera.
-		if (playMode) {
-			// PlayView (Unity Game view): the shot camera owns the whole pane —
-			// no plan inset, no editing chrome, just the framed output. Editor
-			// furniture (selection cage, gizmo, grid, pins) lives on
-			// GIZMO_LAYER and is dropped for this draw, mask restored after.
-			const playMask = shotCam.layers.mask;
-			shotCam.layers.disable(GIZMO_LAYER);
-			draw(shotCam, mainRect, fitAspect(mainRect, shotAspect));
-			shotCam.layers.mask = playMask;
-		} else if (ikMode && poserCam) {
-			// IK mode: the main pane is the poser working view (free navigation,
-			// handle layer visible); the inset is the FROZEN shot camera — the
-			// separate camera-placement screen the framing lives on.
-			poserCam.aspect = mainRect.w / mainRect.h;
-			poserCam.updateProjectionMatrix();
-			draw(poserCam, mainRect, null, !navigatingCamera);
-			if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(shotCam, insetRect, fitAspect(insetRect, shotAspect), !navigatingCamera);
-		} else if (planIsMain) {
-			draw(planCam, planPane, null, false);
-			if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
-		} else if (editorCam && !lookThrough) {
-			// Split-camera editing: the main pane is the EDITOR camera — free
-			// navigation that never touches the recording. The shot camera only
-			// appears in its own preview pane, framed to the export aspect and
-			// stripped of editing chrome, exactly like an exported frame.
-			editorCam.aspect = mainRect.w / mainRect.h;
-			editorCam.updateProjectionMatrix();
-			// A right-drag is a camera gesture even with IK off. Keep the main
-			// image readable while the camera is moving by deferring the expensive
-			// edge/ink pass until the gesture ends; the static panes stay frozen too.
-			draw(editorCam, mainRect, null, !navigatingCamera);
-			if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(planCam, planPane, null, false);
-			const previewEl = shotPreviewRef?.current;
-			if (previewEl && !previewEl.hidden && (!navigatingCamera || redrawFrozenPanes)) {
-				const previewRect = rectOf(previewEl);
-				// The inset card's header strip (src/shell/viewport.css) is chrome:
-				// the frame is drawn into the card body below it.
-				const header = parseFloat(getComputedStyle(previewEl).getPropertyValue("--shot-preview-header")) || 0;
-				previewRect.y += header;
-				previewRect.h -= header;
-				if (previewRect.w >= 2 && previewRect.h >= 2) {
-					const previewMask = shotCam.layers.mask;
-					shotCam.layers.disable(GIZMO_LAYER);
-					draw(shotCam, previewRect, fitAspect(previewRect, shotAspect), !navigatingCamera);
-					shotCam.layers.mask = previewMask;
-				}
+		try {
+			if (playMode) {
+				// PlayView (Unity Game view): the shot camera owns the whole pane —
+				// no plan inset, no editing chrome, just the framed output. Editor
+				// furniture (selection cage, gizmo, grid, pins) lives on
+				// GIZMO_LAYER and is dropped for this draw, mask restored after.
+				const playMask = shotCam.layers.mask;
+				shotCam.layers.disable(GIZMO_LAYER);
+				draw(shotCam, mainRect, fitAspect(mainRect, shotAspect));
+				shotCam.layers.mask = playMask;
+			} else if (ikMode && poserCam) {
+				// IK mode: the main pane is the poser working view (free navigation,
+				// handle layer visible); the inset is the FROZEN shot camera — the
+				// separate camera-placement screen the framing lives on.
+				poserCam.aspect = mainRect.w / mainRect.h;
+				poserCam.updateProjectionMatrix();
+				drawEditorPane(poserCam, mainRect, null, !navigatingCamera);
+				if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(shotCam, insetRect, fitAspect(insetRect, shotAspect), !navigatingCamera);
+				drawPreviewCard();
+			} else if (planIsMain) {
+				draw(planCam, planPane, null, false);
+				if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
+				drawPreviewCard();
+			} else if (editorCam && !lookThrough) {
+				// Split-camera editing: the main pane is the EDITOR camera — free
+				// navigation that never touches the recording. The shot camera only
+				// appears in its own preview pane, framed to the export aspect and
+				// stripped of editing chrome, exactly like an exported frame.
+				editorCam.aspect = mainRect.w / mainRect.h;
+				editorCam.updateProjectionMatrix();
+				// A right-drag is a camera gesture even with IK off. Keep the main
+				// image readable while the camera is moving by deferring the expensive
+				// edge/ink pass until the gesture ends; the plan inset stays frozen.
+				drawEditorPane(editorCam, mainRect, null, !navigatingCamera);
+				if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(planCam, planPane, null, false);
+				drawPreviewCard();
+			} else {
+				// Shot camera in the main pane WITH the editing chrome. Look-through
+				// (the PiP expand) lands here so the operator
+				// can fly the recording lens with the same bindings as the free camera.
+				// The QA hook (`window.__cozyclay.setLookThrough`) draws the same path.
+				// Look-through is the recording lens: it keeps the authored stage.
+				draw(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
+				if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(planCam, planPane, null, false);
+				drawPreviewCard();
 			}
-		} else {
-			// Shot camera in the main pane WITH the editing chrome. Look-through
-			// (the PiP expand) lands here so the operator
-			// can fly the recording lens with the same bindings as the free camera.
-			// The QA hook (`window.__cozyclay.setLookThrough`) draws the same path.
-			draw(shotCam, shotPane, fitAspect(shotPane, shotAspect), !navigatingCamera);
-			if (!navigatingCamera || redrawFrozenPanes) drawVisibleInset(planCam, planPane, null, false);
+			if (redrawFrozenPanes) pixelState.needsFrozenRedraw = false;
+		} finally {
+			for (const mark of marks) mark.visible = true;
+			gl.setScissorTest(false);
+			gl.setViewport(0, 0, size.width, size.height);
 		}
-		if (redrawFrozenPanes) pixelState.needsFrozenRedraw = false;
-
-		gl.setScissorTest(false);
-		gl.setViewport(0, 0, size.width, size.height);
 	}, 1);
 
 	return null;

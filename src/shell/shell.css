@@ -1,58 +1,101 @@
 @layer shell {
-	/* Only the frame changes here. Region controls retain their legacy styles. */
+	/* #570 floating-glass frame. The viewport fills the window; the top bar,
+	   both columns, the dock and the status strip float over it. Region
+	   controls keep their own styles; glass.css restyles their surfaces. */
 	.app:not([data-embed-mode]) {
-		--shell-right-default: 340px;
-		--shell-dock-default: clamp(220px, 30vh, 330px);
-		display: grid;
-		grid-template-rows: 44px minmax(0, 1fr) var(--shell-dock-height, var(--shell-dock-default)) 24px;
-		gap: 1px;
+		--shell-gap: var(--float-gap, 12px);
+		--shell-left: var(--shell-left-width, var(--shell-left-default));
+		--shell-right: var(--shell-right-width, var(--shell-right-default));
+		--shell-left-default: 260px;
+		--shell-right-default: 300px;
+		--shell-dock: var(--shell-dock-height, var(--shell-dock-default));
+		/* The sequencer's fixed grid: 48px head + 28px camera bar (always
+		   reserved, see glass-regions.css) + 24px ruler + the lane rows
+		   (22 + 66 + 22 + 66 = 176) = 324px. The dock is exactly that tall, so
+		   every lane is on screen and the body never scrolls vertically. */
+		--shell-dock-default: 324px;
+		/* The shot card never takes more than 36 % of the dock, so the
+		   Sequencer keeps room on narrow windows. */
+		--shell-camera: min(var(--shell-camera-width, 340px), calc((100vw - var(--shell-center-left) - var(--shell-center-right)) * .36));
+		--shell-status-h: 28px;
+		--shell-dock-bottom: var(--shell-gap);
+		--shell-center-left: calc(var(--shell-left) + var(--shell-gap) * 2);
+		--shell-center-right: calc(var(--shell-right) + var(--shell-gap) * 2);
+		--shell-center-bottom: calc(var(--shell-dock) + var(--shell-status-h) + var(--shell-dock-bottom) + var(--shell-gap));
+		position: relative;
+		display: block;
 		height: 100vh;
 		min-height: 0;
+		overflow: hidden;
 		background: var(--surface-0);
+	}
+
+	@media (max-width: 1440px) {
+		.app:not([data-embed-mode]) { --shell-left-default: 236px; --shell-right-default: 272px; }
+	}
+	@media (max-width: 1180px) {
+		.app:not([data-embed-mode]) { --shell-left-default: 212px; --shell-right-default: 248px; }
 	}
 
 	.app:not([data-embed-mode]) > .main { display: contents; }
-	.app:not([data-embed-mode]) .topbar {
-		grid-row: 1;
-		height: 44px;
-		border: 0;
-		background: var(--surface-bar);
-	}
-	.app:not([data-embed-mode]) .brandbar {
-		grid-row: 4;
-		height: 24px;
-		border: 0;
-		background: var(--surface-bar);
-	}
-	.app:not([data-embed-mode]) .brandbar::before { display: none; }
-
 	.app:not([data-embed-mode]) .workspace {
-		position: relative;
-		grid-row: 2;
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) var(--shell-right-width, var(--shell-right-default));
-		gap: 1px;
+		position: absolute;
+		inset: 0;
+		display: block;
 		min-width: 0;
 		min-height: 0;
 	}
+
+	/* The stage is full-bleed: panels are glass over it. */
 	.app:not([data-embed-mode]) .viewport {
-		width: 100%;
-		height: 100%;
+		position: absolute;
+		inset: 0;
+		width: auto;
+		height: auto;
 		min-height: 0;
 		padding: 0;
 	}
-	.app:not([data-embed-mode]) .stage { border: 0; }
-	.studio-right-column {
-		--outliner-height: var(--shell-outliner-height, min(420px, 62%));
-		position: relative;
-		display: grid;
-		grid-template-rows: minmax(0, var(--outliner-height)) minmax(0, 1fr);
-		gap: 1px;
-		min-height: 0;
-		min-width: 0;
-		background: var(--surface-0);
+	/* No entrance animation on the full-bleed stage: stageIn starts at
+	   scale(.985), and the canvas measures its box at mount, so the drawing
+	   buffer stayed ~1.5% short of the layout box and the scene was stretched
+	   (soft edges, misaligned pixels). */
+	.app:not([data-embed-mode]) .stage { border: 0; animation: none; }
+
+	.app:not([data-embed-mode]) .topbar {
+		position: absolute;
+		z-index: 20;
+		top: var(--shell-gap);
+		left: var(--shell-center-left);
+		right: var(--shell-center-right);
+		height: 40px;
+		padding: 0;
+		border: 0;
+		background: none;
 	}
-	.studio-right-column > .panel {
+
+	.app:not([data-embed-mode]) .studio-left-column,
+	.app:not([data-embed-mode]) .studio-right-column {
+		position: absolute;
+		z-index: 12;
+		top: var(--shell-gap);
+		bottom: var(--shell-gap);
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+		min-height: 0;
+		overflow: hidden;
+	}
+	.app:not([data-embed-mode]) .studio-left-column {
+		left: var(--shell-gap);
+		width: var(--shell-left);
+	}
+	.app:not([data-embed-mode]) .studio-right-column {
+		right: var(--shell-gap);
+		width: var(--shell-right);
+	}
+	.studio-left-column > .panel,
+	.studio-right-column > .panel,
+	.studio-left-column > .studio-library {
 		width: 100%;
 		min-width: 0;
 		max-width: none;
@@ -61,37 +104,56 @@
 		padding: 0;
 		border: 0;
 		overflow: hidden;
-		background: var(--surface-panel);
+		background: none;
 	}
-	.studio-right-column > .hierarchy-left { grid-row: 1; }
-	.studio-right-column > .inspector-sidebar { grid-row: 2; }
-
-	.studio-dock-slot { position: relative; grid-row: 3; min-height: 0; min-width: 0; }
-	.app:not([data-embed-mode]) .bottom-window {
-		display: grid;
-		grid-template-columns: 620px minmax(0, 1fr);
-		grid-template-rows: auto minmax(0, 1fr);
-		column-gap: 1px;
-		height: 100%;
-		border: 0;
-		background: var(--surface-0);
+	.studio-left-column > .hierarchy-left {
+		flex: 0 0 auto;
+		height: var(--shell-outliner-height, 46%);
 	}
-	.app:not([data-embed-mode]) .bottom-window-tabs { grid-column: 1 / -1; }
-	.app:not([data-embed-mode]) .assets-pane {
-		grid-column: 1;
-		grid-row: 2;
-		height: auto;
+	.studio-left-column > .studio-library {
+		flex: 1 1 auto;
+		display: flex;
+		flex-direction: column;
+	}
+	.studio-right-column > .inspector-sidebar {
+		flex: 1 1 auto;
+		display: flex;
+		flex-direction: column;
+	}
+	.studio-right-column .inspector-pane {
+		flex: 1 1 auto;
 		min-height: 0;
-		max-height: none;
-		min-width: 0;
+		display: flex;
+		flex-direction: column;
 	}
-	.app:not([data-embed-mode]) .assets-shelf { grid-template-columns: minmax(0, 1fr); }
+	.studio-right-column .studio-agent-inspector {
+		position: relative;
+		flex: 0 0 auto;
+		display: flex;
+		flex-direction: column;
+		height: var(--shell-agent-height, 380px);
+		min-height: 0;
+	}
+	.studio-right-column .studio-agent-inspector[hidden] { display: none; }
+
+	.app:not([data-embed-mode]) .studio-dock-slot {
+		position: absolute;
+		z-index: 12;
+		left: var(--shell-center-left);
+		right: var(--shell-center-right);
+		bottom: var(--shell-dock-bottom);
+		height: calc(var(--shell-dock) + var(--shell-status-h));
+		min-width: 0;
+		min-height: 0;
+	}
+	/* The status line is the dock's own last row (see .brandbar below). */
+	.app:not([data-embed-mode]) .bottom-window {
+		height: calc(100% - var(--shell-status-h));
+		border: 0;
+	}
 	.app:not([data-embed-mode]) .bottom-timeline {
-		grid-column: 2;
-		grid-row: 2;
 		min-width: 0;
 		overflow: auto;
-		background: var(--surface-panel);
 	}
 	.app:not([data-embed-mode]) .timeline:not(.collapsed) {
 		flex: 1 1 auto;
@@ -100,46 +162,108 @@
 		max-height: none;
 	}
 
-	/* Keep the original resize gestures, with hit areas over the 1px gaps. */
-	.shell-sidebar-splitter {
+	/* The status line sits inside the dock's panel as its bottom row. */
+	.app:not([data-embed-mode]) .brandbar {
 		position: absolute;
-		top: 0;
-		bottom: 0;
-		right: calc(var(--shell-right-width, var(--shell-right-default)) - 3px);
-		width: 7px;
-		margin: 0;
+		z-index: 13;
+		left: var(--shell-center-left);
+		right: var(--shell-center-right);
+		bottom: var(--shell-dock-bottom);
+		height: var(--shell-status-h);
+		border: 0;
 	}
-	.shell-outliner-splitter {
+	.app:not([data-embed-mode]) .brandbar::before { display: none; }
+
+	/* Resize hit areas sit in the 12px gutters between floating panels. */
+	.app:not([data-embed-mode]) .shell-splitter {
 		position: absolute;
-		top: calc(var(--outliner-height) - 3px);
-		left: 0;
-		right: 0;
-		height: 7px;
+		z-index: 14;
 		margin: 0;
+		background: none;
+		touch-action: none;
+	}
+	.app:not([data-embed-mode]) .shell-left-splitter {
+		top: var(--shell-gap);
+		bottom: var(--shell-gap);
+		left: calc(var(--shell-gap) + var(--shell-left));
+		width: var(--shell-gap);
+		cursor: col-resize;
+	}
+	.app:not([data-embed-mode]) .shell-sidebar-splitter {
+		top: var(--shell-gap);
+		bottom: var(--shell-gap);
+		right: calc(var(--shell-gap) + var(--shell-right));
+		width: var(--shell-gap);
+		cursor: col-resize;
+	}
+	.app:not([data-embed-mode]) .shell-outliner-splitter {
+		position: relative;
+		flex: 0 0 auto;
+		height: 12px;
 		cursor: row-resize;
 	}
-	.shell-outliner-splitter::after { inset: 3px 0; width: auto; height: 1px; }
-	.studio-dock-slot > .timeline-splitter {
+	.app:not([data-embed-mode]) .shell-agent-splitter {
 		position: absolute;
-		top: -4px;
+		top: calc(var(--shell-gap) * -1);
 		left: 0;
 		right: 0;
-		height: 7px;
-		margin: 0;
+		height: 12px;
+		cursor: row-resize;
 	}
+	.app:not([data-embed-mode]) .shell-camera-splitter {
+		top: 0;
+		bottom: 0;
+		right: calc(var(--shell-camera) - 6px);
+		width: 12px;
+		cursor: col-resize;
+	}
+	/* The stage canvas is full-bleed (the shot preview is drawn into it under
+	   the dock's card), but the scene is only meant to be SEEN in two places:
+	   the open viewport between the panels and that preview card. Everywhere
+	   else — the 12px gutters, the window margins, the band between the top
+	   pills — a raw slice of floor and horizon read as a crack in the UI. This
+	   frame paints all of that in the shell surface, with the viewport window
+	   and the dock cut out as rounded rects (same 20px radius as the panels),
+	   so the stage sits in a window of the UI instead of leaking around it. */
+	.app:not([data-embed-mode]) .workspace::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 6;
+		pointer-events: none;
+		/* The panel tone, not the window tone: the dock and the columns blur
+		   this frame through their glass, and on the darker --surface-0 they
+		   went a step darker than designed. */
+		background: var(--surface-panel);
+		--shell-view-top: calc(var(--shell-gap) * 2 + 40px);
+		--shell-cut-w: calc(100% - var(--shell-center-left) - var(--shell-center-right));
+		--shell-view-h: max(0px, calc(100% - var(--shell-view-top) - var(--shell-center-bottom)));
+		--shell-dock-h: calc(var(--shell-dock) + var(--shell-status-h));
+		/* An SVG without a viewBox keeps rx in CSS pixels at any mask-size, so
+		   the cut-outs stay 20px-round however the panels are resized. rx is the
+		   panels' --float-radius (themes.css); a data URI cannot read the token. */
+		--shell-round-cut: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' rx='20'/%3E%3C/svg%3E");
+		-webkit-mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-round-cut);
+		mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-round-cut);
+		-webkit-mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-cut-w) var(--shell-dock-h);
+		mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-cut-w) var(--shell-dock-h);
+		/* The dock cut-out is placed from the bottom edge: a percentage in
+		   mask-position is relative to (box - mask size), so calc(100% - ...)
+		   would land it hundreds of px too high. */
+		-webkit-mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), left var(--shell-center-left) bottom var(--shell-dock-bottom);
+		mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), left var(--shell-center-left) bottom var(--shell-dock-bottom);
+		-webkit-mask-repeat: no-repeat;
+		mask-repeat: no-repeat;
+		-webkit-mask-composite: xor;
+		mask-composite: exclude;
+	}
+
 	.preferences-slot { display: contents; }
 
-	/* 30vh is 324px at 1080. The reference/acceptance explicitly specifies
-	   330px there; retain the fluid clamp below that reference height. */
-	@media (min-height: 1080px) {
-		.app:not([data-embed-mode]) { --shell-dock-default: 330px; }
-	}
-	@media (max-width: 1440px) {
-		.app:not([data-embed-mode]) { --shell-right-default: 300px; }
-	}
-
-	/* Embeds still use the existing viewport-only / compact transport layout. */
-	.app[data-embed-mode] .studio-right-column { display: none; }
+	/* Embeds keep the viewport-only / compact transport layout. */
+	.app[data-embed-mode] .studio-right-column,
+	.app[data-embed-mode] .studio-left-column,
+	.app[data-embed-mode] .shell-splitter { display: none; }
+	.app[data-embed-mode] .studio-dock-slot { position: relative; min-width: 0; min-height: 0; }
 	.app[data-embed-mode="playview"] .studio-dock-slot { display: none; }
-	.app[data-embed-mode="playground"] .assets-pane { display: none; }
 }

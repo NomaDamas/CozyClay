@@ -3,6 +3,8 @@ import { createRoot } from "react-dom/client";
 // First stylesheet on the page: it fixes the cascade-layer order before any
 // component sheet (topbar.css, viewport.css, pose.css...) opens a layer.
 import "./styles/tokens.css";
+import "./styles/themes.css";
+import { applyTheme, readTheme } from "./theme.js";
 import App from "./App.jsx";
 import ErrorBoundary from "./error-boundary.jsx";
 import "./styles.css";
@@ -14,6 +16,7 @@ import { fetchPlaygroundProject, isPlaygroundEmbed, playgroundSceneUrl, stashPla
 registerPwa();
 void initAnalytics();
 document.documentElement.lang = LOCALE;
+applyTheme(readTheme());
 
 async function boot() {
 	// The landing-page playground needs its preset in hand before the first

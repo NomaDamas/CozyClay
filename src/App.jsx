@@ -63,7 +63,7 @@ import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor } from "./auto-color.js";
 import { DualRender, fitAspect, GIZMO_LAYER } from "./dualview.jsx";
 import { GridFloor } from "./grid-floor.jsx";
-import { GRID_BACKGROUND, GRID_FOG, readStoredGridView, writeStoredGridView } from "./grid-view.js";
+import { GRID_BACKGROUND, GRID_FOG, STAGE_BACKGROUND, readStoredGridView, writeStoredGridView } from "./grid-view.js";
 import {
 	CURVE_GRAB_RADIUS_PX,
 	DRAG_RADIUS_DEFAULT,
@@ -899,6 +899,9 @@ export default function App() {
 		"--shell-right-width": workspaceLayout.shellSidebarWidth && `${workspaceLayout.shellSidebarWidth}px`,
 		"--shell-outliner-height": workspaceLayout.shellOutlinerHeight && `${workspaceLayout.shellOutlinerHeight}px`,
 		"--shell-dock-height": workspaceLayout.shellDockHeight && `${workspaceLayout.shellDockHeight}px`,
+		"--shell-left-width": workspaceLayout.shellLeftWidth && `${workspaceLayout.shellLeftWidth}px`,
+		"--shell-agent-height": workspaceLayout.shellAgentHeight && `${workspaceLayout.shellAgentHeight}px`,
+		"--shell-camera-width": workspaceLayout.shellCameraWidth && `${workspaceLayout.shellCameraWidth}px`,
 		"--hierarchy-width": `${workspaceLayout.hierarchyWidth}px`,
 		"--sidebar-width": `${workspaceLayout.sidebarWidth}px`,
 		"--timeline-height": `${workspaceLayout.timelineHeight}px`,
@@ -914,13 +917,26 @@ export default function App() {
 		const startY = e.clientY;
 		const shell = e.currentTarget.closest(".app");
 		const sidebarWidth = shell.querySelector(".studio-right-column").getBoundingClientRect().width;
+		const leftWidth = shell.querySelector(".studio-left-column")?.getBoundingClientRect().width ?? 0;
 		const hierarchyHeight = shell.querySelector(".hierarchy-left").getBoundingClientRect().height;
 		const mainHeight = shell.querySelector(".workspace").getBoundingClientRect().height;
 		const dockHeight = shell.querySelector(".bottom-window").getBoundingClientRect().height;
+		const agentHeight = shell.querySelector(".studio-agent-inspector")?.getBoundingClientRect().height ?? 0;
+		const rightHeight = shell.querySelector(".studio-right-column").getBoundingClientRect().height;
+		const cameraWidth = Number.parseFloat(getComputedStyle(shell).getPropertyValue("--shell-camera-width")) || 340;
 		const onMove = (ev) => {
 			const dx = ev.clientX - startX;
 			const dy = ev.clientY - startY;
 			setWorkspaceLayout((current) => {
+				if (kind === "left") {
+					return { ...current, shellLeftWidth: Math.max(200, Math.min(window.innerWidth * 0.3, leftWidth + dx)) };
+				}
+				if (kind === "agent") {
+					return { ...current, shellAgentHeight: Math.max(160, Math.min(rightHeight - 200, agentHeight - dy)) };
+				}
+				if (kind === "camera") {
+					return { ...current, shellCameraWidth: Math.max(240, Math.min(560, cameraWidth - dx)) };
+				}
 				if (kind === "sidebar") {
 					return {
 						...current,
@@ -6723,12 +6739,13 @@ export default function App() {
 		saveStatus: { state: projectSaveState, text: projectStatus, dirty: projectDirty, name: projectName },
 		exportStatus: exportStatus && { ...exportStatus, cancel: stopShotRecording, retry: retryExport },
 		subscribeToasts: (listener) => { toastSinkRef.current.add(listener); return () => toastSinkRef.current.delete(listener); },
+		enterShotLook,
 	};
 
 	return (
 		<AppContext.Provider value={appContext}>
 		<StudioShellContext.Provider value={shellContext}>
-		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined}
+		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined} data-plan-draw={railDraw || pathDraw || waypointMode ? 1 : undefined}
 			viewport={
 				<div className="viewport" data-drop={viewportDrop.over ? "over" : undefined} {...viewportDrop.handlers}
 					onWheel={(event) => {
@@ -6770,6 +6787,9 @@ export default function App() {
 							shadows="percentage"
 							frameloop={renderActive ? "always" : "demand"}
 							dpr={[1, 2]}
+							// Measure the layout box, not the transformed one: stageIn's scale()
+							// at mount used to leave the buffer short of the box in every mode.
+							resize={{ offsetSize: true }}
 							gl={{ preserveDrawingBuffer: true, antialias: true }}
 							onCreated={({ gl }) => {
 								gl.domElement.addEventListener("webglcontextlost", (event) => {
@@ -6796,7 +6816,7 @@ export default function App() {
 								timelineHeight={workspaceLayout.timelineHeight}
 								planZoom={workspaceLayout.planZoom}
 							/>
-							<color attach="background" args={[gridView ? GRID_BACKGROUND : "#eef4f3"]} />
+							<color attach="background" args={[gridView ? GRID_BACKGROUND : STAGE_BACKGROUND]} />
 							{/* The open stage runs 500 m; without a falloff the whole deck
 							    reads at once and the horizon sits a kilometre away. Blender's
 							    viewport answer is a clip distance that lets the neutral void
@@ -6804,7 +6824,7 @@ export default function App() {
 							    same idea — it fades the floor INTO the background colour, so
 							    past ~120 m the deck simply ceases to exist with no horizon
 							    line, no clip edge and no tone break. */}
-							<fog attach="fog" args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : ["#eef4f3", 18, 54]} />
+							<fog attach="fog" args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [STAGE_BACKGROUND, 18, 54]} />
 							<StageLights keyLight={keyLight} neutral={gridView} />
 							<KeyLightPuck
 								keyLight={keyLight}
@@ -7224,6 +7244,9 @@ export default function App() {
 								planCamRef={planCamRef}
 								poserCamRef={poserCamRef}
 								editorCamRef={editorCamRef}
+								// The studio hides the facing marks on screen; embeds show the
+								// scene as exported.
+								editorLook={!embedMode && !playgroundMode}
 								ikMode={ikMode}
 								planIsMain={planIsMain}
 								// Preview IS PlayView's render path: DualRender tests this branch

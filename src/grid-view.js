@@ -6,11 +6,15 @@
 
 export const GRID_VIEW_STORAGE_KEY = "cozyclay.grid-view.v1";
 
-// Blender's solid-mode look: a dark grey void, not true black. Fog matches
-// the background so distance still dissolves into the same neutral. The far
-// plane stays below the capture rig's CAPTURE_FOG_NEAR (55) so pushing near
-// past far still disables fog for exported frames, exactly as in clay mode.
-export const GRID_BACKGROUND = "#2c2e33";
+// Blender's solid-mode look: a dark grey void, not true black. The stage
+// wears it always — editor, shot preview and exports, under both UI themes —
+// so the set reads as one grey workbench; the grid view only trades the deck
+// for the reference grid. Fog matches the background so distance still
+// dissolves into the same neutral. The far plane stays below the capture
+// rig's CAPTURE_FOG_NEAR (55) so pushing near past far still disables fog for
+// exported frames.
+export const STAGE_BACKGROUND = "#232428";
+export const GRID_BACKGROUND = STAGE_BACKGROUND;
 export const GRID_FOG = Object.freeze({ color: GRID_BACKGROUND, near: 30, far: 54 });
 
 // Line palette, tuned against the dark background the way Blender's theme

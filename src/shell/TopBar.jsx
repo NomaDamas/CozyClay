@@ -2,31 +2,18 @@ import { useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import ProjectPanel from "../panels/ProjectPanel.jsx";
 import MenuBar, { MenuPopover } from "./MenuBar.jsx";
+import { SaveState } from "./StatusBar.jsx";
 import { ko, isKo } from "../locale.js";
 import "./topbar.css";
 
-// 2a top bar: project, File/Edit/Window/Help, then only the MCP state and the
-// one primary action. Save and Export live in File (G7); their state is shown
-// by the status bar.
+// 2a top bar: File/Edit/Window/Help, then only the MCP state and the one
+// primary action. Save and Export live in File (G7). #570: the project name
+// and its save state head the left column (ProjectHead below).
 export default function TopBar({ preferences }) {
-	const {
-		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
-		projectManifest, recState, liveHubStatus, liveWorkspaceHandle,
-	} = useStudioShell();
+	const { recState, liveHubStatus, liveWorkspaceHandle } = useStudioShell();
 	const connected = liveHubStatus === "connected";
 	return (
 		<header className="topbar v2-topbar" data-rec-state={recState}>
-			<div className="topbar-project">
-				<span className="topbar-swatch" aria-hidden="true" />
-				<ProjectPanel
-					projectMenuOpen={projectMenuOpen}
-					setProjectMenuOpen={setProjectMenuOpen}
-					projectDirty={projectDirty}
-					projectName={projectName}
-					projectStartupOpen={projectStartupOpen}
-					projectManifest={projectManifest}
-				/>
-			</div>
 			<MenuBar preferences={preferences} />
 			<div className="topbar-spacer" />
 			<span
@@ -40,6 +27,28 @@ export default function TopBar({ preferences }) {
 			</span>
 			<GenerateMotion />
 		</header>
+	);
+}
+
+// #570: the project heads the left column — its name opens the project menu,
+// the line under it is the save state.
+export function ProjectHead() {
+	const {
+		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
+		projectManifest, saveStatus,
+	} = useStudioShell();
+	return (
+		<div className="topbar-project studio-project-head">
+			<ProjectPanel
+				projectMenuOpen={projectMenuOpen}
+				setProjectMenuOpen={setProjectMenuOpen}
+				projectDirty={projectDirty}
+				projectName={projectName}
+				projectStartupOpen={projectStartupOpen}
+				projectManifest={projectManifest}
+			/>
+			<SaveState status={saveStatus} />
+		</div>
 	);
 }
 

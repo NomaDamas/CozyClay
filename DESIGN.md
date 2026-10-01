@@ -190,8 +190,10 @@ Motion › ARDY Connection). UI copy contains no Kimodo, ProjFlow or 2D Root.
 
 ### G9 — Agent pane
 
-Window › Agent changes the right column's lower header to Details | Agent in
-the same style as Content | Log. Closing it restores Details.
+The Agent always sits at the foot of the right column (#570), under Details;
+it no longer replaces Details. Collapsed it is a 44 px bar (the default);
+Window › Agent, Cmd/Ctrl+B, the bar and the chevron in its header fold it
+open and shut. Open, a 12 px handle above it resizes the split.
 
 ### G10 — adding things
 
@@ -203,10 +205,9 @@ Props inspector `AddObjectMenu` are removed.
 
 ### G11 — responsive shell
 
-The bottom dock is `clamp(220px, 30vh, 330px)` with a drag handle. Content can
-collapse to its 36 px header so Sequencer takes the width. At ≤1440 px the right
-column is 300 px. At 1280×800 the viewport remains at least 480 px tall and
-900 px wide.
+Superseded by §6 (#570): the bottom dock holds only the Sequencer and the shot
+preview, `clamp(220px, 30vh, 300px)` tall by default, and every panel edge has
+a drag handle.
 
 ### G12 — start and Preferences
 
@@ -240,3 +241,62 @@ snapping and a read-only hotkeys list.
   announcements, visible keyboard focus and immediate state changes.
 - `.camera-tutorial-handoff`: the contextual action row inside the existing
   tutorial; it wraps at narrow widths and has visible keyboard focus.
+
+## 6. Floating-glass shell and themes (#570)
+
+The viewport fills the window. Every other region floats over it as a glass
+panel with 12 px gutters and a 20 px radius:
+
+- **Left column (260 px):** the project name with its save state as the
+  panel's title, then the Outliner, then the object Library (Content | Log).
+  Outliner rows are 30 px with a 16 px line icon per type; the selected row is
+  a filled accent row. The Library picks its folder from a dropdown and draws
+  objects as line glyphs in a 3-column grid of 12 px-radius tiles.
+- **Right column (300 px):** Details and the Agent as two separate cards with
+  a 12 px gap (G9). Details is titled by the selection (name, then kind); each
+  section is an 11 px label over a rounded card.
+- **Top row:** menus left, the mode switch (Stage, Pose, Camera, Motion, each
+  with its icon) centred, then one capsule with the MCP state and Generate
+  Motion. All 40 px capsules between the two columns.
+- **Viewport rails:** a 44 px vertical rail on the left (Add, the mode's tools,
+  its value such as snap) and one on the right (view, shading, Show, fly
+  speed). Rail controls are 36 px round buttons with 16 px line icons; their
+  menus open beside the rail.
+- **Bottom dock:** the Sequencer (48 px head: transport capsule, frame count,
+  actions; 26 px rows, 170 px track column, no lane grid) and the Shot Camera
+  card at its right end (340 px): title and lens, the frame, a ratio switch
+  (16:9, 2.39, 4:3, 1:1, 9:16) and Look through. The dock's glass is masked
+  over the frame, because the shot camera is drawn into the stage canvas
+  beneath it.
+- **Status line:** the dock's own 28 px bottom row (status, fps, source link),
+  separated by a hairline rather than floating on its own.
+- **Top-View:** hidden until something is drawn on it — a camera rail, an
+  object path or root waypoints — then it opens under the overlay row.
+
+Every panel boundary resizes from its gutter: left width (200–30 % of the
+window), right width (280–50 %), dock height, Outliner/Library split,
+Details/Agent split and Sequencer/shot-preview split (240–560 px). Sizes
+persist with the workspace layout.
+
+Themes live on `<html data-theme>` (Preferences › Appearance › Theme) and are
+declared in `src/styles/themes.css` (shell layer, so they outrank `tokens.css`
+and the legacy `:root` aliases):
+
+- **Dark (default):** the v2 surfaces in §2 with a deep clay-orange accent
+  (`--select #b8541d`, tint `rgba(184,84,29,.18)`, tinted text `#e08a55`,
+  white text on the accent). Panels carry a soft top light and a darker bottom
+  edge; the accent bleeds 7 % into the top of each panel; primary buttons use
+  a `#c8622a → #a84a17` fill. The stage itself gets no tint.
+- **Light:** a `#eaeaed` window, translucent white glass (74 %, Details and
+  Agent 82 % for reading), system blue accent (`--select #0a6ee0`, tint
+  `rgba(0,122,255,.14)`), text `#1d1d1f / #6e6e73 / #86868b`.
+
+Panel interiors are styled in `src/shell/glass-regions.css`, unlayered like
+the Outliner, Sequencer and Details sheets it restyles and loaded after them.
+Numbers use the UI font with tabular figures; the shell sets no monospace.
+
+Both themes use the system UI font first (`-apple-system`, SF Pro), with IBM
+Plex Sans and the Korean families as fallbacks. Hard-coded legacy colours in
+`styles.css` and the Agent stylesheet read `--lg-*` / `--agent-*` variables
+whose fallbacks are the original dark values, so only the light theme
+overrides them.

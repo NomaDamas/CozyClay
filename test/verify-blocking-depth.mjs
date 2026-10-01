@@ -65,7 +65,7 @@ expect(
 	"the viewport fog is untouched",
 	// Clay stage keeps its tuned values; grid view swaps to the void fog whose
 	// far plane also sits below CAPTURE_FOG_NEAR, so the capture trick holds.
-	app.includes('args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : ["#eef4f3", 18, 54]}'),
+	app.includes('args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [STAGE_BACKGROUND, 18, 54]}'),
 );
 const captureFog = app.indexOf("fog.near = CAPTURE_FOG_NEAR;");
 const restoreFog = app.indexOf("fog.near = fogNear;");

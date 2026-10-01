@@ -1,0 +1,195 @@
+/* Studio themes (#570). tokens.css keeps the v2 base values; a theme on
+   <html data-theme> restates them in the shell layer, which outranks both the
+   token layer and the legacy :root aliases, so every region and body-level
+   popover follows the one choice. */
+@layer tokens, legacy, shell, regions;
+
+@layer shell {
+	:root[data-theme] {
+		/* Floating-panel geometry shared by both themes. */
+		--float-gap: 6px;
+		--float-radius: 20px;
+		--capsule-radius: 20px;
+		--float-head: 48px;
+		--sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "IBM Plex Sans", "Pretendard", "Noto Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", system-ui, "Segoe UI", Helvetica, Arial, sans-serif;
+		--mono: "SF Mono", ui-monospace, "JetBrains Mono", SFMono-Regular, Menlo, Consolas, monospace;
+	}
+
+	/* Dark: the v2 surfaces with a deep clay-orange accent and shaded panels. */
+	:root[data-theme="dark"] {
+		color-scheme: dark;
+		--select: #b8541d;
+		--select-tint: rgba(184,84,29,.18);
+		--select-text: #e08a55;
+		--on-select: #fff;
+		--primary: #b8541d;
+		--primary-fill: linear-gradient(180deg, #c8622a, #a84a17);
+		--project-swatch: #b8541d;
+
+		--glass-panel: radial-gradient(140% 55% at 50% 0%, rgba(184,84,29,.07), rgba(184,84,29,0) 70%),
+			linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.018) 25%, rgba(255,255,255,0) 45%, rgba(0,0,0,.12) 70%, rgba(0,0,0,.38)),
+			#151517;
+		--glass-text-panel: var(--glass-panel);
+		/* The dock's flat fill: the columns' mid-tone, no top-to-bottom ramp. */
+		--glass-text-panel-flat: rgba(21,21,23,.96);
+		--glass-capsule: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.015) 50%, rgba(0,0,0,.32)), rgba(12,12,13,.78);
+		--glass-blur: blur(40px) saturate(1.6);
+		--capsule-blur: blur(14px) saturate(1.3);
+		--panel-shadow-outer: 0 0 0 .5px rgba(255,255,255,.1), 0 1px 1px rgba(0,0,0,.25), 0 20px 50px -14px rgba(0,0,0,.55);
+		--panel-shadow-inset: inset 0 1px 0 rgba(255,255,255,.13), inset 0 0 0 1px rgba(255,255,255,.045), inset 0 -1px 0 rgba(0,0,0,.45), inset 0 -18px 30px -18px rgba(0,0,0,.4);
+		--panel-shadow: var(--panel-shadow-outer), var(--panel-shadow-inset);
+		--capsule-shadow: 0 0 0 .5px rgba(255,255,255,.08), inset 0 1px 0 rgba(255,255,255,.12), inset 0 -1px 0 rgba(0,0,0,.4);
+		--grip: rgba(255,255,255,.14);
+		--grip-hover: rgba(255,255,255,.4);
+
+		/* Panel interiors (glass-regions.css). */
+		--label: #8e8e96;
+		--text-soft: #c9c9ce;
+		--field-fill: rgba(255,255,255,.05);
+		--card-fill: rgba(255,255,255,.05);
+		--card-ring: 0 0 0 .5px rgba(255,255,255,.08);
+		--chip-fill: rgba(255,255,255,.06);
+		--hairline: rgba(255,255,255,.07);
+		--seg-on: rgba(255,255,255,.14);
+		--seg-on-shadow: 0 1px 2px rgba(0,0,0,.45), 0 0 0 .5px rgba(255,255,255,.06);
+		--seg-on-text: #e08a55;
+		--row-sel-bg: rgba(184,84,29,.16);
+		--row-sel-text: #fff;
+		--row-sel-icon: #b8541d;
+		--row-sel-meta: #c98f70;
+		--tile-fill: rgba(255,255,255,.04);
+		--tile-sel-fill: rgba(184,84,29,.16);
+		--tile-sel-ring: inset 0 0 0 1.5px #b8541d;
+		--tile-stroke: #c9c9ce;
+		--tile-label: #9b9ba1;
+		--snap-on-fill: rgba(184,84,29,.16);
+		--frame-well: #131315;
+	}
+
+	/* Light: translucent glass over a neutral window, system-blue accent. */
+	:root[data-theme="light"] {
+		color-scheme: light;
+		--surface-0: #eaeaed;
+		--surface-bar: #f4f4f6;
+		--surface-panel: #f7f7f9;
+		--surface-raised: #ffffff;
+		--surface-active: #e4e4e9;
+		--field: #ececf0;
+		--field-deep: #e6e6eb;
+		--row-divider: #e2e2e7;
+		--overlay: rgba(252,252,253,.66);
+		--divider-strong: #d2d2d8;
+
+		--text-1: #1d1d1f;
+		--text-2: #6e6e73;
+		--text-3: #86868b;
+		--text-row: #3a3a3c;
+		--text-off: #aeaeb2;
+		--text-selected: #000;
+
+		--select: #0a6ee0;
+		--select-tint: rgba(0,122,255,.14);
+		--select-text: #0060d6;
+		--on-select: #fff;
+		--primary: #0a6ee0;
+		--primary-fill: #0a6ee0;
+		--camera: #7d6fae;
+		--danger: #d1343a;
+		--axis-x: #e5484d;
+		--axis-y: #30a46c;
+		--axis-z: #2f6fd6;
+		--ok: #30a46c;
+		--project-swatch: #0a6ee0;
+
+		--chip-folder: #a2845e;
+		--chip-mesh: #8e8e93;
+		--chip-cast: #34c759;
+		--chip-camera: #8e5cf6;
+		--chip-light: #c9a227;
+		--chip-motion: #5e8ef0;
+		--clip-camera: #e5e1ed;
+		--clip-camera-alt: #ece9f3;
+		--clip-body: #d9e4dc;
+		--clip-body-selected: #c9dbcf;
+		--clip-prompt: #e9efea;
+		--clip-prompt-text: #3a5241;
+
+		--glass-panel: rgba(250,250,252,.74);
+		--glass-text-panel: rgba(250,250,252,.82);
+		--glass-text-panel-flat: rgba(250,250,252,.82);
+		--glass-capsule: rgba(252,252,253,.38);
+		--glass-blur: blur(40px) saturate(1.6);
+		--capsule-blur: blur(14px) saturate(1.3);
+		--panel-shadow-outer: 0 0 0 .5px rgba(30,32,40,.1), 0 1px 1px rgba(30,32,40,.03), 0 20px 50px -14px rgba(30,32,40,.2);
+		--panel-shadow-inset: inset 0 .5px 0 rgba(255,255,255,.95);
+		--panel-shadow: var(--panel-shadow-outer), var(--panel-shadow-inset);
+		--capsule-shadow: 0 0 0 .5px rgba(30,32,40,.08), inset 0 .5px 0 rgba(255,255,255,.55);
+		--grip: rgba(30,32,40,.14);
+		--grip-hover: rgba(30,32,40,.4);
+
+		--label: #86868b;
+		--text-soft: #3a3a3c;
+		--field-fill: rgba(30,32,40,.05);
+		--card-fill: rgba(255,255,255,.62);
+		--card-ring: 0 0 0 .5px rgba(30,32,40,.08);
+		--chip-fill: rgba(30,32,40,.06);
+		--hairline: rgba(30,32,40,.07);
+		--seg-on: #fff;
+		--seg-on-shadow: 0 1px 2px rgba(30,32,40,.12), 0 0 0 .5px rgba(30,32,40,.06);
+		--seg-on-text: #0060d6;
+		--row-sel-bg: #0a6ee0;
+		--row-sel-text: #fff;
+		--row-sel-icon: #fff;
+		--row-sel-meta: rgba(255,255,255,.75);
+		--tile-fill: rgba(30,32,40,.04);
+		--tile-sel-fill: rgba(0,122,255,.08);
+		--tile-sel-ring: inset 0 0 0 1.5px #007aff;
+		--tile-stroke: #3a3a3c;
+		--tile-label: #6e6e73;
+		--snap-on-fill: rgba(0,122,255,.1);
+		--frame-well: #131315;
+
+		/* Legacy literals in styles.css read these (dark keeps each fallback). */
+		--lg-ink-rgb: 30,32,40;
+		--lg-2c2c2c: #ffffff;
+		--lg-1a1a1a: #f2f2f5;
+		--lg-232323: #f6f6f8;
+		--lg-1e1e1e: #f4f4f6;
+		--lg-2a2a2a: #eeeef1;
+		--lg-101013: #f4f4f6;
+		--lg-11151e: #f4f4f6;
+		--lg-3c3c3c: #d8d8de;
+		--lg-383838: #dcdce2;
+		--lg-424242: #d0d0d6;
+		--lg-4a4a4a: #c8c8cf;
+		--lg-3f3f3f: #d4d4da;
+		--lg-5c5c5c: #b8b8c0;
+		--lg-d2d2d2: #3a3a3c;
+		--lg-9a9a9a: #6e6e73;
+		--lg-c4c4c4: #48484a;
+	}
+
+	/* The Agent keeps its own palette (src/workflow/agent-panel.css); inside
+	   the studio shell it follows the theme instead. */
+	:root[data-theme] .app[data-shell="glass"] .studio-agent-inspector {
+		--agent-bg: transparent;
+		--agent-bg-raised: var(--surface-raised);
+		--agent-bg-sunken: var(--field);
+		--agent-bubble: var(--select-tint);
+		--agent-border: var(--row-divider);
+		--agent-border-strong: var(--divider-strong);
+		--agent-border-focus: var(--select);
+		--agent-text: var(--text-1);
+		--agent-text-muted: var(--text-2);
+		--agent-text-dim: var(--text-3);
+		--agent-accent: var(--select);
+		--agent-accent-deep: var(--select);
+		--agent-accent-edge: var(--select);
+		--agent-accent-text: var(--on-select);
+		--agent-chrome: transparent;
+		--agent-panel: var(--surface-raised);
+		--agent-hover: var(--surface-active);
+		--agent-text-soft: var(--text-row);
+		--agent-text-strong: var(--text-1);
+	}
+}
