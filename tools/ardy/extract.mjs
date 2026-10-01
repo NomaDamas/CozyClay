@@ -59,7 +59,8 @@ const GVHMR_DETECTOR = gvhmrDetectorFromEnv();
 const GVHMR_KEYPOINTS = gvhmrKeypointsFromEnv();
 // Rollback keeps the original one-shot command completely unchanged.
 const GVHMR_WORKER = process.env.CCLAY_GVHMR_WORKER?.trim() !== "0";
-// Independent of preparation acceleration; disable to recover exact legacy output.
+// Independent of preparation acceleration; disable to skip box-side descent
+// recovery. The bridge-side skin floor guard still runs on every take.
 const GVHMR_TRAJECTORY = process.env.CCLAY_GVHMR_TRAJECTORY?.trim() !== "0";
 const MAX_UPLOAD_BYTES = 300 * 1024 * 1024;
 const EXTRACT_TIMEOUT_MS = 30 * 60 * 1000;
@@ -409,10 +410,13 @@ export async function handleExtract(req, res, { readBody, footagePath, registerM
 				smoothRotations: process.env.CCLAY_GVHMR_ROTATION_SMOOTHING?.trim() !== "0",
 				anchorFeet: process.env.CCLAY_GVHMR_ANCHOR_FEET?.trim() !== "0",
 			});
+			// Every take, not only accepted descents: the retarget grounds the
+			// skeleton, and the shipped skins' soles sit below those joints.
 			const guarded = guardTrajectoryFloor(converted, extractionPerformance?.trajectory?.events ?? []);
 			motions.push(guarded.motion);
 			qualityReports.push(qualityReportForMotion(guarded.motion));
-			if (extractionPerformance?.trajectory?.events?.length) extractionPerformance.trajectory.floor = guarded.diagnostics;
+			if (extractionPerformance?.trajectory) extractionPerformance.trajectory.floor = guarded.diagnostics;
+			else console.error(`[bridge] GVHMR floor ${JSON.stringify(guarded.diagnostics)}`);
 		} catch (err) {
 			console.error(`[bridge] extract convert failed (gvhmr): ${err.message}`);
 			cleanupRemote();

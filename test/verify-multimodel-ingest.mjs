@@ -16,6 +16,8 @@ import {
 	footageSummary,
 	fpsFromFrameTimes,
 	frameCountFor,
+	mocapQualityFailedChecks,
+	mocapQualityReceipt,
 	normalizeSourceUrl,
 	probeFootage,
 	requestBridgeFootage,
@@ -31,6 +33,10 @@ assert.match(segmentationReceipt({ detector: "palette", detectionRate: .98, cove
 assert.match(trajectoryReceipt({ status: "unchanged", rejected: [{ reason: "world-endpoint-unsettled" }] }), /not applied.*never settles/);
 assert.match(trajectoryReceipt({ status: "corrected", changedFrames: 67, rejected: [{ reason: "uncertain-depth" }] }, true), /67프레임.*1구간 미해결/);
 assert.match(trajectoryReceipt({ status: "disabled" }, true), /꺼짐/);
+assert.match(mocapQualityReceipt({ pass: true }), /passed/);
+assert.match(mocapQualityReceipt({ pass: false, checks: [{ name: "jitter", pass: false }, { name: "foot-slide", pass: true }] }), /failed: jitter/);
+assert.deepEqual(mocapQualityFailedChecks({ pass: false, checks: [{ name: "jitter", pass: false }, { name: "foot-slide", pass: true }] }), ["jitter"]);
+assert.match(mocapQualityReceipt(null), /unavailable/);
 const ok = (name, condition, detail = "") => {
 	console.log(`${condition ? "PASS" : "FAIL"} ${name}${condition ? "" : ` — ${detail}`}`);
 	if (!condition) failures += 1;

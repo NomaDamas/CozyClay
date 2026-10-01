@@ -110,7 +110,6 @@ function sourceGlobals(go, pose, frames) {
 	return worlds;
 }
 function writeMat(out, offset, m) { out[offset] = m[0][0]; out[offset + 1] = m[0][1]; out[offset + 2] = m[0][2]; out[offset + 3] = m[1][0]; out[offset + 4] = m[1][1]; out[offset + 5] = m[1][2]; out[offset + 6] = m[2][0]; out[offset + 7] = m[2][1]; out[offset + 8] = m[2][2]; }
-function percentile(values, p) { const a = [...values].sort((x, y) => x - y); const x = (a.length - 1) * p, i = Math.floor(x), t = x - i; return a[i] * (1 - t) + (a[i + 1] ?? a[i]) * t; }
 
 export function smplToCskel27Motion(members, { boneScale: boneScaleOption = "derive" } = {}) {
 	if (boneScaleOption !== "derive" && !(typeof boneScaleOption === "number" && Number.isFinite(boneScaleOption) && boneScaleOption > 0)) throw new Error('smplToCskel27Motion: boneScale must be "derive" or a positive number');
@@ -172,7 +171,15 @@ export function smplToCskel27Motion(members, { boneScale: boneScaleOption = "der
 	const readLocals = (f) => Array.from({ length: 27 }, (_, j) => { const o = (f * 27 + j) * 9; return [[rotMats[o], rotMats[o + 1], rotMats[o + 2]], [rotMats[o + 3], rotMats[o + 4], rotMats[o + 5]], [rotMats[o + 6], rotMats[o + 7], rotMats[o + 8]]]; });
 	const lows = new Array(frames);
 	for (let f = 0; f < frames; f += 1) { const p = forwardKinematics(readLocals(f), offsets, [rootPos[f * 3], rootPos[f * 3 + 1], rootPos[f * 3 + 2]]); lows[f] = Math.min(...[21, 22, 25, 26].map((j) => p[j][1])); }
-	const floor = percentile(lows, 0.1);
+	// Minimum skeletal grounding, the same semantics as GVHMR's own world
+	// frame (the clip's lowest body vertex at Y=0) and cskel27's canonical
+	// neutral (lowest joint on the floor): the lowest foot joint of the whole
+	// take sits at Y=0, so no frame's skeleton is below the floor. A lower
+	// quantile left that fraction of frames penetrating by construction. One
+	// constant shift keeps jumps and elevated landings exactly as filmed; the
+	// shipped skins' clearance below these joints is handled after conversion
+	// by guardTrajectoryFloor.
+	const floor = Math.min(...lows);
 	for (let f = 0; f < frames; f += 1) { rootPos[f * 3 + 1] -= floor; const p = forwardKinematics(readLocals(f), offsets, [rootPos[f * 3], rootPos[f * 3 + 1], rootPos[f * 3 + 2]]); for (let j = 0; j < 27; j += 1) posedJoints.set(p[j], (f * 27 + j) * 3); }
 	return { frames, fps, rotMats, rootPos, posedJoints, boneScale, personScale: 1, rawRootStart: [transl[0], transl[1], transl[2]] };
 }

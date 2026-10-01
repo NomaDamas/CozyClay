@@ -335,8 +335,10 @@ export function captureArdyRoot(rig) {
 	boneInRig.decompose(position, boneRotation, new THREE.Vector3());
 
 	const globalRotation = boneRotation.multiply(prep.bindQuat[rootIndex].clone().invert()).normalize();
-	const bindOffset = prep.offsets[rootIndex].clone().applyQuaternion(globalRotation);
-	// The scale the last applyMotionFrame used (1 for a performer-sized take).
+	// Invert with the offsets the last applyMotionFrame actually used: a
+	// performer-sized take's root offset is measured against its own grown
+	// neutral (scaledOffsets), not the canonical one.
+	const bindOffset = (prep.lastOffsets ?? prep.offsets)[rootIndex].clone().applyQuaternion(globalRotation);
 	const s = prep.lastScale ?? prep.scale;
 	return [
 		(position.x - bindOffset.x) / s,
@@ -347,7 +349,8 @@ export function captureArdyRoot(rig) {
 
 /** Bind offsets against the canonical neutral grown by a take's bone
  *  factors: neutral joint j = parent + boneScale[j] * (neutral[j] - neutral[parent]),
- *  floor-shifted the same way prepOf does, in rig units via prep.scale.
+ *  floor-shifted the same way prepOf does — by the GROWN neutral's own lowest
+ *  joint — in rig units via prep.scale.
  *  Cached per (rig, boneScale array) — one take, one skeleton. */
 const scaledOffsetCache = new WeakMap();
 function scaledOffsets(prep, boneScale) {
@@ -364,13 +367,21 @@ function scaledOffsets(prep, boneScale) {
 	}
 	// Same frame and scale as prepOf's offsets: only the per-bone growth
 	// differs, so an all-ones boneScale reproduces prep.offsets exactly.
+	// The floor shift is the grown skeleton's OWN toe depth: the retarget
+	// (smpl-cskel27) floors posedJoints on the performer's feet, so a
+	// performer standing in the neutral pose has its lowest joint at y = 0,
+	// not at the canonical 0.954 m below the hips. Shifting by the canonical
+	// depth instead sank every bone by s * (canonical - performer) toe depth
+	// (measured: 8.7 cm into the floor on the x-bot for 0.9x legs).
+	let grownMinY = Infinity;
+	for (const g of grown) if (g[1] < grownMinY) grownMinY = g[1];
 	const offsets = new Array(CSKEL27_JOINTS.length).fill(null);
 	for (let j = 0; j < CSKEL27_JOINTS.length; j += 1) {
 		if (!prep.bones[j]) continue;
 		const g = grown[j];
 		offsets[j] = new THREE.Vector3(
 			prep.bindPos[j].x - prep.scale * g[0],
-			prep.bindPos[j].y - prep.scale * (g[1] - ARDY_NEUTRAL_MIN_Y),
+			prep.bindPos[j].y - prep.scale * (g[1] - grownMinY),
 			prep.bindPos[j].z - prep.scale * g[2],
 		);
 	}
@@ -478,6 +489,7 @@ export function applyMotionFrame(rig, motion, frame) {
 	// the bone by the difference (measured: neck/head 7-10 cm low on a
 	// 0.84x torso). Re-measure against the neutral grown by boneScale.
 	const offsets = motion.boneScale ? scaledOffsets(prep, motion.boneScale) : prep.offsets;
+	prep.lastOffsets = offsets;
 
 	for (let j = 0; j < joints; j += 1) {
 		const bone = prep.bones[j];
@@ -520,7 +532,9 @@ export function applyMotionFrame(rig, motion, frame) {
 			// translation, so the performer's arm length is applied HERE by
 			// stretching that translation by the factor of the bone ending at
 			// this joint. Bone scale is never touched: it would scale the skin.
-			vWorld.copy(prep.bindLocalPos[j]).multiplyScalar(boneStretch(prep, motion, j)).applyMatrix4(mParentInv);
+			const stretch = boneStretch(prep, motion, j);
+			recordTakeRest(bone, prep.bindLocalPos[j], stretch);
+			vWorld.copy(prep.bindLocalPos[j]).multiplyScalar(stretch).applyMatrix4(mParentInv);
 		}
 
 		mWorld.compose(vWorld, qWorld, prep.bindScale[j]);
@@ -531,10 +545,38 @@ export function applyMotionFrame(rig, motion, frame) {
 		bone.quaternion.copy(qDecomp);
 	}
 	for (const leaf of prep.stretchedLeaves) {
-		leaf.bone.position.copy(leaf.bindLocalPos).multiplyScalar(boneStretch(prep, motion, leaf.joint));
+		const stretch = boneStretch(prep, motion, leaf.joint);
+		recordTakeRest(leaf.bone, leaf.bindLocalPos, stretch);
+		leaf.bone.position.copy(leaf.bindLocalPos).multiplyScalar(stretch);
 		leaf.bone.quaternion.copy(leaf.bindLocalQuat);
 	}
 	rig.updateMatrixWorld(true);
+}
+
+/* --- take rest translations --------------------------------------------------
+ *
+ * The arm chains (HIERARCHY_PRESERVED_JOINTS) and the hands are driven by
+ * rotation only and ride a FIXED local translation: the bind translation
+ * stretched to the take's bone length. For a performer-sized take that is
+ * not the bind translation, so a layer that "returns a bone to bind" before
+ * posing it by rotation (the IK layer) would snap the performer's arm back to
+ * the rig's bind length. This records, per bone, the rest translation the
+ * current take uses, so such a layer can rest on the take instead. Bones this
+ * module places positionally have no fixed rest and are never recorded.
+ */
+const takeRest = new WeakMap();
+
+function recordTakeRest(bone, bindLocal, stretch) {
+	let rest = takeRest.get(bone);
+	if (!rest) takeRest.set(bone, (rest = new THREE.Vector3()));
+	rest.copy(bindLocal).multiplyScalar(stretch);
+}
+
+/** Local rest translation the last applied take gives a rotation-driven bone
+ * (arm chain, shoulder, hand), or null when playback does not drive the bone
+ * that way or no take is applied. Read-only: the returned vector is live. */
+export function playbackRestPosition(bone) {
+	return takeRest.get(bone) ?? null;
 }
 
 /* --- snapshot / restore ----------------------------------------------------- */
@@ -562,6 +604,8 @@ export function snapshotPlaybackBones(rig) {
 export function restorePlaybackBones(rig, snapshot) {
 	if (!rig || !snapshot) return;
 	for (const entry of snapshot) {
+		// The take is gone: its rest translations no longer describe the rig.
+		takeRest.delete(entry[0]);
 		entry[0].quaternion.set(entry[1], entry[2], entry[3], entry[4]);
 		if (entry.length > 5) entry[0].position.set(entry[5], entry[6], entry[7]);
 	}

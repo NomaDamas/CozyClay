@@ -35,6 +35,7 @@ import {
 	requestBridgeExtract,
 	requestBridgeFootage,
 	sourceLabel,
+	mocapQualityReceipt,
 	segmentationReceipt,
 	trajectoryReceipt,
 } from "./multimodel-ingest.js";
@@ -5251,6 +5252,7 @@ export default function App() {
 	const photoPoseFileRef = useRef(null);
 	const [photoPoseState, setPhotoPoseState] = useState("idle");
 	const [photoPoseError, setPhotoPoseError] = useState("");
+	const [photoPoseQuality, setPhotoPoseQuality] = useState(null);
 
 	// Cast render props, memoized with Character itself (React.memo): during
 	// playback the playhead ticks 24 times a second, and a character whose
@@ -6916,7 +6918,7 @@ export default function App() {
 			const placed = await deliverExtraTakes(takes.slice(1), active, label);
 			if (!live()) return;
 			const persons = 1 + placed;
-			setMultiModelTake({ frames: done.frames, fps: done.fps, gpu: true, personScale, persons, trajectory: done.performance?.trajectory, segmentation: done.segmentation ?? done.performance?.segmentation ?? takes[0]?.segmentation ?? null, quality: done.quality ?? takes[0]?.quality ?? null });
+			setMultiModelTake({ frames: done.frames, fps: done.fps, gpu: true, personScale, persons, trajectory: done.performance?.trajectory, segmentation: done.segmentation ?? done.performance?.segmentation ?? takes[0]?.segmentation ?? null, quality: done.quality ?? takes[0]?.quality ?? null, takeQualities: takes.map((take) => take?.quality ?? done.quality ?? null) });
 			setMultiModelExtract("done");
 			setToast(isKo
 				? `GPU 모션 추출됨 — ${done.frames}프레임 @ ${done.fps} fps${persons > 1 ? ` · ${persons}명` : ""} · 인물 스케일 ×${personScale.toFixed(2)}`
@@ -8340,6 +8342,7 @@ export default function App() {
 		let objectUrl = "";
 		setPhotoPoseState("running");
 		setPhotoPoseError("");
+		setPhotoPoseQuality(null);
 		try {
 			if (!rig) throw new Error("rig-not-loaded");
 			objectUrl = URL.createObjectURL(file);
@@ -8356,6 +8359,7 @@ export default function App() {
 				const healthPayload = await health.json().catch(() => null);
 				if (healthPayload?.extractionBackend !== "gvhmr") throw new Error("extract-backend-unsupported");
 				const done = await requestBridgeExtract(file, {});
+				setPhotoPoseQuality(done.quality ?? null);
 				const take = await loadMotionFromUrl(done.motionUrl);
 				// The middle frame: the wrap's smoothing passes have settled
 				// there, while frame 0 can still carry filter warm-up.
@@ -13410,6 +13414,7 @@ function resizePromptClip(id, edge, rawFrame) {
 						labelOf={poseLabelKo}
 					/>
 					{photoPoseError && <p className="studio-hint error" data-pose-photo-error role="status">{photoPoseError}</p>}
+					{(photoPoseState === "done" || photoPoseQuality) && <p className="studio-hint" data-testid="photo-pose-quality-receipt">{mocapQualityReceipt(photoPoseQuality, isKo)}</p>}
 					{/* Bottles whatever the viewport shows right now — a take frame,
 					    IK corrections included — without touching the character, so a
 					    good mid-clip moment becomes a reusable library pose. */}
@@ -13578,10 +13583,11 @@ function resizePromptClip(id, edge, rawFrame) {
 								)}
 								{multiModelTake?.trajectory && <p className="multimodel-note" data-testid="trajectory-receipt">{trajectoryReceipt(multiModelTake.trajectory, isKo)}</p>}
 								{multiModelTake?.segmentation && <p className="multimodel-note" data-testid="segmentation-receipt">{segmentationReceipt(multiModelTake.segmentation, isKo)}</p>}
-								{multiModelTake?.quality && <p className="multimodel-note" data-testid="mocap-quality-receipt">
-									{multiModelTake.quality.pass
-										? ko("모캡 품질 게이트 통과", "Mocap quality gate passed")
-										: ko(`모캡 품질 게이트 경고: ${multiModelTake.quality.checks?.filter((check) => !check.pass).map((check) => check.name).join(", ") || "확인 필요"}`, `Mocap quality warning: ${multiModelTake.quality.checks?.filter((check) => !check.pass).map((check) => check.name).join(", ") || "review required"}`)}
+								{multiModelTake?.takeQualities?.map((quality, index) => <p className="multimodel-note" data-testid="mocap-quality-receipt" data-take-index={index} key={`quality-${index}`}>
+									{mocapQualityReceipt(quality, isKo, multiModelTake.takeQualities.length > 1 ? (isKo ? `인물 ${index + 1}` : `Performer ${index + 1}`) : "")}
+								</p>)}
+								{multiModelTake?.quality && !multiModelTake?.takeQualities?.length && <p className="multimodel-note" data-testid="mocap-quality-receipt">
+									{mocapQualityReceipt(multiModelTake.quality, isKo)}
 								</p>}
 								{multiModelTake?.gpu && Math.abs(activeChar.y ?? 0) > .001 && <p className="multimodel-note" data-testid="trajectory-stage-offset">{isKo ? `씬 높이 ${(activeChar.y * 100).toFixed(1)}cm가 모션에 추가돼요 (Subject → Y)` : `Scene height ${(activeChar.y * 100).toFixed(1)}cm is added to the motion (Subject → Y)`}</p>}
 								{multiModelTake?.persons > 1 && (

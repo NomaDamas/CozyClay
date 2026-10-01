@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { normalizeBoneName, POSE_BONES, DEFAULT_POSE } from "../poses.js";
+import { playbackRestPosition } from "./playback.js";
 
 /**
  * Frame-based IK layer for direct character posing, following the DCC
@@ -465,29 +466,55 @@ export function resolveIkRig(rig) {
 		const names = CHAINS[track.kind](track.side);
 		const bones = names.map((n) => findBone(rig, n));
 		if (bones.some((b) => !b)) return null;
-		const lengths = [];
+		// World units per local unit along each segment, so segment lengths can
+		// follow the rest translations below instead of whatever pose the rig
+		// happened to hold when it was resolved (a rotation preserves length, so
+		// this ratio is pose-independent).
+		const units = [];
 		for (let i = 0; i < bones.length - 1; i += 1) {
 			bones[i].getWorldPosition(rootPos);
 			bones[i + 1].getWorldPosition(childPos);
 			const len = rootPos.distanceTo(childPos);
 			if (len < 1e-6) return null;
-			lengths.push(len);
+			units.push(len / bones[i + 1].position.length());
 		}
-		out.set(track.id, {
+		const bind = bones.map((bone) => bindTranslation(rig, bone));
+		const rest = bind.map((p) => p.clone());
+		const chain = {
 			track,
 			bones,
 			contactRadii,
 			contactHeights: measureContactHeights(rig),
-			bindPositions: bones.map((bone) => {
-				const saved = rig.userData?.poseBind?.get(bone)?.position;
-				return saved
-					? new THREE.Vector3(saved.x, saved.y, saved.z)
-					: bone.position.clone();
-			}),
-			lengths,
 			poleLocal: track.kind === "arm" ? armPoleLocal : legPoleLocal,
 			rig,
+		};
+		// LIVE rest translations and segment lengths. Every solver returns the
+		// chain to `bindPositions` before posing it by rotation and then trusts
+		// `lengths`, so both must describe the skeleton the rig is actually
+		// playing: a performer-sized take rests the arm chain on its own bone
+		// lengths (playbackRestPosition), and snapping it to the rig's bind
+		// translations popped the upper arm 34.9 -> 27.8 cm on every keyed frame
+		// while the cached performer lengths made solveIk miss by 8 cm. Without
+		// a take (or for positionally skinned bones) this is the bind pose, as
+		// before. Callers that override either value spread the chain, which
+		// snapshots these getters, and replace them with plain data.
+		Object.defineProperties(chain, {
+			bindPositions: {
+				enumerable: true,
+				get() {
+					for (let i = 0; i < bones.length; i += 1) rest[i].copy(playbackRestPosition(bones[i]) ?? bind[i]);
+					return rest;
+				},
+			},
+			lengths: {
+				enumerable: true,
+				get() {
+					const positions = this.bindPositions;
+					return units.map((unit, i) => unit * positions[i + 1].length());
+				},
+			},
 		});
+		out.set(track.id, chain);
 	}
 	// FK swing joints: bone + the child that defines the swing direction. The
 	// hips also carries its bind LOCAL position — the body root control
@@ -498,19 +525,26 @@ export function resolveIkRig(rig) {
 		const bone = findBone(rig, track.bone);
 		if (!bone) return null;
 		const child = track.child ? findBone(rig, track.child) : null;
-		fkJoints.set(track.id, {
-			track,
-			bone,
-			child,
-			bindPos: (() => {
-				const saved = rig.userData?.poseBind?.get(bone)?.position;
-				return saved
-					? new THREE.Vector3(saved.x, saved.y, saved.z)
-					: bone.position.clone();
-			})(),
+		const bind = bindTranslation(rig, bone);
+		const rest = bind.clone();
+		// Live for the same reason as a chain's bindPositions: a swing drag
+		// resets the joint to this translation, and on a performer take the
+		// shoulders rest on the take's girdle length, not the rig's bind.
+		const joint = { track, bone, child };
+		Object.defineProperty(joint, "bindPos", {
+			enumerable: true,
+			get: () => rest.copy(playbackRestPosition(bone) ?? bind),
 		});
+		fkJoints.set(track.id, joint);
 	}
 	return { chains: out, fkJoints, contactRadii, contactHeights: measureContactHeights(rig) };
+}
+
+/** A bone's bind LOCAL translation: the primed snapshot when there is one,
+ * else its current translation (a rig that was never primed). */
+function bindTranslation(rig, bone) {
+	const saved = rig.userData?.poseBind?.get(bone)?.position;
+	return saved ? new THREE.Vector3(saved.x, saved.y, saved.z) : bone.position.clone();
 }
 
 /**
@@ -1132,7 +1166,10 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
  * chain's rotations, those generated translations no longer describe the
  * same FK pose and can visually separate the limb. Return the edited chain
  * to its Mixamo bind translations before applying IK rotations so parent
- * rotation and fixed segment lengths own all descendants.
+ * rotation and fixed segment lengths own all descendants. "Bind" is the
+ * chain's live `bindPositions`: the take's own rest translation for bones
+ * playback drives by rotation (a performer's arm length), the Mixamo bind
+ * translation otherwise.
  *
  * WHY THE DELTA PATH CALLS THIS ONLY AT FULL WEIGHT. The bind restore is not a
  * small adjustment — on a generated clip the per-bone translations sit ~19 mm
@@ -1154,10 +1191,11 @@ export function ikEvaluate(rig, ikState, frame, fkJoints, blendWindow = 0) {
  * space, which is a change to solveIk's contract and to every drag path with it.
  */
 function restoreChainPositions(chain, weight = 1) {
-	if (!chain?.bindPositions) return;
+	const positions = chain?.bindPositions;
+	if (!positions) return;
 	for (let index = 0; index < chain.bones.length; index += 1) {
 		const bone = chain.bones[index];
-		const bind = chain.bindPositions[index];
+		const bind = positions[index];
 		if (weight >= 1) bone.position.copy(bind);
 		else bone.position.lerp(bind, weight);
 	}

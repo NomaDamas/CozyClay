@@ -24,7 +24,7 @@ import { startWorkflowExecution } from "../execution-telemetry.js";
 import { createCanvasCommands } from "./canvas-commands.js";
 import { applyMotionToActiveScene, importImageIntoActiveScene, readStoredSceneDocument } from "./scene-asset-sync.js";
 import { createHttpTransport } from "./agent-client.js";
-import { fetchVideoOutputBlob, requestBridgeExtract } from "../multimodel-ingest.js";
+import { fetchVideoOutputBlob, mocapQualityReceipt, requestBridgeExtract } from "../multimodel-ingest.js";
 import { canvasTakesPaste, fileToDataUrl, imageFileFromTransfer, pastedImageNodeData } from "./clipboard-image.js";
 import { appendVersion, compareIndex, pinnedInputs, selectVersion, versionLabel, versionState } from "./image-versions.js";
 import { normalizeVideoForm, videoFormContract } from "./video-contract.js";
@@ -217,7 +217,10 @@ function VideoNode({ id, data }) {
 			<label className="workflow-schema-check"><input type="checkbox" checked={Boolean(form.extract_mocap)} onChange={(event) => update("extract_mocap", event.target.checked)} />Extract GVHMR motion into connected Motion Input</label>
 		</>}
 		{data.videoUrl && <video controls className="workflow-video-preview" src={data.videoUrl} />}
-		{generated && data.motionExtraction?.motionUrl && <div className="workflow-hint" data-testid="mocap-extraction-receipt">✓ GVHMR motion extracted{Number.isFinite(data.motionExtraction.frames) ? ` · ${data.motionExtraction.frames} frames` : ""}</div>}
+		{generated && data.motionExtraction && <div className="workflow-hint" data-testid="mocap-extraction-receipt">
+			{data.motionExtraction.motionUrl ? `✓ GVHMR motion extracted${Number.isFinite(data.motionExtraction.frames) ? ` · ${data.motionExtraction.frames} frames` : ""}` : "GVHMR motion extraction returned no motion"}
+			<span data-testid="mocap-quality-receipt"> · {mocapQualityReceipt(data.motionExtraction.quality)}</span>
+		</div>}
 		{generated && data.preservation?.pass && <div className="workflow-hint workflow-preservation-ok" data-testid="h3-preservation-receipt">✓ H3 scene/camera lock verified{h3VerificationMetrics(data.preservation)}</div>}
 		{generated && data.preservation && !data.preservation.pass && <div className="workflow-error workflow-preservation-failed" data-testid="h3-preservation-failed">✕ H3 output rejected: background/camera drift{h3VerificationMetrics(data.preservation)}</div>}
 		{generated && data.isLoading && <div className="workflow-hint">Generating video…</div>}{generated && data.errorMsg && <div className="workflow-error">{data.errorMsg}</div>}

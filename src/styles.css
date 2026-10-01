@@ -4359,7 +4359,6 @@ input[type=range]::-moz-range-thumb {
 	   page itself never overflows. Vertical scrolls too, because the speed
 	   graph is taller than a clip lane by design. */
 	overflow-x: auto;
-	overflow-y: auto;
 }
 
 /* The zoomed time surface: every time-coordinate surface (ruler lane, lane
@@ -5357,8 +5356,24 @@ input[type=range]::-moz-range-thumb {
 	}
 	.topbar {
 		padding: 0 14px;
-		gap: 10px;
-		height: 54px;
+		gap: 6px 10px;
+		height: auto;
+		min-height: 54px;
+		grid-template-columns: minmax(0, 1fr) auto;
+		grid-template-rows: auto auto;
+		align-items: center;
+		padding-block: 6px;
+	}
+	.topbar-actions {
+		grid-column: 1 / -1;
+		justify-self: stretch;
+		width: 100%;
+		min-width: 0;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+	}
+	.live-workspace-handle {
+		display: none;
 	}
 	.kbd-hint {
 		display: none;

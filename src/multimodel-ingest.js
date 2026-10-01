@@ -37,6 +37,21 @@ export function trajectoryReceipt(report, korean = false) {
 
 /** Human-readable evidence from the palette detector, when the GVHMR worker
  * exposes it. Older bridges may omit the report. */
+export function mocapQualityFailedChecks(quality) {
+	return Array.isArray(quality?.checks)
+		? quality.checks.filter((check) => check && check.pass === false).map((check) => check.name).filter(Boolean)
+		: [];
+}
+
+/** Keep every extraction surface honest: only an explicit machine pass is good. */
+export function mocapQualityReceipt(quality, korean = false, label = "") {
+	const prefix = label ? `${label}: ` : "";
+	if (quality?.pass === true) return `${prefix}${korean ? "모캡 품질 게이트 통과" : "Mocap quality gate passed"}`;
+	if (!quality) return `${prefix}${korean ? "모캡 품질 결과를 사용할 수 없음" : "Mocap quality result unavailable"}`;
+	const failed = mocapQualityFailedChecks(quality);
+	return `${prefix}${korean ? `모캡 품질 게이트 실패: ${failed.join(", ") || "확인 필요"}` : `Mocap quality gate failed: ${failed.join(", ") || "review required"}`}`;
+}
+
 export function segmentationReceipt(report, korean = false) {
 	if (!report) return "";
 	if (report.available === false) return korean ? "색 세그멘테이션 측정 불가" : "Palette segmentation metrics unavailable";

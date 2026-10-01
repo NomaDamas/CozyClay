@@ -125,6 +125,23 @@ test("posed limb lengths equal the SMPL rest limb lengths and boneScale says so"
 	let low = Infinity; for (const j of ["LeftFoot", "RightFoot", "LeftToeBase", "RightToeBase"]) low = Math.min(low, at(0, J(j))[1]);
 	assert.ok(Math.abs(low) < 1e-3);
 });
+// Grounding is the MINIMUM over the take, not a quantile: a quantile leaves
+// that fraction of frames below the floor by construction. Here one frame
+// dips 4 cm (a 10th percentile of 12 frames would sit on the standing
+// frames and sink it), then the performer jumps and lands on a platform.
+test("minimum skeletal grounding keeps every frame's feet on or above the floor and preserves jumps and elevated landings", () => {
+	const ys = [1, 1, 1, .96, 1, 1, 1.3, 1.3, 1.4, 1.4, 1.4, 1.4];
+	const input = fixture(ys.length); input.smpl_global_orient.data.fill(0); input.smpl_body_pose.data.fill(0);
+	ys.forEach((y, f) => { input.smpl_transl.data[f * 3 + 1] = y; });
+	const motion = smplToCskel27Motion(input);
+	const feet = ["LeftFoot", "RightFoot", "LeftToeBase", "RightToeBase"].map((n) => CSKEL27_JOINTS.indexOf(n));
+	const lowest = (m) => Array.from({ length: m.frames }, (_, f) => Math.min(...feet.map((j) => m.posedJoints[(f * 27 + j) * 3 + 1])));
+	const lows = lowest(motion);
+	assert.ok(Math.abs(Math.min(...lows)) < 1e-5, "the take's lowest foot joint is on the floor");
+	assert.ok(Math.abs(lows[3]) < 1e-5, "the dip frame is the grounded one");
+	assert.ok(lows.every((y) => y >= -1e-6), `no frame below the floor: ${Math.min(...lows)}`);
+	for (let f = 0; f < ys.length; f += 1) assert.ok(Math.abs((motion.rootPos[f * 3 + 1] - motion.rootPos[3 * 3 + 1]) - (Math.fround(ys[f]) - Math.fround(.96))) < 1e-5, `frame ${f} keeps its filmed height relative to the ground`);
+});
 test("bone-scale override uses one uniform factor without changing timing", () => {
 	const input = fixture(3), derived = smplToCskel27Motion(input), uniform = smplToCskel27Motion(input, { boneScale: 1 });
 	assert.equal(uniform.frames, derived.frames); assert.equal(uniform.fps, derived.fps);
