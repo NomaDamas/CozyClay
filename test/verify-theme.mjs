@@ -29,10 +29,11 @@ expect("chrome accent token uses the v2 selection role", css.includes("--accent:
 expect("timeline lanes use the v2 panel surface", css.includes("background-color: var(--surface-panel)"));
 expect("IK uses the v2 danger token", css.includes(".tl-marker.ik") && css.includes("background: var(--danger)"));
 expect("current frame uses the v2 selection token", css.includes(".tl-frame-box") && css.includes("background: var(--select)"));
-// The bright stage stays the default; grid view may swap in the dark void.
-expect("Canvas uses a bright neutral toon background", app.includes('args={[gridView ? GRID_BACKGROUND : "#eef4f3"]}'));
-expect("Character uses bright ivory clay", app.includes('const CLAY = "#f2eee6"'));
-expect("Room uses a high-key floor", room.includes('const FLOOR = "#fffdf7"'));
+// The stage is the grey workbench everywhere (editor, preview, exports, both
+// UI themes); grid view only trades the deck for the reference grid.
+expect("Canvas uses the grey workbench background", app.includes('args={[gridView ? GRID_BACKGROUND : STAGE_BACKGROUND]}'));
+expect("Character uses neutral grey clay", app.includes('const CLAY = "#bdbec3"'));
+expect("Room uses a grey deck a step above the sky", room.includes('const FLOOR = "#5b5d63"'));
 // The walls are gone on purpose: the set is an open deck, so a shot can stage a
 // run or a chase without meeting a corner. These assert their ABSENCE, which is
 // what would regress if a wall were ever reintroduced by accident.
@@ -44,7 +45,7 @@ expect(
 	// The key is user-movable now: the tuned rig survives as the keyLight
 	// DEFAULTS, so an untouched stage still renders the same high-key look.
 	// grid view may swap in the neutral studio rig; the clay values stay the default arm
-	room.includes('["#fffdf6", "#d8d0c3", 0.9]') &&
+	room.includes('["#ffffff", "#5a5d64", 0.9]') &&
 		room.includes("neutral ? 0.34 : 0.18") &&
 		// the key colour is now the user's warmth dial, defaulting to the
 		// tuned warm value — the default keyLight shape carries it

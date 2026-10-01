@@ -48,8 +48,8 @@ const expect = (name, condition, detail = "") => {
 const sceneRoot = `(() => { let node = window.__cozyclay.editorCam; while (node.parent) node = node.parent; return node; })()`;
 const backgroundHex = `${sceneRoot}.background.getHexString()`;
 const gridMesh = `(() => { let g = null; ${sceneRoot}.traverse((c) => { if (c.name === "grid-floor") g = c; }); return g && { mask: g.layers.mask, depthWrite: g.material.depthWrite, transparent: g.material.transparent }; })()`;
-// The deck is the only Lambert plane painted #fffdf7 (src/room.jsx FLOOR).
-const deckPresent = `(() => { let found = false; ${sceneRoot}.traverse((c) => { if (c.isMesh && c.material?.color?.getHexString?.() === "fffdf7") found = true; }); return found; })()`;
+// The deck is the only Lambert plane painted #5b5d63 (src/room.jsx FLOOR).
+const deckPresent = `(() => { let found = false; ${sceneRoot}.traverse((c) => { if (c.isMesh && c.material?.color?.getHexString?.() === "5b5d63") found = true; }); return found; })()`;
 
 expect("app becomes ready", await waitFor("!!document.querySelector('.v2-outliner .v2-outliner-search')", 30000));
 expect("the scene graph hook is live", await waitFor("!!window.__cozyclay?.editorCam?.parent", 30000));
@@ -65,18 +65,19 @@ const openViewMenu = async () => {
 expect("the viewport bar offers the View menu", await waitFor("!!document.querySelector('.view-menu-trigger')", 15000));
 expect("the View menu opens", await openViewMenu());
 expect("the View menu offers the Reference grid toggle", await evaluate(`!!${toggle}`));
-expect("mode OFF shows the clay stage background", await evaluate(`${backgroundHex} === "eef4f3"`));
+// The stage wears the grey void in both modes; the toggle only swaps the deck for the grid.
+expect("mode OFF shows the grey stage background", await evaluate(`${backgroundHex} === "232428"`));
 expect("mode OFF has the floor deck", await evaluate(deckPresent));
 expect("mode OFF has no grid mesh", await evaluate(`${gridMesh} === null`));
 
 await evaluate(`${toggle}.click()`);
-expect("ON swaps the background to the dark void", await waitFor(`${backgroundHex} === "2c2e33"`, 8000));
+expect("ON keeps the dark void background", await waitFor(`${backgroundHex} === "232428"`, 8000));
 expect("ON removes the floor deck", await evaluate(`!(${deckPresent})`));
 const grid = await evaluate(gridMesh);
 expect("ON adds the grid mesh", !!grid, JSON.stringify(grid));
 expect("the grid lives on the export-stripped gizmo layer (bit 5)", grid?.mask === (1 << 5), `mask=${grid?.mask}`);
 expect("the grid is transparent and never writes depth", grid?.transparent === true && grid?.depthWrite === false);
-expect("the fog follows the void colour", await evaluate(`${sceneRoot}.fog.color.getHexString() === "2c2e33"`));
+expect("the fog follows the void colour", await evaluate(`${sceneRoot}.fog.color.getHexString() === "232428"`));
 expect("the preference is stored under its own key", await evaluate(`localStorage.getItem("cozyclay.grid-view.v1") === "1"`));
 
 // persistence across reload
@@ -86,11 +87,11 @@ await sleep(1000);
 expect("app returns after reload", await waitFor("!!document.querySelector('.view-menu-trigger')", 30000));
 expect("the View menu reopens after the reload", await openViewMenu());
 expect("the mode survives the reload", await waitFor(`${toggle}.getAttribute("aria-pressed") === "true"`, 8000));
-expect("the void background survives the reload", await waitFor(`${backgroundHex} === "2c2e33"`, 8000));
+expect("the void background survives the reload", await waitFor(`${backgroundHex} === "232428"`, 8000));
 
-// OFF restores the clay stage exactly
+// OFF restores the deck; the background stays the same grey
 await evaluate(`${toggle}.click()`);
-expect("OFF restores the stage background", await waitFor(`${backgroundHex} === "eef4f3"`, 8000));
+expect("OFF keeps the stage background", await waitFor(`${backgroundHex} === "232428"`, 8000));
 expect("OFF restores the floor deck", await evaluate(deckPresent));
 expect("OFF removes the grid mesh", await evaluate(`${gridMesh} === null`));
 expect("OFF is stored", await evaluate(`localStorage.getItem("cozyclay.grid-view.v1") === "0"`));

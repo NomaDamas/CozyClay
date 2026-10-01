@@ -482,11 +482,13 @@ export const DEMO_MOTION_PROMPT = "A person walks forward.";
 // same window so the two deletion paths feel like one rule.
 export const OBJECT_DELETE_UNDO_MS = 7000;
 export const ASSET_DELETE_UNDO_MS = 7000;
-export const CLAY = "#f2eee6";
-export const CLAY_B = "#ddd6ca";
+// Neutral grey clay: the set is the grey workbench, so the figures are grey
+// too, light enough to stand off the deck and the sky.
+export const CLAY = "#bdbec3";
+export const CLAY_B = "#a4a5aa";
 // X Bot's shell is smooth (no raised exoskeleton like Y Bot's), so it gets a
 // brighter, whiter clay to keep it readable against the set.
-export const CLAY_X = "#faf8f2";
+export const CLAY_X = "#d0d0d4";
 // Model/role default for a cast member; a user-picked entry.tint always wins
 // over this at render time.
 export const defaultCharacterTint = (entry, index) => (entry.model === "x-bot-tpose" ? CLAY_X : index === 0 ? CLAY : CLAY_B);

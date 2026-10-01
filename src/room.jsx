@@ -15,8 +15,9 @@ import * as THREE from "three";
  * never meets an unbounded surface.
  */
 
-// Bright enough to sit clearly above the grid lines: the deck reads as a lit
-// surface with lines drawn ON it, not as a dark line-texture tiling to the fog.
+// The deck is the grey workbench (the same neutral family as STAGE_BACKGROUND
+// in grid-view.js), a step lighter than the sky so the horizon still reads,
+// with the grid lines drawn ON it in a lighter grey.
 //
 // Lit, not unlit. An unlit deck renders one flat colour across its whole 500 m,
 // which costs an exported blocking frame two depth cues at once: the falloff
@@ -24,7 +25,7 @@ import * as THREE from "three";
 // subject is standing ON it rather than floating. The colour is lifted to
 // compensate for the shading the lambert term now applies, so the deck keeps
 // the same on-screen brightness it had while unlit.
-const FLOOR = "#fffdf7";
+const FLOOR = "#5b5d63";
 
 export const STAGE_SIZE = 500;
 
@@ -50,7 +51,7 @@ function makeGridTexture() {
 	const ctx = canvas.getContext("2d");
 	ctx.fillStyle = "#ffffff";
 	ctx.fillRect(0, 0, PX, PX);
-	ctx.strokeStyle = "rgba(120, 110, 92, 0.34)";
+	ctx.strokeStyle = "rgba(40, 42, 48, 0.22)";
 	ctx.lineWidth = 2;
 	for (let m = 1; m < TILE_M; m += 1) {
 		const p = Math.round(m * pxPerM) + 0.5;
@@ -58,8 +59,8 @@ function makeGridTexture() {
 		ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(PX, p); ctx.stroke();
 	}
 	// The ten-metre lines carry the scale read, so they stay heavier.
-	ctx.strokeStyle = "rgba(96, 86, 68, 0.6)";
-	ctx.lineWidth = 5;
+	ctx.strokeStyle = "rgba(24, 26, 30, 0.42)";
+	ctx.lineWidth = 4;
 	ctx.strokeRect(0, 0, PX, PX);
 	const texture = new THREE.CanvasTexture(canvas);
 	texture.wrapS = THREE.RepeatWrapping;
@@ -87,29 +88,29 @@ export function Room() {
  * The key is the USER'S light: `keyLight` carries its grabbable position and
  * the rig's master brightness — fill and rim ride the same dimmer so turning
  * the key down darkens the whole stage instead of flattening it. */
-// Warm/cool slider → light colour. 0.5 is the tuned default (#fff8e8);
-// 0 pulls toward cool daylight, 1 toward sunset amber.
+// Warm/cool slider → light colour. 0.5 is the tuned default (neutral white,
+// so the grey set and the grey clay stay grey); 0 pulls toward cool daylight,
+// 1 toward sunset amber.
 export function keyLightColor(warmth = 0.5) {
 	const w = Math.max(0, Math.min(1, warmth ?? 0.5));
-	const base = new THREE.Color("#fff8e8");
+	const base = new THREE.Color("#ffffff");
 	if (w < 0.5) return base.clone().lerp(new THREE.Color("#e8f0ff"), (0.5 - w) * 2).getStyle();
 	if (w > 0.5) return base.clone().lerp(new THREE.Color("#ffc27a"), (w - 0.5) * 2).getStyle();
-	return "#fff8e8";
+	return "#ffffff";
 }
 
 /**
- * `neutral` is the grid-view rig (Blender's workbench studio light idea):
- * the clay hemisphere fakes a warm bounce off the ivory deck, and with the
- * deck gone that bounce reads as mud against the dark void. Neutral mode
- * swaps it for a white sky over a void-dark ground and lifts the ambient so
- * authored colours stay saturated without any pretend floor.
+ * One neutral rig (Blender's workbench studio light idea): a white sky over
+ * a grey ground bounce. `neutral` is the grid view, where the deck is gone
+ * and the ambient is lifted so authored colours stay saturated without any
+ * pretend floor.
  */
 export function StageLights({ keyLight = { x: 6, y: 9, z: 4, intensity: 1.12, warmth: 0.5 }, neutral = false }) {
 	const dim = keyLight.intensity / 1.12;
 	return (
 		<>
 			<hemisphereLight
-				args={neutral ? ["#ffffff", "#3a3d42", 0.9] : ["#fffdf6", "#d8d0c3", 0.9]}
+				args={neutral ? ["#ffffff", "#3a3d42", 0.9] : ["#ffffff", "#5a5d64", 0.9]}
 				intensity={0.9 * Math.min(1, 0.35 + 0.65 * dim)}
 			/>
 			<ambientLight intensity={(neutral ? 0.34 : 0.18) * Math.min(1, 0.35 + 0.65 * dim)} />
@@ -136,7 +137,7 @@ export function StageLights({ keyLight = { x: 6, y: 9, z: 4, intensity: 1.12, wa
 				shadow-bias={-0.0006}
 				shadow-normalBias={0.02}
 			/>
-			<directionalLight color="#dff6f7" position={[-6, 4, -4]} intensity={0.36 * dim} />
+			<directionalLight color="#eef2f4" position={[-6, 4, -4]} intensity={0.36 * dim} />
 			<directionalLight color="#ffffff" position={[2, 3, 9]} intensity={0.22 * dim} />
 		</>
 	);

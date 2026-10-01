@@ -44,8 +44,8 @@ assert.equal(scene.overrideMaterial, null, "the depth override is taken back off
 assert.deepEqual([...depthBuffer], [1, 2, 3, 255], "without a converter the raw read-back comes back");
 
 // Empty sky is infinitely far away: on a depth plate it reads black, not the
-// studio's pale stage colour.
-const stageBackground = new THREE.Color("#eef4f3");
+// studio's grey stage colour.
+const stageBackground = new THREE.Color("#232428");
 scene.background = stageBackground;
 const backgroundRig = stubCapture(scene);
 renderPass(backgroundRig, scene, camera, "depth");

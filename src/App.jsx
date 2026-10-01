@@ -63,7 +63,7 @@ import { PlanBoard } from "./planview.jsx";
 import { autoColorHex, loadAutoColor } from "./auto-color.js";
 import { DualRender, fitAspect, GIZMO_LAYER } from "./dualview.jsx";
 import { GridFloor } from "./grid-floor.jsx";
-import { GRID_BACKGROUND, GRID_FOG, readStoredGridView, writeStoredGridView } from "./grid-view.js";
+import { GRID_BACKGROUND, GRID_FOG, STAGE_BACKGROUND, readStoredGridView, writeStoredGridView } from "./grid-view.js";
 import {
 	CURVE_GRAB_RADIUS_PX,
 	DRAG_RADIUS_DEFAULT,
@@ -6813,7 +6813,7 @@ export default function App() {
 								timelineHeight={workspaceLayout.timelineHeight}
 								planZoom={workspaceLayout.planZoom}
 							/>
-							<color attach="background" args={[gridView ? GRID_BACKGROUND : "#eef4f3"]} />
+							<color attach="background" args={[gridView ? GRID_BACKGROUND : STAGE_BACKGROUND]} />
 							{/* The open stage runs 500 m; without a falloff the whole deck
 							    reads at once and the horizon sits a kilometre away. Blender's
 							    viewport answer is a clip distance that lets the neutral void
@@ -6821,7 +6821,7 @@ export default function App() {
 							    same idea — it fades the floor INTO the background colour, so
 							    past ~120 m the deck simply ceases to exist with no horizon
 							    line, no clip edge and no tone break. */}
-							<fog attach="fog" args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : ["#eef4f3", 18, 54]} />
+							<fog attach="fog" args={gridView ? [GRID_FOG.color, GRID_FOG.near, GRID_FOG.far] : [STAGE_BACKGROUND, 18, 54]} />
 							<StageLights keyLight={keyLight} neutral={gridView} />
 							<KeyLightPuck
 								keyLight={keyLight}
