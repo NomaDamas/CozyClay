@@ -3023,7 +3023,14 @@ export function useMotion(appContext) {
 	 * finished job, the footage it was ingested as (null when ingest failed) and
 	 * the account's daily generations left. */
 	async function generateFalMotion(kind = "interpolate", instructionOverride = null, commandContext = null) {
+		// One explicit request on the motion:* contract (#466). While the route is
+		// gated, the lock itself is the demand signal. Telemetry never decides.
+		const motionRequest = startMotionRequest({
+			surface: !commandContext ? "fal_card" : commandContext.origin === "mcp" || commandContext.origin === "live" ? "mcp" : "agent",
+			input_mode: kind === "interpolate" ? "a_to_b" : "still",
+		});
 		if (!appContext.shared.falMotionEnabled) {
+			motionRequest.block("locked");
 			showFalMotionLock();
 			return { failed: "AI video motion (Fal) is not enabled for this account." };
 		}
@@ -3031,19 +3038,23 @@ export function useMotion(appContext) {
 		if (kind === "act" && !source.a) {
 			try { source = { ...source, a: captureFalStill() }; setFalMotion((current) => ({ ...current, a: source.a })); }
 			catch (error) {
+				motionRequest.block("missing_input");
 				setFalMotion((current) => ({ ...current, error: error.message, status: "error" }));
 				return { failed: "Could not capture the character's pose frame: the full body must be inside the shot frame, shaded part colours must be on (view.setPartColours { mode: \"shaded\" }), and the renderer and rig must be ready." };
 			}
 		}
 		if (kind === "interpolate" && (!source.a || !source.b)) {
+			motionRequest.block("missing_input");
 			setFalMotion((current) => ({ ...current, error: ko("Capture both A and B poses first.", "A와 B 포즈를 먼저 캡처하세요."), status: "error" }));
 			return { failed: "Capture both A and B poses first." };
 		}
 		if (!source.a?.partColours || (kind === "interpolate" && !source.b?.partColours)) {
+			motionRequest.block("missing_input");
 			setFalMotion((current) => ({ ...current, error: ko("Recapture A/B refs with shaded body-part segmentation enabled.", "색 세그멘테이션이 포함된 음영 A/B 참조를 다시 캡처하세요."), status: "error" }));
 			return { failed: "The captured pose frame has no shaded body-part segmentation; the user must recapture it in the Fal card with shaded part colours on." };
 		}
 		if (kind === "interpolate" && framingDistance(source.a.framing, source.b.framing) > 0.001) {
+			motionRequest.block("missing_input");
 			setFalMotion((current) => ({ ...current, error: ko("The camera changed between A and B. Capture both poses with the same camera.", "A와 B 사이에서 카메라가 바뀌었어요. 같은 카메라로 다시 캡처하세요."), status: "error" }));
 			return { failed: "The camera changed between poses A and B; capture both with the same camera." };
 		}
@@ -3055,6 +3066,8 @@ export function useMotion(appContext) {
 			? source.promptOverride.trim()
 			: buildH3MotionPrompt(description || (kind === "interpolate" ? "" : "Make the character perform the requested action."), { interpolate: kind === "interpolate" });
 		setFalMotion((current) => ({ ...current, status: "submitting", error: "", job: null }));
+		motionRequest.pass("fal");
+		motionRequest.start();
 		try {
 			const fetchImpl = commandContext ? (url, options) => fetch(url, { ...options, signal: commandContext.signal }) : undefined;
 			const submitted = await submitFalMotion({
@@ -3075,6 +3088,7 @@ export function useMotion(appContext) {
 			commandContext?.check();
 			const job = finished?.job;
 			if (job?.status !== "done") throw Object.assign(new Error(job?.error || ko("Fal motion generation failed.", "Fal 생성에 실패했어요.")), job?.error ? {} : { reason: "The AI video generation failed." });
+			motionRequest.succeed();
 			setFalMotion((current) => ({ ...current, job, status: "done", dailyRemaining: finished.dailyRemaining }));
 			let footage = null;
 			if (job.video?.url) {
@@ -3101,13 +3115,18 @@ export function useMotion(appContext) {
 					},
 				});
 				appContext.shared.setResultOpen(true);
+				// Applied = the clip is in the Studio, ready for GVHMR extraction.
+				motionRequest.apply();
 				// The result modal and the studio modal are both z-30; never stack them.
 				appContext.shared.setFalMotionStudioOpen(false);
 				appContext.notify((isKo, ko) => isKo ? "Fal 영상이 준비됐어요 · 추출 패널에서 GVHMR을 실행하세요" : "Fal video is ready · run GVHMR from the extraction panel");
 			}
 			return { job, footage, dailyRemaining: finished.dailyRemaining ?? null };
 		} catch (error) {
-			if (commandContext && (commandContext.signal.aborted || error.code === "STALE_TARGET")) throw error;
+			const cancelled = Boolean(commandContext && (commandContext.signal.aborted || error?.code === "STALE_TARGET"));
+			// 429 is the account's daily cap (workers/api daily_cap).
+			motionRequest.fail(error, cancelled ? "aborted" : error?.status === 429 ? "quota" : "generation_failed");
+			if (cancelled) throw error;
 			setFalMotion((current) => ({ ...current, status: "error", error: error.message || String(error) }));
 			return { failed: error.reason ?? `The AI video generation failed: ${error.message || error}` };
 		}
@@ -3120,8 +3139,12 @@ export function useMotion(appContext) {
 		return null;
 	}
 	function generateFalMotionFromUi(instruction) {
-		if (!appContext.shared.falMotionEnabled) showFalMotionLock();
-		else {
+		if (!appContext.shared.falMotionEnabled) {
+			// Locked, the action's availability check refuses before
+			// generateFalMotion runs, so the chip records its own lock (#466).
+			startMotionRequest({ surface: "agent", input_mode: "still" }).block("locked");
+			showFalMotionLock();
+		} else {
 			// The chip clears the typed instruction when clicked, so a refusal says why.
 			const reason = falMotionUnavailable();
 			if (reason) { appContext.notify(reason); return null; }

@@ -1749,3 +1749,155 @@ ORDER BY week_start_kst, event, app_version_json, qa_marker_json
   Compare equal complete mature periods descriptively; traffic mix, rollout
   adoption, small samples and observability can explain a change. This is not
   a randomized A/B test and supplies no significance or causal-lift claim.
+
+# Builder telemetry (issue #466)
+
+Seven questions a CozyClay builder asks every week, and the event that answers
+each one. Weeks are Monday to Sunday in Asia/Seoul; PostHog stores UTC, so bound
+with `toDateTime('…', 'Asia/Seoul')`. Split `distribution` (npm vs hosted) in
+every table, and exclude `internal_qa = true`. Only versions that ship this
+contract report it: before that release the new events are **unknown, not 0**.
+
+| Question | Event |
+| --- | --- |
+| Do people use bone-level pose control? | `feature:used` `name = 'pose_edit'` (a real pose change) and `app:session_ended.pose_edit_bucket` |
+| Do they press A→B (Fal H3 Max Turbo)? | `motion:*` with `input_mode = 'a_to_b'`; `reason = 'locked'` while the route is gated |
+| Where does it break? | `app:error` (type, source, bundle file + line/column) |
+| Can their machine run it? | `device:profile` (GPU vendor/class, WebGL, CPU/memory, frame-rate bucket) |
+| Where did the install come from? | `install:first_launch.heard_from` (`site`, `playground` from `--via`) |
+| What are they making, with whom? | `survey:use_case` (`use_case`, `team`) |
+| Are they on the newest release? | `update_status` on every npm event |
+
+## Definition changes
+
+- `feature:used name = 'pose_edit'` meant **a pose saved to the library** before
+  this release. From this release it means a real pose change through the
+  semantic boundary, and library saves are `pose_save`. Split by `app_version`;
+  never add the two eras together.
+- `action_count_bucket` no longer counts passive signals (`motion:backend_state`,
+  `app:error`, `device:profile`). Earlier npm sessions always counted at least
+  one action from `motion:backend_state`, so their `1-3` bucket includes
+  sessions with no user action.
+- Edit gestures: repeated edits of the same group less than one second apart
+  (a bone drag, a gizmo move) count once.
+
+## Pose editing vs everything else (per session)
+
+`app:session_ended` is a beacon without `$host`; split with `distribution`.
+
+```sql
+SELECT
+    properties.distribution AS distribution,
+    count() AS sessions,
+    countIf(properties.pose_edit_bucket != '0') AS pose_sessions,
+    countIf(properties.camera_edit_bucket != '0') AS camera_sessions,
+    countIf(properties.object_edit_bucket != '0') AS object_sessions,
+    countIf(properties.shot_edit_bucket != '0') AS shot_sessions,
+    countIf(properties.pose_edit_bucket IN ('4-10', 'gte11')) AS heavy_pose_sessions
+FROM events
+WHERE event = 'app:session_ended'
+  AND properties.pose_edit_bucket IS NOT NULL
+  AND coalesce(properties.internal_qa, false) = false
+  AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY distribution
+```
+
+## A→B demand and outcome
+
+One row per `request_id`, as in the motion funnel above. While the Fal route is
+gated, the card's Generate button is **disabled**, so card demand is
+`feature:used name = 'fal_motion_open'` (the A/B authoring modal was opened);
+the agent panel chip still reports `motion:preflight_blocked reason = 'locked'`.
+
+```sql
+WITH per_request AS (
+    SELECT
+        properties.request_id AS request_id,
+        any(distinct_id) AS person,
+        minIf(properties.surface, event = 'motion:generate_requested') AS surface,
+        minIf(properties.input_mode, event = 'motion:generate_requested') AS input_mode,
+        maxIf(properties.reason, event = 'motion:preflight_blocked') AS blocked_reason,
+        max(event = 'motion:job_started') AS started,
+        max(event = 'motion:job_succeeded') AS succeeded,
+        maxIf(properties.error_code, event = 'motion:job_failed') AS error_code,
+        max(event = 'motion:result_applied') AS applied
+    FROM events
+    WHERE event LIKE 'motion:%' AND event != 'motion:backend_state'
+      AND coalesce(properties.internal_qa, false) = false
+      AND timestamp >= now() - INTERVAL 7 DAY
+    GROUP BY request_id
+)
+SELECT input_mode, surface,
+    count() AS requests, uniq(person) AS people,
+    countIf(blocked_reason = 'locked') AS locked,
+    countIf(blocked_reason = 'missing_input') AS missing_input,
+    countIf(started) AS started, countIf(succeeded) AS succeeded,
+    countIf(error_code = 'quota') AS quota, countIf(applied) AS applied
+FROM per_request
+WHERE input_mode IN ('a_to_b', 'still')
+GROUP BY input_mode, surface
+ORDER BY requests DESC
+```
+
+## Top errors
+
+`error_file`/`error_line`/`error_col` point into the release's minified bundle;
+map them with a sourcemap build of the same `app_version`.
+
+```sql
+SELECT
+    properties.app_version AS version,
+    properties.error_type AS type,
+    properties.error_source AS source,
+    properties.error_file AS file,
+    properties.error_line AS line,
+    properties.error_col AS col,
+    count() AS events,
+    uniq(distinct_id) AS people
+FROM events
+WHERE event = 'app:error'
+  AND coalesce(properties.internal_qa, false) = false
+  AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY version, type, source, file, line, col
+ORDER BY people DESC, events DESC
+LIMIT 20
+```
+
+## Machines
+
+```sql
+SELECT
+    properties.distribution AS distribution,
+    properties.gpu_vendor AS gpu,
+    properties.gpu_class AS class,
+    properties.frame_rate_bucket AS fps,
+    uniq(distinct_id) AS people
+FROM events
+WHERE event = 'device:profile'
+  AND coalesce(properties.internal_qa, false) = false
+  AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY distribution, gpu, class, fps
+ORDER BY people DESC
+```
+
+## Install source, use case and update status
+
+```sql
+-- Install source: blank means the prompt was skipped and no --via was given.
+SELECT coalesce(properties.heard_from, '(blank)') AS source, uniq(distinct_id) AS installs
+FROM events
+WHERE event = 'install:first_launch' AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY source ORDER BY installs DESC;
+
+-- Use case x team, answered after a successful export.
+SELECT properties.use_case AS use_case, properties.team AS team, uniq(distinct_id) AS people
+FROM events
+WHERE event = 'survey:use_case' AND coalesce(properties.internal_qa, false) = false
+GROUP BY use_case, team ORDER BY people DESC;
+
+-- Share of npm users on the newest release in the last 7 days.
+SELECT properties.update_status AS status, properties.app_version AS version, uniq(distinct_id) AS people
+FROM events
+WHERE event = 'app:session_started' AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY status, version ORDER BY people DESC;
+```

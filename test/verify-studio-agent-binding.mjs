@@ -27,6 +27,8 @@ import { TRAIL_EFFECTOR_JOINTS } from '../src/motion-trail.js';
 import { sampleAt } from '../src/sample-at.js';
 import { createShot, shotAtFrame, addShotAtFrame } from '../src/cuts.js';
 import * as studioActions from '../src/studio-actions.js';
+// The real motion request contract (#466); inert here because analytics never initializes.
+import { startMotionRequest } from '../src/analytics.js';
 import { createCommandBus, withCommandHistory } from '../src/command-bus.js';
 import { createStudioAppBinding } from '../src/studio-app-binding.js';
 import { createAppContext } from '../src/app-context.js';
@@ -117,7 +119,7 @@ function fixture(options={}) {
   navigator:{clipboard:{writeText:async text=>{clipboard.push(text);}}}};
  // The hosted AI-video (Fal) service and the footage ingest behind it, as
  // stand-ins; the pose capture answers the 480P still the Fal canvas renders.
- const falScope={buildH3MotionPrompt,FAL_MOTION_MIN_DURATION:5,
+ const falScope={buildH3MotionPrompt,FAL_MOTION_MIN_DURATION:5,startMotionRequest,
   captureFalStill:()=>{if(stand.captureError)throw new Error(stand.captureError);return {dataUrl:'data:image/png;base64,QQ==',width:1664,height:960,partColours:[{part:'head'}],framing:keyA};},
   submitFalMotion:async request=>{stand.falSubmits.push(request);if(stand.falSubmitError)throw new Error(stand.falSubmitError);return {job:{id:'fal-job-1',status:'queued'},dailyRemaining:3};},
   waitForFalMotionJob:async(id,{onUpdate})=>{onUpdate({id,status:'running'});return structuredClone(stand.falFinished);},

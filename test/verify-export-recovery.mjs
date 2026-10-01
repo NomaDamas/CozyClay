@@ -112,6 +112,8 @@ function fixture() {
 		embedMode: false, ko: (english) => english, isKo: false, setToast() {}, setRecordedVideoName() {},
 		startExportAttempt: (descriptor) => startExportAttempt(descriptor, { capture: (event, props) => lifecycle.push({ event, props }) }),
 		exportFailureCode, track: (event) => legacy.push(event), trackFeature() {}, trackActivation() {},
+		// #466: the optional use-case question after a finished export.
+		playgroundMode: false, shouldAskUseCase: () => false, setUseCaseAskOpen() {},
 		moveSequence: { slate: "original-shot" },
 		URL: { createObjectURL: () => "blob:fixture", revokeObjectURL() {} },
 		// Only schedule production URL revocation; tests never await a timer.
