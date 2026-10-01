@@ -51,7 +51,11 @@
 		min-height: 0;
 		padding: 0;
 	}
-	.app:not([data-embed-mode]) .stage { border: 0; }
+	/* No entrance animation on the full-bleed stage: stageIn starts at
+	   scale(.985), and the canvas measures its box at mount, so the drawing
+	   buffer stayed ~1.5% short of the layout box and the scene was stretched
+	   (soft edges, misaligned pixels). */
+	.app:not([data-embed-mode]) .stage { border: 0; animation: none; }
 
 	.app:not([data-embed-mode]) .topbar {
 		position: absolute;
@@ -209,6 +213,47 @@
 		width: 12px;
 		cursor: col-resize;
 	}
+	/* The stage canvas is full-bleed (the shot preview is drawn into it under
+	   the dock's card), but the scene is only meant to be SEEN in two places:
+	   the open viewport between the panels and that preview card. Everywhere
+	   else — the 12px gutters, the window margins, the band between the top
+	   pills — a raw slice of floor and horizon read as a crack in the UI. This
+	   frame paints all of that in the shell surface, with the viewport window
+	   and the dock cut out as rounded rects (same 20px radius as the panels),
+	   so the stage sits in a window of the UI instead of leaking around it. */
+	.app:not([data-embed-mode]) .workspace::after {
+		content: "";
+		position: absolute;
+		inset: 0;
+		z-index: 6;
+		pointer-events: none;
+		/* The panel tone, not the window tone: the dock and the columns blur
+		   this frame through their glass, and on the darker --surface-0 they
+		   went a step darker than designed. */
+		background: var(--surface-panel);
+		--shell-view-top: calc(var(--shell-gap) * 2 + 40px);
+		--shell-cut-w: calc(100% - var(--shell-center-left) - var(--shell-center-right));
+		--shell-view-h: max(0px, calc(100% - var(--shell-view-top) - var(--shell-center-bottom)));
+		--shell-dock-h: calc(var(--shell-dock) + var(--shell-status-h));
+		/* An SVG without a viewBox keeps rx in CSS pixels at any mask-size, so
+		   the cut-outs stay 20px-round however the panels are resized. rx is the
+		   panels' --float-radius (themes.css); a data URI cannot read the token. */
+		--shell-round-cut: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect width='100%25' height='100%25' rx='20'/%3E%3C/svg%3E");
+		-webkit-mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-round-cut);
+		mask-image: linear-gradient(#000 0 0), var(--shell-round-cut), var(--shell-round-cut);
+		-webkit-mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-cut-w) var(--shell-dock-h);
+		mask-size: 100% 100%, var(--shell-cut-w) var(--shell-view-h), var(--shell-cut-w) var(--shell-dock-h);
+		/* The dock cut-out is placed from the bottom edge: a percentage in
+		   mask-position is relative to (box - mask size), so calc(100% - ...)
+		   would land it hundreds of px too high. */
+		-webkit-mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), left var(--shell-center-left) bottom var(--shell-dock-bottom);
+		mask-position: 0 0, var(--shell-center-left) var(--shell-view-top), left var(--shell-center-left) bottom var(--shell-dock-bottom);
+		-webkit-mask-repeat: no-repeat;
+		mask-repeat: no-repeat;
+		-webkit-mask-composite: xor;
+		mask-composite: exclude;
+	}
+
 	.preferences-slot { display: contents; }
 
 	/* Embeds keep the viewport-only / compact transport layout. */

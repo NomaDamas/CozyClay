@@ -7,7 +7,7 @@
 @layer shell {
 	:root[data-theme] {
 		/* Floating-panel geometry shared by both themes. */
-		--float-gap: 12px;
+		--float-gap: 6px;
 		--float-radius: 20px;
 		--capsule-radius: 20px;
 		--float-head: 48px;
@@ -30,6 +30,8 @@
 			linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.018) 25%, rgba(255,255,255,0) 45%, rgba(0,0,0,.12) 70%, rgba(0,0,0,.38)),
 			#151517;
 		--glass-text-panel: var(--glass-panel);
+		/* The dock's flat fill: the columns' mid-tone, no top-to-bottom ramp. */
+		--glass-text-panel-flat: rgba(21,21,23,.96);
 		--glass-capsule: linear-gradient(180deg, rgba(255,255,255,.09), rgba(255,255,255,.015) 50%, rgba(0,0,0,.32)), rgba(12,12,13,.78);
 		--glass-blur: blur(40px) saturate(1.6);
 		--capsule-blur: blur(14px) saturate(1.3);
@@ -114,6 +116,7 @@
 
 		--glass-panel: rgba(250,250,252,.74);
 		--glass-text-panel: rgba(250,250,252,.82);
+		--glass-text-panel-flat: rgba(250,250,252,.82);
 		--glass-capsule: rgba(252,252,253,.38);
 		--glass-blur: blur(40px) saturate(1.6);
 		--capsule-blur: blur(14px) saturate(1.3);

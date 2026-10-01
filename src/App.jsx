@@ -6787,6 +6787,9 @@ export default function App() {
 							shadows="percentage"
 							frameloop={renderActive ? "always" : "demand"}
 							dpr={[1, 2]}
+							// Measure the layout box, not the transformed one: stageIn's scale()
+							// at mount used to leave the buffer short of the box in every mode.
+							resize={{ offsetSize: true }}
 							gl={{ preserveDrawingBuffer: true, antialias: true }}
 							onCreated={({ gl }) => {
 								gl.domElement.addEventListener("webglcontextlost", (event) => {

@@ -59,7 +59,11 @@
 		inset: 0;
 		z-index: -1;
 		border-radius: inherit;
-		background: var(--glass-panel);
+		/* A flat fill, not --glass-panel: that gradient runs top highlight to
+		   bottom shade over the whole panel height, so on the 300px dock it was
+		   a visible ramp (warm head, dark body) next to the tall columns'
+		   gentle one. The dock reads as the columns' mid-tone instead. */
+		background: var(--glass-text-panel-flat, var(--surface-panel));
 		-webkit-backdrop-filter: var(--glass-blur);
 		backdrop-filter: var(--glass-blur);
 		box-shadow: var(--panel-shadow-inset);
@@ -388,8 +392,10 @@
 		padding: 4px 0;
 		border-radius: 22px;
 	}
-	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-left { left: 0; }
-	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-right { right: 0; justify-content: flex-start; }
+	/* The rails are stage furniture: they float inside the viewport window,
+	   a gutter's width off its edge, not glued to the columns beside it. */
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-left { left: var(--shell-gap); }
+	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-right { right: var(--shell-gap); justify-content: flex-start; }
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-left .vp-menu-wrap,
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-right .vp-menu-wrap,
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-overlay-right .view-menu-wrap { position: relative; display: flex; }
@@ -572,6 +578,9 @@
 	.app[data-shell="glass"]:not([data-embed-mode]) .vp-inset {
 		top: calc(var(--shell-gap) * 2 + 40px + 12px);
 		left: calc(var(--shell-center-left) + 56px);
+		/* Above the shell frame (shell.css, z 6): a board dragged into a gutter
+		   must stay visible, not become an invisible drag target under it. */
+		z-index: 7;
 		border-radius: 14px;
 		overflow: hidden;
 	}
