@@ -107,6 +107,7 @@ const NODE_FILES = [
 	"test/verify-agent-panel.mjs",
 	"test/verify-agent-host.mjs",
 	"test/verify-agent-routes.mjs",
+	"test/verify-agent-live-runtime.mjs",
 	"test/verify-agent-runner-errors.mjs",
 	"test/verify-agent-steer.mjs",
 	"test/verify-pi-tools.mjs",
@@ -458,6 +459,8 @@ function hasMcpRuntimeDeps() {
 }
 
 const mcpDepsInstalled = hasMcpRuntimeDeps();
+// Starts the repository hub through mcp/live-hub.mjs, so it needs that tree too.
+const MCP_DEPENDENT_NODE_FILES = new Set(["test/verify-agent-live-runtime.mjs"]);
 
 const categories = new Map([
 	...NODE_FILES.map((file) => [file, { kind: "node", reason: "runs directly under Node" }]),
@@ -479,7 +482,7 @@ const categories = new Map([
 ]);
 if (!mcpDepsInstalled) {
 	for (const [file, category] of categories) {
-		if (!file.startsWith("mcp/") || category.kind !== "node") continue;
+		if (!(file.startsWith("mcp/") || MCP_DEPENDENT_NODE_FILES.has(file)) || category.kind !== "node") continue;
 		categories.set(file, {
 			kind: "mcp-deps",
 			reason: "requires the MCP server dependencies; run `npm --prefix mcp ci` (or `cd mcp && npm install`) first",

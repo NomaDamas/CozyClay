@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { once } from "node:events";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, watch } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const repo = new URL("../..", import.meta.url).pathname;
+const packageVersion = JSON.parse(readFileSync(join(repo, "package.json"), "utf8")).version;
 const scratch = mkdtempSync(join(tmpdir(), "cozyclay-mcp-package-"));
 const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 const initialize = JSON.stringify({
@@ -25,6 +27,57 @@ function run(command, args, options = {}) {
 
 function sha256(file) {
 	return createHash("sha256").update(readFileSync(file)).digest("hex");
+}
+
+function reservePort() {
+	return new Promise((resolvePort, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const { port } = server.address();
+			server.close(() => resolvePort(port));
+		});
+	});
+}
+
+/** Resolves once `<port>.json` appears in the live directory. Armed before the
+ * launcher starts, bounded so a hub that never comes up fails the test. */
+function endpointPublished(liveDirectory, port, timeout = 60_000) {
+	mkdirSync(liveDirectory, { recursive: true });
+	const file = `${port}.json`;
+	return new Promise((resolvePublished, reject) => {
+		const timer = setTimeout(() => { watcher.close(); reject(new Error(`live endpoint ${file} was not published`)); }, timeout);
+		const watcher = watch(liveDirectory, (event, name) => {
+			if (name === file && existsSync(join(liveDirectory, file))) { clearTimeout(timer); watcher.close(); resolvePublished(); }
+		});
+	});
+}
+
+/** The packed Studio launcher, stopped as a process group once the caller is
+ * done with it; stdout and stderr are collected for the assertions. */
+function startStudio(args, options) {
+	const child = spawn(process.execPath, ["bin/cozyclay.mjs", ...args], {
+		...options,
+		detached: process.platform !== "win32",
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+	let stdout = "";
+	let stderr = "";
+	child.stdout.setEncoding("utf8");
+	child.stderr.setEncoding("utf8");
+	child.stdout.on("data", (chunk) => { stdout += chunk; });
+	child.stderr.on("data", (chunk) => { stderr += chunk; });
+	const stop = async () => {
+		if (child.exitCode !== null) return;
+		if (process.platform === "win32") {
+			const taskkill = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+			await once(taskkill, "exit");
+		} else {
+			process.kill(-child.pid, "SIGTERM");
+		}
+		await once(child, "close");
+	};
+	return { child, stop, output: () => ({ stdout, stderr }) };
 }
 
 function runMcp(command, args, options = {}) {
@@ -106,7 +159,7 @@ try {
 	assert.equal(sha256(rootManifest), manifestHashBefore, "MCP install must preserve the published root manifest hash");
 	assert.equal(existsSync(rootLock), false, "MCP install must not create a root lockfile");
 	assert.match(first.stderr, /installing MCP server dependencies/, first.stderr);
-	assert.equal(existsSync(join(runtimeHome, ".cache", "cozyclay", "mcp-runtime", "1.8.1", "bin", "agent", "motion-runtime.mjs")), true, "isolated MCP runtime must include the motion runtime import");
+	assert.equal(existsSync(join(runtimeHome, ".cache", "cozyclay", "mcp-runtime", packageVersion, "bin", "agent", "motion-runtime.mjs")), true, "isolated MCP runtime must include the motion runtime import");
 
 	const second = await runMcp(process.execPath, ["bin/cozyclay.mjs", "mcp"], {
 		cwd: packageRoot,
@@ -116,6 +169,33 @@ try {
 	assert.equal(second.status, 0, second.stderr);
 	assert.equal(JSON.parse(second.stdout.trim()).id, 1, second.stdout);
 	assert.doesNotMatch(second.stderr, /installing MCP server dependencies/, second.stderr);
+
+	// The Studio in the same package reaches its live hub through the runtime
+	// `cclay mcp` just cached: the pane's tools and hub come from that staged
+	// tree, so the hub publishes its endpoint instead of leaving the editor
+	// "MCP offline" (#576).
+	{
+		const configHome = join(scratch, "studio-config");
+		const liveDirectory = join(configHome, "cozyclay", "live");
+		const [studioPort, hubPort] = await Promise.all([reservePort(), reservePort()]);
+		const published = endpointPublished(liveDirectory, hubPort);
+		const studio = startStudio(["--port", String(studioPort), "--no-open", "--no-motion", "--no-star", "--no-update-check"], {
+			cwd: packageRoot,
+			env: { ...environment, CI: "", XDG_CONFIG_HOME: configHome, COZYCLAY_LIVE_PORT: String(hubPort) },
+		});
+		try {
+			await published;
+			const endpoint = JSON.parse(readFileSync(join(liveDirectory, `${hubPort}.json`), "utf8"));
+			assert.equal(endpoint.owner, "cozyclay", "the packaged Studio publishes its own hub");
+			assert.equal(endpoint.pid, studio.child.pid, "the endpoint belongs to the launcher under test");
+		} finally {
+			await studio.stop();
+		}
+		const { stderr: studioStderr } = studio.output();
+		assert.doesNotMatch(studioStderr, /Studio live tools unavailable/, studioStderr);
+		assert.doesNotMatch(studioStderr, /installing MCP server dependencies/, "the Studio reuses the runtime cclay mcp installed");
+		assert.deepEqual(readFileSync(rootManifest), manifestBefore, "the Studio launch must not rewrite the published root manifest");
+	}
 
 	const concurrentHome = join(scratch, "concurrent-home");
 	const concurrentEnv = {
