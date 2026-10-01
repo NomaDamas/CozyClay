@@ -631,4 +631,25 @@
 		box-shadow: inset 0 1px 0 var(--row-divider);
 		overflow: hidden;
 	}
+
+	/* ------------------------------------------------- narrower windows */
+	/* The open stage shrinks first; the top row gives way in steps: mode
+	   names go (icons stay), then the mode switch drops under the top row,
+	   then Generate shortens. */
+	@media (max-width: 1500px) {
+		.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key { padding: 0 9px; }
+		.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-key .vp-mode-name {
+			position: absolute;
+			width: 1px;
+			height: 1px;
+			overflow: hidden;
+			clip: rect(0 0 0 0);
+		}
+	}
+	@media (max-width: 1280px) {
+		.app[data-shell="glass"]:not([data-embed-mode]) .vp-mode-toolbar { top: calc(var(--shell-gap) * 2 + 40px); }
+		.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate-full { display: none; }
+		.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .topbar-generate-short { display: inline; }
+		.app[data-shell="glass"]:not([data-embed-mode]) .v2-topbar .menubar-trigger { padding: 0 8px; }
+	}
 }

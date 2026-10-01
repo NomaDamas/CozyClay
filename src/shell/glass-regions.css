@@ -706,3 +706,54 @@
 	font-size: 14px;
 	line-height: 22px;
 }
+
+/* The Sequencer head drops its secondary groups as the dock narrows. */
+.app[data-shell="glass"]:not([data-embed-mode]) .bottom-timeline { container-type: inline-size; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head { overflow: hidden; }
+@container (max-width: 760px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-badge { display: none; }
+}
+@container (max-width: 620px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-view-tools { display: none; }
+}
+@container (max-width: 580px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-sequencer-actions { display: none; }
+}
+@container (max-width: 480px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-readout span { display: none; }
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-ratios button { min-width: 0; padding: 0; font-size: 11px; }
+
+/* Ruler labels thin out instead of running together. */
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-body { scrollbar-width: thin; }
+@container (max-width: 900px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick:nth-child(2n of .tl-tick) { color: transparent; }
+}
+@container (max-width: 560px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-tick:not(:nth-child(4n + 1 of .tl-tick)) { color: transparent; }
+}
+/* Library head stays one line: tabs left, folder picker right. */
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-tabs { flex: 0 0 auto; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker { min-width: 0; margin-left: auto; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker select {
+	field-sizing: content;
+	max-width: 132px;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+/* A narrow shot card keeps Look through as its icon. */
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-card { container-type: inline-size; }
+.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look { flex: none; white-space: nowrap; }
+@container (max-width: 240px) {
+	.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-look { width: 28px; padding: 0; justify-content: center; font-size: 0; gap: 0; }
+	.app[data-shell="glass"]:not([data-embed-mode]) .dock-shot-meta { display: none; }
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-head {
+	display: grid;
+	grid-template-columns: auto minmax(0, 1fr);
+	align-items: center;
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-head > .content-search { grid-column: 1 / -1; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker { justify-self: end; max-width: 100%; }
+.app[data-shell="glass"]:not([data-embed-mode]) .studio-library .content-folder-picker select { max-width: 100%; }

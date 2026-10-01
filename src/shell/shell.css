@@ -4,11 +4,15 @@
 	   controls keep their own styles; glass.css restyles their surfaces. */
 	.app:not([data-embed-mode]) {
 		--shell-gap: var(--float-gap, 12px);
-		--shell-left: var(--shell-left-width, 260px);
-		--shell-right: var(--shell-right-width, 300px);
+		--shell-left: var(--shell-left-width, var(--shell-left-default));
+		--shell-right: var(--shell-right-width, var(--shell-right-default));
+		--shell-left-default: 260px;
+		--shell-right-default: 300px;
 		--shell-dock: var(--shell-dock-height, var(--shell-dock-default));
 		--shell-dock-default: clamp(220px, 30vh, 300px);
-		--shell-camera: var(--shell-camera-width, 340px);
+		/* The shot card never takes more than 36 % of the dock, so the
+		   Sequencer keeps room on narrow windows. */
+		--shell-camera: min(var(--shell-camera-width, 340px), calc((100vw - var(--shell-center-left) - var(--shell-center-right)) * .36));
 		--shell-status-h: 28px;
 		--shell-dock-bottom: var(--shell-gap);
 		--shell-center-left: calc(var(--shell-left) + var(--shell-gap) * 2);
@@ -20,6 +24,13 @@
 		min-height: 0;
 		overflow: hidden;
 		background: var(--surface-0);
+	}
+
+	@media (max-width: 1440px) {
+		.app:not([data-embed-mode]) { --shell-left-default: 236px; --shell-right-default: 272px; }
+	}
+	@media (max-width: 1180px) {
+		.app:not([data-embed-mode]) { --shell-left-default: 212px; --shell-right-default: 248px; }
 	}
 
 	.app:not([data-embed-mode]) > .main { display: contents; }
