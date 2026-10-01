@@ -136,6 +136,8 @@ for (const [english, korean] of [
 }
 assertKoPairsHaveBothSides("src/fal-motion-studio.jsx");
 assertKoEnglishDefaults("src/fal-motion-studio.jsx");
+assertKoPairsHaveBothSides("src/panels/VideoCapturePanel.jsx");
+assertKoEnglishDefaults("src/panels/VideoCapturePanel.jsx");
 assertKoPairsHaveBothSides("src/domains/motion.js", falMotionDomainSource);
 assertKoEnglishDefaults("src/domains/motion.js", falMotionDomainSource);
 
