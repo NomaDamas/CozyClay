@@ -412,15 +412,6 @@
 
 /* --------------------------------------------------------------- Agent */
 .app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .studio-agent-inspector { overflow: hidden; }
-.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-header {
-	height: 48px;
-	min-height: 48px;
-	padding: 0 44px 0 16px;
-	border: 0;
-	background: none;
-}
-.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-title { font: 600 13px var(--sans); }
-.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-status-dot { display: none; }
 .app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-header::before {
 	content: "";
 	flex: none;
@@ -431,17 +422,7 @@
 	-webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.25c.4 2.9 1.85 4.35 4.75 4.75-2.9.4-4.35 1.85-4.75 4.75-.4-2.9-1.85-4.35-4.75-4.75 2.9-.4 4.35-1.85 4.75-4.75z M12.75 11.5v2.5 M11.5 12.75H14'/%3E%3C/svg%3E") center / 16px no-repeat;
 	mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23000' stroke-width='1.3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M8 2.25c.4 2.9 1.85 4.35 4.75 4.75-2.9.4-4.35 1.85-4.75 4.75-.4-2.9-1.85-4.35-4.75-4.75 2.9-.4 4.35-1.85 4.75-4.75z M12.75 11.5v2.5 M11.5 12.75H14'/%3E%3C/svg%3E") center / 16px no-repeat;
 }
-.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-ghost-button {
-	height: 28px;
-	padding: 0 10px;
-	border: 0;
-	border-radius: 14px;
-	background: none;
-	color: var(--text-2);
-	font: 500 12px var(--sans);
-}
-.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .agent-panel .agent-ghost-button:hover { background: var(--chip-fill); color: var(--text-1); }
-.app[data-shell="glass"]:not([data-embed-mode]) .studio-right-column .studio-agent-collapse { top: 10px; }
+/* The rest of the Agent lives in agent-glass.css. */
 
 /* ----------------------------------------------------------- Sequencer */
 .app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer {

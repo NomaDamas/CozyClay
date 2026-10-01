@@ -10,6 +10,7 @@ import PreferencesSlot from "./PreferencesSlot.jsx";
 import "./shell.css";
 import "./glass.css";
 import "./glass-regions.css";
+import "./agent-glass.css";
 
 const DOCK_TAB_KEY = "cozyclay.dock.tab.v1";
 

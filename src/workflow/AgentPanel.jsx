@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { FiAlertTriangle, FiCheck, FiChevronRight, FiClock, FiDownload, FiImage, FiMoreHorizontal, FiPaperclip, FiPlus, FiRotateCw, FiX } from "react-icons/fi";
+import { FiAlertTriangle, FiArrowUp, FiCheck, FiChevronRight, FiClock, FiDownload, FiFilm, FiImage, FiMoreHorizontal, FiPaperclip, FiPlus, FiRotateCw, FiX } from "react-icons/fi";
 import {
 	ATTACHMENT_FAILED_NOTICE,
 	ATTACHMENT_LIMIT_NOTICE,
@@ -821,9 +821,9 @@ export default function AgentPanel({
 			<StatusDot tone={statusTone} title={panelState} />
 			<h2 className="agent-title">Agent</h2>
 			<span className="agent-header-spacer" />
-			<button type="button" className="agent-ghost-button agent-new" onClick={newSession}><FiPlus size={11} /> New</button>
+			<button type="button" className="agent-icon-button agent-new" aria-label="New conversation" title="New conversation" onClick={newSession}><FiPlus size={14} aria-hidden="true" /></button>
 			{presentation.history && <span className="agent-history-wrap">
-				<button type="button" className="agent-ghost-button agent-history" aria-haspopup="listbox" aria-expanded={surface === "studio" ? historyOpen : undefined} onClick={surface === "studio" ? openHistory : undefined} disabled={surface !== "studio"}>History</button>
+				<button type="button" className="agent-icon-button agent-history" aria-label="History" title="History" aria-haspopup="listbox" aria-expanded={surface === "studio" ? historyOpen : undefined} onClick={surface === "studio" ? openHistory : undefined} disabled={surface !== "studio"}><FiClock size={13} aria-hidden="true" /></button>
 				{surface === "studio" && historyOpen && <div className="agent-history-popover" role="listbox" aria-label="Agent history">
 					{historySessions.length ? historySessions.map((entry) => <button type="button" role="option" className="agent-history-item" key={entry.sessionId} onClick={() => restoreHistorySession(entry.sessionId)}>
 						<span className="agent-history-time">{relativeTime(entry.updatedAt)}</span>
@@ -834,6 +834,13 @@ export default function AgentPanel({
 			<span className="agent-overflow">
 				<button type="button" className="agent-icon-button agent-overflow-toggle" aria-haspopup="menu" aria-expanded={menuOpen} aria-label="More agent actions" onClick={() => setMenuOpen((value) => !value)}><FiMoreHorizontal size={13} /></button>
 				{menuOpen && <div className="agent-menu" role="menu">
+					{/* Who the session is lives with the actions that change it, not
+					    as a standing strip over the conversation. */}
+					{account?.signedIn && <div className="agent-account" role="presentation">
+						<span className="agent-account-email">{account.email}</span>
+						<span className="agent-plan-badge">{quota?.plan || account.plan || "Free"}</span>
+						{resetLabel && <span className="agent-account-reset">resets in {resetLabel}</span>}
+					</div>}
 					<button type="button" role="menuitem" onClick={clearContext}>Clear context</button>
 					<button type="button" role="menuitem" className="agent-menu-keys" aria-expanded={keysOpen} onClick={toggleProviderKeys}>Provider keys…</button>
 					<button type="button" role="menuitem" onClick={signOut}>Sign out</button>
@@ -844,12 +851,6 @@ export default function AgentPanel({
 
 		{restoreNotice && <div className="agent-toast" role="status">{restoreNotice}</div>}
 		{steerNotice && <div className="agent-toast alert agent-steer-notice" role="alert">{steerNotice}</div>}
-
-		{account?.signedIn && <div className="agent-account">
-			<span className="agent-account-email">{account.email}</span>
-			<span className="agent-plan-badge">{quota?.plan || account.plan || "Free"}</span>
-			{resetLabel && <span className="agent-account-reset">resets in {resetLabel}</span>}
-		</div>}
 
 		{/* An inline section, not a modal: the panel stays the one place the
 		    conversation and the credentials it runs on are managed. */}
@@ -930,63 +931,68 @@ export default function AgentPanel({
 				</li>)}
 			</ul>}
 			{attachNotice && <p className="agent-attachment-notice" role="status">{attachNotice}</p>}
-			<textarea
-				ref={composerRef}
-				className="agent-input"
-				aria-label="Message the agent"
-				placeholder={panelState === "rate-limited" ? "Composer is paused" : model ? presentation.composerPlaceholder : "Waiting for the model list…"}
-				value={draft}
-				disabled={composerDisabled}
-				onChange={(event) => store.setDraft(event.target.value)}
-				onKeyDown={onComposerKeyDown}
-				onPaste={onComposerPaste}
-				onDragOver={onComposerDragOver}
-				onDrop={onComposerDrop}
-			/>
-			<div className="agent-composer-controls agent-composer-picks">
-				{/* Five providers in one dropdown: grouped by the provider that serves
-				    them, and a provider without a credential still lists its models —
-				    unpickable, and saying what they are waiting for. */}
-				<select className="agent-model-select" aria-label="Model" value={model} disabled={!models.length} onChange={(event) => chooseModel(event.target.value)}>
-					{modelProviders.length
-						? modelProviders.map((provider) => <optgroup key={provider.id} label={provider.label}>
-							{provider.models.length
-								? provider.models.map((entry) => <option key={entry.key} value={entry.key} disabled={!provider.signedIn}>{provider.signedIn ? entry.label : `${entry.label} — add key`}</option>)
-								: <option value={`${provider.id}/`} disabled>{provider.signedIn ? "No models" : "No models — add key"}</option>}
-						</optgroup>)
-						: models.length
-							? models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)
-							: <option value="">{modelsState === "failed" ? "No model available" : "Loading models…"}</option>}
-				</select>
-				{efforts.length > 0 && (
-					<select className="agent-model-select agent-effort-select" aria-label="Reasoning effort" title="Reasoning effort" value={effort ?? efforts[0]} onChange={(event) => setEffort(event.target.value)}>
-						{efforts.map((value, index) => <option key={value} value={value}>{index === 0 ? `${value} · default` : value}</option>)}
+			{/* One field: the message, and under it on the same surface the
+			    frame toggle, the model and effort picks, and Send. */}
+			<div className="agent-field">
+				<textarea
+					ref={composerRef}
+					className="agent-input"
+					aria-label="Message the agent"
+					placeholder={panelState === "rate-limited" ? "Composer is paused" : model ? presentation.composerPlaceholder : "Waiting for the model list…"}
+					value={draft}
+					disabled={composerDisabled}
+					onChange={(event) => store.setDraft(event.target.value)}
+					onKeyDown={onComposerKeyDown}
+					onPaste={onComposerPaste}
+					onDragOver={onComposerDragOver}
+					onDrop={onComposerDrop}
+				/>
+				<div className="agent-composer-controls">
+					<button type="button" className="agent-attach-chip" aria-pressed={attachFrame} aria-label="Attach current frame" title="Attach current frame" onClick={() => setAttachFrame((value) => !value)}>
+						{attachFrame ? <span className="agent-attach-thumb" aria-hidden="true" /> : <FiPaperclip size={13} aria-hidden="true" />}
+					</button>
+					{/* Five providers in one dropdown: grouped by the provider that serves
+					    them, and a provider without a credential still lists its models —
+					    unpickable, and saying what they are waiting for. */}
+					<select className="agent-model-select" aria-label="Model" title="Model" value={model} disabled={!models.length} onChange={(event) => chooseModel(event.target.value)}>
+						{modelProviders.length
+							? modelProviders.map((provider) => <optgroup key={provider.id} label={provider.label}>
+								{provider.models.length
+									? provider.models.map((entry) => <option key={entry.key} value={entry.key} disabled={!provider.signedIn}>{provider.signedIn ? entry.label : `${entry.label} — add key`}</option>)
+									: <option value={`${provider.id}/`} disabled>{provider.signedIn ? "No models" : "No models — add key"}</option>}
+							</optgroup>)
+							: models.length
+								? models.map((entry) => <option key={entry.id} value={entry.id}>{entry.label}</option>)
+								: <option value="">{modelsState === "failed" ? "No model available" : "Loading models…"}</option>}
 					</select>
-				)}
-			</div>
-			<div className="agent-composer-controls">
-				<button type="button" className="agent-attach-chip" aria-pressed={attachFrame} onClick={() => setAttachFrame((value) => !value)}>
-					{attachFrame ? <span className="agent-attach-thumb" aria-hidden="true" /> : <FiPaperclip size={11} aria-hidden="true" />}
-					Attach current frame
-				</button>
-				{surface === "studio" && i2vActionRef.current && <button
-					type="button"
-					className="agent-attach-chip agent-i2v-action"
-					data-testid="i2v-agent-action"
-					disabled={composerDisabled || !draft.trim() || streaming}
-					onClick={() => { const instruction = draft.trim(); store.setDraft(""); i2vActionRef.current?.(instruction); }}
-				>
-					Generate motion
-				</button>}
-				<span className="agent-composer-spacer" aria-hidden="true" />
-				{/* While a turn runs, Stop is still the way out of it; on a surface
-				    that can be steered, Send becomes the way INTO it. */}
-				{streaming
-					? <>
-						<button type="button" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
-						{presentation.steer && <button type="button" className="agent-send agent-steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
-					</>
-					: <button type="button" className="agent-send" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}>Send</button>}
+					{efforts.length > 0 && (
+						<select className="agent-model-select agent-effort-select" aria-label="Reasoning effort" title="Reasoning effort" value={effort ?? efforts[0]} onChange={(event) => setEffort(event.target.value)}>
+							{/* The closed select shows only the word; "default" rides in the
+							    option's tooltip so the composer row stays one line. */}
+							{efforts.map((value, index) => <option key={value} value={value} title={index === 0 ? "Default for this model" : undefined}>{value}</option>)}
+						</select>
+					)}
+					<span className="agent-composer-spacer" aria-hidden="true" />
+					{surface === "studio" && i2vActionRef.current && <button
+						type="button"
+						className="agent-attach-chip agent-i2v-action"
+						data-testid="i2v-agent-action"
+						aria-label="Generate motion"
+						title="Generate motion from this message"
+						disabled={composerDisabled || !draft.trim() || streaming}
+						onClick={() => { const instruction = draft.trim(); store.setDraft(""); i2vActionRef.current?.(instruction); }}
+					>
+						<FiFilm size={13} aria-hidden="true" />
+					</button>}
+					{/* While a turn runs, Stop is still the way out of it; on a surface
+					    that can be steered, Send becomes the way INTO it. */}
+					{streaming
+						? <>
+							<button type="button" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
+							{presentation.steer && <button type="button" className="agent-send agent-steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
+						</>
+						: <button type="button" className="agent-send" aria-label="Send" title="Send (Enter)" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}><FiArrowUp size={14} aria-hidden="true" /></button>}
+				</div>
 			</div>
 		</div>}
 		{/* The hint exists to warn about image spend; a surface that cannot
