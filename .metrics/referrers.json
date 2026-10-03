@@ -1402,5 +1402,57 @@
       "count": 4,
       "uniques": 3
     }
+  ],
+  "2026-10-03": [
+    {
+      "referrer": "github.com",
+      "count": 196,
+      "uniques": 142
+    },
+    {
+      "referrer": "Google",
+      "count": 128,
+      "uniques": 76
+    },
+    {
+      "referrer": "cozyclay.org",
+      "count": 103,
+      "uniques": 67
+    },
+    {
+      "referrer": "t.co",
+      "count": 98,
+      "uniques": 25
+    },
+    {
+      "referrer": "l.threads.com",
+      "count": 87,
+      "uniques": 68
+    },
+    {
+      "referrer": "chatgpt.com",
+      "count": 51,
+      "uniques": 23
+    },
+    {
+      "referrer": "ruanyifeng.com",
+      "count": 22,
+      "uniques": 20
+    },
+    {
+      "referrer": "reddit.com",
+      "count": 8,
+      "uniques": 6
+    },
+    {
+      "referrer": "Baidu",
+      "count": 6,
+      "uniques": 5
+    },
+    {
+      "referrer": "m.dcinside.com",
+      "count": 4,
+      "uniques": 3
+    }
   ]
 }
