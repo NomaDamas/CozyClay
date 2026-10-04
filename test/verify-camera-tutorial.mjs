@@ -51,6 +51,8 @@ expect("it listens to the shot/rail signals the studio already emits", tutorial.
 expect("both listeners are removed on unmount", tutorial.includes('removeEventListener("cozyclay:nav", onNav)') && tutorial.includes('removeEventListener("cozyclay:playground-signal", onSignal)'));
 expect("nav kinds are fly/walk/dolly/orbit", tutorial.includes('const NAV_KINDS = new Set(["fly", "walk", "dolly", "orbit"])'));
 expect("signal kinds are shot/rail", tutorial.includes('const SIGNAL_KINDS = new Set(["shot", "rail"])'));
+expect("Shot completion follows authored shot state", tutorial.includes('if (shotCount > 0)') && tutorial.includes('add("shot")'));
+expect("Rail completion follows authored rail geometry", tutorial.includes('if (railReady)') && tutorial.includes('add("rail")'));
 expect(
 	"the play step needs the rail first, then the player",
 	/if \(!previewing\) return;[\s\S]*?current\.has\("rail"\)[\s\S]*?add\("play"\)/.test(tutorial),
@@ -65,7 +67,7 @@ for (const [name, needle] of [
 	["the hint card", 'data-testid="camera-tutorial-card"'],
 	["the close button", 'data-testid="camera-tutorial-close"'],
 ]) expect(`${name} is addressable`, tutorial.includes(needle), needle);
-expect("chips publish kind/done/current", /data-kind=\{step\.kind\}[\s\S]*?data-done=\{done\.has\(step\.kind\) \? 1 : 0\}[\s\S]*?data-current=\{step === current \? 1 : 0\}/.test(tutorial));
+expect("chips publish kind/done/current", /data-kind=\{step\.kind\}[\s\S]*?data-done=\{effectiveDone\.has\(step\.kind\) \? 1 : 0\}[\s\S]*?data-current=\{step === current \? 1 : 0\}/.test(tutorial));
 expect("the walk chips publish their own done state", tutorial.includes("data-done={walked.has(key) ? 1 : 0}"));
 expect("the Done state is readable off the root", tutorial.includes('data-state={complete ? "done" : "active"}'));
 expect("the close button is labelled in both locales", tutorial.includes('ko("Close tutorial", "튜토리얼 닫기")'));
@@ -75,8 +77,9 @@ expect("the close button is labelled in both locales", tutorial.includes('ko("Cl
 expect("App imports the component", app.includes('import { CameraTutorial } from "./camera-tutorial.jsx"'));
 expect(
 	"the query string requests it, and never inside an embed",
-	/const \[cameraTutorialQuery\] = useState\(\(\) => !embedMode && !playgroundMode[\s\S]*?get\("tutorial"\) === "camera"[\s\S]*?!cameraTutorialSuppressed\(\)/.test(app),
+	app.includes("const [cameraTutorialEntry] = useState(() =>") && app.includes('query ? "query" : firstRun ? "first-run" : null') && app.includes("const cameraTutorialQuery = Boolean(cameraTutorialEntry)"),
 );
+expect("a fresh install enters the tutorial automatically", app.includes("!loadProjectSession()?.name") && app.includes("SCENES_STORAGE_KEY") && app.includes('source: cameraTutorialEntry'));
 expect("Settings can open it through a window event", app.includes('window.addEventListener("cozyclay:camera-tutorial", onTutorial)'));
 expect("the same event still closes it", /event\.detail\?\.open === false\)? \{\s*setCameraTutorial\(false\)/.test(app));
 expect("the listener is removed on unmount", app.includes('removeEventListener("cozyclay:camera-tutorial", onTutorial)'));
@@ -110,7 +113,7 @@ expect("there is a single startCameraTutorial", (app.match(/async function start
 expect("it takes the entry it was called from", /async function startCameraTutorial\(\{ source = "settings" \} = \{\} \)?/.test(start) || start.includes('async function startCameraTutorial({ source = "settings" } = {})'));
 expect(
 	"the query entry routes through it",
-	/if \(!cameraTutorialQuery \|\| cameraTutorialStarted\.current\) return;[\s\S]{0,160}startCameraTutorialRef\.current\?\.\(\{ source: "query" \}\)/.test(app),
+	/if \(!cameraTutorialQuery \|\| cameraTutorialStarted\.current\) return;[\s\S]{0,220}startCameraTutorialRef\.current\?\.\(\{ source: cameraTutorialEntry \}\)/.test(app),
 );
 expect(
 	"the window-event entry routes through it",
@@ -230,11 +233,12 @@ for (const [name, needle] of [
 	["the shot to select", '.tl-track.shots .tl-shot-block:not(.selected)"'],
 	["Draw rail", '".tl-rail-draw"'],
 	["the Top-View inset", '".vp-inset"'],
-	["the look-through button", '".vp-look-through"'],
+	["the look-through button", ".vp-look-through"],
+	["the dock look-through action", ".dock-shot-look"],
 ]) expect(`the map names ${name}`, tutorial.includes(needle), needle);
 expect(
 	"the rail step swaps its advice on the camera bar's own existence",
-	tutorial.includes('absent: ".tl-rail-draw"') && tutorial.includes('requires: ".tl-rail-draw"'),
+	tutorial.includes('absent: ".tl-rail-draw"') && tutorial.includes("role: \"top-view\", selector: \".vp-inset\", requires: '[data-rail-draw=\"1\"]'") ,
 );
 expect("the beacon and the cue are addressable", tutorial.includes('data-testid="camera-tutorial-beacon"') && tutorial.includes('data-testid="camera-tutorial-gesture"'));
 expect("the beacon publishes the step kind and which target it is on", /data-kind=\{kind\}[\s\S]{0,80}data-role=\{role\}/.test(tutorial));
@@ -251,7 +255,7 @@ expect(
 );
 expect("the gesture cue only stands in for the four nav steps", /NAV_KINDS\.has\(currentKind\)/.test(tutorial));
 expect("the walk cue reads the same pressed-key set as the card", /walked\?\.has\(walkKey\)/.test(tutorial));
-expect("the card points at the region the control lives in", tutorial.includes('where: ko("\u2193 Timeline, Shots lane"') && tutorial.includes('where: ko("\u2192 Viewport"'));
+expect("the card points at the region the control lives in", tutorial.includes('where: ko("↓ Timeline, Camera Cuts"') && tutorial.includes('where: ko("↘ Shot Camera monitor"'));
 expect("the card renders that pointer before the copy", /camera-tutorial-where"?>\{current\.where\}/.test(tutorial));
 
 /* ------------------------------------------------------------ styles ----- */
@@ -306,7 +310,7 @@ expect("and it is in the inventory sweep", manifest.slice(manifest.indexOf("cons
 
 /* -------------------------------------- executable analytics lifecycle --- */
 
-expect("Studio observes committed done/current state rather than driving gestures", tutorial.includes("analytics?.observe(done, currentKind)") && tutorial.includes("[analytics, done, currentKind]"));
+expect("Studio observes committed done/current state rather than driving gestures", tutorial.includes("analytics?.observe(effectiveDone, currentKind)") && tutorial.includes("[analytics, effectiveDone, currentKind]"));
 expect("Studio's close button reports explicit dismissal", tutorial.includes("analytics?.dismiss(); onClose?.();"));
 expect("the window close entry also reports dismissal", /setCameraTutorial\(false\);\s*cameraTutorialAnalytics\.current\?\.dismiss\(\)/.test(app));
 expect("each explicit Studio start creates fresh analytics and resets the mounted progression", start.includes('createTutorialAnalytics({ surface: "studio", startSource: source })') && start.includes("setCameraTutorialAttempt((attempt) => attempt + 1)"));

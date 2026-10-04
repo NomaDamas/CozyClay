@@ -15,6 +15,7 @@ const app = ["../src/App.jsx", "../src/shell/TopBar.jsx", "../src/shell/MenuBar.
 const html = readFileSync(new URL("../index.html", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
 const room = readFileSync(new URL("../src/room.jsx", import.meta.url), "utf8");
+const theme = readFileSync(new URL("../src/theme.js", import.meta.url), "utf8");
 
 expect("header brand is Cozy Clay", app.includes("Cozy <span>Clay</span>"));
 expect("browser title names the studio", /<title>[^<]*Cozy\s?Clay[^<]*<\/title>/.test(html));
@@ -29,6 +30,7 @@ expect("chrome accent token uses the v2 selection role", css.includes("--accent:
 expect("timeline lanes use the v2 panel surface", css.includes("background-color: var(--surface-panel)"));
 expect("IK uses the v2 danger token", css.includes(".tl-marker.ik") && css.includes("background: var(--danger)"));
 expect("current frame uses the v2 selection token", css.includes(".tl-frame-box") && css.includes("background: var(--select)"));
+expect("new installs start in light mode", theme.includes('export const DEFAULT_THEME = "light"'));
 // The stage is the grey workbench (editor, preview, exports), dark or light
 // with the UI theme; grid view only trades the deck for the reference grid.
 expect("Canvas uses the grey workbench background", app.includes('args={[gridView ? GRID_BACKGROUND : stageBackground(uiTheme)]}'));

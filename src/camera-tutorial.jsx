@@ -11,7 +11,7 @@ import { ko } from "./locale.js";
 // to them directly.
 //
 //   cozyclay:nav               fly / walk / dolly / orbit  (src/controls.jsx)
-//   cozyclay:playground-signal shot / rail                 (src/App.jsx)
+//   shotCount / railReady      shot / rail                 (authored state)
 //   previewing prop            play                        (lookThroughShot)
 //
 // Nothing here drives the studio. A step is done when the operator has done
@@ -69,16 +69,16 @@ export const CAMERA_TUTORIAL_STEPS = [
 		label: ko("Shot", "샷"),
 		// The control lives in another region than the card, so the card says
 		// which way to look before it says what to do.
-		where: ko("↓ Timeline, Shots lane", "↓ 타임라인 샷 레인"),
+		where: ko("↓ Timeline, Camera Cuts", "↓ 타임라인 Camera Cuts"),
 		how: () => ko(
-			<>In the timeline's Shots lane click <b>+ Add shot</b>. That is your cut.</>,
-			<>타임라인의 샷 레인에서 <b>+ 샷 추가</b>를 누르세요. 그게 컷입니다.</>,
+			<>In the timeline's Camera Cuts lane click <b>+ Add shot</b>. That is your cut.</>,
+			<>타임라인의 Camera Cuts 레인에서 <b>+ 샷 추가</b>를 누르세요. 그게 컷입니다.</>,
 		),
 	},
 	{
 		kind: "rail",
 		label: ko("Rail", "레일"),
-		where: ko("↓ Timeline, Shots lane", "↓ 타임라인 샷 레인"),
+		where: ko("↓ Timeline, Camera Cuts", "↓ 타임라인 Camera Cuts"),
 		how: () => ko(
 			<>Select the shot, click <b>Draw rail</b> in the camera bar, and drag a line across the top view. That line is the dolly move.</>,
 			<>샷을 선택하고 카메라 바의 <b>레일 그리기</b>를 누른 뒤, 탑뷰에 선을 그으세요. 그 선이 돌리 이동입니다.</>,
@@ -87,10 +87,10 @@ export const CAMERA_TUTORIAL_STEPS = [
 	{
 		kind: "play",
 		label: ko("Play", "재생"),
-		where: ko("→ Viewport", "→ 뷰포트"),
+		where: ko("↘ Shot Camera monitor", "↘ Shot Camera 모니터"),
 		how: () => ko(
 			<>Click <b>Look through</b> in the Shot monitor to fly the shot camera; <b>▶</b> rides the rail, <kbd>Esc</kbd> returns to the free camera.</>,
-			<>뷰포트의 <b>샷 시점</b>을 눌러 샷 카메라를 조종하세요. <b>▶</b>는 레일을 타고, <kbd>Esc</kbd>로 자유 카메라로 돌아옵니다.</>,
+			<>Shot Camera 모니터의 <b>샷 시점</b>을 눌러 샷 카메라를 조종하세요. <b>▶</b>는 레일을 타고, <kbd>Esc</kbd>로 자유 카메라로 돌아옵니다.</>,
 		),
 	},
 ];
@@ -119,10 +119,13 @@ export const TUTORIAL_BEACONS = {
 			label: () => ko("1. Select the shot", "1. 샷을 선택"),
 		},
 		{ role: "draw-rail", selector: ".tl-rail-draw", label: () => ko("2. Draw rail, then drag across the top view", "2. 레일 그리기 후 탑뷰에 선 긋기") },
-		{ role: "top-view", selector: ".vp-inset", requires: ".tl-rail-draw", label: () => ko("Drag a line here", "여기에 선을 그으세요") },
+		// The Top-View becomes an active drawing surface after the tool is armed.
+		{ role: "top-view", selector: ".vp-inset", requires: '[data-rail-draw="1"]', label: () => ko("Drag a line here", "여기에 선을 그으세요") },
 	],
 	play: [
-		{ role: "look-through", selector: ".vp-look-through", label: () => ko("Click to fly the shot camera", "클릭해 샷 카메라를 조종") },
+		// The glass shell keeps the same action in the bottom dock while the
+		// compact viewport card owns it in the classic shell.
+		{ role: "look-through", selector: ".dock-shot-look, .vp-look-through", label: () => ko("Click to fly the shot camera", "클릭해 샷 카메라를 조종") },
 	],
 };
 
@@ -217,7 +220,7 @@ export function TutorialBeacon({ kind, step, role, selector, label, requires = n
 			if (pane) resize.observe(pane);
 		}
 		const mutations = new MutationObserver(schedule);
-		mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style"] });
+		mutations.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "style", "data-rail-draw"] });
 		return () => {
 			if (frame) cancelAnimationFrame(frame);
 			window.removeEventListener("resize", schedule);
@@ -327,11 +330,18 @@ export function GestureCue({ kind, walked, leaving = false, onLeft }) {
  * Top-View inset, and never takes the pointer except on its own close button
  * — every step is completed by working the studio underneath it.
  */
-export function CameraTutorial({ previewing = false, analytics, onStepChange, onClose, onComplete, handoff = null, shotId = null, onOpenExport, onContinue }) {
+export function CameraTutorial({ previewing = false, shotCount = 0, railReady = false, analytics, onStepChange, onClose, onComplete, handoff = null, shotId = null, onOpenExport, onContinue }) {
 	const [done, setDone] = useState(() => new Set());
 	const [walked, setWalked] = useState(() => new Set());
 	const [cue, setCue] = useState(null);
 	const completionReported = useRef(false);
+	const effectiveDone = useMemo(() => {
+		const next = new Set(done);
+		if (shotCount > 0) next.add("shot");
+		if (railReady) next.add("rail");
+		if (previewing && next.has("rail")) next.add("play");
+		return next;
+	}, [done, previewing, railReady, shotCount]);
 
 	useEffect(() => {
 		const complete = (kind) => setDone((current) => (current.has(kind) ? current : new Set(current).add(kind)));
@@ -362,6 +372,16 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 		};
 	}, []);
 
+	// Studio-native completion comes from the authored state. The old playground
+	// signal was never emitted by the Studio shell, so a real Shot or rail could
+	// leave the tutorial stuck on its previous step.
+	useEffect(() => {
+		if (shotCount > 0) setDone((current) => (current.has("shot") ? current : new Set(current).add("shot")));
+	}, [shotCount]);
+	useEffect(() => {
+		if (railReady) setDone((current) => (current.has("rail") ? current : new Set(current).add("rail")));
+	}, [railReady]);
+
 	// The player is the last step, and only once there is a rail to ride:
 	// look-through before the dolly exists shows a still frame, which teaches
 	// nothing about the move. Analytics v1 observes this existing look-through
@@ -369,12 +389,12 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 	useEffect(() => {
 		if (!previewing) return;
 		setDone((current) => (!current.has("rail") || current.has("play") ? current : new Set(current).add("play")));
-	}, [previewing]);
+	}, [previewing, railReady]);
 
-	const current = useMemo(() => CAMERA_TUTORIAL_STEPS.find((step) => !done.has(step.kind)) ?? null, [done]);
+	const current = useMemo(() => CAMERA_TUTORIAL_STEPS.find((step) => !effectiveDone.has(step.kind)) ?? null, [effectiveDone]);
 	const complete = current === null;
 	const currentKind = current?.kind ?? null;
-	const showHandoff = !!shotId && (handoff?.canShow(done) ?? false);
+	const showHandoff = !!shotId && (handoff?.canShow(effectiveDone) ?? false);
 	useEffect(() => {
 		if (!complete || completionReported.current) return;
 		completionReported.current = true;
@@ -384,8 +404,8 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 	// Observe committed progression, outside state updaters (which StrictMode
 	// may replay). The attempt belongs to App and survives effect cleanup/resume.
 	useEffect(() => {
-		analytics?.observe(done, currentKind);
-	}, [analytics, done, currentKind]);
+		analytics?.observe(effectiveDone, currentKind);
+	}, [analytics, effectiveDone, currentKind]);
 
 	// The step the operator is on is the studio's business too: App puts it on
 	// the .app root as data-tutorial-step, and styles.css spotlights whichever
@@ -425,10 +445,10 @@ export function CameraTutorial({ previewing = false, analytics, onStepChange, on
 						key={step.kind}
 						data-testid="camera-tutorial-step"
 						data-kind={step.kind}
-						data-done={done.has(step.kind) ? 1 : 0}
+						data-done={effectiveDone.has(step.kind) ? 1 : 0}
 						data-current={step === current ? 1 : 0}
 					>
-						<i aria-hidden="true">{done.has(step.kind) ? "✓" : index + 1}</i>
+						<i aria-hidden="true">{effectiveDone.has(step.kind) ? "✓" : index + 1}</i>
 						{step.label}
 					</li>
 				))}

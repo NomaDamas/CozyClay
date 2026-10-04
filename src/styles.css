@@ -899,7 +899,8 @@ select {
 .app[data-tutorial-step="shot"] .tl-track.shots .tl-track-add,
 .app[data-tutorial-step="rail"] .tl-track.shots .tl-shot-block:not(.selected),
 .app[data-tutorial-step="rail"] .tl-rail-draw,
-.app[data-tutorial-step="play"] .vp-look-through {
+.app[data-tutorial-step="play"] .vp-look-through,
+.app[data-tutorial-step="play"] .dock-shot-look {
 	animation: tutorial-spotlight 1.5s var(--ease) infinite;
 	box-shadow: 0 0 0 3px var(--accent);
 }
@@ -9425,6 +9426,23 @@ input[type=range] {
    player is up the card gives that width back rather than covering it. */
 .camera-tutorial[data-previewing="1"] {
 	width: clamp(220px, calc(50% - 92px), 360px);
+}
+
+/* The floating shell covers the full-bleed viewport with panels. Keep the
+   instructions inside its open stage, clear of the tool rail and dock. */
+.app[data-shell="glass"]:not([data-embed-mode]) .camera-tutorial {
+	top: calc(var(--shell-view-top, 52px) + 12px);
+	left: calc(var(--shell-center-left) + 64px);
+	width: min(430px, calc(100% - var(--shell-center-left) - var(--shell-center-right) - 128px));
+}
+.app[data-shell="glass"][data-tutorial-step="rail"] .camera-tutorial,
+.app[data-shell="glass"] .camera-tutorial[data-previewing="1"] {
+	top: auto;
+	bottom: calc(var(--shell-center-bottom) + 12px);
+}
+.app[data-shell="glass"]:not([data-embed-mode]) .tutorial-cue {
+	left: calc((var(--shell-center-left) + 100% - var(--shell-center-right)) / 2);
+	bottom: calc(var(--shell-center-bottom) + 18px);
 }
 
 .camera-tutorial-steps {
