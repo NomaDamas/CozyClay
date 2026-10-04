@@ -147,6 +147,7 @@ import {
 } from "./matte.js";
 import { createMatteEditor } from "./matte-editor.js";
 import {
+	SCENES_STORAGE_KEY,
 	SCENES_VERSION,
 	activeSceneIndex,
 	createSceneStage,
@@ -154,6 +155,7 @@ import {
 } from "./scenes.js";
 import {
 	hasFileSystemAccess,
+	loadProjectSession,
 	loadStoredProjectHandle,
 	queryHandlePermission,
 	requestHandlePermission,
@@ -498,9 +500,17 @@ export default function App() {
 	// have something to frame. That function is declared with the project
 	// actions further down; the listeners here reach it through a ref so they
 	// always call the current render's closure (the confirm reads projectDirty).
-	const [cameraTutorialQuery] = useState(() => !embedMode && !playgroundMode
-		&& new URLSearchParams(globalThis.location?.search || "").get("tutorial") === "camera"
-		&& !cameraTutorialSuppressed());
+	const [cameraTutorialEntry] = useState(() => {
+		const params = new URLSearchParams(globalThis.location?.search || "");
+		const query = params.get("tutorial") === "camera";
+		let firstRun = false;
+		try {
+			firstRun = !query && !params.get("scene") && !cameraTutorialSuppressed()
+				&& !loadProjectSession()?.name && !globalThis.localStorage?.getItem(SCENES_STORAGE_KEY);
+		} catch { firstRun = false; }
+		return !embedMode && !playgroundMode && !cameraTutorialSuppressed() && (query ? "query" : firstRun ? "first-run" : null);
+	});
+	const cameraTutorialQuery = Boolean(cameraTutorialEntry);
 	const [cameraTutorial, setCameraTutorial] = useState(false);
 	const cameraTutorialAnalytics = useRef(null);
 	const [cameraTutorialAttempt, setCameraTutorialAttempt] = useState(0);
@@ -524,8 +534,8 @@ export default function App() {
 	useEffect(() => {
 		if (!cameraTutorialQuery || cameraTutorialStarted.current) return;
 		cameraTutorialStarted.current = true;
-		void startCameraTutorialRef.current?.({ source: "query" });
-	}, [cameraTutorialQuery]);
+		void startCameraTutorialRef.current?.({ source: cameraTutorialEntry });
+	}, [cameraTutorialQuery, cameraTutorialEntry]);
 	useEffect(() => {
 		const onTutorial = (event) => {
 			if (event.detail?.open === false) {
@@ -6770,6 +6780,8 @@ export default function App() {
 							key={cameraTutorialAttempt}
 							analytics={cameraTutorialAnalytics.current}
 							previewing={lookThroughShot}
+							shotCount={shots.length}
+							railReady={shots.some((shot) => Array.isArray(shot.camera?.cameraRail) && shot.camera.cameraRail.length >= 2)}
 							onStepChange={setCameraTutorialStep}
 							onComplete={() => { cameraTutorialCompletedRef.current = true; cameraTutorialHandoff?.complete(); }}
 							onClose={() => closeCameraTutorial()}

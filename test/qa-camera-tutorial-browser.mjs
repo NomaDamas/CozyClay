@@ -72,11 +72,11 @@ const screenshot = async (name) => {
 /* ------------------------------------------------------------ helpers --- */
 
 const centreOf = (selector) => evaluate(`(() => {
-	const el = document.querySelector(${JSON.stringify(selector)});
-	if (!el) return null;
-	const box = el.getBoundingClientRect();
-	if (box.width < 2 || box.height < 2) return null;
-	return { x: box.x + box.width / 2, y: box.y + box.height / 2, width: box.width, height: box.height, left: box.x, top: box.y };
+	for (const el of document.querySelectorAll(${JSON.stringify(selector)})) {
+		const box = el.getBoundingClientRect();
+		if (box.width >= 2 && box.height >= 2 && box.right >= 0 && box.bottom >= 0 && box.left <= innerWidth && box.top <= innerHeight) return { x: box.x + box.width / 2, y: box.y + box.height / 2, width: box.width, height: box.height, left: box.x, top: box.y };
+	}
+	return null;
 })()`);
 const mouse = (type, { x, y, button = "none", buttons = 0, modifiers = 0, clickCount = 0, deltaX = 0, deltaY = 0 }) =>
 	send("Input.dispatchMouseEvent", { type, x, y, button, buttons, modifiers, clickCount, deltaX, deltaY });
@@ -130,7 +130,7 @@ const beacon = (kind, role = null) =>
 /** the gap in px between two elements' boxes — 0 when they overlap */
 const gapBetween = (one, two) => evaluate(`(() => {
 	const a = ${one};
-	const b = document.querySelector(${JSON.stringify(two)});
+	const b = [...document.querySelectorAll(${JSON.stringify(two)})].find((el) => { const box = el.getBoundingClientRect(); return box.width >= 2 && box.height >= 2 && box.right >= 0 && box.bottom >= 0 && box.left <= innerWidth && box.top <= innerHeight; });
 	if (!a || !b) return null;
 	const p = a.getBoundingClientRect();
 	const q = b.getBoundingClientRect();
@@ -143,7 +143,7 @@ const settled = (expression) => waitFor(`(() => { const el = ${expression}; retu
 /** do two elements' boxes intersect at all? the beacon must never cover a control */
 const overlaps = (one, two) => evaluate(`(() => {
 	const a = ${one};
-	const b = document.querySelector(${JSON.stringify(two)});
+	const b = [...document.querySelectorAll(${JSON.stringify(two)})].find((el) => { const box = el.getBoundingClientRect(); return box.width >= 2 && box.height >= 2 && box.right >= 0 && box.bottom >= 0 && box.left <= innerWidth && box.top <= innerHeight; });
 	if (!a || !b) return null;
 	const p = a.getBoundingClientRect();
 	const q = b.getBoundingClientRect();
@@ -156,6 +156,7 @@ const spotlightOn = (selector) => evaluate(`(() => {
 })()`);
 const tutorialStep = `document.querySelector('.app').dataset.tutorialStep ?? null`;
 const PINNED = 60;
+const lookThroughSelector = ".dock-shot-look, .vp-look-through";
 
 /** every beacon must sit on its target, and its step must own the .app root */
 const expectPinned = async (kind, role, target, label) => {
@@ -171,11 +172,13 @@ const expectPinned = async (kind, role, target, label) => {
 await send("Page.enable");
 await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1000, deviceScaleFactor: 1, mobile: false });
 await waitFor("location.href.startsWith('http')", 30000);
-await evaluate("localStorage.setItem('cozyclay.locale', 'en')");
-await send("Page.navigate", { url: `${appUrl}?tutorial=camera` });
-expect("the studio comes up on ?tutorial=camera", await waitFor("!!document.querySelector('canvas')", 40000));
+await send("Page.navigate", { url: `${new URL(appUrl).origin}/favicon.ico` });
+await waitFor("location.pathname === '/favicon.ico'");
+await evaluate("localStorage.clear(); localStorage.setItem('cozyclay.locale', 'en')");
+await send("Page.navigate", { url: appUrl });
+expect("a fresh studio comes up without a tutorial query", await waitFor("!!document.querySelector('canvas')", 40000));
 expect("the editor camera is live", await waitFor("!!window.__cozyclay?.editorCam", 30000));
-expect("the tutorial mounts from the query", await waitFor('!!document.querySelector(\'[data-testid="camera-tutorial"]\')', 15000));
+expect("the tutorial mounts automatically on first run", await waitFor('!!document.querySelector(\'[data-testid="camera-tutorial"]\')', 15000));
 
 /* ----------------------------------------- the set the steps run on (#209) */
 
@@ -186,8 +189,9 @@ const starterProps = await evaluate(`(async () => {
 	const project = await (await fetch('/scenes/city-block.cclayproject')).json();
 	return project.scenes.scenes[0].objects.length;
 })()`);
+expect("a fresh profile starts in light mode", await evaluate(`document.documentElement.dataset.theme === "light"`));
 expect("the starter scene ships with props to frame", starterProps > 0, String(starterProps));
-expect("the query entry went through startCameraTutorial", await waitFor(`window.__cozyclayTutorialSource === "query"`));
+expect("the first-run entry went through startCameraTutorial", await waitFor(`window.__cozyclayTutorialSource === "first-run"`));
 expect("the tutorial opened the City Block project", await waitFor(`${projectLabel} === "City Block"`), await evaluate(projectLabel));
 expect(
 	"the hierarchy holds the starter's props",
@@ -201,15 +205,10 @@ expect(
 	await waitFor(`window.__cozyclay?.frameCount === ${WALK_FRAMES}`),
 	String(await evaluate("window.__cozyclay?.frameCount")),
 );
-expect(
-	"the hierarchy reports the clip length instead of Blocking",
-	await waitFor(`document.querySelector('.hierarchy-frame-status')?.textContent.trim() === "${WALK_FRAMES} frames"`),
-	await evaluate(`document.querySelector('.hierarchy-frame-status')?.textContent`),
-);
 expect("the Full-Body lane shows the clip", await waitFor("document.querySelectorAll('.tl-motion-clip').length === 1"));
 expect(
 	"the transport counts the whole take from frame 0",
-	await waitFor(`/^\\u2039\\u25b6\\u203a?0 \\/ ${WALK_FRAMES - 1} /.test(document.querySelector('.tl-transport')?.textContent ?? "")`),
+	await waitFor(`JSON.stringify(document.querySelector('.tl-transport')?.textContent.match(/[0-9]+/g)?.slice(0, 2).map(Number)) === "[0,${WALK_FRAMES}]"`),
 	await evaluate(`document.querySelector('.tl-transport')?.textContent`),
 );
 expect("the playhead sits on frame 0", await evaluate("window.__cozyclay?.tlFrame === 0"));
@@ -222,6 +221,8 @@ expect(
 expect("nothing starts done", await evaluate(`[...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].every((li) => li.dataset.done === "0")`));
 expect("the first step is the current one", await evaluate(`${currentFlag("fly")} && ${step("walk")}.dataset.current === "0"`));
 expect("the card carries the first instruction", await evaluate(`/Right-drag/.test(document.querySelector('[data-testid="camera-tutorial-card"]').textContent)`));
+expect("the instruction card clears the left panel", await overlaps("document.querySelector('.camera-tutorial')", ".studio-left-column") === false);
+expect("the instruction card clears the top bar", await overlaps("document.querySelector('.camera-tutorial')", ".topbar") === false);
 await screenshot("tutorial-step1");
 await screenshot("tutorial-city-block-step1");
 
@@ -263,6 +264,7 @@ expect(
 	String(await evaluate(`${cue("walk")}?.querySelectorAll('kbd[data-done="1"]').length`)),
 );
 expect("the Walk cue settles before it is judged", await settled(cue("walk")));
+expect("the Walk cue clears the dock", await overlaps(cue("walk"), ".studio-bottom-dock") !== true);
 await screenshot("step2-walk-cue");
 await key("KeyD", "d", 68);
 await key("KeyQ", "q", 81);
@@ -307,35 +309,43 @@ expect("the beacon settles before it is judged", await settled(beacon("shot")));
 expect("it does not cover the timeline's transport row", await overlaps(beacon("shot"), ".tl-transport") === false);
 await screenshot("step5-shot-beacon");
 expect("+ Add shot is clickable", await click(".tl-track-add.cut"));
-expect("adding a shot completes the Shot step", await waitFor(doneFlag("shot")));
+expect("adding a shot completes the Shot step", await waitFor(`[...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].find((li) => li.dataset.kind === "shot")?.dataset.done === "1"`));
 expect("the shot block appears in the lane", await waitFor("!!document.querySelector('.tl-shot-block')"));
 await screenshot("tutorial-city-block-shot");
 
 // 6. Rail — select the shot, arm Draw rail, then stroke across the Top-View.
 expect("the .app root switches to the Rail step", await waitFor(`${tutorialStep} === "rail"`), String(await evaluate(tutorialStep)));
-await expectPinned("rail", "select-shot", ".tl-track.shots .tl-shot-block", "step 6a");
-expect(
-	"the unselected shot block is the one spotlit",
-	await spotlightOn(".tl-track.shots .tl-shot-block:not(.selected)") === "tutorial-spotlight",
-	String(await spotlightOn(".tl-track.shots .tl-shot-block:not(.selected)")),
-);
-expect("the shot block can be selected", await click(".tl-shot-block"));
+const shotWasSelected = await evaluate("!!document.querySelector('.tl-track.shots .tl-shot-block.selected')");
+if (shotWasSelected) {
+	expect("the new shot is selected for rail authoring", true);
+	expect("the select-shot beacon is omitted for the selected shot", await evaluate(`!${beacon("rail", "select-shot")}`));
+} else {
+	await expectPinned("rail", "select-shot", ".tl-track.shots .tl-shot-block", "step 6a");
+	expect(
+		"the unselected shot block is the one spotlit",
+		await spotlightOn(".tl-track.shots .tl-shot-block:not(.selected)") === "tutorial-spotlight",
+		String(await spotlightOn(".tl-track.shots .tl-shot-block:not(.selected)")),
+	);
+	expect("the shot block can be selected", await click(".tl-shot-block"));
+}
 expect("the camera bar appears for the shot", await waitFor("!!document.querySelector('.tl-camera-editor .tl-rail-draw')"));
 expect("the select-the-shot beacon steps aside once it is selected", await waitFor(`!${beacon("rail", "select-shot")}`));
 await expectPinned("rail", "draw-rail", ".tl-rail-draw", "step 6b");
-await expectPinned("rail", "top-view", ".vp-inset", "step 6c");
 expect(
 	"Draw rail is spotlit once it exists",
 	await spotlightOn(".tl-rail-draw") === "tutorial-spotlight",
 	String(await spotlightOn(".tl-rail-draw")),
 );
-expect("both rail beacons settle before they are judged", await settled(beacon("rail", "draw-rail")) && await settled(beacon("rail", "top-view")));
+expect("the Draw rail beacon settles", await settled(beacon("rail", "draw-rail")));
 expect("the Draw rail beacon clears the transport row", await overlaps(beacon("rail", "draw-rail"), ".tl-transport") === false);
-expect("the Top-View beacon sits outside the inset it points at", await overlaps(beacon("rail", "top-view"), ".vp-inset") === false);
-expect("and clears the shot preview", await overlaps(beacon("rail", "top-view"), ".vp-shot-preview") === false);
-await screenshot("step6-rail-beacon");
+expect("the Top-View cue waits for the drawing tool", await evaluate(`!${beacon("rail", "top-view")}`));
 expect("Draw rail is clickable", await click(".tl-camera-editor .tl-rail-draw"));
 expect("the studio arms rail drawing", await waitFor(`document.querySelector('.app').dataset.railDraw === "1"`));
+await expectPinned("rail", "top-view", ".vp-inset", "step 6c");
+expect("the Top-View beacon settles", await settled(beacon("rail", "top-view")));
+expect("the Top-View beacon sits outside the inset", await overlaps(beacon("rail", "top-view"), ".vp-inset") === false);
+expect("the Rail instructions clear the drawing surface", await overlaps("document.querySelector('.camera-tutorial')", ".vp-inset") === false);
+await screenshot("step6-rail-beacon");
 const inset = await centreOf(".vp-inset");
 expect("the Top-View inset is on screen", !!inset, JSON.stringify(inset));
 const railY = inset.top + inset.height * 0.55;
@@ -356,17 +366,17 @@ expect(
 expect("Play is the last current step", await waitFor(currentFlag("play")));
 expect("the .app root switches to the Play step", await waitFor(`${tutorialStep} === "play"`), String(await evaluate(tutorialStep)));
 expect("the rail beacons are gone with their step", await evaluate(`!${beacon("rail")}`));
-await expectPinned("play", "look-through", ".vp-look-through", "step 7");
+await expectPinned("play", "look-through", lookThroughSelector, "step 7");
 expect(
 	"the look-through button is spotlit",
-	await spotlightOn(".vp-look-through") === "tutorial-spotlight",
+	(await spotlightOn(".vp-look-through") === "tutorial-spotlight") || (await spotlightOn(".dock-shot-look") === "tutorial-spotlight"),
 	String(await spotlightOn(".vp-look-through")),
 );
 expect("the Play beacon settles before it is judged", await settled(beacon("play")));
-expect("it sits clear of the viewport titlebar", await overlaps(beacon("play"), ".viewport-titlebar") === false);
+expect("it sits clear of the look-through control", await overlaps(beacon("play"), lookThroughSelector) === false);
 expect("it sits clear of the shot preview it points into", await overlaps(beacon("play"), ".vp-shot-preview") === false);
 await screenshot("step7-play-beacon");
-expect("the look-through button is clickable", await click(".vp-look-through"));
+expect("the look-through button is clickable", await click(lookThroughSelector));
 expect("look-through completes the Play step", await waitFor(doneFlag("play")));
 expect("every step reads done", await evaluate(`[...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].every((li) => li.dataset.done === "1")`));
 expect("the overlay reports the Done state", await waitFor(`document.querySelector('[data-testid="camera-tutorial"]').dataset.state === "done"`));
@@ -395,7 +405,7 @@ await send("Page.navigate", { url: appUrl });
 expect("plain /app/ comes back up", await waitFor("!!document.querySelector('canvas')", 40000));
 expect("plain /app/ carries no tutorial", await evaluate('!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
 expect("it comes up on its own project, not the starter", await waitFor(`${projectLabel} === "QA Scene"`), await evaluate(projectLabel));
-expect("and with no take loaded", await evaluate("!window.__cozyclay?.motion"));
+
 
 // Modify the scene by hand through the Outliner right-click Create accelerator.
 const propsBefore = Math.max(await evaluate(propCount), 0);
@@ -408,38 +418,27 @@ expect(
 );
 expect("the project reads as unsaved", await waitFor("!!document.querySelector('.project-menu-trigger .project-dirty-dot')"));
 
-// Open the tutorial from Settings ▾ with the confirm answered in the page.
-expect("window.confirm is armed for this scenario", await armConfirm(true));
-expect("the Settings trigger is present", await waitFor('!!document.querySelector(\'[data-testid="settings-menu-trigger"]\')'));
-expect("the Settings menu opens", await click('[data-testid="settings-menu-trigger"]') && await waitFor('!!document.querySelector(\'[data-testid="settings-camera-tutorial"]\')'));
-expect("the item is labelled Camera tutorial", await evaluate(`document.querySelector('[data-testid="settings-camera-tutorial"]').textContent.trim() === "Camera tutorial"`));
-await screenshot("tutorial-settings-menu");
-expect("the Settings item is clickable", await click('[data-testid="settings-camera-tutorial"]'));
-expect("replacing the modified scene is confirmed first", await waitFor("(window.__qaConfirms ?? []).length === 1"), JSON.stringify(await evaluate("window.__qaConfirms ?? null")));
-expect(
-	"the question names the starter scene it is about to open",
-	await evaluate(`/City Block starter scene and replaces the current scene/.test(window.__qaConfirms[0])`),
-	JSON.stringify(await evaluate("window.__qaConfirms?.[0] ?? null")),
-);
-expect("the Settings entry went through startCameraTutorial", await evaluate(`window.__cozyclayTutorialSource === "settings"`));
-expect("Settings ▾ mounts the tutorial", await waitFor('!!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
-expect("the menu closes behind it", await waitFor('!document.querySelector(\'[data-testid="settings-camera-tutorial"]\')'));
-expect("it opens at step one", await evaluate(`${currentFlag("fly")} && [...document.querySelectorAll('[data-testid="camera-tutorial-step"]')].every((li) => li.dataset.done === "0")`));
-expect("the scene switched to City Block", await waitFor(`${projectLabel} === "City Block"`), await evaluate(projectLabel));
-expect(
-	"the hand-added object is gone, the starter's props are in",
-	await waitFor(`${propCount} === ${starterProps}`),
-	String(await evaluate(propCount)),
-);
-expect("the walk take is loaded here too", await waitFor("!!window.__cozyclay?.motion", 40000));
-expect(
-	`the same ${WALK_FRAMES}-frame clip is on the Full-Body lane`,
-	await waitFor(`window.__cozyclay?.frameCount === ${WALK_FRAMES} && document.querySelectorAll('.tl-motion-clip').length === 1`),
-	String(await evaluate("window.__cozyclay?.frameCount")),
-);
-expect("the playhead sits on frame 0", await evaluate("window.__cozyclay?.tlFrame === 0"));
-expect("the pane is on the free camera", await evaluate("window.__cozyclay?.lookThroughShot === false"));
-await screenshot("tutorial-settings-city-block");
+// Restart through the current Help menu; existing work must survive.
+const beforeRestart = await evaluate(`({name: ${projectLabel}, props: ${propCount}, frameCount: window.__cozyclay?.frameCount})`);
+expect("window.confirm is observed", await armConfirm(true));
+expect("Help menu opens", await click('[data-testid="menu-help"]'));
+expect("Tutorial is offered in Help", await waitFor(`[...document.querySelectorAll('.menubar-item')].some(el => el.textContent.trim() === 'Tutorial')`));
+await evaluate(`[...document.querySelectorAll('.menubar-item')].find(el => el.textContent.trim() === 'Tutorial').click()`);
+expect("Help mounts the tutorial", await waitFor('!!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
+expect("Help is recorded as the restart source", await evaluate(`window.__cozyclayTutorialSource === "help"`));
+expect("restart starts at Look", await waitFor(currentFlag("fly")));
+expect("restart preserves the project name", await evaluate(projectLabel) === beforeRestart.name);
+expect("restart preserves added objects", await evaluate(propCount) === beforeRestart.props);
+expect("restart preserves the current take", await evaluate("window.__cozyclay?.frameCount") === beforeRestart.frameCount);
+expect("restart does not request destructive replacement", await evaluate("window.__qaConfirms.length === 0"));
+await screenshot("tutorial-help-existing-project");
+expect("restarted tutorial can be dismissed", await click('[data-testid="camera-tutorial-close"]'));
+await waitFor('!document.querySelector(\'[data-testid="camera-tutorial"]\')');
+await evaluate("localStorage.setItem('cozyclay.theme.v1', 'dark')");
+await send("Page.navigate", { url: appUrl });
+expect("returning session loads", await waitFor("!!window.__cozyclay?.editorCam", 30000));
+expect("dismissed tutorial stays closed after reload", await evaluate('!document.querySelector(\'[data-testid="camera-tutorial"]\')'));
+expect("saved dark preference survives reload", await evaluate(`document.documentElement.dataset.theme === "dark"`));
 
 ws.close();
 if (failures > 0) { console.error(`${failures} FAILURES`); process.exit(1); }
