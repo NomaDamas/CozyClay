@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="description" content="Free, open source previs software that runs in the browser. Block a scene, pose characters, and author camera moves and cuts, then hand the same shots to an AI video model. No Blender, no Unity — one command." />
-    <meta name="theme-color" content="#232323" />
+    <meta name="theme-color" content="#f5f5f7" />
     <meta name="apple-mobile-web-app-title" content="CozyClay" />
     <link rel="canonical" href="https://cozyclay.org/" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icons/icon-192.png" />
@@ -59,13 +59,18 @@
 
     <style>
       :root {
-        --bg: #1b1b1b;
-        --panel: #232323;
-        --line: #343434;
-        --ink: #ece7de;
-        --muted: #a9a29a;
-        --clay: #f2eee6;
-        --accent: #d9a066;
+        --bg: #f5f5f7;
+        --alt: #ececf0;
+        --panel: #ffffff;
+        --line: #d2d2d7;
+        --line-strong: #c7c7cc;
+        --ink: #1d1d1f;
+        --muted: #636366;
+        --accent: #0066cc;
+        --ok: #2f6b3a;
+        --shadow-card: 0 1px 2px rgba(0, 0, 0, .04), 0 8px 24px rgba(0, 0, 0, .06);
+        --shadow-window: 0 2px 6px rgba(0, 0, 0, .06), 0 30px 60px rgba(0, 0, 0, .18);
+        --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
       * { box-sizing: border-box; }
       html { scroll-behavior: smooth; }
@@ -73,234 +78,263 @@
         margin: 0;
         background: var(--bg);
         color: var(--ink);
-        font: 16px/1.65 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        font: 17px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
         -webkit-font-smoothing: antialiased;
       }
       a { color: var(--accent); }
-      .wrap { max-width: 980px; margin: 0 auto; padding: 0 20px; }
+      button { font-family: inherit; }
+      :focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+      .wrap { max-width: 1160px; margin: 0 auto; padding: 0 24px; }
+      .wrap.narrow { max-width: 820px; }
+
+      /* Type scale: 64 / 36 / 19 / 17 / 14. Nothing else. */
+      h1 { font-size: clamp(40px, 6vw, 64px); line-height: 1.05; letter-spacing: -.02em; font-weight: 700; margin: 0; max-width: 820px; }
+      h1 em { font-style: normal; color: var(--accent); }
+      h2 { font-size: clamp(28px, 3.4vw, 36px); line-height: 1.15; letter-spacing: -.01em; font-weight: 700; margin: 0 0 32px; }
+      h3 { font-size: 19px; font-weight: 600; margin: 0; }
+      .small, figcaption { font-size: 14px; color: var(--muted); }
+      code, pre, kbd { font-family: var(--mono); font-size: 14px; }
+
       header.site {
+        position: sticky; top: 0; z-index: 10;
+        background: rgba(245, 245, 247, .8);
+        backdrop-filter: saturate(180%) blur(20px); -webkit-backdrop-filter: saturate(180%) blur(20px);
         border-bottom: 1px solid var(--line);
-        position: sticky; top: 0; background: rgba(27,27,27,.9);
-        backdrop-filter: blur(8px); z-index: 10;
       }
-      header.site .wrap {
-        display: flex; align-items: center; gap: 16px;
-        min-height: 60px; flex-wrap: wrap;
-      }
-      .brand { font-weight: 700; letter-spacing: -.01em; color: var(--clay); text-decoration: none; font-size: 18px; }
-      header.site nav { margin-left: auto; display: flex; gap: 18px; flex-wrap: wrap; }
-      header.site nav a { color: var(--muted); text-decoration: none; font-size: 14px; }
+      header.site .wrap { display: flex; align-items: center; justify-content: space-between; gap: 8px 16px; flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px; }
+      .brand { display: flex; align-items: center; gap: 10px; min-height: 44px; font-weight: 600; color: var(--ink); text-decoration: none; }
+      .brand img { width: 32px; height: auto; border-radius: 8px; background: #fff; padding: 3px 2px; }
+      header.site nav { display: flex; align-items: center; gap: 4px 24px; flex-wrap: wrap; font-size: 14px; }
+      header.site nav a { display: flex; align-items: center; min-height: 44px; color: var(--muted); text-decoration: none; }
       header.site nav a:hover { color: var(--ink); }
+      header.site nav a.btn, header.site nav a.btn:hover { color: #fff; font-size: 14px; min-height: 44px; padding: 0 16px; }
 
-      .hero { padding: 48px 0 40px; }
-      h1 { font-size: clamp(30px, 5.2vw, 46px); line-height: 1.12; margin: 0 0 18px; letter-spacing: -.02em; color: var(--clay); }
-      .lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); margin: 0 0 28px; max-width: 44em; }
-      .cta { display: flex; gap: 12px; flex-wrap: wrap; margin-bottom: 14px; }
       .btn {
-        display: inline-block; padding: 12px 20px; border-radius: 8px;
-        text-decoration: none; font-weight: 600; font-size: 15px; border: 1px solid var(--line);
+        display: inline-flex; align-items: center; justify-content: center;
+        min-height: 48px; padding: 0 24px; border-radius: 8px; border: 1px solid transparent;
+        font-size: 17px; font-weight: 600; text-decoration: none; cursor: pointer;
+        transition: filter .15s, transform .15s;
       }
-      .btn.primary { background: var(--clay); color: #1b1b1b; border-color: var(--clay); }
-      .btn.ghost { color: var(--ink); }
-      .note { color: var(--muted); font-size: 14px; margin: 0; }
+      .btn:hover { filter: brightness(1.08); }
+      .btn:active { transform: scale(.98); }
+      .btn.primary { background: var(--accent); color: #fff; }
+      .btn.ghost { background: var(--panel); color: var(--ink); border-color: var(--line-strong); }
+      .cta { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
 
-      figure { margin: 40px 0; }
-      figure img { width: 100%; height: auto; display: block; border: 1px solid var(--line); border-radius: 10px; }
-      figcaption { color: var(--muted); font-size: 13px; margin-top: 10px; }
+      .hero { padding: 80px 0 48px; }
+      .hero .wrap { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; }
+      .lede { margin: 0; color: var(--muted); }
+      .cmd {
+        display: inline-flex; align-items: center; gap: 4px; padding: 0 4px 0 14px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+      }
+      .cmd .copy { width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; background: none; border: 0; color: var(--muted); cursor: pointer; }
+      .cmd .copy .ic-done { display: none; color: var(--ok); }
+      .cmd .copy[data-state="copied"] .ic-copy { display: none; }
+      .cmd .copy[data-state="copied"] .ic-done { display: block; }
 
-      /* The mark is blue on white and the eyes are knocked out of the fill, so
-         it sits on a light plate rather than straight on the dark page. */
-      .hero-head { display: flex; align-items: center; gap: 18px; margin: 0 0 16px; }
-      .mark {
-        width: 72px; height: auto; flex: none; border: 0;
-        border-radius: 12px; background: var(--clay); padding: 6px 5px;
-      }
-      .hero-head h1 { margin: 0; }
+      .window { border: 1px solid var(--line-strong); border-radius: 12px; overflow: hidden; background: var(--panel); box-shadow: var(--shadow-window); }
+      .titlebar { display: flex; align-items: center; gap: 8px; height: 40px; padding: 0 14px; background: #e8e8ed; border-bottom: 1px solid var(--line); }
+      .titlebar i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; }
+      .titlebar i:nth-child(2) { background: #febc2e; }
+      .titlebar i:nth-child(3) { background: #28c840; }
+      .titlebar span { flex: 1; text-align: center; margin-right: 52px; font-size: 14px; font-weight: 600; color: var(--muted); }
 
-      .reels {
-        display: grid;
-        grid-template-columns: 1.778fr 1.167fr;
-        gap: 16px;
-        align-items: start;
-        margin: 0 0 30px;
+      .proof { padding: 0 0 96px; }
+      .proof figure { margin: 0; }
+      .proof video { display: block; width: 100%; height: auto; background: #000; }
+      .proof figcaption { margin-top: 16px; text-align: center; }
+
+      section { padding: 88px 0; border-top: 1px solid var(--line); }
+      section.alt { background: var(--alt); }
+      section.hero, section.proof { border-top: 0; }
+
+      .cards { display: flex; flex-wrap: wrap; gap: 20px; }
+      .card {
+        flex: 1 1 240px; min-width: 0; padding: 24px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-card);
       }
-      .reel {
-        margin: 0;
-        border: 1px solid var(--line);
-        border-radius: 12px;
-        overflow: hidden;
-        background: #000;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+      .card p { margin: 4px 0 0; color: var(--muted); }
+      .card .n { display: block; margin-bottom: 16px; font-size: clamp(28px, 3.4vw, 36px); font-weight: 700; line-height: 1; color: var(--accent); }
+      a.card { color: var(--ink); text-decoration: none; font-size: 19px; font-weight: 600; min-height: 96px; transition: transform .2s; }
+      a.card:hover { transform: translateY(-2px); }
+
+      /* Playground. The ids and data-state values belong to the tutorial script below. */
+      .demo { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
+      .demo .window { flex: 999 1 520px; min-width: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, .06), 0 24px 48px rgba(0, 0, 0, .14); }
+      .tutorial-steps { flex: 1 1 180px; display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+      .tutorial-steps[hidden] { display: none; }
+      .tutorial-steps li {
+        display: flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 8px;
+        color: var(--ink); opacity: .55; transition: opacity .2s, background .15s;
       }
-      .reel video { display: block; width: 100%; height: auto; }
-      .reel-note { color: var(--muted); font-size: 13px; margin: 10px 0 0; }
-      .reel-note .chip {
-        display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px;
-        border: 1px solid var(--line); color: var(--muted); text-decoration: none; font-size: 12px;
-      }
-      .reel-note .chip:hover { color: var(--ink); border-color: var(--muted); }
+      .playground-live .tutorial-steps li { opacity: 1; }
+      .tutorial-steps li[data-done="1"] { color: var(--ok); }
+      .tutorial-steps li[data-done="1"]::after { content: "✓"; margin-left: auto; font-weight: 700; }
+      .tutorial-steps li[data-current="1"] { background: var(--accent); color: #fff; font-weight: 600; }
 
       .playground {
         position: relative;
         height: clamp(480px, 70vh, 720px);
-        border: 1px solid var(--line);
-        border-radius: 12px;
         overflow: hidden;
-        background: #000 center / cover no-repeat;
-        box-shadow: 0 24px 60px rgba(0, 0, 0, .45);
+        background: #1b1b1b center / cover no-repeat;
       }
       .playground iframe { display: block; width: 100%; height: 100%; border: 0; background: #1b1b1b; }
       .playground-cover {
         position: absolute; inset: 0; display: flex; flex-direction: column;
         align-items: center; justify-content: center; gap: 12px;
-        background: rgba(0, 0, 0, .35); cursor: pointer; border: 0; color: var(--ink);
+        background: rgba(245, 245, 247, .55); cursor: pointer; border: 0; color: var(--ink);
         font: inherit; padding: 0; width: 100%;
       }
-      .playground-cover:hover { background: rgba(0, 0, 0, .25); }
+      .playground-cover:hover { background: rgba(245, 245, 247, .4); }
       .playground-cover[hidden] { display: none; }
+      .playground-cover .btn { pointer-events: none; }
+      .playground-cover small { font-size: 14px; font-weight: 600; color: var(--ink); }
       .playground[data-state="loading"] iframe { opacity: 0; }
       .playground-loading {
         position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
-        color: var(--ink); font-size: 14px; background: rgba(0, 0, 0, .45); pointer-events: none;
+        color: #fff; font-size: 14px; background: rgba(0, 0, 0, .45); pointer-events: none;
       }
       .playground[data-state="loading"] .playground-loading { display: flex; }
-      .playground-cover .btn { pointer-events: none; }
-      .playground-cover small { color: var(--ink); font-size: 13px; opacity: .85; }
+      .playground-phone { display: none; }
       .playground-bar {
-        display: none; gap: 14px; align-items: center; flex-wrap: wrap;
-        margin: 10px 0 0; font-size: 13px; color: var(--muted);
+        display: none; gap: 8px 12px; align-items: center; flex-wrap: wrap;
+        padding: 10px 14px; border-top: 1px solid var(--line); background: #e8e8ed;
+        font-size: 14px; color: var(--muted);
       }
-      .playground-bar a { color: var(--muted); }
       .playground[data-state="live"] + .playground-bar,
       .playground[data-state="loading"] + .playground-bar { display: flex; }
-      .playground-bar button {
-        background: none; border: 1px solid var(--line); color: var(--ink);
-        border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
+      .playground-bar a { color: var(--muted); }
+      .playground-bar button, button.copy {
+        min-height: 32px; padding: 0 12px; border-radius: 6px; cursor: pointer;
+        background: var(--panel); border: 1px solid var(--line-strong); color: var(--ink); font-size: 14px;
       }
       .playground-bar .spacer { flex: 1; }
-      .playground-phone { display: none; }
+      button.copy[data-state="copied"] { border-color: var(--ok); color: var(--ok); }
 
-      .tutorial-steps { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; padding: 0; list-style: none; }
-      .tutorial-steps li {
-        font-size: 13px; color: var(--muted); border: 1px solid var(--line); border-radius: 999px;
-        padding: 4px 11px; background: var(--panel); opacity: .55; transition: opacity .2s;
-      }
-      .playground-live .tutorial-steps li { opacity: 1; }
-      .tutorial-steps li[data-done="1"] { color: var(--ink); border-color: #4f7a4a; background: #24301f; }
-      .tutorial-steps li[data-done="1"]::before { content: "✓ "; color: #8fd47f; }
-      .tutorial-steps li[data-current="1"] { color: var(--clay); border-color: var(--accent); }
       .tutorial-card {
         position: absolute; left: 14px; top: 14px; z-index: 2; max-width: 46%;
         display: flex; gap: 10px; align-items: baseline;
         padding: 10px 14px; border-radius: 10px; pointer-events: none;
-        background: rgba(20, 20, 20, .82); border: 1px solid var(--line); color: var(--clay);
-        font-size: 15px; line-height: 1.45; backdrop-filter: blur(6px);
+        background: rgba(255, 255, 255, .92); border: 1px solid var(--line); color: var(--ink);
+        font-size: 17px; line-height: 1.45; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+        box-shadow: var(--shadow-card);
       }
       .tutorial-card[hidden] { display: none; }
-      .tutorial-card-step { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; }
-      .tutorial-card kbd[data-done="1"] { border-color: #4f7a4a; color: #8fd47f; background: #24301f; }
+      .tutorial-card-step { color: var(--accent); font-size: 14px; font-weight: 600; white-space: nowrap; }
       .tutorial-card b { color: var(--accent); font-weight: 600; }
       .tutorial-card kbd, .tutorial-done kbd {
-        font: 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 3px 6px; border-radius: 5px;
-        border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+        padding: 2px 6px; border-radius: 5px;
+        border: 1px solid var(--line-strong); background: var(--bg); color: var(--ink);
       }
-      .tutorial-done { flex-basis: 100%; margin: 0 0 4px; font-size: 14px; color: var(--clay); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-      .tutorial-done a { color: var(--accent); }
-      .related { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
-      .related a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; text-decoration: none; color: var(--clay); font-weight: 600; }
-      .related a small { display: block; color: var(--muted); margin-top: 4px; font-weight: 400; }
-      .related a:hover { border-color: var(--muted); }
+      .tutorial-card kbd[data-done="1"] { border-color: var(--ok); color: var(--ok); background: #e6f2e7; }
+      .tutorial-done { flex-basis: 100%; margin: 0 0 4px; color: var(--ink); display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
       .tutorial-done[hidden] { display: none; }
-      .tutorial-steps[hidden] { display: none; }
       .tutorial-done p { flex-basis: 100%; margin: 0; }
       #playground-download-status, #playground-download-error { flex-basis: 100%; margin: 0; }
-      .playground-bar button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-      button.copy {
-        background: var(--panel); border: 1px solid var(--line); color: var(--ink);
-        border-radius: 6px; padding: 5px 10px; font: inherit; font-size: 13px; cursor: pointer;
+      .demo-note { margin: 24px 0 0; }
+
+      /* Quick start */
+      .start { display: flex; flex-wrap: wrap; gap: 32px 40px; }
+      .start-head { flex: 1 1 280px; }
+      .start-head h2 { margin-bottom: 8px; }
+      .start-head p { margin: 0 0 8px; color: var(--muted); }
+      .start-head a { display: inline-flex; align-items: center; min-height: 44px; font-size: 14px; text-decoration: none; }
+      .start-body { flex: 999 1 480px; min-width: 0; display: flex; flex-direction: column; gap: 16px; }
+      .seg { align-self: flex-start; display: flex; gap: 2px; padding: 2px; background: #dcdce1; border-radius: 10px; }
+      .seg button {
+        min-height: 44px; padding: 0 18px; border: 0; border-radius: 8px; background: transparent;
+        color: var(--ink); font-size: 14px; font-weight: 600; cursor: pointer; transition: background .15s;
       }
-      button.copy[data-state="copied"] { border-color: #4f7a4a; color: #8fd47f; }
-      pre.with-copy { position: relative; }
-      pre.with-copy .copy { position: absolute; right: 10px; top: 10px; }
-      @media (max-width: 720px), (hover: none) {
-        .playground-cover .btn, .playground-cover small { display: none; }
-        .playground-phone { display: block; color: var(--ink); font-size: 14px; padding: 0 24px; text-align: center; }
-        .playground-cover { cursor: default; }
+      .seg button[aria-pressed="true"] { background: var(--panel); box-shadow: 0 1px 2px rgba(0, 0, 0, .12); }
+      .code {
+        position: relative; min-height: 140px; padding: 16px 96px 16px 20px;
+        background: var(--panel); border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow-card);
       }
+      .code[hidden] { display: none; }
+      .code pre { margin: 0; overflow-x: auto; line-height: 1.7; }
+      .code .copy { position: absolute; right: 12px; top: 12px; min-height: 44px; padding: 0 14px; border: 0; background: none; color: var(--accent); font-weight: 600; }
 
-      section { padding: 40px 0; border-top: 1px solid var(--line); }
-      h2 { font-size: clamp(22px, 3.2vw, 28px); margin: 0 0 8px; color: var(--clay); letter-spacing: -.01em; }
-      h3 { font-size: 17px; margin: 0 0 6px; color: var(--clay); }
-      .sub { color: var(--muted); margin: 0 0 26px; max-width: 48em; }
-
-      .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
-      @media (min-width: 900px) { .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-      @media (max-width: 520px) { .grid { grid-template-columns: 1fr; } }
-      .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 18px; }
-      .card p { margin: 0; color: var(--muted); font-size: 14px; }
-
-      pre {
-        background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
-        padding: 16px 18px; overflow-x: auto; font-size: 14px; line-height: 1.7;
-      }
-      code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-
-      table { width: 100%; border-collapse: collapse; font-size: 15px; }
+      table { width: 100%; border-collapse: collapse; }
       th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); }
-      th { color: var(--clay); font-weight: 600; white-space: nowrap; }
+      th { font-weight: 600; white-space: nowrap; }
       td { color: var(--muted); }
       .scroller { overflow-x: auto; }
 
-      details { border-bottom: 1px solid var(--line); padding: 16px 0; }
-      #controls { padding: 8px 0 0; border-top: 0; }
-      #controls details { padding: 8px 0 16px; }
-      #controls .scroller { margin-top: 12px; }
-      details summary { cursor: pointer; font-weight: 600; color: var(--clay); font-size: 16px; }
-      details p { color: var(--muted); margin: 12px 0 0; }
+      details { border-bottom: 1px solid var(--line); padding: 6px 0; }
+      details summary { display: flex; align-items: center; min-height: 44px; cursor: pointer; font-weight: 600; }
+      details p { color: var(--muted); margin: 0 0 12px; }
+      #controls { padding: 0 0 88px; border-top: 0; }
+      #controls .scroller { margin: 12px 0; }
+      #faq h2 { margin-bottom: 16px; }
 
-      footer.site { border-top: 1px solid var(--line); padding: 32px 0 56px; color: var(--muted); font-size: 14px; }
-      footer.site a { color: var(--muted); }
+      .closing .wrap { display: flex; flex-direction: column; align-items: center; text-align: center; gap: 24px; }
+      .closing h2 { margin: 0; }
 
-      @media (max-width: 720px) {
-        .reels { grid-template-columns: 1fr; }
+      footer.site { border-top: 1px solid var(--line); padding: 20px 0 32px; color: var(--muted); font-size: 14px; }
+      footer.site .wrap { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 24px; }
+      footer.site p { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 20px; }
+      footer.site a { display: inline-flex; align-items: center; min-height: 44px; color: var(--muted); text-decoration: none; }
+      footer.site a:hover { color: var(--ink); }
+
+      @media (max-width: 720px), (hover: none) {
+        .playground-cover .btn, .playground-cover small { display: none; }
+        .playground-phone { display: block; font-size: 14px; padding: 0 24px; text-align: center; }
+        .playground-cover { cursor: default; }
       }
-      @media (max-width: 620px) {
-        .hero { padding: 40px 0 28px; }
-        .hero-head { align-items: flex-start; }
-        .tutorial-card { max-width: 90%; font-size: 14px; }
-        .btn { width: 100%; text-align: center; }
-        header.site nav { gap: 14px; width: 100%; margin-left: 0; padding-bottom: 10px; }
+      @media (max-width: 720px) {
+        .tutorial-steps { flex-direction: row; flex-wrap: wrap; flex-basis: 100%; }
+        .tutorial-card { max-width: 90%; }
+        section { padding: 64px 0; }
+        .hero { padding: 56px 0 40px; }
+        .proof { padding-bottom: 64px; }
+        .cta .btn { width: 100%; }
+        .code { padding-right: 20px; padding-top: 60px; }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        html { scroll-behavior: auto; }
+        .btn, a.card, .seg button, .tutorial-steps li { transition: none; }
       }
     </style>
   </head>
   <body>
     <header class="site">
       <div class="wrap">
-        <a class="brand" href="/">CozyClay</a>
+        <a class="brand" href="/"><img src="/media/cozyclay-logo.png" width="880" height="714" alt="" />CozyClay</a>
         <nav>
-          <a href="#try">Try it</a>
+          <a href="#how">How it works</a>
+          <a href="#try">Demo</a>
           <a href="#start">Quick start</a>
-          <a href="/greybox-to-video/">Greybox to video</a>
-          <a href="/previs-software/">Previs software</a>
           <a href="https://github.com/NomaDamas/CozyClay">GitHub</a>
+          <a class="btn primary" href="#try">Try it</a>
         </nav>
       </div>
     </header>
 
-    <main class="wrap">
-      <div class="hero">
-        <div class="hero-head">
-          <img class="mark" src="/media/cozyclay-logo.png" width="880" height="714" alt="CozyClay" />
-          <h1>Block the shot before you pay to render it</h1>
+    <main>
+      <section class="hero">
+        <div class="wrap">
+          <h1>Block the shot before you <em>pay to render it</em></h1>
+          <p class="lede">Free, open source previs in your browser.</p>
+          <div class="cta">
+            <a class="btn primary" href="#try">Try it in your browser</a>
+            <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
+          </div>
+          <span class="cmd">
+            <code>npx cozyclay --via site</code>
+            <button type="button" class="copy" data-copy="npx cozyclay --via site" aria-label="Copy command">
+              <svg class="ic-copy" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V6a2 2 0 0 1 2-2h9"></path></svg>
+              <svg class="ic-done" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12l5 5 9-10"></path></svg>
+            </button>
+          </span>
         </div>
-        <p class="lede">
-          Free, open source previs in your browser. Block the scene, pose the characters,
-          set the camera, then hand that exact shot to an AI video model.
-        </p>
+      </section>
 
-        <div class="reels">
-          <div>
-            <div class="reel">
+      <section class="proof">
+        <div class="wrap">
+          <figure>
+            <div class="window">
+              <div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>CozyClay</span></div>
               <video
                 src="/media/cozyclay-demo.mp4"
                 poster="/media/cozyclay-demo-poster.jpg"
@@ -308,38 +342,45 @@
                 autoplay muted loop playsinline preload="metadata"
               ></video>
             </div>
-            <p class="reel-note">Greybox left of the wipe, generated result right. Same camera, every cut.</p>
-          </div>
-          <div>
-            <div class="reel">
-              <video
-                src="/media/cozyclay-seedance-vs-greybox.mp4"
-                poster="/media/cozyclay-seedance-vs-greybox-poster.jpg"
-                width="1104" height="946"
-                autoplay muted loop playsinline preload="metadata"
-              ></video>
+            <figcaption>Greybox left, generated right. Same camera, every cut.</figcaption>
+          </figure>
+        </div>
+      </section>
+
+      <section id="how">
+        <div class="wrap">
+          <h2>How it works</h2>
+          <div class="cards">
+            <div class="card">
+              <span class="n">1</span>
+              <h3>Block the scene</h3>
+              <p>Set pieces and characters.</p>
             </div>
-            <p class="reel-note">Top: blocked here. Bottom: Seedance 2.5, same camera. <a class="chip" href="https://x.com/Yun_HDY/status/2091577179914338583">the post ↗</a></p>
+            <div class="card">
+              <span class="n">2</span>
+              <h3>Set the camera</h3>
+              <p>Moves and cuts on a timeline.</p>
+            </div>
+            <div class="card">
+              <span class="n">3</span>
+              <h3>Hand off the shot</h3>
+              <p>Export the move, not a prompt.</p>
+            </div>
           </div>
         </div>
+      </section>
 
-        <div class="cta">
-          <a class="btn primary" href="#try">Try it in your browser</a>
-          <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
-        </div>
-        <p class="note">
-          Or run it on your machine: <code>npx cozyclay --via site</code>. No Blender, no Unity. Open a saved <code>.cclayproject</code> from the first dialog.
-        </p>
-      </div>
-
-      <section id="try">
+      <section id="try" class="alt">
+        <div class="wrap">
         <h2>Try it</h2>
-        <p class="sub">The city block from the reels, live. Seven moves: fly the camera, cut a shot, draw its dolly, play it back.</p>
+        <div class="demo">
         <ol class="tutorial-steps" id="tutorial-steps"></ol>
+        <div class="window">
+        <div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>City block</span></div>
         <div class="playground" id="playground" style="background-image: url('/media/playground-poster.jpg')">
           <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
             <span class="btn primary">Play with the scene</span>
-            <small>Loads the studio in this box (about 2 MB)</small>
+            <small>About 2 MB</small>
             <span class="playground-phone">Needs a mouse and keyboard. Come back on a computer, or run <code>npx cozyclay --via site</code>.</span>
           </button>
           <div class="playground-loading">Loading the studio…</div>
@@ -362,6 +403,9 @@
           <a href="/app/" target="_blank" rel="noopener">Open studio ↗</a>
           <button type="button" id="playground-close">Close</button>
         </div>
+        </div>
+        </div>
+        <p class="small demo-note">Needs a mouse and keyboard.</p>
         <script type="module">
           import { createTutorialAnalytics } from "/src/tutorial-analytics.js";
           import { createFirstShotHandoff } from "/src/first-shot-handoff.js";
@@ -531,44 +575,64 @@
             renderTutorial();
           })();
         </script>
+        </div>
       </section>
 
       <section id="what">
-        <h2>What you can do</h2>
-        <div class="grid">
-          <div class="card">
-            <h3>Stage a scene</h3>
-            <p>Primitives, set pieces, a W/E/R gizmo, and a plan view for character paths.</p>
-          </div>
-          <div class="card">
-            <h3>Edit like Unity</h3>
-            <p>Right-drag flies, WASD walks, Alt-drag orbits, F frames. Muscle memory carries over.</p>
-          </div>
-          <div class="card">
-            <h3>Author the camera</h3>
-            <p>Lens, dolly, crane, cuts on a timeline. Export the move, not a prompt.</p>
-          </div>
-          <div class="card">
-            <h3>Generate motion</h3>
-            <p>Pose characters, sequence Prompt Blocks, play generated motion back with IK fixes.</p>
+        <div class="wrap">
+          <h2>What you can do</h2>
+          <div class="cards">
+            <div class="card">
+              <h3>Stage a scene</h3>
+              <p>Primitives, set pieces, plan view.</p>
+            </div>
+            <div class="card">
+              <h3>Move through the set</h3>
+              <p>Fly, walk, orbit, frame.</p>
+            </div>
+            <div class="card">
+              <h3>Author the camera</h3>
+              <p>Lens, dolly, crane, cuts.</p>
+            </div>
+            <div class="card">
+              <h3>Generate motion</h3>
+              <p>Poses, Prompt Blocks, IK fixes.</p>
+            </div>
           </div>
         </div>
       </section>
 
-      <section id="start">
-        <h2>Quick start</h2>
-        <p class="sub">Node.js 22.13+ and a Chromium browser.</p>
-        <pre class="with-copy"><code>npx cozyclay --via site</code><button type="button" class="copy" data-copy="npx cozyclay --via site">Copy</button></pre>
-        <p class="sub">Or from source:</p>
-        <pre><code>git clone https://github.com/NomaDamas/CozyClay.git
+      <section id="start" class="alt">
+        <div class="wrap start">
+          <div class="start-head">
+            <h2>Quick start</h2>
+            <p>Node.js 22.13+ and a Chromium browser.</p>
+            <a href="#controls" id="controls-link">Full control list</a>
+          </div>
+          <div class="start-body">
+            <div class="seg" id="start-tabs">
+              <button type="button" aria-pressed="true" data-panel="start-npx">npx</button>
+              <button type="button" aria-pressed="false" data-panel="start-src">From source</button>
+            </div>
+            <div class="code" id="start-npx">
+              <pre><code>npx cozyclay --via site</code></pre>
+              <button type="button" class="copy" data-copy="npx cozyclay --via site">Copy</button>
+            </div>
+            <div class="code" id="start-src" hidden>
+              <pre><code>git clone https://github.com/NomaDamas/CozyClay.git
 cd CozyClay
 npm install
 npm run dev</code></pre>
+              <button type="button" class="copy" data-copy="git clone https://github.com/NomaDamas/CozyClay.git&#10;cd CozyClay&#10;npm install&#10;npm run dev">Copy</button>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <section id="controls">
+      <section id="controls" class="alt">
+        <div class="wrap">
         <details>
-          <summary>Full control list (Unity conventions)</summary>
+          <summary>Full control list</summary>
         <div class="scroller">
           <table>
             <thead><tr><th>Input</th><th>Action</th></tr></thead>
@@ -587,21 +651,25 @@ npm run dev</code></pre>
           </table>
         </div>
         </details>
+        </div>
       </section>
 
       <section id="read">
-        <h2>Read</h2>
-        <div class="related">
-          <a href="/greybox-to-video/">Greybox to AI video<small>Why a grey blockout is the input models keep</small></a>
-          <a href="/seedance-camera-control/">Seedance 2.5 camera control<small>Reference clip beats camera prompts</small></a>
-          <a href="/previs-software/">Previs software compared<small>Free, open source, browser</small></a>
-          <a href="/ai-camera-control/">Camera control for AI video<small>Why prompts drift</small></a>
+        <div class="wrap">
+          <h2>Read</h2>
+          <div class="cards">
+            <a class="card" href="/greybox-to-video/">Greybox to AI video</a>
+            <a class="card" href="/seedance-camera-control/">Seedance 2.5 camera control</a>
+            <a class="card" href="/previs-software/">Previs software compared</a>
+            <a class="card" href="/ai-camera-control/">Camera control for AI video</a>
+          </div>
         </div>
       </section>
 
       <section id="faq">
+        <div class="wrap narrow">
         <h2>FAQ</h2>
-        <details open>
+        <details>
           <summary>What is CozyClay?</summary>
           <p>Open source previs software in a browser: block a scene, pose characters, author camera moves and cuts, preview motion.</p>
         </details>
@@ -621,14 +689,42 @@ npm run dev</code></pre>
           <summary>Is it free? Does it phone home?</summary>
           <p>Free, AGPL-3.0, runs on your machine and works offline. Project content is never uploaded. The npm package sends anonymous usage metrics; <code>cclay telemetry off</code> disables them.</p>
         </details>
+        </div>
+      </section>
+
+      <section class="closing alt">
+        <div class="wrap">
+          <h2>Block your first shot</h2>
+          <div class="cta">
+            <a class="btn primary" href="#try">Try it in your browser</a>
+            <a class="btn ghost" href="https://github.com/NomaDamas/CozyClay">View on GitHub</a>
+          </div>
+        </div>
       </section>
     </main>
+
+    <script>
+      // Quick start: one code block at a time. The link to the control list opens it.
+      (() => {
+        const tabs = document.querySelectorAll("#start-tabs button");
+        tabs.forEach((tab) => tab.addEventListener("click", () => {
+          tabs.forEach((other) => {
+            const on = other === tab;
+            other.setAttribute("aria-pressed", String(on));
+            document.getElementById(other.dataset.panel).hidden = !on;
+          });
+        }));
+        document.getElementById("controls-link").addEventListener("click", () => {
+          document.querySelector("#controls details").open = true;
+        });
+      })();
+    </script>
 
     <footer class="site">
       <div class="wrap">
         <p>
-          <a href="https://github.com/NomaDamas/CozyClay">Source code (AGPL)</a> ·
-          <a href="https://www.npmjs.com/package/cozyclay">npm</a> ·
+          <a href="https://github.com/NomaDamas/CozyClay">Source (AGPL)</a>
+          <a href="https://www.npmjs.com/package/cozyclay">npm</a>
           <a href="/privacy/">Privacy</a>
         </p>
         <p>
