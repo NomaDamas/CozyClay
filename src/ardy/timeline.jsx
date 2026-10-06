@@ -1809,7 +1809,10 @@ export default function Timeline({
 									type="button"
 									className="tl-seq-action rail"
 									data-testid="sequencer-draw-rail"
-									title={ko("Draw or redraw the selected camera rail", "선택한 카메라 레일을 그리거나 다시 그립니다")}
+									// The rail belongs to a shot: with none selected the toggle used to
+									// do nothing at all, so say why instead.
+									disabled={cameraBlockIdx == null}
+									title={cameraBlockIdx == null ? ko("Add or select a shot first — the rail belongs to a shot", "먼저 샷을 추가하거나 선택하세요 — 레일은 샷에 속합니다") : ko("Draw or redraw the selected camera rail", "선택한 카메라 레일을 그리거나 다시 그립니다")}
 									onClick={() => handlers.current.onCameraRailDrawToggle?.()}
 								>
 									{ko("Draw rail", "레일 그리기")}
