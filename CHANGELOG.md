@@ -1,5 +1,61 @@
 # Changelog
 
+## 2.0.2
+
+The first-run audit release: `npx cozyclay` is exercised end to end as a new
+user, and the things that broke on that path are fixed. 2.0.1 (the camera
+tutorial refresh and light-mode default, #586) was tagged but never reached
+npm; this release carries it.
+
+Agent and package
+
+- The Studio Agent panel in the npm package answered every turn with
+  "502 — agent unavailable": the sidecar's Studio tools imported `three`
+  (a devDependency the package does not ship) through `src/scenes.js`. The
+  timeline clock moved to its own module and a test now walks every import
+  reachable from `bin/` and fails on any chain to `three`. (#591)
+- A CLIProxy key in the environment no longer leaves the panel on the ChatGPT
+  sign-in wall; readiness counts every key-authenticated provider. (#591)
+- `CCLAY_KIMODO_HOST=… npx cozyclay` died at start with
+  `Cannot find package 'three'`: the motion bridge now runs from the staged
+  MCP runtime (which carries `three`, `tools/` and `dist/models`), and the
+  package isolation test keeps it that way. (#591)
+- A live-hub port already taken by another CozyClay is reported on the
+  launcher's terminal and named in the pane's error instead of
+  "Studio execution is not installed"; agent handler failures are logged
+  before the 502; a session id with no record no longer shows
+  "Previous conversation could not be restored". (#591)
+
+Studio
+
+- Create on the start screen opens the selected sample scene under the typed
+  name instead of an empty stage named after it; starting over with unsaved
+  work asks first. (#591)
+- Reloading a project created from the start screen brought the previous
+  session's walking take back onto the character, with "Unsaved changes":
+  the hosted-demo seed re-fired on every mount while the bridge probe was
+  down. It now skips a saved project (a `?scene=` launch still seeds), and a
+  reload opens on the clean checkpoint. (#591)
+- With a take installed, the gizmo and the Transform panel's Position and
+  Rotation move the character again; the take keeps animating relative to
+  the new placement. (#591)
+- The shot card's hover actions sit above the card, so clicking a short
+  shot's name selects it instead of hitting Delete. Draw rail is disabled
+  with a reason when no shot is selected. (#591)
+
+Tests
+
+- The start-screen and project-menu browser suites run against the v2
+  shell again, gain the sample-card Create regression, and join the CI
+  browser matrix as observation suites; new regressions cover the package
+  import graph, CLIProxy readiness, the stage transform and the reload
+  session. (#591)
+
+## 2.0.1
+
+- The camera tutorial follows the v2 shell and new installs default to the
+  light theme. (#586)
+
 ## 2.0.0
 
 CozyClay 2.0 is the v2 editor: a floating-glass shell with light and dark
