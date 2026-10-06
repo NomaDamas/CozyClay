@@ -249,7 +249,12 @@ function liveToolsRuntime(mcpRuntime) {
 	return liveToolsModules(mcpRuntime).then(async ([registry, { startLiveHub }]) => {
 		const owner = liveHubOwner();
 		const token = randomBytes(32).toString("hex");
-		const liveHub = await startLiveHub(Number(process.env.COZYCLAY_LIVE_PORT ?? 5184), { token, owner });
+		const livePort = Number(process.env.COZYCLAY_LIVE_PORT ?? 5184);
+		const liveHub = await startLiveHub(livePort, { token, owner });
+		// EADDRINUSE comes back as null: another CozyClay (or its dev server) owns
+		// the port, and the Studio page is built to connect to that port, so the
+		// pane would answer every turn with a misleading capability error.
+		if (!liveHub) console.error(`cozyclay: live hub port ${livePort} is already in use (another CozyClay or its dev server?); the Agent pane cannot drive this Studio until that port is free.`);
 		registry.setLiveHub(liveHub);
 		const handlers = registry.createToolHandlers().map((tool) => ({
 			...tool,
@@ -270,7 +275,7 @@ function liveToolsRuntime(mcpRuntime) {
 			publishLiveEndpoint({ port: liveHub.port, token, owner });
 			liveHub.server?.once("close", () => removeLiveEndpoint(liveHub.port));
 		}
-		return { liveHub, handlers };
+		return { liveHub, handlers, hubPortBusy: !liveHub ? livePort : null };
 	}).catch((error) => {
 		// The pane answers CAPABILITY_MISSING on use; the reason belongs on the
 		// launcher's terminal rather than nowhere.
@@ -425,6 +430,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			await session.modelSession?.abort?.("studio stop", acknowledged ? { quiet: true } : undefined);
 			json(res, 200, { ok: true, status: jobId ? "stopped" : "detached", ...(outcome ? { outcome: { status: outcome.status ?? null, code: outcome.code ?? null, mutated: outcome.mutated ?? null } } : {}) }); return true;
 		}
+		if (!studioRuntime && !hub && hubDeps.hubPortBusy) throw new StudioProtocolError("CAPABILITY_MISSING", `The Studio live hub could not start: port ${hubDeps.hubPortBusy} is in use by another CozyClay or its dev server. Free that port and relaunch.`);
 		if (!studioRuntime && (!hub?.command || !hub?.workspaceId)) throw new StudioProtocolError("CAPABILITY_MISSING", "Studio execution is not installed.");
 		if (!value.context.host.workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "A connected editor handle is required.");
 		let session = studioSessions.get(value.sessionId);

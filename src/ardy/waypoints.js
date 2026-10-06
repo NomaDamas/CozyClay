@@ -1,6 +1,6 @@
 const cleanZero = (value) => (Object.is(value, -0) || Math.abs(value) < 1e-9 ? 0 : value);
 import { isKo } from "../locale.js";
-import { TIMELINE_FRAME_FPS } from "../scenes.js";
+import { TIMELINE_FRAME_FPS } from "../timeline-fps.js";
 
 const DEFAULT_WAYPOINT_SPACING_FRAMES = Math.round(0.4 * TIMELINE_FRAME_FPS);
 

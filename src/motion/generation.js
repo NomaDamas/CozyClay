@@ -1,7 +1,7 @@
 // Pure request construction. The caller supplies one rolled seed and sampled
 // poses; no rig, store, random source, notification or network is touched here.
 import { StudioProtocolError, compileStudioBeats } from '../studio-agent-protocol.js';
-import { TIMELINE_FRAME_FPS as FPS } from '../scenes.js';
+import { TIMELINE_FRAME_FPS as FPS } from '../timeline-fps.js';
 import { judgeAuthoredPath, alignArdyPath } from '../ardy/waypoints.js';
 import { planPosePin, PIN_BLOCKED } from '../ardy/pose-pin.js';
 import { blocksFromRequest, replayPayload, replayTruncated } from '../take-recipe.js';

@@ -3034,8 +3034,8 @@ export default function App() {
 		return [{
 			id: entry.id,
 			url: characterModelUrl(entry.model),
-			position: clip ? [clip.anchorX, entry.y ?? 0, clip.anchorZ] : [entry.x, entry.y ?? 0, entry.z],
-			rot: clip ? clip.rotationDeg : entry.rot,
+			position: [entry.x, entry.y ?? 0, entry.z],
+			rot: entry.rot,
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
 			partColoursEnabled,
 			partColoursMode,
@@ -3057,8 +3057,7 @@ export default function App() {
 		if (!charIdFromHierarchyId(selectedHierarchyId)) return null;
 		const entry = characters.find((item) => item.id === activeChar.id);
 		if (!entry || entry.hidden) return null;
-		const clip = motion;
-		return { position: clip ? [clip.anchorX, entry.y ?? 0, clip.anchorZ] : [entry.x, entry.y ?? 0, entry.z] };
+		return { position: [entry.x, entry.y ?? 0, entry.z] };
 	}, [characters, activeChar.id, motion, selectedHierarchyId]);
 	// The cast rides the SAME gizmo as scene objects — one movement grammar
 	// for everything on stage. The proxy hands ObjectGizmo the object shape
@@ -3960,6 +3959,11 @@ export default function App() {
 			});
 			return;
 		}
+		// The seed dresses a visitor's first, unnamed stage and the starter set a
+		// `?scene=` launch always re-opens ("one character mid-walk"). A named
+		// project is the author's document: reloading it must never put the demo
+		// walk back on a character they deliberately left without a take.
+		if (loadProjectSession()?.name && !new URLSearchParams(window.location.search).get("scene")) { demoSeeded.current = true; return; }
 		if (!demoSeed.seed) return;
 		demoSeeded.current = true;
 		// Loaded, not played: the clip walks the subject out of the default
@@ -7467,9 +7471,9 @@ export default function App() {
 						openProject();
 					}}
 					starters={STARTER_SCENES}
-					onStarter={(id) => {
+					onStarter={(id, name) => {
 						setProjectBrowserOpen(false);
-						void openStarterScene(id);
+						void openStarterScene(id, "starter", name);
 					}}
 					onNew={() => {
 						setProjectBrowserOpen(false);

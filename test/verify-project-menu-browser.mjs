@@ -122,7 +122,7 @@ await clickAt(await rectCentre("[data-testid=menu-file]"));
 expect("clicking File again closes it", await waitFor("!document.querySelector('.menubar-menu')"));
 expect(
 	"the status bar exposes an understandable save status",
-	Boolean(await evaluate("document.querySelector('.v2-statusbar [data-testid=project-save-status]')?.textContent.trim()")),
+	Boolean(await evaluate("document.querySelector('[data-testid=project-save-status]')?.textContent.trim()")),
 );
 expect("the menu starts closed", !(await menuOpen()));
 
@@ -135,7 +135,7 @@ expect("Escape closes the menu", (await menuGone()) === "closed");
 /* -------------------------------------- outside pointerdown closes --- */
 expect("the menu reopens after Escape", (await openMenu()) === "open");
 await armMenuGone();
-const outside = await rectCentre(".topbar .topbar-swatch");
+const outside = await rectCentre(".topbar .topbar-mcp");
 await mouse("mousePressed", outside.x, outside.y);
 expect("a pointerdown outside .project-menu-wrap closes the menu", (await menuGone()) === "closed");
 await mouse("mouseReleased", outside.x, outside.y);
@@ -160,6 +160,36 @@ expect("the Open Project… item still opens the project browser", await waitFor
 expect("selecting an item closes the menu", !(await menuOpen()));
 await clickAt(await rectCentre(".project-browser .x"));
 expect("the project browser closes again", await waitFor("!document.querySelector('.project-browser')"));
+
+/* ---- Create with the sample card selected opens the sample scene ---- */
+const setInput = (selector, value) => evaluate(`(() => {
+	const input = document.querySelector(${JSON.stringify(selector)});
+	if (!input) return false;
+	const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
+	setter.call(input, ${JSON.stringify(value)});
+	input.dispatchEvent(new Event("input", { bubbles: true }));
+	input.dispatchEvent(new Event("change", { bubbles: true }));
+	return true;
+})()`);
+expect("the menu reopens for the sample check", (await openMenu()) === "open");
+await clickAt(await rectCentre('.project-menu [role="menuitem"]:nth-of-type(2)'));
+expect("the start screen opens for the sample check", await waitFor("!!document.querySelector('.project-browser')"));
+await evaluate("[...document.querySelectorAll('.v2-start-nav-item')].find((node) => /New Project|새 프로젝트/.test(node.textContent))?.click()");
+expect("the sample card is offered", await waitFor("!!document.querySelector('[data-template-id=sample-city-block]')"));
+await evaluate("document.querySelector('[data-template-id=sample-city-block]').click()");
+await setInput('[data-testid="start-project-name"]', "sample_create_check");
+expect("the typed name enables Create", await waitFor("document.querySelector('[data-testid=start-create]')?.disabled === false"));
+// A dirty project asks before the starter replaces it; answer yes either way.
+await evaluate("window.confirm = () => true");
+await evaluate("document.querySelector('[data-testid=start-create]').click()");
+expect(
+	"Create with the sample card opens the editor under the typed name",
+	await waitFor("!document.querySelector('.project-browser') && (document.querySelector('.project-menu-trigger')?.textContent || '').includes('sample_create_check')"),
+);
+expect(
+	"the sample scene is loaded into the editor",
+	await waitFor("(window.__cozyclay.objects || []).length > 0"),
+);
 
 ws.close();
 if (failures > 0) {

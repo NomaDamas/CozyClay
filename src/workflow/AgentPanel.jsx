@@ -382,10 +382,12 @@ export default function AgentPanel({
 				const payload = await transport.loadSession(stored);
 				if (!Array.isArray(payload?.transcript)) throw new Error("missing transcript");
 				if (!cancelled) store.restore(payload.transcript, payload.sessionId || stored);
-			} catch {
+			} catch (error) {
 				if (!cancelled) {
 					store.newSession();
-					setRestoreNotice("Previous conversation could not be restored");
+					// A session id with no record behind it (the pane opened, nothing
+					// was ever sent) is nothing to restore, not a failure.
+					if (error?.status !== 404) setRestoreNotice("Previous conversation could not be restored");
 				}
 			} finally {
 				if (!cancelled) setRestoreReady(true);

@@ -407,10 +407,13 @@ process.on("SIGTERM", () => shutdown(143));
 
 if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 	try {
+		// The package has no three (a devDependency); the bridge runs from the
+		// staged MCP runtime, which carries three, tools/ and src/.
+		const bridgeRoot = SOURCE_CHECKOUT ? PKG_ROOT : await ensureMcpRuntime();
 		({ child: bridge, port: bridgePort } = await startBridge({
 			command: process.execPath,
-			args: [BRIDGE],
-			cwd: PKG_ROOT,
+			args: [join(bridgeRoot, "tools", "ardy", "bridge.mjs")],
+			cwd: bridgeRoot,
 			env: process.env,
 			mainPort: opts.port,
 			onSpawn: (child) => {
@@ -431,6 +434,7 @@ if (opts.motion && kimodoHost && existsSync(BRIDGE)) {
 		}));
 	} catch (err) {
 		console.error(`cozyclay: motion generation sidecar failed: ${err.message}`);
+		for (const line of err.lines ?? []) console.error(`cozyclay: ${line}`);
 		console.error("cozyclay: studio did not start; set COZYCLAY_BRIDGE_PORT to an available port or use --no-motion.");
 		if (bridge) await terminateOwned(bridge);
 		process.exit(1);
@@ -455,7 +459,12 @@ server = createServer((req, res) => {
 		return;
 	}
 	if (url.pathname.startsWith("/agent/")) {
-		void agentHandler(req, res, url.pathname).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); } });
+		void agentHandler(req, res, url.pathname).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch((error) => {
+			// The pane only sees "502 — agent unavailable"; the reason belongs on
+			// the launcher's terminal rather than nowhere.
+			console.error(`cozyclay: agent request ${url.pathname} failed: ${error?.message ?? error}`);
+			if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); }
+		});
 		return;
 	}
 	if (url.pathname === "/__cozyclay/telemetry") {
