@@ -309,6 +309,13 @@ expect(
 	app.includes('label={ko("Scale", "크기")}') &&
 	app.includes('data-transform-controls'),
 );
+expect(
+	"installed takes keep the authored character transform as a stage offset",
+	app.includes("position: [entry.x, entry.y ?? 0, entry.z]") &&
+	app.includes("rot: entry.rot") &&
+	!app.includes("position: clip ? [clip.anchorX, entry.y ?? 0, clip.anchorZ]") &&
+	!app.includes("rot: clip ? clip.rotationDeg : entry.rot"),
+);
 // Motion mode hides Move/Rotate/Scale, so the same foldout becomes the open
 // Placement row (stage X/Z + turn) and Scene mode folds the full form away
 // behind the gizmo (#194). Foldout reads defaultOpen once, hence the key.
