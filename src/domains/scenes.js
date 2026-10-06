@@ -538,6 +538,8 @@ export function useScenes(appContext) {
 		setProjectNameDialog(null);
 		const fresh = createSceneDocument(ko("SCENE 01", "씬 01"));
 		storeWorkflowGraph(createWorkflowGraph());
+		appContext.shared.projectMotionsRef.current = new Map();
+		appContext.shared.motionFullRef.current.clear();
 		domain.replaceDocument(fresh.scenes, fresh.activeSceneId, name);
 		persistScenes(fresh.scenes, fresh.activeSceneId);
 		openScene(fresh.scenes[0], fresh.scenes);
@@ -763,6 +765,9 @@ export function useScenes(appContext) {
 			const checkpoint = domain.pendingCheckpoint;
 			domain.pendingCheckpoint = null;
 			if (checkpoint.clock === appContext.undoClock && checkpoint.name === name) appContext.shared.projectSnapshotRef.current = collectProjectSnapshot(name);
+		}
+		if (name !== null && !appContext.shared.projectSnapshotRef.current) {
+			appContext.shared.projectSnapshotRef.current = collectProjectSnapshot(name);
 		}
 		const dirty = name !== null && collectProjectSnapshot(name) !== appContext.shared.projectSnapshotRef.current;
 		domain.setDirty(dirty);

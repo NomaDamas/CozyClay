@@ -3959,6 +3959,11 @@ export default function App() {
 			});
 			return;
 		}
+		// The seed dresses a visitor's first, unnamed stage and the starter set a
+		// `?scene=` launch always re-opens ("one character mid-walk"). A named
+		// project is the author's document: reloading it must never put the demo
+		// walk back on a character they deliberately left without a take.
+		if (loadProjectSession()?.name && !new URLSearchParams(window.location.search).get("scene")) { demoSeeded.current = true; return; }
 		if (!demoSeed.seed) return;
 		demoSeeded.current = true;
 		// Loaded, not played: the clip walks the subject out of the default
