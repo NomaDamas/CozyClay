@@ -162,6 +162,10 @@ jobs:
             tier: observation
           - suite: verify-object-gizmo
             tier: observation
+          - suite: qa-shell-start-browser
+            tier: observation
+          - suite: verify-project-menu-browser
+            tier: observation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

@@ -293,6 +293,7 @@ const BROWSER_FILES = [
 	"test/verify-object-gizmo.mjs",
 	"test/verify-offscreen-export-browser.mjs",
 	"test/verify-project-menu-browser.mjs",
+	"test/verify-project-session-reset.mjs",
 	"test/verify-settings-menu-browser.mjs",
 	"test/verify-static-shot-export-browser.mjs",
 	"test/qa-agent-view-toggle-browser.mjs",
