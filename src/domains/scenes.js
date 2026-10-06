@@ -435,7 +435,8 @@ export function useScenes(appContext) {
 	/** Open a bundled starter scene as a fresh, saveable project. Used by the
 	 * first-run dialog and by `npx cozyclay --scene <id>` (`?scene=`), which is
 	 * how the landing-page tutorial hands people into the local studio. */
-	async function openStarterScene(id, source = "starter", context = null) {
+	async function openStarterScene(id, source = "starter", context = null, name = null) {
+		if (source === "starter" && domain.dirtyStore.read("projectDirty") && !window.confirm(ko("Discard unsaved changes and start a new project?", "저장되지 않은 변경사항을 버리고 새 프로젝트를 시작할까요?"))) return false;
 		const before = source === "tutorial" ? collectProjectSnapshot("Tutorial") : null;
 		const epoch = appContext.shared.tutorialProjectEpochRef.current;
 		const url = playgroundSceneUrl(`?scene=${encodeURIComponent(id)}`);
@@ -448,7 +449,7 @@ export function useScenes(appContext) {
 			return false;
 		}
 		context?.check();
-		applyProject({ ...project, savedAt: null }, true);
+		applyProject({ ...project, name: name?.trim() || project.name, savedAt: null }, true);
 		appContext.shared.projectHandleRef.current = null;
 		track("scene:loaded", { scene_source: source });
 		return true;
@@ -782,7 +783,7 @@ export function useScenes(appContext) {
 		};
 		if (id === "project.browse") { setProjectStartupOpen(false); setProjectBrowserOpen(true); return; }
 		if (id === "project.new") return newProject(args.name, true);
-		if (id === "project.openStarter") return openStarterScene(args.id, args.source, context);
+		if (id === "project.openStarter") return openStarterScene(args.id, args.source, context, args.name);
 		if (id === "project.restore") return restoreStoredProject({ handle: runtime("handleToken") }, context);
 		if (args.handleToken) return openProjectByHandle(runtime("handleToken"), context);
 		if (args.projectToken) { applyProject(runtime("projectToken"), true); return true; }
@@ -807,7 +808,7 @@ export function useScenes(appContext) {
 		projectStartupOpen, setProjectStartupOpen, projectManifest, setProjectManifest, saveBlockedReasons,
 		setSaveBlockedReasons, workflowRevision, setWorkflowRevision, collectProjectSnapshot,
 		collectProjectSerialized, projectProblemsNotice, rehydrateProjectAssets, saveProject, applyProject,
-		openStarterScene: async (id, source = "starter") => (await runProject("project.openStarter", { id, source })).output?.opened === true,
+		openStarterScene: async (id, source = "starter", name = null) => (await runProject("project.openStarter", { id, source, ...(name ? { name } : {}) })).output?.opened === true,
 		openProject, openProjectByHandle, requestNewProject, newProject, restoreOffer,
 		setRestoreOffer, restoreStoredProject, flushScenes, openScene, selectSceneDocument,
 		createSceneDocumentFromUi, duplicateSceneDocumentFromUi, renameSceneDocumentFromUi,

@@ -62,6 +62,23 @@ try {
 	off();
 	auth.logout();
 	assert.equal(changes.length, 8, "unsubscribe removes the listener");
+	// Readiness counts every key-authenticated provider the sidecar knows,
+	// from the environment or the keys file — a CLIProxy-only author must not
+	// land on the ChatGPT sign-in wall.
+	const previousConfigDir = process.env.COZYCLAY_CONFIG_DIR;
+	const previousCliproxyKey = process.env.CLIPROXY_API_KEY;
+	process.env.COZYCLAY_CONFIG_DIR = join(scratch, "config");
+	try {
+		delete process.env.CLIPROXY_API_KEY;
+		const configuredWithout = auth.status().providersConfigured;
+		process.env.CLIPROXY_API_KEY = "test-cliproxy-key";
+		assert.equal(auth.status().providersConfigured, configuredWithout + 1, "CLIPROXY_API_KEY counts as a configured provider");
+	} finally {
+		if (previousConfigDir === undefined) delete process.env.COZYCLAY_CONFIG_DIR;
+		else process.env.COZYCLAY_CONFIG_DIR = previousConfigDir;
+		if (previousCliproxyKey === undefined) delete process.env.CLIPROXY_API_KEY;
+		else process.env.CLIPROXY_API_KEY = previousCliproxyKey;
+	}
 } finally {
 	off();
 	rmSync(scratch, { recursive: true, force: true });

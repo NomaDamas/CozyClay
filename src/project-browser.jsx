@@ -190,6 +190,10 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 		event.preventDefault();
 		const projectName = name.trim();
 		if (!projectName) return;
+		if (selectedTemplate?.starterId) {
+			onStarter?.(selectedTemplate.starterId, projectName);
+			return;
+		}
 		pendingProjectName = projectName;
 		onNew(projectName);
 	};

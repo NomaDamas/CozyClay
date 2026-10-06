@@ -855,8 +855,23 @@
 	background: var(--select-tint, rgba(232, 163, 61, .14));
 }
 
+/* The bar hangs above the block's top-left corner instead of inside it: a
+   short cut (40 frames ~ 38px) is narrower than Split + Duplicate + Delete,
+   and an in-block bar would sit on the shot's name, turning a click on the
+   name into Delete. Hover is kept because the bar is still a child. */
 .v2-sequencer .tl-shot-actions {
+	top: auto;
+	bottom: calc(100% + 2px);
+	left: 0;
+	right: auto;
 	background: var(--overlay, rgba(12, 12, 13, .78));
+}
+
+/* The block clips its own box (overflow hidden) so the hanging bar only exists
+   while it is wanted; the label clips its own text, so nothing else escapes. */
+.v2-sequencer .tl-shot-block:hover,
+.v2-sequencer .tl-shot-block:focus-within {
+	overflow: visible;
 }
 
 .v2-sequencer .tl-shot-actions button {

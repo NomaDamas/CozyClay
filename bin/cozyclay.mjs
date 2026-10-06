@@ -455,7 +455,12 @@ server = createServer((req, res) => {
 		return;
 	}
 	if (url.pathname.startsWith("/agent/")) {
-		void agentHandler(req, res, url.pathname).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch(() => { if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); } });
+		void agentHandler(req, res, url.pathname).then((handled) => { if (!handled && !res.writableEnded) { res.writeHead(404); res.end(); } }).catch((error) => {
+			// The pane only sees "502 — agent unavailable"; the reason belongs on
+			// the launcher's terminal rather than nowhere.
+			console.error(`cozyclay: agent request ${url.pathname} failed: ${error?.message ?? error}`);
+			if (!res.headersSent) { res.writeHead(502); res.end(JSON.stringify({ error: "agent unavailable" })); }
+		});
 		return;
 	}
 	if (url.pathname === "/__cozyclay/telemetry") {

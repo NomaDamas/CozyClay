@@ -7467,9 +7467,9 @@ export default function App() {
 						openProject();
 					}}
 					starters={STARTER_SCENES}
-					onStarter={(id) => {
+					onStarter={(id, name) => {
 						setProjectBrowserOpen(false);
-						void openStarterScene(id);
+						void openStarterScene(id, "starter", name);
 					}}
 					onNew={() => {
 						setProjectBrowserOpen(false);

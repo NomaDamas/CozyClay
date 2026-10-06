@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { openBrowser } from "./open-browser.mjs";
 import { writeSecureJson } from "./agent/secure-file.mjs";
 import { readKeys } from "./agent/provider-keys.mjs";
+import { PROVIDERS } from "./agent/providers.mjs";
 
 export const AUTHORIZE_ENDPOINT = "https://auth.openai.com/oauth/authorize";
 export const TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token";
@@ -51,7 +52,7 @@ const decodeJwt = (value) => { try { return JSON.parse(Buffer.from(value.split("
 const claims = () => decodeJwt(readTokens()?.id_token || "");
 function providersConfigured() {
 	const configured = new Set();
-	for (const name of ["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENROUTER_API_KEY"]) if (process.env[name]?.trim()) configured.add(name);
+	for (const provider of PROVIDERS) for (const name of provider.env) if (process.env[name]?.trim()) configured.add(provider.id);
 	for (const [id, value] of Object.entries(readKeys())) if (typeof value === "string" && value.trim()) configured.add(id);
 	return configured.size;
 }
