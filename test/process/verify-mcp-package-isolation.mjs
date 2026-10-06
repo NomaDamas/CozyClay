@@ -159,7 +159,10 @@ try {
 	assert.equal(sha256(rootManifest), manifestHashBefore, "MCP install must preserve the published root manifest hash");
 	assert.equal(existsSync(rootLock), false, "MCP install must not create a root lockfile");
 	assert.match(first.stderr, /installing MCP server dependencies/, first.stderr);
-	assert.equal(existsSync(join(runtimeHome, ".cache", "cozyclay", "mcp-runtime", packageVersion, "bin", "agent", "motion-runtime.mjs")), true, "isolated MCP runtime must include the motion runtime import");
+	const runtimeRoot = join(runtimeHome, ".cache", "cozyclay", "mcp-runtime", packageVersion);
+	assert.equal(existsSync(join(runtimeRoot, "bin", "agent", "motion-runtime.mjs")), true, "isolated MCP runtime must include the motion runtime import");
+	assert.equal(existsSync(join(runtimeRoot, "tools", "ardy", "bridge.mjs")), true, "isolated MCP runtime must include the motion bridge");
+	assert.equal(existsSync(join(runtimeRoot, "dist", "models", "x-bot-tpose.fbx")), true, "isolated MCP runtime must include the bridge's FBX rigs");
 
 	const second = await runMcp(process.execPath, ["bin/cozyclay.mjs", "mcp"], {
 		cwd: packageRoot,
@@ -195,6 +198,42 @@ try {
 		assert.doesNotMatch(studioStderr, /Studio live tools unavailable/, studioStderr);
 		assert.doesNotMatch(studioStderr, /installing MCP server dependencies/, "the Studio reuses the runtime cclay mcp installed");
 		assert.deepEqual(readFileSync(rootManifest), manifestBefore, "the Studio launch must not rewrite the published root manifest");
+	}
+
+	// The packaged launcher's motion bridge imports three, which only the staged
+	// runtime resolves. Offline there is no Kimodo box, so the strongest true
+	// check is: the sidecar reports ready, the proxied health route answers, and
+	// the launcher is still running afterwards instead of exiting.
+	{
+		const studioPort = await reservePort();
+		const studio = startStudio(["--port", String(studioPort), "--no-open", "--no-star", "--no-update-check"], {
+			cwd: packageRoot,
+			env: { ...environment, CI: "", XDG_CONFIG_HOME: join(scratch, "motion-config"), COZYCLAY_LIVE_PORT: String(await reservePort()), CCLAY_KIMODO_HOST: "qa@127.0.0.1" },
+		});
+		try {
+			await new Promise((resolveReady, reject) => {
+				const timer = setTimeout(() => reject(new Error(`motion sidecar did not start: ${JSON.stringify(studio.output())}`)), 60_000);
+				const onData = () => {
+					if (!/Motion generation: sidecar running against qa@127\.0\.0\.1/.test(studio.output().stdout)) return;
+					clearTimeout(timer);
+					studio.child.off("exit", onExit);
+					resolveReady();
+				};
+				const onExit = (code) => { clearTimeout(timer); reject(new Error(`launcher exited with ${code}: ${JSON.stringify(studio.output())}`)); };
+				studio.child.stdout.on("data", onData);
+				studio.child.once("exit", onExit);
+				onData();
+			});
+			const health = await fetch(`http://127.0.0.1:${studioPort}/ardy/health`);
+			assert.ok([200, 503].includes(health.status), `unexpected /ardy/health status ${health.status}`);
+			await health.json();
+			assert.equal(studio.child.exitCode, null, "the launcher keeps running with the motion bridge");
+		} finally {
+			await studio.stop();
+		}
+		const { stdout: motionStdout, stderr: motionStderr } = studio.output();
+		assert.match(motionStdout, new RegExp(`CozyClay is running at http://127\\.0\\.0\\.1:${studioPort}/app/`), motionStdout);
+		assert.doesNotMatch(motionStderr, /ERR_MODULE_NOT_FOUND|studio did not start/, motionStderr);
 	}
 
 	const concurrentHome = join(scratch, "concurrent-home");

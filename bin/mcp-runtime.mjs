@@ -18,6 +18,7 @@ const MCP_RUNTIME = process.env.COZYCLAY_MCP_RUNTIME_DIR || join(
 function probeMcpRuntime(runtime = MCP_RUNTIME) {
 	const server = join(runtime, "mcp", "server.mjs");
 	if (!existsSync(server)) throw new Error("MCP server is missing");
+	if (!existsSync(join(runtime, "tools", "ardy", "bridge.mjs"))) throw new Error("motion bridge is missing");
 	const runtimeRequire = createRequire(join(runtime, "package.json"));
 	for (const dependency of ["@modelcontextprotocol/sdk/server/mcp.js", "three", "ws", "zod"]) runtimeRequire.resolve(dependency);
 	return server;
@@ -46,6 +47,15 @@ function installMcpRuntime() {
 		// The server publishes its live endpoint file from this module.
 		copyFileSync(join(PKG_ROOT, "bin", "live-endpoint.mjs"), join(staging, "bin", "live-endpoint.mjs"));
 		cpSync(join(PKG_ROOT, "src"), join(staging, "src"), { recursive: true });
+		// The motion bridge imports three, which only this runtime resolves, so the
+		// package launches it from here; its out/ scratch dirs are never copied.
+		for (const dir of ["ardy", "kimodo", "projflow"]) {
+			cpSync(join(PKG_ROOT, "tools", dir), join(staging, "tools", dir), { recursive: true, filter: (path) => basename(path) !== "out" });
+		}
+		copyFileSync(join(PKG_ROOT, "tools", "process-supervisor.mjs"), join(staging, "tools", "process-supervisor.mjs"));
+		// gvhmr-floor.mjs loads its FBX rigs from ../../{public,dist}/models.
+		const models = join(PKG_ROOT, "dist", "models");
+		if (existsSync(models)) cpSync(models, join(staging, "dist", "models"), { recursive: true });
 
 		const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 		const child = spawn(npm, ["ci", "--no-audit", "--no-fund"], {
