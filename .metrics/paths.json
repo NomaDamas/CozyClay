@@ -1858,5 +1858,67 @@
       "count": 7,
       "uniques": 6
     }
+  ],
+  "2026-10-06": [
+    {
+      "path": "/NomaDamas/CozyClay",
+      "title": "Overview",
+      "count": 1212,
+      "uniques": 638
+    },
+    {
+      "path": "/NomaDamas/CozyClay/issues",
+      "title": "/issues",
+      "count": 32,
+      "uniques": 12
+    },
+    {
+      "path": "/NomaDamas/CozyClay/pulls",
+      "title": "/pulls",
+      "count": 27,
+      "uniques": 10
+    },
+    {
+      "path": "/nomadamas/cozyclay",
+      "title": "Overview",
+      "count": 9,
+      "uniques": 8
+    },
+    {
+      "path": "/NomaDamas/CozyClay/fork",
+      "title": "/fork",
+      "count": 9,
+      "uniques": 7
+    },
+    {
+      "path": "/NomaDamas/CozyClay/blob/main/docs/kimodo-setup.md",
+      "title": "/blob/main/docs/kimodo-setup.md",
+      "count": 8,
+      "uniques": 8
+    },
+    {
+      "path": "/NomaDamas/CozyClay/commits",
+      "title": "/commits",
+      "count": 8,
+      "uniques": 3
+    },
+    {
+      "path": "/NomaDamas/CozyClay/releases",
+      "title": "/releases",
+      "count": 7,
+      "uniques": 6
+    },
+    {
+      "path": "/NomaDamas/CozyClay/tree/main",
+      "title": "/tree/main",
+      "count": 7,
+      "uniques": 6
+    },
+    {
+      "path": "/NomaDamas/CozyClay/releases/tag/v1.8.1",
+      "title": "/releases/tag/v1.8.1",
+      "count": 7,
+      "uniques": 5
+    }
   ]
 }
