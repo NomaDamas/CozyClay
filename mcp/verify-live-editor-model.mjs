@@ -151,6 +151,10 @@ try {
 	// Subscribe before navigation: the fixture installs a real startup take
 	// asynchronously, and that authored publication must precede admission.
 	await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+		// This suite owns the scene-loading race it is testing. A fresh profile
+		// would otherwise auto-open the first-run camera tutorial (#586), whose
+		// asynchronous starter remounts the canvas underneath these commands.
+		localStorage.setItem("cozyclay.camera-tutorial-terminal.v1", JSON.stringify({ dismissed: true }));
 		window.__initialTakeReady = new Promise(resolve => {
 			let state;
 			Object.defineProperty(window, '__cozyclay', { configurable: true,
