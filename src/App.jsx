@@ -7282,9 +7282,10 @@ export default function App() {
 								planCamRef={planCamRef}
 								poserCamRef={poserCamRef}
 								editorCamRef={editorCamRef}
-								// The studio hides the facing marks on screen; embeds show the
-								// scene as exported.
-								editorLook={!embedMode && !playgroundMode}
+								// The studio and the landing playground hide the facing marks on
+								// screen; the Workflow embed shows the scene as exported. Captures
+								// render outside this loop and keep them everywhere.
+								editorLook={!embedMode}
 								ikMode={ikMode}
 								planIsMain={planIsMain}
 								// Preview IS PlayView's render path: DualRender tests this branch
