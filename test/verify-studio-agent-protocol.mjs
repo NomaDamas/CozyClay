@@ -163,7 +163,7 @@ function registerTests() {
 	});
 	test("D3 the Studio prompt teaches Kimodo beat writing", async () => {
 		const { STUDIO_SYSTEM_PROMPT } = await import("../bin/agent/studio-prompt.mjs");
-		for (const rule of [/starts with "A person"/, /40-100 characters/, /one or at most two body actions/, /no emotion labels, camera, scenery, story or props/, /3-5 s/, /Every beat must stand alone/, /never "Then the person stops"/]) assert.match(STUDIO_SYSTEM_PROMPT, rule);
+		for (const rule of [/motion\.generate or set with character\.setPromptBlocks/, /starts with "A person"/, /40-100 characters/, /one or at most two body actions/, /no emotion labels, camera, scenery, story or props/, /3-5 s/, /Every beat must stand alone/, /never "Then the person stops"/]) assert.match(STUDIO_SYSTEM_PROMPT, rule);
 	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
 		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 3);
