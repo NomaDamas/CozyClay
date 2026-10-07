@@ -8,6 +8,7 @@ import {
 	attachmentFromFile,
 	transferCarriesFiles,
 } from "./attachment-image.js";
+import { isImeComposing } from "../ime.js";
 import {
 	AGENT_PANEL_OVERLAY_BREAKPOINT,
 	AGENT_PANEL_RAIL_WIDTH,
@@ -761,7 +762,7 @@ export default function AgentPanel({
 			stopTurn();
 			return;
 		}
-		if (event.key === "Enter" && !event.shiftKey) {
+		if (event.key === "Enter" && !isImeComposing(event) && !event.shiftKey) {
 			event.preventDefault();
 			// Enter does what the button under it says: Send, or Steer while a turn
 			// on a steerable surface is still running.

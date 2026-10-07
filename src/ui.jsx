@@ -1,6 +1,7 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { createScrubGesture } from "./ui-scrub.js";
+import { isImeComposing } from "./ime.js";
 
 // Custom dropdown, structurally matched to the reference (`.dropdown`,
 // `dd-caret`, `dropdown-menu`, `dropdown-item`, `dd-check`) with the keyboard
@@ -335,7 +336,7 @@ export function NumberField({ label, value, step, precision = 2, scrubRange, onC
 	};
 
 	const onKeyDown = (e) => {
-		if (e.key === "Enter") {
+		if (e.key === "Enter" && !isImeComposing(e)) {
 			e.preventDefault();
 			commitDraft();
 			// Keep focus and select the committed value so the next keystroke

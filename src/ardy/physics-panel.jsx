@@ -2,6 +2,7 @@ import React, { useEffect, useState, useSyncExternalStore } from "react";
 import { SUPPORT_SITES } from "./physics-review.js";
 import { useMotionCommands } from '../domains/motion.js';
 import "./physics-panel.css";
+import { isImeComposing } from "../ime.js";
 
 // Only the progress panel subscribes. Publishing a percentage must not
 // rerender the full timeline/Studio hundreds of times during a solve.
@@ -31,7 +32,7 @@ export function PhysicsPanel({ ko, disabled, running, progress: progressStore, p
 		const onKeyDown = (event) => {
 			if (event.metaKey || event.ctrlKey || event.altKey) return;
 			if (event.key === "Escape") { event.preventDefault(); onCancel?.(); }
-			if (event.key === "Enter") { event.preventDefault(); onApply?.(); }
+			if (event.key === "Enter" && !isImeComposing(event)) { event.preventDefault(); onApply?.(); }
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);
