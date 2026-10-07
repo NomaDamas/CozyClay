@@ -105,8 +105,8 @@ const characterOp = union(
 	object({ op: literal("update"), characterId: id }, { position, facing, scale: positive, name, hidden: bool }),
 	object({ op: literal("remove"), characterId: id }),
 );
-export const BEAT_TEXT_MAX = 300;
-const generateSource = object({ kind: literal("generate"), beats: array(object({ text: { ...text(BEAT_TEXT_MAX), description: 'One or two plain sentences starting with "A person", usually 50-150 characters: starting posture, limbs and sides, and the order of the movements. Keep a complete movement in one beat; no camera, scenery or story.' } }, { seconds: number(0.5, 60) }), 8, 1) }, { durationSeconds: number(2, 60), seed: integer(-2147483648, 2147483647) });
+export const BEAT_TEXT_MAX = 500;
+const generateSource = object({ kind: literal("generate"), beats: array(object({ text: { ...text(BEAT_TEXT_MAX), description: 'An English description of the body movement starting with "A person". The editor refuses prompts over 500 characters.' } }, { seconds: number(0.5, 60) }), 8, 1) }, { durationSeconds: number(2, 60), seed: integer(-2147483648, 2147483647) });
 const source = union(generateSource, object({ kind: literal("reuse"), artifactId: id }));
 
 /* ----------------------------------------------- element patches ----

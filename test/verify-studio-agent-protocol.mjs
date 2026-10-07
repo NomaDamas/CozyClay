@@ -158,12 +158,12 @@ function registerTests() {
 		const beat = text => ({ name: "generate_motion", args: { characterId: "a", source: { kind: "generate", beats: [{ text }], durationSeconds: 4 } } });
 		assert.equal(protocol.validateStudioCommand(beat("A person walks forward and waves with the right hand.")).args.source.beats[0].text, "A person walks forward and waves with the right hand.");
 		assert.doesNotThrow(() => protocol.validateStudioCommand(beat("A".repeat(protocol.BEAT_TEXT_MAX))));
-		assert.throws(() => protocol.validateStudioCommand(beat("A".repeat(protocol.BEAT_TEXT_MAX + 1))), e => e.code === "INVALID_ARGUMENT" && e.details?.path === "$.args.source.beats[0].text" && /Over 300 characters\..*starting with "A person".*Keep a complete movement in one beat/.test(e.message));
+		assert.throws(() => protocol.validateStudioCommand(beat("A".repeat(protocol.BEAT_TEXT_MAX + 1))), e => e.code === "INVALID_ARGUMENT" && e.details?.path === "$.args.source.beats[0].text" && /Over 500 characters\..*starting with "A person"/.test(e.message));
 		assert.equal(protocol.STUDIO_TOOL_SCHEMAS.generate_motion.properties.source.oneOf[0].properties.beats.items.properties.text.maxLength, protocol.BEAT_TEXT_MAX);
 	});
 	test("D3 the Studio prompt teaches Kimodo beat writing", async () => {
 		const { STUDIO_SYSTEM_PROMPT } = await import("../bin/agent/studio-prompt.mjs");
-		for (const rule of [/motion\.generate or set with character\.setPromptBlocks/, /starting with "A person"/, /usually 50-150 characters/, /Keep a complete movement in one beat/, /never cut one movement across beats/, /tiles a beat longer than 5 s/, /Do not add a standing, ready or idle beat/, /common object interactions/, /leave out camera, scenery and story/, /Every beat must stand alone/, /never "Then the person stops"/]) assert.match(STUDIO_SYSTEM_PROMPT, rule);
+		for (const rule of [/motion\.generate or character\.setPromptBlocks/, /in English/, /starts with "A person"/, /not "Then the person stops"/, /Keep one whole movement inside one beat/, /leave out camera, scenery and story/]) assert.match(STUDIO_SYSTEM_PROMPT, rule);
 	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
 		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 3);
