@@ -258,7 +258,10 @@ export function createCommandBus({ registry, ports }) {
         check() {
           controller.signal.throwIfAborted();
           const current = ports.read();
-          if (!same(current.host, before.host) || (domain && current.domainRevisions?.[domain] !== domainRevision) || (targetId && ports.readTarget?.(targetId) !== token)) fail('STALE_TARGET', 'The target or its authored domain changed while the job was running.');
+          // Name the fence that tripped: the three share one code, and a bare "something changed" leaves the user and the agent guessing.
+          if (!same(current.host, before.host)) fail('STALE_TARGET', 'The open document or scene changed while the job was running.');
+          if (domain && current.domainRevisions?.[domain] !== domainRevision) fail('STALE_TARGET', `The ${domain} data changed while the job was running (revision ${domainRevision} to ${current.domainRevisions?.[domain]}); an edit landed between the request and its result.`);
+          if (targetId && ports.readTarget?.(targetId) !== token) fail('STALE_TARGET', `${targetId} changed while the job was running.`);
         },
         commit(apply) {
           context.check();
