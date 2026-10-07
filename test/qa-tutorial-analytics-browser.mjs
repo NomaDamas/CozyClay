@@ -430,9 +430,10 @@ async function completeRun({ optOut = false } = {}) {
 	assert.equal((await shots()).length, before.length + 1, "Add shot really authors a new cut");
 	if (!optOut) expectFirstEdit("shot_add");
 	if (surface === "playground") {
-		// The real rail handler enters preview and auto-plays the seeded walk.
-		// Arm Play before the stroke, not after this legitimate fast completion.
-		await stepWait("play", () => stepWait("rail", () => drawRail()));
+		// The real rail handler opens the player on the shot camera and leaves
+		// playback to the visitor (#602): Play is their real click on ▶.
+		await stepWait("rail", () => drawRail());
+		await stepWait("play", () => click(".tl-transport .play"));
 	} else await stepWait("rail", () => drawRail());
 	await drawRail(-20);
 	if (!optOut) expectFirstEdit("shot_add");
@@ -444,8 +445,10 @@ async function completeRun({ optOut = false } = {}) {
 		await change("!window.__cozyclay.lookThroughShot", () => key("Escape"), true);
 		await change("window.__cozyclay.lookThroughShot", () => click(".vp-look-through"), true);
 	} else {
+		// The redrawn rail reopens the player paused; the visitor's ▶ rides it.
+		await change("!!document.querySelector('.tl-transport .play.on')", () => click(".tl-transport .play"), true);
 		await wait("window.__cozyclay.playing && window.__cozyclay.tlFrame > 0 && window.__cozyclay.lookThroughShot", true);
-		pass("rail-triggered preview crosses the existing hosted tlPlaying Play boundary");
+		pass("the visitor's ▶ in the rail preview crosses the existing hosted tlPlaying Play boundary");
 		// The QA snapshot's effect is frame-dependent, so it can retain playing
 		// on the final paused frame. The actual transport's on class reflects
 		// tlPlaying directly and is the real user-visible pause/play state.

@@ -160,22 +160,26 @@
       a.card:hover { transform: translateY(-2px); }
 
       /* Playground. The ids and data-state values belong to the tutorial script below. */
-      .demo { display: flex; flex-wrap: wrap; gap: 20px; align-items: flex-start; }
-      .demo .window { flex: 999 1 520px; min-width: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, .06), 0 24px 48px rgba(0, 0, 0, .14); }
-      .tutorial-steps { flex: 1 1 180px; display: flex; flex-direction: column; gap: 4px; margin: 0; padding: 0; list-style: none; }
+      /* The steps sit in the window's title bar so the studio gets the full
+         content width and height; started, the demo scrolls up to fill the screen. */
+      .demo { scroll-margin-top: 76px; }
+      .demo .window { min-width: 0; box-shadow: 0 2px 6px rgba(0, 0, 0, .06), 0 24px 48px rgba(0, 0, 0, .14); }
+      .tutorial-steps { flex: 1; min-width: 0; display: flex; justify-content: center; gap: 4px; margin: 0 52px 0 0; padding: 0; list-style: none; overflow: hidden; }
       .tutorial-steps[hidden] { display: none; }
       .tutorial-steps li {
-        display: flex; align-items: center; min-height: 44px; padding: 0 14px; border-radius: 8px;
-        color: var(--ink); opacity: .55; transition: opacity .2s, background .15s;
+        display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 10px; border-radius: 999px; white-space: nowrap;
+        background: var(--panel); border: 1px solid var(--line); color: var(--ink); font-size: 14px;
+        opacity: .55; transition: opacity .2s, background .15s;
       }
       .playground-live .tutorial-steps li { opacity: 1; }
-      .tutorial-steps li[data-done="1"] { color: var(--ok); }
-      .tutorial-steps li[data-done="1"]::after { content: "✓"; margin-left: auto; font-weight: 700; }
-      .tutorial-steps li[data-current="1"] { background: var(--accent); color: #fff; font-weight: 600; }
+      .tutorial-steps li[data-done="1"] { color: var(--ok); border-color: var(--ok); }
+      .tutorial-steps li[data-done="1"]::after { content: "✓"; font-weight: 700; }
+      .tutorial-steps li[data-current="1"] { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; }
 
       .playground {
         position: relative;
-        height: clamp(480px, 70vh, 720px);
+        /* Header 64 + margin 12 + title bar 40 + bottom bar 52 + 12. */
+        height: clamp(480px, calc(100vh - 180px), 900px);
         overflow: hidden;
         background: #1b1b1b center / cover no-repeat;
       }
@@ -281,9 +285,10 @@
         .playground-cover .btn, .playground-cover small { display: none; }
         .playground-phone { display: block; font-size: 14px; padding: 0 24px; text-align: center; }
         .playground-cover { cursor: default; }
+        /* No playground here, so no steps squeezed into the title bar. */
+        .tutorial-steps { visibility: hidden; }
       }
       @media (max-width: 720px) {
-        .tutorial-steps { flex-direction: row; flex-wrap: wrap; flex-basis: 100%; }
         .tutorial-card { max-width: 90%; }
         section { padding: 64px 0; }
         .hero { padding: 56px 0 40px; }
@@ -374,9 +379,8 @@
         <div class="wrap">
         <h2>Try it</h2>
         <div class="demo">
-        <ol class="tutorial-steps" id="tutorial-steps"></ol>
         <div class="window">
-        <div class="titlebar" aria-hidden="true"><i></i><i></i><i></i><span>City block</span></div>
+        <div class="titlebar"><i aria-hidden="true"></i><i aria-hidden="true"></i><i aria-hidden="true"></i><ol class="tutorial-steps" id="tutorial-steps" aria-label="Tutorial steps"></ol></div>
         <div class="playground" id="playground" style="background-image: url('/media/playground-poster.jpg')">
           <button class="playground-cover" id="playground-start" type="button" aria-label="Start the playground">
             <span class="btn primary">Play with the scene</span>
@@ -716,6 +720,12 @@ npm run dev</code></pre>
         }));
         document.getElementById("controls-link").addEventListener("click", () => {
           document.querySelector("#controls details").open = true;
+        });
+        // A started playground takes the screen: steps, window and its bar in view.
+        document.getElementById("playground-start").addEventListener("click", () => {
+          if (!matchMedia("(min-width: 721px) and (hover: hover)").matches) return;
+          const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+          document.querySelector("#try .demo").scrollIntoView({ block: "start", behavior: still ? "auto" : "smooth" });
         });
       })();
     </script>
