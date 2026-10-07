@@ -154,6 +154,17 @@ function registerTests() {
 		assert.equal(commands[0].args.limit, undefined, "normalization does not edit caller input");
 		rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args: { ops: [createOp("Same"), createOp("Same")] } }), "DUPLICATE_NAME");
 	});
+	test("D3 generate_motion beat text is capped and the refusal says how to write one", async () => {
+		const beat = text => ({ name: "generate_motion", args: { characterId: "a", source: { kind: "generate", beats: [{ text }], durationSeconds: 4 } } });
+		assert.equal(protocol.validateStudioCommand(beat("A person walks forward and waves with the right hand.")).args.source.beats[0].text, "A person walks forward and waves with the right hand.");
+		assert.doesNotThrow(() => protocol.validateStudioCommand(beat("A".repeat(protocol.BEAT_TEXT_MAX))));
+		assert.throws(() => protocol.validateStudioCommand(beat("A".repeat(protocol.BEAT_TEXT_MAX + 1))), e => e.code === "INVALID_ARGUMENT" && e.details?.path === "$.args.source.beats[0].text" && /Over 240 characters\..*starting with "A person".*Split longer actions/.test(e.message));
+		assert.equal(protocol.STUDIO_TOOL_SCHEMAS.generate_motion.properties.source.oneOf[0].properties.beats.items.properties.text.maxLength, protocol.BEAT_TEXT_MAX);
+	});
+	test("D3 the Studio prompt teaches Kimodo beat writing", async () => {
+		const { STUDIO_SYSTEM_PROMPT } = await import("../bin/agent/studio-prompt.mjs");
+		for (const rule of [/starts with "A person"/, /40-100 characters/, /one or at most two body actions/, /no emotion labels, camera, scenery, story or props/, /3-5 s/, /Every beat must stand alone/, /never "Then the person stops"/]) assert.match(STUDIO_SYSTEM_PROMPT, rule);
+	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
 		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 3);
 		assert.ok(protocol.STUDIO_TOOL_ALIASES.includes("patch_elements"));

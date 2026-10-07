@@ -105,7 +105,8 @@ const characterOp = union(
 	object({ op: literal("update"), characterId: id }, { position, facing, scale: positive, name, hidden: bool }),
 	object({ op: literal("remove"), characterId: id }),
 );
-const generateSource = object({ kind: literal("generate"), beats: array(object({ text: text(2000) }, { seconds: number(0.5, 60) }), 8, 1) }, { durationSeconds: number(2, 60), seed: integer(-2147483648, 2147483647) });
+export const BEAT_TEXT_MAX = 240;
+const generateSource = object({ kind: literal("generate"), beats: array(object({ text: { ...text(BEAT_TEXT_MAX), description: 'One plain sentence of 40-100 characters starting with "A person", one or two body actions, no emotion, camera or scenery. Split longer actions into more beats.' } }, { seconds: number(0.5, 60) }), 8, 1) }, { durationSeconds: number(2, 60), seed: integer(-2147483648, 2147483647) });
 const source = union(generateSource, object({ kind: literal("reuse"), artifactId: id }));
 
 /* ----------------------------------------------- element patches ----
@@ -341,7 +342,7 @@ export function validateStudioSchema(schema, value, code = "INVALID_ARGUMENT", p
 		return result;
 	}
 	if (schema.type === "string") {
-		if (typeof value !== "string" || !value.trim() || (schema.maxLength !== undefined && [...value].length > schema.maxLength) || (schema.pattern && !new RegExp(schema.pattern).test(value))) fail(code, "Invalid or oversized string.", path);
+		if (typeof value !== "string" || !value.trim() || (schema.maxLength !== undefined && [...value].length > schema.maxLength) || (schema.pattern && !new RegExp(schema.pattern).test(value))) fail(code, typeof value === "string" && schema.description && [...value].length > schema.maxLength ? `Over ${schema.maxLength} characters. ${schema.description}` : "Invalid or oversized string.", path);
 		if (schema.enum && !schema.enum.includes(value)) fail(code, "Unsupported enum value.", path);
 		return value;
 	}
