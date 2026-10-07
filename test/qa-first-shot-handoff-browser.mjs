@@ -588,7 +588,9 @@ async function completeSteps() {
 	assert.equal(added.length, 1, 'Add shot authors exactly one real cut');
 	const targetId = added[0].id;
 	if (surface === 'playground') {
-		await stepWait('play', () => stepWait('rail', () => drawRail()));
+		// The rail opens the player paused (#602); the visitor's ▶ is Play.
+		await stepWait('rail', () => drawRail());
+		await stepWait('play', () => click('.tl-transport .play'));
 		await pauseHosted();
 	} else {
 		await stepWait('rail', () => drawRail());

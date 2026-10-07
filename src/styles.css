@@ -858,6 +858,8 @@ select {
 /* The plan inset only matters while a rail is being drawn into it. */
 .app[data-embed-mode="playground"]:not([data-rail-draw="1"]) .vp-inset.plan { display: none !important; }
 .app[data-embed-mode="playground"][data-rail-draw="1"] .vp-inset.plan { width: 44% !important; height: 62% !important; }
+/* The shot monitor would sit over the map's corner while the rail is drawn. */
+.app[data-embed-mode="playground"][data-rail-draw="1"] .vp-shot-preview { display: none !important; }
 .app[data-embed-mode="playground"] .bottom-window,
 .app[data-embed-mode="playground"] .bottom-timeline {
 	flex: 0 0 auto;
@@ -878,7 +880,8 @@ select {
 /* The shot monitor is the pane the tutorial points at: keep it small. */
 .app[data-embed-mode="playground"] .vp-shot-preview { width: 22% !important; height: auto !important; aspect-ratio: 16 / 9; right: 12px; bottom: 12px; }
 .app[data-embed-mode="playground"] .vp-shot-preview-tag { font-size: 12px; }
-.app[data-embed-mode="playground"] .vp-look-through { width: 24px; height: 24px; }
+/* The look-through button carries its label now; keep it on one line. */
+.app[data-embed-mode="playground"] .vp-look-through { height: 24px; padding: 0 8px; white-space: nowrap; }
 .app[data-embed-mode="playground"] .vp-look-through svg { width: 15px; height: 15px; }
 /* Tutorial hints: the landing page names the control the current step needs. */
 .app[data-playground-hint="look"] .vp-look-through,
