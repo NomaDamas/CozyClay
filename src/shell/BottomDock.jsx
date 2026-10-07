@@ -372,7 +372,9 @@ export default function BottomDock({ tab = "animation", onTabChange, embedded = 
 			onClearMotion={motion ? clearMotion : null}
 		/>
 			</div>
-			{tab === "animation" && <ShotCard />}
+			{/* Embeds keep their own shot monitor in the viewport (.vp-shot-preview);
+			    the card is styled for the full studio only. */}
+			{tab === "animation" && !embedded && <ShotCard />}
 		</div>
 	);
 }

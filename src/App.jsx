@@ -795,6 +795,23 @@ export default function App() {
 	// bridge read this global, and the render path is still PlayView's.
 	globalThis.playMode = preview;
 	const playMode = preview;
+	// #441 moved shot authoring into commands and dropped the Shot and Rail
+	// signals the landing checklist waits for. Read them from the authored state,
+	// as the studio tutorial does (#586): a shot added here, and a rail drawn.
+	// Declared before the play signal: a drawn rail starts playback in the same
+	// commit, and the checklist expects Rail before Play.
+	const playgroundShotCount = useRef(null);
+	useEffect(() => {
+		if (!playgroundMode) return;
+		if (playgroundShotCount.current !== null && shots.length > playgroundShotCount.current) {
+			window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "shot" }, "*");
+		}
+		playgroundShotCount.current = shots.length;
+	}, [playgroundMode, shots.length]);
+	const playgroundRailReady = playgroundMode && shots.some((shot) => Array.isArray(shot.camera?.cameraRail) && shot.camera.cameraRail.length >= 2);
+	useEffect(() => {
+		if (playgroundRailReady) window.parent?.postMessage({ type: "cozyclay:playground-nav", kind: "rail" }, "*");
+	}, [playgroundRailReady]);
 	// Preview is the player for the finished motion: entering starts playback,
 	// leaving pauses it. The editor view stays the manipulation surface.
 	const [tlPlaying, setTlPlaying] = useState(false);

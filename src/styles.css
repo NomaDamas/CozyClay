@@ -847,6 +847,9 @@ select {
 	display: none;
 }
 .app[data-embed-mode="playground"] .tl-view-tools { display: none !important; }
+/* The v2 Sequencer styles sit outside the legacy layer, so the lane rule above
+   needs !important to keep only the Shots lane. */
+.app[data-embed-mode="playground"] .tl-track:not(.shots) { display: none !important; }
 /* Title bar keeps nothing but the pane's own name: the drawn dolly plays
    full-screen through the shot camera's look-through button, and Esc is the
    way back to flying. */
@@ -865,7 +868,7 @@ select {
 .app[data-embed-mode="playground"] .timeline.empty-shots { height: auto !important; min-height: 0 !important; max-height: none; }
 .app[data-embed-mode="playground"] .tl-body { flex: 0 0 auto; overflow: hidden; }
 .app[data-embed-mode="playground"] .tl-body { min-height: 0 !important; height: auto !important; }
-.app[data-embed-mode="playground"] .tl-surface { height: auto !important; min-height: 0; grid-template-rows: auto auto !important; }
+.app[data-embed-mode="playground"] .tl-surface { height: auto !important; min-height: 0 !important; grid-template-rows: auto auto !important; }
 /* The Shots lane keeps its full-studio height so the block's hover actions
    (Duplicate / Delete) sit in a strip above the clickable body instead of
    covering it. */
