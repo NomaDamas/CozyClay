@@ -70,7 +70,7 @@ const queued = ['motion.commitLineEdit', 'motion.regenerateTrail'].map(id => ({ 
 const legacyIk = ['character.setIkKey', 'character.removeIkKey', 'character.clearIkKeys'].map(studioActionDeclaration);
 const ik = legacyIk.map((entry, index) => ({ ...entry, id: ['ik.setKey', 'ik.removeKey', 'ik.clearKeys'][index] }));
 
-const clear = { id: 'motion.clear', label: 'Clear motion', description: 'Clear the active take, its corrections and take-owned cast fields.',
+const clear = { id: 'motion.clear', label: 'Clear motion', description: 'Clear the active take, its corrections, prompt blocks and take-owned cast fields.',
 	kind: 'mutation', undoDomain: 'motion', input: { type: 'object', properties: { characterId: { type: 'string' } }, required: ['characterId'], additionalProperties: false } };
 const videoDraft = { id: 'motion.setVideoDraft', label: 'Set video motion draft', description: 'Set the uncommitted AI-video form without changing the project or its history.', kind: 'transient',
 	input: input({ instruction: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, promptOverride: { oneOf: [{ const: '' }, { type: 'string', maxLength: 3700 }] }, duration: { oneOf: I2V_MOTION_DURATIONS.map(value => ({ const: value })) } }, []) };
@@ -194,7 +194,7 @@ export function register(registry, ports) {
 				if (ports.state().activeCharacterId !== characterId) fail('TARGET_NOT_READY', 'Select this character before clearing its take.');
 				ports.clearMotionNative();
 			}
-			return { affectedIds: [characterId], summary: 'Cleared motion.' };
+			return { affectedIds: [characterId], summary: 'Cleared motion and prompt blocks.' };
 		} });
 	registry.register({ ...studioActionDeclaration("motion.generateAllBlocks"), target: () => ports.state().activeCharacterId,
 		available: state => state.generating ? "A motion generation is already running."

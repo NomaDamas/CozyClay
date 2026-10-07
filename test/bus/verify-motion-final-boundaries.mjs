@@ -13,6 +13,20 @@ test('motion: cast pose application clears the named inactive character, not the
     ok(f.run('edit.undo', { receiptId: receipt.receiptId })); assert.deepEqual(f.snapshot(), before); assert.deepEqual(f.cast.read(), cast);
   } finally { f.dispose(); }
 });
+test('motion: clear removes prompt blocks with the take and undo restores both', () => {
+  const f = motionFixture();
+  try {
+    f.motion.load([{ id: 'actor-a', take: seedMotion() }]);
+    ok(f.run('character.setPromptBlocks', { characterId: 'actor-a', blocks: [{ startFrame: 0, endFrame: 48, text: 'Walk forward' }] }));
+    const before = f.snapshot(), cast = structuredClone(f.cast.read());
+    const receipt = ok(f.run('motion.clear', { characterId: 'actor-a' }));
+    assert.equal(f.motion.motionFor('actor-a'), null);
+    assert.deepEqual(f.cast.read()[0].layer.promptClips, []);
+    ok(f.run('edit.undo', { receiptId: receipt.receiptId }));
+    assert.deepEqual(f.snapshot(), before);
+    assert.deepEqual(f.cast.read(), cast);
+  } finally { f.dispose(); }
+});
 test('motion: owned gesture recording needs no native cast history', () => {
   const f = motionFixture();
   try {
