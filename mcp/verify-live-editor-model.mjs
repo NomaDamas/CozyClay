@@ -98,12 +98,16 @@ try {
 	const pending = new Map();
 	let liveHello;
 	let xBotRequested;
+	let xBotDescribed;
 	const editorFrames = [];
 	const editorHello = new Promise((resolve) => {
 		liveHello = resolve;
 	});
 	const xBotRequest = new Promise((resolve) => {
 		xBotRequested = resolve;
+	});
+	const xBotDescription = new Promise((resolve) => {
+		xBotDescribed = resolve;
 	});
 	socket.addEventListener("message", (event) => {
 		const frame = JSON.parse(event.data);
@@ -114,6 +118,7 @@ try {
 				const editorFrame = JSON.parse(payload);
 				editorFrames.push(editorFrame);
 				if (editorFrame.type === "hello" && editorFrame.role === "editor") liveHello();
+				if (editorFrame.type === "result" && editorFrame.value?.characters?.some((character) => character.model === "x-bot-tpose")) xBotDescribed();
 			} catch {
 				// CDP control responses are handled below; non-JSON payloads are not protocol frames.
 			}
@@ -151,6 +156,10 @@ try {
 	// Subscribe before navigation: the fixture installs a real startup take
 	// asynchronously, and that authored publication must precede admission.
 	await send('Page.addScriptToEvaluateOnNewDocument', { source: `
+		// This suite owns the scene-loading race it is testing. A fresh profile
+		// would otherwise auto-open the first-run camera tutorial (#586), whose
+		// asynchronous starter remounts the canvas underneath these commands.
+		localStorage.setItem("cozyclay.camera-tutorial-terminal.v1", JSON.stringify({ dismissed: true }));
 		window.__initialTakeReady = new Promise(resolve => {
 			let state;
 			Object.defineProperty(window, '__cozyclay', { configurable: true,
@@ -206,6 +215,9 @@ try {
 	const described = await client.callTool({ name: "describe_scene", arguments: {} });
 	// Then the real editor loads and reports X Bot through the live describe frame.
 	assert.equal(added.isError, undefined, JSON.stringify({ added, editorFrames }));
+	// MCP and CDP use independent sockets: the tool response can arrive before
+	// Network.webSocketFrameSent reports the editor's matching result (#612).
+	await withTimeout(xBotDescription, "editor describe frame for x-bot");
 	const describedFrames = editorFrames.filter((frame) => frame.type === "result" && frame.value?.characters);
 	assert.ok(describedFrames.some((frame) => frame.value.characters.some((character) => character.model === "x-bot-tpose")), JSON.stringify(describedFrames));
 	assert.match(described.content[0].text, /\[x-bot-tpose\]/, described.content[0].text);
