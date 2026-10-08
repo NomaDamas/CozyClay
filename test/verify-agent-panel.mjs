@@ -145,7 +145,8 @@ const controls = [
 ];
 for (const [name, needle] of controls) expect(`composer/transcript exposes the ${name}`, panel.includes(needle), needle);
 
-expect("Enter sends and Shift+Enter inserts a newline", panel.includes('event.key === "Enter" && !event.shiftKey'));
+expect("Enter sends and Shift+Enter inserts a newline", panel.includes('event.key === "Enter" && !isImeComposing(event) && !event.shiftKey'));
+expect("a composing Enter never sends or steers", panel.includes("isImeComposing(event)"));
 expect("Esc stops a running turn", panel.includes('event.key === "Escape" && streaming'));
 expect("Cmd/Ctrl+B toggles the panel", panel.includes("event.metaKey || event.ctrlKey") && panel.includes('=== "b"'));
 expect("focus moves to the composer on open", panel.includes("composerRef.current?.focus()"));

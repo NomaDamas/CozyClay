@@ -7,6 +7,7 @@ import { sceneObjectNameDisplayKo } from "../app-stage.jsx";
 import { MESH_KIND, CUTOUT_KIND, CUTOUT_DEFAULT_HEIGHT, OBJECT_COLORS, normalizeObjectColor } from "../scene-objects.js";
 import { MESH_HEIGHT_MIN } from "../scene-mesh.js";
 import { autoColorHex } from "../auto-color.js";
+import { isImeComposing } from "../ime.js";
 
 export default function ObjectTransformPanel({
 	selectedSceneObject, snapEnabled, setSnapEnabled, attachTargetLabel,
@@ -39,7 +40,7 @@ export default function ObjectTransformPanel({
 		? ['run.update', { txId, args: { id: selectedSceneObject.id, patch } }]
 		: ['object.update', { id: selectedSceneObject.id, patch }];
 	const endKey = event => {
-		if (event.key === 'Enter' || event.key === 'Escape') {
+		if ((event.key === 'Enter' && !isImeComposing(event)) || event.key === 'Escape') {
 			event.stopPropagation(); finish(event.key === 'Enter'); setObjectColorDraft(null);
 		}
 	};

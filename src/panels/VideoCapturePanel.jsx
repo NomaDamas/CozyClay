@@ -1,6 +1,7 @@
 import Foldout from "./Foldout.jsx";
 import { ko, isKo } from "../locale.js";
 import { footageSummary, trajectoryReceipt, segmentationReceipt } from "../multimodel-ingest.js";
+import { isImeComposing } from "../ime.js";
 
 export default function VideoCapturePanel({
 	isCharacterSelection, multiModelStatus, multiModelStage, multiModelFileRef, chooseMultiModelFile,
@@ -49,7 +50,7 @@ export default function VideoCapturePanel({
 								type="text"
 								value={multiModelUrl}
 								onChange={(event) => setMultiModelUrl(event.target.value)}
-								onKeyDown={(event) => { if (event.key === "Enter") useMultiModelUrl(); }}
+								onKeyDown={(event) => { if (event.key === "Enter" && !isImeComposing(event)) useMultiModelUrl(); }}
 								placeholder={ko("https://…/boxing.mp4", "https://…/boxing.mp4")}
 								aria-label={ko("Multi-Model video URL", "멀티 모델 영상 URL")}
 								spellCheck={false}

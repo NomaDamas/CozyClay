@@ -4,6 +4,7 @@ import { motionSegmentSpeedForFrames } from "./motion-edit.js";
 import { createPlaybackClock } from "./playback-clock.js";
 import { promptResizeFrame } from "./timeline-resize.js";
 import { ko, isKo } from "../locale.js";
+import { isImeComposing } from "../ime.js";
 import { buildRail, craneHeightAt } from "../camera-follow.js";
 import { pathMetrics } from "../object-path.js";
 import { flatTiming, timingIsFlat, envelopeDrag, insertCut, removeCut, CUT_MIN_GAP } from "../speed-envelope.js";
@@ -2191,7 +2192,7 @@ export default function Timeline({
 														onClick={(e) => e.stopPropagation()}
 														onBlur={(e) => finishShotRename(shot, index, e.target.value)}
 														onKeyDown={(e) => {
-															if (e.key === "Enter") e.currentTarget.blur();
+															if (e.key === "Enter" && !isImeComposing(e)) e.currentTarget.blur();
 															if (e.key === "Escape") setRenamingShotId(null);
 														}}
 													/>

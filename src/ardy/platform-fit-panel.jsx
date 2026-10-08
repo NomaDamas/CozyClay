@@ -1,5 +1,6 @@
 import React, { useEffect, useSyncExternalStore } from "react";
 import "../panels/pose.css";
+import { isImeComposing } from "../ime.js";
 
 const FOOT_NAMES = { leftFoot: ["Left foot", "왼발"], rightFoot: ["Right foot", "오른발"] };
 function stepLabel(step, ko) {
@@ -18,7 +19,7 @@ export function PlatformFitPanel({ ko, disabled, running, progress: progressStor
 		const onKeyDown = (event) => {
 			if (event.metaKey || event.ctrlKey || event.altKey) return;
 			if (event.key === "Escape") { event.preventDefault(); onCancel?.(); }
-			if (event.key === "Enter") { event.preventDefault(); onApply?.(); }
+			if (event.key === "Enter" && !isImeComposing(event)) { event.preventDefault(); onApply?.(); }
 		};
 		window.addEventListener("keydown", onKeyDown);
 		return () => window.removeEventListener("keydown", onKeyDown);

@@ -4,6 +4,7 @@ import { buildHierarchyNodes } from "./hierarchy-model.js";
 import { sceneObjectIdFromHierarchy } from "./scene-objects.js";
 import { CatalogueEntries, displayObjectLabel } from "./object-catalog.jsx";
 import { Dropdown } from "./ui.jsx";
+import { isImeComposing } from "./ime.js";
 import "./hierarchy-panel.css";
 
 const HIERARCHY_LABELS_KO = {
@@ -559,7 +560,7 @@ function TreeRow({
 						autoFocus
 						onFocus={(event) => event.currentTarget.select()}
 						onKeyDown={(event) => {
-							if (event.key === "Enter") {
+							if (event.key === "Enter" && !isImeComposing(event)) {
 								event.preventDefault();
 								event.stopPropagation(); // keep the tree hotkey quiet
 								finish();
