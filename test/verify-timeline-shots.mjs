@@ -46,5 +46,8 @@ assert.ok(commands.includes("cutAtFrame(current, shotId, frame, owner().capture(
 assert.ok(!timeline.includes("disabled={shots.length <= 1}"));
 assert.ok(css.includes("width: calc((var(--tl-f-end) - var(--tl-f-start)) * 100%);"));
 assert.ok(!css.includes("width: max(8px, calc((var(--tl-f-end) - var(--tl-f-start)) * 100%));"));
+assert.ok(v2Css.includes(".v2-sequencer .tl-shot-actions") && v2Css.includes("bottom: 100%;"));
+assert.ok(!v2Css.includes("bottom: calc(100% + 2px);"));
+assert.ok(v2Css.includes(".v2-sequencer .tl-shot-block.selected .tl-shot-actions") && v2Css.includes(".v2-sequencer .tl-shot-block.active .tl-shot-actions"));
 
 console.log("timeline shots lane verified");
