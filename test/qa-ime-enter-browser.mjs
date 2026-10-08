@@ -81,6 +81,7 @@ const setDraft = async (text) => evaluate(`(() => {
 })()`);
 
 try {
+	await send("Runtime.enable");
 	await send("Page.enable");
 	const url = new URL(process.env.QA_URL || "http://127.0.0.1:5291/workflow/");
 	url.searchParams.set("agent", "mock");
