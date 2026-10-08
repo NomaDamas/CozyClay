@@ -6809,10 +6809,9 @@ input[type=range]::-moz-range-thumb {
 
 /* Keep the timeline focused on the selected workflow.  Pose-correction and
    take-generation controls are useful while authoring motion, but they are
-   noise during blocking and camera work.  The controls stay mounted so the
-   mode switch is lossless; only their always-on chrome is hidden. */
+   noise during blocking and camera work.  The motion clear action stays
+   visible in Stage so a loaded take is always reversible. */
 .app[data-workflow-mode="scene"] .tl-pose-tools,
-.app[data-workflow-mode="scene"] .tl-motion-tools,
 .app[data-workflow-mode="scene"] .take-bar,
 .app[data-workflow-mode="camera"] .tl-pose-tools,
 .app[data-workflow-mode="camera"] .tl-motion-tools,

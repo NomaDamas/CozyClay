@@ -331,7 +331,8 @@ export function createMotionDomain(appContext, characters) {
 	function clear(id) {
 		previews.delete(id);
 		writeLayer(id, { take: null, fullTake: null, ikKeys: [], ikPins: [], ikPinResiduals: [], committedIkEdits: [], takeRecipe: null });
-		castWrite(rows => rows.map(row => row.id === id ? { ...row, scale: 1, motionRef: null } : row));
+		castWrite(rows => rows.map(row => row.id === id ? { ...row, scale: 1, motionRef: null,
+			layer: { ...row.layer, promptClips: [] } } : row));
 		synchronizeTimeline();
 	}
 	function editSegments(id, segments) {
@@ -1512,8 +1513,8 @@ export function useMotion(appContext) {
 		}
 	}
 
-	/** Drop the ACTIVE character's take, its IK corrections and the stature the
-	 * take imposed. One Ctrl+Z entry brings all three back; nothing to clear
+	/** Drop the ACTIVE character's take, its IK corrections, prompt blocks and
+	 * the stature the take imposed. One Ctrl+Z entry brings all four back; nothing to clear
 	 * records nothing, so the shortcut never becomes a dead press.
 	 *
 	 * The pose flows (studio Apply/Reset, pose tiles, photo pose) call this
