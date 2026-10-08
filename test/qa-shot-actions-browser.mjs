@@ -59,9 +59,13 @@ const pointFor = async (selector) => evaluate(`(() => {
 const mouseMove = (x, y) => send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y });
 const movePointer = async (from, to) => {
 	await mouseMove(from.x, from.y);
-	for (let step = 1; step <= 12; step += 1) {
-		await mouseMove(from.x + (to.x - from.x) * (step / 12), from.y + (to.y - from.y) * (step / 12));
+	// A fixed step count could jump over the two-pixel regression entirely.
+	const steps = Math.ceil(Math.max(Math.abs(to.x - from.x), Math.abs(to.y - from.y)));
+	for (let step = 1; step <= steps; step += 1) {
+		await mouseMove(from.x + (to.x - from.x) * (step / steps), from.y + (to.y - from.y) * (step / steps));
+		if (!await evaluate("getComputedStyle(document.querySelector('.tl-shot-actions')).display === 'flex'")) return false;
 	}
+	return true;
 };
 const clickPoint = async (point) => {
 	await send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button: "left", buttons: 1, clickCount: 1 });
@@ -115,8 +119,8 @@ const reachAction = async (buttonIndex) => {
 	if (!await actionBarVisible()) return false;
 	const action = await pointFor(`.tl-shot-actions button:nth-of-type(${buttonIndex})`);
 	if (!action) return false;
-	await movePointer(block, action);
-	return await actionBarVisible();
+	if (!await movePointer(block, action)) return false;
+	return evaluate(`document.elementFromPoint(${action.x}, ${action.y})?.closest('button') === document.querySelector('.tl-shot-actions button:nth-of-type(${buttonIndex})')`);
 };
 
 expect("the action bar stays visible while crossing from the block", await reachAction(2));
