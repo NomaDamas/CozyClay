@@ -94,7 +94,8 @@ const framing = union(
 	object({ exact: object({ position: vec3, lookAt: vec3, focalMm: positive }) }),
 );
 const objectOp = union(
-	object({ op: literal("create"), source: object({ kind: id }), position }, { name, facing, scale: positiveVec3 }),
+	object({ op: literal("create"), source: object({ kind: id }), position }, { name, facing, scale: positiveVec3,
+		parent: { ...name, description: "Group this new object under a parent: an existing object id, or the name of an object created earlier in this same ops list. Moving the parent then moves it too." } }),
 	object({ op: literal("update"), id }, { position, facing, rotationDeg: vec3, scale: positiveVec3, color: text(32), name, hidden: bool }),
 	object({ op: literal("remove"), id }),
 	object({ op: literal("group"), parentId: id, childIds: ids() }),
@@ -466,6 +467,7 @@ export function validateStudioCommand(command) {
 			if (op.op === "update" && Object.keys(op).length === 2) fail("INVALID_ARGUMENT", "Update has no fields.");
 			if (op.facing && op.rotationDeg) fail("INVALID_ARGUMENT", "Facing and exact rotation are exclusive.");
 			if (op.op === "group" && op.childIds.includes(op.parentId)) fail("INVALID_ARGUMENT", "Cannot group an object under itself.");
+			if (op.op === "create" && op.parent !== undefined && op.name !== undefined && op.parent.normalize("NFC").trim() === op.name.normalize("NFC").trim()) fail("INVALID_ARGUMENT", "Cannot group an object under itself.");
 			if (args.collisionPolicy === "avoid" && (!["create", "update"].includes(op.op) || !op.position?.relativeTo)) fail("INVALID_ARGUMENT", "Avoid requires a side-relative position for every operation.");
 		}
 	}

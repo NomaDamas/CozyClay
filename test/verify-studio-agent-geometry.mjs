@@ -96,6 +96,25 @@ test('geometry: measured overlaps, bounded avoidance, and hidden-parent exclusio
   assert.deepEqual(placementChecks(['chair'], h.state, h.ports), { coverage, overlapIds, maximumFootprintOverlapM });
   assert.deepEqual(placementChecks(['alex'], h.state, h.ports).overlapIds, []);
 });
+test('geometry: one batch builds a grouped assembly by parent name and moves as one body', () => {
+  const f = fixture(), at = x => ({ world: { x, y: 0, z: 2 } });
+  const plan = f.apply('arrange_objects', { ops: [
+    { op: 'create', source: { kind: 'cube' }, name: 'Truck', position: at(5) },
+    { op: 'create', source: { kind: 'cube' }, name: 'Truck Cab', position: at(5.2), parent: 'Truck' },
+    { op: 'create', source: { kind: 'cylinder' }, name: 'Truck Wheel', position: at(5.1), parent: 'Truck Cab' },
+  ] });
+  const [body, cab, wheel] = f.state.objects;
+  assert.deepEqual([body.parent, cab.parent, wheel.parent], [null, body.id, cab.id]);
+  assert.deepEqual(plan.checks.overlapIds, [], 'parts of one assembly do not report overlapping each other');
+  f.apply('arrange_objects', { ops: [{ op: 'update', id: body.id, position: at(8) }] });
+  near(f.state.objects[1].x, 8.2); near(f.state.objects[2].x, 8.1);
+  seed(f, { id: 'barrel', x: 8, z: 2 });
+  assert.deepEqual(placementChecks([body.id], f.state, f.ports).overlapIds, ['barrel'], 'a separate body still overlaps');
+  f.apply('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, name: 'Mirror', position: at(8), parent: body.id }] });
+  assert.equal(f.state.objects[4].parent, body.id, 'an existing id is a valid parent');
+  f.refuse('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, position: at(0), parent: 'Ghost' }] }, 'AMBIGUOUS_TARGET');
+  f.refuse('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, name: 'Loop', position: at(0), parent: 'Loop' }] }, 'INVALID_ARGUMENT');
+});
 test('geometry: grouping, carried children, removal, no-op and preserved cast layers/selection', () => {
   const f = fixture(); f.apply('arrange_objects', { ops: [chair('world'), { op: 'create', source: { kind: 'cube' }, position: { world: { x: 3, y: 0, z: 0 } } }] });
   f.apply('arrange_objects', { ops: [{ op: 'group', parentId: 'chair', childIds: ['cube'] }, { op: 'update', id: 'chair', position: { world: { x: 0, y: 0, z: 0 } } }] });
