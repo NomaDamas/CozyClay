@@ -116,9 +116,21 @@ function place(entity, op, state, ports) {
   }
   return { entity: result, relation: { id: result.id, spec, axis, support: surface.label, baseY: surface.y, ...(axis ? { actualGapM, requestedGapM: spec.gapM, basis: spec.basis } : {}) } };
 }
+function groupRootOf(id, objects) {
+  const seen = new Set();
+  let current = objects.find(o => o.id === id);
+  while (current?.parent && !seen.has(current.id)) {
+    seen.add(current.id);
+    current = objects.find(o => o.id === current.parent) ?? current;
+  }
+  return current?.id ?? id;
+}
 function overlapsFor(entity, state, ports) {
   const own = aabb(geometry(entity, state, ports));
-  return [...state.objects, ...state.characters].filter(e => e.id !== entity.id && !isEffectivelyHidden(e, state.objects, state.characters)).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
+  // Parts of one grouped object are built to touch; only other bodies count.
+  const root = groupRootOf(entity.id, state.objects);
+  return [...state.objects, ...state.characters].filter(e => e.id !== entity.id && !isEffectivelyHidden(e, state.objects, state.characters)
+    && groupRootOf(e.id, state.objects) !== root).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
 }
 function overlapsOf(ids, state, ports) {
   const entities = [...state.objects, ...state.characters];
@@ -152,7 +164,7 @@ function transformPatch(op, isObject) {
 export function arrangement(command, before, ports) {
   const isObject = command.name === 'arrange_objects', key = isObject ? 'objects' : 'characters';
   let rows = before[key];
-  const relations = [], warnings = [];
+  const relations = [], warnings = [], createdByName = new Map();
   for (const op of command.args.ops) {
     const id = op.id ?? op.characterId;
     let entity = id ? rows.find(e => e.id === id) : null;
@@ -178,6 +190,12 @@ export function arrangement(command, before, ports) {
       const patch = Object.fromEntries(Object.entries(entity).filter(([k, v]) => !equal(v, rows.find(e => e.id === entity.id)[k])));
       rows = isObject ? updateSceneObject(rows, entity.id, patch) : rows.map(e => e.id === entity.id ? entity : e);
       if (placed.relation) relations.push(placed.relation);
+      if (op.op === 'create' && op.name) createdByName.set(normalizedName(op.name), entity.id);
+      if (isObject && op.op === 'create' && op.parent !== undefined) {
+        const parentId = rows.some(e => e.id === op.parent) ? op.parent : createdByName.get(normalizedName(op.parent));
+        if (!parentId) fail('AMBIGUOUS_TARGET', 'Create parent is neither an existing object id nor an object created earlier in this batch.');
+        rows = setSceneObjectParent(rows, entity.id, parentId);
+      }
     } else if (op.op === 'remove') {
       if (!isObject && (rows.length <= 1 || entity.id === before.activeCharacterId)) fail('INVALID_ARGUMENT', 'Cannot remove the final or active character without a separate selection operation.');
       rows = isObject ? removeSceneObject(rows, id) : rows.filter(e => e.id !== id);
