@@ -442,7 +442,7 @@
 	font-family: var(--sans);
 }
 .app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head {
-	height: 48px;
+	height: auto;
 	min-height: 48px;
 	gap: 12px;
 	padding: 0 16px;
@@ -700,7 +700,7 @@
 
 /* The Sequencer head drops its secondary groups as the dock narrows. */
 .app[data-shell="glass"]:not([data-embed-mode]) .bottom-timeline { container-type: inline-size; }
-.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head { overflow: hidden; }
+.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-head { overflow: visible; }
 @container (max-width: 760px) {
 	.app[data-shell="glass"]:not([data-embed-mode]) .v2-sequencer .tl-badge { display: none; }
 }

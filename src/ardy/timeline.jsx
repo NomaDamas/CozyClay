@@ -1914,7 +1914,7 @@ export default function Timeline({
 										type="button"
 										className="tl-btn clear"
 										aria-label={ko("Clear loaded motion", "불러온 모션 지우기")}
-										title={ko("Clear motion and restore the blocking pose", "모션을 지우고 블로킹 포즈로 되돌리기")}
+										title={ko("Clear motion and prompt blocks, then restore the blocking pose", "모션과 프롬프트 블록을 지우고 블로킹 포즈로 되돌리기")}
 										onClick={onClearMotion}
 									>
 										✕ {ko("Clear motion", "모션 지우기")}
