@@ -28,10 +28,11 @@ const LIMB_CHAINS = {
 };
 
 /**
- * The always-drawn trail tracks: root plus every IK chain endpoint and the
- * head, coloured exactly like their viewport IK/FK handles (posestudio.jsx
- * coding: arms orange, legs blue, torso yellow, head purple). Pick order is
- * limbs-first so an overlapping grab prefers the finer target; hips last.
+ * The available trail tracks: root plus every IK chain endpoint and the head,
+ * coloured exactly like their viewport IK/FK handles (posestudio.jsx coding:
+ * arms orange, legs blue, torso yellow, head purple). The viewport can focus
+ * one track after selection; pick order is limbs-first so an overlapping grab
+ * prefers the finer target; hips last.
  */
 export const TRAIL_TRACKS = [
 	{ id: "leftHand", joint: "LeftHand", color: "#ff8a3d" },

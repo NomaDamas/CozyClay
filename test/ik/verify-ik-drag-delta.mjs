@@ -10,7 +10,7 @@ import {
 	solveSwingAngle,
 	applyBodyContact,
 } from "../../src/ardy/ik.js";
-import { bakeIkDragKey, chainsChangedBy, ikDragRecord, ikDragTouch } from "../../src/ardy/ik-drag.js";
+import { bakeIkDragKey, bakeIkDragRange, chainsChangedBy, ikDragRecord, ikDragTouch } from "../../src/ardy/ik-drag.js";
 
 /* A manual IK drag over a loaded motion must key ONLY the parts it moved, as
  * deltas over the raw clip. Keying every tracked part put an absolute key on a
@@ -145,6 +145,16 @@ function dragHand(take, frame, id, offset, bake) {
 	return target;
 }
 
+function dragEntry(take, frame, id, offset) {
+	take.viewAt(frame);
+	const record = ikDragRecord(null, frame);
+	const chain = take.chains.get(id);
+	const target = chain.bones[2].getWorldPosition(v()).add(offset);
+	ikDragTouch(take.state, record, id);
+	solveIk(chain, target);
+	return { target, entry: bakeIkDragKey(take.chains, take.fkJoints, frame, record.ids, (rig, at) => take.poseClip(at)) };
+}
+
 const handAt = (take, id) => take.chains.get(id).bones[2].getWorldPosition(v());
 
 /* --- frame-5 / frame-30 scenario ------------------------------------------ */
@@ -184,6 +194,29 @@ check("the dragged right hand reaches its target at frame 30 (< 1 mm)",
 	fixed.rightError < 0.001, `err=${mm(fixed.rightError)}`);
 check("the earlier left-hand key still reaches its target at frame 5 (< 1 mm)",
 	fixed.leftKeyError < 0.001, `err=${mm(fixed.leftKeyError)}`);
+
+/* --- one drag applied to the selected motion block ----------------------- */
+{
+	const take = buildTake();
+	const { entry } = dragEntry(take, 5, "leftHand", new THREE.Vector3(0, 0.05, 0.04));
+	const boundaries = bakeIkDragRange(take.chains, take.fkJoints, entry, 0, 20, ["leftHand"], (rig, at) => take.poseClip(at));
+	check("a range bake creates both selected-block boundary keys", boundaries.has(0) && boundaries.has(20));
+	check("range boundary keys remain motion deltas", boundaries.get(0)?.get("leftHand")?.baseQ?.length === 3 && boundaries.get(20)?.get("leftHand")?.baseQ?.length === 3);
+	take.setKey(0, boundaries.get(0));
+	take.setKey(20, boundaries.get(20));
+	const corrections = [];
+	for (const frame of [0, 10, 20]) {
+		take.poseClip(frame);
+		const raw = handAt(take, "leftHand");
+		take.viewAt(frame);
+		corrections.push(handAt(take, "leftHand").distanceTo(raw));
+	}
+	check("the applied correction survives throughout the selected block", corrections.every((distance) => distance > 0.001), corrections.map(mm).join(", "));
+	take.poseClip(30);
+	const outside = handAt(take, "leftHand");
+	take.viewAt(30);
+	check("the range correction eases back to the raw clip outside the block", handAt(take, "leftHand").distanceTo(outside) < 0.001, mm(handAt(take, "leftHand").distanceTo(outside)));
+}
 
 /* --- capture leaves the live pose alone ----------------------------------- */
 {

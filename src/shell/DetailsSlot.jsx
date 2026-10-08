@@ -85,7 +85,8 @@ export default function DetailsSlot() {
 		physicsShow, physicsOptions, platformFitRunning, platformFitProgress, platformFitLast,
 		platformFitApplied, changePhysicsOptions, runAutoPhysics, showPhysicsPreview, applyPhysicsPreview,
 		cancelPhysicsPreview, ikEditTool, setIkEditTool, showTrails, setShowTrails,
-		trailFalloffS, setTrailFalloffS, trailEdit, runTrailRegeneration, trailReadinessState,
+		trailFalloffS, setTrailFalloffS, trailEdit, trailTrackFocus, selectTrailTrack, clearTrailTrackFocus, runTrailRegeneration, trailReadinessState,
+		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		rangePins, rangePinResiduals, rangePinSelection, rangePinPartPick, rangePinPreview,
 		sceneObjects, setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft,
 		deleteRangePin, hasEnvSheet, environment, style, environmentImage,
@@ -332,6 +333,12 @@ export default function DetailsSlot() {
 				trailFalloffS={trailFalloffS}
 				setTrailFalloffS={setTrailFalloffS}
 				trailEdit={trailEdit}
+				trailTrackFocus={trailTrackFocus}
+				selectTrailTrack={selectTrailTrack}
+				clearTrailTrackFocus={clearTrailTrackFocus}
+				pendingIkEdit={pendingIkEdit}
+				applyPendingIkEdit={applyPendingIkEdit}
+				cancelPendingIkEdit={cancelPendingIkEdit}
 				generationBusy={generationBusy}
 				bridgeChecking={bridgeChecking}
 				bridge={bridge}

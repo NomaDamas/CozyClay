@@ -34,12 +34,14 @@ const num = { type: "number" };
 const perBone = items => ({ type: "array", items, minItems: 1, maxItems: 3 });
 const quaternion = input({ x: num, y: num, z: num, w: num });
 /** One track's key: the IK state's { q, p, baseQ, basePos, chainP,
- * keepTranslations, blend, pin } with quaternions as {x,y,z,w} and positions
+ * keepTranslations, blend, pin, correctionRange } with quaternions as {x,y,z,w} and positions
  * as {x,y,z}; blend is the key's own correction range in frames (src/ardy/ik.js
  * correctionWeight), absent for the editor's default range; pin is the id of
- * the range pin that baked the key (src/ardy/range-pin.js). */
+ * the range pin that baked the key (src/ardy/range-pin.js). correctionRange
+ * pairs the boundary keys of an explicitly selected interval. */
 const ikTrackKey = input({}, { q: perBone(quaternion), p: StudioSchemas.Vec3, baseQ: perBone(quaternion), basePos: StudioSchemas.Vec3,
 	chainP: perBone(StudioSchemas.Vec3), keepTranslations: { type: "boolean" }, blend: { type: "integer", minimum: 1, maximum: 240 },
+	correctionRange: input({ start: frame, end: frame }),
 	pin: { type: "string", minLength: 1, maxLength: 64 } });
 const ikTracks = input({}, Object.fromEntries([...STUDIO_IK_CHAIN_TRACKS, ...STUDIO_IK_JOINT_TRACKS].map(track => [track, ikTrackKey])));
 /** The bones an object can ride (src/scene-objects.js SCENE_ATTACH_BONES). */

@@ -1387,7 +1387,8 @@ export default function App() {
 		bodyContact, setBodyContact, IK_CORRECTION_BLEND_FRAMES, autoPhysicsRunning, setAutoPhysicsRunning,
 		physicsPreview, setPhysicsPreview, physicsShow, physicsProgress, physicsOptions, setPhysicsOptions,
 		ikTick, setIkTick, committedIkEdits, setCommittedIkEdits, trailFalloffS, setTrailFalloffS, showTrails,
-		setShowTrails, ikEditTool, setIkEditTool, trailEdit, trailFalloffFrames, focusIkHandle, snapshotIkKeys,
+		setShowTrails, ikEditTool, setIkEditTool, trailEdit, trailTrackFocus, selectTrailTrack, clearTrailTrackFocus, trailFalloffFrames, focusIkHandle, snapshotIkKeys,
+		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		rangePins, rangePinResiduals, rangePinSelection, setRangePinSelection, rangePinPartPick, setRangePinPartPick, rangePinPreview, previewRangePinDraft, applyRangePinDraft, deleteRangePin,
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, bridge, setBridge, bridgeChecking,
 		motionSetupReveal, motionSetupKind, setArdyPrompt, setArdyDuration, ardySeed, preserveStrength,
@@ -4094,11 +4095,12 @@ export default function App() {
 		// Preview changes may re-run this effect without a playhead change.
 		// Always re-establish the motion base before adding a correction.
 		if (motion) poseMemberAtFrame(activeRig, motion, null, tlFrame);
-		const layer = physicsPreview && physicsShow ? physicsPreview.candidate : ikStateRef.current;
+		const layer = pendingIkEdit?.characterId === activeChar.id ? pendingIkEdit.candidate
+			: physicsPreview && physicsShow ? physicsPreview.candidate : ikStateRef.current;
 		if (ikMode || layer.keys.size > 0) {
 			ikEvaluate(ikChains, layer, tlFrame, ikFkJoints, motion ? IK_CORRECTION_BLEND_FRAMES : 0);
 		}
-	}, [ikMode, ikChains, activeRig, motion, posing, tlFrame, ikTick, ikFkJoints, physicsPreview, physicsShow]);
+	}, [ikMode, ikChains, activeRig, motion, posing, tlFrame, ikTick, ikFkJoints, physicsPreview, physicsShow, pendingIkEdit, activeChar.id]);
 
 	// Re-seat the handles on the keyed pose when the FRAME changes with IK
 	// on — scrubbing to frame 39 shows that frame's interpolated pose AND
@@ -4234,12 +4236,22 @@ export default function App() {
 			// Motion-trail QA surface: read the current trail policy and drive the
 			// same drag -> preview -> pending-edit path headless checks cannot reach
 			// through synthetic pointers reliably.
-			trail: { falloffFrames: trailFalloffFrames, falloffS: trailFalloffS, edit: trailEdit, tool: ikEditTool, visible: showTrails },
+			trail: { falloffFrames: trailFalloffFrames, falloffS: trailFalloffS, edit: trailEdit, tool: ikEditTool, visible: showTrails, activeTrackId: trailTrackFocus, visibleTracks: trailTrackFocus ? [trailTrackFocus] : null },
 			trailPoints: (jointName = "Hips") => jointTrailPoints(motion, jointName, { baseY: activeChar.y ?? 0, scale: activeChar.scale ?? 1 }),
 			trailEditApply: (grabFrame, delta) => {
-				onTrailDragStart({ grabFrame });
+				onTrailDragStart({ track: "hips", grabFrame });
 				onTrailDragPreview({ track: "hips", grabFrame, delta });
 				onTrailDragEnd({ track: "hips", grabFrame, delta });
+			},
+			// QA-only IK drag seam: resolves the same production solve/end path as
+			// the viewport manipulator, with a deterministic world-space offset.
+			ikPreviewApply: (track = "leftHand", offset = { x: 0.02, y: 0, z: 0 }) => {
+				const chain = ikChains?.get(track), bone = chain?.bones?.[2];
+				if (!bone) return false;
+				const target = bone.getWorldPosition(new THREE.Vector3()).add(new THREE.Vector3(offset.x ?? 0, offset.y ?? 0, offset.z ?? 0));
+				ikSolve("chain", track, target);
+				ikDragEnd();
+				return true;
 			},
 			trailRegenerate: runTrailRegeneration,
 			// Fix-collisions QA surface: live penetration readout for headless
@@ -4287,7 +4299,7 @@ export default function App() {
 		// close over them: a stale closure would report the set as it was two
 		// edits ago — and, after an undo that removes a subject, would keep
 		// reporting the ghost's capsules.
-	}, [activeRig, motion, tlFrame, tlFrameCount, ikMode, ikChains, ikFocus, ikTick, charA, rangePins, rangePinResiduals, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, preview, posing, playMode, pathDraw, trailEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning, platformFitRunning, platformFitLast, platformFitApplied]);
+	}, [activeRig, motion, tlFrame, tlFrameCount, ikMode, ikChains, ikFocus, ikTick, charA, rangePins, rangePinResiduals, committedIkEdits, waypoints, lookThroughShot, selectedSceneObject, sceneObjects, rigs, characters, pathPointIndex, preview, posing, playMode, pathDraw, trailEdit, trailTrackFocus, pendingIkEdit, trailFalloffFrames, trailFalloffS, ikEditTool, showTrails, physicsPreview, physicsShow, physicsOptions, autoPhysicsRunning, platformFitRunning, platformFitLast, platformFitApplied]);
 	// QA hook (plan §6.5): exposes history depth and the present === objects
 	// invariant so the browser suite can assert undo entry counts directly.
 	// Reads live store state at call time; re-registered after every render.
@@ -6733,7 +6745,8 @@ export default function App() {
 		physicsPreview, physicsShow, physicsOptions, platformFitRunning, platformFitProgress,
 		platformFitLast, platformFitApplied, changePhysicsOptions, runAutoPhysics, showPhysicsPreview,
 		applyPhysicsPreview, cancelPhysicsPreview, ikEditTool, setIkEditTool, showTrails,
-		setShowTrails, trailFalloffS, setTrailFalloffS, trailEdit, runTrailRegeneration,
+		setShowTrails, trailFalloffS, setTrailFalloffS, trailEdit, trailTrackFocus, selectTrailTrack, clearTrailTrackFocus, runTrailRegeneration,
+		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		trailReadinessState, rangePins, rangePinResiduals, rangePinSelection, rangePinPartPick,
 		rangePinPreview, setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft,
 		deleteRangePin, hasEnvSheet, environment, style, environmentImage,
@@ -7268,6 +7281,7 @@ export default function App() {
 									baseY={activeChar.y ?? 0}
 									charScale={activeChar.scale ?? 1}
 									ikFocus={ikFocus}
+									activeTrackId={trailTrackFocus}
 									falloffFrames={trailFalloffFrames}
 									playheadFrame={tlFrame}
 									pendingEdit={trailEdit}
