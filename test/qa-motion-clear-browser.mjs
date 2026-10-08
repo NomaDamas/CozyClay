@@ -77,6 +77,7 @@ const checks = [];
 const pass = (label, detail) => { checks.push({ label, ...detail }); console.log(`PASS ${label} ${JSON.stringify(detail)}`); };
 
 try {
+	await send('Runtime.enable');
 	assert.equal(await waitFor('!!window.__cozyclay?.motion && window.__cozyclay.motion.frames > 0 && !!document.querySelector("[aria-label=\\"Clear loaded motion\\"]")'), true, 'motion take and clear action load');
 	assert.equal(await waitFor('document.querySelector(".app")?.dataset.workflowMode === "scene"'), true, 'Stage workflow loads');
 	const stage = await clearGeometry();
