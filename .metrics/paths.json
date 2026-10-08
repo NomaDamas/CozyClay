@@ -1982,5 +1982,67 @@
       "count": 5,
       "uniques": 5
     }
+  ],
+  "2026-10-08": [
+    {
+      "path": "/NomaDamas/CozyClay",
+      "title": "Overview",
+      "count": 1156,
+      "uniques": 630
+    },
+    {
+      "path": "/NomaDamas/CozyClay/issues",
+      "title": "/issues",
+      "count": 35,
+      "uniques": 15
+    },
+    {
+      "path": "/NomaDamas/CozyClay/pulls",
+      "title": "/pulls",
+      "count": 22,
+      "uniques": 9
+    },
+    {
+      "path": "/NomaDamas/CozyClay/blob/main/docs/kimodo-setup.md",
+      "title": "/blob/main/docs/kimodo-setup.md",
+      "count": 8,
+      "uniques": 8
+    },
+    {
+      "path": "/NomaDamas/CozyClay/tree/main",
+      "title": "/tree/main",
+      "count": 8,
+      "uniques": 7
+    },
+    {
+      "path": "/NomaDamas/CozyClay/fork",
+      "title": "/fork",
+      "count": 8,
+      "uniques": 6
+    },
+    {
+      "path": "/NomaDamas/CozyClay/releases",
+      "title": "/releases",
+      "count": 7,
+      "uniques": 7
+    },
+    {
+      "path": "/NomaDamas/CozyClay/blob/main/mcp/README.md",
+      "title": "/blob/main/mcp/README.md",
+      "count": 6,
+      "uniques": 6
+    },
+    {
+      "path": "/NomaDamas/CozyClay/releases/tag/v1.10.0",
+      "title": "/releases/tag/v1.10.0",
+      "count": 6,
+      "uniques": 6
+    },
+    {
+      "path": "/NomaDamas/CozyClay/blob/main/package.json",
+      "title": "/blob/main/package.json",
+      "count": 5,
+      "uniques": 5
+    }
   ]
 }
