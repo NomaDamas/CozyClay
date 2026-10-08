@@ -345,7 +345,9 @@ export function useShots(appContext) {
       const travel = Math.ceil(curve.length / speed * tlFps) + Math.round(tlFps * 0.5);
       const endFrame = Math.min(tlFrameCount - 1, activeShot.startFrame + Math.max(travel, activeShot.endFrame - activeShot.startFrame));
       setTimelineShotRange(activeShot.id, activeShot.startFrame, endFrame);
-      appContext.shared.enterPreview(); setTlFrame(activeShot.startFrame);
+      // The landing tutorial's last step is pressing ▶ (#602): open the player
+      // on the shot camera, but leave playback to the visitor.
+      appContext.shared.enterPreview(); appContext.shared.setTlPlaying(false); setTlFrame(activeShot.startFrame);
       appContext.notify(isKo ? '레일 완성 — 샷 카메라 시점으로 전환했습니다. ▶ 로 재생, Esc 로 복귀' : 'Rail drawn — you are looking through the shot camera. Press ▶ to ride it; Esc goes back to flying.'); return;
     }
     appContext.notify(isKo ? `카메라 레일 완성 — ${curve ? curve.length.toFixed(1) : '?'} m, 제어점 ${simplified.length}개` : `Camera rail drawn — ${curve ? curve.length.toFixed(1) : '?'} m, ${simplified.length} control points`);
