@@ -11,7 +11,10 @@ import { createContext, useContext } from "react";
 // - generation, blocks/refine, takes/recipe and preserve strength;
 // - agentOpen/toggleAgent, preferencesOpen/setPreferencesOpen;
 // - statusText/setStatusText, previewRanges/setPreviewRanges, liveHubStatus,
-//   flySpeed (the navigation multiplier, not metres per second).
+//   flySpeed (the navigation multiplier, not metres per second);
+// - previsMode ("storyboard" | "animation"), sceneRevision (bumps on every
+//   authored edit) and capturePanelThumbnail(shot) (the shot's first frame as
+//   a PNG data URL, or null) for the Board dock tab.
 export const StudioShellContext = createContext(null);
 
 export function useStudioShell() {
