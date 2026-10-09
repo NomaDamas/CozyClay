@@ -336,10 +336,14 @@ function verificationFiles(directory) {
 // Every suite reserves its own ports and writes under a temp dir, so files
 // are independent of each other; running them serially cost CI five minutes
 // (#413). `--jobs 1` restores the old interleaved live output for debugging.
+// `--shard INDEX/TOTAL` selects a deterministic round-robin slice for CI
+// runners. Shards are disjoint over the sorted inventory and together cover
+// the same runnable set as an unsharded invocation.
 function parseArguments(arguments_) {
 	let listOnly = false;
 	let scope = "all";
 	let jobs = Number(process.env.COZYCLAY_TEST_JOBS) || availableParallelism();
+	let shard = null;
 	for (let index = 0; index < arguments_.length; index += 1) {
 		const argument = arguments_[index];
 		if (argument === "--list") {
@@ -356,11 +360,24 @@ function parseArguments(arguments_) {
 			index += 1;
 			continue;
 		}
+		if (argument === "--shard") {
+			const value = arguments_[index + 1] ?? "";
+			const match = /^(\d+)\/(\d+)$/.exec(value);
+			if (!match) throw new Error(`--shard must be INDEX/TOTAL with 1 <= INDEX <= TOTAL, got ${value}`);
+			const current = Number(match[1]);
+			const total = Number(match[2]);
+			if (!Number.isInteger(current) || !Number.isInteger(total) || current < 1 || total < 1 || current > total) {
+				throw new Error(`--shard must be INDEX/TOTAL with 1 <= INDEX <= TOTAL, got ${value}`);
+			}
+			shard = { current, total };
+			index += 1;
+			continue;
+		}
 		throw new Error(`unknown argument: ${argument}`);
 	}
 	if (scope !== "all" && scope !== "ardy") throw new Error(`unknown test scope: ${scope}`);
 	if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`--jobs must be a positive integer, got ${jobs}`);
-	return { listOnly, scope, jobs };
+	return { listOnly, scope, jobs, shard };
 }
 
 // One file per child. With more than one job the output is buffered per file
@@ -492,7 +509,7 @@ if (!mcpDepsInstalled) {
 	}
 }
 
-const { listOnly, scope, jobs } = parseArguments(process.argv.slice(2));
+const { listOnly, scope, jobs, shard } = parseArguments(process.argv.slice(2));
 const inventory = [...verificationFiles("test"), ...verificationFiles("mcp"), ...EXTRA_INVENTORY].sort();
 for (const file of inventory) {
 	if (/^test\/bus\/verify-.*\.mjs$/.test(file)) categories.set(file, { kind: "node", reason: "command bus contract verification" });
@@ -508,20 +525,30 @@ if (unclassified.length > 0 || stale.length > 0) {
 
 const scoped = inventory.filter((file) => scope === "all" || file.startsWith("test/ardy/") || file.startsWith("test/ik/"));
 const runnable = scoped.filter((file) => categories.get(file).kind === "node");
-console.log(`TEST MANIFEST scope=${scope} runnable=${runnable.length} total=${scoped.length} jobs=${jobs}`);
+const selected = shard ? runnable.filter((_, index) => index % shard.total === shard.current - 1) : runnable;
+const selectedSet = new Set(selected);
+console.log(
+	`TEST MANIFEST scope=${scope} runnable=${runnable.length} selected=${selected.length} total=${scoped.length} jobs=${jobs}${
+		shard ? ` shard=${shard.current}/${shard.total}` : ""
+	}`,
+);
 for (const file of scoped) {
 	const { kind, reason } = categories.get(file);
+	if (kind === "node" && shard && !selectedSet.has(file)) {
+		console.log(`SHARD node ${file} - assigned to another shard`);
+		continue;
+	}
 	console.log(`${kind === "node" ? "RUN" : "EXCLUDE"} ${kind} ${file} - ${reason}`);
 }
 
 if (!listOnly) {
 	if (jobs === 1) {
-		for (const file of runnable) {
+		for (const file of selected) {
 			console.log(`\nRUNNING ${file}`);
 			await run(file, { buffered: false });
 		}
 	} else {
-		await runAll(runnable, jobs);
+		await runAll(selected, jobs);
 	}
-	console.log(`\nPASS ${runnable.length} Node verification files`);
+	console.log(`\nPASS ${selected.length} Node verification files${shard ? ` (shard ${shard.current}/${shard.total})` : ""}`);
 }

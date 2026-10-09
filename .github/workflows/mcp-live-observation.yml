@@ -1,0 +1,48 @@
+name: MCP live observation
+
+on:
+  schedule:
+    - cron: "17 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mcp-live-observation
+  cancel-in-progress: true
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp/package-lock.json
+      - run: npm ci
+      - run: npm --prefix mcp ci
+      - name: Run capture observation
+        id: capture
+        continue-on-error: true
+        run: node mcp/verify-live-capture.mjs > /tmp/verify-live-capture.log 2>&1
+      - name: Publish observation
+        if: always()
+        run: |
+          {
+            echo "## MCP live capture observation"
+            echo ""
+            if [ "${{ steps.capture.outcome }}" = "success" ]; then
+              echo "- :white_check_mark: verify-live-capture"
+            else
+              echo "- :warning: verify-live-capture failed (observation only)"
+              echo '  ```'
+              tail -40 /tmp/verify-live-capture.log
+              echo '  ```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
