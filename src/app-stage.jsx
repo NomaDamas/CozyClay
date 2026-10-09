@@ -48,7 +48,7 @@ import {
 	loadSceneDocumentFromStorage,
 } from "./scenes.js";
 import ObjectGizmo from "./object-gizmo.jsx";
-import { MAX_PATH_POINTS } from "./object-path.js";
+import { MAX_PATH_POINTS, pathCurve, pathCurvePointBetween } from "./object-path.js";
 import { track } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import { isPlaygroundEmbed, takePlaygroundProject } from "./playground.js";
@@ -1811,13 +1811,8 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			if (best.t < 0.02 || best.t > 0.98) return;
 			event.stopImmediatePropagation();
 			event.preventDefault();
-			const a = points[best.index];
-			const b = points[best.index + 1];
-			const inserted = {
-				x: a.x + (b.x - a.x) * best.t,
-				y: (a.y ?? 0) + ((b.y ?? 0) - (a.y ?? 0)) * best.t,
-				z: a.z + (b.z - a.z) * best.t,
-			};
+			// On the curve, so adding a handle barely reshapes the route.
+			const inserted = pathCurvePointBetween(points, best.index, best.t);
 			const next = [...points.slice(0, best.index + 1), inserted, ...points.slice(best.index + 1)];
 			s.onDragStart?.();
 			s.onChangePoints(next);
@@ -1861,7 +1856,8 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [enabled, gl, invalidate]);
 	const linePoints = useMemo(
-		() => (path?.points ?? []).map((point) => [point.x, point.y + 0.02, point.z]),
+		// The curve the object travels, not the chords between its points.
+		() => (path?.points?.length > 1 ? pathCurve(path).points : path?.points ?? []).map((point) => [point.x, point.y + 0.02, point.z]),
 		[path],
 	);
 	if (!enabled || !path || linePoints.length < 2) return null;

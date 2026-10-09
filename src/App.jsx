@@ -189,6 +189,7 @@ import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
 	objectTransformAt,
+	pathCurvePointBetween,
 	pathMetrics,
 	strokeToPathPoints,
 	MAX_PATH_POINTS,
@@ -1209,7 +1210,7 @@ export default function App() {
 		setPromptBlocksReveal, revealPromptBlocks, waypointMode, setWaypointMode, waypoints, setWaypoints,
 		activeWaypointId, setActiveWaypointId, pendingWaypointFrame, setPendingWaypointFrame, promptClips,
 		setPromptClips, editPromptClips, selectedPromptId, setSelectedPromptId, photoPoseState, photoPoseError,
-		setPhotoPoseError, allPoses, selectablePoses, posingIndex, posingChar, posedRig, setPosed, rootStart,
+		setPhotoPoseError, allPoses, selectablePoses, posingIndex, posingChar, posedRig, setPosed, rootStart, commitPosedPose,
 		queueRootWaypointFrame, castMemberOf, addCharacterWaypoint, moveCharacterWaypoint,
 		removeCharacterWaypoint, clearCharacterWaypoints, addFloorWaypoint, moveWaypoint, removeWaypoint,
 		toggleWaypointMode, openStudio, closeStudio, saveCurrentPose, savePose, posePhotoFile, removePose,
@@ -2536,10 +2537,20 @@ export default function App() {
 	appContext.publishScenes(scenes);
 	activeSceneIdRef.current = activeSceneId;
 	shotDocumentRef.current = createShotAuthoringDocument({ shots, waypoints, frameCount: tlFrameCount });
+	// The motion layers: their IK edits (Pose mode, IK keys, range pins) ride
+	// into the saved stage below with each character, and a change to them is
+	// a reason to autosave.
+	const motionLayers = appContext.storeDomain("motion")?.read() ?? null;
+	const ikEditsOf = (id) => {
+		const row = motionLayers?.find((layer) => layer.id === id);
+		if (!row || (!row.ikKeys?.length && !row.ikPins?.length)) return null;
+		return { keys: row.ikKeys, pins: row.ikPins ?? [], pinResiduals: row.ikPinResiduals ?? [] };
+	};
+	// sessionMotion is stripped: generated clips are session-only and far too
+	// heavy for the stage envelope; paths, prompt blocks and IK edits persist.
+	const stageCharacters = characters.map(({ sessionMotion, ...entry }) => ({ ...entry, ikEdits: ikEditsOf(entry.id) }));
 	actorStageRef.current = {
-		// sessionMotion is stripped: generated clips are session-only and far
-		// too heavy for the stage envelope; paths and prompt blocks persist.
-		characters: characters.map(({ sessionMotion, ...entry }) => entry),
+		characters: stageCharacters,
 		hasCharSheet,
 		environmentImage,
 		shotAspect: shotAspectKey,
@@ -3049,7 +3060,7 @@ export default function App() {
 		dirtyRef.current = true;
 		const timer = setTimeout(flushScenes, 400);
 		return () => clearTimeout(timer);
-	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, environmentImage, environment, style, hasEnvSheet, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId]);
+	}, [sceneObjects, shots, waypoints, tlFrameCount, charA, charB, showB, poseA, poseB, hasCharSheet, environmentImage, environment, style, hasEnvSheet, subject, subject2, shotAspectKey, sensorId, keyLight, scenes, activeSceneId, motionLayers]);
 	useEffect(() => {
 		const onPageHide = () => flushScenes();
 		const onVisibility = () => {
@@ -7437,6 +7448,7 @@ export default function App() {
 									markSemanticEdit("pose", before, after);
 									setPoseTick((n) => n + 1);
 								}}
+								onCommit={commitPosedPose}
 							/>
 							<IkHandles
 								chains={ikChains}
@@ -7505,13 +7517,8 @@ export default function App() {
 								onObjectPathPointInsert={(index, t) => {
 									const path = selectedSceneObject?.path;
 									if (!path || path.points.length >= MAX_PATH_POINTS) return;
-									const a = path.points[index];
-									const b = path.points[index + 1];
-									const inserted = {
-										x: a.x + (b.x - a.x) * t,
-										y: (a.y ?? 0) + ((b.y ?? 0) - (a.y ?? 0)) * t,
-										z: a.z + (b.z - a.z) * t,
-									};
+									// On the curve, so adding a handle barely reshapes the route.
+									const inserted = pathCurvePointBetween(path.points, index, t);
 									const points = [...path.points.slice(0, index + 1), inserted, ...path.points.slice(index + 1)];
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
 									changeSceneObject(selectedSceneObject.id, { path: { ...path, points } }, token);

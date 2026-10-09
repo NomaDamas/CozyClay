@@ -8,6 +8,7 @@ import { objectSize } from "./scene-objects.js";
 import { displayObjectLabel } from "./object-catalog.jsx";
 import { ko } from "./locale.js";
 import { isProxyFigure } from "./scenes.js";
+import { pathCurve } from "./object-path.js";
 
 const ROOM_LIMIT = 240; // stay on the open stage (matches scene-objects' clamp)
 const ACTOR_LIMIT = 4; // matches the Subject sliders' range
@@ -325,7 +326,9 @@ function ObjectPathLine({ points, selectedIndex = null }) {
 	return (
 		<group>
 			<Line
-				points={points.map((point) => [point.x, 0.028, point.z])}
+				// The line is the curve the object travels, not the chords
+				// between its points.
+				points={pathCurve({ points }).points.map((point) => [point.x, 0.028, point.z])}
 				color={OBJECT_PATH_COLOR}
 				lineWidth={3}
 				transparent
