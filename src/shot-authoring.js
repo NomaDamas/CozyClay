@@ -33,6 +33,27 @@ export const STILL_HOLD_DEFAULT = 48;
 export const STILL_HOLD_MAX = 240;
 export const shotHold = (shot) => shot.endFrame - shot.startFrame + 1;
 
+/** Lay the stills end to end from frame 0 in their array order, each keeping
+ * its hold; camera keys travel with their still. Clip shots are untouched.
+ * The result is sorted by startFrame, the order the document stores. */
+export function reflowStillShots(shots) {
+	let cursor = 0;
+	return shots.map((shot) => {
+		if (shot.kind !== "still") return shot;
+		const hold = shotHold(shot), delta = cursor - shot.startFrame;
+		cursor += hold;
+		if (!delta) return shot;
+		return { ...shot, startFrame: shot.startFrame + delta, endFrame: shot.endFrame + delta,
+			cameraKeys: shot.cameraKeys.map((key) => ({ ...key, frame: key.frame + delta })) };
+	}).sort((a, b) => a.startFrame - b.startFrame);
+}
+
+/** The timeline length a reflowed document needs, unclamped so a caller can
+ * refuse a storyboard past STILL_FRAME_COUNT_MAX instead of truncating it. */
+export function stillFrameCount(shots) {
+	return Math.max(DEFAULT_FRAME_COUNT, ...shots.map((shot) => shot.endFrame + 1));
+}
+
 const SHOT_KINDS = new Set(["clip", "still"]);
 const CAPTION_MAX = 500;
 // Mirrors the cast posture vocabulary (POSTURES in src/scenes.js once the
@@ -43,6 +64,7 @@ const POSTURES = new Set(["stand", "sit", "lie"]);
 const FRAME_COUNT_MIN = 24;
 const FRAME_COUNT_MAX = 28800;
 const DEFAULT_FRAME_COUNT = 144;
+export const STILL_FRAME_COUNT_MAX = FRAME_COUNT_MAX;
 const RAIL_MAX_POINTS = 512;
 const finite = Number.isFinite;
 
