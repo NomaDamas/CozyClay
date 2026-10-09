@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { objectTransformAt } from "./object-path.js";
+import { sceneObjectTravelMatrixAt } from "./object-travel.js";
 import * as THREE from "three";
 import { GIZMO_LAYER } from "./dualview.jsx";
 import { CUTOUT_KIND, MESH_KIND } from "./scene-objects.js";
@@ -482,7 +483,7 @@ const placeLocal = new THREE.Matrix4();
 const placeWorld = new THREE.Matrix4();
 const placeFrame = new THREE.Matrix4();
 
-function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null }) {
+function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null, travelLookupRef = null }) {
 	const groupRef = useRef(null);
 	const attach = object.attach ?? null;
 	// An object on a travel path — or one CARRIED by a character — is placed
@@ -496,7 +497,14 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
 		const group = groupRef.current;
 		if (!group) return;
 		const frame = frameRef?.current ?? 0;
-		if (attach || object.path) {
+		// A record under a routed parent travels with it (object-travel.js), and
+		// so does a routed record itself: one answer from the authored records.
+		const travelled = frameRef && !attach && travelLookupRef?.current
+			? sceneObjectTravelMatrixAt(travelLookupRef.current, object.id, frame, take ?? {}, placeWorld)
+			: null;
+		if (travelled) {
+			travelled.decompose(group.position, group.quaternion, group.scale);
+		} else if (attach || object.path) {
 			// The authored numbers first. While attached they are the prop's LOCAL
 			// transform in the attach frame; otherwise they are already world.
 			placePos.set(object.x, object.y ?? 0, object.z);
@@ -584,8 +592,13 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
  * loop and would otherwise record props one frame stale; `worldRef` with a
  * "where is this prop" lookup, so a reparent converts from the transform on
  * screen instead of from a second computation of it. */
-export function SetProps({ objects = [], selectedId = null, frameRef = null, take = null, attachFrameRef = null, syncRef = null, worldRef = null }) {
+export function SetProps({ objects = [], authoredObjects = null, selectedId = null, frameRef = null, take = null, attachFrameRef = null, syncRef = null, worldRef = null }) {
 	const registryRef = useRef(null);
+	// The authored records by id: a child's travel is its routed parent's
+	// route against the parent's AUTHORED pose, which the display copies in
+	// `objects` no longer carry once they have been animated.
+	const travelLookupRef = useRef(null);
+	travelLookupRef.current = useMemo(() => (authoredObjects ? new Map(authoredObjects.map((object) => [object.id, object])) : null), [authoredObjects]);
 	if (!registryRef.current) registryRef.current = new Map();
 	if (syncRef) syncRef.current = () => { for (const entry of registryRef.current.values()) entry.place(); };
 	if (worldRef) worldRef.current = (id, out) => registryRef.current.get(id)?.world(out) ?? null;
@@ -600,6 +613,7 @@ export function SetProps({ objects = [], selectedId = null, frameRef = null, tak
 					take={take}
 					attachFrameRef={attachFrameRef}
 					registryRef={registryRef}
+					travelLookupRef={travelLookupRef}
 				/>
 			))}
 		</group>

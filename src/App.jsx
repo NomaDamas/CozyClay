@@ -189,6 +189,7 @@ import {
 	strokeToPathPoints,
 	MAX_PATH_POINTS,
 } from "./object-path.js";
+import { sceneObjectsAt } from "./object-travel.js";
 import {
 	analyticsActive,
 	exportFailureCode,
@@ -2234,15 +2235,11 @@ export default function App() {
 	// the export overwrites it per captured frame and restores nothing, which
 	// is correct — the next render puts it back.
 	propFrameRef.current = tlFrame;
-	const animatedSceneObjects = useMemo(() => {
-		if (!sceneObjects.some((object) => object.path)) return sceneObjects;
-		const take = { frameCount: tlFrameCount, fps: tlFps };
-		return sceneObjects.map((object) => {
-			const at = objectTransformAt(object, tlFrame, take);
-			if (!at) return object;
-			return { ...object, x: at.x, y: at.y, z: at.z, rot: at.rot ?? object.rot };
-		});
-	}, [sceneObjects, tlFrame, tlFrameCount, tlFps]);
+	// Routed records and everything grouped under them (object-travel.js).
+	const animatedSceneObjects = useMemo(
+		() => sceneObjectsAt(sceneObjects, tlFrame, { frameCount: tlFrameCount, fps: tlFps }),
+		[sceneObjects, tlFrame, tlFrameCount, tlFps],
+	);
 
 	// Auto color: Blender's viewport "Random" mode. A DISPLAY-ONLY marker rides
 	// each non-cutout object into the renderers; the authored `color`, the scene
@@ -6879,6 +6876,7 @@ export default function App() {
 							{gridView ? <GridFloor layer={GIZMO_LAYER} /> : <Room light={uiTheme === "light"} />}
 							<SetProps
 								objects={stageSceneObjects}
+								authoredObjects={sceneObjects}
 								selectedId={selectedSceneObjectId}
 								frameRef={propFrameRef}
 								take={{ frameCount: tlFrameCount, fps: tlFps }}
@@ -7151,9 +7149,13 @@ export default function App() {
 									if (!selectedSceneObject) return;
 									// Few points on purpose: the stroke sets the shape, the
 									// operator adds the handles they actually want by
-									// double-clicking the line. Height comes later, from
+									// double-clicking the line. The route starts at the height
+									// the object stands at, so a raised body (a chassis on its
+									// wheels, a prop on a table) travels where it is instead of
+									// dropping to the floor; changing height comes later, from
 									// dragging a point in the scene.
-									const points = strokeToPathPoints(stroke, simplifyStroke);
+									const height = selectedSceneObject.attach ? 0 : selectedSceneObject.y ?? 0;
+									const points = strokeToPathPoints(stroke, simplifyStroke).map((point) => ({ ...point, y: height }));
 									if (points.length < 2) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
 									changeSceneObject(selectedSceneObject.id, { path: { ...(selectedSceneObject.path ?? {}), points } }, token);
