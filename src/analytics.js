@@ -79,6 +79,8 @@ export const EDIT_GROUPS = Object.freeze({
 export const EDIT_BUCKET_KEYS = Object.freeze(Object.keys(EDIT_GROUPS).map((group) => `${group}_edit_bucket`));
 export const USE_CASE_VALUES = Object.freeze(["animation", "film", "game", "ad_mv", "personal", "other", "skip"]);
 export const TEAM_VALUES = Object.freeze(["team", "solo", "skip"]);
+// Mirrors PREVIS_MODES in project.js; kept local so analytics stays import-light.
+export const PREVIS_MODE_VALUES = new Set(["storyboard", "animation"]);
 export const UPDATE_STATUS_VALUES = Object.freeze(["latest", "outdated", "unknown"]);
 const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 	"https://cozyclay.org",
@@ -97,7 +99,7 @@ const EVENT_PROPERTIES = Object.freeze({
 	"hosted:ticket_created": [],
 	"hosted:result_opened": [],
 	"hosted:opened_in_studio": [],
-	"scene:created": ["scene_source"],
+	"scene:created": ["scene_source", "previs_mode"],
 	"scene:loaded": ["scene_source"],
 	"project:saved": ["object_count_bucket", "shot_count_bucket"],
 	"project:opened": ["age_bucket"],
@@ -333,6 +335,7 @@ export function sanitizeProps(event, props) {
 			if (!ERROR_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		}
 		if (event === "device:profile" && !DEVICE_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		if (key === "previs_mode" && !PREVIS_MODE_VALUES.has(props[key])) continue;
 		if (event === "survey:use_case") {
 			if (key === "use_case" && !USE_CASE_VALUES.includes(props[key])) continue;
 			if (key === "team" && !TEAM_VALUES.includes(props[key])) continue;

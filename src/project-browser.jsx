@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import packageInfo from "../package.json";
 import { ko } from "./locale.js";
+import { previsModesEnabled } from "./previs-flag.js";
 import {
 	hasDirectoryPicker,
 	hasFileSystemAccess,
@@ -12,6 +13,7 @@ import {
 	removeRecentProject,
 	requestHandlePermission,
 	storeProjectsDirectory,
+	DEFAULT_PREVIS_MODE,
 } from "./project.js";
 import "./project-browser.css";
 
@@ -25,6 +27,21 @@ const BLANK_TEMPLATE = Object.freeze({
 	kind: "blank",
 	code: "NEW",
 });
+
+// The two project modes the New view offers when previs modes are enabled.
+// Storyboard starts from an empty stage only; Animation keeps every template.
+const MODE_OPTIONS = [
+	{
+		id: "storyboard",
+		label: () => ko("Storyboard", "스토리보드"),
+		blurb: () => ko("Describe scenes in words and direct one panel at a time. Output: image references.", "말로 장면을 설명하면 한 장씩 패널을 연출합니다. 결과물: 이미지 레퍼런스."),
+	},
+	{
+		id: "animation",
+		label: () => ko("Animation", "애니메이션"),
+		blurb: () => ko("Block and shoot continuous motion. Output: clip references.", "연속 동작을 블로킹하고 촬영합니다. 결과물: 클립 레퍼런스."),
+	},
+];
 
 // App.jsx keeps the project mutation behind its named requestNewProject/newProject
 // path. The v2 chooser already has the name, so this short-lived handoff seeds
@@ -91,9 +108,11 @@ export function ProjectNameDialog({ open, initialName = "My Project", onCancel, 
  */
 export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew, onClose, startup = false, starters = [], onStarter }) {
 	const starterTemplates = useMemo(() => starters.map(sampleTemplate), [starters]);
+	const [previsEnabled] = useState(() => previsModesEnabled());
+	const [previsMode, setPrevisMode] = useState(DEFAULT_PREVIS_MODE);
 	const templates = useMemo(
-		() => [BLANK_TEMPLATE, ...starterTemplates],
-		[starterTemplates],
+		() => (previsEnabled && previsMode === "storyboard" ? [BLANK_TEMPLATE] : [BLANK_TEMPLATE, ...starterTemplates]),
+		[previsEnabled, previsMode, starterTemplates],
 	);
 	const defaultTemplate = starterTemplates[0] ?? BLANK_TEMPLATE;
 	const [activeNav, setActiveNav] = useState(startup ? "new" : "recent");
@@ -186,16 +205,28 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 		setName((current) => current.trim() ? current : template.name);
 	};
 
+	const choosePrevisMode = (mode) => {
+		setPrevisMode(mode);
+		// Storyboard offers the blank stage only, so a starter selection cannot
+		// survive the switch.
+		if (mode !== "storyboard" || selectedTemplate?.id === BLANK_TEMPLATE.id) return;
+		setSelectedTemplateId(BLANK_TEMPLATE.id);
+		// A name the starter card filled in would now describe the wrong stage.
+		setName((current) => (current.trim() === selectedTemplate?.name ? BLANK_TEMPLATE.name : current));
+	};
+
 	const createProject = (event) => {
 		event.preventDefault();
 		const projectName = name.trim();
 		if (!projectName) return;
 		if (selectedTemplate?.starterId) {
-			onStarter?.(selectedTemplate.starterId, projectName);
+			if (previsEnabled) onStarter?.(selectedTemplate.starterId, projectName, { previsMode: "animation" });
+			else onStarter?.(selectedTemplate.starterId, projectName);
 			return;
 		}
 		pendingProjectName = projectName;
-		onNew(projectName);
+		if (previsEnabled) onNew(projectName, { previsMode });
+		else onNew(projectName);
 	};
 
 	const recentEntries = [
@@ -240,6 +271,24 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 							<h1>{activeNav === "recent" ? ko("Recent", "최근") : activeNav === "samples" ? ko("Samples", "샘플") : activeNav === "learn" ? ko("Learn", "배우기") : ko("New Project", "새 프로젝트")}</h1>
 							{activeNav !== "new" && <button type="button" className="v2-start-close x" onClick={onClose} aria-label={ko("Close", "닫기")}>×</button>}
 						</div>
+						{previsEnabled && activeNav === "new" && (
+							<div className="v2-start-mode" role="radiogroup" aria-label={ko("Project mode", "프로젝트 모드")} data-testid="start-previs-mode">
+								{MODE_OPTIONS.map((option) => (
+									<button
+										type="button"
+										key={option.id}
+										role="radio"
+										aria-checked={previsMode === option.id}
+										className={`v2-start-mode-option${previsMode === option.id ? " active" : ""}`}
+										data-previs-mode={option.id}
+										onClick={() => choosePrevisMode(option.id)}
+									>
+										<strong>{option.label()}</strong>
+										<span>{option.blurb()}</span>
+									</button>
+								))}
+							</div>
+						)}
 						{(activeNav === "new" || activeNav === "samples") && (
 							<div className="v2-start-tabs" role="tablist" aria-label={ko("Template categories", "템플릿 카테고리")}>
 								{CATEGORIES.map((entry) => (

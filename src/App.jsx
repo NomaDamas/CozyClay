@@ -7622,9 +7622,9 @@ export default function App() {
 						setProjectBrowserOpen(false);
 						void openStarterScene(id, "starter", name);
 					}}
-					onNew={() => {
+					onNew={(name, options) => {
 						setProjectBrowserOpen(false);
-						requestNewProject();
+						requestNewProject(false, options);
 					}}
 					onClose={() => {
 						setProjectBrowserOpen(false);

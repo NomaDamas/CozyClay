@@ -290,6 +290,7 @@ const NODE_FILES = [
 
 const BROWSER_FILES = [
 	"test/qa-capsule-entry-browser.mjs",
+	"test/qa-previs-start-browser.mjs",
 	"test/qa-proxy-figure-browser.mjs",
 	"test/qa-motion-readiness-browser.mjs",
 	"test/qa-export-recovery-browser.mjs",
@@ -338,6 +339,7 @@ const EXTRA_INVENTORY = ["test/ik/translation-step.mjs", "test/qa-scenes-v5-migr
 
 EXTRA_INVENTORY.push("test/qa-proxy-figure-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-capsule-entry-browser.mjs");
+EXTRA_INVENTORY.push("test/qa-previs-start-browser.mjs");
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })
