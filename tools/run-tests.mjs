@@ -14,6 +14,7 @@ if (!process.env.COZYCLAY_AGENT_SESSIONS_DIR) {
 }
 
 const NODE_FILES = [
+	"test/verify-previs-flag.mjs",
 	"test/verify-morphgs-exporter.mjs",
 	"test/verify-studio-elements.mjs",
 	"test/bus/verify-view-mode-pose.mjs",
