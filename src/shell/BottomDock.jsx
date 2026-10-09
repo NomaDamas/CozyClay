@@ -3,6 +3,7 @@ import { useStudioShell } from "./studio-shell-context.js";
 import { logStore } from "./log-store.js";
 import "./dock.css";
 import LibrarySlot from "./LibrarySlot.jsx";
+import BoardSlot from "./BoardSlot.jsx";
 import { ko } from "../locale.js";
 import Timeline from "../ardy/timeline.jsx";
 import { DEFAULT_PLAYBACK_SPEED, SHOT_ASPECT_PRESETS, sceneObjectNameDisplayKo } from "../app-stage.jsx";
@@ -49,13 +50,25 @@ function readDockHeight() {
 }
 
 const DOCK_TABS = [
+	{ key: "board", label: () => ko("Board", "보드") },
 	{ key: "animation", label: () => ko("Animation", "애니메이션") },
 	{ key: "assets", label: () => ko("Assets", "에셋") },
 ];
 
-/** Animation | Assets: both stay mounted, so switching keeps the Sequencer's
- * scroll and zoom and the Library's folder and search. */
-export default function BottomDock({ tab = "animation", onTabChange, embedded = false }) {
+/** The dock's tabs for a project mode: a storyboard works in panels
+ * (Board | Assets), an animation in the Sequencer (Animation | Assets). */
+export function dockTabsFor(previsMode) {
+	const keys = previsMode === "storyboard" ? ["board", "assets"] : ["animation", "assets"];
+	return keys.map((key) => DOCK_TABS.find((entry) => entry.key === key));
+}
+
+/** Animation | Assets (Board | Assets in a storyboard): all stay mounted, so
+ * switching keeps the Sequencer's scroll and zoom and the Library's folder
+ * and search. Any stored tab the mode does not offer opens its first tab. */
+export default function BottomDock({ tab: requestedTab = "animation", onTabChange, embedded = false }) {
+	const { previsMode } = useStudioShell();
+	const tabs = embedded ? dockTabsFor(null) : dockTabsFor(previsMode);
+	const tab = tabs.some((entry) => entry.key === requestedTab) ? requestedTab : tabs[0].key;
 	const {
 		tlFrame, motion, waypointMode, craneSelectedIndex,
 		isCameraSelection, addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFrameCount,
@@ -190,7 +203,7 @@ export default function BottomDock({ tab = "animation", onTabChange, embedded = 
 				onKeyDown={onDockResizeKey}
 			/>
 			{!embedded && <div className="dock-tabs" role="tablist" aria-label={ko("Dock", "도크")}>
-				{DOCK_TABS.map((entry) => (
+				{tabs.map((entry) => (
 					<button
 						type="button"
 						role="tab"
@@ -204,6 +217,7 @@ export default function BottomDock({ tab = "animation", onTabChange, embedded = 
 				))}
 			</div>}
 			{!embedded && <LibrarySlot active={tab === "assets"} />}
+			{!embedded && previsMode === "storyboard" && <BoardSlot active={tab === "board"} />}
 			<div className="bottom-timeline" hidden={tab !== "animation"}>
 			<Timeline
 				frame={tlFrame}
@@ -374,7 +388,7 @@ export default function BottomDock({ tab = "animation", onTabChange, embedded = 
 			</div>
 			{/* Embeds keep their own shot monitor in the viewport (.vp-shot-preview);
 			    the card is styled for the full studio only. */}
-			{tab === "animation" && !embedded && <ShotCard />}
+			{(tab === "animation" || tab === "board") && !embedded && <ShotCard />}
 		</div>
 	);
 }

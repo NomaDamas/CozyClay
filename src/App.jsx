@@ -3868,6 +3868,13 @@ export default function App() {
 		return output;
 	}
 
+	// One storyboard panel as a picture: the shot's first frame through the
+	// offscreen capture rig, as a PNG data URL (null while the renderer has no
+	// frame). The contact sheet and the Board dock tab share it.
+	function capturePanelThumbnail(entry) {
+		return captureShotFramePng(entry.startFrame);
+	}
+
 	/** Contact sheet of the whole cut: one thumbnail and prompt per shot. */
 	async function exportStoryboard() {
 		try {
@@ -3875,7 +3882,7 @@ export default function App() {
 			setToast(ko("Composing the storyboard…", "스토리보드 구성 중…"));
 			const cells = [];
 			for (const [index, entry] of shots.entries()) {
-				const dataUrl = captureShotFramePng(entry.startFrame);
+				const dataUrl = capturePanelThumbnail(entry);
 				const meta = packMetaForShot(entry, index);
 				cells.push({
 					title: storyboardLine(`${index + 1}. ${entry.name}`),
@@ -6876,6 +6883,7 @@ export default function App() {
 		exportShotIdRef, setExportMenuAnchor, setExportMenuOpen, exportPhaseLabel,
 		exportMenuAnchor, resultOpen, exportFeedback, shots, exportKeyframePacks,
 		hasCameraKeys, motion, exportRenderPasses, exportDepthVideo, exportStoryboard,
+		capturePanelThumbnail, previsMode: scenesDomain.previsMode, sceneRevision: sceneRevisionRef.current,
 		downloadOtioCutList, projectStatus, liveWorkspaceHandle, selectedHierarchyId, selectHierarchy,
 		aimEditorAtKeyLight, characters, showB, ikFrames, ikMode,
 		rowIdForCharIndex, activeCharIndex, waypoints, sceneObjects, scenes,

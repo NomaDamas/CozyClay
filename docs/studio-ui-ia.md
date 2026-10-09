@@ -191,6 +191,15 @@ Trails; Perspective owns camera selection and Clay Lit owns shading. Language,
 Analytics and Motion setup live in Preferences under General › Appearance and
 Motion › ARDY Connection.
 
+The bottom dock's tabs follow the project mode. An animation project keeps
+**Animation | Assets**. A storyboard project shows **Board | Assets** and opens
+on Board. Board is the home of the storyboard panels: one card per still in
+still order, each with its thumbnail, caption, hold and the card actions
+(Duplicate, Delete, Stylize, Send to Workflow, Export). `+ Panel` adds a
+panel, a drag reorders the panels, and Delete on a focused card removes it.
+The card actions show on hover or focus, so Board adds no always-visible
+controls beyond `+ Panel`.
+
 G10 leaves exactly two visible add routes: viewport **+ Add** (the object
 catalogue plus Character and Camera) and **Content › Basic Shapes** (drag or
 double-click a primitive). The Outliner right-click **Create ▸** accelerator
