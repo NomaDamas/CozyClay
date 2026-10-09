@@ -2674,13 +2674,13 @@ export function loadSceneStartup() {
 }
 
 /* ------------------------- IK-mode motion trails --------------------------
- * World-space trajectory polylines of the loaded take: the root (hips) path
- * always, plus the focused IK effector's end-point trail. The whole clip is
+ * World-space trajectory polylines of the loaded take: the selected track,
+ * or all tracks when the user asks for an overview. The whole clip is
  * drawn as a faint line; while a grab is active the falloff window is
  * re-drawn on top as a bright highlight. Grabbing any point of a line starts
  * a drag on a camera-facing plane through the grab point; the caller deforms
  * the take (motion-trail.js falloff math) so the preview updates live. */
-export const MotionTrails = memo(function MotionTrails({ motion, rig = null, baseY, charScale, ikFocus, falloffFrames, playheadFrame, pendingEdit, enabled, visible = true, onDragStart, onDragPreview, onDragEnd }) {
+export const MotionTrails = memo(function MotionTrails({ motion, rig = null, baseY, charScale, ikFocus, activeTrackId = null, falloffFrames, playheadFrame, pendingEdit, enabled, visible = true, onDragStart, onDragPreview, onDragEnd }) {
 	const { camera, gl, invalidate } = useThree();
 	const [drag, setDrag] = useState(null);
 	const callbacksRef = useRef({ onDragStart, onDragPreview, onDragEnd });
@@ -2703,8 +2703,11 @@ export const MotionTrails = memo(function MotionTrails({ motion, rig = null, bas
 		[motion, rig, baseY, charScale],
 	);
 	const trackById = (id) => tracks.find((track) => track.id === id) ?? null;
+	const focusTrack = activeTrackId ? tracks.find((track) => track.id === activeTrackId)?.id ?? null : null;
+	const visibleTracks = focusTrack ? tracks.filter((track) => track.id === focusTrack) : tracks;
 	// The falloff window rides whichever line is being (or was last) grabbed.
-	const highlight = drag ?? pendingEdit;
+	const highlightCandidate = drag ?? pendingEdit;
+	const highlight = highlightCandidate && (!focusTrack || highlightCandidate.track === focusTrack) ? highlightCandidate : null;
 	const highlightPoints = useMemo(() => {
 		if (!highlight || !motion?.frames) return null;
 		const flat = trackById(highlight.track)?.flat ?? trackById("hips")?.flat;
@@ -2724,7 +2727,7 @@ export const MotionTrails = memo(function MotionTrails({ motion, rig = null, bas
 	// A single pointerdown listener that measures point-to-ray distance against
 	// the cached trail arrays costs nothing while the mouse merely moves.
 	const pickRef = useRef(null);
-	pickRef.current = { tracks, enabled, falloffFrames, playheadFrame };
+	pickRef.current = { tracks: visibleTracks, enabled, falloffFrames, playheadFrame };
 	// Line2 instances for in-place geometry rewrites during a drag.
 	const lineRefs = useRef({});
 	const highlightRef = useRef(null);
@@ -2821,7 +2824,6 @@ export const MotionTrails = memo(function MotionTrails({ motion, rig = null, bas
 	}, [gl, camera]);
 
 	if (!tracks.length) return null;
-	const focusTrack = TRAIL_EFFECTOR_JOINTS[ikFocus] ? tracks.find((track) => track.joint === TRAIL_EFFECTOR_JOINTS[ikFocus])?.id : null;
 	// depthTest off + high renderOrder: the trails read through the character
 	// and the floor instead of vanishing into them. Every part rides its own
 	// IK-handle colour; the focused part draws thicker.
@@ -2832,10 +2834,13 @@ export const MotionTrails = memo(function MotionTrails({ motion, rig = null, bas
 			ref={(group) => {
 				// QA-only escape hatch (same spirit as window.__cozyclay): lets
 				// headless perf probes toggle the trails without a rebuild.
-				if (typeof window !== "undefined") window.__cozyclayTrails = group;
+				if (typeof window !== "undefined") {
+					window.__cozyclayTrails = group;
+					window.__cozyclayVisibleTrailTracks = visibleTracks.map((track) => track.id);
+				}
 			}}
 		>
-			{tracks.map((track) => track.points.length > 1 && (
+			{visibleTracks.map((track) => track.points.length > 1 && (
 				<Line
 					key={track.id}
 					ref={(line) => {
@@ -2861,6 +2866,7 @@ export const MotionTrails = memo(function MotionTrails({ motion, rig = null, bas
 	previous.baseY === next.baseY &&
 	previous.charScale === next.charScale &&
 	previous.ikFocus === next.ikFocus &&
+	previous.activeTrackId === next.activeTrackId &&
 	previous.falloffFrames === next.falloffFrames &&
 	previous.playheadFrame === next.playheadFrame &&
 	previous.pendingEdit === next.pendingEdit &&

@@ -67,6 +67,7 @@ import { takeAnchor, createCharacterEntry } from "../scenes.js";
 import { retimeMotion } from "../ardy/retime.js";
 import {
 	createMotionEdit,
+	motionEditLayout,
 	renderMotionEdit,
 	remapFrameKeyMap,
 	remapTimelineFrame,
@@ -92,8 +93,8 @@ import {
 } from "../take-recipe.js";
 import { buildGenerationRequest, generationRefusal } from '../motion/generation.js';
 import { planPosePin } from '../ardy/pose-pin.js';
-import { applyTrailFalloffDelta, restoreTrailEdits, trailEditRange, worldDeltaToTrailClip } from "../motion-trail.js";
-import { bakeIkDragKey, chainsChangedBy, ikDragRecord, ikDragTouch } from "../ardy/ik-drag.js";
+import { TRAIL_TRACKS, applyTrailFalloffDelta, restoreTrailEdits, trailEditRange, worldDeltaToTrailClip } from "../motion-trail.js";
+import { bakeIkDragKey, bakeIkDragRange, chainsChangedBy, ikDragRecord, ikDragTouch } from "../ardy/ik-drag.js";
 import { ikKeyJson, ikTrackKeyFromJson } from "../ardy/ik-key-json.js";
 import { findAbsoluteIkKeyConflicts } from "../trail-key-conflicts.js";
 import { chooseIkEntryPose } from "../ik-camera.js";
@@ -113,6 +114,7 @@ function encodeMotionKeys(keys) {
 		...(key.q ? { q: key.q.map(keyQuaternion) } : {}), ...(key.p ? { p: keyVector(key.p) } : {}),
 		...(key.baseQ ? { baseQ: key.baseQ.map(keyQuaternion) } : {}), ...(key.basePos ? { basePos: keyVector(key.basePos) } : {}),
 		...(key.chainP ? { chainP: key.chainP.map(keyVector) } : {}), ...(key.keepTranslations ? { keepTranslations: true } : {}),
+		...(key.correctionRange ? { correctionRange: { start: key.correctionRange.start, end: key.correctionRange.end } } : {}),
 		...(key.blend != null ? { blend: key.blend } : {}),
 		...(key.pin ? { pin: key.pin } : {}),
 	}])) }));
@@ -124,6 +126,7 @@ function decodeMotionKeys(rows) {
 		q: key.q?.map(q) ?? null, p: key.p ? p(key.p) : null,
 		...(key.baseQ ? { baseQ: key.baseQ.map(q) } : {}), ...(key.basePos ? { basePos: p(key.basePos) } : {}),
 		...(key.chainP ? { chainP: key.chainP.map(p) } : {}), ...(key.keepTranslations ? { keepTranslations: true } : {}),
+		...(key.correctionRange ? { correctionRange: { start: key.correctionRange.start, end: key.correctionRange.end } } : {}),
 		...(key.blend != null ? { blend: key.blend } : {}),
 		...(key.pin ? { pin: key.pin } : {}),
 	}]))]));
@@ -245,8 +248,10 @@ export function createMotionDomain(appContext, characters) {
 			.flatMap(rows => rows.flatMap(row => [row.take?.resourceId, row.fullTake?.resourceId])).filter(Boolean));
 		for (const id of takes.keys()) if (!ids.has(id)) takes.delete(id);
 	}
-	function beginAction() {
-		rigImages.set(read(), gesture?.rigs ?? rigSnapshots());
+	function beginAction(preimages = null) {
+		// The bus passes a target id; an explicit preview commit can override
+		// only its rig's preimage without retaining the preview in Undo.
+		rigImages.set(read(), new Map([...(gesture?.rigs ?? rigSnapshots()), ...(preimages instanceof Map ? preimages : [])]));
 		const session = documentStore.beginAction('motion');
 		return { ...session,
 			run(fn) { return session.run(() => { running++; try { return fn(); } finally { running--; } }); },
@@ -555,6 +560,8 @@ export function useMotion(appContext) {
 	// outside React renders so pointer moves stay cheap and the drag-end bake
 	// can create a delta key over the raw clip.
 	const ikDragRef = useRef(null);
+	const ikPreDragRef = useRef(null);
+	const pendingIkEditRef = useRef(null);
 	const ikCameraMemoryRef = useRef(new Map());
 
 	const [ikChains, setIkChains] = useState(null);
@@ -562,6 +569,7 @@ export function useMotion(appContext) {
 	const [ikFkJoints, setIkFkJoints] = useState(null);
 
 	const [ikFocus, setIkFocus] = useState(null);
+	const [pendingIkEdit, setPendingIkEdit] = useState(null);
 
 	// Foot snap (ground plant): while ON, body (hips) drags keep the feet at
 	// the positions captured when the drag started — the knees bend instead
@@ -613,6 +621,7 @@ export function useMotion(appContext) {
 	const [ikEditTool, setIkEditTool] = useState("ik");
 
 	const [trailEdit, setTrailEdit] = useState(null);
+	const [trailTrackFocus, setTrailTrackFocus] = useState("hips");
 	const [rangePinSelection, setRangePinSelection] = useState(null);
 	const [rangePinPartPick, setRangePinPartPick] = useState(null);
 	const [rangePinPreview, setRangePinPreview] = useState(null);
@@ -629,6 +638,89 @@ export function useMotion(appContext) {
 			appContext.shared.setSelectedHierarchyId(hierarchyId);
 		}
 	}
+
+	function selectedIkRange(frame = appContext.shared.tlFrame) {
+		const count = Math.max(1, motion?.frames ?? appContext.shared.tlFrameCount ?? 1);
+		if (!motion) return { startFrame: 0, endFrame: count - 1 };
+		const edit = motion.editSegments ?? createMotionEdit(count);
+		const layout = motionEditLayout(edit);
+		const at = Math.max(0, Math.min(count - 1, Math.round(frame) || 0));
+		const selected = layout.find((segment) => at >= segment.timelineStart && at <= segment.timelineEnd) ?? layout[0];
+		return {
+			startFrame: Math.max(0, selected?.timelineStart ?? 0),
+			endFrame: Math.min(count - 1, selected?.timelineEnd ?? count - 1),
+		};
+	}
+
+	function setPendingIkEditValue(value) {
+		pendingIkEditRef.current = value;
+		setPendingIkEdit(value);
+	}
+
+	function restorePendingIkState(pending) {
+		// A replaced take or another authored edit owns the newer state.
+		if (domain.layer(pending.characterId) !== pending.sourceLayer) return;
+		const state = pending.state;
+		state.keys = copyPhysicsKeys(pending.beforeKeys);
+		state.tracked = new Set(pending.beforeTracked);
+		state.targets = new Map([...pending.beforeTargets].map(([id, target]) => [id, target.clone()]));
+		state.plants = new Map([...pending.beforePlants].map(([id, target]) => [id, target.clone()]));
+		if (pending.rig) {
+			if (pending.beforeFrame === appContext.shared.tlFrame) appContext.shared.restoreExportRig(pending.beforeRig);
+			else appContext.shared.poseMemberAtFrame(pending.rig, pending.motion, state, appContext.shared.tlFrame, IK_CORRECTION_BLEND_FRAMES);
+			if (state.chains) ikSeedTargets(state.chains, state);
+		}
+	}
+
+	function cancelPendingIkEdit() {
+		const pending = pendingIkEditRef.current;
+		if (!pending) return false;
+		restorePendingIkState(pending);
+		setPendingIkEditValue(null);
+		ikDragRef.current = null;
+		ikPreDragRef.current = null;
+		setIkTick((value) => value + 1);
+		return true;
+	}
+
+	function applyPendingIkEdit() {
+		const pending = pendingIkEditRef.current;
+		if (!pending) return false;
+		if (pending.characterId !== appContext.shared.activeChar.id || domain.layer(pending.characterId) !== pending.sourceLayer) {
+			cancelPendingIkEdit();
+			return false;
+		}
+		const session = domain.beginAction(new Map([[pending.characterId, pending.beforeRig]]));
+		try {
+			session.run(() => domain.setKeys(pending.characterId, pending.candidate.keys));
+			session.commit();
+		} catch (error) {
+			session.cancel();
+			throw error;
+		}
+		setPendingIkEditValue(null);
+		ikDragRef.current = null;
+		ikPreDragRef.current = null;
+		if (pending.rig) appContext.shared.poseMemberAtFrame(pending.rig, motion, pending.state, appContext.shared.tlFrame, IK_CORRECTION_BLEND_FRAMES);
+		setIkTick((value) => value + 1);
+		appContext.notify(isKo
+			? `IK 보정을 ${pending.startFrame}–${pending.endFrame}프레임에 적용했어요`
+			: `Applied IK correction across frames ${pending.startFrame}–${pending.endFrame}`);
+		return true;
+	}
+
+	function clearTrailTrackFocus() {
+		setTrailTrackFocus(null);
+		setIkFocus(null);
+	}
+	function selectTrailTrack(track) {
+		setTrailTrackFocus(track);
+		focusIkHandle(track);
+	}
+
+	useEffect(() => {
+		if (!ikMode || ikEditTool !== "trail") setTrailTrackFocus(TRAIL_TRACKS.some(track => track.id === ikFocus) ? ikFocus : "hips");
+	}, [ikMode, ikEditTool, ikFocus]);
 
 	function ensureRangePinState(state) {
 		if (!state) return state;
@@ -885,6 +977,13 @@ export function useMotion(appContext) {
 
 	// Loaded motion: decoded arrays plus the world anchor captured at load.
 	const motion = domain.visibleMotion(appContext.shared.activeChar.id);
+	useEffect(() => {
+		const pending = pendingIkEditRef.current;
+		if (pending && (pending.characterId !== appContext.shared.activeChar.id
+			|| pending.rig !== appContext.shared.activeRig || pending.motion !== motion
+			|| pending.sourceLayer !== domain.layer(pending.characterId)
+			|| !ikMode || ikEditTool !== "ik")) cancelPendingIkEdit();
+	}, [appContext.shared.activeChar.id, appContext.shared.activeRig, motion, pinLayer, ikMode, ikEditTool]);
 	const rangePinRebuildRef = useRef(null);
 	const rangePinSourceStamp = JSON.stringify([pinLayer.take, appContext.shared.activeChar.id]);
 	// A fit is invalidated by a different take, trim or preview, not by key
@@ -968,6 +1067,7 @@ export function useMotion(appContext) {
 
 	/* --------------------------- motion playback ---------------------------- */
 	function leaveIkMode() {
+		cancelPendingIkEdit();
 		const poserCam = appContext.shared.poserCamRef?.current;
 		if (ikMode && poserCam && appContext.shared.activeChar?.id) {
 			const look = appContext.shared.poserLook?.current ?? {};
@@ -1613,7 +1713,7 @@ export function useMotion(appContext) {
 			}
 			setIkMode(true);
 			appContext.notify(motion
-				? ko("Pose mode — correct the motion; drag end keys the fix at this frame", "포즈 모드 — 모션을 보정합니다. 드래그를 끝내면 이 프레임에 보정 키가 찍혀요")
+				? ko("Pose mode — preview the correction, then apply it to the selected motion block", "포즈 모드 — 보정을 미리 본 뒤 선택한 모션 구간에 적용하세요")
 				: ko("Pose mode — drag handles in the main view; the shot camera stays frozen in the inset", "포즈 모드 — 메인 뷰에서 핸들을 드래그하세요. 샷 카메라는 인셋에 고정됩니다"));
 			return;
 		}
@@ -1628,8 +1728,26 @@ export function useMotion(appContext) {
 	// Drag solve, routed by handle kind: chain targets solve the two-bone
 	// chain toward the target; mid joints reposition the elbow/knee with both
 	// ends pinned (the handle snaps to the clamped position); FK joints swing
-	// toward the pointer. Keys are baked on drag END — see ikDragEnd.
+	// toward the pointer. The solved pose stays a preview until Apply.
 	function ikSolve(kind, trackId, targetWorld) {
+		const state = appContext.shared.ikStateRef.current;
+		const ikChains = state.chains;
+		const ikFkJoints = state.fkJoints;
+		if (!ikDragRef.current) {
+			const pending = pendingIkEditRef.current;
+			ikPreDragRef.current = pending ?? {
+				characterId: appContext.shared.activeChar.id,
+				beforeFrame: appContext.shared.tlFrame,
+				sourceLayer: domain.layer(appContext.shared.activeChar.id),
+				state, rig: appContext.shared.activeRig, motion,
+				beforeRig: appContext.shared.snapshotExportRig(appContext.shared.activeRig),
+				beforeKeys: snapshotIkKeys(state),
+				beforeTracked: new Set(state.tracked),
+				beforeTargets: new Map([...state.targets].map(([id, target]) => [id, target.clone()])),
+				beforePlants: new Map([...state.plants].map(([id, target]) => [id, target.clone()])),
+			};
+			ikDragRef.current = { frame: appContext.shared.tlFrame, ids: new Set(pending?.ids ?? []) };
+		}
 		ikDragRef.current = ikDragRecord(ikDragRef.current, appContext.shared.tlFrame);
 		const touch = (id) => ikDragTouch(appContext.shared.ikStateRef.current, ikDragRef.current, id);
 		if (kind === "chain") {
@@ -1697,18 +1815,47 @@ export function useMotion(appContext) {
 		solveSwingAngle(joint, targetWorld.axis, targetWorld.angle, targetWorld.startQuat, targetWorld.startParentQuat);
 	}
 
-	// Drag end: key the dragged part's local rotations at the playhead, so a
-	// scrub away and back restores the dragged pose exactly (slerp).
+	// Drag end: retain the solved pose as a preview. Apply creates keys at both
+	// boundaries of the selected timeline motion segment.
 	function ikDragEnd() {
 		appContext.shared.ikBodyDragRef.current = false;
 		const drag = ikDragRef.current;
 		ikDragRef.current = null;
-		// One entry per drag: the pointermoves only moved bones, the keys map is
-		// untouched until this bake — the key it sets records the pre-drag keys.
-		if (appContext.storeDomain('motion') || ikChains) keyIkPoseAtPlayhead(
-			motion ? (drag ? drag.ids : null) : null,
-		);
-		setIkTick((n) => n + 1);
+		if (!motion) {
+			keyIkPoseAtPlayhead();
+			ikPreDragRef.current = null;
+			setIkTick((n) => n + 1);
+			return;
+		}
+		if (!drag?.ids?.size) {
+			ikPreDragRef.current = null;
+			return;
+		}
+		const state = appContext.shared.ikStateRef.current;
+		const raw = (rawRig, at) => appContext.shared.poseMemberAtFrame(rawRig, motion, null, at);
+		const keyed = bakeIkDragKey(state.chains, state.fkJoints, drag.frame, drag.ids, raw);
+		if (!keyed) {
+			ikPreDragRef.current = null;
+			return;
+		}
+		const before = ikPreDragRef.current;
+		const range = pendingIkEditRef.current ?? selectedIkRange(drag.frame);
+		const next = copyPhysicsKeys(before.beforeKeys);
+		const boundaries = bakeIkDragRange(state.chains, state.fkJoints, keyed, range.startFrame, range.endFrame, drag.ids, raw);
+		for (const [at, entry] of boundaries) {
+			if (!entry) continue;
+			let frameEntry = next.get(at);
+			if (!frameEntry) next.set(at, (frameEntry = new Map()));
+			for (const [track, key] of entry) frameEntry.set(track, { ...key, blend: IK_CORRECTION_BLEND_FRAMES });
+		}
+		setPendingIkEditValue({
+			...before,
+			frame: drag.frame,
+			startFrame: range.startFrame,
+			endFrame: range.endFrame,
+			ids: [...drag.ids],
+			candidate: { ...state, keys: next, tracked: new Set([...state.tracked, ...drag.ids]) },
+		});
 	}
 
 	/** Bake the current tracked rotations at the playhead into a scratch layer
@@ -2259,8 +2406,12 @@ export function useMotion(appContext) {
 	}
 
 	/* --------------------- trail drag -> preview -> regen -------------------- */
-	function onTrailDragStart({ grabFrame } = {}) {
+	function onTrailDragStart({ track, grabFrame } = {}) {
 		if (!motion) return;
+		if (track) {
+			setTrailTrackFocus(track);
+			focusIkHandle(track);
+		}
 		const frame = Math.round(grabFrame ?? appContext.shared.tlFrame);
 		appContext.shared.setTlFrame(frame);
 		// The pre-drag take is both the deformation base (repeated moves re-derive
@@ -3190,7 +3341,8 @@ export function useMotion(appContext) {
 		bodyContact, setBodyContact, IK_CORRECTION_BLEND_FRAMES, autoPhysicsRunning, setAutoPhysicsRunning,
 		physicsPreview, setPhysicsPreview, physicsShow, physicsProgress, physicsOptions, setPhysicsOptions,
 		ikTick, setIkTick, committedIkEdits, setCommittedIkEdits, trailFalloffS, setTrailFalloffS, showTrails,
-		setShowTrails, ikEditTool, setIkEditTool, trailEdit, trailFalloffFrames, focusIkHandle, snapshotIkKeys,
+		setShowTrails, ikEditTool, setIkEditTool, trailEdit, trailTrackFocus, selectTrailTrack, clearTrailTrackFocus, trailFalloffFrames, focusIkHandle, snapshotIkKeys,
+		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		rangePinApplySpec: (pin) => {
 			domain.run('motion.rangePin.apply', { characterId: appContext.shared.activeChar.id, pin });
 			return { residuals: decodeRangePinResiduals(domain.layer(appContext.shared.activeChar.id).ikPinResiduals).get(pin.id) };

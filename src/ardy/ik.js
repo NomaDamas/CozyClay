@@ -1200,20 +1200,28 @@ function trackIslands(keys, trackId, blendWindow) {
 	const frames = [];
 	for (const [f, entry] of keys) {
 		const key = entry.get(trackId);
-		if (key) frames.push([f, key.blend ?? blendWindow]);
+		if (key) frames.push([f, key.blend ?? blendWindow, key.correctionRange ?? null]);
 	}
 	if (!frames.length) return [];
 	frames.sort((a, b) => a[0] - b[0]);
+	// Paired boundary keys keep the selected interval connected even when an
+	// older key lies inside it. Use their current frame positions so retiming
+	// the timeline keeps the interval attached to its keys.
+	const rangeEnd = new Map();
+	const rangeId = range => range ? `${range.start}:${range.end}` : null;
+	for (const [f, , range] of frames) if (range) rangeEnd.set(rangeId(range), f);
 	const islands = [];
-	let [first, firstBlend] = frames[0];
+	let [first, firstBlend, firstRange] = frames[0];
+	let connectedUntil = rangeEnd.get(rangeId(firstRange)) ?? first;
 	let [prev, prevBlend] = frames[0];
 	for (let index = 1; index < frames.length; index += 1) {
-		const [f, blend] = frames[index];
-		if (f - prev > Math.max(prevBlend, blend)) {
+		const [f, blend, range] = frames[index];
+		if (f > connectedUntil && f - prev > Math.max(prevBlend, blend)) {
 			islands.push([first, prev, firstBlend, prevBlend]);
 			first = f;
 			firstBlend = blend;
 		}
+		connectedUntil = Math.max(connectedUntil, rangeEnd.get(rangeId(range)) ?? f);
 		prev = f;
 		prevBlend = blend;
 	}

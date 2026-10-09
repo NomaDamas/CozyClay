@@ -193,6 +193,21 @@ function legacyWeight(keys, trackId, frame, blendWindow) {
 	}
 }
 
+/* Explicit range boundaries stay connected across older interior keys and JSON. */
+{
+	const keys = keysOf("leftHand", [[10], [30], [70]]);
+	for (const frame of [10, 70]) keys.get(frame).get("leftHand").correctionRange = { start: 10, end: 70 };
+	check("range boundaries retain full correction around an older interior key", [20, 40, 60].every(frame => correctionWeight(keys, "leftHand", frame, BLEND) === 1));
+	check("range boundaries still ease outside the range", correctionWeight(keys, "leftHand", 73, BLEND) === 0.5 && correctionWeight(keys, "leftHand", 76, BLEND) === 0);
+	const tracks = ikKeyJson(keys.get(10));
+	const args = validateStudioSchema(studioActionDeclaration("character.setIkKey").input, { characterId: "char-a", frame: 10, tracks });
+	const back = ikTrackKeyFromJson(args.tracks.leftHand);
+	check("range metadata survives action JSON validation and decoding", back.correctionRange.start === 10 && back.correctionRange.end === 70);
+	const copied = copyPhysicsKeys(keys);
+	copied.get(10).get("leftHand").correctionRange.start = 99;
+	check("undo range metadata is an independent copy", keys.get(10).get("leftHand").correctionRange.start === 10);
+}
+
 if (failures) {
 	console.log(`\n${failures} failure(s)`);
 	process.exit(1);

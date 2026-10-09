@@ -31,10 +31,11 @@ export function copyPhysicsKeys(keys) {
 		...(k.baseQ ? { baseQ: k.baseQ.map((q) => q.clone()) } : {}),
 		...(k.basePos ? { basePos: k.basePos.clone() } : {}),
 		...(k.chainP ? { chainP: k.chainP.map((p) => p.clone()) } : {}),
+		...(k.correctionRange ? { correctionRange: { ...k.correctionRange } } : {}),
 	}]))]));
 }
 export function physicsKeyStamp(keys) {
-	return JSON.stringify([...keys].sort((a, b) => a[0] - b[0]).map(([f, e]) => [f, [...e].sort(([a], [b]) => a.localeCompare(b)).map(([id, k]) => [id, k.p?.toArray(), k.q?.map((q) => q.toArray()), k.basePos?.toArray(), k.baseQ?.map((q) => q.toArray()), k.keepTranslations, k.chainP?.map((p) => p.toArray())])]));
+	return JSON.stringify([...keys].sort((a, b) => a[0] - b[0]).map(([f, e]) => [f, [...e].sort(([a], [b]) => a.localeCompare(b)).map(([id, k]) => [id, k.p?.toArray(), k.q?.map((q) => q.toArray()), k.basePos?.toArray(), k.baseQ?.map((q) => q.toArray()), k.keepTranslations, k.chainP?.map((p) => p.toArray()), k.correctionRange])]));
 }
 
 /** Measured skin, shared exact transforms; never a cached bind-pose sole. */

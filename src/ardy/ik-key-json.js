@@ -16,6 +16,7 @@ export function ikTrackKeyJson(key) {
 		...(key.basePos ? { basePos: vector(key.basePos) } : {}),
 		...(key.chainP ? { chainP: key.chainP.map(vector) } : {}),
 		...(key.keepTranslations ? { keepTranslations: true } : {}),
+		...(key.correctionRange ? { correctionRange: { start: key.correctionRange.start, end: key.correctionRange.end } } : {}),
 		...(key.blend != null ? { blend: key.blend } : {}),
 		...(key.pin != null ? { pin: key.pin } : {}),
 	};
@@ -37,6 +38,7 @@ export function ikTrackKeyFromJson(key) {
 		...(key.basePos ? { basePos: vector(key.basePos) } : {}),
 		...(key.chainP ? { chainP: key.chainP.map(vector) } : {}),
 		...(key.keepTranslations ? { keepTranslations: true } : {}),
+		...(key.correctionRange ? { correctionRange: { start: key.correctionRange.start, end: key.correctionRange.end } } : {}),
 		...(key.blend != null ? { blend: key.blend } : {}),
 		...(key.pin != null ? { pin: key.pin } : {}),
 	};

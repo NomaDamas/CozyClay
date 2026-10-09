@@ -3,11 +3,12 @@ import Foldout from "./Foldout.jsx";
 import { useStudioShell } from "../shell/studio-shell-context.js";
 import { useMotionCommands } from "../domains/motion.js";
 import { ko, isKo } from "../locale.js";
-import { HIERARCHY_INSPECTOR_TITLES } from "../app-stage.jsx";
+import { HIERARCHY_INSPECTOR_TITLES, lineTrackLabel } from "../app-stage.jsx";
 import { PhysicsPanel } from "../ardy/physics-panel.jsx";
 import { Field } from "../ui.jsx";
 import { MotionReadiness } from "../motion-readiness-ui.jsx";
 import { RangePinPanel } from "../range-pin-panel.jsx";
+import { TRAIL_TRACKS } from "../motion-trail.js";
 import { PlatformFitPanel } from "../ardy/platform-fit-panel.jsx";
 import "../ardy/auto-fix-panel.css";
 import "./pose.css";
@@ -18,7 +19,7 @@ export default function RigControlPanel({
  physicsShow, physicsOptions, tlFrame, changePhysicsOptions, runAutoPhysics, showPhysicsPreview,
  applyPhysicsPreview, cancelPhysicsPreview, setTlFrame, platformFitRunning, platformFitProgress,
  platformFitLast, platformFitApplied, ikEditTool, setIkEditTool, showTrails, setShowTrails,
- trailFalloffS, setTrailFalloffS, trailEdit, generationBusy, bridgeChecking, bridge,
+ trailFalloffS, setTrailFalloffS, trailEdit, trailTrackFocus = null, selectTrailTrack, clearTrailTrackFocus, pendingIkEdit = null, applyPendingIkEdit, cancelPendingIkEdit, generationBusy, bridgeChecking, bridge,
  runTrailRegeneration, trailReadinessState, openMotionSetup, recheckMotionHealth,
  rangePins = [], rangePinResiduals = new Map(), rangePinSelection = null, rangePinPartPick = null,
  rangePinPreview = null, objects = [], setRangePinSelection, setRangePinPartPick,
@@ -58,9 +59,22 @@ export default function RigControlPanel({
      <button type="button" className={"btn" + (ikEditTool === "trail" ? " primary" : "")} aria-pressed={ikEditTool === "trail"} disabled={!showTrails} onClick={() => setIkEditTool("trail")}>{ko("Path fix", "경로 수정")}</button>
      <button type="button" data-testid="range-pin-tool" className={"btn" + (ikEditTool === "pin" ? " primary" : "")} aria-pressed={ikEditTool === "pin"} disabled={!motion} onClick={() => { setIkEditTool("pin"); setRangePinPartPick?.(null); }}>{ko("Pin", "고정")}</button>
     </div>
+    {pendingIkEdit && <div className="pose-section" data-testid="ik-pending-edit">
+     <div className="pose-row"><span>{ko("IK preview", "IK 미리보기")}</span><b>{pendingIkEdit.startFrame}–{pendingIkEdit.endFrame}</b></div>
+     <p className="inspector-hint">{ko("The drag is previewed. Apply it to the selected motion block or cancel it.", "드래그를 미리 보고 있어요. 선택한 모션 블록에 적용하거나 취소하세요.")}</p>
+     <div className="pose-actions">
+      <button type="button" className="btn primary" data-testid="ik-apply-range" onClick={applyPendingIkEdit}>{ko("Apply range", "구간 적용")}</button>
+      <button type="button" className="btn" data-testid="ik-cancel-preview" onClick={cancelPendingIkEdit}>{ko("Cancel", "취소")}</button>
+     </div>
+    </div>}
     {ikEditTool === "pin" && <RangePinPanel active motion={motion} frame={tlFrame} frameCount={motion?.frames ?? 1} fps={motion?.fps ?? 24} pins={rangePins} residuals={rangePinResiduals} objects={objects} selectedPinId={rangePinSelection} partPick={rangePinPartPick} conflictFrames={rangePinPreview?.conflictFrames ?? []} overlapError={rangePinPreview?.overlapError ?? ""} onSelectPin={(id) => { setRangePinSelection?.(id); if (id) setIkEditTool("pin"); }} onApply={applyRangePinDraft} onCancel={() => { setRangePinSelection?.(null); setIkEditTool("ik"); }} onDelete={deleteRangePin} onPreviewTarget={previewRangePinDraft} />}
     {ikEditTool === "trail" && <>
      <button type="button" className="btn full" aria-pressed={showTrails} onClick={() => setShowTrails((value) => !value)}>{ko(`Trails ${showTrails ? "on" : "off"}`, `궤적선 ${showTrails ? "표시" : "숨김"}`)}</button>
+     <label className="pose-row" data-testid="trail-selection"><span>{ko("Shown line", "표시 라인")}</span><select data-testid="trail-track-select" value={trailTrackFocus ?? ""} onChange={(event) => selectTrailTrack(event.target.value)}>
+      <option value="" disabled>{ko("All lines", "모든 라인")}</option>
+      {TRAIL_TRACKS.map((track) => <option key={track.id} value={track.id}>{lineTrackLabel(track.id)}</option>)}
+     </select></label>
+     {trailTrackFocus && <button type="button" className="btn full" data-testid="trail-show-all" onClick={clearTrailTrackFocus}>{ko("Show all lines", "모든 라인 보기")}</button>}
      <Field label={ko("Falloff", "영향 범위")}><div className="trail-falloff-row"><input type="range" min={0.1} max={2} step={0.1} value={trailFalloffS} onChange={(event) => setTrailFalloffS(Number(event.target.value))} /><span className="trail-falloff-value">{trailFalloffS.toFixed(1)}s</span></div></Field>
      <button type="button" className="btn primary full" disabled={!trailEdit || !motion?.url || generationBusy || bridgeChecking || bridge === null} onClick={runTrailRegeneration}>{ko("Regenerate", "재생성")}</button>
      <MotionReadiness state={trailReadinessState} checking={bridgeChecking} onSetup={() => openMotionSetup("trail")} onRetry={recheckMotionHealth} />
