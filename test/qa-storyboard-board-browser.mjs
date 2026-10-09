@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Storyboard browser QA: per-panel cast overrides (#640), the Board dock
 // tab (#641) and panel Stylize through a stubbed /agent/image (#643). Run
-// through tools/qa-browser.mjs with QA_URL at `/app/?previs=1`.
+// through tools/qa-browser.mjs with QA_URL at `/app/`.
 import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { crc32, deflateSync } from "node:zlib";
@@ -37,7 +37,6 @@ const seedProject = async (previsMode) => {
 	await b.evaluate(`(() => {
 		localStorage.clear();
 		localStorage.setItem('cozyclay.locale', 'en');
-		localStorage.setItem('cozyclay.previs-modes', '1');
 		localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'Board QA', previsMode: ${JSON.stringify(previsMode)}, updatedAt: Date.now() }));
 		localStorage.setItem('${SCENES_STORAGE_KEY}', JSON.stringify({ version: 4, activeSceneId: 'board-qa', scenes: [{
 			id: 'board-qa', name: 'Board QA', objects: [],
@@ -48,7 +47,7 @@ const seedProject = async (previsMode) => {
 	await openStudio();
 };
 const openStudio = async () => {
-	await b.navigate(new URL("/app/?previs=1", b.base));
+	await b.navigate(new URL("/app/", b.base));
 	await b.ready();
 	await hookBus();
 };

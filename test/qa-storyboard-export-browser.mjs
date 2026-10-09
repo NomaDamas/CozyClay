@@ -5,7 +5,7 @@
 // animatic holds every panel for its hold; the cut list makes each still a
 // clip as long as its hold. Downloads are the real browser downloads, read
 // back from the folder Chrome writes them to. Run through tools/qa-browser.mjs
-// with QA_URL at `/app/?previs=1`.
+// with QA_URL at `/app/`.
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
@@ -45,7 +45,6 @@ const seedProject = async (previsMode) => {
 	await b.evaluate(`(() => {
 		localStorage.clear();
 		localStorage.setItem('cozyclay.locale', 'en');
-		localStorage.setItem('cozyclay.previs-modes', '1');
 		localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'Export QA', previsMode: ${JSON.stringify(previsMode)}, updatedAt: Date.now() }));
 		localStorage.setItem('${SCENES_STORAGE_KEY}', JSON.stringify({ version: 4, activeSceneId: 'export-qa', scenes: [{
 			id: 'export-qa', name: 'Export QA', objects: [],
@@ -53,7 +52,7 @@ const seedProject = async (previsMode) => {
 			stage: { characters: [{ id: 'char-a', model: 'y-bot-tpose', x: 0, z: 0, rot: 0, hidden: false, pose: null, subject: 'a person' }], hasCharSheet: false, shotAspect: '16:9' }
 		}] }));
 	})()`);
-	await b.navigate(new URL("/app/?previs=1", b.base));
+	await b.navigate(new URL("/app/", b.base));
 	await b.ready();
 	await hookBus();
 };

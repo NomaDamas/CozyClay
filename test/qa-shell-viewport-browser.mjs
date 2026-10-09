@@ -264,7 +264,6 @@ const openPrevisProject = async (previsMode, theme) => {
 		};
 		localStorage.clear();
 		localStorage.setItem("cozyclay.locale", "en");
-		localStorage.setItem("cozyclay.previs-modes", "1");
 		localStorage.setItem("cozyclay.theme.v1", ${JSON.stringify(theme)});
 		localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "Task 19", previsMode: ${JSON.stringify(previsMode)}, updatedAt: Date.now() }));
 		localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(scene));

@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import packageInfo from "../package.json";
 import { ko } from "./locale.js";
-import { previsModesEnabled } from "./previs-flag.js";
 import {
 	hasDirectoryPicker,
 	hasFileSystemAccess,
@@ -28,7 +27,7 @@ const BLANK_TEMPLATE = Object.freeze({
 	code: "NEW",
 });
 
-// The two project modes the New view offers when previs modes are enabled.
+// The two project modes the New view offers.
 // Storyboard starts from an empty stage only; Animation keeps every template.
 const MODE_OPTIONS = [
 	{
@@ -108,11 +107,10 @@ export function ProjectNameDialog({ open, initialName = "My Project", onCancel, 
  */
 export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew, onClose, startup = false, starters = [], onStarter }) {
 	const starterTemplates = useMemo(() => starters.map(sampleTemplate), [starters]);
-	const [previsEnabled] = useState(() => previsModesEnabled());
 	const [previsMode, setPrevisMode] = useState(DEFAULT_PREVIS_MODE);
 	const templates = useMemo(
-		() => (previsEnabled && previsMode === "storyboard" ? [BLANK_TEMPLATE] : [BLANK_TEMPLATE, ...starterTemplates]),
-		[previsEnabled, previsMode, starterTemplates],
+		() => (previsMode === "storyboard" ? [BLANK_TEMPLATE] : [BLANK_TEMPLATE, ...starterTemplates]),
+		[previsMode, starterTemplates],
 	);
 	const defaultTemplate = starterTemplates[0] ?? BLANK_TEMPLATE;
 	const [activeNav, setActiveNav] = useState(startup ? "new" : "recent");
@@ -220,13 +218,11 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 		const projectName = name.trim();
 		if (!projectName) return;
 		if (selectedTemplate?.starterId) {
-			if (previsEnabled) onStarter?.(selectedTemplate.starterId, projectName, { previsMode: "animation" });
-			else onStarter?.(selectedTemplate.starterId, projectName);
+			onStarter?.(selectedTemplate.starterId, projectName, { previsMode: "animation" });
 			return;
 		}
 		pendingProjectName = projectName;
-		if (previsEnabled) onNew(projectName, { previsMode });
-		else onNew(projectName);
+		onNew(projectName, { previsMode });
 	};
 
 	const recentEntries = [
@@ -271,7 +267,7 @@ export default function ProjectBrowser({ currentName, onOpen, onOpenFile, onNew,
 							<h1>{activeNav === "recent" ? ko("Recent", "최근") : activeNav === "samples" ? ko("Samples", "샘플") : activeNav === "learn" ? ko("Learn", "배우기") : ko("New Project", "새 프로젝트")}</h1>
 							{activeNav !== "new" && <button type="button" className="v2-start-close x" onClick={onClose} aria-label={ko("Close", "닫기")}>×</button>}
 						</div>
-						{previsEnabled && activeNav === "new" && (
+						{activeNav === "new" && (
 							<div className="v2-start-mode" role="radiogroup" aria-label={ko("Project mode", "프로젝트 모드")} data-testid="start-previs-mode">
 								{MODE_OPTIONS.map((option) => (
 									<button

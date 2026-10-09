@@ -22,7 +22,7 @@ observer.send(JSON.stringify({ id: 1, method: "Runtime.enable" }));
 try {
 	await b.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 	await b.seed();
-	await b.navigate(process.env.QA_URL || "http://127.0.0.1:5211/app/?previs=1");
+	await b.navigate(b.base.href);
 	await b.ready();
 	// Use the mounted AppContext provider, not a second command bus.
 	await b.evaluate(`(() => {

@@ -4,7 +4,6 @@ import ProjectPanel from "../panels/ProjectPanel.jsx";
 import MenuBar, { MenuPopover } from "./MenuBar.jsx";
 import { SaveState } from "./StatusBar.jsx";
 import { ko, isKo } from "../locale.js";
-import { previsModesEnabled } from "../previs-flag.js";
 import "./topbar.css";
 
 // 2a top bar: File/Edit/Window/Help, then only the MCP state and the one
@@ -38,7 +37,6 @@ export function ProjectHead() {
 		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
 		projectManifest, saveStatus, previsMode,
 	} = useStudioShell();
-	const [previsEnabled] = useState(previsModesEnabled);
 	return (
 		<div className="topbar-project studio-project-head">
 			<ProjectPanel
@@ -50,7 +48,7 @@ export function ProjectHead() {
 				projectManifest={projectManifest}
 			/>
 			<SaveState status={saveStatus} />
-			{previsEnabled && <PrevisModeBadge mode={previsMode} />}
+			<PrevisModeBadge mode={previsMode} />
 		</div>
 	);
 }
