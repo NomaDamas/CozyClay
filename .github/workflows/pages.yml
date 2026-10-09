@@ -72,6 +72,18 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
           sudo apt-get update
+          # The Azure mirror occasionally stalls between packages for minutes
+          # (8 min on one shard in run 37955319380). Bound the download; on a
+          # stall drop that mirror and fetch from the main archive, then
+          # install from the local package cache.
+          if ! sudo timeout 120 apt-get install -y --no-install-recommends --download-only ffmpeg; then
+            echo "::warning title=apt mirror stalled::ffmpeg download exceeded 120 s; retrying without the Azure mirror"
+            if [ -f /etc/apt/apt-mirrors.txt ]; then
+              sudo sed -i '/azure\.archive\.ubuntu\.com/d' /etc/apt/apt-mirrors.txt
+            fi
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends --download-only ffmpeg
+          fi
           sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run build
       - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/4"
