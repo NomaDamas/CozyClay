@@ -3123,7 +3123,7 @@ export default function App() {
 		return [{
 			id: entry.id,
 			model: entry.model,
-			...(entry.model === "proxy-figure" ? {} : { url: characterModelUrl(entry.model) }),
+			...(isProxyFigure(entry) ? {} : { url: characterModelUrl(entry.model) }),
 			position: [placement.x, entry.y ?? 0, placement.z],
 			rot: placement.rot,
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
@@ -3134,13 +3134,9 @@ export default function App() {
 			// The stature the entry's take was extracted at. It rides with the
 			// clip, never separately — see Character for why.
 			scale: entry.scale ?? 1,
-			...(entry.model === "proxy-figure" ? {} : { onRig: reportRig(entry.id) }),
+			...(isProxyFigure(entry) ? {} : { onRig: reportRig(entry.id) }),
 			pickId,
 			parent: entry.parent ?? null,
-			...(entry.model === "proxy-figure" ? {
-				position: [placement.x, entry.y ?? 0, placement.z],
-				rot: placement.rot,
-			} : {}),
 		}];
 	}), [characters, activeChar.id, motion, shots, tlFrame, partColoursEnabled, partColoursMode]);
 	// Where the selection gizmo stands: same driving rules as the render,
@@ -6878,7 +6874,7 @@ export default function App() {
 		const raw = readStudioState();
 		const original = raw.characters.find(c => c.id === entity.id) ?? raw.characters.find(c => c.model === entity.model);
 		const target = original && raw.targets.get(original.id);
-		if (original?.model === "proxy-figure") {
+		if (isProxyFigure(original)) {
 			const clip = target?.motion;
 			const placement = placementAt(original, frame, {
 				shotAt: at => shotAtFrame(raw.shots, at),
