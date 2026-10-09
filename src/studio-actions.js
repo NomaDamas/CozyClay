@@ -23,6 +23,18 @@ const sceneId = { sceneId: idSchema };
 const NOT_UNDOABLE = "Scenes are outside the undo history: undo_edit and Ctrl+Z cannot revert this.";
 const SCENE_MOVES = "The open scene changes, so later commands in this message are admitted in it; the receipt's host names it.";
 const characterId = { characterId: idSchema };
+const castOverride = {
+	type: "object",
+	properties: {
+		x: { type: "number" },
+		z: { type: "number" },
+		rot: { type: "number" },
+		posture: { type: "string", enum: ["stand", "sit", "lie"] },
+		pose: { type: "object", properties: {}, required: [], additionalProperties: true },
+	},
+	required: [],
+	additionalProperties: false,
+};
 /** A world floor point in metres; y is the floor. */
 const floorPoint = input({ x: { type: "number" }, z: { type: "number" } });
 const waypointFrame = { ...frame, minimum: 1 };
@@ -63,6 +75,9 @@ export const STUDIO_ACTIONS = freezeStudioData([
 		description: `Add a still (a storyboard panel: one picture held for hold frames at 24 fps, default 48, 1-240) after the last still, keyed with the current camera framing. Stills sit end to end from frame 0 in order. ${STORYBOARD_CAP}` },
 	{ id: "shot.setCaption", label: "Set shot caption", kind: "mutation", undoDomain: "shot", input: input({ ...shotId, caption: { type: "string", maxLength: 500 } }),
 		description: "Set a shot's caption (the panel's action or dialogue line), trimmed, at most 500 characters; an empty caption clears it." },
+	{ id: "shot.setCastOverride", label: "Set shot cast override", kind: "mutation", undoDomain: "shot",
+		input: input({ ...shotId, ...characterId, override: { oneOf: [castOverride, { type: "null" }] } }),
+		description: "Set or clear one character's placement and pose override for a shot. Overrides apply only when the character has no installed take; a root path still wins." },
 	{ id: "shot.setHold", label: "Set still hold", kind: "mutation", undoDomain: "shot", input: input({ ...shotId, hold: stillHold }),
 		description: `Set how many frames (1-240 at 24 fps) a still holds; the stills after it move so they stay end to end. Stills only. ${STORYBOARD_CAP}` },
 	{ id: "shot.split", label: "Split shot", kind: "mutation", undoDomain: "shot", input: input(shotId),
@@ -80,6 +95,8 @@ export const STUDIO_ACTIONS = freezeStudioData([
 		description: "Generate the active character's motion from all of its prompt blocks, like the top-bar Generate Motion button when prompt blocks have text. It starts a job and returns status \"started\"; the take lands in the editor when the job finishes. Counts as the one motion generation of this message." },
 	{ id: "character.addWaypoint", label: "Add root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, position: floorPoint }, { frame: waypointFrame }),
 		description: `Pin a character's root path: at frame, the character's root stands at position (world x/z metres). Frame 0 is the character's own spot, so pins start at frame 1 and each frame holds one pin. Omit frame to pace the pin at a walk (1.4 m/s) from the previous one. ${WAYPOINT_RULES} Read paths with inspect_studio { scope: "motion" }.` },
+	{ id: "character.move", label: "Move character", kind: "mutation", undoDomain: "cast", input: input(characterId, { x: num, z: num, rot: num }),
+		description: "Move a character's stage placement. Inside a still this writes that panel's cast override; outside a still it changes the stage record." },
 	{ id: "character.moveWaypoint", label: "Move root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, frame: waypointFrame, position: floorPoint }),
 		description: `Move the character's root waypoint at frame to a new floor position (world x/z metres), keeping its frame. ${WAYPOINT_RULES}` },
 	{ id: "character.removeWaypoint", label: "Remove root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, frame: waypointFrame }),

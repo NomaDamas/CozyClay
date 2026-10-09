@@ -302,17 +302,17 @@ expect(
 expect(
 	"Subject transforms have one inspector home with the direct tools",
 	app.includes('title={workflowMode === "motion" ? ko("Placement", "배치") : ko("Transform", "변환")}') &&
-	app.includes('{ axis: "X", value: activeChar.x, step: 0.05') &&
+	app.includes('{ axis: "X", value: shown.x, step: 0.05') &&
 	app.includes('{ axis: "Y", value: activeChar.y ?? 0, step: 0.05') &&
-	app.includes('{ axis: "Z", value: activeChar.z, step: 0.05') &&
+	app.includes('{ axis: "Z", value: shown.z, step: 0.05') &&
 	app.includes('label={ko("Rotation", "회전")}') &&
 	app.includes('label={ko("Scale", "크기")}') &&
 	app.includes('data-transform-controls'),
 );
 expect(
 	"installed takes keep the authored character transform as a stage offset",
-	app.includes("position: [entry.x, entry.y ?? 0, entry.z]") &&
-	app.includes("rot: entry.rot") &&
+	app.includes("position: [placement.x, entry.y ?? 0, placement.z]") &&
+	app.includes("rot: placement.rot") &&
 	!app.includes("position: clip ? [clip.anchorX, entry.y ?? 0, clip.anchorZ]") &&
 	!app.includes("rot: clip ? clip.rotationDeg : entry.rot"),
 );

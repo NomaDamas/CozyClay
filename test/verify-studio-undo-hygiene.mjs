@@ -150,7 +150,8 @@ const COMMAND_INPUTS = {
 	"shot.create": {}, "shot.split": { shotId: "shot-1" }, "shot.duplicate": { shotId: "shot-1" }, "shot.remove": { shotId: "shot-1" },
 	"shot.setRange": { shotId: "shot-1", range: { startFrame: 1, endFrameExclusive: 15 } }, "shot.reorder": { shotId: "shot-1", startFrame: 2 },
 	"shot.setCameraRail": { shotId: "shot-1", points: [{ x: -2, z: 4 }, { x: 3, z: 4 }] }, "shot.clearCameraRail": { shotId: "shot-1" },
-	"shot.createStill": { caption: "Panel" }, "shot.setCaption": { shotId: "shot-1", caption: "Panel" }, "shot.setHold": { shotId: "shot-1", hold: 24 },
+	"shot.createStill": { caption: "Panel" }, "shot.setCaption": { shotId: "shot-1", caption: "Panel" },
+	"shot.setCastOverride": { shotId: "shot-1", characterId: "actor", override: { x: 1, z: 2, rot: 0 } }, "shot.setHold": { shotId: "shot-1", hold: 24 },
 	"shot.set": { id: "shot-1", set: { targetModel: "seedance-2.5" } }, "shot.rename": { shotId: "shot-1", name: "Renamed" },
 	"shot.setCamera": { shotId: "shot-1", patch: { mode: "follow" } }, "shot.addKey": { shotId: "shot-1", frame: 8 },
 	"shot.moveKey": { shotId: "shot-1", keyId: "key-1", frame: 8 }, "shot.removeKey": { shotId: "shot-1", keyId: "key-1" },
@@ -161,6 +162,7 @@ const COMMAND_INPUTS = {
 	'character.add': { character: { id: 'actor-new', subject: 'New' } },
 	'character.remove': { characterId: 'actor-other' },
 	'character.update': { characterId: 'actor', patch: { x: 2 } },
+	'character.move': { characterId: 'actor', x: 2, z: 0, rot: 0 },
 	'character.setPose': { characterId: 'actor', pose: { id: 'new-pose', bones: {} } },
 	'character.setPromptBlocks': { characterId: 'actor', blocks: [] },
 	'characters.arrange': { ops: [{ op: 'remove', characterId: 'actor-other' }] },
@@ -255,6 +257,7 @@ function commandFixture({ frame = 8, still = false } = {}) {
 	castDomain = {
 		read: () => state.characters, state: () => ({ characters: state.characters, customPoses: state.customPoses }),
 		write: update => ports.writeCharacters(typeof update === 'function' ? update(state.characters) : update),
+		update: (id, patch) => ports.writeCharacters(state.characters.map(entry => entry.id === id ? { ...entry, ...patch } : entry)),
 		writeState: update => ports.writeCastState(typeof update === 'function' ? update(castDomain.state()) : update),
 		applyPose: (id, pose) => ports.writePose(id, pose), showExtras: () => ports.writeCharacters([...state.characters]),
 		extendTimeline: () => ports.writeCharacters([...state.characters]), poses: () => [],
@@ -271,6 +274,7 @@ function commandFixture({ frame = 8, still = false } = {}) {
 		setLens: fovDeg => ports.writeShotState({ fovDeg }),
 		captureCamera: () => ports.writeShotState({ manual: true }),
 		placeCamera: camera => ports.writeShotState({ camera }),
+		setCastOverride: (shotId, characterId, override) => ports.writeShots(state.shots.map(shot => shot.id === shotId ? { ...shot, cast: { ...shot.cast, [characterId]: override } } : shot)),
 	};
 	objectDomain = {
 		read: () => state.objects,
@@ -326,7 +330,7 @@ const cases = {
 	},
 	async "every command mutation writes inside one entry of its undo domain"() {
 		const mutations = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => entry.kind === "mutation");
-		assert.equal(mutations.length, 82);
+		assert.equal(mutations.length, 84);
 		for (const declaration of mutations) {
 			// A new shot needs free room at the playhead; the others act inside shot-1.
 			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8, still: ["shot.setHold", "shot.createStill"].includes(declaration.id) }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));

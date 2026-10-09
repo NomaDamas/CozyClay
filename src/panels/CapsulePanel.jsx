@@ -1,7 +1,9 @@
 import Foldout from "./Foldout.jsx";
 import { ko } from "../locale.js";
 import { POSTURES, isProxyFigure } from "../scenes.js";
-import { useBus } from "../app-context.js";
+import { useBus, AppContext } from "../app-context.js";
+import { useContext } from "react";
+import { shotAtFrame } from "../cuts.js";
 
 const POSTURE_LABELS = {
 	stand: () => ko("Stand", "서기"),
@@ -20,6 +22,11 @@ const POSTURE_GLYPHS = {
  * choice is its posture. Rig figures never see this panel. */
 export default function CapsulePanel({ isCharacterSelection, activeChar }) {
 	const { run } = useBus();
+	const app = useContext(AppContext);
+	const live = app?.ports.read?.();
+	const shot = live ? shotAtFrame(live.shots, live.view.frame) : null;
+	const selectedPosture = live?.targets?.get?.(activeChar.id)?.motion || activeChar.layer?.waypoints?.length
+		? activeChar.posture : shot?.cast?.[activeChar.id]?.posture ?? activeChar.posture;
 	if (!isProxyFigure(activeChar)) return null;
 	return (
 		<Foldout hidden={!isCharacterSelection} title={ko("Capsule figure", "캡슐 인물")}>
@@ -29,11 +36,11 @@ export default function CapsulePanel({ isCharacterSelection, activeChar }) {
 						type="button"
 						key={posture}
 						role="radio"
-						aria-checked={activeChar.posture === posture}
-						className={"rig-option" + (activeChar.posture === posture ? " active" : "")}
+						aria-checked={selectedPosture === posture}
+						className={"rig-option" + (selectedPosture === posture ? " active" : "")}
 						data-posture={posture}
 						onClick={() => {
-							if (activeChar.posture === posture) return;
+							if (selectedPosture === posture) return;
 							run("character.update", { characterId: activeChar.id, patch: { posture } });
 						}}
 					>

@@ -259,6 +259,7 @@ const NODE_FILES = [
 	"test/verify-shot-look.mjs",
 	"test/verify-timeline-shots.mjs",
 	"test/verify-still-shots.mjs",
+	"test/verify-shot-cast-overrides.mjs",
 	"test/verify-tool-handlers.mjs",
 	"test/verify-trim.mjs",
 	"test/verify-update-check.mjs",
@@ -293,6 +294,7 @@ const NODE_FILES = [
 const BROWSER_FILES = [
 	"test/qa-capsule-entry-browser.mjs",
 	"test/qa-previs-start-browser.mjs",
+	"test/qa-storyboard-board-browser.mjs",
 	"test/qa-proxy-figure-browser.mjs",
 	"test/qa-motion-readiness-browser.mjs",
 	"test/qa-export-recovery-browser.mjs",
@@ -342,6 +344,7 @@ const EXTRA_INVENTORY = ["test/ik/translation-step.mjs", "test/qa-scenes-v5-migr
 EXTRA_INVENTORY.push("test/qa-proxy-figure-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-capsule-entry-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-previs-start-browser.mjs");
+EXTRA_INVENTORY.push("test/qa-storyboard-board-browser.mjs");
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })

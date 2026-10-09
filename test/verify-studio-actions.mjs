@@ -14,7 +14,8 @@ import { buildH3MotionPrompt } from "../src/i2v-motion-client.js";
 const code = expected => error => error?.code === expected;
 
 /* The first batch is declared once, as data. */
-const firstBatch = ["shot.create", "shot.createStill", "shot.setCaption", "shot.setHold", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
+const firstBatch = ["shot.create", "shot.createStill", "shot.setCaption", "shot.setCastOverride", "shot.setHold", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
+const castActions = ["character.move"];
 const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"];
 const ikKeyActions = ["character.setIkKey", "character.removeIkKey", "character.clearIkKeys"];
 const attachActions = ["object.attach", "object.detach"];
@@ -25,7 +26,7 @@ const sceneActions = ["scene.create", "scene.duplicate", "scene.rename", "scene.
 const projectActions = ["project.save"];
 const assetActions = ["asset.import"];
 const aiActions = ["ai.prepareShot", "motion.generateFromVideo"];
-assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...waypointActions, ...ikKeyActions, ...attachActions, ...railActions, ...viewActions, ...exportActions, ...sceneActions, ...projectActions, ...assetActions, ...aiActions].sort());
+assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...castActions, ...waypointActions, ...ikKeyActions, ...attachActions, ...railActions, ...viewActions, ...exportActions, ...sceneActions, ...projectActions, ...assetActions, ...aiActions].sort());
 assert.deepEqual([...STUDIO_ACTION_KINDS], ["mutation", "transient", "job", "document"]);
 assert.ok(Object.isFrozen(STUDIO_ACTIONS));
 for (const action of STUDIO_ACTIONS) {

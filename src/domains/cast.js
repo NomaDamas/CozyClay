@@ -35,6 +35,7 @@ import { loadMotionFromUrl } from "../ardy/npz.js";
 import { snapshotPlaybackBones, applyMotionFrame, restorePlaybackBones } from "../ardy/playback.js";
 
 import { HISTORY_LIMIT } from "../history.js";
+import { shotAtFrame } from "../cuts.js";
 
 const sameCastValue = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 
@@ -75,6 +76,25 @@ export function createCastDomain(appContext, initial, customPoses = []) {
 	function write(update) {
 		return writeState(before => ({ ...before, characters: typeof update === 'function' ? update(before.characters) : update }));
 	}
+	function update(characterId, patch) {
+		const entry = read().find(entry => entry.id === characterId);
+		if (!entry) throw new StudioProtocolError('STALE_TARGET', `Character ${characterId} is not in this scene.`);
+		const raw = appContext.ports.read(), shot = shotAtFrame(raw.shots, raw.view.frame);
+		const fields = ['x', 'z', 'rot', 'posture', 'pose'];
+		const panelPatch = Object.fromEntries(Object.entries(patch).filter(([key, value]) => fields.includes(key) && value !== undefined));
+		if (shot?.kind === 'still' && !raw.targets?.get?.(characterId)?.motion && Object.keys(panelPatch).length) {
+			const current = { ...entry, ...shot.cast[characterId] };
+			const normalized = createCharacterEntry({ ...current, ...panelPatch });
+			const override = { x: normalized.x, z: normalized.z, rot: normalized.rot };
+			for (const key of ['posture', 'pose']) if (normalized[key] != null) override[key] = normalized[key];
+			// Enlist the shot owner in the already-open command/drag session:
+			// even a mixed scale + placement edit is one shared Undo entry.
+			const shots = appContext.storeDomain('shot');
+			appContext.recordAction('shot', () => shots.setCastOverride(shot.id, characterId, override), null, true);
+			patch = Object.fromEntries(Object.entries(patch).filter(([key]) => !fields.includes(key)));
+		}
+		if (Object.keys(patch).length) write(rows => rows.map(row => row.id === characterId ? { ...row, ...patch } : row));
+	}
 	function publishMotion(characterId, motion) {
 		if (motion) motions.set(characterId, motion); else motions.delete(characterId);
 		publish(); notify();
@@ -110,7 +130,7 @@ export function createCastDomain(appContext, initial, customPoses = []) {
 		}
 		return run('run.update', { txId: gesture.txId, args });
 	}
-	const domain = { documentStore, state, read, write, writeState, run, edit, beginGesture, finishGesture,
+	const domain = { documentStore, state, read, write, update, writeState, run, edit, beginGesture, finishGesture,
 		activeId: read()[0]?.id ?? null, projection: () => projection, publishMotion, normalizeCharacters: rows => rows.map(createCharacterEntry),
 		bindRender(context) { appContext = context; },
 		beginAction: () => documentStore.beginAction('cast'), canUndo: id => documentStore.canUndo(id),
@@ -187,7 +207,8 @@ export function useCast(appContext) {
 	const rigB = (characters[1] ? rigs[charB.id] : null) ?? null;
 
 	function updateCharacterAt(index, next) {
-		const entry = domain.read()[index];
+		const base = domain.read()[index], raw = appContext.ports.read();
+		const entry = base && { ...base, ...shotAtFrame(raw.shots, raw.view.frame)?.cast[base.id] };
 		if (entry) return domain.edit('character.update', { characterId: entry.id, patch: typeof next === 'function' ? next(entry) : next });
 	}
 
@@ -222,7 +243,8 @@ export function useCast(appContext) {
 	}
 
 	function moveCharacter(charId, next) {
-		const entry = domain.read().find(entry => entry.id === charId);
+		const base = domain.read().find(entry => entry.id === charId), raw = appContext.ports.read();
+		const entry = { ...base, ...shotAtFrame(raw.shots, raw.view.frame)?.cast[charId] };
 		return domain.edit('character.update', { characterId: charId, patch: typeof next === 'function' ? next(entry) : next });
 	}
 
@@ -425,7 +447,7 @@ export function useCast(appContext) {
 	const posedRig = () => rigs[posing] ?? null;
 
 	const setPosed = (pose) => {
-		if (posingIndex >= 0) updateCharacterAt(posingIndex, { pose: typeof pose === "function" ? pose(posingChar?.pose ?? DEFAULT_POSE) : pose });
+		if (posingIndex >= 0) updateCharacterAt(posingIndex, entry => ({ pose: typeof pose === "function" ? pose(entry.pose ?? DEFAULT_POSE) : pose }));
 	};
 
 	/* ------------------------- waypoint workspace --------------------------- */
@@ -985,7 +1007,7 @@ export function useCast(appContext) {
 			const motion = appContext.storeDomain('motion');
 			if (motion) motion.clear(characterId); else appContext.shared.motionDomain.clearMotionNative();
 		}, characterId, true);
-		domain.write(rows => rows.map(entry => entry.id === characterId ? { ...entry, pose } : entry));
+		domain.update(characterId, { pose });
 	};
 	appContext.updateActionPorts({ addCharacterWaypoint, moveCharacterWaypoint, removeCharacterWaypoint, clearCharacterWaypoints, setWaypointMode });
 	return {
