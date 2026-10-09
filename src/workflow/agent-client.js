@@ -27,6 +27,7 @@ import { appendAttachments, ATTACHMENT_MAX_COUNT } from "./attachment-image.js";
 import { ko } from "../locale.js";
 import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
 import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
+import { requestAgentImage, sidecarRequest, sidecarUrl } from "../agent-image-client.js";
 
 export const AGENT_PANEL_WIDTH_KEY = "cozyclay.workflow.agentPanel.width";
 export const AGENT_PANEL_WIDTH_DEFAULT = 360;
@@ -447,11 +448,6 @@ export function parseSseChunk(buffer) {
 
 // --- real transport (loopback sidecar) ------------------------------------
 
-const SIDECAR_ORIGIN = "";
-
-function sidecarUrl(path) {
-	return `${SIDECAR_ORIGIN}${path}`;
-}
 
 const validTelemetryId = (value) => typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
 const AGENT_FAILURE_CODES = new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]);
@@ -590,26 +586,7 @@ export function providerEnvLabel(id) {
 
 export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalThis), surface, capture = track, now = () => performance.now() } = {}) {
 	const activeTurns = new Map();
-	const request = async (path, init) => {
-		const response = await fetchImpl(sidecarUrl(path), {
-			headers: { "content-type": "application/json" },
-			...init,
-		});
-		if (!response.ok) {
-			let detail = null;
-			try { detail = await response.clone().json(); } catch { /* preserve the status when the server did not send JSON */ }
-			const message = typeof detail?.error === "string" ? detail.error : detail?.error?.message;
-			const error = new Error(message || `${path} responded ${response.status}`);
-			// Keep machine-readable verification evidence alongside the human message.
-			// The Workflow node can show why an H3 take was rejected without exposing
-			// or retaining the rejected video itself.
-			error.status = response.status;
-			if (detail?.error && typeof detail.error === "object") Object.assign(error, detail.error);
-			if (detail?.preservation && typeof detail.preservation === "object") error.preservation = detail.preservation;
-			throw error;
-		}
-		return response.json();
-	};
+	const request = (path, init) => sidecarRequest(fetchImpl, path, init);
 	return {
 		mock: false,
 		async status() {
@@ -682,8 +659,8 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		// `references` are the scene's identity / environment slots (#167): extra
 		// attached pictures with a role, passed through untouched so the sidecar
 		// decides how they are described to the model.
-		async image({ prompt, imageDataUrl, referenceDataUrl, references, composition, quality = "auto" }, signal) {
-			return request("/agent/image", { method: "POST", body: JSON.stringify({ prompt, imageDataUrl, ...(referenceDataUrl ? { referenceDataUrl } : {}), ...(Array.isArray(references) && references.length ? { references } : {}), ...(composition ? { composition } : {}), quality }), signal });
+		async image(payload, signal) {
+			return requestAgentImage(payload, { fetchImpl, signal });
 		},
 		async video(payload, signal) {
 			return request("/agent/video", { method: "POST", body: JSON.stringify(payload), signal });

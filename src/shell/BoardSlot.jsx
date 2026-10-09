@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
-import { assetRecord } from "../scene-asset-cache.js";
+import { assetRecord, rememberAsset } from "../scene-asset-cache.js";
+import { ASSET_MAX_SOURCE_BYTES, importImageFile } from "../scene-assets.js";
 import { STILL_HOLD_MAX } from "../shot-authoring.js";
 import { startExportAttempt } from "../analytics.js";
 import { bytesToDataUrl, panelVideoPrompt, sendPanelToWorkflow } from "../workflow-send.js";
+import { panelStylizeRequest, requestAgentImage, stylizedPngBytes, stylizeErrorMessage } from "../agent-image-client.js";
 
 // A card's greybox is re-captured this long after the last document edit, so
 // a drag or a typing burst costs one capture pass, not one per change.
@@ -38,6 +40,7 @@ function useStylizedUrl(assetId) {
  * Agent see the same document. */
 export default function BoardSlot({ active = true }) {
 	const { shots, activeShot, tlFps, runStudioAction, selectTimelineShot, capturePanelThumbnail, packMetaForShot, setToast, sceneRevision } = useStudioShell();
+	const [stylizing, setStylizing] = useState({});
 	const stills = shots.filter((entry) => entry.kind === "still").sort((a, b) => a.startFrame - b.startFrame);
 	const [thumbs, setThumbs] = useState({});
 	const [dragId, setDragId] = useState(null);
@@ -104,6 +107,30 @@ export default function BoardSlot({ active = true }) {
 			setToast(ko(`Could not send the panel to Workflow: ${error?.message || error}`, `패널을 워크플로로 보내지 못했어요: ${error?.message || error}`));
 		}
 	}
+
+	// Stylize: the panel's full-size frame through /agent/image. The picture is
+	// stored as an image asset first, then one shot.setStylized names it, so a
+	// failure anywhere leaves the panel as it was. Never runs on its own.
+	async function stylize(entry) {
+		if (stylizing[entry.id]) return;
+		setStylizing((current) => ({ ...current, [entry.id]: true }));
+		try {
+			// The thumbnail capture is the full-size export frame at the shot camera.
+			const imageDataUrl = capturePanelThumbnail(entry);
+			if (!imageDataUrl) throw new Error(ko("the shot renderer is not ready yet", "샷 렌더러가 아직 준비되지 않았어요"));
+			const meta = packMetaForShot(entry, shots.findIndex((candidate) => candidate.id === entry.id));
+			const result = await requestAgentImage(panelStylizeRequest({ meta, caption: entry.caption, imageDataUrl }));
+			const bytes = stylizedPngBytes(result?.dataUrl, ASSET_MAX_SOURCE_BYTES);
+			const asset = await rememberAsset(await importImageFile(new File([bytes], `${entry.name || "panel"} stylized.png`, { type: "image/png" })));
+			if (!runStudioAction("shot.setStylized", { shotId: entry.id, assetId: asset.id })) throw new Error(ko("the panel is no longer on the board", "패널이 보드에 더 이상 없어요"));
+		} catch (error) {
+			console.warn(`[cozyclay] panel ${entry.id} stylize failed`, error);
+			setToast(stylizeErrorMessage(error));
+		} finally {
+			setStylizing(({ [entry.id]: _done, ...rest }) => rest);
+		}
+	}
+
 	function dropTarget(event, entry) {
 		const box = event.currentTarget.getBoundingClientRect();
 		return { id: entry.id, after: event.clientX > box.left + box.width / 2 };
@@ -145,6 +172,9 @@ export default function BoardSlot({ active = true }) {
 							index={index}
 							fps={fps}
 							thumb={thumbs[entry.id] ?? null}
+							stylizing={Boolean(stylizing[entry.id])}
+							onStylize={() => stylize(entry)}
+							onUnstylize={() => runStudioAction("shot.setStylized", { shotId: entry.id, assetId: null })}
 							selected={activeShot?.id === entry.id}
 							dragging={dragId === entry.id}
 							dropSide={drop?.id === entry.id ? (drop.after ? "after" : "before") : null}
@@ -179,7 +209,7 @@ export default function BoardSlot({ active = true }) {
 	);
 }
 
-function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSelect, onRemove, onDuplicate, onCaption, onHold, onSendToWorkflow, onDragStart, onDragOver, onDrop, onDragEnd }) {
+function PanelCard({ shot, index, fps, thumb, stylizing, onStylize, onUnstylize, selected, dragging, dropSide, onSelect, onRemove, onDuplicate, onCaption, onHold, onSendToWorkflow, onDragStart, onDragOver, onDrop, onDragEnd }) {
 	const stylized = useStylizedUrl(shot.stylizedAssetId);
 	const [sendMenu, setSendMenu] = useState(false);
 	const hold = shot.endFrame - shot.startFrame + 1;
@@ -209,6 +239,7 @@ function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSe
 			data-selected={selected || undefined}
 			data-dragging={dragging || undefined}
 			data-drop={dropSide ?? undefined}
+			data-stylizing={stylizing || undefined}
 			tabIndex={0}
 			draggable
 			aria-label={ko(`Panel ${index + 1}`, `패널 ${index + 1}`)}
@@ -232,7 +263,16 @@ function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSe
 			<div className="dock-board-actions">
 				<button type="button" data-action="duplicate" title={ko("Duplicate this panel after itself", "이 패널을 바로 뒤에 복제")} onClick={(event) => { stop(event); onDuplicate(); }}>{ko("Duplicate", "복제")}</button>
 				<button type="button" data-action="delete" className="danger" title={ko("Delete this panel (Delete)", "이 패널 삭제 (Delete)")} onClick={(event) => { stop(event); onRemove(); }}>{ko("Delete", "삭제")}</button>
-				<button type="button" data-action="stylize" disabled title={ko("Stylize — coming in a later PR", "스타일화 — 다음 PR에서 제공")} data-disabled-reason={LATER_PR}>{ko("Stylize", "스타일화")}</button>
+				<button type="button" data-action="stylize" disabled={stylizing}
+					title={shot.stylizedAssetId
+						? ko("Generate a new stylized picture from this panel's frame and caption (replaces the current one)", "이 패널의 프레임과 캡션으로 스타일화 그림을 새로 생성 (지금 그림을 바꿔요)")
+						: ko("Generate a stylized picture from this panel's frame and caption", "이 패널의 프레임과 캡션으로 스타일화 그림 생성")}
+					onClick={(event) => { stop(event); onStylize(); }}>
+					{stylizing ? ko("Stylizing...", "스타일화 중...") : shot.stylizedAssetId ? ko("Re-stylize", "다시 스타일화") : ko("Stylize", "스타일화")}
+				</button>
+				{shot.stylizedAssetId && !stylizing && (
+					<button type="button" data-action="unstylize" title={ko("Remove the stylized picture; the greybox stays", "스타일화 그림 제거 (그레이박스는 남아요)")} onClick={(event) => { stop(event); onUnstylize(); }}>{ko("Remove", "제거")}</button>
+				)}
 				<button
 					type="button"
 					data-action="workflow"
@@ -258,6 +298,12 @@ function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSe
 				{stylized ? <img className="dock-board-image" src={stylized} alt="" draggable={false} /> : thumb && <img className="dock-board-image" src={thumb} alt="" draggable={false} />}
 				{stylized && thumb && <img className="dock-board-inset" src={thumb} alt="" draggable={false} />}
 				<span className="dock-board-index" data-testid="board-card-index">{index + 1}</span>
+				{stylizing && (
+					<span data-testid="board-card-stylizing" role="status"
+						style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", background: "rgba(0, 0, 0, .45)", color: "#fff", font: "500 11px var(--sans)" }}>
+						{ko("Stylizing...", "스타일화 중...")}
+					</span>
+				)}
 			</div>
 			<textarea
 				key={`caption:${shot.caption ?? ""}`}

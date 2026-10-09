@@ -3,6 +3,7 @@ import { createCameraBlock, updateCameraBlock, removeCameraRail } from '../camer
 import { addShotAtFrame, createShot, cutAtFrame, duplicateShot, removeShot, reorderShot, resizeShot, renameShot, moveCameraKey, removeCameraKey } from '../cuts.js';
 import { reflowStillShots, stillFrameCount, STILL_FRAME_COUNT_MAX, STILL_HOLD_DEFAULT } from '../shot-authoring.js';
 import { ko } from '../locale.js';
+import { isImageAssetId } from '../scene-assets.js';
 import { createStableItemId, updateStableItem } from '../stable-items.js';
 import { railFollowForNewGeometry } from '../camera-rail-schedule.js';
 import { studioActionDeclaration, studioActionRefusal } from '../studio-actions.js';
@@ -31,6 +32,9 @@ const extra = [
   mutation('shot.frame', 'Frame the shot', { ...input({ ...STUDIO_TOOL_SCHEMAS.frame_shot.properties, preset: { type: 'string' } }, []), oneOf: [STUDIO_TOOL_SCHEMAS.frame_shot, input({ preset: { type: 'string' } })] }),
   { ...mutation('shot.replace', 'Replace shot authoring', input({ shots: { type: 'array', items: { type: 'object', properties: {}, additionalProperties: true } } })), exposure: 'ui-only' },
   { ...mutation('shot.captureCamera', 'Capture camera framing', input({ shotId: id }, [])), exposure: 'ui-only' },
+  // The Board's Stylize result (or null to clear it). UI-only: the picture has
+  // to be in the asset store first, which only the Stylize flow does.
+  { ...mutation('shot.setStylized', 'Set stylized panel image', input({ shotId: id, assetId: { oneOf: [{ type: 'string' }, { type: 'null' }] } })), exposure: 'ui-only' },
   { ...mutation('shot.placeCamera', 'Place camera', input(Object.fromEntries(['x', 'y', 'z', 'lookAtX', 'lookAtY', 'lookAtZ', 'focalMm'].map(key => [key, number])), [])), exposure: 'ui-only' },
 ];
 export const declarations = Object.freeze([extra[0], ...existing, ...extra.slice(1).map(entry => entry.id === 'shot.frame' ? entry : { ...entry, exposure: 'ui-only' })]);
@@ -134,6 +138,10 @@ export function register(registry, ports) {
     'shot.setLens': ({ fovDeg }) => owner().setLens(fovDeg),
     'shot.replace': ({ shots }) => owner().write(shots),
     'shot.captureCamera': args => owner().captureCamera(args.shotId),
+    'shot.setStylized': ({ shotId, assetId }) => {
+      if (assetId !== null && !isImageAssetId(assetId)) fail('INVALID_ARGUMENT', `${assetId} is not an image asset id.`);
+      patchShot(shotId, shot => ({ ...shot, stylizedAssetId: assetId }));
+    },
     'shot.placeCamera': args => owner().placeCamera(args),
   };
   const hasShots = state => state.shots.length > 0 || 'There are no shots yet; add one with shot.create.';

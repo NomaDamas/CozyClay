@@ -308,7 +308,15 @@ export async function importImageFile(file, {
  * going away. This is the reachable set; `unreachableAssetIds` is the sweep.
  */
 export function referencedAssetIds(scenes) {
-	return new Set(assetUsageCounts(scenes).keys());
+	const ids = new Set(assetUsageCounts(scenes).keys());
+	// A storyboard panel's stylized picture is held by its shot, not by an object.
+	for (const scene of Array.isArray(scenes) ? scenes : []) {
+		const shots = scene?.shotDocument?.shots;
+		for (const shot of Array.isArray(shots) ? shots : []) {
+			if (isImageAssetId(shot?.stylizedAssetId)) ids.add(shot.stylizedAssetId);
+		}
+	}
+	return ids;
 }
 
 /**
