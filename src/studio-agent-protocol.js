@@ -216,8 +216,8 @@ const indexRow = object({ id, kind: choices(["object", "character", "rig"]) }, {
 // Its schema is on request (inspect_studio scope "actions" with ids); the
 // declared generation and hub timeout ride along for the sidecar's gate.
 const actionIndexRow = object({ id }, { label: name, generation: literal("motion"), timeoutMs: integer(1, 300_000) });
-const shotSummary = object({ id, name, range, keyCount: integer() }, { subjectIds: ids(24, 0) });
-const currentShot = object({ id, name, range, mode: choices(STUDIO_VARIANTS.shotModes) }, { subjectIds: ids(24, 0) });
+const shotSummary = object({ id, name, range, keyCount: integer() }, { subjectIds: ids(24, 0), kind: choices(["clip", "still"]), caption: text(500) });
+const currentShot = object({ id, name, range, mode: choices(STUDIO_VARIANTS.shotModes) }, { subjectIds: ids(24, 0), kind: choices(["clip", "still"]), caption: text(500) });
 const camera = object({ position: vec3, lookAt: vec3, focalMm: positive, sensorId: id, slate: name });
 // What the agent can place: a catalogue kind, or an asset imported into the scene.
 const assetTypes = choices(["primitive", "set-piece", "image", "mesh"]);

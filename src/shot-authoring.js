@@ -9,21 +9,35 @@ import { createShot } from "./cuts.js";
 import { normalizeStableItems } from "./stable-items.js";
 import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
 import { elementByPath } from "./studio-elements.js";
+import { isImageAssetId } from "./scene-assets.js";
+import { createCharacterEntry } from "./scenes.js";
 
 const VIDEO_MODEL_IDS = new Set(VIDEO_MODEL_PRESETS.map((preset) => preset.id));
 const CAMERA_KEY_LIMITS = elementByPath("shot.cameraKeys");
 
-export const SHOT_AUTHORING_VERSION = 4;
-export const SHOT_AUTHORING_KEY = "cozyclay.shot-authoring.v4";
+export const SHOT_AUTHORING_VERSION = 5;
+export const SHOT_AUTHORING_KEY = "cozyclay.shot-authoring.v5";
 // The single-key alias points at the newest legacy body for older callers.
 // New readers should walk the list so a user can still arrive directly from v1.
-export const SHOT_AUTHORING_LEGACY_KEY = "cozyclay.shot-authoring.v3";
+export const SHOT_AUTHORING_LEGACY_KEY = "cozyclay.shot-authoring.v4";
 export const SHOT_AUTHORING_LEGACY_KEYS = Object.freeze([
 	SHOT_AUTHORING_LEGACY_KEY,
+	"cozyclay.shot-authoring.v3",
 	"cozyclay.shot-authoring.v2",
 	"cozyclay.shot-authoring.v1",
 ]);
-export const SHOT_AUTHORING_QUARANTINE_KEY = "cozyclay.shot-authoring.v4.quarantine";
+export const SHOT_AUTHORING_QUARANTINE_KEY = "cozyclay.shot-authoring.v5.quarantine";
+
+/** A still holds one picture for `endFrame - startFrame + 1` frames (24 fps). */
+export const STILL_HOLD_DEFAULT = 48;
+export const STILL_HOLD_MAX = 240;
+export const shotHold = (shot) => shot.endFrame - shot.startFrame + 1;
+
+const SHOT_KINDS = new Set(["clip", "still"]);
+const CAPTION_MAX = 500;
+// Mirrors the cast posture vocabulary (POSTURES in src/scenes.js once the
+// proxy-figure work lands); kept local so this module does not wait on it.
+const POSTURES = new Set(["stand", "sit", "lie"]);
 
 /** clip length sanity bounds, frames @ 24 fps: 1 s .. 20 min */
 const FRAME_COUNT_MIN = 24;
@@ -159,8 +173,34 @@ function repairShots(entries, frameCount, inheritedCamera = null, ids = new Set(
 			cameraKeys: repairKeys(entry.cameraKeys, startFrame, endFrame, ids),
 			camera: repairCamera(inheritedCamera ?? entry.camera),
 			...targetModel,
+			kind: SHOT_KINDS.has(entry.kind) ? entry.kind : "clip",
+			caption: repairCaption(entry.caption),
+			cast: repairCast(entry.cast),
+			stylizedAssetId: isImageAssetId(entry.stylizedAssetId) ? entry.stylizedAssetId : null,
 		};
 	});
+}
+
+function repairCaption(value) {
+	return typeof value === "string" ? Array.from(value.trim()).slice(0, CAPTION_MAX).join("") : "";
+}
+
+/** Per-shot placement overrides keyed by character id. An entry without a
+ * usable id or a finite x/z/rot is dropped; its valid siblings survive. */
+function repairCast(value) {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+	const rows = [];
+	for (const [characterId, entry] of Object.entries(value)) {
+		if (!characterId.trim() || !entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+		if (!finite(entry.x) || !finite(entry.z) || !finite(entry.rot)) continue;
+		const row = { x: entry.x, z: entry.z, rot: entry.rot };
+		if (POSTURES.has(entry.posture)) row.posture = entry.posture;
+		const pose = createCharacterEntry({ pose: entry.pose }).pose;
+		if (pose) row.pose = pose;
+		rows.push([characterId, row]);
+	}
+	// fromEntries defines own properties, so a "__proto__" id stays data.
+	return Object.fromEntries(rows);
 }
 
 function repairWaypoints(entries, ids = new Set()) {
@@ -313,8 +353,9 @@ export function readShotAuthoringDocument(raw) {
 	}
 	const ids = new Set();
 	return {
-		// A v3 body is structurally current but was authored on the old clock;
-		// it is rewritten, so it reports as migrated, not valid.
+		// A v3 body was authored on the old clock and a v4 body lacks the v5
+		// kind/caption/cast/stylizedAssetId defaults; both are rewritten, so they
+		// report as migrated, not valid.
 		status: version < SHOT_AUTHORING_VERSION ? "migrated" : "valid",
 		state: { ...repairShared(parsed, frameCount, ids), shots: repairShots(parsed.shots, effectiveFrameCount, null, ids) },
 	};

@@ -107,6 +107,20 @@ function registerTests() {
 		const invalid = contextFixture(); invalid.units.pivot = "centre";
 		rejects(() => protocol.validateStudioContext(invalid), "INVALID_CONTEXT");
 	});
+	test("#626 shot summaries carry an optional kind and caption", () => {
+		const range = { startFrame: 0, endFrameExclusive: 48 };
+		const value = contextFixture();
+		value.shots = [{ id: "shot-a", name: "Hero", range, keyCount: 0, kind: "still", caption: "She looks up." }, { id: "shot-b", name: "Wide", range: { startFrame: 48, endFrameExclusive: 96 }, keyCount: 1 }];
+		value.shot = { id: "shot-a", name: "Hero", range, mode: "keys", kind: "still", caption: "She looks up." };
+		const accepted = protocol.validateStudioContext(value);
+		assert.equal(accepted.shots[0].kind, "still");
+		assert.equal(accepted.shot.caption, "She looks up.");
+		assert.equal(accepted.shots[1].kind, undefined, "kind stays optional");
+		for (const patch of [{ kind: "gif" }, { caption: "x".repeat(501) }, { caption: "" }]) {
+			rejects(() => protocol.validateStudioContext({ ...value, shots: [{ ...value.shots[0], ...patch }, value.shots[1]] }), "INVALID_CONTEXT");
+			rejects(() => protocol.validateStudioContext({ ...value, shot: { ...value.shot, ...patch } }), "INVALID_CONTEXT");
+		}
+	});
 	test("#405 patch descriptors retain declared pivot notes", () => {
 		for (const path of ["object.position", "character.position"]) {
 			const descriptor = protocol.STUDIO_PATCH_DESCRIPTORS.find(row => row.path === path);
