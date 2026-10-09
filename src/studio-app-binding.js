@@ -223,7 +223,7 @@ export function createStudioAppBinding(ports) {
 	}
 	function runAction(request, args) {
 		const { name: _name, args: _args, ...options } = request;
-		const result = commandBus().run(args.action, args.args, { ...options, origin: "agent", confirmationToken: args.confirmationToken ?? request.confirmationToken });
+		const result = commandBus().run(args.action, args.args, { ...options, origin: "agent", turnId: request.turnId, confirmationToken: args.confirmationToken ?? request.confirmationToken });
 		const answer = receipt => receipt.nextHost ? { ...receipt, host: receipt.nextHost } : receipt;
 		return result?.then ? result.then(answer) : answer(result);
 	}

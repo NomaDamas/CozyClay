@@ -233,6 +233,7 @@ const NODE_FILES = [
 	"test/verify-studio-agent-geometry.mjs",
 	"test/verify-studio-agent-motion.mjs",
 	"test/verify-studio-agent-binding.mjs",
+	"test/verify-studio-agent-turn-undo.mjs",
 	"test/verify-studio-undo-hygiene.mjs",
 	"test/verify-studio-contact-sheet.mjs",
 	"test/verify-reference-slots.mjs",

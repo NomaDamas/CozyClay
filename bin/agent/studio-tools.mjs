@@ -29,7 +29,7 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
     if (generation && (generationGate.used || generationGate.pending)) throw new StudioProtocolError("GENERATION_LIMIT", "One motion generation per user message. Report this result and ask the user before generating again.");
     if (generation && (generationGate.failures ?? 0) >= 2) throw new StudioProtocolError("GENERATION_LIMIT", "Two motion generation attempts already failed in this user message. Report both failures to the user and ask before generating again.");
     const payload = mutationNames.has(name) && session?.admission
-      ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision,
+      ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision, ...(session.admission.turnId ? { turnId: session.admission.turnId } : {}),
           ...(generation && session.onJob ? { wait: false } : {}) }
       : command.args;
     let result;

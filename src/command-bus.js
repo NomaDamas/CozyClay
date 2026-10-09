@@ -45,6 +45,7 @@ export const isBusRunActive = () => activeRunDepth > 0;
 export function createCommandBus({ registry, ports }) {
   const pending = new Map(), transactions = new Map(), jobs = new Map(), listeners = new Set();
   const confirmations = new Map(), historyReceipts = new Map();
+  let agentTurn = null;
   function exposure(entry, args, request) {
     if (request.origin === 'ui') return;
     if (entry.exposure === 'ui-only') fail('CAPABILITY_MISSING', 'This command is available only from the Studio UI.');
@@ -61,6 +62,8 @@ export function createCommandBus({ registry, ports }) {
   const object = properties => ({ type: 'object', properties, required: Object.keys(properties), additionalProperties: false });
   const argsSchema = { type: 'object', properties: {}, required: [], additionalProperties: true };
   const controls = {
+    'agent.turn.begin': object({ turnId: identifier }),
+    'agent.turn.finish': object({ turnId: identifier }),
     'run.begin': object({ id: identifier, args: argsSchema }),
     'run.update': object({ txId: identifier, args: argsSchema }),
     'run.commit': object({ txId: identifier }),
@@ -81,6 +84,22 @@ export function createCommandBus({ registry, ports }) {
     tx.timer = (ports.setTimeout ?? setTimeout)(() => cancelTransaction(tx, true), ports.transactionIdleMs ?? 30_000);
   }
   function control(id, args, request, before) {
+    if (id.startsWith('agent.turn.')) {
+      if (request.origin !== 'agent' || request.turnId !== args.turnId) fail('CAPABILITY_MISSING', 'Only the owning agent turn can control this transaction.');
+      if (id === 'agent.turn.begin') {
+        if (before.previsMode !== 'storyboard') fail('INVALID_ARGUMENT', 'Turn transactions require a Storyboard project.');
+        if (agentTurn || transactions.size) fail('TARGET_BUSY', 'Finish the open transaction first.');
+        agentTurn = { txId: args.turnId, before, affectedIds: new Set(), toasts: [], session: null };
+        return transactionReceipt(id, agentTurn, request, before);
+      }
+      if (agentTurn?.txId !== args.turnId) fail('STALE_TARGET', 'The agent turn is no longer open.');
+      const turn = agentTurn;
+      try { turn.historyEntryId = turn.session?.commit().historyEntryId; }
+      catch (error) { turn.session?.cancel(); throw error; }
+      finally { agentTurn = null; }
+      return transactionReceipt(id, turn, request, turn.before);
+    }
+    if (agentTurn && !id.startsWith('job.')) fail('TARGET_BUSY', 'Finish the agent turn before traversing history or opening another transaction.');
     if (id === 'edit.undo' || id === 'edit.redo') {
       const redo = id === 'edit.redo', historyEntryId = ports.history?.(redo);
       const previous = args.receiptId ? ports.receipt(args.receiptId) : historyReceipts.get(historyEntryId)
@@ -180,23 +199,37 @@ export function createCommandBus({ registry, ports }) {
       mutated: changed, preserved: { authoredState: changed ? 'changed' : 'unchanged' }, recovery: { action: 'inspect', retryAllowed: false },
       message: [...String(error.message || error)].slice(0, 500).join('') });
   }
-  function receipt(entry, request, before, result, historyEntryId, toasts = []) {
+  function receipt(entry, request, before, result, historyEntryId, toasts = [], turn = null) {
     const after = ports.read(), changed = after.revision !== before.revision;
-    if (entry.kind === 'mutation' && changed && !historyEntryId) fail('UNCERTAIN_APPLY', `${entry.id} changed the scene without one undoable entry.`);
-    const completed = entry.kind === 'job' || entry.kind === 'document' || (entry.kind === 'mutation' && changed && after.revision > before.revision + 1);
+    const retainedHistoryEntryId = historyEntryId ?? turn?.txId ?? null;
+    if (entry.kind === 'mutation' && changed && !historyEntryId && !turn) fail('UNCERTAIN_APPLY', `${entry.id} changed the scene without one undoable entry.`);
+    const completed = entry.kind === 'job' || entry.kind === 'document' || (entry.kind === 'mutation' && changed && (turn || after.revision > before.revision + 1));
     const ids = completed || changed ? result.affectedIds : entry.kind === 'transient' ? [before.host.sceneId] : [];
+    if (turn && changed) for (const id of ids) turn.affectedIds.add(id);
     return validateReceipt({ ok: true, commandId: request.commandId, receiptId: crypto.randomUUID(), host: before.host,
       action: entry.id, summary: result.summary, status: completed ? 'completed' : entry.kind === 'transient' ? 'transient' : changed ? 'applied' : 'noop',
       authored: changed, ...(completed ? { kind: entry.kind, ...(result.output === undefined ? {} : { output: result.output }), ...(same(before.host, after.host) ? {} : { nextHost: after.host }) } : entry.kind === 'transient' ? { view: { before: before.viewRevision ?? 0, after: after.viewRevision ?? 0 } } : { mutated: changed }),
       revision: { before: before.revision, after: after.revision }, affectedIds: ids,
       delta: ids.slice(0, 8).map(id => ({ id, after: ports.readback?.(id, after) ?? { removed: true } })),
       checks: { coverage: `studio-action:${entry.id}` }, warnings: toastWarnings(toasts),
-      undo: historyEntryId ? { historyEntryId, entries: 1, canUndoDirect: true } : null, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
+      undo: retainedHistoryEntryId ? { historyEntryId: retainedHistoryEntryId, entries: 1, canUndoDirect: !turn } : null, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
   }
   function executeRun(id, args = {}, options = {}) {
     const request = { origin: 'ui', commandId: crypto.randomUUID(), ...options };
     if (request.origin === 'ui' && (id === 'edit.undo' || id === 'edit.redo')) ports.finishHistoryGesture?.();
     const before = ports.read(), journal = ports.journal();
+    if (agentTurn && !same(agentTurn.before.host, before.host)) {
+      agentTurn.session?.cancel({ restore: false }); agentTurn = null;
+    }
+    const turn = request.origin === 'agent' && request.turnId === agentTurn?.txId ? agentTurn : null;
+    const recordAction = (domain, invoke, targetId, nested = false) => {
+      if (!turn) return ports.recordAction(domain, invoke, targetId, nested);
+      // Enrol each owner in the existing composed session. Do not commit (or
+      // cancel the parent on a tool refusal) at an individual command boundary.
+      turn.session ??= ports.beginAction(domain, targetId);
+      const result = turn.session.run(() => ports.beginAction(domain, targetId).run(invoke));
+      return { result, historyEntryId: null };
+    };
     let begun = false, releaseToasts, timer, foregroundTimer, job, applied = false, committedHistoryId;
     const controller = new AbortController();
     const clearTimer = () => {
@@ -228,6 +261,7 @@ export function createCommandBus({ registry, ports }) {
     };
     try {
       if (request.origin !== 'ui' && !same(validateStudioIdentity(request.host), before.host)) fail('STALE_SCENE', 'The live document changed.');
+      if (request.turnId && !turn && id !== 'agent.turn.begin') fail('STALE_TARGET', 'The agent turn is no longer open.');
       const signature = JSON.stringify({ id, args, ...request });
       if (!journal.begin(request.commandId, signature)) return journal.get(request.commandId) ?? pending.get(request.commandId) ?? refusal(request, before, new StudioProtocolError('UNCERTAIN_APPLY', 'Command is still executing.'));
       begun = true;
@@ -237,11 +271,12 @@ export function createCommandBus({ registry, ports }) {
         // Job controls observe/cancel an admitted identity; completion itself
         // can advance the revision while their wire request is in transit.
         // Document identity and the job's own publication fence still apply.
-        if (!['job.await', 'job.cancel'].includes(id) && request.expectedRevision !== before.revision) fail('STALE_SCENE', 'Authored state changed; obtain fresh intent.');
-        if (before.busy && !transactions.has(validated.txId) && !id.startsWith('job.')) fail('TARGET_BUSY', 'Finish the current editor gesture first.');
+        if (!['job.await', 'job.cancel', 'agent.turn.finish'].includes(id) && request.expectedRevision !== before.revision) fail('STALE_SCENE', 'Authored state changed; obtain fresh intent.');
+        if (before.busy && !turn && !transactions.has(validated.txId) && !id.startsWith('job.')) fail('TARGET_BUSY', 'Finish the current editor gesture first.');
       }
       if (controls[id]) return mapResult(control(id, validated, request, before), remember, rejected);
       if (transactions.size) fail('TARGET_BUSY', 'Finish or cancel the open command transaction first.');
+      if (turn && entry.kind === 'document') fail('TARGET_BUSY', 'Finish the agent turn before changing documents.');
       exposure(entry, validated, request);
       releaseToasts = ports.captureToasts?.(toast => toasts.push(typeof toast === 'string' ? { message: toast } : toast));
       const domain = entry.domain ?? entry.undoDomain;
@@ -266,7 +301,7 @@ export function createCommandBus({ registry, ports }) {
         commit(apply) {
           context.check();
           if (!domain) fail('INVALID_ARGUMENT', 'A committing job must declare its domain.');
-          const recorded = ports.recordAction(domain, apply, targetId ?? null);
+          const recorded = recordAction(domain, apply, targetId ?? null);
           if (recorded?.then) fail('INVALID_ARGUMENT', 'Job publication must be synchronous; prepare before commit.');
           committedHistoryId = recorded.historyEntryId; applied ||= Boolean(committedHistoryId);
           if (job) rebase();
@@ -276,7 +311,7 @@ export function createCommandBus({ registry, ports }) {
           if (job) context.check(); else controller.signal.throwIfAborted();
           const nested = registry.prepare(nestedId, nestedArgs); exposure(nested.entry, nested.args, request);
           const invoke = () => registry.invoke(nested.entry, nested.args, context);
-          const value = nested.entry.kind === 'mutation' ? ports.recordAction(nested.entry.undoDomain, invoke, nested.args.characterId ?? null, true) : { result: invoke() };
+          const value = nested.entry.kind === 'mutation' ? recordAction(nested.entry.undoDomain, invoke, nested.args.characterId ?? null, true) : { result: invoke() };
           // Only the synchronous owned step may advance the fence. Never absorb
           // an external edit while an asynchronous nested step is suspended;
           // its later publication must itself use context.run/commit.
@@ -300,13 +335,13 @@ export function createCommandBus({ registry, ports }) {
         const deadline = new Promise((_, reject) => controller.signal.addEventListener('abort', () => reject(controller.signal.reason), { once: true }));
         return Promise.race([value, deadline]);
       };
-      const value = entry.kind === 'mutation' ? ports.recordAction(entry.undoDomain, invoke, validated.characterId ?? null) : { result: invoke(), historyEntryId: null };
+      const value = entry.kind === 'mutation' ? recordAction(entry.undoDomain, invoke, validated.characterId ?? null) : { result: invoke(), historyEntryId: null };
       const finish = ({ result, historyEntryId }) => mapResult(result, output => {
         clearTimer();
         releaseToasts?.(); releaseToasts = null;
         const refused = toastRefusal();
         if (refused) throw refused;
-        return remember(receipt(entry, request, before, { ...output, affectedIds: [...new Set([...output.affectedIds, ...nestedIds])] }, historyEntryId ?? committedHistoryId, toasts));
+        return remember(receipt(entry, request, before, { ...output, affectedIds: [...new Set([...output.affectedIds, ...nestedIds])] }, historyEntryId ?? committedHistoryId, toasts, turn));
       });
       const finished = value?.then ? value.then(finish) : finish(value);
       const answer = finished?.then ? finished.catch(rejected) : finished;
@@ -348,5 +383,5 @@ export function createCommandBus({ registry, ports }) {
     // Trusted UI adapter only: wire callers can consume, never mint a token.
     confirm(id, args = {}) { const prepared = registry.prepare(id, args), token = crypto.randomUUID(); confirmations.set(token, { id, args: prepared.args, host: ports.read().host, expires: (ports.now ?? Date.now)() + 300_000 }); return token; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },
-    dispose() { for (const tx of transactions.values()) cancelTransaction(tx); for (const job of jobs.values()) if (!job.outcome) job.controller.abort(new StudioProtocolError('CANCELLED', 'Studio closed.')); listeners.clear(); } };
+    dispose() { agentTurn?.session?.cancel(); agentTurn = null; for (const tx of transactions.values()) cancelTransaction(tx); for (const job of jobs.values()) if (!job.outcome) job.controller.abort(new StudioProtocolError('CANCELLED', 'Studio closed.')); listeners.clear(); } };
 }

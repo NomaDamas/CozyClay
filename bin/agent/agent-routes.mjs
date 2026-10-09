@@ -76,6 +76,29 @@ const agentFailureCode = (error, signal, tool = false) => advisory(() => {
 	if (error?.status === 429) return "rate_limited";
 	return tool ? "tool_failed" : "upstream";
 }, tool ? "tool_failed" : "upstream");
+const storyboardTurn = ({ hub, context, turnId, admission }, start) => async function* (input) {
+	if (context.scene?.previsMode !== "storyboard") { yield* start(input); return; }
+	const host = Object.fromEntries(["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"].map(key => [key, context.host[key]]));
+	const control = action => hub.command("run_action", {
+		name: "run_action", args: { action, args: { turnId } }, turnId,
+		commandId: randomUUID(), host, expectedRevision: admission.revision,
+	}, context.host.workspaceHandle);
+	const opened = await control("agent.turn.begin");
+	if (!opened.ok) throw Object.assign(new Error(opened.message), { code: opened.code });
+	admission.turnId = turnId;
+	let terminal;
+	try {
+		for await (const frame of start(input)) {
+			if (frame.type === "done") terminal = frame; else yield frame;
+		}
+	} finally {
+		delete admission.turnId;
+		const receipt = await control("agent.turn.finish");
+		if (!receipt.ok) throw Object.assign(new Error(receipt.message), { code: receipt.code });
+		if (receipt.authored) yield { type: "receipt", receipt };
+	}
+	if (terminal) yield terminal;
+};
 // These existing canvas commands only return a node/edge after publishing a
 // new insertion. Read/focus, generic accepted responses, update no-ops and run
 // outputs (which can echo old values) are deliberately not application proof.
@@ -576,7 +599,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		}
 		try {
 			if (!session.modelSession) session.modelSession = await runner.openSession(value.sessionId, { surface: "studio" });
-			for await (const frame of session.modelSession.start({
+			for await (const frame of storyboardTurn({ hub, context: current, turnId: value.turnId, admission }, input => session.modelSession.start(input))({
 				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
 				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
 				context: value.context, tools: modelTools, systemPrompt: value.context.scene?.previsMode === "storyboard" ? STUDIO_SYSTEM_PROMPT_STORYBOARD : undefined, signal: controller.signal, emit: send,

@@ -91,13 +91,22 @@ async function turn(text, interleave, stopped = false) {
 }
 const arrangement = 'Put a cube on the floor one metre to camera-left of the selected character. Add a second character two metres to camera-right.';
 const motionIntent = 'Make the selected character walk forward, wave, then return to the starting pose over the current shot range. Verify the full take and install it.';
-async function undo(before, count = 1) {
+async function undoStep(before) {
+  const revision = (await fixture.context()).revision.scene;
+  await page.evaluate(() => document.activeElement?.blur());
+  await gate(`STATE:current.context.revision.scene > ${revision}`, () => page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'));
+  const restored = await state(); log.push({ action: 'native-undo', count: 1, before, restored }); assert.deepEqual(restored, before, 'native Undo restores exact authored state and take');
+}
+async function undo(before) {
+  await undoStep(before);
+}
+async function undoMany(before, count) {
   for (let i = 0; i < count; i++) {
     const revision = (await fixture.context()).revision.scene;
     await page.evaluate(() => document.activeElement?.blur());
     await gate(`STATE:current.context.revision.scene > ${revision}`, () => page.keyboard.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z'));
   }
-  const restored = await state(); log.push({ action: 'native-undo', count, before, restored }); assert.deepEqual(restored, before, 'native Undo restores exact authored state and take');
+  const restored = await state(); assert.deepEqual(restored, before, 'native Undo restores the complete multi-turn baseline');
 }
 async function installed(result) {
   const outcome = result.stream.find(e => e.type === 'tool.done')?.result;
@@ -129,7 +138,7 @@ const implementations = {
       console.log(`PASS capsule-only storyboard frame_shot: receipt ok=true; new still camera key differs from initial camera`);
       log.push({ action: 'capsule-only-storyboard-framing', beforeCamera: before.camera, receipt: frame.result, framedShot });
       await shot('task-30-storyboard-capsule-happy');
-      await undo(before, result.commands.filter(e => e.result?.ok && e.result?.authored).length);
+      await undo(before);
     } else {
       // Second turn: the new panel must take the placement, the first must not.
       const second = await turn('둘이 문 앞으로 간다');
@@ -140,7 +149,7 @@ const implementations = {
       assert.equal(panels[1].cast['story-person-a']?.x, 3, 'second panel carries the second turn placement');
       assert.equal(panels[0].cast['story-person-a']?.x, undefined, 'first panel is not overwritten by the second turn');
       console.log('SECOND PANEL CAST', JSON.stringify(panels.map(s => ({ id: s.id, caption: s.caption, cast: s.cast }))));
-      await undo(before, [...result.commands, ...second.commands].filter(e => e.result?.ok && e.result?.authored).length);
+      await undoMany(before, 2);
     }
     assert.deepEqual(await state(), before);
     console.log('PASS storyboard project: one new Board card with caption and two placed characters; second turn lands its placement in the second panel; Ctrl+Z removes both panels');
@@ -169,7 +178,7 @@ const implementations = {
     log.push({action:'initial-real-rig-bounds',bounds}); console.log('INITIAL RIG BOUNDS',JSON.stringify(bounds));
     const result = await turn(arrangement), authored = result.commands.filter(e => ['arrange_objects','arrange_characters'].includes(e.name));
     const after = await state(); log.push({ action:'arrangement-state',before,after }); await shot('intent-desktop');
-    await undo(before,authored.filter(row=>row.result.ok && row.result.authored).length); await shot('intent-native-undo');
+    await undoMany(before,authored.filter(row=>row.result.ok && row.result.authored).length); await shot('intent-native-undo');
     assert.equal(authored.length,2); for (const row of authored) { assert.equal(row.result.ok,true,JSON.stringify(row.result)); assert(row.result.receiptId); assert.equal(row.result.revision.after,row.result.revision.before+1); }
     assert.equal(authored[1].expectedRevision,authored[0].result.revision.after);
     const actor = after.characters.find(e => e.id === target), object = after.objects.find(e => !before.objects.some(b => b.id === e.id)), second = after.characters.find(e => !before.characters.some(b => b.id === e.id));
@@ -251,7 +260,7 @@ const implementations = {
     await turn('Frame the selected character in a medium shot from the front at eye level and save a camera key at the current frame.');
     const conflictBefore = await state(), conflict = await turn('Undo the earlier cube receipt without undoing newer edits.'); assert.equal(conflict.commands.find(e => e.name === 'undo_edit').result.code,'UNDO_CONFLICT'); assert.deepEqual(await state(),conflictBefore); await shot('resilience-undo-conflict');
     const command = arranged.commands.find(e => e.name === 'arrange_objects'); const reconciled = await fixture.hub.command('reconcile_studio_command',{commandId:command.commandId,host:command.result.host},(await fixture.context()).host.workspaceHandle); assert.deepEqual(reconciled.receipt,command.result); assert.equal(reconciled.status,'applied');
-    const repeated = await fixture.hub.command('reconcile_studio_command',{commandId:command.commandId,host:command.result.host},(await fixture.context()).host.workspaceHandle); assert.deepEqual(repeated,reconciled); assert.deepEqual(await state(),conflictBefore); log.push({action:'reconcile-duplicate-ack',reconciled,repeated}); await undo(baseline,1+arranged.commands.filter(e=>e.result?.authored).length);
+    const repeated = await fixture.hub.command('reconcile_studio_command',{commandId:command.commandId,host:command.result.host},(await fixture.context()).host.workspaceHandle); assert.deepEqual(repeated,reconciled); assert.deepEqual(await state(),conflictBefore); log.push({action:'reconcile-duplicate-ack',reconciled,repeated}); await undoMany(baseline,1+arranged.commands.filter(e=>e.result?.authored).length);
     fixture.controls.rateLimit = true; const limited = await turn('Inspect the current selection without changes.'); assert(limited.stream.some(e => e.type === 'error' && e.code === 'rate_limit')); assert.deepEqual(await state(),baseline); await shot('resilience-rate-limit');
     if (failures.length) throw new AggregateError(failures,'V7 has recorded production blockers');
   },
