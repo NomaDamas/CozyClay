@@ -134,6 +134,8 @@ function validReferences(references) {
  * owns the geometry, each character sheet owns one performer's look and the
  * environment reference owns the location.
  */
+export const FRAME_COMPOSITION_GUIDANCE = "Use the first image (a clay blocking frame) as the layout: keep its composition and camera angle, and keep the pose but make it look natural. Render it as:";
+
 export function referenceGuidance(references = []) {
 	const list = Array.isArray(references) ? references : [];
 	if (!list.length) return "";
@@ -143,6 +145,8 @@ export function referenceGuidance(references = []) {
 			lines.push(`Character ${entry.name || "reference"}: match the identity, face, hair and wardrobe from the attached character sheet.`);
 		} else if (entry.role === "environment") {
 			lines.push("Environment: take the location look, materials, palette and lighting from the attached environment reference.");
+		} else if (entry.role === "reference") {
+			lines.push(`Reference ${entry.name || "image"}: use it for the look the prompt asks for (subject, wardrobe, style); keep the exact pose, body position and camera framing of the first image.`);
 		}
 	}
 	return `\n${lines.join("\n")}`;
@@ -678,7 +682,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			let value;
 			try {
 				value = await readBody(req, IMAGE_BODY_LIMIT);
-				if (typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.referenceDataUrl !== undefined && (typeof value.referenceDataUrl !== "string" || !value.referenceDataUrl.startsWith("data:image/"))) || !validReferences(value.references) || (value.quality !== undefined && !["auto", "low", "medium", "high"].includes(value.quality))) throw new Error("Invalid request.");
+				if (typeof value.prompt !== "string" || !value.prompt.trim() || typeof value.imageDataUrl !== "string" || !value.imageDataUrl.startsWith("data:image/") || (value.referenceDataUrl !== undefined && (typeof value.referenceDataUrl !== "string" || !value.referenceDataUrl.startsWith("data:image/"))) || !validReferences(value.references) || (value.composition !== undefined && value.composition !== "frame") || (value.quality !== undefined && !["auto", "low", "medium", "high"].includes(value.quality))) throw new Error("Invalid request.");
 			} catch { json(res, 400, { error: "invalid request" }); return true; }
 			if (!await auth.getAccessToken()) { json(res, 401, { error: { code: "auth", message: "Sign in with ChatGPT in the Agent panel." } }); return true; }
 			try {
@@ -687,8 +691,13 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				// Scene references (#167) are appended after the frame/reference pair,
 				// and the prompt says what each attachment is for.
 				const references = Array.isArray(value.references) ? value.references : [];
-				const prompt = `${value.prompt}${await renderGuidance(value.prompt)}${referenceGuidance(references)}`;
-				const result = await codex.editImage({ ...value, prompt, extraImages: references.map((entry) => entry.dataUrl) });
+				// composition "frame": the attached frame was framed by hand (Pose mode), so the shot
+				// camera's description would contradict it; the frame alone owns camera and pose.
+				const prompt = value.composition === "frame"
+					? `${FRAME_COMPOSITION_GUIDANCE}\n${value.prompt}${referenceGuidance(references)}`
+					: `${value.prompt}${await renderGuidance(value.prompt)}${referenceGuidance(references)}`;
+				const { composition: _composition, ...request } = value;
+				const result = await codex.editImage({ ...request, prompt, extraImages: references.map((entry) => entry.dataUrl) });
 				json(res, 200, { dataUrl: `data:image/png;base64,${result.pngBase64}`, width: result.width, height: result.height });
 			} catch (error) { json(res, error.status === 401 ? 401 : 502, { error: errorInfo(error) }); }
 			return true;

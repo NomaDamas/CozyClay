@@ -14,7 +14,7 @@ import "../ardy/auto-fix-panel.css";
 import "./pose.css";
 
 export default function RigControlPanel({
- isRigSelection, rigSelection, ikChains, ikFocus, footSnap, ikMode,
+ isRigSelection, rigSelection, ikChains, ikFocus, footSnap, ikMode, poseObjectOpacity = 0.2, setPoseObjectOpacity,
  collisionCleanupSupported, motion, autoPhysicsRunning, physicsProgress, physicsPreview,
  physicsShow, physicsOptions, tlFrame, changePhysicsOptions, runAutoPhysics, showPhysicsPreview,
  applyPhysicsPreview, cancelPhysicsPreview, setTlFrame, platformFitRunning, platformFitProgress,
@@ -50,6 +50,13 @@ export default function RigControlPanel({
     <div className="pose-row"><span>{ko("Foot lock", "발 고정")}</span><b>{footSnap ? ko("On", "켜짐") : ko("Off", "꺼짐")}</b></div>
     <div className="pose-row"><span>{ko("Body contact", "몸 접촉")}</span><b>{ikChains ? ko("Ready", "준비됨") : ko("Unavailable", "사용 불가")}</b></div>
     <div className="pose-row"><span>{ko("Influence", "영향")}</span><b>{ikFocus ?? ko("All", "전체")}</b></div>
+    {setPoseObjectOpacity && <div className="pose-row pose-object-opacity">
+     <span>{ko("Object opacity", "오브젝트 투명도")}</span>
+     <input type="range" min={0} max={100} step={5} value={Math.round(poseObjectOpacity * 100)}
+      data-testid="pose-object-opacity" aria-label={ko("Scene object opacity while posing", "포즈 편집 중 오브젝트 불투명도")}
+      onChange={(event) => setPoseObjectOpacity(Number(event.target.value) / 100)} />
+     <b>{Math.round(poseObjectOpacity * 100)}%</b>
+    </div>}
     <p className="inspector-hint">{rigSelection && rigSelection.token !== "rig" ? (isKo ? `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]}이 활성 제어 그룹입니다.` : `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]} is the active control group.`) : ko("Select a body group to pose it in the viewport.", "몸 그룹을 선택해 뷰포트에서 포즈를 잡으세요.")}</p>
    </section>
    {ikMode && <section className="pose-section" data-testid="pose-active-tool">

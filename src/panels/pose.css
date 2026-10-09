@@ -21,6 +21,9 @@
 }
 .pose-details .pose-row { min-height: 24px; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; font-size: 12px; }
 .pose-details .pose-row + .pose-row { border-top: 1px solid var(--row-divider, #2a2a2e); }
+.pose-details .pose-object-opacity { grid-template-columns: auto 1fr 3.5em; }
+.pose-details .pose-object-opacity input { width: 100%; min-width: 0; }
+.pose-details .pose-object-opacity b { text-align: right; }
 .pose-details .pose-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px; }
 .pose-details .pose-preview {
   display: grid;
