@@ -6880,7 +6880,7 @@ export default function App() {
 		const target = original && raw.targets.get(original.id);
 		if (original?.model === "proxy-figure") {
 			const clip = target?.motion;
-			const placement = resolveCharacterPlacement(original, frame, {
+			const placement = placementAt(original, frame, {
 				shotAt: at => shotAtFrame(raw.shots, at),
 				takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
 			});

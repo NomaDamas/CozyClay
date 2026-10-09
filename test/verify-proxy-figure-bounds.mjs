@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { readFileSync } from "node:fs";
 import { proxyFigureBounds } from "../src/character-kind.js";
+import { placementAt } from "../src/root-path.js";
 
 test("proxy bounds follow rendered stature and posture", () => {
 	const stand = proxyFigureBounds({ model: "proxy-figure", posture: "stand", x: 2, z: -3 });
@@ -17,4 +19,24 @@ test("proxy bounds follow rendered stature and posture", () => {
 	assert.ok(Math.abs(lie.max.y - 0.71) < 1e-12);
 	assert.equal(lie.min.z, 5);
 	assert.equal(lie.max.z, 7.55);
+});
+
+// App.jsx's studioBounds proxy branch is evaluated from source so a stale
+// placement identifier (a missing import) throws here, not only in a browser.
+test("App.jsx studioBounds resolves a proxy figure through placementAt", () => {
+	const app = readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8");
+	const start = app.indexOf("function studioBounds(");
+	const end = app.indexOf("function operateStudio(", start);
+	assert.ok(start > 0 && end > start, "studioBounds source slice");
+	const figure = { id: "p1", model: "proxy-figure", posture: "stand", x: 2, z: -3 };
+	const scope = {
+		placementAt, proxyFigureBounds,
+		readStudioState: () => ({ characters: [figure], targets: new Map(), shots: [] }),
+		shotAtFrame: () => null,
+		sampleAt: () => ({ subject: null }),
+		StudioProtocolError: Error,
+	};
+	const studioBounds = new Function(...Object.keys(scope), `${app.slice(start, end)}\nreturn studioBounds;`)(...Object.values(scope));
+	const bounds = studioBounds({ entity: figure, frame: 0, state: {} });
+	assert.deepEqual(bounds, proxyFigureBounds(figure, placementAt(figure, 0, { shotAt: () => null, takeRoot: null })));
 });
