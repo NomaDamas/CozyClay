@@ -5,9 +5,8 @@ on:
     branches: [main]
     paths-ignore:
       - ".metrics/**"
-      - "docs/**"
+      - "docs/**/*.md"
       - "*.md"
-      - "**/*.md"
   workflow_dispatch:
 
 permissions:

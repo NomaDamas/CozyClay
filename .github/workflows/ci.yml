@@ -39,10 +39,16 @@ jobs:
               pull_number: context.payload.pull_request.number,
               per_page: 100,
             });
-            const ignored = (path) => path.startsWith(".metrics/") || path.startsWith("docs/") || path.endsWith(".md");
-            const source = files.some(({ filename }) => !ignored(filename));
+            // Other Markdown (e.g. mcp/LIVE-PROTOCOL.md and public/fonts/README.md)
+            // is asserted by tests. Renames must check the original path too.
+            const ignored = (path) => path.startsWith(".metrics/") || /^docs\/.*\.md$/.test(path) || /^[^/]+\.md$/.test(path);
+            // The files API caps responses at 3000 files: incomplete/empty
+            // input must run CI rather than silently skip unlisted changes.
+            const source = files.length === 0 || files.length >= 3000 || files.some(
+              ({ filename, previous_filename }) => !ignored(filename) || (previous_filename && !ignored(previous_filename))
+            );
             core.setOutput("source", String(source));
-            core.summary
+            await core.summary
               .addHeading("CI scope")
               .addTable([
                 [{ data: "Changed files", header: true }, { data: "Source/test scope", header: true }],
@@ -67,9 +73,13 @@ jobs:
             echo "changes job did not complete successfully: $CHANGES_RESULT"
             exit 1
           fi
-          if [ "$SOURCE_SCOPE" != "true" ]; then
+          if [ "$SOURCE_SCOPE" = "false" ]; then
             echo "docs/metrics-only change: test shards skipped"
             exit 0
+          fi
+          if [ "$SOURCE_SCOPE" != "true" ]; then
+            echo "missing or invalid CI scope: $SOURCE_SCOPE"
+            exit 1
           fi
           if [ "$SHARD_RESULT" != "success" ]; then
             echo "test shard result: $SHARD_RESULT"
@@ -289,9 +299,13 @@ jobs:
             echo "changes job did not complete successfully: $CHANGES_RESULT"
             exit 1
           fi
-          if [ "$SOURCE_SCOPE" != "true" ]; then
+          if [ "$SOURCE_SCOPE" = "false" ]; then
             echo "docs/metrics-only change: heavy CI skipped"
             exit 0
+          fi
+          if [ "$SOURCE_SCOPE" != "true" ]; then
+            echo "missing or invalid CI scope: $SOURCE_SCOPE"
+            exit 1
           fi
           for result in "$TEST_RESULT" "$MCP_RESULT" "$BROWSER_RESULT"; do
             if [ "$result" != "success" ]; then
