@@ -7,6 +7,7 @@ import { encodeMotionResource } from "../src/motion-resources.js";
 import { assetIdForBytes } from "../src/scene-assets.js";
 import { createCutoutObject } from "../src/scene-objects.js";
 import { DEFAULT_POSE } from "../src/poses.js";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9464);
 const out = "/tmp/cozyclay-231-qa";
@@ -121,7 +122,7 @@ if (motions.length) {
 
 // Force a missing motion reference through the app's persisted scene document,
 // then invoke visible Save. This must be the production SaveBlockedDialog.
-await evaluate(`(() => { const k = 'cozyclay.scenes.v4'; const d = JSON.parse(localStorage.getItem(k) || '{}'); const s = d.scenes?.[0]; const c = s?.stage?.characters?.[0]; if (!c) return false; c.motionRef = { motionId: 'f'.repeat(64) }; localStorage.setItem(k, JSON.stringify(d)); location.reload(); return true; })()`);
+await evaluate(`(() => { const k = '${SCENES_STORAGE_KEY}'; const d = JSON.parse(localStorage.getItem(k) || '{}'); const s = d.scenes?.[0]; const c = s?.stage?.characters?.[0]; if (!c) return false; c.motionRef = { motionId: 'f'.repeat(64) }; localStorage.setItem(k, JSON.stringify(d)); location.reload(); return true; })()`);
 await waitFor("reloaded app", "document.querySelector('canvas')");
 await click(".project-menu-trigger"); await evaluate("document.querySelectorAll('.project-menu [role=menuitem]')[2]?.click()");
 await waitFor("SaveBlockedDialog", "document.querySelector('.save-blocked-dialog[data-code], .save-blocked-dialog')", 10000);

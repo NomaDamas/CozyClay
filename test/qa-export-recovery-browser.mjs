@@ -14,6 +14,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdir, writeFile } from "node:fs/promises";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const url = process.env.QA_URL || "http://127.0.0.1:5256/app/";
 const port = Number(process.env.CDP_PORT || 9526);
@@ -123,11 +124,11 @@ const scene = {
 	}],
 };
 
-function installBrowserFixture(sceneDocument, deadline) {
+function installBrowserFixture(sceneDocument, deadline, scenesKey) {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(sceneDocument));
+	localStorage.setItem(scenesKey, JSON.stringify(sceneDocument));
 	const bus = new EventTarget();
 	const qa = window.__qaRecovery = {
 		events: [], downloads: [], native: null,
@@ -501,7 +502,7 @@ try {
 		{ urlPattern: "*/src/analytics.js*", requestStage: "Response" },
 		{ urlPattern: "*/demo/walk-then-stop.npz", requestStage: "Request" },
 	] });
-	await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${timeout});` });
+	await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${timeout}, ${JSON.stringify(SCENES_STORAGE_KEY)});` });
 	await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 	const loaded = once("Page.loadEventFired");
 	await send("Page.navigate", { url }); await loaded;

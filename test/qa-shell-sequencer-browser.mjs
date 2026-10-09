@@ -5,6 +5,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { afterPageLoad } from "./bus/browser-navigation.mjs";
 import { waitForFrameState } from "./bus/browser-frame-state.mjs";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9528);
 const appUrl = process.env.QA_URL || "http://127.0.0.1:5528/app/?motion=/demo/walk-then-stop.npz";
@@ -108,7 +109,7 @@ await evaluate(`(() => {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "Task 14", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(scene));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(scene));
 })()`);
 await send("Page.navigate", { url: appUrl });
 

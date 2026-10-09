@@ -5,6 +5,7 @@
 // and ⌘E hand a real zip to the browser download manager.
 import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9222);
 const out = process.env.QA_OUT || "/tmp/cozyclay-task-9";
@@ -125,7 +126,7 @@ async function load(document) {
 	await evaluate(`(() => {
 		localStorage.setItem("cozyclay.locale", "en");
 		localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-		localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(${JSON.stringify(document)}));
+		localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(${JSON.stringify(document)}));
 		return true;
 	})()`);
 	const loaded = once("Page.loadEventFired");

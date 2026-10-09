@@ -9,6 +9,8 @@
 //   QA_URL=http://127.0.0.1:5180/app/ node tools/qa-browser.mjs -- \
 //     node test/verify-camera-mode-browser.mjs
 
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
+
 const origin = new URL(process.env.QA_URL ?? "http://127.0.0.1:5180/app/").origin;
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -86,7 +88,7 @@ await evaluate(`(() => {
 	}] };
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(document));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(document));
 })()`);
 await send("Page.navigate", { url: `${origin}/app/` });
 expect("the seeded studio becomes ready", await waitFor("!!window.__cozyclay?.editorCam"));

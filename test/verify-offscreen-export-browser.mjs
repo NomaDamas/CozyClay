@@ -3,6 +3,8 @@
 // exported twice through the production WebGL + WebCodecs path. The encoded
 // frame count is exact and every pre-encode RGBA hash must match by address.
 
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
+
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
 const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
@@ -88,7 +90,7 @@ await evaluate(`(() => {
 	};
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(document));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(document));
 })()`);
 await send("Page.reload");
 expect("six-second project and offscreen exporter become ready", await waitFor("!!window.__cozyclay?.rigA && !!window.__exportOffscreen && !!window.__captureFrame", 20_000));

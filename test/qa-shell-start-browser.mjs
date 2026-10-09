@@ -5,6 +5,7 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { SCENES_STORAGE_KEY, PREVIOUS_SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9222);
 const out = process.env.QA_OUT || "/Users/yun/CClineFix/.omo/evidence/cozyclay-ui-overhaul";
@@ -67,7 +68,8 @@ await send("Page.enable");
 // so CI needs no extra env.
 await evaluate(`(() => {
 	localStorage.removeItem("cozyclay.project-session.v1");
-	localStorage.removeItem("cozyclay.scenes.v4");
+	localStorage.removeItem("${SCENES_STORAGE_KEY}");
+	localStorage.removeItem("${PREVIOUS_SCENES_STORAGE_KEY}");
 	localStorage.setItem("cozyclay.camera-tutorial-terminal.v1", JSON.stringify({ dismissed: true }));
 })()`);
 const loaded = waitForPageLoad();

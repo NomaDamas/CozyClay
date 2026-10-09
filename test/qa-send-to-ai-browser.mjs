@@ -10,6 +10,7 @@
 // `QA_URL=http://127.0.0.1:5340/workflow/ CDP_PORT=9468 node tools/qa-browser.mjs -- node test/qa-send-to-ai-browser.mjs`
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const cdpPort = Number(process.env.CDP_PORT || 9468);
 const out = process.env.QA_OUT || "/tmp/send-to-ai-qa";
@@ -93,7 +94,7 @@ const graph = {
 await evaluate(`(() => {
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", ${JSON.stringify(JSON.stringify(sceneDocument))});
+	localStorage.setItem("${SCENES_STORAGE_KEY}", ${JSON.stringify(JSON.stringify(sceneDocument))});
 	localStorage.setItem("cozyclay.workflow.v1", ${JSON.stringify(JSON.stringify(graph))});
 })(), true`);
 await send("Page.reload", { ignoreCache: true });

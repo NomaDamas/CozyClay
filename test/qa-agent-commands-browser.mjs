@@ -16,7 +16,7 @@ import { once } from "node:events";
 import { cameraBrowser } from "./camera-browser-harness.mjs";
 import { connectController, discoverEndpoint } from "../bin/live/client.mjs";
 import { spawnOwned, terminateOwned } from "../tools/process-supervisor.mjs";
-import { createSceneStage } from "../src/scenes.js";
+import { createSceneStage, SCENES_STORAGE_KEY } from "../src/scenes.js";
 import { normalizeSceneObject } from "../src/scene-objects.js";
 import { createShotAuthoringDocument } from "../src/shot-authoring.js";
 import { createStudioTools, studioToolSchemas } from "../bin/agent/studio-tools.mjs";
@@ -121,7 +121,7 @@ async function seedReconstruction() {
 		}] }),
 	}] };
 	await b.navigate(`${b.base.origin}/favicon.ico`);
-	await b.evaluate(`localStorage.clear(); localStorage.setItem('cozyclay.scenes.v4', ${JSON.stringify(JSON.stringify(document))});
+	await b.evaluate(`localStorage.clear(); localStorage.setItem('${SCENES_STORAGE_KEY}', ${JSON.stringify(JSON.stringify(document))});
 		localStorage.setItem('cozyclay.locale', 'en'); localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({name:'Issue 398 QA', updatedAt:1}));`);
 	log("RECONSTRUCTION", { objects: snapshot.objects.length, missingObjects: meta.scene.objectCount - snapshot.objects.length,
 		nameOnlyRows: snapshot.objects.filter(row => !row.renderer).length, frameCount: meta.scene.frameCount, aspect: meta.scene.aspect,

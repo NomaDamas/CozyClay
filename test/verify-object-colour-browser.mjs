@@ -17,6 +17,7 @@
 
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -115,7 +116,7 @@ const renderedColour = () =>
 /** The colour the scene document was saved with (debounced ~400ms). */
 const storedColour = () =>
 	evaluate(`(() => {
-		const body = JSON.parse(localStorage.getItem('cozyclay.scenes.v4') || 'null');
+		const body = JSON.parse(localStorage.getItem('${SCENES_STORAGE_KEY}') || 'null');
 		const scene = body?.scenes?.find((entry) => entry.id === body.activeSceneId) ?? body?.scenes?.[0];
 		return scene?.objects?.[0]?.color ?? null;
 	})()`);
@@ -191,7 +192,7 @@ try {
 		await renderedColour(),
 	);
 	expect("the popover stays open while the hex field is used", await detailsOpen());
-	expect("the typed colour reaches the saved scene", await waitFor("JSON.parse(localStorage.getItem('cozyclay.scenes.v4') || 'null')?.scenes?.[0]?.objects?.[0]?.color === '#ff3366'"), await storedColour());
+	expect("the typed colour reaches the saved scene", await waitFor(`JSON.parse(localStorage.getItem('${SCENES_STORAGE_KEY}') || 'null')?.scenes?.[0]?.objects?.[0]?.color === '#ff3366'`), await storedColour());
 	expect("the hex field reads back the value an agent could also have set", (await hexFieldValue()) === "#ff3366", await hexFieldValue());
 
 	/* --------------------------------------------------------- typos --------- */

@@ -9,6 +9,8 @@
 //   QA_URL=http://127.0.0.1:5180/app/ node tools/qa-browser.mjs -- \
 //     node test/verify-static-shot-export-browser.mjs
 
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
+
 const origin = new URL(process.env.QA_URL ?? "http://127.0.0.1:5180/app/").origin;
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -79,7 +81,7 @@ await evaluate(`(() => {
 	}] };
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(document));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(document));
 })()`);
 await send("Page.navigate", { url: `${origin}/app/` });
 expect("the keyless static shot loads", await waitFor("!!window.__cozyclay?.rigA && !!document.querySelector('.tl-shot-block')"));
@@ -98,7 +100,7 @@ expect(
 	JSON.stringify({ frameCount: result?.frameCount, blobSize: result?.blobSize ?? result?.blob?.size }),
 );
 expect("the preflight materialized one framing key on the shot", await waitFor(
-	"JSON.parse(localStorage.getItem('cozyclay.scenes.v4')).scenes[0].shotDocument.shots[0].cameraKeys.length === 1",
+	`JSON.parse(localStorage.getItem('${SCENES_STORAGE_KEY}')).scenes[0].shotDocument.shots[0].cameraKeys.length === 1`,
 	10000,
 ));
 expect("the export leaves the recorder idle", await waitFor("document.querySelector('.topbar')?.dataset.recState !== 'recording'", 5000));

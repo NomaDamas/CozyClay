@@ -68,13 +68,13 @@ const published = await importImageIntoActiveScene(new Blob(["bytes"], { type: "
 });
 expect("workflow import returns the stored asset", published.asset.id === asset.id);
 expect("workflow import announces same-tab changes", seen.length === 1 && seen[0].meta.source === "same-tab" && seen[0].next.scenes[0].objects.length === 1);
-expect("workflow import writes the scenes storage key", !!storage.getItem("cozyclay.scenes.v4"));
+expect("workflow import writes the scenes storage key", !!storage.getItem("cozyclay.scenes.v5"));
 const storedDocument = readStoredSceneDocument(storage);
 expect("stored scene can be read back", storedDocument.scenes[0].objects[0].assetId === asset.id);
-listeners.get("storage")?.({ key: "cozyclay.scenes.v4", newValue: storage.getItem("cozyclay.scenes.v4") });
+listeners.get("storage")?.({ key: "cozyclay.scenes.v5", newValue: storage.getItem("cozyclay.scenes.v5") });
 expect("storage events announce cross-tab changes", seen.at(-1)?.meta.source === "storage");
 const seenBeforeCorrupt = seen.length;
-listeners.get("storage")?.({ key: "cozyclay.scenes.v4", newValue: "{broken" });
+listeners.get("storage")?.({ key: "cozyclay.scenes.v5", newValue: "{broken" });
 expect("corrupt cross-tab scene bytes are ignored", seen.length === seenBeforeCorrupt);
 unsubscribe();
 expect("unsubscribe removes both event listeners", listeners.size === 0);

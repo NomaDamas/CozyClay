@@ -96,7 +96,7 @@ test('cast: selection changes only the layer projection, never the inspected doc
 
 test('cast: every patchable path matches patch_elements normalization and field receipts', async () => {
   const values = { position: { x: 500, y: -3, z: 2 }, rot: 380, scale: 8, subject: 'A lead', hidden: true,
-    model: 'x-bot-tpose', tint: '#123456', identityImage: 'data:image/png;base64,QQ==', pose: 'pose-wave',
+    model: 'x-bot-tpose', posture: 'lie', tint: '#123456', identityImage: 'data:image/png;base64,QQ==', pose: 'pose-wave',
     promptBlocks: [block], 'motionRef.url': '/ardy/motions/123456-abcdef', 'motionRef.motionId': 'a'.repeat(64) };
   assert.deepEqual(Object.keys(values).map(key => `character.${key}`).sort(), [...STUDIO_PATCHABLE_PATHS.character].sort());
   for (const [path, value] of Object.entries(values)) {

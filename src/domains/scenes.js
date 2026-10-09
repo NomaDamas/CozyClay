@@ -7,7 +7,7 @@ import {
 	readSceneDocument,
 	serializeSceneDocument,
 	SCENES_VERSION,
-	migrateStageFrames,
+	migrateScenesDocument as migrateToCurrentScenes,
 	activeSceneIndex,
 	createSceneDocument,
 	createSceneStage,
@@ -417,9 +417,7 @@ export function useScenes(appContext) {
 		// A project FILE carries its own scene document and never passes the
 		// storage reader, so the 20 fps → 24 fps clock migration is applied here
 		// too — otherwise an older .cozyclay would open a sixth too fast.
-		const doc = Number.isInteger(source.version) && source.version < SCENES_VERSION
-			? { ...source, version: SCENES_VERSION, scenes: source.scenes.map((scene) => ({ ...scene, stage: migrateStageFrames(scene.stage) })) }
-			: source;
+		const doc = migrateToCurrentScenes(source);
 		const mergedCustomPoses = mergeProjectCustomPoses(appContext.shared.customPoses, project.customPoses);
 		const projectPrevisMode = normalizePrevisMode(project.previsMode);
 		domain.replaceDocument(doc.scenes, doc.activeSceneId, project.name, projectPrevisMode);

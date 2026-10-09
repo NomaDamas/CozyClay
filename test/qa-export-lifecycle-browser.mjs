@@ -10,6 +10,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const origin = new URL(process.env.QA_URL || "http://127.0.0.1:5252/app/").origin;
 const port = Number(process.env.CDP_PORT || 9522);
@@ -128,12 +129,12 @@ const scene = {
 const graph = { version: 1, nodes: [{ id: "qa-scene", type: "scene", position: { x: 40, y: 40 }, data: { label: "CozyClay Scene", sceneName: "CozyClay Scene", status: "idle", preview: "scene" } }], edges: [] };
 
 // Runs in every same-origin document, including Workflow's actual iframe.
-function installBrowserFixture(sceneDocument, workflowGraph, deadline) {
+function installBrowserFixture(sceneDocument, workflowGraph, deadline, scenesKey) {
 	if (window === window.top) {
 		localStorage.clear();
 		localStorage.setItem("cozyclay.locale", "en");
 		localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-		localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(sceneDocument));
+		localStorage.setItem(scenesKey, JSON.stringify(sceneDocument));
 		localStorage.setItem("cozyclay.workflow.v1", JSON.stringify(workflowGraph));
 		const bus = new EventTarget();
 		window.__qaExport = {
@@ -291,7 +292,7 @@ try {
 	await send("Network.setCacheDisabled", { cacheDisabled: true });
 	await send("Runtime.addBinding", { name: "__qaExportRecord" });
 	await send("Fetch.enable", { patterns: [{ urlPattern: "*/src/analytics.js*", requestStage: "Response" }] });
-	await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${JSON.stringify(graph)}, ${timeoutMs});` });
+	await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${JSON.stringify(graph)}, ${timeoutMs}, ${JSON.stringify(SCENES_STORAGE_KEY)});` });
 	await send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 	await navigate("/app/");
 	await waitState("!!window.__cozyclay?.rigA && !!window.__cozyclay?.shotCam && typeof window.__cozyclay.exportShotVideo === 'function' && window.__qaExport.events.some(({event}) => event === '$pageview')", "Studio rig and sanitized analytics ready");

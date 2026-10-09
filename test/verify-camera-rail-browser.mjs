@@ -5,6 +5,7 @@
 import { writeFileSync } from "node:fs";
 import { afterPageLoad } from "./bus/browser-navigation.mjs";
 import { waitForFrameState } from './bus/browser-frame-state.mjs';
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9222);
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
@@ -83,7 +84,7 @@ await evaluate(`(() => {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "Rail QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(scene));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(scene));
 })()`);
 await send("Page.navigate", { url: studioUrl });
 expect("studio renders", await waitFor("!!document.querySelector('canvas')"));
@@ -150,12 +151,12 @@ expect("front-authored Follow stays in front of the subject", await waitFor(`(()
 	return !!state?.shotCam && !!state?.charA && state.shotCam.position.z > state.charA.z;
 })()`));
 expect("rail deletion reaches the debounced Scene save", await waitFor(`(() => {
-	const body = JSON.parse(localStorage.getItem("cozyclay.scenes.v4"));
+	const body = JSON.parse(localStorage.getItem("${SCENES_STORAGE_KEY}"));
 	const camera = body.scenes[0].shotDocument.shots[0].camera;
 	return camera.mode === "follow" && camera.cameraRail === null && camera.railFollow === null;
 })()`));
 const persisted = await evaluate(`(() => {
-	const body = JSON.parse(localStorage.getItem("cozyclay.scenes.v4"));
+	const body = JSON.parse(localStorage.getItem("${SCENES_STORAGE_KEY}"));
 	const camera = body.scenes[0].shotDocument.shots[0].camera;
 	return { mode: camera.mode, cameraRail: camera.cameraRail, railFollow: camera.railFollow };
 })()`);
@@ -177,7 +178,7 @@ expect("Follow On captures the user's front camera placement", await waitFor(`((
 		Math.abs(Math.hypot(state.shotCam.position.x - state.charA.x, state.shotCam.position.z - state.charA.z) - 3) < 0.05;
 })()`));
 expect("front placement is persisted as a 180 degree orbit offset", await waitFor(`(() => {
-	const body = JSON.parse(localStorage.getItem("cozyclay.scenes.v4"));
+	const body = JSON.parse(localStorage.getItem("${SCENES_STORAGE_KEY}"));
 	return Math.abs(body.scenes[0].shotDocument.shots[0].camera.followCam.orbitOffsetDeg - 180) < 0.1;
 })()`));
 

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
 	LEGACY_SCENE_STORAGE_KEY,
+	LEGACY_SCENES_STORAGE_KEYS,
 	PREVIOUS_SCENES_STORAGE_KEY,
 	SCENES_QUARANTINE_KEY,
 	SCENES_STORAGE_KEY,
@@ -228,8 +229,11 @@ assert.equal(loadSceneDocumentFromStorage(futureStorage).status, "future");
 assert.deepEqual(futureStorage.writes, [], "future data is left untouched");
 assert.equal(futureStorage.getItem(SCENES_STORAGE_KEY), futureRaw);
 
-assert.equal(SCENES_VERSION, 4);
-assert.match(SCENES_STORAGE_KEY, /\.v4$/);
+assert.equal(SCENES_VERSION, 5);
+assert.match(SCENES_STORAGE_KEY, /\.v5$/);
+assert.equal(SCENES_QUARANTINE_KEY, "cozyclay.scenes.v5.quarantine");
+assert.equal(PREVIOUS_SCENES_STORAGE_KEY, "cozyclay.scenes.v4", "a v4 body is the first fallback");
+assert.deepEqual(LEGACY_SCENES_STORAGE_KEYS, ["cozyclay.scenes.v4", "cozyclay.scenes.v3", "cozyclay.scenes.v2", "cozyclay.scenes.v1"]);
 assert.notEqual(SCENES_STORAGE_KEY, SCENES_QUARANTINE_KEY);
 assert.notEqual(SCENES_STORAGE_KEY, PREVIOUS_SCENES_STORAGE_KEY);
 assert.notEqual(SCENES_STORAGE_KEY, LEGACY_SCENE_STORAGE_KEY);

@@ -2,6 +2,7 @@
 // Browser QA for issue #606. The action bar is reached with a real pointer
 // path from the shot block to each button, including the former two-pixel gap.
 import { mkdirSync, writeFileSync } from "node:fs";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.CDP_PORT || 9222);
 const outputDir = process.env.QA_OUT || "/tmp/cozyclay-shot-actions";
@@ -104,7 +105,7 @@ await evaluate(`(() => {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "Shot actions QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(scene));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(scene));
 })()`);
 await send("Page.navigate", { url: appUrl });
 

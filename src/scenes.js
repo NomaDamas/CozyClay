@@ -17,10 +17,11 @@ const CHARACTER_ROTATION_LIMITS = elementByPath("character.rot");
 const CHARACTER_SCALE_LIMITS = elementByPath("character.scale");
 const KEY_LIGHT_LIMITS = Object.fromEntries(["x", "y", "z", "intensity", "warmth"].map((axis) => [axis, elementByPath(`stage.keyLight.${axis}`)]));
 
-export const SCENES_VERSION = 4;
-export const SCENES_STORAGE_KEY = "cozyclay.scenes.v4";
-export const SCENES_QUARANTINE_KEY = "cozyclay.scenes.v4.quarantine";
-export const PREVIOUS_SCENES_STORAGE_KEY = "cozyclay.scenes.v3";
+export const SCENES_VERSION = 5;
+export const SCENES_STORAGE_KEY = "cozyclay.scenes.v5";
+export const SCENES_QUARANTINE_KEY = "cozyclay.scenes.v5.quarantine";
+export const PREVIOUS_SCENES_STORAGE_KEY = "cozyclay.scenes.v4";
+export const V3_SCENES_STORAGE_KEY = "cozyclay.scenes.v3";
 export const V2_SCENES_STORAGE_KEY = "cozyclay.scenes.v2";
 export const V1_SCENES_STORAGE_KEY = "cozyclay.scenes.v1";
 export const LEGACY_SCENE_STORAGE_KEY = "cozyclay.scene.v1";
@@ -28,6 +29,7 @@ export const LEGACY_SCENE_STORAGE_KEY = "cozyclay.scene.v1";
  * finds their scenes, and the reader migrates whatever body it lands on. */
 export const LEGACY_SCENES_STORAGE_KEYS = Object.freeze([
 	PREVIOUS_SCENES_STORAGE_KEY,
+	V3_SCENES_STORAGE_KEY,
 	V2_SCENES_STORAGE_KEY,
 	V1_SCENES_STORAGE_KEY,
 ]);
@@ -38,6 +40,16 @@ export { LEGACY_FRAME_FPS, TIMELINE_FRAME_FPS, toTimelineFrame };
  * file stem and the wire `source.rig` value sent to ARDY. */
 export const CHARACTER_MODEL_IDS = Object.freeze(["y-bot-tpose", "x-bot-tpose"]);
 export const DEFAULT_CHARACTER_MODEL = "y-bot-tpose";
+/** A rig-free capsule stand-in for blocking. It has no FBX and is never sent
+ * to ARDY, so it extends the accepted kinds without joining
+ * CHARACTER_MODEL_IDS. */
+export const PROXY_FIGURE_MODEL = "proxy-figure";
+export const CHARACTER_KIND_IDS = Object.freeze([...CHARACTER_MODEL_IDS, PROXY_FIGURE_MODEL]);
+export const POSTURES = Object.freeze(["stand", "sit", "lie"]);
+
+export function isProxyFigure(character) {
+	return character?.model === PROXY_FIGURE_MODEL;
+}
 export const DEFAULT_SUBJECT_ONE = "a young woman in a tan coat";
 export const DEFAULT_SUBJECT_TWO = "a man in a dark coat";
 
@@ -153,7 +165,8 @@ export function createCharacterEntry(source = null, index = 0) {
 	const s = plainObject(source) ? source : {};
 	return {
 		id: typeof s.id === "string" && s.id ? s.id : `char-${index + 1}`,
-		model: CHARACTER_MODEL_IDS.includes(s.model) ? s.model : DEFAULT_CHARACTER_MODEL,
+		model: CHARACTER_KIND_IDS.includes(s.model) ? s.model : DEFAULT_CHARACTER_MODEL,
+		posture: POSTURES.includes(s.posture) ? s.posture : "stand",
 		x: Math.max(CHARACTER_POSITION_LIMITS.min.x, Math.min(CHARACTER_POSITION_LIMITS.max.x, finiteOr(s.x, 0))),
 		// Lift is bounded by the deck and the shared room headroom, so every
 		// writer (inspector field, viewport gizmo, load path) shares one envelope.
@@ -491,9 +504,29 @@ export function readSceneDocument(raw, legacyRaw = null) {
 	// Anything below v4 was authored while the timeline ran at 20 fps. The
 	// fallback stage (a v1 global cast) rides the same conversion, applied
 	// once, inside repairScene — whichever stage that scene ends up with.
+	// v4 → v5 needs no step of its own: every cast member passes through
+	// createCharacterEntry, which fills the missing posture with "stand".
 	const legacyClock = payload.version < 4;
 	const repaired = repairDocument(payload, createSceneStage(payload.stage), legacyClock);
 	return { status: migrating ? "migrated" : "valid", ...repaired };
+}
+
+/** Lift a scene document that skipped the storage reader (a project file, a
+ * playground preset) onto SCENES_VERSION: v3 and older move their frames onto
+ * the 24 fps clock, v4 and older gain a standing posture per cast member. */
+export function migrateScenesDocument(source) {
+	if (!Number.isInteger(source.version) || source.version >= SCENES_VERSION) return source;
+	const legacyClock = source.version < 4;
+	return {
+		...source,
+		version: SCENES_VERSION,
+		scenes: source.scenes.map((scene) => {
+			const stage = legacyClock ? migrateStageFrames(scene.stage) : scene.stage;
+			return { ...scene, stage: plainObject(stage) && Array.isArray(stage.characters)
+				? { ...stage, characters: stage.characters.map((entry) => (plainObject(entry) && !POSTURES.includes(entry.posture) ? { ...entry, posture: "stand" } : entry)) }
+				: stage };
+		}),
+	};
 }
 
 export function serializeSceneDocument(document) {

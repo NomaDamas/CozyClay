@@ -3,6 +3,7 @@
 // the production QA state and Three's rotation notifications without replacing
 // camera controls, rendering, persistence, or browser pointer-lock APIs.
 import assert from "node:assert/strict";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 export async function cameraBrowser() {
 	const port = Number(process.env.CDP_PORT || 9222);
@@ -120,7 +121,7 @@ export async function cameraBrowser() {
 			localStorage.clear();
 			localStorage.setItem('cozyclay.locale', 'en');
 			localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'Camera QA', updatedAt: Date.now() }));
-			localStorage.setItem('cozyclay.scenes.v4', JSON.stringify({ version: 4, activeSceneId: 'camera-qa', scenes: [{
+			localStorage.setItem('${SCENES_STORAGE_KEY}', JSON.stringify({ version: 4, activeSceneId: 'camera-qa', scenes: [{
 				id: 'camera-qa', name: 'Camera QA', objects: [],
 				shotDocument: { version: 4, frameCount: 144, waypoints: [], shots: [
 					{ id: 'shot-a', name: 'Shot A', startFrame: 0, endFrame: 47, camera: { mode: 'keys' }, cameraKeys: [] },

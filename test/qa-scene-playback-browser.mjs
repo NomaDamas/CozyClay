@@ -13,6 +13,7 @@
 // `QA_URL=http://127.0.0.1:5398/workflow/ CDP_PORT=9418 node tools/qa-browser.mjs -- node test/qa-scene-playback-browser.mjs`
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const cdpPort = Number(process.env.CDP_PORT || 9418);
 const out = process.env.QA_OUT || "/tmp/scene-playback-qa";
@@ -146,7 +147,7 @@ const graph = {
 await evaluate(`(() => {
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", ${JSON.stringify(JSON.stringify(sceneDocument))});
+	localStorage.setItem("${SCENES_STORAGE_KEY}", ${JSON.stringify(JSON.stringify(sceneDocument))});
 	localStorage.setItem("cozyclay.workflow.v1", ${JSON.stringify(JSON.stringify(graph))});
 })(), true`);
 // Reload on the seeded storage, and wait for the document the assertions run

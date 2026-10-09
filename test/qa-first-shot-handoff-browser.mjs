@@ -15,6 +15,7 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const origin = new URL(process.env.QA_URL || "http://127.0.0.1:5255/app/").origin;
 assert.equal(new URL(origin).port, "5255", "issue #275 QA must use dev port 5255");
@@ -760,7 +761,7 @@ const safetyScene = {
 async function dirtyProject(named) {
 	surface = 'studio'; bridgeAvailable = true;
 	await seedStorage();
-	await evaluate(`localStorage.setItem('cozyclay.scenes.v4',${JSON.stringify(JSON.stringify(safetyScene))}); ${named ? "localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'PRIVATE_NAMED_275',updatedAt:Date.now()}));" : ''} true`);
+	await evaluate(`localStorage.setItem('${SCENES_STORAGE_KEY}',${JSON.stringify(JSON.stringify(safetyScene))}); ${named ? "localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'PRIVATE_NAMED_275',updatedAt:Date.now()}));" : ''} true`);
 	scenarioStart = report.events.length;
 	// Query opens steps on this existing document without granting seeding
 	// authority. It also dismisses the unnamed startup chooser legitimately.
@@ -791,7 +792,7 @@ async function dirtyProject(named) {
 async function priorReceipt(reason) {
 	surface = 'studio'; bridgeAvailable = true;
 	await seedStorage();
-	await evaluate(`localStorage.setItem('cozyclay.scenes.v4',${JSON.stringify(JSON.stringify(safetyScene))}); localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'PRIVATE_RETURN_275',updatedAt:Date.now()})); localStorage.setItem(${JSON.stringify(terminalKey)},JSON.stringify({${reason}:true})); true`);
+	await evaluate(`localStorage.setItem('${SCENES_STORAGE_KEY}',${JSON.stringify(JSON.stringify(safetyScene))}); localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'PRIVATE_RETURN_275',updatedAt:Date.now()})); localStorage.setItem(${JSON.stringify(terminalKey)},JSON.stringify({${reason}:true})); true`);
 	scenarioStart = report.events.length;
 	await navigate('/app/?tutorial=camera'); await rendererReady();
 	assert.equal(await evaluate("!!document.querySelector('[data-testid=camera-tutorial]')"), false);
