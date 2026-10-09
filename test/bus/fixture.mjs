@@ -54,6 +54,7 @@ export function fixture(entries = []) {
 }
 export const result = (affectedIds = ['target']) => ({ affectedIds, summary: 'Fixture action.' });
 export function sample(schema) {
+  if (schema.oneOf) return sample(schema.oneOf[0]);
   if (schema.enum) return schema.enum[0];
   if (schema.type === 'object') return Object.fromEntries(schema.required.map(key => [key, sample(schema.properties[key])]));
   if (schema.type === 'array') return Array.from({ length: schema.minItems ?? 0 }, () => sample(schema.items));

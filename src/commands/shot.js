@@ -17,7 +17,7 @@ const number = { type: 'number' };
 const frame = { type: 'integer', minimum: 0 };
 const input = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required, additionalProperties: false });
 const mutation = (id, label, schema) => ({ id, label, description: label, kind: 'mutation', undoDomain: 'shot', input: schema });
-const existing = ['shot.create', 'shot.createStill', 'shot.setCaption', 'shot.setHold', 'shot.split', 'shot.duplicate', 'shot.remove', 'shot.setRange', 'shot.setCameraRail', 'shot.clearCameraRail', 'shot.reorder'].map(studioActionDeclaration);
+const existing = ['shot.create', 'shot.createStill', 'shot.setCaption', 'shot.setCastOverride', 'shot.setHold', 'shot.split', 'shot.duplicate', 'shot.remove', 'shot.setRange', 'shot.setCameraRail', 'shot.clearCameraRail', 'shot.reorder'].map(studioActionDeclaration);
 const extra = [
   mutation('shot.set', 'Set shot fields', elementSetSchema('shot')),
   mutation('shot.rename', 'Rename shot', input({ shotId: id, name: { type: 'string', maxLength: 240 } })),
@@ -91,6 +91,7 @@ export function register(registry, ports) {
     'shot.create': () => storyboard() ? createStill() : owner().write(current => addShotAtFrame(current, ports.state().frame, owner().state().frameCount, owner().capture())),
     'shot.createStill': args => createStill(args),
     'shot.setCaption': ({ shotId, caption }) => patchShot(shotId, shot => ({ ...shot, caption })),
+    'shot.setCastOverride': ({ shotId, characterId, override }) => owner().setCastOverride(shotId, characterId, override),
     'shot.setHold': ({ shotId, hold }) => {
       const shot = stillOf(shotId), endFrame = shot.startFrame + hold - 1;
       writeStills(owner().read().map(row => row === shot ? { ...row, endFrame, cameraKeys: row.cameraKeys.filter(key => key.frame <= endFrame) } : row));

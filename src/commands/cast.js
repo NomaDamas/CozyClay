@@ -25,6 +25,7 @@ const semantic = [
 	mutation('character.add', 'Add character', input({ character: newCharacter })),
 	mutation('character.remove', 'Remove character', input({ characterId: id })),
 	mutation('character.update', 'Update character', input({ characterId: id, patch: characterPatch })),
+	studioActionDeclaration('character.move'),
 	mutation('character.setPose', 'Set character pose', input({ characterId: id, pose: { oneOf: [id, record, { type: 'null' }] }, clearMotion: { type: 'boolean' } }, ['characterId', 'pose'])),
 	mutation('character.setPromptBlocks', 'Set prompt blocks', input({ characterId: id, blocks })),
 	mutation('characters.arrange', 'Arrange characters', STUDIO_TOOL_SCHEMAS.arrange_characters),
@@ -45,7 +46,7 @@ export function register(registry, ports) {
 	const mounted = () => Boolean(ports.storeDomain?.('cast')) || 'The cast document owner is not mounted.';
 	const character = characterId => owner().read().find(row => row.id === characterId) ?? fail('STALE_TARGET', `Character ${characterId} is not in this scene.`);
 	const pose = value => typeof value === 'string' ? owner().poses().find(row => row.id === value) ?? fail('STALE_TARGET', `Pose ${value} is not in the library.`) : value;
-	const patch = (characterId, update) => { character(characterId); owner().write(rows => rows.map(row => row.id === characterId ? { ...row, ...update } : row)); };
+	const patch = (characterId, update) => { character(characterId); owner().update(characterId, update); };
 	// A character groups under a scene object that stands in the world. An
 	// object a character carries is refused: it rides a bone, not a route.
 	const groupParent = value => {
@@ -84,6 +85,7 @@ export function register(registry, ports) {
 		},
 		'character.remove': ({ characterId }) => { character(characterId); if (owner().read().length <= 1) fail('INVALID_ARGUMENT', 'Cannot remove the final character.'); owner().write(rows => rows.filter(row => row.id !== characterId)); },
 		'character.update': ({ characterId, patch: value }) => { if (Object.hasOwn(value, 'parent')) groupParent(value.parent); patch(characterId, value); },
+		'character.move': ({ characterId, ...value }) => patch(characterId, value),
 		'character.setPose': ({ characterId, pose: value, clearMotion }) => { character(characterId); owner().applyPose(characterId, pose(value), clearMotion); },
 		'character.setPromptBlocks': ({ characterId, blocks }) => {
 			const entry = character(characterId); patch(characterId, { layer: { ...entry.layer, promptClips: blocks } });

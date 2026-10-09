@@ -15,7 +15,8 @@ const inputs = {
   'shot.reorder': { shotId: 'shot-a', startFrame: 25 },
   'shot.setCameraRail': { shotId: 'shot-a', points: [{ x: -2, z: 4 }, { x: 2, z: 4 }] },
   'shot.clearCameraRail': { shotId: 'shot-a' },
-  'shot.createStill': { caption: 'Panel' }, 'shot.setCaption': { shotId: 'shot-a', caption: 'Panel' }, 'shot.setHold': { shotId: 'shot-a', hold: 12 },
+  'shot.createStill': { caption: 'Panel' }, 'shot.setCaption': { shotId: 'shot-a', caption: 'Panel' },
+  'shot.setCastOverride': { shotId: 'shot-a', characterId: 'actor-a', override: { x: 1, z: 2, rot: 0 } }, 'shot.setHold': { shotId: 'shot-a', hold: 12 },
   'shot.set': { id: 'shot-a', set: { targetModel: 'seedance-2.5' } },
   'shot.frame': { subjectIds: ['actor-a'], keyAtFrame: 5, framing: { exact: { position: { x: 1, y: 2, z: 6 }, lookAt: { x: 0, y: 1, z: 0 }, focalMm: 35 } } },
 };

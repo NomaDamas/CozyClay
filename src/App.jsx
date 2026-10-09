@@ -212,6 +212,8 @@ import { STARTER_SCENES } from "./starter-scenes.js";
 import { PART_COLOURS } from "./part-colours.js";
 import {
 	DEFAULT_POSE,
+	applyHipsOffset,
+	applyPose,
 } from "./poses.js";
 import {
 	IkHandles,
@@ -442,11 +444,14 @@ function koSubjectParticle(word) {
  * A missing rig, a member with no clip and a layer with no keys are all
  * no-ops rather than errors: characters without a take keep their pose.
  */
-function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0) {
+function poseMemberAtFrame(rig, clip, ikState, frame, blendFrames = 0, pose = null) {
 	if (!rig) return;
 	if (clip) {
 		const sampled = sampleAt({ frameCount: clip.frames, motion: clip }, null, frame);
 		applyMotionFrame(rig, clip, sampled.motionFrame);
+	} else if (pose) {
+		applyPose(rig, pose);
+		applyHipsOffset(rig, pose.rootY ?? 0);
 	}
 	if (ikState && ikState.keys.size > 0 && ikState.chains && ikState.rig === rig) {
 		ikEvaluate(ikState.chains, ikState, frame, ikState.fkJoints, clip ? blendFrames : 0);
@@ -3086,16 +3091,16 @@ export default function App() {
 		// Each cast member is driven by ITS OWN clip: the active one reads
 		// the editing buffer, the others their stored session motion.
 		const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
-		const placement = entry.model === "proxy-figure" && typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, tlFrame, {
-			shotAt: () => null,
+		const placement = (entry.model === "proxy-figure" || !clip) && typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, tlFrame, {
+			shotAt: frame => shotAtFrame(shots, frame),
 			takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, tlFrame).subject : null,
 		}) : entry;
 		return [{
 			id: entry.id,
 			model: entry.model,
 			...(entry.model === "proxy-figure" ? {} : { url: characterModelUrl(entry.model) }),
-			position: [entry.x, entry.y ?? 0, entry.z],
-			rot: entry.rot,
+			position: [placement.x, entry.y ?? 0, placement.z],
+			rot: placement.rot,
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
 			partColoursEnabled,
 			partColoursMode,
@@ -3112,7 +3117,7 @@ export default function App() {
 				rot: placement.rot,
 			} : {}),
 		}];
-	}), [characters, activeChar.id, motion, tlFrame, partColoursEnabled, partColoursMode]);
+	}), [characters, activeChar.id, motion, shots, tlFrame, partColoursEnabled, partColoursMode]);
 	// Where the selection gizmo stands: same driving rules as the render,
 	// for the active (selected) cast member only. Gated on the HIERARCHY
 	// selection, not the sticky active layer — the layer stays on the last
@@ -3123,8 +3128,10 @@ export default function App() {
 		if (!charIdFromHierarchyId(selectedHierarchyId)) return null;
 		const entry = characters.find((item) => item.id === activeChar.id);
 		if (!entry || entry.hidden) return null;
-		return { position: [entry.x, entry.y ?? 0, entry.z] };
-	}, [characters, activeChar.id, motion, selectedHierarchyId]);
+		const hasTake = activeChar.id === activeCharacterId ? Boolean(motion) : Boolean(activeChar.sessionMotion);
+		const placement = hasTake ? entry : resolveCharacterPlacement(entry, tlFrame, { shotAt: frame => shotAtFrame(shots, frame) });
+		return { position: [placement.x, entry.y ?? 0, placement.z], rot: placement.rot };
+	}, [characters, activeChar.id, motion, shots, tlFrame, selectedHierarchyId]);
 	// The cast rides the SAME gizmo as scene objects — one movement grammar
 	// for everything on stage. The proxy hands ObjectGizmo the object shape
 	// it expects; `height` puts the pivot at the hips like a prop's centre.
@@ -3138,7 +3145,7 @@ export default function App() {
 			z: gizmoView.position[2],
 			height: 1.15,
 			footprint: { width: 0.6, depth: 0.6 },
-			rotY: entry?.rot ?? 0,
+			rotY: gizmoView.rot ?? entry?.rot ?? 0,
 			scaleX: entry?.scale ?? 1,
 			scaleY: entry?.scale ?? 1,
 			scaleZ: entry?.scale ?? 1,
@@ -3407,7 +3414,11 @@ export default function App() {
 			const state = context
 				? (entry.id === activeId ? context.ikState : context.ikStates.get(entry.id))
 				: (entry.id === activeChar.id ? ikStateRef.current : ikStatesRef.current.get(entry.id));
-			poseMemberAtFrame(rigs[entry.id], clip, state, frame, IK_CORRECTION_BLEND_FRAMES);
+			const placement = typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, frame, {
+				shotAt: at => shotAtFrame(context?.shots ?? shots, at),
+				takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
+			}) : entry;
+			poseMemberAtFrame(rigs[entry.id], clip, state, frame, IK_CORRECTION_BLEND_FRAMES, placement.pose ?? null);
 		}
 		// The bones for this frame are now written, so a carried prop can take
 		// its place on them. gl.render() never runs the r3f frame loop, so this
@@ -3471,10 +3482,10 @@ export default function App() {
 			for (const snapshot of recRef.current?.request.context?.rigStates ?? []) restoreExportRig(snapshot);
 			for (const { node, entry } of proxySnapshots) {
 				const clip = entry.id === (context?.activeId ?? activeChar.id) ? (context ? context.motion : motion) : entry.sessionMotion;
-				const placement = resolveCharacterPlacement(entry, frame, {
-					shotAt: () => null,
+				const placement = typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, frame, {
+					shotAt: at => shotAtFrame(context?.shots ?? shots, at),
 					takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
-				});
+				}) : entry;
 				node.position.set(placement.x, entry.y ?? 0, placement.z);
 				node.rotation.y = placement.rot * Math.PI / 180 + (placement.posture === "lie" ? Math.PI : 0);
 				node.updateMatrixWorld(true);
