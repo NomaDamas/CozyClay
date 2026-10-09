@@ -428,7 +428,7 @@ function sceneReport({ characterCursor = 0, objectCursor = 0, limit = 50 } = {})
 				`  ${object.id}  ${object.name}  at x ${round(object.x)}, y ${round(object.y)}, z ${round(object.z)}` +
 					`  yaw ${round(object.rot, 1)}deg  size ${round(size.width)}x${round(size.height)}x${round(size.depth)}m` +
 					`${object.hidden ? " hidden" : ""}`,
-				`    rotX: ${round(object.rotX ?? 0, 1)}  rotZ: ${round(object.rotZ ?? 0, 1)}  color: ${object.color ?? null}  parent: ${object.parent ?? null}`,
+				`    rotX: ${round(object.rotX ?? 0, 1)}  rotZ: ${round(object.rotZ ?? 0, 1)}  color: ${object.color ?? null}${object.opacity < 1 ? `  opacity: ${round(object.opacity, 2)}` : ""}  parent: ${object.parent ?? null}`,
 			);
 			if (object.path?.points?.length >= 2) {
 				const points = object.path.points;
@@ -1297,7 +1297,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				title: "Move, rotate or scale an object",
 				description:
 					"Unlike place_object, update_object changes an existing prop instead of adding one. " +
-					"Every field is optional; omitted fields are left alone. Transforms go through the same clamp/snap path the studio's gizmo uses. hidden shows or hides the prop without deleting it.",
+					"Every field is optional; omitted fields are left alone. Transforms go through the same clamp/snap path the studio's gizmo uses. hidden shows or hides the prop without deleting it. opacity makes it see-through (glass, windows, water).",
 				inputSchema: {
 					id: z.string().describe("object id from place_object or describe_scene"),
 					x: z.number().optional(),
@@ -1333,9 +1333,10 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 					height: z.number().positive().optional().describe("cutout or mesh height in metres"),
 					clay: z.boolean().optional().describe("mesh only: replace file materials with matte clay"),
 					hidden: z.boolean().optional().describe("true hides the prop without deleting it"),
+					opacity: z.number().min(0.05).max(1).optional().describe("1 is solid; lower is see-through, e.g. 0.3 for clear glass"),
 				},
 			},
-			async ({ id, x, y, z: zPos, facing, tilt, roll, scale, scale_x, scale_y, scale_z, color, name, path, height, clay, hidden, ...admission }) => {
+			async ({ id, x, y, z: zPos, facing, tilt, roll, scale, scale_x, scale_y, scale_z, color, name, path, height, clay, hidden, opacity, ...admission }) => {
 				const travelPath = path === null
 					? null
 					: path
@@ -1346,7 +1347,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 						return await runStudioCommand({ ...admission, action: "object.update", args: { id, patch: {
 							x, y, z: zPos, rot: facing, rotX: tilt, rotZ: roll,
 							scaleX: scale_x ?? scale, scaleY: scale_y ?? scale, scaleZ: scale_z ?? scale,
-							color, name, path: travelPath, height, clay, hidden,
+							color, name, path: travelPath, height, clay, hidden, opacity,
 						} } });
 					} catch (error) {
 						return liveError(error);
@@ -1376,6 +1377,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				if (height !== undefined) patch.height = height;
 				if (clay !== undefined) patch.clay = clay;
 				if (hidden !== undefined) patch.hidden = hidden;
+				if (opacity !== undefined) patch.opacity = opacity;
 				sc.objects = updateSceneObject(sc.objects, id, patch);
 				return text(`Updated ${id}.\n\n${sceneReport()}`);
 			},

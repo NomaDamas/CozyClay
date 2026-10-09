@@ -6,7 +6,7 @@
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
-import { createAgentHandler, referenceGuidance } from "../bin/agent/agent-routes.mjs";
+import { createAgentHandler, FRAME_COMPOSITION_GUIDANCE, referenceGuidance } from "../bin/agent/agent-routes.mjs";
 import { createCodexClient } from "../bin/agent/codex-client.mjs";
 import { createFakeModel } from "./fixtures/fake-model.mjs";
 
@@ -61,6 +61,19 @@ assert.ok(call.prompt.startsWith("golden hour"), "the node's own prompt still le
 // What the codex client actually attaches: frame + reference + the references.
 const attached = [call.imageDataUrl, call.referenceDataUrl, ...call.extraImages].filter(Boolean);
 assert.equal(attached.length, 1 + 1 + references.length, `images length = 1 + referenceDataUrl + references (${attached.length})`);
+
+// Pose-mode user references keep the pose and camera on the clay frame.
+await post({ prompt: "knight", imageDataUrl: png, references: [{ role: "reference", name: "1", dataUrl: jpeg }] });
+assert.deepEqual(seen.at(-1).extraImages, [jpeg], "a user reference is forwarded");
+assert.ok(seen.at(-1).prompt.includes("Reference 1:") && seen.at(-1).prompt.includes("keep the exact pose"), `prompt pins the pose to the frame: ${seen.at(-1).prompt}`);
+
+// composition "frame" (Pose mode): the frame owns camera and pose; nothing else describes the camera.
+const framed = await post({ prompt: "knight", imageDataUrl: png, composition: "frame" });
+assert.equal(framed.status, 200);
+assert.ok(seen.at(-1).prompt.startsWith(FRAME_COMPOSITION_GUIDANCE), `frame guidance leads: ${seen.at(-1).prompt}`);
+assert.ok(seen.at(-1).prompt.includes("knight"));
+assert.equal(seen.at(-1).composition, undefined, "the flag is not forwarded to the image backend");
+assert.equal((await post({ prompt: "x", imageDataUrl: png, composition: "loose" })).status, 400, "an unknown composition is rejected");
 
 // Without a referenceDataUrl the count drops by exactly one.
 await post({ prompt: "golden hour", imageDataUrl: png, references: [references[0]] });

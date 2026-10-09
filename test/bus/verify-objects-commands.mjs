@@ -7,7 +7,7 @@ const origins = ['ui', 'agent', 'mcp', 'cli'];
 const changed = (receipt) => { assert.equal(receipt.ok, true, JSON.stringify(receipt)); assert.ok(receipt.undo?.historyEntryId, JSON.stringify(receipt)); return receipt; };
 const patches = {
   renderer: 'sphere', position: { x: 2, y: 3, z: 4 }, rotation: { x: 10, y: 20, z: 30 }, scale: { x: 2, y: 3, z: 4 },
-  name: 'Renamed', color: '#123456', parent: 'sphere', path: { points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 1 }], speed: 2 }, remove: true,
+  name: 'Renamed', color: '#123456', opacity: 0.3, parent: 'sphere', path: { points: [{ x: 0, y: 0, z: 0 }, { x: 2, y: 0, z: 1 }], speed: 2 }, remove: true,
 };
 assert.deepEqual(Object.keys(patches).sort(), STUDIO_ELEMENTS.filter(e => e.path.startsWith('object.') && isSettableElement(e)).map(e => e.path.slice(7)).sort());
 for (const [path, value] of Object.entries(patches)) {

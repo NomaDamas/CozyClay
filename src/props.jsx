@@ -19,6 +19,7 @@ import { CUTOUT_KIND, MESH_KIND } from "./scene-objects.js";
 import { subscribeToAssetTexture } from "./scene-asset-cache.js";
 import { subscribeToMeshScene } from "./scene-mesh-cache.js";
 import { cloneMeshGraph } from "./mesh-graph-clone.js";
+import { applyPoseFade } from "./pose-fade.js";
 
 const CLAY_CAR = "#d98770";
 const CLAY_CAR_TOP = "#e49a84";
@@ -483,7 +484,7 @@ const placeLocal = new THREE.Matrix4();
 const placeWorld = new THREE.Matrix4();
 const placeFrame = new THREE.Matrix4();
 
-function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null, travelLookupRef = null }) {
+function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null, travelLookupRef = null, fadeOpacity = null }) {
 	const groupRef = useRef(null);
 	const attach = object.attach ?? null;
 	// An object on a travel path — or one CARRIED by a character — is placed
@@ -540,6 +541,7 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
 		if (typeof window !== "undefined") {
 			(window.__cclayPropWorld ??= {})[object.id] = { x: group.position.x, y: group.position.y, z: group.position.z, frame };
 		}
+		applyPoseFade(group, fadeOpacity, object.opacity ?? 1);
 	};
 	useFrame(place);
 	// Two things the App needs to reach imperatively, registered per prop: a
@@ -592,7 +594,7 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
  * loop and would otherwise record props one frame stale; `worldRef` with a
  * "where is this prop" lookup, so a reparent converts from the transform on
  * screen instead of from a second computation of it. */
-export function SetProps({ objects = [], authoredObjects = null, selectedId = null, frameRef = null, take = null, attachFrameRef = null, syncRef = null, worldRef = null }) {
+export function SetProps({ objects = [], authoredObjects = null, selectedId = null, frameRef = null, take = null, attachFrameRef = null, syncRef = null, worldRef = null, fadeOpacity = null }) {
 	const registryRef = useRef(null);
 	// The authored records by id: a child's travel is its routed parent's
 	// route against the parent's AUTHORED pose, which the display copies in
@@ -614,6 +616,7 @@ export function SetProps({ objects = [], authoredObjects = null, selectedId = nu
 					attachFrameRef={attachFrameRef}
 					registryRef={registryRef}
 					travelLookupRef={travelLookupRef}
+					fadeOpacity={fadeOpacity}
 				/>
 			))}
 		</group>

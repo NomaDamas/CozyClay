@@ -42,6 +42,7 @@ const entries = [
 	{ path: "object.scale", type: "vec3", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject", min: { x: 0.1, y: 0.1, z: 0.1 }, max: { x: 100, y: 100, z: 100 } },
 	{ path: "object.name", type: "string", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject" },
 	{ path: "object.color", type: "color", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject" },
+	{ path: "object.opacity", type: "number", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject", min: 0.05, max: 1, note: "1 is solid; lower is see-through, e.g. 0.3 for clear glass" },
 	{ path: "object.parent", type: "id", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject" },
 	{ path: "object.attach", type: "id", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject", actions: ["object.attach", "object.detach"], note: "carried by a character's root or bone; channels convert so the prop stays put" },
 	{ path: "object.path", type: "array", persisted: true, undoDomain: "objects", normalizer: "normalizeSceneObject" },

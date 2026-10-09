@@ -2322,7 +2322,8 @@ export function CaptureRig({ apiRef, camRef, width = CAPTURE_W, height = CAPTURE
 					// with — the browser suite asserts GIZMO_LAYER (the gizmo AND
 					// the selection cage) is never in it.
 					window.__captureCameraMask = cam.layers.mask;
-					cam.aspect = width / height;
+					// A view offset (a crop of a wider frustum) already fixes the aspect.
+					if (!cam.view?.enabled) cam.aspect = width / height;
 					cam.updateProjectionMatrix();
 					const previous = gl.getRenderTarget();
 					// The viewport's fog dissolves the deck into the background by ~54 m
@@ -2831,6 +2832,7 @@ export const MotionTrails = memo(function MotionTrails({ motion, rig = null, bas
 		<group
 			visible={visible}
 			renderOrder={900}
+			userData={{ editorOverlay: true }}
 			ref={(group) => {
 				// QA-only escape hatch (same spirit as window.__cozyclay): lets
 				// headless perf probes toggle the trails without a rebuild.

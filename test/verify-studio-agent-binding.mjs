@@ -557,7 +557,7 @@ const implementations={
   assert.deepEqual(r.delta,[{id:'copy-1',after:{patched:[
    {path:'object.renderer',text:'cube'},{path:'object.position',vec:{x:2.5,y:0,z:0}},
    {path:'object.rotation',vec:{x:0,y:0,z:0}},{path:'object.scale',vec:{x:1,y:1,z:1}},
-   {path:'object.name',text:'Copy'},{path:'object.color',text:'#c2c6c8'},
+   {path:'object.name',text:'Copy'},{path:'object.color',text:'#c2c6c8'},{path:'object.opacity',text:null},
    {path:'object.parent',text:null},{path:'object.path',text:null},{path:'object.remove',flag:false},
   ]}}]);
   assert.equal(f.store.current.objects.length,2);

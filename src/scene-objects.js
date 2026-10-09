@@ -629,6 +629,10 @@ export function updateSceneObject(objects, id, patch) {
 			update[key] = patch[key];
 		}
 		if (typeof patch.hidden === "boolean" && patch.hidden !== (object.hidden === true)) update.hidden = patch.hidden;
+		if (patch.opacity !== undefined && Number.isFinite(Number(patch.opacity))) {
+			const opacity = objectOpacity(patch.opacity);
+			if (opacity !== objectOpacity(object.opacity)) update.opacity = opacity;
+		}
 		// The travel path is authored geometry, not a bounded transform: it is
 		// normalized by createObjectPath (which repairs or refuses it) and set
 		// wholesale, with null clearing it back to a standing object.
@@ -798,6 +802,14 @@ export function removeSceneObject(objects, id) {
  * `renderer` (or a record without an id) has nothing to render or address,
  * so it is dropped rather than half-restored (plan §8.2).
  */
+export const OBJECT_OPACITY_MIN = 0.05;
+
+/** 1 = solid. Clamped above zero so a see-through object never becomes an invisible, unpickable one. */
+export function objectOpacity(value) {
+	const n = Number(value);
+	return Number.isFinite(n) ? Math.min(1, Math.max(OBJECT_OPACITY_MIN, n)) : 1;
+}
+
 export function normalizeSceneObject(record) {
 	if (!record || typeof record !== "object" || Array.isArray(record)) return null;
 	const entry = objectLibraryEntry(record.renderer);
@@ -855,6 +867,8 @@ export function normalizeSceneObject(record) {
 		// all, and null is exactly what it meant: world-anchored.
 		attach: normalizeSceneAttach(record.attach) ?? null,
 		hidden: record.hidden === true,
+		// Absent means solid, so documents written before see-through objects are unchanged.
+		...(objectOpacity(record.opacity) < 1 ? { opacity: objectOpacity(record.opacity) } : {}),
 		// Library kinds take their size from the library — a stored footprint is
 		// stale data, not a fact. Cutouts and meshes are the exceptions: their
 		// size IS per-instance. A cutout rebuilds the footprint from height and

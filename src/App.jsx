@@ -273,6 +273,7 @@ import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from ".
 import { motionApiOrigin, I2V_MOTION_SHOT_ASPECT } from "./i2v-motion-client.js";
 import { serializeOtio } from "./otio.js";
 import "./shell/mode.css";
+import { readPoseFadeOpacity, suspendPoseFade, writePoseFadeOpacity } from "./pose-fade.js";
 import {
 	shotAtFrame,
 	shotIndexAtFrame,
@@ -1418,6 +1419,8 @@ export default function App() {
 	// Keep the underlying selection model intact, but use this small workflow
 	// state to surface only the tools that belong to the current job.
 	const [workflowMode, setWorkflowMode] = useState("scene");
+	const [poseObjectOpacity, setPoseObjectOpacityState] = useState(readPoseFadeOpacity);
+	const setPoseObjectOpacity = (value) => { setPoseObjectOpacityState(value); writePoseFadeOpacity(value); };
 	// Pose mode IS IK editing (#521): with no rig to solve there is nothing to
 	// pose, so the mode refuses with the reason instead of opening empty.
 	const poseRefusal = ikChains ? null : ko("Load a character to pose it — Pose mode edits its rig with IK", "캐릭터를 불러와야 포즈를 잡을 수 있어요 — 포즈 모드는 IK로 리그를 편집합니다");
@@ -4537,6 +4540,12 @@ export default function App() {
 		cam.rotation.order = "YXZ";
 		cam.rotation.set(framing.pitch, framing.yaw, 0);
 		cam.fov = framing.fovDeg;
+		const prevAspect = cam.aspect;
+		const offset = framing.viewOffset;
+		if (offset) {
+			cam.aspect = offset.fullWidth / offset.fullHeight;
+			cam.setViewOffset(offset.fullWidth, offset.fullHeight, offset.x, offset.y, offset.width, offset.height);
+		}
 		cam.updateProjectionMatrix();
 		const needsOwnTarget = output.width !== shotOutput.width || output.height !== shotOutput.height;
 		const capture = needsOwnTarget && typeof captureRef.current.createExportCapture === "function"
@@ -4552,7 +4561,64 @@ export default function App() {
 			look.current.yaw = prev.yaw;
 			look.current.pitch = prev.pitch;
 			cam.fov = prev.fov;
+			if (offset) {
+				cam.clearViewOffset();
+				cam.aspect = prevAspect;
+			}
 			cam.updateProjectionMatrix();
+		}
+	}
+
+	/** The canvas runs under the floating panels, so "what I see" is only the uncovered middle.
+	    Returns the largest centred `aspect` rectangle inside that region as a camera view offset. */
+	function visibleViewOffset(aspect) {
+		const canvas = document.querySelector(".viewport canvas");
+		if (!canvas) return null;
+		const box = canvas.getBoundingClientRect();
+		const edge = (selector, side) => {
+			const rect = document.querySelector(selector)?.getBoundingClientRect();
+			return rect && rect.width > 0 && rect.height > 0 ? rect[side] : null;
+		};
+		const left = Math.max(box.left, edge(".studio-left-column", "right") ?? box.left);
+		const right = Math.min(box.right, edge(".studio-right-column", "left") ?? box.right);
+		const top = Math.max(box.top, edge(".topbar", "bottom") ?? box.top);
+		const bottom = Math.min(box.bottom, edge(".studio-dock-slot", "top") ?? box.bottom);
+		if (right - left < 50 || bottom - top < 50) return null;
+		const width = Math.min(right - left, (bottom - top) * aspect);
+		const height = width / aspect;
+		return {
+			fullWidth: box.width, fullHeight: box.height,
+			x: (left + right) / 2 - width / 2 - box.left, y: (top + bottom) / 2 - height / 2 - box.top,
+			width, height,
+		};
+	}
+
+	/** Pose mode's image generation: the shot camera's view of the pose as it stands, at the
+	    delivery size, plus the scene's identity/environment references. The pose-mode object
+	    fade is lifted for this draw only (the props' next frame puts it back), and editor
+	    overlays such as motion trails are hidden around it. */
+	function capturePoseImage(source = "view") {
+		const viewCam = source === "view" ? poserCamRef.current : null;
+		let framing = captureCurrentFraming();
+		if (viewCam) {
+			const dir = viewCam.getWorldDirection(new THREE.Vector3());
+			const pos = viewCam.getWorldPosition(new THREE.Vector3());
+			framing = captureFraming({ pos, yaw: Math.atan2(-dir.x, -dir.z), pitch: Math.asin(THREE.MathUtils.clamp(dir.y, -1, 1)), fovDeg: viewCam.fov });
+			framing.viewOffset = visibleViewOffset(shotOutput.width / shotOutput.height);
+		}
+		const scene = captureRef.current?.scene;
+		const overlays = [];
+		scene?.traverse((node) => {
+			if (node.userData.editorOverlay && node.visible) { node.visible = false; overlays.push(node); }
+		});
+		suspendPoseFade(true);
+		propSyncRef.current?.();
+		try {
+			const dataUrl = captureFramingPng(framing, shotOutput);
+			return dataUrl ? { dataUrl, references: captureShotReferences() } : null;
+		} finally {
+			suspendPoseFade(false);
+			for (const node of overlays) node.visible = true;
 		}
 	}
 
@@ -6773,7 +6839,7 @@ export default function App() {
 		linePreviewError, generationBusy, bridgeChecking, lineReadinessState, runLineEdit,
 		openMotionSetup, recheckMotionHealth, resetLineCurve, exitLineEditMode, readinessState,
 		ardyRunning, cancelArdy, ardyStatus, ardyOutcome, addPromptClip,
-		tlFrame, isRigSelection, ikChains, ikFocus, footSnap,
+		tlFrame, isRigSelection, ikChains, ikFocus, footSnap, poseObjectOpacity, setPoseObjectOpacity, capturePoseImage,
 		collisionCleanupSupported, runFixCollisions, runFixCollisionsRange, autoPhysicsRunning, physicsProgress,
 		physicsPreview, physicsShow, physicsOptions, platformFitRunning, platformFitProgress,
 		platformFitLast, platformFitApplied, changePhysicsOptions, runAutoPhysics, showPhysicsPreview,
@@ -6931,6 +6997,7 @@ export default function App() {
 								attachFrameRef={attachFrameRef}
 								syncRef={propSyncRef}
 								worldRef={propWorldRef}
+								fadeOpacity={workflowMode === "pose" ? poseObjectOpacity : null}
 							/>
 
 							<PerspectiveCamera

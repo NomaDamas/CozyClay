@@ -682,8 +682,8 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		// `references` are the scene's identity / environment slots (#167): extra
 		// attached pictures with a role, passed through untouched so the sidecar
 		// decides how they are described to the model.
-		async image({ prompt, imageDataUrl, referenceDataUrl, references, quality = "auto" }, signal) {
-			return request("/agent/image", { method: "POST", body: JSON.stringify({ prompt, imageDataUrl, ...(referenceDataUrl ? { referenceDataUrl } : {}), ...(Array.isArray(references) && references.length ? { references } : {}), quality }), signal });
+		async image({ prompt, imageDataUrl, referenceDataUrl, references, composition, quality = "auto" }, signal) {
+			return request("/agent/image", { method: "POST", body: JSON.stringify({ prompt, imageDataUrl, ...(referenceDataUrl ? { referenceDataUrl } : {}), ...(Array.isArray(references) && references.length ? { references } : {}), ...(composition ? { composition } : {}), quality }), signal });
 		},
 		async video(payload, signal) {
 			return request("/agent/video", { method: "POST", body: JSON.stringify(payload), signal });

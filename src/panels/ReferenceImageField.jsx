@@ -4,7 +4,7 @@ import { ASSET_IMAGE_TYPES, downscaleTarget } from "../scene-assets.js";
 
 const REFERENCE_IMAGE_MAX_DIMENSION = 1024;
 
-async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIMENSION } = {}) {
+export async function readReferenceImage(file, { maxDimension = REFERENCE_IMAGE_MAX_DIMENSION } = {}) {
 	if (!file) throw new Error("No file");
 	if (!ASSET_IMAGE_TYPES.includes(String(file.type).toLowerCase())) {
 		throw new Error("unsupported image type");

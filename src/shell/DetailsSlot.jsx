@@ -12,6 +12,7 @@ import PosePanel from "../panels/PosePanel.jsx";
 import VideoCapturePanel from "../panels/VideoCapturePanel.jsx";
 import PromptBlocksPanel from "../panels/PromptBlocksPanel.jsx";
 import RigControlPanel from "../panels/RigControlPanel.jsx";
+import PoseImagePanel from "../panels/PoseImagePanel.jsx";
 import EnvironmentPanel from "../panels/EnvironmentPanel.jsx";
 import PropsPanel from "../panels/PropsPanel.jsx";
 import ObjectTransformPanel from "../panels/ObjectTransformPanel.jsx";
@@ -81,7 +82,7 @@ export default function DetailsSlot() {
 		generationBusy, bridgeChecking, lineReadinessState, runLineEdit, openMotionSetup,
 		recheckMotionHealth, resetLineCurve, exitLineEditMode, readinessState, ardyRunning,
 		cancelArdy, ardyStatus, ardyOutcome, tlFrame,
-		isRigSelection, ikChains, ikFocus, footSnap, collisionCleanupSupported,
+		isRigSelection, ikChains, ikFocus, footSnap, poseObjectOpacity, setPoseObjectOpacity, capturePoseImage, collisionCleanupSupported,
 		autoPhysicsRunning, physicsProgress, physicsPreview,
 		physicsShow, physicsOptions, platformFitRunning, platformFitProgress, platformFitLast,
 		platformFitApplied, changePhysicsOptions, runAutoPhysics, showPhysicsPreview, applyPhysicsPreview,
@@ -166,6 +167,7 @@ export default function DetailsSlot() {
 				)}
 			</p>
 		)}
+		<PoseImagePanel hidden={workflowMode !== "pose"} capturePoseImage={capturePoseImage} />
 		{/* Shot TYPE presets live in the viewport toolbar dropdown — not
 			    duplicated here. */}
 
@@ -313,6 +315,8 @@ export default function DetailsSlot() {
 				ikChains={ikChains}
 				ikFocus={ikFocus}
 				footSnap={footSnap}
+				poseObjectOpacity={poseObjectOpacity}
+				setPoseObjectOpacity={setPoseObjectOpacity}
 				ikMode={ikMode}
 				collisionCleanupSupported={collisionCleanupSupported}
 				motion={motion}
