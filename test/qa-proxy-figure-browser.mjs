@@ -225,6 +225,42 @@ try {
 	const screenshot = `${outputDir}/task-6-previs-modes.png`;
 	writeFileSync(screenshot, Buffer.from(shot.data, "base64"));
 	console.log(`QA_SCREENSHOT ${screenshot} bytes=${statSync(screenshot).size}`);
+
+	// #635: rig-only features refuse the capsule figure; the rig keeps them.
+	const capture = async (name) => {
+		const image = await b.send("Page.captureScreenshot", { format: "png" });
+		const file = `${outputDir}/${name}.png`;
+		writeFileSync(file, Buffer.from(image.data, "base64"));
+		console.log(`QA_SCREENSHOT ${file} bytes=${statSync(file).size}`);
+	};
+	const pressTwo = async () => {
+		const key = { key: "2", code: "Digit2", windowsVirtualKeyCode: 50 };
+		await b.send("Input.dispatchKeyEvent", { type: "keyDown", ...key, text: "2" });
+		await b.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
+	};
+	const workflowMode = "document.querySelector('[data-mode][aria-selected=\"true\"]')?.dataset.mode";
+	const capsuleRefusal = "Capsule figures have no rig - Pose mode works on rigged characters only.";
+	await b.change("window.__proxyContext.live.state?.activeCharacterId === 'qa-proxy'", () => b.click('[data-node-id="characterB"]'));
+	const modeBefore = await b.evaluate(workflowMode);
+	assert.equal(await b.evaluate("document.querySelector('[data-mode=\"pose\"]').dataset.disabledReason"), capsuleRefusal);
+	await b.change(`[...document.querySelectorAll('.toast')].some(t => t.textContent === ${JSON.stringify(capsuleRefusal)})`, pressTwo);
+	assert.equal(await b.evaluate(workflowMode), modeBefore, "mode stays after the refusal");
+	console.log(`PASS capsule active + 2 -> toast "${capsuleRefusal}"; mode stays ${modeBefore}`);
+	await capture("task-7-proxy-pose-refused");
+	await b.change("window.__proxyContext.live.state?.activeCharacterId === 'char-a'", () => b.click('[data-node-id="characterA"]'));
+	assert.equal(await b.evaluate("document.querySelector('[data-mode=\"pose\"]').dataset.disabledReason ?? null"), null);
+	await b.change(`${workflowMode} === 'pose'`, pressTwo);
+	console.log("PASS rig active + 2 -> Pose mode opens");
+	await capture("task-7-rig-pose-open");
+	// Failure path: with only the capsule figure left, Generate Motion is refused in place.
+	await b.change("window.__proxyBus.characters.length === 1 && /Capsule/.test(document.querySelector('[data-testid=\"topbar-generate\"]')?.dataset.disabledReason ?? '')",
+		() => b.evaluate("window.__proxyBus.bus.run('character.remove', { characterId: 'char-a' })"));
+	const generate = await b.evaluate("(() => { const el = document.querySelector('[data-testid=\"topbar-generate\"]'); return { reason: el.dataset.disabledReason, ariaDisabled: el.getAttribute('aria-disabled') }; })()");
+	assert.equal(generate.ariaDisabled, "true");
+	assert.match(generate.reason, /Capsule/);
+	console.log(`PASS only capsule figure -> Generate Motion aria-disabled=${generate.ariaDisabled} data-disabled-reason="${generate.reason}"`);
+	await capture("task-7-generate-disabled");
+	assert.equal(errors.length, 0, errors.join("\n"));
 } finally {
 	observer.close();
 	b.close();

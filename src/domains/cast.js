@@ -12,7 +12,8 @@ import {
 	captureHipsOffset,
 	saveCustomPoses,
 } from "../poses.js";
-import { createCharacterEntry, createCharacterLayer } from "../scenes.js";
+import { createCharacterEntry, createCharacterLayer, isProxyFigure } from "../scenes.js";
+import { kindRefusal } from "../character-kind.js";
 import {
 	DEFAULT_SUBJECT,
 	DEFAULT_SUBJECT2,
@@ -720,6 +721,8 @@ export function useCast(appContext) {
 		setPhotoPoseState("running");
 		setPhotoPoseError("");
 		try {
+			// A capsule figure has no bones for a photo to pose.
+			if (isProxyFigure(posingChar ?? activeChar)) throw new StudioProtocolError("TARGET_NOT_READY", kindRefusal("photoPose", isKo));
 			if (!rig) throw new Error("rig-not-loaded");
 			objectUrl = URL.createObjectURL(file);
 			let bones = null;

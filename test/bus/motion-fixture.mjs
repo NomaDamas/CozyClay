@@ -3,7 +3,8 @@ import { parseSync } from 'rolldown/experimental';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
-import { castFixture } from './cast-fixture.mjs';
+import { castFixture, proxyCast } from './cast-fixture.mjs';
+import { appFixture } from './app-fixture.mjs';
 import { motionCache } from './history-owners.mjs';
 import { freeReferences } from './verify-domain-modules.mjs';
 import { createStudioAppActions } from '../../src/commands/index.js';
@@ -49,8 +50,9 @@ export function seedMotion(frames = 48) {
   }
   return { frames, fps: 24, personScale: 1, rotMats, rootPos, posedJoints, anchorX: 0, anchorZ: 0, anchorFrame: 0, rotationDeg: 0, editSegments: createMotionEdit(frames), url: '/ardy/motions/123456-abcdef' };
 }
-export function motionFixture() {
-  const f = castFixture(), scope = f.scope, app = scope.appContext;
+// `{ proxy: true }` adds one capsule figure (cast-fixture PROXY_ID) to the cast.
+export function motionFixture({ proxy = false } = {}) {
+  const f = castFixture(proxy ? appFixture({ characters: proxyCast() }) : undefined), scope = f.scope, app = scope.appContext;
   Object.assign(scope, { rigs: f.rigs, activeRig: f.rigs['actor-a'], activeChar: f.characterRef.current[0], characters: f.characterRef.current,
     takeRecipeRef: { current: null }, trailBaseMotionRef: { current: null }, trailPreviewMotionRef: { current: null },
     physicsJobRef: { current: 0 }, physicsSourceCacheRef: { current: new Map() }, sceneObjects: [],

@@ -11,6 +11,7 @@ import { keyframePackEntries, keyframePackName } from "../src/keyframe-pack.js";
 import { buildZip } from "../src/zip-store.js";
 import { depthRangeFromFrames } from "../src/render-passes.js";
 import { shotsFixture } from "./bus/shots-fixture.mjs";
+import { isProxyFigure } from "../src/scenes.js";
 const shotFixtures = [];
 import { readStudioFunction } from "./bus/verify-domain-modules.mjs";
 
@@ -101,7 +102,7 @@ function fixture() {
 		} } },
 		snapshotPlaybackBones: () => ({ position: bone.position.clone(), quaternion: bone.quaternion.clone() }),
 		restorePlaybackBones: (_rig, saved) => { bone.position.copy(saved.position); bone.quaternion.copy(saved.quaternion); },
-		poseMemberAtFrame: (_rig, clip, _ik, frame) => { if (clip) bone.position.x = frame; }, IK_CORRECTION_BLEND_FRAMES: 6,
+		poseMemberAtFrame: (_rig, clip, _ik, frame) => { if (clip) bone.position.x = frame; }, IK_CORRECTION_BLEND_FRAMES: 6, isProxyFigure,
 		sampleAt: (_scene, shot) => ({ camera: shot?.cameraKeys[0]?.framing }),
 		shotAtFrame: (list, frame) => list.find((shot) => frame >= shot.startFrame && frame <= shot.endFrame),
 		shotIndexAtFrame: (list, frame) => list.findIndex((shot) => frame >= shot.startFrame && frame <= shot.endFrame),

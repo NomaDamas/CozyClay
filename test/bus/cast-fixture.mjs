@@ -5,6 +5,12 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { createServer } from 'vite';
 import { appFixture } from './app-fixture.mjs';
 import { createStudioAppActions } from '../../src/commands/index.js';
+import { createCharacterEntry, PROXY_FIGURE_MODEL } from '../../src/scenes.js';
+
+// The two rigged fixture actors plus one capsule figure, which has no rig.
+export const PROXY_ID = 'actor-proxy';
+export const proxyCast = () => [createCharacterEntry({ id: 'actor-a', model: 'y-bot-tpose', x: 0, z: 0 }),
+  createCharacterEntry({ id: 'actor-b', model: 'y-bot-tpose', x: 4, z: 0 }), createCharacterEntry({ id: PROXY_ID, model: PROXY_FIGURE_MODEL, x: -4, z: 0 }, 2)];
 
 // Keep the shipped constants and cast hook; exclude only renderer components
 // imported by app-stage, which cannot mount in this Node integration fixture.

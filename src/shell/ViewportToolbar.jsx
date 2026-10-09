@@ -392,6 +392,7 @@ export default function ViewportToolbar() {
 								className={"vp-mode-key" + (active ? " active" : "")}
 								aria-selected={active}
 								aria-disabled={refused ? true : undefined}
+								data-disabled-reason={refused || undefined}
 								aria-label={mode.label}
 								title={refused || `${mode.label} (${mode.key})`}
 								onClick={() => selectWorkflowMode(mode.id)}
