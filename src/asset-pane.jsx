@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ko } from "./locale.js";
-import { CHARACTER_MODEL_IDS } from "./scenes.js";
+import { CHARACTER_MODEL_IDS, PROXY_FIGURE_MODEL } from "./scenes.js";
 import { OBJECT_LIBRARY } from "./scene-objects.js";
 import { displayObjectLabel } from "./object-catalog.jsx";
 import { assetAspect, isMeshAssetId, isSupportedMeshType } from "./scene-assets.js";
@@ -10,14 +10,25 @@ import ResourceStatus from "./resource-status.jsx";
 import { logStore } from "./shell/log-store.js";
 import "./asset-pane.css";
 
-/** Casting assets offered in the Content browser's Characters folder. `id` doubles as the FBX
- * file stem and the ARDY wire rig name (see scenes.js). */
-export const CHARACTER_ASSETS = CHARACTER_MODEL_IDS.map((id) => ({
-	id,
-	label: id === "y-bot-tpose" ? "Y Bot" : "X Bot",
-}));
+/** Casting assets offered in the Content browser's Characters folder. A rig's `id` doubles as
+ * the FBX file stem and the ARDY wire rig name (see scenes.js); the capsule figure has no FBX. */
+export const CHARACTER_ASSETS = [
+	...CHARACTER_MODEL_IDS.map((id) => ({
+		id,
+		label: id === "y-bot-tpose" ? "Y Bot" : "X Bot",
+	})),
+	{ id: PROXY_FIGURE_MODEL, label: ko("Capsule figure", "캡슐 인물") },
+];
 
 function CharacterPreview({ model }) {
+	if (model === PROXY_FIGURE_MODEL) {
+		return (
+			<svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true" data-preview="capsule">
+				<circle cx="24" cy="8.5" r="5.5" />
+				<rect x="16" y="16" width="16" height="26" rx="8" />
+			</svg>
+		);
+	}
 	const yBot = model === "y-bot-tpose";
 	return (
 		<svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true">
@@ -392,7 +403,7 @@ function EmptyNote({ children }) {
 	return <p className="content-empty">{children}</p>;
 }
 
-function FolderGrid({ folder, query, ...props }) {
+export function FolderGrid({ folder, query, ...props }) {
 	const { imageAssetIds, meshAssetIds, shots = [], takeVersions = [], poses = [], onShotOpen, onTakeOpen, selectedKey, onSelect } = props;
 	let tiles = [];
 	let empty = null;

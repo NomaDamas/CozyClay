@@ -7,6 +7,7 @@ import CameraPanel from "../panels/CameraPanel.jsx";
 import SubjectsPanel from "../panels/SubjectsPanel.jsx";
 import CharacterTransformPanel from "../panels/CharacterTransformPanel.jsx";
 import RigPanel from "../panels/RigPanel.jsx";
+import CapsulePanel from "../panels/CapsulePanel.jsx";
 import PosePanel from "../panels/PosePanel.jsx";
 import VideoCapturePanel from "../panels/VideoCapturePanel.jsx";
 import PromptBlocksPanel from "../panels/PromptBlocksPanel.jsx";
@@ -200,6 +201,11 @@ export default function DetailsSlot() {
 		    alone, so they open on demand — Subject and Prompt are the panels
 		    you actually work in. */}
 		<RigPanel
+			isCharacterSelection={isCharacterSelection}
+			activeChar={activeChar}
+		/>
+
+		<CapsulePanel
 			isCharacterSelection={isCharacterSelection}
 			activeChar={activeChar}
 		/>

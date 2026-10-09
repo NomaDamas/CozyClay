@@ -116,6 +116,17 @@ const removed = await call("remove_character", { character: "C" });
 check("character removal works", removed.startsWith("Removed C"), removed.split("\n")[0]);
 check("cast shrinks after removal", removed.includes("CAST (total: 2, returned: 2, truncated: false"), removed);
 
+// A rigless capsule figure joins the cast with its posture, and describe_scene
+// names its model so an agent can tell it from a rig.
+const capsule = await call("add_character", { subject: "a stand-in", model: "proxy-figure", posture: "sit", x: 0.5, z: 1 });
+const capsuleLine = capsule.split("\n").find((line) => /^\s+C /.test(line)) ?? "";
+check("add_character model proxy-figure casts a capsule figure", capsuleLine.includes("[proxy-figure]"), capsuleLine);
+check("describe_scene names the capsule figure's model", (await call("describe_scene")).includes("model: proxy-figure"));
+const badPosture = await client.callTool({ name: "add_character", arguments: { subject: "a stand-in", model: "proxy-figure", posture: "kneel" } });
+check("add_character refuses an unknown posture", badPosture.isError === true, JSON.stringify(badPosture));
+console.log(`add_character proxy-figure cast line: ${capsuleLine.trim()}`);
+check("capsule figure removal works", (await call("remove_character", { character: "C" })).startsWith("Removed C"));
+
 // Down to one character, the scene must refuse to empty its cast.
 await call("remove_character", { character: "B" });
 const lastOne = await call("remove_character", { character: "A" });
