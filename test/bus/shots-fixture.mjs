@@ -19,6 +19,7 @@ export function shotsFixture() {
   scope.shotsDomain = shots;
   Object.assign(f.ports, scope.appContext.ports);
   Object.assign(f.actionHandlers.current, scope.appContext.actionPorts);
+  Object.assign(f.actionHandlers.current, { readView: f.actual.readStudioState, publishView: f.actual.operateStudio });
   const oldState = f.actionHandlers.current.state;
   f.actionHandlers.current.state = () => ({ ...oldState(), shots: f.live.current.shots, frame: f.live.current.timeline.currentFrame, frameCount: f.live.current.timeline.frameCount });
   f.ports.canUndo = f.actual.canUndoStudioReceipt;

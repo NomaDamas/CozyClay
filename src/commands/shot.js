@@ -61,12 +61,17 @@ export function register(registry, ports) {
     const clip = next.find(shot => shot.kind !== 'still' && next.some(still => still.kind === 'still' && still.startFrame <= shot.endFrame && still.endFrame >= shot.startFrame));
     if (clip) fail('TARGET_NOT_READY', `The stills would overlap the clip shot ${clip.name} (frames ${clip.startFrame}-${clip.endFrame}); move or remove it first.`);
     owner().writeState(before => ({ ...before, shots: next, frameCount }));
+    return next;
   }
   function createStill({ caption = '', hold = STILL_HOLD_DEFAULT } = {}) {
     const current = owner().read(), framing = owner().capture(), last = current.findLastIndex(shot => shot.kind === 'still');
     const keys = framing ? [{ id: createStableItemId('camera-key'), frame: 0, framing }] : [];
     const still = { ...createShot(`Shot ${current.length + 1}`, 0, hold - 1, keys), kind: 'still', caption };
-    writeStills([...current.slice(0, last + 1), still, ...current.slice(last + 1)]);
+    const written = writeStills([...current.slice(0, last + 1), still, ...current.slice(last + 1)]);
+    // Land the playhead in the new panel (the timeline.seek path) so the placement
+    // actions that follow write this panel's cast override, not the previous one's.
+    const created = written.find(shot => shot.id === still.id), { selection, view } = ports.readView();
+    ports.publishView({ selection, view: { ...view, frame: created.startFrame }, shotId: created.id });
   }
   function duplicate(shotId) {
     const source = shotOf(shotId), copied = { kind: source.kind, caption: source.caption, cast: structuredClone(source.cast), stylizedAssetId: source.stylizedAssetId };
