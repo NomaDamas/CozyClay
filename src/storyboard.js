@@ -3,11 +3,23 @@
 // and tests (recording stub) can supply it.
 
 export const STORYBOARD_PROMPT_CHARS = 90;
+/** The greybox inset beside a stylized panel: half the drawn picture's width
+ * and height (a quarter of its area), in its bottom-right corner. */
+export const STORYBOARD_INSET_SCALE = 0.5;
+
+/** The line under a cell: the panel's own caption when it has one, else the
+ * prompt line the cell was given. */
+export function storyboardCellText(shot) {
+	const caption = typeof shot.caption === "string" ? shot.caption.trim() : "";
+	return (caption || String(shot.prompt ?? "")).slice(0, STORYBOARD_PROMPT_CHARS);
+}
 
 /**
  * Compose a storyboard grid canvas.
  * @param {object} args
- * @param {Array<{ title: string, durationSeconds: number, prompt: string, image: CanvasImageSource | null }>} args.shots
+ * @param {Array<{ title: string, durationSeconds: number, prompt: string, image: CanvasImageSource | null, stylized?: CanvasImageSource | null, caption?: string }>} args.shots
+ *   `image` is the greybox frame; with `stylized` the cell shows the stylized
+ *   picture and the greybox as an inset. `caption` wins over `prompt`.
  * @param {number} [args.columns] grid columns, default 3
  * @param {{ width: number, height: number }} [args.cell] per-cell size, default 320x180
  * @param {(width: number, height: number) => { width: number, height: number, getContext: (kind: string) => CanvasRenderingContext2D }} args.createCanvas
@@ -30,7 +42,7 @@ export function composeStoryboard({ shots, columns = 3, cell = { width: 320, hei
 	shots.forEach((shot, i) => {
 		const x = (i % cols) * cell.width;
 		const y = Math.floor(i / cols) * cell.height;
-		const image = shot.image;
+		const image = shot.stylized || shot.image;
 		if (image) {
 			const iw = image.width || image.videoWidth || 1;
 			const ih = image.height || image.videoHeight || 1;
@@ -39,7 +51,14 @@ export function composeStoryboard({ shots, columns = 3, cell = { width: 320, hei
 			const scale = Math.min(availW / iw, availH / ih);
 			const dw = iw * scale;
 			const dh = ih * scale;
-			ctx.drawImage(image, x + pad + (availW - dw) / 2, y + pad + (availH - dh) / 2, dw, dh);
+			const dx = x + pad + (availW - dw) / 2;
+			const dy = y + pad + (availH - dh) / 2;
+			ctx.drawImage(image, dx, dy, dw, dh);
+			if (shot.stylized && shot.image) {
+				const iw2 = dw * STORYBOARD_INSET_SCALE;
+				const ih2 = dh * STORYBOARD_INSET_SCALE;
+				ctx.drawImage(shot.image, dx + dw - iw2, dy + dh - ih2, iw2, ih2);
+			}
 		} else {
 			ctx.fillStyle = "#2a2a32";
 			ctx.fillRect(x + pad, y + pad, cell.width - pad * 2, thumbHeight - pad);
@@ -53,7 +72,7 @@ export function composeStoryboard({ shots, columns = 3, cell = { width: 320, hei
 		ctx.fillStyle = "#9a9aa5";
 		ctx.fillText(`${shot.durationSeconds}s`, textX, textY);
 		textY += 14;
-		ctx.fillText(String(shot.prompt ?? "").slice(0, STORYBOARD_PROMPT_CHARS), textX, textY);
+		ctx.fillText(storyboardCellText(shot), textX, textY);
 	});
 
 	return canvas;

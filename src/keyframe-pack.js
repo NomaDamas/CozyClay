@@ -19,7 +19,7 @@ export function keyframePackName(shot) {
 	return `cozyclay-shot-${shot.index}-${slugifyTitle(shot.title)}.zip`;
 }
 
-function readmeText({ shot, fps, hasLast, hasClip, ext }) {
+function readmeText({ shot, fps, hasLast, hasClip, ext, hasStylized }) {
 	const lines = [
 		`CozyClay keyframe pack - shot ${shot.index}: ${shot.title}`,
 		`Frame range ${shot.startFrame}-${shot.endFrame} at ${fps} fps.`,
@@ -58,30 +58,39 @@ function readmeText({ shot, fps, hasLast, hasClip, ext }) {
 		"- blocking-depth.mp4: shot-wide normalised depth video; lighter pixels are closer.",
 		"- prompt.txt: the text prompt describing the intended action.",
 	);
+	if (hasStylized) lines.push("- stylized.png: the stylized picture of this panel; first.png is its greybox.");
 	return lines.join("\n") + "\n";
 }
 
 /**
  * Build the ZIP entries for one shot's keyframe pack.
  * @param {object} args
- * @param {{ title: string, index: number, startFrame: number, endFrame: number }} args.shot
+ * @param {{ title: string, index: number, startFrame: number, endFrame: number, kind?: "clip" | "still" }} args.shot
+ *   a still (storyboard panel) is one picture held for its whole range:
+ *   camera.json gets startFrame === endFrame === the panel start, `hold`
+ *   frames and `kind: "still"`.
+ * @param {string} [args.folder] folder inside the zip, default `<index>-<slug>`
  * @param {number} args.fps
  * @param {Uint8Array} args.firstFramePng
  * @param {Uint8Array | null} args.lastFramePng
  * @param {{ data: Uint8Array, ext: "mp4" | "webm" } | null} args.clip
  * @param {object} args.camera
  * @param {string} args.prompt
+ * @param {Uint8Array | null} [args.stylizedPng] the panel's stylized picture
  * @returns {Array<{ name: string, data: Uint8Array | string }>} entries for buildZip
  */
-export function keyframePackEntries({ shot, fps, firstFramePng, lastFramePng, clip, camera, prompt }) {
-	const folder = `${shot.index}-${slugifyTitle(shot.title)}`;
+export function keyframePackEntries({ shot, fps, firstFramePng, lastFramePng, clip, camera, prompt, stylizedPng = null, folder = `${shot.index}-${slugifyTitle(shot.title)}` }) {
 	const entries = [{ name: `${folder}/first.png`, data: firstFramePng }];
 	if (lastFramePng != null) entries.push({ name: `${folder}/last.png`, data: lastFramePng });
 	if (clip != null) entries.push({ name: `${folder}/clip.${clip.ext}`, data: clip.data });
+	if (stylizedPng != null) entries.push({ name: `${folder}/stylized.png`, data: stylizedPng });
+	const range = shot.kind === "still"
+		? { startFrame: shot.startFrame, endFrame: shot.startFrame, hold: shot.endFrame - shot.startFrame + 1, kind: "still" }
+		: { startFrame: shot.startFrame, endFrame: shot.endFrame };
 	entries.push(
-		{ name: `${folder}/camera.json`, data: JSON.stringify({ ...camera, fps, startFrame: shot.startFrame, endFrame: shot.endFrame }, null, 2) + "\n" },
+		{ name: `${folder}/camera.json`, data: JSON.stringify({ ...camera, fps, ...range }, null, 2) + "\n" },
 		{ name: `${folder}/prompt.txt`, data: `${prompt}\n` },
-		{ name: `${folder}/README.txt`, data: readmeText({ shot, fps, hasLast: lastFramePng != null, hasClip: clip != null, ext: clip ? clip.ext : "mp4" }) },
+		{ name: `${folder}/README.txt`, data: readmeText({ shot, fps, hasLast: lastFramePng != null, hasClip: clip != null, ext: clip ? clip.ext : "mp4", hasStylized: stylizedPng != null }) },
 	);
 	return entries;
 }

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { composeStoryboard } from "../src/storyboard.js";
+import { STORYBOARD_INSET_SCALE, composeStoryboard } from "../src/storyboard.js";
 
 function recordingContext() {
 	const calls = { drawImage: [], fillText: [], fillRect: [] };
@@ -70,3 +70,32 @@ const defaults = composeStoryboard({ shots, createCanvas: factory.createCanvas }
 assert.equal(defaults.width, 960, "default layout is three 320px columns");
 
 console.log("PASS storyboard: grid sizing, drawImage per shot, titles, durations, 90-char prompts");
+
+// A panel with a stylized picture: the stylized image fills the thumbnail and
+// the greybox sits bottom-right at half width and height (a quarter of the area).
+{
+	const greybox = image("grey");
+	const stylized = { width: 640, height: 360, tag: "stylized" };
+	const sheet = composeStoryboard({
+		shots: [
+			{ title: "1. Panel", durationSeconds: 2, prompt: "wide · 35mm", caption: "  She enters  ", image: greybox, stylized },
+			{ title: "2. Panel", durationSeconds: 1, prompt: "close · 85mm", caption: "   ", image: greybox },
+		],
+		columns: 2, cell: { width: 480, height: 300 }, createCanvas: factory.createCanvas,
+	});
+	const draws = sheet.ctx.calls.drawImage;
+	assert.equal(draws.length, 3, "stylized + inset for panel 1, greybox for panel 2");
+	assert.equal(draws[0][0], stylized, "the stylized picture is the main image");
+	assert.equal(draws[1][0], greybox, "the greybox is the inset");
+	const [, mx, my, mw, mh] = draws[0];
+	const [, ix, iy, iw, ih] = draws[1];
+	assert.equal(STORYBOARD_INSET_SCALE, 0.5);
+	assert.ok(Math.abs(iw - mw / 2) < 1e-9 && Math.abs(ih - mh / 2) < 1e-9, `inset is half size: ${iw}x${ih} of ${mw}x${mh}`);
+	assert.ok(Math.abs(ix + iw - (mx + mw)) < 1e-9 && Math.abs(iy + ih - (my + mh)) < 1e-9, "inset sits in the bottom-right corner");
+	assert.equal(draws[2][0], greybox, "a panel without a stylized picture shows its greybox");
+	const lines = sheet.ctx.calls.fillText.map((call) => call[0]);
+	assert.ok(lines.includes("She enters"), "a caption wins over the prompt line");
+	assert.ok(!lines.includes("wide · 35mm"), "the prompt line is not drawn when there is a caption");
+	assert.ok(lines.includes("close · 85mm"), "a blank caption falls back to the prompt line");
+	console.log("PASS storyboard: stylized cell draws the greybox as a bottom-right quarter-size inset; caption precedence over the prompt line");
+}

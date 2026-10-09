@@ -173,6 +173,7 @@ export default function MenuBar({ preferences }) {
 		runStudioAction, projectSaveState, previsMode, recState, exportMenuTriggerRef, exportMenuOpen,
 		exportShotIdRef, setExportMenuOpen, shots, exportKeyframePacks, hasCameraKeys, motion,
 		exportRenderPasses, exportDepthVideo, exportStoryboard, downloadOtioCutList,
+		exportContactSheet, exportPanelPacks, exportAnimatic,
 		castDomain, preferencesOpen, setPreferencesOpen, agentOpen, toggleAgent,
 		setToast, embedMode, setProjectStartupOpen, setProjectBrowserOpen,
 	} = shell;
@@ -187,7 +188,13 @@ export default function MenuBar({ preferences }) {
 	const exportOpenRef = useRef(exportMenuOpen);
 	exportOpenRef.current = exportMenuOpen;
 	const recording = recState === "recording";
-	const packReason = shots.length ? "" : ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다");
+	// A storyboard project exports panels (its stills), never clip packs or shot video.
+	const storyboard = previsMode === "storyboard";
+	const panelCount = storyboard ? shots.filter((entry) => entry.kind === "still").length : 0;
+	const noPanels = ko("Add a panel first — storyboard exports describe panels", "패널을 먼저 추가하세요 — 스토리보드 내보내기는 패널을 담습니다");
+	const packReason = storyboard
+		? panelCount ? "" : noPanels
+		: shots.length ? "" : ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다");
 
 	// The camera tutorial's handoff opens Export directly; its flyout lives in File.
 	useEffect(() => {
@@ -223,7 +230,7 @@ export default function MenuBar({ preferences }) {
 
 	// ⌘S saves and ⌘E exports the keyframe pack (G7), from anywhere in the studio.
 	const keys = useRef(null);
-	keys.current = { runStudioAction, projectSaveState, recording, packReason, exportKeyframePacks, setToast };
+	keys.current = { runStudioAction, projectSaveState, recording, packReason, exportKeyframePacks: storyboard ? exportPanelPacks : exportKeyframePacks, setToast };
 	useEffect(() => {
 		if (embedMode) return undefined;
 		const onKeyDown = (event) => {
@@ -277,6 +284,43 @@ export default function MenuBar({ preferences }) {
 		closeMenus(false);
 		onSelect();
 	};
+	// One storyboard Export item: every one needs a panel to describe.
+	const panelItem = (testId, label, title, onSelect, shortcut = null) => (
+		<button
+			type="button"
+			role="menuitem"
+			className="menubar-item"
+			data-testid={testId}
+			disabled={!panelCount || recording}
+			data-disabled-reason={panelCount ? undefined : "no-panels"}
+			title={panelCount ? title : noPanels}
+			onClick={() => {
+				const shotId = exportShotIdRef.current;
+				closeMenus(false);
+				onSelect(shotId);
+			}}
+		>
+			<span className="menubar-item-label">{label}</span>
+			{shortcut && <Shortcut keys={shortcut} />}
+		</button>
+	);
+	const storyboardExports = (
+		<>
+			{panelItem("export-contact-sheet", ko("Contact sheet (PNG)", "콘택트 시트 (PNG)"),
+				ko("Every panel with its caption on one sheet", "모든 패널과 캡션을 한 장에"), () => void exportContactSheet())}
+			{panelItem("export-panel-pack", ko("Panel pack (zip)", "패널 팩 (zip)"),
+				ko("The selected panel's frame, stylized image, camera and prompt as one zip", "선택한 패널의 프레임·스타일 이미지·카메라·프롬프트를 zip 하나로"),
+				(shotId) => void exportPanelPacks(false, shotId), `${MOD}E`)}
+			{panelItem("export-all-panels", ko("All panels (zip)", "모든 패널 (zip)"),
+				ko("One zip with a folder per panel", "패널마다 폴더 하나씩 담은 zip"), () => void exportPanelPacks(true, null))}
+			{panelItem("export-animatic", ko("Animatic (mp4)", "애니매틱 (mp4)"),
+				ko("Every panel held for its hold, as one MP4", "모든 패널을 홀드만큼 이어 MP4 하나로"), () => void exportAnimatic())}
+			{panelItem("export-otio", ko("Cut list (OTIO)", "컷 목록 (OTIO)"),
+				ko("Download the OTIO cut list; each panel is a clip as long as its hold", "OTIO 컷 목록 다운로드 — 패널마다 홀드 길이의 클립"), () => downloadOtioCutList())}
+			{panelItem("export-render-passes", ko("Depth + normal (PNG)", "뎄스 + 노멀 (PNG)"),
+				ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎄스·노멀 컨디션 플레이트"), () => exportRenderPasses())}
+		</>
+	);
 
 	const content = {
 		file: (
@@ -341,6 +385,7 @@ export default function MenuBar({ preferences }) {
 					</button>
 					{exportMenuOpen && (
 						<ExportFlyout anchorRef={exportMenuTriggerRef} autoFocus={flyoutFocus} onAutoFocused={focusedFlyout}>
+							{storyboard ? storyboardExports : (<>
 							<button
 								type="button"
 								role="menuitem"
@@ -438,6 +483,7 @@ export default function MenuBar({ preferences }) {
 										: ko("Add a shot to export video or OTIO", "영상·OTIO를 내보내려면 샷을 추가하세요")}
 								</p>
 							)}
+							</>)}
 						</ExportFlyout>
 					)}
 				</div>
