@@ -14,6 +14,7 @@ import { createGroundSampler } from './ardy/ground.js';
 import { OBJECT_LIBRARY } from './scene-objects.js';
 import { objectTransformAt } from './object-path.js';
 import { sampleAt } from './sample-at.js';
+import { isProxyFigure } from './scenes.js';
 
 const PROFILE = 'studio-motion-v1', BLEND = 6;
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
@@ -76,7 +77,7 @@ const copyEnvironment = env => ({ ...env, host: structuredClone(env.host), floor
  * refused rig leaves every evaluator made before it disposable. */
 function stageCast(env, characterId, cast) {
   for (const member of env.cast) {
-    if (member.character.id === characterId || member.character.hidden) continue;
+    if (member.character.id === characterId || member.character.hidden || isProxyFigure(member.character)) continue;
     // Unsupported bystanders remain explicit missing coverage, never vanish
     // into characterBlockers' otherwise legitimate best-effort skip path.
     const entry = { character: structuredClone(member.character), motion: member.motion ? structuredClone(member.motion) : null, layer: copyLayer(member.ikState), evaluator: null };

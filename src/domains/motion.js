@@ -63,7 +63,8 @@ import {
 import { characterScaleFor, loadMotionFromUrl } from "../ardy/npz.js";
 import { supportHeightForObject, OBJECT_LIBRARY } from "../scene-objects.js";
 import { applySupportRise, autoRoofDrop, applyAutoFall, applyRootDrop, normalizeRootDrop } from "../ardy/root-drop.js";
-import { takeAnchor, createCharacterEntry } from "../scenes.js";
+import { takeAnchor, createCharacterEntry, isProxyFigure } from "../scenes.js";
+import { characterCapabilities, kindRefusal, refuseRigOnly } from "../character-kind.js";
 import { retimeMotion } from "../ardy/retime.js";
 import {
 	createMotionEdit,
@@ -195,6 +196,8 @@ export function createMotionDomain(appContext, characters) {
 	const visibleMotion = id => previews.get(id) ?? motionFor(id);
 	const frame = () => appContext.live.state?.timeline.currentFrame ?? 0;
 	const rigFor = id => appContext.shared.rigs[id];
+	// Rig-only tools refuse a capsule figure by name before looking for its rig.
+	const rigOnly = (id, feature) => refuseRigOnly(appContext.storeDomain('cast')?.read().find(row => row.id === id), feature);
 	function rigSnapshots() {
 		return new Map(Object.entries(appContext.shared.rigs).map(([id, rig]) => [id, appContext.shared.snapshotExportRig(rig)]));
 	}
@@ -272,6 +275,7 @@ export function createMotionDomain(appContext, characters) {
 		setRangePinState(id, state);
 	}
 	function bakeRangePin(id, spec, replaceExisting = false, projectionOnly = false) {
+		rigOnly(id, 'ik');
 		const motion = motionFor(id), rig = rigFor(id), resolved = rig && resolveIkRig(rig);
 		if (!motion || !resolved) throw new StudioProtocolError('TARGET_NOT_READY', 'Load a take and rig for this character first.');
 		const pin = normalizeRangePin(spec, { clipFrames: motion.frames }), state = rangePinState(id);
@@ -357,6 +361,7 @@ export function createMotionDomain(appContext, characters) {
 		synchronizeTimeline();
 	}
 	function fix(id, scope = 'frame') {
+		rigOnly(id, 'collision');
 		const rig = rigFor(id), resolved = rig && resolveIkRig(rig);
 		if (!resolved) throw new StudioProtocolError('TARGET_NOT_READY', 'The character rig is not loaded.');
 		const state = appContext.shared.ikStatesRef.current.get(id) ?? { ...createIkState(), ...resolved };
@@ -368,7 +373,7 @@ export function createMotionDomain(appContext, characters) {
 			try {
 				fixCollisionsRange({ rig, ...resolved, ikState: state, startFrame: 0, endFrame: take.frames - 1,
 					applyFrame(at) { applyMotionFrame(rig, take, at); ikEvaluate(resolved.chains, state, at, resolved.fkJoints, 6); },
-					blockersAt(at) { for (const row of read()) if (row.id !== id) appContext.shared.poseMemberAtFrame(rigFor(row.id), motionFor(row.id), appContext.shared.ikStatesRef.current.get(row.id), at, 6); return blockers(at); } });
+					blockersAt(at) { for (const row of read()) if (row.id !== id && rigFor(row.id)) appContext.shared.poseMemberAtFrame(rigFor(row.id), motionFor(row.id), appContext.shared.ikStatesRef.current.get(row.id), at, 6); return blockers(at); } });
 			} finally { for (const snapshot of originals.values()) appContext.shared.restoreExportRig(snapshot); }
 		} else {
 			const result = fixCollisions(rig, resolved.chains, { ikState: state, fkJoints: resolved.fkJoints, blockers: blockers(frame()) });
@@ -394,6 +399,7 @@ export function createMotionDomain(appContext, characters) {
 		return keyed ? run('ik.setKey', { characterId: id, frame: at, tracks: keyed.tracks }) : null;
 	}
 	function keyPose(id, at, pose) {
+		rigOnly(id, 'pose');
 		const rig = rigFor(id), resolved = rig && resolveIkRig(rig);
 		if (!resolved) throw new StudioProtocolError('TARGET_NOT_READY', 'The character rig is not loaded.');
 		restoreBindPositions(rig); applyPose(rig, { ...REST_BONES, ...pose.bones }); applyHipsOffset(rig, pose.rootY ?? 0);
@@ -403,6 +409,7 @@ export function createMotionDomain(appContext, characters) {
 		});
 	}
 	function editTrail(id, { track = "hips", grabFrame, radiusFrames, delta }) {
+		rigOnly(id, 'trails');
 		const take = motionFor(id), character = appContext.storeDomain('cast').read().find(row => row.id === id);
 		if (!take) throw new StudioProtocolError('TARGET_NOT_READY', 'Load a take first.');
 		const scale = character.scale ?? 1;
@@ -416,12 +423,14 @@ export function createMotionDomain(appContext, characters) {
 	let physicsJob = 0;
 	const physicsStamp = id => JSON.stringify([layer(id), appContext.storeDomain('cast').read().find(row => row.id === id)]);
 	function applyPhysics(id) {
+		rigOnly(id, 'physics');
 		const preview = physicsReviews.get(id);
 		if (!preview || preview.stamp !== physicsStamp(id)) throw new StudioProtocolError('STALE_TARGET', 'Analyse this take again before applying corrections.');
 		setKeys(id, preview.result.candidate.keys);
 		domain.onPhysicsPreview?.(null);
 	}
 	async function autoPhysics(id, options, context) {
+		rigOnly(id, 'physics');
 		const rig = rigFor(id), resolved = rig && resolveIkRig(rig), take = motionFor(id);
 		if (!resolved || !take) throw new StudioProtocolError('TARGET_NOT_READY', 'Load a take and character rig first.');
 		const job = ++physicsJob, stamp = physicsStamp(id), original = appContext.shared.snapshotExportRig(rig);
@@ -851,7 +860,7 @@ export function useMotion(appContext) {
 	/** Write one key from its JSON form (studio-actions.js character.setIkKey):
 	 * each named track replaces its key at `frame` and joins the tracked set. */
 	function setCharacterIkKey(characterId, frame, tracks) {
-		appContext.shared.castMemberOf(characterId);
+		refuseRigOnly(appContext.shared.castMemberOf(characterId), 'ik');
 		if (appContext.storeDomain('motion')) return appContext.storeDomain('motion').setKey(characterId, frame, tracks);
 		editCharacterIkKeys(characterId, (state) => {
 			let entry = state.keys.get(frame);
@@ -1265,6 +1274,11 @@ export function useMotion(appContext) {
 	async function extractMultiModelMotionGpu() {
 		const footage = multiModelFootage;
 		if (!footage || multiModelExtract === "running") return;
+		if (isProxyFigure(appContext.shared.activeChar)) {
+			setMultiModelExtract("error");
+			setMultiModelExtractError(kindRefusal("mocap", isKo));
+			return;
+		}
 		const run = appContext.shared.multiModelRunRef.current;
 		const live = () => appContext.shared.multiModelRunRef.current === run;
 		setMultiModelExtract("running");
@@ -1412,7 +1426,7 @@ export function useMotion(appContext) {
 		const assignments = usable.map((take) => {
 			// Reuse a visible cast member with no clip of its own before adding
 			// another body to the set.
-			const reuse = list.find((entry) => !entry.hidden && !taken.has(entry.id) && !entry.sessionMotion && !entry.motionRef);
+			const reuse = list.find((entry) => !entry.hidden && !isProxyFigure(entry) && !taken.has(entry.id) && !entry.sessionMotion && !entry.motionRef);
 			const id = reuse ? reuse.id : nextCharacterId(idPool);
 			if (!reuse) idPool = [...idPool, { id }];
 			taken.add(id);
@@ -1507,6 +1521,7 @@ export function useMotion(appContext) {
 		setMotionBusy(true);
 		setMotionError("");
 		try {
+			refuseRigOnly(appContext.live.characters.find((entry) => entry.id === targetCharacterId), "take");
 			// Inbound boundary: an ARDY take (20 fps) or a filmed one (30/60)
 			// becomes a production-clock clip here, once, before anything on
 			// the timeline counts its frames. Same-rate input rides through.
@@ -1660,7 +1675,7 @@ export function useMotion(appContext) {
 	// volume on every other frame of the walk.
 	const poseOtherCastMembers = (frame) => {
 		for (const entry of appContext.shared.characters) {
-			if (entry.id === appContext.shared.activeChar.id) continue;
+			if (entry.id === appContext.shared.activeChar.id || isProxyFigure(entry)) continue;
 			appContext.shared.poseMemberAtFrame(appContext.shared.rigs[entry.id], entry.sessionMotion, appContext.shared.ikStatesRef.current.get(entry.id), frame, IK_CORRECTION_BLEND_FRAMES);
 		}
 	};
@@ -2276,6 +2291,10 @@ export function useMotion(appContext) {
 	 * buys the full step count. */
 	function runLineEdit() {
 		if (appContext.shared.generationPendingRef.current || appContext.shared.genRunningRef.current || ardyRunning) return;
+		if (isProxyFigure(appContext.shared.activeChar)) {
+			appContext.notify(kindRefusal("lineEdit", isKo));
+			return;
+		}
 		const generationRequest = requestMotionGeneration("line_edit", "edit", { lineEdit: true });
 		if (!appContext.shared.takeSourceUrl) {
 			appContext.notify(ko("The current take has no bridge source — generate it once before editing a path", "현재 테이크에 브리지 원본이 없어요 — 궤적을 편집하기 전에 한 번 생성하세요"));
@@ -2362,6 +2381,7 @@ export function useMotion(appContext) {
 		if (appContext.shared.generationPendingRef.current || appContext.shared.genRunningRef.current || ardyRunning) throw generationRefusal('TARGET_BUSY', 'A motion generation is already running.');
 		if (appContext.shared.linePreviewUrl) throw generationRefusal('TARGET_NOT_READY', previewBlockingReason(en => en), previewBlockingReason(ko));
 		const character = appContext.storeDomain('cast').read().find(row => row.id === args.characterId);
+		refuseRigOnly(character, 'motion');
 		const active = character.id === appContext.shared.loadedLayerCharRef.current;
 		const posing = active && appContext.shared.posing;
 		const rig = posing ? appContext.shared.posedRig() : appContext.shared.rigs[character.id];
@@ -2481,6 +2501,10 @@ export function useMotion(appContext) {
 	 * deformed line contributes the grab-frame pose as a root guide. */
 	function runTrailRegeneration() {
 		if (appContext.shared.generationPendingRef.current || appContext.shared.genRunningRef.current || ardyRunning) return;
+		if (isProxyFigure(appContext.shared.activeChar)) {
+			appContext.notify(kindRefusal("trails", isKo));
+			return;
+		}
 		const request = requestMotionGeneration("trail", "edit", { motionEdit: true });
 		if (!trailEdit) return;
 		// Same rule as runArdy: motionEdit rewrites a span of THE take, and a
@@ -2859,12 +2883,16 @@ export function useMotion(appContext) {
 	}
 
 	function refineDisabledReason() {
+		if (!characterCapabilities(appContext.shared.activeChar).lineEdit) return kindRefusal("lineEdit", isKo);
 		if (!motion) return ko("No take yet — block a scene first", "아직 테이크가 없어요 — 먼저 장면을 만들어 주세요");
 		if (!motion.url) return ko("This take has no bridge source — generate it once before refining", "이 테이크에는 브리지 원본이 없어요 — 한 번 생성해야 다듬을 수 있어요");
 		return "";
 	}
 
 	function sceneDisabledReason() {
+		// A standing capability, so it outranks the bridge probe: a capsule figure
+		// cannot generate whatever the backend says.
+		if (!characterCapabilities(appContext.shared.activeChar).motion) return kindRefusal("motion", isKo);
 		if (bridge === null || bridgeChecking) return motionReadinessMessage("loading");
 		if (generationBusy) return ko("A generation is already running", "이미 생성이 돌고 있어요");
 		// NOT a line-edit preview, deliberately. Every other reason here is a

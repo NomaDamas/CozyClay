@@ -204,6 +204,7 @@ import {
 	trackFeature,
 } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
+import { characterCapabilities, kindRefusal } from "./character-kind.js";
 import {
 	isPlaygroundEmbed,
 } from "./playground.js";
@@ -1425,7 +1426,10 @@ export default function App() {
 	const setPoseObjectOpacity = (value) => { setPoseObjectOpacityState(value); writePoseFadeOpacity(value); };
 	// Pose mode IS IK editing (#521): with no rig to solve there is nothing to
 	// pose, so the mode refuses with the reason instead of opening empty.
-	const poseRefusal = ikChains ? null : ko("Load a character to pose it — Pose mode edits its rig with IK", "캐릭터를 불러와야 포즈를 잡을 수 있어요 — 포즈 모드는 IK로 리그를 편집합니다");
+	// A capsule figure has no rig at all, so it gets its own reason rather than
+	// the "load a character" one, which would read as a loading problem.
+	const activeCapabilities = characterCapabilities(activeChar);
+	const poseRefusal = !activeCapabilities.pose ? kindRefusal("pose", isKo) : ikChains ? null : ko("Load a character to pose it — Pose mode edits its rig with IK", "캐릭터를 불러와야 포즈를 잡을 수 있어요 — 포즈 모드는 IK로 리그를 편집합니다");
 	function selectWorkflowMode(next) {
 		if (next === "pose" && poseRefusal) {
 			setToast(poseRefusal);
@@ -3396,6 +3400,7 @@ export default function App() {
 		propFrameRef.current = frame;
 		const context = recRef.current?.request.context;
 		for (const entry of context?.characters ?? characters) {
+			if (isProxyFigure(entry)) continue;
 			const activeId = context?.activeId ?? activeChar.id;
 			const clip = entry.id === activeId ? (context ? context.motion : motion) : entry.sessionMotion;
 			const state = context
@@ -4094,7 +4099,7 @@ export default function App() {
 	useEffect(() => {
 		// The ACTIVE member's clip only: its own corrections are applied by the
 		// evaluate effect below, after its editing state settles.
-		poseMemberAtFrame(rigs[activeChar.id], motion, null, tlFrame);
+		if (activeCapabilities.rig) poseMemberAtFrame(rigs[activeChar.id], motion, null, tlFrame);
 		poseOtherCastMembers(tlFrame);
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [characters, activeChar.id, motion, rigs, tlFrame, ikTick]);
@@ -4111,7 +4116,7 @@ export default function App() {
 	// character's rig (re)loads. A rig missing any bone resolves to null and
 	// IK mode stays unavailable.
 	useEffect(() => {
-		const resolved = resolveIkRig(activeRig);
+		const resolved = activeCapabilities.ik ? resolveIkRig(activeRig) : null;
 		const chains = resolved ? resolved.chains : null;
 		setIkChains(chains);
 		setIkFkJoints(resolved ? resolved.fkJoints : null);
@@ -4121,7 +4126,7 @@ export default function App() {
 		ikStateRef.current.fkJoints = resolved ? resolved.fkJoints : null;
 		ikStateRef.current.rig = chains ? activeRig : null;
 		if (!chains) leaveIkMode();
-	}, [activeRig]);
+	}, [activeRig, activeCapabilities.ik]);
 
 	// Whether the collision capsules can be built for this rig at all. Bone
 	// lookups only — no mesh measurement — so it is cheap enough to hang off
@@ -4130,7 +4135,7 @@ export default function App() {
 	// a SEPARATE question from `ikChains`: the two collision buttons disable
 	// on it rather than offering a click whose only possible answer is "not
 	// supported".
-	const collisionCleanupSupported = useMemo(() => supportsCollisionCleanup(activeRig), [activeRig]);
+	const collisionCleanupSupported = useMemo(() => activeCapabilities.physics && supportsCollisionCleanup(activeRig), [activeRig, activeCapabilities.physics]);
 
 	//
 

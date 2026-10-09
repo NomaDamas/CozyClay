@@ -11,6 +11,7 @@ import { createIkState } from '../src/ardy/ik.js';
 import { CSKEL27_NEUTRAL } from '../src/ardy/cskel27-neutral.js';
 import { createSceneObject } from '../src/scene-objects.js';
 import { verifyInstalledTake } from '../src/studio-agent-motion.js';
+import { createCharacterEntry, PROXY_FIGURE_MODEL } from '../src/scenes.js';
 
 function rigFixture() {
   const bytes = readFileSync(new URL('../public/models/y-bot-tpose.fbx', import.meta.url));
@@ -32,7 +33,10 @@ function clipFixture({ frames = 48, hover = 0, travel = 0 } = {}) {
 const bones = rig => { const rows = []; rig.traverse(n => { if (n.isBone) rows.push([...n.position.toArray(), ...n.quaternion.toArray(), ...n.scale.toArray()]); }); return rows; };
 function fixture(options = {}) {
   const target = { character: { id: 'actor', x: 0, y: 0, z: 0, rot: 0, scale: 1 }, rig: rigFixture(), motion: clipFixture(options), ikState: createIkState() };
-  const environment = { host: { workspaceId: 'w', documentEpoch: 'd', sceneId: 's', sceneEpoch: 'e' }, physicsRevision: 1, floor: { model: 'flat', y: 0 }, objects: [], cast: [], frameCount: target.motion.frames };
+  // One capsule figure stands in the set: it has no rig, so verification must
+  // skip it rather than count it as missing cast coverage.
+  const capsule = { character: createCharacterEntry({ id: 'capsule', model: PROXY_FIGURE_MODEL, x: 3, z: 0 }), rig: null, motion: null, ikState: createIkState() };
+  const environment = { host: { workspaceId: 'w', documentEpoch: 'd', sceneId: 's', sceneEpoch: 'e' }, physicsRevision: 1, floor: { model: 'flat', y: 0 }, objects: [], cast: [capsule], frameCount: target.motion.frames };
   const verify = extra => verifyInstalledTake({ target, environment, yieldTask: () => Promise.resolve(), ...extra });
   return { target, environment, verify };
 }
@@ -48,6 +52,7 @@ for (const hover of [0, .4]) test(`installed take: full/ranged verification pres
   assert.equal(part.unsupportedFrames, hover ? 24 : 0); assert.notEqual(part.id, whole.id);
   assert.deepEqual(bones(f.target.rig), before); assert.deepEqual(f.target.ikState.keys, keys);
   assert(Object.isFrozen(whole));
+  assert(!whole.limitations.includes('other-cast-evaluation-incomplete'));
 });
 test('installed take: missing skin and unsupported support cannot be certified', async () => {
   const f = fixture(), meshes = [];
