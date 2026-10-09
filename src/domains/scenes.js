@@ -39,6 +39,7 @@ import {
 	clearStoredProjectHandle,
 	DEFAULT_PREVIS_MODE,
 	normalizePrevisMode,
+	buildAnimationProjectFromStoryboard,
 } from "../project.js";
 import { playgroundSceneUrl, fetchSceneProject } from "../playground.js";
 import { openAssetDb, referencedAssetIds, getAsset, putAsset } from "../scene-assets.js";
@@ -47,7 +48,7 @@ import { encodeMotionResource } from "../motion-resources.js";
 import { openMotionDb, putMotion, sweepMotions } from "../motion-store.js";
 import { resourceManifest } from "../project-resources.js";
 import { isKo, ko } from "../locale.js";
-import { track, bucketCount, bucketProjectAge } from "../analytics.js";
+import { track, bucketCount, bucketProjectAge, startExportAttempt } from "../analytics.js";
 import { mergeProjectCustomPoses } from "../project-poses.js";
 import { DEFAULT_WORKSPACE_LAYOUT, DEFAULT_DURATION_S, TIMELINE_FPS } from "../app-stage.jsx";
 import { saveCustomPoses } from "../poses.js";
@@ -397,6 +398,40 @@ export function useScenes(appContext) {
 			else if (err?.code === "resources-too-large") setSaveBlockedReasons([err]);
 			else appContext.notify(ko("Could not save the project", "프로젝트를 저장하지 못했어요"));
 			return { saved: false, failure: err?.code ?? err?.name ?? "error" };
+		}
+	}
+
+	async function exportAsAnimationProject(context) {
+		if (domain.metadata().previsMode !== "storyboard") return { saved: false, failure: "not-storyboard" };
+		const attempt = startExportAttempt({ export_kind: "animation_project", format: "cclayproject", surface: "studio" });
+		try {
+			const source = readProjectDocument(await collectProjectSerialized(domain.metadata().name ?? "Untitled"));
+			context.check();
+			if (!source.ok) throw new Error(`Could not read the storyboard project: ${source.reason}`);
+			const animation = buildAnimationProjectFromStoryboard(source.project);
+			const serialized = JSON.stringify(animation, null, 2);
+			let downloaded = false;
+			if (hasFileSystemAccess()) {
+				const handle = await pickProjectFileForSave(animation.name);
+				context.check();
+				await writeProjectFile(handle, serialized);
+				await rememberRecentProject(handle, animation.name);
+			} else {
+				downloadProjectFallback(serialized, animation.name);
+				downloaded = true;
+			}
+			attempt.succeed();
+			return {
+				saved: true,
+				name: animation.name,
+				fileName: `${animation.name}${PROJECT_EXTENSION}`,
+				downloaded,
+			};
+		} catch (error) {
+			attempt.fail(error, error?.name === "AbortError" ? "aborted" : "unknown");
+			if (error?.name === "AbortError") return { saved: false, cancelled: true };
+			appContext.notify(ko("Could not export the animation project", "애니메이션 프로젝트를 내보내지 못했어요"));
+			return { saved: false, failure: error?.code ?? error?.name ?? "error" };
 		}
 	}
 
@@ -793,6 +828,7 @@ export function useScenes(appContext) {
 	domain.fileState = () => ({ name: domain.metadata().name, hasFile: Boolean(appContext.shared.projectHandleRef.current),
 		fileAccess: hasFileSystemAccess(), gesture: globalThis.navigator?.userActivation?.isActive === true });
 	domain.save = (args, context) => saveProject(args.saveAs, args.name ?? null, context);
+	domain.exportAsAnimationProject = context => exportAsAnimationProject(context);
 	domain.loadScenes = args => loadLiveScenes(args, true);
 	domain.projectAction = async (id, args, context) => {
 		const runtime = key => {
@@ -828,6 +864,7 @@ export function useScenes(appContext) {
 		projectStartupOpen, setProjectStartupOpen, projectManifest, setProjectManifest, saveBlockedReasons,
 		setSaveBlockedReasons, workflowRevision, setWorkflowRevision, collectProjectSnapshot,
 		collectProjectSerialized, projectProblemsNotice, rehydrateProjectAssets, saveProject, applyProject,
+		exportAsAnimationProject,
 		openStarterScene: async (id, source = "starter", name = null) => (await runProject("project.openStarter", { id, source, ...(name ? { name } : {}) })).output?.opened === true,
 		openProject, openProjectByHandle, requestNewProject, newProject, restoreOffer,
 		setRestoreOffer, restoreStoredProject, flushScenes, openScene, selectSceneDocument,

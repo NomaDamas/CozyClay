@@ -23,7 +23,7 @@ const railActions = ["shot.setCameraRail", "shot.clearCameraRail"];
 const viewActions = ["view.setPartColours", "view.setGuideMode", "view.setInset"];
 const exportActions = ["export.shotVideo"];
 const sceneActions = ["scene.create", "scene.duplicate", "scene.rename", "scene.delete", "scene.switch"];
-const projectActions = ["project.save"];
+const projectActions = ["project.save", "project.exportAsAnimation"];
 const assetActions = ["asset.import"];
 const aiActions = ["ai.prepareShot", "motion.generateFromVideo"];
 assert.deepEqual([...STUDIO_ACTION_IDS].sort(), [...firstBatch, ...castActions, ...waypointActions, ...ikKeyActions, ...attachActions, ...railActions, ...viewActions, ...exportActions, ...sceneActions, ...projectActions, ...assetActions, ...aiActions].sort());

@@ -212,6 +212,7 @@ const NODE_FILES = [
 	"test/verify-preserve-bridge.mjs",
 	"test/verify-project.mjs",
 	"test/verify-workflow-send.mjs",
+	"test/verify-animation-export.mjs",
 	"test/verify-project-previs-mode.mjs",
 	"test/verify-projflow-bridge.mjs",
 	"test/verify-projflow-cskel27.mjs",

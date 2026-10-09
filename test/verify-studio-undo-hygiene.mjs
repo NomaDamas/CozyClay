@@ -197,7 +197,7 @@ const COMMAND_INPUTS = {
 	"scene.create": {}, "scene.duplicate": { sceneId: "scene-1" }, "scene.rename": { sceneId: "scene-1", name: "Renamed" },
 	"scene.delete": { sceneId: "scene-2" }, "scene.switch": { sceneId: "scene-2" }, "project.save": {},
 	"scene.set": { id: "scene-1", set: { name: "Generic" } }, "scene.reorder": { sceneId: "scene-1", order: 1 },
-	"project.rename": { name: "Renamed project" }, "project.saveAs": {}, "project.new": { name: "New project" },
+	"project.rename": { name: "Renamed project" }, "project.saveAs": {}, "project.exportAsAnimation": {}, "project.new": { name: "New project" },
 	"project.open": { serialized: "project" }, "project.openStarter": { id: "starter" }, "project.restore": { handleToken: "handle" }, "project.browse": {},
 	"load_scenes": { document: { version: 4, activeSceneId: "scene-1", scenes: [{ id: "scene-1", name: "ONE" }] } },
 };
@@ -213,7 +213,7 @@ function commandFixture({ frame = 8, still = false } = {}) {
 		characters: [createCharacterEntry({ id: 'actor', subject: 'Ada', layer: { waypoints: [], promptClips: [{ id: 'block', text: 'Walk', startFrame: 0, endFrame: 48 }] } }), createCharacterEntry({ id: 'actor-other' })], customPoses: [], frame, frameCount: 48, selectedObjectId: null, activeCharacterId: "actor",
 		promptBlockCount: 0, generating: false, motionReady: true, exporting: false, canExportVideo: true,
 		scenes: [{ id: "scene-1", name: "ONE" }, { id: "scene-2", name: "TWO" }], activeSceneId: "scene-1",
-		project: { name: "Heist", hasFile: true, fileAccess: false, gesture: false },
+		project: { name: "Heist", previsMode: "animation", hasFile: true, fileAccess: false, gesture: false },
 		aiShot: { mode: "image", imageModel: "gpt_image_2" }, i2vMotion: { enabled: false, status: "idle", dailyRemaining: null },
 	};
 	const entries = [], writes = [];
@@ -288,10 +288,11 @@ function commandFixture({ frame = 8, still = false } = {}) {
 	sceneDomain = {
 		read: () => state.scenes,
 		write: rows => ports.writeScenes(rows),
-		metadata: () => ({ name: state.project.name, activeSceneId: state.activeSceneId }),
+		metadata: () => ({ name: state.project.name, activeSceneId: state.activeSceneId, previsMode: state.project.previsMode }),
 		renameProject: name => ports.writeProject(name),
 		fileState: () => state.project,
 		save: args => ports.saveProject(args.saveAs),
+		exportAsAnimationProject: async () => ({ saved: true, name: "Heist - Animation", fileName: "Heist - Animation.cclayproject", downloaded: true }),
 		projectAction: (...args) => ports.projectAction(...args),
 		loadScenes: args => ports.loadScenes(args),
 	};

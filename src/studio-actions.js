@@ -139,6 +139,8 @@ export const STUDIO_ACTIONS = freezeStudioData([
 		description: `Open another scene of the project, like the scene pill's menu; the scene being left keeps its state. ${SCENE_MOVES}` },
 	{ id: "project.save", exposure: "confirm", confirmationReason: "Saving may overwrite a file or open a file picker.", label: "Save project", kind: "document", input: input(),
 		description: "Save the whole project to its current file, like the Project menu's Save Project, and answer status \"completed\" with output.fileName. A browser file picker opens only from the user's own click, so it is refused, with the reason, when the project has no file yet this session or the browser must re-grant access to it; ask the user to press Save Project once. An unnamed project opens the Save dialog for the user to name it. Browsers without file access download the project file instead." },
+	{ id: "project.exportAsAnimation", exposure: "confirm", confirmationReason: "Exporting writes an animation project file outside the Studio.", label: "Export as Animation project", kind: "document", input: input(),
+		description: "Export the current storyboard as a new Animation project file, leaving the storyboard open and unchanged. Still shots become clip shots with their ranges, camera keys, captions, cast overrides and stylized asset references preserved. The browser asks where to save the new .cclayproject or downloads it when file access is unavailable." },
 	{ id: "asset.import", label: "Import asset", kind: "mutation", undoDomain: "objects",
 		input: input({ source: { type: "string", minLength: 1, maxLength: 8_000_000, pattern: "^(data:|https?://)" }, name: { type: "string", minLength: 1, maxLength: 120 },
 			placeAs: { type: "string", enum: ["cutout", "backdrop", "mesh"] } }),
