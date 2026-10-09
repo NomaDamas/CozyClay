@@ -9,6 +9,9 @@ import {
 	transferCarriesFiles,
 } from "./attachment-image.js";
 import { isImeComposing } from "../ime.js";
+import { useStudioShell } from "../shell/studio-shell-context.js";
+import { previsModesEnabled } from "../previs-flag.js";
+import { ko } from "../locale.js";
 import {
 	AGENT_PANEL_OVERLAY_BREAKPOINT,
 	AGENT_PANEL_RAIL_WIDTH,
@@ -287,6 +290,12 @@ export default function AgentPanel({
 	const transport = useMemo(() => injectedTransport || createAgentTransport({ surface }), [injectedTransport, surface]);
 	const mockState = transport.mock ? transport.state : null;
 
+	// Inside the studio the title names the project's previs mode (#650).
+	const previsMode = useStudioShell()?.previsMode;
+	const [previsEnabled] = useState(previsModesEnabled);
+	const titleMode = surface === "studio" && previsEnabled && previsMode
+		? (previsMode === "storyboard" ? ko("Storyboard", "스토리보드") : ko("Animation", "애니메이션"))
+		: null;
 	const [collapsed, setCollapsed] = useState(defaultCollapsed);
 	// Only the dock owns a width; an embedded host sizes the panel itself and
 	// never reads the dock's stored key.
@@ -822,7 +831,7 @@ export default function AgentPanel({
 
 		<header className="agent-header">
 			<StatusDot tone={statusTone} title={panelState} />
-			<h2 className="agent-title">Agent</h2>
+			<h2 className="agent-title" data-previs-mode={titleMode ? previsMode : undefined}>{titleMode ? `Agent · ${titleMode}` : "Agent"}</h2>
 			<span className="agent-header-spacer" />
 			<button type="button" className="agent-icon-button agent-new" aria-label="New conversation" title="New conversation" onClick={newSession}><FiPlus size={14} aria-hidden="true" /></button>
 			{presentation.history && <span className="agent-history-wrap">

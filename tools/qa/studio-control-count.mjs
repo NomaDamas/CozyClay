@@ -87,6 +87,8 @@ const states = [
 const out = {};
 const over = [];
 for (const [name, setup] of states) {
+  // A storyboard project (#650) has no Motion mode to measure.
+  if (name === "motion" && !(await ev("!!document.querySelector('[data-mode-key=\"4\"]')"))) { console.log("SKIP motion (no Motion mode in this project)"); continue; }
   await setup(); await settle();
   const shot = await send("Page.captureScreenshot", { format: "png" });
   writeFileSync(`${OUT}-${name}.png`, Buffer.from(shot.data, "base64"));
