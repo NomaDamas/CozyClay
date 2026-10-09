@@ -186,22 +186,10 @@ jobs:
           done
           exit "$failed"
 
-  # Real-browser rendering regressions via the CDP QA wrapper — one matrix
-  # job per suite, because the suites dominate wall-clock (setup is ~20 s on
-  # the npm cache while verify-ik-browser and verify-object-gizmo together
-  # ran ~12 minutes in series). Splitting makes the whole workflow as fast as
-  # the single slowest suite and lands gating verdicts in a couple of
-  # minutes instead of after the observation tail.
-  #
-  # Tiers:
-  # - gating: suites proven green on the runner fail their job when they
-  #   fail. camera-rail has been green on SwiftShader since the job landed;
-  #   qa-gizmo-click-through-browser guards the #81 regression and asserts
-  #   through CPU-side raycast hooks and the DOM, not GPU pixels.
-  # - observation: suites the runner's software GL (SwiftShader) cannot pass
-  #   yet — ik-browser fails one occlusion check that passes on real GPUs —
-  #   plus suites newly joining. Results go to the step summary and a
-  #   warning annotation. Promote a suite to gating once it is green here.
+  # Real-browser rendering regressions via the CDP QA wrapper. The two suites
+  # proven green on the hosted runner gate pull requests; the four observation
+  # suites run in browser-observation.yml so they remain visible without
+  # extending the required PR path.
   browser:
     if: needs.changes.outputs.source == 'true'
     needs: changes
@@ -216,14 +204,6 @@ jobs:
             tier: gating
           - suite: qa-gizmo-click-through-browser
             tier: gating
-          - suite: verify-ik-browser
-            tier: observation
-          - suite: verify-object-gizmo
-            tier: observation
-          - suite: qa-shell-start-browser
-            tier: observation
-          - suite: verify-project-menu-browser
-            tier: observation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

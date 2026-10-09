@@ -1,0 +1,66 @@
+name: Browser observation
+
+on:
+  schedule:
+    - cron: "47 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: browser-observation
+  cancel-in-progress: true
+
+jobs:
+  browser:
+    name: browser / ${{ matrix.suite }} (observation)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        suite:
+          - verify-ik-browser
+          - verify-object-gizmo
+          - qa-shell-start-browser
+          - verify-project-menu-browser
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm ci
+      - name: Start dev server (vite)
+        run: |
+          npm run dev:ui -- --host 127.0.0.1 --port 5180 --strictPort &
+          for _ in $(seq 1 120); do
+            curl -sf -o /dev/null http://127.0.0.1:5180/app/ && exit 0
+            sleep 1
+          done
+          echo "dev server did not come up" >&2
+          exit 1
+      - name: Run ${{ matrix.suite }} (observation)
+        run: |
+          t="${{ matrix.suite }}"
+          {
+            echo "## $t (observation)"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+          if node tools/qa-browser.mjs -- node "test/$t.mjs" > "/tmp/$t.log" 2>&1; then
+            echo "- :white_check_mark: $t ($(grep -c '^PASS' "/tmp/$t.log") checks)" >> "$GITHUB_STEP_SUMMARY"
+            echo "$t: PASS ($(grep -c '^PASS' "/tmp/$t.log") checks)"
+            exit 0
+          fi
+          echo "::warning title=browser observation failed::$t (see step summary)"
+          echo "::group::$t observation log (last 40 lines)"
+          tail -40 "/tmp/$t.log"
+          echo "::endgroup::"
+          {
+            echo "- :warning: $t failed (observation only)"
+            echo '  ```'
+            tail -40 "/tmp/$t.log" | sed 's/^/  /'
+            echo '  ```'
+          } >> "$GITHUB_STEP_SUMMARY"
