@@ -84,15 +84,23 @@ await evaluate(`localStorage.setItem("cozyclay.scenes.v4", ${JSON.stringify(v4Ra
 	localStorage.setItem("cozyclay.camera-tutorial-terminal.v1", JSON.stringify({ completed: true }));
 	true`);
 assert.equal(await evaluate(`localStorage.getItem("cozyclay.scenes.v5")`), null, "no v5 key before the studio opens");
+// The migration is written by the studio's scene reader during startup. Hook
+// setItem before any page script runs so the write itself resolves a promise.
+const { identifier: hookId } = await send("Page.addScriptToEvaluateOnNewDocument", { source: `(() => {
+	const original = Storage.prototype.setItem;
+	window.__v5Written = new Promise((resolve) => {
+		Storage.prototype.setItem = function (key, value) {
+			original.call(this, key, value);
+			if (key === "cozyclay.scenes.v5") resolve(value);
+		};
+	});
+})()` });
 await navigate(appUrl);
-
-// The migration is written by the studio's scene reader during startup.
-const deadline = Date.now() + 30000;
-let v5Raw = null;
-while (!v5Raw && Date.now() < deadline) {
-	v5Raw = await evaluate(`localStorage.getItem("cozyclay.scenes.v5")`);
-	if (!v5Raw) await new Promise((resolve) => setTimeout(resolve, 200));
-}
+const v5Raw = await evaluate(`Promise.race([
+	window.__v5Written,
+	new Promise((resolve) => setTimeout(() => resolve(localStorage.getItem("cozyclay.scenes.v5")), 30000)),
+])`);
+await send("Page.removeScriptToEvaluateOnNewDocument", { identifier: hookId });
 assert.ok(v5Raw, "the v5 key appears after /app/ loads");
 const v5 = JSON.parse(v5Raw);
 assert.equal(v5.version, 5);

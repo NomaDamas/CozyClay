@@ -6,7 +6,7 @@
  * existing node or edge. Kept free of React so Node tests can drive it.
  */
 
-import { normalizeWorkflowGraph, WORKFLOW_STORAGE_KEY, WORKFLOW_VERSION } from "./project.js";
+import { loadWorkflowGraph, normalizeWorkflowGraph, WORKFLOW_STORAGE_KEY, WORKFLOW_VERSION } from "./project.js";
 import { pastedImageNodeData } from "./workflow/clipboard-image.js";
 import { DEFAULT_NODE_SCHEMAS, defaultFormValues, schemaProperties } from "./workflow/node-schema.js";
 import { buildShotPrompt } from "./shot-prompt.js";
@@ -70,8 +70,8 @@ export function appendPanelToWorkflowGraph(draft, { dataUrl, mimeType = "image/p
  * storage failure (quota, private mode) surface, so the caller can say so. */
 export function sendPanelToWorkflow(panel, storage = globalThis.localStorage, now = Date.now()) {
 	if (!storage) throw new Error("Browser storage is unavailable");
-	let draft = null;
-	try { draft = JSON.parse(storage.getItem(WORKFLOW_STORAGE_KEY) || "null"); } catch { draft = null; }
+	// A corrupt stored draft throws here, before anything is written.
+	const draft = loadWorkflowGraph(storage, { strict: true });
 	const graph = appendPanelToWorkflowGraph(draft, { ...panel, now });
 	storage.setItem(WORKFLOW_STORAGE_KEY, JSON.stringify(graph));
 	try { globalThis.dispatchEvent?.(new CustomEvent("cozyclay:workflow-change")); } catch { /* non-browser runtime */ }

@@ -81,5 +81,14 @@ assert.equal(store.get(WORKFLOW_STORAGE_KEY), kept);
 assert.throws(() => sendPanelToWorkflow({ dataUrl: DATA_URL, prompt }, null), /storage is unavailable/);
 console.log("PASS a storage failure surfaces and leaves the draft alone");
 
+// a corrupt stored draft is not replaced: the parse error surfaces and storage is untouched
+const corruptStore = new Map([[WORKFLOW_STORAGE_KEY, "{not json"]]);
+let writes = 0;
+const corrupt = { getItem: (key) => corruptStore.get(key) ?? null, setItem: (key, value) => { writes += 1; corruptStore.set(key, value); } };
+assert.throws(() => sendPanelToWorkflow({ dataUrl: DATA_URL, prompt }, corrupt), SyntaxError);
+assert.equal(writes, 0);
+assert.equal(corruptStore.get(WORKFLOW_STORAGE_KEY), "{not json");
+console.log("PASS corrupt stored draft surfaces an error and leaves storage untouched");
+
 assert.equal(bytesToDataUrl(new Uint8Array([137, 80, 78, 71]), "image/png"), "data:image/png;base64,iVBORw==");
 console.log("PASS bytesToDataUrl");
