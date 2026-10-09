@@ -3,6 +3,8 @@ import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
 import { assetRecord } from "../scene-asset-cache.js";
 import { STILL_HOLD_MAX } from "../shot-authoring.js";
+import { startExportAttempt } from "../analytics.js";
+import { bytesToDataUrl, panelVideoPrompt, sendPanelToWorkflow } from "../workflow-send.js";
 
 // A card's greybox is re-captured this long after the last document edit, so
 // a drag or a typing burst costs one capture pass, not one per change.
@@ -35,7 +37,7 @@ function useStylizedUrl(assetId) {
  * Every edit goes through the shot commands, so the Sequencer, undo and the
  * Agent see the same document. */
 export default function BoardSlot({ active = true }) {
-	const { shots, activeShot, tlFps, runStudioAction, selectTimelineShot, capturePanelThumbnail, sceneRevision } = useStudioShell();
+	const { shots, activeShot, tlFps, runStudioAction, selectTimelineShot, capturePanelThumbnail, packMetaForShot, setToast, sceneRevision } = useStudioShell();
 	const stills = shots.filter((entry) => entry.kind === "still").sort((a, b) => a.startFrame - b.startFrame);
 	const [thumbs, setThumbs] = useState({});
 	const [dragId, setDragId] = useState(null);
@@ -74,6 +76,34 @@ export default function BoardSlot({ active = true }) {
 	const fps = tlFps || 24;
 	const addPanel = () => runStudioAction("shot.createStill", {});
 
+	// Append the panel picture (greybox, or the stylized image) and a Video
+	// node wired to it to the Workflow draft, then open the canvas. Nothing runs.
+	async function sendToWorkflow(entry, source) {
+		const attempt = startExportAttempt({ export_kind: "workflow_send", format: "png", surface: "studio" });
+		try {
+			let dataUrl;
+			let mimeType = "image/png";
+			if (source === "stylized") {
+				const record = await assetRecord(entry.stylizedAssetId);
+				if (!record) throw new Error(ko("the stylized image is missing", "스타일화 이미지를 찾을 수 없어요"));
+				mimeType = record.type || "image/png";
+				dataUrl = bytesToDataUrl(record.bytes, mimeType);
+			} else {
+				dataUrl = capturePanelThumbnail(entry);
+			}
+			if (!dataUrl) throw new Error(ko("the shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요"));
+			const index = shots.findIndex((candidate) => candidate.id === entry.id);
+			const prompt = panelVideoPrompt(packMetaForShot(entry, index), entry.caption);
+			sendPanelToWorkflow({ dataUrl, mimeType, fileName: `panel-${stills.findIndex((candidate) => candidate.id === entry.id) + 1}.${mimeType.split("/")[1] || "png"}`, prompt });
+			attempt.succeed();
+			setToast(ko("Panel sent to Workflow", "패널을 워크플로로 보냈어요"));
+			window.open("/workflow/", "_blank", "noopener,noreferrer");
+		} catch (error) {
+			attempt.fail(error);
+			console.warn(`[cozyclay] panel ${entry.id} could not be sent to Workflow`, error);
+			setToast(ko(`Could not send the panel to Workflow: ${error?.message || error}`, `패널을 워크플로로 보내지 못했어요: ${error?.message || error}`));
+		}
+	}
 	function dropTarget(event, entry) {
 		const box = event.currentTarget.getBoundingClientRect();
 		return { id: entry.id, after: event.clientX > box.left + box.width / 2 };
@@ -123,6 +153,7 @@ export default function BoardSlot({ active = true }) {
 							onDuplicate={() => runStudioAction("shot.duplicate", { shotId: entry.id })}
 							onCaption={(caption) => runStudioAction("shot.setCaption", { shotId: entry.id, caption })}
 							onHold={(hold) => runStudioAction("shot.setHold", { shotId: entry.id, hold })}
+							onSendToWorkflow={(source) => sendToWorkflow(entry, source)}
 							onDragStart={(event) => {
 								event.dataTransfer.effectAllowed = "move";
 								event.dataTransfer.setData(PANEL_DRAG_TYPE, entry.id);
@@ -148,8 +179,9 @@ export default function BoardSlot({ active = true }) {
 	);
 }
 
-function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSelect, onRemove, onDuplicate, onCaption, onHold, onDragStart, onDragOver, onDrop, onDragEnd }) {
+function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSelect, onRemove, onDuplicate, onCaption, onHold, onSendToWorkflow, onDragStart, onDragOver, onDrop, onDragEnd }) {
 	const stylized = useStylizedUrl(shot.stylizedAssetId);
+	const [sendMenu, setSendMenu] = useState(false);
 	const hold = shot.endFrame - shot.startFrame + 1;
 	const seconds = Number((hold / fps).toFixed(2));
 	const stop = (event) => event.stopPropagation();
@@ -201,7 +233,25 @@ function PanelCard({ shot, index, fps, thumb, selected, dragging, dropSide, onSe
 				<button type="button" data-action="duplicate" title={ko("Duplicate this panel after itself", "이 패널을 바로 뒤에 복제")} onClick={(event) => { stop(event); onDuplicate(); }}>{ko("Duplicate", "복제")}</button>
 				<button type="button" data-action="delete" className="danger" title={ko("Delete this panel (Delete)", "이 패널 삭제 (Delete)")} onClick={(event) => { stop(event); onRemove(); }}>{ko("Delete", "삭제")}</button>
 				<button type="button" data-action="stylize" disabled title={ko("Stylize — coming in a later PR", "스타일화 — 다음 PR에서 제공")} data-disabled-reason={LATER_PR}>{ko("Stylize", "스타일화")}</button>
-				<button type="button" data-action="workflow" disabled title={ko("Send to Workflow — coming in a later PR", "워크플로로 보내기 — 다음 PR에서 제공")} data-disabled-reason={LATER_PR}>{ko("Send to Workflow", "워크플로로")}</button>
+				<button
+					type="button"
+					data-action="workflow"
+					title={ko("Send this panel to a Workflow video node", "이 패널을 워크플로 비디오 노드로 보내기")}
+					aria-haspopup={shot.stylizedAssetId ? "menu" : undefined}
+					aria-expanded={shot.stylizedAssetId ? sendMenu : undefined}
+					onClick={(event) => {
+						stop(event);
+						// Only a stylized panel has a choice to make.
+						if (shot.stylizedAssetId) setSendMenu((open) => !open);
+						else onSendToWorkflow("greybox");
+					}}
+				>{ko("Send to Workflow", "워크플로로")}</button>
+				{sendMenu && shot.stylizedAssetId && (
+					<div className="dock-board-menu" role="menu" aria-label={ko("Send to Workflow", "워크플로로 보내기")} onKeyDown={(event) => { if (event.key === "Escape") { event.stopPropagation(); setSendMenu(false); } }}>
+						<button type="button" role="menuitem" data-send-source="stylized" autoFocus onClick={(event) => { stop(event); setSendMenu(false); onSendToWorkflow("stylized"); }}>{ko("Stylized image", "스타일화 이미지")}</button>
+						<button type="button" role="menuitem" data-send-source="greybox" onClick={(event) => { stop(event); setSendMenu(false); onSendToWorkflow("greybox"); }}>{ko("Greybox", "그레이박스")}</button>
+					</div>
+				)}
 				<button type="button" data-action="export" disabled title={ko("Export — coming in a later PR", "내보내기 — 다음 PR에서 제공")} data-disabled-reason={LATER_PR}>{ko("Export", "내보내기")}</button>
 			</div>
 			<div className="dock-board-thumb" data-stylized={stylized ? "true" : undefined}>

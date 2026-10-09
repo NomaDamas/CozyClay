@@ -232,6 +232,7 @@
 		cursor: pointer;
 	}
 
+	.app:not([data-embed-mode]) .dock-board-menu { display: flex; flex-basis: 100%; gap: 4px; }
 	.app:not([data-embed-mode]) .dock-board-actions button:hover:not(:disabled) { background: var(--surface-active); }
 	.app:not([data-embed-mode]) .dock-board-actions button.danger:hover { color: var(--danger); }
 	.app:not([data-embed-mode]) .dock-board-actions button:disabled { color: var(--text-3); cursor: default; }
