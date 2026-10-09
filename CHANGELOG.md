@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-Storyboard and Animation modes, behind `?previs=1`. A project is now either a
-storyboard (a row of still panels) or an animation (moving shots); without the
-flag every project is an animation and nothing below shows.
+Storyboard and Animation modes. A project is now either a storyboard (a row of
+still panels) or an animation (moving shots); both are on in a normal launch.
 
 Modes
 
@@ -26,6 +25,14 @@ Capsule figures
   sit or lie, set in Details. It follows root paths in the viewport and in
   exports. Rig-only tools (Pose, IK, motion, take import, physics) refuse it
   and say why. (#634, #635)
+
+Storyboard exports
+
+- The Export menu of a storyboard lists **Contact sheet (PNG)**, **Panel pack
+  (zip)**, **All panels (zip)**, **Animatic (mp4)**, **Cut list (OTIO)** and
+  **Depth + normal (PNG)**. File ▸ **Export as Animation project…** turns the
+  panels into an Animation project. Keyframe pack and shot video stay
+  Animation-only.
 
 Agent and MCP
 
