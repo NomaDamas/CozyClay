@@ -114,7 +114,7 @@ import {
 	RAIL_SCHEDULE_RANGE,
 	resolveRailSchedule,
 } from "./camera-rail-schedule.js";
-import { SetProps } from "./props.jsx";
+import { ObjectCarrier, SetProps } from "./props.jsx";
 import {
 	CUTOUT_KIND,
 	MESH_KIND,
@@ -2271,6 +2271,14 @@ export default function App() {
 	// r3f frame loop — so it asks the set for one placement pass itself, right
 	// after it has written that frame's bones.
 	const propSyncRef = useRef(null);
+	// Characters grouped under a scene object ride it inside an ObjectCarrier.
+	// The carriers read the AUTHORED records by id, and register a placement
+	// pass the recorder runs before the props' (a prop carried on a riding
+	// character's hand needs the carrier placed first).
+	const carrierRegistryRef = useRef(new Set());
+	const sceneObjectLookupRef = useRef(null);
+	sceneObjectLookupRef.current = useMemo(() => new Map(sceneObjects.map((object) => [object.id, object])), [sceneObjects]);
+	const syncCarriers = () => { for (const place of carrierRegistryRef.current) place(); };
 	// Where a prop actually IS, read off its live group: the one authority on
 	// the transform currently on screen, and so the only honest starting point
 	// for a no-jump conversion.
@@ -2279,9 +2287,30 @@ export default function App() {
 	/**
 	 * Hierarchy row drag policy (the panel holds none). An object row dropped on
 	 * another object GROUPS; on a character or one of its bone rows it ATTACHES;
-	 * on Props it comes back to the world. Anything else is not a drop.
+	 * on Props it comes back to the world. A character row dropped on an object
+	 * row is GROUPED under it and rides its travel; dropped on the scene root it
+	 * stands in the world again. Anything else is not a drop.
 	 */
-	const hierarchyReparent = { canDrop: objectsDomain.canReparentSceneObject, onDrop: objectsDomain.reparentSceneObject };
+	function characterGroupMove(sourceRowId, targetRowId) {
+		const characterId = charIdFromHierarchyId(sourceRowId);
+		const entry = characterId ? characters.find((item) => item.id === characterId) : null;
+		if (!entry) return null;
+		if (targetRowId === "shot") return (entry.parent ?? null) !== null ? { characterId, parent: null } : null;
+		const objectId = sceneObjectIdFromHierarchy(String(targetRowId ?? ""));
+		const object = objectId ? sceneObjects.find((item) => item.id === objectId) : null;
+		if (!object || object.attach || entry.parent === objectId) return null;
+		return { characterId, parent: objectId };
+	}
+	const hierarchyReparent = {
+		canDrop: (source, target) => (charIdFromHierarchyId(source)
+			? characterGroupMove(source, target) !== null
+			: objectsDomain.canReparentSceneObject(source, target)),
+		onDrop: (source, target) => {
+			if (!charIdFromHierarchyId(source)) return objectsDomain.reparentSceneObject(source, target);
+			const move = characterGroupMove(source, target);
+			if (move) runStudioAction("character.update", { characterId: move.characterId, patch: { parent: move.parent } });
+		},
+	};
 
 	useEffect(() => {
 		setCraneSelectedIndex(null);
@@ -3061,6 +3090,7 @@ export default function App() {
 			scale: entry.scale ?? 1,
 			...(entry.model === "proxy-figure" ? {} : { onRig: reportRig(entry.id) }),
 			pickId: index === 0 ? "A" : index === 1 ? "B" : entry.id,
+			parent: entry.parent ?? null,
 		}];
 	}), [characters, activeChar.id, motion, partColoursEnabled, partColoursMode]);
 	// Where the selection gizmo stands: same driving rules as the render,
@@ -3361,6 +3391,8 @@ export default function App() {
 		// The bones for this frame are now written, so a carried prop can take
 		// its place on them. gl.render() never runs the r3f frame loop, so this
 		// pass is the recorder's stand-in for the useFrame the preview gets.
+		// Riding characters move with their object first, then the props.
+		syncCarriers();
 		propSyncRef.current?.();
 		const sampled = sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame);
 		const framing = sampled.camera ?? context?.framing;
@@ -3420,6 +3452,7 @@ export default function App() {
 			look.current.yaw = cameraSnapshot.yaw;
 			look.current.pitch = cameraSnapshot.pitch;
 			propFrameRef.current = propFrame;
+			syncCarriers();
 			propSyncRef.current?.();
 		}
 	}
@@ -6927,20 +6960,30 @@ export default function App() {
 							/>
 
 							{characterViews.map((view) => (
-								<Character
+								// Always wrapped, grouped or not: giving or taking a parent
+								// must not remount the rig the playback effects hold.
+								<ObjectCarrier
 									key={`${view.id}:${rigMountEpoch}`}
-									url={view.url}
-									{...{ model: view.model, posture: view.posture }}
-									position={view.position}
-									rot={view.rot}
-									tint={view.tint}
-									partColoursEnabled={view.partColoursEnabled}
-									partColoursMode={view.partColoursMode}
-									pose={view.pose}
-									scale={view.scale}
-									onRig={view.onRig}
-									pickId={view.pickId}
-								/>
+									objectId={view.parent}
+									objectsRef={sceneObjectLookupRef}
+									frameRef={propFrameRef}
+									take={{ frameCount: tlFrameCount, fps: tlFps }}
+									registryRef={carrierRegistryRef}
+								>
+									<Character
+										url={view.url}
+										{...{ model: view.model, posture: view.posture }}
+										position={view.position}
+										rot={view.rot}
+										tint={view.tint}
+										partColoursEnabled={view.partColoursEnabled}
+										partColoursMode={view.partColoursMode}
+										pose={view.pose}
+										scale={view.scale}
+										onRig={view.onRig}
+										pickId={view.pickId}
+									/>
+								</ObjectCarrier>
 							))}
 
 							{/* Selection marker: XYZ tripod + ring on the picked cast

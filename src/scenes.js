@@ -174,6 +174,10 @@ export function createCharacterEntry(source = null, index = 0) {
 		z: Math.max(CHARACTER_POSITION_LIMITS.min.z, Math.min(CHARACTER_POSITION_LIMITS.max.z, finiteOr(s.z, 0))),
 		rot: wrapAngle(finiteOr(s.rot, 0)),
 		hidden: s.hidden === true,
+		// The scene object this character is grouped under, or null. A grouped
+		// character rides its object's travel path the way grouped parts do; its
+		// own x/y/z stay world numbers at the object's authored pose.
+		parent: typeof s.parent === "string" && s.parent ? s.parent : null,
 		// User-picked body tint; null means "model default" (y-bot clay, x-bot
 		// whiter clay) so the entry survives future default tweaks.
 		tint: typeof s.tint === "string" && /^#[0-9a-fA-F]{6}$/.test(s.tint) ? s.tint : null,

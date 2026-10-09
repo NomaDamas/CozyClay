@@ -97,12 +97,14 @@ test('cast: selection changes only the layer projection, never the inspected doc
 test('cast: every patchable path matches patch_elements normalization and field receipts', async () => {
   const values = { position: { x: 500, y: -3, z: 2 }, rot: 380, scale: 8, subject: 'A lead', hidden: true,
     model: 'x-bot-tpose', posture: 'lie', tint: '#123456', identityImage: 'data:image/png;base64,QQ==', pose: 'pose-wave',
-    promptBlocks: [block], 'motionRef.url': '/ardy/motions/123456-abcdef', 'motionRef.motionId': 'a'.repeat(64) };
+    promptBlocks: [block], 'motionRef.url': '/ardy/motions/123456-abcdef', 'motionRef.motionId': 'a'.repeat(64), parent: 'car' };
   assert.deepEqual(Object.keys(values).map(key => `character.${key}`).sort(), [...STUDIO_PATCHABLE_PATHS.character].sort());
   for (const [path, value] of Object.entries(values)) {
     const a = castFixture(), b = castFixture();
     try {
       owned(a); owned(b);
+      // A character groups under an object that exists (#655).
+      if (path === 'parent') for (const f of [a, b]) ok(f.run('object.add', { kind: 'car' }));
       const storedPath = path === 'promptBlocks' ? 'layer.promptClips' : path;
       const set = storedPath.split('.').reduceRight((value, key) => ({ [key]: value }), value);
       const direct = ok(a.run('character.set', { id: 'actor-a', set }, 'agent'));
@@ -112,6 +114,42 @@ test('cast: every patchable path matches patch_elements normalization and field 
       assert.equal(direct.undo.entries, alias.undo.entries);
     } finally { a.dispose(); b.dispose(); }
   }
+});
+
+test('cast: a character groups only under an object that is in the scene (#655)', () => {
+  const f = castFixture();
+  try {
+    owned(f);
+    const before = structuredClone(f.cast.read());
+    assert.equal(f.run('character.set', { id: 'actor-a', set: { parent: 'missing' } }, 'agent').code, 'STALE_TARGET');
+    assert.equal(f.run('character.update', { characterId: 'actor-a', patch: { parent: 'missing' } }).code, 'STALE_TARGET');
+    assert.deepEqual(f.cast.read(), before);
+  } finally { f.dispose(); }
+});
+
+test('cast: moving an object carries the characters grouped under it, in one undo (#655)', () => {
+  const f = castFixture();
+  try {
+    owned(f);
+    ok(f.run('object.add', { kind: 'car', placement: { x: 0, z: 0 } }));
+    ok(f.run('object.add', { kind: 'cube', parent: 'car', placement: { x: 0, z: 1 } }));
+    ok(f.run('character.update', { characterId: 'actor-a', patch: { x: 0.2, z: 0.5, parent: 'car' } }));
+    ok(f.run('character.update', { characterId: 'actor-b', patch: { x: 0.1, z: 1, parent: 'cube' } }));
+    const seat = () => f.cast.read().map(({ id, x, y, z }) => ({ id, x, y, z }));
+    const before = seat();
+    const moved = ok(f.run('object.update', { id: 'car', patch: { x: 2, y: 0.5, z: -1 } }));
+    const after = seat();
+    assert.deepEqual(after.find(row => row.id === 'actor-a'), { id: 'actor-a', x: 2.2, y: 0.5, z: -0.5 });
+    // A rider of a part rides the part, which the car's move carried along.
+    assert.deepEqual(after.find(row => row.id === 'actor-b'), { id: 'actor-b', x: 2.1, y: 0.5, z: 0 });
+    assert.equal(f.run('edit.undo', { receiptId: moved.receiptId }).status, 'undone');
+    assert.deepEqual(seat(), before);
+    assert.equal(f.store.current.objects.find(row => row.id === 'car').x, 0);
+    // Ungrouped, the same move leaves the character where it stands.
+    ok(f.run('character.update', { characterId: 'actor-a', patch: { parent: null } }));
+    ok(f.run('object.update', { id: 'car', patch: { x: 3 } }));
+    assert.equal(f.cast.read().find(row => row.id === 'actor-a').x, 0.2);
+  } finally { f.dispose(); }
 });
 
 test('cast: raw setters are guarded and scene load resets history without authoring', () => {

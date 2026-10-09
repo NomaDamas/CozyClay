@@ -42,6 +42,13 @@ export function register(registry, ports) {
 	const character = characterId => owner().read().find(row => row.id === characterId) ?? fail('STALE_TARGET', `Character ${characterId} is not in this scene.`);
 	const pose = value => typeof value === 'string' ? owner().poses().find(row => row.id === value) ?? fail('STALE_TARGET', `Pose ${value} is not in the library.`) : value;
 	const patch = (characterId, update) => { character(characterId); owner().write(rows => rows.map(row => row.id === characterId ? { ...row, ...update } : row)); };
+	// A character groups under a scene object that stands in the world. An
+	// object a character carries is refused: it rides a bone, not a route.
+	const groupParent = value => {
+		if (value === null || value === undefined) return;
+		const object = ports.state().objects.find(row => row.id === value) ?? fail('STALE_TARGET', `Object ${value} is not in this scene.`);
+		if (object.attach) fail('INVALID_ARGUMENT', 'A character cannot be grouped under an object that a character carries.');
+	};
 	function promptEdit(command, args) {
 		const before = character(args.characterId), clips = before.layer.promptClips;
 		let next;
@@ -72,7 +79,7 @@ export function register(registry, ports) {
 			owner().write(rows => [...rows, row]);
 		},
 		'character.remove': ({ characterId }) => { character(characterId); if (owner().read().length <= 1) fail('INVALID_ARGUMENT', 'Cannot remove the final character.'); owner().write(rows => rows.filter(row => row.id !== characterId)); },
-		'character.update': ({ characterId, patch: value }) => patch(characterId, value),
+		'character.update': ({ characterId, patch: value }) => { if (Object.hasOwn(value, 'parent')) groupParent(value.parent); patch(characterId, value); },
 		'character.setPose': ({ characterId, pose: value, clearMotion }) => { character(characterId); owner().applyPose(characterId, pose(value), clearMotion); },
 		'character.setPromptBlocks': ({ characterId, blocks }) => {
 			const entry = character(characterId); patch(characterId, { layer: { ...entry.layer, promptClips: blocks } });
@@ -96,6 +103,7 @@ export function register(registry, ports) {
 		registry.register({ ...entry, available: mounted, run(args) {
 			// A pose id selects a complete library entry, not a deep bone patch.
 			const ops = args.ops ?? [args];
+			for (const op of ops) if (Object.hasOwn(op.set, 'parent')) groupParent(op.set.parent);
 			const poses = ops.filter(op => Object.hasOwn(op.set, 'pose')).map(op => ({ id: op.id, value: pose(op.set.pose) }));
 			const fields = ops.map(({ id, set: { pose: _pose, ...set } }) => ({ id, set }));
 			const result = entry.run(args.ops ? { ops: fields } : fields[0]);

@@ -340,9 +340,16 @@ function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 					</button>
 				</>
 			) : menu.kind === "character" ? (
-				<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
-					{menu.hidden ? ko("Show", "표시") : ko("Hide", "숨기기")}
-				</button>
+				<>
+					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
+						{menu.hidden ? ko("Show", "표시") : ko("Hide", "숨기기")}
+					</button>
+					{menu.grouped && (
+						<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("ungroup-character", menu.id)}>
+							{ko("Remove from group", "그룹에서 빼기")}
+						</button>
+					)}
+				</>
 			) : menu.kind === "object" ? (
 				<>
 					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("visibility", menu.id)}>
@@ -424,10 +431,11 @@ function TreeRow({
 			dropHandlers.onDrop(event);
 		},
 	};
-	// Row drag: an object row is the handle, ANY row can be the landing spot —
-	// the panel holds no policy, the caller's canDrop decides every rule.
+	// Row drag: an object or character row is the handle, ANY row can be the
+	// landing spot — the panel holds no policy, the caller's canDrop decides
+	// every rule.
 	const [rowDropOver, setRowDropOver] = useState(false);
-	const draggableRow = node.kind === "object" && !editing;
+	const draggableRow = (node.kind === "object" || node.kind === "character") && !editing;
 	const rowDropTarget = !!(reparent && dragSourceId && reparent.canDrop?.(dragSourceId, node.id));
 	const rowDrag = (reparent || draggableRow) && {
 		...(draggableRow
@@ -768,10 +776,11 @@ export default function HierarchyPanel({
 			setContextMenu({
 				x: event.clientX,
 				y: event.clientY,
-				height: node.kind === "object" ? 180 : 44,
+				height: node.kind === "object" ? 180 : node.grouped ? 80 : 44,
 				kind: node.kind,
 				id,
 				hidden: node.hidden === true,
+				grouped: node.grouped === true,
 			});
 		} else if (id === SCENE_ROOT_ID) {
 			// The root row is the scene document: its own verbs, never the
@@ -823,6 +832,11 @@ export default function HierarchyPanel({
 		}
 		if (action === "visibility") {
 			onToggleHidden?.(hierarchyId);
+			return;
+		}
+		if (action === "ungroup-character") {
+			// Out of the group is a drop on the scene root: the same policy door.
+			if (reparent?.canDrop?.(hierarchyId, SCENE_ROOT_ID)) reparent.onDrop?.(hierarchyId, SCENE_ROOT_ID);
 			return;
 		}
 		const objectId = sceneObjectIdFromHierarchy(hierarchyId);
