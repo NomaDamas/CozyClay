@@ -407,9 +407,9 @@ const implementations={
    const c=g.binding.context();
    assert.equal(c.scene.previsMode,'storyboard');
    assert.equal(c.capabilities.storyboard,true);
-   const rigged=c.entities.find(e=>e.id==='actor-a'),capsule=c.entities.find(e=>e.id==='actor-cap');
+   const rigged=c.entities.find(e=>e.id==='actor-a'),proxy=c.entities.find(e=>e.id==='actor-cap');
    assert.deepEqual({kind:rigged.characterKind,posture:rigged.posture},{kind:'rig',posture:undefined});
-   assert.deepEqual({kind:capsule.characterKind,posture:capsule.posture,rigReady:capsule.capabilities.rigReady},{kind:'proxy',posture:'lie',rigReady:false});
+   assert.deepEqual({kind:proxy.characterKind,posture:proxy.posture,rigReady:proxy.capabilities.rigReady},{kind:'proxy',posture:'lie',rigReady:false});
    assert.deepEqual(c.view.mode,'scene','tool modes are untouched');
   }finally{g.dispose();}
   const h=fixture({previsMode:'animation'});

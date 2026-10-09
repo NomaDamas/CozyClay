@@ -7,7 +7,7 @@ import CameraPanel from "../panels/CameraPanel.jsx";
 import SubjectsPanel from "../panels/SubjectsPanel.jsx";
 import CharacterTransformPanel from "../panels/CharacterTransformPanel.jsx";
 import RigPanel from "../panels/RigPanel.jsx";
-import CapsulePanel from "../panels/CapsulePanel.jsx";
+import ProxyFigurePanel from "../panels/ProxyFigurePanel.jsx";
 import PosePanel from "../panels/PosePanel.jsx";
 import VideoCapturePanel from "../panels/VideoCapturePanel.jsx";
 import PromptBlocksPanel from "../panels/PromptBlocksPanel.jsx";
@@ -208,7 +208,7 @@ export default function DetailsSlot() {
 			activeChar={activeChar}
 		/>
 
-		<CapsulePanel
+		<ProxyFigurePanel
 			isCharacterSelection={isCharacterSelection}
 			activeChar={activeChar}
 		/>

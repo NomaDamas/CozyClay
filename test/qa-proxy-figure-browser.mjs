@@ -239,13 +239,13 @@ try {
 		await b.send("Input.dispatchKeyEvent", { type: "keyUp", ...key });
 	};
 	const workflowMode = "document.querySelector('[data-mode][aria-selected=\"true\"]')?.dataset.mode";
-	const capsuleRefusal = "Capsule figures have no rig - Pose mode works on rigged characters only.";
+	const proxyRefusal = "Capsule figures have no rig - Pose mode works on rigged characters only.";
 	await b.change("window.__proxyContext.live.state?.activeCharacterId === 'qa-proxy'", () => b.click('[data-node-id="characterB"]'));
 	const modeBefore = await b.evaluate(workflowMode);
-	assert.equal(await b.evaluate("document.querySelector('[data-mode=\"pose\"]').dataset.disabledReason"), capsuleRefusal);
-	await b.change(`[...document.querySelectorAll('.toast')].some(t => t.textContent === ${JSON.stringify(capsuleRefusal)})`, pressTwo);
+	assert.equal(await b.evaluate("document.querySelector('[data-mode=\"pose\"]').dataset.disabledReason"), proxyRefusal);
+	await b.change(`[...document.querySelectorAll('.toast')].some(t => t.textContent === ${JSON.stringify(proxyRefusal)})`, pressTwo);
 	assert.equal(await b.evaluate(workflowMode), modeBefore, "mode stays after the refusal");
-	console.log(`PASS capsule active + 2 -> toast "${capsuleRefusal}"; mode stays ${modeBefore}`);
+	console.log(`PASS capsule active + 2 -> toast "${proxyRefusal}"; mode stays ${modeBefore}`);
 	await capture("task-7-proxy-pose-refused");
 	await b.change("window.__proxyContext.live.state?.activeCharacterId === 'char-a'", () => b.click('[data-node-id="characterA"]'));
 	assert.equal(await b.evaluate("document.querySelector('[data-mode=\"pose\"]').dataset.disabledReason ?? null"), null);
