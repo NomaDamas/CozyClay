@@ -22,7 +22,8 @@ const dualview = readFileSync(new URL("../src/dualview.jsx", import.meta.url), "
 const offscreenExport = readFileSync(new URL("../src/offscreen-export.js", import.meta.url), "utf8");
 const ui = readFileSync(new URL("../src/ui.jsx", import.meta.url), "utf8");
 const workflowBuilder = readFileSync(new URL("../src/workflow/WorkflowBuilder.jsx", import.meta.url), "utf8");
-const agentClient = readFileSync(new URL("../src/workflow/agent-client.js", import.meta.url), "utf8");
+// The sidecar request helper agent-client.js uses lives in the shared module.
+const agentClient = readFileSync(new URL("../src/agent-image-client.js", import.meta.url), "utf8");
 
 expect("workspace layout persists across reloads", app.includes("WORKSPACE_LAYOUT_KEY") && app.includes("localStorage.setItem"));
 expect("H3 lock evidence is visible on successful video takes", workflowBuilder.includes('data-testid="h3-preservation-receipt"') && workflowBuilder.includes("H3 scene/camera lock verified"));

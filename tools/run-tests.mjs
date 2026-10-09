@@ -261,6 +261,7 @@ const NODE_FILES = [
 	"test/verify-timeline-shots.mjs",
 	"test/verify-still-shots.mjs",
 	"test/verify-shot-cast-overrides.mjs",
+	"test/verify-panel-stylize.mjs",
 	"test/verify-tool-handlers.mjs",
 	"test/verify-trim.mjs",
 	"test/verify-update-check.mjs",

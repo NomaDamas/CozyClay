@@ -1,13 +1,16 @@
 #!/usr/bin/env node
-// Storyboard browser QA: per-panel cast overrides (#640) and the Board dock
-// tab (#641). Run through tools/qa-browser.mjs with QA_URL at `/app/?previs=1`.
+// Storyboard browser QA: per-panel cast overrides (#640), the Board dock
+// tab (#641) and panel Stylize through a stubbed /agent/image (#643). Run
+// through tools/qa-browser.mjs with QA_URL at `/app/?previs=1`.
 import assert from "node:assert/strict";
-import { mkdirSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { crc32, deflateSync } from "node:zlib";
 import { cameraBrowser } from "./camera-browser-harness.mjs";
 import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const outputDir = process.env.QA_OUT || "/Users/yun/CozyClay/.omo/evidence/previs-modes/previs-modes-r5/shots";
 mkdirSync(outputDir, { recursive: true });
+const STUB_PNG = stubPng();
 const b = await cameraBrowser();
 
 // Page errors are collected in the page from the first script on, so a
@@ -216,7 +219,7 @@ try {
 	console.log("PASS Duplicate adds a card with the same caption right after it");
 
 	const laterActions = await b.evaluate("[...document.querySelectorAll('[data-testid=board-card]:nth-child(1) [data-action]')].map(button => `${button.dataset.action}:${button.disabled ? button.dataset.disabledReason : 'enabled'}`)");
-	assert.deepEqual(laterActions, ["duplicate:enabled", "delete:enabled", "stylize:coming in a later PR", "workflow:enabled", "export:coming in a later PR"]);
+	assert.deepEqual(laterActions, ["duplicate:enabled", "delete:enabled", "stylize:enabled", "workflow:enabled", "export:coming in a later PR"]);
 	console.log(`PASS card actions: ${laterActions.join(", ")}`);
 
 	const holdSelector = "[data-testid=board-card]:nth-child(1) [data-testid=board-card-hold]";
@@ -244,6 +247,163 @@ try {
 		await screenshot(`board-${theme}.png`);
 	}
 	await screenshot("task-12-previs-modes.png");
+
+	/* ------------------------------------------- panel Stylize (#643) */
+	await b.evaluate(`(() => { document.documentElement.dataset.theme = 'dark'; window.dispatchEvent(new CustomEvent('cozyclay:theme-change', { detail: 'dark' })); })()`);
+	const sidecar = await imageSidecarStub();
+	try {
+		const firstStill = "window.__storyboardState.state.shots.filter(shot => shot.kind === 'still').sort((a, c) => a.startFrame - c.startFrame)[0]";
+		const card1 = "[data-testid=board-card]:nth-child(1)";
+		assert.equal(await b.evaluate(`${firstStill}.stylizedAssetId`), null);
+
+		// Happy path: the request is held until the card has shown its state.
+		sidecar.mode = "hold";
+		const paused = sidecar.next();
+		await hover(card1);
+		await b.change(`document.querySelector('${card1} [data-testid=board-card-stylizing]')?.textContent === 'Stylizing...' && document.querySelector('${card1} [data-action=stylize]').disabled`,
+			() => b.click(`${card1} [data-action=stylize]`));
+		const request = await paused;
+		console.log(`PASS Stylize shows "${await b.evaluate(`document.querySelector('${card1} [data-testid=board-card-stylizing]').textContent`)}" on the card while /agent/image is pending`);
+		await screenshot("task-14-stylizing.png");
+		assert.deepEqual(Object.keys(request.body).sort(), ["imageDataUrl", "prompt", "quality"]);
+		assert.equal(request.body.quality, "auto");
+		assert.ok(request.body.imageDataUrl.startsWith("data:image/png;base64,"));
+		assert.ok(request.body.prompt.includes("Three: they meet"), request.body.prompt);
+		assert.ok(request.body.prompt.startsWith("Use the first image (a clay blocking frame) as the layout"), request.body.prompt);
+		const frameSize = pngSize(request.body.imageDataUrl);
+		console.log(`PASS request: POST ${request.url} quality=${request.body.quality} frame=${frameSize.width}x${frameSize.height} prompt=${JSON.stringify(request.body.prompt)}`);
+		await b.change(`${firstStill}.stylizedAssetId?.startsWith('img-') && document.querySelector('${card1} .dock-board-thumb')?.dataset.stylized === 'true' && !!document.querySelector('${card1} .dock-board-inset') && !document.querySelector('${card1} [data-testid=board-card-stylizing]')`,
+			() => sidecar.release(request, 200, { dataUrl: `data:image/png;base64,${STUB_PNG.toString("base64")}`, width: 64, height: 64 }));
+		const stylizedId = await b.evaluate(`${firstStill}.stylizedAssetId`);
+		const shown = await b.evaluate(`(async () => { const img = document.querySelector('${card1} .dock-board-image'); await img.decode(); return [img.naturalWidth, img.naturalHeight, document.querySelector('${card1} .dock-board-inset').src.startsWith('data:image/png')]; })()`);
+		assert.deepEqual(shown, [64, 64, true]);
+		assert.equal(await b.evaluate(`document.querySelector('${card1} [data-action=stylize]').textContent`), "Re-stylize");
+		console.log(`PASS card 1 shows the 64x64 stylized image (${stylizedId}) with the greybox inset; the action now reads Re-stylize`);
+		await hover(card1);
+		await screenshot("task-14-previs-modes.png");
+
+		// Remove clears and is undoable.
+		await b.change(`${firstStill}.stylizedAssetId === null && !document.querySelector('${card1} .dock-board-thumb')?.dataset.stylized`, () => b.click(`${card1} [data-action=unstylize]`));
+		await b.evaluate("document.activeElement?.blur()");
+		await b.change(`${firstStill}.stylizedAssetId === ${JSON.stringify(stylizedId)} && document.querySelector('${card1} .dock-board-thumb')?.dataset.stylized === 'true'`, async () => {
+			await b.send("Input.dispatchKeyEvent", { type: "keyDown", key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, modifiers: process.platform === "darwin" ? 4 : 2 });
+			await b.send("Input.dispatchKeyEvent", { type: "keyUp", key: "z", code: "KeyZ", windowsVirtualKeyCode: 90, modifiers: process.platform === "darwin" ? 4 : 2 });
+		});
+		console.log("PASS Remove clears the stylized image and one undo brings it back");
+
+		// Failure path: an entitlement refusal is a toast and the card is unchanged.
+		sidecar.mode = "entitlement";
+		const before = await b.evaluate(`JSON.stringify(${firstStill})`);
+		const refusedRequest = sidecar.next();
+		await hover(card1);
+		await b.change("document.querySelector('.toast')?.textContent === 'This account cannot generate images.'", () => b.click(`${card1} [data-action=stylize]`));
+		// The toast lives 2.2 s: read it and take the picture before anything slower.
+		const toastText = await b.evaluate("document.querySelector('.toast')?.textContent");
+		await screenshot("task-14-entitlement.png");
+		await refusedRequest;
+		await b.change(`!document.querySelector('${card1} [data-testid=board-card-stylizing]')`, async () => {});
+		assert.equal(await b.evaluate(`JSON.stringify(${firstStill})`), before);
+		assert.equal(await b.evaluate(`document.querySelector('${card1} .dock-board-thumb').dataset.stylized`), "true");
+		console.log(`PASS failure path: 403 entitlement -> toast "${toastText}"; the panel keeps ${stylizedId}`);
+		assert.deepEqual(await b.evaluate("window.__boardErrors"), []);
+
+		// Save the project to a file and reopen it in a profile whose asset
+		// store is empty: the picture comes back from the file alone.
+		const projectPath = `${outputDir}/task-14-board.cclayproject`;
+		const saved = await b.evaluate("window.__cozyclayProject.export('Board stylize')");
+		writeFileSync(projectPath, saved);
+		const embedded = JSON.parse(saved).resources.assets.map(asset => asset.id);
+		assert.ok(embedded.includes(stylizedId), JSON.stringify(embedded));
+		console.log(`PASS saved ${projectPath} bytes=${statSync(projectPath).size} embeds ${stylizedId}`);
+		await b.navigate(`${b.base.origin}/favicon.ico`);
+		await b.evaluate("new Promise((resolve, reject) => { const request = indexedDB.deleteDatabase('cozyclay.assets'); request.onsuccess = () => resolve(true); request.onerror = () => reject(request.error); request.onblocked = () => resolve(true); })");
+		await seedProject("storyboard");
+		// Opening a missing database would create it without its store, so look first.
+		assert.equal(await b.evaluate(`indexedDB.databases().then(list => !list.some(db => db.name === 'cozyclay.assets') ? 0 : new Promise(resolve => { const open = indexedDB.open('cozyclay.assets'); open.onsuccess = () => { const db = open.result; if (!db.objectStoreNames.contains('images')) { db.close(); resolve(0); return; } const count = db.transaction('images').objectStore('images').count(); count.onsuccess = () => { db.close(); resolve(count.result); }; }; }))`), 0);
+		const opened = await b.evaluate(`window.__cozyclayProject.open(${JSON.stringify(readFileSync(projectPath, "utf8"))}).then(result => result.ok)`);
+		assert.equal(opened, true);
+		// Opening a project remounts the studio: hook the new context.
+		await b.change("document.querySelectorAll('[data-testid=board-card]').length === 4", async () => {});
+		await hookBus();
+		await b.change(`${firstStill}?.stylizedAssetId === ${JSON.stringify(stylizedId)} && document.querySelector('${card1} .dock-board-thumb')?.dataset.stylized === 'true'`, async () => {});
+		assert.equal(await b.evaluate(`(async () => { const img = document.querySelector('${card1} .dock-board-image'); await img.decode(); return img.naturalWidth; })()`), 64);
+		console.log("PASS reopened from the file with an empty asset store: card 1 still shows the stylized image");
+		await screenshot("task-14-reopened.png");
+	} finally {
+		sidecar.close();
+	}
 } finally {
 	b.close();
+}
+
+/* ---------------------------------------------------- stub sidecar ---- */
+
+// A 64x64 PNG, the stub's stylized picture.
+function stubPng() {
+	const chunk = (type, data) => {
+		const length = Buffer.alloc(4); length.writeUInt32BE(data.length);
+		const body = Buffer.concat([Buffer.from(type), data]);
+		const crc = Buffer.alloc(4); crc.writeUInt32BE(crc32(body));
+		return Buffer.concat([length, body, crc]);
+	};
+	const header = Buffer.alloc(13);
+	header.writeUInt32BE(64, 0); header.writeUInt32BE(64, 4); header[8] = 8; header[9] = 2;
+	const rows = Buffer.alloc(64 * (1 + 64 * 3));
+	for (let y = 0; y < 64; y++) for (let x = 0; x < 64; x++) {
+		const at = y * (1 + 64 * 3) + 1 + x * 3;
+		rows[at] = 200; rows[at + 1] = 120 + x; rows[at + 2] = 60 + y * 2;
+	}
+	return Buffer.concat([Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk("IHDR", header), chunk("IDAT", deflateSync(rows)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+function pngSize(dataUrl) {
+	const bytes = Buffer.from(dataUrl.slice(dataUrl.indexOf(",") + 1), "base64");
+	return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+}
+
+/** /agent/image answered inside the browser through the CDP Fetch domain on a
+ * second DevTools connection, so the suite needs no sidecar process. `next()`
+ * resolves with the next intercepted request; mode "hold" keeps it paused
+ * until `release()`, "entitlement" refuses it like a plan without images. */
+async function imageSidecarStub() {
+	const targets = await (await fetch(`http://127.0.0.1:${Number(process.env.CDP_PORT || 9222)}/json`)).json();
+	const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+	const ws = new WebSocket(page.webSocketDebuggerUrl);
+	await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+	let id = 0;
+	const pending = new Map();
+	const send = (method, params = {}) => new Promise((resolve, reject) => {
+		const requestId = ++id;
+		pending.set(requestId, { resolve, reject });
+		ws.send(JSON.stringify({ id: requestId, method, params }));
+	});
+	const stub = { mode: "hold", waiters: [] };
+	const fulfill = (requestId, status, json) => send("Fetch.fulfillRequest", {
+		requestId, responseCode: status,
+		responseHeaders: [{ name: "content-type", value: "application/json" }],
+		body: Buffer.from(JSON.stringify(json)).toString("base64"),
+	});
+	ws.onmessage = (event) => {
+		const message = JSON.parse(event.data);
+		if (message.id && pending.has(message.id)) {
+			const { resolve, reject } = pending.get(message.id);
+			pending.delete(message.id);
+			if (message.error) reject(new Error(JSON.stringify(message.error)));
+			else resolve(message.result);
+			return;
+		}
+		if (message.method !== "Fetch.requestPaused") return;
+		const { requestId, request } = message.params;
+		const raw = request.postData ?? (request.postDataEntries ?? []).map((entry) => Buffer.from(entry.bytes ?? "", "base64").toString("utf8")).join("");
+		const seen = { requestId, url: new URL(request.url).pathname, method: request.method, body: JSON.parse(raw) };
+		if (stub.mode === "entitlement") fulfill(requestId, 403, { error: { code: "entitlement", message: "403 \u2014 This account cannot generate images.", status: 403 } });
+		stub.waiters.shift()?.(seen);
+	};
+	await send("Fetch.enable", { patterns: [{ urlPattern: "*/agent/image", requestStage: "Request" }] });
+	return {
+		set mode(value) { stub.mode = value; },
+		next: () => new Promise((resolve) => stub.waiters.push(resolve)),
+		release: (seen, status, json) => fulfill(seen.requestId, status, json),
+		close: () => { send("Fetch.disable").catch(() => {}).finally(() => ws.close()); },
+	};
 }

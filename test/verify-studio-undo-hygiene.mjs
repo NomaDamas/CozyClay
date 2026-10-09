@@ -157,7 +157,7 @@ const COMMAND_INPUTS = {
 	"shot.moveKey": { shotId: "shot-1", keyId: "key-1", frame: 8 }, "shot.removeKey": { shotId: "shot-1", keyId: "key-1" },
 	"shot.clearKeys": { shotId: "shot-1" }, "shot.setTimeline": { frameCount: 96 }, "shot.setLens": { fovDeg: 35 },
 	"shot.frame": { preset: "mocapInteraction" }, "shot.replace": { shots: [createShot("Replacement", 0, 23)] },
-	"shot.captureCamera": { shotId: "shot-1" }, "shot.placeCamera": { x: 2 },
+	"shot.captureCamera": { shotId: "shot-1" }, "shot.placeCamera": { x: 2 }, "shot.setStylized": { shotId: "shot-1", assetId: `img-${"e".repeat(32)}` },
 	'character.set': { id: 'actor', set: { subject: 'Generic' } },
 	'character.add': { character: { id: 'actor-new', subject: 'New' } },
 	'character.remove': { characterId: 'actor-other' },
@@ -330,7 +330,7 @@ const cases = {
 	},
 	async "every command mutation writes inside one entry of its undo domain"() {
 		const mutations = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => entry.kind === "mutation");
-		assert.equal(mutations.length, 84);
+		assert.equal(mutations.length, 85);
 		for (const declaration of mutations) {
 			// A new shot needs free room at the playhead; the others act inside shot-1.
 			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8, still: ["shot.setHold", "shot.createStill"].includes(declaration.id) }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));
