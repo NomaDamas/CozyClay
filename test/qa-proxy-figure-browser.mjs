@@ -97,11 +97,24 @@ try {
 	for (const posture of ["stand", "sit", "lie"]) {
 		await b.change(`window.__proxyBus.characters.find(c => c.id === 'qa-proxy').posture === '${posture}'`, () =>
 			b.evaluate(`window.__proxyBus.bus.run('character.update', { characterId: 'qa-proxy', patch: { posture: '${posture}' } })`));
+		await b.evaluate(posture === "lie"
+			? "window.__cozyclay.frameEditorCam({x: 2.4, y: 1.4, z: 3.0}, {x: 0, y: 0.25, z: 0})"
+			: "window.__cozyclay.frameEditorCam({x: 2.6, y: 1.6, z: 3.2}, {x: 0, y: 0.6, z: 0})");
+		await b.settled();
 		const bounds = await b.evaluate("window.__proxyBounds()");
 		if (posture === "stand") assert.ok(Math.abs(bounds.height - 1.7) < 0.01);
 		if (posture === "sit") assert.ok(bounds.height < 1.2 && bounds.height > 1);
 		if (posture === "lie") assert.ok(bounds.height < 0.5, JSON.stringify(bounds));
-		const plate = await b.evaluate("window.__cozyclay.capturePlate()");
+		const plate = await b.evaluate(`(() => {
+			const c = window.__cozyclay;
+			const camera = c.editorCam;
+			return c.captureFraming({
+				pos: { x: camera.position.x, y: camera.position.y, z: camera.position.z },
+				yaw: camera.rotation.y,
+				pitch: camera.rotation.x,
+				fovDeg: camera.fov,
+			});
+		})()`);
 		const path = `${outputDir}/proxy-figure-${posture}.png`;
 		writeFileSync(path, Buffer.from(plate.split(",")[1], "base64"));
 		console.log(`PASS ${posture} bounds ${JSON.stringify(bounds)}; QA_SCREENSHOT ${path}`);
