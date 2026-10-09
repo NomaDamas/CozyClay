@@ -1,5 +1,52 @@
 # Changelog
 
+## Unreleased
+
+Storyboard and Animation modes, behind `?previs=1`. A project is now either a
+storyboard (a row of still panels) or an animation (moving shots); without the
+flag every project is an animation and nothing below shows.
+
+Modes
+
+- The start screen has a Storyboard / Animation control, the project keeps its
+  mode through save and reopen, and the top bar shows it as a badge. A
+  storyboard project hides the Generate group and Motion mode (`4`); motion
+  commands are refused with a reason instead of failing quietly. (#649, #650)
+- The bottom dock has a **Board** tab in storyboard projects: one card per
+  panel with a greybox thumbnail, caption, hold, duplicate, delete and
+  drag-to-reorder. Each panel can keep its own cast placement. (#640, #641)
+- **Stylize** turns a panel into a finished picture through the image route
+  and keeps it in the project beside the greybox; **Send to Workflow** puts
+  the stylized image or the greybox on a Workflow canvas with a connected
+  Video node. (#643, #645)
+
+Capsule figures
+
+- A rigless **Capsule figure** joins the Assets tile list for blocking: stand,
+  sit or lie, set in Details. It follows root paths in the viewport and in
+  exports. Rig-only tools (Pose, IK, motion, take import, physics) refuse it
+  and say why. (#634, #635)
+
+Agent and MCP
+
+- In a storyboard project the Studio Agent adds one panel per request, frames
+  it and never generates motion; the Studio context and `describe_scene` now
+  report the project mode and each character's kind. (#637, #642)
+- MCP motion tools answer `NOT_IN_MODE` in a storyboard and
+  `TARGET_NOT_READY` on a capsule figure; `add_character` takes a model and
+  posture. (#652)
+
+Analytics and docs
+
+- Three counts-only events: `storyboard:panel_created` (`source`),
+  `storyboard:panel_stylized` (`outcome`) and `cast:proxy_added`
+  (`surface`); `scene:created` carries `previs_mode`, and the export
+  `export_kind` vocabulary gains `contact_sheet`, `panel_pack`, `animatic`
+  and `animation_project`. Captions, names and prompts are never properties.
+  Disclosed in `docs/privacy.md` and `docs/analytics-queries.md`. (#653)
+- README has a **Modes** section; the Agent rules, the Studio IA and the
+  capsule-figure notes are updated. (#653)
+
 ## 2.0.2
 
 The first-run audit release: `npx cozyclay` is exercised end to end as a new

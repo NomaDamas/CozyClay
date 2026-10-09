@@ -16,8 +16,10 @@ handoff. A handoff does not prove that the operating system saved the file.
 - `attempt_id`: fresh random 32-character lowercase hexadecimal value, held only
   by that attempt. It is not persisted or derived from an installation, filename,
   URL, path, prompt, scene content or message/request identifier.
-- `export_kind`: `video`, `depth_video`, `frame`, `keyframe_pack`.
-- `format`: `mp4` for video/depth video, `png` for frames, `zip` for packs.
+- `export_kind`: `video`, `depth_video`, `frame`, `keyframe_pack`, `contact_sheet`,
+  `panel_pack`, `animatic`, `animation_project`, `workflow_send`. The last five
+  arrived with storyboard projects (#653); older data only holds the first four.
+- `format`: `mp4` for video/depth video, `png` for frames, `zip` for packs, `cclayproject` for an animation project file.
 - `surface`: `studio`, `workflow`, `embed`; this identifies the initiator, not
   the renderer. Workflow owns its iframe request through its own download
   handoff. The iframe's pack and nested MP4 do not emit separate attempts.
@@ -1901,3 +1903,55 @@ FROM events
 WHERE event = 'app:session_started' AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY status, version ORDER BY people DESC;
 ```
+
+# Storyboard and capsule-figure events (issue #653)
+
+Counts only. None of these events carries a caption, a panel or character name,
+an id, a prompt, an image or a position (`DENIED_PROPERTY_KEYS` and the closed
+value sets in `sanitizeProps` drop anything else).
+
+## Event contract
+
+| Event | Properties | Meaning |
+| --- | --- | --- |
+| `scene:created` | `scene_source`, `previs_mode` | `previs_mode` is `storyboard` or `animation`; absent on events from before modes existed |
+| `storyboard:panel_created` | `source` | `agent` (Studio Agent, MCP or any non-UI command) or `manual` (Board `+ Panel`, timeline add in a storyboard project) |
+| `storyboard:panel_stylized` | `outcome` | `ok` (the stylized picture is stored on the panel) or `error` (renderer not ready, entitlement or network refusal, storage failure) |
+| `cast:proxy_added` | `surface` | `assets` (Capsule figure tile), `agent` (Studio Agent or another non-UI command) or `mcp` (`add_character` live tool) |
+
+## Panels per source and stylize success rate (7 days)
+
+Events carrying the explicit `internal_qa` boolean marker are excluded the same
+way the external cohort queries do.
+
+```sql
+SELECT
+    event,
+    coalesce(nullIf(properties.source, ''), properties.outcome) AS value,
+    count() AS events,
+    count(DISTINCT distinct_id) AS users
+FROM events
+WHERE event IN ('storyboard:panel_created', 'storyboard:panel_stylized')
+  AND timestamp >= now() - INTERVAL 7 DAY
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+GROUP BY event, value
+ORDER BY event, value
+```
+
+## Capsule figures by surface, and new projects by mode (7 days)
+
+```sql
+SELECT
+    event,
+    if(event = 'cast:proxy_added', properties.surface, properties.previs_mode) AS value,
+    count() AS events
+FROM events
+WHERE event IN ('cast:proxy_added', 'scene:created')
+  AND timestamp >= now() - INTERVAL 7 DAY
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+GROUP BY event, value
+ORDER BY event, value
+```
+
+An empty `value` on `scene:created` is a scene made before modes existed or with
+the `?previs=1` flag off. Undo and redo never emit a second event.

@@ -527,6 +527,29 @@ for (const duration of ["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]) {
 assert.deepEqual(sanitizeProps("export:video_succeeded", { format: "mp4", ...allProps }), { format: "mp4" });
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 
+// Previs events (#653): closed values only, never a caption, name or prompt.
+for (const previs_mode of ["storyboard", "animation"]) assert.deepEqual(sanitizeProps("scene:created", { scene_source: "ui", previs_mode }), { scene_source: "ui", previs_mode });
+assert.deepEqual(sanitizeProps("scene:created", { scene_source: "ui", previs_mode: "private mode" }), { scene_source: "ui" });
+const previsContracts = {
+	"storyboard:panel_created": { key: "source", good: ["agent", "manual"], bad: ["mcp", "private", true, 1, null] },
+	"storyboard:panel_stylized": { key: "outcome", good: ["ok", "error"], bad: ["succeeded", "private", true, 1, null] },
+	"cast:proxy_added": { key: "surface", good: ["assets", "agent", "mcp"], bad: ["studio", "private", true, 1, null] },
+};
+for (const [event, { key, good, bad }] of Object.entries(previsContracts)) {
+	for (const value of good) assert.deepEqual(sanitizeProps(event, { [key]: value }), { [key]: value }, `${event} keeps ${key}=${value}`);
+	for (const value of bad) assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${String(value)}`);
+	assert.deepEqual(
+		sanitizeProps(event, { [key]: good[0], caption: "A man opens the door", name: "Panel 1", prompt: "secret", text: "x", shot_id: "shot-1", character_id: "c1", count: 3 }),
+		{ [key]: good[0] },
+		`${event} drops captions, names, prompts and ids`,
+	);
+	assert.deepEqual(sanitizeProps(event, { caption: "A man opens the door" }), {}, `${event} with only a caption sends nothing`);
+}
+for (const export_kind of ["contact_sheet", "panel_pack", "animatic", "animation_project", "workflow_send"]) {
+	assert.deepEqual(sanitizeProps("export:attempt_started", { export_kind }), { export_kind }, `export_kind ${export_kind}`);
+}
+assert.deepEqual(sanitizeProps("export:attempt_started", { export_kind: "panel pack" }), {});
+
 const privacyHtml = readFileSync(new URL("../tools/dev/pages/privacy.html", import.meta.url), "utf8");
 const motionDisclosure = new Map();
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {

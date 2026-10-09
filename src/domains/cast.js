@@ -12,7 +12,7 @@ import {
 	captureHipsOffset,
 	saveCustomPoses,
 } from "../poses.js";
-import { createCharacterEntry, createCharacterLayer, isProxyFigure } from "../scenes.js";
+import { createCharacterEntry, createCharacterLayer, isProxyFigure, PROXY_FIGURE_MODEL } from "../scenes.js";
 import { kindRefusal } from "../character-kind.js";
 import {
 	DEFAULT_SUBJECT,
@@ -29,7 +29,7 @@ import { judgeNextWaypoint } from "../ardy/waypoints.js";
 import { StudioProtocolError } from "../studio-agent-protocol.js";
 import { studioActionRefusal } from "../studio-actions.js";
 import { createStableItemId, removeStableItem } from "../stable-items.js";
-import { trackFeature } from "../analytics.js";
+import { track, trackFeature } from "../analytics.js";
 import { requestBridgeExtract } from "../multimodel-ingest.js";
 import { loadMotionFromUrl } from "../ardy/npz.js";
 import { snapshotPlaybackBones, applyMotionFrame, restorePlaybackBones } from "../ardy/playback.js";
@@ -281,6 +281,7 @@ export function useCast(appContext) {
 	const spawnCharacter = (model, x, z) => {
 		const id = nextCharacterId(domain.read());
 		domain.run('character.add', { character: { id, model, x, z, pose: DEFAULT_POSE, subject: 'a person' } });
+		if (model === PROXY_FIGURE_MODEL) track("cast:proxy_added", { surface: "assets" });
 		appContext.shared.setSelectedHierarchyId(`character:${id}`);
 		appContext.notify(ko("Character added to the scene", "인물을 씬에 추가했어요"));
 	};
@@ -932,7 +933,9 @@ export function useCast(appContext) {
 			const live = appContext.live.state;
 			const patch = finitePatch(args, ["x", "z", "rot"]);
 			const id = nextCharacterId(live.characters);
-			replaceCharacters([...live.characters, createCharacterEntry({ id, model: args.model, subject: args.subject, pose: DEFAULT_POSE, ...patch }, live.characters.length)]);
+			const entry = createCharacterEntry({ id, model: args.model, subject: args.subject, pose: DEFAULT_POSE, ...patch }, live.characters.length);
+			replaceCharacters([...live.characters, entry]);
+			if (isProxyFigure(entry)) track("cast:proxy_added", { surface: "mcp" });
 			return { id };
 		}
 		function updateLiveCharacter(args) {

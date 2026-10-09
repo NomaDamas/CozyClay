@@ -4,7 +4,7 @@ import { ko } from "../locale.js";
 import { assetRecord, rememberAsset } from "../scene-asset-cache.js";
 import { ASSET_MAX_SOURCE_BYTES, importImageFile } from "../scene-assets.js";
 import { STILL_HOLD_MAX } from "../shot-authoring.js";
-import { startExportAttempt } from "../analytics.js";
+import { startExportAttempt, track } from "../analytics.js";
 import { bytesToDataUrl, panelVideoPrompt, sendPanelToWorkflow } from "../workflow-send.js";
 import { panelStylizeRequest, requestAgentImage, stylizedPngBytes, stylizeErrorMessage } from "../agent-image-client.js";
 
@@ -123,7 +123,9 @@ export default function BoardSlot({ active = true }) {
 			const bytes = stylizedPngBytes(result?.dataUrl, ASSET_MAX_SOURCE_BYTES);
 			const asset = await rememberAsset(await importImageFile(new File([bytes], `${entry.name || "panel"} stylized.png`, { type: "image/png" })));
 			if (!runStudioAction("shot.setStylized", { shotId: entry.id, assetId: asset.id })) throw new Error(ko("the panel is no longer on the board", "패널이 보드에 더 이상 없어요"));
+			track("storyboard:panel_stylized", { outcome: "ok" });
 		} catch (error) {
+			track("storyboard:panel_stylized", { outcome: "error" });
 			console.warn(`[cozyclay] panel ${entry.id} stylize failed`, error);
 			setToast(stylizeErrorMessage(error));
 		} finally {

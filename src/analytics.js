@@ -62,6 +62,14 @@ export const EXECUTION_TELEMETRY_VALUES = Object.freeze({
 	outcome: new Set(["succeeded", "failed", "uncertain", "cancelled"]),
 });
 
+// Closed values for the storyboard and capsule-figure events. Counts only: no
+// caption, name, prompt or id ever rides along.
+const PREVIS_PROPERTY_VALUES = Object.freeze({
+	source: new Set(["agent", "manual"]),
+	outcome: new Set(["ok", "error"]),
+	surface: new Set(["assets", "agent", "mcp"]),
+});
+
 const OPT_OUT_KEY = "cozyclay.analyticsOptOut";
 const INTERNAL_QA_KEY = "cozyclay.internalQa";
 const ACTIVATION_KEY = "cozyclay.analyticsActivation";
@@ -100,6 +108,9 @@ const EVENT_PROPERTIES = Object.freeze({
 	"hosted:result_opened": [],
 	"hosted:opened_in_studio": [],
 	"scene:created": ["scene_source", "previs_mode"],
+	"storyboard:panel_created": ["source"],
+	"storyboard:panel_stylized": ["outcome"],
+	"cast:proxy_added": ["surface"],
 	"scene:loaded": ["scene_source"],
 	"project:saved": ["object_count_bucket", "shot_count_bucket"],
 	"project:opened": ["age_bucket"],
@@ -336,6 +347,7 @@ export function sanitizeProps(event, props) {
 		}
 		if (event === "device:profile" && !DEVICE_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		if (key === "previs_mode" && !PREVIS_MODE_VALUES.has(props[key])) continue;
+		if ((event.startsWith("storyboard:") || event.startsWith("cast:")) && !PREVIS_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		if (event === "survey:use_case") {
 			if (key === "use_case" && !USE_CASE_VALUES.includes(props[key])) continue;
 			if (key === "team" && !TEAM_VALUES.includes(props[key])) continue;
