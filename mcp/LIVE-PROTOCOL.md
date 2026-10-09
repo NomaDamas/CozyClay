@@ -148,7 +148,7 @@ scene document already uses.
 | `capture_frame` | `{}` | `{ width: 640, height: 360, mimeType: "image/png", encoding: "base64", byteSize, data, assertions: { renderable, blackFrame, nonBlackPixels, behindCameraPlane, fartherAlongCameraForward, distanceToFloor, occludedBy, visiblePixelCount, characters } }` | leaves the authored document untouched, but is classified open-world/non-idempotent because an oversized PNG creates a mode-0600 managed temporary artifact. Character visibility and occlusion are computed from mounted engine geometry with bounded ray samples. Missing camera, black frame and compressed payloads above 1 MB fail explicitly. Inline responses honor `max_inline_bytes`; managed artifacts are capped at 20 and expire after 10 minutes. |
 | `capture_framing_png` | `{}` | `{ dataUrl, width: 1920, height: 1080, frame, shotId }` | full-resolution PNG (data URL) of the CURRENT shot camera framing at the current timeline frame, rendered through the same park-and-restore shot pipeline the editor's own exports use; `width`/`height` follow the shot aspect preset (1920x1080 at 16:9) and `shotId` names the shot under the playhead. The viewport and the authored document are untouched (idempotent read), and the editor's 640x360 `capture_frame` contract is unchanged. Fails while no shot camera is mounted (e.g. a cast model is still downloading). |
 | `set_camera` | `{ x?, y?, z?, focalMm?, lookAtX?, lookAtY?, lookAtZ? }` | `{ camera }` | omitted fields keep their value; the **viewport must visibly move**. The `lookAt*` triple is additive to v1 and must arrive complete or not at all: given it, the editor aims the shot camera at that world point and records the resulting orientation as the camera's own (so the framing it commits is the one it just applied); without it the orientation is untouched, so an editor that ignores the fields degrades to the pre-aim behaviour instead of failing. `frame_shot` always sends the framing pivot, because the shot vocabulary (`deriveShot`, `captureFraming`) measures the shot as if the lens points at that pivot — a placed-but-unaimed camera reports a framing it is not holding. |
-| `add_character` | `{ subject, x?, z?, rot?, model? }` | `{ id }` | `model` is one of the stable character model ids |
+| `add_character` | `{ subject, x?, z?, rot?, model?, posture? }` | `{ id }` | `model` is one of the stable character model ids, or `proxy-figure` for a rigless capsule figure; `posture` (`stand`, `sit`, `lie`; `stand` when omitted) applies to a capsule figure |
 | `update_character` | `{ ref, x?, y?, z?, rot?, subject?, hidden? }` | `{ id }` | `ref` = id, letter (`"A"`) or 1-based slot |
 | `remove_character` | `{ ref }` | `{ id }` | must refuse to empty the cast |
 | `place_object` | `{ kind, x?, z?, y?, rot?, name?, parent? }` | `{ id }` | `kind` from OBJECT_LIBRARY; optional `name` labels the object and optional `parent` attaches it under another object |
@@ -161,6 +161,27 @@ scene document already uses.
 | `set_prompt_blocks` | `{ blocks: [{ startFrame, endFrame, text }] }` | `{ blocks }` | replace the active character's authored prompt clips after validating each frame range and text |
 | `load_motion` | `{ url, prompt?, blocks?, drop? }` | `{ loaded, url, blocks }` | install an ARDY motion on the selected character. It has the dedicated 30-second editor-processing timeout; motion-job completion carries the character id captured when generation started |
 | `load_scenes` | `{ document }` | `{ sceneName, activeSceneId, scenes: [{ id, name }] }` | replace the whole scene document (same shape `serializeSceneDocument` emits); the response attests the full scene list and active scene for `add_scene` and `switch_scene` parity |
+
+### Previs mode and character kind in the Studio context
+
+`inspect_studio` returns the `studio-context-v1` context that every `run_action`
+is admitted against. Two parts of it describe what a project and its cast can do:
+
+| field | value | meaning |
+| --- | --- | --- |
+| `scene.previsMode` | `"storyboard"` \| `"animation"` | the project's previs mode; optional for older editors |
+| `capabilities.storyboard` | boolean | `true` exactly when `scene.previsMode` is `storyboard` |
+| `entities[].characterKind` | `"rig"` \| `"proxy"` | a rigged model, or a rigless capsule figure (`model: "proxy-figure"`) |
+| `entities[].posture` | `"stand"` \| `"sit"` \| `"lie"` | a capsule figure's posture; absent for a rig |
+
+Before an animation-only tool runs, the server reads these fields from the
+context it admits the command against (`mark_camera_move`, which sends no
+command, reads `previsMode` from `describe`). In a storyboard project `generate_motion`, `set_prompt_blocks`, `load_motion` and
+`mark_camera_move` answer `{ ok: false, code: "NOT_IN_MODE", reason }` and send
+no command; `generate_motion` and `load_motion` on a capsule figure answer
+`{ ok: false, code: "TARGET_NOT_READY", reason }` with the kind's reason. The
+editor's own motion, take, IK and pose commands refuse a capsule figure with
+`TARGET_NOT_READY` as well, so `studio_run` reaches the same answer.
 
 ## Hard rules for the editor side
 
