@@ -22,7 +22,10 @@ const entries = [
 	{ path: "character.scale", type: "number", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", min: 0.2, max: 3 },
 	{ path: "character.subject", type: "string", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry" },
 	{ path: "character.hidden", type: "boolean", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry" },
-	{ path: "character.model", type: "enum", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", enum: ["y-bot-tpose", "x-bot-tpose"] },
+	// The model and posture enums mirror scenes.js CHARACTER_KIND_IDS and
+	// POSTURES; they are literal because scenes.js imports this module.
+	{ path: "character.model", type: "enum", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", enum: ["y-bot-tpose", "x-bot-tpose", "proxy-figure"] },
+	{ path: "character.posture", type: "enum", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", enum: ["stand", "sit", "lie"] },
 	{ path: "character.tint", type: "color", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry" },
 	{ path: "character.identityImage", type: "image", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", note: "data:image only" },
 	{ path: "character.pose", type: "id", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry" },

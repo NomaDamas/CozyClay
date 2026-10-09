@@ -5,7 +5,7 @@
 // playground must never overwrite scenes they authored in the real studio.
 
 import { readProjectDocument } from "./project.js";
-import { SCENES_VERSION, migrateStageFrames } from "./scenes.js";
+import { migrateScenesDocument as migrateToCurrentScenes } from "./scenes.js";
 import { resolveSceneParam } from "./starter-scenes.js";
 
 export const PLAYGROUND_EMBED = "playground";
@@ -42,9 +42,7 @@ export async function fetchPlaygroundProject(url) {
 		const result = readProjectDocument(await response.text());
 		if (!result.ok) return null;
 		const source = result.project.scenesDocument;
-		const document = Number.isInteger(source.version) && source.version < SCENES_VERSION
-			? { ...source, version: SCENES_VERSION, scenes: source.scenes.map((scene) => ({ ...scene, stage: migrateStageFrames(scene.stage) })) }
-			: source;
+		const document = migrateToCurrentScenes(source);
 		return { name: result.project.name, document };
 	} catch {
 		return null;

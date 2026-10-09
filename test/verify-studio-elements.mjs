@@ -109,6 +109,7 @@ function makeCase(entry) {
 		if (field === "subject") input.subject = "authored-test";
 		if (field === "hidden") input.hidden = true;
 		if (field === "model") input.model = "x-bot-tpose";
+		if (field === "posture") input.posture = "sit";
 		if (field === "promptBlocks") input.layer.promptClips = [{ id: "prompt-authored", startFrame: 12, endFrame: 36, prompt: "Walk forward" }];
 		if (field === "waypoints") input.layer.waypoints = [{ id: "waypoint-authored", frame: 24, x: 1, z: 2, heading: null }];
 		if (field === "motionRef.url") input.motionRef.url = "https://example.test/authored.npz";
@@ -164,6 +165,7 @@ const expected = new Map([
 	["character.subject", "authored-test"],
 	["character.hidden", true],
 	["character.model", "x-bot-tpose"],
+	["character.posture", "sit"],
 	["character.promptBlocks", [{ id: "prompt-authored", startFrame: 12, endFrame: 36, prompt: "Walk forward" }]],
 	["character.waypoints", [{ id: "waypoint-authored", frame: 24, x: 1, z: 2, heading: null }]],
 	["character.motionRef.url", "https://example.test/authored.npz"],

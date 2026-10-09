@@ -32,7 +32,7 @@ const edges = [
 ];
 assert.deepEqual(connectedCharacterIds(edges, "scene-1"), ["char-a", "char-b"]);
 
-const storage = new Map([["cozyclay.scenes.v4", JSON.stringify({ version: 4, activeSceneId: "scene-2", scenes: [
+const storage = new Map([["cozyclay.scenes.v5", JSON.stringify({ version: 4, activeSceneId: "scene-2", scenes: [
 	{ id: "scene-1", name: "One", objects: [], stage: { characters: [{ id: "old" }] } },
 	{ id: "scene-2", name: "Two", objects: [], stage: { characters: [{ id: "char-a", subject: "Hero", model: "x-bot-tpose" }] } },
 ] })]]);
