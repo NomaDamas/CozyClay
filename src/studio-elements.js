@@ -22,6 +22,7 @@ const entries = [
 	{ path: "character.scale", type: "number", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", min: 0.2, max: 3 },
 	{ path: "character.subject", type: "string", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry" },
 	{ path: "character.hidden", type: "boolean", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry" },
+	{ path: "character.parent", type: "id", nullable: true, persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", note: "scene object id the character is grouped under and rides; null stands in the world" },
 	// The model and posture enums mirror scenes.js CHARACTER_KIND_IDS and
 	// POSTURES; they are literal because scenes.js imports this module.
 	{ path: "character.model", type: "enum", persisted: true, undoDomain: "cast", normalizer: "createCharacterEntry", enum: ["y-bot-tpose", "x-bot-tpose", "proxy-figure"] },

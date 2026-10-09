@@ -184,10 +184,11 @@ const panelSource = await readFile(new URL("../src/hierarchy-panel.jsx", import.
 // gate (G2) owns the behaviour; here we pin the wiring the App depends on.
 expect("row drags carry the private hierarchy MIME", panelSource.includes('export const HIERARCHY_DRAG_MIME = "application/x-cclay-hierarchy"'));
 expect("dragstart publishes the row id as a move", panelSource.includes("event.dataTransfer.setData(HIERARCHY_DRAG_MIME, node.id)") && panelSource.includes('event.dataTransfer.effectAllowed = "move"'));
-expect("only object rows are draggable, and never mid-rename", panelSource.includes('const draggableRow = node.kind === "object" && !editing'));
+expect("object and character rows are draggable, and never mid-rename", panelSource.includes('const draggableRow = (node.kind === "object" || node.kind === "character") && !editing'));
 expect("the panel accepts a reparent prop", panelSource.includes("reparent = null,") && panelSource.includes("reparent={reparent}"));
 expect("canDrop gates both the highlight and the drop", panelSource.includes("reparent.canDrop?.(dragSourceId, node.id)") && panelSource.includes("!reparent?.canDrop?.(source, node.id)) return;"));
-expect("the drop calls back exactly once per drop", (panelSource.match(/reparent\.onDrop\?\.\(/g) ?? []).length === 1);
+expect("the drop calls back exactly once per drop", (panelSource.match(/reparent\.onDrop\?\.\(source, node\.id\)/g) ?? []).length === 1);
+expect("Remove from group goes through the same policy as a drop on the scene root", panelSource.includes("if (reparent?.canDrop?.(hierarchyId, SCENE_ROOT_ID)) reparent.onDrop?.(hierarchyId, SCENE_ROOT_ID);"));
 expect("row drops reuse the existing data-drop styling", panelSource.includes('data-drop={drop || rowDropTarget ? (dropOver || rowDropOver ? "over" : "target") : undefined}'));
 expect("the dragged row id survives Chrome's blank dragover payload", panelSource.includes("const [dragSourceId, setDragSourceId] = useState(null)") && panelSource.includes("onDragSourceChange?.(node.id)"));
 expect("a Files drag keeps its original handlers", panelSource.includes("const dropEvents = rowDrag || drop || null") && panelSource.includes("if (!event.dataTransfer?.types?.includes?.(\"Files\")) return;"));

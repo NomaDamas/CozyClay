@@ -55,12 +55,37 @@ export function createObjectsDomain(appContext, initial) {
 	};
 	const read = () => documentStore.read("objects");
 	function write(update) {
-		return documentStore.write("objects", before => {
+		let moved = null;
+		const result = documentStore.write("objects", before => {
 			let next = typeof update === "function" ? update(before) : update;
 			for (const row of next.filter(row => row.remove === true)) next = removeSceneObject(next, row.id);
 			if (JSON.stringify(next) === JSON.stringify(before)) return before;
+			moved = { before, next };
 			return next;
 		});
+		if (moved) carryGroupedCharacters(moved.before, moved.next);
+		return result;
+	}
+	/** Characters grouped under an object ride it while authoring too: whatever
+	 * translation an object took in this write (its own move, or carried with
+	 * its group), the characters under it take the same. Joined to the open
+	 * action, so one undo puts back the object and the riders together. */
+	function carryGroupedCharacters(before, next) {
+		const cast = appContext.storeDomain("cast");
+		if (!cast) return;
+		const was = new Map(before.map(row => [row.id, row]));
+		const shifts = new Map();
+		for (const row of next) {
+			const prior = was.get(row.id);
+			if (!prior || row.attach || prior.attach) continue;
+			const shift = { x: row.x - prior.x, y: (row.y ?? 0) - (prior.y ?? 0), z: row.z - prior.z };
+			if (shift.x || shift.y || shift.z) shifts.set(row.id, shift);
+		}
+		if (!shifts.size || !cast.read().some(entry => shifts.has(entry.parent))) return;
+		appContext.recordAction("cast", () => cast.write(rows => rows.map(entry => {
+			const shift = shifts.get(entry.parent);
+			return shift ? { ...entry, x: entry.x + shift.x, y: Math.max(0, (entry.y ?? 0) + shift.y), z: entry.z + shift.z } : entry;
+		})), null, true);
 	}
 	const publish = () => { if (appContext.live.state) appContext.patchLive({ objects: read() }); };
 	const unsubscribe = documentStore.subscribe(publish);

@@ -108,6 +108,7 @@ function makeCase(entry) {
 		if (field === "scale") input.scale = 1.75;
 		if (field === "subject") input.subject = "authored-test";
 		if (field === "hidden") input.hidden = true;
+		if (field === "parent") input.parent = "car-object";
 		if (field === "model") input.model = "x-bot-tpose";
 		if (field === "posture") input.posture = "sit";
 		if (field === "promptBlocks") input.layer.promptClips = [{ id: "prompt-authored", startFrame: 12, endFrame: 36, prompt: "Walk forward" }];
@@ -164,6 +165,7 @@ const expected = new Map([
 	["character.scale", 1.75],
 	["character.subject", "authored-test"],
 	["character.hidden", true],
+	["character.parent", "car-object"],
 	["character.model", "x-bot-tpose"],
 	["character.posture", "sit"],
 	["character.promptBlocks", [{ id: "prompt-authored", startFrame: 12, endFrame: 36, prompt: "Walk forward" }]],

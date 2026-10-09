@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { objectTransformAt } from "./object-path.js";
-import { sceneObjectTravelMatrixAt } from "./object-travel.js";
+import { sceneObjectCarryMatrixAt, sceneObjectTravelMatrixAt } from "./object-travel.js";
 import * as THREE from "three";
 import { GIZMO_LAYER } from "./dualview.jsx";
 import { CUTOUT_KIND, MESH_KIND } from "./scene-objects.js";
@@ -618,4 +618,45 @@ export function SetProps({ objects = [], authoredObjects = null, selectedId = nu
 			))}
 		</group>
 	);
+}
+
+const carryMatrix = new THREE.Matrix4();
+
+/**
+ * A group that rides a scene object's travel: whatever is inside it (a
+ * character grouped under a car) is moved and turned with the object's route,
+ * on top of its own transform and animation. Placed imperatively from the
+ * frame ref for the same reason a routed prop is — the offscreen export
+ * advances frames without a re-render — and registered in `registryRef` so the
+ * recorder can place every carrier before it renders a frame.
+ *
+ * `objectsRef.current` holds the AUTHORED records by id; with no object, or an
+ * object that does not travel, the group stays at identity.
+ */
+export function ObjectCarrier({ objectId = null, objectsRef, frameRef = null, take = null, registryRef = null, children }) {
+	const groupRef = useRef(null);
+	const place = () => {
+		const group = groupRef.current;
+		if (!group) return;
+		const carried = objectId && objectsRef?.current
+			? sceneObjectCarryMatrixAt(objectsRef.current, objectId, frameRef?.current ?? 0, take ?? {}, carryMatrix)
+			: null;
+		if (carried) carried.decompose(group.position, group.quaternion, group.scale);
+		else {
+			group.position.set(0, 0, 0);
+			group.quaternion.identity();
+			group.scale.set(1, 1, 1);
+		}
+	};
+	useFrame(place);
+	const placeRef = useRef(place);
+	placeRef.current = place;
+	useEffect(() => {
+		if (!registryRef) return undefined;
+		const registry = registryRef.current;
+		const entry = () => placeRef.current();
+		registry.add(entry);
+		return () => { registry.delete(entry); };
+	}, [registryRef]);
+	return <group ref={groupRef}>{children}</group>;
 }

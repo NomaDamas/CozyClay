@@ -93,6 +93,22 @@ export function sceneObjectTravelMatrixAt(objects, id, frame, take = {}, out = n
 	return out.multiplyMatrices(scratchMotion, own ?? authoredMatrix(object, scratchAuthored));
 }
 
+const scratchCarry = new Matrix4();
+
+/**
+ * The rigid motion a record's travel hands to whatever rides it at `frame`:
+ * where it is drawn against where it was authored. Its own scale cancels out,
+ * so a rider keeps its size under a scaled chassis. Null when the record does
+ * not travel (nor anything above it), is missing, or is carried by a character.
+ */
+export function sceneObjectCarryMatrixAt(objects, id, frame, take = {}, out = new Matrix4()) {
+	const lookup = asLookup(objects);
+	const object = lookup.get(id);
+	if (!object || object.attach) return null;
+	if (!sceneObjectTravelMatrixAt(lookup, id, frame, take, out)) return null;
+	return out.multiply(authoredMatrix(object, scratchCarry).invert());
+}
+
 const wrapDegrees = (value) => {
 	const wrapped = ((((value + 180) % 360) + 360) % 360) - 180;
 	return wrapped === -180 ? 180 : wrapped;

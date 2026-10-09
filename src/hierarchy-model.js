@@ -147,6 +147,47 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 	// stale record cannot hide a group's children behind an attached row.
 	const listed = sceneObjects.filter((object) => !attachedIds.has(object.id));
 
+	// One row per cast member, built once: a character grouped under a listed
+	// object reads under that object's row (it rides the object), every other
+	// one stays in the cast. A parent that is missing or carried leaves the
+	// character in the cast, as an orphaned prop stays at the top of Props.
+	const listedIds = new Set(listed.map((object) => object.id));
+	const castRows = [];
+	const groupedCharacters = new Map(); // object id → character rows
+	if (Array.isArray(characters)) {
+		characters.forEach((entry, listIndex) => {
+			if (!entry) return;
+			const id = characterRowId(entry, listIndex);
+			// Every cast member carries its own rig subtree (#78) — ids are
+			// namespaced per row (#76) and IK state is per character (#77), so
+			// the tree no longer needs the primary-only gate. Carried props
+			// follow the rig so the body reads first and the luggage after it.
+			const children = [
+				...(entry.model === "proxy-figure" ? [] : [rigSubtree(id)]),
+				...(attachedRows.get(id) ?? []),
+			];
+			const parent = typeof entry.parent === "string" && listedIds.has(entry.parent) ? entry.parent : null;
+			const row = {
+				id,
+				label: `Character ${listIndex + 1}`,
+				kind: "character",
+				hidden: entry.hidden === true,
+				...(parent ? { grouped: true } : {}),
+				...(children.length ? { children } : {}),
+			};
+			if (!parent) castRows.push(row);
+			else if (groupedCharacters.has(parent)) groupedCharacters.get(parent).push(row);
+			else groupedCharacters.set(parent, [row]);
+		});
+	}
+	// An object row's children: the parts grouped under it, then the cast
+	// members riding it.
+	const withRiders = (row, objectId, nested) => {
+		const children = [...nested, ...(groupedCharacters.get(objectId) ?? [])];
+		if (children.length) row.children = children;
+		return row;
+	};
+
 	const clone = (node) => {
 		const next = { ...node };
 		if (node.id === "props") {
@@ -155,12 +196,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 			const childrenOf = (parentId) =>
 				listed
 					.filter((object) => (object.parent ?? null) === parentId)
-					.map((object) => {
-						const row = objectRow(object, object.name);
-						const nested = childrenOf(object.id);
-						if (nested.length) row.children = nested;
-						return row;
-					});
+					.map((object) => withRiders(objectRow(object, object.name), object.id, childrenOf(object.id)));
 			// An object whose parent is missing still has to appear somewhere, so
 			// anything unreachable from the top level is shown at the top level.
 			// An attached object is not a grouping parent, so its children are
@@ -169,12 +205,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 			const rooted = listed.filter(
 				(object) => (object.parent ?? null) === null || !ids.has(object.parent),
 			);
-			next.children = rooted.map((object) => {
-				const row = objectRow(object, object.name);
-				const nested = childrenOf(object.id);
-				if (nested.length) row.children = nested;
-				return row;
-			});
+			next.children = rooted.map((object) => withRiders(objectRow(object, object.name), object.id, childrenOf(object.id)));
 		} else if (node.children) {
 			next.children = node.children.map(clone);
 		}
@@ -186,29 +217,9 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 	// the inspector already route to; extras carry their character id.
 	if (Array.isArray(characters)) {
 		const group = nodes[0]?.children?.find((node) => node.id === "characters");
-		if (group) {
-			// Row ids follow the entry's LIST index so they match the viewport
-			// pickId (A/B/charId) stamped by the Character renderer in App.jsx.
-			group.children = characters.flatMap((entry, listIndex) => {
-				if (!entry) return [];
-				const id = characterRowId(entry, listIndex);
-				// Every cast member carries its own rig subtree (#78) — ids are
-				// namespaced per row (#76) and IK state is per character (#77), so
-				// the tree no longer needs the primary-only gate. Carried props
-				// follow the rig so the body reads first and the luggage after it.
-				const children = [
-					...(entry.model === "proxy-figure" ? [] : [rigSubtree(id)]),
-					...(attachedRows.get(id) ?? []),
-				];
-				return [{
-					id,
-					label: `Character ${listIndex + 1}`,
-					kind: "character",
-					hidden: entry.hidden === true,
-					...(children.length ? { children } : {}),
-				}];
-			});
-		}
+		// Row ids follow the entry's LIST index so they match the viewport
+		// pickId (A/B/charId) stamped by the Character renderer in App.jsx.
+		if (group) group.children = castRows;
 	}
 	return nodes;
 }
