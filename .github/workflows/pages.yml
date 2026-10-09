@@ -48,7 +48,7 @@ jobs:
           path: dist
 
   # Keep deployment protected by the same complete Node suite as pull
-  # requests, but run it on two runners so a main push is not serialized.
+  # requests, on the same four shards (#666), so a main push is not serialized.
   test-shard:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -56,7 +56,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -74,7 +74,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run build
-      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/2"
+      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/4"
         env:
           # The MorphGS truth comparison needs uv + torch; the runner has
           # neither, so only its structural checks run in hosted CI.
