@@ -46,7 +46,7 @@ export function createFixtureMotion({ frames = 48, fps = 24, hover = .08 } = {})
   }
   return { frames, fps, personScale: 1, rootPos, posedJoints, rotMats };
 }
-export async function startFixtureStudio({ port, evidence }) {
+export async function startFixtureStudio({ port, evidence, previsMode = "animation" }) {
   await released(port);
   const hub = await startLiveHub(Number(process.env.QA_LIVE_PORT || 0)); assert(hub, 'exclusive LiveHub required');
   const scratch = mkdtempSync(join(tmpdir(), 'studio-acceptance-'));
@@ -97,12 +97,20 @@ export async function startFixtureStudio({ port, evidence }) {
     const target = fixture.characters[0].id;
     if (controls.rateLimit) return fauxAssistantMessage([], { stopReason: 'error', errorMessage: 'Fixture rate limit: 429 Too Many Requests' });
     let call = null;
-    if (text.includes('Put a cube')) call = outputs === 0 ? { name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, position: { relativeTo: target, basis: 'shot_camera', side: 'left', gapM: 1, support: 'floor' } }] } } : outputs === 1 ? { name: 'arrange_characters', args: { ops: [{ op: 'create', name: 'Fixture second', position: { relativeTo: target, basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } }] } } : null;
+    if (text.includes('두 사람이 식탁에 앉아 있다')) {
+      call = outputs === 0 ? { name: 'run_action', args: { action: 'shot.createStill', args: { caption: '두 사람이 식탁에 앉아 있다' } } }
+        : outputs === 1 || outputs === 2 ? { name: 'run_action', args: { action: 'character.add', args: { character: { id: 'story-person-a', model: 'proxy-figure', posture: 'sit', x: -1, z: 0 } } } }
+        : outputs === 3 || outputs === 4 ? { name: 'run_action', args: { action: 'character.add', args: { character: { id: 'story-person-b', model: 'proxy-figure', posture: 'sit', x: 1, z: 0 } } } }
+        : outputs === 5 || outputs === 6 ? { name: 'frame_shot', args: { subjectIds: ['char-a'], framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } }
+        : outputs === 7 ? { name: 'verify_result', args: { targets: ['story-person-a', 'story-person-b'], checks: ['placement', 'framing'] } } : null;
+    } else if (text.includes('make them walk to the door')) {
+      call = null;
+    } else if (text.includes('Put a cube')) call = outputs === 0 ? { name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, position: { relativeTo: target, basis: 'shot_camera', side: 'left', gapM: 1, support: 'floor' } }] } } : outputs === 1 ? { name: 'arrange_characters', args: { ops: [{ op: 'create', name: 'Fixture second', position: { relativeTo: target, basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } }] } } : null;
     else if (text.includes('Frame the selected')) call = outputs === 0 ? { name: 'frame_shot', args: { subjectIds: [target], keyAtFrame: 0, framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } } : null;
     else if (text.includes('Undo the earlier')) call = outputs === 0 ? { name: 'undo_edit', args: { receiptId: controls.receiptId } } : null;
     else if (text.includes('Inspect')) call = outputs === 0 ? { name: 'inspect_studio', args: { scope: 'selection' } } : null;
     else call = outputs === 0 ? { name: 'generate_motion', args: { characterId: target, source: { kind: 'generate', beats: [{ text: 'walk forward' }, { text: 'wave' }, { text: 'return' }], durationSeconds: 2 } } } : null;
-    return fauxAssistantMessage(call ? [fauxToolCall(call.name, call.args, { id: crypto.randomUUID() })] : [fauxText('Fixture-only execution. Refer to the authoritative receipt; semantic motion and model vision are not verified.')]);
+    return fauxAssistantMessage(call ? [fauxToolCall(call.name, call.args, { id: crypto.randomUUID() })] : [fauxText(text.includes('make them walk to the door') ? 'Storyboard projects do not support motion generation.' : 'Fixture-only execution. Refer to the authoritative receipt; semantic motion and model vision are not verified.')]);
   }));
   let origin;
   const handler = createAgentHandler({ ...(realModel ? {} : { auth: { getAccessToken: async () => 'fixture-only' }, models: fakeModel.models, fauxProvider: fakeModel.fauxProvider }), liveHub: hub, port, getBridgeOrigin: () => origin });

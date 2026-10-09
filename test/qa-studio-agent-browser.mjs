@@ -11,7 +11,7 @@ import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 import { STUDIO_SYSTEM_PROMPT_STORYBOARD } from "../bin/agent/studio-prompt.mjs";
 assert.match(STUDIO_SYSTEM_PROMPT_STORYBOARD, /ONE panel/);
 assert.match(STUDIO_SYSTEM_PROMPT_STORYBOARD, /Never generate motion/);
-const cases = ['binding','intent','framing','motion','resilience','responsive'];
+const cases = ['binding','intent','framing','motion','resilience','responsive','storyboard-happy','storyboard-failure'];
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== '--case' || !cases.includes(args[1]))) { console.error(`Unknown case; expected ${cases.join(', ')}`); process.exit(2); }
 const selected = args.length ? [args[1]] : cases;
@@ -24,7 +24,8 @@ console.log(`MODE ${process.env.QA_REAL_MODEL === '1' ? 'real-model-fixture-gene
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || 'playwright-core');
 const port = Number(process.env.QA_PORT || 5276), cdp = Number(process.env.CDP_PORT || 9476);
 await released(cdp);
-const fixture = await startFixtureStudio({ port, evidence });
+const previsMode = process.env.QA_PREVIS_MODE || "animation";
+const fixture = await startFixtureStudio({ port, evidence, previsMode });
 let browser, page;
 const log = [], results = [];
 const save = (name, value) => writeFileSync(`${evidence}/${name}.json`, JSON.stringify(value, null, 2));
@@ -54,6 +55,12 @@ async function gate(predicate, trigger = async () => {}) {
   await trigger(); await page.evaluate(() => window.__qaGate);
 }
 async function open() {
+  if (await page.locator('.v2-start-screen').count()) {
+    if (previsMode === 'storyboard') await page.locator('[data-testid="start-previs-mode"] [data-previs-mode="storyboard"]').click();
+    await page.getByTestId('start-project-name').fill(`QA ${previsMode}`);
+    await page.getByTestId('start-create').click();
+    await gate("!document.querySelector('.v2-start-screen')");
+  }
   if (await page.locator('.studio-agent-inspector').getAttribute('hidden') !== null) {
     await page.locator('.view-menu-trigger').click();
     await gate("!document.querySelector('.studio-agent-inspector').hidden", () => page.locator('.view-menu .agent-panel-toggle').click());
@@ -101,6 +108,31 @@ async function installed(result) {
   const receipt = result.stream.find(e => e.type === 'receipt')?.receipt; assert(receipt, JSON.stringify(outcome)); return receipt;
 }
 const implementations = {
+  async 'storyboard-happy'() {
+    await open();
+    const before = await state();
+    const result = await turn('두 사람이 식탁에 앉아 있다');
+    assert(result.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'shot.createStill'));
+    assert.equal(result.commands.filter(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'character.add').length, 2);
+    assert(result.commands.some(e => e.name === 'frame_shot' && e.result?.ok));
+    const after = await state();
+    assert.equal(after.shots.length, before.shots.length + 1);
+    assert(after.shots.at(-1).caption.includes('두 사람이 식탁에 앉아 있다'));
+    assert.equal(after.characters.length, before.characters.length + 2);
+    await undo(before, result.commands.filter(e => e.result?.ok && e.result?.authored).length);
+    assert.deepEqual(await state(), before);
+    console.log('PASS storyboard project: one new Board card with caption and two placed characters; Ctrl+Z removes the whole panel');
+  },
+  async 'storyboard-failure'() {
+    await open();
+    const before = await state();
+    const result = await turn('make them walk to the door');
+    const text = result.stream.filter(e => e.type === 'text.delta').map(e => e.text).join('');
+    assert.match(text, /Storyboard/);
+    assert.equal(result.commands.filter(e => e.name.includes('motion') || e.name === 'generate_motion').length, 0);
+    assert.deepEqual(await state(), before);
+    console.log('PASS storyboard failure: reply contains Storyboard and no job starts');
+  },
   async binding() {
     await open(); await page.getByLabel('Message the agent', { exact: true }).fill('retained draft'); await shot('binding-desktop');
     await page.evaluate(() => document.activeElement.blur());
@@ -277,14 +309,14 @@ try {
     if (['motion','responsive'].includes(name)) document.scenes[0].stage.characters[0].motionRef = {url:fixture.origin+'/ardy/motions/123455-abcdef',prompt:'Fixture baseline',rotationDeg:0,anchorX:0,anchorZ:0};
     await page.addInitScript(({ document, scenesKey }) => {
       localStorage.setItem(scenesKey,JSON.stringify(document));
-      localStorage.setItem('cozyclay.locale','en'); localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'QA',updatedAt:1}));
+      localStorage.setItem('cozyclay.locale','en'); localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'QA',previsMode,updatedAt:1}));
       let history; Object.defineProperty(window,'__sceneHistory',{configurable:true,get:()=>history,set:value=>{history=value;window.dispatchEvent(new Event('qa:render'));}});
-    }, { document, scenesKey: SCENES_STORAGE_KEY });
+    }, { document, scenesKey: SCENES_STORAGE_KEY, previsMode });
     try {
-      await page.goto(`http://127.0.0.1:${port}/app/`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
+      await page.goto(`http://127.0.0.1:${port}/app/?previs=1`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
       if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }
-      const c = await fixture.context(); assert.equal(c.capabilities.tools.length,9);
-      await fixture.command('set_camera',{x:0,y:1.6,z:5,lookAtX:0,lookAtY:1,lookAtZ:0,focalMm:35},c.host.workspaceHandle);
+      const c = await fixture.context(); assert.equal(c.capabilities.tools.length, previsMode === 'storyboard' ? 3 : 9);
+      if (previsMode !== 'storyboard') await fixture.command('set_camera',{x:0,y:1.6,z:5,lookAtX:0,lookAtY:1,lookAtZ:0,focalMm:35},c.host.workspaceHandle);
       await implementations[name](); results.push({name,status:'PASS'}); console.log(`PASS CASE ${name}`);
     } catch (error) { results.push({name,status:'FAIL',error:error.stack}); console.error(`FAIL CASE ${name}`,error); await shot(`${name}-failure`); }
     finally { save('actions',log); save('results',results); await context.close(); }
