@@ -198,6 +198,14 @@ function registerTests() {
 		const { STUDIO_SYSTEM_PROMPT } = await import("../bin/agent/studio-prompt.mjs");
 		for (const rule of [/motion\.generate or character\.setPromptBlocks/, /in English/, /starts with "A person"/, /not "Then the person stops"/, /Keep one whole movement inside one beat/, /leave out camera, scenery and story/]) assert.match(STUDIO_SYSTEM_PROMPT, rule);
 	});
+	test("D3 storyboard framing accepts a still shot id and optional caption", () => {
+		const command = protocol.validateStudioCommand({ name: "frame_shot", args: {
+			subjectIds: ["char-alex"], shotId: "still-1", caption: "Two people at a table",
+			framing: { intent: { size: "medium shot", view: "front", level: "eye", side: "right" } },
+		} });
+		assert.equal(command.args.shotId, "still-1");
+		assert.equal(command.args.caption, "Two people at a table");
+	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
 		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 3);
 		assert.ok(protocol.STUDIO_TOOL_ALIASES.includes("patch_elements"));

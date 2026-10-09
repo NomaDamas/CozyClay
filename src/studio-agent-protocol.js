@@ -194,7 +194,7 @@ const toolSchemas = {
 	arrange_objects: object({ ops: array(objectOp, 100, 1) }, { collisionPolicy: { ...choices(STUDIO_VARIANTS.collisionPolicies), default: "report" } }),
 	arrange_characters: object({ ops: array(characterOp, 8, 1) }),
 	patch_elements: object({ ops: array(patchOp, 32, 1) }),
-	frame_shot: object({ subjectIds: ids(1), framing }, { shotId: id, keyAtFrame: integer() }),
+	frame_shot: object({ subjectIds: ids(1), framing }, { shotId: id, caption: { type: "string", maxLength: 500 }, keyAtFrame: integer() }),
 	generate_motion: object({ characterId: id, source }, { repair: { ...choices(["bounded", "none"]), default: "bounded" } }),
 	verify_result: object({ checks: array(choices(["placement", "framing", "motion"]), 3, 1, true) }, { receiptId: id, targets: ids(), range: union(literal("whole_clip"), range), visual: { ...choices(["none", "frame", "contact_sheet"]), default: "none" } }),
 	undo_edit: object({ receiptId: id }),

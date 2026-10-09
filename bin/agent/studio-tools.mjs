@@ -9,7 +9,7 @@ const schema = name => ({ type: "function", name, description: `Studio ${name.re
 export const studioToolSchemas = () => STUDIO_TOOLS.map(schema);
 const text = value => typeof value === "string" ? value : JSON.stringify(value);
 
-export function createStudioTools({ liveHub, workspaceHandle, session, resolveImage } = {}) {
+export function createStudioTools({ liveHub, workspaceHandle, session, resolveImage, previsMode } = {}) {
   if (!liveHub?.command || !workspaceHandle) throw new StudioProtocolError("LIVE_HUB_UNAVAILABLE", "An exact Studio workspace is required.");
   const mutationNames = STUDIO_MUTATION_TOOLS;
   // The turn's command index (the context's actionIndex, from the editor's own
@@ -75,7 +75,8 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
     }
     return result;
   };
-  const tools = STUDIO_TOOLS.map(name => ({ ...schema(name), handler: args => invoke(name, args) }));
+	const availableTools = previsMode === "storyboard" ? STUDIO_TOOLS.filter(name => name !== "generate_motion") : STUDIO_TOOLS;
+	const tools = availableTools.map(name => ({ ...schema(name), handler: args => invoke(name, args) }));
   tools.resolveImage = async (imageId, correlation = {}) => {
     if (typeof resolveImage !== "function") return { visualStatus: "unavailable", reason: "image resolver unavailable" };
     try {
