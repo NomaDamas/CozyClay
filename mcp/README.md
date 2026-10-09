@@ -35,7 +35,7 @@ Then point a client at it. For Claude Desktop, in `claude_desktop_config.json`:
 }
 ```
 
-Restart the client; 26 tools appear.
+Restart the client; 28 tools appear.
 
 Prefer a long-lived endpoint? `node server.mjs --http 5183` serves Streamable HTTP at
 `http://127.0.0.1:5183/mcp` (one isolated session per client), with a plain status page at `/`.
@@ -68,7 +68,7 @@ generated frame matches the blocking instead of drifting off into a generic shot
 | `capture_frame` | a compressed live render with camera-plane, visibility and occlusion assertions |
 | `set_camera` | move the lens / change focal length directly |
 | `frame_shot` | frame by intent — size, view, level, side |
-| `add_character` / `place_character` / `remove_character` | the cast (`add_character { model: "proxy-figure", posture }` adds a rigless capsule figure) |
+| `add_character` / `place_character` / `remove_character` | the cast (`add_character { model: "proxy-figure", posture: "stand" \| "sit" \| "lie" }` adds a rigless capsule figure) |
 | `focus_character` | choose who the camera frames |
 | `place_object` / `update_object` / `remove_object` | the set — `place_object` also accepts `name` and `parent`, so multi-part assets like "Building A" land as one named assembly |
 | `import_mesh` | load a local GLB, OBJ or FBX from a filesystem path as a mesh prop (live editor required); optional floor position, yaw, standing height, clay |
@@ -130,6 +130,39 @@ It tiles them into contiguous ARDY segments, streams the generation through the 
 result onto the active character with prompt blocks on the timeline. Beats longer than the
 per-block limit are split into consecutive blocks, so one phase can produce multiple blocks.
 Pass a previous `motion_url` to reload a clip without generating again.
+
+## Storyboard projects and capsule figures
+
+The tool list is fixed when the server starts, so it is the same 28 tools in every project. A
+tool that does not apply to the project or to its target answers a structured refusal instead
+of acting; nothing is sent to the editor and nothing changes. The refusal is the tool's only
+text content, with `isError: true`:
+
+```json
+{ "ok": false, "code": "NOT_IN_MODE", "reason": "This project is a Storyboard - generate_motion is available in Animation projects." }
+```
+
+| code | when | tools |
+| --- | --- | --- |
+| `NOT_IN_MODE` | the project's `previsMode` is `storyboard` | `generate_motion`, `set_prompt_blocks`, `load_motion`, `mark_camera_move` |
+| `TARGET_NOT_READY` | the target character is a capsule figure (`model: "proxy-figure"`) | `generate_motion` (the editor's active character), `load_motion` (its `character`, else the active one) |
+
+`describe_scene` reports `previsMode: storyboard` or `previsMode: animation` (the connected
+editor's project; `open_project` sets it without one) and marks each cast member
+`kind: rig` or `kind: proxy`, with a capsule figure's `posture`.
+
+A **storyboard project** is a sequence of still shots: one picture per panel, held for a
+number of frames, with a caption. Block it with the camera, cast and set tools, and run the
+still-shot commands (`shot.createStill`, `shot.setCaption`, `shot.setHold`, ...) through
+`studio_run`. Motion, prompt blocks and named camera moves belong to Animation projects.
+
+A **capsule figure** is a rigless stand-in for blocking: `add_character { subject, model:
+"proxy-figure", posture: "sit" }`. It places, turns and frames like any cast member and holds a
+posture (`stand`, `sit` or `lie`), but it has no skeleton, so motion and takes are refused with
+`TARGET_NOT_READY` and the kind's reason, for example `Capsule figures have no rig - Motion
+generation works on rigged characters only.` The editor refuses its own IK, pose, physics,
+collision and line-edit commands on a capsule figure with the same code when they arrive
+through `studio_run`. Use a rigged model for anything that moves a body.
 
 ## Round-trips with the studio
 

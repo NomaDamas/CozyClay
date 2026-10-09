@@ -388,6 +388,24 @@ cclay live patch --target stage --set '{"keyLight.intensity":2.4,"keyLight.warmt
 That one receipt is one Cmd+Z in the editor: `undo --receipt receipt-mu9p1c2-7`
 and the key light goes back exactly where it was.
 
+A registry tool that does not apply to the project or to its target answers a
+structured refusal instead of acting: `NOT_IN_MODE` for an animation-only tool
+in a Storyboard project, `TARGET_NOT_READY` for motion or a take on a capsule
+figure (`model: "proxy-figure"`). Branch on `code`; `reason` is the sentence to
+show. Here a capsule figure is cast, selected, and asked to move:
+
+```sh
+cclay live tool add_character --args '{"subject":"a stand-in","model":"proxy-figure","posture":"sit","x":1.2,"z":0.5}'
+cclay live operate --select character:character-mv17e47z-3
+cclay live tool generate_motion --args '{"phases":["A person walks forward."]}'
+```
+```json
+{"content":[{"type":"text","text":"{\"ok\":false,\"code\":\"TARGET_NOT_READY\",\"reason\":\"Capsule figures have no rig - Motion generation works on rigged characters only.\"}"}],"isError":true}
+```
+
+Nothing reached the editor. Select a rigged character and the same call goes to
+the editor's own motion readiness checks.
+
 The op JSON for `arrange-*` is one operation, an array of them, or
 `{"ops":[…], "collisionPolicy":"report"|"avoid"}`. Placement is `world`
 coordinates or `relativeTo` an entity with `basis` (`world` / `subject` /

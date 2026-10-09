@@ -67,6 +67,7 @@ import {
 } from "../src/scene-objects.js";
 import { classifyMove, captureFraming, moveSlate } from "../src/camera-move.js";
 import { DEFAULT_PREVIS_MODE, PREVIS_MODES, createProjectDocument, readProjectDocument } from "../src/project.js";
+import { kindRefusal } from "../src/character-kind.js";
 
 /* ------------------------------- state ---------------------------------- */
 
@@ -205,6 +206,27 @@ const studioResult = (...receipts) => ({
 	...(receipts.some(receipt => receipt.ok === false) ? { isError: true } : {}),
 });
 const runStudioCommand = async options => studioResult(await executeStudioCommand(options));
+
+// The tool list is fixed when the server starts, so a tool the project's mode
+// or the target's kind cannot run answers a structured refusal instead of acting.
+const refusal = (code, reason) => ({ content: [{ type: "text", text: JSON.stringify({ ok: false, code, reason }) }], isError: true });
+
+/** NOT_IN_MODE in a storyboard project; TARGET_NOT_READY when `feature` is given
+ * and the target (`characterId`, else the active character) is a capsule figure.
+ * Null when the tool may run. `context` is the connected editor's Studio context;
+ * without one the in-memory project answers. */
+const previsRefusal = (toolName, { feature, context, characterId } = {}) => {
+	if ((context ? context.scene?.previsMode : state.previsMode) === "storyboard") {
+		return refusal("NOT_IN_MODE", `This project is a Storyboard - ${toolName} is available in Animation projects.`);
+	}
+	if (!feature) return null;
+	const proxy = context
+		? context.entities?.find((entity) => entity.id === (characterId ?? context.activeCharacterId))?.characterKind === "proxy"
+		: isProxyFigure(findCharacter(characterId ?? state.focus));
+	return proxy ? refusal("TARGET_NOT_READY", kindRefusal(feature)) : null;
+};
+/** The Studio context and one command's declaration, as executeStudioCommand admits it. */
+const inspectAction = (action) => liveHub.command("inspect_studio", { scope: "actions", ids: [action] }, liveWorkspace.getStore());
 
 const scene = () => activeScene(state.doc.scenes, state.doc.activeSceneId);
 const stage = () => scene().stage;
@@ -866,7 +888,9 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				title: "Add a character to the cast",
 				description:
 					"Unlike place_character, add_character adds a new cast member instead of changing an existing one. " +
-					"The cast is unbounded — each one gets its own letter (A, B, C…), position and prompt description.",
+					"The cast is unbounded — each one gets its own letter (A, B, C…), position and prompt description. " +
+					'model "proxy-figure" adds a capsule figure: a rigless stand-in for blocking that holds a posture (stand, sit or lie) ' +
+					"and refuses motion, takes, IK and posing with TARGET_NOT_READY.",
 				inputSchema: {
 					subject: z.string().describe('prompt description, e.g. "a courier holding a package"'),
 					x: z.number().default(0).describe("floor position x in metres"),
@@ -879,7 +903,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 					posture: z
 						.enum(POSTURES)
 						.optional()
-						.describe("body posture, stand when omitted"),
+						.describe("capsule figure posture (stand, sit or lie); stand when omitted"),
 				},
 			},
 			async ({ subject: desc, x, z: zPos, facing, model, posture, ...admission }) => {
@@ -1179,7 +1203,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 			},
 			async ({ beats, ...admission }) => {
 				if (!liveHub?.connected) {
-					return text("Prompt Blocks live on the studio timeline — open the editor and try again.");
+					return previsRefusal("set_prompt_blocks") ?? text("Prompt Blocks live on the studio timeline — open the editor and try again.");
 				}
 				const normalized = normalizePhases(beats.map((b) => b.text));
 				// The timeline runs on a 24 fps production clock.
@@ -1196,7 +1220,9 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 					}
 				}
 				try {
-					return await runStudioCommand({ ...admission, action: "character.setPromptBlocks", args: context => ({
+					const inspected = await inspectAction("character.setPromptBlocks");
+					return previsRefusal("set_prompt_blocks", { context: inspected?.context }) ??
+						await runStudioCommand({ ...admission, inspected, action: "character.setPromptBlocks", args: context => ({
 						characterId: context.activeCharacterId, blocks,
 					}) });
 				} catch (error) {
@@ -1223,8 +1249,12 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				if (!motionUrlPattern.test(args.url)) {
 					throw new Error(`Unsupported motion url "${args.url}". Use /ardy/motions/<id> or /ardy/assembled/<name>.npz.`);
 				}
-				return runStudioCommand({ ...args, action: 'motion.replace', args: async context => ({
-					characterId: args.character === undefined ? context.activeCharacterId : await liveCharacterId(args.character),
+				const inspected = liveHub?.connected ? await inspectAction('motion.replace') : undefined;
+				const characterId = args.character === undefined ? inspected?.context?.activeCharacterId : await liveCharacterId(args.character);
+				const refused = previsRefusal("load_motion", { feature: "take", context: inspected?.context, characterId });
+				if (refused) return refused;
+				return runStudioCommand({ ...args, inspected, action: 'motion.replace', args: context => ({
+					characterId: args.character === undefined ? context.activeCharacterId : characterId,
 					url: args.url, prompt: args.prompt ?? '',
 				}) });
 			},
@@ -1284,10 +1314,13 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				},
 			},
 			async ({ phases, seconds = 9, seed, motion_url, drop, ...admission }) => {
-				if (!liveHub?.connected) return text(noLiveEditor("Motion requires a connected CozyClay editor."));
+				if (!liveHub?.connected) return previsRefusal("generate_motion", { feature: "motion" }) ?? text(noLiveEditor("Motion requires a connected CozyClay editor."));
 				const normalized = normalizePhases(phases.map(phase => typeof phase === 'string' ? phase : phase.text));
 				const beats = normalized.texts.map((text, index) => ({ text, seconds: phases[normalized.sources[index]]?.seconds ?? seconds / phases.length })).filter(beat => beat.text);
-				return runStudioCommand({ ...admission, action: motion_url ? 'motion.replace' : 'motion.generate', args: context => {
+				const action = motion_url ? 'motion.replace' : 'motion.generate', inspected = await inspectAction(action);
+				const refused = previsRefusal("generate_motion", { feature: "motion", context: inspected?.context });
+				if (refused) return refused;
+				return runStudioCommand({ ...admission, inspected, action, args: context => {
 					const generated = generationArgs({ characterId: context.activeCharacterId, source: { kind: 'generate', beats, ...(seed === undefined ? {} : { seed }) } });
 					return motion_url ? { characterId: generated.characterId, url: motion_url, prompt: beats.map(beat => beat.text).join(' '),
 						blocks: generated.blocks.map(({ startFrame, endFrame, text: prompt }) => ({ startFrame, endFrame, prompt })), ...(drop ? { drop } : {}) }
@@ -1534,6 +1567,9 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				} catch (error) {
 					return liveError(error);
 				}
+				// describe carries the editor's previsMode into state.
+				const refused = previsRefusal("mark_camera_move");
+				if (refused) return refused;
 				state.markedFraming = framing();
 				return text(`Marked A position: ${slateLine(currentShot())}\n\nNow move the camera, then call describe_camera_move.`);
 			},
