@@ -273,6 +273,7 @@ const NODE_FILES = [
 	"mcp/verify.mjs",
 	"mcp/verify-http-origin.mjs",
 	"mcp/verify-live.mjs",
+	"mcp/verify-live-proxy-frame.mjs",
 	"mcp/verify-live-motion-job.mjs",
 	"mcp/verify-live-p0.mjs",
 	"mcp/verify-live-port.mjs",
