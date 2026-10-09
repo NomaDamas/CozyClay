@@ -544,6 +544,8 @@ export default function App() {
 	const [tutorialSeedPending, setTutorialSeedPending] = useState(false);
 	useEffect(() => {
 		if (!cameraTutorialQuery || cameraTutorialStarted.current) return;
+		// Storyboard projects never auto-open the seven-step camera tutorial.
+		if (scenesDomain.previsMode === "storyboard") return;
 		cameraTutorialStarted.current = true;
 		void startCameraTutorialRef.current?.({ source: cameraTutorialEntry });
 	}, [cameraTutorialQuery, cameraTutorialEntry]);
@@ -558,6 +560,7 @@ export default function App() {
 				setCameraTutorialHandoff(null);
 				return;
 			}
+			if (scenesDomain.previsMode === "storyboard") return;
 			void startCameraTutorialRef.current?.({ source: event.detail?.source ?? "settings" });
 		};
 		window.addEventListener("cozyclay:camera-tutorial", onTutorial);
@@ -7160,6 +7163,7 @@ export default function App() {
 							key={cameraTutorialAttempt}
 							analytics={cameraTutorialAnalytics.current}
 							previewing={lookThroughShot}
+							previsMode={scenesDomain.previsMode}
 							shotCount={shots.length}
 							railReady={shots.some((shot) => Array.isArray(shot.camera?.cameraRail) && shot.camera.cameraRail.length >= 2)}
 							onStepChange={setCameraTutorialStep}
@@ -7891,7 +7895,7 @@ export default function App() {
 					else newProject(name);
 				}}
 			/>
-			<FirstSuccessGuide open={firstSuccessGuideOpen} onDismiss={() => setFirstSuccessGuideOpen(false)} />
+			<FirstSuccessGuide open={firstSuccessGuideOpen} previsMode={scenesDomain.previsMode} onDismiss={() => setFirstSuccessGuideOpen(false)} />
 			<UseCaseQuestion
 				open={useCaseAskOpen}
 				isKo={isKo}
