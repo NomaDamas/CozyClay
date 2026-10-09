@@ -54,6 +54,7 @@ import {
 	resolveStudioToast,
 } from "./studio-actions.js";
 import { createStudioAppActions } from "./commands/index.js";
+import { STORYBOARD_MOTION_REFUSAL } from "./commands/view.js";
 
 import { createStudioAppBinding } from "./studio-app-binding.js";
 import { AppContext, createAppContext } from "./app-context.js";
@@ -1440,6 +1441,11 @@ export default function App() {
 			setToast(poseRefusal);
 			return;
 		}
+		// A storyboard is stills: there is no Motion department to open.
+		if (next === "motion" && storyboardProject) {
+			setToast(ko(STORYBOARD_MOTION_REFUSAL.en, STORYBOARD_MOTION_REFUSAL.ko));
+			return;
+		}
 		setWorkflowMode(next);
 		// Picking a department leaves the chrome-free player. Shot-look is
 		// camera work, so it only yields when the operator leaves Camera.
@@ -1468,7 +1474,7 @@ export default function App() {
 	// ...and whatever else ends IK (a take starting playback, the rig going
 	// away) hands the operator back to Motion instead of a dead Pose mode.
 	useEffect(() => {
-		if (!ikMode && workflowMode === "pose") setWorkflowMode("motion");
+		if (!ikMode && workflowMode === "pose") setWorkflowMode(storyboardProject ? "scene" : "motion");
 	}, [ikMode]);
 
 	const toggleHierarchyHidden = (hierarchyId) => {
@@ -1610,6 +1616,12 @@ export default function App() {
 		renameSceneDocumentFromUi, deleteSceneDocumentFromUi, switchSceneDocument, addSceneDocument,
 		duplicateSceneDocument, renameSceneDocument, deleteSceneDocument,
 	} = scenesDomain;
+	// A storyboard project has no Motion department: a project opened while
+	// Motion was up lands on Stage instead.
+	const storyboardProject = scenesDomain.previsMode === "storyboard";
+	useEffect(() => {
+		if (storyboardProject && workflowMode === "motion") setWorkflowMode("scene");
+	}, [storyboardProject, workflowMode]);
 
 	const saveBlockedRef = useRef(startup.saveBlocked);
 	const dirtyRef = useRef(false);
@@ -1854,6 +1866,8 @@ export default function App() {
 			// there is no rig to solve. The embedded player has no modes to pick.
 			const modeKey = { Digit1: "scene", Digit2: "pose", Digit3: "camera", Digit4: "motion" }[event.code];
 			if (modeKey && !embedMode && !event.ctrlKey && !event.metaKey && !event.altKey) {
+				// A storyboard has no key 4: it does nothing, not even a refusal.
+				if (modeKey === "motion" && storyboardProject) return;
 				event.preventDefault();
 				if (modeKey !== workflowMode) selectWorkflowMode(modeKey);
 				return;
@@ -1975,6 +1989,13 @@ export default function App() {
 	// Object travel-path drawing: the same Top-View stroke gesture as the rail,
 	// aimed at the selected object instead of the shot camera.
 	const [pathDraw, setPathDraw] = useState(false);
+	// Root-path (waypoint) authoring and Top-View path drawing are motion
+	// tooling; a storyboard never leaves either switched on.
+	useEffect(() => {
+		if (!storyboardProject) return;
+		if (waypointMode) setWaypointMode(false);
+		if (pathDraw) setPathDraw(false);
+	}, [storyboardProject, waypointMode, pathDraw]);
 	const [pathPointIndex, setPathPointIndex] = useState(null);
 	const pathDragTokenRef = useRef(null);
 	const planPathTokenRef = useRef(null);
@@ -6949,7 +6970,8 @@ export default function App() {
 		activeShotIdx, railDraw, pathDraw, setPathDraw, setRailDraw,
 		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe,
 		setBodyContact, setFootSnap, advanceFrame, stepFrame, cameraPreviewEndRef,
-		manualCameraOverrideRef, setTlPlaying, toggleWaypointMode, setWaypointMode, selectActiveCharacterInHierarchy,
+		manualCameraOverrideRef, setTlPlaying, setWaypointMode, selectActiveCharacterInHierarchy,
+		toggleWaypointMode: storyboardProject ? undefined : toggleWaypointMode,
 		setActiveWaypointId, setPendingWaypointFrame, removeWaypoint, queueRootWaypointFrame, revealPromptBlocks,
 		resizePromptClip, movePromptClip, removePromptClip, setSelectedHierarchyId, addCameraKeyframe,
 		moveCameraKeyframe, removeCameraKeyframe, syncActiveCameraFraming, activeCamera, activeShotDuration,
@@ -6971,7 +6993,7 @@ export default function App() {
 	return (
 		<AppContext.Provider value={appContext}>
 		<StudioShellContext.Provider value={shellContext}>
-		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined} data-shot-look={lookThroughShot && !embedMode ? 1 : undefined} data-plan-draw={railDraw || pathDraw || waypointMode ? 1 : undefined}
+		<StudioShell className={"app" + (renderActive ? "" : " render-idle")} style={workspaceStyle} data-workflow-mode={workflowMode} data-previs-mode={scenesDomain.previsMode} data-embed-mode={embedMode ? "playview" : playgroundMode ? "playground" : undefined} data-playground-hint={playgroundMode ? playgroundHint ?? undefined : undefined} data-tutorial-step={cameraTutorial ? cameraTutorialStep ?? undefined : undefined} data-rail-draw={railDraw ? 1 : undefined} data-shot-look={lookThroughShot && !embedMode ? 1 : undefined} data-plan-draw={railDraw || pathDraw || waypointMode ? 1 : undefined}
 			viewport={
 				<div className="viewport" data-drop={viewportDrop.over ? "over" : undefined} {...viewportDrop.handlers}
 					onWheel={(event) => {

@@ -20,6 +20,8 @@ const MODES = [
 	{ id: "camera", key: "3", label: ko("Camera", "카메라") },
 	{ id: "motion", key: "4", label: ko("Motion", "모션") },
 ];
+// A storyboard project has no Motion department: its pill reads 1 2 3.
+export const modesFor = (previsMode) => (previsMode === "storyboard" ? MODES.filter((mode) => mode.id !== "motion") : MODES);
 
 // #570 line icons (16px, 1.3 stroke) for the floating rails.
 const ICON = {
@@ -133,7 +135,7 @@ export default function ViewportToolbar() {
 		agentCollapsed, addSceneObject, spawnCharacter, characters, flySpeed,
 		ikEditTool, setIkEditTool, showTrails, setShowTrails, motion, setRangePinPartPick,
 		trailFalloffS, setTrailFalloffS, lineEditMode, exitLineEditMode, enterRefineMode,
-		refineDisabledReason,
+		refineDisabledReason, previsMode,
 	} = useStudioShell();
 	const menu = useOverlayMenu();
 
@@ -379,7 +381,7 @@ export default function ViewportToolbar() {
 
 			<div className="vp-mode-toolbar" role="toolbar" data-testid="mode-toolbar" aria-label={ko("Mode and tools", "모드와 도구")}>
 				<div className="vp-mode-keys" role="tablist" aria-label={ko("Workflow", "작업 모드")}>
-					{MODES.map((mode) => {
+					{modesFor(previsMode).map((mode) => {
 						const active = workflowMode === mode.id;
 						const refused = mode.id === "pose" ? poseRefusal : null;
 						return (

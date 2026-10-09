@@ -4,13 +4,14 @@ import ProjectPanel from "../panels/ProjectPanel.jsx";
 import MenuBar, { MenuPopover } from "./MenuBar.jsx";
 import { SaveState } from "./StatusBar.jsx";
 import { ko, isKo } from "../locale.js";
+import { previsModesEnabled } from "../previs-flag.js";
 import "./topbar.css";
 
 // 2a top bar: File/Edit/Window/Help, then only the MCP state and the one
 // primary action. Save and Export live in File (G7). #570: the project name
 // and its save state head the left column (ProjectHead below).
 export default function TopBar({ preferences }) {
-	const { recState, liveHubStatus, liveWorkspaceHandle } = useStudioShell();
+	const { recState, liveHubStatus, liveWorkspaceHandle, previsMode } = useStudioShell();
 	const connected = liveHubStatus === "connected";
 	return (
 		<header className="topbar v2-topbar" data-rec-state={recState}>
@@ -25,7 +26,7 @@ export default function TopBar({ preferences }) {
 				<i className="topbar-mcp-dot" aria-hidden="true" />
 				<span className="topbar-mcp-text">{connected ? ko("MCP connected", "MCP 연결됨") : ko("MCP offline", "MCP 꺼짐")}</span>
 			</span>
-			<GenerateMotion />
+			{previsMode !== "storyboard" && <GenerateMotion />}
 		</header>
 	);
 }
@@ -35,8 +36,9 @@ export default function TopBar({ preferences }) {
 export function ProjectHead() {
 	const {
 		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
-		projectManifest, saveStatus,
+		projectManifest, saveStatus, previsMode,
 	} = useStudioShell();
+	const [previsEnabled] = useState(previsModesEnabled);
 	return (
 		<div className="topbar-project studio-project-head">
 			<ProjectPanel
@@ -48,7 +50,21 @@ export function ProjectHead() {
 				projectManifest={projectManifest}
 			/>
 			<SaveState status={saveStatus} />
+			{previsEnabled && <PrevisModeBadge mode={previsMode} />}
 		</div>
+	);
+}
+
+// The project's previs mode, a quiet label under the save state.
+function previsModeLabel(mode) {
+	return mode === "storyboard" ? ko("Storyboard", "스토리보드") : ko("Animation", "애니메이션");
+}
+
+function PrevisModeBadge({ mode }) {
+	return (
+		<span className="topbar-previs-mode" data-testid="topbar-previs-mode" data-previs-mode={mode}>
+			{previsModeLabel(mode)}
+		</span>
 	);
 }
 
