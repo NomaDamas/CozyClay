@@ -533,15 +533,20 @@ export function useScenes(appContext) {
 		}
 	}
 
-	function requestNewProject(authorized = false) {
-		if (!authorized) return runProject("project.new");
+	function requestNewProject(authorized = false, { previsMode } = {}) {
+		if (!authorized) return runProject("project.new", previsMode === undefined ? undefined : { previsMode });
 		if (domain.dirtyStore.read("projectDirty") && !window.confirm(ko("Discard unsaved changes and start a new project?", "저장되지 않은 변경사항을 버리고 새 프로젝트를 시작할까요?"))) return;
-		setProjectNameDialog({ kind: "new", initialName: projectName ?? "My Project" });
+		// The mode chosen on the start screen rides on the name dialog until its
+		// submit commits the project.
+		setProjectNameDialog({ kind: "new", initialName: projectName ?? "My Project", ...(previsMode === undefined ? {} : { previsMode }) });
 	}
 
 	function newProject(name, authorized = false, { previsMode } = {}) {
-		if (!authorized) return runProject("project.new", { ...(typeof name === "string" ? { name } : {}), ...(previsMode === undefined ? {} : { previsMode }) });
-		if (typeof name !== "string") return requestNewProject(true);
+		if (!authorized) {
+			if (previsMode === undefined && projectNameDialog?.kind === "new") previsMode = projectNameDialog.previsMode;
+			return runProject("project.new", { ...(typeof name === "string" ? { name } : {}), ...(previsMode === undefined ? {} : { previsMode }) });
+		}
+		if (typeof name !== "string") return requestNewProject(true, { previsMode });
 		name = name.trim() || "My Project";
 		previsMode = normalizePrevisMode(previsMode);
 		setProjectNameDialog(null);
@@ -557,6 +562,7 @@ export function useScenes(appContext) {
 		appContext.shared.projectSnapshotRef.current = collectProjectSnapshot(name);
 		domain.setDirty(false);
 		storeProjectSession(name, previsMode);
+		track("scene:created", { scene_source: "new_project", previs_mode: previsMode });
 		setProjectStartupOpen(false);
 		appContext.shared.setFirstSuccessGuideOpen(true);
 		domain.pendingCheckpoint = { clock: appContext.undoClock, name };
@@ -670,7 +676,7 @@ export function useScenes(appContext) {
 		const target = nextScenes[nextScenes.length - 1];
 		persistScenes(nextScenes, target.id);
 		openScene(target, nextScenes);
-		track("scene:created", { scene_source: "ui" });
+		track("scene:created", { scene_source: "ui", previs_mode: domain.metadata().previsMode });
 	}
 
 	function duplicateSceneDocument(sceneId) {
