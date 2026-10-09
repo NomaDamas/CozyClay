@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { readFileSync } from "node:fs";
 import { proxyFigureBounds } from "../src/character-kind.js";
 import { placementAt } from "../src/root-path.js";
+import { isProxyFigure } from "../src/scenes.js";
 
 test("proxy bounds follow rendered stature and posture", () => {
 	const stand = proxyFigureBounds({ model: "proxy-figure", posture: "stand", x: 2, z: -3 });
@@ -30,7 +31,7 @@ test("App.jsx studioBounds resolves a proxy figure through placementAt", () => {
 	assert.ok(start > 0 && end > start, "studioBounds source slice");
 	const figure = { id: "p1", model: "proxy-figure", posture: "stand", x: 2, z: -3 };
 	const scope = {
-		placementAt, proxyFigureBounds,
+		placementAt, proxyFigureBounds, isProxyFigure,
 		readStudioState: () => ({ characters: [figure], targets: new Map(), shots: [] }),
 		shotAtFrame: () => null,
 		sampleAt: () => ({ subject: null }),
