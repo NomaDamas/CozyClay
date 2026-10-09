@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { cameraBrowser } from "./camera-browser-harness.mjs";
 import { SCENES_STORAGE_KEY } from "../src/scenes.js";
+import { PROJECT_SESSION_KEY } from "../src/project.js";
 
 const b = await cameraBrowser();
 try {
@@ -104,6 +105,7 @@ try {
 		frameCount: window.__cozyclay.frameCount,
 		motion: Boolean(window.__cozyclay.motion),
 		dirty: Boolean(document.querySelector(".project-dirty-dot")),
+		session: JSON.parse(localStorage.getItem(${JSON.stringify(PROJECT_SESSION_KEY)}) || "null"),
 		};
 	})()`);
 	console.log("reload: dumped");
@@ -129,6 +131,7 @@ try {
 	assert.equal(afterReload.frameCount, 360);
 	assert.equal(afterReload.motion, false);
 	assert.equal(afterReload.dirty, false);
+	assert.equal(afterReload.session?.previsMode, "animation", "a blank project's session record restores the default previs mode");
 } finally {
 	b.close();
 }

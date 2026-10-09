@@ -17,7 +17,15 @@
 import { SCENES_VERSION } from "./scenes.js";
 import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, isAssetId, isImageAssetId, isMeshAssetId, meshIdForBytes, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
 
-export const PROJECT_VERSION = 4;
+export const PROJECT_VERSION = 5;
+// A project is authored either as a storyboard (stills) or as animation
+// (clips). v5 records the choice on the envelope; v2-v4 files are animation.
+export const PREVIS_MODES = Object.freeze(["storyboard", "animation"]);
+export const DEFAULT_PREVIS_MODE = "animation";
+
+export function normalizePrevisMode(value) {
+	return PREVIS_MODES.includes(value) ? value : DEFAULT_PREVIS_MODE;
+}
 export const PROJECT_EXTENSION = ".cclayproject";
 export const WORKFLOW_VERSION = 1;
 export const WORKFLOW_STORAGE_KEY = "cozyclay.workflow.v1";
@@ -362,13 +370,13 @@ function readEmbeddedMotions(value, report) {
 }
 
 /**
- * Build the v4 envelope. Images are embedded when a scene or workflow
+ * Build the v5 envelope. Images are embedded when a scene or workflow
  * assetRef references them; motions are embedded as given (deduped by
  * motionId, first record wins) because the caller already knows which ones
  * the project uses. Throws `resources-too-large` when one motion or the whole
  * manifest exceeds its budget.
  */
-export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, assets, motions, savedAt, workflow }) {
+export function createProjectDocument({ scenesDocument, workspaceLayout, customPoses, name, previsMode, assets, motions, savedAt, workflow }) {
 	const assetRecords = new Map();
 	for (const record of Array.isArray(assets) ? assets : []) {
 		const asset = embeddedAsset(record);
@@ -404,6 +412,7 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
 		kind: "project",
 		version: PROJECT_VERSION,
 		name: typeof name === "string" && name.trim() ? name.trim() : "Untitled",
+		previsMode: normalizePrevisMode(previsMode),
 		...(Number.isFinite(savedAt) && savedAt > 0 ? { savedAt } : {}),
 		scenes: scenesDocument,
 		workspace: workspaceLayout ?? null,
@@ -418,7 +427,8 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
  * problems?, project? }. Invalid embedded records are skipped, each one
  * reported as a warning string and a `{ kind, id, code, message }` problem.
  * v2/v3 files carry images at the top-level `assets`; v4 moves everything
- * under `resources`. Older files are read as-is, never rewritten.
+ * under `resources`; v5 adds the top-level `previsMode` (absent or unknown
+ * reads as the default). Older files are read as-is, never rewritten.
  */
 export function readProjectDocument(raw) {
 	let parsed;
@@ -452,6 +462,7 @@ export function readProjectDocument(raw) {
 		problems,
 		project: {
 			name: typeof parsed.name === "string" && parsed.name.trim() ? parsed.name.trim() : "Untitled",
+			previsMode: normalizePrevisMode(parsed.previsMode),
 			savedAt: Number.isFinite(parsed.savedAt) && parsed.savedAt > 0 ? parsed.savedAt : null,
 			scenesDocument: { version: scenes.version, activeSceneId: scenes.activeSceneId ?? null, scenes: scenes.scenes },
 			workspaceLayout: parsed.workspace && typeof parsed.workspace === "object" ? parsed.workspace : null,
@@ -605,17 +616,17 @@ export function loadProjectSession(storage = globalThis.localStorage) {
 		const value = JSON.parse(storage?.getItem(PROJECT_SESSION_KEY) || "null");
 		if (!value || typeof value !== "object") return null;
 		const name = typeof value.name === "string" ? value.name.trim() : "";
-		return name ? { name, updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : 0 } : null;
+		return name ? { name, previsMode: normalizePrevisMode(value.previsMode), updatedAt: Number.isFinite(value.updatedAt) ? value.updatedAt : 0 } : null;
 	} catch {
 		return null;
 	}
 }
 
-export function storeProjectSession(name, storage = globalThis.localStorage) {
+export function storeProjectSession(name, previsMode = DEFAULT_PREVIS_MODE, storage = globalThis.localStorage) {
 	const normalized = typeof name === "string" ? name.trim() : "";
 	if (!normalized) return false;
 	try {
-		storage?.setItem(PROJECT_SESSION_KEY, JSON.stringify({ name: normalized, updatedAt: Date.now() }));
+		storage?.setItem(PROJECT_SESSION_KEY, JSON.stringify({ name: normalized, previsMode: normalizePrevisMode(previsMode), updatedAt: Date.now() }));
 		return true;
 	} catch {
 		return false;

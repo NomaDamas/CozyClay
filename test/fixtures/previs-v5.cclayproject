@@ -1,0 +1,69 @@
+{
+  "app": "cozyclay",
+  "kind": "project",
+  "version": 5,
+  "name": "Previs v5",
+  "previsMode": "storyboard",
+  "savedAt": 1791504000000,
+  "scenes": {
+    "version": 4,
+    "activeSceneId": "scene-previs-v5",
+    "scenes": [
+      {
+        "id": "scene-previs-v5",
+        "name": "SCENE 01",
+        "objects": [],
+        "shotDocument": null,
+        "stage": {
+          "characters": [
+            {
+              "id": "char-a",
+              "model": "y-bot-tpose",
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "rot": 0,
+              "hidden": false,
+              "tint": null,
+              "pose": null,
+              "identityImage": null,
+              "scale": 1,
+              "subject": "a young woman in a tan coat",
+              "layer": {
+                "waypoints": [],
+                "promptClips": []
+              },
+              "motionRef": null
+            }
+          ],
+          "hasCharSheet": false,
+          "environmentImage": null,
+          "environment": "a sunlit modern living room",
+          "style": "moody cinematic lighting, 35mm film look",
+          "hasEnvSheet": false,
+          "shotAspect": "16:9",
+          "cameraPresetId": null,
+          "sensorId": "fullFrame",
+          "keyLight": {
+            "x": 6,
+            "y": 9,
+            "z": 4,
+            "intensity": 1.12,
+            "warmth": 0.5
+          }
+        }
+      }
+    ]
+  },
+  "workspace": null,
+  "poseLibrary": [],
+  "workflow": {
+    "version": 1,
+    "nodes": [],
+    "edges": []
+  },
+  "resources": {
+    "assets": [],
+    "motions": []
+  }
+}

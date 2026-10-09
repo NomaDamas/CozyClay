@@ -205,6 +205,7 @@ const NODE_FILES = [
 	"test/verify-pose-yaw.mjs",
 	"test/verify-preserve-bridge.mjs",
 	"test/verify-project.mjs",
+	"test/verify-project-previs-mode.mjs",
 	"test/verify-projflow-bridge.mjs",
 	"test/verify-projflow-cskel27.mjs",
 	"test/verify-projflow-replay.mjs",
