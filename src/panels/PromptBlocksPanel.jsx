@@ -21,9 +21,11 @@ export default function PromptBlocksPanel({
 	readinessState, ardyRunning, cancelArdy, ardyStatus, ardyOutcome,
 }) {
 	const { run, begin, commit, characterId } = useCastTransaction();
-	const { refineDisabledReason, workflowMode } = useStudioShell();
+	const { refineDisabledReason, workflowMode, previsMode } = useStudioShell();
 	const selectedClip = promptClips.find((clip) => clip.id === selectedPromptId) ?? null;
 	const refineReason = refineDisabledReason();
+	// A storyboard has no prompt blocks to author or edit.
+	if (previsMode === "storyboard") return null;
 	// Generate, Start over, Take it again and Add block live in the top bar's
 	// Generate Motion button and its caret menu, their one home (R1).
 	return (
