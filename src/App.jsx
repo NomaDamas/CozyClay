@@ -1605,7 +1605,7 @@ export default function App() {
 		get objectsDomain() { return objectsDomain; },
 	}));
 	const {
-		scenes, activeSceneId, sceneSaveError, snapshotActiveScene, persistScenes, projectName, projectDirty,
+		scenes, activeSceneId, sceneSaveError, snapshotActiveScene, persistScenes, projectName, previsMode, projectDirty,
 		setProjectDirty, projectSaveState, setProjectSaveState, projectMenuOpen, setProjectMenuOpen,
 		projectBrowserOpen, setProjectBrowserOpen, projectNameDialog, setProjectNameDialog, projectStartupOpen,
 		setProjectStartupOpen, projectManifest, setProjectManifest, saveBlockedReasons, setSaveBlockedReasons,
@@ -4238,6 +4238,7 @@ export default function App() {
 	// (tools/ardy/visual-qa.mjs). Harmless in normal use.
 	useEffect(() => {
 	window.__cozyclay = {
+			runStudioAction,
 			runArdy: (options) => appContext.live.state.runArdy(options),
 			rigA: activeRig, motion, tlFrame, frameCount: tlFrameCount, playing: tlPlaying, ikMode, ikChains, ikFocus, contactRadii: ikChains?.values().next().value?.contactRadii ?? null, ik: ikStateRef.current,
 			rangePins, rangePinResiduals,
@@ -6831,7 +6832,7 @@ export default function App() {
 			scenes: appContext.live.scenes.map(({ id, name }) => ({ id, name })), activeSceneId: activeSceneIdRef.current,
 			// What a save needs: a name, a file this session, and (to pick or
 			// re-grant a file) the user's click still active.
-			project: { name: projectName, hasFile: Boolean(projectHandleRef.current), fileAccess: hasFileSystemAccess(),
+			project: { name: projectName, previsMode, hasFile: Boolean(projectHandleRef.current), fileAccess: hasFileSystemAccess(),
 				gesture: globalThis.navigator?.userActivation?.isActive === true },
 			// What generate() reads for the Send-to-AI package, as this render has it.
 			aiShot: { mode, imageModel },
@@ -6898,7 +6899,7 @@ export default function App() {
 
 	// The single shell snapshot keeps subsequent region work out of App.
 	const shellContext = {
-		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, projectStartupOpen,
+		projectMenuOpen, setProjectMenuOpen, projectDirty, projectName, previsMode, projectStartupOpen,
 		requestNewProject, setProjectStartupOpen, setProjectBrowserOpen, runStudioAction, saveProject,
 		projectManifest, projectSaveState, recState, exportMenuTriggerRef, exportMenuOpen,
 		exportShotIdRef, setExportMenuAnchor, setExportMenuOpen, exportPhaseLabel,

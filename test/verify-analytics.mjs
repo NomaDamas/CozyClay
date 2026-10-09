@@ -510,7 +510,7 @@ for (const event of lifecycleEvents) {
 		}
 	}
 }
-for (const export_kind of ["video", "depth_video", "frame", "keyframe_pack"]) {
+for (const export_kind of ["video", "depth_video", "frame", "keyframe_pack", "animation_project"]) {
 	for (const format of ["mp4", "png", "zip"]) {
 		for (const surface of ["studio", "workflow", "embed"]) {
 			const props = { export_kind, format, surface };

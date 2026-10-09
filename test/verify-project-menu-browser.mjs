@@ -9,7 +9,11 @@
 // Run: `npm run dev:ui` in one shell, then `npm run test:project-menu`, which
 // launches the headless QA browser against QA_URL (default 127.0.0.1:5180).
 
+import { mkdir, writeFile } from "node:fs/promises";
+
 const port = Number(process.env.CDP_PORT || 9222);
+const out = process.env.QA_OUT || "/tmp/cozyclay-project-menu-qa";
+await mkdir(`${out}/shots`, { recursive: true });
 const targets = await (await fetch(`http://127.0.0.1:${port}/json`)).json();
 const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
 if (!page) throw new Error("no page target on the QA browser");
@@ -35,6 +39,12 @@ const send = (method, params = {}) => new Promise((resolve, reject) => {
 	pending.set(id, { resolve, reject });
 	ws.send(JSON.stringify({ id, method, params }));
 });
+const screenshot = async (name) => {
+	const result = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
+	const path = `${out}/shots/${name}.png`;
+	await writeFile(path, Buffer.from(result.data, "base64"));
+	return path;
+};
 const evaluate = async (expression) => {
 	const result = await send("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
 	if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || "evaluate failed");
@@ -190,6 +200,85 @@ expect(
 	"the sample scene is loaded into the editor",
 	await waitFor("(window.__cozyclay.objects || []).length > 0"),
 );
+
+/* ------------------------ storyboard animation export ------------------ */
+await evaluate(`(() => {
+	const original = URL.createObjectURL.bind(URL);
+	const blobs = new Map();
+	URL.createObjectURL = blob => { const href = original(blob); blobs.set(href, blob); return href; };
+	window.__animationDownload = null;
+	const click = HTMLAnchorElement.prototype.click;
+	HTMLAnchorElement.prototype.click = function () {
+		if (this.download) window.__animationDownload = { name: this.download, blob: blobs.get(this.href) };
+		else click.call(this);
+	};
+	return true;
+})()`);
+await evaluate(`(async () => {
+	const project = JSON.parse(await window.__cozyclayProject.export("Storyboard QA"));
+	project.name = "Storyboard QA";
+	project.previsMode = "storyboard";
+	const scene = project.scenes.scenes[0];
+	scene.objects = [];
+	project.resources = { assets: [], motions: [] };
+	scene.shotDocument = {
+		version: 5,
+		frameCount: 144,
+		waypoints: [],
+		shots: [0, 1, 2].map(index => ({
+			id: "still-" + index,
+			name: "Panel " + (index + 1),
+			startFrame: index * 48,
+			endFrame: index * 48 + 47,
+			cameraKeys: [],
+			camera: null,
+			kind: "still",
+			caption: "Panel " + (index + 1),
+			cast: { hero: { x: index, z: index + 1, rot: index * 10 } },
+			stylizedAssetId: null,
+		})),
+	};
+	await window.__cozyclayProject.open(JSON.stringify(project));
+	return true;
+})()`);
+expect(
+	"the storyboard fixture opens with three still shots",
+	await waitFor(`(async () => {
+		const project = JSON.parse(await window.__cozyclayProject.export());
+		const scene = project.scenes.scenes.find(row => row.id === project.scenes.activeSceneId) || project.scenes.scenes[0];
+		return project.previsMode === "storyboard" && scene.shotDocument.shots.length === 3 && scene.shotDocument.shots.every(shot => shot.kind === "still");
+	})()`),
+);
+await clickAt(await rectCentre("[data-testid=menu-file]"));
+expect("storyboard File menu shows Export as Animation project", await waitFor("!!document.querySelector('[data-testid=export-animation-project]')"));
+const happyShot = await screenshot("task-17-previs-modes");
+console.log(`QA_SCREENSHOT ${happyShot}`);
+await evaluate("window.showSaveFilePicker = undefined; window.showOpenFilePicker = undefined; true");
+await evaluate("document.querySelector('[data-testid=export-animation-project]')?.click()");
+await evaluate("(async () => { await window.__cozyclay.runStudioAction('project.exportAsAnimation'); return true; })()");
+expect("animation project export downloads the suffixed project", await waitFor("!!window.__animationDownload"));
+const exported = await evaluate(`(async () => {
+	const download = window.__animationDownload;
+	return { name: download?.name, project: download?.blob ? JSON.parse(await download.blob.text()) : null };
+})()`);
+expect("download filename is <name> - Animation.cclayproject", exported?.name === "Storyboard QA - Animation.cclayproject");
+expect("download contains three clip shots and keeps the storyboard open", exported?.project?.previsMode === "animation" && exported.project.scenes.scenes[0].shotDocument.shots.length === 3 && exported.project.scenes.scenes[0].shotDocument.shots.every(shot => shot.kind === "clip"));
+expect("the source tab remains a clean storyboard", await evaluate(`(async () => {
+	const project = JSON.parse(await window.__cozyclayProject.export());
+	return project.previsMode === "storyboard" && !document.querySelector('[data-testid=project-save-status]')?.textContent.includes("Unsaved");
+})()`));
+
+await evaluate(`(async () => {
+	const project = JSON.parse(await window.__cozyclayProject.export("Animation QA"));
+	project.name = "Animation QA";
+	project.previsMode = "animation";
+	await window.__cozyclayProject.open(JSON.stringify(project));
+	return true;
+})()`);
+await clickAt(await rectCentre("[data-testid=menu-file]"));
+expect("animation File menu hides Export as Animation project", !(await evaluate("!!document.querySelector('[data-testid=export-animation-project]')")));
+const failureShot = await screenshot("task-17-animation-menu-absent");
+console.log(`QA_SCREENSHOT ${failureShot}`);
 
 ws.close();
 if (failures > 0) {

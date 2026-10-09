@@ -170,7 +170,7 @@ const MENUS = [
 export default function MenuBar({ preferences }) {
 	const shell = useStudioShell();
 	const {
-		runStudioAction, projectSaveState, recState, exportMenuTriggerRef, exportMenuOpen,
+		runStudioAction, projectSaveState, previsMode, recState, exportMenuTriggerRef, exportMenuOpen,
 		exportShotIdRef, setExportMenuOpen, shots, exportKeyframePacks, hasCameraKeys, motion,
 		exportRenderPasses, exportDepthVideo, exportStoryboard, downloadOtioCutList,
 		castDomain, preferencesOpen, setPreferencesOpen, agentOpen, toggleAgent,
@@ -303,6 +303,17 @@ export default function MenuBar({ preferences }) {
 				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => runStudioAction("project.saveAs"))}>
 					<span className="menubar-item-label">{ko("Save As…", "다른 이름으로 저장…")}</span>
 				</button>
+				{previsMode === "storyboard" && (
+					<button
+						type="button"
+						role="menuitem"
+						className="menubar-item"
+						data-testid="export-animation-project"
+						onClick={item(() => runStudioAction("project.exportAsAnimation"))}
+					>
+						<span className="menubar-item-label">{ko("Export as Animation project…", "애니메이션 프로젝트로 내보내기…")}</span>
+					</button>
+				)}
 				<hr className="menubar-separator" />
 				{/* One Export menu for every delivery this studio makes (#193,
 				    R4). The keyframe pack leads because it is the pack an AI video

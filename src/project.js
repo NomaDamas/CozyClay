@@ -16,6 +16,7 @@
 
 import { SCENES_VERSION } from "./scenes.js";
 import { ASSET_MAX_SOURCE_BYTES, assetIdForBytes, isAssetId, isImageAssetId, isMeshAssetId, meshIdForBytes, normalizeAsset, referencedAssetIds } from "./scene-assets.js";
+import { ko } from "./locale.js";
 
 export const PROJECT_VERSION = 5;
 // A project is authored either as a storyboard (stills) or as animation
@@ -420,6 +421,36 @@ export function createProjectDocument({ scenesDocument, workspaceLayout, customP
 		workflow: normalizeWorkflowGraph(workflow),
 		resources: { assets: embeddedAssets, motions: embeddedMotions },
 	};
+}
+
+/** Convert a normalized storyboard project into a fresh animation envelope.
+ * The source remains untouched: still shot records are copied with their
+ * ranges, camera keys, captions, cast overrides and stylized asset references.
+ */
+export function buildAnimationProjectFromStoryboard(project) {
+	const scenesDocument = structuredClone(project?.scenesDocument ?? { version: SCENES_VERSION, activeSceneId: null, scenes: [] });
+	scenesDocument.scenes = (scenesDocument.scenes ?? []).map((scene) => ({
+		...scene,
+		shotDocument: scene.shotDocument && typeof scene.shotDocument === "object"
+			? {
+				...scene.shotDocument,
+				shots: Array.isArray(scene.shotDocument.shots)
+					? scene.shotDocument.shots.map((shot) => ({ ...shot, ...(shot.kind === "still" ? { kind: "clip" } : {}) }))
+					: scene.shotDocument.shots,
+			}
+			: scene.shotDocument,
+	}));
+	return createProjectDocument({
+		scenesDocument,
+		workspaceLayout: structuredClone(project?.workspaceLayout ?? null),
+		customPoses: structuredClone(project?.customPoses ?? []),
+		name: `${project?.name || "Untitled"} - ${ko("Animation", "애니메이션")}`,
+		previsMode: "animation",
+		assets: project?.assets ?? [],
+		motions: project?.motions ?? [],
+		workflow: structuredClone(project?.workflow ?? createWorkflowGraph()),
+		savedAt: Date.now(),
+	});
 }
 
 /**
