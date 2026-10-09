@@ -48,6 +48,12 @@ export function createShot(name = "Shot", startFrame = 0, endFrame = startFrame 
 		endFrame: end,
 		cameraKeys: uniqueKeys(cameraKeys, start, end),
 		camera: createCameraBlock(camera),
+		// v5 shot-document defaults, so a fresh shot already has the shape the
+		// document normalizer gives it (and an undo restores).
+		kind: "clip",
+		caption: "",
+		cast: {},
+		stylizedAssetId: null,
 	};
 }
 
