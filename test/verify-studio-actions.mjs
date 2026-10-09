@@ -14,7 +14,7 @@ import { buildH3MotionPrompt } from "../src/i2v-motion-client.js";
 const code = expected => error => error?.code === expected;
 
 /* The first batch is declared once, as data. */
-const firstBatch = ["shot.create", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
+const firstBatch = ["shot.create", "shot.createStill", "shot.setCaption", "shot.setHold", "shot.split", "shot.duplicate", "shot.remove", "shot.setRange", "shot.reorder", "motion.generateAllBlocks", "object.duplicate"];
 const waypointActions = ["character.addWaypoint", "character.moveWaypoint", "character.removeWaypoint", "character.clearWaypoints"];
 const ikKeyActions = ["character.setIkKey", "character.removeIkKey", "character.clearIkKeys"];
 const attachActions = ["object.attach", "object.detach"];

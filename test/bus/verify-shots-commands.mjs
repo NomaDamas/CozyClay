@@ -15,6 +15,7 @@ const inputs = {
   'shot.reorder': { shotId: 'shot-a', startFrame: 25 },
   'shot.setCameraRail': { shotId: 'shot-a', points: [{ x: -2, z: 4 }, { x: 2, z: 4 }] },
   'shot.clearCameraRail': { shotId: 'shot-a' },
+  'shot.createStill': { caption: 'Panel' }, 'shot.setCaption': { shotId: 'shot-a', caption: 'Panel' }, 'shot.setHold': { shotId: 'shot-a', hold: 12 },
   'shot.set': { id: 'shot-a', set: { targetModel: 'seedance-2.5' } },
   'shot.frame': { subjectIds: ['actor-a'], keyAtFrame: 5, framing: { exact: { position: { x: 1, y: 2, z: 6 }, lookAt: { x: 0, y: 1, z: 0 }, focalMm: 35 } } },
 };
@@ -22,6 +23,7 @@ assert.deepEqual(Object.keys(inputs).sort(), declarations.filter(row => row.kind
 function owned(f) { assert.ok(f.shots.documentStore?.owns('shot'), 'the shipped useShots hook must own the shot slice'); }
 function seed(f, command) {
   const shot = seedShot();
+  if (['shot.setHold', 'shot.createStill'].includes(command)) shot.kind = 'still';
   if (command === 'shot.clearCameraRail') Object.assign(shot.camera, { mode: 'rail', cameraRail: [{ x: -2, z: 4 }, { x: 2, z: 4 }] });
   f.shots.load({ shots: [shot], frameCount: 120, camera: f.actual.readStudioState().camera });
   f.live.current.timeline.currentFrame = command === 'shot.create' ? 30 : 12;

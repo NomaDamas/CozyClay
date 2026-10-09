@@ -150,6 +150,7 @@ const COMMAND_INPUTS = {
 	"shot.create": {}, "shot.split": { shotId: "shot-1" }, "shot.duplicate": { shotId: "shot-1" }, "shot.remove": { shotId: "shot-1" },
 	"shot.setRange": { shotId: "shot-1", range: { startFrame: 1, endFrameExclusive: 15 } }, "shot.reorder": { shotId: "shot-1", startFrame: 2 },
 	"shot.setCameraRail": { shotId: "shot-1", points: [{ x: -2, z: 4 }, { x: 3, z: 4 }] }, "shot.clearCameraRail": { shotId: "shot-1" },
+	"shot.createStill": { caption: "Panel" }, "shot.setCaption": { shotId: "shot-1", caption: "Panel" }, "shot.setHold": { shotId: "shot-1", hold: 24 },
 	"shot.set": { id: "shot-1", set: { targetModel: "seedance-2.5" } }, "shot.rename": { shotId: "shot-1", name: "Renamed" },
 	"shot.setCamera": { shotId: "shot-1", patch: { mode: "follow" } }, "shot.addKey": { shotId: "shot-1", frame: 8 },
 	"shot.moveKey": { shotId: "shot-1", keyId: "key-1", frame: 8 }, "shot.removeKey": { shotId: "shot-1", keyId: "key-1" },
@@ -202,10 +203,10 @@ const COMMAND_INPUTS = {
 // Every command module registered over one generic port object and driven
 // through the real command bus. The history stand-in records which domain each
 // entry is opened in, and the ports record whether a write landed inside it.
-function commandFixture({ frame = 8 } = {}) {
+function commandFixture({ frame = 8, still = false } = {}) {
 	const host = { workspaceId: "workspace", documentEpoch: "document", sceneId: "scene-1", sceneEpoch: "epoch" };
 	const state = {
-		shots: [{ ...createShot("Shot 1", 0, 15, [{ id: "key-1", frame: 0, framing: { pos: { x: 0, y: 1.6, z: 5 }, yaw: 0, pitch: 0, fovDeg: 40 } }], { mode: "rail", cameraRail: [{ x: -2, z: 4 }, { x: 2, z: 4 }] }), id: "shot-1" }],
+		shots: [{ ...createShot("Shot 1", 0, 15, [{ id: "key-1", frame: 0, framing: { pos: { x: 0, y: 1.6, z: 5 }, yaw: 0, pitch: 0, fovDeg: 40 } }], { mode: "rail", cameraRail: [{ x: -2, z: 4 }, { x: 2, z: 4 }] }), id: "shot-1", ...(still ? { kind: "still" } : {}) }],
 		objects: [{ ...createSceneObject("sphere"), id: "parent-1" }, { ...createSceneObject("cube"), id: "object-1", parent: "parent-1" }, { ...createSceneObject("chair"), id: "group-2" }],
 		characters: [createCharacterEntry({ id: 'actor', subject: 'Ada', layer: { waypoints: [], promptClips: [{ id: 'block', text: 'Walk', startFrame: 0, endFrame: 48 }] } }), createCharacterEntry({ id: 'actor-other' })], customPoses: [], frame, frameCount: 48, selectedObjectId: null, activeCharacterId: "actor",
 		promptBlockCount: 0, generating: false, motionReady: true, exporting: false, canExportVideo: true,
@@ -325,10 +326,10 @@ const cases = {
 	},
 	async "every command mutation writes inside one entry of its undo domain"() {
 		const mutations = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => entry.kind === "mutation");
-		assert.equal(mutations.length, 79);
+		assert.equal(mutations.length, 82);
 		for (const declaration of mutations) {
 			// A new shot needs free room at the playhead; the others act inside shot-1.
-			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8 }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));
+			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8, still: ["shot.setHold", "shot.createStill"].includes(declaration.id) }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));
 			const receipt = await f.bus(f.registries[name]).run(declaration.id, COMMAND_INPUTS[declaration.id]);
 			assert.equal(receipt.ok, true, `${declaration.id}: ${JSON.stringify(receipt)}`);
 			assert.deepEqual(f.entries.map(entry => entry.domain), [declaration.undoDomain], `${declaration.id} opens one ${declaration.undoDomain} entry`);

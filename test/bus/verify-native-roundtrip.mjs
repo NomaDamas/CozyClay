@@ -15,6 +15,7 @@ const inputs = {
  'shot.create': {}, 'shot.split': { shotId: 'shot-1' }, 'shot.duplicate': { shotId: 'shot-1' }, 'shot.remove': { shotId: 'shot-1' },
  'shot.setRange': { shotId: 'shot-1', range: { startFrame: 1, endFrameExclusive: 15 } }, 'shot.reorder': { shotId: 'shot-1', startFrame: 2 },
  'shot.setCameraRail': { shotId: 'shot-1', points: [{ x: -2, z: 4 }, { x: 3, z: 4 }] }, 'shot.clearCameraRail': { shotId: 'shot-1' },
+ 'shot.createStill': { caption: 'Panel' }, 'shot.setCaption': { shotId: 'shot-1', caption: 'Panel' }, 'shot.setHold': { shotId: 'shot-1', hold: 24 },
  'character.addWaypoint': { characterId: 'actor-a', position: { x: 0, z: 2 }, frame: 40 },
  'character.moveWaypoint': { characterId: 'actor-a', position: { x: 0, z: 1.1 }, frame: 24 },
  'character.removeWaypoint': { characterId: 'actor-a', frame: 24 }, 'character.clearWaypoints': { characterId: 'actor-a' },
@@ -26,7 +27,7 @@ const inputs = {
 for (const action of STUDIO_ACTIONS.filter(entry => entry.kind === 'mutation')) {
  const f = appFixture();
  try {
-  const shot = { ...cuts.createShot('Test', 0, 15, [], { mode: 'rail', cameraRail: [{ x: -2, z: 4 }, { x: 2, z: 4 }] }), id: 'shot-1' };
+  const shot = { ...cuts.createShot('Test', 0, 15, [], { mode: 'rail', cameraRail: [{ x: -2, z: 4 }, { x: 2, z: 4 }] }), id: 'shot-1', ...(['shot.setHold', 'shot.createStill'].includes(action.id) ? { kind: 'still' } : {}) };
   f.scope.setShots([shot]); f.live.current.shots = [shot];
   const object = { ...createSceneObject('cube', []), id: 'object-1', ...(action.id === 'object.detach' ? { parent: 'parent-1' } : {}) };
   f.store.current.applyAtomic(() => action.id === 'object.detach' ? [{ ...createSceneObject('cube', []), id: 'parent-1' }, object] : [object]);

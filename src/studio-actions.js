@@ -51,21 +51,31 @@ export const STUDIO_ATTACH_BONES = freezeStudioData(["hips", "spine", "chest", "
 const GUIDE_MODES = freezeStudioData(["off", "thirds", "golden", "center", "safe"]);
 /** The image models the Studio writes Send-to-AI prompts for (src/shot.js IMAGE_MODELS). */
 const AI_IMAGE_MODELS = freezeStudioData(["nano_banana_pro", "nano_banana_2", "gpt_image_2", "seedream_5", "flux_2"]);
+const stillHold = { type: "integer", minimum: 1, maximum: 240 };
+const stillIndex = { type: "integer", minimum: 0, maximum: Number.MAX_SAFE_INTEGER };
+const STORYBOARD_CAP = "Refused when the stills would run past the 28800-frame timeline.";
 const WAYPOINT_RULES = "Pins sit at least 8 frames apart, the walk between two pins must stay within 0.5-3 m/s, and x/z are clamped to +/-11 m; a pin that breaks a rule is refused with the frame or distance that would work.";
 
 export const STUDIO_ACTIONS = freezeStudioData([
 	{ id: "shot.create", label: "Add shot", kind: "mutation", undoDomain: "shot", input: input(),
-		description: "Add a new shot at the playhead, keyed with the current camera framing (the timeline's + Add shot). Move the playhead first with operate_studio { frame }. When the playhead is inside a shot, the new one goes in the next free gap." },
+		description: "Add a new shot at the playhead, keyed with the current camera framing (the timeline's + Add shot). Move the playhead first with operate_studio { frame }. When the playhead is inside a shot, the new one goes in the next free gap. In a storyboard project it adds a still instead, exactly like shot.createStill with no arguments." },
+	{ id: "shot.createStill", label: "Add still", kind: "mutation", undoDomain: "shot", input: input({}, { caption: { type: "string", maxLength: 500 }, hold: stillHold }),
+		description: `Add a still (a storyboard panel: one picture held for hold frames at 24 fps, default 48, 1-240) after the last still, keyed with the current camera framing. Stills sit end to end from frame 0 in order. ${STORYBOARD_CAP}` },
+	{ id: "shot.setCaption", label: "Set shot caption", kind: "mutation", undoDomain: "shot", input: input({ ...shotId, caption: { type: "string", maxLength: 500 } }),
+		description: "Set a shot's caption (the panel's action or dialogue line), trimmed, at most 500 characters; an empty caption clears it." },
+	{ id: "shot.setHold", label: "Set still hold", kind: "mutation", undoDomain: "shot", input: input({ ...shotId, hold: stillHold }),
+		description: `Set how many frames (1-240 at 24 fps) a still holds; the stills after it move so they stay end to end. Stills only. ${STORYBOARD_CAP}` },
 	{ id: "shot.split", label: "Split shot", kind: "mutation", undoDomain: "shot", input: input(shotId),
 		description: "Cut a shot in two at the playhead. The playhead must be inside that shot, after its first frame; the second half starts at the playhead." },
 	{ id: "shot.duplicate", label: "Duplicate shot", kind: "mutation", undoDomain: "shot", input: input(shotId),
-		description: "Copy a shot, its camera and its keys into the next free gap on the timeline." },
+		description: "Copy a shot, its camera, keys, caption, per-shot cast and stylized image. A still's copy goes right after it and the stills after it move along; a clip's copy goes into the next free gap on the timeline." },
 	{ id: "shot.remove", label: "Delete shot", kind: "mutation", undoDomain: "shot", input: input(shotId),
 		description: "Delete a shot and leave its frames as free-camera time." },
 	{ id: "shot.setRange", label: "Set shot range", kind: "mutation", undoDomain: "shot", input: input({ ...shotId, range: StudioSchemas.FrameRange }),
 		description: "Move a shot's start and end to a half-open frame range. Edges are clamped to the timeline and refused where they would overlap another shot; the receipt's delta shows the range that landed." },
-	{ id: "shot.reorder", label: "Move shot", kind: "mutation", undoDomain: "shot", input: input({ ...shotId, startFrame: frame }),
-		description: "Move a shot in time to start at startFrame, keeping its length and camera keys. Refused (a noop) where it would overlap another shot." },
+	{ id: "shot.reorder", label: "Move shot", kind: "mutation", undoDomain: "shot",
+		input: input(shotId, { startFrame: frame, index: stillIndex }),
+		description: "Move a shot; give exactly one of startFrame or index. With startFrame, a clip moves in time to start there, keeping its length and camera keys (a noop where it would overlap another shot), and a still moves to the place in the still order that frame falls in. With index (stills only), the still moves to that position among the stills (0 is first; past the end means last). Stills stay end to end from frame 0." },
 	{ id: "motion.generateAllBlocks", label: "Generate all blocks", kind: "job", generation: "motion", domain: "motion", background: true, input: input(),
 		description: "Generate the active character's motion from all of its prompt blocks, like the top-bar Generate Motion button when prompt blocks have text. It starts a job and returns status \"started\"; the take lands in the editor when the job finishes. Counts as the one motion generation of this message." },
 	{ id: "character.addWaypoint", label: "Add root waypoint", kind: "mutation", undoDomain: "cast", input: input({ ...characterId, position: floorPoint }, { frame: waypointFrame }),
