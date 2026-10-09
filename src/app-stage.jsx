@@ -987,8 +987,12 @@ export function ShotRig({ preset, nonce, fovDeg, charA, charB, showB, probeX, pr
     Two frame sources can drive the move. Standalone preview advances authored
     frames at production cadence; follow mode reads the timeline playhead, so the camera and
     the character motion are two views of the same time axis — playing or
-    scrubbing frame 72 at 24 fps puts the camera exactly 3 s into its move. */
-export function MoveRig({ playing, following, followFrame, fps, keys, shots, scene, camRef, look, isInterrupted, onDone }) {
+    scrubbing frame 72 at 24 fps puts the camera exactly 3 s into its move.
+
+    frameRef is the imperative playhead routed props and riders already read in
+    their own useFrame. The followFrame prop reaches this Canvas subtree one
+    commit later, so alone it would pose the camera a paint behind them. */
+export function MoveRig({ playing, following, followFrame, frameRef, fps, keys, shots, scene, camRef, look, isInterrupted, onDone }) {
 	const invalidate = useThree((state) => state.invalidate);
 	const preview = useRef({ frame: 0, finished: false, notified: false });
 	const handlers = useRef({ isInterrupted, onDone });
@@ -1069,9 +1073,10 @@ export function MoveRig({ playing, following, followFrame, fps, keys, shots, sce
 		}
 		if (!following) return;
 		if (isInterrupted?.()) return; // manual viewport framing owns the paused camera
-		if (appliedFrame.current === followFrame) return;
-		appliedFrame.current = followFrame;
-		apply(followFrame);
+		const frame = frameRef?.current ?? followFrame;
+		if (appliedFrame.current === frame) return;
+		appliedFrame.current = frame;
+		apply(frame);
 		invalidate();
 	});
 	return null;
@@ -1082,9 +1087,11 @@ export function MoveRig({ playing, following, followFrame, fps, keys, shots, sce
  * is derived offline from the subject trajectory (camera-follow.js), so this
  * rig only samples it at the playhead — scrub, play, PlayView and Record all
  * replay the identical deterministic move. Null-rendering, so every apply
- * must invalidate() by hand in demand mode, like MoveRig.
+ * must invalidate() by hand in demand mode, like MoveRig. Like MoveRig it
+ * prefers frameRef over the frame prop so the camera lands in the same paint
+ * as the routed props and riders it follows.
  */
-export function FollowCamRig({ enabled, frame, scene, shot, camRef, look, isInterrupted }) {
+export function FollowCamRig({ enabled, frame, frameRef, scene, shot, camRef, look, isInterrupted }) {
 	const invalidate = useThree((state) => state.invalidate);
 	const applied = useRef(null);
 	useEffect(() => {
@@ -1099,9 +1106,10 @@ export function FollowCamRig({ enabled, frame, scene, shot, camRef, look, isInte
 		if (isInterrupted?.()) return; // the user is flying; yield until released
 		const cam = camRef.current;
 		if (!cam) return;
-		const sample = sampleAt(scene, shot, frame).camera;
-		if (!sample || applied.current === frame) return;
-		applied.current = frame;
+		const playhead = frameRef?.current ?? frame;
+		const sample = sampleAt(scene, shot, playhead).camera;
+		if (!sample || applied.current === playhead) return;
+		applied.current = playhead;
 		cam.position.set(sample.pos.x, sample.pos.y, sample.pos.z);
 		look.current.yaw = sample.yaw;
 		look.current.pitch = sample.pitch;
