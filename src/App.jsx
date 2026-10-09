@@ -271,7 +271,7 @@ import {
 } from "./shot-guides.js";
 import { shotCaptureMeta } from "./shot-meta.js";
 import { buildShotPrompt } from "./shot-prompt.js";
-import { keyframePackEntries, keyframePackName } from "./keyframe-pack.js";
+import { buildKeyframePack, keyframePackEntries, keyframePackName, slugifyTitle } from "./keyframe-pack.js";
 import { buildZip } from "./zip-store.js";
 import { composeStoryboard } from "./storyboard.js";
 import { DEPTH_RANGE_M, depthRangeFromFrames, passFileName, renderPass } from "./render-passes.js";
@@ -3329,7 +3329,7 @@ export default function App() {
 			ikStates: new Map([...ikStatesRef.current].map(([id, state]) => [id, copyIk(state)])),
 			rigStates: Object.values(rigs).filter(Boolean).map(snapshotExportRig),
 		};
-		return Object.freeze({ kind, format: kind === "frame" ? "png" : kind === "keyframe_pack" ? "zip" : "mp4",
+		return Object.freeze({ kind, format: kind === "frame" || kind === "contact_sheet" ? "png" : kind === "keyframe_pack" || kind === "panel_pack" ? "zip" : "mp4",
 			context, run, external, download, handedOff: new Set() });
 	}
 
@@ -3923,18 +3923,7 @@ export default function App() {
 				// the fit, so the frame is scaled to height) and a caption block wide
 				// enough for the 90 characters the composer draws at this size.
 				cell: { width: 480, height: 300 },
-				createCanvas: (width, height) => {
-					const element = document.createElement("canvas");
-					element.width = width;
-					element.height = height;
-					const ctx = element.getContext("2d");
-					// The sheet is a deliverable, so it uses the studio's own type
-					// stack rather than the canvas default (10px sans-serif).
-					ctx.font = STORYBOARD_FONT;
-					ctx.textAlign = "left";
-					ctx.textBaseline = "top";
-					return element;
-				},
+				createCanvas: storyboardCanvas,
 			});
 			saveDownload(canvas.toDataURL("image/png"), "cozyclay-storyboard.png");
 			setToast(isKo ? `스토리보드 저장됨 · ${cells.length}샷` : `Storyboard saved · ${cells.length} shots`);
@@ -3942,6 +3931,162 @@ export default function App() {
 		} catch (error) {
 			setToast(error?.message || String(error));
 		}
+	}
+
+	function storyboardCanvas(width, height) {
+		const element = document.createElement("canvas");
+		element.width = width;
+		element.height = height;
+		const ctx = element.getContext("2d");
+		// The sheet is a deliverable, so it uses the studio's own type
+		// stack rather than the canvas default (10px sans-serif).
+		ctx.font = STORYBOARD_FONT;
+		ctx.textAlign = "left";
+		ctx.textBaseline = "top";
+		return element;
+	}
+
+	/* ===================== storyboard exports (#644) =======================
+	 * A storyboard project's panels are its stills, in still order. Each
+	 * export runs as one export job (status panel, cancel, retry, analytics
+	 * export_kind contact_sheet | panel_pack | animatic) and draws its frames
+	 * through withExportFrame, so per-panel cast overrides and proxy paths
+	 * land exactly as the preview shows them.
+	 */
+
+	function storyboardPanels(list = shots) {
+		return list.filter((entry) => entry.kind === "still").sort((a, b) => a.startFrame - b.startFrame);
+	}
+
+	const noPanelsMessage = () => ko("Add a panel first — storyboard exports describe panels", "패널을 먼저 추가하세요 — 스토리보드 내보내기는 패널을 담습니다");
+
+	// The panel's stylized picture as PNG bytes, or null when it has none (or
+	// its asset is gone from this browser).
+	async function panelStylizedPng(entry) {
+		if (!entry.stylizedAssetId) return null;
+		const record = await assetRecord(entry.stylizedAssetId);
+		if (!record) {
+			console.warn(`[cozyclay] stylized panel ${entry.stylizedAssetId} is missing; exporting the greybox only`);
+			return null;
+		}
+		const bytes = new Uint8Array(record.bytes);
+		if (record.type === "image/png") return bytes;
+		const bitmap = await createImageBitmap(new Blob([bytes], { type: record.type }));
+		try {
+			const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+			canvas.getContext("2d").drawImage(bitmap, 0, 0);
+			return new Uint8Array(await (await canvas.convertToBlob({ type: "image/png" })).arrayBuffer());
+		} finally {
+			bitmap.close();
+		}
+	}
+
+	async function loadPngBytes(bytes) {
+		const url = URL.createObjectURL(new Blob([bytes], { type: "image/png" }));
+		try { return await loadImage(url); }
+		finally { URL.revokeObjectURL(url); }
+	}
+
+	const panelFolder = (order) => `panel-${String(order + 1).padStart(2, "0")}`;
+
+	/** Contact sheet of the storyboard: the stylized picture with the greybox
+	 * inset when a panel has one, and the panel caption under it. */
+	async function exportContactSheet() {
+		if (recRef.current) return null;
+		if (!storyboardPanels().length) { setToast(noPanelsMessage()); return null; }
+		return executeExportRequest(exportRequest("contact_sheet", async (job) => {
+			const all = job.request.context.shots;
+			const panels = storyboardPanels(all);
+			updateExportStatus(job, "preparing", { stage: "frames", cancellable: true });
+			const cells = [];
+			for (const [order, entry] of panels.entries()) {
+				const dataUrl = captureShotFramePng(entry.startFrame);
+				if (!dataUrl) throw Object.assign(new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요")), { exportFailureCode: "render_failed" });
+				const stylized = await panelStylizedPng(entry);
+				const meta = packMetaForShot(entry, all.indexOf(entry));
+				cells.push({
+					title: storyboardLine(`${order + 1}. ${entry.name}`),
+					durationSeconds: Number(((entry.endFrame - entry.startFrame + 1) / tlFps).toFixed(2)),
+					prompt: storyboardCaption(buildShotPrompt(meta, { target: "image" })),
+					caption: storyboardLine((entry.caption ?? "").trim()),
+					image: await loadImage(dataUrl),
+					stylized: stylized ? await loadPngBytes(stylized) : null,
+				});
+				await exportBoundary(job);
+			}
+			const canvas = composeStoryboard({ shots: cells, columns: Math.min(3, cells.length), cell: { width: 480, height: 300 }, createCanvas: storyboardCanvas });
+			job.controller.signal.throwIfAborted();
+			saveDownload(canvas.toDataURL("image/png"), "cozyclay-storyboard.png");
+			setToast(isKo ? `콘택트 시트 다운로드 요청 · 패널 ${cells.length}개` : `Download requested: contact sheet · ${cells.length} panels`);
+			return { fileName: "cozyclay-storyboard.png", panelCount: cells.length };
+		}));
+	}
+
+	// One panel's pack: the greybox as first.png, the stylized picture when
+	// there is one, the still's camera and hold, and the image prompt plus caption.
+	async function panelPackArgs(entry, order, all) {
+		const firstUrl = captureShotFramePng(entry.startFrame);
+		if (!firstUrl) throw Object.assign(new Error(ko("The shot renderer is not ready", "샷 렌더러가 아직 준비되지 않았어요")), { exportFailureCode: "render_failed" });
+		const meta = packMetaForShot(entry, all.indexOf(entry));
+		const caption = (entry.caption ?? "").trim();
+		return {
+			shot: { title: entry.name, index: order + 1, startFrame: entry.startFrame, endFrame: entry.endFrame, kind: "still" },
+			fps: tlFps,
+			firstFramePng: dataUrlToBytes(firstUrl),
+			lastFramePng: null,
+			clip: null,
+			stylizedPng: await panelStylizedPng(entry),
+			camera: { ...meta, framing: { start: shotFramingAtFrame(entry, entry.startFrame) } },
+			prompt: buildShotPrompt(meta, { target: "image" }) + (caption ? `\nCAPTION: ${caption}` : ""),
+			folder: panelFolder(order),
+		};
+	}
+
+	/** Panel pack (zip) for one panel — the given one, else the selected one,
+	 * else the one under the playhead, else the first — or, with `every`, one
+	 * zip holding a panel-NN/ folder per panel. */
+	async function exportPanelPacks(every = false, shotId = null) {
+		if (recRef.current) return null;
+		const panels = storyboardPanels();
+		if (!panels.length) { setToast(noPanelsMessage()); return null; }
+		const target = shotId ? panels.find((entry) => entry.id === shotId)
+			: panels.find((entry) => entry.id === activeShot?.id)
+			?? panels.find((entry) => tlFrame >= entry.startFrame && tlFrame <= entry.endFrame) ?? panels[0];
+		if (!target) return null;
+		return executeExportRequest(exportRequest("panel_pack", async (job) => {
+			const all = job.request.context.shots;
+			const contextPanels = storyboardPanels(all);
+			const targets = every ? contextPanels : contextPanels.filter((entry) => entry.id === target.id);
+			updateExportStatus(job, "preparing", { stage: "frames", cancellable: true });
+			const packs = [];
+			for (const [step, entry] of targets.entries()) {
+				job.label = ko(`Panel ${step + 1} of ${targets.length}`, `패널 ${step + 1} / ${targets.length}`);
+				packs.push(await panelPackArgs(entry, contextPanels.indexOf(entry), all));
+				await exportBoundary(job);
+			}
+			updateExportStatus(job, "finalizing", { stage: "archive", cancellable: true });
+			await exportBoundary(job);
+			const entries = packs.flatMap((args) => keyframePackEntries(args));
+			const bytes = every ? buildZip(entries) : buildKeyframePack(packs[0]);
+			const name = every ? "cozyclay-panels.zip" : `cozyclay-${packs[0].folder}-${slugifyTitle(target.name)}.zip`;
+			await exportBoundary(job);
+			const url = URL.createObjectURL(new Blob([bytes], { type: "application/zip" }));
+			try { saveDownload(url, name); }
+			finally { setTimeout(() => URL.revokeObjectURL(url), 10_000); }
+			setToast(isKo ? `${name} 다운로드 요청 · 파일 ${entries.length}개` : `Download requested: ${name} · ${entries.length} files`);
+			return { fileName: name, entries: entries.map((entry) => entry.name) };
+		}));
+	}
+
+	/** Animatic (mp4): every panel held for its hold, from frame 0 to the last
+	 * still's end, at the production fps. */
+	async function exportAnimatic() {
+		if (recRef.current) return null;
+		const panels = storyboardPanels();
+		if (!panels.length) { setToast(noPanelsMessage()); return null; }
+		const endFrame = panels.at(-1).endFrame;
+		return executeExportRequest(exportRequest("animatic",
+			(job) => runShotExport({ startFrame: 0, endFrame, fileName: "cozyclay-animatic.mp4" }, job)));
 	}
 
 	function captureCurrentFraming() {
@@ -6905,6 +7050,7 @@ export default function App() {
 		exportShotIdRef, setExportMenuAnchor, setExportMenuOpen, exportPhaseLabel,
 		exportMenuAnchor, resultOpen, exportFeedback, shots, exportKeyframePacks,
 		hasCameraKeys, motion, exportRenderPasses, exportDepthVideo, exportStoryboard,
+		exportContactSheet, exportPanelPacks, exportAnimatic,
 		capturePanelThumbnail, packMetaForShot, previsMode: scenesDomain.previsMode, sceneRevision: sceneRevisionRef.current,
 		downloadOtioCutList, projectStatus, liveWorkspaceHandle, selectedHierarchyId, selectHierarchy,
 		aimEditorAtKeyLight, characters, showB, ikFrames, ikMode,
