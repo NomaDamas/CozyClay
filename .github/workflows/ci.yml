@@ -7,17 +7,100 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
+  # Keep the workflow and its required check alive for every pull request, but
+  # avoid spending a full test budget on docs/metrics-only changes. A job-level
+  # skip reports success; a workflow-level paths filter would leave a required
+  # check pending instead.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.filter.outputs.source }}
+    steps:
+      - id: filter
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === "workflow_dispatch") {
+              core.setOutput("source", "true");
+              return;
+            }
+            const files = await github.paginate(github.rest.pulls.listFiles, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number,
+              per_page: 100,
+            });
+            // Other Markdown (e.g. mcp/LIVE-PROTOCOL.md and public/fonts/README.md)
+            // is asserted by tests. Renames must check the original path too.
+            const ignored = (path) => path.startsWith(".metrics/") || /^docs\/.*\.md$/.test(path) || /^[^/]+\.md$/.test(path);
+            // The files API caps responses at 3000 files: incomplete/empty
+            // input must run CI rather than silently skip unlisted changes.
+            const source = files.length === 0 || files.length >= 3000 || files.some(
+              ({ filename, previous_filename }) => !ignored(filename) || (previous_filename && !ignored(previous_filename))
+            );
+            core.setOutput("source", String(source));
+            await core.summary
+              .addHeading("CI scope")
+              .addTable([
+                [{ data: "Changed files", header: true }, { data: "Source/test scope", header: true }],
+                [String(files.length), source ? "yes" : "no"],
+              ])
+              .write();
+
+  # Keep the historical `test` check name stable for branch protection while
+  # the actual suite runs on two deterministic shards below.
+  test:
+    if: always()
+    needs: [changes, test-shard]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check test shards
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SOURCE_SCOPE: ${{ needs.changes.outputs.source }}
+          SHARD_RESULT: ${{ needs.test-shard.result }}
+        run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "changes job did not complete successfully: $CHANGES_RESULT"
+            exit 1
+          fi
+          if [ "$SOURCE_SCOPE" = "false" ]; then
+            echo "docs/metrics-only change: test shards skipped"
+            exit 0
+          fi
+          if [ "$SOURCE_SCOPE" != "true" ]; then
+            echo "missing or invalid CI scope: $SOURCE_SCOPE"
+            exit 1
+          fi
+          if [ "$SHARD_RESULT" != "success" ]; then
+            echo "test shard result: $SHARD_RESULT"
+            exit 1
+          fi
+          echo "all test shards passed"
+
   # The full node suite (vite build + tools/run-tests.mjs), identical to the
   # test step pages.yml runs before deploying: green here means the merge
-  # cannot break the deploy.
-  test:
+  # cannot break the deploy. Each shard has its own runner, so wall-clock time
+  # follows the slower half of the suite instead of the whole suite.
+  test-shard:
+    if: needs.changes.outputs.source == 'true'
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    name: test / shard ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,11 +121,9 @@ jobs:
         run: |
           sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
           sudo apt-get update
-          sudo apt-get install -y ffmpeg
-      # tools/run-tests.mjs inventories mcp/ alongside test/ (#52), so the
-      # MCP verify suites — including the hermetic verify:live family — run
-      # under `npm test`; only browser-bound suites stay classified out.
-      - run: npm test
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: npm run build
+      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/2"
         env:
           # test/verify-morphgs-exporter.mjs: the MorphGS truth comparison
           # needs uv + a torch wheel; the runner has neither, so only its
@@ -56,10 +137,11 @@ jobs:
   # how a broken capture_frame shipped. The element-management suites assert
   # at the protocol/JSON level and GATE; verify-live-capture actually renders
   # an offscreen frame, which overruns the 5 s live-command bound under the
-  # runner's software GL (SwiftShader), so it runs in observation until that
-  # bound and the runner get along. A job of its own, in parallel with
-  # `browser`, so the new tier adds no wall-clock to the critical path.
+  # runner's software GL (SwiftShader), so it is covered by the scheduled
+  # observation workflow instead of extending every pull request.
   mcp-live:
+    if: needs.changes.outputs.source == 'true'
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -68,6 +150,9 @@ jobs:
         with:
           node-version: 22.19
           cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp/package-lock.json
       - run: npm ci
       - run: npm --prefix mcp ci
       - name: MCP live suites (gating)
@@ -100,53 +185,14 @@ jobs:
             fi
           done
           exit "$failed"
-      - name: MCP live suites (observation)
-        # capture_frame renders a real offscreen frame; SwiftShader overruns
-        # the 5 s live-command bound. Keep it visible without gating.
-        if: ${{ always() }}
-        run: |
-          {
-            echo "## MCP live suites (observation)"
-            echo ""
-          } >> "$GITHUB_STEP_SUMMARY"
-          t=verify-live-capture
-          if node "mcp/$t.mjs" > "/tmp/$t.log" 2>&1; then
-            echo "- :white_check_mark: $t" >> "$GITHUB_STEP_SUMMARY"
-            echo "$t: PASS"
-          else
-            echo "::warning title=MCP live suite failed::$t (see step summary)"
-            echo "::group::$t failure log (last 40 lines)"
-            echo "$t: FAIL"
-            tail -40 "/tmp/$t.log"
-            echo "::endgroup::"
-            {
-              echo "- :x: $t"
-              echo "  <details><summary>log tail</summary>"
-              echo ""
-              echo '  ```'
-              tail -40 "/tmp/$t.log" | sed 's/^/  /'
-              echo '  ```'
-              echo "  </details>"
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
 
-  # Real-browser rendering regressions via the CDP QA wrapper — one matrix
-  # job per suite, because the suites dominate wall-clock (setup is ~20 s on
-  # the npm cache while verify-ik-browser and verify-object-gizmo together
-  # ran ~12 minutes in series). Splitting makes the whole workflow as fast as
-  # the single slowest suite and lands gating verdicts in a couple of
-  # minutes instead of after the observation tail.
-  #
-  # Tiers:
-  # - gating: suites proven green on the runner fail their job when they
-  #   fail. camera-rail has been green on SwiftShader since the job landed;
-  #   qa-gizmo-click-through-browser guards the #81 regression and asserts
-  #   through CPU-side raycast hooks and the DOM, not GPU pixels.
-  # - observation: suites the runner's software GL (SwiftShader) cannot pass
-  #   yet — ik-browser fails one occlusion check that passes on real GPUs —
-  #   plus suites newly joining. Results go to the step summary and a
-  #   warning annotation. Promote a suite to gating once it is green here.
+  # Real-browser rendering regressions via the CDP QA wrapper. The two suites
+  # proven green on the hosted runner gate pull requests; the four observation
+  # suites run in browser-observation.yml so they remain visible without
+  # extending the required PR path.
   browser:
+    if: needs.changes.outputs.source == 'true'
+    needs: changes
     name: browser / ${{ matrix.suite }} (${{ matrix.tier }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -158,14 +204,6 @@ jobs:
             tier: gating
           - suite: qa-gizmo-click-through-browser
             tier: gating
-          - suite: verify-ik-browser
-            tier: observation
-          - suite: verify-object-gizmo
-            tier: observation
-          - suite: qa-shell-start-browser
-            tier: observation
-          - suite: verify-project-menu-browser
-            tier: observation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -221,3 +259,38 @@ jobs:
             exit 1
           fi
           echo "::warning title=browser suite failed::$t (see step summary)"
+
+  # One stable required check can be selected in branch protection while the
+  # expensive jobs remain conditionally skipped for docs/metrics-only PRs.
+  gate:
+    if: always()
+    needs: [changes, test, mcp-live, browser]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check CI results
+        env:
+          CHANGES_RESULT: ${{ needs.changes.result }}
+          SOURCE_SCOPE: ${{ needs.changes.outputs.source }}
+          TEST_RESULT: ${{ needs.test.result }}
+          MCP_RESULT: ${{ needs.mcp-live.result }}
+          BROWSER_RESULT: ${{ needs.browser.result }}
+        run: |
+          if [ "$CHANGES_RESULT" != "success" ]; then
+            echo "changes job did not complete successfully: $CHANGES_RESULT"
+            exit 1
+          fi
+          if [ "$SOURCE_SCOPE" = "false" ]; then
+            echo "docs/metrics-only change: heavy CI skipped"
+            exit 0
+          fi
+          if [ "$SOURCE_SCOPE" != "true" ]; then
+            echo "missing or invalid CI scope: $SOURCE_SCOPE"
+            exit 1
+          fi
+          for result in "$TEST_RESULT" "$MCP_RESULT" "$BROWSER_RESULT"; do
+            if [ "$result" != "success" ]; then
+              echo "required CI job result: $result"
+              exit 1
+            fi
+          done
+          echo "all required CI jobs passed"

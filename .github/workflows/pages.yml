@@ -3,6 +3,10 @@ name: Deploy demo to GitHub Pages
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - ".metrics/**"
+      - "docs/**/*.md"
+      - "*.md"
   workflow_dispatch:
 
 permissions:
@@ -24,15 +28,14 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp/package-lock.json
       - run: npm ci
-      - run: npm --prefix mcp ci
-      - name: Install media inspection tools
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
-      - run: npm test
+      - run: npm run build
         env:
-          # See ci.yml: the MorphGS truth comparison needs uv + torch.
-          MORPHGS_SKIP_TRUTH: "1"
           VITE_POSTHOG_KEY: ${{ secrets.VITE_POSTHOG_KEY }}
           # Optional first-party proxy host (repo variable); empty falls back to us.i.posthog.com.
           VITE_POSTHOG_HOST: ${{ vars.VITE_POSTHOG_HOST }}
@@ -44,8 +47,41 @@ jobs:
         with:
           path: dist
 
+  # Keep deployment protected by the same complete Node suite as pull
+  # requests, but run it on two runners so a main push is not serialized.
+  test-shard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    name: pages test / shard ${{ matrix.shard }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            mcp/package-lock.json
+      - run: npm ci
+      - run: npm --prefix mcp ci
+      - name: Install media inspection tools
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*.list /etc/apt/sources.list.d/google-chrome*.sources
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+      - run: npm run build
+      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/2"
+        env:
+          # The MorphGS truth comparison needs uv + torch; the runner has
+          # neither, so only its structural checks run in hosted CI.
+          MORPHGS_SKIP_TRUTH: "1"
+
   deploy:
-    needs: build
+    needs: [build, test-shard]
     runs-on: ubuntu-latest
     environment:
       name: github-pages
