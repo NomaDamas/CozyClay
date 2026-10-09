@@ -37,6 +37,8 @@ import {
 	requestHandlePermission,
 	createWorkflowGraph,
 	clearStoredProjectHandle,
+	DEFAULT_PREVIS_MODE,
+	normalizePrevisMode,
 } from "../project.js";
 import { playgroundSceneUrl, fetchSceneProject } from "../playground.js";
 import { openAssetDb, referencedAssetIds, getAsset, putAsset } from "../scene-assets.js";
@@ -55,9 +57,11 @@ import { createIkState } from "../ardy/ik.js";
 
 // The scene list and project identity share one history. Dirty is derived from
 // the saved checkpoint, not an authored edit, and has its own non-history slice.
-export function createScenesDomain(appContext, initial, name) {
+// previsMode is project identity too: it is set only by a document boundary
+// (blank creation, starter/file open, session restore), never by an edit.
+export function createScenesDomain(appContext, initial, name, previsMode = DEFAULT_PREVIS_MODE) {
 	const ordered = rows => rows.map((scene, order) => ({ ...scene, order }));
-	let native = createDocumentStore({ owned: { scenes: ordered(initial.scenes), project: { name, activeSceneId: initial.activeSceneId } } });
+	let native = createDocumentStore({ owned: { scenes: ordered(initial.scenes), project: { name, activeSceneId: initial.activeSceneId, previsMode: normalizePrevisMode(previsMode) } } });
 	const listeners = new Set();
 	const notify = () => { for (const listener of listeners) listener(); };
 	let release = native.subscribe(notify);
@@ -93,7 +97,7 @@ export function createScenesDomain(appContext, initial, name) {
 		appContext.publishScenes(read());
 		appContext.shared.activeSceneIdRef.current = metadata().activeSceneId;
 		if (appContext.live.state) appContext.patchLive({ scenes: read(), activeSceneId: metadata().activeSceneId });
-		storeProjectSession(metadata().name);
+		storeProjectSession(metadata().name, metadata().previsMode);
 		domain.persist?.();
 		domain.refreshDirty?.();
 	};
@@ -117,9 +121,9 @@ export function createScenesDomain(appContext, initial, name) {
 		},
 		// Session cache/file loads are explicit non-authored boundaries. They
 		// retire scene history, just as opening a scene retired native history.
-		replaceDocument(scenes, activeSceneId, name = metadata().name) {
+		replaceDocument(scenes, activeSceneId, name = metadata().name, previsMode = metadata().previsMode) {
 			release(); native.dispose();
-			native = createDocumentStore({ owned: { scenes: ordered(scenes), project: { name, activeSceneId } } });
+			native = createDocumentStore({ owned: { scenes: ordered(scenes), project: { name, activeSceneId, previsMode: normalizePrevisMode(previsMode) } } });
 			release = native.subscribe(notify); notify();
 		},
 		setDirty(value) {
@@ -135,9 +139,13 @@ export function createScenesDomain(appContext, initial, name) {
 }
 
 export function useScenes(appContext) {
-	const [domain] = useState(() => appContext.storeDomain("scenes") ?? createScenesDomain(appContext, appContext.shared.startup.document, loadProjectSession()?.name ?? null));
+	const [domain] = useState(() => {
+		if (appContext.storeDomain("scenes")) return appContext.storeDomain("scenes");
+		const session = loadProjectSession();
+		return createScenesDomain(appContext, appContext.shared.startup.document, session?.name ?? null, session?.previsMode);
+	});
 	const scenes = useDocumentDomain(domain.documentStore, "scenes");
-	const { activeSceneId, name: projectName } = useDocumentDomain(domain.documentStore, "project");
+	const { activeSceneId, name: projectName, previsMode } = useDocumentDomain(domain.documentStore, "project");
 	const projectDirty = useDocumentDomain(domain.dirtyStore, "projectDirty");
 	const runtimeValues = useRef(new Map());
 	async function runProject(id, args = {}) {
@@ -222,6 +230,7 @@ export function useScenes(appContext) {
 			customPoses: appContext.shared.projectStateRef.current.customPoses,
 			workflow: loadWorkflowGraph(),
 			name,
+			previsMode: domain.metadata().previsMode,
 		};
 	}
 
@@ -296,7 +305,7 @@ export function useScenes(appContext) {
 		appContext.shared.projectSnapshotRef.current = snapshot;
 		if (domain.metadata().name === previousName) domain.nameSaved(name);
 		refreshProjectDirty();
-		storeProjectSession(domain.metadata().name);
+		storeProjectSession(domain.metadata().name, domain.metadata().previsMode);
 	}
 
 	function projectProblemsNotice(problems) {
@@ -412,7 +421,8 @@ export function useScenes(appContext) {
 			? { ...source, version: SCENES_VERSION, scenes: source.scenes.map((scene) => ({ ...scene, stage: migrateStageFrames(scene.stage) })) }
 			: source;
 		const mergedCustomPoses = mergeProjectCustomPoses(appContext.shared.customPoses, project.customPoses);
-		domain.replaceDocument(doc.scenes, doc.activeSceneId, project.name);
+		const projectPrevisMode = normalizePrevisMode(project.previsMode);
+		domain.replaceDocument(doc.scenes, doc.activeSceneId, project.name, projectPrevisMode);
 		if (project.workspaceLayout) appContext.shared.setWorkspaceLayout({ ...DEFAULT_WORKSPACE_LAYOUT, ...project.workspaceLayout });
 		appContext.bus.run('cast.setCustomPoses', { poses: mergedCustomPoses });
 		const resolvedWorkflow = resolveWorkflowOutputs(normalizeWorkflowGraph(project.workflow), new Map((project.assets ?? []).map((asset) => [asset.id, asset])));
@@ -423,7 +433,7 @@ export function useScenes(appContext) {
 		appContext.shared.projectSnapshotRef.current = collectProjectSnapshot(project.name);
 		domain.pendingCheckpoint = { clock: appContext.undoClock, name: project.name };
 		domain.setDirty(false);
-		storeProjectSession(project.name);
+		storeProjectSession(project.name, projectPrevisMode);
 		setProjectStartupOpen(false);
 		// Whatever document this is, it is no longer the scene the tutorial opened
 		// for itself; startCameraTutorial re-arms the flag after its own open.
@@ -531,23 +541,24 @@ export function useScenes(appContext) {
 		setProjectNameDialog({ kind: "new", initialName: projectName ?? "My Project" });
 	}
 
-	function newProject(name, authorized = false) {
-		if (!authorized) return runProject("project.new", typeof name === "string" ? { name } : {});
+	function newProject(name, authorized = false, { previsMode } = {}) {
+		if (!authorized) return runProject("project.new", { ...(typeof name === "string" ? { name } : {}), ...(previsMode === undefined ? {} : { previsMode }) });
 		if (typeof name !== "string") return requestNewProject(true);
 		name = name.trim() || "My Project";
+		previsMode = normalizePrevisMode(previsMode);
 		setProjectNameDialog(null);
 		const fresh = createSceneDocument(ko("SCENE 01", "씬 01"));
 		storeWorkflowGraph(createWorkflowGraph());
 		appContext.shared.projectMotionsRef.current = new Map();
 		appContext.shared.motionFullRef.current.clear();
-		domain.replaceDocument(fresh.scenes, fresh.activeSceneId, name);
+		domain.replaceDocument(fresh.scenes, fresh.activeSceneId, name, previsMode);
 		persistScenes(fresh.scenes, fresh.activeSceneId);
 		openScene(fresh.scenes[0], fresh.scenes);
 		appContext.shared.projectHandleRef.current = null;
 		clearStoredProjectHandle();
 		appContext.shared.projectSnapshotRef.current = collectProjectSnapshot(name);
 		domain.setDirty(false);
-		storeProjectSession(name);
+		storeProjectSession(name, previsMode);
 		setProjectStartupOpen(false);
 		appContext.shared.setFirstSuccessGuideOpen(true);
 		domain.pendingCheckpoint = { clock: appContext.undoClock, name };
@@ -787,7 +798,7 @@ export function useScenes(appContext) {
 			return value;
 		};
 		if (id === "project.browse") { setProjectStartupOpen(false); setProjectBrowserOpen(true); return; }
-		if (id === "project.new") return newProject(args.name, true);
+		if (id === "project.new") return newProject(args.name, true, { previsMode: args.previsMode });
 		if (id === "project.openStarter") return openStarterScene(args.id, args.source, context, args.name);
 		if (id === "project.restore") return restoreStoredProject({ handle: runtime("handleToken") }, context);
 		if (args.handleToken) return openProjectByHandle(runtime("handleToken"), context);
@@ -807,7 +818,7 @@ export function useScenes(appContext) {
 	domain.refreshDirty = () => refreshProjectDirty(false);
 	return {
 		...domain, applyExternalScene, loadLiveScenes, refreshProjectDirty,
-		scenes, activeSceneId, sceneSaveError, snapshotActiveScene, persistScenes, projectName,
+		scenes, activeSceneId, sceneSaveError, snapshotActiveScene, persistScenes, projectName, previsMode,
 		projectDirty, setProjectDirty: domain.setDirty, projectSaveState, setProjectSaveState, projectMenuOpen,
 		setProjectMenuOpen, projectBrowserOpen, setProjectBrowserOpen, projectNameDialog, setProjectNameDialog,
 		projectStartupOpen, setProjectStartupOpen, projectManifest, setProjectManifest, saveBlockedReasons,
