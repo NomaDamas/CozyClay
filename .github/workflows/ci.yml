@@ -57,7 +57,7 @@ jobs:
               .write();
 
   # Keep the historical `test` check name stable for branch protection while
-  # the actual suite runs on two deterministic shards below.
+  # the actual suite runs on four deterministic shards below.
   test:
     if: always()
     needs: [changes, test-shard]
@@ -90,7 +90,9 @@ jobs:
   # The full node suite (vite build + tools/run-tests.mjs), identical to the
   # test step pages.yml runs before deploying: green here means the merge
   # cannot break the deploy. Each shard has its own runner, so wall-clock time
-  # follows the slower half of the suite instead of the whole suite.
+  # follows the slowest quarter of the suite instead of the whole suite (#666):
+  # minutes are free on this public repository, and ten jobs per run stay
+  # under the free plan's 20 concurrent jobs with two pull requests in flight.
   test-shard:
     if: needs.changes.outputs.source == 'true'
     needs: changes
@@ -100,7 +102,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2]
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -123,7 +125,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run build
-      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/2"
+      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/4"
         env:
           # test/verify-morphgs-exporter.mjs: the MorphGS truth comparison
           # needs uv + a torch wheel; the runner has neither, so only its
