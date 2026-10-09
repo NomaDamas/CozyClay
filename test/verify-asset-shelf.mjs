@@ -3,6 +3,10 @@
 // pipeline DERIVED. This suite pins that split as pure data-in/data-out.
 import { assetKind, derivedAssetIds, formatAssetBytes, sourceAssetIds } from "../src/asset-shelf.js";
 import { LOG_LIMIT, logStore } from "../src/shell/log-store.js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { createServer } from "vite";
+import { CHARACTER_KIND_IDS } from "../src/scenes.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -139,6 +143,24 @@ const quiet = notified;
 logStore.push({ text: "after unsubscribe" });
 expect("unsubscribe stops notifications", notified === quiet);
 logStore.clear();
+
+// The Content pane's Characters folder casts both rigs and the capsule figure.
+// The pane is JSX, so vite transforms it for this one render.
+const server = await createServer({ configFile: false, logLevel: "silent", server: { middlewareMode: true, hmr: false },
+	optimizeDeps: { noDiscovery: true, include: [] }, appType: "custom" });
+let pane;
+try { pane = await server.ssrLoadModule("/src/asset-pane.jsx"); }
+finally { await server.close(); }
+const characterTiles = (query) => [...renderToStaticMarkup(createElement(pane.FolderGrid, { folder: "characters", query }))
+	.matchAll(/data-asset-key="character:([^"]+)"/g)].map((match) => match[1]);
+const listed = characterTiles("");
+expect("the Characters folder lists three tiles", listed.length === 3, listed.join(", "));
+expect("the Characters folder offers every character kind", JSON.stringify(listed) === JSON.stringify(CHARACTER_KIND_IDS), listed.join(", "));
+expect("the capsule figure tile is labelled", pane.CHARACTER_ASSETS.find((asset) => asset.id === "proxy-figure")?.label === "Capsule figure");
+expect("the capsule tile draws an SVG silhouette, not an FBX thumbnail",
+	renderToStaticMarkup(createElement(pane.FolderGrid, { folder: "characters", query: "capsule" })).includes('data-preview="capsule"'));
+expect("a name search finds the capsule figure", JSON.stringify(characterTiles("capsule")) === JSON.stringify(["proxy-figure"]), characterTiles("capsule").join(", "));
+expect("a search that matches nothing lists no tiles", characterTiles("xyz").length === 0, characterTiles("xyz").join(", "));
 
 if (failures) {
 	console.error(`\n${failures} failure(s)`);

@@ -68,7 +68,7 @@ generated frame matches the blocking instead of drifting off into a generic shot
 | `capture_frame` | a compressed live render with camera-plane, visibility and occlusion assertions |
 | `set_camera` | move the lens / change focal length directly |
 | `frame_shot` | frame by intent — size, view, level, side |
-| `add_character` / `place_character` / `remove_character` | the cast |
+| `add_character` / `place_character` / `remove_character` | the cast (`add_character { model: "proxy-figure", posture }` adds a rigless capsule figure) |
 | `focus_character` | choose who the camera frames |
 | `place_object` / `update_object` / `remove_object` | the set — `place_object` also accepts `name` and `parent`, so multi-part assets like "Building A" land as one named assembly |
 | `import_mesh` | load a local GLB, OBJ or FBX from a filesystem path as a mesh prop (live editor required); optional floor position, yaw, standing height, clay |

@@ -47,7 +47,8 @@ import {
 	slateLine,
 } from "../src/shot.js";
 import {
-	CHARACTER_MODEL_IDS,
+	CHARACTER_KIND_IDS,
+	POSTURES,
 	activeScene,
 	addScene,
 	createCharacterEntry,
@@ -867,16 +868,20 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 					z: z.number().default(0).describe("floor position z in metres"),
 					facing: z.number().default(0).describe("yaw in degrees; 0 faces the default camera"),
 					model: z
-						.enum(CHARACTER_MODEL_IDS)
+						.enum(CHARACTER_KIND_IDS)
 						.optional()
-						.describe("which mannequin to use"),
+						.describe('which mannequin to use; "proxy-figure" is a rigless capsule figure for blocking'),
+					posture: z
+						.enum(POSTURES)
+						.optional()
+						.describe("body posture, stand when omitted"),
 				},
 			},
-			async ({ subject: desc, x, z: zPos, facing, model, ...admission }) => {
+			async ({ subject: desc, x, z: zPos, facing, model, posture, ...admission }) => {
 				if (liveHub?.connected) {
 					try {
 						return await runStudioCommand({ ...admission, action: "character.add", args: {
-							character: { subject: desc, x, z: zPos, rot: facing, model, pose: DEFAULT_POSE },
+							character: { subject: desc, x, z: zPos, rot: facing, model, posture, pose: DEFAULT_POSE },
 						} });
 					} catch (error) {
 						return liveError(error);
@@ -890,7 +895,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				const taken = new Set(st.characters.map((c) => c.id));
 				let id = `char-${String.fromCharCode(97 + index)}`;
 				for (let n = index + 1; taken.has(id); n += 1) id = `char-${n}`;
-				const entry = createCharacterEntry({ id, subject: desc, x, z: zPos, rot: facing, model }, index);
+				const entry = createCharacterEntry({ id, subject: desc, x, z: zPos, rot: facing, model, posture }, index);
 				st.characters = [...st.characters, entry];
 				return text(`Added ${String.fromCharCode(65 + index)} (${entry.id}).\n\n${sceneReport()}`);
 			},

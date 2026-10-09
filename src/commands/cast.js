@@ -5,7 +5,7 @@ import { studioActionDeclaration } from "../studio-actions.js";
 import { characterOf, fail, changedIds } from "./shared.js";
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/character.js';
-import { createCharacterEntry } from '../scenes.js';
+import { createCharacterEntry, CHARACTER_KIND_IDS, POSTURES } from '../scenes.js';
 import { DEFAULT_POSE } from '../poses.js';
 import { createStableItemId, updateStableItem, removeStableItem } from '../stable-items.js';
 import { movePromptClipFrames } from '../ardy/prompt-clips.js';
@@ -14,13 +14,17 @@ import { STUDIO_TOOL_SCHEMAS, StudioSchemas } from '../studio-agent-protocol.js'
 const id = StudioSchemas.TargetGuard.properties.targetId;
 const input = (properties, required = Object.keys(properties)) => ({ type: 'object', properties, required, additionalProperties: false });
 const record = { type: 'object', properties: {}, additionalProperties: true };
+// A capsule figure is cast by model id; its posture is the one body choice it
+// has. A patched posture outside POSTURES normalizes to "stand" (createCharacterEntry).
+const newCharacter = { ...record, properties: { model: { type: 'string', enum: [...CHARACTER_KIND_IDS] }, posture: { type: 'string', enum: [...POSTURES] } }, required: [] };
+const characterPatch = { ...record, properties: { posture: { type: 'string', description: `One of ${POSTURES.join(', ')}; anything else stands.` } }, required: [] };
 const mutation = (id, label, schema, exposure = 'open') => ({ id, label, description: label, kind: 'mutation', undoDomain: 'cast', input: schema, exposure });
 const blocks = elementSetSchema('character').properties.set.properties.layer.properties.promptClips;
 const semantic = [
 	mutation('character.set', 'Set character fields', elementSetSchema('character')),
-	mutation('character.add', 'Add character', input({ character: record })),
+	mutation('character.add', 'Add character', input({ character: newCharacter })),
 	mutation('character.remove', 'Remove character', input({ characterId: id })),
-	mutation('character.update', 'Update character', input({ characterId: id, patch: record })),
+	mutation('character.update', 'Update character', input({ characterId: id, patch: characterPatch })),
 	mutation('character.setPose', 'Set character pose', input({ characterId: id, pose: { oneOf: [id, record, { type: 'null' }] }, clearMotion: { type: 'boolean' } }, ['characterId', 'pose'])),
 	mutation('character.setPromptBlocks', 'Set prompt blocks', input({ characterId: id, blocks })),
 	mutation('characters.arrange', 'Arrange characters', STUDIO_TOOL_SCHEMAS.arrange_characters),
