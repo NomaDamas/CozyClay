@@ -12,7 +12,6 @@ import { panelStylizeRequest, requestAgentImage, stylizedPngBytes, stylizeErrorM
 // a drag or a typing burst costs one capture pass, not one per change.
 const THUMB_DEBOUNCE_MS = 500;
 const PANEL_DRAG_TYPE = "application/x-cozyclay-panel";
-const LATER_PR = "coming in a later PR";
 
 /** The stylized picture behind a panel, as an object URL for its lifetime. */
 function useStylizedUrl(assetId) {
@@ -39,7 +38,7 @@ function useStylizedUrl(assetId) {
  * Every edit goes through the shot commands, so the Sequencer, undo and the
  * Agent see the same document. */
 export default function BoardSlot({ active = true }) {
-	const { shots, activeShot, tlFps, runStudioAction, selectTimelineShot, capturePanelThumbnail, packMetaForShot, setToast, sceneRevision } = useStudioShell();
+	const { shots, activeShot, tlFps, runStudioAction, selectTimelineShot, capturePanelThumbnail, packMetaForShot, setToast, sceneRevision, exportPanelPacks, recState } = useStudioShell();
 	const [stylizing, setStylizing] = useState({});
 	const stills = shots.filter((entry) => entry.kind === "still").sort((a, b) => a.startFrame - b.startFrame);
 	const [thumbs, setThumbs] = useState({});
@@ -186,6 +185,8 @@ export default function BoardSlot({ active = true }) {
 							onCaption={(caption) => runStudioAction("shot.setCaption", { shotId: entry.id, caption })}
 							onHold={(hold) => runStudioAction("shot.setHold", { shotId: entry.id, hold })}
 							onSendToWorkflow={(source) => sendToWorkflow(entry, source)}
+						exporting={recState === "recording"}
+						onExport={() => exportPanelPacks(false, entry.id)}
 							onDragStart={(event) => {
 								event.dataTransfer.effectAllowed = "move";
 								event.dataTransfer.setData(PANEL_DRAG_TYPE, entry.id);
@@ -211,7 +212,7 @@ export default function BoardSlot({ active = true }) {
 	);
 }
 
-function PanelCard({ shot, index, fps, thumb, stylizing, onStylize, onUnstylize, selected, dragging, dropSide, onSelect, onRemove, onDuplicate, onCaption, onHold, onSendToWorkflow, onDragStart, onDragOver, onDrop, onDragEnd }) {
+function PanelCard({ shot, index, fps, thumb, stylizing, onStylize, onUnstylize, selected, dragging, dropSide, onSelect, onRemove, onDuplicate, onCaption, onHold, onSendToWorkflow, exporting, onExport, onDragStart, onDragOver, onDrop, onDragEnd }) {
 	const stylized = useStylizedUrl(shot.stylizedAssetId);
 	const [sendMenu, setSendMenu] = useState(false);
 	const hold = shot.endFrame - shot.startFrame + 1;
@@ -294,7 +295,7 @@ function PanelCard({ shot, index, fps, thumb, stylizing, onStylize, onUnstylize,
 						<button type="button" role="menuitem" data-send-source="greybox" onClick={(event) => { stop(event); setSendMenu(false); onSendToWorkflow("greybox"); }}>{ko("Greybox", "그레이박스")}</button>
 					</div>
 				)}
-				<button type="button" data-action="export" disabled title={ko("Export — coming in a later PR", "내보내기 — 다음 PR에서 제공")} data-disabled-reason={LATER_PR}>{ko("Export", "내보내기")}</button>
+				<button type="button" data-action="export" disabled={exporting} title={exporting ? ko("Export — another export is running", "내보내기 — 다른 내보내기가 진행 중입니다") : ko("Export this panel as a pack (zip)", "이 패널을 팩(zip)으로 내보내기")} data-disabled-reason={exporting ? "export-running" : undefined} onClick={(event) => { stop(event); onExport(); }}>{ko("Export", "내보내기")}</button>
 			</div>
 			<div className="dock-board-thumb" data-stylized={stylized ? "true" : undefined}>
 				{stylized ? <img className="dock-board-image" src={stylized} alt="" draggable={false} /> : thumb && <img className="dock-board-image" src={thumb} alt="" draggable={false} />}

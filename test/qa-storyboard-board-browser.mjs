@@ -3,7 +3,10 @@
 // tab (#641) and panel Stylize through a stubbed /agent/image (#643). Run
 // through tools/qa-browser.mjs with QA_URL at `/app/`.
 import assert from "node:assert/strict";
-import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { crc32, deflateSync } from "node:zlib";
 import { cameraBrowser } from "./camera-browser-harness.mjs";
 import { SCENES_STORAGE_KEY } from "../src/scenes.js";
@@ -11,7 +14,9 @@ import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 const outputDir = process.env.QA_OUT || "/Users/yun/CozyClay/.omo/evidence/previs-modes/previs-modes-r5/shots";
 mkdirSync(outputDir, { recursive: true });
 const STUB_PNG = stubPng();
+const downloadDir = mkdtempSync(join(tmpdir(), "cozyclay-board-export-"));
 const b = await cameraBrowser();
+const downloads = await downloadWatcher(downloadDir);
 
 // Page errors are collected in the page from the first script on, so a
 // reload keeps counting.
@@ -218,8 +223,33 @@ try {
 	console.log("PASS Duplicate adds a card with the same caption right after it");
 
 	const laterActions = await b.evaluate("[...document.querySelectorAll('[data-testid=board-card]:nth-child(1) [data-action]')].map(button => `${button.dataset.action}:${button.disabled ? button.dataset.disabledReason : 'enabled'}`)");
-	assert.deepEqual(laterActions, ["duplicate:enabled", "delete:enabled", "stylize:enabled", "workflow:enabled", "export:coming in a later PR"]);
+	assert.deepEqual(laterActions, ["duplicate:enabled", "delete:enabled", "stylize:enabled", "workflow:enabled", "export:enabled"]);
 	console.log(`PASS card actions: ${laterActions.join(", ")}`);
+
+	// Export on a card downloads that panel's pack (the Export menu's Panel pack).
+	// The button is disabled with a reason while the job runs; the observer is
+	// armed before the click so the transient state cannot be missed.
+	const exportButton = "[data-testid=board-card]:nth-child(2) [data-action=export]";
+	await hover("[data-testid=board-card]:nth-child(2)");
+	const nextDownload = downloads.next();
+	const busyReason = b.evaluate(`new Promise((resolve) => {
+		const button = document.querySelector(${JSON.stringify(exportButton)});
+		const observer = new MutationObserver(() => { if (button.disabled && button.dataset.disabledReason) { observer.disconnect(); resolve(button.dataset.disabledReason); } });
+		observer.observe(button, { attributes: true });
+		button.click();
+	})`);
+	const pack = await nextDownload;
+	assert.equal(await busyReason, "export-running");
+	console.log("PASS failure path: while the export job runs the card's Export is disabled with data-disabled-reason=export-running");
+	assert.match(pack.name, /^cozyclay-panel-0[1-4]-[a-z0-9-]+\.zip$/);
+	const listing = execFileSync("unzip", ["-Z1", pack.path], { encoding: "utf8" }).trim().split("\n");
+	assert.ok(listing.length >= 4 && listing.every(name => name.startsWith(pack.name.match(/panel-0[1-4]/)[0] + "/")), JSON.stringify(listing));
+	assert.ok(execFileSync("unzip", ["-t", pack.path], { encoding: "utf8" }).includes("No errors detected"));
+	console.log(`PASS happy path: card 2 Export downloaded ${pack.name} ${JSON.stringify(listing)}`);
+	await b.arm(`document.querySelector(${JSON.stringify(exportButton)}).disabled === false`);
+	await b.settled();
+	assert.equal(await b.evaluate(`document.querySelector(${JSON.stringify(exportButton)}).dataset.disabledReason ?? null`), null);
+	console.log("PASS Export is enabled again once the job settles");
 
 	const holdSelector = "[data-testid=board-card]:nth-child(1) [data-testid=board-card-hold]";
 	await b.click(holdSelector);
@@ -332,7 +362,9 @@ try {
 		sidecar.close();
 	}
 } finally {
+	downloads.close();
 	b.close();
+	rmSync(downloadDir, { recursive: true, force: true });
 }
 
 /* ---------------------------------------------------- stub sidecar ---- */
@@ -404,5 +436,50 @@ async function imageSidecarStub() {
 		next: () => new Promise((resolve) => stub.waiters.push(resolve)),
 		release: (seen, status, json) => fulfill(seen.requestId, status, json),
 		close: () => { send("Fetch.disable").catch(() => {}).finally(() => ws.close()); },
+	};
+}
+
+/* ------------------------------------------------------ downloads ---- */
+
+/** Browser downloads land in `dir` under their guid; `next()` resolves with
+ * the next completed one, subscribed before the click that starts it. */
+async function downloadWatcher(dir) {
+	const targets = await (await fetch(`http://127.0.0.1:${Number(process.env.CDP_PORT || 9222)}/json`)).json();
+	const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+	const ws = new WebSocket(page.webSocketDebuggerUrl);
+	await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
+	let id = 0;
+	const pending = new Map();
+	const names = new Map();
+	const waiters = [];
+	ws.onmessage = (event) => {
+		const message = JSON.parse(event.data);
+		if (message.id && pending.has(message.id)) {
+			const { resolve, reject } = pending.get(message.id);
+			pending.delete(message.id);
+			if (message.error) reject(new Error(JSON.stringify(message.error)));
+			else resolve(message.result);
+		} else if (message.method === "Browser.downloadWillBegin") {
+			names.set(message.params.guid, message.params.suggestedFilename);
+		} else if (message.method === "Browser.downloadProgress" && message.params.state !== "inProgress") {
+			const { guid, state } = message.params;
+			const waiter = waiters.shift();
+			if (!waiter) return;
+			if (state === "completed") waiter.resolve({ name: names.get(guid), path: join(dir, guid) });
+			else waiter.reject(new Error(`download ${names.get(guid)} ${state}`));
+		}
+	};
+	const send = (method, params = {}) => new Promise((resolve, reject) => {
+		const requestId = ++id;
+		pending.set(requestId, { resolve, reject });
+		ws.send(JSON.stringify({ id: requestId, method, params }));
+	});
+	await send("Browser.setDownloadBehavior", { behavior: "allowAndName", downloadPath: dir, eventsEnabled: true });
+	return {
+		next: () => new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error("download timeout")), 120_000);
+			waiters.push({ resolve: (value) => { clearTimeout(timer); resolve(value); }, reject: (error) => { clearTimeout(timer); reject(error); } });
+		}),
+		close: () => { send("Browser.setDownloadBehavior", { behavior: "default" }).catch(() => {}).finally(() => ws.close()); },
 	};
 }
