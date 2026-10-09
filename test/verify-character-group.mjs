@@ -4,7 +4,7 @@
 import { Matrix4, Quaternion, Vector3 } from "three";
 import { createCharacterEntry } from "../src/scenes.js";
 import { buildHierarchyNodes } from "../src/hierarchy-model.js";
-import { sceneObjectCarryMatrixAt } from "../src/object-travel.js";
+import { carriedPointAt, sceneObjectCarryMatrixAt } from "../src/object-travel.js";
 
 let failures = 0;
 const ok = (name, pass, detail = "") => {
@@ -105,6 +105,29 @@ ok("a rider of a part travels with the routed parent above it", (() => {
 ok("an object that does not travel carries nothing", sceneObjectCarryMatrixAt([record({ id: "rock", x: 1, z: 1 })], "rock", 120, take) === null);
 ok("a missing object carries nothing", sceneObjectCarryMatrixAt(objects, "gone", 120, take) === null);
 ok("an object a character carries hands nothing on", sceneObjectCarryMatrixAt([{ ...chassis, attach: { characterId: "walker", bone: null } }], "cube", 120, take) === null);
+
+/* --- the camera's subject (#663) ------------------------------------------- */
+
+ok("a subject riding a routed object is carried with it", (() => {
+	const at = carriedPointAt(objects, "cube", { x: -2.2, z: 0 }, 120, take);
+	return near(at.x, -2.2) && near(at.z, 5) && at.y === undefined;
+})());
+ok("a subject keeps its height when it gave one", (() => {
+	const at = carriedPointAt(objects, "cube", { x: -2.2, y: 0.62, z: 0 }, 120, take);
+	return near(at.y, 0.62) && near(at.z, 5);
+})());
+ok("a subject on a turning route swings round with it", (() => {
+	const rows = [record({ id: "body", x: 0, z: 0, path: { points: [{ x: 0, y: 0, z: 0 }, { x: 10, y: 0, z: 0 }] } })];
+	const at = carriedPointAt(rows, "body", { x: 0, y: 0, z: 1 }, 120, take);
+	return near(at.x, 6) && near(at.z, 0);
+})());
+ok("a subject riding nothing, or a still object, is returned as it came", (() => {
+	const point = { x: 1, z: 2 };
+	return carriedPointAt(objects, null, point, 120, take) === point
+		&& carriedPointAt([record({ id: "rock", x: 1, z: 1 })], "rock", point, 120, take) === point
+		&& carriedPointAt(objects, "gone", point, 120, take) === point
+		&& carriedPointAt(objects, "cube", null, 120, take) === null;
+})());
 
 if (failures) {
 	console.error(`${failures} character group check(s) failed`);

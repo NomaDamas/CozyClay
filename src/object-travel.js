@@ -109,6 +109,23 @@ export function sceneObjectCarryMatrixAt(objects, id, frame, take = {}, out = ne
 	return out.multiply(authoredMatrix(object, scratchCarry).invert());
 }
 
+const scratchCarried = new Matrix4();
+const scratchPoint = new Vector3();
+
+/**
+ * Where a point riding `objectId` stands at `frame`: the point (a grouped
+ * character's played root) through the object's carry. The point comes back
+ * unchanged when there is no object or it does not travel; `y` is used for
+ * the carry and returned only when the point had one.
+ */
+export function carriedPointAt(objects, objectId, point, frame, take = {}) {
+	if (!point || !objectId) return point;
+	const carry = sceneObjectCarryMatrixAt(objects, objectId, frame, take, scratchCarried);
+	if (!carry) return point;
+	scratchPoint.set(point.x, point.y ?? 0, point.z).applyMatrix4(carry);
+	return point.y === undefined ? { x: scratchPoint.x, z: scratchPoint.z } : { x: scratchPoint.x, y: scratchPoint.y, z: scratchPoint.z };
+}
+
 const wrapDegrees = (value) => {
 	const wrapped = ((((value + 180) % 360) + 360) % 360) - 180;
 	return wrapped === -180 ? 180 : wrapped;
