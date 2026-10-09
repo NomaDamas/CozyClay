@@ -651,7 +651,11 @@ export function ObjectCarrier({ objectId = null, objectsRef, frameRef = null, ta
 			group.scale.set(1, 1, 1);
 		}
 	};
-	useFrame(place);
+	// Ahead of every priority-0 placement: a prop held by a rider reads its
+	// bone's world matrix through this group, so the carry must land first or
+	// the prop trails the hand by one frame. Mount order alone does not hold
+	// (SetProps mounts before the cast; a rig remount moves to the back).
+	useFrame(place, -1);
 	const placeRef = useRef(place);
 	placeRef.current = place;
 	useEffect(() => {

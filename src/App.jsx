@@ -7225,6 +7225,7 @@ export default function App() {
 								// editorial camera keys resume when the block returns to Keys mode.
 								following={!followCamActive && hasCameraKeys && (preview || (moveFollow && !ikMode && !waypointMode && !posing))}
 								followFrame={tlFrame}
+								frameRef={propFrameRef}
 								fps={tlFps}
 								keys={cameraKeys}
 								shots={shots}
@@ -7237,6 +7238,7 @@ export default function App() {
 							<FollowCamRig
 								enabled={followCamActive && !movePlaying}
 								frame={tlFrame}
+								frameRef={propFrameRef}
 								scene={playbackScene}
 								shot={activeShot}
 								camRef={shotCamRef}
