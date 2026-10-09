@@ -141,11 +141,14 @@ export function normalizeWorkflowGraph(value) {
 	return { version: WORKFLOW_VERSION, nodes, edges };
 }
 
-/** Read the browser-local workflow draft used by the standalone canvas. */
-export function loadWorkflowGraph(storage = globalThis.localStorage) {
+/** Read the browser-local workflow draft used by the standalone canvas.
+ * A corrupt draft reads as an empty graph unless `strict`, which rethrows the
+ * parse error so a caller about to write can refuse to overwrite it. */
+export function loadWorkflowGraph(storage = globalThis.localStorage, { strict = false } = {}) {
 	try {
 		return normalizeWorkflowGraph(JSON.parse(storage?.getItem(WORKFLOW_STORAGE_KEY) || "null"));
-	} catch {
+	} catch (error) {
+		if (strict) throw error;
 		return createWorkflowGraph();
 	}
 }
