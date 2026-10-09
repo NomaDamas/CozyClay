@@ -108,7 +108,7 @@ try {
 		assert.equal(receipt.ok, true, JSON.stringify(receipt));
 	}
 	// The cast is a capsule figure, the storyboard's stand-in.
-	const proxy = await b.evaluate("window.__exportBus.run('character.update', { characterId: 'char-a', patch: { model: 'proxy-figure', x: 0, z: 0, rot: 0, posture: 'stand' } })");
+	const proxy = await b.evaluate("window.__exportBus.run('character.add', { character: { id: 'char-proxy', model: 'proxy-figure', subject: 'A stand-in', x: 0, z: 0, rot: 0, posture: 'stand' } })");
 	assert.equal(proxy.ok, true, JSON.stringify(proxy));
 	let panels = await stills();
 	const hold = await b.evaluate(`window.__exportBus.run('shot.setHold', { shotId: ${JSON.stringify(panels[1].id)}, hold: 24 })`);
