@@ -5,7 +5,8 @@ import { studioActionDeclaration } from "../studio-actions.js";
 import { characterOf, fail, changedIds } from "./shared.js";
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/character.js';
-import { createCharacterEntry, CHARACTER_KIND_IDS, POSTURES } from '../scenes.js';
+import { createCharacterEntry, CHARACTER_KIND_IDS, POSTURES, isProxyFigure } from '../scenes.js';
+import { track } from '../analytics.js';
 import { DEFAULT_POSE } from '../poses.js';
 import { createStableItemId, updateStableItem, removeStableItem } from '../stable-items.js';
 import { movePromptClipFrames } from '../ardy/prompt-clips.js';
@@ -117,10 +118,13 @@ export function register(registry, ports) {
 			return result;
 		} });
 	} }, ports, semantic[0]);
-	for (const declaration of semantic.slice(1)) registry.register({ ...declaration, available: mounted, run(args) {
+	for (const declaration of semantic.slice(1)) registry.register({ ...declaration, available: mounted, run(args, context) {
 		if (declaration.id === 'characters.arrange') { const plan = owner().arrange(args); return { affectedIds: plan.affectedIds, summary: 'Arranged characters.' }; }
 		const before = owner().read();
 		if (declaration.id.endsWith('PromptBlock')) promptEdit(declaration.id, args); else methods[declaration.id](args);
+		// The Assets tile and the MCP live path report themselves; this is the agent and
+		// any other non-UI bus caller adding a capsule figure.
+		if (declaration.id === 'character.add' && context?.origin && context.origin !== 'ui' && isProxyFigure(owner().read().find(row => !before.some(prior => prior.id === row.id)))) track('cast:proxy_added', { surface: 'agent' });
 		const changed = changedIds(before, owner().read());
 		return { affectedIds: changed.length ? changed : [args.characterId ?? ports.state().activeSceneId], summary: declaration.label };
 	} });

@@ -52,7 +52,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 
 |  | |
 | --- | --- |
-| **Stage a scene** | Create primitives and set pieces, then move, rotate and scale them with the transform strip's gizmo. Grid snapping is a preference, not a law — hold `Ctrl` mid-drag to invert it. A bird's-eye Top-View drives 2D root waypoints for character paths. **View ▾** on the viewport bar holds the reference grid and Auto Color — Blender's random viewport color, so twenty grey blockout boxes stay tellable apart without touching the colors you authored (captures include the display colors while it is on). |
+| **Stage a scene** | Create primitives and set pieces, then move, rotate and scale them with the transform strip's gizmo. Cast people from **Assets › Characters**: a rigged character you can pose and animate, or a **Capsule figure** — a rigless stand-in with one posture (stand, sit or lie) chosen in Details, for blocking where nobody needs to move their limbs. Capsule figures follow root paths and per-panel placements like any character but refuse pose, IK and motion tools, with the reason in the tooltip. Grid snapping is a preference, not a law — hold `Ctrl` mid-drag to invert it. A bird's-eye Top-View drives 2D root waypoints for character paths. **View ▾** on the viewport bar holds the reference grid and Auto Color — Blender's random viewport color, so twenty grey blockout boxes stay tellable apart without touching the colors you authored (captures include the display colors while it is on). |
 | **Fly the camera** | Right-drag flies (WASD walks, Q/E cranes), middle-drag pans, Alt+drag orbits the selection, click selects, `F` frames — the muscle memory you already have from a 3D editor. Fly, pan and orbit lock the pointer for the hold, so the view can turn past the window edge. Selecting the camera switches to Camera mode. **Look through** in the Shot monitor puts you behind the shot camera with the same bindings; click the on-screen **Shot camera** indicator or press `Esc` to return to the free camera. |
 | **Cut and move the camera** | Add shots on the timeline, draw a dolly rail on the Top-View, set speed, height and crane, and preview the move through the shot camera. Each shot carries a **Target model** (Seedance 2.5, Kling 2, Veo 3, self-hosted MiniMax-H3) and is flagged when the cut runs past that model's limits. |
 | **Export for AI video** | One **Export ▾** menu: a keyframe pack (first/last frame, clip, camera JSON, prompt, README) as a zip, an mp4 of the shot, depth + normal conditioning passes, a storyboard contact sheet, and an OTIO cut list. Seedance 2.5 reads the pack's greybox clip as its white-model reference video, and MiniMax H3, Wan 3.0, LTX Desktop and fal render-to-real accept the same clip. The **Shot Prompt** turns the framing into a structured prompt for the model you picked. |
@@ -60,6 +60,21 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 | **Generate motion** | Pose characters and export poses, sequence multi-phase motion as Prompt Blocks on a resizable timeline, send them to Kimodo, then play the result back with sparse IK correction where the generated motion needs fixing. Draw over a joint's trail to reshape a take, keep most of it and regenerate a window, and step back through its history. |
 | **Capture motion from video or a photo** | Drop a clip or a still: the GPU box runs [GVHMR](https://github.com/zju3dv/GVHMR) and the result is retargeted onto the character with stabilisation, contact correction and a quality gate. |
 | **Direct it with an AI** | Open the **Agent panel** (`Cmd/Ctrl+B`), sign in with your ChatGPT account, and ask for a shot in plain language; the conversation survives reloads and you can paste a reference screenshot into it. Or connect Claude — or any MCP client — or drive the Studio from a terminal with `cclay live`. All three place the cast, frame "a low wide profile", generate multi-phase motion, and the viewport moves in front of you. See [AI control](#ai-control). |
+
+## Modes
+
+Behind `?previs=1`, a project is either a **Storyboard** or an **Animation**. Pick it on the start screen (the badge in the top bar shows which one you are in); a project keeps its mode when saved and reopened.
+
+| | Storyboard | Animation |
+| --- | --- | --- |
+| **Choose it when** | You want a row of still panels: framing, who stands where, a caption and a hold per panel | You want moving shots: motion on a timeline, camera moves, takes |
+| **Timeline** | The **Board** dock tab: one card per panel with a greybox thumbnail, caption, hold, duplicate, delete and drag-to-reorder | Shots on the timeline, with motion and Prompt Blocks |
+| **Cast** | Rigged characters or capsule figures; each panel can keep its own placement ("Use stage placement" clears it) | Rigged characters with Pose and Motion mode; capsule figures for blocking |
+| **Motion tools** | Hidden: no Generate group, no Motion mode (`4`); the agent has no `generate_motion` and the MCP motion tools answer `NOT_IN_MODE` | Available |
+| **Agent** | **Agent · Storyboard** builds one panel per request and never generates motion | The full Studio tool set |
+| **Exports** | **Stylize** a panel through the image route, **Send to Workflow** (the stylized image or the greybox) from its card, plus the Export ▾ menu's keyframe pack, video, passes and contact sheet | Export ▾: keyframe pack, mp4, depth + normal passes, contact sheet, OTIO cut list |
+
+Start in Storyboard when you are deciding what the shots are, then open the idea as an Animation when it needs motion. Without the flag every project is an Animation and nothing above changes.
 
 ## Quick start
 
@@ -182,7 +197,7 @@ Every control's home is recorded in [`docs/studio-ui-ia.md`](docs/studio-ui-ia.m
 | --- | --- |
 | [`docs/kimodo-setup.md`](docs/kimodo-setup.md) | Installing Kimodo: the route table, CUDA over SSH, local MLX/Metal/CPU generation and what each route supports |
 | [`docs/agent-cli.md`](docs/agent-cli.md) | Driving the Studio from a terminal with `cclay live` |
-| [`docs/agent-prompt-to-scene.md`](docs/agent-prompt-to-scene.md) | The ask / infer / omit rule the Agent follows when turning a video prompt into blocking |
+| [`docs/agent-prompt-to-scene.md`](docs/agent-prompt-to-scene.md) | The ask / infer / omit rule the Agent follows when turning a video prompt into blocking, and the one-panel-per-request rule in storyboards |
 | [`mcp/README.md`](mcp/README.md) | MCP tools, transports, and the live-control protocol |
 | [`docs/studio-ui-ia.md`](docs/studio-ui-ia.md) | Where every Studio control lives and why |
 | [`docs/privacy.md`](docs/privacy.md) | The full analytics disclosure: events, identifiers, opt-out, internal QA marking |

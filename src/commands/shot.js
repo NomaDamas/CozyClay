@@ -3,6 +3,7 @@ import { createCameraBlock, updateCameraBlock, removeCameraRail } from '../camer
 import { addShotAtFrame, createShot, cutAtFrame, duplicateShot, removeShot, reorderShot, resizeShot, renameShot, moveCameraKey, removeCameraKey } from '../cuts.js';
 import { reflowStillShots, stillFrameCount, STILL_FRAME_COUNT_MAX, STILL_HOLD_DEFAULT } from '../shot-authoring.js';
 import { ko } from '../locale.js';
+import { track } from '../analytics.js';
 import { isImageAssetId } from '../scene-assets.js';
 import { createStableItemId, updateStableItem } from '../stable-items.js';
 import { railFollowForNewGeometry } from '../camera-rail-schedule.js';
@@ -154,12 +155,15 @@ export function register(registry, ports) {
   registerElementSet(registry, ports, extra[0]);
   for (const declaration of declarations.filter(row => row.id !== 'shot.set')) registry.register({ ...declaration,
     available: state => mounted() === true ? (availability[declaration.id] ?? (existing.includes(declaration) ? hasShots : () => true))(state) : mounted(),
-    run(args) {
+    run(args, context) {
       if (declaration.id === 'shot.frame') {
         const plan = owner().frame(args);
         return { affectedIds: plan.affectedIds, summary: 'Framed the shot.' };
       }
-      const before = owner().read(); methods[declaration.id](args);
+      const before = owner().read(), newPanel = declaration.id === 'shot.createStill' || (declaration.id === 'shot.create' && storyboard());
+      methods[declaration.id](args);
+      // Only the origin travels: never the caption, name or id of the panel.
+      if (newPanel) track('storyboard:panel_created', { source: context?.origin && context.origin !== 'ui' ? 'agent' : 'manual' });
       // The owner re-normalizes every shot on write, so compare content, not
       // identity; a storyboard reflow can still move more shots than a receipt
       // names (100), and the first 100 stand for the batch.

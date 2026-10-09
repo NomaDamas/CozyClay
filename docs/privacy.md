@@ -15,7 +15,11 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `app:session_ended` | Session duration, action count, scenes touched, and per-group edit gesture counts (`pose`, `camera`, `object`, `shot`, `prompt`), all bucketed |
 | `feature:used` | One signal per feature per session (`pose_edit` is a real pose change; `pose_save` is saving a pose to the library; `fal_motion_open` is opening the AI video A/B card) |
 | `$pageview` | Funnel and drop-off analysis |
-| `scene:created` | Funnel and drop-off analysis |
+| `scene:created` | Funnel and drop-off analysis; carries `previs_mode` (`storyboard` or `animation`) when the project has a mode |
+| `storyboard:panel_created` | A storyboard panel was added; `source` is `agent` or `manual`. No caption, name or id |
+| `storyboard:panel_stylized` | A Board panel Stylize finished; `outcome` is `ok` or `error`. No prompt, caption or image |
+| `cast:proxy_added` | A capsule figure was added to the scene; `surface` is `assets`, `agent` or `mcp`. No name or position |
+| `export:attempt_started`, `export:attempt_succeeded`, `export:attempt_failed`, `export:attempt_cancelled` | One export attempt; `export_kind` is `video`, `depth_video`, `frame`, `keyframe_pack`, `contact_sheet`, `panel_pack`, `animatic`, `animation_project` or `workflow_send`, plus `format` (`mp4`, `png`, `zip` or `cclayproject`), surface, duration bucket and failure code. Never file names or content |
 | `scene:loaded` | Funnel and drop-off analysis |
 | `project:saved` | User-owned project persistence |
 | `project:opened` | Return to a saved project (age bucket) |
