@@ -12,6 +12,7 @@ import { buildZip } from "../src/zip-store.js";
 import { depthRangeFromFrames } from "../src/render-passes.js";
 import { shotsFixture } from "./bus/shots-fixture.mjs";
 import { isProxyFigure } from "../src/scenes.js";
+import { placementAt } from "../src/root-path.js";
 const shotFixtures = [];
 import { readStudioFunction } from "./bus/verify-domain-modules.mjs";
 
@@ -83,7 +84,7 @@ function fixture() {
 			}];
 		},
 		shots, tlFrame: 0, tlFrameCount: 360, tlFps: 24, TIMELINE_FPS: 24,
-		characters: [{ id: "cast", x: 2, y: 0, z: 3, rot: 30, scale: 1 }], activeChar: { id: "cast" }, motion: null,
+		characters: [{ id: "cast", x: 2, y: 0, z: 3, rot: 30, scale: 1 }], characterViews: [], activeChar: { id: "cast" }, motion: null,
 		playbackScene: { frameCount: 360 }, shotOutput: { width: 2, height: 2 },
 		ikStateRef: { current: { keys: new Map(), tracked: new Set(), rig, chains: new Map() } },
 		ikStatesRef: { current: new Map() }, snapshotIkKeys: (state) => new Map(state.keys),
@@ -103,7 +104,7 @@ function fixture() {
 		snapshotPlaybackBones: () => ({ position: bone.position.clone(), quaternion: bone.quaternion.clone() }),
 		restorePlaybackBones: (_rig, saved) => { bone.position.copy(saved.position); bone.quaternion.copy(saved.quaternion); },
 		poseMemberAtFrame: (_rig, clip, _ik, frame) => { if (clip) bone.position.x = frame; }, IK_CORRECTION_BLEND_FRAMES: 6, isProxyFigure,
-		sampleAt: (_scene, shot) => ({ camera: shot?.cameraKeys[0]?.framing }),
+		sampleAt: (_scene, shot) => ({ camera: shot?.cameraKeys[0]?.framing }), placementAt,
 		shotAtFrame: (list, frame) => list.find((shot) => frame >= shot.startFrame && frame <= shot.endFrame),
 		shotIndexAtFrame: (list, frame) => list.findIndex((shot) => frame >= shot.startFrame && frame <= shot.endFrame),
 		timelineContentExtent: () => 0, promptClips: [], multiModelFootage: null,
