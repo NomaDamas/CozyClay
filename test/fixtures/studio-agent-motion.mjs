@@ -101,7 +101,7 @@ export async function startFixtureStudio({ port, evidence, previsMode = "animati
       call = outputs === 0 ? { name: 'run_action', args: { action: 'shot.createStill', args: { caption: '두 사람이 식탁에 앉아 있다' } } }
         : outputs === 1 || outputs === 2 ? { name: 'run_action', args: { action: 'character.add', args: { character: { id: 'story-person-a', model: 'proxy-figure', posture: 'sit', x: -1, z: 0 } } } }
         : outputs === 3 || outputs === 4 ? { name: 'run_action', args: { action: 'character.add', args: { character: { id: 'story-person-b', model: 'proxy-figure', posture: 'sit', x: 1, z: 0 } } } }
-        : outputs === 5 || outputs === 6 ? { name: 'frame_shot', args: { subjectIds: ['char-a'], framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } }
+        : outputs === 5 || outputs === 6 ? { name: 'frame_shot', args: { subjectIds: ['story-person-a'], framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } }
         : outputs === 7 ? { name: 'verify_result', args: { targets: ['story-person-a', 'story-person-b'], checks: ['placement', 'framing'] } } : null;
     } else if (text.includes('둘이 문 앞으로 간다')) {
       call = outputs === 0 ? { name: 'run_action', args: { action: 'shot.createStill', args: { caption: '둘이 문 앞으로 간다' } } }

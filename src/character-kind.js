@@ -7,6 +7,34 @@ import { isKo } from "./locale.js";
 import { StudioProtocolError } from "./studio-agent-protocol.js";
 
 export const CHARACTER_CAPABILITIES = Object.freeze(["rig", "ik", "pose", "motion", "mocap", "physics", "trails", "lineEdit"]);
+const PROXY_BODY_RADIUS = 0.22;
+const PROXY_BODY_HEIGHT = 1.45;
+const PROXY_HEAD_RADIUS = 0.12;
+
+/** Return a capsule figure's rendered world-space bounds without a rig. */
+export function proxyFigureBounds(character, placement = character) {
+	const posture = character?.posture === "sit" || character?.posture === "lie" ? character.posture : "stand";
+	const bodyHeight = posture === "sit" ? PROXY_BODY_HEIGHT * 0.6 : PROXY_BODY_HEIGHT;
+	const stature = Number.isFinite(placement?.scale) ? placement.scale : Number.isFinite(character?.scale) ? character.scale : 1;
+	const x = Number.isFinite(placement?.x) ? placement.x : character?.x ?? 0;
+	const y = Number.isFinite(placement?.y) ? placement.y : character?.y ?? 0;
+	const z = Number.isFinite(placement?.z) ? placement.z : character?.z ?? 0;
+	const yaw = ((Number.isFinite(placement?.rot) ? placement.rot : character?.rot ?? 0) + (posture === "lie" ? 180 : 0)) * Math.PI / 180;
+	const [minCorner, maxCorner] = posture === "lie"
+		? [[-PROXY_BODY_RADIUS, PROXY_BODY_RADIUS - PROXY_HEAD_RADIUS, -(bodyHeight + 0.25)],
+			[PROXY_BODY_RADIUS, PROXY_BODY_RADIUS + PROXY_HEAD_RADIUS, 0]]
+		: [[-PROXY_BODY_RADIUS, 0, -PROXY_BODY_RADIUS], [PROXY_BODY_RADIUS, bodyHeight + 0.25, PROXY_BODY_RADIUS]];
+	const min = { x: Infinity, y: Infinity, z: Infinity }, max = { x: -Infinity, y: -Infinity, z: -Infinity };
+	for (const lx of [minCorner[0], maxCorner[0]]) for (const ly of [minCorner[1], maxCorner[1]]) for (const lz of [minCorner[2], maxCorner[2]]) {
+		const sx = lx * stature, sy = ly * stature, sz = lz * stature;
+		const wx = x + sx * Math.cos(yaw) + sz * Math.sin(yaw);
+		const wz = z - sx * Math.sin(yaw) + sz * Math.cos(yaw);
+		min.x = Math.min(min.x, wx); max.x = Math.max(max.x, wx);
+		min.y = Math.min(min.y, y + sy); max.y = Math.max(max.y, y + sy);
+		min.z = Math.min(min.z, wz); max.z = Math.max(max.z, wz);
+	}
+	return { min, max };
+}
 
 /** `{ rig, ik, pose, motion, mocap, physics, trails, lineEdit }` - all false
  * for a capsule figure, all true for a rigged character. */

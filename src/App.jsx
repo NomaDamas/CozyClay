@@ -205,7 +205,7 @@ import {
 	trackFeature,
 } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
-import { characterCapabilities, kindRefusal } from "./character-kind.js";
+import { characterCapabilities, kindRefusal, proxyFigureBounds } from "./character-kind.js";
 import {
 	isPlaygroundEmbed,
 } from "./playground.js";
@@ -6877,6 +6877,14 @@ export default function App() {
 		const raw = readStudioState();
 		const original = raw.characters.find(c => c.id === entity.id) ?? raw.characters.find(c => c.model === entity.model);
 		const target = original && raw.targets.get(original.id);
+		if (original?.model === "proxy-figure") {
+			const clip = target?.motion;
+			const placement = resolveCharacterPlacement(original, frame, {
+				shotAt: at => shotAtFrame(raw.shots, at),
+				takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
+			});
+			return proxyFigureBounds(original, placement);
+		}
 		if (!target?.rig) throw new StudioProtocolError("TARGET_NOT_READY", "Character bounds require its loaded rig.");
 		const rig = cloneSkeleton(target.rig), parent = new THREE.Group();
 		const originals = [], copies = [];
