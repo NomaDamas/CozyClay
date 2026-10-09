@@ -57,7 +57,15 @@ try {
 			const root = window.__proxyRoot();
 			root.updateWorldMatrix(true, true);
 			const box = new THREE.Box3().setFromObject(root);
-			return { height: box.max.y - box.min.y, minY: box.min.y, maxZ: box.max.z, minZ: box.min.z };
+			return {
+				height: box.max.y - box.min.y,
+				minX: box.min.x,
+				maxX: box.max.x,
+				minY: box.min.y,
+				maxY: box.max.y,
+				maxZ: box.max.z,
+				minZ: box.min.z,
+			};
 		};
 	})()`);
 	assert.ok(await b.evaluate("!!window.__proxyRoot()"), "proxy pick root exists");
@@ -97,14 +105,29 @@ try {
 	for (const posture of ["stand", "sit", "lie"]) {
 		await b.change(`window.__proxyBus.characters.find(c => c.id === 'qa-proxy').posture === '${posture}'`, () =>
 			b.evaluate(`window.__proxyBus.bus.run('character.update', { characterId: 'qa-proxy', patch: { posture: '${posture}' } })`));
-		await b.evaluate(posture === "lie"
-			? "window.__cozyclay.frameEditorCam({x: 2.4, y: 1.4, z: 3.0}, {x: 0, y: 0.25, z: 0})"
-			: "window.__cozyclay.frameEditorCam({x: 2.6, y: 1.6, z: 3.2}, {x: 0, y: 0.6, z: 0})");
-		await b.settled();
 		const bounds = await b.evaluate("window.__proxyBounds()");
 		if (posture === "stand") assert.ok(Math.abs(bounds.height - 1.7) < 0.01);
 		if (posture === "sit") assert.ok(bounds.height < 1.2 && bounds.height > 1);
 		if (posture === "lie") assert.ok(bounds.height < 0.5, JSON.stringify(bounds));
+		const target = {
+			x: (bounds.minX + bounds.maxX) / 2,
+			y: (bounds.minY + bounds.maxY) / 2,
+			z: (bounds.minZ + bounds.maxZ) / 2,
+		};
+		const offset = posture === "lie"
+			? { x: 2.2, y: 1.8, z: 2.8 }
+			: { x: 2.4, y: 1.4, z: 3.0 };
+		const eye = {
+			x: target.x + offset.x,
+			y: target.y + offset.y,
+			z: target.z + offset.z,
+		};
+		await b.arm(`(() => {
+			const c = window.__cozyclay.editorCam;
+			return Math.hypot(c.position.x - ${eye.x}, c.position.y - ${eye.y}, c.position.z - ${eye.z}) < 1e-5;
+		})()`);
+		await b.evaluate(`window.__cozyclay.frameEditorCam(${JSON.stringify(eye)}, ${JSON.stringify(target)})`);
+		await b.settled();
 		const plate = await b.evaluate(`(() => {
 			const c = window.__cozyclay;
 			const camera = c.editorCam;
