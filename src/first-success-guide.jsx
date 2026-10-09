@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { ko } from "./locale.js";
 
-const STEPS = [
+const ANIMATION_STEPS = [
 	{
 		en: "Select a character in the Outliner.",
 		ko: "아웃라이너에서 캐릭터를 선택하세요.",
@@ -28,8 +28,39 @@ const STEPS = [
 	},
 ];
 
+const STORYBOARD_STEPS = [
+	{
+		en: "Open the Agent panel (Cmd/Ctrl+B).",
+		ko: "에이전트 패널을 여세요 (Cmd/Ctrl+B).",
+		hintEn: "The Agent panel is where you describe each panel.",
+		hintKo: "에이전트 패널에서 각 패널을 설명합니다.",
+	},
+	{
+		en: "Describe one scene in a sentence.",
+		ko: "장면 하나를 한 문장으로 설명하세요.",
+		hintEn: "One sentence per turn is enough for one panel.",
+		hintKo: "패널 하나에는 한 문장이면 충분합니다.",
+	},
+	{
+		en: "Your panel appears on the Board.",
+		ko: "패널이 보드에 나타납니다.",
+		hintEn: "Open the Board tab to see the new panel card.",
+		hintKo: "보드 탭에서 새 패널 카드를 확인하세요.",
+	},
+	{
+		en: "Stylize it, or export the panel pack.",
+		ko: "스타일을 입히거나 패널 팩으로 내보내세요.",
+		hintEn: "Use Stylize on the card, or export the panel pack.",
+		hintKo: "카드에서 스타일을 입히거나 패널 팩으로 내보내세요.",
+	},
+];
+
+export const STEPS_BY_MODE = { animation: ANIMATION_STEPS, storyboard: STORYBOARD_STEPS };
+
 /** A compact, dismissible first-run checklist that follows the v2 shell grammar. */
-export default function FirstSuccessGuide({ open, onDismiss }) {
+export default function FirstSuccessGuide({ open, onDismiss, previsMode = "animation" }) {
+	const storyboard = previsMode === "storyboard";
+	const STEPS = STEPS_BY_MODE[storyboard ? "storyboard" : "animation"];
 	const [step, setStep] = useState(0);
 	useEffect(() => {
 		if (open) setStep(0);
@@ -49,8 +80,8 @@ export default function FirstSuccessGuide({ open, onDismiss }) {
 			{complete ? (
 				<div className="v2-first-success-guide-complete first-success-guide-complete" id="first-success-guide-description" role="status">
 					<div className="v2-first-success-guide-check first-success-guide-check">✓</div>
-					<strong>{ko("You made your first shot.", "첫 샷을 만들었어요.")}</strong>
-					<p>{ko("Select, move, key, and play are the core CozyClay loop. You can close this guide and keep blocking.", "선택하고, 움직이고, 키를 찍고, 재생하는 것이 CozyClay의 핵심 흐름입니다. 가이드를 닫고 계속 블로킹하세요.")}</p>
+					<strong>{storyboard ? ko("You made your first panel.", "첫 패널을 만들었어요.") : ko("You made your first shot.", "첫 샷을 만들었어요.")}</strong>
+					<p>{storyboard ? ko("Describe, review on the Board, then stylize or export. You can close this guide and keep adding panels.", "설명하고, 보드에서 확인한 뒤 스타일을 입히거나 내보내세요. 가이드를 닫고 패널을 계속 추가하세요.") : ko("Select, move, key, and play are the core CozyClay loop. You can close this guide and keep blocking.", "선택하고, 움직이고, 키를 찍고, 재생하는 것이 CozyClay의 핵심 흐름입니다. 가이드를 닫고 계속 블로킹하세요.")}</p>
 					<button type="button" className="v2-first-success-guide-next first-success-guide-next btn primary" onClick={onDismiss}>{ko("Continue editing", "편집 계속하기")}</button>
 				</div>
 			) : (

@@ -330,7 +330,7 @@ export function GestureCue({ kind, walked, leaving = false, onLeft }) {
  * Top-View inset, and never takes the pointer except on its own close button
  * — every step is completed by working the studio underneath it.
  */
-export function CameraTutorial({ previewing = false, shotCount = 0, railReady = false, analytics, onStepChange, onClose, onComplete, handoff = null, shotId = null, onOpenExport, onContinue }) {
+export function CameraTutorial({ previsMode, previewing = false, shotCount = 0, railReady = false, analytics, onStepChange, onClose, onComplete, handoff = null, shotId = null, onOpenExport, onContinue }) {
 	const [done, setDone] = useState(() => new Set());
 	const [walked, setWalked] = useState(() => new Set());
 	const [cue, setCue] = useState(null);
@@ -428,6 +428,9 @@ export function CameraTutorial({ previewing = false, shotCount = 0, railReady = 
 			return prev.leaving ? prev : { ...prev, leaving: true };
 		});
 	}, [currentKind]);
+
+	// Storyboard projects never show the camera tutorial (its steps are shot/rail/play).
+	if (previsMode === "storyboard") return null;
 
 	return (
 	<>

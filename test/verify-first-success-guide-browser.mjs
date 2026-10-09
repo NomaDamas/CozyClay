@@ -57,6 +57,10 @@ const evaluate = async (expression) => {
 	}
 };
 await send("Page.enable");
+// QA_LOCALE=ko runs the same contract against the Korean labels.
+const LOCALE = process.env.QA_LOCALE === "ko" ? "ko" : "en";
+// A fresh profile would open the first-run camera tutorial instead of the chooser.
+await evaluate(`localStorage.setItem("cozyclay.locale", ${JSON.stringify(LOCALE)}); localStorage.setItem("cozyclay.camera-tutorial-terminal.v1", JSON.stringify({ dismissed: true }))`);
 const loaded = waitForPageLoad();
 await send("Page.reload", { ignoreCache: true });
 await loaded;
@@ -99,22 +103,76 @@ const setInput = (selector, value) => evaluate(`(() => {
 expect("the first-run v2 project chooser renders", await waitFor("!!document.querySelector('.v2-start-screen.project-browser-backdrop.startup')"));
 expect("the chooser exposes the new-project preview", await waitFor("!!document.querySelector('[data-testid=start-project-preview]')"));
 expect("the chooser has a named Create action", await waitFor("!!document.querySelector('[data-testid=start-create]')"));
+// Blank Stage is the blank-project path that opens the guide (Sample City Block is a starter).
+await evaluate("document.querySelector('[data-template-id=blank-stage]')?.click()");
 await setInput('[data-testid="start-project-name"]', "guide_project");
 await evaluate("document.querySelector('[data-testid=start-create]').click()");
 expect("creating from the preview opens the editor", await waitFor("!document.querySelector('.project-browser') && !!document.querySelector('.timeline')"));
 expect("guidance starts after project creation", await waitFor("!!document.querySelector('.first-success-guide')"));
 const guideText = await evaluate("document.querySelector('.first-success-guide')?.textContent || ''");
-expect("guidance names selection, movement, key, and playback", /Select a character.*Move it.*Press K.*Scrub the timeline.*Space/s.test(guideText), guideText);
+const animationPattern = LOCALE === "ko" ? /아웃라이너에서 캐릭터를 선택.*장면 보기에서 캐릭터를 움직.*K를 눌러.*타임라인을 문지르거나 Space/s : /Select a character.*Move it.*Press K.*Scrub the timeline.*Space/s;
+expect("guidance names selection, movement, key, and playback", animationPattern.test(guideText), guideText);
+expect("an animation project shows none of the storyboard steps", !guideText.includes("Agent panel") && !guideText.includes("에이전트 패널을 여세요"), guideText);
 
 for (let index = 0; index < 4; index += 1) {
 	await evaluate("document.querySelector('.first-success-guide-next')?.click()");
-	const expected = index === 3 ? "You made your first shot." : `Step ${index + 2} of 4`;
+	const expected = index === 3 ? (LOCALE === "ko" ? "첫 샷을 만들었어요." : "You made your first shot.") : (LOCALE === "ko" ? `${index + 2} / 4 단계` : `Step ${index + 2} of 4`);
 	expect(`guide advances after action ${index + 1}`, await waitFor(`document.querySelector('.first-success-guide')?.textContent.includes(${JSON.stringify(expected)})`));
 }
-expect("the guide exposes a completion state", await waitFor("document.querySelector('.first-success-guide')?.textContent.includes('You made your first shot.')"));
+expect("the guide exposes a completion state", await waitFor(`document.querySelector('.first-success-guide')?.textContent.includes(${JSON.stringify((LOCALE === "ko" ? "첫 샷을 만들었어요." : "You made your first shot."))})`));
 await evaluate("document.querySelector('.first-success-guide-close').click()");
 expect("the guide can be dismissed", await waitFor("!document.querySelector('.first-success-guide')"));
 expect("the editor remains available after dismissal", await waitFor("!!document.querySelector('.timeline')"));
+
+// --- Storyboard project (needs the ?previs=1 start screen) ------------------
+const STORYBOARD = LOCALE === "ko"
+	? ["에이전트 패널을 여세요 (Cmd/Ctrl+B).", "장면 하나를 한 문장으로 설명하세요.", "패널이 보드에 나타납니다.", "스타일을 입히거나 패널 팩으로 내보내세요."]
+	: ["Open the Agent panel (Cmd/Ctrl+B).", "Describe one scene in a sentence.", "Your panel appears on the Board.", "Stylize it, or export the panel pack."];
+const flagged = new URL(await evaluate("location.href")).searchParams.get("previs") === "1";
+if (!flagged) {
+	console.log("SKIP storyboard checks — run with QA_URL=.../app/?previs=1");
+} else {
+	await evaluate("window.confirm = () => true");
+	await evaluate("document.querySelector('[data-testid=menu-file]').click()");
+	expect("File shows New", await waitFor("!!document.querySelector('[data-testid=menubar-new]')"));
+	await evaluate("document.querySelector('[data-testid=menubar-new]').click()");
+	expect("File > New offers the mode control", await waitFor("!!document.querySelector('[data-testid=start-previs-mode]')"));
+	await evaluate("document.querySelector('[data-previs-mode=storyboard]').click()");
+	expect("Storyboard is the checked mode", await waitFor("document.querySelector('[data-previs-mode=storyboard]')?.getAttribute('aria-checked') === 'true'"));
+	await setInput('[data-testid="start-project-name"]', "guide_storyboard");
+	await evaluate("document.querySelector('[data-testid=start-create]').click()");
+	expect("the storyboard project opens", await waitFor("!document.querySelector('.v2-start-screen') && !!document.querySelector('.timeline') && document.querySelector('.app')?.dataset.previsMode === 'storyboard'"));
+	expect("the guide opens on blank-project creation in storyboard", await waitFor("!!document.querySelector('.first-success-guide')"));
+	const items = await evaluate("[...document.querySelectorAll('.first-success-guide-steps li > div > strong')].map((node) => node.textContent)");
+	expect("the guide lists exactly the four storyboard steps in order", JSON.stringify(items) === JSON.stringify(STORYBOARD), JSON.stringify(items));
+	const sbText = await evaluate("document.querySelector('.first-success-guide')?.textContent || ''");
+	expect("no animation step leaks into the storyboard guide", !/Press K|Scrub the timeline|K를 눌러|타임라인을 문지르/.test(sbText), sbText);
+	if (process.env.QA_SHOTS_DIR) {
+		const shot = await send("Page.captureScreenshot", { format: "png" });
+		const { writeFileSync, mkdirSync } = await import("node:fs");
+		mkdirSync(process.env.QA_SHOTS_DIR, { recursive: true });
+		writeFileSync(`${process.env.QA_SHOTS_DIR}/task-20-storyboard-guide-${LOCALE}.png`, Buffer.from(shot.data, "base64"));
+	}
+	for (let index = 0; index < 4; index += 1) {
+		await evaluate("document.querySelector('.first-success-guide-next')?.click()");
+		const expected = index === 3 ? (LOCALE === "ko" ? "첫 패널을 만들었어요." : "You made your first panel.") : (LOCALE === "ko" ? `${index + 2} / 4 단계` : `Step ${index + 2} of 4`);
+		expect(`storyboard guide advances after action ${index + 1}`, await waitFor(`document.querySelector('.first-success-guide')?.textContent.includes(${JSON.stringify(expected)})`));
+	}
+	await evaluate("document.querySelector('.first-success-guide-close').click()");
+	expect("the storyboard guide can be dismissed", await waitFor("!document.querySelector('.first-success-guide')"));
+
+	// Failure scenario: the ?tutorial= door stays shut in a storyboard project.
+	// Clear the dismissed marker so only the storyboard gate can keep the tutorial shut.
+	await evaluate('localStorage.removeItem("cozyclay.camera-tutorial-terminal.v1")');
+	const reopened = waitForPageLoad();
+	await send("Page.navigate", { url: new URL("?previs=1&tutorial=camera", await evaluate("location.href")).href });
+	await reopened;
+	expect("the storyboard project reopens through ?tutorial=camera", await waitFor("!document.querySelector('.v2-start-screen') && !!document.querySelector('.timeline') && document.querySelector('.app')?.dataset.previsMode === 'storyboard'", 30000));
+	await evaluate("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
+	const tutorial = await evaluate("({ href: location.search, panel: !!document.querySelector('[data-testid=camera-tutorial]'), beacon: !!document.querySelector('[data-testid=camera-tutorial-beacon], .tutorial-beacon'), step: document.querySelector('.app')?.dataset.tutorialStep ?? null, source: window.__cozyclayTutorialSource ?? null })");
+	console.log(JSON.stringify(tutorial));
+	expect("?tutorial=camera does not render the camera tutorial in a storyboard project", tutorial.href.includes("tutorial=camera") && !tutorial.panel && !tutorial.beacon && tutorial.step === null && tutorial.source === null, JSON.stringify(tutorial));
+}
 
 ws.close();
 if (failures > 0) {
