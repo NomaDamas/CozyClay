@@ -34,6 +34,7 @@ const MEMORY_ONLY_TOOLS = new Set(["live_status"]);
 const REVISION = /revision: [0-9a-f]{12}/g;
 const DESCRIBE_SCENE_REPORT = `Project: Untitled
 Scene: SCENE 01  (1 scene in project)
+previsMode: animation
 
 CAMERA
   position   x 0  y 1.6  z 4.5
@@ -44,7 +45,7 @@ CAMERA
 
 CAST (total: 1, returned: 1, truncated: false, revision: <rev>)
   A char-a  "a young woman in a tan coat"  at x 0, z 0, facing 0deg  [y-bot-tpose]  <- framed
-    model: y-bot-tpose  pose: null  tint: null  scale: 1
+    model: y-bot-tpose  kind: rig  pose: null  tint: null  scale: 1
     motionRef: null
     layer: {"waypoints":[],"promptClips":[]}
 

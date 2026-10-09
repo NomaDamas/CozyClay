@@ -1,5 +1,8 @@
 // Shared by the browser and sidecar. No Node, React, renderer or provider imports.
 import { STUDIO_ELEMENTS, isSettableElement } from "./studio-elements.js";
+// Mirrors PREVIS_MODES (project.js) and POSTURES (scenes.js). Neither is imported:
+// both pull in three.js, which the agent sidecar must not load. The protocol test pins the lists to their owners.
+const PREVIS_MODES = ["storyboard", "animation"], POSTURES = ["stand", "sit", "lie"];
 
 export const STUDIO_PROTOCOL_VERSION = "studio-agent-v1";
 // Sized for the compact index of up to 400 entities (~100 bytes each) beside
@@ -208,6 +211,9 @@ const entity = object({ id, kind: choices(["object", "character", "rig"]), token
 	libraryKind: id, renderer: id, color: nullable(text(32)), tint: nullable(text(32)), modelId: nullable(text(120)), assetId: id, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), pathPointCount: integer(0, 64),
 	motion: object({ takeId: nullable(id), frames: integer(), ikKeyCount: integer(), promptBlockCount: integer() }, { poseId: nullable(id), keyIds: ids(8, 0) }),
 	capabilities: object({ rigReady: bool, ik: bool, measuredFeet: bool }),
+	// `kind` above already names the entity class ("character"); a character's own
+	// kind is `characterKind`: a rigged model, or a rig-free capsule figure.
+	characterKind: choices(["rig", "proxy"]), posture: choices(POSTURES),
 });
 // One compact row per entity, so the model sees the whole scene even when
 // only 24 rows carry full detail.
@@ -226,12 +232,12 @@ const jobSummary = object({ id, characterId: id, state: choices(STUDIO_VARIANTS.
 const contextSchema = object({
 	schema: literal("studio-context-v1"), host, revision,
 	units: object({ distance: literal("m"), angle: literal("deg"), up: literal("+Y"), yawZero: literal("+Z"), yawPositiveToward: literal("+X"), pivot: literal("base"), fps: literal(24), rangeEnd: literal("exclusive") }),
-	scene: object({ name, aspect: text(40), floorY: number(), frameCount: integer(), objectCount: integer(), characterCount: integer() }),
+	scene: object({ name, aspect: text(40), floorY: number(), frameCount: integer(), objectCount: integer(), characterCount: integer() }, { previsMode: choices(PREVIS_MODES) }),
 	selection, activeCharacterId: nullable(id), view, shot: nullable(currentShot), camera: nullable(camera),
 	entities: array(entity, 24), entityPage: object({ returned: integer(0, 24), total: integer(), truncated: bool, nextCursor: nullable(text(512)) }),
 	shots: array(shotSummary, 8), shotsTruncated: bool, assets: array(assetSummary, STUDIO_CONTEXT_LIMITS.assets),
 	recentReceipts: array(object({ id, summary: name, canUndoDirect: bool }), 3), jobs: array(jobSummary, 8),
-	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOLS), STUDIO_TOOLS.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool }),
+	capabilities: object({ profile: literal("studio-slice-1"), tools: array(choices(STUDIO_TOOLS), STUDIO_TOOLS.length, 0, true) }, { rigReady: bool, cameraReady: bool, bridgeReady: bool, storyboard: bool }),
 }, { entityIndex: array(indexRow, STUDIO_CONTEXT_LIMITS.entityIndex), actionIndex: array(actionIndexRow, 512) });
 const guardSchema = object({ ...identityFields, targetId: id, token: id });
 const efforts = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];

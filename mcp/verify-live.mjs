@@ -47,7 +47,7 @@ export async function studio({ projectRoot, withCast = false } = {}) {
 	const describe = () => {
 		const live = f.actual.readStudioState();
 		return structuredClone({
-			sceneName: live.sceneName,
+			sceneName: live.sceneName, previsMode: live.previsMode,
 			camera: { ...live.camera.position, focalMm: live.camera.focalMm, sensorId: live.filmback.sensorId, aspectRatio: live.filmback.aspectRatio },
 			characters: live.characters, objects: live.objects, stage: live.stage,
 			activeCharacterId: live.activeCharacterId,

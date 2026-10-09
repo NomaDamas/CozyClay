@@ -8,6 +8,8 @@ import * as protocol from "../src/studio-agent-protocol.js";
 import * as contextTools from "../src/studio-agent-context.js";
 import { STUDIO_ELEMENTS } from "../src/studio-elements.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
+import { PREVIS_MODES } from "../src/project.js";
+import { POSTURES } from "../src/scenes.js";
 import { createFakeModel } from "./fixtures/fake-model.mjs";
 
 export const uuid = "00000000-0000-4000-8000-000000000001";
@@ -101,6 +103,23 @@ function registerTests() {
 	});
 	test("D3 bogus typed object op, unknown nested fields and later variants cannot pass", () => {
 		for (const args of [{ ops: [{ op: "bogus" }] }, { ops: [] }, { ops: [createOp()], document: {} }, { ops: [{ ...createOp(), source: { imageId: "image-1", placeAs: "cutout" } }] }, { ops: [{ op: "attach", id: "a", characterId: "b", bone: null }] }, { ops: [{ ...createOp(), position: { world: { ...point(), password: "private" } } }] }, { ops: [{ op: "update", id: "a" }] }]) rejects(() => protocol.validateStudioCommand({ name: "arrange_objects", args }));
+	});
+	test("#637 context carries previsMode, character kind and storyboard capability, all optional", () => {
+		const bare = contextFixture();
+		assert.deepEqual(protocol.StudioSchemas.StudioContextV1.properties.scene.properties.previsMode.enum, [...PREVIS_MODES], "protocol mirrors PREVIS_MODES");
+		assert.deepEqual(protocol.StudioSchemas.Entity.properties.posture.enum, [...POSTURES], "protocol mirrors POSTURES");
+		assert.equal(protocol.validateStudioContext(bare).scene.previsMode, undefined, "a context without previsMode still validates");
+		const value = contextFixture();
+		value.scene.previsMode = "storyboard"; value.capabilities.storyboard = true;
+		value.entities = [value.entities[0], { id: "char-cap", kind: "character", name: "Cap", token: "ct-12", position: { x: 1, y: 0, z: 1 }, yawDeg: 0, scale: 1, modelId: "proxy-figure", characterKind: "proxy", posture: "sit", capabilities: { rigReady: false, ik: false, measuredFeet: false } }];
+		value.scene.characterCount = 2; value.entityPage = { returned: 2, total: 2, truncated: false, nextCursor: null };
+		const accepted = contextTools.buildStudioContext(value);
+		assert.equal(accepted.scene.previsMode, "storyboard");
+		assert.equal(accepted.capabilities.storyboard, true);
+		assert.deepEqual(accepted.entities.map(e => e.characterKind ?? null).sort(), [null, "proxy"]);
+		assert.deepEqual(protocol.STUDIO_VARIANTS.modes, ["scene", "pose", "camera", "motion"], "tool modes stay four");
+		const mutations = [c => c.scene.previsMode = "x", c => c.entities[1].characterKind = "capsule", c => c.entities[1].posture = "float", c => c.capabilities.storyboard = "yes"];
+		for (const mutate of mutations) { const invalid = structuredClone(value); mutate(invalid); rejects(() => protocol.validateStudioContext(invalid), "INVALID_CONTEXT"); }
 	});
 	test("#405 context units validate and retain the base pivot", () => {
 		assert.equal(protocol.validateStudioContext(contextFixture()).units.pivot, "base");

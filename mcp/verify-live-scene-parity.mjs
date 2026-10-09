@@ -25,6 +25,9 @@ try {
 	assert.match(remainder.content[0].text, /SET \(total: 51, returned: 1, truncated: false, revision: [a-f0-9]+\)/);
 	assert.match(remainder.content[0].text, /cube-51/);
 
+	const described = bounded.content[0].text;
+	assert.match(described, /^previsMode: animation$/m);
+	assert.match(described, /model: y-bot-tpose  kind: rig/);
 	const before = s.describe().document;
 	const refused = await s.call("add_scene", { name: "REFUSED", expectedRevision: s.f.binding.refresh().revision + 1 });
 	assert.equal(refused.isError, true);

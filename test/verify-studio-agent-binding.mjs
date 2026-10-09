@@ -48,7 +48,7 @@ import { createMotionEdit } from '../src/ardy/motion-edit.js';
 import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/motion-calibration.js';
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 
-const cases = ['inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'generate-all-blocks-refusal-reason', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'run-action-shot-camera-rail-and-undo', 'run-action-view-toggles', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'verify-result-targets', 'late-apply-inspect-patch', 'arrange-with-attached-prop', 'run-action-export-shot-video', 'run-action-scenes', 'run-action-project-save', 'run-action-asset-import-and-undo', 'run-action-ai-prepare-shot', 'run-action-motion-generate-from-video'];
+const cases = ['previs-mode-and-character-kind', 'inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'generate-all-blocks-refusal-reason', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'run-action-shot-camera-rail-and-undo', 'run-action-view-toggles', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'verify-result-targets', 'late-apply-inspect-patch', 'arrange-with-attached-prop', 'run-action-export-shot-video', 'run-action-scenes', 'run-action-project-save', 'run-action-asset-import-and-undo', 'run-action-ai-prepare-shot', 'run-action-motion-generate-from-video'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 import { readStudioSource } from './bus/verify-domain-modules.mjs';
@@ -165,6 +165,7 @@ function fixture(options={}) {
  scope.appContext=createAppContext({characters:characterRef,state:live,scenes:scope.scenesRef,getBus:()=>scope.studioBindingRef.current.bus,notify:(...args)=>scope.setToast(...args)}).forRender(scope);
  scope.stageDomain=scope;
  scope.scenesDomain=scope;
+ scope.previsMode=options.previsMode;
  scope.shotsDomain=scope;
  scope.castDomain=scope;
  scope.motionDomain=scope;
@@ -399,6 +400,23 @@ const implementations={
  },
  async 'motion-job-states'(){ await motionCase('motion-job-states'); },
  async 'agent-motion-survives-reload'(){ await motionCase('agent-motion-survives-reload'); },
+ async 'previs-mode-and-character-kind'(){
+  const proxy=createCharacterEntry({id:'actor-cap',model:'proxy-figure',x:2,z:2,posture:'lie'});
+  const g=fixture({previsMode:'storyboard',characters:[createCharacterEntry({id:'actor-a',model:'y-bot-tpose',x:0,z:0}),proxy]});
+  try{
+   const c=g.binding.context();
+   assert.equal(c.scene.previsMode,'storyboard');
+   assert.equal(c.capabilities.storyboard,true);
+   const rigged=c.entities.find(e=>e.id==='actor-a'),capsule=c.entities.find(e=>e.id==='actor-cap');
+   assert.deepEqual({kind:rigged.characterKind,posture:rigged.posture},{kind:'rig',posture:undefined});
+   assert.deepEqual({kind:capsule.characterKind,posture:capsule.posture,rigReady:capsule.capabilities.rigReady},{kind:'proxy',posture:'lie',rigReady:false});
+   assert.deepEqual(c.view.mode,'scene','tool modes are untouched');
+  }finally{g.dispose();}
+  const h=fixture({previsMode:'animation'});
+  try{const c=h.binding.context();assert.equal(c.scene.previsMode,'animation');assert.equal(c.capabilities.storyboard,false);}finally{h.dispose();}
+  const bare=fixture();
+  try{const c=bare.binding.context();assert.equal(c.scene.previsMode,undefined);assert.equal(c.capabilities.storyboard,undefined);}finally{bare.dispose();}
+ },
  async 'inspect-entity-transforms'(f){
   const created=await f.call('arrange_objects',f.request('arrange_objects',{ops:Array.from({length:30},(_,i)=>({op:'create',source:{kind:'cube'},name:`Prop ${i}`,position:{world:{x:i+2,y:1,z:3}},facing:{yawDeg:30},scale:{x:2,y:3,z:4}}))}));
   assert.equal(created.status,'applied',JSON.stringify(created));

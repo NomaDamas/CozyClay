@@ -50,6 +50,7 @@ import {
 	CHARACTER_KIND_IDS,
 	POSTURES,
 	activeScene,
+	isProxyFigure,
 	addScene,
 	createCharacterEntry,
 	createSceneDocument,
@@ -65,7 +66,7 @@ import {
 	updateSceneObject,
 } from "../src/scene-objects.js";
 import { classifyMove, captureFraming, moveSlate } from "../src/camera-move.js";
-import { createProjectDocument, readProjectDocument } from "../src/project.js";
+import { DEFAULT_PREVIS_MODE, PREVIS_MODES, createProjectDocument, readProjectDocument } from "../src/project.js";
 
 /* ------------------------------- state ---------------------------------- */
 
@@ -73,6 +74,8 @@ import { createProjectDocument, readProjectDocument } from "../src/project.js";
 export const state = {
 	doc: createSceneDocument(),
 	name: "Untitled",
+	/** the project's previs mode ("storyboard" | "animation"); the live editor reports it with every describe */
+	previsMode: DEFAULT_PREVIS_MODE,
 	camera: { x: 0, y: 1.6, z: 4.5, focalMm: 35 },
 	timeline: { currentFrame: 0, frameCount: 360, fps: 24 },
 	/** which character the camera frames against; null means the first of the cast */
@@ -300,6 +303,7 @@ const applyLiveDescription = (description) => {
 		if (!parsed.document) throw new Error("Live editor returned an invalid scene document.");
 		state.doc = parsed.document;
 	}
+	if (PREVIS_MODES.includes(description.previsMode)) state.previsMode = description.previsMode;
 	const sc = scene();
 	if (typeof description.sceneName === "string" && description.sceneName) sc.name = description.sceneName;
 	if (description.camera && typeof description.camera === "object") {
@@ -394,6 +398,7 @@ function sceneReport({ characterCursor = 0, objectCursor = 0, limit = 50 } = {})
 	const lines = [
 		`Project: ${state.name}`,
 		`Scene: ${sc.name}  (${state.doc.scenes.length} scene${state.doc.scenes.length === 1 ? "" : "s"} in project)`,
+		`previsMode: ${state.previsMode}`,
 		"",
 		"CAMERA",
 		`  position   x ${round(state.camera.x)}  y ${round(state.camera.y)}  z ${round(state.camera.z)}`,
@@ -412,7 +417,7 @@ function sceneReport({ characterCursor = 0, objectCursor = 0, limit = 50 } = {})
 				`facing ${round(c.rot, 1)}deg  [${c.model}]` +
 				`${c.pose ? " posed" : ""}${c.hidden ? " hidden" : ""}` +
 				`${c === framed ? "  <- framed" : ""}`,
-			`    model: ${c.model}  pose: ${JSON.stringify(c.pose ?? null)}  tint: ${c.tint ?? null}  scale: ${c.scale ?? 1}`,
+			`    model: ${c.model}  kind: ${isProxyFigure(c) ? "proxy" : "rig"}${isProxyFigure(c) ? `  posture: ${c.posture ?? "stand"}` : ""}  pose: ${JSON.stringify(c.pose ?? null)}  tint: ${c.tint ?? null}  scale: ${c.scale ?? 1}`,
 			`    motionRef: ${JSON.stringify(c.motionRef ?? null)}`,
 			`    layer: ${JSON.stringify({ waypoints: c.layer?.waypoints ?? [], promptClips: c.layer?.promptClips ?? [] })}`,
 		);
@@ -1683,6 +1688,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 					}
 				}
 				state.doc = nextDocument;
+				state.previsMode = result.project.previsMode ?? DEFAULT_PREVIS_MODE;
 				state.name = result.project.name;
 				state.focus = null;
 				state.focusLocked = false;

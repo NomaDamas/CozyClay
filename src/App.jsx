@@ -2892,6 +2892,7 @@ export default function App() {
 					aspectRatio: live.filmback.aspectRatio,
 				},
 				stage: live.stage,
+				previsMode: scenesDomain.metadata().previsMode,
 				timeline: live.timeline,
 				activeCharacterId: live.activeCharacterId,
 				characters: castDomain.read(),
@@ -6614,7 +6615,7 @@ export default function App() {
 			preserveAuthoredMotion: Boolean(c.layer?.waypoints?.length) }]));
 		return { host: { workspaceId: liveWorkspaceIdRef.current, documentEpoch: studioDocumentEpochRef.current,
 				sceneId: activeSceneIdRef.current, sceneEpoch: studioSceneEpochRef.current }, workspaceHandle: liveWorkspaceHandleRef.current,
-			sceneName: live.scenes.find(s => s.id === activeSceneIdRef.current)?.name ?? "Untitled Scene", aspect: live.stage.shotAspect, stage: live.stage,
+			sceneName: live.scenes.find(s => s.id === activeSceneIdRef.current)?.name ?? "Untitled Scene", previsMode: scenesDomain.previsMode, aspect: live.stage.shotAspect, stage: live.stage,
 			objects: storeRef.current.objects, characters: list, targets, shots: live.shots, frameCount: live.timeline.frameCount,
 			selection: live.studioSelection, activeCharacterId: live.activeCharacterId, selectedShotId: live.studioShotId,
 			view: live.studioView, camera: live.studioCamera ?? readStudioCamera(), filmback: live.filmback, manual: manualCameraOverrideRef.current,
