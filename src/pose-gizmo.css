@@ -1,0 +1,23 @@
+.pose-rotation-readout {
+	transform: translate(10px, -100%);
+	display: grid;
+	gap: 3px;
+	padding: 5px 8px;
+	border-radius: 7px;
+	background: rgba(22, 22, 26, 0.72);
+	backdrop-filter: blur(6px);
+	box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 14px rgba(0, 0, 0, 0.18);
+	color: rgba(255, 255, 255, 0.86);
+	font: 500 11px/1.25 ui-sans-serif, system-ui, -apple-system, sans-serif;
+	font-variant-numeric: tabular-nums;
+	white-space: nowrap;
+	user-select: none;
+}
+.pose-rotation-axes { display: flex; gap: 9px; }
+.pose-rotation-axes span { display: inline-flex; gap: 3px; opacity: 0.72; }
+.pose-rotation-axes span.active { opacity: 1; }
+.pose-rotation-readout i { font-style: normal; font-weight: 600; }
+.pose-rotation-readout [data-axis="x"] i, .pose-rotation-delta[data-axis="x"] span { color: #ff6b5e; }
+.pose-rotation-readout [data-axis="y"] i, .pose-rotation-delta[data-axis="y"] span { color: #7ee07a; }
+.pose-rotation-readout [data-axis="z"] i, .pose-rotation-delta[data-axis="z"] span { color: #5c9dff; }
+.pose-rotation-delta { display: flex; gap: 4px; font-size: 13px; font-weight: 600; color: #fff; }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
-import { Line } from "@react-three/drei";
+import { Html, Line } from "@react-three/drei";
 import * as THREE from "three";
 import { POSE_BONES, normalizeBoneName, primeBindPose } from "./poses.js";
 import { poseThumbnail, warmThumbnailModels } from "./pose-thumbs.js";
@@ -8,6 +8,8 @@ import { IK_TRACKS, MID_TRACKS, ikControlIsExposed } from "./ardy/ik.js";
 import { shouldRefreshIkExposure } from "./use-render-activity.js";
 import { POSER_LAYER } from "./dualview.jsx";
 import { ko, isKo } from "./locale.js";
+import { ROTATION_AXES, backFaceFade, bindQuaternionOf, handleColor as sideColor, ringAngle, rotationFromBindDeg, rotationReadout } from "./pose-gizmo.js";
+import "./pose-gizmo.css";
 
 /** Same normalised-name match rule as poses.js: equal, or one is a suffix of
  * the other, so `mixamorig:LeftArm`, `mixamorigLeftArm` and `LeftArm` all hit. */
@@ -231,28 +233,18 @@ export function PoseHandles({ root, enabled, onChange }) {
 	);
 }
 
-/** IK handle colour by limb, matching the FK handle coding: arms orange,
- * legs blue. */
-function ikHandleColor(track) {
-	return track.kind === "arm" ? "#ff8a3d" : "#4dd2ff";
-}
-
-/** World-axis gizmo colours (Blender / Cascadeur convention). */
-const AXIS_DEFS = [
-	{ axis: "X", dir: new THREE.Vector3(1, 0, 0), color: "#ff5340" },
-	{ axis: "Y", dir: new THREE.Vector3(0, 1, 0), color: "#54e05c" },
-	{ axis: "Z", dir: new THREE.Vector3(0, 0, 1), color: "#3d8bff" },
-];
+/** World-axis gizmo colours (Blender / Cascadeur convention), shared with the rotation rings. */
+const AXIS_DEFS = ROTATION_AXES.map(({ axis, dir, color }) => ({ axis: axis.toUpperCase(), dir, color }));
 const GIZMO_LEN = 0.22;
-const GIZMO_SHAFT_R = 0.012;
-const GIZMO_TIP_R = 0.03;
+const GIZMO_SHAFT_R = 0.0065;
+const GIZMO_TIP_R = 0.022;
 const GIZMO_PICK_SHAFT_R = 0.045;
 const GIZMO_PICK_TIP_R = 0.055;
 const HANDLE_R = 0.055; // chain target spheres
 const JOINT_R = 0.042; // mid-joint + FK swing spheres
-const SWING_RING_R = 0.12; // effector rotation ring
-const SWING_RING_TUBE = 0.012; // visible tube
-const SWING_RING_PICK_TUBE = 0.045; // invisible grab tube
+const SWING_RING_R = 0.17; // rotation ring radius, clear of the hand/foot mesh
+const SWING_RING_TUBE = 0.0045; // visible ring line
+const SWING_RING_PICK_TUBE = 0.035; // invisible grab tube
 /** Unfocused handles fade back so the focused one reads clearly. */
 const OPACITY_FOCUSED = 1;
 const OPACITY_UNFOCUSED = 0.5;
@@ -299,7 +291,11 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 	const skinnedBlockerProxiesRef = useRef(new Map());
 	const occlusionRay = useRef(new THREE.Raycaster()).current;
 	const gizmoRef = useRef(null);
-	const ringRef = useRef(null); // swing ring around the focused effector
+	const ringRef = useRef(null); // rotation rings around the focused joint
+	const readoutRef = useRef(null);
+	const [hoverAxis, setHoverAxis] = useState(null);
+	const [rotationDrag, setRotationDrag] = useState(null); // { axis, angle } while a ring drags
+	const [rotationDeg, setRotationDeg] = useState(null);
 	const dragRef = useRef(null);
 	const handlersRef = useRef(null);
 	const solveRef = useRef(onSolve);
@@ -359,6 +355,13 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 			);
 			raycaster.setFromCamera(tmp.ndc, camera);
 			if (!raycaster.ray.intersectPlane(d.plane, tmp.hit)) return;
+			if ((d.kind === "fk" || d.kind === "swing") && d.axisDir) {
+				const angle = ringAngle(d.axisDir, d.targetStart, d.hitStart, tmp.hit);
+				if (Math.hypot(ev.clientX - d.downXY[0], ev.clientY - d.downXY[1]) > CLICK_PX) d.moved = true;
+				solveRef.current?.(d.kind, d.trackId, { axis: d.axisDir, angle, startQuat: d.startQuat, startParentQuat: d.startParentQuat });
+				setRotationDrag({ axis: d.axisName, angle });
+				return;
+			}
 			if (d.kind === "fk" || d.kind === "swing" || (d.kind === "body" && !d.axisDir)) {
 				// Swing = trackball rotation (TransformControls rotate model):
 				// axis = offset × eye, angle = (offset · tangent) × speed/camDist,
@@ -407,6 +410,7 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 			const d = dragRef.current;
 			dragRef.current = null;
 			gl.domElement.style.cursor = "";
+			setRotationDrag(null);
 			if (!d) return;
 			// Click (never dragged): the focused sphere toggles focus OFF; a
 			// not-yet-focused sphere just took focus (nothing to bake). An
@@ -739,11 +743,12 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 				: clickable
 					? THREE.MathUtils.lerp(OPACITY_FAR, OPACITY_NEAR, emphasis)
 					: THREE.MathUtils.lerp(OPACITY_DISABLED_FAR, OPACITY_DISABLED_NEAR, emphasis);
-			mesh.material.emissiveIntensity = focused
-				? 2.6
-				: clickable
-					? THREE.MathUtils.lerp(1.5, 2.35, emphasis)
-					: THREE.MathUtils.lerp(0.45, 0.8, emphasis);
+			const [core, halo] = mesh.children;
+			if (core) core.material.opacity = mesh.material.opacity;
+			if (halo) {
+				halo.quaternion.copy(camera.quaternion);
+				halo.material.opacity = mesh.material.opacity * (focused ? 0.6 : 0.4);
+			}
 		}
 		const focusExposed = !!focus && visibilityRef.current.get(focus) !== false;
 		if (gizmoRef.current) gizmoRef.current.visible = focusExposed;
@@ -773,10 +778,16 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 		// the camera: a trackball ring, not a bone-aligned one — the drag math
 		// is trackball, so the affordance must match.
 		if (ringRef.current && focus) {
-			const chain = chains?.get(focus);
-			if (chain) {
-				ringRef.current.position.copy(chain.bones[2].getWorldPosition(tmp.pos));
-				ringRef.current.quaternion.copy(camera.getWorldQuaternion(new THREE.Quaternion()));
+			const bone = chains?.get(focus)?.bones[2] ?? fkJoints?.get(focus)?.bone ?? null;
+			if (bone) {
+				bone.getWorldPosition(tmp.pos);
+				ringRef.current.position.copy(tmp.pos);
+				const deg = rotationFromBindDeg(bindQuaternionOf(bone), bone.quaternion);
+				if (!rotationDeg || deg.x !== rotationDeg.x || deg.y !== rotationDeg.y || deg.z !== rotationDeg.z) setRotationDeg(deg);
+				if (readoutRef.current) {
+					readoutRef.current.position.copy(tmp.pos).add(tmp.delta.set(SWING_RING_R * 0.8, SWING_RING_R * 0.8, 0).applyQuaternion(camera.quaternion));
+					readoutRef.current.visible = focusExposed;
+				}
 			}
 		}
 	});
@@ -842,7 +853,11 @@ const CLICK_PX = 4;
 		}
 		raycaster.setFromCamera(ndc, camera);
 		let plane;
-		if (axisDir) {
+		const ringDrag = !!axisDir && (kind === "fk" || kind === "swing");
+		if (ringDrag) {
+			// A ring turns about its axis: the pointer is read on the ring's own plane.
+			plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axisDir, origin);
+		} else if (axisDir) {
 			// TransformControls: plane normal = axis × (eye × axis) — the plane
 			// contains the axis and is as view-perpendicular as possible.
 			const eye = camera.getWorldDirection(new THREE.Vector3());
@@ -883,6 +898,7 @@ const CLICK_PX = 4;
 				dragRef.current = null;
 				return;
 			}
+			if (ringDrag) dragRef.current.axisName = ROTATION_AXES.find((a) => a.dir === axisDir)?.axis ?? "x";
 			dragRef.current.startQuat = bone.quaternion.clone();
 			dragRef.current.startParentQuat = bone.parent.getWorldQuaternion(new THREE.Quaternion());
 			dragRef.current.eye = origin.clone().sub(camera.getWorldPosition(new THREE.Vector3())).negate().normalize();
@@ -950,10 +966,24 @@ const CLICK_PX = 4;
 		};
 		// The handles live on POSER_LAYER so they render only in the poser
 		// (IK working) view; the raycaster must see that layer to hit them.
+		const onHover = (ev) => {
+			if (ev.buttons || dragRef.current) return;
+			const rings = pickRefs.current.filter((p) => p.part === "ring" && p.mesh?.parent && p.track.id === focusIdRef.current);
+			let axis = null;
+			if (rings.length) {
+				const rect = el.getBoundingClientRect();
+				raycaster.setFromCamera(new THREE.Vector2(((ev.clientX - rect.left) / rect.width) * 2 - 1, -((ev.clientY - rect.top) / rect.height) * 2 + 1), camera);
+				const hit = raycaster.intersectObjects(rings.map((p) => p.mesh), false)[0];
+				axis = hit ? ROTATION_AXES.find((a) => a.dir === rings.find((p) => p.mesh === hit.object)?.axisDir)?.axis ?? null : null;
+			}
+			setHoverAxis((current) => (current === axis ? current : axis));
+		};
 		raycaster.layers.enable(POSER_LAYER);
 		el.addEventListener("pointerdown", onDown, true);
+		el.addEventListener("pointermove", onHover);
 		return () => {
 			el.removeEventListener("pointerdown", onDown, true);
+			el.removeEventListener("pointermove", onHover);
 			raycaster.layers.disable(POSER_LAYER);
 		};
 	});
@@ -983,19 +1013,17 @@ const CLICK_PX = 4;
 					register(track, kind)(m);
 				}}
 				renderOrder={999}
-				scale={focused ? 1.2 : 1}
 			>
-				<sphereGeometry args={[radius, 16, 16]} />
-				<meshStandardMaterial
-					color="#000000"
-					emissive={color}
-					emissiveIntensity={focused ? 2.6 : 1.4}
-					toneMapped={false}
-					depthTest={false}
-					depthWrite={false}
-					transparent
-					opacity={focused ? OPACITY_FOCUSED : OPACITY_UNFOCUSED}
-				/>
+				<sphereGeometry args={[radius, 12, 8]} />
+				<meshBasicMaterial colorWrite={false} depthTest={false} depthWrite={false} transparent opacity={focused ? OPACITY_FOCUSED : OPACITY_UNFOCUSED} />
+				<mesh renderOrder={999} ref={(m) => m?.layers.set(POSER_LAYER)} raycast={() => {}}>
+					<sphereGeometry args={[radius * (focused ? 0.62 : 0.52), 20, 14]} />
+					<meshBasicMaterial color={color} toneMapped={false} depthTest={false} depthWrite={false} transparent />
+				</mesh>
+				<mesh renderOrder={998} ref={(m) => m?.layers.set(POSER_LAYER)} raycast={() => {}}>
+					<ringGeometry args={[radius * (focused ? 0.86 : 0.8), radius * (focused ? 1.0 : 0.92), 48]} />
+					<meshBasicMaterial color={color} toneMapped={false} depthTest={false} depthWrite={false} transparent side={THREE.DoubleSide} />
+				</mesh>
 			</mesh>
 		);
 	};
@@ -1008,15 +1036,16 @@ const CLICK_PX = 4;
 		MID_TRACKS.find((t) => t.id === focus) ||
 		(focus === "hips" ? (fkJoints?.get("hips")?.track ?? null) : null);
 	const gizmoKind = IK_TRACKS.find((t) => t.id === focus) ? "chain" : MID_TRACKS.find((t) => t.id === focus) ? "mid" : focus === "hips" ? "body" : null;
-	// The focused chain (hand/foot) also gets a rotation ring: arrows move
-	// the wrist/ankle, the ring turns the hand/foot itself.
-	const swingTrack = IK_TRACKS.find((t) => t.id === focus) ?? null;
+	// The focused hand/foot gets rotation rings beside its move arrows (the
+	// rings turn the hand/foot itself); a focused FK joint gets rings only.
+	const rotateTrack = IK_TRACKS.find((t) => t.id === focus) ?? (focus && focus !== "hips" ? fkJoints?.get(focus)?.track ?? null : null);
+	const rotateKind = IK_TRACKS.find((t) => t.id === focus) ? "swing" : "fk";
 
 	return (
 		<group>
-			{IK_TRACKS.map((track) => (chains.has(track.id) ? sphereFor(track, "chain", ikHandleColor(track), HANDLE_R) : null))}
-			{MID_TRACKS.map((track) => (chains.has(track.chain) ? sphereFor(track, "mid", ikHandleColor({ kind: track.chain.includes("Hand") ? "arm" : "leg" }), JOINT_R) : null))}
-			{[...(fkJoints ?? [])].map(([id, joint]) => sphereFor(joint.track, id === "hips" ? "body" : "fk", joint.track.color, id === "hips" ? HANDLE_R : JOINT_R))}
+			{IK_TRACKS.map((track) => (chains.has(track.id) ? sphereFor(track, "chain", sideColor(track.id), HANDLE_R) : null))}
+			{MID_TRACKS.map((track) => (chains.has(track.chain) ? sphereFor(track, "mid", sideColor(track.id), JOINT_R) : null))}
+			{[...(fkJoints ?? [])].map(([id, joint]) => sphereFor(joint.track, id === "hips" ? "body" : "fk", sideColor(id), id === "hips" ? HANDLE_R : JOINT_R))}
 
 			{/* Mini move-gizmo on the focused position handle: world-axis arrows. */}
 			{gizmoTrack && (
@@ -1033,7 +1062,7 @@ const CLICK_PX = 4;
 									}}
 								>
 									<cylinderGeometry args={[GIZMO_SHAFT_R, GIZMO_SHAFT_R, GIZMO_LEN, 8]} />
-									<meshStandardMaterial color="#000000" emissive={color} emissiveIntensity={2.2} toneMapped={false} depthTest={false} depthWrite={false} transparent opacity={0.9} />
+									<meshBasicMaterial color={color} toneMapped={false} depthTest={false} depthWrite={false} transparent opacity={0.85} />
 								</mesh>
 								<mesh
 									position={[0, GIZMO_LEN + 0.04, 0]}
@@ -1042,8 +1071,8 @@ const CLICK_PX = 4;
 										register(gizmoTrack, gizmoKind, dir, "tip")(m);
 									}}
 								>
-									<coneGeometry args={[GIZMO_TIP_R, 0.08, 12]} />
-									<meshStandardMaterial color="#000000" emissive={color} emissiveIntensity={2.4} toneMapped={false} depthTest={false} depthWrite={false} transparent opacity={0.95} />
+									<coneGeometry args={[GIZMO_TIP_R, 0.06, 16]} />
+									<meshBasicMaterial color={color} toneMapped={false} depthTest={false} depthWrite={false} transparent opacity={0.95} />
 								</mesh>
 								{/* Invisible forgiving hit volumes keep the target
 								    at least as easy to grab as the visible arrow. */}
@@ -1073,41 +1102,62 @@ const CLICK_PX = 4;
 				</group>
 			)}
 
-			{/* Trackball rotation ring on the focused hand/foot: turns the
-			    effector itself while the position gizmo keeps moving it. A thin
-			    visible torus plus a fat invisible one — a 3 px tube raycasts
+			{/* Axis rotation rings on the focused rotatable joint (hand/foot, or an
+			    FK joint): each ring turns the bone about one world axis, and the
+			    label reads the drag delta plus the angle away from the bind pose.
+			    Thin visible tubes ride fat invisible ones: a 3 px tube raycasts
 			    terribly, so the pick target is generous. */}
-			{swingTrack && (
+			{rotateTrack && (
 				<group ref={(g) => { ringRef.current = g; }} renderOrder={999}>
-					<mesh
-						ref={(m) => {
-							if (m) m.layers.set(POSER_LAYER);
-						}}
-					>
-						<torusGeometry args={[SWING_RING_R, SWING_RING_TUBE, 10, 48]} />
-						<meshStandardMaterial
-							color="#000000"
-							emissive={ikHandleColor(swingTrack)}
-							emissiveIntensity={2.2}
-							toneMapped={false}
-							depthTest={false}
-							depthWrite={false}
-							transparent
-							opacity={0.9}
-						/>
-					</mesh>
-					<mesh
-						ref={(m) => {
-							if (m) m.layers.set(POSER_LAYER);
-							register(swingTrack, "swing", null, "ring")(m);
-						}}
-					>
-						<torusGeometry args={[SWING_RING_R, SWING_RING_PICK_TUBE, 8, 32]} />
-						<meshBasicMaterial transparent opacity={0} depthWrite={false} />
-					</mesh>
+					{ROTATION_AXES.map(({ axis, dir, color }) => {
+						const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+						const active = rotationDrag?.axis === axis;
+						const hot = active || (!rotationDrag && hoverAxis === axis);
+						return (
+							<group key={axis} quaternion={quat}>
+								<mesh ref={(m) => m?.layers.set(POSER_LAYER)}>
+									<torusGeometry args={[SWING_RING_R, hot ? SWING_RING_TUBE * 2.2 : SWING_RING_TUBE, 6, 96]} />
+									<meshBasicMaterial ref={(m) => m && backFaceFade(m)} color={color} toneMapped={false} depthTest={false} depthWrite={false} transparent opacity={rotationDrag && !active ? 0.15 : hot ? 1 : 0.7} />
+								</mesh>
+								<mesh
+									ref={(m) => {
+										if (m) m.layers.set(POSER_LAYER);
+										register(rotateTrack, rotateKind, dir, "ring")(m);
+									}}
+								>
+									<torusGeometry args={[SWING_RING_R, SWING_RING_PICK_TUBE, 8, 48]} />
+									<meshBasicMaterial transparent opacity={0} depthTest={false} depthWrite={false} />
+								</mesh>
+							</group>
+						);
+					})}
+				</group>
+			)}
+			{rotateTrack && rotationDeg && (
+				<group ref={readoutRef}>
+					<Html zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
+						<RotationReadout readout={rotationReadout(rotationDeg, rotationDrag)} />
+					</Html>
 				</group>
 			)}
 		</group>
+	);
+}
+
+function RotationReadout({ readout }) {
+	return (
+		<div className="pose-rotation-readout" data-testid="pose-rotation-readout">
+			{readout.delta && (
+				<div className="pose-rotation-delta" data-axis={readout.delta.axis}>
+					<span>{readout.delta.axis.toUpperCase()}</span>{readout.delta.value}
+				</div>
+			)}
+			<div className="pose-rotation-axes">
+				{readout.axes.map(({ axis, value, active }) => (
+					<span key={axis} data-axis={axis} className={active ? "active" : undefined}><i>{axis.toUpperCase()}</i>{value}</span>
+				))}
+			</div>
+		</div>
 	);
 }
 

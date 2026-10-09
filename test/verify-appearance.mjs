@@ -116,9 +116,9 @@ expect(
 );
 expect(
 	"gizmo arrows and swing rings remain visible over the player body",
-	posestudio.includes("depthTest={false} depthWrite={false} transparent opacity={0.9}") &&
+	posestudio.includes("depthTest={false} depthWrite={false} transparent opacity={0.85}") &&
 		posestudio.includes("depthTest={false} depthWrite={false} transparent opacity={0.95}") &&
-		posestudio.includes("toneMapped={false}\n\t\t\t\t\t\t\tdepthTest={false}"),
+		posestudio.includes("backFaceFade(m)} color={color} toneMapped={false} depthTest={false}"),
 );
 expect(
 	"unchanged IK frames reuse the previous exposure pass",
