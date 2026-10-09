@@ -33,6 +33,8 @@ const NODE_FILES = [
 	"test/verify-motion-stabilize.mjs",
 	"test/verify-i2v-motion-prompt.mjs",
 	"test/verify-facing-marks.mjs",
+	"test/verify-pose-fade.mjs",
+	"test/verify-pose-gizmo.mjs",
 	"test/ardy/verify-gvhmr-floor.mjs",
 	"test/verify-gvhmr-detector-flag.mjs",
 	"test/verify-gvhmr-only.mjs",
