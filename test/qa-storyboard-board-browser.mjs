@@ -216,7 +216,7 @@ try {
 	console.log("PASS Duplicate adds a card with the same caption right after it");
 
 	const laterActions = await b.evaluate("[...document.querySelectorAll('[data-testid=board-card]:nth-child(1) [data-action]')].map(button => `${button.dataset.action}:${button.disabled ? button.dataset.disabledReason : 'enabled'}`)");
-	assert.deepEqual(laterActions, ["duplicate:enabled", "delete:enabled", "stylize:coming in a later PR", "workflow:coming in a later PR", "export:coming in a later PR"]);
+	assert.deepEqual(laterActions, ["duplicate:enabled", "delete:enabled", "stylize:coming in a later PR", "workflow:enabled", "export:coming in a later PR"]);
 	console.log(`PASS card actions: ${laterActions.join(", ")}`);
 
 	const holdSelector = "[data-testid=board-card]:nth-child(1) [data-testid=board-card-hold]";

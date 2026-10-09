@@ -6883,7 +6883,7 @@ export default function App() {
 		exportShotIdRef, setExportMenuAnchor, setExportMenuOpen, exportPhaseLabel,
 		exportMenuAnchor, resultOpen, exportFeedback, shots, exportKeyframePacks,
 		hasCameraKeys, motion, exportRenderPasses, exportDepthVideo, exportStoryboard,
-		capturePanelThumbnail, previsMode: scenesDomain.previsMode, sceneRevision: sceneRevisionRef.current,
+		capturePanelThumbnail, packMetaForShot, previsMode: scenesDomain.previsMode, sceneRevision: sceneRevisionRef.current,
 		downloadOtioCutList, projectStatus, liveWorkspaceHandle, selectedHierarchyId, selectHierarchy,
 		aimEditorAtKeyLight, characters, showB, ikFrames, ikMode,
 		rowIdForCharIndex, activeCharIndex, waypoints, sceneObjects, scenes,
