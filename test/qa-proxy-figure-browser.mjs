@@ -148,6 +148,12 @@ try {
 	assert.ok(await b.evaluate("!!window.__proxyRoot()"));
 	assert.equal(errors.length, 0, errors.join("\n"));
 	console.log("PASS unknown posture normalizes to stand; figure still renders; zero page/console errors");
+	for (const shotId of ["shot-a", "shot-b"]) {
+		const removeReceipt = await b.evaluate(`window.__proxyBus.bus.run('shot.remove', { shotId: ${JSON.stringify(shotId)} })`);
+		assert.equal(removeReceipt.ok, true, JSON.stringify(removeReceipt));
+	}
+	const seekReceipt = await b.evaluate("window.__proxyBus.bus.run('timeline.seek', { frame: 0 })");
+	assert.equal(seekReceipt.ok, true, JSON.stringify(seekReceipt));
 	const shotReceipt = await b.evaluate(`(() => {
 		const original = URL.createObjectURL;
 		window.__proxyVideoSizes = [];
@@ -162,6 +168,13 @@ try {
 	assert.ok(shotId, JSON.stringify(shotReceipt));
 	const rangeReceipt = await b.evaluate(`window.__proxyBus.bus.run('shot.setRange', { shotId: ${JSON.stringify(shotId)}, range: { startFrame: 0, endFrameExclusive: 24 } })`);
 	assert.equal(rangeReceipt.ok, true, JSON.stringify(rangeReceipt));
+	const rangedShot = await b.evaluate(`(async () => {
+		const project = JSON.parse(await window.__cozyclayProject.export()).scenes;
+		const scene = project.scenes.find(entry => entry.id === project.activeSceneId) || project.scenes[0];
+		return scene.shotDocument.shots.find(shot => shot.id === ${JSON.stringify(shotId)});
+	})()`);
+	assert.equal(rangedShot?.startFrame, 0, JSON.stringify(rangedShot));
+	assert.equal(rangedShot?.endFrame, 23, JSON.stringify(rangedShot));
 	const stillVideo = await b.evaluate(`window.__proxyBus.bus.run('export.shotVideo', { shotId: ${JSON.stringify(shotId)} })`);
 	assert.match(stillVideo.message ?? "", /Download requested: .* · 24 frames/, JSON.stringify(stillVideo));
 	const noPathBytes = await b.evaluate("window.__proxyVideoSizes.at(-1)");
