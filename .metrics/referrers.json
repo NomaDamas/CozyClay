@@ -1714,5 +1714,57 @@
       "count": 5,
       "uniques": 3
     }
+  ],
+  "2026-10-09": [
+    {
+      "referrer": "github.com",
+      "count": 130,
+      "uniques": 103
+    },
+    {
+      "referrer": "Google",
+      "count": 117,
+      "uniques": 71
+    },
+    {
+      "referrer": "cozyclay.org",
+      "count": 91,
+      "uniques": 63
+    },
+    {
+      "referrer": "l.threads.com",
+      "count": 84,
+      "uniques": 67
+    },
+    {
+      "referrer": "t.co",
+      "count": 58,
+      "uniques": 16
+    },
+    {
+      "referrer": "chatgpt.com",
+      "count": 25,
+      "uniques": 14
+    },
+    {
+      "referrer": "ruanyifeng.com",
+      "count": 16,
+      "uniques": 14
+    },
+    {
+      "referrer": "libhunt.com",
+      "count": 5,
+      "uniques": 4
+    },
+    {
+      "referrer": "search.brave.com",
+      "count": 5,
+      "uniques": 4
+    },
+    {
+      "referrer": "DuckDuckGo",
+      "count": 3,
+      "uniques": 3
+    }
   ]
 }
