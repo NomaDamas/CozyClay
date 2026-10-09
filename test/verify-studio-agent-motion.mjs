@@ -35,8 +35,8 @@ function fixture(options = {}) {
   const target = { character: { id: 'actor', x: 0, y: 0, z: 0, rot: 0, scale: 1 }, rig: rigFixture(), motion: clipFixture(options), ikState: createIkState() };
   // One capsule figure stands in the set: it has no rig, so verification must
   // skip it rather than count it as missing cast coverage.
-  const capsule = { character: createCharacterEntry({ id: 'capsule', model: PROXY_FIGURE_MODEL, x: 3, z: 0 }), rig: null, motion: null, ikState: createIkState() };
-  const environment = { host: { workspaceId: 'w', documentEpoch: 'd', sceneId: 's', sceneEpoch: 'e' }, physicsRevision: 1, floor: { model: 'flat', y: 0 }, objects: [], cast: [capsule], frameCount: target.motion.frames };
+  const proxy = { character: createCharacterEntry({ id: 'proxy', model: PROXY_FIGURE_MODEL, x: 3, z: 0 }), rig: null, motion: null, ikState: createIkState() };
+  const environment = { host: { workspaceId: 'w', documentEpoch: 'd', sceneId: 's', sceneEpoch: 'e' }, physicsRevision: 1, floor: { model: 'flat', y: 0 }, objects: [], cast: [proxy], frameCount: target.motion.frames };
   const verify = extra => verifyInstalledTake({ target, environment, yieldTask: () => Promise.resolve(), ...extra });
   return { target, environment, verify };
 }

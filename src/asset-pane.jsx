@@ -23,7 +23,7 @@ export const CHARACTER_ASSETS = [
 function CharacterPreview({ model }) {
 	if (model === PROXY_FIGURE_MODEL) {
 		return (
-			<svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true" data-preview="capsule">
+			<svg className="asset-card-preview" viewBox="0 0 48 48" aria-hidden="true" data-preview="proxy-figure">
 				<circle cx="24" cy="8.5" r="5.5" />
 				<rect x="16" y="16" width="16" height="26" rx="8" />
 			</svg>

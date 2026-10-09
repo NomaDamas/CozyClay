@@ -421,15 +421,15 @@ cases.refusals = async () => {
 		// Animation: a capsule figure refuses motion and takes by its kind.
 		reportedMode = "animation";
 		const added = receipt(await s.call("add_character", { subject: "A stand-in", model: "proxy-figure", posture: "sit", x: 1, z: 1 }), "character.add");
-		const capsuleId = added.affectedIds.find(id => s.f.cast.read().find(row => row.id === id)?.model === "proxy-figure");
-		assert.ok(capsuleId, JSON.stringify(added));
-		assert.equal((await s.f.call("operate_studio", s.f.request("operate_studio", { selection: { kind: "character", id: capsuleId } }))).ok, true);
+		const proxyId = added.affectedIds.find(id => s.f.cast.read().find(row => row.id === id)?.model === "proxy-figure");
+		assert.ok(proxyId, JSON.stringify(added));
+		assert.equal((await s.f.call("operate_studio", s.f.request("operate_studio", { selection: { kind: "character", id: proxyId } }))).ok, true);
 		s.f.cast.switchActiveCharacterLayer();
 		const before = structuredClone(s.f.cast.read()), sent = actions().length;
 		const motion = refusalOf(await s.call("generate_motion", { phases: ["A person walks forward."] }));
 		assert.deepEqual(motion, { ok: false, code: "TARGET_NOT_READY", reason: "Capsule figures have no rig - Motion generation works on rigged characters only." });
 		console.log(`generate_motion on a capsule figure: ${JSON.stringify(motion)}`);
-		const take = refusalOf(await s.call("load_motion", { url: "/ardy/motions/123456-abcdef", character: capsuleId }));
+		const take = refusalOf(await s.call("load_motion", { url: "/ardy/motions/123456-abcdef", character: proxyId }));
 		assert.deepEqual(take, { ok: false, code: "TARGET_NOT_READY", reason: "Capsule figures have no rig - Loading a take works on rigged characters only." });
 		assert.equal(actions().length, sent, "a refusal sends no command to the editor");
 		assert.deepEqual(s.f.cast.read(), before);

@@ -158,7 +158,7 @@ expect("the Characters folder lists three tiles", listed.length === 3, listed.jo
 expect("the Characters folder offers every character kind", JSON.stringify(listed) === JSON.stringify(CHARACTER_KIND_IDS), listed.join(", "));
 expect("the capsule figure tile is labelled", pane.CHARACTER_ASSETS.find((asset) => asset.id === "proxy-figure")?.label === "Capsule figure");
 expect("the capsule tile draws an SVG silhouette, not an FBX thumbnail",
-	renderToStaticMarkup(createElement(pane.FolderGrid, { folder: "characters", query: "capsule" })).includes('data-preview="capsule"'));
+	renderToStaticMarkup(createElement(pane.FolderGrid, { folder: "characters", query: "capsule" })).includes('data-preview="proxy-figure"'));
 expect("a name search finds the capsule figure", JSON.stringify(characterTiles("capsule")) === JSON.stringify(["proxy-figure"]), characterTiles("capsule").join(", "));
 expect("a search that matches nothing lists no tiles", characterTiles("xyz").length === 0, characterTiles("xyz").join(", "));
 

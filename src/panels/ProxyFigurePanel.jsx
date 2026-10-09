@@ -20,7 +20,7 @@ const POSTURE_GLYPHS = {
 
 /** Details for a capsule figure: it has no rig and no bones, so the one body
  * choice is its posture. Rig figures never see this panel. */
-export default function CapsulePanel({ isCharacterSelection, activeChar }) {
+export default function ProxyFigurePanel({ isCharacterSelection, activeChar }) {
 	const { run } = useBus();
 	const app = useContext(AppContext);
 	const live = app?.ports.read?.();
@@ -30,7 +30,7 @@ export default function CapsulePanel({ isCharacterSelection, activeChar }) {
 	if (!isProxyFigure(activeChar)) return null;
 	return (
 		<Foldout hidden={!isCharacterSelection} title={ko("Capsule figure", "캡슐 인물")}>
-			<div className="rig-picker" role="radiogroup" aria-label={ko("Posture", "자세")} data-testid="capsule-posture" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
+			<div className="rig-picker" role="radiogroup" aria-label={ko("Posture", "자세")} data-testid="proxy-posture" style={{ gridTemplateColumns: "repeat(3, minmax(0, 1fr))" }}>
 				{POSTURES.map((posture) => (
 					<button
 						type="button"
