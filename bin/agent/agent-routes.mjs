@@ -10,6 +10,7 @@ import { createAgentTools, SYSTEM_PROMPT, pickWorkspace } from "./agent-tools.mj
 import { createVideoAdapters, validateFalVideoRequest } from "./video-adapters.mjs";
 import { createSessionStore, transcriptFromHistory } from "./session-store.mjs";
 import { createAgentRunner } from "./agent-runner.mjs";
+import { STUDIO_SYSTEM_PROMPT_STORYBOARD } from "./studio-prompt.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -508,7 +509,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				if (session.activeJobId === jobId) { session.activeJobId = null; session.activeJobTurnId = null; }
 			}
 		};
-		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, session: { signal: controller.signal, admission, generation, onJob, actionIndex: current?.actionIndex ?? [] }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
+		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, previsMode: value.context.scene?.previsMode, session: { signal: controller.signal, admission, generation, onJob, actionIndex: current?.actionIndex ?? [] }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
 		const motion = async args => {
 			// Private artifact IDs belonged to the retired sidecar runtime. Reuse
 			// retained editor takes through motion.loadVersion, not another installer.
@@ -578,7 +579,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			for await (const frame of session.modelSession.start({
 				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
 				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
-				context: value.context, tools: modelTools, signal: controller.signal, emit: send,
+				context: value.context, tools: modelTools, systemPrompt: value.context.scene?.previsMode === "storyboard" ? STUDIO_SYSTEM_PROMPT_STORYBOARD : undefined, signal: controller.signal, emit: send,
 				meta: persistenceMeta,
 				quotaEvent: headers => codex?.parseQuotaHeaders ? quotaEvent(codex, headers) : { type: "quota", plan: null, primary: { usedPercent: null, windowMinutes: null, resetAt: null }, credits: { has: null } },
 			})) emitFrame(frame);

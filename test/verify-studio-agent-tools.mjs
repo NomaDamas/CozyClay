@@ -21,7 +21,7 @@ const sessionDir = mkdtempSync(join(tmpdir(), "cozyclay-agent-sessions-"));
 process.env.COZYCLAY_AGENT_SESSIONS_DIR = sessionDir;
 process.on("exit", () => rmSync(sessionDir, { recursive: true, force: true }));
 
-const CASES = new Set(["studio-tool-catalogue", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision", "run-action-admission-and-generation-limit", "stale-scene-readmits-any-family", "run-action-job-timeout", "verify-motion-timeout", "non-generation-job-skips-generation-gate", "scene-change-readmits-host", "ai-video-motion-shares-generation-gate"]);
+const CASES = new Set(["studio-tool-catalogue", "storyboard-tool-surface", "surface-context-and-images", "stale-host-and-post-install-rate-limit", "sse-disconnect-reconnect", "sequential-mutations-revision-chain", "external-revision-bump-refuses", "sequential-same-target-token-rotation", "rejection-receipt-surfaces-reason", "inspect-readmits-revision", "stale-scene-readmits-revision", "uncertain-apply-readmits-revision", "run-action-admission-and-generation-limit", "stale-scene-readmits-any-family", "run-action-job-timeout", "verify-motion-timeout", "non-generation-job-skips-generation-gate", "scene-change-readmits-host", "ai-video-motion-shares-generation-gate"]);
 const index = process.argv.indexOf("--case");
 const selected = index >= 0 ? process.argv[index + 1] : null;
 if (selected && !CASES.has(selected)) { console.error(`unknown --case ${selected}`); process.exit(2); }
@@ -193,6 +193,23 @@ if (shouldRun("studio-tool-catalogue")) {
   assert.equal(parsed.delta[0].after.patched.find(p => p.path === "object.scale").vec.y, 0.1);
   assert.ok(rendered.length < 8000, "sanity: this fixture is far under the 8000-byte receipt cap");
   console.log("PASS the Studio tool list is exactly the ten families and patch_elements is admitted");
+}
+
+if (shouldRun("storyboard-tool-surface")) {
+  const { createStudioTools } = await import("../bin/agent/studio-tools.mjs");
+  const { STUDIO_ACTIONS } = await import("../src/studio-actions.js");
+  const { studioActionIndex } = await import("../src/studio-agent-context.js");
+  const liveHub = { command: async () => ({ ok: true, status: "applied", revision: { before: 1, after: 2 } }) };
+  const session = { admission: { commandId: () => "cmd-1", host: host(), revision: 1, refresh: async () => {} } };
+  const storyboardTools = createStudioTools({ liveHub, workspaceHandle: "handle-1", previsMode: "storyboard", session });
+  const animationTools = createStudioTools({ liveHub, workspaceHandle: "handle-1", previsMode: "animation", session });
+  assert(!storyboardTools.some(tool => tool.name === "generate_motion"));
+  assert.deepEqual(animationTools.map(tool => tool.name), STUDIO_TOOLS);
+  const storyboardActions = studioActionIndex(STUDIO_ACTIONS, { previsMode: "storyboard" });
+  const animationActions = studioActionIndex(STUDIO_ACTIONS, { previsMode: "animation" });
+  assert(!storyboardActions.some(action => action.generation === "motion" || action.id.startsWith("motion.")));
+  assert.deepEqual(animationActions, studioActionIndex(STUDIO_ACTIONS));
+  console.log("PASS storyboard tools omit generate_motion and motion actions while animation remains unchanged");
 }
 
 if (shouldRun("run-action-admission-and-generation-limit")) {

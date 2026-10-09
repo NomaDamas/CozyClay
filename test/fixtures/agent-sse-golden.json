@@ -342,5 +342,11 @@
 			"type": "done",
 			"eventSeq": 8
 		}
+	],
+	"B": [
+		{ "type": "tool.start", "name": "run_action", "args": { "action": "shot.createStill" } },
+		{ "type": "tool.start", "name": "run_action", "args": { "action": "character.add" } },
+		{ "type": "tool.start", "name": "frame_shot" },
+		{ "type": "tool.start", "name": "verify_result" }
 	]
 }

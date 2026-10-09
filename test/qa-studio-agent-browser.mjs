@@ -8,6 +8,9 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { startFixtureStudio, bounded, released, sceneDocument } from './fixtures/studio-agent-motion.mjs';
 import { SCENES_STORAGE_KEY } from "../src/scenes.js";
+import { STUDIO_SYSTEM_PROMPT_STORYBOARD } from "../bin/agent/studio-prompt.mjs";
+assert.match(STUDIO_SYSTEM_PROMPT_STORYBOARD, /ONE panel/);
+assert.match(STUDIO_SYSTEM_PROMPT_STORYBOARD, /Never generate motion/);
 const cases = ['binding','intent','framing','motion','resilience','responsive'];
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== '--case' || !cases.includes(args[1]))) { console.error(`Unknown case; expected ${cases.join(', ')}`); process.exit(2); }
