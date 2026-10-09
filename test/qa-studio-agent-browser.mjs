@@ -119,9 +119,18 @@ const implementations = {
     assert.equal(after.shots.length, before.shots.length + 1);
     assert(after.shots.at(-1).caption.includes('두 사람이 식탁에 앉아 있다'));
     assert.equal(after.characters.length, before.characters.length + 2);
-    await undo(before, result.commands.filter(e => e.result?.ok && e.result?.authored).length);
+    // Second turn: the new panel must take the placement, the first must not.
+    const second = await turn('둘이 문 앞으로 간다');
+    assert(second.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'shot.createStill'));
+    assert(second.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'character.move'));
+    const twice = await state(), panels = twice.shots.slice(-2);
+    assert.equal(twice.shots.length, before.shots.length + 2);
+    assert.equal(panels[1].cast['story-person-a']?.x, 3, 'second panel carries the second turn placement');
+    assert.equal(panels[0].cast['story-person-a']?.x, undefined, 'first panel is not overwritten by the second turn');
+    console.log('SECOND PANEL CAST', JSON.stringify(panels.map(s => ({ id: s.id, caption: s.caption, cast: s.cast }))));
+    await undo(before, [...result.commands, ...second.commands].filter(e => e.result?.ok && e.result?.authored).length);
     assert.deepEqual(await state(), before);
-    console.log('PASS storyboard project: one new Board card with caption and two placed characters; Ctrl+Z removes the whole panel');
+    console.log('PASS storyboard project: one new Board card with caption and two placed characters; second turn lands its placement in the second panel; Ctrl+Z removes both panels');
   },
   async 'storyboard-failure'() {
     await open();

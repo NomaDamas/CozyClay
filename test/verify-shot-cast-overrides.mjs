@@ -45,6 +45,20 @@ try {
 	assert.equal(f.live.current.shots[1].cast[character.id], undefined, "clearing removes the override");
 	assert.equal(f.scope.appContext.undoClock, beforeDepth + 2, "clear adds one undo entry");
 	assert.equal(first.cast[character.id], undefined, "first still remains independent");
+	// shot.createStill moves the playhead into the new panel, so the next placement lands there.
+	f.live.current.timeline.currentFrame = 0;
+	f.live.current.studioView.frame = 0;
+	const created = f.run("shot.createStill", { caption: "Third" });
+	assert.equal(created.ok, true, JSON.stringify(created));
+	const third = f.live.current.shots.find(shot => shot.caption === "Third");
+	assert.equal(f.live.current.timeline.currentFrame, third.startFrame, "playhead sits on the new still's startFrame");
+	assert.equal(f.live.current.studioView.frame, third.startFrame);
+	assert.equal(f.live.current.studioShotId, third.id);
+	const placed = f.run("character.move", { characterId: character.id, x: 7, z: 1, rot: 0 });
+	assert.equal(placed.ok, true, JSON.stringify(placed));
+	assert.equal(f.live.current.shots.find(shot => shot.id === third.id).cast[character.id].x, 7, "placement writes the NEW still's override");
+	assert.equal(f.live.current.shots.filter(shot => shot.id !== third.id).some(shot => shot.cast[character.id]?.x === 7), false, "no other panel takes it");
+	console.log("PASS shot.createStill seeks to the new still and character.move writes its cast override");
 	console.log("PASS still cast override routes character.move to shot.cast and leaves base placement unchanged");
 	console.log("PASS resolveCharacterPlacement returns base in still 1 and override in still 2");
 	console.log("PASS installed take root wins over still cast override");
