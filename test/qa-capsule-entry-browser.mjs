@@ -29,7 +29,7 @@ const capsule = "window.__capsuleQa.characters.find(c => c.model === 'proxy-figu
 try {
 	await b.send("Emulation.setDeviceMetricsOverride", { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
 	await b.seed();
-	await b.navigate(process.env.QA_URL || "http://127.0.0.1:5216/app/?previs=1");
+	await b.navigate(b.base.href);
 	await b.ready();
 	await b.evaluate(`(async () => {
 		const element = document.querySelector('.app');

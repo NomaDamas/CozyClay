@@ -313,7 +313,7 @@ try {
       let history; Object.defineProperty(window,'__sceneHistory',{configurable:true,get:()=>history,set:value=>{history=value;window.dispatchEvent(new Event('qa:render'));}});
     }, { document, scenesKey: SCENES_STORAGE_KEY, previsMode });
     try {
-      await page.goto(`http://127.0.0.1:${port}/app/?previs=1`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
+      await page.goto(`http://127.0.0.1:${port}/app/`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
       if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }
       const c = await fixture.context(); assert.equal(c.capabilities.tools.length, previsMode === 'storyboard' ? 3 : 9);
       if (previsMode !== 'storyboard') await fixture.command('set_camera',{x:0,y:1.6,z:5,lookAtX:0,lookAtY:1,lookAtZ:0,focalMm:35},c.host.workspaceHandle);

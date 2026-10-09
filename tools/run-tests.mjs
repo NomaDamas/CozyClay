@@ -17,7 +17,6 @@ const NODE_FILES = [
 	"test/verify-proxy-figure.mjs",
 	"test/verify-character-capabilities.mjs",
 	"test/verify-root-path.mjs",
-	"test/verify-previs-flag.mjs",
 	"test/verify-morphgs-exporter.mjs",
 	"test/verify-studio-elements.mjs",
 	"test/bus/verify-view-mode-pose.mjs",

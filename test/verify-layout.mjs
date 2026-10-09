@@ -520,7 +520,7 @@ expect("the mode pill drops Motion in a storyboard", viewportToolbar.includes('p
 expect("key 4 is ignored in a storyboard", appSource.includes('if (modeKey === "motion" && storyboardProject) return;'));
 expect("selectWorkflowMode refuses Motion in a storyboard with the shared toast", appSource.includes('if (next === "motion" && storyboardProject) {') && appSource.includes("setToast(ko(STORYBOARD_MOTION_REFUSAL.en, STORYBOARD_MOTION_REFUSAL.ko))"));
 expect("the Generate Motion group is not rendered in a storyboard", topBar.includes('{previsMode !== "storyboard" && <GenerateMotion />}'));
-expect("the project head shows the mode badge behind the flag", topBar.includes('data-testid="topbar-previs-mode"') && topBar.includes("{previsEnabled && <PrevisModeBadge mode={previsMode} />}"));
+expect("the project head always shows the mode badge", topBar.includes('data-testid="topbar-previs-mode"') && topBar.includes("<PrevisModeBadge mode={previsMode} />") && !topBar.includes("previsEnabled"));
 expect("waypoint authoring and Top-View path drawing stay off in a storyboard", appSource.includes("toggleWaypointMode: storyboardProject ? undefined : toggleWaypointMode") && appSource.includes("if (waypointMode) setWaypointMode(false);") && appSource.includes("if (pathDraw) setPathDraw(false);"));
 expect(
 	"storyboard CSS hides the take bar, motion/pose tools, the waypoint switch and the prop path track",

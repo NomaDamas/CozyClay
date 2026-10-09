@@ -19,11 +19,11 @@ expect("the first-success guide keeps its v2 region root", guide.includes('class
 expect("all new visual rules are rooted in the v2 regions", css.includes(".v2-start-screen") && css.includes(".v2-first-success-guide") && !/^\.(project-browser|first-success-guide)/m.test(css));
 expect("the v2 screen keeps the fixed 232px and 340px columns", css.includes("var(--start-nav-width, 232px)") && css.includes("var(--start-preview-width, 340px)"));
 
-// Previs modes (#649): the New view's Storyboard/Animation control renders only
-// behind previsModesEnabled(), offers exactly two options with ko/en copy, and
+// Previs modes (#649, #654): the New view's Storyboard/Animation control always
+// renders on the New view, offers exactly two options with ko/en copy, and
 // Storyboard narrows the templates to the blank stage.
 const modeBlock = browser.slice(browser.indexOf("const MODE_OPTIONS = ["), browser.indexOf("];", browser.indexOf("const MODE_OPTIONS = [")));
-expect("the mode control renders only behind the previs flag", browser.includes('import { previsModesEnabled } from "./previs-flag.js"') && browser.includes('{previsEnabled && activeNav === "new" && (') && browser.includes('className="v2-start-mode" role="radiogroup"'));
+expect("the mode control renders on the New view without a flag", !browser.includes("previs-flag") && browser.includes('{activeNav === "new" && (') && browser.includes('className="v2-start-mode" role="radiogroup"'));
 expect("the mode control offers exactly Storyboard and Animation", (modeBlock.match(/\bid: "/g) || []).length === 2 && modeBlock.includes('id: "storyboard"') && modeBlock.includes('id: "animation"'));
 expect("both mode labels carry en and ko copy", modeBlock.includes('ko("Storyboard", "스토리보드")') && modeBlock.includes('ko("Animation", "애니메이션")'));
 expect("both mode blurbs carry en and ko copy", modeBlock.includes('ko("Describe scenes in words and direct one panel at a time. Output: image references.", "말로 장면을 설명하면 한 장씩 패널을 연출합니다. 결과물: 이미지 레퍼런스.")') && modeBlock.includes('ko("Block and shoot continuous motion. Output: clip references.", "연속 동작을 블로킹하고 촬영합니다. 결과물: 클립 레퍼런스.")'));

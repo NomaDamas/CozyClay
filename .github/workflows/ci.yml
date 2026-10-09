@@ -203,7 +203,8 @@ jobs:
   # Real-browser rendering regressions via the CDP QA wrapper. The two suites
   # proven green on the hosted runner gate pull requests; the four observation
   # suites run in browser-observation.yml so they remain visible without
-  # extending the required PR path.
+  # extending the required PR path. The previs-mode suites (#654) run here as
+  # observation: a failure is a warning in the step summary, not a red check.
   browser:
     if: needs.changes.outputs.source == 'true'
     needs: changes
@@ -218,6 +219,14 @@ jobs:
             tier: gating
           - suite: qa-gizmo-click-through-browser
             tier: gating
+          - suite: qa-proxy-figure-browser
+            tier: observation
+          - suite: qa-storyboard-board-browser
+            tier: observation
+          - suite: qa-storyboard-export-browser
+            tier: observation
+          - suite: qa-previs-start-browser
+            tier: observation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

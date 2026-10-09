@@ -10,7 +10,6 @@ import {
 } from "./attachment-image.js";
 import { isImeComposing } from "../ime.js";
 import { useStudioShell } from "../shell/studio-shell-context.js";
-import { previsModesEnabled } from "../previs-flag.js";
 import { ko } from "../locale.js";
 import {
 	AGENT_PANEL_OVERLAY_BREAKPOINT,
@@ -292,8 +291,7 @@ export default function AgentPanel({
 
 	// Inside the studio the title names the project's previs mode (#650).
 	const previsMode = useStudioShell()?.previsMode;
-	const [previsEnabled] = useState(previsModesEnabled);
-	const titleMode = surface === "studio" && previsEnabled && previsMode
+	const titleMode = surface === "studio" && previsMode
 		? (previsMode === "storyboard" ? ko("Storyboard", "스토리보드") : ko("Animation", "애니메이션"))
 		: null;
 	const [collapsed, setCollapsed] = useState(defaultCollapsed);

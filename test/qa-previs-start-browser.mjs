@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Browser QA for the start screen's project mode (#649). With ?previs=1 the New
+// Browser QA for the start screen's project mode (#649, #654). The New
 // view offers Storyboard / Animation above the templates; the choice lands on
-// the project and survives a reload. Without the flag the control is absent.
-// Run through tools/qa-browser.mjs with QA_URL pointing at `/app/?previs=1`.
+// the project and survives a reload. No URL flag is needed.
+// Run through tools/qa-browser.mjs with QA_URL pointing at `/app/`.
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -57,11 +57,6 @@ const evaluate = async (expression) => {
 const reload = async () => {
 	const loaded = waitForPageLoad();
 	await send("Page.reload", { ignoreCache: true });
-	await loaded;
-};
-const navigate = async (url) => {
-	const loaded = waitForPageLoad();
-	await send("Page.navigate", { url });
 	await loaded;
 };
 const waitFor = (condition, timeoutMs = 15000) => evaluate(`new Promise((resolve) => {
@@ -126,8 +121,6 @@ const expect = (name, condition, detail = "") => {
 	if (!condition) failures += 1;
 };
 
-const flaggedUrl = await evaluate("location.href");
-expect("the suite runs with ?previs=1", new URL(flaggedUrl).searchParams.get("previs") === "1", flaggedUrl);
 await firstLaunch();
 
 // --- New screen, Animation (default) -------------------------------------
@@ -195,17 +188,6 @@ const cityBlockOpened = await waitFor(`${editorOpen} && (document.querySelector(
 expect("City Block opens in the editor", cityBlockOpened, await evaluate("JSON.stringify({ start: !!document.querySelector('.v2-start-screen'), menu: document.querySelector('.project-menu-trigger')?.textContent, toast: document.querySelector('[role=status]')?.textContent, name: document.querySelector('[data-testid=start-project-name]')?.value, selected: document.querySelector('.v2-start-template.selected')?.dataset.templateId })"));
 const animationSession = await session();
 expect("the City Block project is an animation project", animationSession?.name === "qa649_animation" && animationSession?.previsMode === "animation", JSON.stringify(animationSession));
-
-// --- Without the flag the control is absent ----------------------------------
-const unflagged = new URL(flaggedUrl);
-unflagged.searchParams.set("previs", "0");
-await navigate(unflagged.href);
-await firstLaunch();
-expect("the unflagged start screen renders", await waitFor("!!document.querySelector('.v2-start-screen.startup [data-testid=start-create]')"));
-expect("the unflagged start screen has no mode control", await evaluate("!document.querySelector('[data-testid=start-previs-mode], .v2-start-mode')"));
-const unflaggedTemplates = await templateIds();
-expect("the unflagged start screen keeps every template", unflaggedTemplates.includes("blank-stage") && unflaggedTemplates.includes("sample-city-block"), unflaggedTemplates.join(","));
-await screenshot("task-18-new-unflagged-light.png");
 
 ws.close();
 if (failures > 0) {
