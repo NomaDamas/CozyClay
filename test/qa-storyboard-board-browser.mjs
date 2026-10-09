@@ -82,7 +82,7 @@ try {
 		window.__storyboardBus = context.bus;
 		window.__storyboardState = context.live;
 	})()`);
-	await b.evaluate("window.__storyboardBus.run('character.update', { characterId: 'char-a', patch: { model: 'proxy-figure', x: 0, z: 0, rot: 0, posture: 'stand' } })");
+	await b.evaluate("window.__storyboardBus.run('character.add', { character: { id: 'char-proxy', model: 'proxy-figure', subject: 'A stand-in', x: 0, z: 0, rot: 0, posture: 'stand' } })");
 	await b.change("!!window.__cozyclay?.editorCam", async () => {});
 	await b.evaluate("window.__storyboardBus.run('shot.remove', { shotId: 'shot-a' }); window.__storyboardBus.run('shot.remove', { shotId: 'shot-b' });");
 	const createOne = async caption => {

@@ -69,3 +69,25 @@ test('cast: character.add refuses unknown models and postures; a patched unknown
     console.log('PASS character.update unknown posture normalizes to stand');
   } finally { f.dispose(); }
 });
+
+test('cast: character.update refuses an in-place rig <-> capsule figure conversion', () => {
+  for (const origin of ['ui', 'agent', 'mcp']) {
+    const f = castFixture();
+    try {
+      ok(f.run('character.add', { character: proxy }, origin));
+      const rigId = f.cast.read().find(entry => entry.id !== proxy.id).id;
+      const before = f.snapshot();
+      for (const [characterId, model] of [[rigId, 'proxy-figure'], [proxy.id, 'y-bot-tpose']]) {
+        const refused = f.run('character.update', { characterId, patch: { model } }, origin);
+        assert.equal(refused.ok, false, JSON.stringify(refused));
+        assert.equal(refused.code, 'INVALID_ARGUMENT', JSON.stringify(refused));
+        assert.match(refused.message, /kind is chosen when it is created/);
+      }
+      assert.deepEqual(f.snapshot(), before);
+      ok(f.run('character.update', { characterId: proxy.id, patch: { posture: 'lie', model: 'proxy-figure', subject: 'Renamed' } }, origin));
+      ok(f.run('character.update', { characterId: rigId, patch: { subject: 'Renamed' } }, origin));
+      assert.equal(f.cast.read().find(entry => entry.id === proxy.id).posture, 'lie');
+      console.log(`PASS character.update model kind change refused with INVALID_ARGUMENT (${origin}); posture/name patches still succeed`);
+    } finally { f.dispose(); }
+  }
+});

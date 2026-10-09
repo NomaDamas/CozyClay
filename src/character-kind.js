@@ -30,6 +30,12 @@ const FEATURE_LABELS = {
 	take: ["Loading a take", "테이크 불러오기"],
 };
 
+// A character's kind (rig or capsule figure) is fixed at creation; character.update refuses a kind change.
+export const KIND_FIXED_REFUSAL = Object.freeze({
+	en: "A character's kind is chosen when it is created; add a new character instead.",
+	ko: "캐릭터 종류는 만들 때 정합니다. 새 캐릭터를 추가하세요.",
+});
+
 export function kindRefusal(feature, ko = false) {
 	const label = FEATURE_LABELS[feature]?.[ko ? 1 : 0] ?? feature;
 	return ko

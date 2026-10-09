@@ -5,7 +5,8 @@ import { studioActionDeclaration } from "../studio-actions.js";
 import { characterOf, fail, changedIds } from "./shared.js";
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/character.js';
-import { createCharacterEntry, CHARACTER_KIND_IDS, POSTURES, isProxyFigure } from '../scenes.js';
+import { createCharacterEntry, CHARACTER_KIND_IDS, POSTURES, PROXY_FIGURE_MODEL, isProxyFigure } from '../scenes.js';
+import { KIND_FIXED_REFUSAL } from '../character-kind.js';
 import { track } from '../analytics.js';
 import { DEFAULT_POSE } from '../poses.js';
 import { createStableItemId, updateStableItem, removeStableItem } from '../stable-items.js';
@@ -85,7 +86,12 @@ export function register(registry, ports) {
 			owner().write(rows => [...rows, row]);
 		},
 		'character.remove': ({ characterId }) => { character(characterId); if (owner().read().length <= 1) fail('INVALID_ARGUMENT', 'Cannot remove the final character.'); owner().write(rows => rows.filter(row => row.id !== characterId)); },
-		'character.update': ({ characterId, patch: value }) => { if (Object.hasOwn(value, 'parent')) groupParent(value.parent); patch(characterId, value); },
+		'character.update': ({ characterId, patch: value }) => {
+			// Rig <-> capsule figure is a different kind of cast member; rig-to-rig model swaps stay.
+			if (Object.hasOwn(value, 'model') && (value.model === PROXY_FIGURE_MODEL) !== isProxyFigure(character(characterId))) fail('INVALID_ARGUMENT', KIND_FIXED_REFUSAL.en);
+			if (Object.hasOwn(value, 'parent')) groupParent(value.parent);
+			patch(characterId, value);
+		},
 		'character.move': ({ characterId, ...value }) => patch(characterId, value),
 		'character.setPose': ({ characterId, pose: value, clearMotion }) => { character(characterId); owner().applyPose(characterId, pose(value), clearMotion); },
 		'character.setPromptBlocks': ({ characterId, blocks }) => {
