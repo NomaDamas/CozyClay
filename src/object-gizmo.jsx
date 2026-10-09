@@ -769,9 +769,9 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 
 	// QA hook: where each handle sits on screen, through the exact rect the
 	// picker builds its ray from. Headless checks drive real pointer events
-	// with it (harmless in normal use).
-	if (typeof window !== "undefined") {
-		if (!pickOnly) window.__gizmoHandles = () => {
+	// with it (harmless in normal use). The character gizmo is a separate
+	// pick-only instance, so it needs its own mirror hook.
+	const getHandles = () => {
 			const camera = camRef?.current;
 			const pane = paneRef?.current;
 			if (!camera || !pane) return [];
@@ -800,7 +800,14 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 					};
 				});
 		};
-	}
+	if (typeof window !== "undefined" && !pickOnly) window.__gizmoHandles = getHandles;
+	useEffect(() => {
+		if (typeof window === "undefined" || !pickOnly) return undefined;
+		window.__characterGizmoHandles = getHandles;
+		return () => {
+			if (window.__characterGizmoHandles === getHandles) delete window.__characterGizmoHandles;
+		};
+	}, [pickOnly]);
 
 	if (!enabled || !object) {
 		handlesRef.current.clear();

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { cameraBrowser } from "./camera-browser-harness.mjs";
 
-const outputDir = process.env.QA_OUT || new URL("../.omo/qa-proxy-figure/", import.meta.url).pathname;
+const outputDir = process.env.QA_OUT || "/Users/yun/CozyClay/.omo/evidence/previs-modes/previs-modes-w2a/shots";
 mkdirSync(outputDir, { recursive: true });
 const b = await cameraBrowser();
 const errors = [];
@@ -75,11 +75,11 @@ try {
 		await b.mouse("mouseReleased", { ...point, button: "left", buttons: 0, clickCount: 1 });
 	});
 	console.log("PASS clicking proxy mesh selects characterB row");
-	await b.arm("window.__gizmoHandles?.().some(h => h.axis === 'x')");
+	await b.arm("window.__characterGizmoHandles?.().some(h => h.axis === 'x')");
 	await b.settled();
 	for (const axis of ["x", "z"]) {
 		const before = await b.evaluate(`window.__proxyBus.characters.find(c => c.id === 'qa-proxy').${axis}`);
-		const handle = await b.evaluate(`window.__gizmoHandles().find(h => h.axis === '${axis}')`);
+		const handle = await b.evaluate(`window.__characterGizmoHandles().find(h => h.axis === '${axis}')`);
 		await b.change(`Math.abs(window.__proxyBus.characters.find(c => c.id === 'qa-proxy').${axis} - ${before}) > 0.01`, async () => {
 			await b.mouse("mousePressed", { x: handle.x, y: handle.y, button: "left", buttons: 1 });
 			for (let tick = 1; tick <= 8; tick++) {
