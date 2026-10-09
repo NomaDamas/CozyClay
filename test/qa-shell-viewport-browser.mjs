@@ -259,7 +259,7 @@ const openPrevisProject = async (previsMode, theme) => {
 			scenes: [{
 				id: "task-19-scene", name: "Task 19", objects: [],
 				shotDocument: { version: 4, frameCount: 144, shots: [], waypoints: [] },
-				stage: { characters: [{ id: "char-a", model: "y-bot-tpose", x: 0, z: 0, rot: 0, hidden: false, pose: null, subject: "a person" }], hasCharSheet: false, shotAspect: "16:9" },
+				stage: { characters: [{ id: "char-a", model: "y-bot-tpose", x: 0, z: 0, rot: 0, hidden: false, pose: null, subject: "a person", layer: { waypoints: [], promptClips: [{ id: "prompt-clip-task-25", startFrame: 0, endFrame: 48, text: "walks to the door" }] } }], hasCharSheet: false, shotAspect: "16:9" },
 			}],
 		};
 		localStorage.clear();
@@ -285,6 +285,12 @@ const readPrevisShell = () => evaluate(`(() => {
 		generate: !!document.querySelector('[data-testid=topbar-generate]'),
 		workflowMode: document.querySelector('.app')?.dataset.workflowMode,
 		agentTitle: document.querySelector('.agent-title')?.textContent.trim() ?? null,
+		// Task 25: a storyboard has no prompt-block lane, chips or edit controls.
+		promptLane: !!document.querySelector('.tl-track[data-track-id="Prompts"]'),
+		promptChips: document.querySelectorAll('.tl-chip-input').length,
+		promptAdd: !!document.querySelector('[data-testid=sequencer-add-block], .tl-track-add[title*="prompt clip"]'),
+		promptPanel: [...document.querySelectorAll('.foldout')].some((node) => node.textContent.includes('Prompt Blocks')),
+		bodyLane: !!document.querySelector('.tl-track[data-track-id="Full-Body"]'),
 	};
 })()`);
 const pressDigit4 = async () => {
@@ -299,6 +305,8 @@ for (const theme of ["light", "dark"]) {
 	expect(`storyboard/${theme}: three mode tabs read 1 2 3`, storyboard.keys === "123", JSON.stringify(storyboard));
 	expect(`storyboard/${theme}: the badge reads Storyboard`, storyboard.badge === "Storyboard", JSON.stringify(storyboard));
 	expect(`storyboard/${theme}: no topbar-generate`, storyboard.generate === false, JSON.stringify(storyboard));
+	expect(`storyboard/${theme}: no prompt lane, chip, add control or Prompt Blocks panel despite an existing block`, storyboard.promptLane === false && storyboard.promptChips === 0 && storyboard.promptAdd === false && storyboard.promptPanel === false, JSON.stringify(storyboard));
+	expect(`storyboard/${theme}: the other lanes stay`, storyboard.bodyLane === true, JSON.stringify(storyboard));
 	expect(`storyboard/${theme}: the theme is ${theme}`, storyboard.theme === theme, JSON.stringify(storyboard));
 	await pressDigit4();
 	const afterKey = await readPrevisShell();
@@ -312,10 +320,15 @@ for (const theme of ["light", "dark"]) {
 	const animation = await readPrevisShell();
 	expect(`animation/${theme}: four mode tabs read 1 2 3 4`, animation.keys === "1234", JSON.stringify(animation));
 	expect(`animation/${theme}: the badge reads Animation`, animation.badge === "Animation", JSON.stringify(animation));
+	expect(`animation/${theme}: the prompt lane and its chip are present`, animation.promptLane === true && animation.promptChips === 1, JSON.stringify(animation));
 	expect(`animation/${theme}: topbar-generate is rendered`, animation.generate === true, JSON.stringify(animation));
 	previsReport[`animation-${theme}`] = animation;
 	console.log(`QA_PREVIS animation/${theme} ${JSON.stringify(animation)}`);
 	save(`task-19-animation-${theme}`, await capture());
+	await evaluate("document.activeElement?.blur()");
+	await pressDigit4();
+	const animationMotion = await waitFor("!!document.querySelector('[data-testid=sequencer-add-block]')", 10000);
+	expect(`animation/${theme}: key 4 shows the + Block control`, animationMotion === true, String(animationMotion));
 }
 
 // Failure path: Motion through every door of a storyboard is refused. The bus

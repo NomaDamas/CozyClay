@@ -238,6 +238,7 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 			waypoints={waypoints}
 			pathSpeed={pathSpeed}
 			pendingWaypointFrame={pendingWaypointFrame}
+			previsMode={previsMode}
 			promptClips={promptClips}
 			selectedPromptId={selectedPromptId}
 			badge={stateBadge}

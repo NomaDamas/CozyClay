@@ -153,7 +153,7 @@ const travelTrackSource = timelineSource.slice(
 ok("the strip has a travel track for a selected prop", timelineSource.includes("function ObjectTravelTrack("));
 ok(
 	"selecting a prop swaps the performer's lanes instead of joining them",
-	timelineSource.includes("{pathObject ? (") && timelineSource.includes(") : TRACKS.map((name) => ("),
+	timelineSource.includes("{pathObject ? (") && timelineSource.includes(") : tracks.map((name) => ("),
 );
 ok(
 	"the prop's track carries the route controls",

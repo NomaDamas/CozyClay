@@ -948,6 +948,8 @@ export default function Timeline({
 	// not rendered anywhere else. The Root path (Waypoint) toggle stays in
 	// every mode: blocking uses it to stage where a subject walks.
 	workflowMode = "motion",
+	// A storyboard works in panels: it has no Prompts lane, chips or + Block.
+	previsMode = null,
 	waypoints = [],
 	pathSpeed = null, // { min, max, warn } in m/s, shown on the 2D Root label
 	badge,
@@ -1715,6 +1717,8 @@ export default function Timeline({
 	// The motion-layer track tools (Prompts +, the Full-Body Cut, the trim and
 	// retime grips) edit the take, so Scene and Camera never render them.
 	const motionTools = workflowMode === "motion";
+	const promptBlocksHidden = previsMode === "storyboard";
+	const tracks = promptBlocksHidden ? TRACKS.filter((name) => name !== "Prompts") : TRACKS;
 	const activeShotForCut = shots[activeShotIdx] ?? null;
 	const canCutShot = Boolean(activeShotForCut && frame > activeShotForCut.startFrame && frame <= activeShotForCut.endFrame);
 	// A trim or retime grip edits ONE segment: it belongs to the segment the
@@ -1776,7 +1780,7 @@ export default function Timeline({
 								>
 									{ko("Cut", "컷")}
 								</button>
-								<button
+								{!promptBlocksHidden && <button
 									type="button"
 									className="tl-seq-action"
 									data-testid="sequencer-add-block"
@@ -1784,7 +1788,7 @@ export default function Timeline({
 									onClick={() => handlers.current.onPromptAdd?.(frame)}
 								>
 									{ko("+ Block", "+ 블록")}
-								</button>
+								</button>}
 							</>) : workflowMode === "pose" || ikMode ? (
 								<button
 									type="button"
@@ -2026,7 +2030,7 @@ export default function Timeline({
 								onTimingGestureStart={() => handlers.current.onObjectTimingGestureStart?.()}
 								onTimingGestureEnd={() => handlers.current.onObjectTimingGestureEnd?.()}
 							/>
-						) : TRACKS.map((name) => (
+						) : tracks.map((name) => (
 							<div className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} data-track-id={name} key={name}>
 								<span className="tl-track-label tl-track-tree">
 									{name === IK_LANE ? (
