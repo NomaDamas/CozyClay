@@ -7,6 +7,10 @@ const BODY_RADIUS = 0.22;
 const BODY_HEIGHT = 1.45;
 const HEAD_RADIUS = 0.12;
 
+export function proxyYaw(rot, posture = "stand") {
+	return (rot * Math.PI) / 180 + (posture === "lie" ? Math.PI : 0);
+}
+
 export const ProxyFigure = memo(function ProxyFigure({
 	position,
 	rot,
@@ -57,7 +61,7 @@ export const ProxyFigure = memo(function ProxyFigure({
 	return (
 		<group
 			position={position}
-			rotation={[0, (rot * Math.PI) / 180 + (posture === "lie" ? Math.PI : 0), 0]}
+			rotation={[0, proxyYaw(rot, posture), 0]}
 			scale={scale}
 			userData={pickId ? { characterPick: pickId, selected: !!selected } : undefined}
 		>

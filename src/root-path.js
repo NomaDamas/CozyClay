@@ -1,3 +1,5 @@
+import { isProxyFigure } from "./scenes.js";
+
 // Frame-addressed scene placement. No renderer or waypoint authoring state.
 export function sampleRootPath(character, frame, { fps = 24 } = {}) {
 	const waypoints = character.layer?.waypoints ?? [];
@@ -30,4 +32,17 @@ export function resolveCharacterPlacement(character, frame, { shotAt = () => nul
 	const root = sampleRootPath(character, frame);
 	if (root) return { ...base, x: root.x, z: root.z, rot: root.heading };
 	return { ...base, ...shotAt(frame)?.cast?.[character.id] };
+}
+
+// Rendering and export share the same placement policy. A rigged character's
+// authored waypoints belong to its take, not its world transform; only proxy
+// figures use the root-path sampler without a take. Still cast overrides are
+// editorial placement and apply to either kind while the playhead is inside a
+// still.
+export function placementAt(character, frame, { shotAt = () => null, takeRoot = null } = {}) {
+	if (takeRoot) return resolveCharacterPlacement(character, frame, { takeRoot });
+	const shot = shotAt(frame);
+	if (isProxyFigure(character)) return resolveCharacterPlacement(character, frame, { shotAt: () => shot });
+	if (shot?.kind === "still") return { ...character, ...shot.cast?.[character.id] };
+	return character;
 }

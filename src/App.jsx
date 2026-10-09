@@ -61,7 +61,8 @@ import { AppContext, createAppContext } from "./app-context.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 import { PlanBoard } from "./planview.jsx";
-import { resolveCharacterPlacement } from "./root-path.js";
+import { placementAt } from "./root-path.js";
+import { proxyYaw } from "./proxy-figure.jsx";
 import { autoColorHex, loadAutoColor } from "./auto-color.js";
 import { DualRender, fitAspect, GIZMO_LAYER } from "./dualview.jsx";
 import { GridFloor } from "./grid-floor.jsx";
@@ -3115,10 +3116,10 @@ export default function App() {
 		// Each cast member is driven by ITS OWN clip: the active one reads
 		// the editing buffer, the others their stored session motion.
 		const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
-		const placement = (entry.model === "proxy-figure" || !clip) && typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, tlFrame, {
+		const placement = placementAt(entry, tlFrame, {
 			shotAt: frame => shotAtFrame(shots, frame),
 			takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, tlFrame).subject : null,
-		}) : entry;
+		});
 		return [{
 			id: entry.id,
 			model: entry.model,
@@ -3153,7 +3154,7 @@ export default function App() {
 		const entry = characters.find((item) => item.id === activeChar.id);
 		if (!entry || entry.hidden) return null;
 		const hasTake = activeChar.id === activeCharacterId ? Boolean(motion) : Boolean(activeChar.sessionMotion);
-		const placement = hasTake ? entry : resolveCharacterPlacement(entry, tlFrame, { shotAt: frame => shotAtFrame(shots, frame) });
+		const placement = hasTake ? entry : placementAt(entry, tlFrame, { shotAt: frame => shotAtFrame(shots, frame) });
 		return { position: [placement.x, entry.y ?? 0, placement.z], rot: placement.rot };
 	}, [characters, activeChar.id, motion, shots, tlFrame, selectedHierarchyId]);
 	// The cast rides the SAME gizmo as scene objects — one movement grammar
@@ -3438,10 +3439,10 @@ export default function App() {
 			const state = context
 				? (entry.id === activeId ? context.ikState : context.ikStates.get(entry.id))
 				: (entry.id === activeChar.id ? ikStateRef.current : ikStatesRef.current.get(entry.id));
-			const placement = typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, frame, {
+			const placement = placementAt(entry, frame, {
 				shotAt: at => shotAtFrame(context?.shots ?? shots, at),
 				takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
-			}) : entry;
+			});
 			poseMemberAtFrame(rigs[entry.id], clip, state, frame, IK_CORRECTION_BLEND_FRAMES, placement.pose ?? null);
 		}
 		// The bones for this frame are now written, so a carried prop can take
@@ -3492,7 +3493,7 @@ export default function App() {
 		const context = recRef.current?.request.context;
 		const cast = context?.characters ?? characters;
 		const scene = (recRef.current?.capture ?? captureRef.current)?.scene;
-		const pickIdByCharacter = new Map((typeof characterViews === "undefined" ? [] : characterViews).map(view => [view.id, view.pickId]));
+		const pickIdByCharacter = new Map(characterViews.map(view => [view.id, view.pickId]));
 		if (typeof scene?.traverse === "function") scene.traverse(node => {
 			const index = cast.findIndex(entry => isProxyFigure(entry) && node.userData.characterPick === pickIdByCharacter.get(entry.id));
 			if (index < 0) return;
@@ -3506,12 +3507,12 @@ export default function App() {
 			for (const snapshot of recRef.current?.request.context?.rigStates ?? []) restoreExportRig(snapshot);
 			for (const { node, entry } of proxySnapshots) {
 				const clip = entry.id === (context?.activeId ?? activeChar.id) ? (context ? context.motion : motion) : entry.sessionMotion;
-				const placement = typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, frame, {
+				const placement = placementAt(entry, frame, {
 					shotAt: at => shotAtFrame(context?.shots ?? shots, at),
 					takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
-				}) : entry;
+				});
 				node.position.set(placement.x, entry.y ?? 0, placement.z);
-				node.rotation.y = placement.rot * Math.PI / 180 + (placement.posture === "lie" ? Math.PI : 0);
+				node.rotation.y = proxyYaw(placement.rot, placement.posture);
 				node.updateMatrixWorld(true);
 			}
 			const plate = applyExportFrame(frame);

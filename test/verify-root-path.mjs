@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { resolveCharacterPlacement, sampleRootPath } from "../src/root-path.js";
+import { placementAt, resolveCharacterPlacement, sampleRootPath } from "../src/root-path.js";
 
 const character = {
 	id: "proxy",
@@ -44,4 +44,14 @@ assert.deepEqual(sampleRootPath(character, -10), { x: 0, z: 0, heading: 12 });
 assert.deepEqual(sampleRootPath(character, 12, { fps: 48 }), sampleRootPath(character, 12));
 const stationary = { ...character, layer: { waypoints: [{ frame: 24, x: 0, z: 0, heading: null }] } };
 assert.equal(sampleRootPath(stationary, 12).heading, 12);
+const rigged = { ...pathCharacter, model: "y-bot-tpose" };
+assert.deepEqual(placementAt(rigged, 12, {
+	shotAt: () => ({ kind: "clip", cast: { proxy: { x: 4, z: 5, rot: 33 } } }),
+}), rigged);
+assert.deepEqual(placementAt(rigged, 12, {
+	shotAt: () => ({ kind: "still", cast: { proxy: { x: 4, z: 5, rot: 33 } } }),
+}), { ...rigged, x: 4, z: 5, rot: 33 });
+assert.equal(placementAt({ ...pathCharacter, model: "proxy-figure" }, 12, {
+	shotAt: () => ({ kind: "clip", cast: { proxy: { x: 4, z: 5, rot: 33 } } }),
+}).x, 1.5);
 console.log("PASS root path interpolation, heading, hold, null, and placement priority");
