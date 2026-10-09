@@ -412,8 +412,8 @@ expect(
 	app.includes("personScale = characterScaleFor(null, declared);"),
 );
 expect(
-	"stature survives the save: only the session clip is stripped from the stage",
-	app.includes("characters: characters.map(({ sessionMotion, ...entry }) => entry)") &&
+	"stature survives the save: only the session clip is stripped from the stage, and the layer's IK edits ride along",
+	app.includes("characters.map(({ sessionMotion, ...entry }) => ({ ...entry, ikEdits: ikEditsOf(entry.id) }))") && app.includes("characters: stageCharacters,") &&
 	app.includes("appContext.storeDomain('motion').hydrate(entry.id, clip, entry.motionRef)"),
 );
 expect(

@@ -86,52 +86,139 @@ export function translateObjectPath(path, delta) {
 	});
 }
 
-/** Cumulative arc length per point, plus the total. */
-export function pathMetrics(path) {
-	const points = path?.points ?? [];
-	const cumulative = [0];
-	for (let i = 1; i < points.length; i += 1) {
-		const a = points[i - 1];
-		const b = points[i];
-		cumulative.push(cumulative[i - 1] + Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z));
-	}
-	return { cumulative, length: cumulative[cumulative.length - 1] ?? 0 };
+/*
+ * The route as travelled is a curve, not the polyline of its points: a
+ * centripetal Catmull-Rom through every authored point (the camera rail's
+ * curve, in 3D so lifted points stay lifted), sampled every few centimetres.
+ * A car rounds a corner instead of snapping to the next leg, and its heading
+ * turns with the curve instead of jumping at each point. The ends are
+ * extended by mirroring their neighbour, so a two-point route is still a
+ * straight line and the curve still starts and ends on the authored points.
+ */
+const CURVE_SPACING = 0.05;
+const CURVE_MAX_STEPS = 400;
+const CURVE_ALPHA = 0.5; // centripetal: no loops or overshoot at tight corners
+const curveCache = new Map();
+const CURVE_CACHE_SIZE = 64;
+
+const mirror = (point, neighbour) => ({ x: 2 * point.x - neighbour.x, y: 2 * point.y - neighbour.y, z: 2 * point.z - neighbour.z });
+const span = (a, b) => Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+
+function catmullRom(p0, p1, p2, p3, t) {
+	const t0 = 0;
+	const t1 = t0 + Math.max(span(p0, p1) ** CURVE_ALPHA, 1e-6);
+	const t2 = t1 + Math.max(span(p1, p2) ** CURVE_ALPHA, 1e-6);
+	const t3 = t2 + Math.max(span(p2, p3) ** CURVE_ALPHA, 1e-6);
+	const at = t1 + (t2 - t1) * t;
+	const lerp = (a, b, ta, tb) => {
+		const w = tb - ta < 1e-12 ? 0 : (at - ta) / (tb - ta);
+		return { x: a.x + (b.x - a.x) * w, y: a.y + (b.y - a.y) * w, z: a.z + (b.z - a.z) * w };
+	};
+	const a1 = lerp(p0, p1, t0, t1);
+	const a2 = lerp(p1, p2, t1, t2);
+	const a3 = lerp(p2, p3, t2, t3);
+	return lerp(lerp(a1, a2, t0, t2), lerp(a2, a3, t1, t3), t1, t2);
 }
 
-/** The point at `distance` along the path, extrapolating past the end. */
-function pointAtDistance(path, metrics, distance) {
-	const { points } = path;
-	const { cumulative, length } = metrics;
-	if (distance <= 0) {
-		const heading = headingBetween(points[0], points[1]);
-		return { ...points[0], heading };
+function segmentControls(points, index) {
+	const p1 = points[index];
+	const p2 = points[index + 1];
+	const p0 = index > 0 ? points[index - 1] : mirror(p1, p2);
+	const p3 = index + 2 < points.length ? points[index + 2] : mirror(p2, p1);
+	return [p0, p1, p2, p3];
+}
+
+const asPoint = (point) => ({ x: finite(point?.x), y: finite(point?.y), z: finite(point?.z) });
+
+/** The point a fraction `t` along the curve between authored points
+ * `index` and `index + 1` — where a point inserted on the drawn line goes. */
+export function pathCurvePointBetween(points, index, t) {
+	const list = (points ?? []).map(asPoint);
+	if (index < 0 || index + 1 >= list.length) return null;
+	const at = catmullRom(...segmentControls(list, index), clamp(finite(t), 0, 1));
+	return { x: at.x, y: Math.max(0, at.y), z: at.z };
+}
+
+/**
+ * The travelled curve: dense points, cumulative arc length, the total, and
+ * a heading (yaw degrees, or null when the curve does not move on the floor)
+ * at every dense point.
+ */
+export function pathCurve(path) {
+	const points = (path?.points ?? []).map(asPoint);
+	const key = points.map((point) => `${point.x},${point.y},${point.z}`).join(";");
+	const cached = curveCache.get(key);
+	if (cached) return cached;
+	const dense = points.length ? [{ ...points[0] }] : [];
+	for (let index = 0; index + 1 < points.length; index += 1) {
+		const controls = segmentControls(points, index);
+		const steps = clamp(Math.ceil(span(points[index], points[index + 1]) / CURVE_SPACING), 2, CURVE_MAX_STEPS);
+		for (let step = 1; step <= steps; step += 1) {
+			const at = step === steps ? { ...points[index + 1] } : catmullRom(...controls, step / steps);
+			dense.push({ x: at.x, y: Math.max(0, at.y), z: at.z });
+		}
 	}
+	const cumulative = dense.length ? [0] : [];
+	for (let i = 1; i < dense.length; i += 1) cumulative.push(cumulative[i - 1] + span(dense[i - 1], dense[i]));
+	// The tangent at each sample, from its neighbours: headings blend between
+	// samples instead of stepping with every 5 cm segment.
+	const headings = dense.map((_, i) => headingBetween(dense[Math.max(0, i - 1)], dense[Math.min(dense.length - 1, i + 1)]));
+	const curve = { points: dense, cumulative, length: cumulative[cumulative.length - 1] ?? 0, headings };
+	if (curveCache.size >= CURVE_CACHE_SIZE) curveCache.delete(curveCache.keys().next().value);
+	curveCache.set(key, curve);
+	return curve;
+}
+
+/** Arc length along the travelled curve, plus the total. */
+export function pathMetrics(path) {
+	const { cumulative, length } = pathCurve(path);
+	return { cumulative, length };
+}
+
+/** Shortest-way blend between two yaws in degrees; null-safe. */
+function blendHeading(a, b, weight) {
+	if (a === null) return b;
+	if (b === null) return a;
+	const delta = ((((b - a) % 360) + 540) % 360) - 180;
+	return a + delta * weight;
+}
+
+/** The point at `distance` along the curve, extrapolating past the end. */
+function pointAtDistance(path, curve, distance) {
+	const { points, cumulative, length, headings } = curve;
+	if (distance <= 0) return { ...points[0], heading: headings[0] };
+	const lastIndex = points.length - 1;
 	if (distance >= length) {
-		const last = points[points.length - 1];
-		const heading = headingBetween(points[points.length - 2], last);
+		const last = points[lastIndex];
+		const heading = headings[lastIndex];
 		if (!path.extend) return { ...last, heading };
 		// Past the end the object keeps its final direction and speed.
 		const overshoot = distance - length;
-		const previous = points[points.length - 2];
-		const span = Math.hypot(last.x - previous.x, last.y - previous.y, last.z - previous.z) || 1;
+		const previous = points[lastIndex - 1];
+		const step = span(previous, last) || 1;
 		return {
-			x: last.x + ((last.x - previous.x) / span) * overshoot,
-			y: Math.max(0, last.y + ((last.y - previous.y) / span) * overshoot),
-			z: last.z + ((last.z - previous.z) / span) * overshoot,
+			x: last.x + ((last.x - previous.x) / step) * overshoot,
+			y: Math.max(0, last.y + ((last.y - previous.y) / step) * overshoot),
+			z: last.z + ((last.z - previous.z) / step) * overshoot,
 			heading,
 		};
 	}
-	let index = 1;
-	while (index < cumulative.length - 1 && cumulative[index] < distance) index += 1;
-	const a = points[index - 1];
-	const b = points[index];
-	const segment = cumulative[index] - cumulative[index - 1];
-	const weight = segment > 1e-9 ? (distance - cumulative[index - 1]) / segment : 0;
+	let lo = 0;
+	let hi = lastIndex;
+	while (hi - lo > 1) {
+		const mid = (lo + hi) >> 1;
+		if (cumulative[mid] <= distance) lo = mid;
+		else hi = mid;
+	}
+	const a = points[lo];
+	const b = points[hi];
+	const segment = cumulative[hi] - cumulative[lo];
+	const weight = segment > 1e-9 ? (distance - cumulative[lo]) / segment : 0;
 	return {
 		x: a.x + (b.x - a.x) * weight,
 		y: a.y + (b.y - a.y) * weight,
 		z: a.z + (b.z - a.z) * weight,
-		heading: headingBetween(a, b),
+		heading: blendHeading(headings[lo], headings[hi], weight),
 	};
 }
 
@@ -155,31 +242,31 @@ function headingBetween(a, b) {
 export function objectTransformAt(object, frame, take = {}) {
 	const path = createObjectPath(object?.path);
 	if (!path) return null;
-	const metrics = pathMetrics(path);
-	if (metrics.length <= 1e-9) return null;
+	const curve = pathCurve(path);
+	if (curve.length <= 1e-9) return null;
 	const frameCount = Math.max(1, Math.round(finite(take.frameCount, 1)));
 	const fps = Math.max(1, finite(take.fps, 24));
 	const sampled = clamp(finite(frame), 0, Math.max(0, frameCount - 1));
 	const seconds = sampled / fps;
 	// speed 0 = fill the timeline: cover the whole path across the take.
 	const duration = Math.max(1e-6, (frameCount - 1) / fps);
-	const speed = path.speed > 0 ? path.speed : metrics.length / duration;
+	const speed = path.speed > 0 ? path.speed : curve.length / duration;
 	// The travel window: the stretch of the take the route is walked in. The
 	// timing envelope shapes progress INSIDE this window; the window's length
 	// (and so the arrival frame) never moves — the area is the distance.
-	const window = metrics.length / speed;
+	const window = curve.length / speed;
 	const u = seconds / Math.max(1e-6, window);
 	let distance;
-	if (path.loop && metrics.length > 1e-9) {
-		distance = metrics.length * timingProgress(path.timing, u - Math.floor(u));
+	if (path.loop && curve.length > 1e-9) {
+		distance = curve.length * timingProgress(path.timing, u - Math.floor(u));
 	} else if (u >= 1) {
 		// Past the window: arrived. Extend keeps walking the final heading at
 		// the plain average speed, exactly as it did before envelopes existed.
-		distance = metrics.length + (path.extend ? speed * (seconds - window) : 0);
+		distance = curve.length + (path.extend ? speed * (seconds - window) : 0);
 	} else {
-		distance = metrics.length * timingProgress(path.timing, u);
+		distance = curve.length * timingProgress(path.timing, u);
 	}
-	const at = pointAtDistance(path, metrics, distance);
+	const at = pointAtDistance(path, curve, distance);
 	return {
 		x: at.x,
 		y: at.y,

@@ -704,6 +704,23 @@ export function useCast(appContext) {
 			: ko(`Saved the current pose to the library as “${pose.label}”`, `지금 자세를 “${pose.label}”로 라이브러리에 저장했어요`));
 	}
 
+	/** A handle drag is an authored pose. When it ends, the rig as it now
+	 * stands becomes the posed character's own pose — so the scene autosaves
+	 * it and undo can step it back — instead of living only on the rig until
+	 * a reload re-applies the stored pose over it. The library is untouched;
+	 * Save pose still bottles a pose there. */
+	function commitPosedPose() {
+		const rig = posedRig();
+		if (!rig || !posingChar) return;
+		domain.run('character.setPose', { characterId: posingChar.id, clearMotion: false, pose: {
+			id: `edited:${posingChar.id}`,
+			label: ko("Edited pose", "편집한 포즈"),
+			prompt: "in the exact body pose shown in the blocking frame",
+			bones: capturePose(rig),
+			rootY: captureHipsOffset(rig),
+		} });
+	}
+
 	function savePose() {
 		const rig = posedRig();
 		if (!rig) return;
@@ -1014,7 +1031,7 @@ export function useCast(appContext) {
 		...domain,
 		applyExternalCharacters, publishStudioCharacters, syncStudioLayerBuffer, undoScene, redoScene, snapshotStudioDomain, removeLegacyRootWaypoint, switchActiveCharacterLayer, createLegacyCastHandlers, toggleCharacterHidden,
 		characters, editCharacters, customPoses, posing, setPosing, posingClosing,
-		studioPick, setStudioPick, rigs, rigMountEpoch, setRigMountEpoch, setPoseTick, charA, charB, showB,
+		studioPick, setStudioPick, commitPosedPose, rigs, rigMountEpoch, setRigMountEpoch, setPoseTick, charA, charB, showB,
 		poseA, poseB, subject, subject2, updateCharacterAt, setShowB, moveCharacter, removeCharacter, reportRig,
 		spawnCharacter, charKeyToHierarchyId, charIdFromHierarchyId, activeCharacterId, setActiveCharacterId,
 		rowIdForCharIndex, activeChar, selectActiveCharacterInHierarchy, activeCharIndex, activeRig, waitForRig,
