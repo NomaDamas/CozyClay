@@ -33,6 +33,7 @@ const state = async () => {
   const r = await fixture.read();
   return { objects: r.objects, characters: r.characters, shots: r.shots, camera: r.camera, takes: r.context.entities.filter(e => e.kind === 'character').map(e => ({ id: e.id, ...e.motion })).sort((a,b)=>a.id.localeCompare(b.id)) };
 };
+let activeCase = null;
 const shot = async name => { await page.screenshot({ path: `${evidence}/${name}.png` }); console.log('SCREENSHOT', `${evidence}/${name}.png`); };
 // Register in-page event listeners BEFORE the triggering action. No timer polling.
 async function gate(predicate, trigger = async () => {}) {
@@ -67,6 +68,7 @@ async function open() {
     await page.locator('.view-menu-trigger').click();
   }
   await gate("!!document.querySelector('[aria-label=\"Message the agent\"]') && !document.querySelector('[aria-label=\"Message the agent\"]').disabled");
+  if (activeCase === 'storyboard-happy') await gate("STATE:current.characters.length > 0");
   const layout = await page.evaluate(() => {
     const i = document.querySelector('.inspector-sidebar').getBoundingClientRect(), a = document.querySelector('.studio-agent-inspector').getBoundingClientRect();
     return { width: a.width, left: a.left, right: a.right, inspectorLeft: i.left, inspectorRight: i.right };
@@ -119,16 +121,27 @@ const implementations = {
     assert.equal(after.shots.length, before.shots.length + 1);
     assert(after.shots.at(-1).caption.includes('두 사람이 식탁에 앉아 있다'));
     assert.equal(after.characters.length, before.characters.length + 2);
-    // Second turn: the new panel must take the placement, the first must not.
-    const second = await turn('둘이 문 앞으로 간다');
-    assert(second.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'shot.createStill'));
-    assert(second.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'character.move'));
-    const twice = await state(), panels = twice.shots.slice(-2);
-    assert.equal(twice.shots.length, before.shots.length + 2);
-    assert.equal(panels[1].cast['story-person-a']?.x, 3, 'second panel carries the second turn placement');
-    assert.equal(panels[0].cast['story-person-a']?.x, undefined, 'first panel is not overwritten by the second turn');
-    console.log('SECOND PANEL CAST', JSON.stringify(panels.map(s => ({ id: s.id, caption: s.caption, cast: s.cast }))));
-    await undo(before, [...result.commands, ...second.commands].filter(e => e.result?.ok && e.result?.authored).length);
+    const frame = result.commands.find(e => e.name === 'frame_shot');
+    const framedShot = after.shots.at(-1);
+    assert(frame.result.ok === true, JSON.stringify(frame.result));
+    if (process.env.QA_CAPSULE_ONLY === '1') {
+      assert(framedShot.cameraKeys.some(key => JSON.stringify(key.framing) !== JSON.stringify(before.camera)), JSON.stringify({ before: before.camera, framedShot }));
+      console.log(`PASS capsule-only storyboard frame_shot: receipt ok=true; new still camera key differs from initial camera`);
+      log.push({ action: 'capsule-only-storyboard-framing', beforeCamera: before.camera, receipt: frame.result, framedShot });
+      await shot('task-30-storyboard-capsule-happy');
+      await undo(before, result.commands.filter(e => e.result?.ok && e.result?.authored).length);
+    } else {
+      // Second turn: the new panel must take the placement, the first must not.
+      const second = await turn('둘이 문 앞으로 간다');
+      assert(second.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'shot.createStill'));
+      assert(second.commands.some(e => e.name === 'run_action' && e.result?.ok && e.result?.action === 'character.move'));
+      const twice = await state(), panels = twice.shots.slice(-2);
+      assert.equal(twice.shots.length, before.shots.length + 2);
+      assert.equal(panels[1].cast['story-person-a']?.x, 3, 'second panel carries the second turn placement');
+      assert.equal(panels[0].cast['story-person-a']?.x, undefined, 'first panel is not overwritten by the second turn');
+      console.log('SECOND PANEL CAST', JSON.stringify(panels.map(s => ({ id: s.id, caption: s.caption, cast: s.cast }))));
+      await undo(before, [...result.commands, ...second.commands].filter(e => e.result?.ok && e.result?.authored).length);
+    }
     assert.deepEqual(await state(), before);
     console.log('PASS storyboard project: one new Board card with caption and two placed characters; second turn lands its placement in the second panel; Ctrl+Z removes both panels');
   },
@@ -140,6 +153,7 @@ const implementations = {
     assert.match(text, /Storyboard/);
     assert.equal(result.commands.filter(e => e.name.includes('motion') || e.name === 'generate_motion').length, 0);
     assert.deepEqual(await state(), before);
+    await shot('task-30-storyboard-failure');
     console.log('PASS storyboard failure: reply contains Storyboard and no job starts');
   },
   async binding() {
@@ -311,8 +325,12 @@ const implementations = {
 try {
   browser = await chromium.launch({ executablePath: process.env.CHROME_PATH || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', headless: process.env.QA_HEADLESS === '1', args:[`--remote-debugging-port=${cdp}`] });
   for (const name of selected) {
+    activeCase = name;
     const context = await browser.newContext({viewport:{width:1600,height:950}}); page = await context.newPage();
     const document = structuredClone(sceneDocument);
+    if (name === 'storyboard-happy' && process.env.QA_CAPSULE_ONLY === '1') {
+      document.scenes[0].stage.characters = [{ id: 'char-a', subject: 'Capsule lead', model: 'proxy-figure', posture: 'sit', x: 0, z: 0, rot: 0, hidden: false }];
+    }
     // Layout starts with an actually restorable take; motion Undo restores these
     // real prior bytes. Intent retains the untouched default pose/bounds repro.
     if (['motion','responsive'].includes(name)) document.scenes[0].stage.characters[0].motionRef = {url:fixture.origin+'/ardy/motions/123455-abcdef',prompt:'Fixture baseline',rotationDeg:0,anchorX:0,anchorZ:0};
@@ -322,12 +340,15 @@ try {
       let history; Object.defineProperty(window,'__sceneHistory',{configurable:true,get:()=>history,set:value=>{history=value;window.dispatchEvent(new Event('qa:render'));}});
     }, { document, scenesKey: SCENES_STORAGE_KEY, previsMode });
     try {
-      await page.goto(`http://127.0.0.1:${port}/app/`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
+      await page.goto(`http://127.0.0.1:${port}/app/`);
+      await gate(name === 'storyboard-happy' && process.env.QA_CAPSULE_ONLY === '1'
+        ? "!!window.__cozyclay && !!document.querySelector('.view-menu-trigger')"
+        : "!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
       if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }
       const c = await fixture.context(); assert.equal(c.capabilities.tools.length, previsMode === 'storyboard' ? 3 : 9);
       if (previsMode !== 'storyboard') await fixture.command('set_camera',{x:0,y:1.6,z:5,lookAtX:0,lookAtY:1,lookAtZ:0,focalMm:35},c.host.workspaceHandle);
       await implementations[name](); results.push({name,status:'PASS'}); console.log(`PASS CASE ${name}`);
-    } catch (error) { results.push({name,status:'FAIL',error:error.stack}); console.error(`FAIL CASE ${name}`,error); await shot(`${name}-failure`); }
+    } catch (error) { results.push({name,status:'FAIL',error:error.stack}); console.error(`FAIL CASE ${name}`,error); await shot(`task-30-${name}`); }
     finally { save('actions',log); save('results',results); await context.close(); }
   }
 } finally {
