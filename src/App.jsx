@@ -60,6 +60,7 @@ import { AppContext, createAppContext } from "./app-context.js";
 import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 import { PlanBoard } from "./planview.jsx";
+import { resolveCharacterPlacement } from "./root-path.js";
 import { autoColorHex, loadAutoColor } from "./auto-color.js";
 import { DualRender, fitAspect, GIZMO_LAYER } from "./dualview.jsx";
 import { GridFloor } from "./grid-floor.jsx";
@@ -151,6 +152,7 @@ import {
 	SCENES_VERSION,
 	activeSceneIndex,
 	createSceneStage,
+	isProxyFigure,
 	normalizeReferenceImage,
 } from "./scenes.js";
 import {
@@ -3075,9 +3077,14 @@ export default function App() {
 	// props did not change must not re-render its subtree.
 	const characterViews = useMemo(() => characters.flatMap((entry, index) => {
 		if (entry.hidden) return [];
+		const pickId = index === 0 ? "A" : index === 1 ? "B" : entry.id;
 		// Each cast member is driven by ITS OWN clip: the active one reads
 		// the editing buffer, the others their stored session motion.
 		const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
+		const placement = entry.model === "proxy-figure" && typeof resolveCharacterPlacement === "function" ? resolveCharacterPlacement(entry, tlFrame, {
+			shotAt: () => null,
+			takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, tlFrame).subject : null,
+		}) : entry;
 		return [{
 			id: entry.id,
 			model: entry.model,
@@ -3087,16 +3094,20 @@ export default function App() {
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
 			partColoursEnabled,
 			partColoursMode,
-			pose: clip ? null : (entry.pose ?? DEFAULT_POSE),
-			posture: entry.posture,
+			pose: clip ? null : (placement.pose ?? DEFAULT_POSE),
+			posture: placement.posture,
 			// The stature the entry's take was extracted at. It rides with the
 			// clip, never separately — see Character for why.
 			scale: entry.scale ?? 1,
 			...(entry.model === "proxy-figure" ? {} : { onRig: reportRig(entry.id) }),
-			pickId: index === 0 ? "A" : index === 1 ? "B" : entry.id,
+			pickId,
 			parent: entry.parent ?? null,
+			...(entry.model === "proxy-figure" ? {
+				position: [placement.x, entry.y ?? 0, placement.z],
+				rot: placement.rot,
+			} : {}),
 		}];
-	}), [characters, activeChar.id, motion, partColoursEnabled, partColoursMode]);
+	}), [characters, activeChar.id, motion, tlFrame, partColoursEnabled, partColoursMode]);
 	// Where the selection gizmo stands: same driving rules as the render,
 	// for the active (selected) cast member only. Gated on the HIERARCHY
 	// selection, not the sticky active layer — the layer stays on the last
@@ -3436,18 +3447,43 @@ export default function App() {
 		const cameraSnapshot = { position: cam.position.clone(), quaternion: cam.quaternion.clone(),
 			rotationOrder: cam.rotation.order, fov: cam.fov, yaw: look.current.yaw, pitch: look.current.pitch };
 		const rigSnapshots = Object.values(rigs).filter(Boolean).map(snapshotExportRig);
+		const proxySnapshots = [];
+		const context = recRef.current?.request.context;
+		const cast = context?.characters ?? characters;
+		const scene = (recRef.current?.capture ?? captureRef.current)?.scene;
+		const pickIdByCharacter = new Map((typeof characterViews === "undefined" ? [] : characterViews).map(view => [view.id, view.pickId]));
+		if (typeof scene?.traverse === "function") scene.traverse(node => {
+			const index = cast.findIndex(entry => isProxyFigure(entry) && node.userData.characterPick === pickIdByCharacter.get(entry.id));
+			if (index < 0) return;
+			proxySnapshots.push({ node, entry: cast[index], position: node.position.clone(), quaternion: node.quaternion.clone() });
+		});
 		const propFrame = propFrameRef.current;
 		try {
 			// Character stature lives on the rig and placement/yaw on its parent,
 			// not in playback bones. Retry temporarily restores both, plus the
 			// original held pose, then puts the CURRENT editor transforms back.
 			for (const snapshot of recRef.current?.request.context?.rigStates ?? []) restoreExportRig(snapshot);
+			for (const { node, entry } of proxySnapshots) {
+				const clip = entry.id === (context?.activeId ?? activeChar.id) ? (context ? context.motion : motion) : entry.sessionMotion;
+				const placement = resolveCharacterPlacement(entry, frame, {
+					shotAt: () => null,
+					takeRoot: clip ? sampleAt({ frameCount: clip.frames, motion: clip }, null, frame).subject : null,
+				});
+				node.position.set(placement.x, entry.y ?? 0, placement.z);
+				node.rotation.y = placement.rot * Math.PI / 180 + (placement.posture === "lie" ? Math.PI : 0);
+				node.updateMatrixWorld(true);
+			}
 			const plate = applyExportFrame(frame);
 			return render ? render() : plate;
 		} catch (error) {
 			throw Object.assign(new Error(error?.message || String(error), { cause: error }), { exportFailureCode: exportFailureCode(error, "render_failed") });
 		} finally {
 			for (const snapshot of rigSnapshots) restoreExportRig(snapshot);
+			for (const { node, position, quaternion } of proxySnapshots) {
+				node.position.copy(position);
+				node.quaternion.copy(quaternion);
+				node.updateMatrixWorld(true);
+			}
 			cam.position.copy(cameraSnapshot.position);
 			cam.rotation.order = cameraSnapshot.rotationOrder;
 			cam.quaternion.copy(cameraSnapshot.quaternion);
@@ -7210,6 +7246,7 @@ export default function App() {
 								look={look}
 								fovDeg={fovDeg}
 								characters={characters}
+								characterPlacements={characterViews}
 								onMoveCharacter={moveCharacter}
 								onCameraGestureStart={beginCameraFramingGesture}
 								pathStart={activeChar}

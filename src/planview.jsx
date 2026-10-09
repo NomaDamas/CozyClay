@@ -7,6 +7,7 @@ import { PLAN_LAYER } from "./dualview.jsx";
 import { objectSize } from "./scene-objects.js";
 import { displayObjectLabel } from "./object-catalog.jsx";
 import { ko } from "./locale.js";
+import { isProxyFigure } from "./scenes.js";
 
 const ROOM_LIMIT = 240; // stay on the open stage (matches scene-objects' clamp)
 const ACTOR_LIMIT = 4; // matches the Subject sliders' range
@@ -490,7 +491,11 @@ function WaypointPath({ waypoints, start, activeWaypointId }) {
  * reports moves that still hit it, so a fast drag off the edge silently strands
  * the puck.
  */
-export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, characters = [], onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, pathStart = null, waypoints, activeWaypointId, onSelectWaypoint, onMoveWaypoint, onSelectEntity, sceneObjects = [], selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, cameraRailPoints = null, railDraw = false, onRailStroke, pathDraw = false, onPathStroke, objectPathPoints = null, objectPathSelectedIndex = null, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, subjectTrack = null, onCameraChange, keyLight = null, minimal = false }) {
+export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, characters = [], characterPlacements = [], onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, pathStart = null, waypoints, activeWaypointId, onSelectWaypoint, onMoveWaypoint, onSelectEntity, sceneObjects = [], selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, cameraRailPoints = null, railDraw = false, onRailStroke, pathDraw = false, onPathStroke, objectPathPoints = null, objectPathSelectedIndex = null, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, subjectTrack = null, onCameraChange, keyLight = null, minimal = false }) {
+	characters = characters.map(entry => {
+		const placement = isProxyFigure(entry) && characterPlacements.find(view => view.id === entry.id);
+		return placement ? { ...entry, x: placement.position[0], z: placement.position[2], rot: placement.rot } : entry;
+	});
 	const [drag, setDrag] = useState(null); // { id, mode }
 	// live stroke while the rail is being drawn; world XZ, display only
 	const [railStroke, setRailStroke] = useState(null);
@@ -901,7 +906,7 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 				const puckId = listIndex === 0 ? "a" : listIndex === 1 ? "b" : `char:${entry.id}`;
 				const color = listIndex === 0 ? SUBJECT_ONE_COLOR : SUBJECT_TWO_COLOR;
 				return (
-					<group key={entry.id} position={[entry.x, 0, entry.z]}>
+					<group key={entry.id} position={[entry.x, 0, entry.z]} userData={{ characterPuck: entry.id }}>
 						<PlanLabel text={ko(`S${listIndex + 1}`, `인물 ${listIndex + 1}`)} color={color} offset={-(CAST_RING_OUTER + 0.3)} />
 						<CastRing color={color} />
 						<group rotation={[0, (entry.rot * Math.PI) / 180, 0]}>

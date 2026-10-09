@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { cameraBrowser } from "./camera-browser-harness.mjs";
 
-const outputDir = process.env.QA_OUT || "/Users/yun/CozyClay/.omo/evidence/previs-modes/previs-modes-w2a/shots";
+const outputDir = process.env.QA_OUT || "/Users/yun/CozyClay/.omo/evidence/previs-modes/previs-modes-w2b/shots";
 mkdirSync(outputDir, { recursive: true });
 const b = await cameraBrowser();
 const errors = [];
@@ -31,6 +31,7 @@ try {
 		while (fiber && !fiber.memoizedProps?.value?.bus) fiber = fiber.return;
 		if (!fiber) throw new Error('AppContext provider not found');
 		const context = fiber.memoizedProps.value;
+		window.__proxyContext = context;
 		window.__proxyBus = { bus: context.bus, get characters() { return context.live.characters; } };
 	})()`);
 	await b.change("!!document.querySelector('[data-node-id=\"characterB\"]')", () => b.evaluate(`window.__proxyBus.bus.run('character.add', { character: { id: 'qa-proxy', model: 'proxy-figure', tint: '#cf946e', posture: 'stand', x: 0, z: 0, rot: 0 } })`));
@@ -140,16 +141,77 @@ try {
 		})()`);
 		const path = `${outputDir}/proxy-figure-${posture}.png`;
 		writeFileSync(path, Buffer.from(plate.split(",")[1], "base64"));
-		console.log(`PASS ${posture} bounds ${JSON.stringify(bounds)}; QA_SCREENSHOT ${path}`);
+		console.log(`PASS ${posture} bounds ${JSON.stringify(bounds)}; QA_SCREENSHOT ${path} bytes=${statSync(path).size}`);
 	}
 	await b.change("window.__proxyBus.characters.find(c => c.id === 'qa-proxy').posture === 'stand'", () =>
 		b.evaluate("window.__proxyBus.bus.run('character.update', { characterId: 'qa-proxy', patch: { posture: 'unknown' } })"));
 	assert.ok(await b.evaluate("!!window.__proxyRoot()"));
 	assert.equal(errors.length, 0, errors.join("\n"));
 	console.log("PASS unknown posture normalizes to stand; figure still renders; zero page/console errors");
+	const shotReceipt = await b.evaluate(`(() => {
+		const original = URL.createObjectURL;
+		window.__proxyVideoSizes = [];
+		URL.createObjectURL = function(blob) {
+			if (blob.type === 'video/mp4') window.__proxyVideoSizes.push(blob.size);
+			return original.call(this, blob);
+		};
+		return window.__proxyBus.bus.run('shot.create');
+	})()`);
+	assert.equal(shotReceipt.ok, true, JSON.stringify(shotReceipt));
+	const shotId = shotReceipt.affectedIds?.[0] ?? shotReceipt.output?.shotId;
+	assert.ok(shotId, JSON.stringify(shotReceipt));
+	const rangeReceipt = await b.evaluate(`window.__proxyBus.bus.run('shot.setRange', { shotId: ${JSON.stringify(shotId)}, range: { startFrame: 0, endFrameExclusive: 24 } })`);
+	assert.equal(rangeReceipt.ok, true, JSON.stringify(rangeReceipt));
+	const stillVideo = await b.evaluate(`window.__proxyBus.bus.run('export.shotVideo', { shotId: ${JSON.stringify(shotId)} })`);
+	assert.match(stillVideo.message ?? "", /Download requested: .* · 24 frames/, JSON.stringify(stillVideo));
+	const noPathBytes = await b.evaluate("window.__proxyVideoSizes.at(-1)");
+	assert.ok(Number.isInteger(noPathBytes) && noPathBytes > 0, `no-path sizes=${JSON.stringify(await b.evaluate("window.__proxyVideoSizes"))}`);
+	for (const [frame, position] of [[8, { x: 1, z: 0 }], [16, { x: 1, z: 1 }]]) {
+		const receipt = await b.evaluate(`window.__proxyBus.bus.run('character.addWaypoint', { characterId: 'qa-proxy', frame: ${frame}, position: ${JSON.stringify(position)} })`);
+		assert.equal(receipt.ok, true, JSON.stringify(receipt));
+	}
+	await b.change("Math.abs(window.__proxyRoot().position.x - 1) < 1e-6", () =>
+		b.evaluate("window.__proxyBus.bus.run('timeline.seek', { frame: 12 })"));
+	const midpoint = await b.evaluate(`(() => {
+		let puck;
+		window.__proxyScene.traverse(node => { if (node.userData.characterPuck === 'qa-proxy') puck = node; });
+		return { mesh: window.__proxyRoot().getWorldPosition(new window.__proxyThree.Vector3()).toArray(), puck: puck.position.toArray() };
+	})()`);
+	assert.ok(Math.abs(midpoint.mesh[0] - 1) < 1e-6, JSON.stringify(midpoint));
+	assert.ok(Math.abs(midpoint.puck[0] - 1) < 1e-6, JSON.stringify(midpoint));
+	assert.ok(Math.abs(midpoint.mesh[2] - 0.5) < 1e-6, JSON.stringify(midpoint));
+	assert.ok(Math.abs(midpoint.puck[2] - 0.5) < 1e-6, JSON.stringify(midpoint));
+	console.log(`PASS root-path midpoint mesh and puck follow ${JSON.stringify(midpoint)}`);
+	const movingVideo = await b.evaluate(`window.__proxyBus.bus.run('export.shotVideo', { shotId: ${JSON.stringify(shotId)} })`);
+	assert.match(movingVideo.message ?? "", /Download requested: .* · 24 frames/, JSON.stringify(movingVideo));
+	const pathBytes = await b.evaluate("window.__proxyVideoSizes.at(-1)");
+	assert.ok(Number.isInteger(pathBytes) && pathBytes > 0, `path sizes=${JSON.stringify(await b.evaluate("window.__proxyVideoSizes"))}`);
+	assert.notEqual(noPathBytes, pathBytes, `moving mp4 byte size matches no-path export: ${noPathBytes}`);
+	assert.ok(Math.abs(await b.evaluate("window.__proxyRoot().position.x") - 1) < 1e-6, "export restores viewport placement");
+	console.log(`PASS export.shotVideo bus action 24-frame mp4 byte sizes differ no-path=${noPathBytes} path=${pathBytes}; viewport restored`);
+	await b.evaluate("window.__proxyBus.bus.run('character.update', { characterId: 'char-a', patch: { hidden: false } })");
+	await b.settled();
+	const rigBefore = await b.evaluate(`(() => {
+		let rig;
+		window.__proxyScene.traverse(node => { if (node.userData.characterPick === 'A' && node.type === 'Group') rig = node; });
+		return rig?.getWorldPosition(new window.__proxyThree.Vector3()).toArray() ?? null;
+	})()`);
+	assert.ok(rigBefore, "rigged character root exists");
+	const rigReceipt = await b.evaluate("window.__proxyBus.bus.run('character.addWaypoint', { characterId: 'char-a', frame: 24, position: { x: 1, z: 0 } })");
+	assert.equal(rigReceipt.ok, true, JSON.stringify(rigReceipt));
+	await b.change("Math.abs(window.__proxyRoot().position.x - 1) < 1e-6", () =>
+		b.evaluate("window.__proxyBus.bus.run('timeline.seek', { frame: 18 })"));
+	const rigAfter = await b.evaluate(`(() => {
+		let rig;
+		window.__proxyScene.traverse(node => { if (node.userData.characterPick === 'A' && node.type === 'Group') rig = node; });
+		return rig?.getWorldPosition(new window.__proxyThree.Vector3()).toArray() ?? null;
+	})()`);
+	assert.deepEqual(rigAfter, rigBefore);
+	console.log(`PASS rigged waypoint does not change rendered position before=${JSON.stringify(rigBefore)} after=${JSON.stringify(rigAfter)}`);
 	const shot = await b.send("Page.captureScreenshot", { format: "png" });
-	writeFileSync(`${outputDir}/task-5-previs-modes.png`, Buffer.from(shot.data, "base64"));
-	console.log(`QA_SCREENSHOT ${outputDir}/task-5-previs-modes.png`);
+	const screenshot = `${outputDir}/task-6-previs-modes.png`;
+	writeFileSync(screenshot, Buffer.from(shot.data, "base64"));
+	console.log(`QA_SCREENSHOT ${screenshot} bytes=${statSync(screenshot).size}`);
 } finally {
 	observer.close();
 	b.close();

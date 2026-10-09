@@ -15,6 +15,7 @@ if (!process.env.COZYCLAY_AGENT_SESSIONS_DIR) {
 
 const NODE_FILES = [
 	"test/verify-proxy-figure.mjs",
+	"test/verify-root-path.mjs",
 	"test/verify-previs-flag.mjs",
 	"test/verify-morphgs-exporter.mjs",
 	"test/verify-studio-elements.mjs",
