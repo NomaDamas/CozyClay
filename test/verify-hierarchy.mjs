@@ -83,6 +83,14 @@ const CAST = [{ id: "cast-1" }, { id: "cast-2" }];
 const findRow = (nodes, id) => flatten(nodes).find((node) => node.id === id);
 const rowIds = (node) => (node?.children ?? []).map((child) => child.id);
 
+const proxyTree = buildHierarchyNodes(
+	[{ id: "bag", name: "Bag", attach: { characterId: "proxy", bone: null } }],
+	[{ id: "rig" }, { id: "proxy", model: "proxy-figure" }, { id: "extra", model: "proxy-figure" }],
+);
+expect("proxy characters remain character rows without rig children", findRow(proxyTree, "characterB")?.kind === "character" && !findRow(proxyTree, "characterB.rig") && !findRow(proxyTree, "character:extra.rig"));
+expect("proxy root attachments remain in the character row", rowIds(findRow(proxyTree, "characterB")).join() === "object:bag");
+expect("rigged neighbors retain their rig subtree", !!findRow(proxyTree, "characterA.rig"));
+
 // A prop attached to a character is carried BY it, so it leaves the flat Props
 // list and reads under the character row instead.
 const attachedTree = buildHierarchyNodes(

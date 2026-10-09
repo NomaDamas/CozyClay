@@ -3047,17 +3047,19 @@ export default function App() {
 		const clip = entry.id === activeChar.id ? motion : entry.sessionMotion;
 		return [{
 			id: entry.id,
-			url: characterModelUrl(entry.model),
+			model: entry.model,
+			...(entry.model === "proxy-figure" ? {} : { url: characterModelUrl(entry.model) }),
 			position: [entry.x, entry.y ?? 0, entry.z],
 			rot: entry.rot,
 			tint: entry.tint ?? defaultCharacterTint(entry, index),
 			partColoursEnabled,
 			partColoursMode,
 			pose: clip ? null : (entry.pose ?? DEFAULT_POSE),
+			posture: entry.posture,
 			// The stature the entry's take was extracted at. It rides with the
 			// clip, never separately — see Character for why.
 			scale: entry.scale ?? 1,
-			onRig: reportRig(entry.id),
+			...(entry.model === "proxy-figure" ? {} : { onRig: reportRig(entry.id) }),
 			pickId: index === 0 ? "A" : index === 1 ? "B" : entry.id,
 		}];
 	}), [characters, activeChar.id, motion, partColoursEnabled, partColoursMode]);
@@ -6928,6 +6930,7 @@ export default function App() {
 								<Character
 									key={`${view.id}:${rigMountEpoch}`}
 									url={view.url}
+									{...{ model: view.model, posture: view.posture }}
 									position={view.position}
 									rot={view.rot}
 									tint={view.tint}

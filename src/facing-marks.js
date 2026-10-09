@@ -73,3 +73,16 @@ export function addFacingMarks(clone) {
 		head.add(mesh);
 	}
 }
+
+export function proxyFacingMark(material = null) {
+	const mesh = new THREE.Mesh(
+		new THREE.ConeGeometry(0.055, 0.16, 4),
+		material ?? new THREE.MeshStandardMaterial({ color: "#1C1C1C", roughness: 0.7, metalness: 0 }),
+	);
+	mesh.position.set(0, -0.015, 0.115);
+	mesh.rotation.set(Math.PI / 2, Math.PI / 4, 0);
+	mesh.castShadow = true;
+	mesh.frustumCulled = false;
+	mesh.userData.facingMark = true;
+	return mesh;
+}

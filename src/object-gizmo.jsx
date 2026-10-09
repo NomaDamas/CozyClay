@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { GIZMO_LAYER, SHOT_ASPECT, fitAspect } from "./dualview.jsx";
@@ -769,9 +769,9 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 
 	// QA hook: where each handle sits on screen, through the exact rect the
 	// picker builds its ray from. Headless checks drive real pointer events
-	// with it (harmless in normal use).
-	if (typeof window !== "undefined") {
-		if (!pickOnly) window.__gizmoHandles = () => {
+	// with it (harmless in normal use). The character gizmo is a separate
+	// pick-only instance, so it needs its own mirror hook.
+	const getHandles = useCallback(() => {
 			const camera = camRef?.current;
 			const pane = paneRef?.current;
 			if (!camera || !pane) return [];
@@ -799,8 +799,15 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 						y: rect.y + ((1 - point.y) / 2) * rect.h,
 					};
 				});
+		}, [camRef, paneRef, shotAspect]);
+	if (typeof window !== "undefined" && !pickOnly) window.__gizmoHandles = getHandles;
+	useEffect(() => {
+		if (typeof window === "undefined" || !pickOnly) return undefined;
+		window.__characterGizmoHandles = getHandles;
+		return () => {
+			if (window.__characterGizmoHandles === getHandles) delete window.__characterGizmoHandles;
 		};
-	}
+	}, [getHandles, pickOnly]);
 
 	if (!enabled || !object) {
 		handlesRef.current.clear();

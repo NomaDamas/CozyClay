@@ -197,7 +197,7 @@ export function buildHierarchyNodes(sceneObjects = [], characters = null) {
 				// the tree no longer needs the primary-only gate. Carried props
 				// follow the rig so the body reads first and the luggage after it.
 				const children = [
-					rigSubtree(id),
+					...(entry.model === "proxy-figure" ? [] : [rigSubtree(id)]),
 					...(attachedRows.get(id) ?? []),
 				];
 				return [{
