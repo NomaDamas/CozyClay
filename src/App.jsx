@@ -189,7 +189,7 @@ import {
 	strokeToPathPoints,
 	MAX_PATH_POINTS,
 } from "./object-path.js";
-import { sceneObjectsAt } from "./object-travel.js";
+import { carriedPointAt, sceneObjectsAt } from "./object-travel.js";
 import {
 	analyticsActive,
 	exportFailureCode,
@@ -4384,19 +4384,37 @@ export default function App() {
 		fovDeg,
 		filmback,
 	}), [tlFrameCount, tlFps, charA, motion, fovDeg, filmback]);
-	const motionPos = useMemo(() => (
-		motion ? sampleAt(playbackSceneBase, null, tlFrame).subject : null
-	), [motion, playbackSceneBase, tlFrame]);
+	// The camera's subject grouped under a routed object (#655) stands where
+	// that object carries it: its played root through the object's carry,
+	// frame by frame — the same carry the renderer gives the body. Null when it
+	// rides nothing, so every reader below keeps the plain played root.
+	const subjectCarry = useMemo(() => {
+		if (!charA.parent) return null;
+		const objects = new Map(sceneObjects.map((object) => [object.id, object]));
+		const take = { frameCount: tlFrameCount, fps: tlFps };
+		return (point, frame) => {
+			if (!point) return point;
+			const at = carriedPointAt(objects, charA.parent, { x: point.x, y: charA.y ?? 0, z: point.z }, frame, take);
+			return { x: at.x, z: at.z };
+		};
+	}, [charA.parent, charA.y, sceneObjects, tlFrameCount, tlFps]);
+	const motionPos = useMemo(() => {
+		if (!motion && !subjectCarry) return null;
+		const subject = sampleAt(playbackSceneBase, null, tlFrame).subject;
+		return subjectCarry ? subjectCarry(subject, tlFrame) : subject;
+	}, [motion, subjectCarry, playbackSceneBase, tlFrame]);
 
 	// The subject's full per-frame scene trajectory — what the follow camera
-	// is derived from. Without a loaded motion the subject stands still and
-	// the follow camera simply composes a static frame.
+	// is derived from. Without a loaded motion, and riding nothing, the subject
+	// stands still and the follow camera simply composes a static frame.
 	const subjectTrack = useMemo(() => {
 		if (!shots.some((shot) => shot.camera?.mode === "follow" || shot.camera?.mode === "rail")) return null;
 		const frames = Math.max(tlFrameCount, 1);
-		return Array.from({ length: frames }, (_, frame) =>
-			sampleAt(playbackSceneBase, null, frame).subject);
-	}, [shots, playbackSceneBase, tlFrameCount]);
+		return Array.from({ length: frames }, (_, frame) => {
+			const subject = sampleAt(playbackSceneBase, null, frame).subject;
+			return subjectCarry ? subjectCarry(subject, frame) : subject;
+		});
+	}, [shots, playbackSceneBase, tlFrameCount, subjectCarry]);
 
 	// The dense rail (spline through the drawn control points) — shared by
 	// the follow controller and the Top-View display.
