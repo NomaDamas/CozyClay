@@ -267,7 +267,9 @@ export function frameDraft(command, state, ports) {
   const created = !shot && !state.shotDocument.shots.length && !command.args.shotId;
   if (created) shot = createShot('Shot 1', 0, state.frameCount - 1);
   if (!shot) fail('AMBIGUOUS_TARGET', 'No shot owns this frame; select an existing shot explicitly.');
-  const frame = command.args.keyAtFrame ?? state.frame;
+  const still = shot.kind === 'still';
+  const existingKey = shot.cameraKeys[0];
+  const frame = still ? (existingKey?.frame ?? shot.startFrame) : command.args.keyAtFrame ?? state.frame;
   if (frame < shot.startFrame || frame > shot.endFrame || shot.endFrame >= state.frameCount) fail('INVALID_RANGE', 'Framing/key frame must be inside the shot range.');
   const intent = command.args.framing.intent;
   let camera = command.args.framing.exact;
@@ -288,9 +290,9 @@ export function frameDraft(command, state, ports) {
   const framing = captureFraming({ pos: camera.position, yaw: Math.atan2(-direction.x, -direction.z), pitch: Math.atan2(direction.y, Math.hypot(direction.x, direction.z)), fovDeg: fov / DEG });
   let keyId;
   let keys = shot.cameraKeys;
-  if (command.args.keyAtFrame !== undefined) {
-    keyId = keys.find(k => k.frame === frame)?.id ?? createStableItemId('camera-key');
-    keys = [...keys.filter(k => k.frame !== frame), { id: keyId, frame, framing }].sort((a, b) => a.frame - b.frame);
+  if (still || command.args.keyAtFrame !== undefined) {
+    keyId = (still ? existingKey?.id : keys.find(k => k.frame === frame)?.id) ?? createStableItemId('camera-key');
+    keys = still ? [{ id: keyId, frame, framing }] : [...keys.filter(k => k.frame !== frame), { id: keyId, frame, framing }].sort((a, b) => a.frame - b.frame);
   }
   const nextShot = { ...shot, cameraKeys: keys, camera: { ...shot.camera, mode: 'keys' } };
   const shots = created ? [nextShot] : state.shotDocument.shots.map(s => s.id === shot.id ? nextShot : s);

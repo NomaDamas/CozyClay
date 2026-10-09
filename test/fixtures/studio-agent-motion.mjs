@@ -106,7 +106,9 @@ export async function startFixtureStudio({ port, evidence, previsMode = "animati
         : outputs === 8 ? { name: 'verify_result', args: { targets: ['story-person-a', 'story-person-b'], checks: ['placement', 'framing'] } } : null;
     } else if (text.includes('둘이 문 앞으로 간다')) {
       call = outputs === 0 ? { name: 'run_action', args: { action: 'shot.createStill', args: { caption: '둘이 문 앞으로 간다' } } }
-        : outputs === 1 || outputs === 2 ? { name: 'run_action', args: { action: 'character.move', args: { characterId: 'story-person-a', x: 3, z: 2, rot: 0 } } } : null;
+        : outputs === 1 || outputs === 2 ? { name: 'inspect_studio', args: { scope: 'selection' } }
+        : outputs === 3 || outputs === 4 ? { name: 'frame_shot', args: { subjectIds: ['story-person-a'], framing: { intent: { size: 'wide shot', view: 'front', level: 'eye', side: 'left' } } } }
+        : outputs === 5 || outputs === 6 ? { name: 'run_action', args: { action: 'character.move', args: { characterId: 'story-person-a', x: 3, z: 2, rot: 0 } } } : null;
     } else if (text.includes('make them walk to the door')) {
       call = null;
     } else if (text.includes('Put a cube')) call = outputs === 0 ? { name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, position: { relativeTo: target, basis: 'shot_camera', side: 'left', gapM: 1, support: 'floor' } }] } } : outputs === 1 ? { name: 'arrange_characters', args: { ops: [{ op: 'create', name: 'Fixture second', position: { relativeTo: target, basis: 'shot_camera', side: 'right', gapM: 2, support: 'floor' } }] } } : null;
