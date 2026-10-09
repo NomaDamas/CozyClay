@@ -15,6 +15,8 @@ import { Line, Text, useFBX } from "@react-three/drei";
 import * as THREE from "three";
 import { SkeletonUtils } from "three/examples/jsm/Addons.js";
 import { addFacingMarks } from "./facing-marks.js";
+import { ProxyFigure } from "./proxy-figure.jsx";
+import { isProxyFigure } from "./scenes.js";
 import { retimeMotion } from "./ardy/retime.js";
 import {
 	TRAIL_EFFECTOR_JOINTS,
@@ -464,6 +466,7 @@ export const characterModelUrl = (model) => `/models/${model}.fbx`;
 
 /** Shipped rig names as the operator says them, not as the files spell them. */
 export const CHARACTER_MODEL_LABELS = { "y-bot-tpose": "Y Bot", "x-bot-tpose": "X Bot" };
+CHARACTER_MODEL_LABELS["proxy-figure"] = ko("Capsule figure", "캡슐 인물");
 
 /** Sequential ids for spawned characters, collision-free against the cast. */
 export function nextCharacterId(list) {
@@ -802,7 +805,11 @@ export const MULTIMODEL_SAMPLE_FPS = TIMELINE_FPS;
 /* ------------------------------------------------------------------ 3D --- */
 
 // Memoized: unchanged cast members skip re-rendering on every playhead tick.
-export const Character = memo(function Character({ url, position, rot, tint, pose, scale = 1, onRig, pickId, partColoursEnabled = false, partColoursMode = "shaded" }) {
+export const Character = memo(function Character(props) {
+	return isProxyFigure(props) ? <ProxyFigure {...props} /> : <RiggedCharacter {...props} />;
+});
+
+const RiggedCharacter = memo(function RiggedCharacter({ url, position, rot, tint, pose, scale = 1, onRig, pickId, partColoursEnabled = false, partColoursMode = "shaded" }) {
 	const fbx = useFBX(url);
 	const model = useMemo(() => {
 		const clone = SkeletonUtils.clone(fbx);

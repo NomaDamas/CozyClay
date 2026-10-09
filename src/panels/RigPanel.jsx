@@ -5,9 +5,11 @@ import { PoseThumbPreview } from "../posestudio.jsx";
 import { DEFAULT_POSE } from "../poses.js";
 import { CHARACTER_MODEL_LABELS } from "../app-stage.jsx";
 import { useBus } from '../app-context.js';
+import { isProxyFigure } from "../scenes.js";
 
 export default function RigPanel({ isCharacterSelection, activeChar }) {
 	const { run } = useBus();
+	if (isProxyFigure(activeChar)) return null;
 	return (
 <Foldout hidden={!isCharacterSelection} defaultOpen={false} title={ko("Rig", "리그")}>
 					{/* The rig is a property of the character, and swapping it is a
