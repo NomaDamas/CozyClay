@@ -1953,5 +1953,5 @@ GROUP BY event, value
 ORDER BY event, value
 ```
 
-An empty `value` on `scene:created` is a scene made before modes existed or with
-the `?previs=1` flag off. Undo and redo never emit a second event.
+An empty `value` on `scene:created` is a scene made before project modes
+existed (builds older than the Storyboard/Animation release). Undo and redo never emit a second event.

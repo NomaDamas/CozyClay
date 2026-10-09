@@ -63,7 +63,7 @@ https://github.com/user-attachments/assets/1d0113e5-6922-443d-affc-1bdabc666247
 
 ## Modes
 
-Behind `?previs=1`, a project is either a **Storyboard** or an **Animation**. Pick it on the start screen (the badge in the top bar shows which one you are in); a project keeps its mode when saved and reopened.
+A project is either a **Storyboard** or an **Animation**. Pick it on the start screen (the badge in the top bar shows which one you are in); a project keeps its mode when saved and reopened.
 
 | | Storyboard | Animation |
 | --- | --- | --- |
@@ -72,9 +72,9 @@ Behind `?previs=1`, a project is either a **Storyboard** or an **Animation**. Pi
 | **Cast** | Rigged characters or capsule figures; each panel can keep its own placement ("Use stage placement" clears it) | Rigged characters with Pose and Motion mode; capsule figures for blocking |
 | **Motion tools** | Hidden: no Generate group, no Motion mode (`4`); the agent has no `generate_motion` and the MCP motion tools answer `NOT_IN_MODE` | Available |
 | **Agent** | **Agent · Storyboard** builds one panel per request and never generates motion | The full Studio tool set |
-| **Exports** | **Stylize** a panel through the image route, **Send to Workflow** (the stylized image or the greybox) from its card, plus the Export ▾ menu's keyframe pack, video, passes and contact sheet | Export ▾: keyframe pack, mp4, depth + normal passes, contact sheet, OTIO cut list |
+| **Exports** | **Stylize** a panel through the image route, **Send to Workflow** (the stylized image or the greybox) from its card, plus the Export ▾ menu: **Contact sheet (PNG)**, **Panel pack (zip)**, **All panels (zip)**, **Animatic (mp4)**, **Cut list (OTIO)** and **Depth + normal (PNG)**; File ▸ **Export as Animation project…** turns the panels into an Animation. There is no keyframe pack or shot video in a storyboard | Export ▾: keyframe pack, mp4, depth + normal passes, contact sheet, OTIO cut list |
 
-Start in Storyboard when you are deciding what the shots are, then open the idea as an Animation when it needs motion. Without the flag every project is an Animation and nothing above changes.
+Start in Storyboard when you are deciding what the shots are, then open the idea as an Animation when it needs motion.
 
 ## Quick start
 
