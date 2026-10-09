@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { once } from 'node:events';
 import { startFixtureStudio, bounded, released, sceneDocument } from './fixtures/studio-agent-motion.mjs';
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 const cases = ['binding','intent','framing','motion','resilience','responsive'];
 const args = process.argv.slice(2);
 if (args.length && (args.length !== 2 || args[0] !== '--case' || !cases.includes(args[1]))) { console.error(`Unknown case; expected ${cases.join(', ')}`); process.exit(2); }
@@ -271,11 +272,11 @@ try {
     // Layout starts with an actually restorable take; motion Undo restores these
     // real prior bytes. Intent retains the untouched default pose/bounds repro.
     if (['motion','responsive'].includes(name)) document.scenes[0].stage.characters[0].motionRef = {url:fixture.origin+'/ardy/motions/123455-abcdef',prompt:'Fixture baseline',rotationDeg:0,anchorX:0,anchorZ:0};
-    await page.addInitScript(document => {
-      localStorage.setItem('cozyclay.scenes.v4',JSON.stringify(document));
+    await page.addInitScript(({ document, scenesKey }) => {
+      localStorage.setItem(scenesKey,JSON.stringify(document));
       localStorage.setItem('cozyclay.locale','en'); localStorage.setItem('cozyclay.project-session.v1',JSON.stringify({name:'QA',updatedAt:1}));
       let history; Object.defineProperty(window,'__sceneHistory',{configurable:true,get:()=>history,set:value=>{history=value;window.dispatchEvent(new Event('qa:render'));}});
-    }, document);
+    }, { document, scenesKey: SCENES_STORAGE_KEY });
     try {
       await page.goto(`http://127.0.0.1:${port}/app/`); await gate("!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
       if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }

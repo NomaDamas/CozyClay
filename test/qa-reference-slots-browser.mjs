@@ -6,6 +6,7 @@
 // screenshotted with the identity thumbnail on screen, because "the data is
 // there" and "the operator can see it" are two different claims.
 import { mkdirSync, writeFileSync } from "node:fs";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const out = process.env.QA_OUT || "/tmp/reference-slots-qa";
 mkdirSync(out, { recursive: true });
@@ -87,7 +88,7 @@ await evaluate(`(() => {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(document));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(document));
 })()`);
 await send("Page.reload");
 expect(

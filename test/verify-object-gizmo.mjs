@@ -788,7 +788,7 @@ expect(
 	JSON.stringify(historyAfterLoad),
 );
 // Isolation: only now reset the store for anything that follows. The app
-// itself persists the whole stage under cozyclay.scenes.v4 — clearing just
+// itself persists the whole stage under SCENES_STORAGE_KEY — clearing just
 // the legacy pair leaves every object the cases above created to reload
 // into the drop-to-surface section. Sweep all cozyclay keys but the editor
 // preferences: the locale, and the project session — without it the studio

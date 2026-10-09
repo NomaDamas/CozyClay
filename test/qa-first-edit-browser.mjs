@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { DEFAULT_POSE } from "../src/poses.js";
 import { createProjectDocument } from "../src/project.js";
 import { cameraBrowser, assertPose } from "./camera-browser-harness.mjs";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const parentDir = process.env.QA_SHOT_DIR || tmpdir();
 mkdirSync(parentDir, { recursive: true });
@@ -147,7 +148,7 @@ async function fresh(surface, { tutorial = false } = {}) {
 		localStorage.setItem('cozyclay.analyticsOptOut', '1');
 		localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'First-edit QA', updatedAt: Date.now() }));
 		localStorage.setItem('cozyclay_poses', ${JSON.stringify(JSON.stringify([customPose]))});
-		localStorage.setItem('cozyclay.scenes.v4', JSON.stringify({ version: 4, activeSceneId: ${JSON.stringify(sceneId)}, scenes: [{
+		localStorage.setItem('${SCENES_STORAGE_KEY}', JSON.stringify({ version: 4, activeSceneId: ${JSON.stringify(sceneId)}, scenes: [{
 			id: ${JSON.stringify(sceneId)}, name: 'First-edit QA', objects: [],
 			shotDocument: { version: 4, frameCount: 144, waypoints: [], shots: [{
 				id: ${JSON.stringify(shotId)}, name: 'Restored shot', startFrame: 0, endFrame: 143,
@@ -158,7 +159,7 @@ async function fresh(surface, { tutorial = false } = {}) {
 		}] }));
 	})()`);
 	fixtureProject = createProjectDocument({
-		scenesDocument: await b.evaluate("JSON.parse(localStorage.getItem('cozyclay.scenes.v4'))"),
+		scenesDocument: await b.evaluate(`JSON.parse(localStorage.getItem('${SCENES_STORAGE_KEY}'))`),
 		customPoses: [customPose], name: "First-edit QA",
 	});
 	const url = new URL(b.base);

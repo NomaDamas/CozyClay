@@ -16,6 +16,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startFixtureStudio, sceneDocument } from "./fixtures/studio-agent-motion.mjs";
 import { spawnOwned, terminateOwned } from "../tools/process-supervisor.mjs";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const port = Number(process.env.QA_PORT || 5204);
 const cdp = Number(process.env.CDP_PORT || 9304);
@@ -123,7 +124,7 @@ try {
 	await send("Page.enable");
 	await viewport(1440, 900);
 	await send("Page.addScriptToEvaluateOnNewDocument", {
-		source: `localStorage.setItem('cozyclay.scenes.v4', ${JSON.stringify(JSON.stringify(sceneDocument))});`
+		source: `localStorage.setItem('${SCENES_STORAGE_KEY}', ${JSON.stringify(JSON.stringify(sceneDocument))});`
 			+ `localStorage.setItem('cozyclay.locale', 'en');`
 			+ `localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'QA', updatedAt: 1 }));`,
 	});

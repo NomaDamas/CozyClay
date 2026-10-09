@@ -9,6 +9,7 @@ import assert from "node:assert/strict";
 import { EventEmitter, once as eventOnce } from "node:events";
 import { createServer } from "node:http";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const url = new URL(process.env.QA_URL || "http://127.0.0.1:5257/app/");
 const port = Number(process.env.CDP_PORT || 9497);
@@ -164,12 +165,12 @@ const scene = { version: 4, activeSceneId: "qa-readiness", scenes: [{
 	shotDocument: { version: 4, frameCount: 96, waypoints: [], shots: [{ id: "qa-shot", name: "Shot 1", startFrame: 0, endFrame: 95, camera: { mode: "keys" }, cameraKeys: [{ id: "qa-camera", frame: 0, framing: { pos: { x: 0, y: 1.6, z: 4 }, yaw: 0, pitch: -0.08, fovDeg: 45 } }] }] },
 	stage: { characters: [{ id: "char-a", model: "y-bot-tpose", x: 0, z: 0, rot: 0, hidden: false, pose: null, layer: { waypoints: [], promptClips: [] } }], hasCharSheet: false, shotAspect: "16:9" },
 }] };
-function installBrowserFixture(documentSeed, deadline) {
+function installBrowserFixture(documentSeed, deadline, scenesKey) {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(documentSeed));
-	window.__qaInitialScene = JSON.parse(localStorage.getItem("cozyclay.scenes.v4")).activeSceneId;
+	localStorage.setItem(scenesKey, JSON.stringify(documentSeed));
+	window.__qaInitialScene = JSON.parse(localStorage.getItem(scenesKey)).activeSceneId;
 	const bus = new EventTarget();
 	const qa = window.__qaReadiness = {
 		events: [], signal: () => bus.dispatchEvent(new Event("change")),
@@ -303,7 +304,7 @@ try {
 	// otherwise leaves a cancelled InterceptionId in the held initial fixture.
 	await navigate("about:blank");
 	await send("Fetch.enable", { patterns: [{ urlPattern: "*/src/analytics.js*", requestStage: "Response" }, { urlPattern: "*/ardy/*", requestStage: "Request" }, { urlPattern: "*://telemetry.invalid/*", requestStage: "Request" }, { urlPattern: "*://*.posthog.com/*", requestStage: "Request" }] });
-	({ identifier: fixtureId } = await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${timeoutMs})` }));
+	({ identifier: fixtureId } = await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${timeoutMs}, ${JSON.stringify(SCENES_STORAGE_KEY)})` }));
 	await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1100, deviceScaleFactor: 1, mobile: false });
 	await navigate(url.href);
 	await evaluate("window.__qaReadiness.studio");
@@ -438,7 +439,7 @@ try {
 	console.error(`FAIL motion readiness QA: ${error.stack || error}`); process.exitCode = 1;
 	if (ws.readyState === WebSocket.OPEN) { try { await screenshot("failure"); } catch (failure) { console.error(`Failure screenshot: ${failure.message}`); } }
 	if (ws.readyState === WebSocket.OPEN) {
-		try { console.error(`QA_DOCUMENT_FAILURE ${JSON.stringify(await evaluate("({ initial: window.__qaInitialScene, stored: JSON.parse(localStorage.getItem('cozyclay.scenes.v4')), readiness: [...document.querySelectorAll('.motion-readiness')].map(e => e.dataset.state) })"))} LIVE_COMMANDS ${JSON.stringify(liveFrames)}`); }
+		try { console.error(`QA_DOCUMENT_FAILURE ${JSON.stringify(await evaluate(`({ initial: window.__qaInitialScene, stored: JSON.parse(localStorage.getItem('${SCENES_STORAGE_KEY}')), readiness: [...document.querySelectorAll('.motion-readiness')].map(e => e.dataset.state) })`))} LIVE_COMMANDS ${JSON.stringify(liveFrames)}`); }
 		catch (diagnosticError) { console.error(`Failure document unavailable: ${diagnosticError.message}`); }
 	}
 } finally {

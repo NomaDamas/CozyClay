@@ -7,6 +7,7 @@
 // only thing that separates a working material override from a silent no-op.
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const out = process.env.QA_OUT || "/tmp/keyframe-pack-qa";
 mkdirSync(out, { recursive: true });
@@ -96,7 +97,7 @@ await evaluate(`(() => {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(document));
+	localStorage.setItem("${SCENES_STORAGE_KEY}", JSON.stringify(document));
 })()`);
 await send("Page.reload");
 expect("the studio and its export hooks come up", await waitFor("!!window.__cozyclay?.rigA && typeof window.__cozyclay?.exportKeyframePack === 'function' && typeof window.__cozyclay?.renderPass === 'function' && !!window.__captureFrame", 60_000));

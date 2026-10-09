@@ -15,6 +15,7 @@
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const url = new URL(process.env.QA_URL || "http://127.0.0.1:5254/app/");
 const port = Number(process.env.CDP_PORT || 9493);
@@ -137,11 +138,11 @@ const scene = {
 		stage: { characters: [{ id: "char-a", model: "y-bot-tpose", x: 0, z: 0, rot: 0, hidden: false, pose: null, layer: { waypoints: [], promptClips: [] } }], hasCharSheet: false, shotAspect: "16:9" },
 	}],
 };
-function installBrowserFixture(sceneDocument, deadline) {
+function installBrowserFixture(sceneDocument, deadline, scenesKey) {
 	localStorage.clear();
 	localStorage.setItem("cozyclay.locale", "en");
 	localStorage.setItem("cozyclay.project-session.v1", JSON.stringify({ name: "QA", updatedAt: Date.now() }));
-	localStorage.setItem("cozyclay.scenes.v4", JSON.stringify(sceneDocument));
+	localStorage.setItem(scenesKey, JSON.stringify(sceneDocument));
 	const bus = new EventTarget();
 	const qa = window.__qaMotion = {
 		events: [], liveFrames: [], live: null, hello: null,
@@ -295,7 +296,7 @@ try {
 		{ urlPattern: "*://telemetry.invalid/*", requestStage: "Request" },
 		{ urlPattern: "*://*.posthog.com/*", requestStage: "Request" },
 	] });
-	({ identifier: fixtureId } = await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${timeoutMs});` }));
+	({ identifier: fixtureId } = await send("Page.addScriptToEvaluateOnNewDocument", { source: `(${installBrowserFixture.toString()})(${JSON.stringify(scene)}, ${timeoutMs}, ${JSON.stringify(SCENES_STORAGE_KEY)});` }));
 	await send("Emulation.setDeviceMetricsOverride", { width: 1600, height: 1100, deviceScaleFactor: 1, mobile: false });
 	await navigate(url.href);
 	// Missing-backend studio legitimately loads the shipped demo once. Await its
