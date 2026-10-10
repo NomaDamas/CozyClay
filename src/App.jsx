@@ -7607,7 +7607,10 @@ export default function App() {
 								onSelect={setPathPointIndex}
 								onChangePoints={(points) => {
 									if (!selectedSceneObject) return;
-									changeSceneObject(selectedSceneObject.id, { path: points === null ? null : { ...selectedSceneObject.path, points } });
+									// Inside the drag's own transaction, like the Top-View point
+									// move: a plain update while the transaction is open is
+									// refused, so the dot never moved in the 3D view.
+									changeSceneObject(selectedSceneObject.id, { path: points === null ? null : { ...selectedSceneObject.path, points } }, pathDragTokenRef.current);
 								}}
 								onDragStart={() => {
 									pathDragTokenRef.current = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
