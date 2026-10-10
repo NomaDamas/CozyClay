@@ -1,5 +1,7 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import { objectTransformAt } from "./object-path.js";
+import { routeOwnerFor } from "./route-owner.js";
+import { EMPTY_KIND } from "./scene-objects.js";
 
 /**
  * Travel through the grouping hierarchy.
@@ -12,6 +14,12 @@ import { objectTransformAt } from "./object-path.js";
  * it, relative to where it was authored — is applied rigidly to everything
  * under it. Scale never rides along: the motion is the routed record's own
  * route sample against its own authored pose, both at its own scale.
+ *
+ * The inverse holds for an Empty, which is a pure group node: when it has no
+ * route of its own but a routed descendant owns the group's travel (a car
+ * Empty over its Chassis), it is drawn carried by that descendant's motion, so
+ * its marker and gizmo stay on the car. Ordinary meshes keep their authored
+ * place — only ancestors carry what is below them.
  *
  * Carried props are left to the attach frame that already places them: a
  * record that rides a character is not walked, and neither is an ancestor
@@ -28,9 +36,9 @@ const scratchAuthored = new Matrix4();
 const scratchOwn = new Matrix4();
 const scratchMotion = new Matrix4();
 
-function compose(out, x, y, z, rotX, rot, rotZ, object) {
+function compose(out, x, y, z, rotX, rot, rotZ, object, order = "XYZ") {
 	scratchPos.set(x, y, z);
-	scratchQuat.setFromEuler(scratchEuler.set(rotX * DEG, rot * DEG, rotZ * DEG));
+	scratchQuat.setFromEuler(scratchEuler.set(rotX * DEG, rot * DEG, rotZ * DEG, order));
 	scratchScale.set(object.scaleX ?? 1, object.scaleY ?? 1, object.scaleZ ?? 1);
 	return out.compose(scratchPos, scratchQuat, scratchScale);
 }
@@ -39,12 +47,32 @@ function authoredMatrix(object, out) {
 	return compose(out, object.x ?? 0, object.y ?? 0, object.z ?? 0, object.rotX ?? 0, object.rot ?? 0, object.rotZ ?? 0, object);
 }
 
+/**
+ * The pose a route sample gives a record, as the Euler triple of
+ * R = Ry(yaw) · Rx(pitch) · Rz(bank), applied as three.js's "YXZ" order: the
+ * yaw turns the body in the world, the pitch tilts it about its own lateral
+ * axis, the bank rolls it about its own forward axis. An authored rotX/rotZ is
+ * the body's own pitch and roll, so it stays about the body's axes however the
+ * heading turns (in the plain XYZ order rotX stayed about world X, and a pitch
+ * became a roll once the route turned). The route's lean rides on top:
+ * `bank` positive = right side down, `pitch` positive = nose up, which is
+ * the opposite sign to rotX (positive rotX tips the nose down).
+ */
+export function travelPose(object, at) {
+	return {
+		rotX: (object.rotX ?? 0) - (at.pitch ?? 0),
+		rot: at.rot ?? object.rot ?? 0,
+		rotZ: (object.rotZ ?? 0) + (at.bank ?? 0),
+	};
+}
+
 /** The record's own route sample as a matrix, or null when it does not travel. */
 function ownTravelMatrix(object, frame, take, out) {
 	if (!object.path) return null;
 	const at = objectTransformAt(object, frame, take);
 	if (!at) return null;
-	return compose(out, at.x, at.y, at.z, object.rotX ?? 0, at.rot ?? object.rot ?? 0, object.rotZ ?? 0, object);
+	const pose = travelPose(object, at);
+	return compose(out, at.x, at.y, at.z, pose.rotX, pose.rot, pose.rotZ, object, "YXZ");
 }
 
 const asLookup = (objects) => {
@@ -75,10 +103,26 @@ function ancestorsOf(lookup, object) {
 	return chain;
 }
 
+const scratchRide = new Matrix4();
+
+/** The routed descendant an Empty rides, or null for anything else. */
+function ridden(lookup, object) {
+	if (object.path || object.attach || object.renderer !== EMPTY_KIND) return null;
+	const owner = routeOwnerFor(lookup, object.id);
+	return owner && owner !== object ? owner : null;
+}
+
 export function sceneObjectTravelMatrixAt(objects, id, frame, take = {}, out = new Matrix4()) {
 	const lookup = asLookup(objects);
 	const object = lookup.get(id);
 	if (!object || object.attach) return null;
+	const owner = ridden(lookup, object);
+	// The descendant's whole carry (its own ancestors' motion included, which
+	// the Empty shares), applied to where the Empty was authored. Its own scale
+	// never enters: the carry is rigid.
+	if (owner && sceneObjectCarryMatrixAt(lookup, owner.id, frame, take, scratchRide)) {
+		return out.multiplyMatrices(scratchRide, authoredMatrix(object, scratchAuthored));
+	}
 	const chain = ancestorsOf(lookup, object);
 	let moved = false;
 	scratchMotion.identity();
@@ -144,16 +188,9 @@ export function sceneObjectsAt(objects, frame, take = {}) {
 	const quaternion = new Quaternion();
 	const scale = new Vector3();
 	const euler = new Euler();
-	return objects.map((object) => {
-		if (object.attach || !ancestorsOf(lookup, object).some((ancestor) => ancestor.path)) {
-			// Nothing above it travels: the route sample alone, exactly as before
-			// the hierarchy carry — for a carried prop, in the frame its numbers
-			// already live in.
-			const at = objectTransformAt(object, frame, take);
-			return at ? { ...object, x: at.x, y: at.y, z: at.z, rot: at.rot ?? object.rot } : object;
-		}
-		if (!sceneObjectTravelMatrixAt(lookup, object.id, frame, take, matrix)) return object;
-		matrix.decompose(position, quaternion, scale);
+	/** The record for a pose given as a matrix: x/y/z plus the XYZ Euler the records speak. */
+	const recordAt = (object, pose) => {
+		pose.decompose(position, quaternion, scale);
 		const next = { ...object, x: position.x, y: position.y, z: position.z };
 		// A pure turn about the vertical keeps the authored zero pitch/roll and
 		// reads back as one yaw, instead of the 180/x/180 Euler a decompose of a
@@ -167,5 +204,21 @@ export function sceneObjectsAt(objects, frame, take = {}) {
 			next.rotZ = euler.z / DEG;
 		}
 		return next;
+	};
+	return objects.map((object) => {
+		if (object.attach || (!ancestorsOf(lookup, object).some((ancestor) => ancestor.path) && !ridden(lookup, object))) {
+			// Nothing above it travels (and nothing below carries it): the route
+			// sample alone, exactly as before the hierarchy carry — for a carried
+			// prop, in the frame its numbers already live in.
+			const at = objectTransformAt(object, frame, take);
+			if (!at) return object;
+			// A level, upright route is a yaw and a place. One that leans, or a
+			// body with its own pitch/roll, is an orientation (travelPose).
+			if (!at.bank && !at.pitch && !(object.rotX ?? 0) && !(object.rotZ ?? 0)) return { ...object, x: at.x, y: at.y, z: at.z, rot: at.rot ?? object.rot };
+			const pose = travelPose(object, at);
+			return recordAt(object, compose(matrix, at.x, at.y, at.z, pose.rotX, pose.rot, pose.rotZ, object, "YXZ"));
+		}
+		if (!sceneObjectTravelMatrixAt(lookup, object.id, frame, take, matrix)) return object;
+		return recordAt(object, matrix);
 	});
 }

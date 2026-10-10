@@ -169,7 +169,7 @@ cases['cli-run'] = async () => {
 cases['commands'] = async () => {
   const s = await studio();
   try {
-    const registered = s.f.registry.ids();
+    const registered = s.f.registry.ids().filter(id => id !== 'object.update'); // declared agentHidden: a legacy UI-only command
     // The index: every registered command by id and label, no schemas.
     const index = await callTool('studio_commands', {}, s.handle);
     assert.equal(index.isError, false);
@@ -202,7 +202,7 @@ cases['context'] = async () => {
     // The agent's turn context: an id/label row for every registered command.
     const context = f.binding.context();
     assert.ok(Array.isArray(context.actionIndex), 'the turn context carries the command index');
-    assert.deepEqual(context.actionIndex.map(row => row.id), f.registry.ids());
+    assert.deepEqual(context.actionIndex.map(row => row.id), f.registry.ids().filter(id => id !== 'object.update'));
     const row = context.actionIndex.find(entry => entry.id === STAMP.id);
     assert.deepEqual({ id: row.id, label: row.label }, { id: STAMP.id, label: STAMP.label });
     const allowed = new Set(['id', 'label', 'generation', 'timeoutMs']);

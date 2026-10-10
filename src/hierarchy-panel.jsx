@@ -203,6 +203,7 @@ function displayHierarchyLabel(node) {
 }
 
 const OUTLINER_TYPES = {
+	empty: "Empty",
 	folder: "Folder",
 	mesh: "Mesh",
 	cast: "Cast",
@@ -212,7 +213,7 @@ const OUTLINER_TYPES = {
 
 function outlinerTypeFor(node) {
 	const key = node.kind === "object"
-		? "mesh"
+		? node.renderer === "empty" ? "empty" : "mesh"
 		: node.kind === "character" || node.kind === "bone"
 			? "cast"
 			: node.kind === "camera"
@@ -220,7 +221,9 @@ function outlinerTypeFor(node) {
 				: node.kind === "light"
 					? "light"
 					: "folder";
-	const label = key === "folder"
+	const label = key === "empty"
+		? ko(OUTLINER_TYPES[key], "빈 오브젝트")
+		: key === "folder"
 		? ko(OUTLINER_TYPES[key], "폴더")
 		: key === "mesh"
 			? ko(OUTLINER_TYPES[key], "메시")
@@ -367,6 +370,14 @@ function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("frame", menu.id)}>
 						{ko("Frame", "프레임 맞추기")}
 					</button>
+					<button type="button" role="menuitem" className="hierarchy-context-item" data-action="group-under-empty" onClick={() => onAction("group-under-empty", menu.id)}>
+						{ko("Group under new Empty", "빈 오브젝트로 묶기")}
+					</button>
+					{menu.grouped && (
+						<button type="button" role="menuitem" className="hierarchy-context-item" data-action="ungroup-object" onClick={() => onAction("ungroup-object", menu.id)}>
+							{ko("Move out to Props", "그룹에서 빼기 (Props로)")}
+						</button>
+					)}
 				</>
 			) : (
 				<CatalogueEntries onPick={onAddObject} />
@@ -636,6 +647,8 @@ export default function HierarchyPanel({
 	onDuplicateObject,
 	onDeleteObject,
 	onFrameObject,
+	onGroupObject,
+	renameRequest = null,
 	onToggleHidden,
 	propsDrop = null,
 	reparent = null,
@@ -656,6 +669,10 @@ export default function HierarchyPanel({
 	// Row currently in in-place rename. The panel owns it: F2/Return and the
 	// row context menu are the only ways in, so app state stays out of it.
 	const [editingId, setEditingId] = useState(null);
+	// A freshly made Empty asks to be named: open its row's rename field.
+	useEffect(() => {
+		if (renameRequest?.id) setEditingId(renameRequest.id);
+	}, [renameRequest?.id, renameRequest?.nonce]);
 	// The row being dragged. dataTransfer.getData() is deliberately blank during
 	// dragover in Chrome, so canDrop could never gate the highlight from the
 	// payload alone — the id lives here from dragstart until dragend/drop.
@@ -773,14 +790,18 @@ export default function HierarchyPanel({
 		event.stopPropagation(); // a row pick must not also open the create menu
 		const node = findHierarchyNode(hierarchyNodes, id);
 		if (node?.kind === "object" || node?.kind === "character") {
+			// A grouped object can leave its group from the menu too, not only by
+			// dragging its row onto Props.
+			const objectId = node.kind === "object" ? sceneObjectIdFromHierarchy(id) : null;
+			const inGroup = objectId ? Boolean(sceneObjects.find((entry) => entry.id === objectId)?.parent) : false;
 			setContextMenu({
 				x: event.clientX,
 				y: event.clientY,
-				height: node.kind === "object" ? 180 : node.grouped ? 80 : 44,
+				height: node.kind === "object" ? (inGroup ? 248 : 212) : node.grouped ? 80 : 44,
 				kind: node.kind,
 				id,
 				hidden: node.hidden === true,
-				grouped: node.grouped === true,
+				grouped: node.grouped === true || inGroup,
 			});
 		} else if (id === SCENE_ROOT_ID) {
 			// The root row is the scene document: its own verbs, never the
@@ -794,13 +815,13 @@ export default function HierarchyPanel({
 				canDelete: availableScenes.length > 1,
 			});
 		} else {
-			setContextMenu({ x: event.clientX, y: event.clientY, height: 344, kind: "create" });
+			setContextMenu({ x: event.clientX, y: event.clientY, height: 376, kind: "create" });
 		}
 	};
 
 	const openCreateMenu = (event) => {
 		event.preventDefault(); // suppress the browser menu on the tree only
-		setContextMenu({ x: event.clientX, y: event.clientY, height: 344, kind: "create" });
+		setContextMenu({ x: event.clientX, y: event.clientY, height: 376, kind: "create" });
 	};
 
 	const deleteActiveScene = () => {
@@ -834,6 +855,11 @@ export default function HierarchyPanel({
 			onToggleHidden?.(hierarchyId);
 			return;
 		}
+		if (action === "ungroup-object") {
+			// The same door as dropping the row on Props: out of its group, kept where it is.
+			if (reparent?.canDrop?.(hierarchyId, "props")) reparent.onDrop?.(hierarchyId, "props");
+			return;
+		}
 		if (action === "ungroup-character") {
 			// Out of the group is a drop on the scene root: the same policy door.
 			if (reparent?.canDrop?.(hierarchyId, SCENE_ROOT_ID)) reparent.onDrop?.(hierarchyId, SCENE_ROOT_ID);
@@ -844,6 +870,7 @@ export default function HierarchyPanel({
 		if (action === "duplicate") onDuplicateObject?.(objectId);
 		else if (action === "delete") onDeleteObject?.(objectId);
 		else if (action === "frame") onFrameObject?.(objectId);
+		else if (action === "group-under-empty") onGroupObject?.(objectId);
 	};
 
 	const commitRename = (hierarchyId, name) => {

@@ -13,13 +13,60 @@
  */
 
 import { createTiming, timingIsFlat, timingProgress } from "./speed-envelope.js";
+import { monotoneCubicAt } from "./monotone-cubic.js";
 
 const MAX_PATH_POINTS = 64;
+// The camera rail's crane marks, mirrored: the two ends are always marks, up to
+// MAX_PATH_MARKS in all, never closer than MARK_GAP of the route's length.
+const MAX_PATH_MARKS = 8;
+const MARK_GAP = 0.03;
 const ROOM_LIMIT = 240;
 const MAX_HEIGHT = 60;
+// A mark's lean (bank / pitch) is a body tilt, not a flip: ±90° is a vehicle on
+// its side, past that it is a different (and unreachable-by-slider) gesture.
+const MAX_LEAN = 90;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const finite = (value, fallback = 0) => (typeof value === "number" && Number.isFinite(value) ? value : fallback);
+
+const tidyDegrees = (value) => {
+	const rounded = Math.round(value * 1e4) / 1e4;
+	return rounded === 0 ? 0 : rounded;
+};
+
+/** One stored mark: a bare number is a level dot (bank 0, pitch 0). */
+function readMark(entry) {
+	if (entry && typeof entry === "object") {
+		return {
+			t: finite(entry.t, -1),
+			bank: tidyDegrees(clamp(finite(entry.bank), -MAX_LEAN, MAX_LEAN)),
+			pitch: tidyDegrees(clamp(finite(entry.pitch), -MAX_LEAN, MAX_LEAN)),
+		};
+	}
+	return { t: finite(entry, -1), bank: 0, pitch: 0 };
+}
+
+/**
+ * The interior marks a hand has dropped on the route: `{ t, bank, pitch }`,
+ * `t` the arc fraction, `bank` the roll about the travel direction (degrees,
+ * positive = right side down) and `pitch` the nose angle (positive = nose up)
+ * the body holds when it passes the dot. A plain number is accepted as a level
+ * dot. The ends are implicit marks 0 and 1, always level, and never stored.
+ */
+function normalizeMarks(value) {
+	const marks = [];
+	const sorted = (Array.isArray(value) ? value : [])
+		.map(readMark)
+		.filter((mark) => mark.t > MARK_GAP && mark.t < 1 - MARK_GAP)
+		.sort((a, b) => a.t - b.t);
+	for (const mark of sorted) {
+		const previous = marks.length ? marks[marks.length - 1].t : 0;
+		if (mark.t - previous < MARK_GAP || 1 - mark.t < MARK_GAP) continue;
+		if (marks.length >= MAX_PATH_MARKS - 2) break;
+		marks.push(mark);
+	}
+	return marks;
+}
 
 /** One authored path point: a floor position plus the height it travels at. */
 function createPathPoint(value) {
@@ -55,6 +102,9 @@ export function createObjectPath(value) {
 	const timing = createTiming(value.timing);
 	return {
 		points,
+		// The grabbable dots on the route (see pathMarkFractions); the points
+		// are the route's shape, the marks are where a hand takes hold of it.
+		marks: normalizeMarks(value.marks),
 		timing: timingIsFlat(timing) ? null : timing,
 		// 0 means "fill the timeline": the length/duration answer is computed at
 		// sample time, where the take's duration is known.
@@ -83,6 +133,41 @@ export function translateObjectPath(path, delta) {
 	return createObjectPath({
 		...source,
 		points: source.points.map((point) => ({ x: point.x + dx, y: point.y + dy, z: point.z + dz })),
+	});
+}
+
+/**
+ * The same route, turned bodily about a pivot. A rotating group no longer
+ * turns its children's routes (a route is a road in the world; see
+ * updateSceneObject), so nothing in the scene calls this now; it stays as the
+ * pure helper for a caller that does want a road turned. `matrix` is a row-major 3x3 rotation (kept as plain numbers so this module
+ * stays importable without three.js); every point goes to
+ * `to + matrix · (point − from)`, so one call also covers a pivot that moved
+ * in the same edit. Values are tidied at 1e-9 so float dust never accumulates
+ * over a drag's many small steps. Shape is preserved; only the room walls and
+ * the floor can bend it.
+ */
+export function rotateObjectPath(path, matrix, from, to) {
+	const source = createObjectPath(path);
+	if (!source) return null;
+	if (!Array.isArray(matrix) || matrix.length !== 9 || !matrix.every((value) => Number.isFinite(value))) return source;
+	const tidy = (value) => {
+		const rounded = Math.round(value * 1e9) / 1e9;
+		return rounded === 0 ? 0 : rounded;
+	};
+	const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = matrix;
+	return createObjectPath({
+		...source,
+		points: source.points.map((point) => {
+			const dx = point.x - finite(from?.x);
+			const dy = point.y - finite(from?.y);
+			const dz = point.z - finite(from?.z);
+			return {
+				x: tidy(finite(to?.x) + m0 * dx + m1 * dy + m2 * dz),
+				y: tidy(finite(to?.y) + m3 * dx + m4 * dy + m5 * dz),
+				z: tidy(finite(to?.z) + m6 * dx + m7 * dy + m8 * dz),
+			};
+		}),
 	});
 }
 
@@ -137,6 +222,90 @@ export function pathCurvePointBetween(points, index, t) {
 	if (index < 0 || index + 1 >= list.length) return null;
 	const at = catmullRom(...segmentControls(list, index), clamp(finite(t), 0, 1));
 	return { x: at.x, y: Math.max(0, at.y), z: at.z };
+}
+
+/** The interior marks, normalized: `{ t, bank, pitch }` ascending by `t`. */
+export function pathMarks(path) {
+	return normalizeMarks(path?.marks);
+}
+
+/** Every mark as an arc fraction, ends included: the dots the editors draw. */
+export function pathMarkFractions(path) {
+	return [0, ...normalizeMarks(path?.marks).map((mark) => mark.t), 1];
+}
+
+/**
+ * The marks with one more dot at arc fraction `t`, and the editor index it
+ * takes (ends count: the first interior dot is 1). The new dot is born with the
+ * lean the route already has there, so dropping it changes nothing visible; its
+ * neighbours keep theirs. Null when the route is full or `t` is too close to a
+ * dot or an end.
+ */
+export function insertPathMark(path, t) {
+	const marks = normalizeMarks(path?.marks);
+	const at = finite(t, -1);
+	if (marks.length >= MAX_PATH_MARKS - 2) return null;
+	if (!(at > MARK_GAP && at < 1 - MARK_GAP)) return null;
+	if (marks.some((mark) => Math.abs(mark.t - at) < MARK_GAP)) return null;
+	const lean = pathLeanAt(path, at);
+	const next = [...marks, { t: at, bank: tidyDegrees(lean.bank), pitch: tidyDegrees(lean.pitch) }].sort((a, b) => a.t - b.t);
+	return { marks: next, index: next.findIndex((mark) => mark.t === at) + 1 };
+}
+
+/**
+ * The body's tilt at arc fraction `t`: a monotone piecewise cubic through the
+ * marks' bank and pitch (ends level), the camera crane's own interpolation —
+ * it hits every dot exactly, never overshoots between two, and is level again
+ * at both ends and wherever the neighbouring dots are.
+ */
+export function pathLeanAt(path, t) {
+	const marks = normalizeMarks(path?.marks);
+	if (!marks.some((mark) => mark.bank || mark.pitch)) return { bank: 0, pitch: 0 };
+	const knots = [{ t: 0, bank: 0, pitch: 0 }, ...marks, { t: 1, bank: 0, pitch: 0 }];
+	const at = clamp(finite(t), 0, 1);
+	const tidy = (value) => (Math.abs(value) < 1e-12 ? 0 : value);
+	return {
+		bank: tidy(monotoneCubicAt(knots, at, (knot) => knot.bank)),
+		pitch: tidy(monotoneCubicAt(knots, at, (knot) => knot.pitch)),
+	};
+}
+
+/** The point at arc fraction `t` of the travelled curve. */
+export function pathPointAtFraction(path, t) {
+	const curve = pathCurve(path);
+	if (!curve.points.length) return null;
+	const at = pointAtDistance({ extend: false }, curve, clamp(finite(t), 0, 1) * curve.length);
+	return { x: at.x, y: at.y, z: at.z };
+}
+
+/**
+ * Where on the travelled curve a screen/plan position is nearest: `project`
+ * maps a world point to the editor's 2D space (pixels in the scene, metres on
+ * the board). Returns `{ d, t, point }` — distance in that space, arc fraction,
+ * the curve point — or null for a route with no length.
+ */
+export function nearestPathFraction(path, project, x, y) {
+	const curve = pathCurve(path);
+	if (curve.length <= 1e-9) return null;
+	let best = null;
+	let prev = null;
+	for (let i = 0; i < curve.points.length; i += 1) {
+		const screen = project(curve.points[i]);
+		if (screen && prev) {
+			const dx = screen.x - prev.screen.x;
+			const dy = screen.y - prev.screen.y;
+			const lenSq = dx * dx + dy * dy;
+			const w = lenSq < 1e-12 ? 0 : clamp(((x - prev.screen.x) * dx + (y - prev.screen.y) * dy) / lenSq, 0, 1);
+			const d = Math.hypot(prev.screen.x + dx * w - x, prev.screen.y + dy * w - y);
+			if (!best || d < best.d) {
+				const distance = curve.cumulative[prev.i] + (curve.cumulative[i] - curve.cumulative[prev.i]) * w;
+				best = { d, t: distance / curve.length };
+			}
+		}
+		prev = screen ? { screen, i } : null;
+	}
+	if (best) best.point = pathPointAtFraction(path, best.t);
+	return best;
 }
 
 /**
@@ -232,18 +401,11 @@ function headingBetween(a, b) {
 }
 
 /**
- * Where an object stands at `frame`. Returns null when the object has no
- * usable path, so callers fall back to its authored transform untouched.
- *
- * @param {object} object a scene object record
- * @param {number} frame absolute timeline frame
- * @param {{ frameCount: number, fps: number }} take timeline geometry
+ * How far along the travelled curve the route has taken the object at
+ * `frame`, in metres (past `length` only when the route extends), with the
+ * curve itself. Shared by the pose and the progress readout.
  */
-export function objectTransformAt(object, frame, take = {}) {
-	const path = createObjectPath(object?.path);
-	if (!path) return null;
-	const curve = pathCurve(path);
-	if (curve.length <= 1e-9) return null;
+function travelledDistance(path, curve, frame, take) {
 	const frameCount = Math.max(1, Math.round(finite(take.frameCount, 1)));
 	const fps = Math.max(1, finite(take.fps, 24));
 	const sampled = clamp(finite(frame), 0, Math.max(0, frameCount - 1));
@@ -256,43 +418,72 @@ export function objectTransformAt(object, frame, take = {}) {
 	// (and so the arrival frame) never moves — the area is the distance.
 	const window = curve.length / speed;
 	const u = seconds / Math.max(1e-6, window);
-	let distance;
-	if (path.loop && curve.length > 1e-9) {
-		distance = curve.length * timingProgress(path.timing, u - Math.floor(u));
-	} else if (u >= 1) {
-		// Past the window: arrived. Extend keeps walking the final heading at
-		// the plain average speed, exactly as it did before envelopes existed.
-		distance = curve.length + (path.extend ? speed * (seconds - window) : 0);
-	} else {
-		distance = curve.length * timingProgress(path.timing, u);
-	}
+	if (path.loop && curve.length > 1e-9) return curve.length * timingProgress(path.timing, u - Math.floor(u));
+	// Past the window: arrived. Extend keeps walking the final heading at
+	// the plain average speed, exactly as it did before envelopes existed.
+	if (u >= 1) return curve.length + (path.extend ? speed * (seconds - window) : 0);
+	return curve.length * timingProgress(path.timing, u);
+}
+
+/**
+ * The arc fraction 0..1 the route has the object at on `frame` — what the
+ * dots are measured in — or null when the path cannot describe travel.
+ *
+ * @param {object} path a path record
+ * @param {number} frame absolute timeline frame
+ * @param {{ frameCount: number, fps: number }} take timeline geometry
+ */
+export function pathProgressAt(path, frame, take = {}) {
+	const normal = createObjectPath(path);
+	if (!normal) return null;
+	const curve = pathCurve(normal);
+	if (curve.length <= 1e-9) return null;
+	return clamp(travelledDistance(normal, curve, frame, take) / curve.length, 0, 1);
+}
+
+/**
+ * Where an object stands at `frame`. Returns null when the object has no
+ * usable path, so callers fall back to its authored transform untouched.
+ * `bank` and `pitch` (degrees) are the lean the route's marks ask for there.
+ *
+ * @param {object} object a scene object record
+ * @param {number} frame absolute timeline frame
+ * @param {{ frameCount: number, fps: number }} take timeline geometry
+ */
+export function objectTransformAt(object, frame, take = {}) {
+	const path = createObjectPath(object?.path);
+	if (!path) return null;
+	const curve = pathCurve(path);
+	if (curve.length <= 1e-9) return null;
+	const distance = travelledDistance(path, curve, frame, take);
 	const at = pointAtDistance(path, curve, distance);
+	const lean = pathLeanAt(path, distance / curve.length);
 	return {
 		x: at.x,
 		y: at.y,
 		z: at.z,
 		rot: path.faceTravel && at.heading !== null ? at.heading : null,
+		bank: lean.bank,
+		pitch: lean.pitch,
 	};
 }
 
 /**
- * A drawn stroke becomes the FEWEST points that still carry its shape.
+ * A drawn stroke keeps its shape, exactly as the camera rail's does.
  *
- * The rail wants fidelity to the drawn curve; a travel route does not. A route
- * is a plan the operator then adjusts point by point, and a stroke that lands
- * twenty dots on the floor is a route nobody can grab. So this simplifies
- * coarsely and, if the shape is still busy, keeps coarsening until the count
- * fits under the ceiling: a straight drag gives two points, a dog-leg three,
- * and anything more elaborate stays inside a handful the hand can manage.
- * Points are added deliberately afterwards, by double-clicking the line.
+ * The rail runs the stroke through the same Douglas-Peucker pass (0.12 m) and
+ * keeps every vertex it asks for; a route is the same kind of line, so it gets
+ * the same treatment instead of a two-or-three point caricature. Those
+ * vertices are the shape; what the hand grabs are the MARKS (pathMarkFractions)
+ * — the ends, plus dots added by double-clicking the line. The schema's point
+ * ceiling is the only limit: a busier stroke coarsens until it fits.
  */
-const STROKE_MAX_POINTS = 5;
+const STROKE_EPSILON = 0.12;
+const STROKE_MAX_POINTS = MAX_PATH_POINTS;
 
-export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_POINTS, epsilon = 0.55 } = {}) {
+export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_POINTS, epsilon = STROKE_EPSILON } = {}) {
 	if (!stroke || stroke.length < 2) return [];
 	let points = simplify(stroke, epsilon);
-	// Escalate rather than pick a single magic epsilon: the right coarseness
-	// depends on how big the drawn route is, which only the stroke knows.
 	for (let step = 0; step < 12 && points.length > maxPoints; step += 1) {
 		epsilon *= 1.8;
 		points = simplify(stroke, epsilon);
@@ -308,4 +499,4 @@ export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_PO
 	return points.map((point) => ({ x: point.x, y: 0, z: point.z }));
 }
 
-export { MAX_PATH_POINTS, MAX_HEIGHT as MAX_PATH_HEIGHT, STROKE_MAX_POINTS };
+export { MAX_PATH_POINTS, MAX_PATH_MARKS, MARK_GAP, MAX_LEAN as MAX_PATH_LEAN, MAX_HEIGHT as MAX_PATH_HEIGHT, STROKE_MAX_POINTS };

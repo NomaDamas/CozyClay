@@ -280,7 +280,7 @@ export function Field({ label, children }) {
 		</div>
 	);
 }
-export function NumberField({ label, value, step, precision = 2, scrubRange, onChange, onScrubStart, onScrubEnd, title }) {
+export function NumberField({ label, value, step, precision = 2, scrubRange, onChange, onScrubStart, onScrubEnd, title, disabled = false }) {
 	const [focused, setFocused] = useState(false);
 	const [draft, setDraft] = useState(null);
 	// The draft must be readable synchronously: blur() fires the commit
@@ -358,7 +358,7 @@ export function NumberField({ label, value, step, precision = 2, scrubRange, onC
 	// alone was a 15 px hotspot nobody found). Sensitivity is a fixed-travel
 	// rate (src/ui-scrub.js), not pixels * step, so every field feels the same.
 	const onFieldPointerDown = (e) => {
-		if (e.button !== 0) return;
+		if (e.button !== 0 || disabled) return;
 		// A press inside an already-focused input is text editing (caret
 		// placement, drag-select), not a scrub — leave it alone.
 		if (focused && e.target === inputRef.current) return;
@@ -461,7 +461,7 @@ export function NumberField({ label, value, step, precision = 2, scrubRange, onC
 
 	return (
 		<span
-			className={`number-field v2-details-number-field${focused ? " editing" : ""}`}
+			className={`number-field v2-details-number-field${focused ? " editing" : ""}${disabled ? " disabled" : ""}`}
 			title={title}
 			onPointerDown={onFieldPointerDown}
 			onPointerUp={endFieldDrag}
@@ -473,6 +473,7 @@ export function NumberField({ label, value, step, precision = 2, scrubRange, onC
 				type="text"
 				inputMode="decimal"
 				value={display}
+				disabled={disabled}
 				onFocus={onFocus}
 				onBlur={onBlur}
 				onChange={(e) => setDraftValue(e.target.value)}

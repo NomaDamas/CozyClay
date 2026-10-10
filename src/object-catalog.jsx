@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ko, isKo } from "./locale.js";
-import { OBJECT_LIBRARY } from "./scene-objects.js";
+import { EMPTY_KIND, OBJECT_MENU_ENTRIES } from "./scene-objects.js";
 
 const GROUP_LABELS_KO = {
 	Primitives: "기본 도형",
@@ -8,6 +8,7 @@ const GROUP_LABELS_KO = {
 };
 
 const OBJECT_LABELS_KO = {
+	Empty: "빈 오브젝트",
 	Cube: "큐브",
 	Sphere: "구",
 	Capsule: "캡슐",
@@ -41,7 +42,7 @@ export function displayObjectLabel(label) {
  * (docs/unity-reference.md §9.7). */
 export function buildObjectMenuGroups() {
 	const groups = [];
-	for (const entry of OBJECT_LIBRARY) {
+	for (const entry of OBJECT_MENU_ENTRIES) {
 		const group = groups.find((item) => item.name === entry.group);
 		if (group) group.entries.push(entry);
 		else groups.push({ name: entry.group, entries: [entry] });
@@ -65,7 +66,8 @@ export function CatalogueEntries({ onPick }) {
 				>
 					<span className={`add-object-swatch ${entry.kind}`} style={{ background: entry.color }} aria-hidden="true" />
 					<span>{displayObjectLabel(entry.label)}</span>
-					<small>{entry.footprint.width} × {entry.footprint.depth} m</small>
+					{/* An empty has no size to quote: say what it is instead of "0 × 0 m". */}
+					<small>{entry.kind === EMPTY_KIND ? ko("node only", "노드 전용") : `${entry.footprint.width} × ${entry.footprint.depth} m`}</small>
 				</button>
 			))}
 		</div>

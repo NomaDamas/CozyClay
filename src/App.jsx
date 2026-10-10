@@ -188,13 +188,13 @@ import { demoSeedGate, hasLineEditCapability, motionReadiness } from "./motion-r
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
+	insertPathMark,
 	objectTransformAt,
-	pathCurvePointBetween,
 	pathMetrics,
 	strokeToPathPoints,
-	MAX_PATH_POINTS,
 } from "./object-path.js";
 import { carriedPointAt, sceneObjectsAt } from "./object-travel.js";
+import { routeOwnerFor } from "./route-owner.js";
 import {
 	analyticsActive,
 	exportFailureCode,
@@ -1540,9 +1540,16 @@ export default function App() {
 		matteShrink, setMatteShrink, matteFeather, setMatteFeather, matteMode, setMatteMode, matteStats,
 		setMatteStats, matteBusy, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled, addSceneObject,
 		importCutout, importCutouts, spawnCutoutAt, persistMeshAsset, importMesh, importMeshes, spawnMeshAt,
-		applyMatte, duplicateSelectedSceneObject, frameSelection, renameSceneObject, sceneObjectWorldMatrix,
+		applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest, renameSceneObject, sceneObjectWorldMatrix,
 		attachTargetForRow, attachTargetLabel, attachSceneObject,
 	} = objectsDomain;
+
+	// The record whose route the studio shows for the selection: the selected
+	// record itself, or the routed record inside the group it stands for (a car
+	// Empty over its Chassis). Selection stays on the group; only the route's
+	// source moves. With no route anywhere a new stroke lands on the selection.
+	const routeOwner = useMemo(() => routeOwnerFor(sceneObjects, selectedSceneObjectId), [sceneObjects, selectedSceneObjectId]);
+	const pathTarget = routeOwner ?? selectedSceneObject;
 
 	// An undo offer is an offer, not a banner: without a window it sits on the
 	// screen for the rest of the session. Long enough to notice and reach, then
@@ -1688,6 +1695,8 @@ export default function App() {
 	// the gesture is "paste into the studio", not "paste into this box".
 	useEffect(() => {
 		const onPaste = (event) => {
+			// The Agent composer takes a picture pasted anywhere on it first.
+			if (event.defaultPrevented) return;
 			const target = event.target;
 			// Never steal a paste aimed at somewhere text goes.
 			if (target instanceof HTMLElement) {
@@ -1964,7 +1973,7 @@ export default function App() {
 	// selection would point the gizmo at a stale dot.
 	useEffect(() => {
 		setPathPointIndex(null);
-	}, [selectedSceneObjectId]);
+	}, [selectedSceneObjectId, routeOwner?.id]);
 
 	useEffect(() => {
 		if (!inspectorActionsOpen) return undefined;
@@ -2034,6 +2043,16 @@ export default function App() {
 		if (typeof toast.uiMessage === "string" && toast.uiMessage) for (const sink of toastSinkRef.current) sink(toast);
 		showToast(toast.uiMessage);
 	}, []);
+	// The dots on a route are found by double-clicking the line, a gesture
+	// nothing hints at: say it once, the first time a route is selected.
+	const routeHintShownRef = useRef(false);
+	// The route shown may belong to a routed record inside the selected group.
+	const selectedRouteId = routeOwner?.path ? routeOwner.id : null;
+	useEffect(() => {
+		if (!selectedRouteId || routeHintShownRef.current) return;
+		routeHintShownRef.current = true;
+		setToast(ko("Double-click the line to add a dot", "선을 더블클릭하면 점이 추가돼요"));
+	}, [selectedRouteId, setToast]);
 	// The PWA's "a newer studio is waiting" registration, once one arrives.
 	const [pwaUpdate, setPwaUpdate] = useState(null);
 	useEffect(() => {
@@ -2280,6 +2299,16 @@ export default function App() {
 	const animatedSceneObjects = useMemo(
 		() => sceneObjectsAt(sceneObjects, tlFrame, { frameCount: tlFrameCount, fps: tlFps }),
 		[sceneObjects, tlFrame, tlFrameCount, tlFps],
+	);
+
+	// The selection as it is DRAWN at this frame, for the transform gizmo to sit
+	// on: a routed record, the group under one, and the Empty that rides its
+	// routed descendant all stand away from their authored numbers while the
+	// playhead is off frame 0. Drags still read the authored records (the gizmo
+	// is handed those separately), so they stay delta-based on authored numbers.
+	const gizmoSceneObject = useMemo(
+		() => (selectedSceneObject ? animatedSceneObjects.find((object) => object.id === selectedSceneObject.id) ?? selectedSceneObject : null),
+		[selectedSceneObject, animatedSceneObjects],
 	);
 
 	// Auto color: Blender's viewport "Random" mode. A DISPLAY-ONLY marker rides
@@ -4501,9 +4530,10 @@ export default function App() {
 			insetPane: insetPaneRef.current,
 			mainPane: mainPaneRef.current,
 			// the selected prop's route, so QA can aim a gesture at the line
-			objectPath: selectedSceneObject?.path ?? null,
+			objectPath: routeOwner?.path ?? null,
+			objectPathOwnerId: routeOwner?.id ?? null,
 			pathPointIndex,
-			pathHandlesEnabled: !preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path,
+			pathHandlesEnabled: !preview && !lookThroughShot && !ikMode && !posing && !!routeOwner?.path,
 			addSceneObject: (kind, placement = {}) => addSceneObject(kind, placement),
 			scrub: (frame) => setTlFrame(Math.max(0, Math.min(tlFrameCount - 1, Math.round(frame)))),
 			pause: () => setTlPlaying(false),
@@ -7075,7 +7105,7 @@ export default function App() {
 		aimEditorAtKeyLight, characters, showB, ikFrames, ikMode,
 		rowIdForCharIndex, activeCharIndex, waypoints, sceneObjects, scenes,
 		activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi, renameSceneDocumentFromUi,
-		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection,
+		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest,
 		toggleHierarchyHidden, propsDrop, hierarchyReparent, agentTouchedRows, workflowMode,
 		selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
 		preset, applyPreset, cameraPresetId, i2vMotionCameraLocked, shotAspectKey,
@@ -7133,8 +7163,8 @@ export default function App() {
 		addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFps, ghostLayers,
 		pathSpeed, tlPlaying, pendingWaypointFrame, stateBadge, applyMotionTrim,
 		resetMotionTrim, cutMotionAtPlayhead, changeMotionSegmentSpeed, removeMotionSegmentById, bodyContact,
-		activeShotIdx, railDraw, pathDraw, setPathDraw, setRailDraw,
-		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe,
+		activeShotIdx, railDraw, pathDraw, pathTarget, setPathDraw, setRailDraw,
+		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe, pathPointIndex, setPathPointIndex,
 		setBodyContact, setFootSnap, advanceFrame, stepFrame, cameraPreviewEndRef,
 		manualCameraOverrideRef, setTlPlaying, setWaypointMode, selectActiveCharacterInHierarchy,
 		toggleWaypointMode: storyboardProject ? undefined : toggleWaypointMode,
@@ -7505,28 +7535,30 @@ export default function App() {
 								cameraRailPoints={railCurve ? railCurve.points : null}
 								railDraw={railDraw}
 								pathDraw={pathDraw}
-								objectPathPoints={selectedSceneObject?.path?.points ?? null}
+								objectPath={routeOwner?.path ?? null}
 								objectPathSelectedIndex={pathPointIndex}
 								onObjectPathPointSelect={setPathPointIndex}
-								onObjectPathPointMove={(index, floor) => {
-									const path = selectedSceneObject?.path;
+								onObjectPathChange={(patch) => {
+									const path = routeOwner?.path;
 									if (!path) return;
-									// The board edits the floor route only; a point's height is
-									// the scene's business, so y rides through untouched.
-									const points = path.points.map((point, i) => (i === index ? { ...point, x: floor.x, z: floor.z } : point));
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, points } }, planPathTokenRef.current);
+									// Inside the gesture's own transaction (planPathTokenRef), like
+									// the 3D view. The board bends the floor route only; a point's
+									// height is the scene's business, so y rides through untouched.
+									changeSceneObject(routeOwner.id, { path: { ...path, ...patch } }, planPathTokenRef.current);
 								}}
-								onObjectPathPointInsert={(index, t) => {
-									const path = selectedSceneObject?.path;
-									if (!path || path.points.length >= MAX_PATH_POINTS) return;
-									// On the curve, so adding a handle barely reshapes the route.
-									const inserted = pathCurvePointBetween(path.points, index, t);
-									const points = [...path.points.slice(0, index + 1), inserted, ...path.points.slice(index + 1)];
+								onObjectPathMarkInsert={(t) => {
+									const path = routeOwner?.path;
+									if (!path) return;
+									// The new dot is born with the lean the route already has there,
+									// and it goes to the record that owns the route (the selected
+									// group may only contain it).
+									const added = insertPathMark(path, t);
+									if (!added) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, points } }, token);
+									changeSceneObject(routeOwner.id, { path: { ...path, marks: added.marks } }, token);
 									endSceneTransaction(token, { commit: true });
-									setPathPointIndex(index + 1);
-									setToast(ko("Point added — drag it here, or lift it in the scene", "점을 추가했어요 — 여기서 끌거나 씬에서 높이를 올리세요"));
+									setPathPointIndex(added.index);
+									setToast(ko("Dot added — drag it to bend the route", "점을 추가했어요 — 끌어서 경로를 휘세요"));
 								}}
 								onObjectPathGestureStart={() => {
 									planPathTokenRef.current = beginSceneTransaction({ owner: "object-path", cancel: () => { planPathTokenRef.current = null; } });
@@ -7539,20 +7571,22 @@ export default function App() {
 								keyLight={keyLight}
 								onRailStroke={shotsDomain.drawCameraRail}
 								onPathStroke={(stroke) => {
-									if (!selectedSceneObject) return;
-									// Few points on purpose: the stroke sets the shape, the
-									// operator adds the handles they actually want by
-									// double-clicking the line. The route starts at the height
+									if (!pathTarget) return;
+									// The stroke keeps its shape, as the camera rail's does; the
+									// operator adds the dots they want to hold by double-clicking
+									// the line. The route starts at the height
 									// the object stands at, so a raised body (a chassis on its
 									// wheels, a prop on a table) travels where it is instead of
 									// dropping to the floor; changing height comes later, from
 									// dragging a point in the scene.
-									const height = selectedSceneObject.attach ? 0 : selectedSceneObject.y ?? 0;
+									const height = pathTarget.attach ? 0 : pathTarget.y ?? 0;
 									const points = strokeToPathPoints(stroke, simplifyStroke).map((point) => ({ ...point, y: height }));
 									if (points.length < 2) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-									changeSceneObject(selectedSceneObject.id, { path: { ...(selectedSceneObject.path ?? {}), points } }, token);
+									// A new stroke is a new shape: marks belong to the old one.
+									changeSceneObject(pathTarget.id, { path: { ...(pathTarget.path ?? {}), points, marks: [] } }, token);
 									endSceneTransaction(token, { commit: true });
+									setPathPointIndex(null);
 									setPathDraw(false);
 									const metrics = pathMetrics(createObjectPath({ points }));
 									setToast(isKo
@@ -7565,7 +7599,7 @@ export default function App() {
 							    the plan owns the big pane (the pucks are the handles there)
 							    and while posing/IK owns the pointer. */}
 							<ObjectGizmo
-								object={cameraGizmoObject ?? lightGizmoObject ?? (selectedSceneObject && !isEffectivelyHidden(selectedSceneObject, sceneObjects, characters) ? selectedSceneObject : null)}
+								object={cameraGizmoObject ?? lightGizmoObject ?? (selectedSceneObject && !isEffectivelyHidden(selectedSceneObject, sceneObjects, characters) ? gizmoSceneObject : null)}
 								objects={sceneObjects}
 								mode={lightGizmoObject ? "move" : cameraGizmoObject ? (gizmoMode === "scale" ? "move" : gizmoMode) : gizmoMode}
 								snap={snapEnabled}
@@ -7599,15 +7633,19 @@ export default function App() {
 								/>
 							)}
 							<ObjectPathHandles
-								path={selectedSceneObject?.path ?? null}
+								path={routeOwner?.path ?? null}
 								selectedIndex={pathPointIndex}
-								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path}
+								mode={gizmoMode}
+								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!routeOwner?.path}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setPathPointIndex}
-								onChangePoints={(points) => {
-									if (!selectedSceneObject) return;
-									changeSceneObject(selectedSceneObject.id, { path: points === null ? null : { ...selectedSceneObject.path, points } });
+								onChangePath={(patch) => {
+									if (!routeOwner) return;
+									// Inside the drag's own transaction, like the Top-View mark
+									// move: a plain update while the transaction is open is
+									// refused, so the dot never moved in the 3D view.
+									changeSceneObject(routeOwner.id, { path: patch === null ? null : { ...routeOwner.path, ...patch } }, pathDragTokenRef.current);
 								}}
 								onDragStart={() => {
 									pathDragTokenRef.current = beginSceneTransaction({ owner: "object-path", cancel: () => {} });

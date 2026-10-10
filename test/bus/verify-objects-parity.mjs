@@ -4,10 +4,10 @@ import { objectsFixture } from './objects-fixture.mjs';
 import { declarations } from '../../src/commands/objects.js';
 const cases = {
   'object.set': { id: 'cube', set: { name: 'Generic' } },
+  'object.update': { id: 'cube', patch: { x: 2 } },
   'object.add': { kind: 'cone' },
   'object.remove': { ids: ['cube'] },
   'object.rename': { id: 'cube', name: 'Renamed' },
-  'object.update': { id: 'cube', patch: { x: 2 } },
   'object.group': { parent: 'sphere', children: ['cube'] },
   'object.ungroup': { children: ['cube'] },
   'object.attach': { objectId: 'cube', characterId: 'actor-a' },
@@ -16,6 +16,22 @@ const cases = {
   'objects.arrange': { ops: [{ op: 'update', id: 'cube', position: { world: { x: 2, y: 0, z: 1 } } }] },
 };
 assert.deepEqual(Object.keys(cases).sort(), declarations.filter(entry => entry.kind === 'mutation' && entry.exposure !== 'ui-only').map(entry => entry.id).sort());
+// object.update is a legacy command that silently ignores unknown keys: the agent's index leaves it out (the prompt points at
+// object.set / arrange_objects), while the wire keeps it for MCP's update_object, the CLI and the UI.
+{
+  const f = objectsFixture();
+  try {
+    const declared = declarations.find(entry => entry.id === 'object.update');
+    assert.deepEqual([declared.exposure, declared.agentHidden], [undefined, true]);
+    const listed = f.binding.handlers.inspect_studio({ scope: 'actions' }).actions.map(row => row.id);
+    assert.ok(listed.includes('object.set') && listed.includes('objects.arrange') && !listed.includes('object.update'), 'inspect_studio actions omits object.update');
+    assert.deepEqual(f.binding.handlers.inspect_studio({ scope: 'actions', ids: ['object.update'] }).actions, []);
+    assert.ok(!f.binding.context().actionIndex.some(row => row.id === 'object.update'), 'the turn actionIndex omits object.update');
+    assert.ok(f.binding.context().actionIndex.some(row => row.id === 'object.set'));
+    for (const [index, origin] of ['agent', 'mcp', 'cli', 'ui'].entries()) assert.equal(f.run('object.update', { id: 'cube', patch: { x: 2 + index } }, origin).ok, true, `${origin} keeps object.update`);
+    console.log('PASS object.update is hidden from the agent index; the wire keeps it for every origin');
+  } finally { f.dispose(); }
+}
 for (const [command, args] of Object.entries(cases)) for (const origin of ['ui', 'agent', 'mcp', 'cli']) {
   const f = objectsFixture(), initial = structuredClone(f.objects.read());
   const ok = receipt => { assert.equal(receipt.ok, true, JSON.stringify(receipt)); return receipt; };

@@ -23,6 +23,9 @@ import {
 	objectSize,
 	setSceneObjectAttach,
 	setSceneObjectParent,
+	rigidMotionBetween,
+	carryPointByMotion,
+	tidyAngle,
 } from "../scene-objects.js";
 
 import { ko, isKo } from "../locale.js";
@@ -67,22 +70,35 @@ export function createObjectsDomain(appContext, initial) {
 		return result;
 	}
 	/** Characters grouped under an object ride it while authoring too: whatever
-	 * translation an object took in this write (its own move, or carried with
-	 * its group), the characters under it take the same. Joined to the open
-	 * action, so one undo puts back the object and the riders together. */
+	 * motion an object took in this write (its own move or turn, or carried with
+	 * its group), the characters under it take the same. A pure move shifts
+	 * them by the same translation. A turn orbits them about the object's pivot
+	 * (position by the object's Δ, like any carried child) and adds the yaw
+	 * part of Δ to their facing — a character has only a yaw, so the pitch or
+	 * roll of its parent moves where it stands and never tips it over.
+	 * Joined to the open action, so one undo puts back the object and the
+	 * riders together. */
 	function carryGroupedCharacters(before, next) {
 		const cast = appContext.storeDomain("cast");
 		if (!cast) return;
 		const was = new Map(before.map(row => [row.id, row]));
 		const shifts = new Map();
+		const turns = new Map();
 		for (const row of next) {
 			const prior = was.get(row.id);
 			if (!prior || row.attach || prior.attach) continue;
+			const turn = rigidMotionBetween(prior, row);
+			if (turn) { turns.set(row.id, turn); continue; }
 			const shift = { x: row.x - prior.x, y: (row.y ?? 0) - (prior.y ?? 0), z: row.z - prior.z };
 			if (shift.x || shift.y || shift.z) shifts.set(row.id, shift);
 		}
-		if (!shifts.size || !cast.read().some(entry => shifts.has(entry.parent))) return;
+		if (!(shifts.size || turns.size) || !cast.read().some(entry => shifts.has(entry.parent) || turns.has(entry.parent))) return;
 		appContext.recordAction("cast", () => cast.write(rows => rows.map(entry => {
+			const turn = turns.get(entry.parent);
+			if (turn) {
+				const at = carryPointByMotion({ x: entry.x, y: entry.y ?? 0, z: entry.z }, turn);
+				return { ...entry, x: at.x, y: Math.max(0, at.y), z: at.z, rot: tidyAngle((entry.rot ?? 0) + turn.yaw) };
+			}
 			const shift = shifts.get(entry.parent);
 			return shift ? { ...entry, x: entry.x + shift.x, y: Math.max(0, (entry.y ?? 0) + shift.y), z: entry.z + shift.z } : entry;
 		})), null, true);
@@ -267,6 +283,10 @@ export function useObjects(appContext) {
 
 	const [gizmoMode, setGizmoMode] = useState("move");
 
+	// An Empty is nothing but its name: the moment one is made, its Outliner
+	// row opens for naming (a nonce, so a second Empty re-opens it).
+	const [renameRequest, setRenameRequest] = useState(null);
+
 	// Snap is a preference, not a law: with it on the gizmo blocks on the plan
 	// board's grid, and Ctrl/Cmd during a drag gives a free one. Off, it is the
 	// other way round. (docs/unity-reference.md §9.5)
@@ -280,10 +300,11 @@ export function useObjects(appContext) {
 		const placement = at ?? (camera
 			? placementInFront({ x: camera.position.x, z: camera.position.z }, paneYaw)
 			: {});
-		const receipt = run("object.add", { kind, placement });
+		const receipt = run("object.add", { kind, placement, first: true });
 		const object = domain.read().find(row => row.id === receipt.affectedIds[0]);
 		appContext.shared.markCraftAction("object");
 		appContext.shared.setSelectedHierarchyId(`object:${object.id}`);
+		if (object.renderer === "empty") setRenameRequest({ id: `object:${object.id}`, nonce: Date.now() });
 		// Deliberate divergence from Unity's rename-on-create: creating an object
 		// here is followed by placing it, and dropping focus into a text field
 		// swallows the very next W/E/R. Renaming stays on F2/Return and the row's
@@ -571,6 +592,25 @@ export function useObjects(appContext) {
 			{ x: object.x, y: (object.y ?? 0) + size.height / 2, z: object.z },
 			Math.max(size.width, size.height, size.depth, 0.5),
 		);
+	}
+
+	/** Outliner "Group under new Empty": the object's parent node, made on the
+	 * spot. One command, one write, so one undo takes back the Empty and the
+	 * reparent together. Selection follows the Empty, the new handle. */
+	function groupObjectUnderNewEmpty(id = selectedSceneObjectId) {
+		if (!id) return null;
+		try {
+			const receipt = run("object.groupUnderEmpty", { id });
+			const emptyId = receipt.affectedIds[0];
+			appContext.shared.setSelectedHierarchyId(`object:${emptyId}`);
+			setRenameRequest({ id: `object:${emptyId}`, nonce: Date.now() });
+			setGizmoMode("move");
+			appContext.notify(ko("Grouped under a new Empty", "빈 오브젝트로 묶었어요"));
+			return emptyId;
+		} catch (error) {
+			appContext.notify(error?.message || ko("Could not group this object", "이 오브젝트는 묶을 수 없어요"));
+			return null;
+		}
 	}
 
 	/** In-place rename commit from the hierarchy (F2 / Return / rename on
@@ -903,7 +943,9 @@ export function useObjects(appContext) {
 		// Grouping keeps its own rules (self, cycles, unknown ids) — asking the
 		// store is the only way to stay honest about them.
 		if (targetObjectId) return setSceneObjectParent(sceneObjects, id, targetObjectId) !== sceneObjects;
-		if (targetRowId === "props") return (object.attach ?? null) !== null || (object.parent ?? null) !== null;
+		// Props takes an object out of its group (or off a character) and lists
+		// it first, so the drop always shows; a top-level object moves up too.
+		if (targetRowId === "props") return (object.attach ?? null) !== null || (object.parent ?? null) !== null || sceneObjects[0]?.id !== id;
 		const attach = attachTargetForRow(targetRowId);
 		if (!attach) return false;
 		const current = object.attach ?? null;
@@ -919,6 +961,14 @@ export function useObjects(appContext) {
 		// group comes back to world numbers on the way, exactly as the Props
 		// row would put it back.
 		if (targetObjectId) return run("object.group", { parent: targetObjectId, children: [id] });
+		const object = sceneObjects.find((entry) => entry.id === id);
+		if (targetRowId === "props" && !object?.attach) {
+			// Out of its group and to the top of Props in one write (one undo):
+			// records are world-space, so clearing the parent moves nothing.
+			const rows = setSceneObjectParent(domain.read(), id, null);
+			const moved = rows.find((entry) => entry.id === id);
+			return run("objects.replace", { objects: [moved, ...rows.filter((entry) => entry.id !== id)] });
+		}
 		const attach = targetRowId === "props" ? null : attachTargetForRow(targetRowId);
 		appContext.shared.runStudioAction(attach ? "object.attach" : "object.detach", attach
 			? { objectId: id, characterId: attach.characterId, ...(attach.bone ? { bone: attach.bone } : {}) }
@@ -951,7 +1001,7 @@ export function useObjects(appContext) {
 		matteBrush, setMatteBrush, matteShrink, setMatteShrink, matteFeather, setMatteFeather, matteMode,
 		setMatteMode, matteStats, setMatteStats, matteBusy, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
 		addSceneObject, importCutout, importCutouts, spawnCutoutAt, persistMeshAsset, importMesh, importMeshes,
-		spawnMeshAt, applyMatte, duplicateSelectedSceneObject, frameSelection, renameSceneObject,
+		spawnMeshAt, applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest, renameSceneObject,
 		sceneObjectWorldMatrix, attachTargetForRow, attachTargetLabel, attachSceneObject,
 	};
 }

@@ -108,6 +108,20 @@ function overlaps(a, b) {
 	return true;
 }
 
+/** Every pair of same-facing faces of a and b that share a plane and overlap. */
+function conflictingFaces(a, b) {
+	const found = [];
+	for (const fa of a.faces) {
+		for (const fb of b.faces) {
+			if (dot(fa.n, fb.n) <= NORMAL_DOT) continue;
+			const gap = dot(fa.n, [fb.c[0] - fa.c[0], fb.c[1] - fa.c[1], fb.c[2] - fa.c[2]]);
+			if (Math.abs(gap) > PLANE_EPS) continue;
+			if (overlaps(fa, fb)) found.push(fa);
+		}
+	}
+	return found;
+}
+
 function conflict(a, b) {
 	for (const fa of a.faces) {
 		for (const fb of b.faces) {
@@ -160,4 +174,43 @@ export function coplanarDepthRanks(objects) {
 		if (rank[j] > 0) ranks.set(objects[j].id, rank[j]);
 	}
 	return ranks;
+}
+
+const AXES = ["x", "y", "z"];
+const FACE_NAMES = { "y+": "tops", "y-": "bottoms" };
+const round = (value) => Number(value.toFixed(4));
+
+/**
+ * The coplanar conflicts coplanarDepthRanks resolves by offset, named: for
+ * each pair of objects with same-facing faces in one plane, the shared planes
+ * ("tops at y=1.05"). Informational for a receipt; it does not decide ranks.
+ *
+ * @param {Array<object>} objects scene-object records
+ * @returns {Array<{a: string, b: string, planes: Array<{face: string, axis: string|null, at: number}>}>}
+ */
+export function coplanarConflicts(objects) {
+	const pairs = [];
+	if (!Array.isArray(objects) || objects.length < 2) return pairs;
+	const shapes = objects.map((object) => (object && typeof object === "object" ? facesOf(object) : null));
+	for (let j = 1; j < objects.length; j += 1) {
+		const b = shapes[j];
+		if (!b) continue;
+		for (let i = 0; i < j; i += 1) {
+			const a = shapes[i];
+			if (!a) continue;
+			if (
+				a.min[0] > b.max[0] + PLANE_EPS || b.min[0] > a.max[0] + PLANE_EPS ||
+				a.min[1] > b.max[1] + PLANE_EPS || b.min[1] > a.max[1] + PLANE_EPS ||
+				a.min[2] > b.max[2] + PLANE_EPS || b.min[2] > a.max[2] + PLANE_EPS
+			) continue;
+			const planes = conflictingFaces(a, b).map((face) => {
+				const axis = [0, 1, 2].find((k) => Math.abs(face.n[k]) > NORMAL_DOT);
+				if (axis === undefined) return { face: "tilted faces", axis: null, at: round(dot(face.n, face.c)) };
+				const sign = face.n[axis] > 0 ? "+" : "-";
+				return { face: FACE_NAMES[`${AXES[axis]}${sign}`] ?? `${sign}${AXES[axis]} faces`, axis: AXES[axis], at: round(face.c[axis]) };
+			});
+			if (planes.length) pairs.push({ a: objects[i].id, b: objects[j].id, planes });
+		}
+	}
+	return pairs;
 }

@@ -224,7 +224,7 @@ export class LiveHub {
 			baseline(value) { if (mutation) mutation.before = mutationState(mutation.name, value); },
 			receipt(command, value) {
 				if (command === "inspect_studio") {
-					studioContext = value?.context;
+					studioContext = value?.context ?? (value?.host && value?.revision ? { host: value.host, revision: value.revision } : undefined);
 				} else if (command === "run_action") {
 					// The bus attests application itself. No legacy describe diff or
 					// post-ack read may turn an admitted refusal into uncertainty.

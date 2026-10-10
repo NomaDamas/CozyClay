@@ -65,7 +65,8 @@ export async function startFixtureStudio({ port, evidence, previsMode = "animati
     if (controls.lostAck && name === 'commit_motion_candidate' && result.ok) { controls.lostAck = false; throw Error('Fixture lost acknowledgement after editor commit'); }
     return result;
   };
-  const context = async () => (await command('inspect_studio', { scope: 'selection' }, hub.workspaceHandles[0])).context;
+  // inspect_studio answers the revision and document identity; the whole context is read_studio_context at that identity.
+  const context = async () => { const { host } = await command('inspect_studio', { scope: 'selection' }, hub.workspaceHandles[0]); const read = await command('read_studio_context', { host }, hub.workspaceHandles[0]); return read?.context ?? read; };
   const read = async () => {
     const description = await command('describe', {}, hub.workspaceHandles[0]);
     const { objects, characters, camera, timeline } = description;

@@ -3038,6 +3038,28 @@ input[type=range]::-moz-range-thumb {
 	color: #eafff3;
 }
 
+/* The selected dot's lean: two small scrub fields, the word as their badge. */
+.objmo-lean {
+	display: inline-flex;
+	align-items: stretch;
+	gap: 6px;
+}
+
+.objmo-lean .number-field {
+	flex: none;
+	width: 104px;
+}
+
+.objmo-lean .number-field .axis {
+	width: auto;
+	padding: 0 6px;
+	font-size: 10px;
+}
+
+.number-field.disabled { opacity: .45; }
+.number-field.disabled .axis,
+.number-field.disabled input { cursor: not-allowed; }
+
 .tl-path-hint {
 	margin-left: auto;
 	color: #7fae95;
@@ -5996,6 +6018,12 @@ input[type=range]::-moz-range-thumb {
 	height: 12px;
 	border: 1px solid rgba(var(--lg-ink-rgb, 255,255,255), .25);
 	border-radius: 3px;
+}
+
+/* an Empty has no colour: a dashed, hollow swatch reads as "nothing to draw" */
+.add-object-swatch.empty {
+	background: transparent !important;
+	border-style: dashed;
 }
 
 /* inspector cards clip their overflow, so the menu opens inline there */

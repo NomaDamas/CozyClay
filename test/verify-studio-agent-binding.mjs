@@ -49,7 +49,7 @@ import { createMotionEdit } from '../src/ardy/motion-edit.js';
 import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/motion-calibration.js';
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 
-const cases = ['previs-mode-and-character-kind', 'inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'still-frame-shot-camera-key', 'clip-frame-shot-camera-key', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'generate-all-blocks-refusal-reason', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'run-action-shot-camera-rail-and-undo', 'run-action-view-toggles', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'verify-result-targets', 'late-apply-inspect-patch', 'arrange-with-attached-prop', 'run-action-export-shot-video', 'run-action-scenes', 'run-action-project-save', 'run-action-asset-import-and-undo', 'run-action-ai-prepare-shot', 'run-action-motion-generate-from-video'];
+const cases = ['previs-mode-and-character-kind', 'inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'still-frame-shot-camera-key', 'clip-frame-shot-camera-key', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'generate-all-blocks-refusal-reason', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'run-action-shot-camera-rail-and-undo', 'run-action-view-toggles', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'verify-result-targets', 'late-apply-inspect-patch', 'arrange-with-attached-prop', 'arrange-local-space', 'run-action-export-shot-video', 'run-action-scenes', 'run-action-project-save', 'run-action-asset-import-and-undo', 'run-action-ai-prepare-shot', 'run-action-motion-generate-from-video'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 import { readStudioSource } from './bus/verify-domain-modules.mjs';
@@ -338,7 +338,8 @@ const implementations={
    f.actual.publishStudioCharacters(f.characterRef.current.map(c=>c.id==='actor-b'?{...c,x:5+index}:c),true);
    const live=f.binding.refresh().revision;
    const seen=await invoke('inspect_studio',{scope});
-   assert.equal(seen.context?.revision?.scene,live,`inspect scope ${scope} reports the admission revision`);
+   assert.equal(seen.revision?.scene,live,`inspect scope ${scope} reports the admission revision`);
+   assert.equal(seen.context,undefined,`inspect scope ${scope} does not echo the whole context`);
    const patched=await invoke('patch_elements',{ops:[{target:{kind:'object',id},set:{color:`#12345${index}`}}]}).catch(error=>error);
    assert.equal(patched.status,'applied',`patch after inspect scope ${scope} is admitted at the revision it reported: ${patched.code ?? ''} ${patched.message ?? ''}`);
    assert.deepEqual(sent.at(-1),{name:'patch_elements',expectedRevision:live});
@@ -488,7 +489,9 @@ const implementations={
   const rail=createShot('Rail shot',0,47,[{frame:5,framing:{pos:{x:0,y:1.6,z:5},yaw:0.1,pitch:-0.05,fovDeg:40}}],{mode:'rail',cameraRail:[{x:-2,z:4},{x:2,z:4}]});
   f.scope.setShots([rail]);f.live.current.shots=[rail];
   const shot=await f.call('inspect_studio',{scope:'shot'});
-  assert.equal(shot.context.revision.scene,f.binding.refresh().revision,'every scope carries the admission context');
+  assert.equal(shot.revision.scene,f.binding.refresh().revision,'every scope carries the admission revision');
+  assert.equal(shot.context,undefined,'and no embedded context');
+  assert.deepEqual(shot.host,(({workspaceId,documentEpoch,sceneId,sceneEpoch})=>({workspaceId,documentEpoch,sceneId,sceneEpoch}))(f.binding.context().host),'with the minimal document identity');
   assert.equal(shot.scope,'document');
   assert.deepEqual(shot.document.shots.map(s=>({id:s.id,name:s.name,range:{startFrame:s.startFrame,endFrameExclusive:s.endFrame+1},mode:s.camera.mode,
    cameraKeys:s.cameraKeys.map(({id,...key})=>key),rail:s.camera.cameraRail})),[{id:rail.id,name:'Rail shot',range:{startFrame:0,endFrameExclusive:48},mode:'rail',
@@ -502,12 +505,12 @@ const implementations={
   assert.deepEqual(actor.layer.promptClips.map(({id,...clip})=>clip),[{startFrame:0,endFrame:24,text:'walks in'}]);
   assert.deepEqual(actor.layer.waypoints.map(p=>({frame:p.frame,position:{x:p.x,y:p.y??0,z:p.z}})),[{frame:0,position:{x:0,y:0,z:0}},{frame:24,position:{x:1,y:0,z:2}}]);
   assert.deepEqual(motion.document.motion.find(c=>c.id==='actor-b').ikKeys.map(k=>k.frame),[7]);
-  assert.equal(motion.context.entities.find(c=>c.id==='actor-a').motion.frames,0);
-  assert.equal(motion.context.entities.find(c=>c.id==='actor-a').motion.takeId,null);
+  assert.equal(f.binding.context().entities.find(c=>c.id==='actor-a').motion.frames,0);
+  assert.equal(f.binding.context().entities.find(c=>c.id==='actor-a').motion.takeId,null);
   const scene=await f.call('inspect_studio',{scope:'scene'}),stage=scene.document.stage;
   assert.deepEqual({environment:stage.environment,style:stage.style,hasEnvironmentImage:!!stage.environmentImage,hasEnvSheet:stage.hasEnvSheet,keyLight:stage.keyLight,camera:{presetId:stage.cameraPresetId,aspect:stage.shotAspect,sensorId:stage.sensorId}},
    {environment:'a sunlit modern living room',style:'moody cinematic lighting, 35mm film look',hasEnvironmentImage:false,hasEnvSheet:false,keyLight:{x:6,y:9,z:4,intensity:1.12,warmth:0.5},camera:{presetId:null,aspect:'16:9',sensorId:'fullFrame'}});
-  assert.deepEqual({characters:scene.context.scene.characterCount,objects:scene.context.scene.objectCount,shots:scene.document.shots.length,frames:scene.context.scene.frameCount,assets:scene.context.assets.length},
+  assert.deepEqual({characters:f.binding.context().scene.characterCount,objects:f.binding.context().scene.objectCount,shots:scene.document.shots.length,frames:f.binding.context().scene.frameCount,assets:f.binding.context().assets.length},
    {characters:2,objects:0,shots:1,frames:48,assets:commands.studioObjectCatalogue().objects.length});
   const made=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'create',source:{kind:'cube'},position:{world:{x:0,y:0,z:0}}},{op:'create',source:{kind:'cube'},position:{world:{x:2,y:0,z:0}}}]}));
   assert.equal(made.status,'applied',JSON.stringify(made));
@@ -517,7 +520,7 @@ const implementations={
   assert.equal(routed.status,'applied',JSON.stringify(routed));
   assert.equal(f.binding.handlers.operate_studio(f.request('operate_studio',{selection:{kind:'object',id:child}})).ok,true);
   const selected=await f.call('inspect_studio',{scope:'selection'}),entity=selected.document.objects[0];
-  assert.deepEqual(selected.context.selection,{kind:'object',id:child});
+  assert.deepEqual(f.binding.context().selection,{kind:'object',id:child});
   assert.equal(entity.id,child);assert.equal(entity.color,'#d94a4a');assert.equal(entity.parent,base);assert.equal(entity.attach,null);
   assert.deepEqual(entity.path.points,[{x:2,y:0,z:0},{x:4,y:0,z:1}]);
   const tinted=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{tint:'#123456'}}]}));
@@ -549,7 +552,7 @@ const implementations={
  async 'patch-during-gesture'(f){f.scope.studioGestureRef.current=true;const r=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'stage'},set:{'keyLight.warmth':0.9}}]}));assert.equal(r.code,'TARGET_BUSY',JSON.stringify(r));assert.equal(f.history.current.past.length,0);assert.equal(f.live.current.stage.keyLight.warmth,0.5);},
  async 'run-action-shot-create-and-undo'(f){
   const listed=await f.call('inspect_studio',{scope:'actions'});
-  assert.deepEqual(listed.actions.map(a=>a.id).sort(),commandDeclarations().map(entry=>entry.id).sort(),'the App registers every declared action');
+  assert.deepEqual(listed.actions.map(a=>a.id).sort(),commandDeclarations().filter(entry=>!entry.agentHidden).map(entry=>entry.id).sort(),'the App registers every declared action except agentHidden ones');
   const byId=Object.fromEntries(listed.actions.map(a=>[a.id,a]));
   assert.equal(byId['shot.create'].available,true,JSON.stringify(byId['shot.create']));
   assert.equal(byId['shot.create'].input,undefined,'the listing carries no schema');
@@ -574,7 +577,7 @@ const implementations={
   const created=await f.call('arrange_objects',f.request('arrange_objects',createArgs));assert.equal(created.ok,true,JSON.stringify(created));const id=created.affectedIds[0];
   const r=await f.call('run_action',f.request('run_action',{action:'object.duplicate',args:{objectId:id}}));
   assert.equal(r.status,'applied',JSON.stringify(r));assert.deepEqual(r.affectedIds,['copy-1']);assert.equal(r.revision.after,r.revision.before+1);
-  assert.deepEqual(r.delta,[{id:'copy-1',after:{patched:[
+  assert.deepEqual(r.delta,[{id:'copy-1',after:{bounds:{min:{x:2,y:0,z:-0.5},max:{x:3,y:1,z:0.5}},patched:[
    {path:'object.renderer',text:'cube'},{path:'object.position',vec:{x:2.5,y:0,z:0}},
    {path:'object.rotation',vec:{x:0,y:0,z:0}},{path:'object.scale',vec:{x:1,y:1,z:1}},
    {path:'object.name',text:'Copy'},{path:'object.color',text:'#c2c6c8'},{path:'object.opacity',text:null},
@@ -694,6 +697,17 @@ const implementations={
   await refused('character.setIkKey',{characterId:'ghost',frame:5,tracks:{head:{q:[q()]}}},'STALE_TARGET');
   await refused('character.removeIkKey',{characterId:'actor-a',frame:9},'STALE_TARGET');
   assert.equal(f.history.current.past.length,depth);
+ },
+ async 'arrange-local-space'(f){
+  const made=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'create',source:{kind:'cube'},name:'Chassis',position:{world:{x:4,y:0,z:1}},facing:{yawDeg:90}},{op:'create',source:{kind:'cube'},name:'Wheel',parent:'Chassis',space:'parent',position:{world:{x:1,y:0.5,z:0}}}]}));
+  assert.equal(made.status,'applied',JSON.stringify(made));
+  const [chassis,wheel]=made.affectedIds;
+  const result=await f.call('inspect_studio',{scope:'entities',ids:[chassis,wheel]});
+  const root=result.entities.find(row=>row.id===chassis),part=result.entities.find(row=>row.id===wheel);
+  assert.equal(root.local,undefined,'a root carries no local transform');
+  assert.deepEqual(part.position,{x:4,y:0.5,z:0},'local +X of a yaw-90 parent is world -Z');
+  assert.equal(part.yawDeg,90);
+  assert.deepEqual(part.local,{position:{x:1,y:0.5,z:0},rotationDeg:{x:0,y:0,z:0}});
  },
  async 'arrange-with-attached-prop'(f){
   // A prop riding a character is measured where it is drawn, so carrying it

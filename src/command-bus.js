@@ -48,7 +48,7 @@ export function createCommandBus({ registry, ports }) {
   let agentTurn = null;
   function exposure(entry, args, request) {
     if (request.origin === 'ui') return;
-    if (entry.exposure === 'ui-only') fail('CAPABILITY_MISSING', 'This command is available only from the Studio UI.');
+    if (entry.exposure === 'ui-only') fail('CAPABILITY_MISSING', entry.uiOnlyHint ?? 'This command is available only from the Studio UI.');
     if (entry.id === 'load_scenes') {
       const ids = scenes => [...new Set(scenes.map(scene => scene.id))].sort();
       if (same(ids(args.document.scenes), ids(registry.state().scenes))) return;
@@ -201,6 +201,11 @@ export function createCommandBus({ registry, ports }) {
       mutated: changed, preserved: { authoredState: changed ? 'changed' : 'unchanged' }, recovery: { action: 'inspect', retryAllowed: false },
       message: [...String(error.message || error)].slice(0, 500).join('') });
   }
+  /** Findings first, toasts after; past the schema's twelve, say how many were left out. */
+  const receiptWarnings = (findings = [], toasts = [], omitted = 0, limit = 12) => {
+    const all = [...(omitted ? [{ code: 'READBACK_TRUNCATED', count: omitted, message: `Readback lists 8 of ${8 + omitted} affected ids; inspect_studio scope entities with ids for the rest.` }] : []), ...findings, ...toastWarnings(toasts)];
+    return all.length <= limit ? all : [...all.slice(0, limit - 1), { code: 'WARNINGS_TRUNCATED', count: all.length - limit + 1, message: `${all.length - limit + 1} more warnings omitted.` }];
+  };
   function receipt(entry, request, before, result, historyEntryId, toasts = [], turn = null) {
     const after = ports.read(), changed = after.revision !== before.revision;
     const retainedHistoryEntryId = historyEntryId ?? turn?.txId ?? null;
@@ -208,13 +213,20 @@ export function createCommandBus({ registry, ports }) {
     const completed = entry.kind === 'job' || entry.kind === 'document' || (entry.kind === 'mutation' && changed && (turn || after.revision > before.revision + 1));
     const ids = completed || changed ? result.affectedIds : entry.kind === 'transient' ? [before.host.sceneId] : [];
     if (turn && changed) for (const id of ids) turn.affectedIds.add(id);
-    return validateReceipt({ ok: true, commandId: request.commandId, receiptId: crypto.randomUUID(), host: before.host,
+    const build = level => validateReceipt({ ok: true, commandId: request.commandId, receiptId: crypto.randomUUID(), host: before.host,
       action: entry.id, summary: result.summary, status: completed ? 'completed' : entry.kind === 'transient' ? 'transient' : changed ? 'applied' : 'noop',
       authored: changed, ...(completed ? { kind: entry.kind, ...(result.output === undefined ? {} : { output: result.output }), ...(same(before.host, after.host) ? {} : { nextHost: after.host }) } : entry.kind === 'transient' ? { view: { before: before.viewRevision ?? 0, after: after.viewRevision ?? 0 } } : { mutated: changed }),
       revision: { before: before.revision, after: after.revision }, affectedIds: ids,
-      delta: ids.slice(0, 8).map(id => ({ id, after: ports.readback?.(id, after) ?? { removed: true } })),
-      checks: { coverage: `studio-action:${entry.id}` }, warnings: toastWarnings(toasts),
+      delta: ids.slice(0, 8).map(id => ({ id, after: ports.readback?.(id, after, level > 0) ?? { removed: true } })),
+      // The command's own measurements (an arrangement's overlap evidence) ride beside the coverage tag.
+      checks: { coverage: `studio-action:${entry.id}`, ...result.checks }, warnings: receiptWarnings(result.warnings, toasts, Math.max(0, ids.length - 8), level > 1 ? 4 : 12),
       undo: retainedHistoryEntryId ? { historyEntryId: retainedHistoryEntryId, entries: 1, canUndoDirect: !turn } : null, ...(ids.length > 8 ? { detailCursor: request.commandId } : {}) });
+    // Full readback and warnings are richer than the 8 KiB receipt always allows; shed the extras
+    // (box and children, then all but the first warnings) rather than fail an edit that was applied.
+    for (let level = 0; ; level++) {
+      try { return build(level); }
+      catch (error) { if (level >= 2 || error?.code !== 'INVALID_RECEIPT' || !/8 KiB/.test(error.message)) throw error; }
+    }
   }
   function executeRun(id, args = {}, options = {}) {
     const request = { origin: 'ui', commandId: crypto.randomUUID(), ...options };

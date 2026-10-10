@@ -92,7 +92,7 @@ for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revis
   const args = { ops: [{ op: "update", id: "cube", position: { world: { x: 1, y: 0, z: 0 } } }] };
   const liveHub = { async command(name, payload, handle) {
     assert.equal(handle, "handle-12");
-    if (name === "inspect_studio") return { context: { revision: { scene: revision } } };
+    if (name === "inspect_studio") return { revision: { scene: revision } };
     sent.push(structuredClone(payload));
     if (payload.expectedRevision !== revision) {
       if (scenario === "stale-scene-readmits-revision") return { ok: false, code: "STALE_SCENE", message: "Authored scene revision changed." };
@@ -106,7 +106,7 @@ for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revis
     }
     return { ok: true, status: "applied", revision: { before, after: revision } };
   } };
-  admission.refresh = async () => { refreshes++; const read = await liveHub.command("inspect_studio", { scope: "scene" }, "handle-12"); admission.revision = read.context.revision.scene; };
+  admission.refresh = async () => { refreshes++; const read = await liveHub.command("inspect_studio", { scope: "scene" }, "handle-12"); admission.revision = read.revision.scene; };
   const invoke = createStudioTools({ liveHub, workspaceHandle: "handle-12", session: { admission } }).internal.invoke;
   await invoke("arrange_objects", args);
   assert.equal(admission.revision, 2);
@@ -418,11 +418,12 @@ if (shouldRun("stale-host-and-post-install-rate-limit")) {
 if (shouldRun("sequential-mutations-revision-chain") || shouldRun("external-revision-bump-refuses")) {
   const revisionScenarios = selected ? [selected === "external-revision-bump-refuses"] : [false, true];
   for (const externalBump of revisionScenarios) {
-    let sceneRevision = 1; let applies = 0; const commands = [];
+    let sceneRevision = 1; let applies = 0; const commands = []; let charToken = "ct-11";
   const live = await liveFixture({ command: async (name, args) => {
     commands.push({ name, args });
-    if (name === "read_studio_context") return { context: context(host(live.handle), sceneRevision) };
-    if (externalBump && applies === 1) sceneRevision++;
+    if (name === "read_studio_context") { const fresh = context(host(live.handle), sceneRevision); return { context: { ...fresh, entities: fresh.entities.map(row => ({ ...row, token: charToken })) } }; }
+    // The outside edit touches the very character the model is about to remove, so the sidecar must not replay the command for it.
+    if (externalBump && applies === 1 && sceneRevision === 2) { sceneRevision++; charToken = "ct-12"; }
     if (args.expectedRevision !== sceneRevision) return { ok: false, error: { code: "STALE_SCENE", message: "Authored scene revision changed." } };
     applies++; const before = sceneRevision++; return { ok: true, commandId: args.commandId, receiptId: `receipt-${applies}`, host: host(live.handle), status: "applied", authored: true, revision: { before, after: sceneRevision }, affectedIds: [args.name === "arrange_objects" ? "cube" : "char-alex"], delta: [], checks: { coverage: "fixture" }, undo: { historyEntryId: `history-${applies}`, entries: 1, canUndoDirect: true }, warnings: [] };
   } });

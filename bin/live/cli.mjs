@@ -320,7 +320,7 @@ async function runVerb({ client, verb, spec, name, flags }) {
 		}
 	};
 	const admitted = async (commandName, args, { context, options = forwarded } = {}) => {
-		const envelope = admissionEnvelope(commandName, args, context ?? (await command("inspect_studio", { scope: "selection" }))?.context);
+		const envelope = admissionEnvelope(commandName, args, context ?? await command("inspect_studio", { scope: "selection" }));
 		try {
 			const value = await command(commandName, envelope, options);
 			if (value?.ok === false) throw receiptFailure(value);
@@ -446,7 +446,7 @@ async function runVerb({ client, verb, spec, name, flags }) {
 		// at and the deadline it needs, which --timeout overrides.
 		const inspected = await command("inspect_studio", { scope: "actions", ids: [name] });
 		const deadline = timeoutMs ?? inspected?.actions?.find((row) => row.id === name)?.timeoutMs;
-		return admitted("run_action", { action: name, args }, { context: inspected?.context, options: deadline === undefined ? {} : { timeoutMs: deadline } });
+		return admitted("run_action", { action: name, args }, { context: inspected, options: deadline === undefined ? {} : { timeoutMs: deadline } });
 	}
 
 	if (verb === "cmd") return raw(() => command(name, flags.has("--args") ? jsonFlag(flags, "--args") : {}));

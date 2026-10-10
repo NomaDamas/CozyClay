@@ -48,8 +48,11 @@ export const describeEditors = (editors) => editors.map((editor) => ({
  * carries no per-entity tokens, because the scene revision already bumps on
  * every authored change and a retired token only refuses a legitimate retry.
  */
-export function admissionEnvelope(name, args, context) {
-	if (!context?.host || !context.revision || !Array.isArray(context.entities)) {
+export function admissionEnvelope(name, args, inspected) {
+	// inspect_studio answers the host and revision at its top level; an older
+	// editor embedded a whole context. Admission needs only those two.
+	const context = inspected?.context ?? inspected;
+	if (!context?.host || !context.revision) {
 		throw new LiveCliError("EDITOR_ERROR", "The editor did not return a Studio context to admit this command against.");
 	}
 	const host = Object.fromEntries(IDENTITY.map((key) => [key, context.host[key]]));

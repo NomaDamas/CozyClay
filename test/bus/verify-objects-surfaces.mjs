@@ -41,5 +41,17 @@ try {
   const rollback = rollbackReceipt.output;
   assert.equal(rollback.rolledBack, true);
   assert.deepEqual(f.objects.read(), saved);
+  // A batch that references its own earlier parts is one transaction: one history entry, one undo.
+  const preAssembly = structuredClone(f.objects.read()), assemblyDepth = f.objects.store.depths().past;
+  const assembly = f.binding.handlers.arrange_objects(f.request('arrange_objects', { ops: [
+    { op: 'create', source: { kind: 'cube' }, name: 'Chassis', scale: { x: 2, y: 0.5, z: 4 }, position: { world: { x: -8, y: 0, z: 6 } } },
+    { op: 'create', source: { kind: 'cube' }, name: 'Hood', scale: { x: 1, y: 0.2, z: 1 }, rotationDeg: { x: -10, y: 0, z: 0 }, position: { onObject: 'Chassis', offsetXZ: { x: 0, z: 1 } }, parent: 'Chassis' },
+    { op: 'create', source: { kind: 'cube' }, name: 'Fender', scale: { x: 0.3, y: 0.2, z: 1 }, position: { relativeTo: 'Hood', basis: 'world', side: 'right', gapM: 0.1, support: 'floor' } },
+  ] }));
+  assert.equal(assembly.action, 'objects.arrange', JSON.stringify(assembly));
+  assert.equal(f.objects.read().length, preAssembly.length + 3);
+  assert.equal(f.objects.store.depths().past, assemblyDepth + 1);
+  f.actual.undoScene(); assert.deepEqual(f.objects.read(), preAssembly);
+  assert.equal(f.objects.store.depths().past, assemblyDepth);
   console.log('PASS real UI add/rename/group, planner alias/replay, duplication and atomic legacy batches');
 } finally { f.dispose(); }

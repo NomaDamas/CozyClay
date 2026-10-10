@@ -114,6 +114,7 @@ const NODE_FILES = [
 	"test/verify-agent-host.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-studio-owner-restart.mjs",
+	"test/verify-studio-agent-rebase.mjs",
 	"test/verify-agent-live-runtime.mjs",
 	"test/verify-package-agent-imports.mjs",
 	"test/verify-agent-runner-errors.mjs",
@@ -125,6 +126,7 @@ const NODE_FILES = [
 	"test/verify-agent-sse-golden.mjs",
 	"test/verify-agent-context-budget.mjs",
 	"test/verify-studio-agent-protocol.mjs",
+	"test/verify-studio-agent-tokens.mjs",
 	"test/verify-studio-agent-jobs.mjs",
 	"test/verify-agent-execution.mjs",
 	"test/verify-workflow-execution.mjs",
@@ -138,6 +140,8 @@ const NODE_FILES = [
 	"test/verify-appearance.mjs",
 	"test/verify-auto-color.mjs",
 	"test/verify-coplanar-depth.mjs",
+	"test/verify-empty-object.mjs",
+	"test/verify-route-owner.mjs",
 	"test/verify-part-colours.mjs",
 	"test/verify-asset-shelf.mjs",
 	"test/verify-blocking-depth.mjs",
@@ -235,6 +239,7 @@ const NODE_FILES = [
 	"test/verify-mesh-graph-clone.mjs",
 	"test/verify-scene-objects.mjs",
 	"test/verify-studio-agent-geometry.mjs",
+	"test/verify-local-placement.mjs",
 	"test/verify-studio-agent-motion.mjs",
 	"test/verify-studio-agent-binding.mjs",
 	"test/verify-studio-agent-turn-undo.mjs",
@@ -290,7 +295,9 @@ const NODE_FILES = [
 	"mcp/verify-import-mesh.mjs",
 	"test/verify-object-path.mjs",
 	"test/verify-object-travel.mjs",
+	"test/verify-object-travel-lean.mjs",
 	"test/verify-character-group.mjs",
+	"test/verify-group-rotation.mjs",
 	"test/verify-number-field-scrub.mjs",
 	"test/verify-speed-envelope.mjs",
 	"test/verify-motion-resources.mjs",
@@ -306,6 +313,7 @@ const BROWSER_FILES = [
 	"test/qa-storyboard-board-browser.mjs",
 	"test/qa-storyboard-export-browser.mjs",
 	"test/qa-proxy-figure-browser.mjs",
+	"test/qa-rail-lean-browser.mjs",
 	"test/qa-motion-readiness-browser.mjs",
 	"test/qa-export-recovery-browser.mjs",
 	"test/verify-camera-mode-browser.mjs",
@@ -344,12 +352,15 @@ const BROWSER_FILES = [
 	"test/qa-agent-activity-browser.mjs",
 	"test/qa-platform-fit-browser.mjs",
 	"test/qa-scenes-v5-migration-browser.mjs",
+	"test/qa-clipboard-paste-browser.mjs",
+	"test/qa-rail-ring-browser.mjs",
+	"test/qa-rail-reach-browser.mjs",
 ];
 
 // The inventory sweep only picks up `verify*.mjs`; a browser suite named for
 // the QA runner it needs is listed here so it still shows up in the manifest
 // (as an EXCLUDE with its reason) instead of going unmentioned.
-const EXTRA_INVENTORY = ["test/ik/translation-step.mjs", "test/qa-scenes-v5-migration-browser.mjs", "test/qa-studio-agent-browser.mjs", "test/qa-agent-scenarios-browser.mjs", "test/qa-execution-outcomes-browser.mjs", "test/qa-motion-readiness-browser.mjs", "test/qa-export-recovery-browser.mjs", "test/qa-agent-view-toggle-browser.mjs", "test/qa-camera-tutorial-browser.mjs", "test/qa-first-shot-handoff-browser.mjs", "test/qa-tutorial-analytics-browser.mjs", "test/qa-camera-pointer-lock-browser.mjs", "test/qa-first-edit-browser.mjs", "test/qa-ia-tail-browser.mjs", "test/qa-keyframe-pack-browser.mjs", "test/qa-preview-browser.mjs", "test/qa-project-resources-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-playback-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs", "test/qa-view-menu-browser.mjs", "test/qa-agent-activity-browser.mjs", "test/qa-live-reconnect-browser.mjs", "test/qa-platform-fit-browser.mjs"];
+const EXTRA_INVENTORY = ["test/ik/translation-step.mjs", "test/qa-scenes-v5-migration-browser.mjs", "test/qa-studio-agent-browser.mjs", "test/qa-agent-scenarios-browser.mjs", "test/qa-execution-outcomes-browser.mjs", "test/qa-motion-readiness-browser.mjs", "test/qa-export-recovery-browser.mjs", "test/qa-agent-view-toggle-browser.mjs", "test/qa-camera-tutorial-browser.mjs", "test/qa-first-shot-handoff-browser.mjs", "test/qa-tutorial-analytics-browser.mjs", "test/qa-camera-pointer-lock-browser.mjs", "test/qa-first-edit-browser.mjs", "test/qa-ia-tail-browser.mjs", "test/qa-keyframe-pack-browser.mjs", "test/qa-preview-browser.mjs", "test/qa-project-resources-browser.mjs", "test/qa-reference-slots-browser.mjs", "test/qa-scene-playback-browser.mjs", "test/qa-scene-switcher-browser.mjs", "test/qa-send-to-ai-browser.mjs", "test/qa-view-menu-browser.mjs", "test/qa-agent-activity-browser.mjs", "test/qa-live-reconnect-browser.mjs", "test/qa-platform-fit-browser.mjs", "test/qa-clipboard-paste-browser.mjs", "test/qa-rail-lean-browser.mjs", "test/qa-rail-reach-browser.mjs", "test/qa-rail-ring-browser.mjs"];
 
 EXTRA_INVENTORY.push("test/qa-proxy-figure-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-proxy-entry-browser.mjs");

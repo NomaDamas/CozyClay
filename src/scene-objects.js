@@ -209,6 +209,42 @@ const MESH_ENTRY = {
 	color: "#c49a6c",
 };
 
+/**
+ * An empty is a pure grouping node: a transform and a place in the hierarchy,
+ * with nothing to draw (Unity's Create Empty, Blender's Empty). It exists so a
+ * multi-part assembly can have one top-level handle — move it, turn it, give it
+ * a route — without any of the parts having to stand in for it.
+ *
+ * Its size is zero on purpose. Every consumer that reads geometry (blockers,
+ * drop surfaces, ground sampling, support rise, fits, the plan footprint) goes
+ * through `footprint` × `height`, so a zero box makes the empty invisible to
+ * all of them without a per-consumer special case; the few that would
+ * misread a zero box as a point (dropToSurfacePatch) check `isEmptyObject`.
+ * It is creatable from the menu, so it lives beside the library entries rather
+ * than being import-only.
+ */
+export const EMPTY_KIND = "empty";
+/** Editor-only marker size in metres: the axes cross drawn for an empty, and
+ * the side of the invisible volume that makes it clickable. */
+export const EMPTY_MARKER_SIZE = 0.3;
+const EMPTY_ENTRY = {
+	kind: EMPTY_KIND,
+	label: "Empty",
+	group: "Primitives",
+	footprint: { width: 0, depth: 0 },
+	height: 0,
+	color: "#ffffff",
+};
+
+/** True for a record that is only a node: no mesh, no collision, no surface. */
+export function isEmptyObject(object) {
+	return object?.renderer === EMPTY_KIND;
+}
+
+/** The catalogue grouped for the create menu: the library plus the empty,
+ * which is creatable but has no footprint to satisfy the library's contract. */
+export const OBJECT_MENU_ENTRIES = Object.freeze([EMPTY_ENTRY, ...OBJECT_LIBRARY]);
+
 /** Every kind that can exist in a scene: the catalogue you can create from,
  * plus the kinds that arrive by import and so are deliberately absent from the
  * "Add object" menu (a cutout without an image, a mesh without a GLB, has
@@ -216,6 +252,7 @@ const MESH_ENTRY = {
 export function objectLibraryEntry(kind) {
 	if (kind === CUTOUT_KIND) return CUTOUT_ENTRY;
 	if (kind === MESH_KIND) return MESH_ENTRY;
+	if (kind === EMPTY_KIND) return EMPTY_ENTRY;
 	return OBJECT_LIBRARY.find((entry) => entry.kind === kind) ?? null;
 }
 
@@ -523,6 +560,15 @@ const TRANSFORM_LIMITS = {
 	scaleZ: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.z, OBJECT_SCALE_LIMITS.max.z),
 };
 
+/** The patch keys updateSceneObject reads for this object; any other key is
+ * silently ignored there, so callers that must not be silent check against this. */
+export function objectPatchFields(object) {
+	const fields = [...Object.keys(TRANSFORM_LIMITS), "name", "color", "hidden", "opacity", "path"];
+	if (object?.renderer === CUTOUT_KIND) fields.push("assetId", "sourceAssetId", "matteAssetId", "matteScale", "height", "aspect", "width", "stretch");
+	if (object?.renderer === MESH_KIND) fields.push("clay", "assetId", "height");
+	return fields;
+}
+
 /** Every object that hangs off `id`, at any depth. A cycle cannot form because
  * setParent refuses one, but the seen-set keeps this total even if data is
  * hand-edited into a loop. */
@@ -574,13 +620,117 @@ export function isEffectivelyHidden(entity, objects = [], characters = []) {
 	return false;
 }
 
+/** Float dust (6e-17 where 0 belongs) is snapped away, and everything else is
+ * kept to 1e-9: fine enough that hundreds of small gizmo steps cannot drift a
+ * carried child visibly, coarse enough that stored values stay readable. */
+const tidy = (value) => {
+	const rounded = Math.round(value * 1e9) / 1e9;
+	return rounded === 0 ? 0 : rounded;
+};
+export const tidyAngle = (deg) => tidy(wrapAngle(tidy(deg)));
+
+const orientationOf = (record) =>
+	new Quaternion().setFromEuler(new Euler((record.rotX ?? 0) * DEG, (record.rot ?? 0) * DEG, (record.rotZ ?? 0) * DEG, EULER_ORDER));
+
+/** The Euler triple (degrees, XYZ) for an orientation that stays closest to
+ * `near`. Every orientation has two XYZ triples — (x, y, z) and
+ * (x+180, 180−y, z+180) — and a bare setFromQuaternion always answers with the
+ * one whose Y is within ±90. Taking that blindly would turn a plain yaw of 170
+ * into "rotX 180, rot −10, rotZ 180": the same pose, but the bird's-eye board
+ * and the inspector read `rot` as the yaw. The nearer triple keeps a flat
+ * object flat across every turn. */
+function eulerNear(quaternion, near) {
+	const e = new Euler().setFromQuaternion(quaternion, EULER_ORDER);
+	const here = [near.rotX ?? 0, near.rot ?? 0, near.rotZ ?? 0];
+	const candidates = [
+		[e.x / DEG, e.y / DEG, e.z / DEG],
+		[e.x / DEG + 180, 180 - e.y / DEG, e.z / DEG + 180],
+	].map((triple) => triple.map(tidyAngle));
+	const distance = (triple) => triple.reduce((sum, value, i) => sum + Math.abs(wrapAngle(value - here[i])), 0);
+	const [rotX, rot, rotZ] = distance(candidates[1]) < distance(candidates[0]) ? candidates[1] : candidates[0];
+	return { rotX, rot, rotZ };
+}
+
+/**
+ * The rigid motion that takes a pose to another: where its pivot was and is,
+ * and the turn Δ = q_after · q_before⁻¹ between the two orientations (XYZ
+ * Eulers, the renderer's order). Anything riding the pose goes to
+ * `to + Δ·(p − from)` and turns by Δ on the spot. Returns null when the
+ * orientation did not change — a pure move stays a plain translation.
+ *
+ * `yaw` is the part of Δ that turns about the vertical (swing-twist about +Y,
+ * degrees). A character only has a yaw, so it takes this and nothing more: the
+ * pitch or roll of what it is grouped under moves its position and leaves its
+ * facing alone.
+ *
+ * @returns {{ quaternion: Quaternion, matrix: number[], yaw: number, from: object, to: object } | null}
+ */
+export function rigidMotionBetween(before, after) {
+	if ((before.rotX ?? 0) === (after.rotX ?? 0) && (before.rot ?? 0) === (after.rot ?? 0) && (before.rotZ ?? 0) === (after.rotZ ?? 0)) return null;
+	const quaternion = orientationOf(after).multiply(orientationOf(before).invert());
+	if (quaternion.w < 0) quaternion.set(-quaternion.x, -quaternion.y, -quaternion.z, -quaternion.w);
+	if (quaternion.w > 1 - 1e-15) return null;
+	const { x, y, z, w } = quaternion;
+	return {
+		quaternion,
+		// row-major 3x3 of Δ
+		matrix: [
+			1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+			2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+			2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+		],
+		yaw: tidyAngle((2 * Math.atan2(y, w)) / DEG),
+		from: { x: before.x ?? 0, y: before.y ?? 0, z: before.z ?? 0 },
+		to: { x: after.x ?? 0, y: after.y ?? 0, z: after.z ?? 0 },
+	};
+}
+
+/** A point carried by a rigid motion from `rigidMotionBetween`. */
+export function carryPointByMotion(point, motion) {
+	const { matrix: m, from, to } = motion;
+	const dx = point.x - from.x;
+	const dy = (point.y ?? 0) - from.y;
+	const dz = point.z - from.z;
+	return {
+		x: tidy(to.x + m[0] * dx + m[1] * dy + m[2] * dz),
+		y: tidy(to.y + m[3] * dx + m[4] * dy + m[5] * dz),
+		z: tidy(to.z + m[6] * dx + m[7] * dy + m[8] * dz),
+	};
+}
+
+/** Descendants that turn with a rotating parent: everything under it except
+ * records riding a character (their numbers are bone-local, so they follow the
+ * bone, not the parent) and whatever hangs below such a record. */
+function descendantsThatTurn(objects, id) {
+	const out = new Set();
+	let frontier = [id];
+	while (frontier.length) {
+		const next = [];
+		for (const object of objects) {
+			if (!object.parent || !frontier.includes(object.parent) || object.id === id || out.has(object.id) || object.attach) continue;
+			out.add(object.id);
+			next.push(object.id);
+		}
+		frontier = next;
+	}
+	return out;
+}
+
 export function updateSceneObject(objects, id, patch) {
 	let changed = false;
 	const target = objects.find((object) => object.id === id);
-	// A parent carries its children: the group is dragged, nudged and dropped as
-	// one body. Only translation rides along — rotating or scaling a group would
-	// have to orbit and rescale every child about the parent's origin, which is a
-	// different feature and is deliberately not pretended at here.
+	// A parent carries its children: the group is dragged, nudged, turned and
+	// dropped as one body. Translation shifts every descendant by the same
+	// delta. Rotation turns the group rigidly about the parent's pivot: each
+	// descendant orbits it by Δ = q_new · q_old⁻¹ and composes Δ onto its own
+	// orientation, so every child keeps its pose relative to the parent. A
+	// child's travel route is NOT turned with it: the route is a road in the
+	// world, and a parent's turn turns the bodies (their orientation and the
+	// authored position they orbit), never the road they would drive. A move and a turn in one patch is both at once,
+	// about the pivot's old and new place. Scale is NOT carried — rescaling a
+	// group would have to resize every child about the parent, a different
+	// feature. Records riding a character (`attach`) hold bone-local numbers and
+	// are left alone by the turn, and so is everything below them.
 	const carried = target ? descendantsOf(objects, id) : [];
 	const delta = { x: 0, y: 0, z: 0 };
 	if (target) {
@@ -593,10 +743,43 @@ export function updateSceneObject(objects, id, patch) {
 	}
 	const moving = new Set(carried.map((object) => object.id));
 	const shifts = delta.x || delta.y || delta.z;
+	let turn = null;
+	let turning = null;
+	if (target && !target.attach && carried.length) {
+		const after = { x: (target.x ?? 0) + delta.x, y: (target.y ?? 0) + delta.y, z: (target.z ?? 0) + delta.z };
+		for (const key of ["rotX", "rot", "rotZ"]) {
+			const value = patch[key] === undefined ? NaN : Number(patch[key]);
+			after[key] = Number.isFinite(value) ? TRANSFORM_LIMITS[key](value) : (target[key] ?? 0);
+		}
+		turn = rigidMotionBetween(target, after);
+		if (turn) turning = descendantsThatTurn(objects, id);
+	}
 
 	const next = objects.map((object) => {
 		if (object.id !== id) {
-			if (!shifts || !moving.has(object.id)) return object;
+			if ((!shifts && !turn) || !moving.has(object.id)) return object;
+			if (turn && turning.has(object.id)) {
+				const update = {};
+				const orbit = carryPointByMotion({ x: object.x, y: object.y, z: object.z }, turn);
+				for (const axis of ["x", "y", "z"]) {
+					const bounded = TRANSFORM_LIMITS[axis](orbit[axis]);
+					if (bounded !== (object[axis] ?? 0)) update[axis] = bounded;
+				}
+				const orientation = new Quaternion().multiplyQuaternions(turn.quaternion, orientationOf(object));
+				const euler = eulerNear(orientation, object);
+				for (const key of ["rotX", "rot", "rotZ"]) {
+					if (euler[key] !== (object[key] ?? 0)) update[key] = euler[key];
+				}
+				// A move in the same edit still carries the road along, unturned.
+				if (object.path && shifts) {
+					const moved = translateObjectPath(object.path, delta);
+					if (JSON.stringify(moved ?? null) !== JSON.stringify(object.path ?? null)) update.path = moved;
+				}
+				if (!Object.keys(update).length) return object;
+				changed = true;
+				return { ...object, ...update };
+			}
+			if (!shifts) return object;
 			const update = {};
 			const carriedDelta = { x: 0, y: 0, z: 0 };
 			for (const axis of ["x", "y", "z"]) {
@@ -791,6 +974,34 @@ export function removeSceneObject(objects, id) {
 	// are promoted to top level rather than vanishing with it, because a group
 	// is an editing convenience and never an owner of the parts.
 	return next.map((object) => (object.parent === id ? { ...object, parent: null } : object));
+}
+
+/**
+ * Wrap `id` in a new Empty: the Empty takes the object's place in the tree
+ * (its parent, its position) and the object becomes its child. One pure edit,
+ * so the caller can publish it as ONE history entry.
+ *
+ * Returns `{ objects, emptyId }`, or null when the object is unknown or is
+ * carried by a character (its numbers are local to a bone frame, so an Empty
+ * "at its position" would sit at a fictional place — detach first).
+ *
+ * Rotation is not copied: the Empty starts unturned, because a group node
+ * should be a clean handle, and the children keep their world transforms
+ * (grouping moves nothing on screen).
+ */
+export function groupUnderNewEmpty(objects, id) {
+	const target = objects.find((object) => object.id === id);
+	if (!target || target.attach) return null;
+	const created = createSceneObject(EMPTY_KIND, objects, { x: target.x, z: target.z });
+	if (!created) return null;
+	const names = new Set(objects.map((object) => object.name));
+	const base = `${target.name} Group`;
+	let name = base;
+	for (let n = 2; names.has(name); n += 1) name = `${base} ${n}`;
+	const empty = { ...created, name, y: TRANSFORM_LIMITS.y(target.y ?? 0), parent: target.parent ?? null };
+	// The Empty goes in just before the object, so the Outliner row keeps its place.
+	const next = objects.flatMap((object) => (object.id === id ? [empty, { ...object, parent: empty.id }] : [object]));
+	return { objects: next, emptyId: empty.id };
 }
 /* -------------------------------------------------- persistence ---- */
 
@@ -1092,9 +1303,13 @@ export function objectFootprintBounds(object) {
  * clamped here: the y clamp stays in updateSceneObject, the single owner.
  */
 export function dropToSurfacePatch(object, others, characters = []) {
+	// An empty has no base to rest on and no extent to rest with: dropping it
+	// would carry a whole assembly to wherever a zero-size point happens to sit.
+	if (isEmptyObject(object)) return null;
 	const self = objectFootprintBounds(object);
 	let highestTop = 0;
 	for (const other of others) {
+		if (isEmptyObject(other)) continue;
 		if (isEffectivelyHidden(other, others, characters)) continue;
 		const bounds = objectFootprintBounds(other);
 		if (self.minX >= bounds.maxX - OVERLAP_EPS || bounds.minX >= self.maxX - OVERLAP_EPS) continue;

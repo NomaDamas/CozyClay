@@ -1,4 +1,5 @@
 import { timingProgress } from "./speed-envelope.js";
+import { monotoneCubicAt } from "./monotone-cubic.js";
 
 /**
  * Follow camera: a real crew in three pieces of math.
@@ -290,30 +291,7 @@ function cranePoints(value) {
 export function craneHeightAt(craneHeight, progress) {
 	const points = cranePoints(craneHeight);
 	if (!points) return NaN;
-	const clamped = Math.max(0, Math.min(1, progress));
-	if (clamped <= points[0].t) return points[0].height;
-	if (clamped >= points[points.length - 1].t) return points[points.length - 1].height;
-	let i = 0;
-	while (i < points.length - 2 && clamped > points[i + 1].t) i += 1;
-	const p0 = points[i];
-	const p1 = points[i + 1];
-	const h = p1.t - p0.t;
-	if (h < 1e-9) return p1.height;
-	const secant = (a, b) => (b.height - a.height) / Math.max(b.t - a.t, 1e-9);
-	const d = secant(p0, p1);
-	// harmonic mean of neighbouring secants; zero across a local extremum
-	const mono = (sa, sb) => (sa * sb <= 0 ? 0 : (2 * sa * sb) / (sa + sb));
-	const m0 = i > 0 ? mono(secant(points[i - 1], p0), d) : d;
-	const m1 = i < points.length - 2 ? mono(d, secant(p1, points[i + 2])) : d;
-	const u = (clamped - p0.t) / h;
-	const u2 = u * u;
-	const u3 = u2 * u;
-	return (
-		(2 * u3 - 3 * u2 + 1) * p0.height +
-		(u3 - 2 * u2 + u) * h * m0 +
-		(-2 * u3 + 3 * u2) * p1.height +
-		(u3 - u2) * h * m1
-	);
+	return monotoneCubicAt(points, Math.max(0, Math.min(1, progress)), (point) => point.height);
 }
 
 /* ------------------------------------------------------------ the rail --- */
@@ -534,4 +512,73 @@ export function buildRailFollowTrack(subject, fps, rail, params = {}) {
 		track.push({ pos, yaw, pitch: offsetPitch(pitch, p.pitchOffsetDeg), s });
 	}
 	return track;
+}
+
+/**
+ * Prepare an x/z rail bend for one crane mark: a copy of the drawn control
+ * points (with one inserted at the mark's base when none is close enough to
+ * anchor the bend) plus a per-point weight — a cosine bump centred on the
+ * anchor that fades to zero by the neighbouring crane marks, so dragging one
+ * mark can never tow the marks beside it. For an interior mark both rail
+ * ends are pinned outright. `maxControls` stops the seeding at a schema
+ * ceiling (the nearest point anchors the bend instead).
+ */
+export function prepareRailBend(controlPoints, base, marks, markIndex, { maxControls = Infinity } = {}) {
+	const controls = (controlPoints ?? []).map((entry) => ({ ...entry }));
+	if (controls.length < 2) return null;
+	// nearest control point / segment to the mark's base
+	let nearestIdx = 0;
+	let nearestD = Infinity;
+	for (let i = 0; i < controls.length; i += 1) {
+		const d = Math.hypot(controls[i].x - base.x, controls[i].z - base.z);
+		if (d < nearestD) {
+			nearestD = d;
+			nearestIdx = i;
+		}
+	}
+	const interior = markIndex > 0 && markIndex < marks.length - 1;
+	let anchorIdx = nearestIdx;
+	if (interior && nearestD > 0.25 && controls.length < maxControls) {
+		// no control point near the mark: bend needs a vertex to pull, so one
+		// is seeded at the base, on the segment the base projects onto
+		let segmentIdx = 0;
+		let segmentD = Infinity;
+		for (let i = 0; i < controls.length - 1; i += 1) {
+			const ax = controls[i].x;
+			const az = controls[i].z;
+			const bx = controls[i + 1].x;
+			const bz = controls[i + 1].z;
+			const lenSq = Math.max((bx - ax) ** 2 + (bz - az) ** 2, 1e-9);
+			const u = Math.max(0, Math.min(1, ((base.x - ax) * (bx - ax) + (base.z - az) * (bz - az)) / lenSq));
+			const d = Math.hypot(ax + (bx - ax) * u - base.x, az + (bz - az) * u - base.z);
+			if (d < segmentD) {
+				segmentD = d;
+				segmentIdx = i;
+			}
+		}
+		// An object route's points carry a height; the seed takes the one the
+		// curve has there. (The camera rail's points have none.)
+		const seed = { x: base.x, z: base.z };
+		if (base.y !== undefined) seed.y = base.y;
+		controls.splice(segmentIdx + 1, 0, seed);
+		anchorIdx = segmentIdx + 1;
+	}
+	// normalized arc parameter of each control point along the control polygon
+	const ts = [0];
+	for (let i = 1; i < controls.length; i += 1) {
+		ts.push(ts[i - 1] + Math.hypot(controls[i].x - controls[i - 1].x, controls[i].z - controls[i - 1].z));
+	}
+	const total = Math.max(ts[ts.length - 1], 1e-9);
+	for (let i = 0; i < ts.length; i += 1) ts[i] /= total;
+	// the bump reaches exactly to the neighbouring crane marks
+	const t0 = ts[anchorIdx];
+	const previous = markIndex > 0 ? marks[markIndex - 1].t : null;
+	const next = markIndex < marks.length - 1 ? marks[markIndex + 1].t : null;
+	const radius = Math.max(0.15, Math.min(previous != null ? t0 - previous : 1, next != null ? next - t0 : 1));
+	const weights = ts.map((t, i) => {
+		if (interior && (i === 0 || i === ts.length - 1)) return 0;
+		const d = Math.abs(t - t0);
+		return d >= radius ? 0 : 0.5 * (1 + Math.cos((Math.PI * d) / radius));
+	});
+	return { startControls: controls, weights, t0, radius };
 }

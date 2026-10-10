@@ -181,6 +181,15 @@ const TOOL_ANNOTATIONS = Object.freeze({
 /** The document identity a Studio command is admitted in. */
 const STUDIO_IDENTITY_KEYS = ["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"];
 
+/** The Studio context behind an inspect answer. inspect_studio answers the
+ * revision and document identity, not the whole context (older editors embedded
+ * it); entities, selection and the mode are read apart, at that identity. */
+const contextOf = async (inspected, workspaceHandle = liveWorkspace.getStore()) => {
+	if (inspected?.context) return inspected.context;
+	if (!inspected?.host || !Number.isSafeInteger(inspected.revision?.scene)) return undefined;
+	const read = await liveHub.command("read_studio_context", { host: inspected.host }, workspaceHandle);
+	return read?.context ?? read;
+};
 /** One registered editor command through the editor's own bus, admitted at
  * the open document and its current revision like the agent's run_action. Its
  * declaration (read from the editor, never from this server) sets the hub
@@ -188,15 +197,18 @@ const STUDIO_IDENTITY_KEYS = ["workspaceId", "documentEpoch", "sceneId", "sceneE
 const executeStudioCommand = async ({ action, args, expectedRevision, commandId, timeoutMs, confirmationToken, inspected }) => {
 	const workspaceHandle = liveWorkspace.getStore();
 	inspected ??= await liveHub.command("inspect_studio", { scope: "actions", ids: [action] }, workspaceHandle);
-	const context = inspected?.context;
+	const context = await contextOf(inspected, workspaceHandle);
 	if (!context?.host || !Number.isSafeInteger(context.revision?.scene)) throw new Error("The editor did not return a Studio context to admit this command against.");
+	// Admission stays at the revision the inspect answered: an edit that lands
+	// between that inspect and the context read is the editor's to refuse (STALE_SCENE).
+	const inspectedRevision = Number.isSafeInteger(inspected?.revision?.scene) ? inspected.revision.scene : context.revision.scene;
 	const declared = inspected.actions?.find((row) => row.id === action);
 	const receipt = await liveHub.command("run_action", {
 		name: "run_action",
 		args: { action, args: typeof args === "function" ? await args(context) : args ?? {}, ...(confirmationToken ? { confirmationToken } : {}) },
 		commandId: commandId ?? randomUUID(),
 		host: Object.fromEntries(STUDIO_IDENTITY_KEYS.map((key) => [key, context.host[key]])),
-		expectedRevision: expectedRevision ?? context.revision.scene,
+		expectedRevision: expectedRevision ?? inspectedRevision,
 	}, workspaceHandle, { timeoutMs: timeoutMs ?? (declared?.timeoutMs === undefined ? undefined : Math.min(MAX_COMMAND_TIMEOUT_MS, declared.timeoutMs + (declared.generation ? 5000 : 0))) });
 	return receipt;
 };
@@ -461,7 +473,7 @@ function sceneReport({ characterCursor = 0, objectCursor = 0, limit = 50 } = {})
 				const points = object.path.points;
 				const first = points[0];
 				const last = points[points.length - 1];
-				lines.push(`    path: ${points.length} pts  (${round(first.x, 1)},${round(first.z, 1)}) → (${round(last.x, 1)},${round(last.z, 1)})  speed: ${object.path.speed || "fills take"}${object.path.extend ? "  keeps going" : ""}${object.path.loop ? "  loops" : ""}`);
+				lines.push(`    path: ${points.length} pts  (${round(first.x, 1)},${round(first.z, 1)}) → (${round(last.x, 1)},${round(last.z, 1)})  speed: ${object.path.speed || "fills take"}${object.path.extend ? "  keeps going" : ""}${object.path.loop ? "  loops" : ""}${object.path.marks?.length ? `  marks: ${object.path.marks.map((mark) => (typeof mark === "number" ? round(mark, 2) : `${round(mark.t, 2)}${mark.bank ? ` bank ${round(mark.bank, 1)}` : ""}${mark.pitch ? ` pitch ${round(mark.pitch, 1)}` : ""}`)).join(", ")}` : ""}`);
 			}
 		}
 	}
@@ -1221,7 +1233,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				}
 				try {
 					const inspected = await inspectAction("character.setPromptBlocks");
-					return previsRefusal("set_prompt_blocks", { context: inspected?.context }) ??
+					return previsRefusal("set_prompt_blocks", { context: await contextOf(inspected) }) ??
 						await runStudioCommand({ ...admission, inspected, action: "character.setPromptBlocks", args: context => ({
 						characterId: context.activeCharacterId, blocks,
 					}) });
@@ -1251,7 +1263,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				}
 				const inspected = liveHub?.connected ? await inspectAction('motion.replace') : undefined;
 				const characterId = args.character === undefined ? inspected?.context?.activeCharacterId : await liveCharacterId(args.character);
-				const refused = previsRefusal("load_motion", { feature: "take", context: inspected?.context, characterId });
+				const refused = previsRefusal("load_motion", { feature: "take", context: await contextOf(inspected), characterId });
 				if (refused) return refused;
 				return runStudioCommand({ ...args, inspected, action: 'motion.replace', args: context => ({
 					characterId: args.character === undefined ? context.activeCharacterId : characterId,
@@ -1318,7 +1330,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				const normalized = normalizePhases(phases.map(phase => typeof phase === 'string' ? phase : phase.text));
 				const beats = normalized.texts.map((text, index) => ({ text, seconds: phases[normalized.sources[index]]?.seconds ?? seconds / phases.length })).filter(beat => beat.text);
 				const action = motion_url ? 'motion.replace' : 'motion.generate', inspected = await inspectAction(action);
-				const refused = previsRefusal("generate_motion", { feature: "motion", context: inspected?.context });
+				const refused = previsRefusal("generate_motion", { feature: "motion", context: await contextOf(inspected) });
 				if (refused) return refused;
 				return runStudioCommand({ ...admission, inspected, action, args: context => {
 					const generated = generationArgs({ characterId: context.activeCharacterId, source: { kind: 'generate', beats, ...(seed === undefined ? {} : { seed }) } });
@@ -1364,6 +1376,14 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 							face_travel: z.boolean().optional().describe("turn to face the direction of travel (default true)"),
 							loop: z.boolean().optional(),
 							extend: z.boolean().optional().describe("keep going in the final direction after the route ends"),
+							marks: z
+								.array(z.union([
+									z.number().min(0).max(1),
+									z.object({ t: z.number().min(0).max(1), bank: z.number().min(-90).max(90).optional(), pitch: z.number().min(-90).max(90).optional() }),
+								]))
+								.max(6)
+								.optional()
+								.describe("dots along the route: an arc fraction 0-1, or { t, bank, pitch } (degrees, +-90) to lean there; level again at the neighbouring marks and ends"),
 						})
 						.nullable()
 						.optional()
@@ -1378,7 +1398,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				const travelPath = path === null
 					? null
 					: path
-						? { points: path.points.map((point) => ({ x: point.x, y: point.y ?? 0, z: point.z })), speed: path.speed ?? 0, faceTravel: path.face_travel !== false, loop: path.loop === true, extend: path.extend === true }
+						? { points: path.points.map((point) => ({ x: point.x, y: point.y ?? 0, z: point.z })), speed: path.speed ?? 0, faceTravel: path.face_travel !== false, loop: path.loop === true, extend: path.extend === true, ...(path.marks ? { marks: path.marks } : {}) }
 						: undefined;
 				if (liveHub?.connected) {
 					try {

@@ -256,9 +256,18 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 		// whichever surface is nearer.
 		tools.raycaster.layers.set(GIZMO_LAYER);
 		let ghostId = null;
+		let ghostIsEmpty = false;
 		const ghostHit = tools.raycaster.intersectObjects(scene.children, true).find((entry) => {
 			if (!entry.object.isMesh) return false;
 			for (let node = entry.object; node; node = node.parent) {
+				// An Empty's marker: its pick volume is a gizmo-layer mesh under
+				// the object's own group, so the owning record is the first
+				// ancestor carrying a sceneObjectId.
+				if (entry.object.userData?.emptyPick && node.userData?.sceneObjectId) {
+					ghostId = node.userData.sceneObjectId;
+					ghostIsEmpty = true;
+					return true;
+				}
 				if (node.userData?.shotCameraPick) {
 					ghostId = "__shotcam__";
 					return true;
@@ -271,7 +280,9 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			return false;
 		});
 		tools.raycaster.layers.set(0);
-		if (ghostHit && (!hit || ghostHit.distance < hit.distance)) return { id: ghostId, point: ghostHit.point.clone() };
+		// The Empty's marker is drawn over the set (no depth test), so what you
+		// see is what you click: it wins over whatever surface is behind it.
+		if (ghostHit && (ghostIsEmpty || !hit || ghostHit.distance < hit.distance)) return { id: ghostId, point: ghostHit.point.clone() };
 		if (!hit) return null;
 		for (let node = hit.object; node; node = node.parent) {
 			if (node.userData?.sceneObjectId) return { id: node.userData.sceneObjectId, point: hit.point.clone() };
@@ -478,9 +489,15 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 		 * null for the uniform-scale knob and for plane handles, which carry
 		 * their own `plane` axes instead. */
 		const beginDrag = (kind, axis, dir, camera) => {
-			const live = stateRef.current.object;
-			if (!live) return false;
-			tools.origin.set(live.x, gizmoHeight(live), live.z);
+			const shown = stateRef.current.object;
+			if (!shown) return false;
+			// The gizmo can be SHOWN on the pose a routed record is drawn at, while
+			// every channel a drag writes starts from the AUTHORED record: a start
+			// taken from the drawn numbers would land them in the authored ones
+			// (a jump of however far the car has driven). The pivot, and the yaw
+			// the card's corners are seen at, are the shown ones.
+			const live = stateRef.current.objects.find((entry) => entry.id === shown.id) ?? shown;
+			tools.origin.set(shown.x, gizmoHeight(shown), shown.z);
 			camera.getWorldDirection(tools.eye);
 			let plane;
 			let drag;
@@ -525,7 +542,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 				// The card's own plane, so the grab tracks the picture rather than a
 				// world axis: a standee that has been turned is still resized by the
 				// corner the eye sees.
-				const yaw = ((live.rot ?? 0) * Math.PI) / 180;
+				const yaw = ((shown.rot ?? 0) * Math.PI) / 180;
 				const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 				const up = new THREE.Vector3(0, 1, 0);
 				const normal = new THREE.Vector3().crossVectors(right, up).normalize();
@@ -631,17 +648,22 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			// side-effect free: it only answers "would you grab here?".
 			if (stateRef.current.claimPointer?.(event)) return;
 			const grabbed = pickHandle(event);
-			// A press ON the key-light sun outranks any handle overlapping it:
-			// the puck's own body-drag is the primary interaction there, and the
-			// centre plane-square would otherwise silently claim the grab.
+			// A press ON the key-light sun, or on a route or crane dot, outranks
+			// any handle overlapping it: the puck's own body-drag and the dot's
+			// own grab are the primary interaction there, and the centre
+			// plane-square would otherwise silently claim the grab. (A routed
+			// object drawn at frame 0 sits exactly on its route's start dot.)
 			if (grabbed && rayFrom(event)) {
 				tools.raycaster.layers.set(GIZMO_LAYER);
-				const sunClaims = tools.raycaster.intersectObjects(scene.children, true).some((entry) => {
-					for (let node = entry.object; node; node = node.parent) if (node.userData?.keyLightPick) return true;
+				const dotClaims = tools.raycaster.intersectObjects(scene.children, true).some((entry) => {
+					for (let node = entry.object; node; node = node.parent) {
+						const data = node.userData;
+						if (data?.keyLightPick || data?.pathIndex !== undefined || data?.pathRing || data?.craneIndex !== undefined) return true;
+					}
 					return false;
 				});
 				tools.raycaster.layers.set(0);
-				if (sunClaims) return;
+				if (dotClaims) return;
 			}
 			if (
 				grabbed &&

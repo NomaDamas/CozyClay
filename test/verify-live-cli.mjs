@@ -119,7 +119,7 @@ const connectEditor = async (url, workspaceId, meta, controls = { silent: new Se
 		switch (frame.name) {
 			case "ping": return { pong: true };
 			case "describe": return describeValue();
-			case "inspect_studio": return { context: context(), entities: entities(), total: 2, nextCursor: null };
+			case "inspect_studio": return { revision: context().revision, host: context().host, entities: entities(), total: 2, nextCursor: null };
 			case "arrange_objects":
 			case "arrange_characters":
 			case "frame_shot": {
@@ -328,7 +328,7 @@ try {
 	assert.equal(described.objects.length, 1);
 
 	const inspected = ok(await run(["inspect", "--scope", "selection"]));
-	assert.equal(inspected.context.host.workspaceId, IDENTITY.workspaceId);
+	assert.equal(inspected.host.workspaceId, IDENTITY.workspaceId);
 	assert.equal(inspected.total, 2);
 	const inspectedByQuery = ok(await run(["inspect", "--scope", "entities", "--query", "Cube"]));
 	assert.ok(inspectedByQuery.entities.length > 0);

@@ -6,7 +6,8 @@ import { promptResizeFrame } from "./timeline-resize.js";
 import { ko, isKo } from "../locale.js";
 import { isImeComposing } from "../ime.js";
 import { buildRail, craneHeightAt } from "../camera-follow.js";
-import { pathMetrics } from "../object-path.js";
+import { insertPathMark, pathMarks, pathMetrics, pathProgressAt, MAX_PATH_LEAN } from "../object-path.js";
+import { NumberField } from "../ui.jsx";
 import { flatTiming, timingIsFlat, envelopeDrag, insertCut, removeCut, CUT_MIN_GAP } from "../speed-envelope.js";
 import { checkShotAgainstPreset, presetById } from "../model-presets.js";
 import "./timeline.css";
@@ -508,9 +509,6 @@ function SpeedGraph({
 		<div className={"sg" + (bare ? " sg-bare" : "")}>
 			{!bare && <header className="sg-head">
 				<span className="sg-facts">{facts ?? `${averageSpeed.toFixed(1)} ${speedUnit} ${ko("average", "평균")}`}</span>
-				<span className="tl-path-hint">
-					{ko("drag the curve · double-click or the button cuts · Delete removes a cut", "곡선을 끌어 조절 · 더블클릭이나 버튼으로 컷 · 컷 선택 후 Delete로 삭제")}
-				</span>
 				<button
 					type="button"
 					className="tl-camera-tool"
@@ -534,7 +532,7 @@ function SpeedGraph({
 					</button>
 				)}
 			</header>}
-			<div className="sg-body">
+			<div className="sg-body" title={ko("Drag the curve · double-click or the button cuts · Delete removes a cut", "곡선을 끌어 조절 · 더블클릭이나 버튼으로 컷 · 컷 선택 후 Delete로 삭제")}>
 				<svg
 					ref={svgRef}
 					viewBox="0 0 1 1"
@@ -618,12 +616,21 @@ function travelSpan(path, metrics, frameCount, fps) {
  * row ask "whose?". The frame ruler and the transport above stay put, because
  * those belong to the take, not to any one subject.
  */
-function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDrawToggle, onPathChange, onPathClear, onTimingGestureStart, onTimingGestureEnd }) {
+function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDrawToggle, onPathChange, onPathClear, onTimingGestureStart, onTimingGestureEnd, markIndex = null, onMarkAdd, onMarkLean, onMarkScrubStart, onMarkScrubEnd }) {
 	const path = object?.path ?? null;
 	const metrics = useMemo(() => (path ? pathMetrics(path) : null), [path]);
 	const span = useMemo(() => travelSpan(path, metrics, frameCount, fps), [path, metrics, frameCount, fps]);
 	const patch = (change) => onPathChange?.({ ...path, ...change });
 	const seconds = span ? (span.end - span.start) / Math.max(1, fps) : 0;
+	// The dot under the playhead: where on the route the prop is this frame.
+	// Null when the route is full or the prop is standing on a dot or an end.
+	const playheadMark = useMemo(() => {
+		if (!path) return null;
+		const progress = pathProgressAt(path, frame, { frameCount, fps });
+		return progress == null ? null : insertPathMark(path, progress);
+	}, [path, frame, frameCount, fps]);
+	const marks = useMemo(() => (path ? pathMarks(path) : []), [path]);
+	const selectedMark = markIndex != null && markIndex > 0 && markIndex <= marks.length ? marks[markIndex - 1] : null;
 	return (
 		<>
 			<div className="tl-track objmo">
@@ -682,22 +689,16 @@ function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDra
 							>
 								{ko("Loop", "반복")}
 							</button>
+							{/* Destructive, so it sits apart at the row's end and only
+							    turns red under the pointer. */}
 							<button
 								type="button"
-								className="tl-camera-tool danger"
+								className="tl-camera-tool danger objmo-end"
 								title={ko("Delete this route; the object stands still again", "경로를 지웁니다. 오브젝트는 다시 제자리에 섭니다")}
 								onClick={() => onPathClear?.()}
 							>
 								{ko("Delete path", "경로 삭제")}
 							</button>
-							{/* The two gestures nobody guesses, on the same row rather than
-							    a lane of their own — an empty track reads as broken. */}
-							<span className="tl-path-hint">
-								{ko(
-									`${metrics.length.toFixed(1)} m · ${path.points.length} points · double-click the line to add a point · Delete removes it`,
-									`${metrics.length.toFixed(1)} m · 점 ${path.points.length}개 · 선을 더블클릭하면 점 추가 · Delete로 삭제`,
-								)}
-							</span>
 						</>
 					) : (
 						<span className="tl-path-hint">
@@ -706,6 +707,59 @@ function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDra
 					)}
 				</div>
 			</div>
+			{path && (
+				<div className="tl-track objmo objmo-dots">
+					<span className="tl-track-label">{ko("Dots", "점")}</span>
+					<div className="tl-lane objmo-tools">
+						<button
+							type="button"
+							className="tl-camera-tool"
+							data-testid="route-add-dot"
+							disabled={!playheadMark}
+							title={playheadMark
+								? ko("Add a dot where the prop is on this frame", "지금 프레임에서 소품이 있는 곳에 점을 추가합니다")
+								: ko("No room for a dot here: the route is full, or the playhead is on a dot or an end", "여기엔 점을 추가할 수 없어요: 경로가 가득 찼거나, 재생 위치가 점이나 끝에 있어요")}
+							onClick={() => playheadMark && onMarkAdd?.(playheadMark.marks[playheadMark.index - 1].t)}
+						>
+							{ko("Add dot at playhead", "현재 위치에 점 추가")}
+						</button>
+						<span className="objmo-lean" data-testid="route-lean-fields" title={selectedMark ? undefined : ko("Ends are always level; select a dot between them to lean the prop there", "양 끝은 항상 수평이에요. 사이의 점을 선택하면 그 지점에서 기울일 수 있어요")}>
+							<NumberField
+								label={ko("Bank", "기울기")}
+								title={ko("Roll about the direction of travel; positive leans onto the right side", "진행 방향을 축으로 한 기울기; 양수는 오른쪽이 내려갑니다")}
+								value={selectedMark ? selectedMark.bank : 0}
+								step={1}
+								precision={1}
+								scrubRange={MAX_PATH_LEAN}
+								disabled={!selectedMark}
+								onChange={(value, token) => onMarkLean?.("bank", value, token)}
+								onScrubStart={onMarkScrubStart}
+								onScrubEnd={onMarkScrubEnd}
+							/>
+							<NumberField
+								label={ko("Pitch", "피치")}
+								title={ko("Nose up (positive) or down; the prop holds this angle at the dot", "코가 위(양수) 또는 아래로 향하는 각도; 이 점에서 이 각도를 유지합니다")}
+								value={selectedMark ? selectedMark.pitch : 0}
+								step={1}
+								precision={1}
+								scrubRange={MAX_PATH_LEAN}
+								disabled={!selectedMark}
+								onChange={(value, token) => onMarkLean?.("pitch", value, token)}
+								onScrubStart={onMarkScrubStart}
+								onScrubEnd={onMarkScrubEnd}
+							/>
+						</span>
+						{/* One short status, muted: the long form is in the tooltips. */}
+						<span className="tl-path-hint">
+							{selectedMark
+								? ko("Eases back to level at the next dot · E shows rings on the dot", "다음 점에서 수평으로 돌아와요 · E 키로 점에 회전 링")
+								: markIndex === 0 || (markIndex != null && markIndex === marks.length + 1)
+									? ko("Ends stay level", "양 끝은 수평")
+									: ko("Select a dot to lean the prop there", "점을 선택하면 그 지점에서 기울기")}
+						</span>
+					</div>
+				</div>
+			)}
 			{path && span && (
 				<div className="tl-track objmo sg-row">
 					<span className="tl-track-label">{ko("Speed", "속도 곡선")}</span>
@@ -1020,6 +1074,11 @@ export default function Timeline({
 	onObjectPathClear,
 	onObjectTimingGestureStart,
 	onObjectTimingGestureEnd,
+	objectPathPointIndex = null,
+	onObjectMarkAdd,
+	onObjectMarkLean,
+	onObjectMarkScrubStart,
+	onObjectMarkScrubEnd,
 	onCameraRailDelete,
 	onShotSelect,
 	onShotBoundaryMove,
@@ -1059,7 +1118,7 @@ export default function Timeline({
 	// The window key/interval handlers register once; the latest callbacks
 	// are read through a ref so they never go stale mid-playback.
 	const handlers = useRef({});
-	handlers.current = { onScrub, onAdvance, onStep, onPlayToggle, onWaypointToggle, onMarkerSelect, onMarkerRemove, onRootKeyframeAdd, onPromptAdd, onPromptSelect, onPromptChange, onPromptResize, onPromptMove, onPromptRemove, onIkKeyframeAdd, onIkKeyframeRemove, onPinSelect, onFootSnapToggle, onBodyContactToggle, onCameraMoveSelect, onCameraKeyframeAdd, onCameraKeyframeMove, onCameraKeyframeRemove, onCameraBlockSelect, onCameraBlockChange, onCameraPreview, onCameraRailDrawToggle, onCameraRailDelete, onObjectPathDrawToggle, onObjectPathChange, onObjectPathClear, onObjectTimingGestureStart, onObjectTimingGestureEnd, onShotSelect, onShotBoundaryMove, onShotRename, onShotRemove, onShotDuplicate, onShotCut, onShotSplit, onShotMove, onMotionTrim, onMotionTrimReset, onMotionCut, onMotionSpeedChange, onMotionSegmentRemove, onEditGestureStart };
+	handlers.current = { onScrub, onAdvance, onStep, onPlayToggle, onWaypointToggle, onMarkerSelect, onMarkerRemove, onRootKeyframeAdd, onPromptAdd, onPromptSelect, onPromptChange, onPromptResize, onPromptMove, onPromptRemove, onIkKeyframeAdd, onIkKeyframeRemove, onPinSelect, onFootSnapToggle, onBodyContactToggle, onCameraMoveSelect, onCameraKeyframeAdd, onCameraKeyframeMove, onCameraKeyframeRemove, onCameraBlockSelect, onCameraBlockChange, onCameraPreview, onCameraRailDrawToggle, onCameraRailDelete, onObjectPathDrawToggle, onObjectPathChange, onObjectPathClear, onObjectTimingGestureStart, onObjectTimingGestureEnd, onObjectMarkAdd, onObjectMarkLean, onObjectMarkScrubStart, onObjectMarkScrubEnd, onShotSelect, onShotBoundaryMove, onShotRename, onShotRemove, onShotDuplicate, onShotCut, onShotSplit, onShotMove, onMotionTrim, onMotionTrimReset, onMotionCut, onMotionSpeedChange, onMotionSegmentRemove, onEditGestureStart };
 
 	// Trackpad/wheel zoom over the FRAME ruler lane only. React registers
 	// onWheel as passive, so a synthetic onWheel could never preventDefault —
@@ -1975,7 +2034,7 @@ export default function Timeline({
 					)}
 
 					<div className="tl-body" ref={bodyRef}>
-						<div className={"tl-surface" + (!shots.length ? " empty-shots" : "")} style={{ "--tl-zoom": surfaceZoom }}>
+						<div className={"tl-surface" + (!shots.length ? " empty-shots" : "") + (pathObject ? " prop-subject" : "")} style={{ "--tl-zoom": surfaceZoom }}>
 						<div className="tl-ruler">
 							<span className="tl-ruler-label">{ko("Frame", "프레임")}</span>
 							<div
@@ -2029,6 +2088,11 @@ export default function Timeline({
 								onPathClear={() => handlers.current.onObjectPathClear?.()}
 								onTimingGestureStart={() => handlers.current.onObjectTimingGestureStart?.()}
 								onTimingGestureEnd={() => handlers.current.onObjectTimingGestureEnd?.()}
+								markIndex={objectPathPointIndex}
+								onMarkAdd={(t) => handlers.current.onObjectMarkAdd?.(t)}
+								onMarkLean={(key, value, token) => handlers.current.onObjectMarkLean?.(key, value, token)}
+								onMarkScrubStart={(...args) => handlers.current.onObjectMarkScrubStart?.(...args)}
+								onMarkScrubEnd={(...args) => handlers.current.onObjectMarkScrubEnd?.(...args)}
 							/>
 						) : tracks.map((name) => (
 							<div className={"tl-track" + (name === "Prompts" ? " prompts" : "") + (name === IK_LANE ? " ik" : "") + (name === SHOTS_LANE ? " shots" : "")} data-track-id={name} key={name}>

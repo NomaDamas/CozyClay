@@ -125,7 +125,7 @@ export function register(registry, ports) {
 		} });
 	} }, ports, semantic[0]);
 	for (const declaration of semantic.slice(1)) registry.register({ ...declaration, available: mounted, run(args, context) {
-		if (declaration.id === 'characters.arrange') { const plan = owner().arrange(args); return { affectedIds: plan.affectedIds, summary: 'Arranged characters.' }; }
+		if (declaration.id === 'characters.arrange') { const plan = owner().arrange(args); return { affectedIds: plan.affectedIds, summary: 'Arranged characters.', checks: plan.checks, warnings: plan.warnings }; }
 		const before = owner().read();
 		if (declaration.id.endsWith('PromptBlock')) promptEdit(declaration.id, args); else methods[declaration.id](args);
 		// The Assets tile and the MCP live path report themselves; this is the agent and

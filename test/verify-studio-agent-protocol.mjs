@@ -206,6 +206,14 @@ function registerTests() {
 		assert.equal(command.args.shotId, "still-1");
 		assert.equal(command.args.caption, "Two people at a table");
 	});
+	test("the Studio prompt states the scene-geometry facts and prefers object.set over object.update", async () => {
+		const { STUDIO_SYSTEM_PROMPT: prompt } = await import("../bin/agent/studio-prompt.mjs");
+		for (const rule of [/Euler order XYZ for rotX\/rot\/rotZ/, /yaw zero \+Z/, /base pivot: y is the bottom/, /x\/z are the footprint centre/, /unit cube at scale 1 is 1 m/,
+			/world space unless the tool says otherwise/, /not parent-relative/, /at least 0\.1 m; smaller requests are clamped/, /Prefer object\.set or arrange_objects to the legacy object\.update/,
+			/use an empty \(kind "empty", no geometry\) as the root/, /never use a tiny cube as a folder/, /rotating it rotates them about the parent's pivot; scale is not carried/,
+			/coplanar overlapping faces: offset them by at least 3 mm or put one fully inside/]) assert.match(prompt, rule);
+		assert.doesNotMatch(prompt, /Grouping carries position only/);
+	});
 	test("D3 patch_elements schema is derived from the element declaration table", () => {
 		assert.equal(protocol.STUDIO_TOOL_FAMILIES.length, 3);
 		assert.ok(protocol.STUDIO_TOOL_ALIASES.includes("patch_elements"));
@@ -490,6 +498,23 @@ function registerTests() {
 			const legacy=await post({sessionId:"legacy",text:"hello"});assert.equal(legacy.status,200);assert.match(legacy.contentType,/text\/event-stream/);assert.equal(calls.length,1);
 			const badLegacy=await post({sessionId:"legacy",text:1});assert.equal(badLegacy.status,400);assert.deepEqual(JSON.parse(badLegacy.text),{error:"invalid request"});
 		});
+	});
+	test("route marks: a number or { t, bank, pitch } is accepted and passed through untouched", () => {
+		const route = marks => ({ name: "patch_elements", args: { ops: [{ target: { kind: "object", id: "car" }, set: { path: { points: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 9 }], marks } } }] } });
+		const marks = [0.25, { t: 0.5, bank: 12, pitch: -4 }, { t: 0.75 }];
+		const valid = protocol.validateStudioCommand(route(marks));
+		assert.deepEqual(valid.args.ops[0].set.path.marks, marks, "the lean rides through as authored");
+		assert.deepEqual(protocol.validateStudioCommand(route([0.2, 0.6])).args.ops[0].set.path.marks, [0.2, 0.6], "plain numbers still work");
+		rejects(() => protocol.validateStudioCommand(route([{ t: 0.5, bank: 120 }])), "INVALID_ARGUMENT");
+		rejects(() => protocol.validateStudioCommand(route([{ bank: 10 }])), "INVALID_ARGUMENT");
+		rejects(() => protocol.validateStudioCommand(route([{ t: 0.5, roll: 10 }])), "INVALID_ARGUMENT");
+		// the readback row echoes the marks, lean included
+		const context = contextFixture();
+		context.entities.push({ id: "car", kind: "object", token: "t-car", pathPointCount: 2, pathMarks: marks });
+		context.entityPage = { returned: 2, total: 2, truncated: false, nextCursor: null };
+		protocol.validateStudioContext(context);
+		context.entities.at(-1).pathMarks = [{ t: 0.5, bank: 200 }];
+		rejects(() => protocol.validateStudioContext(context));
 	});
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {

@@ -27,7 +27,9 @@ const CLAIM_KEYS = [
 	HANDLE_PROXY_FLAG,
 	"keyLightPick", // the key-light sun's grab surfaces (app-stage KeyLightPuck)
 	"pathAxis", // travel path: axis-gizmo pick proxies (app-stage ObjectPathHandles)
-	"pathIndex", // travel path: waypoint dots — index 0 is a valid value
+	"pathIndex", // travel path: mark dots — index 0 is a valid value
+	"pathRing", // travel path: the selected dot's bank / pitch rings
+	"pathLine", // travel path: the drawn route itself — a press near it is aimed at the route
 	"craneAxis", // crane marks: axis-gizmo pick proxies (app-stage CraneHandles)
 	"craneIndex", // crane marks: height dots
 ];

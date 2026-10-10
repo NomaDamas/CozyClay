@@ -418,6 +418,9 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					for (const message of restored.history) await state.lane.appendMessage(message, state.context);
 					state.persisted = restored.history.length;
 				}
+				// Studio only: older turns' full contexts are stale and large, so each request
+				// carries the newest one whole and a stub for the rest. The stored lane and
+				// the persisted history keep every context.
 				state.unsubscribers.push(state.harness.events.on("turn_end", persist));
 				state.unsubscribers.push(state.harness.events.on("run_end", persist));
 			}

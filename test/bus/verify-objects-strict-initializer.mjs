@@ -20,7 +20,8 @@ try {
   assert.equal(first.documentStore, f.objects.documentStore);
   assert.equal(f.scope.appContext.storeDomain('objects'), first);
   f.objects.addSceneObject('cone');
-  assert.equal(f.objects.read().at(-1).renderer, 'cone');
+  // A UI-made object is listed first under Props.
+  assert.equal(f.objects.read().at(0).renderer, 'cone');
   assert.equal(f.objects.documentStore.depths().past, 1);
   console.log('PASS real initializer replay retains one owner and UI/command publication stays on the same store');
 } finally { for (const domain of created) if (domain.documentStore !== f.objects.documentStore) domain.dispose(); f.dispose(); }

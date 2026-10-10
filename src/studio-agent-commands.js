@@ -1,12 +1,14 @@
 // Studio composites prepare private domain drafts; the App owns publication,
 // history, gesture fences and semantic revision/telemetry. No UI callbacks here.
-import { Euler, Vector3, PerspectiveCamera } from 'three';
+import { Euler, Vector3, Quaternion, PerspectiveCamera } from 'three';
 import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, isEffectivelyHidden, supportHeightForObject, OBJECT_LIBRARY } from './scene-objects.js';
 import { createCharacterEntry } from './scenes.js';
 import { createShot, shotAtFrame } from './cuts.js';
 import { captureFraming } from './camera-move.js';
 import { createStableItemId } from './stable-items.js';
 import { focalMmToFov, SENSOR_FORMATS } from './shot.js';
+import { coplanarConflicts } from './coplanar-depth.js';
+import { clampWarning } from './receipt-findings.js';
 import { StudioProtocolError, StudioSchemas, STUDIO_PATCH_KINDS, STUDIO_PATCH_DESCRIPTORS, validateStudioSchema, validateStudioIdentity, validateReceipt, freezeStudioData } from './studio-agent-protocol.js';
 
 const DEG = Math.PI / 180, EPS = 1e-8, CHARACTER_SUPPORT_TOLERANCE = 5e-3;
@@ -20,6 +22,39 @@ const entityById = (state, id) => {
   if (!entity) fail('AMBIGUOUS_TARGET', 'Target ID is not present in the admitted scene.');
   return entity;
 };
+/** Resolve a placement reference against the evolving batch draft: an id first,
+ * else the unique name of an object or character already in it. Parts created
+ * earlier in the same batch are in the draft, so they resolve by name. */
+function resolveRef(ref, state, field) {
+  const all = [...state.objects, ...state.characters];
+  if (all.some(e => e.id === ref)) return ref;
+  const named = all.filter(e => normalizedName(e.name ?? e.subject ?? '') === normalizedName(ref));
+  if (named.length === 1) return named[0].id;
+  if (named.length) fail('AMBIGUOUS_TARGET', `${field} '${ref}' matches ${named.length} objects by name (${named.map(e => e.id).join(', ')}); reference one by id.`);
+  fail('AMBIGUOUS_TARGET', `${field} '${ref}' not found; reference an existing id, or a part created EARLIER in this batch by its name (create it before it is referenced).`);
+}
+/** The op with every reference field (relativeTo, onObject, between, support,
+ * facing targets) resolved to an id in the current draft. */
+function resolveOpRefs(op, state, selfId) {
+  const { position: p, facing: f } = op;
+  if (!p && !f) return op;
+  const r = (value, field) => {
+    const resolved = resolveRef(value, state, field);
+    if (resolved === selfId) fail('INVALID_ARGUMENT', `${field} '${value}' is the object being placed; reference a different part.`);
+    return resolved;
+  };
+  const out = { ...op };
+  if (p) out.position = { ...p,
+    ...(p.relativeTo !== undefined ? { relativeTo: r(p.relativeTo, 'relativeTo') } : {}),
+    ...(p.onObject !== undefined ? { onObject: r(p.onObject, 'onObject') } : {}),
+    ...(p.between ? { between: p.between.map(value => r(value, 'between')) } : {}),
+    ...(p.support && typeof p.support === 'object' ? { support: { objectId: r(p.support.objectId, 'support.objectId') } } : {}) };
+  if (f) {
+    const key = ['towardId', 'awayFromId', 'sameAsId'].find(k => f[k] !== undefined);
+    if (key) out.facing = { [key]: r(f[key], `facing.${key}`) };
+  }
+  return out;
+}
 function boxPoints(bounds) {
   if (!bounds || ['x', 'y', 'z'].some(a => !Number.isFinite(bounds.min?.[a]) || !Number.isFinite(bounds.max?.[a]) || bounds.min[a] > bounds.max[a])) fail('TARGET_NOT_READY', 'Evaluated bounds are unavailable.');
   return [bounds.min.x, bounds.max.x].flatMap(x => [bounds.min.y, bounds.max.y].flatMap(y => [bounds.min.z, bounds.max.z].map(z => new Vector3(x, y, z))));
@@ -55,7 +90,7 @@ function support(spec, state) {
   const id = spec.onObject ?? (typeof spec.support === 'object' ? spec.support.objectId : null);
   if (!id) return { y: state.floorY, label: 'floor' };
   const object = entityById(state, id);
-  if (!object.renderer || object.renderer === 'cutout' || ['sphere', 'capsule', 'cone', 'car', 'small-plane'].includes(object.renderer) || object.path || object.attach || Math.abs(object.rotX) > EPS || Math.abs(object.rotZ) > EPS || isEffectivelyHidden(object, state.objects, state.characters)) fail('TARGET_NOT_READY', 'Support must be a stationary solid upright surface.');
+  if (!object.renderer || object.renderer === 'cutout' || ['sphere', 'capsule', 'cone', 'car', 'small-plane', 'empty'].includes(object.renderer) || object.path || object.attach || Math.abs(object.rotX) > EPS || Math.abs(object.rotZ) > EPS || isEffectivelyHidden(object, state.objects, state.characters)) fail('TARGET_NOT_READY', 'Support must be a stationary solid upright surface.');
   return { y: object.y + supportHeightForObject(object) * object.scaleY, label: `object:${id}`, object };
 }
 function facingYaw(spec, entity, state) {
@@ -106,6 +141,9 @@ function place(entity, op, state, ports) {
     if (Math.hypot(result.x - previous.x, result.z - previous.z, result.rot - previous.rot) < EPS) { converged = true; break; }
   }
   if (!converged) fail('AMBIGUOUS_BASIS', 'Facing and placement cannot satisfy the requested relation.');
+  // A pitched/rolled part rests its lowest corner on the support.
+  if (result.renderer && !result.attach && !result.path && (Math.abs(result.rotX) > EPS || Math.abs(result.rotZ) > EPS))
+    result = patchEntity(result, { y: result.y + surface.y - Math.min(...geometry(result, state, ports).map(p => p.y)) });
   const points = geometry(result, state, ports);
   const supportTolerance = !result.renderer && surface.label === 'floor' ? CHARACTER_SUPPORT_TOLERANCE : EPS;
   if (Math.abs(Math.min(...points.map(p => p.y)) - surface.y) > supportTolerance) fail('TARGET_NOT_READY', 'Tilted or offset bounds cannot rest on the requested support.');
@@ -115,6 +153,63 @@ function place(entity, op, state, ports) {
     if (Math.abs(actualGapM - spec.gapM) > EPS) fail('INVALID_ARGUMENT', 'Domain limits prevent the requested clearance.');
   }
   return { entity: result, relation: { id: result.id, spec, axis, support: surface.label, baseY: surface.y, ...(axis ? { actualGapM, requestedGapM: spec.gapM, basis: spec.basis } : {}) } };
+}
+// Parent-relative (local) space. Object rows are flat world-space; `parent` only
+// groups. A parent's frame is its stored pivot (base, y = bottom) and Euler XYZ
+// degrees; parent SCALE is deliberately not part of the frame.
+const objectQuat = o => new Quaternion().setFromEuler(new Euler((o.rotX ?? 0) * DEG, (o.rot ?? 0) * DEG, (o.rotZ ?? 0) * DEG, 'XYZ'));
+const wrapDeg = a => ((a + 540) % 360 + 360) % 360 - 180;
+// XYZ Euler angles come in two equal-orientation spellings, (x,y,z) and
+// (x+180, 180-y, z+180). Report the one with the least pitch/roll, so a pure
+// yaw of 135 reads back as yaw 135 rather than (180, 45, 180).
+function eulerDegOf(q) {
+  const e = new Euler().setFromQuaternion(q, 'XYZ'), a = { x: e.x / DEG, y: e.y / DEG, z: e.z / DEG };
+  const b = { x: wrapDeg(a.x + 180), y: wrapDeg(180 - a.y), z: wrapDeg(a.z + 180) };
+  return Math.abs(b.x) + Math.abs(b.z) < Math.abs(a.x) + Math.abs(a.z) - 1e-9 ? b : a;
+}
+const eulerQuat = r => new Quaternion().setFromEuler(new Euler(r.x * DEG, r.y * DEG, r.z * DEG, 'XYZ'));
+/** world = parentPivot + R_parent * local; orientation = R_parent * R_local. */
+export function localToWorld(parent, local) {
+  const p = vector(local.position ?? { x: 0, y: 0, z: 0 }).applyQuaternion(objectQuat(parent)).add(vector(pos(parent)));
+  const q = objectQuat(parent).multiply(eulerQuat(local.rotationDeg ?? { x: 0, y: 0, z: 0 }));
+  return { position: { x: p.x, y: p.y, z: p.z }, rotationDeg: eulerDegOf(q) };
+}
+/** Inverse of localToWorld for an object row under its parent row. */
+export function worldToLocal(parent, object) {
+  const inverse = objectQuat(parent).invert();
+  const p = vector(pos(object)).sub(vector(pos(parent))).applyQuaternion(inverse);
+  return { position: { x: p.x, y: p.y, z: p.z }, rotationDeg: eulerDegOf(inverse.multiply(objectQuat(object))) };
+}
+const tidy = v => Math.round(v * 1e4) / 1e4 + 0;
+/** Compact readback: the object's transform in its parent's frame, or null for
+ * a root, a missing parent or a parent whose stored pose is not its world pose. */
+export function localTransformReadback(object, objects) {
+  const parent = object.parent ? objects.find(o => o.id === object.parent) : null;
+  if (!parent || parent.attach || parent.path || object.attach || object.path) return null;
+  const { position, rotationDeg } = worldToLocal(parent, object);
+  const round = v => ({ x: tidy(v.x), y: tidy(v.y), z: tidy(v.z) });
+  return { position: round(position), rotationDeg: round(rotationDeg) };
+}
+const resolveParentRef = (ref, rows, createdByName) => rows.some(e => e.id === ref) ? ref : createdByName.get(normalizedName(ref));
+/** Rewrites an op given in the parent's local frame into the equivalent world op. */
+function parentFrameOp(op, entity, rows, createdByName) {
+  const create = op.op === 'create';
+  if (create && op.parent === undefined) fail('INVALID_ARGUMENT', 'space "parent" needs `parent` on a create: an existing object id, or the name of an object created earlier in this batch.');
+  if (!create && !entity.parent) fail('INVALID_ARGUMENT', 'space "parent" needs an object that already has a parent; group it under one first, or omit space for world coordinates.');
+  const parentId = create ? resolveParentRef(op.parent, rows, createdByName) : entity.parent;
+  const parent = rows.find(e => e.id === parentId);
+  if (!parent) fail('AMBIGUOUS_TARGET', 'space "parent": the parent is neither an existing object id nor an object created earlier in this batch.');
+  if (parent.attach || parent.path) fail('CAPABILITY_MISSING', 'space "parent": an attached or routed parent has no fixed pose to place against.');
+  if (!op.position && !op.rotationDeg && !op.facing) fail('INVALID_ARGUMENT', 'space "parent" applies to position, rotationDeg or facing; none was given.');
+  if (op.position && !op.position.world) fail('INVALID_ARGUMENT', 'space "parent" takes position {world:{x,y,z}} as local metres from the parent pivot; relativeTo, between and onObject resolve in world space, so omit space for them.');
+  if (op.facing && !('yawDeg' in op.facing)) fail('INVALID_ARGUMENT', 'space "parent" takes facing {yawDeg} only (local yaw); towardId, awayFromId and sameAsId are world-space.');
+  const current = create ? { position: { x: 0, y: 0, z: 0 }, rotationDeg: { x: 0, y: 0, z: 0 } } : worldToLocal(parent, entity);
+  // Local rotation: rotationDeg, else the current local one with its yaw set by
+  // facing; a new child with neither takes the parent's orientation (local zero).
+  const rotation = op.rotationDeg ?? (op.facing ? { ...current.rotationDeg, y: op.facing.yawDeg } : create ? current.rotationDeg : null);
+  const world = localToWorld(parent, { position: op.position ? op.position.world : current.position, rotationDeg: rotation ?? current.rotationDeg });
+  const { space, facing, ...rest } = op;
+  return { ...rest, ...(op.position ? { position: { world: world.position } } : {}), ...(rotation ? { rotationDeg: world.rotationDeg } : {}) };
 }
 function groupRootOf(id, objects) {
   const seen = new Set();
@@ -130,11 +225,18 @@ function overlapsFor(entity, state, ports) {
   // Parts of one grouped object are built to touch; only other bodies count.
   const root = groupRootOf(entity.id, state.objects);
   return [...state.objects, ...state.characters].filter(e => e.id !== entity.id && !isEffectivelyHidden(e, state.objects, state.characters)
-    && groupRootOf(e.id, state.objects) !== root).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
+    && groupRootOf(e.id, state.objects) !== root).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, of: entity.id, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
 }
 function overlapsOf(ids, state, ports) {
   const entities = [...state.objects, ...state.characters];
   return ids.flatMap(id => { const e = entities.find(row => row.id === id); return e ? overlapsFor(e, state, ports) : []; });
+}
+/** World AABB of one entity as {min,max}, or null when its evaluated bounds are unavailable (a prop whose renderer is not mounted). */
+export function entityWorldBounds(entity, state, ports) {
+  try {
+    const box = aabb(geometry(entity, state, ports)), round = v => Number(v.toFixed(4));
+    return { min: Object.fromEntries(['x', 'y', 'z'].map(a => [a, round(box[a].min)])), max: Object.fromEntries(['x', 'y', 'z'].map(a => [a, round(box[a].max)])) };
+  } catch { return null; }
 }
 const overlapEvidence = overlaps => ({ coverage: 'same-frame-world-AABB-proxies', overlapIds: [...new Set(overlaps.map(o => o.id))].slice(0, 100), maximumFootprintOverlapM: Math.max(0, ...overlaps.map(o => o.depth)) });
 /** Placement evidence for entity ids in the given scene: the same-frame AABB
@@ -164,38 +266,49 @@ function transformPatch(op, isObject) {
 export function arrangement(command, before, ports) {
   const isObject = command.name === 'arrange_objects', key = isObject ? 'objects' : 'characters';
   let rows = before[key];
-  const relations = [], warnings = [], createdByName = new Map();
-  for (const op of command.args.ops) {
-    const id = op.id ?? op.characterId;
+  const relations = [], warnings = [], clamps = [], createdByName = new Map();
+  // References resolve against the evolving draft (`rows`), in op order.
+  const draft = () => ({ ...before, [key]: rows });
+  for (const rawOp of command.args.ops) {
+    const id = rawOp.id ?? rawOp.characterId;
     let entity = id ? rows.find(e => e.id === id) : null;
-    if (id && !entity) fail('AMBIGUOUS_TARGET', 'Edited target is not present in the draft.');
+    if (id && !entity) fail('AMBIGUOUS_TARGET', `Edited target '${id}' is not present in the draft; ids of parts created in this batch are not known yet, so use the part name in position references and create it before it is referenced.`);
+    let op = resolveOpRefs(rawOp, draft(), id);
     if (op.op === 'create') {
       if (op.name && rows.some(e => normalizedName(e.name ?? e.subject) === normalizedName(op.name))) fail('DUPLICATE_NAME', 'Create name already exists in the domain.');
+      let parentId;
+      if (isObject && op.parent !== undefined) {
+        parentId = rows.some(e => e.id === op.parent) ? op.parent : createdByName.get(normalizedName(op.parent));
+        if (!parentId) fail('AMBIGUOUS_TARGET', `Create parent '${op.parent}' is neither an existing object id nor an object created earlier in this batch; create the parent first.`);
+      }
       entity = isObject ? createSceneObject(op.source.kind, rows) : createCharacterEntry({ id: createStableItemId('character'), subject: normalizedName(op.name) });
       if (!entity) fail('INVALID_ARGUMENT', 'Unsupported object library kind.');
       rows = [...rows, entity];
+      // Parent before placing, so avoidance and overlap checks see one body.
+      if (parentId) { rows = setSceneObjectParent(rows, entity.id, parentId); entity = rows.find(e => e.id === entity.id); }
     }
     if (['create', 'update'].includes(op.op)) {
       if (entity.attach) fail('CAPABILITY_MISSING', 'Attached transforms require a world-preserving attachment adapter.');
+      if (op.space === 'parent') op = parentFrameOp(op, entity, rows, createdByName);
       entity = patchEntity(entity, transformPatch(op, isObject));
-      const placed = place(entity, op, before, ports);
+      const placed = place(entity, op, draft(), ports);
       entity = placed.entity;
-      if (command.args.collisionPolicy === 'avoid') {
-        entity = avoid(entity, placed.relation, { ...before, [key]: rows }, ports);
-        entity = patchEntity(entity, { rot: facingYaw(op.facing, entity, before) });
-        const reference = entityById(before, op.position.relativeTo);
-        placed.relation.actualGapM = interval(geometry(entity, before, ports), placed.relation.axis).min - interval(geometry(reference, before, ports), placed.relation.axis).max;
+      // What was asked against what the domain kept: scale and position limits move values silently.
+      const asked = isObject ? { ...(op.position?.world ?? {}), ...(op.scale ? { scaleX: op.scale.x, scaleY: op.scale.y, scaleZ: op.scale.z } : {}) }
+        : { ...(op.position?.world ?? {}), ...(op.scale === undefined ? {} : { scale: op.scale }) };
+      const clamp = clampWarning(entity.id, Object.fromEntries(Object.entries(asked).filter(([k]) => ['x', 'y', 'z', 'scale', 'scaleX', 'scaleY', 'scaleZ'].includes(k))), entity);
+      if (clamp) clamps.push(clamp);
+      if (command.args.collisionPolicy === 'avoid' && placed.relation?.axis) {
+        entity = avoid(entity, placed.relation, draft(), ports);
+        entity = patchEntity(entity, { rot: facingYaw(op.facing, entity, draft()) });
+        const reference = entityById(draft(), op.position.relativeTo);
+        placed.relation.actualGapM = interval(geometry(entity, draft(), ports), placed.relation.axis).min - interval(geometry(reference, draft(), ports), placed.relation.axis).max;
         if (placed.relation.actualGapM < op.position.gapM - EPS) fail('VERIFICATION_FAILED', 'Avoidance cannot preserve the requested facing and minimum clearance.');
       }
       const patch = Object.fromEntries(Object.entries(entity).filter(([k, v]) => !equal(v, rows.find(e => e.id === entity.id)[k])));
       rows = isObject ? updateSceneObject(rows, entity.id, patch) : rows.map(e => e.id === entity.id ? entity : e);
       if (placed.relation) relations.push(placed.relation);
       if (op.op === 'create' && op.name) createdByName.set(normalizedName(op.name), entity.id);
-      if (isObject && op.op === 'create' && op.parent !== undefined) {
-        const parentId = rows.some(e => e.id === op.parent) ? op.parent : createdByName.get(normalizedName(op.parent));
-        if (!parentId) fail('AMBIGUOUS_TARGET', 'Create parent is neither an existing object id nor an object created earlier in this batch.');
-        rows = setSceneObjectParent(rows, entity.id, parentId);
-      }
     } else if (op.op === 'remove') {
       if (!isObject && (rows.length <= 1 || entity.id === before.activeCharacterId)) fail('INVALID_ARGUMENT', 'Cannot remove the final or active character without a separate selection operation.');
       rows = isObject ? removeSceneObject(rows, id) : rows.filter(e => e.id !== id);
@@ -223,7 +336,24 @@ export function arrangement(command, before, ports) {
     relation.actualGapM = actualGapM;
   }
   if (command.args.collisionPolicy === 'avoid' && overlaps.length) fail('VERIFICATION_FAILED', 'The final batch is still blocked after its outward adjustments.');
-  for (const item of overlaps.slice(0, 10)) warnings.push({ code: 'FOOTPRINT_OVERLAP', id: item.id });
+  // Every finding the receipt carries: a value moved to a limit first, then what the final scene shows wrong.
+  const nameOf = id => { const e = [...after.objects, ...after.characters].find(row => row.id === id); return e?.name ?? e?.subject ?? id; };
+  warnings.push(...clamps.slice(0, 3));
+  for (const item of overlaps.slice(0, 5)) warnings.push({ code: 'FOOTPRINT_OVERLAP', id: item.id, message: [...`${nameOf(item.of)} overlaps ${nameOf(item.id)} by ${Number(item.depth.toFixed(2))} m`].slice(0, 120).join('') });
+  if (overlaps.length > 5) warnings.push({ code: 'FOOTPRINT_OVERLAP', count: overlaps.length - 5, message: `${overlaps.length - 5} more footprint overlaps omitted` });
+  if (isObject) {
+    // Parts of one assembly touch on purpose, but faces sharing one plane flicker as the camera moves.
+    const touched = new Set(affectedIds), groups = new Map();
+    for (const row of rows) if (touched.has(row.id)) { const root = groupRootOf(row.id, rows); if (root !== row.id || rows.some(o => o.parent === row.id)) groups.set(root, null); }
+    const coplanar = [];
+    for (const root of groups.keys()) for (const pair of coplanarConflicts(rows.filter(row => groupRootOf(row.id, rows) === root))) {
+      if (!touched.has(pair.a) && !touched.has(pair.b)) continue;
+      const planes = pair.planes.map(plane => `${plane.face} coincide at ${plane.axis ? `${plane.axis}=${plane.at}` : `offset ${plane.at}`}`).join(', ');
+      coplanar.push({ code: 'COPLANAR_FACES', id: pair.b, message: [...`${nameOf(pair.a)} and ${nameOf(pair.b)} ${planes}`].slice(0, 120).join('') });
+    }
+    warnings.push(...coplanar.slice(0, 2));
+    if (coplanar.length > 2) warnings.push({ code: 'COPLANAR_FACES', count: coplanar.length - 2, message: `${coplanar.length - 2} more coplanar face pairs omitted` });
+  }
   if (relations.some(r => r.adjustmentM)) warnings.push({ code: 'OUTWARD_ADJUSTMENT', count: relations.filter(r => r.adjustmentM).length });
   const relation = relations.length === 1 ? relations[0] : null;
   return { domain: isObject ? 'objects' : 'cast', draft: equal(rows, before[key]) ? before[key] : rows, affectedIds,

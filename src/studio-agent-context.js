@@ -39,9 +39,7 @@ export function validateStudioCursor(cursor, context) {
  * registered command, plus the declared generation and hub timeout. The
  * description and input schema stay out; the agent reads them on request. */
 export function studioActionIndex(actions, { previsMode } = {}) {
-	const available = previsMode === "storyboard"
-		? actions.filter(action => action.generation !== "motion" && action.domain !== "motion")
-		: actions;
+	const available = actions.filter(action => !action.agentHidden && (previsMode !== "storyboard" || (action.generation !== "motion" && action.domain !== "motion")));
 	return available.map(({ id, label, generation, timeoutMs }) => ({ id, ...(label ? { label: [...label].slice(0, 120).join("") } : {}),
 		...(generation ? { generation } : {}), ...(timeoutMs === undefined ? {} : { timeoutMs }) }));
 }
@@ -120,7 +118,12 @@ const object = fields => ({ type: "object", properties: fields, required: Object
 const array = (items, maxItems = 10000, minItems = 0) => ({ type: "array", items, minItems, maxItems });
 const vec = StudioSchemas.Vec3;
 const timing = object({ cuts: array(object({ t: nonnegative, d: nonnegative }), 64), envelopes: array(array(nonnegative, 24, 24), 65, 1) });
-const path = object({ points: array(vec, 64, 2), speed: nonnegative, faceTravel: bool, loop: bool, extend: bool, timing: nullable(timing) });
+// `marks` (the editor's grab dots, arc fractions) is optional: it is UI state on
+// the route, and older fixtures and agent-written routes carry none.
+const pathFields = { points: array(vec, 64, 2), speed: nonnegative, faceTravel: bool, loop: bool, extend: bool, timing: nullable(timing) };
+// A mark is an arc fraction, or { t, bank, pitch } (degrees) when it carries a lean.
+const routeMark = { oneOf: [nonnegative, { type: "object", properties: { t: nonnegative, bank: num, pitch: num }, required: ["t"], additionalProperties: false }] };
+const path = { ...object({ ...pathFields, marks: array(routeMark, 6) }), required: Object.keys(pathFields) };
 const physicalObject = object({ id, renderer: id, position: vec, rotationDeg: vec, scale: object({ x: positive, y: positive, z: positive }),
 	footprint: object({ width: nonnegative, depth: nonnegative }), height: nonnegative, supportY: num, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), path: nullable(path), hidden: bool });
 const physicalCharacter = object({ id, incarnation: id, modelId: nullable(id), rigId: nullable(id), rigReady: bool, hidden: bool, position: vec, yawDeg: num, scale: positive,

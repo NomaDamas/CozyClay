@@ -194,6 +194,7 @@
 .v2-outliner .v2-outliner-chip.cast { background: var(--chip-cast, #5fb584); }
 .v2-outliner .v2-outliner-chip.cam { background: var(--camera, #a78bfa); }
 .v2-outliner .v2-outliner-chip.light { background: var(--chip-light, #d9b84a); }
+.v2-outliner .v2-outliner-chip.empty { background: transparent; border: 1px dashed var(--chip-mesh, #7e8b99); }
 
 .v2-outliner .hierarchy-label {
 	flex: 1 1 auto;

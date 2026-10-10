@@ -8,7 +8,7 @@ import { shotAtFrame } from "./cuts.js";
 import { isProxyFigure } from "./scenes.js";
 import { CUTOUT_KIND, MESH_KIND, OBJECT_LIBRARY, supportHeightForObject } from "./scene-objects.js";
 import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
-import { createStudioCommandJournal, framingChecks, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
+import { createStudioCommandJournal, entityWorldBounds, framingChecks, localTransformReadback, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { verifyInstalledTake } from "./studio-agent-motion.js";
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateReceipt, validateStudioCommand, validateStudioIdentity } from "./studio-agent-protocol.js";
 import { CONTACT_SHEET_LAYOUT, buildContactSheet, sampleContactSheetFrames } from "./studio-contact-sheet.js";
@@ -123,11 +123,13 @@ export function createStudioAppBinding(ports) {
 					ikKeyCount: t?.ikState?.keys.size ?? 0, promptBlockCount: c.layer?.promptClips?.length ?? 0 },
 				capabilities: { rigReady: Boolean(t?.rig), ik: Boolean(t?.rig?.userData?.poseBind), measuredFeet: false },
 				characterKind: isProxyFigure(c) ? "proxy" : "rig", ...(isProxyFigure(c) ? { posture: c.posture ?? "stand" } : {}) };
-		}), ...s.objects.map(o => ({ id: o.id, kind: "object", token: tokens.get(o.id).token, name: o.name || o.id,
+		}), ...s.objects.map(o => { const local = localTransformReadback(o, s.objects); return { id: o.id, kind: "object", token: tokens.get(o.id).token, name: o.name || o.id,
 			position: { x: o.x, y: o.y ?? 0, z: o.z }, yawDeg: o.rot ?? 0,
 			rotationDeg: { x: o.rotX ?? 0, y: o.rot ?? 0, z: o.rotZ ?? 0 }, scale: { x: o.scaleX, y: o.scaleY, z: o.scaleZ },
 			renderer: o.renderer, color: o.color ?? null, ...(o.assetId ? { assetId: o.assetId } : {}),
-			parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0 }))];
+			parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0,
+			// the dots on the route, with the lean (degrees) a mark carries
+			...(o.path?.marks?.length ? { pathMarks: o.path.marks.map(mark => typeof mark === "number" ? mark : { t: mark.t, ...(mark.bank !== undefined ? { bank: mark.bank } : {}), ...(mark.pitch !== undefined ? { pitch: mark.pitch } : {}) }) } : {}), ...(local ? { local } : {}) }; })];
 	}
 	const frameRange = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
 	function assetList(s) {
@@ -185,19 +187,32 @@ export function createStudioAppBinding(ports) {
 		return s;
 	}
 	/** Actual state of one action target after it ran. */
-	function actionReadback(id, s) {
+	function actionReadback(id, s, compact = false) {
 		const patched = Object.entries(s.document).flatMap(([kind, value]) => {
 			const target = elementTarget(kind, value, id, s.host.sceneId);
 			return target ? elementReadback(kind, target) : [];
 		});
 		if (id === s.host.sceneId) return { selection: s.selection, activeCharacterId: s.activeCharacterId, shotId: s.selectedShotId, view: s.view,
 			...(patched.length ? { patched } : {}) };
-		if (patched.length) return { patched };
+		const object = s.objects.find(row => row.id === id), entity = object ?? s.characters.find(row => row.id === id);
+		// Beyond the transform an object's patched paths already carry: the world box it occupies and, for a
+		// group, who hangs off it. `compact` (a receipt near its size limit) drops back to the paths alone.
+		// A character's box means cloning and posing its rig, too dear for every receipt: inspect or verify has it.
+		const extras = () => {
+			if (!object || compact) return {};
+			const childIds = s.objects.filter(row => row.parent === id).map(row => row.id);
+			return { bounds: entityWorldBounds(object, { ...s, frame: s.view.frame }, { bounds: ports.bounds }),
+				...(childIds.length ? { childIds: childIds.slice(0, 12), ...(childIds.length > 12 ? { childCount: childIds.length } : {}) } : {}) };
+		};
+		if (patched.length) return { patched, ...extras() };
 		const shot = s.shots.find(row => row.id === id);
 		if (shot) return { name: shot.name || shot.id, range: { startFrame: shot.startFrame, endFrameExclusive: shot.endFrame + 1 } };
-		const entity = s.objects.find(row => row.id === id) ?? s.characters.find(row => row.id === id);
-		if (entity) return { name: entity.name || entity.subject || entity.id, position: { x: entity.x, y: entity.y ?? 0, z: entity.z } };
-		return { removed: true };
+		if (!entity) return { removed: true };
+		const brief = { name: entity.name || entity.subject || entity.id, position: { x: entity.x, y: entity.y ?? 0, z: entity.z } };
+		if (compact) return brief;
+		if (!object) return { ...brief, yawDeg: entity.rot ?? 0, scale: entity.scale ?? 1, ...extras() };
+		return { ...brief, rotationDeg: { x: object.rotX ?? 0, y: object.rot ?? 0, z: object.rotZ ?? 0 }, scale: { x: object.scaleX, y: object.scaleY, z: object.scaleZ },
+			parentId: object.parent ?? null, ...extras() };
 	}
 	/** One registered Studio action, run for the agent through the same
 	 * registry the UI controls call. A mutation is bound to the native history
@@ -263,7 +278,10 @@ export function createStudioAppBinding(ports) {
 				// Only a check nothing could compute is unsupported, and says why; a motion
 				// check computed for some characters still names the ones it skipped.
 				const scene = readCommand(), entityIds = ids => ids.filter(id => scene.objects.some(o => o.id === id) || scene.characters.some(c => c.id === id));
-				const measured = args.targets ? entityIds(args.targets) : receipt.checks ? null : entityIds(receipt.affectedIds);
+				// A receipt's checks are evidence only for what they measured: every receipt carries a coverage tag, but
+				// only an arrange/frame receipt carries overlap or framing numbers. Anything else is measured here.
+				const measuredBy = { placement: "overlapIds", framing: "screenFraction" }, unmeasured = receipt && args.checks.some(check => measuredBy[check] && receipt.checks?.[measuredBy[check]] === undefined);
+				const measured = args.targets ? entityIds(args.targets) : unmeasured ? entityIds(receipt.affectedIds) : null;
 				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, evidenceRevision, stale: evidenceRevision !== s.revision, checks: measured ? { coverage: "current-scene-targets" } : receipt.checks,
 					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [], unsupportedChecks: [], unsupportedReasons: {} };
 				const reasons = result.unsupportedReasons, verified = [], skipped = [], pending = [];
@@ -315,17 +333,20 @@ export function createStudioAppBinding(ports) {
 		read_studio_context(request) { const c = context(); if (!same(validateStudioIdentity(request.host), owner)) fail("STALE_SCENE", "This is not the requested document."); return c; },
 		inspect_studio(args) {
 			const command = validateStudioCommand({ name: "inspect_studio", args }); const c = context();
-			// Every scope carries the context: its revision is what the agent's next
-			// command is admitted at, so a scope without it leaves that admission stale.
-			if (command.args.scope === "catalogue") return { context: c, ...studioObjectCatalogue() };
-			if (command.args.scope === "document") return { context: c, scope: "document",
+			// Every scope carries the revision and document identity, not the whole
+			// context (the turn already holds that, and resending it per call is what
+			// the model pays for): the revision is what the agent's next command is
+			// admitted at, so a scope without it leaves that admission stale.
+			const head = { revision: c.revision, host: (({ workspaceId, documentEpoch, sceneId, sceneEpoch }) => ({ workspaceId, documentEpoch, sceneId, sceneEpoch }))(c.host) };
+			if (command.args.scope === "catalogue") return { ...head, ...studioObjectCatalogue() };
+			if (command.args.scope === "document") return { ...head, scope: "document",
 				...readElementDocument(refresh().document, command.args, c.host.sceneId) };
 			// Discovery for run_action: every registered action with its label, kind,
 			// exposure and availability (the reason when unavailable). Schemas are on
 			// request: ids answer those actions' full declarations, input included.
 			if (command.args.scope === "actions") {
-				const actions = ports.actions?.()?.list() ?? [];
-				return { context: c, actions: command.args.ids ? actions.filter(row => command.args.ids.includes(row.id)) : actions.map(({ input, description, ...row }) => row) };
+				const actions = (ports.actions?.()?.list() ?? []).filter(row => !row.agentHidden);
+				return { ...head, actions: command.args.ids ? actions.filter(row => command.args.ids.includes(row.id)) : actions.map(({ input, description, ...row }) => row) };
 			}
 			const s = refresh();
 			const wanted = row => (!args.ids || args.ids.includes(row.id)) && (!args.query || Boolean(row.name?.includes(args.query)));
@@ -333,14 +354,14 @@ export function createStudioAppBinding(ports) {
 				const select = { shot: ["shot"], motion: ["motion", "character"] }[command.args.scope];
 				const ids = args.ids ?? (command.args.scope === "selection" ? [s.selection?.id ?? s.host.sceneId]
 					: args.query && select ? (command.args.scope === "shot" ? s.shots : entityProjection(s).filter(row => row.kind === "character")).filter(wanted).map(row => row.id) : undefined);
-				return { context: c, scope: "document", ...readElementDocument(s.document, { ...command.args, ids, select }, c.host.sceneId) };
+				return { ...head, scope: "document", ...readElementDocument(s.document, { ...command.args, ids, select }, c.host.sceneId) };
 			}
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
 			// Stable id order, so an offset cursor survives unrelated edits.
 			const filtered = entityProjection(s).filter(wanted).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
-			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,
+			return { ...head, entities: filtered.slice(offset, offset + limit), total: filtered.length,
 				nextCursor: offset + limit < filtered.length ? studioEntityCursor(c, offset + limit) : null };
 		},
 		operate_studio: request => execute({ ...request, name: "operate_studio" }),
