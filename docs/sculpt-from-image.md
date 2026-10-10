@@ -1,6 +1,6 @@
 # Sculpt objects: a clay prop from one reference image
 
-STATUS: in progress (#730)
+STATUS: implemented (#730); live QA: `mcp/qa-sculpt-live.mjs`
 
 An agent looks at a reference image, breaks the subject into a handful of soft clay parts, and stands the result in the set as one object. The object is **data, not code**: a `sculpt` record carries a recipe of parts, and CozyClay builds the geometry from it. Nothing the agent writes is executed.
 
