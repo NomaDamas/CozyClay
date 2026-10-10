@@ -17,7 +17,8 @@ const reportPath = `${outputDir}/${label}.json`;
 const shotDir = `${outputDir}/${label}`;
 const modelSlug = model.replace(/[^a-z0-9.]+/gi, "-");
 mkdirSync(shotDir, { recursive: true });
-const commit = execFileSync("git", ["rev-parse", "--short=7", "HEAD"], { encoding: "utf8" }).trim();
+// The code under test: the newest commit touching anything but the bench itself.
+const commit = execFileSync("git", ["log", "-1", "--first-parent", "--format=%h", "--abbrev=7", "--", ".", ":!test/qa-agent-bench-browser.mjs", ":!docs/qa/agent-bench.md"], { encoding: "utf8" }).trim();
 
 const targets = await (await fetch(`http://127.0.0.1:${cdpPort}/json`)).json();
 const target = targets.find((entry) => entry.type === "page" && entry.webSocketDebuggerUrl);
@@ -96,10 +97,11 @@ const finalReply = () => evaluate(`(() => [...document.querySelectorAll('.agent-
 // installed before any page script runs. Every "/agent/turn" response (the
 // turn stream and a replay after a dropped stream) is cloned and its SSE
 // "data: {json}" lines are pushed to window.__benchFrames; a "done" frame
-// settles the waiter the harness armed for the turn.
+// settles the waiter the harness armed for the turn. The request bodies are
+// kept too (window.__benchRequests), so a failing turn can be replayed with curl.
 const FETCH_TEE = `(() => {
   if (window.__benchTee) return; window.__benchTee = true;
-  window.__benchFrames = []; window.__benchSeqs = new Set(); window.__benchWaiters = [];
+  window.__benchFrames = []; window.__benchRequests = []; window.__benchSeqs = new Set(); window.__benchWaiters = [];
   const original = window.fetch;
   const push = (frame) => {
     if (frame.eventSeq !== undefined) { if (window.__benchSeqs.has(frame.eventSeq)) return; window.__benchSeqs.add(frame.eventSeq); }
@@ -109,6 +111,7 @@ const FETCH_TEE = `(() => {
   window.fetch = async function (input, init) {
     const response = await original.apply(this, arguments);
     const url = typeof input === 'string' ? input : input?.url || String(input);
+    if (url.includes('/agent/turn') && typeof init?.body === 'string') window.__benchRequests.push({ url, method: init.method || 'GET', status: response.status, body: init.body });
     if (!url.includes('/agent/turn') || !response.body) return response;
     (async () => {
       const reader = response.clone().body.getReader(); const decoder = new TextDecoder(); let buffer = '';
@@ -135,7 +138,7 @@ const textarea = `document.querySelector('aside[aria-label="Agent"] textarea[ari
 async function turn(prompt) {
   await waitFor(`!!${textarea} && !${textarea}.disabled`);
   const startedAt = await evaluate(`(() => {
-    window.__benchFrames = []; window.__benchSeqs = new Set();
+    window.__benchFrames = []; window.__benchRequests = []; window.__benchSeqs = new Set();
     window.__benchDone = new Promise(resolve => window.__benchWaiters.push(resolve));
     const input=${textarea}; const setter=Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype,'value').set;
     setter.call(input, ${JSON.stringify(prompt)}); input.dispatchEvent(new Event('input',{bubbles:true})); input.focus();
@@ -149,7 +152,8 @@ async function turn(prompt) {
   }
   await waitFor(ready, 60_000).catch(() => null);
   const frames = await evaluate(`window.__benchFrames`);
-  return { startedAt, timedOut, frames, reply: await finalReply() };
+  const requests = await evaluate(`window.__benchRequests`);
+  return { startedAt, timedOut, frames, requests, reply: await finalReply() };
 }
 
 function countOverlapWarnings(value) {
@@ -163,13 +167,16 @@ function countOverlapWarnings(value) {
 }
 function metricsOf({ startedAt, timedOut, frames }) {
   const done = frames.find((frame) => frame.type === "done");
+  const error = frames.find((frame) => frame.type === "error");
   const toolDone = frames.filter((frame) => frame.type === "tool.done");
   return {
     toolCalls: frames.filter((frame) => frame.type === "tool.start").length,
     authoredReceipts: toolDone.filter((frame) => frame.result?.authored === true).length,
     wallMs: done ? done.receivedAt - startedAt : null,
     overlapWarnings: toolDone.reduce((sum, frame) => sum + countOverlapWarnings(frame.result), 0),
-    errorCode: timedOut ? "BENCH_TIMEOUT" : (frames.find((frame) => frame.type === "error")?.code ?? null),
+    errorCode: timedOut ? "BENCH_TIMEOUT" : (error?.code ?? null),
+    errorMessage: timedOut ? `no done frame within ${turnTimeoutMs} ms` : (error?.message ?? null),
+    errorStatus: error?.status ?? null,
     usage: done?.usage ?? null,
   };
 }
@@ -221,7 +228,8 @@ const SCENARIOS = [
     return { success, measured: { characterCount: after.characters.length, shotCount: after.shots.length, objectCount: after.objects.length, shots: after.shots.map(({ id, name }) => ({ id, name })), tables: tables.map(({ id, name, libraryKind, renderer }) => ({ id, name, libraryKind, renderer })) } };
   } },
   { id: "S4", prompt: "방금 한 거 되돌려", assert(before, after) {
-    // `before` is the state right after S3: the last authored change.
+    // `before` is the state right after S3: the last authored change. The loop
+    // only credits this when S3 itself succeeded (PRECONDITION_S3).
     const success = after.shots.length < 3 || after.objects.length < before.objects.length;
     return { success, measured: { afterS3: { shotCount: before.shots.length, objectCount: before.objects.length, characterCount: before.characters.length }, now: { shotCount: after.shots.length, objectCount: after.objects.length, characterCount: after.characters.length } } };
   } },
@@ -254,22 +262,31 @@ try {
 const rows = [];
 let previous = null;
 for (const scenario of SCENARIOS) {
-  const row = { model, scenario: scenario.id, prompt: scenario.prompt, toolCalls: 0, authoredReceipts: 0, wallMs: null, overlapWarnings: 0, success: false, errorCode: null, usage: null, reply: "", measured: null };
+  const row = { model, scenario: scenario.id, prompt: scenario.prompt, toolCalls: 0, authoredReceipts: 0, wallMs: null, overlapWarnings: 0, success: false, errorCode: null, errorMessage: null, errorStatus: null, usage: null, reply: "", measured: null };
   try {
     if (setupFailure) throw Object.assign(new Error(setupFailure), { code: "BENCH_SETUP" });
     const before = previous ?? state();
     const result = await turn(scenario.prompt);
     Object.assign(row, metricsOf(result), { reply: result.reply });
+    row.turnLog = `${shotDir}/${modelSlug}-${scenario.id}.turn.json`;
+    writeFileSync(row.turnLog, `${JSON.stringify({ requests: result.requests, frames: result.frames }, null, 2)}\n`);
     const after = state();
     const verdict = scenario.assert(before, after);
-    // A turn that timed out or ended on an error frame did not do the work,
-    // even when the scene happens to satisfy the assertion (S4 after a failed S3).
+    // A turn that timed out or ended on an error frame did not do the work.
     row.success = verdict.success && row.errorCode === null;
-    const turnError = result.frames.find((frame) => frame.type === "error");
-    row.measured = { ...verdict.measured, ...(turnError ? { turnError: { code: turnError.code ?? null, message: turnError.message ?? null, status: turnError.status ?? null } } : {}) };
+    row.measured = verdict.measured;
+    // A revert is only observable after an S3 that built the scene; otherwise
+    // the shot count is below 3 whether or not anything was undone.
+    const s3 = rows.find((entry) => entry.scenario === "S3");
+    if (scenario.id === "S4" && !s3?.success) {
+      row.measured = { ...row.measured, precondition: { s3Success: false, turnErrorCode: row.errorCode } };
+      row.success = false;
+      row.errorCode = "PRECONDITION_S3";
+    }
     previous = after;
   } catch (error) {
     row.errorCode ??= error.code || "BENCH_ERROR";
+    row.errorMessage ??= error.message;
     row.measured = { error: error.message };
     previous = null;
   }
@@ -278,7 +295,7 @@ for (const scenario of SCENARIOS) {
     row.screenshot = `${shotDir}/${modelSlug}-${scenario.id}.png`;
     writeFileSync(row.screenshot, Buffer.from(shot.data, "base64"));
   } catch {}
-  console.log(`${row.success ? "PASS" : "FAIL"} ${model} ${scenario.id} tools=${row.toolCalls} authored=${row.authoredReceipts} wallMs=${row.wallMs} overlap=${row.overlapWarnings} error=${row.errorCode} ${JSON.stringify(row.measured)}`);
+  console.log(`${row.success ? "PASS" : "FAIL"} ${model} ${scenario.id} tools=${row.toolCalls} authored=${row.authoredReceipts} wallMs=${row.wallMs} overlap=${row.overlapWarnings} error=${row.errorCode} status=${row.errorStatus} message=${JSON.stringify(row.errorMessage)} ${JSON.stringify(row.measured)}`);
   rows.push(row);
 }
 
