@@ -981,6 +981,69 @@ expect("no timer drives the auth transition", !/set(Interval|Timeout)\([^)]*(sig
 	expect("no roles, no line", renderToStaticMarkup(React.createElement(ModelRolesLine, { model: "x/y", roles: null })) === "");
 }
 
+// --- supervisor note (#728) ------------------------------------------------
+// After a reviewable Studio turn has ended, the store asks the sidecar once
+// for the supervisor's note and appends it; the card renders it muted, with a
+// button that sends its blockers and concerns as the next turn.
+{
+	const note = { type: "supervisor", turnId: "turn-1", verdict: "reviewed", model: "cliproxy/claude-opus-5-5", effort: "high", elapsedMs: 4200, eventSeq: 9,
+		summary: "The chair landed; the reply claims a verification that did not run.",
+		items: [{ text: "Chair 1.4 m left of Alex", status: "done", evidence: "receipt-1 actualGapM 1.4" }],
+		issues: [{ severity: "blocker", kind: "honesty", text: "Claims a verify that never ran", evidence: "no verify_result call" }, { severity: "concern", kind: "framing", text: "Chair clipped at frame left", evidence: "clipped: true" }, { severity: "note", kind: "spatial", text: "Chair faces the wall", evidence: "yawDeg 180" }],
+		counts: { blocker: 1, concern: 1, note: 1 } };
+	expect("the client asks the supervisor route", client.includes("/supervisor`") && client.includes("requestSupervisorNote(turnId)"));
+	expect("the send label goes through ko()", panel.includes('ko("Send as next prompt", "다음 턴으로 보내기")'));
+	expect("the supervisor card is token-driven and muted", /\.agent-supervisor-card\s*\{[^}]*color: var\(--agent-text-muted\)/.test(css));
+	const drive = async (frames) => {
+		const asked = [];
+		let store;
+		const transport = {
+			async turn(_request, onEvent) { for (const frame of frames) onEvent(frame); onEvent({ type: "done" }); },
+			async supervisor(turnId) { asked.push({ turnId, streaming: store.getState().streaming, status: store.getState().lastTurn?.status }); return note; },
+		};
+		store = createAgentChatStore({ transport, surface: "studio", buildContext: () => ({ schema: "studio-context-v1" }) });
+		const arrived = new Promise((resolve) => { const off = store.subscribe((state) => { if (state.items.some((item) => item.kind === "supervisor")) { off(); resolve(); } }); });
+		await store.send("put a chair left of her");
+		return { store, asked, arrived, turnId: store.getState().turnId };
+	};
+	const authored = await drive([{ type: "tool.start", callId: "c1", name: "arrange_objects" }, { type: "tool.done", callId: "c1", ok: true, result: { ok: true, authored: true, receiptId: "receipt-1", affectedIds: ["chair"] } }, { type: "text.delta", text: "Placed." }]);
+	let deadline;
+	await Promise.race([authored.arrived, new Promise((_, reject) => { deadline = setTimeout(() => reject(new Error("supervisor note never arrived")), 5000); })]).finally(() => clearTimeout(deadline));
+	expect("an authored Studio turn asks for its note once, after it is Ready", authored.asked.length === 1 && authored.asked[0].turnId === authored.turnId && authored.asked[0].streaming === false && authored.asked[0].status === "done", JSON.stringify(authored.asked));
+	const card = authored.store.getState().items.find((item) => item.kind === "supervisor");
+	expect("the note joins the transcript as a supervisor item", card?.id === `supervisor:${authored.turnId}` && card.summary === note.summary && card.counts.blocker === 1, JSON.stringify(card));
+	const readOnly = await drive([{ type: "tool.start", callId: "c1", name: "inspect_studio" }, { type: "tool.done", callId: "c1", ok: true, result: { entities: [] } }, { type: "text.delta", text: "One character." }]);
+	await new Promise((resolve) => setImmediate(resolve));
+	expect("a read-only turn never asks for a note", readOnly.asked.length === 0, JSON.stringify(readOnly.asked));
+	const refused = await drive([{ type: "tool.start", callId: "c1", name: "run_action" }, { type: "tool.done", callId: "c1", ok: false, error: "TARGET_NOT_READY: Capsule figures cannot pose." }, { type: "text.delta", text: "It cannot pose." }]);
+	await refused.arrived;
+	expect("a refused turn asks for its note", refused.asked.length === 1);
+	const followUp = module_.supervisorFollowUp(note);
+	expect("the next prompt carries the blockers and concerns, not the notes", followUp.includes("[blocker] Claims a verify that never ran (no verify_result call)") && followUp.includes("[concern] Chair clipped at frame left") && !followUp.includes("faces the wall"), followUp);
+	expect("a note without blockers or concerns suggests no prompt", module_.supervisorFollowUp({ issues: [note.issues[2]] }) === null);
+
+	const { parseSync } = await import("rolldown/experimental");
+	const { transformWithOxc } = await import("vite");
+	const React = await import("react");
+	const { renderToStaticMarkup } = await import("react-dom/server");
+	const source = parseSync("AgentPanel.jsx", panel).program.body
+		.filter((node) => (node.type === "FunctionDeclaration" && node.id.name === "SupervisorCard")
+			|| (node.type === "VariableDeclaration" && ["SUPERVISOR_SEVERITY_COPY", "SUPERVISOR_STATUS_COPY"].includes(node.declarations[0]?.id?.name)))
+		.map((node) => panel.slice(node.start, node.end)).join("\n");
+	const { code } = await transformWithOxc(`function card() {\n${source}\nreturn SupervisorCard;\n}`, "card.jsx", { lang: "jsx", jsx: { runtime: "classic" } });
+	const cardFor = (locale) => new Function("React", "useState", "ko", "supervisorFollowUp", `${code}\nreturn card();`)(React, React.useState, (english, korean) => locale === "ko" ? korean : english, module_.supervisorFollowUp);
+	const render = (locale, props) => renderToStaticMarkup(React.createElement(cardFor(locale), { onSend() {}, ...props }));
+	const collapsed = render("en", { note });
+	expect("collapsed: summary, counts and the send button, no lists", collapsed.includes(note.summary) && collapsed.includes("1 blocker") && collapsed.includes("1 concern") && collapsed.includes("1 note")
+		&& collapsed.includes("Send as next prompt") && collapsed.includes('data-open="false"') && !collapsed.includes("Chair 1.4 m left of Alex"), collapsed);
+	const expanded = render("en", { note, defaultOpen: true });
+	expect("expanded: items and issues with their evidence", expanded.includes("done · Chair 1.4 m left of Alex — receipt-1 actualGapM 1.4") && expanded.includes("blocker · Claims a verify that never ran — no verify_result call")
+		&& expanded.includes("note · Chair faces the wall") && expanded.includes('aria-expanded="true"'), expanded);
+	expect("the send button reads in Korean under the Korean locale", render("ko", { note }).includes("다음 턴으로 보내기"));
+	const unavailable = render("en", { note: { ...note, verdict: "unavailable", reason: "the reviewer request timed out", summary: "", items: [], issues: [], counts: { blocker: 0, concern: 0, note: 0 } } });
+	expect("an unavailable review is one muted line", unavailable === '<div class="agent-card agent-supervisor-card" data-supervisor-verdict="unavailable"><p class="agent-supervisor-summary">Supervisor review unavailable — the reviewer request timed out</p></div>', unavailable);
+}
+
 if (failures) {
 	console.error(`${failures} FAILURES`);
 	process.exitCode = 1;

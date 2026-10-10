@@ -744,6 +744,15 @@
 
 .agent-receipt-summary { line-height: 1.5; word-break: break-word; }
 
+/* The supervisor note (#728) reads quieter than the turn it reviews. */
+.agent-supervisor-card { display: flex; flex-direction: column; gap: var(--agent-space-2); padding: var(--agent-space-3) var(--agent-space-4); border-style: dashed; background: var(--agent-bg-sunken); color: var(--agent-text-muted); font-size: var(--agent-font-md); }
+.agent-supervisor-head { display: flex; align-items: center; gap: var(--agent-space-2); }
+.agent-supervisor-toggle { margin-left: auto; }
+.agent-supervisor-summary { margin: 0; line-height: 1.5; word-break: break-word; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.agent-supervisor-card[data-open="true"] .agent-supervisor-summary { display: block; }
+.agent-supervisor-badge.blocker { border-color: var(--agent-alert-edge); background: var(--agent-alert-bg); color: var(--agent-alert); }
+.agent-supervisor-badge.note { border-color: var(--agent-border-strong); background: transparent; color: var(--agent-text-dim); }
+
 .agent-failure-card { border-color: #6d3a52; background: #2a1c26; }
 .agent-failure-code {
 	color: var(--agent-alert);

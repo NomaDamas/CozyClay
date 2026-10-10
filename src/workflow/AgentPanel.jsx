@@ -42,6 +42,7 @@ import {
 	STUDIO_SESSION_STORAGE_KEY,
 	selectedModelRoles,
 	shortModelId,
+	supervisorFollowUp,
 } from "./agent-client.js";
 import "./agent-panel.css";
 
@@ -196,6 +197,37 @@ function ReceiptCard({ item }) {
 		{/* The pane has no direct Undo into the Studio editor; it names the two
 		    paths that do exist rather than drawing a button it cannot honour. */}
 		{installedWithWarnings && <p className="agent-job-note">Undo with Cmd+Z or ask the agent.</p>}
+	</div>;
+}
+
+const SUPERVISOR_SEVERITY_COPY = { blocker: ko("blocker", "차단"), concern: ko("concern", "우려"), note: ko("note", "참고") };
+const SUPERVISOR_STATUS_COPY = { done: ko("done", "완료"), partial: ko("partial", "일부"), refused: ko("refused", "거부됨"), missing: ko("missing", "누락") };
+
+// The supervisor's note on a finished Studio turn (#728): muted, collapsed to
+// its summary and counts, and never acted on by itself. Its one action puts
+// the blockers and concerns into the composer as the author's next turn.
+function SupervisorCard({ note, onSend, defaultOpen = false }) {
+	const [open, setOpen] = useState(defaultOpen);
+	if (note.verdict !== "reviewed") return <div className="agent-card agent-supervisor-card" data-supervisor-verdict="unavailable">
+		<p className="agent-supervisor-summary">{ko("Supervisor review unavailable", "감독 검토를 할 수 없었어요")}{note.reason ? ` — ${note.reason}` : ""}</p>
+	</div>;
+	const followUp = supervisorFollowUp(note);
+	return <div className="agent-card agent-supervisor-card" data-supervisor-verdict="reviewed" data-open={open ? "true" : "false"}>
+		<div className="agent-supervisor-head">
+			<span className="agent-job-label">{ko("Supervisor", "감독")}</span>
+			{["blocker", "concern", "note"].filter((severity) => note.counts?.[severity] > 0).map((severity) => <span key={severity} className={`agent-job-badge agent-supervisor-badge ${severity}`} data-severity={severity}>{note.counts[severity]} {SUPERVISOR_SEVERITY_COPY[severity]}</span>)}
+			<button type="button" className="agent-ghost-button agent-supervisor-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>{open ? ko("Less", "접기") : ko("Details", "자세히")}</button>
+		</div>
+		<p className="agent-supervisor-summary">{note.summary}</p>
+		{open && note.items?.length > 0 && <ul className="agent-receipt-notes agent-supervisor-items">
+			{note.items.map((item, index) => <li key={index} data-status={item.status}>{SUPERVISOR_STATUS_COPY[item.status] ?? item.status} · {item.text}{item.evidence ? ` — ${item.evidence}` : ""}</li>)}
+		</ul>}
+		{open && note.issues?.length > 0 && <ul className="agent-receipt-notes agent-supervisor-issues">
+			{note.issues.map((issue, index) => <li key={index} data-severity={issue.severity}>{SUPERVISOR_SEVERITY_COPY[issue.severity] ?? issue.severity} · {issue.text}{issue.evidence ? ` — ${issue.evidence}` : ""}</li>)}
+		</ul>}
+		{followUp && <div className="agent-job-actions">
+			<button type="button" className="agent-ghost-button agent-supervisor-send" onClick={() => onSend(followUp)}>{ko("Send as next prompt", "다음 턴으로 보내기")}</button>
+		</div>}
 	</div>;
 }
 
@@ -948,6 +980,7 @@ export default function AgentPanel({
 				if (item.kind === "job") return <div className="agent-row" key={item.id}><JobCard job={item} onStop={stopTurn} onAccept={(job) => store.acceptJob(job.jobId)} /></div>;
 				if (item.kind === "receipt") return <div className="agent-row" key={item.id}><ReceiptCard item={item} /></div>;
 				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt)} /></div>;
+				if (item.kind === "supervisor") return <div className="agent-row" key={item.id}><SupervisorCard note={item} onSend={(text) => { store.setDraft(text); runTurn(text); }} /></div>;
 				return <div className="agent-row" key={item.id}><ImageResultCard image={item} onUse={(image) => store.applyImage(image.id)} onUndo={(image) => store.undoImage(image.id)} onRegenerate={() => runTurn(chat.lastPrompt)} onOpen={setLightbox} /></div>;
 			})}
 

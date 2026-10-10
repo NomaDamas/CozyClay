@@ -125,6 +125,7 @@ const NODE_FILES = [
 	"test/verify-schema-to-typebox.mjs",
 	"test/verify-agent-sse-golden.mjs",
 	"test/verify-agent-context-budget.mjs",
+	"test/verify-agent-supervisor.mjs",
 	"test/verify-studio-agent-protocol.mjs",
 	"test/verify-studio-agent-tokens.mjs",
 	"test/verify-studio-agent-jobs.mjs",

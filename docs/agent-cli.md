@@ -590,6 +590,55 @@ The other refusals: 404 when no Workflow or Studio turn carries that id, 409
 `NO_ACTIVE_TURN` when the turn has already ended (or was stopped), 400 when
 the text is missing or empty or an attachment is not an inline data URL.
 
+## Supervisor
+
+After a Studio turn ends, the sidecar reviews it once in the background and
+leaves the result as a note card in the Agent panel. The review never delays
+the turn and never talks back to the agent: the turn's stream ends with its
+`done` frame exactly as before, and only then does the review start. It runs
+only when the turn authored something (a tool result with `authored: true`)
+or met a refusal (`TARGET_NOT_READY`, `CAPABILITY_MISSING`,
+`CONFIRMATION_REQUIRED`), and was not stopped; read-only turns and questions
+are not reviewed.
+
+The reviewer is the turn's own model, at reasoning effort `high` (clamped to
+the nearest level the model supports), in one request with a 120 s
+timeout. It sees the user request, every receipt of the turn (bounded: no
+image bytes, 8 delta rows, 12 warnings), the refusals, the last reply, the
+geometry facts of a framing `verify_result` the sidecar issues itself for the
+shots the turn touched, and up to five pictures: the current shot frame, the
+Top View, and the start frame of each shot the turn created (the playhead is
+put back afterwards). It judges seven items: request coverage, refused versus
+missing deliverables, spatial sanity, framing, continuity across shots, undo
+integrity and report honesty.
+
+| variable | effect |
+| --- | --- |
+| `COZYCLAY_SUPERVISOR=off` | no review at all; the route answers 204 |
+| `COZYCLAY_SUPERVISOR_EFFORT` | the reasoning effort, default `high` |
+
+The note is one more sequenced event on the turn's record, so
+`GET /agent/turn/<turnId>/events?after=N` replays it after `done`. The panel
+reads it from its own route, which takes the same `studio_owner` cookie:
+
+```sh
+curl -s http://127.0.0.1:5180/agent/turn/<turnId>/supervisor -H 'cookie: studio_owner=…'
+```
+```json
+{"type":"supervisor","turnId":"…","verdict":"reviewed","model":"cliproxy/claude-opus-5-5","effort":"high","elapsedMs":41210,"summary":"…","items":[{"text":"…","status":"done","evidence":"…"}],"issues":[{"severity":"concern","kind":"framing","text":"…","evidence":"…"}],"counts":{"blocker":0,"concern":1,"note":0},"eventSeq":14}
+```
+
+`status` is `done`, `partial`, `refused` or `missing`; `severity` is
+`blocker`, `concern` or `note`; `kind` is `coverage`, `disclosure`,
+`spatial`, `framing`, `continuity`, `undo` or `honesty`. A review that could
+not run or did not answer with a valid verdict is still a note, with
+`verdict: "unavailable"`, empty lists and a `reason`. While the review is
+running the route holds the request up to 180 s; it answers 204 when the wait
+runs out, when the turn was not reviewed or the switch is off, 404 for an
+unknown turn and 403 for another session's cookie. The card's
+**Send as next prompt** button puts the blockers and concerns into the
+composer and sends them as an ordinary turn; nothing is sent on its own.
+
 ## Sessions
 
 Conversations live in `~/.config/cozyclay/agent-sessions/`
