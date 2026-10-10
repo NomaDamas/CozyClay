@@ -205,7 +205,7 @@ const CLIPROXY_NON_CHAT = /^gpt-image-|-auto-review$/;
  * catalogue model of the same family and wire format: `owned_by: openai` rides openai-responses,
  * `owned_by: anthropic` rides anthropic-messages. Other owners (openai-compatibility upstreams such as
  * opencode-go) are left out: they need upstream-specific headers the proxy does not pass through. */
-function cliproxyLiveModel(id, owner, knownModels) {
+export function cliproxyLiveModel(id, owner, knownModels) {
 	if (CLIPROXY_NON_CHAT.test(id)) return null;
 	const api = owner === "openai" ? "openai-responses" : owner === "anthropic" ? "anthropic-messages" : null;
 	if (!api) return null;
@@ -213,7 +213,11 @@ function cliproxyLiveModel(id, owner, knownModels) {
 	const family = owner === "anthropic" ? id.match(/^claude-[a-z]+/)?.[0] : id.match(/^gpt-\d+/)?.[0];
 	const sameFamily = family ? candidates.filter((model) => model.id.startsWith(family)) : [];
 	const template = [...(sameFamily.length ? sameFamily : candidates)].sort((a, b) => b.id.localeCompare(a.id, undefined, { numeric: true }))[0];
-	return template ? { ...template, id, name: id } : null;
+	if (!template) return null;
+	// The 5-5 claude generation rejects thinking {type:"disabled"}; a null "off" makes pi-ai send no thinking block (#723).
+	const generation = owner === "anthropic" ? id.match(/-(\d+)-(\d+)$/) : null;
+	if (generation && Number(generation[1]) >= 5) return { ...template, id, name: id, thinkingLevelMap: { ...template.thinkingLevelMap, off: null } };
+	return { ...template, id, name: id };
 }
 
 function extendCliproxyProvider(provider, live, state) {
