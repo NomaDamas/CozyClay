@@ -1,5 +1,7 @@
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import { objectTransformAt } from "./object-path.js";
+import { routeOwnerFor } from "./route-owner.js";
+import { EMPTY_KIND } from "./scene-objects.js";
 
 /**
  * Travel through the grouping hierarchy.
@@ -12,6 +14,12 @@ import { objectTransformAt } from "./object-path.js";
  * it, relative to where it was authored — is applied rigidly to everything
  * under it. Scale never rides along: the motion is the routed record's own
  * route sample against its own authored pose, both at its own scale.
+ *
+ * The inverse holds for an Empty, which is a pure group node: when it has no
+ * route of its own but a routed descendant owns the group's travel (a car
+ * Empty over its Chassis), it is drawn carried by that descendant's motion, so
+ * its marker and gizmo stay on the car. Ordinary meshes keep their authored
+ * place — only ancestors carry what is below them.
  *
  * Carried props are left to the attach frame that already places them: a
  * record that rides a character is not walked, and neither is an ancestor
@@ -95,10 +103,26 @@ function ancestorsOf(lookup, object) {
 	return chain;
 }
 
+const scratchRide = new Matrix4();
+
+/** The routed descendant an Empty rides, or null for anything else. */
+function ridden(lookup, object) {
+	if (object.path || object.attach || object.renderer !== EMPTY_KIND) return null;
+	const owner = routeOwnerFor(lookup, object.id);
+	return owner && owner !== object ? owner : null;
+}
+
 export function sceneObjectTravelMatrixAt(objects, id, frame, take = {}, out = new Matrix4()) {
 	const lookup = asLookup(objects);
 	const object = lookup.get(id);
 	if (!object || object.attach) return null;
+	const owner = ridden(lookup, object);
+	// The descendant's whole carry (its own ancestors' motion included, which
+	// the Empty shares), applied to where the Empty was authored. Its own scale
+	// never enters: the carry is rigid.
+	if (owner && sceneObjectCarryMatrixAt(lookup, owner.id, frame, take, scratchRide)) {
+		return out.multiplyMatrices(scratchRide, authoredMatrix(object, scratchAuthored));
+	}
 	const chain = ancestorsOf(lookup, object);
 	let moved = false;
 	scratchMotion.identity();
@@ -182,10 +206,10 @@ export function sceneObjectsAt(objects, frame, take = {}) {
 		return next;
 	};
 	return objects.map((object) => {
-		if (object.attach || !ancestorsOf(lookup, object).some((ancestor) => ancestor.path)) {
-			// Nothing above it travels: the route sample alone, exactly as before
-			// the hierarchy carry — for a carried prop, in the frame its numbers
-			// already live in.
+		if (object.attach || (!ancestorsOf(lookup, object).some((ancestor) => ancestor.path) && !ridden(lookup, object))) {
+			// Nothing above it travels (and nothing below carries it): the route
+			// sample alone, exactly as before the hierarchy carry — for a carried
+			// prop, in the frame its numbers already live in.
 			const at = objectTransformAt(object, frame, take);
 			if (!at) return object;
 			// A level, upright route is a yaw and a place. One that leans, or a

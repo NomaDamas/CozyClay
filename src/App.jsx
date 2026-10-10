@@ -2300,6 +2300,16 @@ export default function App() {
 		[sceneObjects, tlFrame, tlFrameCount, tlFps],
 	);
 
+	// The selection as it is DRAWN at this frame, for the transform gizmo to sit
+	// on: a routed record, the group under one, and the Empty that rides its
+	// routed descendant all stand away from their authored numbers while the
+	// playhead is off frame 0. Drags still read the authored records (the gizmo
+	// is handed those separately), so they stay delta-based on authored numbers.
+	const gizmoSceneObject = useMemo(
+		() => (selectedSceneObject ? animatedSceneObjects.find((object) => object.id === selectedSceneObject.id) ?? selectedSceneObject : null),
+		[selectedSceneObject, animatedSceneObjects],
+	);
+
 	// Auto color: Blender's viewport "Random" mode. A DISPLAY-ONLY marker rides
 	// each non-cutout object into the renderers; the authored `color`, the scene
 	// document, undo history and the MCP view never change — toggling OFF makes
@@ -7588,7 +7598,7 @@ export default function App() {
 							    the plan owns the big pane (the pucks are the handles there)
 							    and while posing/IK owns the pointer. */}
 							<ObjectGizmo
-								object={cameraGizmoObject ?? lightGizmoObject ?? (selectedSceneObject && !isEffectivelyHidden(selectedSceneObject, sceneObjects, characters) ? selectedSceneObject : null)}
+								object={cameraGizmoObject ?? lightGizmoObject ?? (selectedSceneObject && !isEffectivelyHidden(selectedSceneObject, sceneObjects, characters) ? gizmoSceneObject : null)}
 								objects={sceneObjects}
 								mode={lightGizmoObject ? "move" : cameraGizmoObject ? (gizmoMode === "scale" ? "move" : gizmoMode) : gizmoMode}
 								snap={snapEnabled}
