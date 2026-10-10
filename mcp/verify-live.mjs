@@ -140,7 +140,7 @@ cases.receipts = async () => {
 		receipt(await s.call("switch_scene", { name: oldScene }), "scene.switch");
 		assert.equal(s.f.scope.activeSceneIdRef.current, "scene");
 		assert.ok(s.wire.some(frame => frame.name === "run_action"));
-		assert.ok(s.wire.every(frame => ["inspect_studio", "run_action", "describe"].includes(frame.name)), "migrated aliases must not send legacy mutator frames");
+		assert.ok(s.wire.every(frame => ["inspect_studio", "read_studio_context", "run_action", "describe"].includes(frame.name)), "migrated aliases must not send legacy mutator frames");
 	} finally { await s.close(); }
 };
 
@@ -384,7 +384,7 @@ cases.cast = async () => {
 		const final = await s.call("remove_character", { character: "A" });
 		assert.equal(JSON.parse(final.content[0].text).code, "INVALID_ARGUMENT");
 		assert.equal(s.f.cast.read().length, 1);
-		assert.ok(s.wire.every(frame => ["inspect_studio", "run_action", "describe"].includes(frame.name)), "cast aliases use no legacy mutation frames");
+		assert.ok(s.wire.every(frame => ["inspect_studio", "read_studio_context", "run_action", "describe"].includes(frame.name)), "cast aliases use no legacy mutation frames");
 	} finally { await s.close(); }
 };
 
@@ -410,7 +410,10 @@ cases.refusals = async () => {
 		const value = await command(name, ...args);
 		if (!reportedMode) return value;
 		if (name === "describe") return { ...value, previsMode: reportedMode };
-		if (name === "inspect_studio") return { ...value, context: { ...value.context, scene: { ...value.context.scene, previsMode: reportedMode } } };
+		// inspect_studio answers a head (revision, host) and the context is read apart; carry the mode wherever a context is.
+		const withMode = context => ({ ...context, scene: { ...context.scene, previsMode: reportedMode } });
+		if (name === "inspect_studio" && value?.context) return { ...value, context: withMode(value.context) };
+		if (name === "read_studio_context") return value?.context ? { ...value, context: withMode(value.context) } : value?.scene ? withMode(value) : value;
 		return value;
 	};
 	const actions = () => s.wire.filter(frame => frame.name === "run_action").map(frame => frame.args.args.action);

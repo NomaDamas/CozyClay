@@ -24,16 +24,18 @@ try {
   console.log('PASS overlap warning and evidence reach the receipt');
 
   // 2. object.update: a key nothing reads is an error for the wire, lenient for the UI.
+  // The agent's index leaves the command out (object.set and arrange_objects declare
+  // every key); the wire keeps it for MCP's update_object and the CLI, and names the
+  // unknown key instead of ignoring it.
   const [crateA, crateB] = [first.affectedIds[0], second.affectedIds[0]];
   const revision = f.binding.refresh().revision;
-  // The agent never reaches it: object.update is hidden from the wire and its
-  // refusal names the doors that validate every key (object.set, arrange_objects).
+  assert.ok(!f.binding.context().actionIndex.some(row => row.id === 'object.update'), 'the agent index omits object.update');
   const unknown = f.run('object.update', { id: crateB, patch: { scale: 2, foo: 1, x: 7 } }, 'agent');
   assert.equal(unknown.ok, false, JSON.stringify(unknown));
-  assert.equal(unknown.code, 'CAPABILITY_MISSING');
-  assert.match(unknown.message, /object\.set/);
+  assert.equal(unknown.code, 'INVALID_ARGUMENT');
+  assert.match(unknown.message, /cannot set scale/); assert.match(unknown.message, /Supported fields/);
   assert.equal(f.run('object.update', { id: crateB, patch: { foo: 1 } }, 'ui').status, 'noop', 'the UI door stays lenient');
-  console.log('PASS object.update is refused on the agent wire and lenient for the UI');
+  console.log('PASS object.update names an unknown key on the wire and stays lenient for the UI');
 
   // 3. Clamps are warnings, in object.update and in arrange_objects.
   const clamped = f.run('object.update', { id: crateB, patch: { scaleY: 0.025, x: 6.2 } }, 'ui');
