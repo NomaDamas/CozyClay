@@ -548,7 +548,7 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
 		// the store only knows the authored one — and while attached the authored
 		// one is not even in world space. Harmless in normal use.
 		if (typeof window !== "undefined") {
-			(window.__cclayPropWorld ??= {})[object.id] = { x: group.position.x, y: group.position.y, z: group.position.z, frame };
+			(window.__cclayPropWorld ??= {})[object.id] = { x: group.position.x, y: group.position.y, z: group.position.z, quat: { x: group.quaternion.x, y: group.quaternion.y, z: group.quaternion.z, w: group.quaternion.w }, frame };
 		}
 		applyPoseFade(group, fadeOpacity, object.opacity ?? 1);
 	};

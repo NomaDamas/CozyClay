@@ -23,6 +23,9 @@ import {
 	objectSize,
 	setSceneObjectAttach,
 	setSceneObjectParent,
+	rigidMotionBetween,
+	carryPointByMotion,
+	tidyAngle,
 } from "../scene-objects.js";
 
 import { ko, isKo } from "../locale.js";
@@ -67,22 +70,35 @@ export function createObjectsDomain(appContext, initial) {
 		return result;
 	}
 	/** Characters grouped under an object ride it while authoring too: whatever
-	 * translation an object took in this write (its own move, or carried with
-	 * its group), the characters under it take the same. Joined to the open
-	 * action, so one undo puts back the object and the riders together. */
+	 * motion an object took in this write (its own move or turn, or carried with
+	 * its group), the characters under it take the same. A pure move shifts
+	 * them by the same translation. A turn orbits them about the object's pivot
+	 * (position by the object's Δ, like any carried child) and adds the yaw
+	 * part of Δ to their facing — a character has only a yaw, so the pitch or
+	 * roll of its parent moves where it stands and never tips it over.
+	 * Joined to the open action, so one undo puts back the object and the
+	 * riders together. */
 	function carryGroupedCharacters(before, next) {
 		const cast = appContext.storeDomain("cast");
 		if (!cast) return;
 		const was = new Map(before.map(row => [row.id, row]));
 		const shifts = new Map();
+		const turns = new Map();
 		for (const row of next) {
 			const prior = was.get(row.id);
 			if (!prior || row.attach || prior.attach) continue;
+			const turn = rigidMotionBetween(prior, row);
+			if (turn) { turns.set(row.id, turn); continue; }
 			const shift = { x: row.x - prior.x, y: (row.y ?? 0) - (prior.y ?? 0), z: row.z - prior.z };
 			if (shift.x || shift.y || shift.z) shifts.set(row.id, shift);
 		}
-		if (!shifts.size || !cast.read().some(entry => shifts.has(entry.parent))) return;
+		if (!(shifts.size || turns.size) || !cast.read().some(entry => shifts.has(entry.parent) || turns.has(entry.parent))) return;
 		appContext.recordAction("cast", () => cast.write(rows => rows.map(entry => {
+			const turn = turns.get(entry.parent);
+			if (turn) {
+				const at = carryPointByMotion({ x: entry.x, y: entry.y ?? 0, z: entry.z }, turn);
+				return { ...entry, x: at.x, y: Math.max(0, at.y), z: at.z, rot: tidyAngle((entry.rot ?? 0) + turn.yaw) };
+			}
 			const shift = shifts.get(entry.parent);
 			return shift ? { ...entry, x: entry.x + shift.x, y: Math.max(0, (entry.y ?? 0) + shift.y), z: entry.z + shift.z } : entry;
 		})), null, true);

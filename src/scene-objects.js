@@ -18,7 +18,7 @@
  */
 
 import { Euler, Quaternion } from "three";
-import { createObjectPath, translateObjectPath } from "./object-path.js";
+import { createObjectPath, rotateObjectPath, translateObjectPath } from "./object-path.js";
 import { elementByPath } from "./studio-elements.js";
 import { MESH_DEFAULT_HEIGHT, MESH_HEIGHT_MIN } from "./scene-mesh.js";
 
@@ -574,13 +574,115 @@ export function isEffectivelyHidden(entity, objects = [], characters = []) {
 	return false;
 }
 
+/** Float dust (6e-17 where 0 belongs) is snapped away, and everything else is
+ * kept to 1e-9: fine enough that hundreds of small gizmo steps cannot drift a
+ * carried child visibly, coarse enough that stored values stay readable. */
+const tidy = (value) => {
+	const rounded = Math.round(value * 1e9) / 1e9;
+	return rounded === 0 ? 0 : rounded;
+};
+export const tidyAngle = (deg) => tidy(wrapAngle(tidy(deg)));
+
+const orientationOf = (record) =>
+	new Quaternion().setFromEuler(new Euler((record.rotX ?? 0) * DEG, (record.rot ?? 0) * DEG, (record.rotZ ?? 0) * DEG, EULER_ORDER));
+
+/** The Euler triple (degrees, XYZ) for an orientation that stays closest to
+ * `near`. Every orientation has two XYZ triples — (x, y, z) and
+ * (x+180, 180−y, z+180) — and a bare setFromQuaternion always answers with the
+ * one whose Y is within ±90. Taking that blindly would turn a plain yaw of 170
+ * into "rotX 180, rot −10, rotZ 180": the same pose, but the bird's-eye board
+ * and the inspector read `rot` as the yaw. The nearer triple keeps a flat
+ * object flat across every turn. */
+function eulerNear(quaternion, near) {
+	const e = new Euler().setFromQuaternion(quaternion, EULER_ORDER);
+	const here = [near.rotX ?? 0, near.rot ?? 0, near.rotZ ?? 0];
+	const candidates = [
+		[e.x / DEG, e.y / DEG, e.z / DEG],
+		[e.x / DEG + 180, 180 - e.y / DEG, e.z / DEG + 180],
+	].map((triple) => triple.map(tidyAngle));
+	const distance = (triple) => triple.reduce((sum, value, i) => sum + Math.abs(wrapAngle(value - here[i])), 0);
+	const [rotX, rot, rotZ] = distance(candidates[1]) < distance(candidates[0]) ? candidates[1] : candidates[0];
+	return { rotX, rot, rotZ };
+}
+
+/**
+ * The rigid motion that takes a pose to another: where its pivot was and is,
+ * and the turn Δ = q_after · q_before⁻¹ between the two orientations (XYZ
+ * Eulers, the renderer's order). Anything riding the pose goes to
+ * `to + Δ·(p − from)` and turns by Δ on the spot. Returns null when the
+ * orientation did not change — a pure move stays a plain translation.
+ *
+ * `yaw` is the part of Δ that turns about the vertical (swing-twist about +Y,
+ * degrees). A character only has a yaw, so it takes this and nothing more: the
+ * pitch or roll of what it is grouped under moves its position and leaves its
+ * facing alone.
+ *
+ * @returns {{ quaternion: Quaternion, matrix: number[], yaw: number, from: object, to: object } | null}
+ */
+export function rigidMotionBetween(before, after) {
+	if ((before.rotX ?? 0) === (after.rotX ?? 0) && (before.rot ?? 0) === (after.rot ?? 0) && (before.rotZ ?? 0) === (after.rotZ ?? 0)) return null;
+	const quaternion = orientationOf(after).multiply(orientationOf(before).invert());
+	if (quaternion.w < 0) quaternion.set(-quaternion.x, -quaternion.y, -quaternion.z, -quaternion.w);
+	if (quaternion.w > 1 - 1e-15) return null;
+	const { x, y, z, w } = quaternion;
+	return {
+		quaternion,
+		// row-major 3x3 of Δ
+		matrix: [
+			1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w),
+			2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w),
+			2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y),
+		],
+		yaw: tidyAngle((2 * Math.atan2(y, w)) / DEG),
+		from: { x: before.x ?? 0, y: before.y ?? 0, z: before.z ?? 0 },
+		to: { x: after.x ?? 0, y: after.y ?? 0, z: after.z ?? 0 },
+	};
+}
+
+/** A point carried by a rigid motion from `rigidMotionBetween`. */
+export function carryPointByMotion(point, motion) {
+	const { matrix: m, from, to } = motion;
+	const dx = point.x - from.x;
+	const dy = (point.y ?? 0) - from.y;
+	const dz = point.z - from.z;
+	return {
+		x: tidy(to.x + m[0] * dx + m[1] * dy + m[2] * dz),
+		y: tidy(to.y + m[3] * dx + m[4] * dy + m[5] * dz),
+		z: tidy(to.z + m[6] * dx + m[7] * dy + m[8] * dz),
+	};
+}
+
+/** Descendants that turn with a rotating parent: everything under it except
+ * records riding a character (their numbers are bone-local, so they follow the
+ * bone, not the parent) and whatever hangs below such a record. */
+function descendantsThatTurn(objects, id) {
+	const out = new Set();
+	let frontier = [id];
+	while (frontier.length) {
+		const next = [];
+		for (const object of objects) {
+			if (!object.parent || !frontier.includes(object.parent) || object.id === id || out.has(object.id) || object.attach) continue;
+			out.add(object.id);
+			next.push(object.id);
+		}
+		frontier = next;
+	}
+	return out;
+}
+
 export function updateSceneObject(objects, id, patch) {
 	let changed = false;
 	const target = objects.find((object) => object.id === id);
-	// A parent carries its children: the group is dragged, nudged and dropped as
-	// one body. Only translation rides along — rotating or scaling a group would
-	// have to orbit and rescale every child about the parent's origin, which is a
-	// different feature and is deliberately not pretended at here.
+	// A parent carries its children: the group is dragged, nudged, turned and
+	// dropped as one body. Translation shifts every descendant by the same
+	// delta. Rotation turns the group rigidly about the parent's pivot: each
+	// descendant orbits it by Δ = q_new · q_old⁻¹ (position AND route) and
+	// composes Δ onto its own orientation, so every child keeps its pose
+	// relative to the parent. A move and a turn in one patch is both at once,
+	// about the pivot's old and new place. Scale is NOT carried — rescaling a
+	// group would have to resize every child about the parent, a different
+	// feature. Records riding a character (`attach`) hold bone-local numbers and
+	// are left alone by the turn, and so is everything below them.
 	const carried = target ? descendantsOf(objects, id) : [];
 	const delta = { x: 0, y: 0, z: 0 };
 	if (target) {
@@ -593,10 +695,42 @@ export function updateSceneObject(objects, id, patch) {
 	}
 	const moving = new Set(carried.map((object) => object.id));
 	const shifts = delta.x || delta.y || delta.z;
+	let turn = null;
+	let turning = null;
+	if (target && !target.attach && carried.length) {
+		const after = { x: (target.x ?? 0) + delta.x, y: (target.y ?? 0) + delta.y, z: (target.z ?? 0) + delta.z };
+		for (const key of ["rotX", "rot", "rotZ"]) {
+			const value = patch[key] === undefined ? NaN : Number(patch[key]);
+			after[key] = Number.isFinite(value) ? TRANSFORM_LIMITS[key](value) : (target[key] ?? 0);
+		}
+		turn = rigidMotionBetween(target, after);
+		if (turn) turning = descendantsThatTurn(objects, id);
+	}
 
 	const next = objects.map((object) => {
 		if (object.id !== id) {
-			if (!shifts || !moving.has(object.id)) return object;
+			if ((!shifts && !turn) || !moving.has(object.id)) return object;
+			if (turn && turning.has(object.id)) {
+				const update = {};
+				const orbit = carryPointByMotion({ x: object.x, y: object.y, z: object.z }, turn);
+				for (const axis of ["x", "y", "z"]) {
+					const bounded = TRANSFORM_LIMITS[axis](orbit[axis]);
+					if (bounded !== (object[axis] ?? 0)) update[axis] = bounded;
+				}
+				const orientation = new Quaternion().multiplyQuaternions(turn.quaternion, orientationOf(object));
+				const euler = eulerNear(orientation, object);
+				for (const key of ["rotX", "rot", "rotZ"]) {
+					if (euler[key] !== (object[key] ?? 0)) update[key] = euler[key];
+				}
+				if (object.path) {
+					const moved = rotateObjectPath(object.path, turn.matrix, turn.from, turn.to);
+					if (JSON.stringify(moved ?? null) !== JSON.stringify(object.path ?? null)) update.path = moved;
+				}
+				if (!Object.keys(update).length) return object;
+				changed = true;
+				return { ...object, ...update };
+			}
+			if (!shifts) return object;
 			const update = {};
 			const carriedDelta = { x: 0, y: 0, z: 0 };
 			for (const axis of ["x", "y", "z"]) {

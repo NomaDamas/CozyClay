@@ -289,6 +289,7 @@ const NODE_FILES = [
 	"test/verify-object-path.mjs",
 	"test/verify-object-travel.mjs",
 	"test/verify-character-group.mjs",
+	"test/verify-group-rotation.mjs",
 	"test/verify-number-field-scrub.mjs",
 	"test/verify-speed-envelope.mjs",
 	"test/verify-motion-resources.mjs",

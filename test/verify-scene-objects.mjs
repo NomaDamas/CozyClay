@@ -850,12 +850,14 @@ expect(
 	movedChild.find((o) => o.id === gParent.id).x === 0,
 );
 
-// Rotating or scaling a group is NOT propagated — only translation is claimed.
+// Rotating a group turns it rigidly about the parent (test/verify-group-rotation.mjs
+// covers the math); scaling is NOT propagated — only translation and rotation are claimed.
 const groupSpun = updateSceneObject(grouped, gParent.id, { rot: 90, scaleX: 2 });
+const spunA = groupSpun.find((o) => o.id === gChildA.id);
 expect(
-	"rotation and scale stay on the parent alone",
-	groupSpun.find((o) => o.id === gChildA.id).rot === gChildA.rot &&
-		groupSpun.find((o) => o.id === gChildA.id).scaleX === gChildA.scaleX,
+	"rotation turns the child with the parent (its rot gains the parent's yaw) while scale stays on the parent alone",
+	Math.abs((((spunA.rot - (gChildA.rot + 90)) % 360) + 540) % 360 - 180) < 1e-6 && spunA.scaleX === gChildA.scaleX,
+	JSON.stringify(spunA),
 );
 
 expect("an object cannot parent itself", setSceneObjectParent(grouped, gParent.id, gParent.id) === grouped);

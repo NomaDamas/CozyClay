@@ -86,6 +86,40 @@ export function translateObjectPath(path, delta) {
 	});
 }
 
+/**
+ * The same route, turned bodily about a pivot: a rotating group carries every
+ * child's route around with it, the way translateObjectPath carries it along.
+ * `matrix` is a row-major 3x3 rotation (kept as plain numbers so this module
+ * stays importable without three.js); every point goes to
+ * `to + matrix · (point − from)`, so one call also covers a pivot that moved
+ * in the same edit. Values are tidied at 1e-9 so float dust never accumulates
+ * over a drag's many small steps. Shape is preserved; only the room walls and
+ * the floor can bend it.
+ */
+export function rotateObjectPath(path, matrix, from, to) {
+	const source = createObjectPath(path);
+	if (!source) return null;
+	if (!Array.isArray(matrix) || matrix.length !== 9 || !matrix.every((value) => Number.isFinite(value))) return source;
+	const tidy = (value) => {
+		const rounded = Math.round(value * 1e9) / 1e9;
+		return rounded === 0 ? 0 : rounded;
+	};
+	const [m0, m1, m2, m3, m4, m5, m6, m7, m8] = matrix;
+	return createObjectPath({
+		...source,
+		points: source.points.map((point) => {
+			const dx = point.x - finite(from?.x);
+			const dy = point.y - finite(from?.y);
+			const dz = point.z - finite(from?.z);
+			return {
+				x: tidy(finite(to?.x) + m0 * dx + m1 * dy + m2 * dz),
+				y: tidy(finite(to?.y) + m3 * dx + m4 * dy + m5 * dz),
+				z: tidy(finite(to?.z) + m6 * dx + m7 * dy + m8 * dz),
+			};
+		}),
+	});
+}
+
 /*
  * The route as travelled is a curve, not the polyline of its points: a
  * centripetal Catmull-Rom through every authored point (the camera rail's
