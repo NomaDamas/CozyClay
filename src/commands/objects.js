@@ -19,7 +19,7 @@ const PATCH_HINTS = { scale: 'use scaleX, scaleY, scaleZ', rotY: 'use rot for ya
 const mutation = (id, label, input) => ({ id, label, description: label, kind: 'mutation', undoDomain: 'objects', input });
 const semantic = [
 	mutation('object.set', 'Set object fields', setInput),
-	mutation('object.add', 'Add object', input({ kind: { type: 'string' }, placement, name: { type: 'string' }, parent: id }, ['kind'])),
+	mutation('object.add', 'Add object', input({ kind: { type: 'string' }, placement, name: { type: 'string' }, parent: id, first: { type: 'boolean' } }, ['kind'])),
 	mutation('object.remove', 'Remove objects', input({ ids })),
 	mutation('object.rename', 'Rename object', input({ id, name: { type: 'string', maxLength: 240 } })),
 	mutation('object.group', 'Group objects', input({ parent: id, children: ids })),
@@ -58,7 +58,9 @@ export function register(registry, ports) {
 			const object = createSceneObject(args.kind, before, args.placement);
 			if (!object) fail('INVALID_ARGUMENT', `Unknown object kind: ${args.kind}`);
 			const placed = updateSceneObject([object], object.id, { ...(args.placement ?? {}), ...(args.name === undefined ? {} : { name: args.name }) })[0];
-			const next = [...before, placed];
+			// `first`: the Outliner lists Props in record order, so a UI-made object
+			// goes to the top where it is seen, not below a long expanded group.
+			const next = args.first ? [placed, ...before] : [...before, placed];
 			owned().write(args.parent === undefined ? next : setSceneObjectParent(next, placed.id, args.parent));
 			return result(before, 'Added object.');
 		},

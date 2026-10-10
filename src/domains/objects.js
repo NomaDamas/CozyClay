@@ -300,7 +300,7 @@ export function useObjects(appContext) {
 		const placement = at ?? (camera
 			? placementInFront({ x: camera.position.x, z: camera.position.z }, paneYaw)
 			: {});
-		const receipt = run("object.add", { kind, placement });
+		const receipt = run("object.add", { kind, placement, first: true });
 		const object = domain.read().find(row => row.id === receipt.affectedIds[0]);
 		appContext.shared.markCraftAction("object");
 		appContext.shared.setSelectedHierarchyId(`object:${object.id}`);
@@ -943,7 +943,9 @@ export function useObjects(appContext) {
 		// Grouping keeps its own rules (self, cycles, unknown ids) — asking the
 		// store is the only way to stay honest about them.
 		if (targetObjectId) return setSceneObjectParent(sceneObjects, id, targetObjectId) !== sceneObjects;
-		if (targetRowId === "props") return (object.attach ?? null) !== null || (object.parent ?? null) !== null;
+		// Props takes an object out of its group (or off a character) and lists
+		// it first, so the drop always shows; a top-level object moves up too.
+		if (targetRowId === "props") return (object.attach ?? null) !== null || (object.parent ?? null) !== null || sceneObjects[0]?.id !== id;
 		const attach = attachTargetForRow(targetRowId);
 		if (!attach) return false;
 		const current = object.attach ?? null;
@@ -959,6 +961,14 @@ export function useObjects(appContext) {
 		// group comes back to world numbers on the way, exactly as the Props
 		// row would put it back.
 		if (targetObjectId) return run("object.group", { parent: targetObjectId, children: [id] });
+		const object = sceneObjects.find((entry) => entry.id === id);
+		if (targetRowId === "props" && !object?.attach) {
+			// Out of its group and to the top of Props in one write (one undo):
+			// records are world-space, so clearing the parent moves nothing.
+			const rows = setSceneObjectParent(domain.read(), id, null);
+			const moved = rows.find((entry) => entry.id === id);
+			return run("objects.replace", { objects: [moved, ...rows.filter((entry) => entry.id !== id)] });
+		}
 		const attach = targetRowId === "props" ? null : attachTargetForRow(targetRowId);
 		appContext.shared.runStudioAction(attach ? "object.attach" : "object.detach", attach
 			? { objectId: id, characterId: attach.characterId, ...(attach.bone ? { bone: attach.bone } : {}) }
