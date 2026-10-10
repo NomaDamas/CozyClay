@@ -210,7 +210,7 @@ function registerTests() {
 		const { STUDIO_SYSTEM_PROMPT: prompt } = await import("../bin/agent/studio-prompt.mjs");
 		for (const rule of [/Euler order XYZ for rotX\/rot\/rotZ/, /yaw zero \+Z/, /base pivot: y is the bottom/, /x\/z are the footprint centre/, /unit cube at scale 1 is 1 m/,
 			/world space unless the tool says otherwise/, /not parent-relative/, /at least 0\.1 m; smaller requests are clamped/, /Prefer object\.set or arrange_objects to the legacy object\.update/,
-			/create an empty object \(a pure grouping node with no geometry\)/, /never use a tiny cube as a folder/, /rotating it rotates them about the parent's pivot; scale is not carried/,
+			/use an empty \(kind "empty", no geometry\) as the root/, /never use a tiny cube as a folder/, /rotating it rotates them about the parent's pivot; scale is not carried/,
 			/coplanar overlapping faces: offset them by at least 3 mm or put one fully inside/]) assert.match(prompt, rule);
 		assert.doesNotMatch(prompt, /Grouping carries position only/);
 	});
