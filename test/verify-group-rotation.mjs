@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Rotating a parent scene object turns its whole group rigidly about the
 // parent's pivot. Records stay flat and world-space; updateSceneObject carries
-// descendants (position, orientation, route) so every child keeps its pose
+// descendants (position, orientation; never the route, a road in the world) so every child keeps its pose
 // RELATIVE to the parent. three.js is the oracle for all of the math.
 import assert from "node:assert/strict";
 import { Euler, Matrix4, Quaternion, Vector3 } from "three";
@@ -121,21 +121,24 @@ check("an attached parent does not carry a turn (its numbers are bone-local)", (
 	assert.equal(byId(out, "staff").rot, 90);
 });
 
-check("children's routes rotate about the same pivot", () => {
+check("children's routes stay put when the parent turns; the body orbits and turns", () => {
 	const path = { points: [{ x: 3, y: 5, z: 5 }, { x: 3, y: 5, z: 9 }, { x: 6, y: 7, z: 9 }], speed: 2, faceTravel: false };
 	const rows = [obj("car", null, { x: 2, y: 5, z: 5 }), obj("ghost", "car", { x: 3, y: 5, z: 5 }, { path })];
 	const out = updateSceneObject(rows, "car", { rot: 90, rotX: 30 });
-	const q = new Quaternion().setFromEuler(new Euler(30 * DEG, 90 * DEG, 0, "XYZ"));
-	const moved = byId(out, "ghost").path;
-	assert.equal(moved.points.length, 3);
-	assert.equal(moved.speed, 2, "route settings other than the points are kept");
-	path.points.forEach((p, i) => {
-		const e = new Vector3(p.x - 2, p.y - 5, p.z - 5).applyQuaternion(q);
-		near(moved.points[i].x, 2 + e.x, 1e-9); near(moved.points[i].y, 5 + e.y, 1e-9); near(moved.points[i].z, 5 + e.z, 1e-9);
-	});
-	// the child itself sits on its (rotated) route start
 	const ghost = byId(out, "ghost");
-	near(ghost.x, moved.points[0].x, 1e-9); near(ghost.y, moved.points[0].y, 1e-9); near(ghost.z, moved.points[0].z, 1e-9);
+	assert.deepEqual(ghost.path, byId(rows, "ghost").path, "the road is not turned with the group");
+	const q = new Quaternion().setFromEuler(new Euler(30 * DEG, 90 * DEG, 0, "XYZ"));
+	const e = new Vector3(1, 0, 0).applyQuaternion(q);
+	near(ghost.x, 2 + e.x, 1e-9); near(ghost.y, 5 + e.y, 1e-9); near(ghost.z, 5 + e.z, 1e-9);
+	assertSameRelative(rows, out, "car", "ghost");
+	// turning back restores every descendant exactly
+	const back = updateSceneObject(out, "car", { rot: 0, rotX: 0 });
+	const g = byId(back, "ghost"), g0 = byId(rows, "ghost");
+	for (const key of ["x", "y", "z", "rot", "rotX", "rotZ"]) near(g[key], g0[key], 1e-9, `${key} restored`);
+	assert.deepEqual(g.path, g0.path);
+	// a move together with the turn still carries the road, unturned
+	const both = updateSceneObject(rows, "car", { rot: 90, x: 4 });
+	assert.deepEqual(byId(both, "ghost").path, translateObjectPath(path, { x: 2, y: 0, z: 0 }));
 });
 
 check("a translation-only patch is exactly the old behaviour (no rotation fields touched)", () => {
@@ -169,8 +172,7 @@ check("360 steps of 1 degree return every child to its start within 1e-6", () =>
 			const a = rigid(was).elements, b = rigid(is).elements;
 			for (let i = 0; i < 16; i += 1) near(a[i], b[i], 1e-6, `${key}: ${id} matrix ${i}`);
 		}
-		const path = byId(rows, "a").path.points, first = byId(start, "a").path.points;
-		path.forEach((p, i) => { for (const axis of ["x", "y", "z"]) near(p[axis], first[i][axis], 1e-6, `${key}: route point ${i}.${axis}`); });
+		assert.deepEqual(byId(rows, "a").path, byId(start, "a").path, `${key}: the route is never touched by the turn`);
 	}
 });
 

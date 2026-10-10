@@ -18,7 +18,7 @@
  */
 
 import { Euler, Quaternion } from "three";
-import { createObjectPath, rotateObjectPath, translateObjectPath } from "./object-path.js";
+import { createObjectPath, translateObjectPath } from "./object-path.js";
 import { elementByPath } from "./studio-elements.js";
 import { MESH_DEFAULT_HEIGHT, MESH_HEIGHT_MIN } from "./scene-mesh.js";
 
@@ -722,9 +722,11 @@ export function updateSceneObject(objects, id, patch) {
 	// A parent carries its children: the group is dragged, nudged, turned and
 	// dropped as one body. Translation shifts every descendant by the same
 	// delta. Rotation turns the group rigidly about the parent's pivot: each
-	// descendant orbits it by Δ = q_new · q_old⁻¹ (position AND route) and
-	// composes Δ onto its own orientation, so every child keeps its pose
-	// relative to the parent. A move and a turn in one patch is both at once,
+	// descendant orbits it by Δ = q_new · q_old⁻¹ and composes Δ onto its own
+	// orientation, so every child keeps its pose relative to the parent. A
+	// child's travel route is NOT turned with it: the route is a road in the
+	// world, and a parent's turn turns the bodies (their orientation and the
+	// authored position they orbit), never the road they would drive. A move and a turn in one patch is both at once,
 	// about the pivot's old and new place. Scale is NOT carried — rescaling a
 	// group would have to resize every child about the parent, a different
 	// feature. Records riding a character (`attach`) hold bone-local numbers and
@@ -768,8 +770,9 @@ export function updateSceneObject(objects, id, patch) {
 				for (const key of ["rotX", "rot", "rotZ"]) {
 					if (euler[key] !== (object[key] ?? 0)) update[key] = euler[key];
 				}
-				if (object.path) {
-					const moved = rotateObjectPath(object.path, turn.matrix, turn.from, turn.to);
+				// A move in the same edit still carries the road along, unturned.
+				if (object.path && shifts) {
+					const moved = translateObjectPath(object.path, delta);
 					if (JSON.stringify(moved ?? null) !== JSON.stringify(object.path ?? null)) update.path = moved;
 				}
 				if (!Object.keys(update).length) return object;
