@@ -64,6 +64,7 @@ export function createCommandBus({ registry, ports }) {
   const controls = {
     'agent.turn.begin': object({ turnId: identifier }),
     'agent.turn.finish': object({ turnId: identifier }),
+    'agent.turn.cancel': object({ turnId: identifier }),
     'run.begin': object({ id: identifier, args: argsSchema }),
     'run.update': object({ txId: identifier, args: argsSchema }),
     'run.commit': object({ txId: identifier }),
@@ -87,13 +88,14 @@ export function createCommandBus({ registry, ports }) {
     if (id.startsWith('agent.turn.')) {
       if (request.origin !== 'agent' || request.turnId !== args.turnId) fail('CAPABILITY_MISSING', 'Only the owning agent turn can control this transaction.');
       if (id === 'agent.turn.begin') {
-        if (before.previsMode !== 'storyboard') fail('INVALID_ARGUMENT', 'Turn transactions require a Storyboard project.');
         if (agentTurn || transactions.size) fail('TARGET_BUSY', 'Finish the open transaction first.');
         agentTurn = { txId: args.turnId, before, affectedIds: new Set(), toasts: [], session: null };
         return transactionReceipt(id, agentTurn, request, before);
       }
       if (agentTurn?.txId !== args.turnId) fail('STALE_TARGET', 'The agent turn is no longer open.');
       const turn = agentTurn;
+      // A rolled-back turn restores every owner it touched and leaves no entry.
+      if (id === 'agent.turn.cancel') { agentTurn = null; turn.session?.cancel(); return transactionReceipt(id, turn, request, before); }
       try { turn.historyEntryId = turn.session?.commit().historyEntryId; }
       catch (error) { turn.session?.cancel(); throw error; }
       finally { agentTurn = null; }
@@ -271,7 +273,7 @@ export function createCommandBus({ registry, ports }) {
         // Job controls observe/cancel an admitted identity; completion itself
         // can advance the revision while their wire request is in transit.
         // Document identity and the job's own publication fence still apply.
-        if (!['job.await', 'job.cancel', 'agent.turn.finish'].includes(id) && request.expectedRevision !== before.revision) fail('STALE_SCENE', 'Authored state changed; obtain fresh intent.');
+        if (!['job.await', 'job.cancel', 'agent.turn.finish', 'agent.turn.cancel'].includes(id) && request.expectedRevision !== before.revision) fail('STALE_SCENE', 'Authored state changed; obtain fresh intent.');
         if (before.busy && !turn && !transactions.has(validated.txId) && !id.startsWith('job.')) fail('TARGET_BUSY', 'Finish the current editor gesture first.');
       }
       if (controls[id]) return mapResult(control(id, validated, request, before), remember, rejected);

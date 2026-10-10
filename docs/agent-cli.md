@@ -568,11 +568,14 @@ composer sends. `queued: true` is literal: the harness takes one steer at a
 time and hands the text to the model at the next step of the same turn, so a
 tool call already in flight finishes first and nothing is cancelled.
 
-Studio turns are not steerable in this version. Their envelopes are frozen,
-so the route answers 409 `STEER_UNSUPPORTED` for a Studio turn id. The other
-refusals: 404 when no Workflow turn carries that id, 409 `NO_ACTIVE_TURN`
-when the turn has already ended, 400 when the text is missing or empty or an
-attachment is not an inline data URL.
+Studio turns are steerable the same way. The Studio turn id is the `turnId`
+of its envelope, and the request must carry the session's `studio_owner`
+cookie (the one the turn's response set, scoped to `/agent`); without it the
+route answers 403 `AUTH_REQUIRED`, exactly like the turn's event stream.
+
+The other refusals: 404 when no Workflow or Studio turn carries that id, 409
+`NO_ACTIVE_TURN` when the turn has already ended (or was stopped), 400 when
+the text is missing or empty or an attachment is not an inline data URL.
 
 ## Sessions
 

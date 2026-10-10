@@ -9,6 +9,7 @@ const SOURCE_EXTENSIONS = new Set([".js", ".jsx", ".mjs", ".cjs"]);
 const ROOT_DEPENDENCY_ALLOWLIST = Object.freeze({
 	"@earendil-works/pi-agent-core": "0.85.1",
 	"@earendil-works/pi-ai": "0.85.1",
+	"@earendil-works/pi-codemode": "1.1.0",
 });
 const MCP_DEPENDENCY_BASELINE = Object.freeze({
 	"@modelcontextprotocol/sdk": "^1.30.0",
