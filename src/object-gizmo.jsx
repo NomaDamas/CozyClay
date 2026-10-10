@@ -648,17 +648,22 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			// side-effect free: it only answers "would you grab here?".
 			if (stateRef.current.claimPointer?.(event)) return;
 			const grabbed = pickHandle(event);
-			// A press ON the key-light sun outranks any handle overlapping it:
-			// the puck's own body-drag is the primary interaction there, and the
-			// centre plane-square would otherwise silently claim the grab.
+			// A press ON the key-light sun, or on a route or crane dot, outranks
+			// any handle overlapping it: the puck's own body-drag and the dot's
+			// own grab are the primary interaction there, and the centre
+			// plane-square would otherwise silently claim the grab. (A routed
+			// object drawn at frame 0 sits exactly on its route's start dot.)
 			if (grabbed && rayFrom(event)) {
 				tools.raycaster.layers.set(GIZMO_LAYER);
-				const sunClaims = tools.raycaster.intersectObjects(scene.children, true).some((entry) => {
-					for (let node = entry.object; node; node = node.parent) if (node.userData?.keyLightPick) return true;
+				const dotClaims = tools.raycaster.intersectObjects(scene.children, true).some((entry) => {
+					for (let node = entry.object; node; node = node.parent) {
+						const data = node.userData;
+						if (data?.keyLightPick || data?.pathIndex !== undefined || data?.craneIndex !== undefined) return true;
+					}
 					return false;
 				});
 				tools.raycaster.layers.set(0);
-				if (sunClaims) return;
+				if (dotClaims) return;
 			}
 			if (
 				grabbed &&
