@@ -532,6 +532,22 @@ the panel can show what a key would buy you.
 The model is picked per turn, so one session can start on ChatGPT and
 continue on Anthropic without losing its history.
 
+### Prompt caching
+
+On an `anthropic-messages` model the request already carries Anthropic cache
+breakpoints from pi-ai 0.85.1 itself (default retention "short", i.e.
+`{"type":"ephemeral"}`): every system block
+(`node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js:801-826`),
+the last tool definition (`:1133`, unless the model's
+`compat.supportsCacheControlOnTools` is false) and the last block of the last
+user message (`:1066-1085`). The runner's `before_payload` hook only fills a
+missing mark on the last system block and the last tool, never past
+Anthropic's four breakpoints. The Studio's `<actions>` block sits at the end
+of the system prompt, so the system prompt and the tool schemas form a stable
+cacheable prefix; whether a turn hit the cache shows in the `done` frame's
+`usage.cacheRead` / `usage.cacheWrite` (token counts summed over the turn's
+provider requests, with `usage.requests` the number of requests).
+
 ## Steering a running turn
 
 On the Workflow canvas you can add to a turn while it is still running,
