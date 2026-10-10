@@ -560,3 +560,77 @@ console.log("agent provider verification passed");
 		}
 	}
 }
+
+// #717: model roles and the fallback chain are pure functions of the catalog
+// listAgentModels returns, and every derived role stays on main's provider.
+{
+	const entry = (provider, id, input = ["text", "image"]) => ({ id, key: `${provider}/${id}`, input });
+	const fakeCatalog = (anthropicSignedIn) => ({ providers: [
+		{ id: "openai-codex", signedIn: true, models: [entry("openai-codex", "gpt-6-astra"), entry("openai-codex", "gpt-6-luna"), entry("openai-codex", "gpt-5.4-mini")] },
+		{ id: "anthropic", signedIn: anthropicSignedIn, models: [entry("anthropic", "claude-opus-5-5"), entry("anthropic", "claude-sonnet-5-5")] },
+		{ id: "cliproxy", signedIn: true, models: [entry("cliproxy", "claude-opus-5-5"), entry("cliproxy", "claude-sonnet-5-5"), entry("cliproxy", "claude-haiku-4-5"), entry("cliproxy", "claude-haiku-5-5"), entry("cliproxy", "gpt-6-astra")] },
+		{ id: "google", signedIn: true, models: [entry("google", "gemini-3-pro")] },
+	] });
+	assert.deepEqual(providers.MODEL_ROLES, ["main", "helper", "vision", "advisor"]);
+
+	for (const anthropicSignedIn of [true, false]) {
+		const catalog = fakeCatalog(anthropicSignedIn);
+		assert.deepEqual(providers.resolveRoleModels("cliproxy/claude-opus-5-5", catalog), {
+			main: "cliproxy/claude-opus-5-5",
+			helper: "cliproxy/claude-haiku-5-5",
+			vision: "cliproxy/claude-opus-5-5",
+			advisor: "cliproxy/claude-sonnet-5-5",
+		});
+		assert.deepEqual(providers.fallbackChain("cliproxy/claude-opus-5-5", catalog), [
+			...(anthropicSignedIn ? ["anthropic/claude-opus-5-5"] : []),
+			"cliproxy/claude-sonnet-5-5",
+			"cliproxy/claude-haiku-5-5",
+		], `fallback with anthropic signedIn=${anthropicSignedIn}`);
+	}
+	console.log("PASS #717 cliproxy opus main: helper haiku-5-5, advisor sonnet-5-5, fallback crosses only to signed-in providers");
+
+	const catalog = fakeCatalog(true);
+	const codexRoles = providers.resolveRoleModels("openai-codex/gpt-6-astra", catalog);
+	assert.equal(codexRoles.helper, "openai-codex/gpt-5.4-mini", "the mini-class id beats luna for the gpt helper");
+	assert.equal(codexRoles.advisor, "openai-codex/gpt-6-astra");
+	assert.equal(codexRoles.vision, "openai-codex/gpt-6-astra");
+	assert.deepEqual(providers.fallbackChain("openai-codex/gpt-6-astra", catalog), ["cliproxy/gpt-6-astra", "openai-codex/gpt-5.4-mini"]);
+	assert.equal(providers.resolveRoleModels("openai-codex/gpt-6-luna", { providers: [{ id: "openai-codex", signedIn: true, models: [entry("openai-codex", "gpt-6-astra"), entry("openai-codex", "gpt-6-luna")] }] }).helper, "openai-codex/gpt-6-luna", "without a mini-class id luna is the gpt helper");
+	console.log("PASS #717 openai-codex astra main: helper is the mini-class id, advisor astra");
+
+	const geminiRoles = providers.resolveRoleModels("google/gemini-3-pro", catalog);
+	assert.deepEqual(geminiRoles, { main: "google/gemini-3-pro", helper: "google/gemini-3-pro", vision: "google/gemini-3-pro", advisor: "google/gemini-3-pro" });
+	assert.deepEqual(providers.fallbackChain("google/gemini-3-pro", catalog), []);
+	const lone = { providers: [{ id: "anthropic", signedIn: true, models: [entry("anthropic", "claude-haiku-5-5")] }] };
+	assert.equal(providers.resolveRoleModels("anthropic/claude-haiku-5-5", lone).helper, "anthropic/claude-haiku-5-5");
+	assert.deepEqual(providers.fallbackChain("anthropic/claude-haiku-5-5", lone), []);
+	console.log("PASS #717 a main with no smaller model keeps helper === main and an empty fallback");
+
+	const textOnly = { providers: [{ id: "cliproxy", signedIn: true, models: [entry("cliproxy", "claude-sonnet-5-5", ["text"]), entry("cliproxy", "claude-haiku-5-5")] }] };
+	assert.equal(providers.resolveRoleModels("cliproxy/claude-sonnet-5-5", textOnly).vision, "cliproxy/claude-haiku-5-5", "a text-only main borrows the first same-provider vision model");
+	for (const [key, value] of [["cliproxy/claude-unknown-9", catalog], ["nope/x", catalog], [undefined, catalog], ["cliproxy/claude-opus-5-5", null], ["cliproxy/claude-opus-5-5", { providers: "bad" }]]) {
+		const roles = providers.resolveRoleModels(key, value);
+		const main = typeof key === "string" ? key : "";
+		assert.deepEqual(roles, { main, helper: main, vision: main, advisor: main }, `unknown input degrades to main: ${key}`);
+		assert.deepEqual(providers.fallbackChain(key, value), [], `unknown input has no fallback: ${key}`);
+	}
+	assert.deepEqual(providers.resolveRoleModels("cliproxy/claude-opus-5-5", catalog), providers.resolveRoleModels("cliproxy/claude-opus-5-5", fakeCatalog(true)), "deterministic");
+	console.log("PASS #717 vision borrows an image model, unknown ids degrade to main without throwing");
+
+	const base = await providers.createModels({ auth: { readStored: () => undefined }, keys: { readKeys: () => ({}) }, env: {} });
+	const codexOnly = { getModels: (id) => base.getModels(id), getAuth: async (id) => (id === "openai-codex" ? { auth: {}, source: "chatgpt" } : undefined) };
+	const listed = await providers.listAgentModels({ models: codexOnly, auth: { readStored: () => undefined, status: () => ({ signedIn: true }) }, keys: { readKeys: () => ({}) }, env: {} });
+	const byMain = listed.roles?.byMain ?? {};
+	const codexKeys = listed.providers.find((provider) => provider.id === "openai-codex").models.map((model) => model.key);
+	assert.ok(codexKeys.length > 0);
+	assert.deepEqual(Object.keys(byMain).sort(), [...codexKeys].sort(), "roles.byMain covers exactly the signed-in provider's models");
+	assert.ok(listed.providers.some((provider) => !provider.signedIn && provider.models.length > 0), "signed-out providers still list models without roles");
+	for (const key of codexKeys) {
+		const roles = byMain[key];
+		assert.deepEqual(Object.keys(roles).sort(), ["advisor", "fallback", "helper", "vision"]);
+		assert.ok([roles.helper, roles.vision, roles.advisor].every((value) => value.startsWith("openai-codex/")), `${key} roles stay on its provider`);
+		assert.ok(Array.isArray(roles.fallback) && roles.fallback.length <= 3 && !roles.fallback.includes(key));
+	}
+	assert.equal(byMain["openai-codex/gpt-6-astra"]?.advisor, "openai-codex/gpt-6-astra");
+	console.log("PASS #717 listAgentModels carries roles.byMain for signed-in providers only");
+}

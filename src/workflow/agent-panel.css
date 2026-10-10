@@ -1097,6 +1097,16 @@
 
 .agent-model-select option:disabled { color: var(--agent-text-dim); }
 
+/* The selected model's derived roles (#717): one muted, read-only line. */
+.agent-model-roles {
+	margin: var(--agent-space-1) 0 0;
+	overflow: hidden;
+	white-space: nowrap;
+	text-overflow: ellipsis;
+	color: var(--agent-text-dim);
+	font-size: var(--agent-font-sm);
+}
+
 .agent-composer-picks { margin-bottom: var(--agent-space-2); }
 .agent-effort-select { flex: 0 0 auto; width: auto; max-width: 42%; }
 .agent-composer-spacer { flex: 1; }
