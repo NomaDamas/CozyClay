@@ -489,9 +489,15 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 		 * null for the uniform-scale knob and for plane handles, which carry
 		 * their own `plane` axes instead. */
 		const beginDrag = (kind, axis, dir, camera) => {
-			const live = stateRef.current.object;
-			if (!live) return false;
-			tools.origin.set(live.x, gizmoHeight(live), live.z);
+			const shown = stateRef.current.object;
+			if (!shown) return false;
+			// The gizmo can be SHOWN on the pose a routed record is drawn at, while
+			// every channel a drag writes starts from the AUTHORED record: a start
+			// taken from the drawn numbers would land them in the authored ones
+			// (a jump of however far the car has driven). The pivot, and the yaw
+			// the card's corners are seen at, are the shown ones.
+			const live = stateRef.current.objects.find((entry) => entry.id === shown.id) ?? shown;
+			tools.origin.set(shown.x, gizmoHeight(shown), shown.z);
 			camera.getWorldDirection(tools.eye);
 			let plane;
 			let drag;
@@ -536,7 +542,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 				// The card's own plane, so the grab tracks the picture rather than a
 				// world axis: a standee that has been turned is still resized by the
 				// corner the eye sees.
-				const yaw = ((live.rot ?? 0) * Math.PI) / 180;
+				const yaw = ((shown.rot ?? 0) * Math.PI) / 180;
 				const right = new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw));
 				const up = new THREE.Vector3(0, 1, 0);
 				const normal = new THREE.Vector3().crossVectors(right, up).normalize();
