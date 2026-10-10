@@ -23,8 +23,10 @@ const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
 let seq = 0;
 const pending = new Map();
+const events = [];
 ws.onmessage = (event) => {
 	const message = JSON.parse(event.data);
+	if (!message.id) events.push(message);
 	if (!message.id || !pending.has(message.id)) return;
 	const item = pending.get(message.id);
 	pending.delete(message.id);
@@ -86,8 +88,32 @@ const click = async (selector) => {
 };
 
 // --- the Studio Agent composer ------------------------------------------
+// The composer stays disabled until GET /agent/models answers, and a disabled
+// textarea ignores focus(). On a fast machine the list lands before anyone
+// looks, so hold the answer back to make the slow path happen every time.
+const MODEL_LIST_DELAY_MS = 1800;
+await send("Fetch.enable", { patterns: [{ urlPattern: "*/agent/models*", requestStage: "Request" }] });
+let heldModelRequests = 0;
+const release = (requestId) => setTimeout(() => { send("Fetch.continueRequest", { requestId }).catch(() => {}); }, MODEL_LIST_DELAY_MS);
+const holdModels = setInterval(() => {
+	while (events.length) {
+		const message = events.shift();
+		if (message.method !== "Fetch.requestPaused") continue;
+		heldModelRequests += 1;
+		release(message.params.requestId);
+	}
+}, 20);
+await send("Page.reload");
+await sleep(500);
+await waitFor("the studio shell after reload", () => evaluate("!!document.querySelector('[data-testid=studio-agent-bar]')"), 30000);
 await click("[data-testid=studio-agent-bar]");
+const openedAt = Date.now();
+await waitFor("the composer textarea", () => evaluate("!!document.querySelector('.agent-input')"));
+expect("the model list is still pending when the panel opens (delay took effect)", await evaluate("document.querySelector('.agent-input').disabled"), `held=${heldModelRequests}`);
 await waitFor("the composer", () => evaluate("!!document.querySelector('.agent-input') && !document.querySelector('.agent-input').disabled && document.querySelector('.agent-input').offsetParent !== null"));
+clearInterval(holdModels);
+await send("Fetch.disable");
+expect("the delayed model list really arrived late", heldModelRequests > 0 && Date.now() - openedAt > 500, `held=${heldModelRequests}`);
 expect("opening the Agent panel focuses the composer", (await active()).startsWith("TEXTAREA.agent-input"), await active());
 
 const stageBefore = await cutouts();
