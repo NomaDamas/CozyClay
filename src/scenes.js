@@ -197,6 +197,10 @@ export function createCharacterEntry(source = null, index = 0) {
 		// re-fetch and decode it on the next session.
 		layer: normalizeLayer(s.layer),
 		motionRef: normalizeMotionRef(s.motionRef),
+		// The Pose-mode / IK edits on this character's layer (encoded keys, range
+		// pins and their residuals). The motion domain owns them while the scene
+		// is open; this is what the saved scene carries so a reload keeps them.
+		ikEdits: normalizeIkEdits(s.ikEdits),
 	};
 }
 
@@ -206,6 +210,15 @@ const MOTION_ID_RE = /^[0-9a-f]{64}$/i;
 // in the project's embedded motions) and/or by location (url: a bridge run,
 // which is what pre-motionId documents carry). Either one alone is a valid
 // ref; the restore path prefers the embedded bytes when both are present.
+function normalizeIkEdits(value) {
+	if (!plainObject(value)) return null;
+	const rows = (list, valid) => (Array.isArray(list) ? list.filter(valid).map((entry) => cloneValue(entry)) : []);
+	const keys = rows(value.keys, (row) => plainObject(row) && Number.isFinite(row.frame) && plainObject(row.tracks));
+	const pins = rows(value.pins, (pin) => plainObject(pin) && typeof pin.id === "string");
+	const pinResiduals = rows(value.pinResiduals, (row) => Array.isArray(row) && typeof row[0] === "string");
+	return keys.length || pins.length ? { keys, pins, pinResiduals } : null;
+}
+
 function normalizeMotionRef(ref) {
 	if (!plainObject(ref)) return null;
 	const motionId = typeof ref.motionId === "string" && MOTION_ID_RE.test(ref.motionId) ? ref.motionId.toLowerCase() : null;

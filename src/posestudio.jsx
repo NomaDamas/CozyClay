@@ -40,7 +40,7 @@ function handleColor(entry) {
  * best matches the drag direction in screen space). Each move calls
  * `onChange()`.
  */
-export function PoseHandles({ root, enabled, onChange }) {
+export function PoseHandles({ root, enabled, onChange, onCommit }) {
 	const { camera, gl, raycaster } = useThree();
 	const meshRefs = useRef([]);
 	const jointsRef = useRef(new Map());
@@ -48,6 +48,10 @@ export function PoseHandles({ root, enabled, onChange }) {
 	const dragHandlersRef = useRef(null);
 	const onChangeRef = useRef(onChange);
 	onChangeRef.current = onChange;
+	// Called once when a drag that actually moved a joint ends: the pose the
+	// rig now stands in is the author's, and the host keeps it.
+	const onCommitRef = useRef(onCommit);
+	onCommitRef.current = onCommit;
 	const tmp = useRef({
 		origin: new THREE.Vector3(),
 		limb: new THREE.Vector3(),
@@ -116,6 +120,7 @@ export function PoseHandles({ root, enabled, onChange }) {
 				bone.quaternion.copy(tmp.qNew);
 				bone.updateMatrixWorld(true);
 			}
+			d.moved = true;
 			onChangeRef.current?.(before, d.writable.map((bone) => bone.quaternion.toArray()));
 		};
 		const onUp = () => {
@@ -126,7 +131,9 @@ export function PoseHandles({ root, enabled, onChange }) {
 			window.removeEventListener("pointermove", onMove);
 			window.removeEventListener("pointerup", onUp);
 			window.removeEventListener("pointercancel", onUp);
+			const moved = dragRef.current?.moved === true;
 			dragRef.current = null;
+			if (moved) onCommitRef.current?.();
 			gl.domElement.style.cursor = "";
 		};
 		dragHandlersRef.current = { onMove, onUp };

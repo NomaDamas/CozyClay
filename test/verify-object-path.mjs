@@ -1,7 +1,7 @@
 // Object travel paths: schema repair, arc-length sampling and the frame →
 // transform answer that playback, export and MCP all share.
 import { readFileSync } from "node:fs";
-import { createObjectPath, pathMetrics, objectTransformAt, strokeToPathPoints, MAX_PATH_POINTS, STROKE_MAX_POINTS } from "../src/object-path.js";
+import { createObjectPath, pathCurve, pathCurvePointBetween, pathMetrics, objectTransformAt, strokeToPathPoints, MAX_PATH_POINTS, STROKE_MAX_POINTS } from "../src/object-path.js";
 import { simplifyStroke } from "../src/camera-follow.js";
 import { updateSceneObject } from "../src/scene-objects.js";
 
@@ -44,7 +44,42 @@ ok("a negative or absurd speed falls back to fill-the-timeline", (() => {
 {
 	const path = createObjectPath({ points: [{ x: 0, z: 0 }, { x: 3, z: 0 }, { x: 3, z: 4 }] });
 	const metrics = pathMetrics(path);
-	ok("cumulative length walks the stroke", near(metrics.length, 7) && near(metrics.cumulative[1], 3), JSON.stringify(metrics));
+	// The route rounds the corner: a little off the 7 m of chords, never the
+	// 5 m shortcut, and arc length only ever grows.
+	ok("the travelled length is the curve through the stroke", metrics.length > 6.5 && metrics.length < 7.6 && metrics.cumulative.every((value, i) => i === 0 || value >= metrics.cumulative[i - 1]), String(metrics.length));
+	const curve = pathCurve(path);
+	ok("the curve passes through every authored point", path.points.every((point) => curve.points.some((sample) => near(sample.x, point.x, 1e-9) && near(sample.z, point.z, 1e-9))));
+	ok("the curve starts and ends on the stroke's ends", near(curve.points[0].x, 0) && near(curve.points.at(-1).x, 3) && near(curve.points.at(-1).z, 4));
+}
+
+{
+	// A corner is turned, not snapped: across a right-angle route the heading
+	// never jumps more than a few degrees between frames, and still ends up
+	// facing the last leg.
+	const object = { path: { points: [{ x: 0, z: 0 }, { x: 0, z: 6 }, { x: 6, z: 6 }] } };
+	const turnTake = { frameCount: 241, fps: 24 };
+	let worst = 0;
+	let previous = objectTransformAt(object, 0, turnTake).rot;
+	for (let frame = 1; frame < 241; frame += 1) {
+		const rot = objectTransformAt(object, frame, turnTake).rot;
+		worst = Math.max(worst, Math.abs(((((rot - previous) % 360) + 540) % 360) - 180));
+		previous = rot;
+	}
+	ok("a corner turns the heading smoothly", worst < 4, `largest per-frame turn ${worst.toFixed(2)}°`);
+	ok("the heading starts down the first leg and ends down the last", near(objectTransformAt(object, 0, turnTake).rot, 0, 1) && near(objectTransformAt(object, 240, turnTake).rot, 90, 1));
+	const corner = objectTransformAt(object, 120, turnTake);
+	ok("the route cuts inside the corner instead of touching it twice", Math.hypot(corner.x - 0, corner.z - 6) < 1.5, JSON.stringify(corner));
+}
+
+{
+	const points = [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 6 }, { x: 6, y: 1, z: 6 }];
+	const start = pathCurvePointBetween(points, 1, 0);
+	const end = pathCurvePointBetween(points, 1, 1);
+	const mid = pathCurvePointBetween(points, 1, 0.5);
+	const curve = pathCurve({ points });
+	const closest = Math.min(...curve.points.map((sample) => Math.hypot(sample.x - mid.x, sample.y - mid.y, sample.z - mid.z)));
+	ok("a point between two handles sits on the curve", near(start.x, 0) && near(start.z, 6) && near(end.x, 6) && near(end.y, 1) && closest < 0.05, JSON.stringify({ mid, closest }));
+	ok("a point between handles is refused off the ends", pathCurvePointBetween(points, 2, 0.5) === null && pathCurvePointBetween(points, -1, 0.5) === null);
 }
 
 /* --- sampling -------------------------------------------------------------- */
@@ -173,9 +208,8 @@ const handlesSource = appSource.slice(
 
 ok("the route takes a mid-path point on double-click", handlesSource.includes('addEventListener("dblclick", onDouble'));
 ok(
-	"an inserted point lands on the segment, so adding one never moves the route",
-	handlesSource.includes("a.x + (b.x - a.x) * best.t") &&
-	handlesSource.includes("a.z + (b.z - a.z) * best.t"),
+	"an inserted point lands on the travelled curve, so adding one barely reshapes the route",
+	handlesSource.includes("pathCurvePointBetween(points, best.index, best.t)"),
 );
 ok("a point cannot be dropped on top of its neighbour", handlesSource.includes("best.t < 0.02 || best.t > 0.98"));
 ok("the route refuses to grow past the point ceiling", handlesSource.includes("points.length >= MAX_PATH_POINTS"));

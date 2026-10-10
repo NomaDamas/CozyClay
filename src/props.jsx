@@ -20,6 +20,7 @@ import { subscribeToAssetTexture } from "./scene-asset-cache.js";
 import { subscribeToMeshScene } from "./scene-mesh-cache.js";
 import { cloneMeshGraph } from "./mesh-graph-clone.js";
 import { applyPoseFade } from "./pose-fade.js";
+import { coplanarDepthRanks } from "./coplanar-depth.js";
 
 const CLAY_CAR = "#d98770";
 const CLAY_CAR_TOP = "#e49a84";
@@ -212,12 +213,20 @@ function autoFlat(hex) {
 	return { color: hex, roughness: 1, metalness: 0, emissive: hex, emissiveIntensity: 0.4 };
 }
 
-function Primitive({ kind, color, autoColor }) {
+// Parts of an assembly can share a plane with an earlier part (hood top and
+// grille top). The depth test can't order them and the winner flips as the
+// camera moves, so a ranked part is pulled toward the camera by `rank` steps
+// (negative = nearer). Rank 0 gets nothing: those materials stay untouched.
+function depthRankProps(rank) {
+	return rank > 0 ? { polygonOffset: true, polygonOffsetFactor: -rank, polygonOffsetUnits: -rank } : null;
+}
+
+function Primitive({ kind, color, autoColor, depthRank = 0 }) {
 	const side = kind === "plane" ? THREE.DoubleSide : THREE.FrontSide;
 	const material = autoColor ? (
-		<meshStandardMaterial {...autoFlat(autoColor)} side={side} />
+		<meshStandardMaterial {...autoFlat(autoColor)} side={side} {...depthRankProps(depthRank)} />
 	) : (
-		<meshStandardMaterial color={color} roughness={0.82} side={side} />
+		<meshStandardMaterial color={color} roughness={0.82} side={side} {...depthRankProps(depthRank)} />
 	);
 	if (kind === "sphere") {
 		return (
@@ -424,7 +433,7 @@ function Cutout({ object }) {
 
 const PRIMITIVE_KINDS = new Set(["cube", "sphere", "capsule", "cylinder", "cone", "plane"]);
 
-function SceneObjectContent({ object }) {
+function SceneObjectContent({ object, depthRank = 0 }) {
 	// `autoColor` is the viewport-only display color the auto-color mode stamps
 	// onto the DISPLAYED object (App's displaySceneObjects); the authored
 	// `color` is untouched underneath. Cutouts stay out: tinting a photo
@@ -436,7 +445,7 @@ function SceneObjectContent({ object }) {
 	if (renderer === "car") return <Car color={autoColor ?? color} autoColor={autoColor} />;
 	if (renderer === "small-plane") return <SmallPlane autoColor={autoColor} />;
 	if (renderer === "chair") return <Chair autoColor={autoColor} />;
-	if (PRIMITIVE_KINDS.has(renderer)) return <Primitive kind={renderer} color={color} autoColor={autoColor} />;
+	if (PRIMITIVE_KINDS.has(renderer)) return <Primitive kind={renderer} color={color} autoColor={autoColor} depthRank={depthRank} />;
 	return null;
 }
 
@@ -484,7 +493,7 @@ const placeLocal = new THREE.Matrix4();
 const placeWorld = new THREE.Matrix4();
 const placeFrame = new THREE.Matrix4();
 
-function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null, travelLookupRef = null, fadeOpacity = null }) {
+function SceneObject({ object, selected, frameRef = null, take = null, attachFrameRef = null, registryRef = null, travelLookupRef = null, fadeOpacity = null, depthRank = 0 }) {
 	const groupRef = useRef(null);
 	const attach = object.attach ?? null;
 	// An object on a travel path — or one CARRIED by a character — is placed
@@ -580,7 +589,7 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
 			// the viewport picker walks up from a hit mesh to find this id
 			userData={{ sceneObjectId: object.id }}
 		>
-			<SceneObjectContent object={object} />
+			<SceneObjectContent object={object} depthRank={depthRank} />
 			{selected && <SelectionBox object={object} />}
 		</group>
 	);
@@ -601,6 +610,9 @@ export function SetProps({ objects = [], authoredObjects = null, selectedId = nu
 	// `objects` no longer carry once they have been animated.
 	const travelLookupRef = useRef(null);
 	travelLookupRef.current = useMemo(() => (authoredObjects ? new Map(authoredObjects.map((object) => [object.id, object])) : null), [authoredObjects]);
+	// Coplanar-face ranks come from the AUTHORED records: a routed group moves
+	// rigidly, so what shares a plane at rest shares it on every frame.
+	const depthRanks = useMemo(() => coplanarDepthRanks(authoredObjects ?? objects), [authoredObjects, objects]);
 	if (!registryRef.current) registryRef.current = new Map();
 	if (syncRef) syncRef.current = () => { for (const entry of registryRef.current.values()) entry.place(); };
 	if (worldRef) worldRef.current = (id, out) => registryRef.current.get(id)?.world(out) ?? null;
@@ -617,6 +629,7 @@ export function SetProps({ objects = [], authoredObjects = null, selectedId = nu
 					registryRef={registryRef}
 					travelLookupRef={travelLookupRef}
 					fadeOpacity={fadeOpacity}
+					depthRank={depthRanks.get(object.id) ?? 0}
 				/>
 			))}
 		</group>
@@ -651,7 +664,11 @@ export function ObjectCarrier({ objectId = null, objectsRef, frameRef = null, ta
 			group.scale.set(1, 1, 1);
 		}
 	};
-	useFrame(place);
+	// Ahead of every priority-0 placement: a prop held by a rider reads its
+	// bone's world matrix through this group, so the carry must land first or
+	// the prop trails the hand by one frame. Mount order alone does not hold
+	// (SetProps mounts before the cast; a rig remount moves to the back).
+	useFrame(place, -1);
 	const placeRef = useRef(place);
 	placeRef.current = place;
 	useEffect(() => {

@@ -162,7 +162,10 @@ export function createMotionDomain(appContext, characters) {
 		const ref = entry.motionRef;
 		const take = ref ? { resourceId: `restore:${entry.id}:${ref.motionId ?? ref.url}`, url: ref.url ?? null, anchorX: ref.anchorX, anchorZ: ref.anchorZ,
 			rotationDeg: ref.rotationDeg, prompt: ref.prompt ?? '', ...(ref.trailEdits ? { trailEdits: ref.trailEdits } : {}), ...(ref.studioTakeId ? { studioTakeId: ref.studioTakeId } : {}) } : null;
-		return { id: entry.id, take, fullTake: take, takeVersions: ref?.url ? [{ motionUrl: ref.url, recipe: null, savedAt: Date.now(), label: ko('Loaded', '불러옴') }] : [] };
+		// The saved Pose-mode / IK edits come back with the scene (scenes.js ikEdits).
+		const edits = entry.ikEdits;
+		return { id: entry.id, take, fullTake: take, takeVersions: ref?.url ? [{ motionUrl: ref.url, recipe: null, savedAt: Date.now(), label: ko('Loaded', '불러옴') }] : [],
+			ikKeys: edits?.keys ?? [], ikPins: edits?.pins ?? [], ikPinResiduals: edits?.pinResiduals ?? [] };
 	});
 	function snapshotTake(take) {
 		if (!take) return null;
