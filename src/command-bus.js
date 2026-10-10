@@ -101,8 +101,13 @@ export function createCommandBus({ registry, ports }) {
       finally { agentTurn = null; }
       return transactionReceipt(id, turn, request, turn.before);
     }
-    if (agentTurn && !id.startsWith('job.')) fail('TARGET_BUSY', 'Finish the agent turn before traversing history or opening another transaction.');
-    if (id === 'edit.undo' || id === 'edit.redo') {
+    // Every Studio turn opens a turn transaction (#715), so "undo the last thing" arrives
+    // inside one. Until the turn has authored anything (no session yet) history traversal
+    // is safe: the undo lands as its own entry and a later edit still groups into the turn.
+    // After the first authored edit the turn owns the frontier and traversal waits (#735).
+    const traversal = id === 'edit.undo' || id === 'edit.redo';
+    if (agentTurn && !id.startsWith('job.') && !(traversal && !agentTurn.session)) fail('TARGET_BUSY', 'Finish the agent turn before traversing history or opening another transaction.');
+    if (traversal) {
       const redo = id === 'edit.redo', historyEntryId = ports.history?.(redo);
       const previous = args.receiptId ? ports.receipt(args.receiptId) : historyReceipts.get(historyEntryId)
         ?? (historyEntryId ? { receiptId: historyEntryId, host: before.host, affectedIds: [before.host.sceneId],
