@@ -548,6 +548,30 @@ cacheable prefix; whether a turn hit the cache shows in the `done` frame's
 `usage.cacheRead` / `usage.cacheWrite` (token counts summed over the turn's
 provider requests, with `usage.requests` the number of requests).
 
+### Supervisor
+
+At the end of each Studio run a second model checks whether the agent did
+everything the request literally asked for. It is the main model's helper
+role (#717), or its advisor with `COZYCLAY_SUPERVISOR_ROLE=advisor`;
+`COZYCLAY_SUPERVISOR=off` turns it off. It is also off when that role
+resolves to the main model itself (no distinct smaller model on the
+provider, or a model the catalog does not list). Workflow turns are never
+supervised.
+
+The supervisor reads the latest request, the outcome of each tool call since
+it and the last reply. When it lists missing items, the same run continues
+with a `Supervisor check: ...` user message, at most twice per turn, and the
+turn still ends with one `done`. Each check streams one frame:
+
+```json
+{"type":"supervisor","verdict":"incomplete","missing":["raise the key light"],"model":"anthropic/claude-haiku-5-5","followUp":1}
+{"type":"supervisor","verdict":"complete","model":"anthropic/claude-haiku-5-5"}
+{"type":"supervisor","verdict":"unavailable","reason":"supervisor timed out"}
+```
+
+`unavailable` (an error, a 15 s timeout or an unparsable reply) never blocks
+the turn. The supervisor's own requests are not counted in `done.usage`.
+
 ## Steering a running turn
 
 On the Workflow canvas you can add to a turn while it is still running,
