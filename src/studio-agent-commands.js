@@ -7,6 +7,8 @@ import { createShot, shotAtFrame } from './cuts.js';
 import { captureFraming } from './camera-move.js';
 import { createStableItemId } from './stable-items.js';
 import { focalMmToFov, SENSOR_FORMATS } from './shot.js';
+import { coplanarConflicts } from './coplanar-depth.js';
+import { clampWarning } from './receipt-findings.js';
 import { StudioProtocolError, StudioSchemas, STUDIO_PATCH_KINDS, STUDIO_PATCH_DESCRIPTORS, validateStudioSchema, validateStudioIdentity, validateReceipt, freezeStudioData } from './studio-agent-protocol.js';
 
 const DEG = Math.PI / 180, EPS = 1e-8, CHARACTER_SUPPORT_TOLERANCE = 5e-3;
@@ -223,11 +225,18 @@ function overlapsFor(entity, state, ports) {
   // Parts of one grouped object are built to touch; only other bodies count.
   const root = groupRootOf(entity.id, state.objects);
   return [...state.objects, ...state.characters].filter(e => e.id !== entity.id && !isEffectivelyHidden(e, state.objects, state.characters)
-    && groupRootOf(e.id, state.objects) !== root).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
+    && groupRootOf(e.id, state.objects) !== root).map(other => ({ id: other.id, bounds: aabb(geometry(other, state, ports)) })).map(other => ({ ...other, of: entity.id, depth: overlap(own, other.bounds) })).filter(o => o.depth > EPS);
 }
 function overlapsOf(ids, state, ports) {
   const entities = [...state.objects, ...state.characters];
   return ids.flatMap(id => { const e = entities.find(row => row.id === id); return e ? overlapsFor(e, state, ports) : []; });
+}
+/** World AABB of one entity as {min,max}, or null when its evaluated bounds are unavailable (a prop whose renderer is not mounted). */
+export function entityWorldBounds(entity, state, ports) {
+  try {
+    const box = aabb(geometry(entity, state, ports)), round = v => Number(v.toFixed(4));
+    return { min: Object.fromEntries(['x', 'y', 'z'].map(a => [a, round(box[a].min)])), max: Object.fromEntries(['x', 'y', 'z'].map(a => [a, round(box[a].max)])) };
+  } catch { return null; }
 }
 const overlapEvidence = overlaps => ({ coverage: 'same-frame-world-AABB-proxies', overlapIds: [...new Set(overlaps.map(o => o.id))].slice(0, 100), maximumFootprintOverlapM: Math.max(0, ...overlaps.map(o => o.depth)) });
 /** Placement evidence for entity ids in the given scene: the same-frame AABB
@@ -257,7 +266,7 @@ function transformPatch(op, isObject) {
 export function arrangement(command, before, ports) {
   const isObject = command.name === 'arrange_objects', key = isObject ? 'objects' : 'characters';
   let rows = before[key];
-  const relations = [], warnings = [], createdByName = new Map();
+  const relations = [], warnings = [], clamps = [], createdByName = new Map();
   // References resolve against the evolving draft (`rows`), in op order.
   const draft = () => ({ ...before, [key]: rows });
   for (const rawOp of command.args.ops) {
@@ -284,6 +293,11 @@ export function arrangement(command, before, ports) {
       entity = patchEntity(entity, transformPatch(op, isObject));
       const placed = place(entity, op, draft(), ports);
       entity = placed.entity;
+      // What was asked against what the domain kept: scale and position limits move values silently.
+      const asked = isObject ? { ...(op.position?.world ?? {}), ...(op.scale ? { scaleX: op.scale.x, scaleY: op.scale.y, scaleZ: op.scale.z } : {}) }
+        : { ...(op.position?.world ?? {}), ...(op.scale === undefined ? {} : { scale: op.scale }) };
+      const clamp = clampWarning(entity.id, Object.fromEntries(Object.entries(asked).filter(([k]) => ['x', 'y', 'z', 'scale', 'scaleX', 'scaleY', 'scaleZ'].includes(k))), entity);
+      if (clamp) clamps.push(clamp);
       if (command.args.collisionPolicy === 'avoid' && placed.relation?.axis) {
         entity = avoid(entity, placed.relation, draft(), ports);
         entity = patchEntity(entity, { rot: facingYaw(op.facing, entity, draft()) });
@@ -322,7 +336,24 @@ export function arrangement(command, before, ports) {
     relation.actualGapM = actualGapM;
   }
   if (command.args.collisionPolicy === 'avoid' && overlaps.length) fail('VERIFICATION_FAILED', 'The final batch is still blocked after its outward adjustments.');
-  for (const item of overlaps.slice(0, 10)) warnings.push({ code: 'FOOTPRINT_OVERLAP', id: item.id });
+  // Every finding the receipt carries: a value moved to a limit first, then what the final scene shows wrong.
+  const nameOf = id => { const e = [...after.objects, ...after.characters].find(row => row.id === id); return e?.name ?? e?.subject ?? id; };
+  warnings.push(...clamps.slice(0, 3));
+  for (const item of overlaps.slice(0, 5)) warnings.push({ code: 'FOOTPRINT_OVERLAP', id: item.id, message: [...`${nameOf(item.of)} overlaps ${nameOf(item.id)} by ${Number(item.depth.toFixed(2))} m`].slice(0, 120).join('') });
+  if (overlaps.length > 5) warnings.push({ code: 'FOOTPRINT_OVERLAP', count: overlaps.length - 5, message: `${overlaps.length - 5} more footprint overlaps omitted` });
+  if (isObject) {
+    // Parts of one assembly touch on purpose, but faces sharing one plane flicker as the camera moves.
+    const touched = new Set(affectedIds), groups = new Map();
+    for (const row of rows) if (touched.has(row.id)) { const root = groupRootOf(row.id, rows); if (root !== row.id || rows.some(o => o.parent === row.id)) groups.set(root, null); }
+    const coplanar = [];
+    for (const root of groups.keys()) for (const pair of coplanarConflicts(rows.filter(row => groupRootOf(row.id, rows) === root))) {
+      if (!touched.has(pair.a) && !touched.has(pair.b)) continue;
+      const planes = pair.planes.map(plane => `${plane.face} coincide at ${plane.axis ? `${plane.axis}=${plane.at}` : `offset ${plane.at}`}`).join(', ');
+      coplanar.push({ code: 'COPLANAR_FACES', id: pair.b, message: [...`${nameOf(pair.a)} and ${nameOf(pair.b)} ${planes}`].slice(0, 120).join('') });
+    }
+    warnings.push(...coplanar.slice(0, 2));
+    if (coplanar.length > 2) warnings.push({ code: 'COPLANAR_FACES', count: coplanar.length - 2, message: `${coplanar.length - 2} more coplanar face pairs omitted` });
+  }
   if (relations.some(r => r.adjustmentM)) warnings.push({ code: 'OUTWARD_ADJUSTMENT', count: relations.filter(r => r.adjustmentM).length });
   const relation = relations.length === 1 ? relations[0] : null;
   return { domain: isObject ? 'objects' : 'cast', draft: equal(rows, before[key]) ? before[key] : rows, affectedIds,

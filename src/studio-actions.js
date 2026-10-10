@@ -189,7 +189,9 @@ export function createStudioActionRegistry({ readState } = {}) {
 		if (!Array.isArray(result?.affectedIds) || result.affectedIds.some(value => typeof value !== "string") || typeof result.summary !== "string") {
 			throw new Error(`Studio action ${id} must return { affectedIds, summary }.`);
 		}
-		return { affectedIds: [...result.affectedIds], summary: result.summary, ...(result.output === undefined ? {} : { output: structuredClone(result.output) }) };
+		return { affectedIds: [...result.affectedIds], summary: result.summary, ...(result.output === undefined ? {} : { output: structuredClone(result.output) }),
+			// What the command measured and what it found wrong; the bus puts both on the receipt.
+			...(result.checks === undefined ? {} : { checks: structuredClone(result.checks) }), ...(result.warnings?.length ? { warnings: structuredClone(result.warnings) } : {}) };
 	};
 	const registry = {
 		register(entry) {

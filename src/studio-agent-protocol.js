@@ -268,7 +268,7 @@ const verification = object({ id, status: choices(["verified", "unverified"]), p
 // not a missing member.
 const patchedValue = object({ path: text(120) }, { number: number(), text: nullable(text(512)), flag: bool, vec: vec3, count: integer(), bytes: integer() });
 const readback = object({}, { position: vec3, yawDeg: number(), rotationDeg: vec3, scale: union(positive, positiveVec3), name, color: text(32), hidden: bool, modelId: id, renderer: id,
-	parentId: nullable(id), childIds: ids(100, 0), removed: bool, range, camera, keyId: id, frame: integer(), subjectIds: ids(24, 0), selection, activeCharacterId: nullable(id), shotId: nullable(id), view, token: id, takeId: nullable(id), statureM: positive,
+	parentId: nullable(id), childIds: ids(100, 0), childCount: integer(0), bounds: nullable(bounds), removed: bool, range, camera, keyId: id, frame: integer(), subjectIds: ids(24, 0), selection, activeCharacterId: nullable(id), shotId: nullable(id), view, token: id, takeId: nullable(id), statureM: positive,
 	patched: array(patchedValue, 32, 1) });
 const checks = object({ coverage: name }, { relationSatisfied: bool, overlapIds: ids(100, 0), actualGapM: number(), requestedGapM: number(0), maximumFootprintOverlapM: number(0),
 	basis: choices(STUDIO_VARIANTS.positionBases), clipped: bool, occluded: bool, behindCamera: bool, screenFraction: number(0), derivedSize: choices(STUDIO_VARIANTS.framingSizes), support: name, baseY: number(), facesTargetId: id });

@@ -577,7 +577,7 @@ const implementations={
   const created=await f.call('arrange_objects',f.request('arrange_objects',createArgs));assert.equal(created.ok,true,JSON.stringify(created));const id=created.affectedIds[0];
   const r=await f.call('run_action',f.request('run_action',{action:'object.duplicate',args:{objectId:id}}));
   assert.equal(r.status,'applied',JSON.stringify(r));assert.deepEqual(r.affectedIds,['copy-1']);assert.equal(r.revision.after,r.revision.before+1);
-  assert.deepEqual(r.delta,[{id:'copy-1',after:{patched:[
+  assert.deepEqual(r.delta,[{id:'copy-1',after:{bounds:{min:{x:2,y:0,z:-0.5},max:{x:3,y:1,z:0.5}},patched:[
    {path:'object.renderer',text:'cube'},{path:'object.position',vec:{x:2.5,y:0,z:0}},
    {path:'object.rotation',vec:{x:0,y:0,z:0}},{path:'object.scale',vec:{x:1,y:1,z:1}},
    {path:'object.name',text:'Copy'},{path:'object.color',text:'#c2c6c8'},{path:'object.opacity',text:null},

@@ -560,6 +560,15 @@ const TRANSFORM_LIMITS = {
 	scaleZ: (value) => clamp(value, OBJECT_SCALE_LIMITS.min.z, OBJECT_SCALE_LIMITS.max.z),
 };
 
+/** The patch keys updateSceneObject reads for this object; any other key is
+ * silently ignored there, so callers that must not be silent check against this. */
+export function objectPatchFields(object) {
+	const fields = [...Object.keys(TRANSFORM_LIMITS), "name", "color", "hidden", "opacity", "path"];
+	if (object?.renderer === CUTOUT_KIND) fields.push("assetId", "sourceAssetId", "matteAssetId", "matteScale", "height", "aspect", "width", "stretch");
+	if (object?.renderer === MESH_KIND) fields.push("clay", "assetId", "height");
+	return fields;
+}
+
 /** Every object that hangs off `id`, at any depth. A cycle cannot form because
  * setParent refuses one, but the seen-set keeps this total even if data is
  * hand-edited into a loop. */

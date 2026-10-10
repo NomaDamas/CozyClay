@@ -3,7 +3,8 @@ import { studioActionDeclaration } from "../studio-actions.js";
 import { characterOf, fail } from "./shared.js";
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/object.js';
-import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject, groupUnderNewEmpty } from '../scene-objects.js';
+import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject, groupUnderNewEmpty, objectPatchFields } from '../scene-objects.js';
+import { clampWarning } from '../receipt-findings.js';
 import { STUDIO_TOOL_SCHEMAS, StudioSchemas } from '../studio-agent-protocol.js';
 
 const id = StudioSchemas.TargetGuard.properties.targetId;
@@ -14,6 +15,7 @@ const placement = input({ x: number, y: number, z: number, rot: number }, []);
 const setInput = elementSetSchema('object');
 const scale = setInput.properties.set.properties.scale;
 setInput.properties.set.properties.scale = { oneOf: [number, scale] };
+const PATCH_HINTS = { scale: 'use scaleX, scaleY, scaleZ', rotY: 'use rot for yaw', yaw: 'use rot for yaw', rotation: 'use rot, rotX, rotZ', position: 'use x, y, z', parent: 'use object.group or object.set parent', parentId: 'use object.group or object.set parent' };
 const mutation = (id, label, input) => ({ id, label, description: label, kind: 'mutation', undoDomain: 'objects', input });
 const semantic = [
 	mutation('object.set', 'Set object fields', setInput),
@@ -70,10 +72,16 @@ export function register(registry, ports) {
 			owned().write(updateSceneObject(before, id, { name }));
 			return result(before, 'Renamed object.');
 		},
-		'object.update': ({ id, patch }) => {
-			objectOf(id); const before = owned().read();
-			owned().write(updateSceneObject(before, id, patch));
-			return result(before, 'Updated object.');
+		'object.update': ({ id, patch }, context) => {
+			const target = objectOf(id), before = owned().read();
+			// Wire callers get an error for a key nothing reads; the UI's own patches stay lenient.
+			const unknown = Object.keys(patch ?? {}).filter(key => !objectPatchFields(target).includes(key));
+			if (unknown.length && context?.origin && context.origin !== 'ui') fail('INVALID_ARGUMENT', `object.update cannot set ${unknown.join(', ')}${unknown.some(key => PATCH_HINTS[key]) ? ` (${unknown.filter(key => PATCH_HINTS[key]).map(key => `${key}: ${PATCH_HINTS[key]}`).join('; ')})` : ''}. Supported fields: ${objectPatchFields(target).join(', ')}.`);
+			const next = updateSceneObject(before, id, patch);
+			owned().write(next);
+			const kept = next.find(row => row.id === id);
+			const warning = clampWarning(id, Object.fromEntries(['x', 'y', 'z', 'scaleX', 'scaleY', 'scaleZ'].filter(key => Object.hasOwn(patch ?? {}, key)).map(key => [key, Number(patch[key])])), kept);
+			return { ...result(before, 'Updated object.'), ...(warning ? { warnings: [warning] } : {}) };
 		},
 		'object.group': ({ parent, children }) => {
 			objectOf(parent); children.forEach(objectOf);
@@ -97,7 +105,7 @@ export function register(registry, ports) {
 		},
 		'objects.arrange': args => {
 			const plan = owned().arrange(args);
-			return { affectedIds: plan.affectedIds, summary: 'Arranged objects.' };
+			return { affectedIds: plan.affectedIds, summary: 'Arranged objects.', checks: plan.checks, warnings: plan.warnings };
 		},
 	};
 	// Scalar scale is a convenience at the command boundary; the registry still

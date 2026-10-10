@@ -8,7 +8,7 @@ import { shotAtFrame } from "./cuts.js";
 import { isProxyFigure } from "./scenes.js";
 import { CUTOUT_KIND, MESH_KIND, OBJECT_LIBRARY, supportHeightForObject } from "./scene-objects.js";
 import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
-import { createStudioCommandJournal, framingChecks, localTransformReadback, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
+import { createStudioCommandJournal, entityWorldBounds, framingChecks, localTransformReadback, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { verifyInstalledTake } from "./studio-agent-motion.js";
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateReceipt, validateStudioCommand, validateStudioIdentity } from "./studio-agent-protocol.js";
 import { CONTACT_SHEET_LAYOUT, buildContactSheet, sampleContactSheetFrames } from "./studio-contact-sheet.js";
@@ -186,19 +186,32 @@ export function createStudioAppBinding(ports) {
 		return s;
 	}
 	/** Actual state of one action target after it ran. */
-	function actionReadback(id, s) {
+	function actionReadback(id, s, compact = false) {
 		const patched = Object.entries(s.document).flatMap(([kind, value]) => {
 			const target = elementTarget(kind, value, id, s.host.sceneId);
 			return target ? elementReadback(kind, target) : [];
 		});
 		if (id === s.host.sceneId) return { selection: s.selection, activeCharacterId: s.activeCharacterId, shotId: s.selectedShotId, view: s.view,
 			...(patched.length ? { patched } : {}) };
-		if (patched.length) return { patched };
+		const object = s.objects.find(row => row.id === id), entity = object ?? s.characters.find(row => row.id === id);
+		// Beyond the transform an object's patched paths already carry: the world box it occupies and, for a
+		// group, who hangs off it. `compact` (a receipt near its size limit) drops back to the paths alone.
+		// A character's box means cloning and posing its rig, too dear for every receipt: inspect or verify has it.
+		const extras = () => {
+			if (!object || compact) return {};
+			const childIds = s.objects.filter(row => row.parent === id).map(row => row.id);
+			return { bounds: entityWorldBounds(object, { ...s, frame: s.view.frame }, { bounds: ports.bounds }),
+				...(childIds.length ? { childIds: childIds.slice(0, 12), ...(childIds.length > 12 ? { childCount: childIds.length } : {}) } : {}) };
+		};
+		if (patched.length) return { patched, ...extras() };
 		const shot = s.shots.find(row => row.id === id);
 		if (shot) return { name: shot.name || shot.id, range: { startFrame: shot.startFrame, endFrameExclusive: shot.endFrame + 1 } };
-		const entity = s.objects.find(row => row.id === id) ?? s.characters.find(row => row.id === id);
-		if (entity) return { name: entity.name || entity.subject || entity.id, position: { x: entity.x, y: entity.y ?? 0, z: entity.z } };
-		return { removed: true };
+		if (!entity) return { removed: true };
+		const brief = { name: entity.name || entity.subject || entity.id, position: { x: entity.x, y: entity.y ?? 0, z: entity.z } };
+		if (compact) return brief;
+		if (!object) return { ...brief, yawDeg: entity.rot ?? 0, scale: entity.scale ?? 1, ...extras() };
+		return { ...brief, rotationDeg: { x: object.rotX ?? 0, y: object.rot ?? 0, z: object.rotZ ?? 0 }, scale: { x: object.scaleX, y: object.scaleY, z: object.scaleZ },
+			parentId: object.parent ?? null, ...extras() };
 	}
 	/** One registered Studio action, run for the agent through the same
 	 * registry the UI controls call. A mutation is bound to the native history
@@ -264,7 +277,11 @@ export function createStudioAppBinding(ports) {
 				// Only a check nothing could compute is unsupported, and says why; a motion
 				// check computed for some characters still names the ones it skipped.
 				const scene = readCommand(), entityIds = ids => ids.filter(id => scene.objects.some(o => o.id === id) || scene.characters.some(c => c.id === id));
-				const measured = args.targets ? entityIds(args.targets) : receipt.checks ? null : entityIds(receipt.affectedIds);
+				// A receipt's checks are evidence only for what they measured: every receipt carries a coverage tag, but
+				// only an arrange/frame receipt carries overlap or framing numbers. Anything else is measured here.
+				const measuredBy = { placement: "overlapIds", framing: "screenFraction" };
+				const unmeasured = receipt && args.checks.some(check => measuredBy[check] && receipt.checks?.[measuredBy[check]] === undefined);
+				const measured = args.targets ? entityIds(args.targets) : unmeasured ? entityIds(receipt.affectedIds) : null;
 				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, evidenceRevision, stale: evidenceRevision !== s.revision, checks: measured ? { coverage: "current-scene-targets" } : receipt.checks,
 					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [], unsupportedChecks: [], unsupportedReasons: {} };
 				const reasons = result.unsupportedReasons, verified = [], skipped = [], pending = [];
