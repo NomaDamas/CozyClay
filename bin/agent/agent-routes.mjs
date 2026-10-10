@@ -440,6 +440,17 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		let session = studioSessions.get(value.sessionId);
 		const suppliedOwner = parseCookies(req).studio_owner;
 		if (session && suppliedOwner && session.owner !== suppliedOwner) throw new StudioProtocolError("AUTH_REQUIRED", "Studio session owner mismatch.");
+		const existing = session?.turns.get(value.turnId);
+		if (existing) { session.updatedAt = clock(); writeStudioStream(res, existing, 0, req); return true; }
+		let current;
+		try { current = studioRuntime?.readContext ? await studioRuntime.readContext(value.context.host) : await authoritativeStudioContext(value, hub); }
+		catch (error) { if (error instanceof StudioProtocolError) throw error; if (error?.code) throw new StudioProtocolError(error.code, error.message); throw new StudioProtocolError("CAPABILITY_MISSING", "The connected editor does not expose authoritative Studio context."); }
+		validateStudioContextFreshness(value.context, current);
+		// The session, and the owner token only this turn's response can hand
+		// the browser, exist only once the turn is admitted. Minting them before
+		// a refusal (the editor still reconnecting after a restart) left a
+		// session whose owner the browser never received: its cookie from the
+		// previous server then failed every retry with "owner mismatch".
 		if (!session) {
 			studioOwner(req, value.sessionId, true);
 			let persisted = null;
@@ -448,12 +459,6 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			studioSessions.set(value.sessionId, session);
 		}
 		session.updatedAt = clock();
-		const existing = session.turns.get(value.turnId);
-		if (existing) { writeStudioStream(res, existing, 0, req); return true; }
-		let current;
-		try { current = studioRuntime?.readContext ? await studioRuntime.readContext(value.context.host) : await authoritativeStudioContext(value, hub); }
-		catch (error) { if (error instanceof StudioProtocolError) throw error; if (error?.code) throw new StudioProtocolError(error.code, error.message); throw new StudioProtocolError("CAPABILITY_MISSING", "The connected editor does not expose authoritative Studio context."); }
-		validateStudioContextFreshness(value.context, current);
 		if (studioRuntime?.handleTurn) { await studioRuntime.handleTurn(value, req, res); return true; }
 		const record = { next: 0, events: [], listeners: new Set(), terminal: false }; studioEvents.set(value.turnId, record); session.turns.set(value.turnId, record); session.host = studioIdentity(value.context.host);
 		res.setHeader("set-cookie", `studio_owner=${encodeURIComponent(session.owner)}; Path=/agent; HttpOnly; SameSite=Strict`);
