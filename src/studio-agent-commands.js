@@ -20,6 +20,39 @@ const entityById = (state, id) => {
   if (!entity) fail('AMBIGUOUS_TARGET', 'Target ID is not present in the admitted scene.');
   return entity;
 };
+/** Resolve a placement reference against the evolving batch draft: an id first,
+ * else the unique name of an object or character already in it. Parts created
+ * earlier in the same batch are in the draft, so they resolve by name. */
+function resolveRef(ref, state, field) {
+  const all = [...state.objects, ...state.characters];
+  if (all.some(e => e.id === ref)) return ref;
+  const named = all.filter(e => normalizedName(e.name ?? e.subject ?? '') === normalizedName(ref));
+  if (named.length === 1) return named[0].id;
+  if (named.length) fail('AMBIGUOUS_TARGET', `${field} '${ref}' matches ${named.length} objects by name (${named.map(e => e.id).join(', ')}); reference one by id.`);
+  fail('AMBIGUOUS_TARGET', `${field} '${ref}' not found; reference an existing id, or a part created EARLIER in this batch by its name (create it before it is referenced).`);
+}
+/** The op with every reference field (relativeTo, onObject, between, support,
+ * facing targets) resolved to an id in the current draft. */
+function resolveOpRefs(op, state, selfId) {
+  const { position: p, facing: f } = op;
+  if (!p && !f) return op;
+  const r = (value, field) => {
+    const resolved = resolveRef(value, state, field);
+    if (resolved === selfId) fail('INVALID_ARGUMENT', `${field} '${value}' is the object being placed; reference a different part.`);
+    return resolved;
+  };
+  const out = { ...op };
+  if (p) out.position = { ...p,
+    ...(p.relativeTo !== undefined ? { relativeTo: r(p.relativeTo, 'relativeTo') } : {}),
+    ...(p.onObject !== undefined ? { onObject: r(p.onObject, 'onObject') } : {}),
+    ...(p.between ? { between: p.between.map(value => r(value, 'between')) } : {}),
+    ...(p.support && typeof p.support === 'object' ? { support: { objectId: r(p.support.objectId, 'support.objectId') } } : {}) };
+  if (f) {
+    const key = ['towardId', 'awayFromId', 'sameAsId'].find(k => f[k] !== undefined);
+    if (key) out.facing = { [key]: r(f[key], `facing.${key}`) };
+  }
+  return out;
+}
 function boxPoints(bounds) {
   if (!bounds || ['x', 'y', 'z'].some(a => !Number.isFinite(bounds.min?.[a]) || !Number.isFinite(bounds.max?.[a]) || bounds.min[a] > bounds.max[a])) fail('TARGET_NOT_READY', 'Evaluated bounds are unavailable.');
   return [bounds.min.x, bounds.max.x].flatMap(x => [bounds.min.y, bounds.max.y].flatMap(y => [bounds.min.z, bounds.max.z].map(z => new Vector3(x, y, z))));
@@ -106,6 +139,9 @@ function place(entity, op, state, ports) {
     if (Math.hypot(result.x - previous.x, result.z - previous.z, result.rot - previous.rot) < EPS) { converged = true; break; }
   }
   if (!converged) fail('AMBIGUOUS_BASIS', 'Facing and placement cannot satisfy the requested relation.');
+  // A pitched/rolled part rests its lowest corner on the support.
+  if (result.renderer && !result.attach && !result.path && (Math.abs(result.rotX) > EPS || Math.abs(result.rotZ) > EPS))
+    result = patchEntity(result, { y: result.y + surface.y - Math.min(...geometry(result, state, ports).map(p => p.y)) });
   const points = geometry(result, state, ports);
   const supportTolerance = !result.renderer && surface.label === 'floor' ? CHARACTER_SUPPORT_TOLERANCE : EPS;
   if (Math.abs(Math.min(...points.map(p => p.y)) - surface.y) > supportTolerance) fail('TARGET_NOT_READY', 'Tilted or offset bounds cannot rest on the requested support.');
@@ -165,37 +201,42 @@ export function arrangement(command, before, ports) {
   const isObject = command.name === 'arrange_objects', key = isObject ? 'objects' : 'characters';
   let rows = before[key];
   const relations = [], warnings = [], createdByName = new Map();
-  for (const op of command.args.ops) {
-    const id = op.id ?? op.characterId;
+  // References resolve against the evolving draft (`rows`), in op order.
+  const draft = () => ({ ...before, [key]: rows });
+  for (const rawOp of command.args.ops) {
+    const id = rawOp.id ?? rawOp.characterId;
     let entity = id ? rows.find(e => e.id === id) : null;
-    if (id && !entity) fail('AMBIGUOUS_TARGET', 'Edited target is not present in the draft.');
+    if (id && !entity) fail('AMBIGUOUS_TARGET', `Edited target '${id}' is not present in the draft; ids of parts created in this batch are not known yet, so use the part name in position references and create it before it is referenced.`);
+    const op = resolveOpRefs(rawOp, draft(), id);
     if (op.op === 'create') {
       if (op.name && rows.some(e => normalizedName(e.name ?? e.subject) === normalizedName(op.name))) fail('DUPLICATE_NAME', 'Create name already exists in the domain.');
+      let parentId;
+      if (isObject && op.parent !== undefined) {
+        parentId = rows.some(e => e.id === op.parent) ? op.parent : createdByName.get(normalizedName(op.parent));
+        if (!parentId) fail('AMBIGUOUS_TARGET', `Create parent '${op.parent}' is neither an existing object id nor an object created earlier in this batch; create the parent first.`);
+      }
       entity = isObject ? createSceneObject(op.source.kind, rows) : createCharacterEntry({ id: createStableItemId('character'), subject: normalizedName(op.name) });
       if (!entity) fail('INVALID_ARGUMENT', 'Unsupported object library kind.');
       rows = [...rows, entity];
+      // Parent before placing, so avoidance and overlap checks see one body.
+      if (parentId) { rows = setSceneObjectParent(rows, entity.id, parentId); entity = rows.find(e => e.id === entity.id); }
     }
     if (['create', 'update'].includes(op.op)) {
       if (entity.attach) fail('CAPABILITY_MISSING', 'Attached transforms require a world-preserving attachment adapter.');
       entity = patchEntity(entity, transformPatch(op, isObject));
-      const placed = place(entity, op, before, ports);
+      const placed = place(entity, op, draft(), ports);
       entity = placed.entity;
-      if (command.args.collisionPolicy === 'avoid') {
-        entity = avoid(entity, placed.relation, { ...before, [key]: rows }, ports);
-        entity = patchEntity(entity, { rot: facingYaw(op.facing, entity, before) });
-        const reference = entityById(before, op.position.relativeTo);
-        placed.relation.actualGapM = interval(geometry(entity, before, ports), placed.relation.axis).min - interval(geometry(reference, before, ports), placed.relation.axis).max;
+      if (command.args.collisionPolicy === 'avoid' && placed.relation?.axis) {
+        entity = avoid(entity, placed.relation, draft(), ports);
+        entity = patchEntity(entity, { rot: facingYaw(op.facing, entity, draft()) });
+        const reference = entityById(draft(), op.position.relativeTo);
+        placed.relation.actualGapM = interval(geometry(entity, draft(), ports), placed.relation.axis).min - interval(geometry(reference, draft(), ports), placed.relation.axis).max;
         if (placed.relation.actualGapM < op.position.gapM - EPS) fail('VERIFICATION_FAILED', 'Avoidance cannot preserve the requested facing and minimum clearance.');
       }
       const patch = Object.fromEntries(Object.entries(entity).filter(([k, v]) => !equal(v, rows.find(e => e.id === entity.id)[k])));
       rows = isObject ? updateSceneObject(rows, entity.id, patch) : rows.map(e => e.id === entity.id ? entity : e);
       if (placed.relation) relations.push(placed.relation);
       if (op.op === 'create' && op.name) createdByName.set(normalizedName(op.name), entity.id);
-      if (isObject && op.op === 'create' && op.parent !== undefined) {
-        const parentId = rows.some(e => e.id === op.parent) ? op.parent : createdByName.get(normalizedName(op.parent));
-        if (!parentId) fail('AMBIGUOUS_TARGET', 'Create parent is neither an existing object id nor an object created earlier in this batch.');
-        rows = setSceneObjectParent(rows, entity.id, parentId);
-      }
     } else if (op.op === 'remove') {
       if (!isObject && (rows.length <= 1 || entity.id === before.activeCharacterId)) fail('INVALID_ARGUMENT', 'Cannot remove the final or active character without a separate selection operation.');
       rows = isObject ? removeSceneObject(rows, id) : rows.filter(e => e.id !== id);

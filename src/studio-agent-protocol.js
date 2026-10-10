@@ -79,6 +79,8 @@ const positiveVec3 = object({ x: positive, y: positive, z: positive });
 const range = { ...object({ startFrame: integer(), endFrameExclusive: integer(1) }), "x-studio-range": true };
 const ids = (max = 100, min = 1) => array(id, max, min, true);
 const name = text(120);
+// A placement reference: an id, or the name of a part created earlier in the same ops list.
+const ref = { ...text(120), description: "Object id, or the name of a part created EARLIER in this ops list (create it first)." };
 const identityFields = { workspaceId: id, documentEpoch: id, sceneId: id, sceneEpoch: id };
 const identity = object(identityFields);
 const host = object({ surface: literal("studio"), ...identityFields, workspaceHandle: nullable(id) });
@@ -87,17 +89,18 @@ const selection = nullable(object({ kind: choices(STUDIO_VARIANTS.selectionKinds
 const view = object({ mode: choices(STUDIO_VARIANTS.modes), frame: integer(), playing: bool, lookThrough: bool, grid: bool, autoColor: bool });
 const position = union(
 	object({ world: vec3 }),
-	object({ relativeTo: id, basis: choices(STUDIO_VARIANTS.positionBases), side: choices(STUDIO_VARIANTS.positionSides), gapM: number(0), support: union(literal("floor"), object({ objectId: id })) }),
-	object({ between: ids(2, 2), fraction: number(0, 1), support: literal("floor") }),
-	object({ onObject: id }, { offsetXZ: object({ x: number(), z: number() }) }),
+	object({ relativeTo: ref, basis: choices(STUDIO_VARIANTS.positionBases), side: choices(STUDIO_VARIANTS.positionSides), gapM: number(0), support: union(literal("floor"), object({ objectId: ref })) }),
+	object({ between: array(ref, 2, 2, true), fraction: number(0, 1), support: literal("floor") }),
+	object({ onObject: ref }, { offsetXZ: object({ x: number(), z: number() }) }),
 );
-const facing = union(object({ yawDeg: number() }), object({ towardId: id }), object({ sameAsId: id }), object({ awayFromId: id }));
+const facing = union(object({ yawDeg: number() }), object({ towardId: ref }), object({ sameAsId: ref }), object({ awayFromId: ref }));
 const framing = union(
 	object({ intent: object({ size: choices(STUDIO_VARIANTS.framingSizes), view: choices(STUDIO_VARIANTS.framingViews), level: choices(STUDIO_VARIANTS.framingLevels), side: choices(STUDIO_VARIANTS.framingSides) }, { focalMm: positive }) }),
 	object({ exact: object({ position: vec3, lookAt: vec3, focalMm: positive }) }),
 );
 const objectOp = union(
 	object({ op: literal("create"), source: object({ kind: id }), position }, { name, facing, scale: positiveVec3,
+		rotationDeg: { ...vec3, description: "Euler XYZ degrees (x pitch, y yaw, z roll), as in update. Exclusive with facing. A pitched/rolled part rests its lowest corner on its support." },
 		parent: { ...name, description: "Group this new object under a parent: an existing object id, or the name of an object created earlier in this same ops list. Moving the parent then moves it too." } }),
 	object({ op: literal("update"), id }, { position, facing, rotationDeg: vec3, scale: positiveVec3, color: text(32), name, hidden: bool }),
 	object({ op: literal("remove"), id }),
@@ -191,7 +194,7 @@ const patchOp = union(
 const toolSchemas = {
 	inspect_studio: object({ scope: choices(STUDIO_VARIANTS.inspectionScopes) }, { ids: ids(32), select: ids(32), query: name, cursor: text(512), limit: { ...integer(1, 32), default: 12 } }),
 	operate_studio: object({}, { selection, shotId: id, frame: integer(), playing: bool, mode: choices(STUDIO_VARIANTS.modes), view: object({}, { lookThrough: bool, grid: bool, autoColor: bool }) }),
-	arrange_objects: object({ ops: array(objectOp, 100, 1) }, { collisionPolicy: { ...choices(STUDIO_VARIANTS.collisionPolicies), default: "report" } }),
+	arrange_objects: object({ ops: { ...array(objectOp, 100, 1), description: "Applied in order, as one undo step. Each op sees the parts created by earlier ops, so build an assembly in one call: create the main part, then place the rest with position.onObject / relativeTo(+side,gapM) / between naming earlier parts (e.g. relativeTo \"Hood\"). Reference parts created in this call by name, never by id." } }, { collisionPolicy: { ...choices(STUDIO_VARIANTS.collisionPolicies), default: "report" } }),
 	arrange_characters: object({ ops: array(characterOp, 8, 1) }),
 	patch_elements: object({ ops: array(patchOp, 32, 1) }),
 	frame_shot: object({ subjectIds: ids(1), framing }, { shotId: id, caption: { type: "string", maxLength: 500 }, keyAtFrame: integer() }),
@@ -471,11 +474,14 @@ export function validateStudioCommand(command) {
 		if (new Set(names).size !== names.length) fail("DUPLICATE_NAME", "Create names must be unique; resolve existing targets by ID.");
 		for (const op of args.ops) {
 			if (op.op === "update" && Object.keys(op).length === 2) fail("INVALID_ARGUMENT", "Update has no fields.");
-			if (op.facing && op.rotationDeg) fail("INVALID_ARGUMENT", "Facing and exact rotation are exclusive.");
+			if (op.facing && op.rotationDeg) fail("INVALID_ARGUMENT", "Facing and rotationDeg are exclusive: facing sets yaw only (toward/away/same-as/yawDeg); rotationDeg {x,y,z} sets the full rotation, with y as the yaw.");
 			if (op.op === "group" && op.childIds.includes(op.parentId)) fail("INVALID_ARGUMENT", "Cannot group an object under itself.");
 			if (op.op === "create" && op.parent !== undefined && op.name !== undefined && op.parent.normalize("NFC").trim() === op.name.normalize("NFC").trim()) fail("INVALID_ARGUMENT", "Cannot group an object under itself.");
-			if (args.collisionPolicy === "avoid" && (!["create", "update"].includes(op.op) || !op.position?.relativeTo)) fail("INVALID_ARGUMENT", "Avoid requires a side-relative position for every operation.");
 		}
+		// Avoidance nudges outward from a relativeTo reference, so at least one op needs one;
+		// the others (world/onObject/between, remove, group) are placed as given and the
+		// final batch is still checked for overlap.
+		if (args.collisionPolicy === "avoid" && !args.ops.some(op => ["create", "update"].includes(op.op) && op.position?.relativeTo)) fail("INVALID_ARGUMENT", "collisionPolicy avoid needs at least one op with position.relativeTo (it nudges outward from that reference); other ops are placed as given.");
 	}
 	if (command.name === "generate_motion" && args.source.kind === "generate") {
 		args.source.beats = args.source.beats.map(beat => ({ ...beat, text: beat.text.trim().replace(/\s+/g, " ") }));

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { Euler, Vector3 } from 'three';
 import { createSceneObject, updateSceneObject } from '../src/scene-objects.js';
 import { createCharacterEntry } from '../src/scenes.js';
 import { createShotAuthoringDocument } from '../src/shot-authoring.js';
@@ -114,6 +115,53 @@ test('geometry: one batch builds a grouped assembly by parent name and moves as 
   assert.equal(f.state.objects[4].parent, body.id, 'an existing id is a valid parent');
   f.refuse('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, position: at(0), parent: 'Ghost' }] }, 'AMBIGUOUS_TARGET');
   f.refuse('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, name: 'Loop', position: at(0), parent: 'Loop' }] }, 'INVALID_ARGUMENT');
+});
+const boxCorners = o => { const e = new Euler(o.rotX * Math.PI / 180, o.rot * Math.PI / 180, o.rotZ * Math.PI / 180, 'XYZ'), w = o.footprint.width * o.scaleX / 2, d = o.footprint.depth * o.scaleZ / 2;
+  return [-w, w].flatMap(x => [0, o.height * o.scaleY].flatMap(y => [-d, d].map(z => new Vector3(x, y, z).applyEuler(e).add(new Vector3(o.x, o.y, o.z))))); };
+const car = () => [
+  { op: 'create', source: { kind: 'cube' }, name: 'Chassis', scale: { x: 2, y: 0.5, z: 4 }, position: { world: { x: 6, y: 0, z: 3 } } },
+  { op: 'create', source: { kind: 'cube' }, name: 'Hood', scale: { x: 1, y: 0.2, z: 1 }, position: { onObject: 'Chassis', offsetXZ: { x: 0, z: 1 } }, parent: 'Chassis' },
+  { op: 'create', source: { kind: 'cube' }, name: 'Right Fender', scale: { x: 0.3, y: 0.2, z: 1 }, position: { relativeTo: 'Hood', basis: 'world', side: 'right', gapM: 0.1, support: { objectId: 'Chassis' } } },
+  { op: 'create', source: { kind: 'cube' }, name: 'Badge', scale: { x: 0.1, y: 0.1, z: 0.1 }, position: { between: ['Hood', 'Right Fender'], fraction: 0.5, support: 'floor' } },
+  { op: 'create', source: { kind: 'cube' }, name: 'Windshield', scale: { x: 1, y: 0.6, z: 0.05 }, rotationDeg: { x: -30, y: 0, z: 0 }, position: { onObject: 'Chassis', offsetXZ: { x: 0, z: 0 } } },
+];
+test('geometry: a batch references parts created earlier in the same batch (onObject / relativeTo / between / rotationDeg)', () => {
+  const f = fixture(), plan = f.apply('arrange_objects', { ops: car() });
+  const by = n => f.state.objects.find(o => o.name === n);
+  const [chassis, hood, fender, badge, shield] = ['Chassis', 'Hood', 'Right Fender', 'Badge', 'Windshield'].map(by);
+  near(hood.y, chassis.y + chassis.supportY * chassis.scaleY); near(hood.x, chassis.x); near(hood.z, chassis.z + 1); assert.equal(hood.parent, chassis.id);
+  near(fender.x, hood.x + hood.footprint.width * hood.scaleX / 2 + 0.1 + fender.footprint.width * fender.scaleX / 2);
+  near(fender.z, hood.z);
+  assert.ok(plan.details.some(d => d.id === fender.id && Math.abs(d.actualGapM - 0.1) < 1e-8), 'relation readback resolves the in-batch name');
+  near(badge.x, (hood.x + fender.x) / 2); near(badge.z, (hood.z + fender.z) / 2);
+  assert.deepEqual([shield.rotX, shield.rot, shield.rotZ], [-30, 0, 0]);
+  near(Math.min(...boxCorners(shield).map(p => p.y)), chassis.y + chassis.supportY * chassis.scaleY);
+  // The same batch is deterministic.
+  const g = fixture(); g.apply('arrange_objects', { ops: car() });
+  assert.deepEqual(g.state.objects, f.state.objects);
+  // A reference to a part created LATER, a missing name, an ambiguous name and a self reference teach the fix.
+  fixture().refuse('arrange_objects', { ops: [car()[1], car()[0]] }, 'AMBIGUOUS_TARGET');
+  assert.throws(() => fixture().prepare('arrange_objects', { ops: [car()[0], { ...car()[1], position: { onObject: 'Bonnet' } }] }), e => e.code === 'AMBIGUOUS_TARGET' && /'Bonnet' not found; .*created EARLIER in this batch by its name/.test(e.message));
+  const h = fixture(); h.state.objects.push({ ...createSceneObject('cube'), id: 'a', name: 'Twin' }, { ...createSceneObject('cube'), id: 'b', name: 'Twin' });
+  assert.throws(() => h.prepare('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, position: { onObject: 'Twin' } }] }), e => e.code === 'AMBIGUOUS_TARGET' && /matches 2 objects by name/.test(e.message));
+  h.refuse('arrange_objects', { ops: [{ op: 'update', id: 'a', position: { onObject: 'Twin' } }] }, 'AMBIGUOUS_TARGET');
+  h.refuse('arrange_objects', { ops: [{ op: 'update', id: 'a', position: { onObject: 'a' } }] }, 'INVALID_ARGUMENT');
+  // Facing targets resolve against the draft too.
+  const k = fixture(); k.apply('arrange_objects', { ops: [car()[0], { op: 'create', source: { kind: 'chair' }, name: 'Seat', position: { world: { x: 0, y: 0, z: 0 } }, facing: { towardId: 'Chassis' } }] });
+  near(k.state.objects[1].rot, Math.atan2(6, 3) * 180 / Math.PI);
+});
+test('geometry: create takes rotationDeg, exclusive with facing, and avoid accepts in-batch references', () => {
+  const f = fixture();
+  f.apply('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, name: 'Tilt', rotationDeg: { x: 10, y: 20, z: 30 }, position: { world: { x: 1, y: 0, z: 1 } } }, { op: 'create', source: { kind: 'cube' }, name: 'Flat', rotationDeg: { x: 0, y: 45, z: 0 }, position: { world: { x: 3, y: 0, z: 3 } } }] });
+  assert.deepEqual(f.state.objects.map(o => [o.rotX, o.rot, o.rotZ]), [[10, 20, 30], [0, 45, 0]]);
+  fixture().refuse('arrange_objects', { ops: [{ op: 'create', source: { kind: 'cube' }, rotationDeg: { x: 0, y: 0, z: 0 }, facing: { yawDeg: 0 }, position: { world: { x: 0, y: 0, z: 0 } } }] }, 'INVALID_ARGUMENT');
+  assert.throws(() => validateStudioCommand({ name: 'arrange_objects', args: { ops: [{ op: 'create', source: { kind: 'cube' }, rotationDeg: { x: 0, y: 0, z: 0 }, facing: { yawDeg: 0 }, position: { world: { x: 0, y: 0, z: 0 } } }] } }), e => /rotationDeg \{x,y,z\}/.test(e.message));
+  const g = fixture();
+  const avoided = g.apply('arrange_objects', { collisionPolicy: 'avoid', ops: [
+    { op: 'create', source: { kind: 'cube' }, name: 'Base', position: { world: { x: 6, y: 0, z: 3 } } },
+    { op: 'create', source: { kind: 'chair' }, name: 'Side', position: { relativeTo: 'Base', basis: 'world', side: 'right', gapM: 0.2, support: 'floor' } }] });
+  near(avoided.details[0].actualGapM, 0.2);
+  fixture().refuse('arrange_objects', { collisionPolicy: 'avoid', ops: [{ op: 'create', source: { kind: 'cube' }, position: { world: { x: 0, y: 0, z: 0 } } }] }, 'INVALID_ARGUMENT');
 });
 test('geometry: grouping, carried children, removal, no-op and preserved cast layers/selection', () => {
   const f = fixture(); f.apply('arrange_objects', { ops: [chair('world'), { op: 'create', source: { kind: 'cube' }, position: { world: { x: 3, y: 0, z: 0 } } }] });
