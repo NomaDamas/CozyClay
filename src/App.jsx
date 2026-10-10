@@ -1539,7 +1539,7 @@ export default function App() {
 		matteShrink, setMatteShrink, matteFeather, setMatteFeather, matteMode, setMatteMode, matteStats,
 		setMatteStats, matteBusy, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled, addSceneObject,
 		importCutout, importCutouts, spawnCutoutAt, persistMeshAsset, importMesh, importMeshes, spawnMeshAt,
-		applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameSceneObject, sceneObjectWorldMatrix,
+		applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest, renameSceneObject, sceneObjectWorldMatrix,
 		attachTargetForRow, attachTargetLabel, attachSceneObject,
 	} = objectsDomain;
 
@@ -7074,7 +7074,7 @@ export default function App() {
 		aimEditorAtKeyLight, characters, showB, ikFrames, ikMode,
 		rowIdForCharIndex, activeCharIndex, waypoints, sceneObjects, scenes,
 		activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi, renameSceneDocumentFromUi,
-		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection, groupObjectUnderNewEmpty,
+		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest,
 		toggleHierarchyHidden, propsDrop, hierarchyReparent, agentTouchedRows, workflowMode,
 		selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
 		preset, applyPreset, cameraPresetId, i2vMotionCameraLocked, shotAspectKey,

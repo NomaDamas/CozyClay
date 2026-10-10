@@ -115,6 +115,9 @@ await waitFor("editor view is the main view", () => evaluate("window.__cozyclay.
 const cubeId = await evaluate(`window.__cozyclay.sceneObject.place({ kind: "cube", name: "Probe Cube", x: 1, z: 1 }).id`);
 await rowFor(`object:${cubeId}`);
 
+const renameOpenOn = (rowId) => evaluate(`(() => { const el = document.activeElement; return el?.tagName === "INPUT" && !!el.closest('[data-node-id="${rowId}"]'); })()`);
+const pressKey = async (key, code, vk) => { for (const type of ["rawKeyDown", "keyUp"]) await send("Input.dispatchKeyEvent", { type, key, code, windowsVirtualKeyCode: vk }); };
+
 /* ------------------------- create an Empty from the real create menu ---- */
 
 await openProps();
@@ -128,6 +131,8 @@ assert.ok(emptyItem, "Empty menu item is on screen");
 await click(emptyItem.x, emptyItem.y);
 const created = await waitFor("an empty record", async () => (await objects()).find((o) => o.renderer === "empty") ?? null, 8000).catch((error) => { console.log("runtime errors:", JSON.stringify(runtimeErrors.slice(-5))); throw error; });
 await rowFor(`object:${created.id}`);
+expect("a new Empty opens its name field at once", await waitFor("rename field", async () => (await renameOpenOn(`object:${created.id}`)) || null, 4000).catch(() => false) === true);
+await pressKey("Escape", "Escape", 27);
 expect("the Empty is selected after creation", (await selectedRow()) === `object:${created.id}`, String(await selectedRow()));
 const chip = await evaluate(`document.querySelector('[data-node-id="object:${created.id}"] .v2-outliner-chip')?.className ?? ""`);
 expect("the Empty row has its own icon, distinct from a mesh row", /\bempty\b/.test(chip) && !/\bmesh\b/.test(chip), chip);
@@ -302,6 +307,8 @@ expect("the new Empty sits at the cube's position", near(grouped.parent.x, survi
 expect("the cube did not move", near(grouped.cube.x, survivor.x) && near(grouped.cube.z, survivor.z) && near(grouped.cube.y, survivor.y));
 await waitFor("new empty selected", async () => ((await selectedRow()) === `object:${grouped.parent.id}` ? true : null));
 expect("selection follows to the new Empty", true);
+expect("Group under new Empty opens the Empty's name field", await waitFor("group rename field", async () => (await renameOpenOn(`object:${grouped.parent.id}`)) || null, 4000).catch(() => false) === true);
+await pressKey("Escape", "Escape", 27);
 await shot("grouped-under-new-empty");
 
 // one undo step takes back both the Empty and the parenting

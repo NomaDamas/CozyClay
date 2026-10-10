@@ -283,6 +283,10 @@ export function useObjects(appContext) {
 
 	const [gizmoMode, setGizmoMode] = useState("move");
 
+	// An Empty is nothing but its name: the moment one is made, its Outliner
+	// row opens for naming (a nonce, so a second Empty re-opens it).
+	const [renameRequest, setRenameRequest] = useState(null);
+
 	// Snap is a preference, not a law: with it on the gizmo blocks on the plan
 	// board's grid, and Ctrl/Cmd during a drag gives a free one. Off, it is the
 	// other way round. (docs/unity-reference.md §9.5)
@@ -300,6 +304,7 @@ export function useObjects(appContext) {
 		const object = domain.read().find(row => row.id === receipt.affectedIds[0]);
 		appContext.shared.markCraftAction("object");
 		appContext.shared.setSelectedHierarchyId(`object:${object.id}`);
+		if (object.renderer === "empty") setRenameRequest({ id: `object:${object.id}`, nonce: Date.now() });
 		// Deliberate divergence from Unity's rename-on-create: creating an object
 		// here is followed by placing it, and dropping focus into a text field
 		// swallows the very next W/E/R. Renaming stays on F2/Return and the row's
@@ -598,6 +603,7 @@ export function useObjects(appContext) {
 			const receipt = run("object.groupUnderEmpty", { id });
 			const emptyId = receipt.affectedIds[0];
 			appContext.shared.setSelectedHierarchyId(`object:${emptyId}`);
+			setRenameRequest({ id: `object:${emptyId}`, nonce: Date.now() });
 			setGizmoMode("move");
 			appContext.notify(ko("Grouped under a new Empty", "빈 오브젝트로 묶었어요"));
 			return emptyId;
@@ -985,7 +991,7 @@ export function useObjects(appContext) {
 		matteBrush, setMatteBrush, matteShrink, setMatteShrink, matteFeather, setMatteFeather, matteMode,
 		setMatteMode, matteStats, setMatteStats, matteBusy, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
 		addSceneObject, importCutout, importCutouts, spawnCutoutAt, persistMeshAsset, importMesh, importMeshes,
-		spawnMeshAt, applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameSceneObject,
+		spawnMeshAt, applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest, renameSceneObject,
 		sceneObjectWorldMatrix, attachTargetForRow, attachTargetLabel, attachSceneObject,
 	};
 }

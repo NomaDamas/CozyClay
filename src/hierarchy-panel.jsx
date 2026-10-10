@@ -643,6 +643,7 @@ export default function HierarchyPanel({
 	onDeleteObject,
 	onFrameObject,
 	onGroupObject,
+	renameRequest = null,
 	onToggleHidden,
 	propsDrop = null,
 	reparent = null,
@@ -663,6 +664,10 @@ export default function HierarchyPanel({
 	// Row currently in in-place rename. The panel owns it: F2/Return and the
 	// row context menu are the only ways in, so app state stays out of it.
 	const [editingId, setEditingId] = useState(null);
+	// A freshly made Empty asks to be named: open its row's rename field.
+	useEffect(() => {
+		if (renameRequest?.id) setEditingId(renameRequest.id);
+	}, [renameRequest?.id, renameRequest?.nonce]);
 	// The row being dragged. dataTransfer.getData() is deliberately blank during
 	// dragover in Chrome, so canDrop could never gate the highlight from the
 	// payload alone — the id lives here from dragstart until dragend/drop.

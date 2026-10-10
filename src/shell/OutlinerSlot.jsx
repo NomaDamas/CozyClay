@@ -9,7 +9,7 @@ export default function OutlinerSlot() {
 		ikMode, rowIdForCharIndex, activeCharIndex, sceneObjects,
 		scenes, activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi,
 		renameSceneDocumentFromUi, deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, runStudioAction,
-		deleteSceneObject, frameSelection, groupObjectUnderNewEmpty, toggleHierarchyHidden, propsDrop, hierarchyReparent,
+		deleteSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest, toggleHierarchyHidden, propsDrop, hierarchyReparent,
 		agentTouchedRows,
 	} = useStudioShell();
 	return (
@@ -41,6 +41,7 @@ export default function OutlinerSlot() {
 			onDeleteObject={deleteSceneObject}
 			onFrameObject={frameSelection}
 			onGroupObject={groupObjectUnderNewEmpty}
+			renameRequest={renameRequest}
 			onToggleHidden={toggleHierarchyHidden}
 			propsDrop={propsDrop}
 			reparent={hierarchyReparent}
