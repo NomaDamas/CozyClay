@@ -218,6 +218,22 @@ test('framing: independent filmback inversion, key/lens/aim boundaries and measu
   const fractions = [0, 4].map(z => fixture().prepare('frame_shot', { subjectIds: ['alex'], framing: { exact: { position: { x: 0, y: 1, z: 5 }, lookAt: { x: 0, y: 1, z }, focalMm: 35 } } }).checks.screenFraction);
   near(...fractions);
 });
+test('framing: measured occlusion and camera side instead of an unmeasured warning', () => {
+  const exact = position => ({ exact: { position, lookAt: { x: 0, y: 1, z: 0 }, focalMm: 35 } });
+  const f = fixture(), clear = f.prepare('frame_shot', { subjectIds: ['alex'], framing: exact({ x: 0, y: 1.6, z: 5 }) });
+  assert.equal(clear.checks.occluded, false); assert.equal(clear.checks.cameraSide, undefined, 'one character has no line to be on a side of');
+  assert.deepEqual(clear.warnings, [], 'a clear sight line warns nothing');
+  seed(f, { id: 'crate', x: 0, z: 2.5, scaleY: 2 });
+  const blocked = f.prepare('frame_shot', { subjectIds: ['alex'], framing: exact({ x: 0, y: 1.6, z: 5 }) });
+  assert.equal(blocked.checks.occluded, true); assert.deepEqual(blocked.warnings, [{ code: 'OCCLUDED', id: 'crate' }]);
+  f.state.characters.push(createCharacterEntry({ id: 'bea', subject: 'Bea', x: 2, z: 0 }));
+  const right = f.apply('frame_shot', { subjectIds: ['alex'], framing: exact({ x: 1, y: 1.6, z: 5 }) });
+  assert.equal(right.checks.cameraSide, 'right'); assert.equal(f.prepare('frame_shot', { subjectIds: ['alex'], framing: exact({ x: 1, y: 1.6, z: -5 }) }).checks.cameraSide, 'left');
+  assert.deepEqual(framingChecks(['alex'], f.state, f.ports), right.checks, 'verify measures what the receipt reported');
+  const { coverage, screenFraction, derivedSize, behindCamera, clipped } = right.checks;
+  assert.deepEqual(Object.keys(right.checks), ['coverage', 'screenFraction', 'derivedSize', 'behindCamera', 'clipped', 'occluded', 'cameraSide']);
+  assert.ok(coverage && screenFraction > 0 && derivedSize && behindCamera === false && typeof clipped === 'boolean');
+});
 test('shared journal: retained outcomes, in-flight protection, deterministic expiry and host isolation', () => {
   const host = fixture().state.host; let clock = 0, retain = true;
   const journal = createStudioCommandJournal({ host, now: () => clock, isRetained: () => retain, maxCompleted: 1 });

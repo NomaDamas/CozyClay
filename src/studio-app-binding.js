@@ -10,6 +10,7 @@ import { CUTOUT_KIND, MESH_KIND, OBJECT_LIBRARY, supportHeightForObject } from "
 import { buildStudioContext, physicsFingerprintInput, studioEntityCursor, validateStudioCursor } from "./studio-agent-context.js";
 import { createStudioCommandJournal, entityWorldBounds, framingChecks, localTransformReadback, placementChecks, studioObjectCatalogue } from "./studio-agent-commands.js";
 import { verifyInstalledTake } from "./studio-agent-motion.js";
+import { shotGeometryFacts } from "./studio-geometry-facts.js";
 import { STUDIO_TOOL_FAMILIES, StudioProtocolError, validateReceipt, validateStudioCommand, validateStudioIdentity } from "./studio-agent-protocol.js";
 import { CONTACT_SHEET_LAYOUT, buildContactSheet, sampleContactSheetFrames } from "./studio-contact-sheet.js";
 
@@ -282,8 +283,10 @@ export function createStudioAppBinding(ports) {
 				// only an arrange/frame receipt carries overlap or framing numbers. Anything else is measured here.
 				const measuredBy = { placement: "overlapIds", framing: "screenFraction" }, unmeasured = receipt && args.checks.some(check => measuredBy[check] && receipt.checks?.[measuredBy[check]] === undefined);
 				const measured = args.targets ? entityIds(args.targets) : unmeasured ? entityIds(receipt.affectedIds) : null;
+				// A framing check also carries the cut's geometry, read from the scene: side of the action line
+				// and sight lines per shot, the receipt's or targets' shots first (8 at most).
 				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, evidenceRevision, stale: evidenceRevision !== s.revision, checks: measured ? { coverage: "current-scene-targets" } : receipt.checks,
-					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [], unsupportedChecks: [], unsupportedReasons: {} };
+					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [], unsupportedChecks: [], unsupportedReasons: {}, ...(args.checks.includes("framing") ? { geometry: shotGeometryFacts(scene, { first: receipt ? receipt.affectedIds : args.targets, ports: { bounds: ports.bounds } }) } : {}) };
 				const reasons = result.unsupportedReasons, verified = [], skipped = [], pending = [];
 				for (const check of args.checks.filter(check => check !== "motion" && measured)) {
 					if (!measured.length) { reasons[check] = "No target is an object or character in the current scene."; continue; }
@@ -302,6 +305,8 @@ export function createStudioAppBinding(ports) {
 							.then(verification => { verified[index] = verification; }, error => { if (!(error instanceof StudioProtocolError)) throw error; skipped.push(`${name}: ${error.message}`); }));
 					});
 				}
+				// A frame is the shot camera's view; a plan is the Top View, the set from above
+				// with names and the shot camera's wedge.
 				if (args.visual !== "none") {
 					if (args.visual === "contact_sheet") {
 						// One image of frames across the range, each rendered through the export
@@ -309,7 +314,7 @@ export function createStudioAppBinding(ports) {
 						const frames = sampleContactSheetFrames(args.range, s.frameCount), sheet = buildContactSheet(frames, ports.renderFrameBuffer), imageId = crypto.randomUUID();
 						images.set(imageId, { dataUrl: ports.encodePng(sheet.data, sheet), width: sheet.width, height: sheet.height, frames, layout: CONTACT_SHEET_LAYOUT, revision: s.revision, receiptId: result.receiptId });
 						result.visualRefs.push({ imageId, frames, layout: CONTACT_SHEET_LAYOUT });
-					} else { const capture = ports.capture(); const imageId = crypto.randomUUID(); images.set(imageId, { ...capture, revision: s.revision, receiptId: result.receiptId }); result.visualRefs.push({ imageId }); }
+					} else { const capture = args.visual === "plan" ? (ports.capturePlan ?? (() => fail("CAPABILITY_MISSING", "This editor cannot render the top view.")))() : ports.capture(); const imageId = crypto.randomUUID(); images.set(imageId, { ...capture, revision: s.revision, receiptId: result.receiptId }); result.visualRefs.push({ imageId, ...(args.visual === "plan" ? { kind: "plan" } : {}) }); }
 				}
 				const finish = () => {
 					const computed = verified.filter(Boolean);

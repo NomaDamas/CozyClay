@@ -49,7 +49,7 @@ import { createMotionEdit } from '../src/ardy/motion-edit.js';
 import { applyMotionCalibration, normalizeMotionCalibration } from '../src/ardy/motion-calibration.js';
 import { decodeMotionResource, encodeMotionResource, resolveMotionSource, sha256Hex } from '../src/motion-resources.js';
 
-const cases = ['previs-mode-and-character-kind', 'inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'still-frame-shot-camera-key', 'clip-frame-shot-camera-key', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'generate-all-blocks-refusal-reason', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'run-action-shot-camera-rail-and-undo', 'run-action-view-toggles', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'verify-result-targets', 'late-apply-inspect-patch', 'arrange-with-attached-prop', 'arrange-local-space', 'run-action-export-shot-video', 'run-action-scenes', 'run-action-project-save', 'run-action-asset-import-and-undo', 'run-action-ai-prepare-shot', 'run-action-motion-generate-from-video'];
+const cases = ['previs-mode-and-character-kind', 'verify-plan-and-geometry', 'inspect-entity-transforms', 'targeted-commit-and-undo', 'stale-target-and-epoch', 'selected-B-while-A-generates', 'edit-during-generation', 'invalid-prepare', 'mid-gesture-target', 'lost-acknowledgement', 'camera-undo', 'still-frame-shot-camera-key', 'clip-frame-shot-camera-key', 'rail-camera-undo', 'rail-camera-undo-after-object-undo', 'stop-before-commit', 'explicit-unverified-acceptance', 'context-revisions', 'recreated-motion-read-and-verify', 'stale-receipt-undo', 'unverified-default-refusal', 'reverted-edit-invalidates-target', 'motion-preserves-playhead', 'patch-character-tint-and-undo', 'patch-stage-key-light-and-undo', 'patch-partial-drop', 'patch-during-gesture', 'patch-shot-and-prompt-blocks', 'patch-stage-environment-text-and-undo', 'run-action-shot-create-and-undo', 'run-action-object-duplicate-and-undo', 'generate-all-blocks-refusal-reason', 'run-action-refusals', 'run-action-character-waypoints-and-undo', 'run-action-character-ik-keys-and-undo', 'run-action-object-attach-and-undo', 'ui-refusals-localized-or-silent', 'run-action-shot-camera-rail-and-undo', 'run-action-view-toggles', 'context-entity-index', 'context-assets', 'inspect-scopes', 'cursor-survives-edit', 'agent-motion-survives-reload', 'motion-job-states', 'verify-stale-receipt', 'verify-result-targets', 'late-apply-inspect-patch', 'arrange-with-attached-prop', 'arrange-local-space', 'run-action-export-shot-video', 'run-action-scenes', 'run-action-project-save', 'run-action-asset-import-and-undo', 'run-action-ai-prepare-shot', 'run-action-motion-generate-from-video'];
 const argv = process.argv.slice(2);
 assert(!argv.length || (argv.length === 2 && argv[0] === '--case' && cases.includes(argv[1])), 'Unknown test arguments');
 import { readStudioSource } from './bus/verify-domain-modules.mjs';
@@ -399,6 +399,35 @@ const implementations={
   assert.equal(take.verification.characterId,'actor-a');assert.equal(take.verification.profile,'studio-motion-v1');
   assert.equal(take.verification.evaluatedFrames,48);assert.deepEqual(take.verification.range,{startFrame:0,endFrameExclusive:48});
   assert(['verified','unverified'].includes(take.verification.status),JSON.stringify(take.verification));
+ },
+ async 'verify-plan-and-geometry'(f){
+  // verify_result measures the sight line and side of the line, adds the cut's
+  // geometry and, asked for a plan, the Top View through its own port.
+  const shot=await f.call('frame_shot',f.request('frame_shot',{subjectIds:['actor-a'],framing:{exact:{position:{x:2,y:1.6,z:5},lookAt:{x:0,y:1,z:0},focalMm:35}}}));
+  assert.equal(shot.ok,true,JSON.stringify(shot));
+  assert(!shot.warnings.some(w=>w.code==='OCCLUSION_UNMEASURED'),JSON.stringify(shot.warnings));
+  const png='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',plans=[];
+  f.ports.capturePlan=()=>{plans.push(f.binding.refresh().revision);return {dataUrl:png,width:1280,height:720,frame:0,shotId:shot.affectedIds[0]};};
+  const verified=await f.call('verify_result',f.request('verify_result',{receiptId:shot.receiptId,checks:['framing'],visual:'plan'}));
+  assert.notEqual(verified.ok,false,JSON.stringify(verified));
+  assert.equal(verified.visualRefs.length,1);assert.equal(verified.visualRefs[0].kind,'plan');assert.equal(plans.length,1);
+  const image=await f.call('resolve_studio_image',{imageId:verified.visualRefs[0].imageId,receiptId:shot.receiptId,revision:verified.revision});
+  assert.match(image.dataUrl,/^data:image\/png;base64,/);assert.equal(image.width,1280);
+  protocol.validateStudioSchema(protocol.StudioSchemas.GeometryFacts,verified.geometry);
+  assert.deepEqual(verified.geometry.shots.map(s=>({shotId:s.shotId,subjectIds:s.subjectIds,cameraSide:s.cameraSide})),[{shotId:shot.affectedIds[0],subjectIds:['actor-a','actor-b'],cameraSide:'right'}]);
+  assert.equal(verified.geometry.axisConsistent,null,'one shot has nothing to compare');
+  // A target verify of the framing reports the same sight-line evidence; an editor without the port refuses the plan.
+  const targets=await f.call('verify_result',f.request('verify_result',{targets:['actor-a'],checks:['framing'],visual:'none'}));
+  assert.equal(typeof targets.checks.framing.occluded,'boolean',JSON.stringify(targets.checks));assert.equal(targets.checks.framing.occluded,false);
+  assert.equal(targets.checks.framing.cameraSide,'right','actor-b stands 4 m along +x; a camera at +z is right of the line');
+  const crate=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'create',source:{kind:'cube'},position:{world:{x:1,y:0,z:2.5}},scale:{x:1,y:2,z:1}}]}));
+  assert.equal(crate.ok,true,JSON.stringify(crate));
+  const blocked=await f.call('verify_result',f.request('verify_result',{targets:['actor-a'],checks:['framing'],visual:'none'}));
+  assert.equal(blocked.checks.framing.occluded,true,'a crate in the sight line occludes the subject');
+  assert.deepEqual(blocked.geometry.shots[0].occluders,[{subjectId:'actor-a',byObjectId:crate.affectedIds[0]}]);
+  delete f.ports.capturePlan;
+  const refused=await f.call('verify_result',f.request('verify_result',{receiptId:shot.receiptId,checks:['framing'],visual:'plan'}));
+  assert.equal(refused.code,'CAPABILITY_MISSING',JSON.stringify(refused));
  },
  async 'motion-job-states'(){ await motionCase('motion-job-states'); },
  async 'agent-motion-survives-reload'(){ await motionCase('agent-motion-survives-reload'); },

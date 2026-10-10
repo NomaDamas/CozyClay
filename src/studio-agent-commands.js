@@ -9,6 +9,7 @@ import { createStableItemId } from './stable-items.js';
 import { focalMmToFov, SENSOR_FORMATS } from './shot.js';
 import { coplanarConflicts } from './coplanar-depth.js';
 import { clampWarning } from './receipt-findings.js';
+import { occludersOf, primarySubjects, sideOfAxis } from './studio-geometry-facts.js';
 import { StudioProtocolError, StudioSchemas, STUDIO_PATCH_KINDS, STUDIO_PATCH_DESCRIPTORS, validateStudioSchema, validateStudioIdentity, validateReceipt, freezeStudioData } from './studio-agent-protocol.js';
 
 const DEG = Math.PI / 180, EPS = 1e-8, CHARACTER_SUPPORT_TOLERANCE = 5e-3;
@@ -380,12 +381,23 @@ function projectSubject(points, camera, fov, aspectRatio) {
   const derivedSize = [['extreme close-up', 2.8], ['close-up', 1.6], ['medium close-up', 1.15], ['medium shot', 0.8], ['medium-wide shot', 0.52], ['wide shot', 0.3], ['extreme wide shot', 0]].find(([, threshold]) => screenFraction >= threshold)[0];
   return { screenBounds, checks: { coverage: 'same-frame-subject-bounds-projection', screenFraction, derivedSize, behindCamera, clipped: behindCamera || screen.some(p => Math.abs(p.x) > 1 || Math.abs(p.y) > 1 || p.z < -1 || p.z > 1) } };
 }
+const boundsOf = points => { const box = aabb(points); return { min: { x: box.x.min, y: box.y.min, z: box.z.min }, max: { x: box.x.max, y: box.y.max, z: box.z.max } }; };
+/** What stands in the way of the camera and where it stands: occluded when a prop
+ * crosses the sight line to any subject, and the camera's side of the line between
+ * the two leading characters (the subjects, else the ones nearest the camera). */
+function sightChecks(subjects, boxes, cameraPosition, state, ports) {
+  const occluders = subjects.flatMap((subject, index) => occludersOf(subject, cameraPosition, state, ports, boundsOf(boxes[index])));
+  const pair = primarySubjects(subjects.map(subject => subject.id), cameraPosition, state);
+  const cameraSide = pair.length === 2 ? sideOfAxis(pair[0], pair[1], cameraPosition) : null;
+  return { occluders, checks: { occluded: occluders.length > 0, ...(cameraSide ? { cameraSide } : {}) } };
+}
 /** Framing evidence for entity ids through the current shot camera at the
- * current frame: the same subject-bounds projection frame_shot reports. */
+ * current frame: the same subject-bounds projection and sight line frame_shot reports. */
 export function framingChecks(ids, state, ports) {
   if (!state.camera || !SENSOR_FORMATS[state.filmback?.sensorId] || !(state.filmback.aspectRatio > 0)) fail('TARGET_NOT_READY', 'The shot camera and filmback must be available.');
-  const points = ids.flatMap(id => geometry(entityById(state, id), state, ports));
-  return projectSubject(points, state.camera, focalMmToFov(state.camera.focalMm, state.filmback.sensorId, state.filmback.aspectRatio), state.filmback.aspectRatio).checks;
+  const subjects = ids.map(id => entityById(state, id)), boxes = subjects.map(entity => geometry(entity, state, ports));
+  const projected = projectSubject(boxes.flat(), state.camera, focalMmToFov(state.camera.focalMm, state.filmback.sensorId, state.filmback.aspectRatio), state.filmback.aspectRatio).checks;
+  return { ...projected, ...sightChecks(subjects, boxes, state.camera.position, state, ports).checks };
 }
 export function frameDraft(command, state, ports) {
   if (state.frameCount <= 0) fail('TARGET_NOT_READY', 'A nonempty timeline is required.');
@@ -426,12 +438,13 @@ export function frameDraft(command, state, ports) {
   }
   const nextShot = { ...shot, cameraKeys: keys, camera: { ...shot.camera, mode: 'keys' } };
   const shots = created ? [nextShot] : state.shotDocument.shots.map(s => s.id === shot.id ? nextShot : s);
-  const { screenBounds, checks } = projectSubject(points, camera, fov, state.filmback.aspectRatio), derivedSize = checks.derivedSize;
+  const { screenBounds, checks: projected } = projectSubject(points, camera, fov, state.filmback.aspectRatio), derivedSize = projected.derivedSize;
+  const sight = sightChecks([subject], [points], camera.position, state, ports), checks = { ...projected, ...sight.checks };
   const resolvedCamera = { ...camera, sensorId: state.filmback.sensorId, slate: derivedSize };
   const draft = { shotDocument: { ...state.shotDocument, shots }, camera: resolvedCamera, manual: true };
   return { domain: 'shot', draft, affectedIds: [shot.id, ...(keyId ? [keyId] : [])],
     checks,
-    warnings: [{ code: 'OCCLUSION_UNMEASURED' }], details: { created, shotId: shot.id, keyId, frame, framing, screenBounds, subjectIds: [subject.id] } };
+    warnings: sight.occluders.slice(0, 5).map(item => ({ code: 'OCCLUDED', id: item.byObjectId })), details: { created, shotId: shot.id, keyId, frame, framing, screenBounds, subjectIds: [subject.id] } };
 }
 
 /** Local journal. Unsettled/protected records are never evicted. Call prune on

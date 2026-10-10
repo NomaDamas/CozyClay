@@ -205,7 +205,7 @@ const toolSchemas = {
 	patch_elements: object({ ops: array(patchOp, 32, 1) }),
 	frame_shot: object({ subjectIds: ids(1), framing }, { shotId: id, caption: { type: "string", maxLength: 500 }, keyAtFrame: integer() }),
 	generate_motion: object({ characterId: id, source }, { repair: { ...choices(["bounded", "none"]), default: "bounded" } }),
-	verify_result: object({ checks: array(choices(["placement", "framing", "motion"]), 3, 1, true) }, { receiptId: id, targets: ids(), range: union(literal("whole_clip"), range), visual: { ...choices(["none", "frame", "contact_sheet"]), default: "none" } }),
+	verify_result: object({ checks: array(choices(["placement", "framing", "motion"]), 3, 1, true) }, { receiptId: id, targets: ids(), range: union(literal("whole_clip"), range), visual: { ...choices(["none", "frame", "contact_sheet", "plan"]), default: "none" } }),
 	undo_edit: object({ receiptId: id }),
 	run_action: object({ action: id }, { args: openObject, confirmationToken: id }),
 };
@@ -274,8 +274,19 @@ const patchedValue = object({ path: text(120) }, { number: number(), text: nulla
 const readback = object({}, { position: vec3, yawDeg: number(), rotationDeg: vec3, scale: union(positive, positiveVec3), name, color: text(32), hidden: bool, modelId: id, renderer: id,
 	parentId: nullable(id), childIds: ids(100, 0), childCount: integer(0), bounds: nullable(bounds), removed: bool, range, camera, keyId: id, frame: integer(), subjectIds: ids(24, 0), selection, activeCharacterId: nullable(id), shotId: nullable(id), view, token: id, takeId: nullable(id), statureM: positive,
 	patched: array(patchedValue, 32, 1) });
+const CAMERA_SIDES = ["left", "right", "on-axis"];
 const checks = object({ coverage: name }, { relationSatisfied: bool, overlapIds: ids(100, 0), actualGapM: number(), requestedGapM: number(0), maximumFootprintOverlapM: number(0),
-	basis: choices(STUDIO_VARIANTS.positionBases), clipped: bool, occluded: bool, behindCamera: bool, screenFraction: number(0), derivedSize: choices(STUDIO_VARIANTS.framingSizes), support: name, baseY: number(), facesTargetId: id });
+	basis: choices(STUDIO_VARIANTS.positionBases), clipped: bool, occluded: bool, behindCamera: bool, screenFraction: number(0), derivedSize: choices(STUDIO_VARIANTS.framingSizes), support: name, baseY: number(), facesTargetId: id,
+	cameraSide: choices(CAMERA_SIDES), axisConsistent: bool });
+// Code-computed shot geometry verify_result carries beside a framing check
+// (src/studio-geometry-facts.js): bounded to 8 shots and 24 subjects.
+const geometryFacts = object({
+	subjects: array(object({ id, position: vec3, yawDeg: number() }), 24),
+	pairs: array(object({ a: id, b: id, distanceM: number(0) }), 24),
+	shots: array(object({ shotId: id, subjectIds: ids(2, 0), camera: nullable(object({ position: vec3, lookAt: vec3 })), cameraSide: nullable(choices(CAMERA_SIDES)),
+		occluders: array(object({ subjectId: id, byObjectId: id }), 8) }), 8),
+	axisConsistent: nullable(bool),
+});
 const warning = object({ code: id }, { id, message: name, suggestedOutwardDeltaM: number(), count: integer() });
 const receiptBase = { ok: literal(true), commandId: id, receiptId: id, host: identity, status: choices(STUDIO_VARIANTS.receiptStatuses), authored: bool, revision: revisions, affectedIds: ids(100, 0),
 	delta: array(object({ id, after: readback }), 8), checks, undo: nullable(undo), warnings: array(warning, 12) };
@@ -311,7 +322,7 @@ const failureSchema = object({ ok: literal(false), commandId: id, host: identity
 // x-studio-range is the sole relational schema annotation: end > start.
 export const StudioSchemas = freezeStudioData({ catalogue: STUDIO_CATALOGUE, variants: STUDIO_VARIANTS, Vec3: vec3, FrameRange: range, PositionSpec: position, FacingSpec: facing,
 	ObjectOp: objectOp, CharacterOp: characterOp, Framing: framing, GenerateSource: generateSource, Source: source, Identity: identity, Host: host, TargetGuard: guardSchema,
-	Entity: entity, ShotSummary: shotSummary, StudioContextV1: contextSchema, StudioTurn: turnSchema, StudioStop: stopSchema, Receipt: receiptSchema, ReceiptVariants: receiptVariants, Failure: failureSchema });
+	Entity: entity, ShotSummary: shotSummary, StudioContextV1: contextSchema, StudioTurn: turnSchema, StudioStop: stopSchema, Receipt: receiptSchema, ReceiptVariants: receiptVariants, Failure: failureSchema, GeometryFacts: geometryFacts });
 
 /** Validate the closed JSON Schema subset used above; return a detached value
  * with declared defaults. Errors contain schema paths, never payload values. */
