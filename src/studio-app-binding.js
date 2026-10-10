@@ -315,17 +315,20 @@ export function createStudioAppBinding(ports) {
 		read_studio_context(request) { const c = context(); if (!same(validateStudioIdentity(request.host), owner)) fail("STALE_SCENE", "This is not the requested document."); return c; },
 		inspect_studio(args) {
 			const command = validateStudioCommand({ name: "inspect_studio", args }); const c = context();
-			// Every scope carries the context: its revision is what the agent's next
-			// command is admitted at, so a scope without it leaves that admission stale.
-			if (command.args.scope === "catalogue") return { context: c, ...studioObjectCatalogue() };
-			if (command.args.scope === "document") return { context: c, scope: "document",
+			// Every scope carries the revision and document identity, not the whole
+			// context (the turn already holds that, and resending it per call is what
+			// the model pays for): the revision is what the agent's next command is
+			// admitted at, so a scope without it leaves that admission stale.
+			const head = { revision: c.revision, host: (({ workspaceId, documentEpoch, sceneId, sceneEpoch }) => ({ workspaceId, documentEpoch, sceneId, sceneEpoch }))(c.host) };
+			if (command.args.scope === "catalogue") return { ...head, ...studioObjectCatalogue() };
+			if (command.args.scope === "document") return { ...head, scope: "document",
 				...readElementDocument(refresh().document, command.args, c.host.sceneId) };
 			// Discovery for run_action: every registered action with its label, kind,
 			// exposure and availability (the reason when unavailable). Schemas are on
 			// request: ids answer those actions' full declarations, input included.
 			if (command.args.scope === "actions") {
 				const actions = (ports.actions?.()?.list() ?? []).filter(row => !row.agentHidden);
-				return { context: c, actions: command.args.ids ? actions.filter(row => command.args.ids.includes(row.id)) : actions.map(({ input, description, ...row }) => row) };
+				return { ...head, actions: command.args.ids ? actions.filter(row => command.args.ids.includes(row.id)) : actions.map(({ input, description, ...row }) => row) };
 			}
 			const s = refresh();
 			const wanted = row => (!args.ids || args.ids.includes(row.id)) && (!args.query || Boolean(row.name?.includes(args.query)));
@@ -333,14 +336,14 @@ export function createStudioAppBinding(ports) {
 				const select = { shot: ["shot"], motion: ["motion", "character"] }[command.args.scope];
 				const ids = args.ids ?? (command.args.scope === "selection" ? [s.selection?.id ?? s.host.sceneId]
 					: args.query && select ? (command.args.scope === "shot" ? s.shots : entityProjection(s).filter(row => row.kind === "character")).filter(wanted).map(row => row.id) : undefined);
-				return { context: c, scope: "document", ...readElementDocument(s.document, { ...command.args, ids, select }, c.host.sceneId) };
+				return { ...head, scope: "document", ...readElementDocument(s.document, { ...command.args, ids, select }, c.host.sceneId) };
 			}
 			// Build each page from the same complete authoritative projection; never
 			// page by slicing an already-truncated Send context.
 			// Stable id order, so an offset cursor survives unrelated edits.
 			const filtered = entityProjection(s).filter(wanted).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 			const offset = args.cursor ? validateStudioCursor(args.cursor, c) : 0, limit = command.args.limit;
-			return { context: c, entities: filtered.slice(offset, offset + limit), total: filtered.length,
+			return { ...head, entities: filtered.slice(offset, offset + limit), total: filtered.length,
 				nextCursor: offset + limit < filtered.length ? studioEntityCursor(c, offset + limit) : null };
 		},
 		operate_studio: request => execute({ ...request, name: "operate_studio" }),

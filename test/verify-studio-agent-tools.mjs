@@ -92,7 +92,7 @@ for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revis
   const args = { ops: [{ op: "update", id: "cube", position: { world: { x: 1, y: 0, z: 0 } } }] };
   const liveHub = { async command(name, payload, handle) {
     assert.equal(handle, "handle-12");
-    if (name === "inspect_studio") return { context: { revision: { scene: revision } } };
+    if (name === "inspect_studio") return { revision: { scene: revision } };
     sent.push(structuredClone(payload));
     if (payload.expectedRevision !== revision) {
       if (scenario === "stale-scene-readmits-revision") return { ok: false, code: "STALE_SCENE", message: "Authored scene revision changed." };
@@ -106,7 +106,7 @@ for (const scenario of ["inspect-readmits-revision", "stale-scene-readmits-revis
     }
     return { ok: true, status: "applied", revision: { before, after: revision } };
   } };
-  admission.refresh = async () => { refreshes++; const read = await liveHub.command("inspect_studio", { scope: "scene" }, "handle-12"); admission.revision = read.context.revision.scene; };
+  admission.refresh = async () => { refreshes++; const read = await liveHub.command("inspect_studio", { scope: "scene" }, "handle-12"); admission.revision = read.revision.scene; };
   const invoke = createStudioTools({ liveHub, workspaceHandle: "handle-12", session: { admission } }).internal.invoke;
   await invoke("arrange_objects", args);
   assert.equal(admission.revision, 2);

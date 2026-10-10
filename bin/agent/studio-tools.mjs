@@ -66,9 +66,9 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
     if (name === "run_action" && result?.host && session?.admission && result.host.workspaceId === session.admission.host.workspaceId) {
       session.admission.host = validateStudioIdentity(result.host);
     }
-    if (name === "inspect_studio" && Number.isSafeInteger(result?.context?.revision?.scene) && session?.admission) {
-      session.admission.revision = result.context.revision.scene;
-    }
+    // An inspect reports the live revision at its top level (older editors embedded a context).
+    const inspected = result?.revision?.scene ?? result?.context?.revision?.scene;
+    if (name === "inspect_studio" && Number.isSafeInteger(inspected) && session?.admission) session.admission.revision = inspected;
     if (mutationNames.has(name) && session?.admission) {
       if (Number.isSafeInteger(result?.revision?.after)) session.admission.revision = result.revision.after;
       else await session.admission.refresh();

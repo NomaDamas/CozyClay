@@ -188,7 +188,13 @@ const STUDIO_IDENTITY_KEYS = ["workspaceId", "documentEpoch", "sceneId", "sceneE
 const executeStudioCommand = async ({ action, args, expectedRevision, commandId, timeoutMs, confirmationToken, inspected }) => {
 	const workspaceHandle = liveWorkspace.getStore();
 	inspected ??= await liveHub.command("inspect_studio", { scope: "actions", ids: [action] }, workspaceHandle);
-	const context = inspected?.context;
+	// inspect_studio answers the revision and document identity, not the whole
+	// context; the callbacks below read entities and selection from it.
+	let context = inspected?.context;
+	if (!context && inspected?.host && Number.isSafeInteger(inspected.revision?.scene)) {
+		const read = await liveHub.command("read_studio_context", { host: inspected.host }, workspaceHandle);
+		context = read?.context ?? read;
+	}
 	if (!context?.host || !Number.isSafeInteger(context.revision?.scene)) throw new Error("The editor did not return a Studio context to admit this command against.");
 	const declared = inspected.actions?.find((row) => row.id === action);
 	const receipt = await liveHub.command("run_action", {

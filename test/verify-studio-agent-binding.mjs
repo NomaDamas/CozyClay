@@ -338,7 +338,8 @@ const implementations={
    f.actual.publishStudioCharacters(f.characterRef.current.map(c=>c.id==='actor-b'?{...c,x:5+index}:c),true);
    const live=f.binding.refresh().revision;
    const seen=await invoke('inspect_studio',{scope});
-   assert.equal(seen.context?.revision?.scene,live,`inspect scope ${scope} reports the admission revision`);
+   assert.equal(seen.revision?.scene,live,`inspect scope ${scope} reports the admission revision`);
+   assert.equal(seen.context,undefined,`inspect scope ${scope} does not echo the whole context`);
    const patched=await invoke('patch_elements',{ops:[{target:{kind:'object',id},set:{color:`#12345${index}`}}]}).catch(error=>error);
    assert.equal(patched.status,'applied',`patch after inspect scope ${scope} is admitted at the revision it reported: ${patched.code ?? ''} ${patched.message ?? ''}`);
    assert.deepEqual(sent.at(-1),{name:'patch_elements',expectedRevision:live});
@@ -488,7 +489,9 @@ const implementations={
   const rail=createShot('Rail shot',0,47,[{frame:5,framing:{pos:{x:0,y:1.6,z:5},yaw:0.1,pitch:-0.05,fovDeg:40}}],{mode:'rail',cameraRail:[{x:-2,z:4},{x:2,z:4}]});
   f.scope.setShots([rail]);f.live.current.shots=[rail];
   const shot=await f.call('inspect_studio',{scope:'shot'});
-  assert.equal(shot.context.revision.scene,f.binding.refresh().revision,'every scope carries the admission context');
+  assert.equal(shot.revision.scene,f.binding.refresh().revision,'every scope carries the admission revision');
+  assert.equal(shot.context,undefined,'and no embedded context');
+  assert.deepEqual(shot.host,(({workspaceId,documentEpoch,sceneId,sceneEpoch})=>({workspaceId,documentEpoch,sceneId,sceneEpoch}))(f.binding.context().host),'with the minimal document identity');
   assert.equal(shot.scope,'document');
   assert.deepEqual(shot.document.shots.map(s=>({id:s.id,name:s.name,range:{startFrame:s.startFrame,endFrameExclusive:s.endFrame+1},mode:s.camera.mode,
    cameraKeys:s.cameraKeys.map(({id,...key})=>key),rail:s.camera.cameraRail})),[{id:rail.id,name:'Rail shot',range:{startFrame:0,endFrameExclusive:48},mode:'rail',
@@ -502,12 +505,12 @@ const implementations={
   assert.deepEqual(actor.layer.promptClips.map(({id,...clip})=>clip),[{startFrame:0,endFrame:24,text:'walks in'}]);
   assert.deepEqual(actor.layer.waypoints.map(p=>({frame:p.frame,position:{x:p.x,y:p.y??0,z:p.z}})),[{frame:0,position:{x:0,y:0,z:0}},{frame:24,position:{x:1,y:0,z:2}}]);
   assert.deepEqual(motion.document.motion.find(c=>c.id==='actor-b').ikKeys.map(k=>k.frame),[7]);
-  assert.equal(motion.context.entities.find(c=>c.id==='actor-a').motion.frames,0);
-  assert.equal(motion.context.entities.find(c=>c.id==='actor-a').motion.takeId,null);
+  assert.equal(f.binding.context().entities.find(c=>c.id==='actor-a').motion.frames,0);
+  assert.equal(f.binding.context().entities.find(c=>c.id==='actor-a').motion.takeId,null);
   const scene=await f.call('inspect_studio',{scope:'scene'}),stage=scene.document.stage;
   assert.deepEqual({environment:stage.environment,style:stage.style,hasEnvironmentImage:!!stage.environmentImage,hasEnvSheet:stage.hasEnvSheet,keyLight:stage.keyLight,camera:{presetId:stage.cameraPresetId,aspect:stage.shotAspect,sensorId:stage.sensorId}},
    {environment:'a sunlit modern living room',style:'moody cinematic lighting, 35mm film look',hasEnvironmentImage:false,hasEnvSheet:false,keyLight:{x:6,y:9,z:4,intensity:1.12,warmth:0.5},camera:{presetId:null,aspect:'16:9',sensorId:'fullFrame'}});
-  assert.deepEqual({characters:scene.context.scene.characterCount,objects:scene.context.scene.objectCount,shots:scene.document.shots.length,frames:scene.context.scene.frameCount,assets:scene.context.assets.length},
+  assert.deepEqual({characters:f.binding.context().scene.characterCount,objects:f.binding.context().scene.objectCount,shots:scene.document.shots.length,frames:f.binding.context().scene.frameCount,assets:f.binding.context().assets.length},
    {characters:2,objects:0,shots:1,frames:48,assets:commands.studioObjectCatalogue().objects.length});
   const made=await f.call('arrange_objects',f.request('arrange_objects',{ops:[{op:'create',source:{kind:'cube'},position:{world:{x:0,y:0,z:0}}},{op:'create',source:{kind:'cube'},position:{world:{x:2,y:0,z:0}}}]}));
   assert.equal(made.status,'applied',JSON.stringify(made));
@@ -517,7 +520,7 @@ const implementations={
   assert.equal(routed.status,'applied',JSON.stringify(routed));
   assert.equal(f.binding.handlers.operate_studio(f.request('operate_studio',{selection:{kind:'object',id:child}})).ok,true);
   const selected=await f.call('inspect_studio',{scope:'selection'}),entity=selected.document.objects[0];
-  assert.deepEqual(selected.context.selection,{kind:'object',id:child});
+  assert.deepEqual(f.binding.context().selection,{kind:'object',id:child});
   assert.equal(entity.id,child);assert.equal(entity.color,'#d94a4a');assert.equal(entity.parent,base);assert.equal(entity.attach,null);
   assert.deepEqual(entity.path.points,[{x:2,y:0,z:0},{x:4,y:0,z:1}]);
   const tinted=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'character',id:'actor-a'},set:{tint:'#123456'}}]}));

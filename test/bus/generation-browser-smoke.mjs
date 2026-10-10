@@ -111,7 +111,8 @@ try {
   const session = crypto.randomUUID(); let cookie;
   async function turn(steps) {
     faux.script([...steps, { type: 'text', text: 'Reported' }]);
-    const context = (await hub.command('inspect_studio', { scope: 'scene' }, hub.workspaceHandles[0])).context;
+    const { host } = await hub.command('inspect_studio', { scope: 'scene' }, hub.workspaceHandles[0]);
+    const read = await hub.command('read_studio_context', { host }, hub.workspaceHandles[0]); const context = read?.context ?? read;
     const response = await fetch(origin + '/agent/turn', { method: 'POST', headers: { origin, 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
       body: JSON.stringify({ surface: 'studio', sessionId: session, turnId: crypto.randomUUID(), text: 'Check this take', context }), signal: AbortSignal.timeout(90000) });
     assert.equal(response.status, 200); cookie = response.headers.get('set-cookie')?.split(';')[0] ?? cookie;
