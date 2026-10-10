@@ -373,6 +373,11 @@ function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 					<button type="button" role="menuitem" className="hierarchy-context-item" data-action="group-under-empty" onClick={() => onAction("group-under-empty", menu.id)}>
 						{ko("Group under new Empty", "빈 오브젝트로 묶기")}
 					</button>
+					{menu.grouped && (
+						<button type="button" role="menuitem" className="hierarchy-context-item" data-action="ungroup-object" onClick={() => onAction("ungroup-object", menu.id)}>
+							{ko("Move out to Props", "그룹에서 빼기 (Props로)")}
+						</button>
+					)}
 				</>
 			) : (
 				<CatalogueEntries onPick={onAddObject} />
@@ -785,14 +790,18 @@ export default function HierarchyPanel({
 		event.stopPropagation(); // a row pick must not also open the create menu
 		const node = findHierarchyNode(hierarchyNodes, id);
 		if (node?.kind === "object" || node?.kind === "character") {
+			// A grouped object can leave its group from the menu too, not only by
+			// dragging its row onto Props.
+			const objectId = node.kind === "object" ? sceneObjectIdFromHierarchy(id) : null;
+			const inGroup = objectId ? Boolean(sceneObjects.find((entry) => entry.id === objectId)?.parent) : false;
 			setContextMenu({
 				x: event.clientX,
 				y: event.clientY,
-				height: node.kind === "object" ? 212 : node.grouped ? 80 : 44,
+				height: node.kind === "object" ? (inGroup ? 248 : 212) : node.grouped ? 80 : 44,
 				kind: node.kind,
 				id,
 				hidden: node.hidden === true,
-				grouped: node.grouped === true,
+				grouped: node.grouped === true || inGroup,
 			});
 		} else if (id === SCENE_ROOT_ID) {
 			// The root row is the scene document: its own verbs, never the
@@ -844,6 +853,11 @@ export default function HierarchyPanel({
 		}
 		if (action === "visibility") {
 			onToggleHidden?.(hierarchyId);
+			return;
+		}
+		if (action === "ungroup-object") {
+			// The same door as dropping the row on Props: out of its group, kept where it is.
+			if (reparent?.canDrop?.(hierarchyId, "props")) reparent.onDrop?.(hierarchyId, "props");
 			return;
 		}
 		if (action === "ungroup-character") {
