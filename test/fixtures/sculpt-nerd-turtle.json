@@ -1,0 +1,308 @@
+{
+	"version": 1,
+	"parts": [
+		{
+			"id": "trunk",
+			"shape": "blob",
+			"size": [
+				0.612,
+				0.468,
+				0.432
+			],
+			"position": [
+				0.0,
+				0.351,
+				0.0
+			],
+			"color": "#4a8e9c",
+			"roundness": 0.08,
+			"taper": 0.3
+		},
+		{
+			"id": "leg",
+			"shape": "blob",
+			"size": [
+				0.234,
+				0.234,
+				0.225
+			],
+			"position": [
+				0.162,
+				0.126,
+				0.009
+			],
+			"color": "#4a8e9c",
+			"roundness": 0.13,
+			"mirror": true
+		},
+		{
+			"id": "foot",
+			"shape": "blob",
+			"size": [
+				0.261,
+				0.09,
+				0.279
+			],
+			"position": [
+				0.171,
+				0.045,
+				0.045
+			],
+			"color": "#4a8e9c",
+			"roundness": 0.1,
+			"mirror": true
+		},
+		{
+			"id": "plastron",
+			"shape": "blob",
+			"size": [
+				0.45,
+				0.36,
+				0.09
+			],
+			"position": [
+				0.0,
+				0.36,
+				0.162
+			],
+			"color": "#a89a7c",
+			"roundness": 0.3,
+			"rotation": [
+				-8,
+				0,
+				0
+			]
+		},
+		{
+			"id": "carapace",
+			"shape": "blob",
+			"size": [
+				0.612,
+				0.504,
+				0.27
+			],
+			"position": [
+				0.0,
+				0.378,
+				-0.099
+			],
+			"color": "#d58e6e",
+			"roundness": 0.1
+		},
+		{
+			"id": "arm",
+			"shape": "blob",
+			"size": [
+				0.153,
+				0.279,
+				0.162
+			],
+			"position": [
+				0.315,
+				0.351,
+				0.045
+			],
+			"color": "#4a8e9c",
+			"roundness": 0.05,
+			"rotation": [
+				0,
+				0,
+				8
+			],
+			"mirror": true
+		},
+		{
+			"id": "tail",
+			"shape": "blob",
+			"size": [
+				0.252,
+				0.261,
+				0.252
+			],
+			"position": [
+				0.225,
+				0.189,
+				-0.18
+			],
+			"color": "#4a8e9c",
+			"roundness": 0
+		},
+		{
+			"id": "head",
+			"shape": "blob",
+			"size": [
+				0.684,
+				0.378,
+				0.504
+			],
+			"position": [
+				0.0,
+				0.6975,
+				0.0135
+			],
+			"color": "#4a8e9c",
+			"roundness": 0.2,
+			"rotation": [
+				0,
+				20,
+				-6
+			]
+		},
+		{
+			"id": "eye",
+			"shape": "blob",
+			"size": [
+				0.198,
+				0.162,
+				0.135
+			],
+			"position": [
+				0.171,
+				0.045,
+				0.216
+			],
+			"color": "#ece8ec",
+			"roundness": 0,
+			"parent": "head",
+			"mirror": true
+		},
+		{
+			"id": "pupil",
+			"shape": "blob",
+			"size": [
+				0.0675,
+				0.0765,
+				0.027
+			],
+			"position": [
+				0.0315,
+				0.0225,
+				0.0585
+			],
+			"color": "#0e0c10",
+			"roundness": 0,
+			"parent": "eye"
+		},
+		{
+			"id": "catchlight",
+			"shape": "blob",
+			"size": [
+				0.0203,
+				0.0203,
+				0.009
+			],
+			"position": [
+				0.0158,
+				0.0203,
+				0.0135
+			],
+			"color": "#ffffff",
+			"roundness": 0,
+			"parent": "pupil"
+		},
+		{
+			"id": "rim",
+			"shape": "frame",
+			"size": [
+				0.342,
+				0.189,
+				0.0315
+			],
+			"position": [
+				0.1845,
+				0.045,
+				0.306
+			],
+			"color": "#240405",
+			"border": 0.0405,
+			"parent": "head",
+			"mirror": true
+		},
+		{
+			"id": "bridge",
+			"shape": "box",
+			"size": [
+				0.054,
+				0.0315,
+				0.027
+			],
+			"position": [
+				0.0,
+				0.063,
+				0.315
+			],
+			"color": "#240405",
+			"roundness": 0,
+			"parent": "head"
+		},
+		{
+			"id": "temple",
+			"shape": "box",
+			"size": [
+				0.027,
+				0.027,
+				0.27
+			],
+			"position": [
+				0.3465,
+				0.09,
+				0.171
+			],
+			"color": "#240405",
+			"roundness": 0,
+			"parent": "head",
+			"mirror": true
+		},
+		{
+			"id": "mouth",
+			"shape": "blob",
+			"size": [
+				0.189,
+				0.108,
+				0.045
+			],
+			"position": [
+				-0.0585,
+				-0.0855,
+				0.234
+			],
+			"color": "#5a1e30",
+			"roundness": 0,
+			"parent": "head"
+		},
+		{
+			"id": "tongue",
+			"shape": "blob",
+			"size": [
+				0.117,
+				0.036,
+				0.027
+			],
+			"position": [
+				-0.0495,
+				-0.1125,
+				0.2475
+			],
+			"color": "#d27a9c",
+			"roundness": 0,
+			"parent": "head"
+		},
+		{
+			"id": "tooth",
+			"shape": "box",
+			"size": [
+				0.045,
+				0.0495,
+				0.018
+			],
+			"position": [
+				-0.108,
+				-0.0585,
+				0.252
+			],
+			"color": "#efe6cc",
+			"roundness": 0.2,
+			"parent": "head"
+		}
+	]
+}

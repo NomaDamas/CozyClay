@@ -4,7 +4,7 @@ import Foldout from "./Foldout.jsx";
 import { ko, isKo } from "../locale.js";
 import { Field, Vector3Row } from "../ui.jsx";
 import { sceneObjectNameDisplayKo } from "../app-stage.jsx";
-import { MESH_KIND, CUTOUT_KIND, EMPTY_KIND, CUTOUT_DEFAULT_HEIGHT, OBJECT_COLORS, normalizeObjectColor } from "../scene-objects.js";
+import { MESH_KIND, CUTOUT_KIND, EMPTY_KIND, SCULPT_KIND, CUTOUT_DEFAULT_HEIGHT, OBJECT_COLORS, normalizeObjectColor } from "../scene-objects.js";
 import { MESH_HEIGHT_MIN } from "../scene-mesh.js";
 import { autoColorHex } from "../auto-color.js";
 import { isImeComposing } from "../ime.js";
@@ -453,7 +453,7 @@ export default function ObjectTransformPanel({
 										</p>
 									</>
 								)}
-								{selectedSceneObject.renderer !== CUTOUT_KIND && selectedSceneObject.renderer !== EMPTY_KIND && (selectedSceneObject.renderer !== MESH_KIND || selectedSceneObject.clay) && (
+								{selectedSceneObject.renderer !== CUTOUT_KIND && selectedSceneObject.renderer !== EMPTY_KIND && selectedSceneObject.renderer !== SCULPT_KIND && (selectedSceneObject.renderer !== MESH_KIND || selectedSceneObject.clay) && (
 									// One swatch shows the colour; the row opens only when you want
 									// to change it, instead of six chips sitting there all day.
 									<details className="object-colors-pop">

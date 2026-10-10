@@ -15,7 +15,8 @@ import { objectTransformAt } from "./object-path.js";
 import { sceneObjectCarryMatrixAt, sceneObjectTravelMatrixAt, travelPose } from "./object-travel.js";
 import * as THREE from "three";
 import { GIZMO_LAYER } from "./dualview.jsx";
-import { CUTOUT_KIND, MESH_KIND, EMPTY_KIND, EMPTY_MARKER_SIZE } from "./scene-objects.js";
+import { CUTOUT_KIND, MESH_KIND, EMPTY_KIND, EMPTY_MARKER_SIZE, SCULPT_KIND } from "./scene-objects.js";
+import { buildSculptGroup, disposeSculptGroup } from "./sculpt-geometry.js";
 import { subscribeToAssetTexture } from "./scene-asset-cache.js";
 import { subscribeToMeshScene } from "./scene-mesh-cache.js";
 import { cloneMeshGraph } from "./mesh-graph-clone.js";
@@ -431,6 +432,26 @@ function Cutout({ object }) {
 	);
 }
 
+/**
+ * A sculpt: the clay parts its recipe describes, rebuilt only when the recipe
+ * or the look changes. Each part keeps its own clay colour; auto-colour paints
+ * the whole sculpt flat like any other prop, because it is one object.
+ */
+function Sculpt({ object, depthRank = 0 }) {
+	const { recipe, autoColor } = object;
+	const group = useMemo(
+		() => buildSculptGroup(recipe, {
+			materialFor: (part) => new THREE.MeshStandardMaterial({
+				...(autoColor ? autoFlat(autoColor) : { color: part.color, roughness: 0.82, metalness: 0 }),
+				...depthRankProps(depthRank),
+			}),
+		}),
+		[recipe, autoColor, depthRank],
+	);
+	useEffect(() => () => disposeSculptGroup(group), [group]);
+	return <primitive object={group} />;
+}
+
 const PRIMITIVE_KINDS = new Set(["cube", "sphere", "capsule", "cylinder", "cone", "plane"]);
 
 // X red, Y green, Z blue: the DCC convention, so a turned Empty reads its own
@@ -492,6 +513,7 @@ function SceneObjectContent({ object, depthRank = 0 }) {
 	if (renderer === EMPTY_KIND) return <EmptyMarker />;
 	if (renderer === CUTOUT_KIND) return <Cutout object={object} />;
 	if (renderer === MESH_KIND) return <ImportedMesh object={object} />;
+	if (renderer === SCULPT_KIND) return <Sculpt object={object} depthRank={depthRank} />;
 	if (renderer === "car") return <Car color={autoColor ?? color} autoColor={autoColor} />;
 	if (renderer === "small-plane") return <SmallPlane autoColor={autoColor} />;
 	if (renderer === "chair") return <Chair autoColor={autoColor} />;

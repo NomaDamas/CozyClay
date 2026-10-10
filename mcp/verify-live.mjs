@@ -391,7 +391,7 @@ cases.cast = async () => {
 // #652: the tool list is fixed at server start, so refusals replace removals.
 const RECORDED_TOOLS = [
 	"describe_scene", "live_status", "describe_shot", "capture_frame", "set_camera", "frame_shot", "add_character", "place_character",
-	"remove_character", "focus_character", "place_object", "import_mesh", "group_objects", "set_prompt_blocks", "load_motion",
+	"remove_character", "focus_character", "place_object", "import_mesh", "sculpt_object", "group_objects", "set_prompt_blocks", "load_motion",
 	"generate_motion", "update_object", "remove_object", "apply_batch", "render_prompt", "mark_camera_move", "describe_camera_move",
 	"add_scene", "switch_scene", "open_project", "save_project", "studio_commands", "studio_run",
 ];
