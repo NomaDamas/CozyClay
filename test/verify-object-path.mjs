@@ -328,7 +328,7 @@ ok(
 const planSource = readFileSync(new URL("../src/planview.jsx", import.meta.url), "utf8");
 
 ok("the Top-View takes a mark on double-click", planSource.includes('addEventListener("dblclick", onDouble)'));
-ok("the board draws the camera rail's own line for the route", planSource.includes("<CameraRailLine points={curve.points} color={OBJECT_PATH_COLOR} />"));
+ok("the board draws the camera rail's own line for the route", planSource.includes("<CameraRailLine points={curve.points} color={lit ? OBJECT_PATH_LIT_COLOR : OBJECT_PATH_COLOR} />"));
 ok("route points outrank pucks when picking on the board", planSource.includes('mode: "pathPoint"'));
 ok("dragging a board point is one undo entry", planSource.includes("onObjectPathGestureStart") && planSource.includes("onObjectPathGestureEnd"));
 ok(
@@ -359,7 +359,8 @@ ok("a long prop name is clipped, not spilled", cssSource.includes(".tl-track.obj
 ok(
 	"the hint shares the controls row instead of owning an empty one",
 	travelTrackSource.includes('<span className="tl-path-hint">') &&
-	(travelTrackSource.match(/tl-track objmo/g) ?? []).length === 2 &&
+	// the controls row, the dots row (add dot / lean) and the speed graph
+	(travelTrackSource.match(/tl-track objmo/g) ?? []).length === 3 &&
 	!travelTrackSource.includes('ko("Travel"'),
 );
 ok("the strip keeps the default height — no growth hack for the graph", !cssSource.includes("has(.tl-track.sg-row)"));

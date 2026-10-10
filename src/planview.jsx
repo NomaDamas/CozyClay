@@ -344,9 +344,10 @@ function SubjectMovementGuide({ track }) {
  */
 const OBJECT_PATH_COLOR = "#6fcf97";
 const OBJECT_PATH_SELECTED_COLOR = "#ffb454";
+const OBJECT_PATH_LIT_COLOR = "#d4f7e2";
 // How near the floor pointer must be to grab a route point, in metres.
 const PATH_POINT_GRAB = 0.34;
-function ObjectPathLine({ path, selectedIndex = null, hoverIndex = null }) {
+function ObjectPathLine({ path, selectedIndex = null, hoverIndex = null, lit = false }) {
 	const curve = useMemo(() => (path?.points?.length > 1 ? pathCurve(path) : null), [path]);
 	const marks = useMemo(() => (path ? pathMarkFractions(path).map((t) => pathPointAtFraction(path, t)) : []), [path]);
 	if (!curve || curve.points.length < 2) return null;
@@ -355,7 +356,7 @@ function ObjectPathLine({ path, selectedIndex = null, hoverIndex = null }) {
 			{/* The camera rail's own line: the curve the object travels, with the
 			    same start disc, START label, heading arrow and end ring. Only the
 			    colour is the prop's. */}
-			<CameraRailLine points={curve.points} color={OBJECT_PATH_COLOR} />
+			<CameraRailLine points={curve.points} color={lit ? OBJECT_PATH_LIT_COLOR : OBJECT_PATH_COLOR} />
 			{/* The marks, like the rail's crane dots: the ends plus any added by
 			    double-clicking the line. These are what the board lets you grab. */}
 			{marks.map((point, index) => point && (
@@ -515,6 +516,8 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 	const [railStroke, setRailStroke] = useState(null);
 	// the route mark under the pointer, for the hover highlight
 	const [hoverMark, setHoverMark] = useState(null);
+	// The pointer is on the route where a double-click would still drop a dot.
+	const [hoverLine, setHoverLine] = useState(false);
 	const rootRef = useRef();
 	const camPos = useRef();
 	const camRot = useRef();
@@ -738,11 +741,25 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			const grip = p && pick(p);
 			const markIndex = grip?.mode === "pathPoint" ? grip.origin.pathIndex : null;
 			setHoverMark((current) => (current === markIndex ? current : markIndex));
-			host.style.cursor = !grip
-				? "default"
-				: grip.mode === "turn"
-					? "ew-resize"
-					: "grab";
+			// The route answers too: it brightens and the cursor says "copy" while a
+			// double-click here would still add a dot.
+			let addable = false;
+			const route = latest.current.objectPath;
+			if (!grip && p && route && route.points?.length >= 2) {
+				const fractions = pathMarkFractions(route);
+				if (fractions.length < MAX_PATH_MARKS) {
+					const best = nearestPathFraction(route, (point) => ({ x: point.x, y: point.z }), p.x, p.z);
+					addable = !!best && best.d <= PATH_POINT_GRAB && !fractions.some((entry) => Math.abs(entry - best.t) < MARK_GAP + 0.01);
+				}
+			}
+			setHoverLine((current) => (current === addable ? current : addable));
+			host.style.cursor = addable
+				? "copy"
+				: !grip
+					? "default"
+					: grip.mode === "turn"
+						? "ew-resize"
+						: "grab";
 		};
 
 		const onMove = (event) => {
@@ -968,7 +985,7 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			{railStroke && railStroke.length > 1 && <CameraRailLine points={railStroke} live />}
 			{/* The selected object's travel path, drawn in its own colour so a
 			    prop's route never reads as the camera's rail. */}
-			{!minimal && objectPath && objectPath.points?.length > 1 && <ObjectPathLine path={objectPath} selectedIndex={objectPathSelectedIndex} hoverIndex={hoverMark} />}
+			{!minimal && objectPath && objectPath.points?.length > 1 && <ObjectPathLine path={objectPath} selectedIndex={objectPathSelectedIndex} hoverIndex={hoverMark} lit={hoverLine} />}
 			{/* The sun on the floor plan: a gold disc + a stem toward the stage
 			    centre, so blocking can read where the light comes from without
 			    switching to the 3D scene. Not draggable here — the 3D puck owns

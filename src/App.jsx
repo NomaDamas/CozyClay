@@ -2035,6 +2035,15 @@ export default function App() {
 		if (typeof toast.uiMessage === "string" && toast.uiMessage) for (const sink of toastSinkRef.current) sink(toast);
 		showToast(toast.uiMessage);
 	}, []);
+	// The dots on a route are found by double-clicking the line, a gesture
+	// nothing hints at: say it once, the first time a route is selected.
+	const routeHintShownRef = useRef(false);
+	const selectedRouteId = selectedSceneObject?.path ? selectedSceneObject.id : null;
+	useEffect(() => {
+		if (!selectedRouteId || routeHintShownRef.current) return;
+		routeHintShownRef.current = true;
+		setToast(ko("Double-click the line to add a dot", "선을 더블클릭하면 점이 추가돼요"));
+	}, [selectedRouteId, setToast]);
 	// The PWA's "a newer studio is waiting" registration, once one arrives.
 	const [pwaUpdate, setPwaUpdate] = useState(null);
 	useEffect(() => {
@@ -7135,7 +7144,7 @@ export default function App() {
 		pathSpeed, tlPlaying, pendingWaypointFrame, stateBadge, applyMotionTrim,
 		resetMotionTrim, cutMotionAtPlayhead, changeMotionSegmentSpeed, removeMotionSegmentById, bodyContact,
 		activeShotIdx, railDraw, pathDraw, setPathDraw, setRailDraw,
-		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe,
+		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe, pathPointIndex, setPathPointIndex,
 		setBodyContact, setFootSnap, advanceFrame, stepFrame, cameraPreviewEndRef,
 		manualCameraOverrideRef, setTlPlaying, setWaypointMode, selectActiveCharacterInHierarchy,
 		toggleWaypointMode: storyboardProject ? undefined : toggleWaypointMode,

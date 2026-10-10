@@ -1636,6 +1636,8 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 	const [dragInfo, setDragInfo] = useState(null);
 	// Mark index under the pointer, for the hover highlight.
 	const [hover, setHover] = useState(null);
+	// The pointer is on the line where a dot could still be dropped.
+	const [lineHover, setLineHover] = useState(false);
 	stateRef.current = { path, selectedIndex, enabled, onSelect, onChangePath, onDragStart, onDragEnd };
 	// The line is not a mesh the raycaster can hit, but the object gizmo's
 	// selection handler decides "does this press belong to a path handle?" by
@@ -1829,6 +1831,7 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			const s = stateRef.current;
 			if (dragRef.current || !s.enabled || !s.path || event.buttons !== 0 || event.target !== gl.domElement) {
 				setHover((current) => (current === null ? current : null));
+				setLineHover((current) => (current ? false : current));
 				return;
 			}
 			let index = null;
@@ -1840,6 +1843,19 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			}
 			setHover((current) => (current === index ? current : index));
 			if (index !== null) gl.domElement.style.cursor = "grab";
+			// The line itself answers too: it brightens and the cursor says "copy"
+			// while a double-click here would still drop a dot.
+			let addable = false;
+			if (index === null && camRef.current) {
+				const fractions = pathMarkFractions(s.path);
+				if (fractions.length < MAX_PATH_MARKS) {
+					camRef.current.updateMatrixWorld();
+					const best = nearestPathFraction(s.path, paneScreen, event.clientX, event.clientY);
+					addable = !!best && best.d <= PATH_LINE_PICK_PX && !fractions.some((entry) => Math.abs(entry - best.t) < PATH_MARK_CLEARANCE);
+				}
+			}
+			setLineHover((current) => (current === addable ? current : addable));
+			if (addable) gl.domElement.style.cursor = "copy";
 		};
 		// Double-click the route to drop a mark on it — the crane curve's
 		// gesture, so one habit covers both. A mark only gives the next drag
@@ -1913,12 +1929,25 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 		() => (path ? pathMarkFractions(path).map((t) => pathPointAtFraction(path, t)) : []),
 		[path],
 	);
+	// The dots that carry a lean, in the travel frame they will pose the body in:
+	// a yaw from the route's direction there, then the lean itself.
+	const leans = useMemo(() => {
+		if (!path) return [];
+		return pathMarks(path).map((mark, i) => {
+			if (!mark.bank && !mark.pitch) return null;
+			const before = pathPointAtFraction(path, Math.max(0, mark.t - 0.01));
+			const after = pathPointAtFraction(path, Math.min(1, mark.t + 0.01));
+			const yaw = before && after ? Math.atan2(after.x - before.x, after.z - before.z) : 0;
+			const quaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(-mark.pitch * (Math.PI / 180), yaw, mark.bank * (Math.PI / 180), "YXZ"));
+			return { index: i + 1, quaternion };
+		}).filter(Boolean);
+	}, [path]);
 	if (!enabled || !path || linePoints.length < 2) return null;
 	const selected = selectedIndex != null ? marks[selectedIndex] : null;
 	return (
 		<group ref={groupRef}>
 			<primitive object={lineProxy} />
-			<Line points={linePoints} color="#6fcf97" lineWidth={2.5} transparent opacity={0.9} />
+			<Line points={linePoints} color={lineHover ? "#d4f7e2" : "#6fcf97"} lineWidth={lineHover ? 4 : 2.5} transparent opacity={lineHover ? 1 : 0.9} />
 			{selected && (
 				<group ref={gizmoRef} position={[selected.x, selected.y, selected.z]} renderOrder={999}>
 					{CRANE_AXES.map(({ axis, dir, color }) => {
@@ -1951,6 +1980,20 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 					</mesh>
 					{/* the real click target: a dot is a dozen pixels from a few
 					    metres back, so an invisible halo carries the press */}
+					{/* a dot that leans the body: a bar through it tilted the way the
+					    body will sit (across = bank, along = pitch), in the travel frame */}
+					{leans.filter((lean) => lean.index === index).map((lean) => (
+						<group key="lean" quaternion={lean.quaternion} userData={{ pathLean: true }}>
+							<mesh renderOrder={998}>
+								<boxGeometry args={[0.7, 0.03, 0.03]} />
+								<meshBasicMaterial color="#ffb454" depthTest={false} transparent opacity={0.95} />
+							</mesh>
+							<mesh renderOrder={998}>
+								<boxGeometry args={[0.03, 0.03, 0.46]} />
+								<meshBasicMaterial color="#ffd08a" depthTest={false} transparent opacity={0.95} />
+							</mesh>
+						</group>
+					))}
 					<mesh userData={{ pathIndex: index }}>
 						<sphereGeometry args={[0.24, 10, 8]} />
 						<meshBasicMaterial visible={false} />
