@@ -24,6 +24,9 @@ export function normaliseFrame(frame) {
 	if (Object.hasOwn(value, "callId")) value.callId = "<call>";
 	if (value.props && Object.hasOwn(value.props, "turn_id")) value.props.turn_id = "<turn>";
 	if (value.props && Object.hasOwn(value.props, "duration_bucket")) value.props.duration_bucket = "<bucket>";
+	// Token counts are the faux provider's estimate of the prompt text, which
+	// differs per caller; the usage shape and the request count are pinned.
+	if (value.type === "done" && value.usage) for (const key of ["input", "output", "cacheRead", "cacheWrite"]) value.usage[key] = Number.isFinite(value.usage[key]) ? "<tokens>" : value.usage[key];
 	return value;
 }
 

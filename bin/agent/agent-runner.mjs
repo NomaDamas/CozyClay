@@ -1,6 +1,5 @@
 import { summariseCanvasResult } from "./agent-tools.mjs";
 import { sanitizeUpstreamDetail } from "./agent-routes.mjs";
-import { compactStudioContexts } from "./studio-history.mjs";
 
 const DEFAULT_MODEL = "gpt-6-astra";
 
@@ -144,6 +143,85 @@ function studioUserMessage(input) {
 			{ type: "text", text: `${contextText}\n${input.text || ""}` },
 		],
 	};
+}
+
+const STUDIO_CONTEXT_PREFIX = "<studio-context>";
+const STUDIO_CONTEXT_BLOCK = /^<studio-context>\n([\s\S]*?)\n<\/studio-context>/;
+const STUDIO_CONTEXT_SUPERSEDED = "<studio-context superseded/>";
+const escapeStudioJson = (value) => JSON.stringify(value).replaceAll("<", "\\u003c").replaceAll(">", "\\u003e").replaceAll("&", "\\u0026");
+const isStudioContextPart = (part) => part?.type === "text" && typeof part.text === "string" && part.text.startsWith(STUDIO_CONTEXT_PREFIX);
+
+function withoutInspectContext(part) {
+	if (part?.type !== "text" || typeof part.text !== "string") return part;
+	let parsed;
+	try { parsed = JSON.parse(part.text); } catch { return part; }
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !Object.hasOwn(parsed, "context")) return part;
+	const { context: _context, ...rest } = parsed;
+	return { ...part, text: JSON.stringify(rest) };
+}
+
+/** The Studio per-request context diet (#716), applied to the provider view
+ * only (pi's transform_context): every <studio-context> but the latest is
+ * replaced by a superseded marker, every inspect_studio result but the most
+ * recent tool result drops its re-embedded `context`, and the latest
+ * context's static actionIndex moves to the end of the system prompt. The
+ * stored lane messages are never touched; edited messages are new objects. */
+export function studioContextDiet({ messages, systemPrompt }) {
+	let latestContext = -1;
+	let latestToolResult = -1;
+	messages.forEach((message, index) => {
+		if (message?.role === "user" && Array.isArray(message.content) && message.content.some(isStudioContextPart)) latestContext = index;
+		if (message?.role === "toolResult") latestToolResult = index;
+	});
+	let actionIndex;
+	const edited = messages.map((message, index) => {
+		if (message?.role === "toolResult" && message.toolName === "inspect_studio" && index !== latestToolResult && Array.isArray(message.content)) {
+			const content = message.content.map(withoutInspectContext);
+			return content.some((part, i) => part !== message.content[i]) ? { ...message, content } : message;
+		}
+		if (message?.role !== "user" || !Array.isArray(message.content) || !message.content.some(isStudioContextPart)) return message;
+		const content = message.content.map((part) => {
+			if (!isStudioContextPart(part)) return part;
+			const block = STUDIO_CONTEXT_BLOCK.exec(part.text);
+			if (index !== latestContext) return { ...part, text: block ? STUDIO_CONTEXT_SUPERSEDED + part.text.slice(block[0].length) : STUDIO_CONTEXT_SUPERSEDED };
+			if (!block) return part;
+			let context;
+			try { context = JSON.parse(block[1]); } catch { return part; }
+			if (!context || typeof context !== "object" || !Array.isArray(context.actionIndex)) return part;
+			({ actionIndex } = context);
+			const { actionIndex: _actionIndex, ...rest } = context;
+			return { ...part, text: `${STUDIO_CONTEXT_PREFIX}\n${escapeStudioJson(rest)}\n</studio-context>${part.text.slice(block[0].length)}` };
+		});
+		return { ...message, content };
+	});
+	return {
+		messages: edited,
+		systemPrompt: actionIndex ? `${systemPrompt}\n<actions>\n${JSON.stringify(actionIndex)}\n</actions>` : systemPrompt,
+	};
+}
+
+/** Anthropic prompt-cache breakpoints on the stable prefix (#716): pi-ai's
+ * anthropic-messages builder already marks the system blocks, the last tool
+ * and the last user block by default; this only fills a missing mark on the
+ * last system block and the last tool, never past the API's 4 breakpoints,
+ * and never on tools for a model whose compat declares them unsupported. */
+export function withAnthropicCacheBreakpoints(payload, model) {
+	if (!payload || typeof payload !== "object") return undefined;
+	const marked = (block) => Boolean(block?.cache_control);
+	const system = Array.isArray(payload.system) ? payload.system : [];
+	const tools = Array.isArray(payload.tools) ? payload.tools : [];
+	const messageBlocks = (Array.isArray(payload.messages) ? payload.messages : []).flatMap((message) => Array.isArray(message?.content) ? message.content : []);
+	let count = [...system, ...tools, ...messageBlocks].filter(marked).length;
+	const cacheControl = { type: "ephemeral" };
+	let next = payload;
+	if (system.length && !marked(system.at(-1)) && count < 4) {
+		next = { ...next, system: [...system.slice(0, -1), { ...system.at(-1), cache_control: cacheControl }] };
+		count += 1;
+	}
+	if (tools.length && !marked(tools.at(-1)) && model?.compat?.supportsCacheControlOnTools !== false && count < 4) {
+		next = { ...next, tools: [...tools.slice(0, -1), { ...tools.at(-1), cache_control: cacheControl }] };
+	}
+	return next === payload ? undefined : next;
 }
 
 function studioObservationMessage(observation) {
@@ -312,6 +390,18 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					streamOptions: { maxRetryDelayMs: RETRY_MAX_DELAY_MS, ...(codexBaseUrl ? { transport: "sse" } : {}) },
 				}, state.context)).harness;
 				state.harness.hooks.on("after_response", (response) => emitQuota(state.active?.queue, state.lastInput, response));
+				state.harness.hooks.on("after_response", ({ message }) => {
+					const usage = state.active?.usage;
+					if (!usage) return;
+					usage.requests += 1;
+					for (const key of ["input", "output", "cacheRead", "cacheWrite"]) if (Number.isFinite(message?.usage?.[key])) usage[key] += message.usage[key];
+				});
+				state.harness.hooks.on("transform_context", (event) => state.lastInput?.surface === "studio" ? studioContextDiet(event) : undefined);
+				state.harness.hooks.on("before_payload", ({ model, payload }) => {
+					if (model?.api !== "anthropic-messages") return undefined;
+					const next = withAnthropicCacheBreakpoints(payload, model);
+					return next ? { payload: next } : undefined;
+				});
 				state.harness.hooks.on("after_response", async ({ message }) => {
 					if (message.stopReason !== "error" || state.provider !== "openai-codex" || state.active.authRetried
 						|| classifyError({ message: message.errorMessage }).code !== "unauthorized") return;
@@ -331,7 +421,6 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				// Studio only: older turns' full contexts are stale and large, so each request
 				// carries the newest one whole and a stub for the rest. The stored lane and
 				// the persisted history keep every context.
-				if (surface === "studio") state.unsubscribers.push(state.harness.hooks.on("transform_context", ({ messages }) => ({ messages: compactStudioContexts(messages) })));
 				state.unsubscribers.push(state.harness.events.on("turn_end", persist));
 				state.unsubscribers.push(state.harness.events.on("run_end", persist));
 			}
@@ -410,7 +499,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					const fallback = code === "aborted" ? "The turn was aborted." : code === "truncated" ? "The model stream ended before a terminal response event." : "The model or live editor could not complete this turn.";
 					queue.push({ type: "error", code, message: detail || fallback, ...(status ? { status } : {}) });
 				}
-				queue.push({ type: "done" });
+				queue.push({ type: "done", usage: { ...state.active.usage } });
 				queue.close();
 			});
 			return () => { for (const unsubscribe of eventUnsubscribers) unsubscribe(); };
@@ -425,7 +514,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			const queue = new FrameQueue();
 			// Studio never sends a quota frame at all (unchanged, #379): mark it sent
 			// up front so `pushFrame`'s gate never holds Studio's first frame.
-			state.active = { queue, quotaSent: input.surface === "studio", pendingFrames: [], authRetried: false, abortRequested: false, lastResponseHeaders: null };
+			state.active = { queue, quotaSent: input.surface === "studio", pendingFrames: [], authRetried: false, abortRequested: false, lastResponseHeaders: null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 } };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;

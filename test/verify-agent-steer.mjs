@@ -1,8 +1,9 @@
 // Steering a running Workflow turn (#379): the text POSTed to
 // /agent/turn/:turnId/steer must reach the NEXT model call's context, placed
 // after the tool result the turn was blocked on — never before it, and never
-// dropped. Studio turns are frozen envelopes and cannot be steered; a turn
-// that already ended answers 409 NO_ACTIVE_TURN; an unknown turnId is 404.
+// dropped. A running Studio turn is steerable by its session's cookie owner
+// (#715); a turn that already ended answers 409 NO_ACTIVE_TURN; an unknown
+// turnId is 404.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { once } from "node:events";
@@ -123,27 +124,43 @@ async function startServer(options) {
 	console.log("PASS unknown turnId answers 404");
 }
 
-// --- Studio turnId -> 409 STEER_UNSUPPORTED ---
-// Steer is Workflow-only; the only thing to prove for Studio is the refusal.
+// --- Studio turnId: owner steers a running turn; others 403; ended 409 ---
 // The fixture is copied from verify-agent-routes.mjs's own Studio group
-// (envelopeFixture/contextFixture + a plain live-command stub + a faux model
-// that answers with one text message so the turn ends immediately).
+// (envelopeFixture/contextFixture + a plain live-command stub). The model
+// calls inspect_studio, whose live command stalls until the steer has landed.
 {
 	const { envelopeFixture, contextFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const slow = deferred();
 	const fauxStudio = createFakeModel();
-	fauxStudio.script([[{ type: "text", text: "inspected" }]]);
-	const fakeLive = { command: async () => ({ assetId: "a1", objectId: "o1" }) };
+	fauxStudio.script([{ type: "toolCall", id: "s1", name: "inspect_studio", arguments: { scope: "scene" } }, "acknowledged"]);
+	const fakeLive = { command: async (name) => { if (name === "inspect_studio") { await slow.promise; return { context: { revision: { scene: 41 } } }; } return { assetId: "a1", objectId: "o1" }; } };
 	const studioRuntime = { readContext: async () => contextFixture() };
 	const { server, origin } = await startServer({ codex: { parseQuotaHeaders: () => ({ primary: {}, credits: {} }) }, models: fauxStudio.models, fauxProvider: fauxStudio.fauxProvider, liveHub: fakeLive, studioRuntime });
 	const envelope = envelopeFixture();
+	const steer = (cookie) => fetch(`${origin}/agent/turn/${envelope.turnId}/steer`, { method: "POST", headers: { "content-type": "application/json", origin, ...(cookie ? { cookie } : {}) }, body: JSON.stringify({ text: "steer studio" }) });
 	const turnResponse = await fetch(`${origin}/agent/turn`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify(envelope) });
-	const turnText = await turnResponse.text();
-	expect("the Studio fixture turn itself succeeds", turnResponse.status === 200, turnText);
-	const steerResponse = await fetch(`${origin}/agent/turn/${envelope.turnId}/steer`, { method: "POST", headers: { "content-type": "application/json", origin }, body: JSON.stringify({ text: "steer studio" }) });
-	const steerBody = await steerResponse.json();
-	expect("a Studio turnId cannot be steered", steerResponse.status === 409 && steerBody?.error?.code === "STEER_UNSUPPORTED", JSON.stringify(steerBody));
+	expect("the Studio fixture turn itself starts", turnResponse.status === 200, `status ${turnResponse.status}`);
+	const cookie = turnResponse.headers.get("set-cookie")?.split(";")[0];
+	let anonymous = null, owned = null, ownedBody = null;
+	const events = await readSseEvents(turnResponse, async (event) => {
+		if (event.type !== "tool.start" || owned !== null) return;
+		anonymous = await steer(null);
+		owned = await steer(cookie);
+		ownedBody = await owned.json();
+		slow.resolve();
+	});
+	expect("a Studio steer without the owner cookie is 403 AUTH_REQUIRED", anonymous?.status === 403 && (await anonymous.json())?.error?.code === "AUTH_REQUIRED", `status ${anonymous?.status}`);
+	expect("the owner's Studio steer is accepted while the tool runs", owned?.status === 200 && ownedBody?.ok === true && ownedBody?.queued === true, JSON.stringify(ownedBody));
+	expect("the Studio turn completes", events.some((event) => event.type === "done"));
+	const steered = fauxStudio.calls[1]?.messages ?? [];
+	const toolResultIndex = steered.findIndex((message) => message.role === "toolResult");
+	const steerIndex = steered.findIndex((message) => JSON.stringify(message).includes("steer studio"));
+	expect("the Studio steer text reaches the next model call after the tool result", toolResultIndex !== -1 && steerIndex > toolResultIndex, `toolResultIndex=${toolResultIndex} steerIndex=${steerIndex}`);
+	const late = await steer(cookie);
+	const lateBody = await late.json();
+	expect("steering a Studio turn that already ended is 409 NO_ACTIVE_TURN", late.status === 409 && lateBody?.error?.code === "NO_ACTIVE_TURN", JSON.stringify(lateBody));
 	await new Promise((resolve) => server.close(resolve));
-	console.log("PASS a Studio turnId answers 409 STEER_UNSUPPORTED");
+	console.log("PASS a Studio turn is steerable by its owner, 403 without the cookie, 409 after it ended");
 }
 
 // --- unit: the compaction option plumbs through to the harness options, default off ---

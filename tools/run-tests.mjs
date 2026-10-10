@@ -121,8 +121,10 @@ const NODE_FILES = [
 	"test/verify-agent-steer.mjs",
 	"test/verify-pi-tools.mjs",
 	"test/verify-agent-providers.mjs",
+	"test/verify-cliproxy-live-model.mjs",
 	"test/verify-schema-to-typebox.mjs",
 	"test/verify-agent-sse-golden.mjs",
+	"test/verify-agent-context-budget.mjs",
 	"test/verify-studio-agent-protocol.mjs",
 	"test/verify-studio-agent-tokens.mjs",
 	"test/verify-studio-agent-jobs.mjs",
@@ -527,6 +529,7 @@ const MCP_DEPENDENT_NODE_FILES = new Set(["test/verify-agent-live-runtime.mjs"])
 const categories = new Map([
 	...NODE_FILES.map((file) => [file, { kind: "node", reason: "runs directly under Node" }]),
 	["test/verify-studio-agent-tools.mjs", { kind: "node", reason: "runs directly under Node" }],
+	["test/verify-agent-script-tool.mjs", { kind: "node", reason: "runs directly under Node" }],
 	...BROWSER_FILES.map((file) => [file, { kind: "browser", reason: "requires the QA browser wrapper and a running Vite app" }]),
 	["test/process/verify-mcp-package-isolation.mjs", { kind: "package-integration", reason: "installs the MCP runtime from the npm registry with an isolated cache" }],
 	...["mcp/verify-live-batch.mjs", "mcp/verify-live-capture.mjs", "mcp/verify-live-editor-model.mjs", "mcp/verify-live-scene-parity.mjs", "test/qa-live-reconnect-browser.mjs"].map(

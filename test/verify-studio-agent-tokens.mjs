@@ -24,7 +24,6 @@ const { createAgentHandler } = await import("../bin/agent/agent-routes.mjs");
 const { createFakeModel } = await import("./fixtures/fake-model.mjs");
 const { contextFixture, envelopeFixture, uuid } = await import("./verify-studio-agent-protocol.mjs");
 const report = process.env.COZYCLAY_TOKENS_REPORT === "1", legacy = process.env.COZYCLAY_TOKENS_LEGACY === "1";
-const { compactStudioContexts } = legacy ? {} : await import("../bin/agent/studio-history.mjs");
 // What a provider would be sent: role and content (tool results also carry a
 // `details` copy for the UI in pi's own messages; no provider payload includes it).
 const wire = messages => messages.map(({ role, content }) => ({ role, content }));
@@ -100,7 +99,7 @@ assert.deepEqual(world.applied, [41, 42, 44, 45], "each edit was admitted at the
 const contextText = message => (Array.isArray(message.content) ? message.content : []).flatMap(part => part?.type === "text" ? [part.text] : []).filter(text => text.startsWith("<studio-context"));
 const toolResults = call => call.messages.filter(message => message.role === "toolResult");
 const fullContextBytes = Buffer.byteLength(JSON.stringify(context()));
-const isStub = text => /omitted\/>/.test(text);
+const isStub = text => /(omitted|superseded)\/>/.test(text);
 let total = 0, uncompacted = 0;
 for (const [index, call] of fake.calls.entries()) {
 	const texts = call.messages.flatMap(contextText), stubs = texts.filter(isStub);
@@ -111,7 +110,7 @@ for (const [index, call] of fake.calls.entries()) {
 	if (legacy) continue;
 	assert.equal(texts.length - stubs.length, 1, `request ${index + 1}: exactly one full studio-context`);
 	assert.ok(!isStub(contextText(call.messages.filter(message => message.role === "user" && contextText(message).length).at(-1))[0]), `request ${index + 1}: the newest turn keeps its full context`);
-	for (const stub of stubs) assert.match(stub, /^<studio-context revision="\d+" omitted\/>/, "older turns carry a revision stub");
+	for (const stub of stubs) assert.match(stub, /^<studio-context superseded\/>/, "older turns carry the superseded marker");
 }
 if (!legacy) {
 	for (const result of toolResults(fake.calls.at(-1))) {
@@ -122,12 +121,10 @@ if (!legacy) {
 		assert.ok(Number.isSafeInteger(parsed.revision?.scene), "inspect results carry the revision");
 		assert.ok(text.length < 4000, `inspect result is the scope payload only (${text.length} B)`);
 	}
-	const sample = fake.calls.at(-1).messages;
-	assert.deepEqual(compactStudioContexts(sample), sample, "compaction is idempotent");
 	// The persisted history keeps every full context: stubs exist only in the request.
 	const persisted = readFileSync(join(sessionDir, `${uuid}.jsonl`), "utf8");
 	assert.equal((persisted.match(/<studio-context>/g) ?? []).length, 4, "persisted history keeps each turn's full context");
-	assert.ok(!persisted.includes("omitted/>"), "no stub is persisted");
+	assert.ok(!persisted.includes("omitted/>") && !persisted.includes("superseded/>"), "no stub is persisted");
 	assert.ok(total < uncompacted * 0.5, `prompt bytes drop by more than half: ${total} vs ${uncompacted} uncompacted`);
 }
 if (report) console.log(JSON.stringify({ mode: legacy ? "legacy-inspect" : "compact", requests: fake.calls.length, totalPromptBytes: total, uncompactedEstimate: uncompacted, perRequestBytes: fake.calls.map(requestBytes), fullContextBytes }));

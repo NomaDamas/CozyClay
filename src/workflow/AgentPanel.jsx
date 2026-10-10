@@ -40,6 +40,8 @@ import {
 	storeModel,
 	storePanelWidth,
 	STUDIO_SESSION_STORAGE_KEY,
+	selectedModelRoles,
+	shortModelId,
 } from "./agent-client.js";
 import "./agent-panel.css";
 
@@ -123,6 +125,18 @@ function PausedCard({ resetAt, onRetry, onSwitchModel }) {
 			<button type="button" className="agent-paused-switch" onClick={onSwitchModel}>Switch model</button>
 		</div>
 	</div>;
+}
+
+// The lineup the sidecar derived for the selected model (#717), read-only:
+// what a turn may lean on beside it. Vision is named only when it is not the
+// selected model itself.
+function ModelRolesLine({ model, roles }) {
+	if (!roles) return null;
+	const parts = [[ko("helper", "보조"), roles.helper], [ko("advisor", "자문"), roles.advisor]];
+	if (roles.vision !== model) parts.push([ko("vision", "비전"), roles.vision]);
+	return <p className="agent-model-roles" data-agent-model-roles="true">
+		{parts.map(([label, key]) => `${label} · ${shortModelId(key)}`).join(" · ")}
+	</p>;
 }
 
 // A generation is a server-owned job. The card shows the state the runtime
@@ -310,6 +324,8 @@ export default function AgentPanel({
 	const [modelProviders, setModelProviders] = useState([]);
 	const [model, setModel] = useState("");
 	const [modelsState, setModelsState] = useState("loading");
+	// The roles derived per main model (#717); shown, never sent or stored.
+	const [modelRoles, setModelRoles] = useState(null);
 	// null = the model's backend default; picking a model resets it.
 	const [effort, setEffort] = useState(null);
 	const efforts = useMemo(() => effortOptions(models.find((entry) => entry.id === model)), [models, model]);
@@ -326,6 +342,7 @@ export default function AgentPanel({
 		const providers = Array.isArray(advertised?.providers) ? advertised.providers : [];
 		setModelProviders(providers);
 		setModels(list);
+		setModelRoles(advertised?.roles?.byMain ?? null);
 		// A saved or removed key arrives through this same path, so a selection the
 		// panel opened with is dropped here the moment its provider cannot run it.
 		setModel((current) => nextSelectedModel(providers, list, current));
@@ -1020,6 +1037,7 @@ export default function AgentPanel({
 						</>
 						: <button type="button" className="agent-send" aria-label="Send" title="Send (Enter)" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}><FiArrowUp size={14} aria-hidden="true" /></button>}
 				</div>
+				<ModelRolesLine model={model} roles={selectedModelRoles(modelRoles, model)} />
 			</div>
 		</div>}
 		{/* The hint exists to warn about image spend; a surface that cannot
