@@ -353,6 +353,7 @@ export default function AgentPanel({
 	const [restoreReady, setRestoreReady] = useState(surface !== "studio");
 
 	const composerRef = useRef(null);
+	const focusPendingRef = useRef(false);
 	const transcriptRef = useRef(null);
 
 	// The host's context builder and image-action handler are read through refs
@@ -576,7 +577,11 @@ export default function AgentPanel({
 			if (composerRef.current && composerRef.current === document.activeElement) composerRef.current.blur();
 			return;
 		}
-		if (embedded || !collapsed) composerRef.current?.focus();
+		if (!(embedded || !collapsed)) return;
+		composerRef.current?.focus();
+		// A composer still waiting on the model list is disabled and refuses
+		// focus; the open is remembered so it lands once the composer enables.
+		focusPendingRef.current = document.activeElement !== composerRef.current;
 	}, [authState, collapsed, embedded, hidden]);
 
 	useEffect(() => {
@@ -797,6 +802,13 @@ export default function AgentPanel({
 	// can send to: the composer stays shut instead of submitting a turn the
 	// provider would refuse.
 	const composerDisabled = panelState === "rate-limited" || !model || !modelIsSelectable(modelProviders, model);
+	useEffect(() => {
+		if (hidden) focusPendingRef.current = false;
+		if (hidden || composerDisabled || !focusPendingRef.current) return;
+		focusPendingRef.current = false;
+		// Only claim focus nobody else has taken in the meantime.
+		if (!document.activeElement || document.activeElement === document.body) composerRef.current?.focus();
+	}, [composerDisabled, hidden]);
 
 	if (collapsed && !embedded) {
 		return <aside className="agent-panel collapsed" data-agent-state={panelState} data-agent-collapsed="true" aria-label="Agent panel, collapsed">
