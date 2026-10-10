@@ -26,6 +26,7 @@ Read every prompt for six groups:
 | Group | Tools |
 | --- | --- |
 | Space and set pieces | `place_object`, `update_object`, `describe_scene` |
+| A prop or creature from a reference image | `sculpt_object` (Studio: `object.sculpt`), then `capture_frame`; rules in `sculpt-from-image.md` |
 | Characters | `add_character`, `place_character`, `focus_character` |
 | Per-shot framing and camera | `frame_shot`, `set_camera`, `mark_camera_move` |
 | Dialogue or SFX timing | `set_prompt_blocks` |
