@@ -509,9 +509,6 @@ function SpeedGraph({
 		<div className={"sg" + (bare ? " sg-bare" : "")}>
 			{!bare && <header className="sg-head">
 				<span className="sg-facts">{facts ?? `${averageSpeed.toFixed(1)} ${speedUnit} ${ko("average", "평균")}`}</span>
-				<span className="tl-path-hint">
-					{ko("drag the curve · double-click or the button cuts · Delete removes a cut", "곡선을 끌어 조절 · 더블클릭이나 버튼으로 컷 · 컷 선택 후 Delete로 삭제")}
-				</span>
 				<button
 					type="button"
 					className="tl-camera-tool"
@@ -535,7 +532,7 @@ function SpeedGraph({
 					</button>
 				)}
 			</header>}
-			<div className="sg-body">
+			<div className="sg-body" title={ko("Drag the curve · double-click or the button cuts · Delete removes a cut", "곡선을 끌어 조절 · 더블클릭이나 버튼으로 컷 · 컷 선택 후 Delete로 삭제")}>
 				<svg
 					ref={svgRef}
 					viewBox="0 0 1 1"
@@ -692,22 +689,16 @@ function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDra
 							>
 								{ko("Loop", "반복")}
 							</button>
+							{/* Destructive, so it sits apart at the row's end and only
+							    turns red under the pointer. */}
 							<button
 								type="button"
-								className="tl-camera-tool danger"
+								className="tl-camera-tool danger objmo-end"
 								title={ko("Delete this route; the object stands still again", "경로를 지웁니다. 오브젝트는 다시 제자리에 섭니다")}
 								onClick={() => onPathClear?.()}
 							>
 								{ko("Delete path", "경로 삭제")}
 							</button>
-							{/* The two gestures nobody guesses, on the same row rather than
-							    a lane of their own — an empty track reads as broken. */}
-							<span className="tl-path-hint">
-								{ko(
-									`${metrics.length.toFixed(1)} m · double-click the line to add a dot · drag it to bend · Delete removes it`,
-									`${metrics.length.toFixed(1)} m · 선을 더블클릭하면 점 추가 · 끌면 휨 · Delete로 삭제`,
-								)}
-							</span>
 						</>
 					) : (
 						<span className="tl-path-hint">
@@ -758,12 +749,13 @@ function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDra
 								onScrubEnd={onMarkScrubEnd}
 							/>
 						</span>
+						{/* One short status, muted: the long form is in the tooltips. */}
 						<span className="tl-path-hint">
 							{selectedMark
-								? ko("Degrees at this dot; the prop eases in and out of the lean", "이 점에서의 각도예요. 기울기는 부드럽게 들어가고 나와요")
+								? ko("Eases back to level at the next dot · E shows rings on the dot", "다음 점에서 수평으로 돌아와요 · E 키로 점에 회전 링")
 								: markIndex === 0 || (markIndex != null && markIndex === marks.length + 1)
-									? ko("Ends are always level", "양 끝은 항상 수평이에요")
-									: ko("Select a dot on the route to lean the prop there", "경로의 점을 선택하면 그 지점에서 기울일 수 있어요")}
+									? ko("Ends stay level", "양 끝은 수평")
+									: ko("Select a dot to lean the prop there", "점을 선택하면 그 지점에서 기울기")}
 						</span>
 					</div>
 				</div>

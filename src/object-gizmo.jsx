@@ -658,7 +658,7 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 				const dotClaims = tools.raycaster.intersectObjects(scene.children, true).some((entry) => {
 					for (let node = entry.object; node; node = node.parent) {
 						const data = node.userData;
-						if (data?.keyLightPick || data?.pathIndex !== undefined || data?.craneIndex !== undefined) return true;
+						if (data?.keyLightPick || data?.pathIndex !== undefined || data?.pathRing || data?.craneIndex !== undefined) return true;
 					}
 					return false;
 				});

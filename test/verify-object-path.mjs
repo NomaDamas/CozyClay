@@ -336,8 +336,10 @@ ok(
 	planSource.includes("prepareRailBend(route.points") && !planSource.includes("entry.y +"),
 );
 ok(
-	"the strip teaches both gestures instead of leaving them to be found",
-	travelTrackSource.includes("선을 더블클릭하면 점 추가") && travelTrackSource.includes("Delete로 삭제"),
+	"the gestures are taught once (the first-selection toast) and by tooltip, not as a running caption",
+	!travelTrackSource.includes("선을 더블클릭하면 점 추가 · 끌면 휨") &&
+	readFileSync(new URL("../src/ardy/timeline.jsx", import.meta.url), "utf8").includes('title={ko("Drag the curve') &&
+	readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8").includes("선을 더블클릭하면 점이 추가돼요"),
 );
 
 /* --- the strip's own layout ----------------------------------------------- */

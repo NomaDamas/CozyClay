@@ -48,7 +48,7 @@ import {
 	loadSceneDocumentFromStorage,
 } from "./scenes.js";
 import ObjectGizmo from "./object-gizmo.jsx";
-import { insertPathMark, MARK_GAP, MAX_PATH_MARKS, MAX_PATH_POINTS, nearestPathFraction, pathCurve, pathMarkFractions, pathMarks, pathPointAtFraction } from "./object-path.js";
+import { insertPathMark, MARK_GAP, MAX_PATH_LEAN, MAX_PATH_MARKS, MAX_PATH_POINTS, nearestPathFraction, pathCurve, pathMarkFractions, pathMarks, pathPointAtFraction } from "./object-path.js";
 import { track } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import { isPlaygroundEmbed, takePlaygroundProject } from "./playground.js";
@@ -1603,6 +1603,16 @@ const PATH_LINE_PICK_PX = 14;
 // A mark never sits closer than this to its neighbours (fraction of the route),
 // a little over the schema's own gap so a slide never lands on the edge of it.
 const PATH_MARK_CLEARANCE = MARK_GAP + 0.01;
+// The selected dot's lean rings, in the travel frame (Y up, Z forward): bank
+// spins about forward — a torus lies in XY, so its axis is already Z — and
+// pitch about the lateral axis, the same torus turned onto YZ. The rotate tool
+// (E) shows them in place of the move arrows, exactly as the object gizmo does.
+const PATH_RING_R = 0.42;
+const PATH_RINGS = [
+	{ key: "bank", color: "#ffb454", rotation: [0, 0, 0] },
+	{ key: "pitch", color: "#7cc7ff", rotation: [0, Math.PI / 2, 0] },
+];
+const wrapDeg = (deg) => ((((deg + 180) % 360) + 360) % 360) - 180;
 
 /** A world point in the pane's client pixels, or null behind the camera. */
 function paneProject(world, pane, camera) {
@@ -1625,7 +1635,7 @@ function paneProject(world, pane, camera) {
  * Delete removes an interior mark. The marks are where a hand takes hold; the
  * route's own points are its shape and are moved by the bend, never one by one.
  */
-export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRef, onSelect, onChangePath, onDragStart, onDragEnd }) {
+export function ObjectPathHandles({ path, selectedIndex, enabled, mode = "move", paneRef, camRef, onSelect, onChangePath, onDragStart, onDragEnd }) {
 	const { gl } = useThree();
 	const invalidate = useThree((state) => state.invalidate);
 	const groupRef = useRef(null);
@@ -1638,7 +1648,9 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 	const [hover, setHover] = useState(null);
 	// The pointer is on the line where a dot could still be dropped.
 	const [lineHover, setLineHover] = useState(false);
-	stateRef.current = { path, selectedIndex, enabled, onSelect, onChangePath, onDragStart, onDragEnd };
+	// Which lean ring the pointer is over, for the hover highlight.
+	const [ringHover, setRingHover] = useState(null);
+	stateRef.current = { path, selectedIndex, enabled, mode, onSelect, onChangePath, onDragStart, onDragEnd };
 	// The line is not a mesh the raycaster can hit, but the object gizmo's
 	// selection handler decides "does this press belong to a path handle?" by
 	// raycasting GIZMO_LAYER (gizmo-claim.js). This invisible node answers that
@@ -1670,10 +1682,13 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 		const world = gizmo.getWorldPosition(new THREE.Vector3());
 		gizmo.scale.setScalar(Math.max(0.35, camera.getWorldPosition(new THREE.Vector3()).distanceTo(world) * CRANE_GIZMO_SCALE));
 	});
+	// Everything here is editor furniture on GIZMO_LAYER — and the pick
+	// raycasts look only there, so a handle that mounts later (the rings the
+	// rotate tool brings) must be stamped too: `mode` is a dependency.
 	useEffect(() => {
 		groupRef.current?.traverse((node) => node.layers?.set(GIZMO_LAYER));
 		invalidate();
-	}, [path, selectedIndex, enabled, dragInfo, invalidate]);
+	}, [path, selectedIndex, enabled, mode, dragInfo, invalidate]);
 	useEffect(() => {
 		if (!enabled) return undefined;
 		const raycaster = new THREE.Raycaster();
@@ -1704,11 +1719,53 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			if (!base) return null;
 			return { base, fractions, bend: prepareRailBend(s.path.points, base, fractions.map((t) => ({ t })), index, { maxControls: MAX_PATH_POINTS }) };
 		};
+		// The travel frame at mark `index`: the heading the body has there (the
+		// route's own direction), as forward / right vectors on the floor.
+		const frameAt = (s, index) => {
+			const t = pathMarkFractions(s.path)[index];
+			const before = pathPointAtFraction(s.path, Math.max(0, t - 0.01));
+			const after = pathPointAtFraction(s.path, Math.min(1, t + 0.01));
+			const yaw = before && after ? Math.atan2(after.x - before.x, after.z - before.z) : 0;
+			return { yaw, forward: new THREE.Vector3(Math.sin(yaw), 0, Math.cos(yaw)), right: new THREE.Vector3(Math.cos(yaw), 0, -Math.sin(yaw)) };
+		};
 		const onDown = (event) => {
 			const s = stateRef.current;
 			if (!s.enabled || !s.path || event.button !== 0) return;
 			if (!groupRef.current || !rayFrom(event)) return;
 			const hits = raycaster.intersectObjects(groupRef.current.children, true);
+			// A ring on the selected dot turns its lean: bank about the travel
+			// direction, pitch about the lateral axis. The pointer's angle around
+			// the ring is read in the ring's own plane, the object gizmo's way.
+			const ringHit = hits.find((entry) => entry.object.userData?.pathRing);
+			if (ringHit && s.mode === "rotate" && s.selectedIndex != null) {
+				const key = ringHit.object.userData.pathRing;
+				const fractions = pathMarkFractions(s.path);
+				if (s.selectedIndex <= 0 || s.selectedIndex >= fractions.length - 1) return;
+				const base = pathPointAtFraction(s.path, fractions[s.selectedIndex]);
+				if (!base) return;
+				const frame = frameAt(s, s.selectedIndex);
+				const spin = key === "bank" ? frame.forward : frame.right;
+				const origin = new THREE.Vector3(base.x, base.y, base.z);
+				const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(spin, origin);
+				const hit = new THREE.Vector3();
+				if (!raycaster.ray.intersectPlane(plane, hit)) return;
+				const tangent = new THREE.Vector3(spin.y, spin.z, spin.x).cross(spin).normalize();
+				const binormal = spin.clone().cross(tangent).normalize();
+				const offset = hit.clone().sub(origin);
+				if (offset.lengthSq() < 1e-8) return;
+				event.stopImmediatePropagation();
+				event.preventDefault();
+				const marks = pathMarks(s.path);
+				dragRef.current = {
+					ring: key, index: s.selectedIndex, origin, plane, tangent, binormal,
+					lastAngle: Math.atan2(offset.dot(binormal), offset.dot(tangent)), turned: 0,
+					startValue: marks[s.selectedIndex - 1]?.[key] ?? 0, marks, recorded: false,
+				};
+				gl.domElement.style.cursor = "grabbing";
+				setDragInfo({ ring: key });
+				invalidate();
+				return;
+			}
 			// The axis gizmo outranks the dots: its arrows sit on the selected
 			// mark, and a press on an arrow is a directed move, not a reselect.
 			const axisHit = hits.find((entry) => entry.object.userData?.pathAxis);
@@ -1769,6 +1826,27 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			const drag = dragRef.current;
 			if (!drag || !s.enabled || !s.path) return;
 			if (!rayFrom(event)) return;
+			if (drag.ring) {
+				const hit = new THREE.Vector3();
+				if (!raycaster.ray.intersectPlane(drag.plane, hit)) return;
+				const offset = hit.sub(drag.origin);
+				const angle = Math.atan2(offset.dot(drag.binormal), offset.dot(drag.tangent));
+				// Wrapped increments: crossing the ring's seam never jumps a turn.
+				drag.turned += wrapDeg(((angle - drag.lastAngle) * 180) / Math.PI);
+				drag.lastAngle = angle;
+				// The lean's own handedness (travelPose): bank is a right-handed
+				// turn about forward; pitch reads nose-up, the other way about right.
+				const raw = drag.startValue + (drag.ring === "bank" ? drag.turned : -drag.turned);
+				const step = event.ctrlKey || event.metaKey ? 5 : 0.5;
+				const value = Math.max(-MAX_PATH_LEAN, Math.min(MAX_PATH_LEAN, Math.round(raw / step) * step));
+				if (!drag.recorded) {
+					s.onDragStart?.();
+					drag.recorded = true;
+				}
+				s.onChangePath({ marks: drag.marks.map((entry, i) => (i + 1 === drag.index ? { ...entry, [drag.ring]: value } : entry)) }, { dragging: true });
+				invalidate();
+				return;
+			}
 			if (drag.slide) {
 				// slide along the arc: the ray onto the horizontal plane at the mark
 				const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -drag.base.y);
@@ -1832,17 +1910,22 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			if (dragRef.current || !s.enabled || !s.path || event.buttons !== 0 || event.target !== gl.domElement) {
 				setHover((current) => (current === null ? current : null));
 				setLineHover((current) => (current ? false : current));
+				setRingHover((current) => (current === null ? current : null));
 				return;
 			}
 			let index = null;
+			let ring = null;
 			if (rayFrom(event) && groupRef.current) {
 				const hits = raycaster.intersectObjects(groupRef.current.children, true);
 				const axisHit = s.selectedIndex != null && hits.find((entry) => entry.object.userData?.pathAxis);
+				const ringHit = s.mode === "rotate" && s.selectedIndex != null && hits.find((entry) => entry.object.userData?.pathRing);
 				const dot = hits.find((entry) => entry.object.userData?.pathIndex !== undefined);
-				if (!axisHit && dot) index = dot.object.userData.pathIndex;
+				if (ringHit) ring = ringHit.object.userData.pathRing;
+				else if (!axisHit && dot) index = dot.object.userData.pathIndex;
 			}
 			setHover((current) => (current === index ? current : index));
-			if (index !== null) gl.domElement.style.cursor = "grab";
+			setRingHover((current) => (current === ring ? current : ring));
+			if (index !== null || ring !== null) gl.domElement.style.cursor = "grab";
 			// The line itself answers too: it brightens and the cursor says "copy"
 			// while a double-click here would still drop a dot.
 			let addable = false;
@@ -1942,6 +2025,18 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			return { index: i + 1, quaternion };
 		}).filter(Boolean);
 	}, [path]);
+	// The travel frame the selected dot's rings stand in: a yaw from the route's
+	// direction there. Only an interior dot has one — the ends are always level.
+	const leanFrame = useMemo(() => {
+		if (!path || selectedIndex == null) return null;
+		const fractions = pathMarkFractions(path);
+		if (selectedIndex <= 0 || selectedIndex >= fractions.length - 1) return null;
+		const t = fractions[selectedIndex];
+		const before = pathPointAtFraction(path, Math.max(0, t - 0.01));
+		const after = pathPointAtFraction(path, Math.min(1, t + 0.01));
+		const yaw = before && after ? Math.atan2(after.x - before.x, after.z - before.z) : 0;
+		return { quaternion: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw) };
+	}, [path, selectedIndex]);
 	if (!enabled || !path || linePoints.length < 2) return null;
 	const selected = selectedIndex != null ? marks[selectedIndex] : null;
 	return (
@@ -1950,7 +2045,27 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			<Line points={linePoints} color={lineHover ? "#d4f7e2" : "#6fcf97"} lineWidth={lineHover ? 4 : 2.5} transparent opacity={lineHover ? 1 : 0.9} />
 			{selected && (
 				<group ref={gizmoRef} position={[selected.x, selected.y, selected.z]} renderOrder={999}>
-					{CRANE_AXES.map(({ axis, dir, color }) => {
+					{mode === "rotate" && leanFrame && (
+						<group quaternion={leanFrame.quaternion}>
+							{PATH_RINGS.map(({ key, color, rotation }) => {
+								const lit = dragInfo?.ring === key || (!dragInfo && ringHover === key);
+								return (
+									<group key={key} rotation={rotation}>
+										<mesh renderOrder={999}>
+											<torusGeometry args={[PATH_RING_R, 0.022, 8, 48]} />
+											<meshStandardMaterial color="#000000" emissive={lit ? "#ffd23d" : color} emissiveIntensity={lit ? 3 : 2.2} toneMapped={false} depthTest={false} depthWrite={false} transparent opacity={0.95} />
+										</mesh>
+										{/* the grab band: a 2 cm ring is nothing to aim at */}
+										<mesh userData={{ pathRing: key }}>
+											<torusGeometry args={[PATH_RING_R, 0.07, 6, 32]} />
+											<meshBasicMaterial visible={false} />
+										</mesh>
+									</group>
+								);
+							})}
+						</group>
+					)}
+					{mode !== "rotate" && CRANE_AXES.map(({ axis, dir, color }) => {
 						const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
 						return (
 							<group key={axis} quaternion={quat}>
@@ -2004,7 +2119,9 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			{dragInfo && selected && (
 				<GizmoLabel
 					position={[selected.x, selected.y + 0.42, selected.z]}
-					text={dragInfo.slide ? `${Math.round(pathMarkFractions(path)[selectedIndex] * 100)}%` : `x ${selected.x.toFixed(1)}  y ${selected.y.toFixed(1)}  z ${selected.z.toFixed(1)}`}
+					text={dragInfo.ring
+						? `${dragInfo.ring} ${(pathMarks(path)[selectedIndex - 1]?.[dragInfo.ring] ?? 0).toFixed(1)}°`
+						: dragInfo.slide ? `${Math.round(pathMarkFractions(path)[selectedIndex] * 100)}%` : `x ${selected.x.toFixed(1)}  y ${selected.y.toFixed(1)}  z ${selected.z.toFixed(1)}`}
 					camRef={camRef}
 				/>
 			)}

@@ -7635,6 +7635,7 @@ export default function App() {
 							<ObjectPathHandles
 								path={routeOwner?.path ?? null}
 								selectedIndex={pathPointIndex}
+								mode={gizmoMode}
 								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!routeOwner?.path}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}

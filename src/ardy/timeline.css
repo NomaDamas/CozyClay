@@ -1220,3 +1220,130 @@
 		width: var(--tl-track-tree-width, 190px);
 	}
 }
+
+/* ------------------------------------------------- Route strip (v2) ----
+   A prop's route rows wear the sequencer's own chips and type: neutral
+   pills, the segmented "on" look for toggles, muted facts, and the select
+   colour only on the curve. The legacy green instrument stays for the
+   classic shell (styles.css). */
+.v2-sequencer .tl-track.objmo .tl-track-label {
+	gap: 6px;
+	color: var(--text-1, #e4e4e7);
+	font: 500 12px var(--sans);
+}
+.v2-sequencer .tl-track.objmo .tl-track-label .tl-subject-kind {
+	color: var(--label, #8e8e96);
+	font: 500 10px var(--sans);
+	letter-spacing: .04em;
+}
+.v2-sequencer .tl-track.objmo .tl-lane {
+	background: none;
+	border-bottom: 1px solid var(--hairline, rgba(255,255,255,.07));
+}
+.v2-sequencer .objmo-tools {
+	gap: 6px;
+	padding: 4px 10px;
+	color: var(--text-2, #6e6e73);
+	font: 400 11px var(--sans);
+}
+.v2-sequencer .objmo-tools .tl-camera-tool,
+.v2-sequencer .objmo .sg-head .tl-camera-tool {
+	height: 24px;
+	padding: 0 10px;
+	border: 0;
+	border-radius: 12px;
+	background: var(--chip-fill, rgba(255,255,255,.06));
+	color: var(--text-soft, #c9c9ce);
+	font: 500 11px var(--sans);
+}
+.v2-sequencer .objmo-tools .tl-camera-tool:hover:not(:disabled),
+.v2-sequencer .objmo .sg-head .tl-camera-tool:hover:not(:disabled) {
+	background: var(--field-fill, rgba(255,255,255,.05));
+	color: var(--text-1, #e4e4e7);
+}
+.v2-sequencer .objmo-tools .tl-camera-tool.active {
+	background: var(--seg-on, rgba(255,255,255,.14));
+	box-shadow: var(--seg-on-shadow, none);
+	color: var(--seg-on-text, #e08a55);
+}
+.v2-sequencer .objmo-tools .tl-camera-tool.danger,
+.v2-sequencer .objmo .sg-head .tl-camera-tool.danger {
+	background: none;
+	color: var(--text-3, #636369);
+}
+.v2-sequencer .objmo-tools .tl-camera-tool.danger:hover:not(:disabled),
+.v2-sequencer .objmo .sg-head .tl-camera-tool.danger:hover:not(:disabled) {
+	background: var(--chip-fill, rgba(255,255,255,.06));
+	color: var(--danger, #e5484d);
+}
+.v2-sequencer .objmo-tools .objmo-end { margin-left: auto; }
+.v2-sequencer .objmo-speed {
+	height: 24px;
+	padding: 0 10px 0 9px;
+	border: 0;
+	border-radius: 12px;
+	background: var(--chip-fill, rgba(255,255,255,.06));
+	color: var(--label, #8e8e96);
+	font: 500 11px var(--sans);
+}
+.v2-sequencer .objmo-speed input[type="range"]::-webkit-slider-runnable-track { background: var(--divider-strong, rgba(255,255,255,.18)); }
+.v2-sequencer .objmo-speed input[type="range"]::-moz-range-track { background: var(--divider-strong, rgba(255,255,255,.18)); }
+.v2-sequencer .objmo-speed input[type="range"]::-webkit-slider-thumb {
+	background: var(--seg-on, #fff);
+	box-shadow: var(--seg-on-shadow, 0 1px 2px rgba(0,0,0,.3));
+}
+.v2-sequencer .objmo-speed input[type="range"]::-moz-range-thumb {
+	background: var(--seg-on, #fff);
+	box-shadow: var(--seg-on-shadow, 0 1px 2px rgba(0,0,0,.3));
+}
+.v2-sequencer .objmo-speed input[type="range"]:focus-visible { outline-color: var(--select, #e8a33d); }
+.v2-sequencer .objmo-speed .objmo-speed-value { color: var(--text-1, #e4e4e7); }
+.v2-sequencer .objmo-lean .number-field {
+	height: 24px;
+	border: 0;
+	border-radius: 12px;
+	background: var(--chip-fill, rgba(255,255,255,.06));
+	color: var(--text-1, #e4e4e7);
+	overflow: hidden;
+}
+.v2-sequencer .objmo-lean .number-field .axis {
+	background: none;
+	color: var(--label, #8e8e96);
+	font: 500 11px var(--sans);
+}
+.v2-sequencer .objmo-lean .number-field input {
+	border: 0;
+	background: none;
+	color: var(--text-1, #e4e4e7);
+	font: 500 11px var(--sans);
+}
+.v2-sequencer .objmo-lean .number-field:focus-within { box-shadow: 0 0 0 1.5px var(--select, #e8a33d) inset; }
+.v2-sequencer .tl-path-hint {
+	color: var(--text-3, #636369);
+	font: 400 10.5px var(--sans);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.v2-sequencer .objmo .sg-head {
+	gap: 8px;
+	padding: 4px 10px 3px;
+	color: var(--label, #8e8e96);
+	font: 400 11px var(--sans);
+}
+.v2-sequencer .objmo .sg-head .sg-facts { color: var(--text-1, #e4e4e7); font-weight: 500; }
+.v2-sequencer .objmo .sg-body {
+	margin: 0 10px 6px;
+	border: 0;
+	border-radius: 8px;
+	background: var(--tile-fill, rgba(255,255,255,.04));
+}
+.v2-sequencer .objmo .sg-line { stroke: var(--select, #e8a33d); }
+.v2-sequencer .objmo .sg-fill { fill: var(--select-tint, rgba(232,163,61,.14)); }
+.v2-sequencer .objmo .sg-axis,
+.v2-sequencer .objmo .sg-average { stroke: var(--divider-strong, rgba(255,255,255,.18)); }
+.v2-sequencer .objmo .sg-outside { fill: var(--chip-fill, rgba(255,255,255,.06)); }
+.v2-sequencer .objmo .sg-scale-top,
+.v2-sequencer .objmo .sg-scale-avg,
+.v2-sequencer .objmo .sg-scale-zero { color: var(--text-3, #636369); }
+.v2-sequencer .objmo .sg-readout { background: var(--text-1, #e4e4e7); color: var(--bg, #fff); }
