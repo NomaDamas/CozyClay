@@ -123,7 +123,7 @@ const source = union(generateSource, object({ kind: literal("reuse"), artifactId
 const dataImage = { ...text(2 * 1024 * 1024), pattern: "^data:image/[A-Za-z0-9.+-]+[;,]" };
 const promptBlock = object({ startFrame: integer(), endFrame: integer(1), text: text(2000) }, { id });
 const cameraKey = object({ frame: integer(), framing: object({ pos: vec3, yaw: number(), pitch: number(), fovDeg: number(1, 179) }) }, { id });
-const objectRoute = nullable(object({ points: array(vec3, 64, 2) }, { speed: number(0, 50), faceTravel: bool, loop: bool, extend: bool }));
+const objectRoute = nullable(object({ points: array(vec3, 64, 2) }, { speed: number(0, 50), faceTravel: bool, loop: bool, extend: bool, marks: array(number(0, 1), 6) }));
 const PATCH_VALUE_SCHEMAS = {
 	"character.pose": nullable(id), "character.identityImage": nullable(dataImage), "character.promptBlocks": array(promptBlock, 64),
 	"object.parent": nullable(id), "object.path": objectRoute, "stage.environmentImage": nullable(dataImage),

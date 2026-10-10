@@ -36,7 +36,7 @@ import {
 	curveToPoints2d,
 	validateLineEdit,
 } from "./line-edit.js";
-import { craneHeightAt, railPoint } from "./camera-follow.js";
+import { craneHeightAt, prepareRailBend, railPoint } from "./camera-follow.js";
 import { CUTOUT_KIND, DEFAULT_SCENE_OBJECTS, MESH_KIND, SCENE_ATTACH_BONES, updateSceneObject } from "./scene-objects.js";
 import { imageFilesFrom } from "./scene-assets.js";
 import { splitDroppedFiles } from "./scene-mesh.js";
@@ -48,7 +48,7 @@ import {
 	loadSceneDocumentFromStorage,
 } from "./scenes.js";
 import ObjectGizmo from "./object-gizmo.jsx";
-import { MAX_PATH_POINTS, pathCurve, pathCurvePointBetween } from "./object-path.js";
+import { MARK_GAP, MAX_PATH_MARKS, MAX_PATH_POINTS, nearestPathFraction, pathCurve, pathMarkFractions, pathPointAtFraction } from "./object-path.js";
 import { track } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import { isPlaygroundEmbed, takePlaygroundProject } from "./playground.js";
@@ -1559,69 +1559,9 @@ export const CRANE_AXES = [
 export const CRANE_ARROW_LEN = 0.5;
 export const CRANE_GIZMO_SCALE = 0.16; // metres of gizmo per metre of camera distance
 
-/**
- * Prepare an x/z rail bend for one crane mark: a copy of the drawn control
- * points (with one inserted at the mark's base when none is close enough to
- * anchor the bend) plus a per-point weight — a cosine bump centred on the
- * anchor that fades to zero by the neighbouring crane marks, so dragging one
- * mark can never tow the marks beside it. For an interior mark both rail
- * ends are pinned outright.
- */
-export function prepareRailBend(controlPoints, base, marks, markIndex) {
-	const controls = (controlPoints ?? []).map((entry) => ({ ...entry }));
-	if (controls.length < 2) return null;
-	// nearest control point / segment to the mark's base
-	let nearestIdx = 0;
-	let nearestD = Infinity;
-	for (let i = 0; i < controls.length; i += 1) {
-		const d = Math.hypot(controls[i].x - base.x, controls[i].z - base.z);
-		if (d < nearestD) {
-			nearestD = d;
-			nearestIdx = i;
-		}
-	}
-	const interior = markIndex > 0 && markIndex < marks.length - 1;
-	let anchorIdx = nearestIdx;
-	if (interior && nearestD > 0.25) {
-		// no control point near the mark: bend needs a vertex to pull, so one
-		// is seeded at the base, on the segment the base projects onto
-		let segmentIdx = 0;
-		let segmentD = Infinity;
-		for (let i = 0; i < controls.length - 1; i += 1) {
-			const ax = controls[i].x;
-			const az = controls[i].z;
-			const bx = controls[i + 1].x;
-			const bz = controls[i + 1].z;
-			const lenSq = Math.max((bx - ax) ** 2 + (bz - az) ** 2, 1e-9);
-			const u = Math.max(0, Math.min(1, ((base.x - ax) * (bx - ax) + (base.z - az) * (bz - az)) / lenSq));
-			const d = Math.hypot(ax + (bx - ax) * u - base.x, az + (bz - az) * u - base.z);
-			if (d < segmentD) {
-				segmentD = d;
-				segmentIdx = i;
-			}
-		}
-		controls.splice(segmentIdx + 1, 0, { x: base.x, z: base.z });
-		anchorIdx = segmentIdx + 1;
-	}
-	// normalized arc parameter of each control point along the control polygon
-	const ts = [0];
-	for (let i = 1; i < controls.length; i += 1) {
-		ts.push(ts[i - 1] + Math.hypot(controls[i].x - controls[i - 1].x, controls[i].z - controls[i - 1].z));
-	}
-	const total = Math.max(ts[ts.length - 1], 1e-9);
-	for (let i = 0; i < ts.length; i += 1) ts[i] /= total;
-	// the bump reaches exactly to the neighbouring crane marks
-	const t0 = ts[anchorIdx];
-	const previous = markIndex > 0 ? marks[markIndex - 1].t : null;
-	const next = markIndex < marks.length - 1 ? marks[markIndex + 1].t : null;
-	const radius = Math.max(0.15, Math.min(previous != null ? t0 - previous : 1, next != null ? next - t0 : 1));
-	const weights = ts.map((t, i) => {
-		if (interior && (i === 0 || i === ts.length - 1)) return 0;
-		const d = Math.abs(t - t0);
-		return d >= radius ? 0 : 0.5 * (1 + Math.cos((Math.PI * d) / radius));
-	});
-	return { startControls: controls, weights, t0, radius };
-}
+// The rail-bend preparation is shared with the Top-View board and lives with the
+// rest of the rail math.
+export { prepareRailBend };
 
 /**
  * A floating readout beside a drag — billboarded, sized to the screen, on
@@ -1657,21 +1597,70 @@ export function GizmoLabel({ position, text, camRef }) {
 	);
 }
 
+// How near (screen pixels) a press must be to the drawn route to count as
+// aimed at it — the line is thin, so the target is a generous band around it.
+const PATH_LINE_PICK_PX = 14;
+// A mark never sits closer than this to its neighbours (fraction of the route),
+// a little over the schema's own gap so a slide never lands on the edge of it.
+const PATH_MARK_CLEARANCE = MARK_GAP + 0.01;
+
+/** A world point in the pane's client pixels, or null behind the camera. */
+function paneProject(world, pane, camera) {
+	if (!pane || !camera) return null;
+	const bounds = pane.getBoundingClientRect();
+	const projected = new THREE.Vector3(world.x, world.y ?? 0, world.z).project(camera);
+	return projected.z > 1 ? null : {
+		x: bounds.left + ((projected.x + 1) / 2) * bounds.width,
+		y: bounds.top + ((1 - projected.y) / 2) * bounds.height,
+	};
+}
+
 /**
- * A scene object's travel path in the 3D view: the route as a line, its points
- * as grabbable dots, and a 3-axis gizmo on the selected dot. The grammar is
- * the crane's on purpose — Top-View draws the floor route, the scene lifts and
- * nudges the individual points, so a plane can climb along its own path.
+ * A scene object's travel path in the 3D view, edited the way the camera rail
+ * is (CraneHandles): the route is a dense curve, and a few MARKS ride on it —
+ * the two ends, plus any added by double-clicking the line. Pressing a mark
+ * selects it and drags it freely (the curve bends around it, fading out by the
+ * neighbouring marks, so the marks beside it stay put); Shift slides it along
+ * the route; the 3-axis gizmo on the selected mark bends x / z and lifts y;
+ * Delete removes an interior mark. The marks are where a hand takes hold; the
+ * route's own points are its shape and are moved by the bend, never one by one.
  */
-export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRef, onSelect, onChangePoints, onDragStart, onDragEnd }) {
+export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRef, onSelect, onChangePath, onDragStart, onDragEnd }) {
 	const { gl } = useThree();
 	const invalidate = useThree((state) => state.invalidate);
 	const groupRef = useRef(null);
 	const gizmoRef = useRef(null);
 	const dragRef = useRef(null);
 	const stateRef = useRef(null);
-	const [dragging, setDragging] = useState(false);
-	stateRef.current = { path, selectedIndex, enabled, onSelect, onChangePoints, onDragStart, onDragEnd };
+	// What the pointer is doing: a bend drag lights up the span it deforms.
+	const [dragInfo, setDragInfo] = useState(null);
+	// Mark index under the pointer, for the hover highlight.
+	const [hover, setHover] = useState(null);
+	stateRef.current = { path, selectedIndex, enabled, onSelect, onChangePath, onDragStart, onDragEnd };
+	// The line is not a mesh the raycaster can hit, but the object gizmo's
+	// selection handler decides "does this press belong to a path handle?" by
+	// raycasting GIZMO_LAYER (gizmo-claim.js). This invisible node answers that
+	// ray in SCREEN space — near the drawn curve counts — so a press on the
+	// route is claimed instead of deselecting the object, which unmounted these
+	// handles before the double-click that adds a mark could arrive.
+	const lineProxy = useMemo(() => {
+		const node = new THREE.Group();
+		node.userData.pathLine = true;
+		node.raycast = function raycastRoute(raycaster, intersects) {
+			const s = stateRef.current;
+			const camera = raycaster.camera ?? camRef.current;
+			if (!s.enabled || !s.path || !camera || !paneRef.current) return;
+			// Any point down the ray lands on the pointer's pixel: that is the pointer.
+			const ahead = raycaster.ray.at(Math.max(1, (camera.near ?? 0.1) * 2), new THREE.Vector3());
+			const pointer = paneProject(ahead, paneRef.current, camera);
+			if (!pointer) return;
+			const spot = nearestPathFraction(s.path, (world) => paneProject(world, paneRef.current, camera), pointer.x, pointer.y);
+			if (spot && spot.d <= PATH_LINE_PICK_PX) intersects.push({ distance: 1e-3, point: ahead, object: node });
+		};
+		return node;
+		// refs are stable
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, []);
 	useFrame(() => {
 		const gizmo = gizmoRef.current;
 		const camera = camRef.current;
@@ -1682,7 +1671,7 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 	useEffect(() => {
 		groupRef.current?.traverse((node) => node.layers?.set(GIZMO_LAYER));
 		invalidate();
-	}, [path, selectedIndex, enabled, dragging, invalidate]);
+	}, [path, selectedIndex, enabled, dragInfo, invalidate]);
 	useEffect(() => {
 		if (!enabled) return undefined;
 		const raycaster = new THREE.Raycaster();
@@ -1702,20 +1691,34 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			raycaster.setFromCamera(ndc, camera);
 			return raycaster;
 		};
+		const paneScreen = (world) => paneProject(world, paneRef.current, camRef.current);
+		// The bend a drag of mark `index` will apply: the route's points with a
+		// per-point weight (the camera rail's own preparation, so a mark deforms
+		// the route the same way here), seeded with a vertex under the mark when
+		// the stroke left none close enough to pull.
+		const prepareBend = (s, index) => {
+			const fractions = pathMarkFractions(s.path);
+			const base = pathPointAtFraction(s.path, fractions[index]);
+			if (!base) return null;
+			return { base, fractions, bend: prepareRailBend(s.path.points, base, fractions.map((t) => ({ t })), index, { maxControls: MAX_PATH_POINTS }) };
+		};
 		const onDown = (event) => {
 			const s = stateRef.current;
 			if (!s.enabled || !s.path || event.button !== 0) return;
 			if (!groupRef.current || !rayFrom(event)) return;
 			const hits = raycaster.intersectObjects(groupRef.current.children, true);
-			// The axis gizmo outranks the dots, exactly like the crane's.
+			// The axis gizmo outranks the dots: its arrows sit on the selected
+			// mark, and a press on an arrow is a directed move, not a reselect.
 			const axisHit = hits.find((entry) => entry.object.userData?.pathAxis);
-			if (axisHit && s.selectedIndex != null && s.path.points[s.selectedIndex]) {
+			if (axisHit && s.selectedIndex != null) {
+				const prepared = prepareBend(s, s.selectedIndex);
+				if (!prepared?.bend) return;
 				const axis = axisHit.object.userData.pathAxis;
-				const point = s.path.points[s.selectedIndex];
-				const origin = new THREE.Vector3(point.x, point.y, point.z);
+				const origin = new THREE.Vector3(prepared.base.x, prepared.base.y, prepared.base.z);
 				const dir = CRANE_AXES.find((entry) => entry.axis === axis).dir;
 				const eye = new THREE.Vector3();
 				camRef.current.getWorldDirection(eye);
+				// slide plane: contains the axis and faces the camera as squarely as it can
 				const normal = dir.clone().cross(eye).cross(dir);
 				if (normal.lengthSq() < 1e-6) return;
 				normal.normalize();
@@ -1724,28 +1727,39 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 				if (!raycaster.ray.intersectPlane(plane, hitStart)) return;
 				event.stopImmediatePropagation();
 				event.preventDefault();
-				dragRef.current = { axis, index: s.selectedIndex, dir: dir.clone(), plane, hitStart, start: { ...point }, recorded: false };
-				setDragging(true);
+				dragRef.current = { axis, index: s.selectedIndex, dir: dir.clone(), plane, hitStart, bend: prepared.bend, recorded: false };
+				setDragInfo({ t0: prepared.bend.t0, radius: prepared.bend.radius });
 				invalidate();
 				return;
 			}
 			const hit = hits.find((entry) => entry.object.userData?.pathIndex !== undefined);
-			if (!hit) return;
-			event.stopImmediatePropagation();
-			event.preventDefault();
+			if (!hit) {
+				// A press on the route itself belongs to it too: take it so the
+				// fly camera does not, and the object stays selected for the
+				// double-click that follows.
+				if (hits.some((entry) => entry.object.userData?.pathLine)) {
+					event.stopImmediatePropagation();
+					event.preventDefault();
+				}
+				return;
+			}
 			const index = hit.object.userData.pathIndex;
-			s.onSelect(index);
-			// A press on the dot itself moves it freely on the camera plane —
-			// the sun puck's grammar, so a point can be nudged without aiming.
-			const point = s.path.points[index];
-			const origin = new THREE.Vector3(point.x, point.y, point.z);
+			const prepared = prepareBend(s, index);
+			if (!prepared?.bend) return;
+			// A press on the mark moves it freely on the camera plane — the sun
+			// puck's grammar, so the route can be nudged without aiming at an arrow.
 			const facing = new THREE.Vector3();
 			camRef.current.getWorldDirection(facing);
-			const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(facing, origin);
+			const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(facing, new THREE.Vector3(prepared.base.x, prepared.base.y, prepared.base.z));
 			const hitStart = new THREE.Vector3();
 			if (!raycaster.ray.intersectPlane(plane, hitStart)) return;
-			dragRef.current = { axis: null, index, plane, hitStart, start: { ...point }, recorded: false };
-			setDragging(true);
+			event.stopImmediatePropagation();
+			event.preventDefault();
+			s.onSelect(index);
+			const slide = event.shiftKey && index > 0 && index < prepared.fractions.length - 1;
+			dragRef.current = { axis: null, index, slide, plane, hitStart, base: prepared.base, fractions: prepared.fractions, bend: prepared.bend, recorded: false };
+			gl.domElement.style.cursor = "grabbing";
+			setDragInfo(slide ? { slide: true } : { t0: prepared.bend.t0, radius: prepared.bend.radius });
 			invalidate();
 		};
 		const onMove = (event) => {
@@ -1753,84 +1767,105 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			const drag = dragRef.current;
 			if (!drag || !s.enabled || !s.path) return;
 			if (!rayFrom(event)) return;
+			if (drag.slide) {
+				// slide along the arc: the ray onto the horizontal plane at the mark
+				const floor = new THREE.Plane(new THREE.Vector3(0, 1, 0), -drag.base.y);
+				const world = new THREE.Vector3();
+				if (!raycaster.ray.intersectPlane(floor, world)) return;
+				const spot = nearestPathFraction(s.path, (point) => ({ x: point.x, y: point.z }), world.x, world.z);
+				if (!spot) return;
+				const t = Math.max(
+					drag.fractions[drag.index - 1] + PATH_MARK_CLEARANCE,
+					Math.min(drag.fractions[drag.index + 1] - PATH_MARK_CLEARANCE, spot.t),
+				);
+				if (!drag.recorded) {
+					s.onDragStart?.();
+					drag.recorded = true;
+				}
+				s.onChangePath({ marks: drag.fractions.slice(1, -1).map((entry, i) => (i + 1 === drag.index ? t : entry)) }, { dragging: true });
+				invalidate();
+				return;
+			}
 			const world = new THREE.Vector3();
 			if (!raycaster.ray.intersectPlane(drag.plane, world)) return;
+			let delta;
+			if (drag.axis) {
+				const travel = world.clone().sub(drag.hitStart).dot(drag.dir);
+				delta = drag.dir.clone().multiplyScalar(travel);
+			} else {
+				delta = world.clone().sub(drag.hitStart);
+			}
 			if (!drag.recorded) {
 				s.onDragStart?.();
 				drag.recorded = true;
 			}
-			const points = s.path.points.map((entry) => ({ ...entry }));
-			if (drag.axis) {
-				const travel = world.clone().sub(drag.hitStart).dot(drag.dir);
-				const axis = drag.axis;
-				points[drag.index][axis] = drag.start[axis] + travel;
-			} else {
-				points[drag.index] = {
-					x: drag.start.x + (world.x - drag.hitStart.x),
-					y: drag.start.y + (world.y - drag.hitStart.y),
-					z: drag.start.z + (world.z - drag.hitStart.z),
+			// A weighted bump: the points around the mark follow, fading out by the
+			// neighbouring marks; the ends of an interior mark's bend stay pinned.
+			const moved = drag.bend.startControls.map((entry, i) => {
+				const weight = drag.bend.weights[i];
+				if (!(weight > 0)) return entry;
+				return {
+					...entry,
+					x: entry.x + delta.x * weight,
+					y: Math.max(0, (entry.y ?? 0) + delta.y * weight),
+					z: entry.z + delta.z * weight,
 				};
-			}
-			if (points[drag.index].y < 0) points[drag.index].y = 0;
-			s.onChangePoints(points, { dragging: true });
+			});
+			s.onChangePath({ points: moved }, { dragging: true });
 			invalidate();
 		};
 		const onUp = () => {
 			const drag = dragRef.current;
 			dragRef.current = null;
-			setDragging(false);
+			setDragInfo(null);
+			if (drag) gl.domElement.style.cursor = "";
 			if (drag?.recorded) stateRef.current.onDragEnd?.();
 			invalidate();
 		};
-		const paneScreen = (world) => {
-			const pane = paneRef.current?.getBoundingClientRect();
-			if (!pane) return null;
-			const projected = world.project(camRef.current);
-			return projected.z > 1 ? null : {
-				x: pane.left + ((projected.x + 1) / 2) * pane.width,
-				y: pane.top + ((1 - projected.y) / 2) * pane.height,
-			};
+		// Hover: the only cue that the dots are handles. Window-bubble, so it
+		// runs after the object gizmo's own cursor reset on the canvas.
+		const onHover = (event) => {
+			const s = stateRef.current;
+			if (dragRef.current || !s.enabled || !s.path || event.buttons !== 0 || event.target !== gl.domElement) {
+				setHover((current) => (current === null ? current : null));
+				return;
+			}
+			let index = null;
+			if (rayFrom(event) && groupRef.current) {
+				const hits = raycaster.intersectObjects(groupRef.current.children, true);
+				const axisHit = s.selectedIndex != null && hits.find((entry) => entry.object.userData?.pathAxis);
+				const dot = hits.find((entry) => entry.object.userData?.pathIndex !== undefined);
+				if (!axisHit && dot) index = dot.object.userData.pathIndex;
+			}
+			setHover((current) => (current === index ? current : index));
+			if (index !== null) gl.domElement.style.cursor = "grab";
 		};
-		// Double-click the route to drop a point mid-path — the crane curve's
-		// gesture, so one habit covers both. The new point lands ON the line,
-		// so adding it never changes where the object goes; it only gives the
-		// next drag something to grab in the middle.
+		// Double-click the route to drop a mark on it — the crane curve's
+		// gesture, so one habit covers both. A mark only gives the next drag
+		// something to grab in the middle: it never changes where the object goes.
 		const onDouble = (event) => {
 			const s = stateRef.current;
 			if (!s.enabled || !s.path || !camRef.current) return;
-			const points = s.path.points;
-			if (points.length >= MAX_PATH_POINTS) return;
+			const fractions = pathMarkFractions(s.path);
+			if (fractions.length >= MAX_PATH_MARKS) return;
 			camRef.current.updateMatrixWorld();
-			let best = null;
-			for (let i = 0; i < points.length - 1; i += 1) {
-				const a = paneScreen(new THREE.Vector3(points[i].x, points[i].y ?? 0, points[i].z));
-				const b = paneScreen(new THREE.Vector3(points[i + 1].x, points[i + 1].y ?? 0, points[i + 1].z));
-				if (!a || !b) continue;
-				const dx = b.x - a.x;
-				const dy = b.y - a.y;
-				const lenSq = dx * dx + dy * dy;
-				const t = lenSq < 1e-6 ? 0 : Math.min(1, Math.max(0, ((event.clientX - a.x) * dx + (event.clientY - a.y) * dy) / lenSq));
-				const d = Math.hypot(a.x + dx * t - event.clientX, a.y + dy * t - event.clientY);
-				if (!best || d < best.d) best = { d, index: i, t };
-			}
-			if (!best || best.d > 14) return;
-			// Refuse a point that would sit on top of a neighbour: a zero-length
-			// segment is not a handle, it is a duplicate the schema would drop.
-			if (best.t < 0.02 || best.t > 0.98) return;
+			const best = nearestPathFraction(s.path, paneScreen, event.clientX, event.clientY);
+			if (!best || best.d > PATH_LINE_PICK_PX) return;
+			// Not on top of a mark that is already there.
+			if (fractions.some((entry) => Math.abs(entry - best.t) < PATH_MARK_CLEARANCE)) return;
 			event.stopImmediatePropagation();
 			event.preventDefault();
-			// On the curve, so adding a handle barely reshapes the route.
-			const inserted = pathCurvePointBetween(points, best.index, best.t);
-			const next = [...points.slice(0, best.index + 1), inserted, ...points.slice(best.index + 1)];
+			const marks = [...fractions.slice(1, -1), best.t].sort((a, b) => a - b);
 			s.onDragStart?.();
-			s.onChangePoints(next);
+			s.onChangePath({ marks });
 			s.onDragEnd?.();
-			s.onSelect(best.index + 1);
+			s.onSelect(marks.indexOf(best.t) + 1);
 			invalidate();
 		};
-		// Delete removes the selected point, never the object: while a point is
-		// selected this handler owns the key, and the scene-object delete
-		// handler stands down (it checks the same selection).
+		// Delete removes the selected interior mark, never the object: while a
+		// mark is selected this handler owns the key, and the scene-object delete
+		// handler stands down (it checks the same selection). The ends stay — a
+		// route is whatever lies between them; "Delete path" clears it.
 		const onKey = (event) => {
 			const s = stateRef.current;
 			if (!s.enabled || !s.path || s.selectedIndex == null) return;
@@ -1838,11 +1873,10 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			if (document.activeElement && /INPUT|TEXTAREA|SELECT/.test(document.activeElement.tagName)) return;
 			event.preventDefault();
 			event.stopImmediatePropagation();
-			const remaining = s.path.points.filter((_, index) => index !== s.selectedIndex);
-			// Two points are the least a route can be; the last removal clears
-			// the whole path instead of leaving a stub that cannot be walked.
+			const fractions = pathMarkFractions(s.path);
+			if (s.selectedIndex <= 0 || s.selectedIndex >= fractions.length - 1) return;
 			s.onDragStart?.();
-			s.onChangePoints(remaining.length >= 2 ? remaining : null);
+			s.onChangePath({ marks: fractions.slice(1, -1).filter((_, i) => i + 1 !== s.selectedIndex) });
 			s.onDragEnd?.();
 			s.onSelect(null);
 			invalidate();
@@ -1851,27 +1885,35 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 		el.addEventListener("pointerdown", onDown);
 		window.addEventListener("pointermove", onMove, true);
 		window.addEventListener("pointerup", onUp, true);
+		window.addEventListener("pointermove", onHover);
 		el.addEventListener("dblclick", onDouble, true);
 		window.addEventListener("keydown", onKey, true);
 		return () => {
 			el.removeEventListener("pointerdown", onDown);
 			window.removeEventListener("pointermove", onMove, true);
 			window.removeEventListener("pointerup", onUp, true);
+			window.removeEventListener("pointermove", onHover);
 			el.removeEventListener("dblclick", onDouble, true);
 			window.removeEventListener("keydown", onKey, true);
 		};
 		// paneRef/camRef are stable; handlers read live state through stateRef
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [enabled, gl, invalidate]);
+	const curve = useMemo(() => (path?.points?.length > 1 ? pathCurve(path) : null), [path]);
 	const linePoints = useMemo(
 		// The curve the object travels, not the chords between its points.
-		() => (path?.points?.length > 1 ? pathCurve(path).points : path?.points ?? []).map((point) => [point.x, point.y + 0.02, point.z]),
+		() => (curve ? curve.points : []).map((point) => [point.x, point.y + 0.02, point.z]),
+		[curve],
+	);
+	const marks = useMemo(
+		() => (path ? pathMarkFractions(path).map((t) => pathPointAtFraction(path, t)) : []),
 		[path],
 	);
 	if (!enabled || !path || linePoints.length < 2) return null;
-	const selected = selectedIndex != null ? path.points[selectedIndex] : null;
+	const selected = selectedIndex != null ? marks[selectedIndex] : null;
 	return (
 		<group ref={groupRef}>
+			<primitive object={lineProxy} />
 			<Line points={linePoints} color="#6fcf97" lineWidth={2.5} transparent opacity={0.9} />
 			{selected && (
 				<group ref={gizmoRef} position={[selected.x, selected.y, selected.z]} renderOrder={999}>
@@ -1896,25 +1938,41 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 					})}
 				</group>
 			)}
-			{path.points.map((point, index) => (
-				<group key={`${index}:${path.points.length}`} position={[point.x, point.y, point.z]}>
-					<mesh userData={{ pathIndex: index }} renderOrder={998}>
-						<sphereGeometry args={[0.075, 14, 10]} />
-						<meshBasicMaterial color={index === selectedIndex ? "#ffb454" : "#6fcf97"} depthTest={false} transparent opacity={0.95} />
+			{marks.map((point, index) => point && (
+				<group key={`${index}:${marks.length}`} position={[point.x, point.y, point.z]}>
+					<mesh userData={{ pathIndex: index }} renderOrder={998} scale={hover === index ? 1.3 : 1}>
+						<sphereGeometry args={[0.085, 16, 12]} />
+						{/* the selected mark keeps its own colour; hover only brightens */}
+						<meshBasicMaterial color={index === selectedIndex ? (hover === index ? "#ffd08a" : "#ffb454") : hover === index ? "#d4f7e2" : "#6fcf97"} depthTest={false} transparent opacity={0.95} />
 					</mesh>
+					{/* the real click target: a dot is a dozen pixels from a few
+					    metres back, so an invisible halo carries the press */}
 					<mesh userData={{ pathIndex: index }}>
-						<sphereGeometry args={[0.22, 10, 8]} />
+						<sphereGeometry args={[0.24, 10, 8]} />
 						<meshBasicMaterial visible={false} />
 					</mesh>
 				</group>
 			))}
-			{dragging && selected && (
+			{/* live readout while a drag moves the mark */}
+			{dragInfo && selected && (
 				<GizmoLabel
 					position={[selected.x, selected.y + 0.42, selected.z]}
-					text={`x ${selected.x.toFixed(1)}  y ${selected.y.toFixed(1)}  z ${selected.z.toFixed(1)}`}
+					text={dragInfo.slide ? `${Math.round(pathMarkFractions(path)[selectedIndex] * 100)}%` : `x ${selected.x.toFixed(1)}  y ${selected.y.toFixed(1)}  z ${selected.z.toFixed(1)}`}
 					camRef={camRef}
 				/>
 			)}
+			{/* the span a bend will actually deform, lit on the route */}
+			{dragInfo?.radius != null && curve && (() => {
+				const span = [];
+				for (let i = 0; i < curve.points.length; i += 1) {
+					const t = curve.cumulative[i] / curve.length;
+					if (t >= dragInfo.t0 - dragInfo.radius && t <= dragInfo.t0 + dragInfo.radius) {
+						span.push([curve.points[i].x, curve.points[i].y + 0.03, curve.points[i].z]);
+					}
+				}
+				if (span.length < 2) return null;
+				return <Line points={span} color="#ffb454" lineWidth={4} transparent opacity={0.9} />;
+			})()}
 		</group>
 	);
 }

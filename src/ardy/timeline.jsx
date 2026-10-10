@@ -694,8 +694,8 @@ function ObjectTravelTrack({ object, frame, frameCount, fps, pathDraw, onPathDra
 							    a lane of their own — an empty track reads as broken. */}
 							<span className="tl-path-hint">
 								{ko(
-									`${metrics.length.toFixed(1)} m · ${path.points.length} points · double-click the line to add a point · Delete removes it`,
-									`${metrics.length.toFixed(1)} m · 점 ${path.points.length}개 · 선을 더블클릭하면 점 추가 · Delete로 삭제`,
+									`${metrics.length.toFixed(1)} m · double-click the line to add a dot · drag it to bend · Delete removes it`,
+									`${metrics.length.toFixed(1)} m · 선을 더블클릭하면 점 추가 · 끌면 휨 · Delete로 삭제`,
 								)}
 							</span>
 						</>

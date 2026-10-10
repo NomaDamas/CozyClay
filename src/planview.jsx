@@ -8,7 +8,8 @@ import { EMPTY_MARKER_SIZE, isEmptyObject, objectSize } from "./scene-objects.js
 import { displayObjectLabel } from "./object-catalog.jsx";
 import { ko } from "./locale.js";
 import { isProxyFigure } from "./scenes.js";
-import { pathCurve } from "./object-path.js";
+import { prepareRailBend } from "./camera-follow.js";
+import { MARK_GAP, MAX_PATH_MARKS, MAX_PATH_POINTS, nearestPathFraction, pathCurve, pathMarkFractions, pathPointAtFraction } from "./object-path.js";
 
 const ROOM_LIMIT = 240; // stay on the open stage (matches scene-objects' clamp)
 const ACTOR_LIMIT = 4; // matches the Subject sliders' range
@@ -345,54 +346,38 @@ const OBJECT_PATH_COLOR = "#6fcf97";
 const OBJECT_PATH_SELECTED_COLOR = "#ffb454";
 // How near the floor pointer must be to grab a route point, in metres.
 const PATH_POINT_GRAB = 0.34;
-function ObjectPathLine({ points, selectedIndex = null }) {
-	if (!points || points.length < 2) return null;
-	const first = points[0];
-	const last = points[points.length - 1];
+function ObjectPathLine({ path, selectedIndex = null, hoverIndex = null }) {
+	const curve = useMemo(() => (path?.points?.length > 1 ? pathCurve(path) : null), [path]);
+	const marks = useMemo(() => (path ? pathMarkFractions(path).map((t) => pathPointAtFraction(path, t)) : []), [path]);
+	if (!curve || curve.points.length < 2) return null;
 	return (
 		<group>
-			<Line
-				// The line is the curve the object travels, not the chords
-				// between its points.
-				points={pathCurve({ points }).points.map((point) => [point.x, 0.028, point.z])}
-				color={OBJECT_PATH_COLOR}
-				lineWidth={3}
-				transparent
-				opacity={0.92}
-				depthWrite={false}
-				depthTest={false}
-				renderOrder={9}
-			/>
-			{/* Every point is a handle here, not just the ends: the route is
-			    drawn on this board, so it should also be editable on it. */}
-			{points.map((point, index) => (
+			{/* The camera rail's own line: the curve the object travels, with the
+			    same start disc, START label, heading arrow and end ring. Only the
+			    colour is the prop's. */}
+			<CameraRailLine points={curve.points} color={OBJECT_PATH_COLOR} />
+			{/* The marks, like the rail's crane dots: the ends plus any added by
+			    double-clicking the line. These are what the board lets you grab. */}
+			{marks.map((point, index) => point && (
 				<mesh
 					key={index}
-					position={[point.x, 0.036, point.z]}
+					position={[point.x, 0.042, point.z]}
 					rotation={[-Math.PI / 2, 0, 0]}
-					renderOrder={10}
+					renderOrder={12}
 				>
-					<circleGeometry args={[index === selectedIndex ? 0.13 : 0.1, 14]} />
+					<circleGeometry args={[index === selectedIndex ? 0.13 : index === hoverIndex ? 0.12 : 0.1, 14]} />
 					<meshBasicMaterial
-						color={index === selectedIndex ? OBJECT_PATH_SELECTED_COLOR : OBJECT_PATH_COLOR}
+						color={index === selectedIndex ? OBJECT_PATH_SELECTED_COLOR : index === hoverIndex ? "#d4f7e2" : "#2f8f5b"}
 						depthWrite={false}
 						depthTest={false}
 					/>
 				</mesh>
 			))}
-			<mesh position={[first.x, 0.038, first.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={11}>
-				<circleGeometry args={[0.16, 18]} />
-				<meshBasicMaterial color={OBJECT_PATH_COLOR} depthWrite={false} depthTest={false} />
-			</mesh>
-			<mesh position={[last.x, 0.038, last.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={11}>
-				<ringGeometry args={[0.13, 0.19, 18]} />
-				<meshBasicMaterial color={OBJECT_PATH_COLOR} depthWrite={false} depthTest={false} />
-			</mesh>
 		</group>
 	);
 }
 
-function CameraRailLine({ points, live = false }) {
+function CameraRailLine({ points, live = false, color = RAIL_COLOR }) {
 	const directionGeometry = useMemo(() => {
 		if (live || !points || points.length < 2) return null;
 		const head = points[0];
@@ -424,22 +409,22 @@ function CameraRailLine({ points, live = false }) {
 	const last = points[points.length - 1];
 	return (
 		<group>
-			<Line points={points.map((point) => [point.x, 0.03, point.z])} color={RAIL_COLOR} lineWidth={live ? 2.5 : 3.5} transparent opacity={live ? 0.72 : 0.96} depthWrite={false} depthTest={false} renderOrder={9} />
+			<Line points={points.map((point) => [point.x, 0.03, point.z])} color={color} lineWidth={live ? 2.5 : 3.5} transparent opacity={live ? 0.72 : 0.96} depthWrite={false} depthTest={false} renderOrder={9} />
 			{!live && (
 				<>
 					<mesh position={[first.x, 0.04, first.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={11}>
 						<circleGeometry args={[0.22, 20]} />
-						<meshBasicMaterial color={RAIL_COLOR} depthWrite={false} depthTest={false} />
+						<meshBasicMaterial color={color} depthWrite={false} depthTest={false} />
 					</mesh>
 					<mesh position={[first.x, 0.039, first.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={10}>
 						<ringGeometry args={[0.27, 0.32, 20]} />
-						<meshBasicMaterial color={RAIL_COLOR} transparent opacity={0.72} depthWrite={false} depthTest={false} />
+						<meshBasicMaterial color={color} transparent opacity={0.72} depthWrite={false} depthTest={false} />
 					</mesh>
 					<Text
 						position={[first.x, 0.05, first.z + 0.48]}
 						rotation={[-Math.PI / 2, 0, 0]}
 						fontSize={0.24}
-						color={RAIL_COLOR}
+						color={color}
 						anchorX="center"
 						anchorY="middle"
 						outlineWidth={0.035}
@@ -452,12 +437,12 @@ function CameraRailLine({ points, live = false }) {
 					</Text>
 					{directionGeometry && (
 						<mesh geometry={directionGeometry} renderOrder={11}>
-							<meshBasicMaterial color={RAIL_COLOR} depthWrite={false} depthTest={false} side={THREE.DoubleSide} />
+							<meshBasicMaterial color={color} depthWrite={false} depthTest={false} side={THREE.DoubleSide} />
 						</mesh>
 					)}
 					<mesh position={[last.x, 0.04, last.z]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={10}>
 						<ringGeometry args={[0.1, 0.15, 16]} />
-						<meshBasicMaterial color={RAIL_COLOR} depthWrite={false} depthTest={false} />
+						<meshBasicMaterial color={color} depthWrite={false} depthTest={false} />
 					</mesh>
 				</>
 			)}
@@ -520,7 +505,7 @@ function WaypointPath({ waypoints, start, activeWaypointId }) {
  * reports moves that still hit it, so a fast drag off the edge silently strands
  * the puck.
  */
-export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, characters = [], characterPlacements = [], onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, pathStart = null, waypoints, activeWaypointId, onSelectWaypoint, onMoveWaypoint, onSelectEntity, sceneObjects = [], selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, cameraRailPoints = null, railDraw = false, onRailStroke, pathDraw = false, onPathStroke, objectPathPoints = null, objectPathSelectedIndex = null, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, subjectTrack = null, onCameraChange, keyLight = null, minimal = false }) {
+export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, characters = [], characterPlacements = [], onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, pathStart = null, waypoints, activeWaypointId, onSelectWaypoint, onMoveWaypoint, onSelectEntity, sceneObjects = [], selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, cameraRailPoints = null, railDraw = false, onRailStroke, pathDraw = false, onPathStroke, objectPath = null, objectPathSelectedIndex = null, onObjectPathPointSelect, onObjectPathChange, onObjectPathMarkInsert, onObjectPathGestureStart, onObjectPathGestureEnd, subjectTrack = null, onCameraChange, keyLight = null, minimal = false }) {
 	characters = characters.map(entry => {
 		const placement = isProxyFigure(entry) && characterPlacements.find(view => view.id === entry.id);
 		return placement ? { ...entry, x: placement.position[0], z: placement.position[2], rot: placement.rot } : entry;
@@ -528,6 +513,8 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 	const [drag, setDrag] = useState(null); // { id, mode }
 	// live stroke while the rail is being drawn; world XZ, display only
 	const [railStroke, setRailStroke] = useState(null);
+	// the route mark under the pointer, for the hover highlight
+	const [hoverMark, setHoverMark] = useState(null);
 	const rootRef = useRef();
 	const camPos = useRef();
 	const camRot = useRef();
@@ -554,8 +541,8 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 	// clears dragRef, so a dep that changes while dragging (charA.x does, on the
 	// very first move) would kill the drag after one frame. Read live values
 	// through a ref and keep the effect's deps stable.
-	const latest = useRef({ objectPathPoints, objectPathSelectedIndex, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, characters, waypoints, onSelectWaypoint, onMoveWaypoint, onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, onSelectEntity, sceneObjects, selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, railDraw, onRailStroke, pathDraw, onPathStroke, onCameraChange });
-	latest.current = { objectPathPoints, objectPathSelectedIndex, onObjectPathPointSelect, onObjectPathPointMove, onObjectPathPointInsert, onObjectPathGestureStart, onObjectPathGestureEnd, characters, waypoints, onSelectWaypoint, onMoveWaypoint, onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, onSelectEntity, sceneObjects, selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, railDraw, onRailStroke, pathDraw, onPathStroke, onCameraChange };
+	const latest = useRef({ objectPath, objectPathSelectedIndex, onObjectPathPointSelect, onObjectPathChange, onObjectPathMarkInsert, onObjectPathGestureStart, onObjectPathGestureEnd, characters, waypoints, onSelectWaypoint, onMoveWaypoint, onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, onSelectEntity, sceneObjects, selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, railDraw, onRailStroke, pathDraw, onPathStroke, onCameraChange });
+	latest.current = { objectPath, objectPathSelectedIndex, onObjectPathPointSelect, onObjectPathChange, onObjectPathMarkInsert, onObjectPathGestureStart, onObjectPathGestureEnd, characters, waypoints, onSelectWaypoint, onMoveWaypoint, onMoveCharacter, onCharacterGestureStart, onWaypointGestureStart, onCameraGestureStart, onSelectEntity, sceneObjects, selectedSceneObjectId, onMoveSceneObject, onObjectMoveStart, onObjectMoveEnd, railDraw, onRailStroke, pathDraw, onPathStroke, onCameraChange };
 
 	const targets = () => {
 		const cast = latest.current.characters;
@@ -648,13 +635,15 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			// "the puck doesn't move". Pick the NEAREST target instead.
 			// A route's own points outrank pucks: they are smaller, they sit on
 			// top of the deck, and a press near one is always meant for it.
-			const pathPoints = latest.current.objectPathPoints;
-			if (pathPoints && pathPoints.length >= 2) {
+			const route = latest.current.objectPath;
+			if (route && route.points?.length >= 2) {
 				let nearest = null;
-				for (let i = 0; i < pathPoints.length; i += 1) {
-					const d = (p.x - pathPoints[i].x) ** 2 + (p.z - pathPoints[i].z) ** 2;
+				pathMarkFractions(route).forEach((t, i) => {
+					const at = pathPointAtFraction(route, t);
+					if (!at) return;
+					const d = (p.x - at.x) ** 2 + (p.z - at.z) ** 2;
 					if (d < PATH_POINT_GRAB * PATH_POINT_GRAB && (!nearest || d < nearest.d)) nearest = { d, index: i };
-				}
+				});
 				if (nearest) return { id: `path:${nearest.index}`, mode: "pathPoint", origin: { pathIndex: nearest.index } };
 			}
 			const list = targets();
@@ -706,8 +695,17 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			// instantly (plan §6.4). Camera, character and waypoint grips
 			// write separate state and must never open a scene transaction.
 			if (grip.mode === "pathPoint") {
-				// One undo entry per point drag, like every other plan gesture.
+				// One undo entry per mark drag, like every other plan gesture.
 				latest.current.onObjectPathGestureStart?.();
+				// The bend this drag applies (the camera rail's own preparation):
+				// the route's points around the mark follow, fading out by the
+				// neighbouring marks.
+				const route = latest.current.objectPath;
+				const fractions = pathMarkFractions(route);
+				const base = pathPointAtFraction(route, fractions[grip.origin.pathIndex]);
+				const bend = base && prepareRailBend(route.points, base, fractions.map((t) => ({ t })), grip.origin.pathIndex, { maxControls: MAX_PATH_POINTS });
+				dragRef.current.bend = bend;
+				dragRef.current.pressed = { x: p.x, z: p.z };
 			} else if (grip.origin.objectId) {
 				dragRef.current.token = latest.current.onObjectMoveStart?.({
 					owner: "plan",
@@ -738,6 +736,8 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			}
 			const p = toFloor(event);
 			const grip = p && pick(p);
+			const markIndex = grip?.mode === "pathPoint" ? grip.origin.pathIndex : null;
+			setHoverMark((current) => (current === markIndex ? current : markIndex));
 			host.style.cursor = !grip
 				? "default"
 				: grip.mode === "turn"
@@ -762,10 +762,18 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			}
 
 			if (grip.mode === "pathPoint") {
-				latest.current.onObjectPathPointMove?.(grip.origin.pathIndex, {
-					x: snap(p.x, ROOM_LIMIT),
-					z: snap(p.z, ROOM_LIMIT),
+				if (!grip.bend) return;
+				// Floor only: a point's height is the scene's business, so y rides
+				// through untouched. The pull is snapped like every board move.
+				const dx = Math.round((p.x - grip.pressed.x) / 0.05) * 0.05;
+				const dz = Math.round((p.z - grip.pressed.z) / 0.05) * 0.05;
+				const moved = grip.bend.startControls.map((entry, i) => {
+					const weight = grip.bend.weights[i];
+					return weight > 0
+						? { ...entry, x: THREE.MathUtils.clamp(entry.x + dx * weight, -ROOM_LIMIT, ROOM_LIMIT), z: THREE.MathUtils.clamp(entry.z + dz * weight, -ROOM_LIMIT, ROOM_LIMIT) }
+						: entry;
 				});
+				latest.current.onObjectPathChange?.({ points: moved });
 				return;
 			}
 
@@ -867,27 +875,20 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 		// 3D scene uses, offered here because this is the board the route was
 		// drawn on, so this is where a hand goes looking for it.
 		const onDouble = (event) => {
-			const points = latest.current.objectPathPoints;
-			if (!points || points.length < 2) return;
+			const route = latest.current.objectPath;
+			if (!route || route.points?.length < 2) return;
 			if (latest.current.railDraw || latest.current.pathDraw) return;
 			const p = toFloor(event);
 			if (!p) return;
-			let best = null;
-			for (let i = 0; i < points.length - 1; i += 1) {
-				const a = points[i];
-				const b = points[i + 1];
-				const dx = b.x - a.x;
-				const dz = b.z - a.z;
-				const lenSq = dx * dx + dz * dz;
-				const t = lenSq < 1e-9 ? 0 : Math.min(1, Math.max(0, ((p.x - a.x) * dx + (p.z - a.z) * dz) / lenSq));
-				const d = Math.hypot(a.x + dx * t - p.x, a.z + dz * t - p.z);
-				if (!best || d < best.d) best = { d, index: i, t };
-			}
-			// Near the line, and not on top of a point that is already there.
-			if (!best || best.d > PATH_POINT_GRAB || best.t < 0.04 || best.t > 0.96) return;
+			const fractions = pathMarkFractions(route);
+			if (fractions.length >= MAX_PATH_MARKS) return;
+			const best = nearestPathFraction(route, (point) => ({ x: point.x, y: point.z }), p.x, p.z);
+			// Near the line, and not on top of a mark that is already there.
+			if (!best || best.d > PATH_POINT_GRAB) return;
+			if (fractions.some((entry) => Math.abs(entry - best.t) < MARK_GAP + 0.01)) return;
 			event.preventDefault();
 			event.stopPropagation();
-			latest.current.onObjectPathPointInsert?.(best.index, best.t);
+			latest.current.onObjectPathMarkInsert?.(best.t);
 		};
 
 		const onEscape = (event) => {
@@ -967,7 +968,7 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			{railStroke && railStroke.length > 1 && <CameraRailLine points={railStroke} live />}
 			{/* The selected object's travel path, drawn in its own colour so a
 			    prop's route never reads as the camera's rail. */}
-			{!minimal && objectPathPoints && objectPathPoints.length > 1 && <ObjectPathLine points={objectPathPoints} selectedIndex={objectPathSelectedIndex} />}
+			{!minimal && objectPath && objectPath.points?.length > 1 && <ObjectPathLine path={objectPath} selectedIndex={objectPathSelectedIndex} hoverIndex={hoverMark} />}
 			{/* The sun on the floor plan: a gold disc + a stem toward the stage
 			    centre, so blocking can read where the light comes from without
 			    switching to the 3D scene. Not draggable here — the 3D puck owns

@@ -189,10 +189,9 @@ import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
 	objectTransformAt,
-	pathCurvePointBetween,
+	pathMarkFractions,
 	pathMetrics,
 	strokeToPathPoints,
-	MAX_PATH_POINTS,
 } from "./object-path.js";
 import { carriedPointAt, sceneObjectsAt } from "./object-travel.js";
 import {
@@ -7505,28 +7504,26 @@ export default function App() {
 								cameraRailPoints={railCurve ? railCurve.points : null}
 								railDraw={railDraw}
 								pathDraw={pathDraw}
-								objectPathPoints={selectedSceneObject?.path?.points ?? null}
+								objectPath={selectedSceneObject?.path ?? null}
 								objectPathSelectedIndex={pathPointIndex}
 								onObjectPathPointSelect={setPathPointIndex}
-								onObjectPathPointMove={(index, floor) => {
+								onObjectPathChange={(patch) => {
 									const path = selectedSceneObject?.path;
 									if (!path) return;
-									// The board edits the floor route only; a point's height is
-									// the scene's business, so y rides through untouched.
-									const points = path.points.map((point, i) => (i === index ? { ...point, x: floor.x, z: floor.z } : point));
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, points } }, planPathTokenRef.current);
+									// Inside the gesture's own transaction (planPathTokenRef), like
+									// the 3D view. The board bends the floor route only; a point's
+									// height is the scene's business, so y rides through untouched.
+									changeSceneObject(selectedSceneObject.id, { path: { ...path, ...patch } }, planPathTokenRef.current);
 								}}
-								onObjectPathPointInsert={(index, t) => {
+								onObjectPathMarkInsert={(t) => {
 									const path = selectedSceneObject?.path;
-									if (!path || path.points.length >= MAX_PATH_POINTS) return;
-									// On the curve, so adding a handle barely reshapes the route.
-									const inserted = pathCurvePointBetween(path.points, index, t);
-									const points = [...path.points.slice(0, index + 1), inserted, ...path.points.slice(index + 1)];
+									if (!path) return;
+									const marks = [...pathMarkFractions(path).slice(1, -1), t].sort((a, b) => a - b);
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, points } }, token);
+									changeSceneObject(selectedSceneObject.id, { path: { ...path, marks } }, token);
 									endSceneTransaction(token, { commit: true });
-									setPathPointIndex(index + 1);
-									setToast(ko("Point added — drag it here, or lift it in the scene", "점을 추가했어요 — 여기서 끌거나 씬에서 높이를 올리세요"));
+									setPathPointIndex(marks.indexOf(t) + 1);
+									setToast(ko("Dot added — drag it to bend the route", "점을 추가했어요 — 끌어서 경로를 휘세요"));
 								}}
 								onObjectPathGestureStart={() => {
 									planPathTokenRef.current = beginSceneTransaction({ owner: "object-path", cancel: () => { planPathTokenRef.current = null; } });
@@ -7540,9 +7537,9 @@ export default function App() {
 								onRailStroke={shotsDomain.drawCameraRail}
 								onPathStroke={(stroke) => {
 									if (!selectedSceneObject) return;
-									// Few points on purpose: the stroke sets the shape, the
-									// operator adds the handles they actually want by
-									// double-clicking the line. The route starts at the height
+									// The stroke keeps its shape, as the camera rail's does; the
+									// operator adds the dots they want to hold by double-clicking
+									// the line. The route starts at the height
 									// the object stands at, so a raised body (a chassis on its
 									// wheels, a prop on a table) travels where it is instead of
 									// dropping to the floor; changing height comes later, from
@@ -7551,8 +7548,10 @@ export default function App() {
 									const points = strokeToPathPoints(stroke, simplifyStroke).map((point) => ({ ...point, y: height }));
 									if (points.length < 2) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-									changeSceneObject(selectedSceneObject.id, { path: { ...(selectedSceneObject.path ?? {}), points } }, token);
+									// A new stroke is a new shape: marks belong to the old one.
+									changeSceneObject(selectedSceneObject.id, { path: { ...(selectedSceneObject.path ?? {}), points, marks: [] } }, token);
 									endSceneTransaction(token, { commit: true });
+									setPathPointIndex(null);
 									setPathDraw(false);
 									const metrics = pathMetrics(createObjectPath({ points }));
 									setToast(isKo
@@ -7605,12 +7604,12 @@ export default function App() {
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setPathPointIndex}
-								onChangePoints={(points) => {
+								onChangePath={(patch) => {
 									if (!selectedSceneObject) return;
-									// Inside the drag's own transaction, like the Top-View point
+									// Inside the drag's own transaction, like the Top-View mark
 									// move: a plain update while the transaction is open is
 									// refused, so the dot never moved in the 3D view.
-									changeSceneObject(selectedSceneObject.id, { path: points === null ? null : { ...selectedSceneObject.path, points } }, pathDragTokenRef.current);
+									changeSceneObject(selectedSceneObject.id, { path: patch === null ? null : { ...selectedSceneObject.path, ...patch } }, pathDragTokenRef.current);
 								}}
 								onDragStart={() => {
 									pathDragTokenRef.current = beginSceneTransaction({ owner: "object-path", cancel: () => {} });

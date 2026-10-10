@@ -1,8 +1,9 @@
 // Object travel paths: schema repair, arc-length sampling and the frame →
 // transform answer that playback, export and MCP all share.
 import { readFileSync } from "node:fs";
-import { createObjectPath, pathCurve, pathCurvePointBetween, pathMetrics, objectTransformAt, strokeToPathPoints, MAX_PATH_POINTS, STROKE_MAX_POINTS } from "../src/object-path.js";
+import { createObjectPath, nearestPathFraction, pathCurve, pathCurvePointBetween, pathMarkFractions, pathMetrics, pathPointAtFraction, objectTransformAt, strokeToPathPoints, translateObjectPath, MAX_PATH_MARKS, MAX_PATH_POINTS, STROKE_MAX_POINTS } from "../src/object-path.js";
 import { simplifyStroke } from "../src/camera-follow.js";
+import { claimsPress } from "../src/gizmo-claim.js";
 import { updateSceneObject } from "../src/scene-objects.js";
 
 let failures = 0;
@@ -143,10 +144,10 @@ const take = { frameCount: 25, fps: 24 }; // exactly one second of travel
 	})());
 }
 
-/* --- a stroke drops few dots -------------------------------------------- */
+/* --- a stroke keeps its shape, like the camera rail's ---------------------- */
 
-// The stroke sets the shape; the operator adds the handles they want by
-// double-clicking the line. A route littered with twenty dots is unusable.
+// The camera rail simplifies at 0.12 m and keeps what that asks for; the route
+// takes the same treatment. What a hand grabs are the MARKS, not these points.
 const straightDrag = Array.from({ length: 60 }, (_, i) => ({ x: i * 0.1, z: 0 }));
 const dogLeg = [
 	...Array.from({ length: 30 }, (_, i) => ({ x: i * 0.2, z: 0 })),
@@ -155,7 +156,7 @@ const dogLeg = [
 const circle = Array.from({ length: 120 }, (_, i) => ({ x: Math.cos((i / 120) * Math.PI * 2) * 5, z: Math.sin((i / 120) * Math.PI * 2) * 5 }));
 const noisy = Array.from({ length: 200 }, (_, i) => ({ x: i * 0.05, z: Math.sin(i) * 0.4 }));
 
-ok("a straight drag is two points", strokeToPathPoints(straightDrag, simplifyStroke).length === 2);
+ok("a straight drag is two points (nothing to keep)", strokeToPathPoints(straightDrag, simplifyStroke).length === 2);
 ok("a dog-leg keeps its corner", strokeToPathPoints(dogLeg, simplifyStroke).length === 3);
 ok(
 	"no stroke exceeds the ceiling",
@@ -172,6 +173,34 @@ ok(
 );
 ok("a stroke that is not a stroke yields nothing", strokeToPathPoints([{ x: 0, z: 0 }], simplifyStroke).length === 0);
 ok("stroke points come in floor form, height authored later", strokeToPathPoints(dogLeg, simplifyStroke).every((point) => point.y === 0));
+
+ok(
+	"a drawn stroke keeps the camera rail's point count (same 0.12 m pass), not a caricature",
+	(() => {
+		const stroke = Array.from({ length: 100 }, (_, i) => ({ x: i * 0.1, z: Math.sin(i * 0.12) * 2 }));
+		const rail = simplifyStroke(stroke, 0.12);
+		const route = strokeToPathPoints(stroke, simplifyStroke);
+		return rail.length > 5 && route.length === rail.length;
+	})(),
+);
+ok("a very busy stroke still fits the schema's point ceiling", strokeToPathPoints(noisy, simplifyStroke).length <= MAX_PATH_POINTS);
+ok("a stroke is not capped at the old five points", STROKE_MAX_POINTS === MAX_PATH_POINTS);
+
+/* --- marks: the dots a hand takes hold of ---------------------------------- */
+
+{
+	const flat = createObjectPath({ points: [{ x: 0, z: 0 }, { x: 10, z: 0 }] });
+	ok("a route has its two ends as marks and no more by default", pathMarkFractions(flat).join() === "0,1");
+	const marked = createObjectPath({ points: [{ x: 0, z: 0 }, { x: 10, z: 0 }], marks: [0.7, 0.3, 0.31, 0.001, 0.999, "x", 0.3] });
+	ok("marks are sorted, deduplicated and kept off the ends", pathMarkFractions(marked).join() === "0,0.3,0.7,1");
+	const many = createObjectPath({ points: [{ x: 0, z: 0 }, { x: 10, z: 0 }], marks: Array.from({ length: 30 }, (_, i) => 0.04 + i * 0.03) });
+	ok("marks stop at the camera rail's ceiling", pathMarkFractions(many).length === MAX_PATH_MARKS);
+	ok("marks survive a translated route", pathMarkFractions(translateObjectPath(marked, { x: 3, y: 0, z: 1 })).join() === "0,0.3,0.7,1");
+	const at = pathPointAtFraction(flat, 0.25);
+	ok("a mark rides the curve at its arc fraction", near(at.x, 2.5, 1e-6) && near(at.z, 0, 1e-6));
+	const hit = nearestPathFraction(flat, (point) => ({ x: point.x * 10, y: point.z * 10 }), 40, 3);
+	ok("the nearest spot on the route is found by arc fraction", near(hit.t, 0.4, 1e-6) && near(hit.d, 3, 1e-6));
+}
 
 /* --- the strip loads the selected subject -------------------------------- */
 
@@ -206,17 +235,17 @@ const handlesSource = appSource.slice(
 	appSource.indexOf("function CraneHandles("),
 );
 
-ok("the route takes a mid-path point on double-click", handlesSource.includes('addEventListener("dblclick", onDouble'));
+ok("the route takes a mark on double-click", handlesSource.includes('addEventListener("dblclick", onDouble'));
 ok(
-	"an inserted point lands on the travelled curve, so adding one barely reshapes the route",
-	handlesSource.includes("pathCurvePointBetween(points, best.index, best.t)"),
+	"a mark lands on the travelled curve, so adding one never reshapes the route",
+	handlesSource.includes("nearestPathFraction(s.path, paneScreen, event.clientX, event.clientY)"),
 );
-ok("a point cannot be dropped on top of its neighbour", handlesSource.includes("best.t < 0.02 || best.t > 0.98"));
-ok("the route refuses to grow past the point ceiling", handlesSource.includes("points.length >= MAX_PATH_POINTS"));
-ok(
-	"deleting the last removable point clears the route instead of leaving a stub",
-	handlesSource.includes("remaining.length >= 2 ? remaining : null"),
-);
+ok("a mark cannot be dropped on top of another", handlesSource.includes("PATH_MARK_CLEARANCE"));
+ok("the route refuses to grow past the camera rail's mark ceiling", handlesSource.includes("fractions.length >= MAX_PATH_MARKS"));
+ok("dragging a mark bends the route with the camera rail's own preparation", handlesSource.includes("prepareRailBend(s.path.points"));
+ok("Shift slides a mark along the route, as a crane mark slides", handlesSource.includes("event.shiftKey"));
+ok("a press on the route is claimed, so the object stays selected for the double-click", handlesSource.includes("userData.pathLine") && claimsPress([{ object: { userData: { pathLine: true }, parent: null } }]));
+ok("only an interior mark can be deleted", handlesSource.includes("s.selectedIndex <= 0 || s.selectedIndex >= fractions.length - 1"));
 ok(
 	"a selected point owns Delete, so the prop survives the press",
 	appSource.includes("if (pathPointIndex != null) return;"),
@@ -227,13 +256,13 @@ ok(
 
 const planSource = readFileSync(new URL("../src/planview.jsx", import.meta.url), "utf8");
 
-ok("the Top-View takes a mid-path point on double-click", planSource.includes('addEventListener("dblclick", onDouble)'));
-ok("the board draws every route point, not just the ends", planSource.includes("points.map((point, index) => ("));
+ok("the Top-View takes a mark on double-click", planSource.includes('addEventListener("dblclick", onDouble)'));
+ok("the board draws the camera rail's own line for the route", planSource.includes("<CameraRailLine points={curve.points} color={OBJECT_PATH_COLOR} />"));
 ok("route points outrank pucks when picking on the board", planSource.includes('mode: "pathPoint"'));
 ok("dragging a board point is one undo entry", planSource.includes("onObjectPathGestureStart") && planSource.includes("onObjectPathGestureEnd"));
 ok(
-	"the board edits the floor route and leaves height to the scene",
-	appSource.includes("{ ...point, x: floor.x, z: floor.z }"),
+	"the board bends the floor route and leaves height to the scene",
+	planSource.includes("prepareRailBend(route.points") && !planSource.includes("entry.y +"),
 );
 ok(
 	"the strip teaches both gestures instead of leaving them to be found",

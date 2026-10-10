@@ -15,11 +15,34 @@
 import { createTiming, timingIsFlat, timingProgress } from "./speed-envelope.js";
 
 const MAX_PATH_POINTS = 64;
+// The camera rail's crane marks, mirrored: the two ends are always marks, up to
+// MAX_PATH_MARKS in all, never closer than MARK_GAP of the route's length.
+const MAX_PATH_MARKS = 8;
+const MARK_GAP = 0.03;
 const ROOM_LIMIT = 240;
 const MAX_HEIGHT = 60;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const finite = (value, fallback = 0) => (typeof value === "number" && Number.isFinite(value) ? value : fallback);
+
+/**
+ * The interior marks (arc fractions of the route) a hand has dropped on it.
+ * The ends are implicit marks 0 and 1 and never stored.
+ */
+function normalizeMarks(value) {
+	const marks = [];
+	const sorted = (Array.isArray(value) ? value : [])
+		.map((entry) => finite(entry, -1))
+		.filter((t) => t > MARK_GAP && t < 1 - MARK_GAP)
+		.sort((a, b) => a - b);
+	for (const t of sorted) {
+		const previous = marks.length ? marks[marks.length - 1] : 0;
+		if (t - previous < MARK_GAP || 1 - t < MARK_GAP) continue;
+		if (marks.length >= MAX_PATH_MARKS - 2) break;
+		marks.push(t);
+	}
+	return marks;
+}
 
 /** One authored path point: a floor position plus the height it travels at. */
 function createPathPoint(value) {
@@ -55,6 +78,9 @@ export function createObjectPath(value) {
 	const timing = createTiming(value.timing);
 	return {
 		points,
+		// The grabbable dots on the route (see pathMarkFractions); the points
+		// are the route's shape, the marks are where a hand takes hold of it.
+		marks: normalizeMarks(value.marks),
 		timing: timingIsFlat(timing) ? null : timing,
 		// 0 means "fill the timeline": the length/duration answer is computed at
 		// sample time, where the take's duration is known.
@@ -171,6 +197,49 @@ export function pathCurvePointBetween(points, index, t) {
 	if (index < 0 || index + 1 >= list.length) return null;
 	const at = catmullRom(...segmentControls(list, index), clamp(finite(t), 0, 1));
 	return { x: at.x, y: Math.max(0, at.y), z: at.z };
+}
+
+/** Every mark as an arc fraction, ends included: the dots the editors draw. */
+export function pathMarkFractions(path) {
+	return [0, ...normalizeMarks(path?.marks), 1];
+}
+
+/** The point at arc fraction `t` of the travelled curve. */
+export function pathPointAtFraction(path, t) {
+	const curve = pathCurve(path);
+	if (!curve.points.length) return null;
+	const at = pointAtDistance({ extend: false }, curve, clamp(finite(t), 0, 1) * curve.length);
+	return { x: at.x, y: at.y, z: at.z };
+}
+
+/**
+ * Where on the travelled curve a screen/plan position is nearest: `project`
+ * maps a world point to the editor's 2D space (pixels in the scene, metres on
+ * the board). Returns `{ d, t, point }` — distance in that space, arc fraction,
+ * the curve point — or null for a route with no length.
+ */
+export function nearestPathFraction(path, project, x, y) {
+	const curve = pathCurve(path);
+	if (curve.length <= 1e-9) return null;
+	let best = null;
+	let prev = null;
+	for (let i = 0; i < curve.points.length; i += 1) {
+		const screen = project(curve.points[i]);
+		if (screen && prev) {
+			const dx = screen.x - prev.screen.x;
+			const dy = screen.y - prev.screen.y;
+			const lenSq = dx * dx + dy * dy;
+			const w = lenSq < 1e-12 ? 0 : clamp(((x - prev.screen.x) * dx + (y - prev.screen.y) * dy) / lenSq, 0, 1);
+			const d = Math.hypot(prev.screen.x + dx * w - x, prev.screen.y + dy * w - y);
+			if (!best || d < best.d) {
+				const distance = curve.cumulative[prev.i] + (curve.cumulative[i] - curve.cumulative[prev.i]) * w;
+				best = { d, t: distance / curve.length };
+			}
+		}
+		prev = screen ? { screen, i } : null;
+	}
+	if (best) best.point = pathPointAtFraction(path, best.t);
+	return best;
 }
 
 /**
@@ -310,23 +379,21 @@ export function objectTransformAt(object, frame, take = {}) {
 }
 
 /**
- * A drawn stroke becomes the FEWEST points that still carry its shape.
+ * A drawn stroke keeps its shape, exactly as the camera rail's does.
  *
- * The rail wants fidelity to the drawn curve; a travel route does not. A route
- * is a plan the operator then adjusts point by point, and a stroke that lands
- * twenty dots on the floor is a route nobody can grab. So this simplifies
- * coarsely and, if the shape is still busy, keeps coarsening until the count
- * fits under the ceiling: a straight drag gives two points, a dog-leg three,
- * and anything more elaborate stays inside a handful the hand can manage.
- * Points are added deliberately afterwards, by double-clicking the line.
+ * The rail runs the stroke through the same Douglas-Peucker pass (0.12 m) and
+ * keeps every vertex it asks for; a route is the same kind of line, so it gets
+ * the same treatment instead of a two-or-three point caricature. Those
+ * vertices are the shape; what the hand grabs are the MARKS (pathMarkFractions)
+ * — the ends, plus dots added by double-clicking the line. The schema's point
+ * ceiling is the only limit: a busier stroke coarsens until it fits.
  */
-const STROKE_MAX_POINTS = 5;
+const STROKE_EPSILON = 0.12;
+const STROKE_MAX_POINTS = MAX_PATH_POINTS;
 
-export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_POINTS, epsilon = 0.55 } = {}) {
+export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_POINTS, epsilon = STROKE_EPSILON } = {}) {
 	if (!stroke || stroke.length < 2) return [];
 	let points = simplify(stroke, epsilon);
-	// Escalate rather than pick a single magic epsilon: the right coarseness
-	// depends on how big the drawn route is, which only the stroke knows.
 	for (let step = 0; step < 12 && points.length > maxPoints; step += 1) {
 		epsilon *= 1.8;
 		points = simplify(stroke, epsilon);
@@ -342,4 +409,4 @@ export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_PO
 	return points.map((point) => ({ x: point.x, y: 0, z: point.z }));
 }
 
-export { MAX_PATH_POINTS, MAX_HEIGHT as MAX_PATH_HEIGHT, STROKE_MAX_POINTS };
+export { MAX_PATH_POINTS, MAX_PATH_MARKS, MARK_GAP, MAX_HEIGHT as MAX_PATH_HEIGHT, STROKE_MAX_POINTS };
