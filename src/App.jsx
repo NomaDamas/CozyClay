@@ -194,6 +194,7 @@ import {
 	strokeToPathPoints,
 } from "./object-path.js";
 import { carriedPointAt, sceneObjectsAt } from "./object-travel.js";
+import { routeOwnerFor } from "./route-owner.js";
 import {
 	analyticsActive,
 	exportFailureCode,
@@ -1543,6 +1544,13 @@ export default function App() {
 		attachTargetForRow, attachTargetLabel, attachSceneObject,
 	} = objectsDomain;
 
+	// The record whose route the studio shows for the selection: the selected
+	// record itself, or the routed record inside the group it stands for (a car
+	// Empty over its Chassis). Selection stays on the group; only the route's
+	// source moves. With no route anywhere a new stroke lands on the selection.
+	const routeOwner = useMemo(() => routeOwnerFor(sceneObjects, selectedSceneObjectId), [sceneObjects, selectedSceneObjectId]);
+	const pathTarget = routeOwner ?? selectedSceneObject;
+
 	// An undo offer is an offer, not a banner: without a window it sits on the
 	// screen for the rest of the session. Long enough to notice and reach, then
 	// gone — the deletion is still reversible through Undo history afterwards.
@@ -1965,7 +1973,7 @@ export default function App() {
 	// selection would point the gizmo at a stale dot.
 	useEffect(() => {
 		setPathPointIndex(null);
-	}, [selectedSceneObjectId]);
+	}, [selectedSceneObjectId, routeOwner?.id]);
 
 	useEffect(() => {
 		if (!inspectorActionsOpen) return undefined;
@@ -4511,9 +4519,10 @@ export default function App() {
 			insetPane: insetPaneRef.current,
 			mainPane: mainPaneRef.current,
 			// the selected prop's route, so QA can aim a gesture at the line
-			objectPath: selectedSceneObject?.path ?? null,
+			objectPath: routeOwner?.path ?? null,
+			objectPathOwnerId: routeOwner?.id ?? null,
 			pathPointIndex,
-			pathHandlesEnabled: !preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path,
+			pathHandlesEnabled: !preview && !lookThroughShot && !ikMode && !posing && !!routeOwner?.path,
 			addSceneObject: (kind, placement = {}) => addSceneObject(kind, placement),
 			scrub: (frame) => setTlFrame(Math.max(0, Math.min(tlFrameCount - 1, Math.round(frame)))),
 			pause: () => setTlPlaying(false),
@@ -7143,7 +7152,7 @@ export default function App() {
 		addActiveCranePoint, deleteSelectedCranePoint, setCraneSelectedIndex, tlFps, ghostLayers,
 		pathSpeed, tlPlaying, pendingWaypointFrame, stateBadge, applyMotionTrim,
 		resetMotionTrim, cutMotionAtPlayhead, changeMotionSegmentSpeed, removeMotionSegmentById, bodyContact,
-		activeShotIdx, railDraw, pathDraw, setPathDraw, setRailDraw,
+		activeShotIdx, railDraw, pathDraw, pathTarget, setPathDraw, setRailDraw,
 		setWorkspaceLayout, timingTokenRef, railCurve, ikAddKeyframe, ikDeleteKeyframe, pathPointIndex, setPathPointIndex,
 		setBodyContact, setFootSnap, advanceFrame, stepFrame, cameraPreviewEndRef,
 		manualCameraOverrideRef, setTlPlaying, setWaypointMode, selectActiveCharacterInHierarchy,
@@ -7515,25 +7524,27 @@ export default function App() {
 								cameraRailPoints={railCurve ? railCurve.points : null}
 								railDraw={railDraw}
 								pathDraw={pathDraw}
-								objectPath={selectedSceneObject?.path ?? null}
+								objectPath={routeOwner?.path ?? null}
 								objectPathSelectedIndex={pathPointIndex}
 								onObjectPathPointSelect={setPathPointIndex}
 								onObjectPathChange={(patch) => {
-									const path = selectedSceneObject?.path;
+									const path = routeOwner?.path;
 									if (!path) return;
 									// Inside the gesture's own transaction (planPathTokenRef), like
 									// the 3D view. The board bends the floor route only; a point's
 									// height is the scene's business, so y rides through untouched.
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, ...patch } }, planPathTokenRef.current);
+									changeSceneObject(routeOwner.id, { path: { ...path, ...patch } }, planPathTokenRef.current);
 								}}
 								onObjectPathMarkInsert={(t) => {
-									const path = selectedSceneObject?.path;
+									const path = routeOwner?.path;
 									if (!path) return;
-									// The new dot is born with the lean the route already has there.
+									// The new dot is born with the lean the route already has there,
+									// and it goes to the record that owns the route (the selected
+									// group may only contain it).
 									const added = insertPathMark(path, t);
 									if (!added) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, marks: added.marks } }, token);
+									changeSceneObject(routeOwner.id, { path: { ...path, marks: added.marks } }, token);
 									endSceneTransaction(token, { commit: true });
 									setPathPointIndex(added.index);
 									setToast(ko("Dot added — drag it to bend the route", "점을 추가했어요 — 끌어서 경로를 휘세요"));
@@ -7549,7 +7560,7 @@ export default function App() {
 								keyLight={keyLight}
 								onRailStroke={shotsDomain.drawCameraRail}
 								onPathStroke={(stroke) => {
-									if (!selectedSceneObject) return;
+									if (!pathTarget) return;
 									// The stroke keeps its shape, as the camera rail's does; the
 									// operator adds the dots they want to hold by double-clicking
 									// the line. The route starts at the height
@@ -7557,12 +7568,12 @@ export default function App() {
 									// wheels, a prop on a table) travels where it is instead of
 									// dropping to the floor; changing height comes later, from
 									// dragging a point in the scene.
-									const height = selectedSceneObject.attach ? 0 : selectedSceneObject.y ?? 0;
+									const height = pathTarget.attach ? 0 : pathTarget.y ?? 0;
 									const points = strokeToPathPoints(stroke, simplifyStroke).map((point) => ({ ...point, y: height }));
 									if (points.length < 2) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
 									// A new stroke is a new shape: marks belong to the old one.
-									changeSceneObject(selectedSceneObject.id, { path: { ...(selectedSceneObject.path ?? {}), points, marks: [] } }, token);
+									changeSceneObject(pathTarget.id, { path: { ...(pathTarget.path ?? {}), points, marks: [] } }, token);
 									endSceneTransaction(token, { commit: true });
 									setPathPointIndex(null);
 									setPathDraw(false);
@@ -7611,18 +7622,18 @@ export default function App() {
 								/>
 							)}
 							<ObjectPathHandles
-								path={selectedSceneObject?.path ?? null}
+								path={routeOwner?.path ?? null}
 								selectedIndex={pathPointIndex}
-								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!selectedSceneObject?.path}
+								enabled={!preview && !lookThroughShot && !ikMode && !posing && !!routeOwner?.path}
 								paneRef={mainPaneRef}
 								camRef={editorCamRef}
 								onSelect={setPathPointIndex}
 								onChangePath={(patch) => {
-									if (!selectedSceneObject) return;
+									if (!routeOwner) return;
 									// Inside the drag's own transaction, like the Top-View mark
 									// move: a plain update while the transaction is open is
 									// refused, so the dot never moved in the 3D view.
-									changeSceneObject(selectedSceneObject.id, { path: patch === null ? null : { ...selectedSceneObject.path, ...patch } }, pathDragTokenRef.current);
+									changeSceneObject(routeOwner.id, { path: patch === null ? null : { ...routeOwner.path, ...patch } }, pathDragTokenRef.current);
 								}}
 								onDragStart={() => {
 									pathDragTokenRef.current = beginSceneTransaction({ owner: "object-path", cancel: () => {} });

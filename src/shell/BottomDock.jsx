@@ -79,7 +79,7 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 		resetMotionTrim, cutMotionAtPlayhead, changeMotionSegmentSpeed, removeMotionSegmentById, ikFrames,
 		rangePins, rangePinSelection, ikEditTool, rangePinPreview, footSnap,
 		bodyContact, shots, shotAspectKey, activeShotIdx, railDraw,
-		pathDraw, selectedSceneObject, setPathDraw, setRailDraw, setWorkspaceLayout,
+		pathDraw, pathTarget, setPathDraw, setRailDraw, setWorkspaceLayout,
 		changeSceneObject, timingTokenRef, beginSceneTransaction, endSceneTransaction, railCurve,
 		posing, ikAddKeyframe, ikDeleteKeyframe, setRangePinSelection, setIkEditTool,
 		setBodyContact, setToast, setFootSnap, setTlFrame, advanceFrame,
@@ -266,14 +266,14 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 				activeShotIdx={activeShotIdx}
 				railDraw={railDraw}
 				pathDraw={pathDraw}
-				pathObject={selectedSceneObject ? { id: selectedSceneObject.id, name: sceneObjectNameDisplayKo(selectedSceneObject.name), path: selectedSceneObject.path } : null}
+				pathObject={pathTarget ? { id: pathTarget.id, name: sceneObjectNameDisplayKo(pathTarget.name), path: pathTarget.path } : null}
 				onObjectPathDrawToggle={() => {
 					setPathDraw((current) => !current);
 					if (!pathDraw) setRailDraw(false);
 					setWorkspaceLayout((current) => ({ ...current, insetCollapsed: false }));
 				}}
 				onObjectPathChange={(path) => {
-					if (selectedSceneObject) changeSceneObject(selectedSceneObject.id, { path }, timingTokenRef.current ?? undefined);
+					if (pathTarget) changeSceneObject(pathTarget.id, { path }, timingTokenRef.current ?? undefined);
 				}}
 				objectPathPointIndex={pathPointIndex}
 				onObjectMarkAdd={(t) => {
@@ -303,9 +303,9 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 				onObjectMarkScrubStart={beginSceneTransaction}
 				onObjectMarkScrubEnd={endSceneTransaction}
 				onObjectPathClear={() => {
-					if (!selectedSceneObject) return;
+					if (!pathTarget) return;
 					const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-					changeSceneObject(selectedSceneObject.id, { path: null }, token);
+					changeSceneObject(pathTarget.id, { path: null }, token);
 					endSceneTransaction(token, { commit: true });
 				}}
 				onObjectTimingGestureStart={() => {
