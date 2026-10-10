@@ -21,6 +21,7 @@
 //   GET  /agent/turn/<turnId>/events?after=N -> replay after a dropped stream
 //   POST /agent/stop                        -> { surface, sessionId, turnId, jobId? }
 //   POST /agent/jobs/<jobId>/accept          -> explicit "Apply with warnings"
+//   GET  /agent/turn/<turnId>/supervisor     -> 200 supervisor note | 204 none (#728)
 
 import { bucketMs, track } from "../analytics.js";
 import { appendAttachments, ATTACHMENT_MAX_COUNT } from "./attachment-image.js";
@@ -355,6 +356,18 @@ export const STEER_ERROR_COPY = {
 	NO_ACTIVE_TURN: "That turn already ended — send it as a new message.",
 };
 
+/** Codes a Studio refusal carries: a turn that met one is reviewed by the
+ * supervisor even when it authored nothing (#728). */
+const SUPERVISOR_REFUSAL = /^(TARGET_NOT_READY|CAPABILITY_MISSING|CONFIRMATION_REQUIRED):/;
+
+/** The next prompt a supervisor note suggests: its blocker and concern issues,
+ * or null when it raised none. */
+export function supervisorFollowUp(note) {
+	const issues = (Array.isArray(note?.issues) ? note.issues : []).filter((issue) => issue?.severity === "blocker" || issue?.severity === "concern");
+	if (!issues.length) return null;
+	return [ko("Supervisor review — please address:", "감독 검토 — 다음을 고쳐 주세요:"), ...issues.map((issue) => `- [${issue.severity}] ${issue.text}${issue.evidence ? ` (${issue.evidence})` : ""}`)].join("\n");
+}
+
 export const ERROR_COPY = {
 	auth: "Your session expired. Sign in again to continue.",
 	entitlement: "This account cannot generate images.",
@@ -685,6 +698,15 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 		},
 		async videoProviders() {
 			return request("/agent/video/providers");
+		},
+		/** The supervisor note for a finished Studio turn (#728): one long-poll
+		 * the sidecar holds while the review runs. A 200 is the note; a 204, a
+		 * failure or anything unreadable is no note. */
+		async supervisor(turnId, signal) {
+			const response = await fetchImpl(sidecarUrl(`/agent/turn/${encodeURIComponent(turnId)}/supervisor`), { headers: { accept: "application/json" }, credentials: "same-origin", signal });
+			if (response?.status !== 200) return null;
+			const note = await response.json();
+			return note?.type === "supervisor" && ["reviewed", "unavailable"].includes(note.verdict) ? note : null;
 		},
 		/** Streams sidecar events to `onEvent`. Resolves when the turn ends. */
 		async turn(turnRequest, onEvent, signal) {
@@ -1166,6 +1188,9 @@ export function createAgentChatStore({
 	// turnId, or the hex id the dock's transport mints. It is what the steer
 	// route is keyed by, and only the transport can tell us which it is.
 	let wireTurnId = null;
+	// Supervisor note requests still waiting on the sidecar; a cleared or
+	// replaced conversation abandons them.
+	const supervisorRequests = new Set();
 	let state = {
 		sessionId: newId(),
 		turnId: null,
@@ -1257,8 +1282,29 @@ export function createAgentChatStore({
 		try { onReceipt?.(receipt); } catch { /* host presentation is advisory */ }
 	}
 
+	// One request per reviewable Studio turn, after its stream ended: the note
+	// joins the transcript whenever it arrives, and nothing waits for it.
+	function requestSupervisorNote(turnId) {
+		if (typeof transport.supervisor !== "function") return;
+		const request = new AbortController();
+		supervisorRequests.add(request);
+		Promise.resolve()
+			.then(() => transport.supervisor(turnId, request.signal))
+			.then((note) => {
+				if (!note || request.signal.aborted) return;
+				setItems((items) => [...items, { ...note, kind: "supervisor", id: `supervisor:${turnId}` }]);
+			})
+			.catch(() => { /* a missing note is no note */ })
+			.finally(() => supervisorRequests.delete(request));
+	}
+	const abandonSupervisorNotes = () => { for (const request of supervisorRequests) request.abort(); supervisorRequests.clear(); };
+
 	function applyEvent(event) {
 		if (activeTurn && ["text.delta", "tool.start", "tool.done", "image", "job.state", "job.progress", "receipt", "error"].includes(event?.type)) activeTurn.produced = true;
+		// The supervisor's own trigger, read from the same frames: an authored
+		// result or a refusal makes the turn reviewable.
+		if (activeTurn && ((event?.type === "tool.done" && (event.ok ? event.result?.authored === true : SUPERVISOR_REFUSAL.test(String(event.error ?? ""))))
+			|| (event?.type === "receipt" && event.receipt?.authored === true))) activeTurn.reviewable = true;
 		if (event?.type === "text.delta") {
 			setItems((items) => {
 				const last = items[items.length - 1];
@@ -1336,6 +1382,7 @@ export function createAgentChatStore({
 	}
 
 	const resetSession = () => {
+		abandonSupervisorNotes();
 		seenReceipts.clear();
 		settledActions.clear();
 		// Clearing the transcript also retires the server session: a cleared chat
@@ -1343,6 +1390,7 @@ export function createAgentChatStore({
 		set({ sessionId: newId(), turnId: null, items: [], pendingAttachments: [], rateLimit: null, lastPrompt: "", turnStartedAt: null, lastTurn: null });
 	};
 	const restore = (transcript, sessionId = state.sessionId) => {
+		abandonSupervisorNotes();
 		seenReceipts.clear();
 		settledActions.clear();
 		const restoredReceiptIds = new Set();
@@ -1399,7 +1447,7 @@ export function createAgentChatStore({
 				return;
 			}
 			const startedAt = clock();
-			const turn = { produced: false, failure: null };
+			const turn = { produced: false, failure: null, reviewable: false };
 			activeTurn = turn;
 			// What the author attached to THIS message: an explicit list wins, the
 			// composer's pending pictures otherwise. Either way the composer is
@@ -1455,6 +1503,7 @@ export function createAgentChatStore({
 							failure: turn.failure,
 						},
 					});
+					if (studio && turn.reviewable && !signal.aborted) requestSupervisorNote(turnId);
 				}
 			}
 		},

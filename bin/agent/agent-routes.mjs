@@ -42,6 +42,10 @@ const ATTACHMENTS_MAX = 4;
 const ATTACHMENT_MAX_CHARS = 6_000_000;
 const TURN_BODY_LIMIT = ATTACHMENTS_MAX * ATTACHMENT_MAX_CHARS + 64 * 1024;
 
+// How long GET /agent/turn/<id>/supervisor holds a request for a review that
+// is still running before it answers 204 (#728).
+const SUPERVISOR_WAIT_MS = 180_000;
+
 /** Reject anything that is not a short list of inline {dataUrl, name?} images.
  * The Studio envelope validates its own copy; this is the legacy body's. */
 function validAttachments(attachments) {
@@ -339,7 +343,10 @@ function liveToolsRuntime(mcpRuntime) {
 	});
 }
 
-export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, cliproxyBaseUrl, env, fauxProvider, handlers, liveHub, mcpRuntime, port, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore } = {}) {
+// `supervisor` (#728) defaults off only under an injected scripted provider:
+// a test's script is an exact queue of replies, and a review would take one
+// meant for a later turn. The real sidecar never injects one.
+export function createAgentHandler({ auth = defaultAuth, codex, models, codexBaseUrl, cliproxyBaseUrl, env, fauxProvider, handlers, liveHub, mcpRuntime, port, studioRuntime, clock = Date.now, setIntervalImpl = setInterval, clearIntervalImpl = clearInterval, sessionStore: injectedSessionStore, supervisor = !fauxProvider } = {}) {
 	const requestContext = new AsyncLocalStorage();
 	codex ||= defaultClient(auth, requestContext);
 	const runtime = handlers !== undefined || liveHub !== undefined ? Promise.resolve({ handlers: handlers ?? [], liveHub }) : liveToolsRuntime(mcpRuntime);
@@ -401,6 +408,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		return owner;
 	};
 	const emitStudioEvent = (turnId, event) => {
+		// The supervisor note lands after the turn ended (#728): it joins the turn's
+		// record, terminal or not, but never resurrects one that was retired.
+		if (event.type === "supervisor" && !studioEvents.has(turnId)) return;
 		const record = studioEvents.get(turnId) || { next: 0, events: [], listeners: new Set(), terminal: false };
 		// Execution telemetry is advisory and is validated key-by-key in the
 		// browser: it carries no replay cursor, is never retained for a resume,
@@ -434,7 +444,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	const writeStudioStream = (res, record, after = 0, req = null) => {
 		res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-cache", connection: "keep-alive" }); res.flushHeaders?.();
 		let cursor = after; const send = event => {
-			if (res.destroyed) return;
+			if (res.destroyed || res.writableEnded) return;
 			if (event.eventSeq === undefined) { res.write(`data: ${JSON.stringify(event)}\n\n`); return; }
 			if (event.eventSeq > cursor) { cursor = event.eventSeq; res.write(`data: ${JSON.stringify(event)}\n\n`); }
 		};
@@ -455,8 +465,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	};
 	const handleStudioTurn = async (req, res, value, path) => {
 		const { StudioProtocolError, validateStudioContextFreshness } = await import("../../src/studio-agent-protocol.js");
-		const [{ createStudioTools }, { encodeStudioContext }, { createScriptTool }] = await Promise.all([
-			import("./studio-tools.mjs"), import("../../src/studio-agent-context.js"), import("./script-tool.mjs"),
+		const [{ createStudioTools }, { encodeStudioContext }, { createScriptTool }, { runSupervisor, shouldSupervise }] = await Promise.all([
+			import("./studio-tools.mjs"), import("../../src/studio-agent-context.js"), import("./script-tool.mjs"), import("./supervisor.mjs"),
 		]);
 		const hubDeps = await runtime; const hub = hubDeps.liveHub || liveHub;
 		if (path === "/agent/stop") {
@@ -513,7 +523,18 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		const record = { next: 0, events: [], listeners: new Set(), terminal: false }; studioEvents.set(value.turnId, record); session.turns.set(value.turnId, record); session.host = studioIdentity(value.context.host);
 		res.setHeader("set-cookie", `studio_owner=${encodeURIComponent(session.owner)}; Path=/agent; HttpOnly; SameSite=Strict`);
 		const close = writeStudioStream(res, record, 0, req);
-		const send = event => emitStudioEvent(value.turnId, event);
+		// What the supervisor reviews once the turn is over: every frame but text
+		// and telemetry, and the last stretch of text the model wrote.
+		const turnFrames = [];
+		let replySegment = "", lastReply = "";
+		const send = event => {
+			if (event.type === "text.delta") { replySegment += event.text ?? ""; lastReply = replySegment; }
+			else if (!["execution_telemetry", "execution_tool_started"].includes(event.type)) {
+				if (event.type === "tool.start") replySegment = "";
+				turnFrames.push(event);
+			}
+			emitStudioEvent(value.turnId, event);
+		};
 		// The Studio turn is measured exactly like the Workflow turn, correlated by
 		// the turn id the host already owns (the frozen envelope carries no room
 		// for a second one).
@@ -641,10 +662,14 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			if (frame.type === "done") {
 			if (turnOutcome === "succeeded" && !toolFailed) telemetry.finished("succeeded", null);
 			else telemetry.finished(turnOutcome, turnFailureCode || "tool_failed");
+			// Marked before the done frame leaves, so a client that asks for the
+			// review the moment its stream ends finds it pending, not absent.
+			if (supervisor && process.env.COZYCLAY_SUPERVISOR !== "off" && !controller.signal.aborted && shouldSupervise(turnFrames)) record.supervisor = "pending";
 			}
 			send(frame);
 		};
 		const persistenceMeta = { sceneName: value.context?.scene?.name ?? value.context?.sceneName ?? null, firstText: value.text, motionJobIds: [...session.motionJobIds] };
+		const modelKey = value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra");
 		let runner = studioRunners.get(value.sessionId);
 		if (!runner) {
 			runner = createAgentRunner({ models: await ensureWorkflowModels(), fauxProvider, sessionStore, clock, codexBaseUrl, cliproxyBaseUrl, auth, env });
@@ -653,7 +678,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		try {
 			if (!session.modelSession) session.modelSession = await runner.openSession(value.sessionId, { surface: "studio" });
 			for await (const frame of turnTransaction.run(input => session.modelSession.start(input))({
-				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
+				surface: "studio", sessionId: value.sessionId, model: modelKey, effort: value.effort,
 				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
 				context: value.context, tools: [...modelTools, scriptTool], systemPrompt: value.context.scene?.previsMode === "storyboard" ? STUDIO_SYSTEM_PROMPT_STORYBOARD : undefined, signal: controller.signal, emit: send,
 				meta: persistenceMeta,
@@ -668,7 +693,22 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		}
 		if (controller.signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
 		if (!record.terminal) emitFrame({ type: "done" });
-		close(); if (!res.writableEnded) res.end(); session.controller = null; session.activeTurnId = null; return true;
+		close(); if (!res.writableEnded) res.end(); session.controller = null; session.activeTurnId = null;
+		// The review starts only now, after the stream has ended, and only ever
+		// appends one note to the record: it neither delays nor steers the turn.
+		if (record.supervisor === "pending") void (async () => {
+			const startedAt = Date.now();
+			let frame;
+			try {
+				frame = await runSupervisor({ registry: await ensureWorkflowModels(), modelKey, effort: process.env.COZYCLAY_SUPERVISOR_EFFORT || "high", turnId: value.turnId, request: value.text, frames: turnFrames, reply: lastReply,
+					hub, workspaceHandle: value.context.host.workspaceHandle, admission, baseline: value.context });
+			} catch (error) {
+				frame = { type: "supervisor", turnId: value.turnId, verdict: "unavailable", model: modelKey, effort: null, elapsedMs: Date.now() - startedAt, summary: "", items: [], issues: [], counts: { blocker: 0, concern: 0, note: 0 }, reason: "The supervisor could not start." };
+			}
+			record.supervisor = "done";
+			emitStudioEvent(value.turnId, frame);
+		})();
+		return true;
 	};
 	const handle = async (req, res, path = new URL(req.url, "http://127.0.0.1").pathname) => {
 		if (!path.startsWith("/agent/")) return false;
@@ -683,6 +723,33 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			const after = Number(new URL(req.url, "http://127.0.0.1").searchParams.get("after") || 0);
 			if (!Number.isSafeInteger(after) || after < 0) { json(res, 400, { error: "invalid cursor" }); return true; }
 			writeStudioStream(res, record, after, req); return true;
+		}
+		// The supervisor note for one Studio turn (#728): 200 with the note once it
+		// exists, held up to SUPERVISOR_WAIT_MS while it is pending, 204 when the
+		// turn was never reviewed or the wait ran out.
+		if (path.startsWith("/agent/turn/") && path.endsWith("/supervisor") && req.method === "GET") {
+			if (!await hasAnyCredential()) { json(res, 401, { error: { code: "AUTH_REQUIRED", message: "Sign in or configure a provider key." } }); return true; }
+			const turnId = decodeURIComponent(path.slice("/agent/turn/".length, -"/supervisor".length));
+			const session = [...studioSessions.values()].find(candidate => candidate.turns.has(turnId)); const record = studioEvents.get(turnId);
+			if (!record || !session) { json(res, 404, { error: "turn not found" }); return true; }
+			if (parseCookies(req).studio_owner !== session.owner) { json(res, 403, { error: { code: "AUTH_REQUIRED", message: "Studio supervisor note is not owned by this session." } }); return true; }
+			const noContent = () => { res.writeHead(204, { "cache-control": "no-store" }); res.end(); };
+			const existing = record.events.findLast(event => event.type === "supervisor");
+			if (existing) { json(res, 200, existing); return true; }
+			if (record.supervisor !== "pending") { noContent(); return true; }
+			await new Promise(resolve => {
+				let timer;
+				const settle = note => {
+					clearTimeout(timer); record.listeners.delete(listener); res.off("close", onClose);
+					if (note !== undefined && !res.writableEnded && !res.destroyed) { if (note) json(res, 200, note); else noContent(); }
+					resolve();
+				};
+				const listener = event => { if (event.type === "supervisor") settle(event); };
+				const onClose = () => settle(undefined);
+				record.listeners.add(listener); res.once("close", onClose);
+				timer = setTimeout(() => settle(null), SUPERVISOR_WAIT_MS);
+			});
+			return true;
 		}
 		if (path.startsWith("/agent/turn/") && path.endsWith("/steer") && req.method === "POST") {
 			const turnId = decodeURIComponent(path.slice("/agent/turn/".length, -"/steer".length));
