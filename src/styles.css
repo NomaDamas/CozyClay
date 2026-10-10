@@ -3164,9 +3164,22 @@ input[type=range]::-moz-range-thumb {
 	vector-effect: non-scaling-stroke;
 }
 
-.sg-cut-diamond { fill: #ffb454; }
+/* The pin head lives outside the SVG: the graph's 1×1 viewBox is stretched to
+   the lane, so anything drawn inside it is as wide as the lane is long. */
+.sg-cut-pin {
+	position: absolute;
+	top: 3px;
+	width: 9px;
+	height: 9px;
+	padding: 0;
+	border: 0;
+	border-radius: 2px;
+	background: #ffb454;
+	transform: translateX(-50%) rotate(45deg);
+	cursor: pointer;
+}
 
-.sg-pin.selected .sg-cut-diamond { fill: #ffd08a; }
+.sg-cut-pin.selected { background: #ffd08a; box-shadow: 0 0 0 2px rgba(255, 208, 138, .35); }
 .sg-pin.selected .sg-cut { stroke-width: 2; stroke-dasharray: none; }
 
 .sg-cut-pick {
@@ -3362,7 +3375,9 @@ input[type=range]::-moz-range-thumb {
 .sg-shot .sg-line { stroke: #b9a1e8; }
 .sg-shot .sg-axis, .sg-shot .sg-average { stroke: rgba(185, 161, 232, .4); }
 .sg-shot .sg-readout { background: #4a3d6e; }
-.sg-shot .sg-scale-top, .sg-shot .sg-scale-avg, .sg-shot .sg-scale-zero { color: #7d6a9e; }
+/* The box's own width is its clock and it has no room for an axis: a dozen
+   pixels tall, three marks would sit on top of one another. */
+.sg-bare .sg-scale-top, .sg-bare .sg-scale-avg, .sg-bare .sg-scale-zero { display: none; }
 
 
 
@@ -3418,10 +3433,13 @@ input[type=range]::-moz-range-thumb {
 	pointer-events: none;
 }
 
+/* One axis, one edge: all three scale marks sit on the left. */
 .sg-scale-top,
-.sg-scale-avg {
+.sg-scale-avg,
+.sg-scale-zero {
 	position: absolute;
 	left: 4px;
+	right: auto;
 	color: #7fae95;
 	font-size: 8px;
 	pointer-events: none;

@@ -219,6 +219,8 @@ jobs:
             tier: gating
           - suite: qa-gizmo-click-through-browser
             tier: gating
+          - suite: qa-speed-graph-browser
+            tier: gating
           - suite: qa-proxy-figure-browser
             tier: observation
           - suite: qa-storyboard-board-browser

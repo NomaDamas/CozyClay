@@ -371,7 +371,7 @@ ok("the speed editor is a real instrument: header, graph body, axes",
 	cssSource.includes(".sg-axis") && cssSource.includes(".sg-average"));
 ok("cuts are visible affordances, not hidden gestures",
 	timelineSource.includes('ko("Cut at playhead", "재생 위치에 컷")') &&
-	cssSource.includes(".sg-cut-diamond"));
+	cssSource.includes(".sg-cut-pin"));
 ok("the travel bar row is gone, folded into the graph", !travelTrackSource.includes('ko("Travel", "이동")') && !cssSource.includes(".objmo-travel {"));
 
 

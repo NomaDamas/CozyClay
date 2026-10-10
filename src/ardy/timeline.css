@@ -1175,10 +1175,17 @@
 	fill: var(--select-tint, rgba(232, 163, 61, .14));
 }
 
-.v2-sequencer .sg-cut,
-.v2-sequencer .sg-cut-diamond {
+.v2-sequencer .sg-cut {
 	stroke: var(--select, #e8a33d);
-	fill: var(--select, #e8a33d);
+}
+
+.v2-sequencer .sg-cut-pin {
+	background: var(--select, #e8a33d);
+}
+
+.v2-sequencer .sg-cut-pin.selected {
+	background: var(--select, #e8a33d);
+	box-shadow: 0 0 0 1.5px var(--surface-panel, #1a1a1c), 0 0 0 3px var(--select, #e8a33d);
 }
 
 .v2-sequencer .sg-playhead {
@@ -1332,12 +1339,17 @@
 	font: 400 11px var(--sans);
 }
 .v2-sequencer .objmo .sg-head .sg-facts { color: var(--text-1, #e4e4e7); font-weight: 500; }
+/* The body spans the lane edge to edge: the SVG maps time across its own
+   width, so a side margin would put the curve on a different clock from the
+   ruler and the playhead above it. */
 .v2-sequencer .objmo .sg-body {
-	margin: 0 10px 6px;
+	margin: 0 0 6px;
 	border: 0;
-	border-radius: 8px;
+	border-radius: 0;
 	background: var(--tile-fill, rgba(255,255,255,.04));
 }
+/* The sequencer's own playhead already crosses the strip. */
+.v2-sequencer .objmo .sg-playhead { display: none; }
 .v2-sequencer .objmo .sg-line { stroke: var(--select, #e8a33d); }
 .v2-sequencer .objmo .sg-fill { fill: var(--select-tint, rgba(232,163,61,.14)); }
 .v2-sequencer .objmo .sg-axis,
@@ -1377,4 +1389,4 @@
 .v2-sequencer .objmo-tools { height: 100%; padding: 0 10px; flex-wrap: nowrap; overflow: hidden; }
 .v2-sequencer .objmo .sg { position: absolute; inset: 0; }
 .v2-sequencer .objmo .sg-head { padding: 3px 10px 2px; }
-.v2-sequencer .objmo .sg-body { min-height: 36px; margin: 0 10px 6px; }
+.v2-sequencer .objmo .sg-body { min-height: 36px; margin: 0 0 6px; }
