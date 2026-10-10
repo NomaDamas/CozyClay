@@ -569,7 +569,6 @@ function SpeedGraph({
 						return (
 							<g key={index} className={"sg-pin" + (index === selectedCut ? " selected" : "")}>
 								<line className="sg-cut" x1={x} y1="0.06" x2={x} y2="1" />
-								<path className="sg-cut-diamond" d={`M ${x} 0.055 l 0.007 -0.045 l -0.014 0 l 0.007 0.045 z`} />
 								<line
 									className="sg-cut-pick"
 									x1={x}
@@ -586,6 +585,26 @@ function SpeedGraph({
 					})}
 					<line className="sg-playhead" x1={playheadTakeX} y1="0" x2={playheadTakeX} y2="1" />
 				</svg>
+				{/* The pin heads are HTML, not SVG: the graph's 1×1 viewBox is
+				    stretched to the lane, so a shape drawn inside it comes out as
+				    wide as the lane is long, and a stroke on it swallowed the whole
+				    graph. A positioned square keeps its size whatever the lane does. */}
+				{shown.cuts.map((cut, index) => (
+					<button
+						key={index}
+						type="button"
+						className={"sg-cut-pin" + (index === selectedCut ? " selected" : "")}
+						style={{ left: `${((origin + cut.t * span) * 100).toFixed(3)}%` }}
+						aria-pressed={index === selectedCut}
+						aria-label={ko("Cut", "컷")}
+						title={ko("Cut: click to select, Delete removes it", "컷: 클릭해 선택, Delete로 삭제")}
+						onPointerDown={(event) => {
+							event.stopPropagation();
+							event.preventDefault();
+							setSelectedCut(index === selectedCut ? null : index);
+						}}
+					/>
+				))}
 				<span className="sg-scale-top">{Math.round(yMax * averageSpeed * 10) / 10}</span>
 				<span className="sg-scale-avg" style={{ top: `${avgY * 100}%` }}>{averageSpeed.toFixed(1)}</span>
 				<span className="sg-scale-zero">0</span>
