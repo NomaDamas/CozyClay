@@ -76,28 +76,54 @@ const agentFailureCode = (error, signal, tool = false) => advisory(() => {
 	if (error?.status === 429) return "rate_limited";
 	return tool ? "tool_failed" : "upstream";
 }, tool ? "tool_failed" : "upstream");
-const storyboardTurn = ({ hub, context, turnId, admission }, start) => async function* (input) {
-	if (context.scene?.previsMode !== "storyboard") { yield* start(input); return; }
+/**
+ * One user message is one editor transaction: every Studio turn whose editor
+ * reports a previsMode opens agent.turn.begin and closes agent.turn.finish, so
+ * all of its mutations land as ONE history entry and one receipt frame. A
+ * context without a previsMode comes from an editor that predates turn
+ * transactions and runs unwrapped. rollback() cancels the open transaction
+ * (restoring the pre-turn document) and reopens it for the rest of the turn.
+ */
+const agentTurn = ({ hub, context, turnId, admission }) => {
+	const wrapped = Boolean(context.scene?.previsMode);
 	const host = Object.fromEntries(["workspaceId", "documentEpoch", "sceneId", "sceneEpoch"].map(key => [key, context.host[key]]));
-	const control = action => hub.command("run_action", {
-		name: "run_action", args: { action, args: { turnId } }, turnId,
-		commandId: randomUUID(), host, expectedRevision: admission.revision,
-	}, context.host.workspaceHandle);
-	const opened = await control("agent.turn.begin");
-	if (!opened.ok) throw Object.assign(new Error(opened.message), { code: opened.code });
-	admission.turnId = turnId;
-	let terminal;
-	try {
-		for await (const frame of start(input)) {
-			if (frame.type === "done") terminal = frame; else yield frame;
-		}
-	} finally {
-		delete admission.turnId;
-		const receipt = await control("agent.turn.finish");
+	const control = async action => {
+		const receipt = await hub.command("run_action", {
+			name: "run_action", args: { action, args: { turnId } }, turnId,
+			commandId: randomUUID(), host, expectedRevision: admission.revision,
+		}, context.host.workspaceHandle);
 		if (!receipt.ok) throw Object.assign(new Error(receipt.message), { code: receipt.code });
-		if (receipt.authored) yield { type: "receipt", receipt };
-	}
-	if (terminal) yield terminal;
+		return receipt;
+	};
+	const open = async () => { await control("agent.turn.begin"); admission.turnId = turnId; };
+	return {
+		async rollback() {
+			if (admission.turnId !== turnId) return null;
+			delete admission.turnId;
+			const receipt = await control("agent.turn.cancel");
+			await admission.refresh();
+			await open();
+			return receipt;
+		},
+		run: start => async function* (input) {
+			if (!wrapped) { yield* start(input); return; }
+			await open();
+			let terminal;
+			try {
+				for await (const frame of start(input)) {
+					if (frame.type === "done") terminal = frame; else yield frame;
+				}
+			} finally {
+				// A rollback whose reopen failed has already closed the transaction.
+				if (admission.turnId === turnId) {
+					delete admission.turnId;
+					const receipt = await control("agent.turn.finish");
+					if (receipt.authored) yield { type: "receipt", receipt };
+				}
+			}
+			if (terminal) yield terminal;
+		},
+	};
 };
 // These existing canvas commands only return a node/edge after publishing a
 // new insertion. Read/focus, generic accepted responses, update no-ops and run
@@ -429,8 +455,8 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 	};
 	const handleStudioTurn = async (req, res, value, path) => {
 		const { StudioProtocolError, validateStudioContextFreshness } = await import("../../src/studio-agent-protocol.js");
-		const [{ createStudioTools }, { encodeStudioContext }] = await Promise.all([
-			import("./studio-tools.mjs"), import("../../src/studio-agent-context.js"),
+		const [{ createStudioTools }, { encodeStudioContext }, { createScriptTool }] = await Promise.all([
+			import("./studio-tools.mjs"), import("../../src/studio-agent-context.js"), import("./script-tool.mjs"),
 		]);
 		const hubDeps = await runtime; const hub = hubDeps.liveHub || liveHub;
 		if (path === "/agent/stop") {
@@ -488,7 +514,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		// for a second one).
 		const telemetry = createTurnTelemetry(send, value.turnId);
 		let turnOutcome = "succeeded", turnFailureCode = null, toolFailed = false;
-		const controller = new AbortController(); session.controller = controller;
+		const controller = new AbortController(); session.controller = controller; session.activeTurnId = value.turnId;
 		// Admission is the document identity plus the exact scene revision each
 		// command expects. Per-entity tokens are deliberately absent: the revision
 		// already moves whenever any authored content changes, and a turn's second
@@ -553,6 +579,19 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				return { ...result, visualStatus: visual.visualStatus, imageId: visual.imageId, revision: visual.revision, receiptId: visual.receiptId, ...(visual.dataUrl ? { dataUrl: visual.dataUrl } : {}) };
 			},
 		}));
+		const turnTransaction = agentTurn({ hub, context: current, turnId: value.turnId, admission });
+		const script = createScriptTool({ tools: modelTools, signal: controller.signal, emit: send });
+		const scriptTool = {
+			...script,
+			// A script that fails after it edited the scene rolls the turn back, so
+			// the model retries from the pre-turn document, never from half a script.
+			handler: async (args, options) => {
+				const result = await script.handler(args, options);
+				if (result.ok || !result.calls.some(call => call.ok && Number.isSafeInteger(call.revision?.after) && call.revision.after !== call.revision.before)) return result;
+				const rollback = await turnTransaction.rollback();
+				return rollback ? { ...result, rollback: { status: "rolled_back", receiptId: rollback.receiptId, revision: rollback.revision, affectedIds: rollback.affectedIds.slice(0, 8) } } : result;
+			},
+		};
 		let frameObservation;
 		if (value.attachFrame) {
 			const captured = await hub.command("capture_framing_png", {}, value.context.host.workspaceHandle);
@@ -599,10 +638,10 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		}
 		try {
 			if (!session.modelSession) session.modelSession = await runner.openSession(value.sessionId, { surface: "studio" });
-			for await (const frame of storyboardTurn({ hub, context: current, turnId: value.turnId, admission }, input => session.modelSession.start(input))({
+			for await (const frame of turnTransaction.run(input => session.modelSession.start(input))({
 				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
 				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
-				context: value.context, tools: modelTools, systemPrompt: value.context.scene?.previsMode === "storyboard" ? STUDIO_SYSTEM_PROMPT_STORYBOARD : undefined, signal: controller.signal, emit: send,
+				context: value.context, tools: [...modelTools, scriptTool], systemPrompt: value.context.scene?.previsMode === "storyboard" ? STUDIO_SYSTEM_PROMPT_STORYBOARD : undefined, signal: controller.signal, emit: send,
 				meta: persistenceMeta,
 				quotaEvent: headers => codex?.parseQuotaHeaders ? quotaEvent(codex, headers) : { type: "quota", plan: null, primary: { usedPercent: null, windowMinutes: null, resetAt: null }, credits: { has: null } },
 			})) emitFrame(frame);
@@ -615,7 +654,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		}
 		if (controller.signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }
 		if (!record.terminal) emitFrame({ type: "done" });
-		close(); if (!res.writableEnded) res.end(); session.controller = null; return true;
+		close(); if (!res.writableEnded) res.end(); session.controller = null; session.activeTurnId = null; return true;
 	};
 	const handle = async (req, res, path = new URL(req.url, "http://127.0.0.1").pathname) => {
 		if (!path.startsWith("/agent/")) return false;
@@ -638,12 +677,15 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				value = await readBody(req, TURN_BODY_LIMIT);
 				if (!value || typeof value.text !== "string" || !value.text.trim() || !validAttachments(value.attachments)) throw new Error("Invalid request.");
 			} catch { json(res, 400, { error: "invalid request" }); return true; }
-			// Studio turnIds are frozen envelopes; their events are keyed in studioSessions,
-			// never in the Workflow `sessions` map, so that lookup alone tells them apart.
-			if ([...studioSessions.values()].some(candidate => candidate.turns.has(turnId))) { json(res, 409, { error: { code: "STEER_UNSUPPORTED", message: "Steering a Studio turn is not supported." } }); return true; }
-			const session = [...sessions.values()].find(candidate => candidate.turnId === turnId);
+			// Studio turns are keyed in studioSessions, never in the Workflow
+			// `sessions` map, so that lookup alone tells them apart. Only the cookie
+			// owner of the Studio session may steer its running turn.
+			const studio = [...studioSessions.values()].find(candidate => candidate.turns.has(turnId));
+			if (studio && parseCookies(req).studio_owner !== studio.owner) { json(res, 403, { error: { code: "AUTH_REQUIRED", message: "Studio turn is not owned by this session." } }); return true; }
+			const session = studio ?? [...sessions.values()].find(candidate => candidate.turnId === turnId);
 			if (!session) { json(res, 404, { error: "turn not found" }); return true; }
-			if (!session.running || !session.modelSession) { json(res, 409, { error: { code: "NO_ACTIVE_TURN", message: "This turn already ended." } }); return true; }
+			const active = studio ? studio.activeTurnId === turnId && studio.controller && !studio.controller.signal.aborted : session.running;
+			if (!active || !session.modelSession) { json(res, 409, { error: { code: "NO_ACTIVE_TURN", message: "This turn already ended." } }); return true; }
 			const images = (Array.isArray(value.attachments) ? value.attachments : []).map(attachment => {
 				const match = /^data:([^;]+);base64,(.*)$/.exec(attachment?.dataUrl || "");
 				return match ? { type: "image", data: match[2], mimeType: match[1] } : null;
