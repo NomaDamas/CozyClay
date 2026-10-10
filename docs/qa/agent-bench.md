@@ -23,6 +23,7 @@ done
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `QA_AGENT_MODEL` | `cliproxy/claude-opus-5-5` | Value selected in the Agent pane's Model select |
+| `QA_AGENT_EFFORT` | unset | Value selected in the pane's "Reasoning effort" select (e.g. `medium`); unset keeps the pane default, which sends no effort field (thinking off). Recorded per row as `effort`. |
 | `QA_OUT` | `/tmp/cozyclay-agent-bench` | Output directory |
 | `QA_BENCH_LABEL` | `baseline` | Report name: writes `$QA_OUT/<label>.json` and `$QA_OUT/<label>/*.png` |
 | `QA_BENCH_TURN_TIMEOUT_MS` | `240000` | Per-turn deadline |

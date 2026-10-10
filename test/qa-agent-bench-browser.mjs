@@ -10,6 +10,9 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 const cdpPort = Number(process.env.CDP_PORT || 9222);
 const baseUrl = process.env.QA_URL || "http://127.0.0.1:5180/app/";
 const model = process.env.QA_AGENT_MODEL || "cliproxy/claude-opus-5-5";
+// Reasoning effort picked in the pane's "Reasoning effort" select (e.g. medium). Unset = the
+// pane's default, which sends no effort field at all (the sidecar then runs with thinking off).
+const effort = process.env.QA_AGENT_EFFORT || null;
 const outputDir = process.env.QA_OUT || "/tmp/cozyclay-agent-bench";
 const label = process.env.QA_BENCH_LABEL || "baseline";
 const turnTimeoutMs = Number(process.env.QA_BENCH_TURN_TIMEOUT_MS || 240_000);
@@ -79,6 +82,15 @@ async function chooseModel() {
   await waitFor(`(() => { const select=document.querySelector('aside[aria-label="Agent"] select[aria-label="Model"]'); return [...(select?.options ?? [])].some(option => option.value === ${value}); })()`, 30_000);
   await evaluate(`(() => { const select=document.querySelector('aside[aria-label="Agent"] select[aria-label="Model"]'); const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set; setter.call(select,${value}); select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
   await waitFor(`document.querySelector('aside[aria-label="Agent"] select[aria-label="Model"]')?.value === ${value}`);
+}
+async function chooseEffort() {
+  if (!effort) return;
+  const value = JSON.stringify(effort);
+  const select = `document.querySelector('aside[aria-label="Agent"] select[aria-label="Reasoning effort"]')`;
+  await waitFor(`!!${select}`, 30_000);
+  await waitFor(`[...(${select}?.options ?? [])].some(option => option.value === ${value})`, 30_000);
+  await evaluate(`(() => { const select=${select}; const setter=Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype,'value').set; setter.call(select,${value}); select.dispatchEvent(new Event('change',{bubbles:true})); })()`);
+  await waitFor(`${select}?.value === ${value}`);
 }
 async function pageLoad(url) {
   const loaded = new Promise((resolve) => {
@@ -253,6 +265,7 @@ try {
   await readHandle();
   await showAgentPane();
   await chooseModel();
+  await chooseEffort();
   if (!(await evaluate(`window.__benchTee === true`))) throw new Error("fetch tee did not install");
 } catch (error) {
   setupFailure = error.message;
@@ -262,7 +275,7 @@ try {
 const rows = [];
 let previous = null;
 for (const scenario of SCENARIOS) {
-  const row = { model, scenario: scenario.id, prompt: scenario.prompt, toolCalls: 0, authoredReceipts: 0, wallMs: null, overlapWarnings: 0, success: false, errorCode: null, errorMessage: null, errorStatus: null, usage: null, reply: "", measured: null };
+  const row = { model, effort, scenario: scenario.id, prompt: scenario.prompt, toolCalls: 0, authoredReceipts: 0, wallMs: null, overlapWarnings: 0, success: false, errorCode: null, errorMessage: null, errorStatus: null, usage: null, reply: "", measured: null };
   try {
     if (setupFailure) throw Object.assign(new Error(setupFailure), { code: "BENCH_SETUP" });
     const before = previous ?? state();
