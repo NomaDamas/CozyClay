@@ -98,11 +98,13 @@ const framing = union(
 	object({ intent: object({ size: choices(STUDIO_VARIANTS.framingSizes), view: choices(STUDIO_VARIANTS.framingViews), level: choices(STUDIO_VARIANTS.framingLevels), side: choices(STUDIO_VARIANTS.framingSides) }, { focalMm: positive }) }),
 	object({ exact: object({ position: vec3, lookAt: vec3, focalMm: positive }) }),
 );
+const localSpace = { ...choices(["parent"]), description: "\"parent\" reads position.world, rotationDeg and facing.yawDeg in the parent's local frame (its pivot and rotation, not its scale); omit for world space." };
 const objectOp = union(
 	object({ op: literal("create"), source: object({ kind: id }), position }, { name, facing, scale: positiveVec3,
 		rotationDeg: { ...vec3, description: "Euler XYZ degrees (x pitch, y yaw, z roll), as in update. Exclusive with facing. A pitched/rolled part rests its lowest corner on its support." },
-		parent: { ...name, description: "Group this new object under a parent: an existing object id, or the name of an object created earlier in this same ops list. Moving the parent then moves it too." } }),
-	object({ op: literal("update"), id }, { position, facing, rotationDeg: vec3, scale: positiveVec3, color: text(32), name, hidden: bool }),
+		parent: { ...name, description: "Group this new object under a parent: an existing object id, or the name of an object created earlier in this same ops list. Moving the parent then moves it too." },
+		space: localSpace }),
+	object({ op: literal("update"), id }, { position, facing, rotationDeg: vec3, scale: positiveVec3, color: text(32), name, hidden: bool, space: localSpace }),
 	object({ op: literal("remove"), id }),
 	object({ op: literal("group"), parentId: id, childIds: ids() }),
 	object({ op: literal("ungroup"), childIds: ids() }),
@@ -212,6 +214,7 @@ const bounds = object({ min: vec3, max: vec3 });
 const entity = object({ id, kind: choices(["object", "character", "rig"]), token: id }, {
 	name, detailsOmitted: bool, position: vec3, yawDeg: number(), rotationDeg: vec3, scale: union(positive, positiveVec3), bounds: nullable(bounds),
 	libraryKind: id, renderer: id, color: nullable(text(32)), tint: nullable(text(32)), modelId: nullable(text(120)), assetId: id, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), pathPointCount: integer(0, 64),
+	local: object({ position: vec3, rotationDeg: vec3 }),
 	motion: object({ takeId: nullable(id), frames: integer(), ikKeyCount: integer(), promptBlockCount: integer() }, { poseId: nullable(id), keyIds: ids(8, 0) }),
 	capabilities: object({ rigReady: bool, ik: bool, measuredFeet: bool }),
 	// `kind` above already names the entity class ("character"); a character's own

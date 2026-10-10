@@ -235,6 +235,7 @@ const NODE_FILES = [
 	"test/verify-mesh-graph-clone.mjs",
 	"test/verify-scene-objects.mjs",
 	"test/verify-studio-agent-geometry.mjs",
+	"test/verify-local-placement.mjs",
 	"test/verify-studio-agent-motion.mjs",
 	"test/verify-studio-agent-binding.mjs",
 	"test/verify-studio-agent-turn-undo.mjs",
