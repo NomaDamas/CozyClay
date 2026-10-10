@@ -1347,3 +1347,34 @@
 .v2-sequencer .objmo .sg-scale-avg,
 .v2-sequencer .objmo .sg-scale-zero { color: var(--text-3, #636369); }
 .v2-sequencer .objmo .sg-readout { background: var(--text-1, #e4e4e7); color: var(--bg, #fff); }
+
+/* The prop strip is three rows of its own — controls, dots, the speed graph —
+   not the performer's row / group / row / group grid: give the surface that
+   shape while it is loaded, and let the graph take whatever height is left
+   instead of spilling past the dock. */
+.v2-sequencer .tl-surface.prop-subject {
+	grid-template-rows:
+		var(--tl-ruler-height, 24px)
+		var(--tl-prop-row-height, 32px)
+		var(--tl-prop-row-height, 32px)
+		minmax(0, 1fr);
+}
+.v2-sequencer .tl-track.objmo {
+	height: var(--tl-prop-row-height, 32px);
+	min-height: 0;
+}
+.v2-sequencer .tl-track.objmo .tl-lane {
+	min-height: 0;
+	height: 100%;
+	overflow: hidden;
+}
+.v2-sequencer .tl-track.objmo.sg-row,
+.v2-sequencer .tl-track.objmo.sg-row .tl-lane {
+	height: 100%;
+	min-height: 0;
+}
+.v2-sequencer .tl-track.objmo.sg-row .tl-track-label { padding-top: 6px; }
+.v2-sequencer .objmo-tools { height: 100%; padding: 0 10px; flex-wrap: nowrap; overflow: hidden; }
+.v2-sequencer .objmo .sg { position: absolute; inset: 0; }
+.v2-sequencer .objmo .sg-head { padding: 3px 10px 2px; }
+.v2-sequencer .objmo .sg-body { min-height: 36px; margin: 0 10px 6px; }
