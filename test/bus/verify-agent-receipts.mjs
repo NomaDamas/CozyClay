@@ -26,22 +26,21 @@ try {
   // 2. object.update: a key nothing reads is an error for the wire, lenient for the UI.
   const [crateA, crateB] = [first.affectedIds[0], second.affectedIds[0]];
   const revision = f.binding.refresh().revision;
+  // The agent never reaches it: object.update is hidden from the wire and its
+  // refusal names the doors that validate every key (object.set, arrange_objects).
   const unknown = f.run('object.update', { id: crateB, patch: { scale: 2, foo: 1, x: 7 } }, 'agent');
   assert.equal(unknown.ok, false, JSON.stringify(unknown));
-  assert.equal(unknown.code, 'INVALID_ARGUMENT');
-  assert.match(unknown.message, /cannot set scale, foo/);
-  assert.match(unknown.message, /Supported fields: .*scaleX.*name/);
-  assert.equal(f.binding.refresh().revision, revision, 'the refusal changed nothing');
+  assert.equal(unknown.code, 'CAPABILITY_MISSING');
+  assert.match(unknown.message, /object\.set/);
   assert.equal(f.run('object.update', { id: crateB, patch: { foo: 1 } }, 'ui').status, 'noop', 'the UI door stays lenient');
-  assert.equal(f.run('object.update', { id: crateB, patch: { height: 3 } }, 'agent').code, 'INVALID_ARGUMENT', 'height is a cutout/mesh field, not a cube field');
-  console.log('PASS unknown patch keys are refused with the supported fields');
+  console.log('PASS object.update is refused on the agent wire and lenient for the UI');
 
   // 3. Clamps are warnings, in object.update and in arrange_objects.
-  const clamped = f.run('object.update', { id: crateB, patch: { scaleY: 0.025, x: 6.2 } }, 'agent');
+  const clamped = f.run('object.update', { id: crateB, patch: { scaleY: 0.025, x: 6.2 } }, 'ui');
   assert.equal(clamped.status, 'applied', JSON.stringify(clamped));
   assert.deepEqual(find(clamped, 'CLAMPED').map(w => [w.id, w.message]), [[crateB, 'Clamped: scaleY 0.025→0.1 (minimum 0.1)']]);
-  assert.equal(f.run('object.update', { id: crateB, patch: { scaleY: 0.1 } }, 'agent').status, 'noop');
-  const far = f.run('object.update', { id: crateB, patch: { x: 900 } }, 'agent');
+  assert.equal(f.run('object.update', { id: crateB, patch: { scaleY: 0.1 } }, 'ui').status, 'noop');
+  const far = f.run('object.update', { id: crateB, patch: { x: 900 } }, 'ui');
   assert.match(find(far, 'CLAMPED')[0].message, /x 900→240 \(maximum 240 m\)/);
   const squash = arrange([create('Slab', { x: -6, y: 0, z: -6 }, { x: 1, y: 0.025, z: 1 })]);
   assert.match(find(squash, 'CLAMPED')[0].message, /scaleY 0\.025→0\.1 \(minimum 0\.1\)/, JSON.stringify(squash.warnings));
@@ -71,7 +70,7 @@ try {
   console.log('PASS readback carries rotation, scale, parent, children and bounds; truncation is stated');
 
   // 5. verify_result(receiptId) measures a receipt that has no placement evidence.
-  const moved = f.run('object.update', { id: crateB, patch: { x: 6.1 } }, 'agent');
+  const moved = f.run('object.update', { id: crateB, patch: { x: 6.1 } }, 'ui');
   assert.equal(moved.status, 'applied');
   assert.equal(moved.checks.overlapIds, undefined, 'an update receipt carries no overlap measurement');
   const verified = await f.binding.handlers.verify_result(f.request('verify_result', { receiptId: moved.receiptId, checks: ['placement'], visual: 'none' }));
