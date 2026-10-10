@@ -500,12 +500,18 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		// edit to the same entity would otherwise carry a token the first edit retired.
 		const admission = {
 			commandId: () => randomUUID(), host: studioIdentity(value.context.host), revision: value.context.revision.scene,
-			refresh: async () => {
-				// Read at the admitted host: a scene action may have opened another
-				// scene of this workspace during the turn (studio-tools adopts it).
+			// Read at the admitted host: a scene action may have opened another
+			// scene of this workspace during the turn (studio-tools adopts it).
+			snapshot: async () => {
 				const host = { ...value.context.host, ...admission.host };
-				const refreshed = studioRuntime?.readContext ? await studioRuntime.readContext(host) : await authoritativeStudioContext({ ...value, context: { ...value.context, host } }, hub);
+				return studioRuntime?.readContext ? await studioRuntime.readContext(host) : await authoritativeStudioContext({ ...value, context: { ...value.context, host } }, hub);
+			},
+			// Re-admits at the live revision and hands back the context it read, which
+			// the tools compare against what the agent last saw (studio-rebase.mjs).
+			refresh: async () => {
+				const refreshed = await admission.snapshot();
 				admission.revision = refreshed.revision.scene;
+				return refreshed;
 			},
 		};
 		// One motion generation per user message, whichever path starts it:
@@ -537,7 +543,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				if (session.activeJobId === jobId) { session.activeJobId = null; session.activeJobTurnId = null; }
 			}
 		};
-		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, previsMode: value.context.scene?.previsMode, session: { signal: controller.signal, admission, generation, onJob, actionIndex: current?.actionIndex ?? [] }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
+		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, previsMode: value.context.scene?.previsMode, session: { signal: controller.signal, admission, generation, onJob, actionIndex: current?.actionIndex ?? [], baseline: value.context }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
 		const motion = async args => {
 			// Private artifact IDs belonged to the retired sidecar runtime. Reuse
 			// retained editor takes through motion.loadVersion, not another installer.
@@ -578,6 +584,9 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				toolFailed = true;
 				if (typeof frame.error === "string" && frame.error.startsWith("Validation failed for tool ")) frame.error = "INVALID_ARGUMENT: Unexpected field.";
 			}
+			// A command the sidecar re-sent once (stale revision, busy gesture) is
+			// marked on the frame itself; the receipt carries autoRebased and a warning.
+			if (frame.ok && frame.result?.autoRebased === true) frame.autoRebased = true;
 			send(frame);
 			if (record) {
 				record.execution.executed(frame.ok ? "succeeded" : (controller.signal.aborted ? "cancelled" : "failed"));

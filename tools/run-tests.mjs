@@ -114,6 +114,7 @@ const NODE_FILES = [
 	"test/verify-agent-host.mjs",
 	"test/verify-agent-routes.mjs",
 	"test/verify-studio-owner-restart.mjs",
+	"test/verify-studio-agent-rebase.mjs",
 	"test/verify-agent-live-runtime.mjs",
 	"test/verify-package-agent-imports.mjs",
 	"test/verify-agent-runner-errors.mjs",
