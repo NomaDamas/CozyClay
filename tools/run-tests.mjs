@@ -295,6 +295,7 @@ const NODE_FILES = [
 	"mcp/verify-protocol-version.mjs",
 	"mcp/verify-tool-annotations.mjs",
 	"mcp/verify-import-mesh.mjs",
+	"mcp/verify-sculpt-object.mjs",
 	"test/verify-object-path.mjs",
 	"test/verify-object-travel.mjs",
 	"test/verify-object-travel-lean.mjs",

@@ -72,6 +72,7 @@ generated frame matches the blocking instead of drifting off into a generic shot
 | `focus_character` | choose who the camera frames |
 | `place_object` / `update_object` / `remove_object` | the set — `place_object` also accepts `name` and `parent`, so multi-part assets like "Building A" land as one named assembly |
 | `import_mesh` | load a local GLB, OBJ or FBX from a filesystem path as a mesh prop (live editor required); optional floor position, yaw, standing height, clay |
+| `sculpt_object` | build a clay prop from a recipe of soft parts (blob, box, cylinder, torus, frame), usually from a reference image; pass `id` to re-sculpt one. Works without an editor. Contract: `docs/sculpt-from-image.md` |
 | `group_objects` | attach children to a parent so they move as one; pass `parent: null` to detach |
 | `apply_batch` | execute up to 100 object mutations as one user-visible undo transaction |
 | `render_prompt` | the shot as an AI image or video prompt |
