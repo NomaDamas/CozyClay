@@ -141,6 +141,7 @@ const NODE_FILES = [
 	"test/verify-auto-color.mjs",
 	"test/verify-coplanar-depth.mjs",
 	"test/verify-empty-object.mjs",
+	"test/verify-sculpt-recipe.mjs",
 	"test/verify-route-owner.mjs",
 	"test/verify-part-colours.mjs",
 	"test/verify-asset-shelf.mjs",
