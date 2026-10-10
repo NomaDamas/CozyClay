@@ -9,7 +9,7 @@ export default function OutlinerSlot() {
 		ikMode, rowIdForCharIndex, activeCharIndex, sceneObjects,
 		scenes, activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi,
 		renameSceneDocumentFromUi, deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, runStudioAction,
-		deleteSceneObject, frameSelection, toggleHierarchyHidden, propsDrop, hierarchyReparent,
+		deleteSceneObject, frameSelection, groupObjectUnderNewEmpty, toggleHierarchyHidden, propsDrop, hierarchyReparent,
 		agentTouchedRows,
 	} = useStudioShell();
 	return (
@@ -40,6 +40,7 @@ export default function OutlinerSlot() {
 			onDuplicateObject={(objectId) => runStudioAction("object.duplicate", objectId ? { objectId } : {})}
 			onDeleteObject={deleteSceneObject}
 			onFrameObject={frameSelection}
+			onGroupObject={groupObjectUnderNewEmpty}
 			onToggleHidden={toggleHierarchyHidden}
 			propsDrop={propsDrop}
 			reparent={hierarchyReparent}

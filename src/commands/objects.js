@@ -3,7 +3,7 @@ import { studioActionDeclaration } from "../studio-actions.js";
 import { characterOf, fail } from "./shared.js";
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/object.js';
-import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject } from '../scene-objects.js';
+import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject, groupUnderNewEmpty } from '../scene-objects.js';
 import { STUDIO_TOOL_SCHEMAS, StudioSchemas } from '../studio-agent-protocol.js';
 
 const id = StudioSchemas.TargetGuard.properties.targetId;
@@ -22,6 +22,8 @@ const semantic = [
 	mutation('object.rename', 'Rename object', input({ id, name: { type: 'string', maxLength: 240 } })),
 	mutation('object.group', 'Group objects', input({ parent: id, children: ids })),
 	mutation('object.ungroup', 'Ungroup objects', input({ children: ids })),
+	// The Outliner's "Group under new Empty": the Empty and the reparent are one write, so one undo.
+	{ ...mutation('object.groupUnderEmpty', 'Group object under a new Empty', input({ id })), exposure: 'ui-only' },
 	mutation('object.update', 'Update object', input({ id, patch: { type: 'object', properties: {}, additionalProperties: true } }, [])),
 	mutation('objects.arrange', 'Arrange objects', STUDIO_TOOL_SCHEMAS.arrange_objects),
 ];
@@ -83,6 +85,14 @@ export function register(registry, ports) {
 			children.forEach(objectOf); const before = owned().read();
 			owned().write(children.reduce((rows, id) => setSceneObjectParent(rows, id, null), before));
 			return result(before, 'Ungrouped objects.');
+		},
+		'object.groupUnderEmpty': ({ id }) => {
+			const object = objectOf(id); const before = owned().read();
+			if (object.attach) fail('CAPABILITY_MISSING', 'Detach the object from its character before grouping it.');
+			const grouped = groupUnderNewEmpty(before, id);
+			if (!grouped) fail('INVALID_ARGUMENT', 'Cannot group this object.');
+			owned().write(grouped.objects);
+			return { affectedIds: [grouped.emptyId, id], summary: 'Grouped the object under a new Empty.' };
 		},
 		'objects.arrange': args => {
 			const plan = owned().arrange(args);

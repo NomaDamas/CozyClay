@@ -209,6 +209,42 @@ const MESH_ENTRY = {
 	color: "#c49a6c",
 };
 
+/**
+ * An empty is a pure grouping node: a transform and a place in the hierarchy,
+ * with nothing to draw (Unity's Create Empty, Blender's Empty). It exists so a
+ * multi-part assembly can have one top-level handle — move it, turn it, give it
+ * a route — without any of the parts having to stand in for it.
+ *
+ * Its size is zero on purpose. Every consumer that reads geometry (blockers,
+ * drop surfaces, ground sampling, support rise, fits, the plan footprint) goes
+ * through `footprint` × `height`, so a zero box makes the empty invisible to
+ * all of them without a per-consumer special case; the few that would
+ * misread a zero box as a point (dropToSurfacePatch) check `isEmptyObject`.
+ * It is creatable from the menu, so it lives beside the library entries rather
+ * than being import-only.
+ */
+export const EMPTY_KIND = "empty";
+/** Editor-only marker size in metres: the axes cross drawn for an empty, and
+ * the side of the invisible volume that makes it clickable. */
+export const EMPTY_MARKER_SIZE = 0.3;
+const EMPTY_ENTRY = {
+	kind: EMPTY_KIND,
+	label: "Empty",
+	group: "Primitives",
+	footprint: { width: 0, depth: 0 },
+	height: 0,
+	color: "#ffffff",
+};
+
+/** True for a record that is only a node: no mesh, no collision, no surface. */
+export function isEmptyObject(object) {
+	return object?.renderer === EMPTY_KIND;
+}
+
+/** The catalogue grouped for the create menu: the library plus the empty,
+ * which is creatable but has no footprint to satisfy the library's contract. */
+export const OBJECT_MENU_ENTRIES = Object.freeze([EMPTY_ENTRY, ...OBJECT_LIBRARY]);
+
 /** Every kind that can exist in a scene: the catalogue you can create from,
  * plus the kinds that arrive by import and so are deliberately absent from the
  * "Add object" menu (a cutout without an image, a mesh without a GLB, has
@@ -216,6 +252,7 @@ const MESH_ENTRY = {
 export function objectLibraryEntry(kind) {
 	if (kind === CUTOUT_KIND) return CUTOUT_ENTRY;
 	if (kind === MESH_KIND) return MESH_ENTRY;
+	if (kind === EMPTY_KIND) return EMPTY_ENTRY;
 	return OBJECT_LIBRARY.find((entry) => entry.kind === kind) ?? null;
 }
 
@@ -926,6 +963,34 @@ export function removeSceneObject(objects, id) {
 	// is an editing convenience and never an owner of the parts.
 	return next.map((object) => (object.parent === id ? { ...object, parent: null } : object));
 }
+
+/**
+ * Wrap `id` in a new Empty: the Empty takes the object's place in the tree
+ * (its parent, its position) and the object becomes its child. One pure edit,
+ * so the caller can publish it as ONE history entry.
+ *
+ * Returns `{ objects, emptyId }`, or null when the object is unknown or is
+ * carried by a character (its numbers are local to a bone frame, so an Empty
+ * "at its position" would sit at a fictional place — detach first).
+ *
+ * Rotation is not copied: the Empty starts unturned, because a group node
+ * should be a clean handle, and the children keep their world transforms
+ * (grouping moves nothing on screen).
+ */
+export function groupUnderNewEmpty(objects, id) {
+	const target = objects.find((object) => object.id === id);
+	if (!target || target.attach) return null;
+	const created = createSceneObject(EMPTY_KIND, objects, { x: target.x, z: target.z });
+	if (!created) return null;
+	const names = new Set(objects.map((object) => object.name));
+	const base = `${target.name} Group`;
+	let name = base;
+	for (let n = 2; names.has(name); n += 1) name = `${base} ${n}`;
+	const empty = { ...created, name, y: TRANSFORM_LIMITS.y(target.y ?? 0), parent: target.parent ?? null };
+	// The Empty goes in just before the object, so the Outliner row keeps its place.
+	const next = objects.flatMap((object) => (object.id === id ? [empty, { ...object, parent: empty.id }] : [object]));
+	return { objects: next, emptyId: empty.id };
+}
 /* -------------------------------------------------- persistence ---- */
 
 /**
@@ -1226,9 +1291,13 @@ export function objectFootprintBounds(object) {
  * clamped here: the y clamp stays in updateSceneObject, the single owner.
  */
 export function dropToSurfacePatch(object, others, characters = []) {
+	// An empty has no base to rest on and no extent to rest with: dropping it
+	// would carry a whole assembly to wherever a zero-size point happens to sit.
+	if (isEmptyObject(object)) return null;
 	const self = objectFootprintBounds(object);
 	let highestTop = 0;
 	for (const other of others) {
+		if (isEmptyObject(other)) continue;
 		if (isEffectivelyHidden(other, others, characters)) continue;
 		const bounds = objectFootprintBounds(other);
 		if (self.minX >= bounds.maxX - OVERLAP_EPS || bounds.minX >= self.maxX - OVERLAP_EPS) continue;

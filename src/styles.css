@@ -5998,6 +5998,12 @@ input[type=range]::-moz-range-thumb {
 	border-radius: 3px;
 }
 
+/* an Empty has no colour: a dashed, hollow swatch reads as "nothing to draw" */
+.add-object-swatch.empty {
+	background: transparent !important;
+	border-style: dashed;
+}
+
 /* inspector cards clip their overflow, so the menu opens inline there */
 .card .add-object {
 	display: block;

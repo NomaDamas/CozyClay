@@ -15,7 +15,7 @@ import { objectTransformAt } from "./object-path.js";
 import { sceneObjectCarryMatrixAt, sceneObjectTravelMatrixAt } from "./object-travel.js";
 import * as THREE from "three";
 import { GIZMO_LAYER } from "./dualview.jsx";
-import { CUTOUT_KIND, MESH_KIND } from "./scene-objects.js";
+import { CUTOUT_KIND, MESH_KIND, EMPTY_KIND, EMPTY_MARKER_SIZE } from "./scene-objects.js";
 import { subscribeToAssetTexture } from "./scene-asset-cache.js";
 import { subscribeToMeshScene } from "./scene-mesh-cache.js";
 import { cloneMeshGraph } from "./mesh-graph-clone.js";
@@ -433,6 +433,55 @@ function Cutout({ object }) {
 
 const PRIMITIVE_KINDS = new Set(["cube", "sphere", "capsule", "cylinder", "cone", "plane"]);
 
+// X red, Y green, Z blue: the DCC convention, so a turned Empty reads its own
+// orientation off the marker.
+const EMPTY_AXES = [
+	{ to: [1, 0, 0], color: "#e5594f" },
+	{ to: [0, 1, 0], color: "#5fb95f" },
+	{ to: [0, 0, 1], color: "#4f86e5" },
+];
+
+/**
+ * An Empty's viewport presence: a three-axis cross and a pick volume, and
+ * nothing else. It is editor furniture, so every node sits on GIZMO_LAYER —
+ * the layer the shot camera, the preview card, PlayView, the ink prepass and
+ * the recorder all drop — and it casts no shadow because it has no mesh to
+ * cast one. The pick volume is invisible (never drawn) but still raycasts; the
+ * object picker finds it by `userData.emptyPick` on the gizmo-layer pass.
+ */
+function EmptyMarker() {
+	const half = EMPTY_MARKER_SIZE / 2;
+	const axes = useMemo(() => {
+		const positions = [];
+		const colors = [];
+		const color = new THREE.Color();
+		for (const axis of EMPTY_AXES) {
+			positions.push(-axis.to[0] * half, -axis.to[1] * half, -axis.to[2] * half, axis.to[0] * half, axis.to[1] * half, axis.to[2] * half);
+			color.set(axis.color);
+			colors.push(color.r, color.g, color.b, color.r, color.g, color.b);
+		}
+		const geometry = new THREE.BufferGeometry();
+		geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+		geometry.setAttribute("color", new THREE.Float32BufferAttribute(colors, 3));
+		return geometry;
+	}, [half]);
+	useEffect(() => () => axes.dispose(), [axes]);
+	const onLayer = (node) => {
+		if (node) node.layers.set(GIZMO_LAYER);
+	};
+	return (
+		<group userData={{ emptyMarker: true }}>
+			<lineSegments ref={onLayer} geometry={axes} renderOrder={997} frustumCulled={false}>
+				<lineBasicMaterial vertexColors depthTest={false} depthWrite={false} transparent opacity={0.95} />
+			</lineSegments>
+			<mesh ref={onLayer} visible={false} userData={{ emptyPick: true }}>
+				<sphereGeometry args={[half * 1.25, 12, 8]} />
+				<meshBasicMaterial />
+			</mesh>
+		</group>
+	);
+}
+
 function SceneObjectContent({ object, depthRank = 0 }) {
 	// `autoColor` is the viewport-only display color the auto-color mode stamps
 	// onto the DISPLAYED object (App's displaySceneObjects); the authored
@@ -440,6 +489,7 @@ function SceneObjectContent({ object, depthRank = 0 }) {
 	// standee destroys the one thing it is for. Imported meshes take the same
 	// override as a cube — file materials are cloned and tinted per instance.
 	const { renderer, color, autoColor } = object;
+	if (renderer === EMPTY_KIND) return <EmptyMarker />;
 	if (renderer === CUTOUT_KIND) return <Cutout object={object} />;
 	if (renderer === MESH_KIND) return <ImportedMesh object={object} />;
 	if (renderer === "car") return <Car color={autoColor ?? color} autoColor={autoColor} />;
@@ -455,9 +505,12 @@ function SceneObjectContent({ object, depthRank = 0 }) {
  * object instead of a selection.
  */
 function SelectionBox({ object }) {
-	const height = Math.max(object.height ?? 1, 0.08);
-	const width = object.footprint?.width ?? 1;
-	const depth = object.footprint?.depth ?? 1;
+	// An Empty has no extent, so its cage is the marker's own cube, centred on
+	// the origin (a prop's cage stands on it).
+	const empty = object.renderer === EMPTY_KIND;
+	const height = empty ? EMPTY_MARKER_SIZE : Math.max(object.height ?? 1, 0.08);
+	const width = empty ? EMPTY_MARKER_SIZE : object.footprint?.width ?? 1;
+	const depth = empty ? EMPTY_MARKER_SIZE : object.footprint?.depth ?? 1;
 	const edges = useMemo(
 		() => new THREE.EdgesGeometry(new THREE.BoxGeometry(width * 1.04, height * 1.04, depth * 1.04)),
 		[width, height, depth],
@@ -474,7 +527,7 @@ function SelectionBox({ object }) {
 				if (mesh) mesh.layers.set(GIZMO_LAYER);
 			}}
 			geometry={edges}
-			position={[0, height / 2, 0]}
+			position={[0, empty ? 0 : height / 2, 0]}
 			renderOrder={998}
 		>
 			<lineBasicMaterial color="#e7b557" transparent opacity={0.95} depthTest={false} depthWrite={false} />

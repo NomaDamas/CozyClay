@@ -203,6 +203,7 @@ function displayHierarchyLabel(node) {
 }
 
 const OUTLINER_TYPES = {
+	empty: "Empty",
 	folder: "Folder",
 	mesh: "Mesh",
 	cast: "Cast",
@@ -212,7 +213,7 @@ const OUTLINER_TYPES = {
 
 function outlinerTypeFor(node) {
 	const key = node.kind === "object"
-		? "mesh"
+		? node.renderer === "empty" ? "empty" : "mesh"
 		: node.kind === "character" || node.kind === "bone"
 			? "cast"
 			: node.kind === "camera"
@@ -220,7 +221,9 @@ function outlinerTypeFor(node) {
 				: node.kind === "light"
 					? "light"
 					: "folder";
-	const label = key === "folder"
+	const label = key === "empty"
+		? ko(OUTLINER_TYPES[key], "빈 오브젝트")
+		: key === "folder"
 		? ko(OUTLINER_TYPES[key], "폴더")
 		: key === "mesh"
 			? ko(OUTLINER_TYPES[key], "메시")
@@ -366,6 +369,9 @@ function RowContextMenu({ menu, onClose, onAction, onAddObject }) {
 					</button>
 					<button type="button" role="menuitem" className="hierarchy-context-item" onClick={() => onAction("frame", menu.id)}>
 						{ko("Frame", "프레임 맞추기")}
+					</button>
+					<button type="button" role="menuitem" className="hierarchy-context-item" data-action="group-under-empty" onClick={() => onAction("group-under-empty", menu.id)}>
+						{ko("Group under new Empty", "빈 오브젝트로 묶기")}
 					</button>
 				</>
 			) : (
@@ -636,6 +642,7 @@ export default function HierarchyPanel({
 	onDuplicateObject,
 	onDeleteObject,
 	onFrameObject,
+	onGroupObject,
 	onToggleHidden,
 	propsDrop = null,
 	reparent = null,
@@ -776,7 +783,7 @@ export default function HierarchyPanel({
 			setContextMenu({
 				x: event.clientX,
 				y: event.clientY,
-				height: node.kind === "object" ? 180 : node.grouped ? 80 : 44,
+				height: node.kind === "object" ? 212 : node.grouped ? 80 : 44,
 				kind: node.kind,
 				id,
 				hidden: node.hidden === true,
@@ -794,13 +801,13 @@ export default function HierarchyPanel({
 				canDelete: availableScenes.length > 1,
 			});
 		} else {
-			setContextMenu({ x: event.clientX, y: event.clientY, height: 344, kind: "create" });
+			setContextMenu({ x: event.clientX, y: event.clientY, height: 376, kind: "create" });
 		}
 	};
 
 	const openCreateMenu = (event) => {
 		event.preventDefault(); // suppress the browser menu on the tree only
-		setContextMenu({ x: event.clientX, y: event.clientY, height: 344, kind: "create" });
+		setContextMenu({ x: event.clientX, y: event.clientY, height: 376, kind: "create" });
 	};
 
 	const deleteActiveScene = () => {
@@ -844,6 +851,7 @@ export default function HierarchyPanel({
 		if (action === "duplicate") onDuplicateObject?.(objectId);
 		else if (action === "delete") onDeleteObject?.(objectId);
 		else if (action === "frame") onFrameObject?.(objectId);
+		else if (action === "group-under-empty") onGroupObject?.(objectId);
 	};
 
 	const commitRename = (hierarchyId, name) => {

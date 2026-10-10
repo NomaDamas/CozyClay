@@ -4,7 +4,7 @@ import { Line, Text } from "@react-three/drei";
 import * as THREE from "three";
 import { aimAt } from "./controls.jsx";
 import { PLAN_LAYER } from "./dualview.jsx";
-import { objectSize } from "./scene-objects.js";
+import { EMPTY_MARKER_SIZE, isEmptyObject, objectSize } from "./scene-objects.js";
 import { displayObjectLabel } from "./object-catalog.jsx";
 import { ko } from "./locale.js";
 import { isProxyFigure } from "./scenes.js";
@@ -188,7 +188,33 @@ function CastRing({ color }) {
 	);
 }
 
+/** An Empty on the board: no footprint, just a small cross and a ring where
+ * its origin stands, so a group node can be found, selected and dragged like
+ * any other row of the plan. */
+function EmptyPlanMarker({ object, selected, dragging, turning }) {
+	const half = EMPTY_MARKER_SIZE / 2;
+	const color = selected ? SELECTED_COLOR : PROP_LABEL_COLOR;
+	const rotation = (object.rot * Math.PI) / 180;
+	const cross = useMemo(() => [[[-half, 0.04, 0], [half, 0.04, 0]], [[0, 0.04, -half], [0, 0.04, half]]], [half]);
+	return (
+		<group position={[object.x, 0, object.z]} rotation={[0, rotation, 0]}>
+			{cross.map((points, index) => (
+				<Line key={index} points={points} color={color} lineWidth={selected ? 2 : 1.5} transparent opacity={selected ? 1 : 0.85} depthWrite={false} depthTest={false} renderOrder={12} />
+			))}
+			<mesh position={[0, 0.036, 0]} rotation={[-Math.PI / 2, 0, 0]} renderOrder={11}>
+				<ringGeometry args={[half * 0.8, half * 0.95, 24]} />
+				<meshBasicMaterial color={color} transparent opacity={selected ? 0.9 : 0.6} depthWrite={false} depthTest={false} />
+			</mesh>
+			<group position={[0, 0, half + 0.35]} rotation={[0, -rotation, 0]}>
+				<PlanLabel text={displayObjectLabel(object.name).slice(0, 8)} color={color} offset={0} muted={!selected} />
+			</group>
+			{selected && <Puck color={SELECTED_COLOR} showBody={false} handleDist={half + 0.65} dragging={dragging} turning={turning} />}
+		</group>
+	);
+}
+
 function SceneObjectFootprint({ object, selected, dragging, turning }) {
+	if (isEmptyObject(object)) return <EmptyPlanMarker object={object} selected={selected} dragging={dragging} turning={turning} />;
 	const { width, height, depth } = objectSize(object);
 	const objectLabel = displayObjectLabel(object.name).slice(0, 8);
 	const handleDist = depth / 2 + 0.65;
@@ -547,7 +573,9 @@ export function PlanBoard({ hostRef, planCamRef, shotCamRef, look, fovDeg, chara
 			});
 		});
 		for (const object of latest.current.sceneObjects) {
-			const { width, depth } = objectSize(object);
+			// An Empty has no footprint; it is picked by its marker's size.
+			const size = isEmptyObject(object) ? { width: EMPTY_MARKER_SIZE, depth: EMPTY_MARKER_SIZE } : objectSize(object);
+			const { width, depth } = size;
 			out.push({
 				id: `object:${object.id}`,
 				objectId: object.id,

@@ -55,7 +55,7 @@ function support(spec, state) {
   const id = spec.onObject ?? (typeof spec.support === 'object' ? spec.support.objectId : null);
   if (!id) return { y: state.floorY, label: 'floor' };
   const object = entityById(state, id);
-  if (!object.renderer || object.renderer === 'cutout' || ['sphere', 'capsule', 'cone', 'car', 'small-plane'].includes(object.renderer) || object.path || object.attach || Math.abs(object.rotX) > EPS || Math.abs(object.rotZ) > EPS || isEffectivelyHidden(object, state.objects, state.characters)) fail('TARGET_NOT_READY', 'Support must be a stationary solid upright surface.');
+  if (!object.renderer || object.renderer === 'cutout' || ['sphere', 'capsule', 'cone', 'car', 'small-plane', 'empty'].includes(object.renderer) || object.path || object.attach || Math.abs(object.rotX) > EPS || Math.abs(object.rotZ) > EPS || isEffectivelyHidden(object, state.objects, state.characters)) fail('TARGET_NOT_READY', 'Support must be a stationary solid upright surface.');
   return { y: object.y + supportHeightForObject(object) * object.scaleY, label: `object:${id}`, object };
 }
 function facingYaw(spec, entity, state) {

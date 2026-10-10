@@ -256,9 +256,18 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 		// whichever surface is nearer.
 		tools.raycaster.layers.set(GIZMO_LAYER);
 		let ghostId = null;
+		let ghostIsEmpty = false;
 		const ghostHit = tools.raycaster.intersectObjects(scene.children, true).find((entry) => {
 			if (!entry.object.isMesh) return false;
 			for (let node = entry.object; node; node = node.parent) {
+				// An Empty's marker: its pick volume is a gizmo-layer mesh under
+				// the object's own group, so the owning record is the first
+				// ancestor carrying a sceneObjectId.
+				if (entry.object.userData?.emptyPick && node.userData?.sceneObjectId) {
+					ghostId = node.userData.sceneObjectId;
+					ghostIsEmpty = true;
+					return true;
+				}
 				if (node.userData?.shotCameraPick) {
 					ghostId = "__shotcam__";
 					return true;
@@ -271,7 +280,9 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 			return false;
 		});
 		tools.raycaster.layers.set(0);
-		if (ghostHit && (!hit || ghostHit.distance < hit.distance)) return { id: ghostId, point: ghostHit.point.clone() };
+		// The Empty's marker is drawn over the set (no depth test), so what you
+		// see is what you click: it wins over whatever surface is behind it.
+		if (ghostHit && (ghostIsEmpty || !hit || ghostHit.distance < hit.distance)) return { id: ghostId, point: ghostHit.point.clone() };
 		if (!hit) return null;
 		for (let node = hit.object; node; node = node.parent) {
 			if (node.userData?.sceneObjectId) return { id: node.userData.sceneObjectId, point: hit.point.clone() };

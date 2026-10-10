@@ -589,6 +589,24 @@ export function useObjects(appContext) {
 		);
 	}
 
+	/** Outliner "Group under new Empty": the object's parent node, made on the
+	 * spot. One command, one write, so one undo takes back the Empty and the
+	 * reparent together. Selection follows the Empty, the new handle. */
+	function groupObjectUnderNewEmpty(id = selectedSceneObjectId) {
+		if (!id) return null;
+		try {
+			const receipt = run("object.groupUnderEmpty", { id });
+			const emptyId = receipt.affectedIds[0];
+			appContext.shared.setSelectedHierarchyId(`object:${emptyId}`);
+			setGizmoMode("move");
+			appContext.notify(ko("Grouped under a new Empty", "빈 오브젝트로 묶었어요"));
+			return emptyId;
+		} catch (error) {
+			appContext.notify(error?.message || ko("Could not group this object", "이 오브젝트는 묶을 수 없어요"));
+			return null;
+		}
+	}
+
 	/** In-place rename commit from the hierarchy (F2 / Return / rename on
 	 * create). The row label lives in the tree; the object name is shared
 	 * state, so this is just the inspector's rename through another door. */
@@ -967,7 +985,7 @@ export function useObjects(appContext) {
 		matteBrush, setMatteBrush, matteShrink, setMatteShrink, matteFeather, setMatteFeather, matteMode,
 		setMatteMode, matteStats, setMatteStats, matteBusy, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled,
 		addSceneObject, importCutout, importCutouts, spawnCutoutAt, persistMeshAsset, importMesh, importMeshes,
-		spawnMeshAt, applyMatte, duplicateSelectedSceneObject, frameSelection, renameSceneObject,
+		spawnMeshAt, applyMatte, duplicateSelectedSceneObject, frameSelection, groupObjectUnderNewEmpty, renameSceneObject,
 		sceneObjectWorldMatrix, attachTargetForRow, attachTargetLabel, attachSceneObject,
 	};
 }
