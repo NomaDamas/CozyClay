@@ -102,7 +102,7 @@ export async function startFixtureStudio({ port, evidence, previsMode = "animati
         : outputs === 1 || outputs === 2 ? { name: 'run_action', args: { action: 'character.add', args: { character: { id: 'story-person-a', model: 'proxy-figure', posture: 'sit', x: -1, z: 0 } } } }
         : outputs === 3 || outputs === 4 ? { name: 'run_action', args: { action: 'character.add', args: { character: { id: 'story-person-b', model: 'proxy-figure', posture: 'sit', x: 1, z: 0 } } } }
         : outputs === 5 ? { name: 'inspect_studio', args: { scope: 'selection' } }
-        : outputs === 6 || outputs === 7 ? { name: 'frame_shot', args: { subjectIds: process.env.QA_CAPSULE_ONLY === '1' ? ['char-a'] : ['story-person-a'], framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } }
+        : outputs === 6 || outputs === 7 ? { name: 'frame_shot', args: { subjectIds: process.env.QA_PROXY_ONLY === '1' ? ['char-a'] : ['story-person-a'], framing: { intent: { size: 'medium shot', view: 'front', level: 'eye', side: 'right' } } } }
         : outputs === 8 ? { name: 'verify_result', args: { targets: ['story-person-a', 'story-person-b'], checks: ['placement', 'framing'] } } : null;
     } else if (text.includes('둘이 문 앞으로 간다')) {
       call = outputs === 0 ? { name: 'run_action', args: { action: 'shot.createStill', args: { caption: '둘이 문 앞으로 간다' } } }
