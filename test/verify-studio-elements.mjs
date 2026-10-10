@@ -199,7 +199,7 @@ const expected = new Map([
 	["object.opacity", 0.3],
 	["object.parent", "parent-object"],
 	["object.attach", { characterId: "char-test", bone: "rightHand" }],
-	["object.path", { points: [{ x: 1, y: 0, z: 2 }, { x: 4, y: 1, z: 5 }], timing: null, speed: 0, faceTravel: true, loop: false, extend: false }],
+	["object.path", { points: [{ x: 1, y: 0, z: 2 }, { x: 4, y: 1, z: 5 }], marks: [], timing: null, speed: 0, faceTravel: true, loop: false, extend: false }],
 	["object.cutout", "image-authored"],
 ]);
 

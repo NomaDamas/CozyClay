@@ -8,7 +8,6 @@ const STUDIO_INSPECT_NOTE = ' The per-turn context contains entityIndex and acti
 const STUDIO_MUTATION_TOOLS = new Set(["operate_studio", "arrange_objects", "arrange_characters", "patch_elements", "frame_shot", "verify_result", "undo_edit", "run_action"]);
 const schema = name => ({ type: "function", name, description: `Studio ${name.replaceAll("_", " ")} command.${name === "generate_motion" ? " Timing: give EITHER source.durationSeconds (total) with NO per-beat seconds, OR seconds on EVERY beat with NO durationSeconds. Generation is an alias for motion.generate in the editor, including the character's root path, pose controls and take preservation. A completed receipt is undoable with undo_edit; a started receipt carries jobId for run_action job.await or job.cancel. Generation does not certify motion quality: use verify_result for motion checks and report its evidence and any warnings. One generation per user message: a second call fails with GENERATION_LIMIT." : ""}${name === "verify_result" ? " Pass exactly one of receiptId or targets (not both). An earlier receipt stays verifiable after later edits: it answers stale: true with evidenceRevision (the revision that receipt describes) beside revision (the current one), and a requested frame is captured from the current scene; report the evidence as stale, never as current." : ""}${name === "inspect_studio" ? `${STUDIO_INSPECT_NOTE} scope "actions" lists the editor actions for run_action with their availability (the reason when unavailable); with ids it answers those actions' descriptions and input schemas.` : ""}${name === "run_action" ? " Run one editor action by id (actionIndex in the context lists them) with args matching its input schema; read the schema first with inspect_studio scope \"actions\" and ids instead of guessing. A mutating action answers with a receipt (action, summary, delta) that undo_edit reverts; a job action answers status \"started\", or \"completed\" with its output when it runs to its end; only an action declared generation \"motion\" counts as this message's one generation. A document action (scenes, the project file) answers status \"completed\" and is not undoable; when it opens another scene, its host names that scene and later commands are admitted there." : ""}${STUDIO_MUTATION_TOOLS.has(name) ? STUDIO_TOOL_RECEIPT_NOTE : ""}`, parameters: STUDIO_TOOL_SCHEMAS[name] });
 export const studioToolSchemas = () => STUDIO_TOOLS.map(schema);
-export { BUSY_WAIT_MS } from "./studio-rebase.mjs";
 const text = value => typeof value === "string" ? value : JSON.stringify(value);
 
 export function createStudioTools({ liveHub, workspaceHandle, session, resolveImage, previsMode } = {}) {
@@ -30,17 +29,16 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
   // a refusal: the revision it was admitted at and the context re-read for it.
   const attempt = async (name, args, scratch = {}) => {
     const command = validateStudioCommand({ name, args });
-    if (name === 'generate_motion' && command.args.source.kind === 'generate') return invoke('run_action', { action: 'motion.generate', args: generationArgs(command.args) });
+    if (name === 'generate_motion' && command.args.source.kind === 'generate') return rebaser.run('run_action', { action: 'motion.generate', args: generationArgs(command.args) });
     const action = name === "run_action" ? declared.get(command.args.action) : undefined;
     const generation = action?.generation === "motion";
-    scratch.generation = generation;
     if (generation && (generationGate.used || generationGate.pending)) throw new StudioProtocolError("GENERATION_LIMIT", "One motion generation per user message. Report this result and ask the user before generating again.");
     if (generation && (generationGate.failures ?? 0) >= 2) throw new StudioProtocolError("GENERATION_LIMIT", "Two motion generation attempts already failed in this user message. Report both failures to the user and ask before generating again.");
     const payload = mutationNames.has(name) && session?.admission
       ? { name, args: command.args, commandId: session.admission.commandId(), host: session.admission.host, expectedRevision: session.admission.revision, ...(session.admission.turnId ? { turnId: session.admission.turnId } : {}),
           ...(generation && session.onJob ? { wait: false } : {}) }
       : command.args;
-    scratch.refusedRevision = payload.expectedRevision;
+    Object.assign(scratch, { generation, refusedRevision: payload.expectedRevision });
     let result;
     if (generation) generationGate.pending = true;
     try {
@@ -78,15 +76,13 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
     // An inspect reports the live revision at its top level (older editors embedded a context).
     if (name === "inspect_studio") rebaser.afterInspect(result);
     if (mutationNames.has(name) && session?.admission) {
-      if (Number.isSafeInteger(result?.revision?.after)) session.admission.revision = result.revision.after;
-      else await session.admission.refresh();
+      if (Number.isSafeInteger(result?.revision?.after)) session.admission.revision = result.revision.after; else await session.admission.refresh();
       await rebaser.observeOwnEdit(result);
     }
     return result;
   };
-  const invoke = (name, args) => rebaser.run(name, args);
 	const availableTools = previsMode === "storyboard" ? STUDIO_TOOLS.filter(name => name !== "generate_motion") : STUDIO_TOOLS;
-	const tools = availableTools.map(name => ({ ...schema(name), handler: args => invoke(name, args) }));
+	const tools = availableTools.map(name => ({ ...schema(name), handler: args => rebaser.run(name, args) }));
   tools.resolveImage = async (imageId, correlation = {}) => {
     if (typeof resolveImage !== "function") return { visualStatus: "unavailable", reason: "image resolver unavailable" };
     try {
@@ -95,7 +91,7 @@ export function createStudioTools({ liveHub, workspaceHandle, session, resolveIm
       return { visualStatus: "attached", dataUrl: result.dataUrl, imageId, revision: result.revision ?? null, receiptId: result.receiptId ?? correlation.receiptId ?? null };
     } catch { return { visualStatus: "unavailable", reason: "image attachment failed", imageId }; }
   };
-  tools.internal = { invoke };
+  tools.internal = { invoke: rebaser.run };
   return tools;
 }
 export function studioToolResult(result) { return text(result); }

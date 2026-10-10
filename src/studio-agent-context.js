@@ -39,10 +39,7 @@ export function validateStudioCursor(cursor, context) {
  * registered command, plus the declared generation and hub timeout. The
  * description and input schema stay out; the agent reads them on request. */
 export function studioActionIndex(actions, { previsMode } = {}) {
-	const shown = actions.filter(action => !action.agentHidden);
-	const available = previsMode === "storyboard"
-		? shown.filter(action => action.generation !== "motion" && action.domain !== "motion")
-		: shown;
+	const available = actions.filter(action => !action.agentHidden && (previsMode !== "storyboard" || (action.generation !== "motion" && action.domain !== "motion")));
 	return available.map(({ id, label, generation, timeoutMs }) => ({ id, ...(label ? { label: [...label].slice(0, 120).join("") } : {}),
 		...(generation ? { generation } : {}), ...(timeoutMs === undefined ? {} : { timeoutMs }) }));
 }

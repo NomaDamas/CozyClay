@@ -129,8 +129,7 @@ export function createStudioAppBinding(ports) {
 			renderer: o.renderer, color: o.color ?? null, ...(o.assetId ? { assetId: o.assetId } : {}),
 			parentId: o.parent ?? null, attachment: o.attach ?? null, pathPointCount: o.path?.points.length ?? 0,
 			// the dots on the route, with the lean (degrees) a mark carries
-			...(o.path?.marks?.length ? { pathMarks: o.path.marks.map(mark => typeof mark === "number" ? mark : { t: mark.t, ...(mark.bank !== undefined ? { bank: mark.bank } : {}), ...(mark.pitch !== undefined ? { pitch: mark.pitch } : {}) }) } : {}),
-			...(local ? { local } : {}) }; })];
+			...(o.path?.marks?.length ? { pathMarks: o.path.marks.map(mark => typeof mark === "number" ? mark : { t: mark.t, ...(mark.bank !== undefined ? { bank: mark.bank } : {}), ...(mark.pitch !== undefined ? { pitch: mark.pitch } : {}) }) } : {}), ...(local ? { local } : {}) }; })];
 	}
 	const frameRange = row => ({ startFrame: row.startFrame, endFrameExclusive: row.endFrame + 1 });
 	function assetList(s) {
@@ -281,8 +280,7 @@ export function createStudioAppBinding(ports) {
 				const scene = readCommand(), entityIds = ids => ids.filter(id => scene.objects.some(o => o.id === id) || scene.characters.some(c => c.id === id));
 				// A receipt's checks are evidence only for what they measured: every receipt carries a coverage tag, but
 				// only an arrange/frame receipt carries overlap or framing numbers. Anything else is measured here.
-				const measuredBy = { placement: "overlapIds", framing: "screenFraction" };
-				const unmeasured = receipt && args.checks.some(check => measuredBy[check] && receipt.checks?.[measuredBy[check]] === undefined);
+				const measuredBy = { placement: "overlapIds", framing: "screenFraction" }, unmeasured = receipt && args.checks.some(check => measuredBy[check] && receipt.checks?.[measuredBy[check]] === undefined);
 				const measured = args.targets ? entityIds(args.targets) : unmeasured ? entityIds(receipt.affectedIds) : null;
 				const result = { receiptId: receipt?.receiptId ?? null, revision: s.revision, evidenceRevision, stale: evidenceRevision !== s.revision, checks: measured ? { coverage: "current-scene-targets" } : receipt.checks,
 					verification: receipt?.verification ?? null, semanticStatus: "unavailable", visualRefs: [], unsupportedChecks: [], unsupportedReasons: {} };
