@@ -1,7 +1,7 @@
 import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
 import { sceneObjectNameDisplayKo, HIERARCHY_INSPECTOR_TITLES, CHARACTER_MODEL_LABELS } from "../app-stage.jsx";
-import { CUTOUT_KIND, EMPTY_KIND } from "../scene-objects.js";
+import { CUTOUT_KIND, EMPTY_KIND, SCULPT_KIND } from "../scene-objects.js";
 import LightPanel from "../panels/LightPanel.jsx";
 import CameraPanel from "../panels/CameraPanel.jsx";
 import SubjectsPanel from "../panels/SubjectsPanel.jsx";
@@ -31,7 +31,7 @@ const characterTitle = (index) => ko(`Character ${index + 1}`, `인물 ${index +
 function detailsSelection({ selectedHierarchyId: id, selectedSceneObject, rigSelection, characters, shot, inspectorHasContent }) {
 	if (!inspectorHasContent) return null;
 	if (selectedSceneObject) {
-		const kind = selectedSceneObject.renderer === CUTOUT_KIND ? ko("Cutout", "컷아웃") : selectedSceneObject.renderer === EMPTY_KIND ? ko("Empty", "빈 오브젝트") : ko("Mesh", "메시");
+		const kind = selectedSceneObject.renderer === CUTOUT_KIND ? ko("Cutout", "컷아웃") : selectedSceneObject.renderer === EMPTY_KIND ? ko("Empty", "빈 오브젝트") : selectedSceneObject.renderer === SCULPT_KIND ? ko("Sculpt", "조형") : ko("Mesh", "메시");
 		return { name: sceneObjectNameDisplayKo(selectedSceneObject.name), type: `${selectedSceneObject.renderer === EMPTY_KIND ? ko("Node", "노드") : ko("Prop", "소품")} · ${kind}` };
 	}
 	if (rigSelection) {

@@ -20,6 +20,9 @@ import {
 	duplicateCutoutOptions,
 	MESH_KIND,
 	duplicateMeshOptions,
+	createSculptObject,
+	duplicateSculptOptions,
+	SCULPT_KIND,
 	objectSize,
 	setSceneObjectAttach,
 	setSceneObjectParent,
@@ -574,7 +577,9 @@ export function useObjects(appContext) {
 			? createCutoutObject(duplicateCutoutOptions(object), objects, placement)
 			: object.renderer === MESH_KIND
 				? createMeshObject(duplicateMeshOptions(object), objects, placement)
-				: createSceneObject(object.renderer, objects, placement);
+				: object.renderer === SCULPT_KIND
+					? createSculptObject(duplicateSculptOptions(object), objects, placement).object
+					: createSceneObject(object.renderer, objects, placement);
 		if (!copy) return;
 		// Unity drops the duplicate exactly on top of the original; for blocking,
 		// one grid step to the side means you can see that it worked.

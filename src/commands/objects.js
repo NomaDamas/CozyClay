@@ -3,7 +3,8 @@ import { studioActionDeclaration } from "../studio-actions.js";
 import { characterOf, fail } from "./shared.js";
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/object.js';
-import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject, groupUnderNewEmpty, objectPatchFields } from '../scene-objects.js';
+import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject, groupUnderNewEmpty, objectPatchFields, createSculptObject, SCULPT_KIND } from '../scene-objects.js';
+import { expandSculptParts, normalizeSculptRecipe } from '../sculpt-recipe.js';
 import { clampWarning } from '../receipt-findings.js';
 import { STUDIO_TOOL_SCHEMAS, StudioSchemas } from '../studio-agent-protocol.js';
 
@@ -20,6 +21,10 @@ const mutation = (id, label, input) => ({ id, label, description: label, kind: '
 const semantic = [
 	mutation('object.set', 'Set object fields', setInput),
 	mutation('object.add', 'Add object', input({ kind: { type: 'string' }, placement, name: { type: 'string' }, parent: id, first: { type: 'boolean' } }, ['kind'])),
+	// A clay prop from a recipe of soft parts (docs/sculpt-from-image.md). With `id` it re-sculpts that
+	// sculpt in place (one undo); without, it creates one. The recipe is checked by sculpt-recipe.js.
+	{ ...mutation('object.sculpt', 'Sculpt a clay prop from a recipe', input({ recipe: { type: 'object', properties: {}, additionalProperties: true }, id, name: { type: 'string', maxLength: 240 }, placement, parent: id }, ['recipe'])),
+		description: 'Create a sculpt (or re-sculpt one by id) from a recipe { version: 1, parts: [{ id, shape: blob|box|cylinder|torus|frame, size: [x,y,z] m, position, rotation (deg), color, parent, mirror, roundness, taper, border }] }. Floor is y=0, front +z, the subject\'s left +x; mirror reflects across x=0.' },
 	mutation('object.remove', 'Remove objects', input({ ids })),
 	mutation('object.rename', 'Rename object', input({ id, name: { type: 'string', maxLength: 240 } })),
 	mutation('object.group', 'Group objects', input({ parent: id, children: ids })),
@@ -64,6 +69,29 @@ export function register(registry, ports) {
 			const next = args.first ? [placed, ...before] : [...before, placed];
 			owned().write(args.parent === undefined ? next : setSceneObjectParent(next, placed.id, args.parent));
 			return result(before, 'Added object.');
+		},
+		'object.sculpt': args => {
+			const before = owned().read();
+			const refused = normalizeSculptRecipe(args.recipe);
+			if (!refused.ok) fail('INVALID_ARGUMENT', `Recipe refused at ${refused.error}`);
+			const patch = { ...(args.placement ?? {}), ...(args.name === undefined ? {} : { name: args.name }) };
+			let objectId = args.id;
+			if (objectId !== undefined) {
+				const target = objectOf(objectId);
+				if (target.renderer !== SCULPT_KIND) fail('INVALID_ARGUMENT', `${objectId} is a ${target.renderer}, not a sculpt; omit id to create a new sculpt.`);
+				owned().write(updateSceneObject(before, objectId, { ...patch, recipe: refused.recipe }));
+			} else {
+				if (args.parent !== undefined) objectOf(args.parent);
+				const made = createSculptObject({ recipe: refused.recipe, name: args.name }, before, args.placement);
+				objectId = made.object.id;
+				const next = [...before, updateSceneObject([made.object], objectId, patch)[0]];
+				owned().write(args.parent === undefined ? next : setSceneObjectParent(next, objectId, args.parent));
+			}
+			const sculpted = owned().read().find(row => row.id === objectId);
+			const parts = expandSculptParts(sculpted.recipe).length;
+			const size = `${sculpted.footprint.width} × ${sculpted.footprint.depth} m, ${sculpted.height} m tall`;
+			return { affectedIds: [objectId, ...result(before, '').affectedIds.filter(row => row !== objectId)],
+				summary: `${args.id === undefined ? 'Sculpted' : 'Re-sculpted'} ${sculpted.name} (${objectId}): ${parts} parts, ${size}.` };
 		},
 		'object.remove': ({ ids }) => {
 			const before = owned().read(); ids.forEach(objectOf);

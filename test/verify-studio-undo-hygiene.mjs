@@ -187,6 +187,7 @@ const COMMAND_INPUTS = {
 	"object.attach": { objectId: "object-1", characterId: "actor" }, "object.detach": { objectId: "object-1" }, "object.duplicate": { objectId: "object-1" },
 	"asset.import": { source: "https://assets.example.test/poster.png", name: "poster.png", placeAs: "cutout" },
 	"object.set": { id: "object-1", set: { name: "Generic" } }, "object.add": { kind: "cone" },
+	"object.sculpt": { recipe: { parts: [{ id: "body", shape: "blob", size: [0.4, 0.6, 0.4], position: [0, 0.3, 0] }] } },
 	"object.remove": { ids: ["object-1"] }, "object.rename": { id: "object-1", name: "Renamed" },
 	"object.update": { id: "object-1", patch: { x: 2 } },
 	"object.group": { parent: "group-2", children: ["object-1"] }, "object.ungroup": { children: ["object-1"] },
@@ -332,7 +333,7 @@ const cases = {
 	},
 	async "every command mutation writes inside one entry of its undo domain"() {
 		const mutations = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => entry.kind === "mutation");
-		assert.equal(mutations.length, 86);
+		assert.equal(mutations.length, 87);
 		for (const declaration of mutations) {
 			// A new shot needs free room at the playhead; the others act inside shot-1.
 			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8, still: ["shot.setHold", "shot.createStill"].includes(declaration.id) }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));

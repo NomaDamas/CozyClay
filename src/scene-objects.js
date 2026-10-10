@@ -21,6 +21,7 @@ import { Euler, Quaternion } from "three";
 import { createObjectPath, translateObjectPath } from "./object-path.js";
 import { elementByPath } from "./studio-elements.js";
 import { MESH_DEFAULT_HEIGHT, MESH_HEIGHT_MIN } from "./scene-mesh.js";
+import { normalizeSculptRecipe, sculptStandingBox } from "./sculpt-recipe.js";
 
 export const DEFAULT_SCENE_OBJECTS = [];
 /** The persistence contract (plan §8.1): the version lives in the key AND in
@@ -210,6 +211,22 @@ const MESH_ENTRY = {
 };
 
 /**
+ * A sculpt is a clay prop built from a recipe of soft parts (sculpt-recipe.js):
+ * data an agent writes from a reference image, never code. Like a mesh its size
+ * is per-instance, but it is MEASURED from the recipe rather than stored as a
+ * fact, so a record can never disagree with the parts it draws.
+ */
+export const SCULPT_KIND = "sculpt";
+const SCULPT_ENTRY = {
+	kind: SCULPT_KIND,
+	label: "Sculpt",
+	group: "Sculpts",
+	footprint: { width: 1, depth: 1 },
+	height: 1,
+	color: "#c2c6c8",
+};
+
+/**
  * An empty is a pure grouping node: a transform and a place in the hierarchy,
  * with nothing to draw (Unity's Create Empty, Blender's Empty). It exists so a
  * multi-part assembly can have one top-level handle — move it, turn it, give it
@@ -252,6 +269,7 @@ export const OBJECT_MENU_ENTRIES = Object.freeze([EMPTY_ENTRY, ...OBJECT_LIBRARY
 export function objectLibraryEntry(kind) {
 	if (kind === CUTOUT_KIND) return CUTOUT_ENTRY;
 	if (kind === MESH_KIND) return MESH_ENTRY;
+	if (kind === SCULPT_KIND) return SCULPT_ENTRY;
 	if (kind === EMPTY_KIND) return EMPTY_ENTRY;
 	return OBJECT_LIBRARY.find((entry) => entry.kind === kind) ?? null;
 }
@@ -369,7 +387,7 @@ export function sceneObjectIdFromHierarchy(hierarchyId) {
 export function createSceneObject(kind, existing = [], placement = {}) {
 	// Cutouts and meshes come from an import, never from the catalogue:
 	// without an asset id the record has nothing to draw.
-	if (kind === CUTOUT_KIND || kind === MESH_KIND) return null;
+	if (kind === CUTOUT_KIND || kind === MESH_KIND || kind === SCULPT_KIND) return null;
 	const entry = objectLibraryEntry(kind);
 	if (!entry) return null;
 	const names = new Set(existing.map((object) => object.name));
@@ -547,6 +565,52 @@ export function duplicateMeshOptions(object) {
 	return { assetId: object.assetId, height: object.height, footprint: object.footprint, name: object.name, clay: object.clay === true };
 }
 
+/**
+ * A fresh sculpt from a recipe. Returns `{ object }` or `{ error }` with the
+ * recipe's own refusal, so a caller (the agent above all) hears why a recipe
+ * cannot be drawn instead of getting a silent null.
+ */
+export function createSculptObject({ recipe, name = "" } = {}, existing = [], placement = {}) {
+	const normalized = normalizeSculptRecipe(recipe);
+	if (!normalized.ok) return { error: normalized.error };
+	const { footprint, height } = sculptStandingBox(normalized.recipe);
+	const base = typeof name === "string" && name.trim() ? name.trim() : SCULPT_ENTRY.label;
+	const names = new Set(existing.map((object) => object.name));
+	let displayName = base;
+	for (let n = 2; names.has(displayName); n += 1) displayName = `${base} ${n}`;
+	const ids = new Set(existing.map((object) => object.id));
+	let id = SCULPT_KIND;
+	for (let n = 2; ids.has(id); n += 1) id = `${SCULPT_KIND}-${n}`;
+	return {
+		object: {
+			id,
+			name: displayName,
+			renderer: SCULPT_KIND,
+			x: TRANSFORM_LIMITS.x(Number(placement.x) || 0),
+			y: TRANSFORM_LIMITS.y(Number(placement.y) || 0),
+			z: TRANSFORM_LIMITS.z(Number(placement.z) || 0),
+			rot: wrapAngle(Number(placement.rot) || 0),
+			rotX: 0,
+			rotZ: 0,
+			scaleX: 1,
+			scaleY: 1,
+			scaleZ: 1,
+			path: null,
+			color: SCULPT_ENTRY.color,
+			parent: null,
+			attach: null,
+			hidden: false,
+			recipe: normalized.recipe,
+			footprint,
+			height,
+		},
+	};
+}
+
+export function duplicateSculptOptions(object) {
+	return { recipe: object.recipe, name: object.name };
+}
+
 /** Every writable transform channel and the rule that keeps it in the room. */
 const TRANSFORM_LIMITS = {
 	x: (value) => clamp(value, OBJECT_POSITION_LIMITS.min.x, OBJECT_POSITION_LIMITS.max.x),
@@ -566,6 +630,7 @@ export function objectPatchFields(object) {
 	const fields = [...Object.keys(TRANSFORM_LIMITS), "name", "color", "hidden", "opacity", "path"];
 	if (object?.renderer === CUTOUT_KIND) fields.push("assetId", "sourceAssetId", "matteAssetId", "matteScale", "height", "aspect", "width", "stretch");
 	if (object?.renderer === MESH_KIND) fields.push("clay", "assetId", "height");
+	if (object?.renderer === SCULPT_KIND) fields.push("recipe");
 	return fields;
 }
 
@@ -891,6 +956,15 @@ export function updateSceneObject(objects, id, patch) {
 				}
 			}
 		}
+		// A recipe that cannot be drawn leaves the sculpt as it was; the command
+		// layer (object.sculpt) is where the refusal is reported.
+		if (object.renderer === SCULPT_KIND && patch.recipe !== undefined) {
+			const normalized = normalizeSculptRecipe(patch.recipe);
+			if (normalized.ok && JSON.stringify(normalized.recipe) !== JSON.stringify(object.recipe)) {
+				update.recipe = normalized.recipe;
+				Object.assign(update, sculptStandingBox(normalized.recipe));
+			}
+		}
 		if (!Object.keys(update).length) return object;
 		changed = true;
 		return { ...object, ...update };
@@ -1031,6 +1105,9 @@ export function normalizeSceneObject(record) {
 	// rule an unknown renderer already gets.
 	const isCutout = entry.kind === CUTOUT_KIND;
 	const isMesh = entry.kind === MESH_KIND;
+	const sculpt = entry.kind === SCULPT_KIND ? normalizeSculptRecipe(record.recipe) : null;
+	// Same rule as a cutout without its picture: nothing to draw, so dropped.
+	if (sculpt && !sculpt.ok) return null;
 	if (isCutout && (typeof record.assetId !== "string" || !record.assetId)) return null;
 	if (isMesh && (typeof record.assetId !== "string" || !record.assetId)) return null;
 	// Defensive import fallback, not a migration: hand-authored or external
@@ -1105,6 +1182,8 @@ export function normalizeSceneObject(record) {
 					),
 					height: cutoutHeight(pick(record.height, CUTOUT_DEFAULT_HEIGHT)),
 				}
+			: sculpt
+				? { recipe: sculpt.recipe, ...sculptStandingBox(sculpt.recipe) }
 			: isMesh
 				? {
 						assetId: record.assetId,

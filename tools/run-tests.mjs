@@ -142,6 +142,7 @@ const NODE_FILES = [
 	"test/verify-coplanar-depth.mjs",
 	"test/verify-empty-object.mjs",
 	"test/verify-sculpt-recipe.mjs",
+	"test/verify-sculpt-object.mjs",
 	"test/verify-route-owner.mjs",
 	"test/verify-part-colours.mjs",
 	"test/verify-asset-shelf.mjs",

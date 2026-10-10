@@ -360,6 +360,7 @@ export const SCENE_RENDERER_LABELS_KO = new Map([
 	["aircraft", ko("aircraft", "비행기")],
 	[CUTOUT_KIND, ko("cutout", "컷아웃")],
 	[MESH_KIND, ko("Mesh", "모델")],
+	["sculpt", ko("Sculpt", "조형")],
 ]);
 
 export const SCENE_OBJECT_NAME_LABELS_KO = new Map([
