@@ -15,7 +15,9 @@ const model = process.env.QA_AGENT_MODEL || "cliproxy/claude-opus-5-5";
 const effort = process.env.QA_AGENT_EFFORT || null;
 const outputDir = process.env.QA_OUT || "/tmp/cozyclay-agent-bench";
 const label = process.env.QA_BENCH_LABEL || "baseline";
-const turnTimeoutMs = Number(process.env.QA_BENCH_TURN_TIMEOUT_MS || 240_000);
+// 480 s: the three-shot coverage scenario (S3) ran 180-210 s on main with thinking off, so
+// 240 s turned honest slow runs into BENCH_TIMEOUT rows and poisoned S4's precondition.
+const turnTimeoutMs = Number(process.env.QA_BENCH_TURN_TIMEOUT_MS || 480_000);
 const reportPath = `${outputDir}/${label}.json`;
 const shotDir = `${outputDir}/${label}`;
 const modelSlug = model.replace(/[^a-z0-9.]+/gi, "-");
@@ -228,10 +230,15 @@ const SCENARIOS = [
   { id: "S2", prompt: "그 캐릭터 주위에 의자 6개를 반경 2m 원형으로 둘러 배치해", assert(before, after) {
     const character = characterIn(before, before.activeCharacterId);
     const added = newObjects(before, after).map((row) => ({ id: row.id, name: row.name, renderer: row.renderer, x: row.x, z: row.z, distanceM: round(xz(row, character)) }));
+    // The request is "six chairs on a 2 m ring": count every chair that ended up on the ring,
+    // whether it was created now or moved there (reusing the S1 chair is a valid reading).
+    const ring = after.objects.filter((row) => `${row.name ?? ""} ${row.libraryKind ?? ""} ${row.renderer ?? ""}`.toLowerCase().includes("chair"))
+      .map((row) => ({ id: row.id, name: row.name, renderer: row.renderer, x: row.x, z: row.z, distanceM: round(xz(row, character)) }))
+      .filter((row) => row.distanceM >= 1.5 && row.distanceM <= 2.5);
     let minPairwiseM = null;
-    for (let i = 0; i < added.length; i++) for (let j = i + 1; j < added.length; j++) minPairwiseM = Math.min(minPairwiseM ?? Infinity, xz(added[i], added[j]));
-    const success = after.objects.length === before.objects.length + 6 && added.length === 6 && added.every((row) => row.distanceM >= 1.5 && row.distanceM <= 2.5) && minPairwiseM > 0.3;
-    return { success, measured: { characterId: character?.id ?? null, objectCountBefore: before.objects.length, objectCountAfter: after.objects.length, minPairwiseM: round(minPairwiseM), added } };
+    for (let i = 0; i < ring.length; i++) for (let j = i + 1; j < ring.length; j++) minPairwiseM = Math.min(minPairwiseM ?? Infinity, xz(ring[i], ring[j]));
+    const success = ring.length === 6 && minPairwiseM > 0.3;
+    return { success, measured: { characterId: character?.id ?? null, objectCountBefore: before.objects.length, objectCountAfter: after.objects.length, ringCount: ring.length, minPairwiseM: round(minPairwiseM), added, ring } };
   } },
   { id: "S3", prompt: "두 캐릭터가 테이블에 마주 앉아 대화하는 장면을 만들어. 캐릭터가 하나면 하나 추가해. 샷은 세 개: 마스터 투샷, A의 OTS, B의 OTS.", assert(before, after) {
     // Built-in props carry no libraryKind; their kind is the renderer id.
