@@ -188,8 +188,8 @@ import { demoSeedGate, hasLineEditCapability, motionReadiness } from "./motion-r
 import { PWA_UPDATE_EVENT } from "./pwa.js";
 import {
 	createObjectPath,
+	insertPathMark,
 	objectTransformAt,
-	pathMarkFractions,
 	pathMetrics,
 	strokeToPathPoints,
 } from "./object-path.js";
@@ -7520,11 +7520,13 @@ export default function App() {
 								onObjectPathMarkInsert={(t) => {
 									const path = selectedSceneObject?.path;
 									if (!path) return;
-									const marks = [...pathMarkFractions(path).slice(1, -1), t].sort((a, b) => a - b);
+									// The new dot is born with the lean the route already has there.
+									const added = insertPathMark(path, t);
+									if (!added) return;
 									const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-									changeSceneObject(selectedSceneObject.id, { path: { ...path, marks } }, token);
+									changeSceneObject(selectedSceneObject.id, { path: { ...path, marks: added.marks } }, token);
 									endSceneTransaction(token, { commit: true });
-									setPathPointIndex(marks.indexOf(t) + 1);
+									setPathPointIndex(added.index);
 									setToast(ko("Dot added — drag it to bend the route", "점을 추가했어요 — 끌어서 경로를 휘세요"));
 								}}
 								onObjectPathGestureStart={() => {

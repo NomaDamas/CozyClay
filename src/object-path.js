@@ -13,6 +13,7 @@
  */
 
 import { createTiming, timingIsFlat, timingProgress } from "./speed-envelope.js";
+import { monotoneCubicAt } from "./monotone-cubic.js";
 
 const MAX_PATH_POINTS = 64;
 // The camera rail's crane marks, mirrored: the two ends are always marks, up to
@@ -21,25 +22,48 @@ const MAX_PATH_MARKS = 8;
 const MARK_GAP = 0.03;
 const ROOM_LIMIT = 240;
 const MAX_HEIGHT = 60;
+// A mark's lean (bank / pitch) is a body tilt, not a flip: ±90° is a vehicle on
+// its side, past that it is a different (and unreachable-by-slider) gesture.
+const MAX_LEAN = 90;
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
 const finite = (value, fallback = 0) => (typeof value === "number" && Number.isFinite(value) ? value : fallback);
 
+const tidyDegrees = (value) => {
+	const rounded = Math.round(value * 1e4) / 1e4;
+	return rounded === 0 ? 0 : rounded;
+};
+
+/** One stored mark: a bare number is a level dot (bank 0, pitch 0). */
+function readMark(entry) {
+	if (entry && typeof entry === "object") {
+		return {
+			t: finite(entry.t, -1),
+			bank: tidyDegrees(clamp(finite(entry.bank), -MAX_LEAN, MAX_LEAN)),
+			pitch: tidyDegrees(clamp(finite(entry.pitch), -MAX_LEAN, MAX_LEAN)),
+		};
+	}
+	return { t: finite(entry, -1), bank: 0, pitch: 0 };
+}
+
 /**
- * The interior marks (arc fractions of the route) a hand has dropped on it.
- * The ends are implicit marks 0 and 1 and never stored.
+ * The interior marks a hand has dropped on the route: `{ t, bank, pitch }`,
+ * `t` the arc fraction, `bank` the roll about the travel direction (degrees,
+ * positive = right side down) and `pitch` the nose angle (positive = nose up)
+ * the body holds when it passes the dot. A plain number is accepted as a level
+ * dot. The ends are implicit marks 0 and 1, always level, and never stored.
  */
 function normalizeMarks(value) {
 	const marks = [];
 	const sorted = (Array.isArray(value) ? value : [])
-		.map((entry) => finite(entry, -1))
-		.filter((t) => t > MARK_GAP && t < 1 - MARK_GAP)
-		.sort((a, b) => a - b);
-	for (const t of sorted) {
-		const previous = marks.length ? marks[marks.length - 1] : 0;
-		if (t - previous < MARK_GAP || 1 - t < MARK_GAP) continue;
+		.map(readMark)
+		.filter((mark) => mark.t > MARK_GAP && mark.t < 1 - MARK_GAP)
+		.sort((a, b) => a.t - b.t);
+	for (const mark of sorted) {
+		const previous = marks.length ? marks[marks.length - 1].t : 0;
+		if (mark.t - previous < MARK_GAP || 1 - mark.t < MARK_GAP) continue;
 		if (marks.length >= MAX_PATH_MARKS - 2) break;
-		marks.push(t);
+		marks.push(mark);
 	}
 	return marks;
 }
@@ -113,9 +137,10 @@ export function translateObjectPath(path, delta) {
 }
 
 /**
- * The same route, turned bodily about a pivot: a rotating group carries every
- * child's route around with it, the way translateObjectPath carries it along.
- * `matrix` is a row-major 3x3 rotation (kept as plain numbers so this module
+ * The same route, turned bodily about a pivot. A rotating group no longer
+ * turns its children's routes (a route is a road in the world; see
+ * updateSceneObject), so nothing in the scene calls this now; it stays as the
+ * pure helper for a caller that does want a road turned. `matrix` is a row-major 3x3 rotation (kept as plain numbers so this module
  * stays importable without three.js); every point goes to
  * `to + matrix · (point − from)`, so one call also covers a pivot that moved
  * in the same edit. Values are tidied at 1e-9 so float dust never accumulates
@@ -199,9 +224,50 @@ export function pathCurvePointBetween(points, index, t) {
 	return { x: at.x, y: Math.max(0, at.y), z: at.z };
 }
 
+/** The interior marks, normalized: `{ t, bank, pitch }` ascending by `t`. */
+export function pathMarks(path) {
+	return normalizeMarks(path?.marks);
+}
+
 /** Every mark as an arc fraction, ends included: the dots the editors draw. */
 export function pathMarkFractions(path) {
-	return [0, ...normalizeMarks(path?.marks), 1];
+	return [0, ...normalizeMarks(path?.marks).map((mark) => mark.t), 1];
+}
+
+/**
+ * The marks with one more dot at arc fraction `t`, and the editor index it
+ * takes (ends count: the first interior dot is 1). The new dot is born with the
+ * lean the route already has there, so dropping it changes nothing visible; its
+ * neighbours keep theirs. Null when the route is full or `t` is too close to a
+ * dot or an end.
+ */
+export function insertPathMark(path, t) {
+	const marks = normalizeMarks(path?.marks);
+	const at = finite(t, -1);
+	if (marks.length >= MAX_PATH_MARKS - 2) return null;
+	if (!(at > MARK_GAP && at < 1 - MARK_GAP)) return null;
+	if (marks.some((mark) => Math.abs(mark.t - at) < MARK_GAP)) return null;
+	const lean = pathLeanAt(path, at);
+	const next = [...marks, { t: at, bank: tidyDegrees(lean.bank), pitch: tidyDegrees(lean.pitch) }].sort((a, b) => a.t - b.t);
+	return { marks: next, index: next.findIndex((mark) => mark.t === at) + 1 };
+}
+
+/**
+ * The body's tilt at arc fraction `t`: a monotone piecewise cubic through the
+ * marks' bank and pitch (ends level), the camera crane's own interpolation —
+ * it hits every dot exactly, never overshoots between two, and is level again
+ * at both ends and wherever the neighbouring dots are.
+ */
+export function pathLeanAt(path, t) {
+	const marks = normalizeMarks(path?.marks);
+	if (!marks.some((mark) => mark.bank || mark.pitch)) return { bank: 0, pitch: 0 };
+	const knots = [{ t: 0, bank: 0, pitch: 0 }, ...marks, { t: 1, bank: 0, pitch: 0 }];
+	const at = clamp(finite(t), 0, 1);
+	const tidy = (value) => (Math.abs(value) < 1e-12 ? 0 : value);
+	return {
+		bank: tidy(monotoneCubicAt(knots, at, (knot) => knot.bank)),
+		pitch: tidy(monotoneCubicAt(knots, at, (knot) => knot.pitch)),
+	};
 }
 
 /** The point at arc fraction `t` of the travelled curve. */
@@ -335,18 +401,11 @@ function headingBetween(a, b) {
 }
 
 /**
- * Where an object stands at `frame`. Returns null when the object has no
- * usable path, so callers fall back to its authored transform untouched.
- *
- * @param {object} object a scene object record
- * @param {number} frame absolute timeline frame
- * @param {{ frameCount: number, fps: number }} take timeline geometry
+ * How far along the travelled curve the route has taken the object at
+ * `frame`, in metres (past `length` only when the route extends), with the
+ * curve itself. Shared by the pose and the progress readout.
  */
-export function objectTransformAt(object, frame, take = {}) {
-	const path = createObjectPath(object?.path);
-	if (!path) return null;
-	const curve = pathCurve(path);
-	if (curve.length <= 1e-9) return null;
+function travelledDistance(path, curve, frame, take) {
 	const frameCount = Math.max(1, Math.round(finite(take.frameCount, 1)));
 	const fps = Math.max(1, finite(take.fps, 24));
 	const sampled = clamp(finite(frame), 0, Math.max(0, frameCount - 1));
@@ -359,22 +418,53 @@ export function objectTransformAt(object, frame, take = {}) {
 	// (and so the arrival frame) never moves — the area is the distance.
 	const window = curve.length / speed;
 	const u = seconds / Math.max(1e-6, window);
-	let distance;
-	if (path.loop && curve.length > 1e-9) {
-		distance = curve.length * timingProgress(path.timing, u - Math.floor(u));
-	} else if (u >= 1) {
-		// Past the window: arrived. Extend keeps walking the final heading at
-		// the plain average speed, exactly as it did before envelopes existed.
-		distance = curve.length + (path.extend ? speed * (seconds - window) : 0);
-	} else {
-		distance = curve.length * timingProgress(path.timing, u);
-	}
+	if (path.loop && curve.length > 1e-9) return curve.length * timingProgress(path.timing, u - Math.floor(u));
+	// Past the window: arrived. Extend keeps walking the final heading at
+	// the plain average speed, exactly as it did before envelopes existed.
+	if (u >= 1) return curve.length + (path.extend ? speed * (seconds - window) : 0);
+	return curve.length * timingProgress(path.timing, u);
+}
+
+/**
+ * The arc fraction 0..1 the route has the object at on `frame` — what the
+ * dots are measured in — or null when the path cannot describe travel.
+ *
+ * @param {object} path a path record
+ * @param {number} frame absolute timeline frame
+ * @param {{ frameCount: number, fps: number }} take timeline geometry
+ */
+export function pathProgressAt(path, frame, take = {}) {
+	const normal = createObjectPath(path);
+	if (!normal) return null;
+	const curve = pathCurve(normal);
+	if (curve.length <= 1e-9) return null;
+	return clamp(travelledDistance(normal, curve, frame, take) / curve.length, 0, 1);
+}
+
+/**
+ * Where an object stands at `frame`. Returns null when the object has no
+ * usable path, so callers fall back to its authored transform untouched.
+ * `bank` and `pitch` (degrees) are the lean the route's marks ask for there.
+ *
+ * @param {object} object a scene object record
+ * @param {number} frame absolute timeline frame
+ * @param {{ frameCount: number, fps: number }} take timeline geometry
+ */
+export function objectTransformAt(object, frame, take = {}) {
+	const path = createObjectPath(object?.path);
+	if (!path) return null;
+	const curve = pathCurve(path);
+	if (curve.length <= 1e-9) return null;
+	const distance = travelledDistance(path, curve, frame, take);
 	const at = pointAtDistance(path, curve, distance);
+	const lean = pathLeanAt(path, distance / curve.length);
 	return {
 		x: at.x,
 		y: at.y,
 		z: at.z,
 		rot: path.faceTravel && at.heading !== null ? at.heading : null,
+		bank: lean.bank,
+		pitch: lean.pitch,
 	};
 }
 
@@ -409,4 +499,4 @@ export function strokeToPathPoints(stroke, simplify, { maxPoints = STROKE_MAX_PO
 	return points.map((point) => ({ x: point.x, y: 0, z: point.z }));
 }
 
-export { MAX_PATH_POINTS, MAX_PATH_MARKS, MARK_GAP, MAX_HEIGHT as MAX_PATH_HEIGHT, STROKE_MAX_POINTS };
+export { MAX_PATH_POINTS, MAX_PATH_MARKS, MARK_GAP, MAX_LEAN as MAX_PATH_LEAN, MAX_HEIGHT as MAX_PATH_HEIGHT, STROKE_MAX_POINTS };

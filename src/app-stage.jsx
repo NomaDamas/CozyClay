@@ -48,7 +48,7 @@ import {
 	loadSceneDocumentFromStorage,
 } from "./scenes.js";
 import ObjectGizmo from "./object-gizmo.jsx";
-import { MARK_GAP, MAX_PATH_MARKS, MAX_PATH_POINTS, nearestPathFraction, pathCurve, pathMarkFractions, pathPointAtFraction } from "./object-path.js";
+import { insertPathMark, MARK_GAP, MAX_PATH_MARKS, MAX_PATH_POINTS, nearestPathFraction, pathCurve, pathMarkFractions, pathMarks, pathPointAtFraction } from "./object-path.js";
 import { track } from "./analytics.js";
 import { ko, isKo } from "./locale.js";
 import { isPlaygroundEmbed, takePlaygroundProject } from "./playground.js";
@@ -1757,7 +1757,7 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			event.preventDefault();
 			s.onSelect(index);
 			const slide = event.shiftKey && index > 0 && index < prepared.fractions.length - 1;
-			dragRef.current = { axis: null, index, slide, plane, hitStart, base: prepared.base, fractions: prepared.fractions, bend: prepared.bend, recorded: false };
+			dragRef.current = { axis: null, index, slide, plane, hitStart, base: prepared.base, fractions: prepared.fractions, marks: pathMarks(s.path), bend: prepared.bend, recorded: false };
 			gl.domElement.style.cursor = "grabbing";
 			setDragInfo(slide ? { slide: true } : { t0: prepared.bend.t0, radius: prepared.bend.radius });
 			invalidate();
@@ -1782,7 +1782,8 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 					s.onDragStart?.();
 					drag.recorded = true;
 				}
-				s.onChangePath({ marks: drag.fractions.slice(1, -1).map((entry, i) => (i + 1 === drag.index ? t : entry)) }, { dragging: true });
+					// the dot keeps its lean as it slides: matched by place in the row, not by value
+					s.onChangePath({ marks: drag.marks.map((entry, i) => (i + 1 === drag.index ? { ...entry, t } : entry)) }, { dragging: true });
 				invalidate();
 				return;
 			}
@@ -1855,11 +1856,14 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			if (fractions.some((entry) => Math.abs(entry - best.t) < PATH_MARK_CLEARANCE)) return;
 			event.stopImmediatePropagation();
 			event.preventDefault();
-			const marks = [...fractions.slice(1, -1), best.t].sort((a, b) => a - b);
+			// The new dot is born with the lean the route already has there, and its
+			// neighbours keep theirs.
+			const added = insertPathMark(s.path, best.t);
+			if (!added) return;
 			s.onDragStart?.();
-			s.onChangePath({ marks });
+			s.onChangePath({ marks: added.marks });
 			s.onDragEnd?.();
-			s.onSelect(marks.indexOf(best.t) + 1);
+			s.onSelect(added.index);
 			invalidate();
 		};
 		// Delete removes the selected interior mark, never the object: while a
@@ -1876,7 +1880,7 @@ export function ObjectPathHandles({ path, selectedIndex, enabled, paneRef, camRe
 			const fractions = pathMarkFractions(s.path);
 			if (s.selectedIndex <= 0 || s.selectedIndex >= fractions.length - 1) return;
 			s.onDragStart?.();
-			s.onChangePath({ marks: fractions.slice(1, -1).filter((_, i) => i + 1 !== s.selectedIndex) });
+			s.onChangePath({ marks: pathMarks(s.path).filter((_, i) => i + 1 !== s.selectedIndex) });
 			s.onDragEnd?.();
 			s.onSelect(null);
 			invalidate();

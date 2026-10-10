@@ -28,9 +28,9 @@ const scratchAuthored = new Matrix4();
 const scratchOwn = new Matrix4();
 const scratchMotion = new Matrix4();
 
-function compose(out, x, y, z, rotX, rot, rotZ, object) {
+function compose(out, x, y, z, rotX, rot, rotZ, object, order = "XYZ") {
 	scratchPos.set(x, y, z);
-	scratchQuat.setFromEuler(scratchEuler.set(rotX * DEG, rot * DEG, rotZ * DEG));
+	scratchQuat.setFromEuler(scratchEuler.set(rotX * DEG, rot * DEG, rotZ * DEG, order));
 	scratchScale.set(object.scaleX ?? 1, object.scaleY ?? 1, object.scaleZ ?? 1);
 	return out.compose(scratchPos, scratchQuat, scratchScale);
 }
@@ -39,12 +39,32 @@ function authoredMatrix(object, out) {
 	return compose(out, object.x ?? 0, object.y ?? 0, object.z ?? 0, object.rotX ?? 0, object.rot ?? 0, object.rotZ ?? 0, object);
 }
 
+/**
+ * The pose a route sample gives a record, as the Euler triple of
+ * R = Ry(yaw) · Rx(pitch) · Rz(bank), applied as three.js's "YXZ" order: the
+ * yaw turns the body in the world, the pitch tilts it about its own lateral
+ * axis, the bank rolls it about its own forward axis. An authored rotX/rotZ is
+ * the body's own pitch and roll, so it stays about the body's axes however the
+ * heading turns (in the plain XYZ order rotX stayed about world X, and a pitch
+ * became a roll once the route turned). The route's lean rides on top:
+ * `bank` positive = right side down, `pitch` positive = nose up, which is
+ * the opposite sign to rotX (positive rotX tips the nose down).
+ */
+export function travelPose(object, at) {
+	return {
+		rotX: (object.rotX ?? 0) - (at.pitch ?? 0),
+		rot: at.rot ?? object.rot ?? 0,
+		rotZ: (object.rotZ ?? 0) + (at.bank ?? 0),
+	};
+}
+
 /** The record's own route sample as a matrix, or null when it does not travel. */
 function ownTravelMatrix(object, frame, take, out) {
 	if (!object.path) return null;
 	const at = objectTransformAt(object, frame, take);
 	if (!at) return null;
-	return compose(out, at.x, at.y, at.z, object.rotX ?? 0, at.rot ?? object.rot ?? 0, object.rotZ ?? 0, object);
+	const pose = travelPose(object, at);
+	return compose(out, at.x, at.y, at.z, pose.rotX, pose.rot, pose.rotZ, object, "YXZ");
 }
 
 const asLookup = (objects) => {
@@ -144,16 +164,9 @@ export function sceneObjectsAt(objects, frame, take = {}) {
 	const quaternion = new Quaternion();
 	const scale = new Vector3();
 	const euler = new Euler();
-	return objects.map((object) => {
-		if (object.attach || !ancestorsOf(lookup, object).some((ancestor) => ancestor.path)) {
-			// Nothing above it travels: the route sample alone, exactly as before
-			// the hierarchy carry — for a carried prop, in the frame its numbers
-			// already live in.
-			const at = objectTransformAt(object, frame, take);
-			return at ? { ...object, x: at.x, y: at.y, z: at.z, rot: at.rot ?? object.rot } : object;
-		}
-		if (!sceneObjectTravelMatrixAt(lookup, object.id, frame, take, matrix)) return object;
-		matrix.decompose(position, quaternion, scale);
+	/** The record for a pose given as a matrix: x/y/z plus the XYZ Euler the records speak. */
+	const recordAt = (object, pose) => {
+		pose.decompose(position, quaternion, scale);
 		const next = { ...object, x: position.x, y: position.y, z: position.z };
 		// A pure turn about the vertical keeps the authored zero pitch/roll and
 		// reads back as one yaw, instead of the 180/x/180 Euler a decompose of a
@@ -167,5 +180,21 @@ export function sceneObjectsAt(objects, frame, take = {}) {
 			next.rotZ = euler.z / DEG;
 		}
 		return next;
+	};
+	return objects.map((object) => {
+		if (object.attach || !ancestorsOf(lookup, object).some((ancestor) => ancestor.path)) {
+			// Nothing above it travels: the route sample alone, exactly as before
+			// the hierarchy carry — for a carried prop, in the frame its numbers
+			// already live in.
+			const at = objectTransformAt(object, frame, take);
+			if (!at) return object;
+			// A level, upright route is a yaw and a place. One that leans, or a
+			// body with its own pitch/roll, is an orientation (travelPose).
+			if (!at.bank && !at.pitch && !(object.rotX ?? 0) && !(object.rotZ ?? 0)) return { ...object, x: at.x, y: at.y, z: at.z, rot: at.rot ?? object.rot };
+			const pose = travelPose(object, at);
+			return recordAt(object, compose(matrix, at.x, at.y, at.z, pose.rotX, pose.rot, pose.rotZ, object, "YXZ"));
+		}
+		if (!sceneObjectTravelMatrixAt(lookup, object.id, frame, take, matrix)) return object;
+		return recordAt(object, matrix);
 	});
 }

@@ -292,6 +292,7 @@ const NODE_FILES = [
 	"mcp/verify-import-mesh.mjs",
 	"test/verify-object-path.mjs",
 	"test/verify-object-travel.mjs",
+	"test/verify-object-travel-lean.mjs",
 	"test/verify-character-group.mjs",
 	"test/verify-group-rotation.mjs",
 	"test/verify-number-field-scrub.mjs",

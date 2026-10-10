@@ -12,7 +12,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import { objectTransformAt } from "./object-path.js";
-import { sceneObjectCarryMatrixAt, sceneObjectTravelMatrixAt } from "./object-travel.js";
+import { sceneObjectCarryMatrixAt, sceneObjectTravelMatrixAt, travelPose } from "./object-travel.js";
 import * as THREE from "three";
 import { GIZMO_LAYER } from "./dualview.jsx";
 import { CUTOUT_KIND, MESH_KIND, EMPTY_KIND, EMPTY_MARKER_SIZE } from "./scene-objects.js";
@@ -571,13 +571,16 @@ function SceneObject({ object, selected, frameRef = null, take = null, attachFra
 			// The authored numbers first. While attached they are the prop's LOCAL
 			// transform in the attach frame; otherwise they are already world.
 			placePos.set(object.x, object.y ?? 0, object.z);
-			placeEuler.set((object.rotX ?? 0) * DEG, object.rot * DEG, (object.rotZ ?? 0) * DEG);
+			placeEuler.set((object.rotX ?? 0) * DEG, object.rot * DEG, (object.rotZ ?? 0) * DEG, "XYZ");
 			placeScale.set(object.scaleX ?? 1, object.scaleY ?? 1, object.scaleZ ?? 1);
 			if (frameRef && object.path) {
 				const at = objectTransformAt(object, frame, take ?? {});
 				if (at) {
 					placePos.set(at.x, at.y, at.z);
-					if (at.rot !== null) placeEuler.y = at.rot * DEG;
+					// The same pose object-travel gives a routed record: yaw, then
+					// the body's own pitch, then its roll (+ the route's lean).
+					const pose = travelPose(object, at);
+					placeEuler.set(pose.rotX * DEG, pose.rot * DEG, pose.rotZ * DEG, "YXZ");
 				}
 			}
 			// A missing rig (the character left the cast, or its model has not

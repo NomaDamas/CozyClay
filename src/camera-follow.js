@@ -1,4 +1,5 @@
 import { timingProgress } from "./speed-envelope.js";
+import { monotoneCubicAt } from "./monotone-cubic.js";
 
 /**
  * Follow camera: a real crew in three pieces of math.
@@ -290,30 +291,7 @@ function cranePoints(value) {
 export function craneHeightAt(craneHeight, progress) {
 	const points = cranePoints(craneHeight);
 	if (!points) return NaN;
-	const clamped = Math.max(0, Math.min(1, progress));
-	if (clamped <= points[0].t) return points[0].height;
-	if (clamped >= points[points.length - 1].t) return points[points.length - 1].height;
-	let i = 0;
-	while (i < points.length - 2 && clamped > points[i + 1].t) i += 1;
-	const p0 = points[i];
-	const p1 = points[i + 1];
-	const h = p1.t - p0.t;
-	if (h < 1e-9) return p1.height;
-	const secant = (a, b) => (b.height - a.height) / Math.max(b.t - a.t, 1e-9);
-	const d = secant(p0, p1);
-	// harmonic mean of neighbouring secants; zero across a local extremum
-	const mono = (sa, sb) => (sa * sb <= 0 ? 0 : (2 * sa * sb) / (sa + sb));
-	const m0 = i > 0 ? mono(secant(points[i - 1], p0), d) : d;
-	const m1 = i < points.length - 2 ? mono(d, secant(p1, points[i + 2])) : d;
-	const u = (clamped - p0.t) / h;
-	const u2 = u * u;
-	const u3 = u2 * u;
-	return (
-		(2 * u3 - 3 * u2 + 1) * p0.height +
-		(u3 - 2 * u2 + u) * h * m0 +
-		(-2 * u3 + 3 * u2) * p1.height +
-		(u3 - u2) * h * m1
-	);
+	return monotoneCubicAt(points, Math.max(0, Math.min(1, progress)), (point) => point.height);
 }
 
 /* ------------------------------------------------------------ the rail --- */

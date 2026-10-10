@@ -124,7 +124,9 @@ const timing = object({ cuts: array(object({ t: nonnegative, d: nonnegative }), 
 // `marks` (the editor's grab dots, arc fractions) is optional: it is UI state on
 // the route, and older fixtures and agent-written routes carry none.
 const pathFields = { points: array(vec, 64, 2), speed: nonnegative, faceTravel: bool, loop: bool, extend: bool, timing: nullable(timing) };
-const path = { ...object({ ...pathFields, marks: array(nonnegative, 6) }), required: Object.keys(pathFields) };
+// A mark is an arc fraction, or { t, bank, pitch } when it carries a lean (degrees).
+const mark = { oneOf: [nonnegative, { type: "object", properties: { t: nonnegative, bank: num, pitch: num }, required: ["t"], additionalProperties: false }] };
+const path = { ...object({ ...pathFields, marks: array(mark, 6) }), required: Object.keys(pathFields) };
 const physicalObject = object({ id, renderer: id, position: vec, rotationDeg: vec, scale: object({ x: positive, y: positive, z: positive }),
 	footprint: object({ width: nonnegative, depth: nonnegative }), height: nonnegative, supportY: num, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), path: nullable(path), hidden: bool });
 const physicalCharacter = object({ id, incarnation: id, modelId: nullable(id), rigId: nullable(id), rigReady: bool, hidden: bool, position: vec, yawDeg: num, scale: positive,

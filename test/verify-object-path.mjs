@@ -1,8 +1,9 @@
 // Object travel paths: schema repair, arc-length sampling and the frame →
 // transform answer that playback, export and MCP all share.
 import { readFileSync } from "node:fs";
-import { createObjectPath, nearestPathFraction, pathCurve, pathCurvePointBetween, pathMarkFractions, pathMetrics, pathPointAtFraction, objectTransformAt, strokeToPathPoints, translateObjectPath, MAX_PATH_MARKS, MAX_PATH_POINTS, STROKE_MAX_POINTS } from "../src/object-path.js";
-import { simplifyStroke } from "../src/camera-follow.js";
+import { createObjectPath, nearestPathFraction, pathCurve, pathCurvePointBetween, pathLeanAt, pathMarkFractions, pathMarks, pathProgressAt, insertPathMark, pathMetrics, pathPointAtFraction, objectTransformAt, strokeToPathPoints, translateObjectPath, MAX_PATH_MARKS, MAX_PATH_POINTS, STROKE_MAX_POINTS } from "../src/object-path.js";
+import { simplifyStroke, craneHeightAt } from "../src/camera-follow.js";
+import { monotoneCubicAt } from "../src/monotone-cubic.js";
 import { claimsPress } from "../src/gizmo-claim.js";
 import { updateSceneObject } from "../src/scene-objects.js";
 
@@ -200,6 +201,76 @@ ok("a stroke is not capped at the old five points", STROKE_MAX_POINTS === MAX_PA
 	ok("a mark rides the curve at its arc fraction", near(at.x, 2.5, 1e-6) && near(at.z, 0, 1e-6));
 	const hit = nearestPathFraction(flat, (point) => ({ x: point.x * 10, y: point.z * 10 }), 40, 3);
 	ok("the nearest spot on the route is found by arc fraction", near(hit.t, 0.4, 1e-6) && near(hit.d, 3, 1e-6));
+}
+
+/* --- lean marks: bank / pitch along the route ------------------------------- */
+
+{
+	const line = [{ x: 0, z: 0 }, { x: 20, z: 0 }];
+	const plain = createObjectPath({ points: line, marks: [0.3, 0.7] });
+	ok("a plain-number mark reads as a level dot", pathMarks(plain).every((m) => m.bank === 0 && m.pitch === 0) && pathMarkFractions(plain).join() === "0,0.3,0.7,1");
+	const leaned = createObjectPath({ points: line, marks: [{ t: 0.7, bank: 8 }, { t: 0.3, bank: 12, pitch: -4 }, 0.5, { t: "x", bank: 3 }, { t: 0.9, bank: 500, pitch: -500 }] });
+	ok("marks keep their order, gap and cap with objects", pathMarkFractions(leaned).join() === "0,0.3,0.5,0.7,0.9,1");
+	ok("bank and pitch clamp to ±90", pathMarks(leaned)[3].bank === 90 && pathMarks(leaned)[3].pitch === -90);
+	ok("a mark object carries its bank and pitch", pathMarks(leaned)[0].bank === 12 && pathMarks(leaned)[0].pitch === -4 && pathMarks(leaned)[1].bank === 0);
+	ok("a normalised route normalises to itself", JSON.stringify(createObjectPath(leaned)) === JSON.stringify(leaned));
+	ok("lean survives a translated route", pathMarks(translateObjectPath(leaned, { x: 3, y: 0, z: 1 }))[0].bank === 12);
+	ok("tidy values", pathMarks(createObjectPath({ points: line, marks: [{ t: 0.4, bank: 12.00000001, pitch: 1e-9 }] }))[0].bank === 12
+		&& pathMarks(createObjectPath({ points: line, marks: [{ t: 0.4, bank: 12.00000001, pitch: 1e-9 }] }))[0].pitch === 0);
+
+	const lean = createObjectPath({ points: line, marks: [{ t: 0.3, bank: 10 }, { t: 0.6, bank: 25 }, { t: 0.8, bank: 0 }] });
+	ok("the lean hits every mark exactly", near(pathLeanAt(lean, 0.3).bank, 10, 1e-9) && near(pathLeanAt(lean, 0.6).bank, 25, 1e-9) && near(pathLeanAt(lean, 0.8).bank, 0, 1e-9));
+	ok("both ends are level", pathLeanAt(lean, 0).bank === 0 && pathLeanAt(lean, 1).bank === 0 && pathLeanAt(lean, 0).pitch === 0);
+	ok("t outside 0..1 clamps", pathLeanAt(lean, -3).bank === 0 && pathLeanAt(lean, 9).bank === 0);
+	let max = -Infinity;
+	let monotone = true;
+	let previous = 0;
+	for (let i = 0; i <= 1000; i += 1) {
+		const bank = pathLeanAt(lean, i / 1000).bank;
+		max = Math.max(max, bank);
+		if (i / 1000 <= 0.6 && bank < previous - 1e-9) monotone = false;
+		if (i / 1000 <= 0.6) previous = bank;
+	}
+	ok("no overshoot above the tallest mark", max <= 25 + 1e-9, String(max));
+	ok("monotone rise up to the peak", monotone);
+	let belowZero = 0;
+	for (let i = 0; i <= 1000; i += 1) belowZero = Math.min(belowZero, pathLeanAt(lean, i / 1000).bank);
+	ok("never dips below level between level neighbours", belowZero >= -1e-9, String(belowZero));
+	const settle = createObjectPath({ points: line, marks: [{ t: 0.4, bank: 12 }, { t: 0.5, bank: 0 }, { t: 0.7, bank: 0 }] });
+	ok("flat across neighbours that are both level", [0.5, 0.55, 0.6, 0.7].every((t) => Math.abs(pathLeanAt(settle, t).bank) < 1e-9));
+	ok("a level route has no lean", pathLeanAt(plain, 0.5).bank === 0 && pathLeanAt(plain, 0.5).pitch === 0);
+	ok("bank and pitch are independent", (() => { const p = createObjectPath({ points: line, marks: [{ t: 0.5, bank: 10, pitch: -6 }] }); const l = pathLeanAt(p, 0.5); return near(l.bank, 10) && near(l.pitch, -6); })());
+
+	// the crane and the route's lean are one interpolator
+	const crane = { points: [{ t: 0, height: 3 }, { t: 0.4, height: 1 }, { t: 0.6, height: 4 }, { t: 1, height: 2 }] };
+	ok("the crane runs on the shared monotone cubic", [0.05, 0.2, 0.45, 0.55, 0.9].every((t) => craneHeightAt(crane, t) === monotoneCubicAt(crane.points, t, (k) => k.height)));
+
+	// insert: born with the lean the route already has there
+	const added = insertPathMark(lean, 0.45);
+	ok("a dot inserted on the lean curve keeps its value there and barely reshapes it", added && added.index === 2 && (() => {
+		const next = createObjectPath({ ...lean, marks: added.marks });
+		return [0.1, 0.3, 0.45, 0.5, 0.7, 0.9].every((t) => near(pathLeanAt(next, t).bank, pathLeanAt(lean, t).bank, t === 0.45 ? 1e-3 : 1));
+	})());
+	ok("insert refuses a crowded spot, an end and a full route", insertPathMark(lean, 0.31) === null && insertPathMark(lean, 0.01) === null && insertPathMark(lean, 0.99) === null
+		&& insertPathMark(createObjectPath({ points: line, marks: Array.from({ length: 30 }, (_, i) => 0.04 + i * 0.03) }), 0.5) === null);
+
+	// progress
+	const take = { frameCount: 101, fps: 25 };
+	const runner = createObjectPath({ points: line });
+	ok("progress runs 0 to 1 across the take", pathProgressAt(runner, 0, take) === 0 && near(pathProgressAt(runner, 50, take), 0.5, 1e-9) && near(pathProgressAt(runner, 100, take), 1, 1e-9));
+	ok("progress agrees with the pose", (() => {
+		const at = objectTransformAt({ path: runner }, 37, take);
+		return near(at.x / 20, pathProgressAt(runner, 37, take), 1e-9);
+	})());
+	const slow = createObjectPath({ points: line, speed: 2 });
+	ok("a slow route is part-way when the take ends", near(pathProgressAt(slow, 100, take), 0.4, 1e-9));
+	const looped = createObjectPath({ points: line, speed: 10, loop: true });
+	ok("a looping route wraps its progress", near(pathProgressAt(looped, 75, take), 0.5, 1e-9));
+	ok("progress clamps at the end when the route extends", pathProgressAt(createObjectPath({ points: line, speed: 20, extend: true }), 100, take) === 1);
+	ok("no path, no progress", pathProgressAt(null, 3, take) === null);
+	const posed = objectTransformAt({ path: createObjectPath({ points: line, marks: [{ t: 0.5, bank: 14, pitch: 3 }] }) }, 50, take);
+	ok("the pose carries the lean for its frame", near(posed.bank, 14, 1e-9) && near(posed.pitch, 3, 1e-9));
+	ok("a level route poses with bank 0 / pitch 0", objectTransformAt({ path: runner }, 50, take).bank === 0 && objectTransformAt({ path: runner }, 50, take).pitch === 0);
 }
 
 /* --- the strip loads the selected subject -------------------------------- */
