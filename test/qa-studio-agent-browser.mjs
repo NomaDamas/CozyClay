@@ -133,10 +133,14 @@ const implementations = {
     const frame = result.commands.find(e => e.name === 'frame_shot');
     const framedShot = after.shots.at(-1);
     assert(frame.result.ok === true, JSON.stringify(frame.result));
+    const createdPanelKeyPos = frame.result.delta?.[0]?.before?.cameraKeys?.[0]?.framing?.pos ?? { x: before.camera.x, y: before.camera.y, z: before.camera.z };
+    const firstPanelKeyPos = framedShot.cameraKeys[0]?.framing?.pos;
+    assert(createdPanelKeyPos && firstPanelKeyPos, JSON.stringify({ frame: frame.result, framedShot }));
+    assert.notDeepEqual(firstPanelKeyPos, createdPanelKeyPos, 'frame_shot must replace the newly created still camera key');
     if (process.env.QA_CAPSULE_ONLY === '1') {
-      assert(framedShot.cameraKeys.some(key => JSON.stringify(key.framing) !== JSON.stringify(before.camera)), JSON.stringify({ before: before.camera, framedShot }));
-      console.log(`PASS capsule-only storyboard frame_shot: receipt ok=true; new still camera key differs from initial camera`);
-      log.push({ action: 'capsule-only-storyboard-framing', beforeCamera: before.camera, receipt: frame.result, framedShot });
+      console.log(`PANEL KEY POSITIONS panel-1-created=${JSON.stringify(createdPanelKeyPos)} panel-1-after=${JSON.stringify(firstPanelKeyPos)} differ=true`);
+      console.log(`PASS capsule-only storyboard frame_shot: receipt ok=true; new still camera key differs from its creation framing`);
+      log.push({ action: 'capsule-only-storyboard-framing', createdPanelKeyPos, firstPanelKeyPos, receipt: frame.result, framedShot });
       await shot('task-30-storyboard-capsule-happy');
       await undo(before);
     } else {
@@ -148,6 +152,12 @@ const implementations = {
       assert.equal(twice.shots.length, before.shots.length + 2);
       assert.equal(panels[1].cast['story-person-a']?.x, 3, 'second panel carries the second turn placement');
       assert.equal(panels[0].cast['story-person-a']?.x, undefined, 'first panel is not overwritten by the second turn');
+      const secondFrame = second.commands.find(e => e.name === 'frame_shot');
+      const secondPanelKeyPos = panels[1].cameraKeys[0]?.framing?.pos;
+      assert(secondFrame?.result?.ok && secondPanelKeyPos, JSON.stringify({ secondFrame, panels }));
+      assert.notDeepEqual(secondPanelKeyPos, firstPanelKeyPos, 'each still panel must receive its own framing');
+      assert.deepEqual(panels[0].cameraKeys[0]?.framing?.pos, firstPanelKeyPos, 'the previous panel camera key must remain unchanged');
+      console.log(`PANEL KEY POSITIONS panel-1=${JSON.stringify(firstPanelKeyPos)} panel-2=${JSON.stringify(secondPanelKeyPos)} differ=true previous-unchanged=true`);
       console.log('SECOND PANEL CAST', JSON.stringify(panels.map(s => ({ id: s.id, caption: s.caption, cast: s.cast }))));
       await undoMany(before, 2);
     }
@@ -350,7 +360,7 @@ try {
     }, { document, scenesKey: SCENES_STORAGE_KEY, previsMode });
     try {
       await page.goto(`http://127.0.0.1:${port}/app/`);
-      await gate(name === 'storyboard-happy' && process.env.QA_CAPSULE_ONLY === '1'
+      await gate(name === 'storyboard-happy' && previsMode === 'storyboard'
         ? "!!window.__cozyclay && !!document.querySelector('.view-menu-trigger')"
         : "!!window.__cozyclay?.rigA && !!document.querySelector('.view-menu-trigger')");
       if (['motion','responsive'].includes(name)) { await gate('window.__cozyclay.motion?.frames === 48'); log.push({action:'restored-fixture-baseline',case:name,state:await state()}); }
