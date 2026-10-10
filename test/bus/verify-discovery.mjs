@@ -326,8 +326,8 @@ cases['milestone'] = async () => {
     assert.deepEqual(done[0].result.actions.map(row => row.input), [STAMP.input], 'the schema arrives on request');
     assert.deepEqual({ action: done[1].result.action, status: done[1].result.status, output: done[1].result.output }, { action: STAMP.id, status: 'completed', output: { note: 'agent' } });
     const seen = faux.calls[0].messages.flatMap(message => Array.isArray(message.content) ? message.content : []).map(part => part.text ?? '').join('\n');
-    const encoded = JSON.parse(/<studio-context>\n(.*)\n<\/studio-context>/.exec(seen)[1]);
-    assert.deepEqual(encoded.actionIndex.find(row => row.id === STAMP.id), { id: STAMP.id, label: STAMP.label, timeoutMs: STAMP.timeoutMs }, 'the model sees the command in its index');
+    const actions = JSON.parse(/\n<actions>\n(.*)\n<\/actions>$/s.exec(faux.calls[0].systemPrompt)[1]);
+    assert.deepEqual(actions.find(row => row.id === STAMP.id), { id: STAMP.id, label: STAMP.label, timeoutMs: STAMP.timeoutMs }, 'the model sees the command in its index');
     assert.ok(!seen.includes(STAMP.description), 'and not its description or schema');
     // MCP and the CLI: the same command, listed and run.
     const listed = await callTool('studio_commands', {}, s.handle);
