@@ -946,6 +946,41 @@ expect("no timer drives the auth transition", !/set(Interval|Timeout)\([^)]*(sig
 	expect("a verified installed job reads Installed", job("verified").includes(">Installed<") && !job("verified").includes("with warnings"), job("verified"));
 }
 
+// --- model roles line (#717) ----------------------------------------------
+// The sidecar derives helper / vision / advisor per main model; the panel
+// passes them through and shows them read-only under the Model select.
+{
+	const byMain = { "cliproxy/claude-opus-5-5": { helper: "cliproxy/claude-haiku-5-5", vision: "cliproxy/claude-opus-5-5", advisor: "cliproxy/claude-sonnet-5-5", fallback: ["cliproxy/claude-sonnet-5-5"] } };
+	const answering = (body) => module_.createHttpTransport({ fetchImpl: async () => new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } }) });
+	const withRoles = await answering({ providers: [], models: [{ id: "cliproxy/claude-opus-5-5" }], roles: { byMain } }).models();
+	expect("the transport passes roles.byMain through from /agent/models", withRoles.roles?.byMain === undefined ? false : JSON.stringify(withRoles.roles.byMain) === JSON.stringify(byMain), JSON.stringify(withRoles));
+	expect("a sidecar without roles advertises none", (await answering({ providers: [], models: [] }).models()).roles === undefined
+		&& (await answering({ providers: [], models: [], roles: { byMain: [] } }).models()).roles === undefined);
+	expect("selectedModelRoles returns the entry for the selected key", module_.selectedModelRoles(byMain, "cliproxy/claude-opus-5-5") === byMain["cliproxy/claude-opus-5-5"]);
+	expect("selectedModelRoles hides a missing or malformed entry", module_.selectedModelRoles(byMain, "cliproxy/other") === null && module_.selectedModelRoles(null, "x/y") === null
+		&& module_.selectedModelRoles({ "x/y": { helper: 3 } }, "x/y") === null);
+	expect("shortModelId drops the provider prefix", module_.shortModelId("cliproxy/claude-haiku-5-5") === "claude-haiku-5-5" && module_.shortModelId("openrouter/a/b") === "a/b");
+	expect("the roles line sits directly under the model controls", /<\/div>\n\t+<ModelRolesLine model=\{model\} roles=\{selectedModelRoles\(modelRoles, model\)\} \/>/.test(panel));
+	expect("the roles line labels go through ko()", panel.includes('ko("helper", "보조")') && panel.includes('ko("advisor", "자문")') && panel.includes('ko("vision", "비전")'));
+	expect("the roles are never persisted", !/storeModel\([^)]*[Rr]oles|localStorage[^\n]*roles/.test(panel + client));
+	expect("the roles line is token-driven", /\.agent-model-roles\s*\{[^}]*color: var\(--agent-text-dim\)/.test(css));
+	const { parseSync } = await import("rolldown/experimental");
+	const { transformWithOxc } = await import("vite");
+	const React = await import("react");
+	const { renderToStaticMarkup } = await import("react-dom/server");
+	const scope = { React, ko: (english) => english, shortModelId: module_.shortModelId };
+	const source = parseSync("AgentPanel.jsx", panel).program.body
+		.filter((node) => node.type === "FunctionDeclaration" && node.id.name === "ModelRolesLine")
+		.map((node) => panel.slice(node.start, node.end)).join("\n");
+	const { code } = await transformWithOxc(`function line() {\n${source}\nreturn ModelRolesLine;\n}`, "line.jsx", { lang: "jsx", jsx: { runtime: "classic" } });
+	const ModelRolesLine = new Function(...Object.keys(scope), `${code}\nreturn line();`)(...Object.values(scope));
+	const rendered = renderToStaticMarkup(React.createElement(ModelRolesLine, { model: "cliproxy/claude-opus-5-5", roles: byMain["cliproxy/claude-opus-5-5"] }));
+	expect("the roles line reads helper · id · advisor · id", rendered === '<p class="agent-model-roles" data-agent-model-roles="true">helper · claude-haiku-5-5 · advisor · claude-sonnet-5-5</p>', rendered);
+	const borrowed = renderToStaticMarkup(React.createElement(ModelRolesLine, { model: "cliproxy/claude-sonnet-5-5", roles: { helper: "cliproxy/claude-haiku-5-5", vision: "cliproxy/claude-haiku-5-5", advisor: "cliproxy/claude-sonnet-5-5" } }));
+	expect("a borrowed vision model is named", borrowed.includes("vision · claude-haiku-5-5"), borrowed);
+	expect("no roles, no line", renderToStaticMarkup(React.createElement(ModelRolesLine, { model: "x/y", roles: null })) === "");
+}
+
 if (failures) {
 	console.error(`${failures} FAILURES`);
 	process.exitCode = 1;

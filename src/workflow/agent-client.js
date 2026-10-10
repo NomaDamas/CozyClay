@@ -13,7 +13,7 @@
 //   POST /oauth/logout  -> { ok }
 //   POST /agent/turn    -> SSE, lines of `data: {json}`
 //   POST /agent/stop    -> { ok }
-//   GET  /agent/models  -> { providers: [{ id, label, signedIn, models }], models: [flat] }
+//   GET  /agent/models  -> { providers: [{ id, label, signedIn, models }], models: [flat], roles: { byMain } }
 //   POST /agent/turn/<turnId>/steer -> { ok, queued } while that turn streams
 //
 // Studio hosts add the frozen task-1 contracts on the same routes:
@@ -292,6 +292,20 @@ export function modelIsSelectable(providers, key) {
 export function nextSelectedModel(providers, models, current) {
 	if (current && models.some((entry) => entry.id === current) && modelIsSelectable(providers, current)) return current;
 	return preferredModel(models.filter((entry) => modelIsSelectable(providers, entry.id)));
+}
+
+/** The roles the sidecar derived for one main model (#717): `{ helper, vision,
+ * advisor, fallback }`, each a `provider/id` key. Read-only here — nothing the
+ * panel sends depends on it — so a malformed entry is simply not shown. */
+export function selectedModelRoles(byMain, key) {
+	const entry = byMain && typeof byMain === "object" && typeof key === "string" ? byMain[key] : null;
+	return entry && ["helper", "vision", "advisor"].every((role) => typeof entry[role] === "string" && entry[role]) ? entry : null;
+}
+
+/** A `provider/id` key without its provider, for a line that has no room for it. */
+export function shortModelId(key) {
+	const value = String(key ?? "");
+	return value.slice(value.indexOf("/") + 1);
 }
 
 /** "resets in 42m" / "resets in 1h 05m" for the account strip and the paused
@@ -612,6 +626,10 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const providers = Array.isArray(result?.providers)
 				? result.providers.filter((provider) => provider?.id && Array.isArray(provider.models))
 				: [];
+			// The derived model roles (#717) ride along untouched; a sidecar without
+			// them simply leaves the roles line hidden.
+			const byMain = result?.roles?.byMain;
+			if (byMain && typeof byMain === "object" && !Array.isArray(byMain)) return { providers, models, roles: { byMain } };
 			return { providers, models };
 		},
 		/** Steering a turn that is STILL streaming. The id is the one this browser
