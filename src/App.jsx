@@ -2927,6 +2927,8 @@ export default function App() {
 		activeShotId: activeShot?.id ?? null,
 		captureCurrentFraming,
 		captureFramingPng,
+		// The Top View pull (verify_result visual "plan", capture_plan_png).
+		capturePlanPng,
 		captureShotMeta,
 		// The identity / environment reference pictures a capture carries (#167).
 		captureShotReferences,
@@ -2998,10 +3000,7 @@ export default function App() {
 		// not capture_frame's 640x360 preview, which stays exactly as it is.
 			capture_framing_png: (args = {}) => {
 				const live = appContext.live.state;
-				const requested = args?.output;
-				const output = Number.isFinite(requested?.width) && Number.isFinite(requested?.height)
-					? { width: Math.round(requested.width), height: Math.round(requested.height) }
-					: SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
+				const output = requestedCaptureOutput(args) ?? SHOT_ASPECT_PRESETS[live.stage.shotAspect] ?? SHOT_ASPECT_PRESETS["16:9"];
 				const dataUrl = live.captureFramingPng(live.captureCurrentFraming(), output);
 				if (!dataUrl) throw new Error("The shot renderer is not ready");
 				return {
@@ -3018,6 +3017,9 @@ export default function App() {
 					references: live.captureShotReferences(),
 				};
 			},
+			// The Top View as the agent's plan picture: names on the floor and the
+			// shot camera's wedge over the orthographic plan render.
+			capture_plan_png: (args = {}) => appContext.live.state.capturePlanPng(requestedCaptureOutput(args) ?? undefined),
 	};
 
 	useEffect(() => {
@@ -4793,7 +4795,7 @@ export default function App() {
 				? { label: ko("ROOT PATH", "루트 경로"), kind: "root" }
 				: null;
 
-	function bufferToPng(buffer, output = shotOutput) {
+	function bufferToPng(buffer, output = shotOutput, decorate = null) {
 		const canvas = document.createElement("canvas");
 		if (output === shotOutput) {
 			canvas.width = shotOutput.width;
@@ -4813,6 +4815,7 @@ export default function App() {
 			);
 		}
 		ctx.putImageData(image, 0, 0);
+		decorate?.(ctx);
 		return canvas.toDataURL("image/png");
 	}
 
@@ -4852,6 +4855,74 @@ export default function App() {
 				cam.aspect = prevAspect;
 			}
 			cam.updateProjectionMatrix();
+		}
+	}
+
+	/** A live capture command's requested `output` size, or null to use its default. */
+	function requestedCaptureOutput(args) {
+		const requested = args?.output;
+		return Number.isFinite(requested?.width) && Number.isFinite(requested?.height)
+			? { width: Math.round(requested.width), height: Math.round(requested.height) }
+			: null;
+	}
+
+	/** The Top View as a PNG: the plan camera's orthographic view, at the inset's
+	    vertical extent widened to the output aspect, then each visible subject's and
+	    object's name at its floor position and the shot camera as a wedge toward
+	    where it looks. The capture rig renders whichever camera its ref holds, so the
+	    plan camera stands in for the shot camera for this one synchronous draw
+	    (as captureFramingPng parks the shot camera) and both are put back before
+	    the next paint. */
+	function capturePlanPng(output = { width: 1280, height: 720 }) {
+		const plan = planCamRef.current, shotCam = shotCamRef.current;
+		if (!plan?.isOrthographicCamera || !shotCam || typeof captureRef.current?.createExportCapture !== "function") throw new Error("The plan renderer is not ready");
+		const live = appContext.live.state;
+		const prev = { left: plan.left, right: plan.right };
+		const extent = plan.top, aspect = output.width / output.height;
+		plan.left = -extent * aspect;
+		plan.right = extent * aspect;
+		plan.updateProjectionMatrix();
+		plan.updateMatrixWorld();
+		const capture = captureRef.current.createExportCapture(output);
+		try {
+			shotCamRef.current = plan;
+			let buffer;
+			try { buffer = capture.render(); } finally { shotCamRef.current = shotCam; }
+			if (!buffer) throw new Error("The plan renderer is not ready");
+			const toPixel = (x, z) => {
+				const p = new THREE.Vector3(x, 0, z).project(plan);
+				return [((p.x + 1) / 2) * output.width, ((1 - p.y) / 2) * output.height];
+			};
+			const label = (ctx, text, x, z, colour) => {
+				const [px, py] = toPixel(x, z), shown = text.length > 28 ? `${text.slice(0, 27)}\u2026` : text;
+				ctx.fillStyle = colour;
+				ctx.beginPath(); ctx.arc(px, py, 4, 0, Math.PI * 2); ctx.fill();
+				ctx.strokeText(shown, px + 7, py - 7);
+				ctx.fillText(shown, px + 7, py - 7);
+			};
+			const dataUrl = bufferToPng(buffer, output, (ctx) => {
+				ctx.font = "600 15px system-ui, sans-serif";
+				ctx.lineWidth = 3;
+				ctx.strokeStyle = "rgba(20, 18, 16, 0.85)";
+				for (const o of live.objects) if (!isEffectivelyHidden(o, live.objects, live.characters)) label(ctx, o.name || o.id, o.x, o.z, "#e8d9b0");
+				for (const c of live.characters) if (!c.hidden) label(ctx, c.subject || c.id, c.x, c.z, "#9fd3ff");
+				// The shot camera: a wedge as wide as its horizontal field of view.
+				const yaw = look.current.yaw, half = Math.atan(Math.tan((shotCam.fov * Math.PI) / 360) * shotCam.aspect), reach = 2;
+				const edge = (angle) => toPixel(shotCam.position.x - Math.sin(angle) * reach, shotCam.position.z - Math.cos(angle) * reach);
+				const [cx, cz] = toPixel(shotCam.position.x, shotCam.position.z), [lx, lz] = edge(yaw + half), [rx, rz] = edge(yaw - half);
+				ctx.fillStyle = "rgba(255, 92, 72, 0.28)";
+				ctx.strokeStyle = "#ff5c48";
+				ctx.lineWidth = 2;
+				ctx.beginPath(); ctx.moveTo(cx, cz); ctx.lineTo(lx, lz); ctx.lineTo(rx, rz); ctx.closePath(); ctx.fill(); ctx.stroke();
+				ctx.fillStyle = "#ff5c48";
+				ctx.beginPath(); ctx.arc(cx, cz, 5, 0, Math.PI * 2); ctx.fill();
+			});
+			return { dataUrl, width: output.width, height: output.height, frame: live.timeline.currentFrame, shotId: live.activeShotId };
+		} finally {
+			capture.dispose?.();
+			plan.left = prev.left;
+			plan.right = prev.right;
+			plan.updateProjectionMatrix();
 		}
 	}
 
@@ -6982,7 +7053,7 @@ export default function App() {
 		read: readStudioState, revision: sceneRevisionRef, bounds: studioBounds, commit: commitStudioDraft,
 		operate: operateStudio, undo: () => stepStudioHistory(false), redo: () => stepStudioHistory(true),
 		history: redo => appContext.historyEntry(redo), finishHistoryGesture: finishStudioHistoryGesture,
-		stepHistory: stepStudioHistory, capture: () => liveQueries.capture_framing_png({}),
+		stepHistory: stepStudioHistory, capture: () => liveQueries.capture_framing_png({}), capturePlan: () => liveQueries.capture_plan_png({}),
 		// One shot frame as raw read-back pixels (rows bottom-up), from the export
 		// path captureShotFramePng uses; an export in flight renders at its output.
 		renderFrameBuffer: frame => {

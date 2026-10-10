@@ -18,7 +18,7 @@ export const STUDIO_COMMAND_TIMEOUT_MS = 30_000;
 const studioCommands = new Set([
 	"inspect_studio", "operate_studio", "arrange_objects", "arrange_characters", "patch_elements",
 	"frame_shot", "verify_result", "undo_edit", "read_studio_context", "resolve_studio_image",
-	"capture_framing_png", "reconcile_studio_command", "run_action",
+	"capture_framing_png", "capture_plan_png", "reconcile_studio_command", "run_action",
 ]);
 
 const mutationCommands = new Set([

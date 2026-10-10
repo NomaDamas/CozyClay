@@ -144,6 +144,19 @@ cclay live capture --framing --out /tmp/329-doc/shots/f-a-wide-hip.png
 {"path":"/tmp/329-doc/shots/f-a-wide-hip.png","width":1920,"height":1080,"bytes":344608}
 ```
 
+To check the blocking from above instead, ask `verify` for the plan:
+`cclay live verify --receipt receipt-mu3uybub-4 --checks framing --visual plan --out /tmp/plan.png`
+writes the Top View (the inset's orthographic plan at 1280×720) with every
+visible character's and object's name at its floor position and the shot
+camera drawn as a red wedge toward where it looks; its `visualRefs` entry
+carries `kind: "plan"`. A `framing` check also returns `geometry`: per shot
+the two leading characters, the camera's side of the line between them
+(`cameraSide`: `left`, `right` or `on-axis` within 5 cm), the props crossing
+the sight line (`occluders`), and `axisConsistent` across the cut (false when
+a shot of the same pair crosses the line, null with fewer than two sided
+shots). The frame-shot receipt itself reports `occluded` and `cameraSide` in
+`checks`, and one `OCCLUDED` warning per prop in the way.
+
 Reading that PNG as an image shows the character standing center-frame, head
 to feet unclipped, the chair fully visible beside her, camera at hip height —
 the framing the receipt promised. Session (a) is done; the prop stays in the
@@ -352,7 +365,7 @@ state, never on a guess about what the dead hub saw.
 | `patch --target <kind>[:<id>] --set '<json>'` | set declared authored fields by path on one `character` / `object` / `shot` / `stage` target; `inspect --scope catalogue` lists the patchable paths | yes |
 | `frame-shot --subject <id> --size … --view … --level … [--side] [--focal]` or `--exact px,py,pz,lx,ly,lz,focal` | move the shot camera by film vocabulary or to an exact pose; `keyAtFrame` (via `cmd`) also authors a camera key | yes |
 | `operate [--select object:<id>] [--frame N] [--mode scene\|camera\|motion] [--play\|--pause]` | transient editor state — selection, playhead, mode; nothing authored | yes (transient) |
-| `verify --receipt <id> --checks placement,framing [--visual frame --out check.png]` | re-run a receipt's evidence, optionally writing its visual proof | no |
+| `verify --receipt <id> --checks placement,framing [--visual frame\|contact_sheet\|plan --out check.png]` | re-run a receipt's evidence, optionally writing its visual proof (`plan` is the Top View) | no |
 | `undo --receipt <id>` | restore the document through the editor's native history, one entry | yes |
 | `cmd <name> --args '<json>'` | any live-protocol command, raw (no admission, no auto-receipt) | per command |
 | `tool <name> --args '<json>'` | any registry tool the hub serves, e.g. `describe_shot` | no |

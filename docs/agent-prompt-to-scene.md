@@ -32,6 +32,8 @@ Read every prompt for six groups:
 | Anything the user confirms in one batch | `apply_batch` |
 | Reading the result back | `describe_scene`, `describe_shot`, `capture_frame` |
 
+In the Studio, `verify_result` with a `framing` check returns code-measured `cameraSide` (left, right or on-axis of the line between the two leading characters) and `axisConsistent` (the 180-degree rule across the cut), so the side the camera sits on is checked, not guessed; `visual: "plan"` adds a top-view picture.
+
 The names above are MCP tool names, defined in `mcp/tool-handlers.mjs` for MCP clients and the `cclay` live tool — they are not the Agent/Studio panel's current tools. The Studio panel itself drives the scene through the Studio families: `inspect_studio`, `operate_studio`, `arrange_objects`, `arrange_characters`, `frame_shot`, `generate_motion`, `verify_result`, `undo_edit`.
 
 ## Storyboard projects: one panel per request
