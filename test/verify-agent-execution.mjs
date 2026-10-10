@@ -332,6 +332,11 @@ for (const explicit of [true, false]) {
 	};
 	const studioRuntime = { readContext: async () => (await import("./verify-studio-agent-protocol.mjs")).contextFixture() };
 	const liveHub = { workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", command: async () => ({}) };
+	// This scenario pins WHICH model ids reach the Codex fixture for the main turns; the
+	// #718 supervisor would add its own helper-model requests to that list, so it is
+	// switched off here and restored in the finally below.
+	const previousSupervisor = process.env.COZYCLAY_SUPERVISOR;
+	process.env.COZYCLAY_SUPERVISOR = "off";
 	const handler = createAgentHandler({ auth, codex, codexBaseUrl: fixtureUrl, handlers: [], liveHub, studioRuntime });
 	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
 	const sidecarUrl = await listen(sidecar);
@@ -362,7 +367,10 @@ for (const explicit of [true, false]) {
 		}
 		assert.deepEqual(received, ["gpt-6-astra", liveId, liveId, liveId], "static, Workflow and both Studio turns reach the Codex fixture");
 		console.log("PASS 16v: one handler registry carries live Codex discovery into Workflow and Studio execution");
-	} finally { await handler.close(); await close(sidecar); await close(fixture); }
+	} finally {
+		if (previousSupervisor === undefined) delete process.env.COZYCLAY_SUPERVISOR; else process.env.COZYCLAY_SUPERVISOR = previousSupervisor;
+		await handler.close(); await close(sidecar); await close(fixture);
+	}
 }
 
 // #379 / 16z: concurrent cold listings share discovery and execution, not just

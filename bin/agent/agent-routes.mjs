@@ -223,6 +223,11 @@ function quotaEvent(codex, headers) {
 	};
 }
 
+// The supervisor's role catalog (#718) per model registry: listAgentModels
+// reads every provider's auth, so a Studio turn reuses it for 60 s.
+const SUPERVISOR_CATALOG_TTL_MS = 60_000;
+const supervisorCatalogs = new WeakMap();
+
 // Backend errors may echo credentials or image inputs, so their bodies are
 // never forwarded. Only a structured message survives, redacted and clipped to
 // one line — without it neither the log nor the panel can say why a turn died.
@@ -367,6 +372,31 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			// A retired build must not clear a newer identity's initialization.
 			if (workflowModelsPromise === pending) workflowModelsPromise = null;
 			throw error;
+		}
+	};
+	/** The Studio supervisor for one turn: the main model's helper (or, with
+	 * COZYCLAY_SUPERVISOR_ROLE=advisor, its advisor) role model. None when
+	 * COZYCLAY_SUPERVISOR=off, or when the role resolves to main itself (a model
+	 * the catalog does not list, or a lineup without a distinct role model). */
+	const studioSupervisor = async (mainModel) => {
+		if (process.env.COZYCLAY_SUPERVISOR === "off") return undefined;
+		try {
+			const registry = await ensureWorkflowModels();
+			const { listAgentModels, resolveRoleModels } = await import("./providers.mjs");
+			let cached = supervisorCatalogs.get(registry);
+			if (!cached || Date.now() - cached.at >= SUPERVISOR_CATALOG_TTL_MS) {
+				const entry = { at: Date.now(), catalog: listAgentModels({ auth, codex, models: registry, env }) };
+				entry.catalog.catch(() => { if (supervisorCatalogs.get(registry) === entry) supervisorCatalogs.delete(registry); });
+				supervisorCatalogs.set(registry, entry);
+				cached = entry;
+			}
+			const roles = resolveRoleModels(mainModel.includes("/") ? mainModel : `openai-codex/${mainModel}`, await cached.catalog);
+			const modelKey = process.env.COZYCLAY_SUPERVISOR_ROLE === "advisor" ? roles.advisor : roles.helper;
+			return modelKey && modelKey !== roles.main ? { modelKey, maxFollowUps: 2 } : undefined;
+		} catch (error) {
+			// The gate is advisory: a catalog failure runs the turn unsupervised.
+			console.error(`cozyclay: supervisor unavailable for this turn: ${error?.message ?? error}`);
+			return undefined;
 		}
 	};
 	const hasAnyCredential = async () => {
@@ -638,8 +668,10 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		}
 		try {
 			if (!session.modelSession) session.modelSession = await runner.openSession(value.sessionId, { surface: "studio" });
+			const model = value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra");
+			const supervisor = await studioSupervisor(model);
 			for await (const frame of turnTransaction.run(input => session.modelSession.start(input))({
-				surface: "studio", sessionId: value.sessionId, model: value.model || (fauxProvider ? `${fauxProvider.provider?.id || fauxProvider.provider || "faux"}/scripted` : "gpt-6-astra"), effort: value.effort,
+				surface: "studio", sessionId: value.sessionId, model, effort: value.effort, ...(supervisor ? { supervisor } : {}),
 				text: value.text, attachments: value.attachments, contextText: encodeStudioContext(value.context), frameObservation,
 				context: value.context, tools: [...modelTools, scriptTool], systemPrompt: value.context.scene?.previsMode === "storyboard" ? STUDIO_SYSTEM_PROMPT_STORYBOARD : undefined, signal: controller.signal, emit: send,
 				meta: persistenceMeta,

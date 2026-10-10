@@ -224,6 +224,76 @@ export function withAnthropicCacheBreakpoints(payload, model) {
 	return next === payload ? undefined : next;
 }
 
+// The supervisor completion gate (#718): at the end of a Studio run a second,
+// cheaper model reads a compact digest of the run and either lets it end or
+// sends the agent back with the items it left undone.
+const SUPERVISOR_TIMEOUT_MS = 15_000;
+const SUPERVISOR_FOLLOW_UP_PREFIX = "Supervisor check:";
+const SUPERVISOR_SYSTEM_PROMPT = "You are a previs supervisor. Decide whether the agent completed the user's request as literally stated. Reply with JSON only: {\"complete\": boolean, \"missing\": string[]} where missing lists concrete undone items in the user's language.";
+const clip = (text, max) => text.length > max ? `${text.slice(0, max - 1)}\u2026` : text;
+const textParts = (content) => typeof content === "string" ? [content]
+	: Array.isArray(content) ? content.filter((part) => part?.type === "text" && typeof part.text === "string").map((part) => part.text) : [];
+const isSupervisorFollowUp = (message) => message?.role === "user" && textParts(message.content).some((text) => text.startsWith(SUPERVISOR_FOLLOW_UP_PREFIX));
+
+function requestText(message) {
+	const parts = textParts(message?.content);
+	const plain = parts.filter((text) => !text.startsWith(STUDIO_CONTEXT_PREFIX));
+	if (plain.length) return plain.at(-1).trim();
+	// A frame-observation turn folds the request into the context part's tail.
+	const context = parts.find((text) => text.startsWith(STUDIO_CONTEXT_PREFIX)) ?? "";
+	const end = context.indexOf("</studio-context>");
+	return end === -1 ? "" : context.slice(end + "</studio-context>".length).trim();
+}
+
+function toolOutcome(message) {
+	const [text = ""] = textParts(message.content);
+	let parsed;
+	try { parsed = JSON.parse(text); } catch { parsed = undefined; }
+	const result = parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+	return {
+		tool: message.toolName,
+		ok: message.isError ? false : typeof result.ok === "boolean" ? result.ok : true,
+		...(typeof result.status === "string" ? { status: result.status } : {}),
+		...(typeof result.code === "string" ? { code: result.code } : {}),
+		...(Array.isArray(result.affectedIds) ? { affected: result.affectedIds.length } : {}),
+		...(typeof result.receiptId === "string" ? { receiptId: result.receiptId } : {}),
+		...(message.isError ? { error: clip(text, 200) } : {}),
+	};
+}
+
+/** The supervisor's view of a run: the user's latest request (never the
+ * <studio-context> part nor a supervisor follow-up), the outcome of every tool
+ * call since that request, and the agent's last reply. Pure. */
+export function buildSupervisorDigest(messages) {
+	const list = Array.isArray(messages) ? messages : [];
+	let anchor = list.findLastIndex((message) => message?.role === "user" && Array.isArray(message.content) && message.content.some(isStudioContextPart));
+	if (anchor === -1) anchor = list.findLastIndex((message) => message?.role === "user" && !isSupervisorFollowUp(message));
+	const tools = list.slice(anchor + 1).filter((message) => message?.role === "toolResult").map(toolOutcome);
+	return {
+		request: clip(anchor === -1 ? "" : requestText(list[anchor]), 4000),
+		tools: tools.slice(-40),
+		reply: clip(textParts(list.findLast((message) => message?.role === "assistant")?.content).join("").trim(), 2000),
+	};
+}
+
+/** `{ complete, missing }` from the first JSON object in a supervisor reply,
+ * or null when there is none or it has no boolean `complete`. Pure. */
+export function parseSupervisorVerdict(text) {
+	if (typeof text !== "string") return null;
+	const source = text.slice(0, 8000);
+	for (let start = source.indexOf("{"); start !== -1; start = source.indexOf("{", start + 1)) {
+		for (let end = source.indexOf("}", start); end !== -1; end = source.indexOf("}", end + 1)) {
+			let value;
+			try { value = JSON.parse(source.slice(start, end + 1)); } catch { continue; }
+			if (!value || typeof value !== "object" || Array.isArray(value) || typeof value.complete !== "boolean") return null;
+			const missing = (Array.isArray(value.missing) ? value.missing : [])
+				.filter((item) => typeof item === "string" && item.trim()).map((item) => clip(item.trim(), 300)).slice(0, 8);
+			return { complete: value.complete, missing };
+		}
+	}
+	return null;
+}
+
 function studioObservationMessage(observation) {
 	return {
 		role: "user",
@@ -361,6 +431,41 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			sendQuota(queue, input);
 		};
 
+		// before_run_end: a returned followUp continues the SAME run with that text
+		// as the next user message, so run_end (and its done frame) fires once.
+		const superviseRunEnd = async ({ messages }, hookContext) => {
+			const input = state.lastInput;
+			const active = state.active;
+			const supervisor = input?.surface === "studio" ? input.supervisor : undefined;
+			if (!supervisor?.modelKey || !active || active.abortRequested || (active.followUps ?? 0) >= (supervisor.maxFollowUps ?? 0)) return undefined;
+			const last = Array.isArray(messages) ? messages.findLast((message) => message?.role === "assistant") : undefined;
+			if (last?.stopReason === "error" || last?.stopReason === "aborted") return undefined;
+			const key = supervisor.modelKey;
+			const unavailable = (reason) => { active.queue.push({ type: "supervisor", verdict: "unavailable", reason }); return undefined; };
+			const slash = key.indexOf("/");
+			const model = slash > 0 ? state.registry?.getModel(key.slice(0, slash), key.slice(slash + 1)) : undefined;
+			if (!model) return unavailable(`unknown supervisor model ${key}`);
+			let verdict;
+			try {
+				const signal = AbortSignal.any([AbortSignal.timeout(SUPERVISOR_TIMEOUT_MS), input.signal, hookContext?.abortSignal].filter(Boolean));
+				const reply = await state.registry.completeSimple(model, {
+					systemPrompt: SUPERVISOR_SYSTEM_PROMPT,
+					messages: [{ role: "user", content: JSON.stringify(buildSupervisorDigest(messages)), timestamp: Date.now() }],
+				}, { signal });
+				if (reply?.stopReason === "error" || reply?.stopReason === "aborted") throw new Error(reply.errorMessage || `supervisor call ${reply.stopReason}`);
+				verdict = parseSupervisorVerdict(textParts(reply?.content).join(""));
+			} catch (error) {
+				const message = error?.name === "TimeoutError" ? "supervisor timed out" : sanitizeUpstreamDetail(JSON.stringify({ message: String(error?.message ?? error) })) || "supervisor call failed";
+				return unavailable(message);
+			}
+			if (!verdict) return unavailable("unparsable supervisor reply");
+			if (verdict.complete) { active.queue.push({ type: "supervisor", verdict: "complete", model: key }); return undefined; }
+			if (!verdict.missing.length) return unavailable("supervisor reported incomplete without missing items");
+			active.followUps = (active.followUps ?? 0) + 1;
+			active.queue.push({ type: "supervisor", verdict: "incomplete", missing: verdict.missing, model: key, followUp: active.followUps });
+			return { followUp: `${SUPERVISOR_FOLLOW_UP_PREFIX} the request is not complete. Missing: ${verdict.missing.join("; ")}. Complete these now, verify the result, then report.` };
+		};
+
 		const ensureHarness = async (input) => {
 			const { pi, models: registry } = await ensureModels();
 			const activePrompt = input.systemPrompt || (input.surface === "studio" ? (await import("./studio-prompt.mjs")).STUDIO_SYSTEM_PROMPT : systemPrompt);
@@ -402,6 +507,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					const next = withAnthropicCacheBreakpoints(payload, model);
 					return next ? { payload: next } : undefined;
 				});
+				state.harness.hooks.on("before_run_end", superviseRunEnd);
 				state.harness.hooks.on("after_response", async ({ message }) => {
 					if (message.stopReason !== "error" || state.provider !== "openai-codex" || state.active.authRetried
 						|| classifyError({ message: message.errorMessage }).code !== "unauthorized") return;
@@ -511,7 +617,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 			const queue = new FrameQueue();
 			// Studio never sends a quota frame at all (unchanged, #379): mark it sent
 			// up front so `pushFrame`'s gate never holds Studio's first frame.
-			state.active = { queue, quotaSent: input.surface === "studio", pendingFrames: [], authRetried: false, abortRequested: false, lastResponseHeaders: null, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 } };
+			state.active = { queue, quotaSent: input.surface === "studio", pendingFrames: [], authRetried: false, abortRequested: false, lastResponseHeaders: null, followUps: 0, usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, requests: 0 } };
 			state.lastInput = input;
 			const controller = input.signal ? null : new AbortController();
 			const signal = input.signal || controller.signal;
