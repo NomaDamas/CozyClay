@@ -277,27 +277,27 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 				}}
 				objectPathPointIndex={pathPointIndex}
 				onObjectMarkAdd={(t) => {
-					const path = selectedSceneObject?.path;
+					const path = pathTarget?.path;
 					const added = path ? insertPathMark(path, t) : null;
 					if (!added) return;
 					const token = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-					changeSceneObject(selectedSceneObject.id, { path: { ...path, marks: added.marks } }, token);
+					changeSceneObject(pathTarget.id, { path: { ...path, marks: added.marks } }, token);
 					endSceneTransaction(token, { commit: true });
 					setPathPointIndex(added.index);
 				}}
 				onObjectMarkLean={(key, value, token) => {
-					const path = selectedSceneObject?.path;
+					const path = pathTarget?.path;
 					if (!path || pathPointIndex == null || (key !== "bank" && key !== "pitch")) return;
 					const marks = pathMarks(path);
 					if (pathPointIndex < 1 || pathPointIndex > marks.length) return;
 					const next = { ...path, marks: marks.map((mark, i) => (i + 1 === pathPointIndex ? { ...mark, [key]: value } : mark)) };
 					// A scrub hands its own transaction; a typed value is one entry.
 					if (token != null) {
-						changeSceneObject(selectedSceneObject.id, { path: next }, token);
+						changeSceneObject(pathTarget.id, { path: next }, token);
 						return;
 					}
 					const own = beginSceneTransaction({ owner: "object-path", cancel: () => {} });
-					changeSceneObject(selectedSceneObject.id, { path: next }, own);
+					changeSceneObject(pathTarget.id, { path: next }, own);
 					endSceneTransaction(own, { commit: true });
 				}}
 				onObjectMarkScrubStart={beginSceneTransaction}

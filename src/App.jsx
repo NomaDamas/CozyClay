@@ -2046,7 +2046,8 @@ export default function App() {
 	// The dots on a route are found by double-clicking the line, a gesture
 	// nothing hints at: say it once, the first time a route is selected.
 	const routeHintShownRef = useRef(false);
-	const selectedRouteId = selectedSceneObject?.path ? selectedSceneObject.id : null;
+	// The route shown may belong to a routed record inside the selected group.
+	const selectedRouteId = routeOwner?.path ? routeOwner.id : null;
 	useEffect(() => {
 		if (!selectedRouteId || routeHintShownRef.current) return;
 		routeHintShownRef.current = true;
