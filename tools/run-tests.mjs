@@ -119,6 +119,7 @@ const NODE_FILES = [
 	"test/verify-agent-steer.mjs",
 	"test/verify-pi-tools.mjs",
 	"test/verify-agent-providers.mjs",
+	"test/verify-cliproxy-live-model.mjs",
 	"test/verify-schema-to-typebox.mjs",
 	"test/verify-agent-sse-golden.mjs",
 	"test/verify-agent-context-budget.mjs",
