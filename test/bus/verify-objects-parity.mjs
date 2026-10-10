@@ -6,6 +6,7 @@ const cases = {
   'object.set': { id: 'cube', set: { name: 'Generic' } },
   'object.update': { id: 'cube', patch: { x: 2 } },
   'object.add': { kind: 'cone' },
+  'object.sculpt': { recipe: { parts: [{ id: 'body', shape: 'blob', size: [0.4, 0.6, 0.4], position: [0, 0.3, 0] }] } },
   'object.remove': { ids: ['cube'] },
   'object.rename': { id: 'cube', name: 'Renamed' },
   'object.group': { parent: 'sphere', children: ['cube'] },
