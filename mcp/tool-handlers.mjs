@@ -467,7 +467,7 @@ function sceneReport({ characterCursor = 0, objectCursor = 0, limit = 50 } = {})
 				const points = object.path.points;
 				const first = points[0];
 				const last = points[points.length - 1];
-				lines.push(`    path: ${points.length} pts  (${round(first.x, 1)},${round(first.z, 1)}) → (${round(last.x, 1)},${round(last.z, 1)})  speed: ${object.path.speed || "fills take"}${object.path.extend ? "  keeps going" : ""}${object.path.loop ? "  loops" : ""}`);
+				lines.push(`    path: ${points.length} pts  (${round(first.x, 1)},${round(first.z, 1)}) → (${round(last.x, 1)},${round(last.z, 1)})  speed: ${object.path.speed || "fills take"}${object.path.extend ? "  keeps going" : ""}${object.path.loop ? "  loops" : ""}${object.path.marks?.length ? `  marks: ${object.path.marks.map((mark) => (typeof mark === "number" ? round(mark, 2) : `${round(mark.t, 2)}${mark.bank ? ` bank ${round(mark.bank, 1)}` : ""}${mark.pitch ? ` pitch ${round(mark.pitch, 1)}` : ""}`)).join(", ")}` : ""}`);
 			}
 		}
 	}
@@ -1370,6 +1370,14 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 							face_travel: z.boolean().optional().describe("turn to face the direction of travel (default true)"),
 							loop: z.boolean().optional(),
 							extend: z.boolean().optional().describe("keep going in the final direction after the route ends"),
+							marks: z
+								.array(z.union([
+									z.number().min(0).max(1),
+									z.object({ t: z.number().min(0).max(1), bank: z.number().min(-90).max(90).optional(), pitch: z.number().min(-90).max(90).optional() }),
+								]))
+								.max(6)
+								.optional()
+								.describe("dots along the route: an arc fraction 0-1, or { t, bank, pitch } (degrees, +-90) to lean there; level again at the neighbouring marks and ends"),
 						})
 						.nullable()
 						.optional()
@@ -1384,7 +1392,7 @@ export const createToolHandlers = ({ projectRootPromise } = {}) => {
 				const travelPath = path === null
 					? null
 					: path
-						? { points: path.points.map((point) => ({ x: point.x, y: point.y ?? 0, z: point.z })), speed: path.speed ?? 0, faceTravel: path.face_travel !== false, loop: path.loop === true, extend: path.extend === true }
+						? { points: path.points.map((point) => ({ x: point.x, y: point.y ?? 0, z: point.z })), speed: path.speed ?? 0, faceTravel: path.face_travel !== false, loop: path.loop === true, extend: path.extend === true, ...(path.marks ? { marks: path.marks } : {}) }
 						: undefined;
 				if (liveHub?.connected) {
 					try {

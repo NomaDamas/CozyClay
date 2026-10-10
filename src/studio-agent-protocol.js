@@ -128,7 +128,11 @@ const source = union(generateSource, object({ kind: literal("reuse"), artifactId
 const dataImage = { ...text(2 * 1024 * 1024), pattern: "^data:image/[A-Za-z0-9.+-]+[;,]" };
 const promptBlock = object({ startFrame: integer(), endFrame: integer(1), text: text(2000) }, { id });
 const cameraKey = object({ frame: integer(), framing: object({ pos: vec3, yaw: number(), pitch: number(), fovDeg: number(1, 179) }) }, { id });
-const objectRoute = nullable(object({ points: array(vec3, 64, 2) }, { speed: number(0, 50), faceTravel: bool, loop: bool, extend: bool, marks: array(union(number(0, 1), object({ t: number(0, 1) }, { bank: number(-90, 90), pitch: number(-90, 90) })), 6) }));
+// A mark is an arc fraction, or { t, bank, pitch } when the object should lean
+// there (degrees, +-90). The route normaliser (src/object-path.js) owns the
+// rules; this only carries the shape through untouched.
+const routeMark = union(number(0, 1), object({ t: number(0, 1) }, { bank: number(-90, 90), pitch: number(-90, 90) }));
+const objectRoute = nullable(object({ points: array(vec3, 64, 2) }, { speed: number(0, 50), faceTravel: bool, loop: bool, extend: bool, marks: array(routeMark, 6) }));
 const PATCH_VALUE_SCHEMAS = {
 	"character.pose": nullable(id), "character.identityImage": nullable(dataImage), "character.promptBlocks": array(promptBlock, 64),
 	"object.parent": nullable(id), "object.path": objectRoute, "stage.environmentImage": nullable(dataImage),
@@ -213,7 +217,7 @@ export const STUDIO_CATALOGUE = freezeStudioData(STUDIO_TOOLS.map(name => ({ nam
 const bounds = object({ min: vec3, max: vec3 });
 const entity = object({ id, kind: choices(["object", "character", "rig"]), token: id }, {
 	name, detailsOmitted: bool, position: vec3, yawDeg: number(), rotationDeg: vec3, scale: union(positive, positiveVec3), bounds: nullable(bounds),
-	libraryKind: id, renderer: id, color: nullable(text(32)), tint: nullable(text(32)), modelId: nullable(text(120)), assetId: id, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), pathPointCount: integer(0, 64),
+	libraryKind: id, renderer: id, color: nullable(text(32)), tint: nullable(text(32)), modelId: nullable(text(120)), assetId: id, parentId: nullable(id), attachment: nullable(object({ characterId: id, bone: nullable(id) })), pathPointCount: integer(0, 64), pathMarks: array(union(number(0, 1), object({ t: number(0, 1) }, { bank: number(-90, 90), pitch: number(-90, 90) })), 6),
 	local: object({ position: vec3, rotationDeg: vec3 }),
 	motion: object({ takeId: nullable(id), frames: integer(), ikKeyCount: integer(), promptBlockCount: integer() }, { poseId: nullable(id), keyIds: ids(8, 0) }),
 	capabilities: object({ rigReady: bool, ik: bool, measuredFeet: bool }),

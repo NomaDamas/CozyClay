@@ -499,6 +499,23 @@ function registerTests() {
 			const badLegacy=await post({sessionId:"legacy",text:1});assert.equal(badLegacy.status,400);assert.deepEqual(JSON.parse(badLegacy.text),{error:"invalid request"});
 		});
 	});
+	test("route marks: a number or { t, bank, pitch } is accepted and passed through untouched", () => {
+		const route = marks => ({ name: "patch_elements", args: { ops: [{ target: { kind: "object", id: "car" }, set: { path: { points: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 9 }], marks } } }] } });
+		const marks = [0.25, { t: 0.5, bank: 12, pitch: -4 }, { t: 0.75 }];
+		const valid = protocol.validateStudioCommand(route(marks));
+		assert.deepEqual(valid.args.ops[0].set.path.marks, marks, "the lean rides through as authored");
+		assert.deepEqual(protocol.validateStudioCommand(route([0.2, 0.6])).args.ops[0].set.path.marks, [0.2, 0.6], "plain numbers still work");
+		rejects(() => protocol.validateStudioCommand(route([{ t: 0.5, bank: 120 }])), "INVALID_ARGUMENT");
+		rejects(() => protocol.validateStudioCommand(route([{ bank: 10 }])), "INVALID_ARGUMENT");
+		rejects(() => protocol.validateStudioCommand(route([{ t: 0.5, roll: 10 }])), "INVALID_ARGUMENT");
+		// the readback row echoes the marks, lean included
+		const context = contextFixture();
+		context.entities.push({ id: "car", kind: "object", token: "t-car", pathPointCount: 2, pathMarks: marks });
+		context.entityPage = { returned: 2, total: 2, truncated: false, nextCursor: null };
+		protocol.validateStudioContext(context);
+		context.entities.at(-1).pathMarks = [{ t: 0.5, bank: 200 }];
+		rejects(() => protocol.validateStudioContext(context));
+	});
 }
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
 	const caseFlag=process.argv.indexOf("--case");
