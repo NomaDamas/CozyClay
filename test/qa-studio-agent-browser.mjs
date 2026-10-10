@@ -137,11 +137,11 @@ const implementations = {
     const firstPanelKeyPos = framedShot.cameraKeys[0]?.framing?.pos;
     assert(createdPanelKeyPos && firstPanelKeyPos, JSON.stringify({ frame: frame.result, framedShot }));
     assert.notDeepEqual(firstPanelKeyPos, createdPanelKeyPos, 'frame_shot must replace the newly created still camera key');
-    if (process.env.QA_CAPSULE_ONLY === '1') {
+    if (process.env.QA_PROXY_ONLY === '1') {
       console.log(`PANEL KEY POSITIONS panel-1-created=${JSON.stringify(createdPanelKeyPos)} panel-1-after=${JSON.stringify(firstPanelKeyPos)} differ=true`);
-      console.log(`PASS capsule-only storyboard frame_shot: receipt ok=true; new still camera key differs from its creation framing`);
-      log.push({ action: 'capsule-only-storyboard-framing', createdPanelKeyPos, firstPanelKeyPos, receipt: frame.result, framedShot });
-      await shot('task-30-storyboard-capsule-happy');
+      console.log(`PASS proxy-only storyboard frame_shot: receipt ok=true; new still camera key differs from its creation framing`);
+      log.push({ action: 'proxy-only-storyboard-framing', createdPanelKeyPos, firstPanelKeyPos, receipt: frame.result, framedShot });
+      await shot('task-30-storyboard-proxy-happy');
       await undo(before);
     } else {
       // Second turn: the new panel must take the placement, the first must not.
@@ -347,7 +347,7 @@ try {
     activeCase = name;
     const context = await browser.newContext({viewport:{width:1600,height:950}}); page = await context.newPage();
     const document = structuredClone(sceneDocument);
-    if (name === 'storyboard-happy' && process.env.QA_CAPSULE_ONLY === '1') {
+    if (name === 'storyboard-happy' && process.env.QA_PROXY_ONLY === '1') {
       document.scenes[0].stage.characters = [{ id: 'char-a', subject: 'Capsule lead', model: 'proxy-figure', posture: 'sit', x: 0, z: 0, rot: 0, hidden: false }];
     }
     // Layout starts with an actually restorable take; motion Undo restores these
