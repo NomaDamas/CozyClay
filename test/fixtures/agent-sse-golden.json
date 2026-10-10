@@ -141,7 +141,14 @@
 			}
 		},
 		{
-			"type": "done"
+			"type": "done",
+			"usage": {
+				"input": "<tokens>",
+				"output": "<tokens>",
+				"cacheRead": "<tokens>",
+				"cacheWrite": "<tokens>",
+				"requests": 4
+			}
 		}
 	],
 	"S": [
@@ -340,6 +347,13 @@
 		},
 		{
 			"type": "done",
+			"usage": {
+				"input": "<tokens>",
+				"output": "<tokens>",
+				"cacheRead": "<tokens>",
+				"cacheWrite": "<tokens>",
+				"requests": 4
+			},
 			"eventSeq": 8
 		}
 	],
