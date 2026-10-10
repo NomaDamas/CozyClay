@@ -1,7 +1,7 @@
 // Travel through the grouping hierarchy: a routed parent carries every record
 // grouped under it, rigidly, and records with nothing routed above them read
 // exactly as they did before the carry existed.
-import { Matrix4, Quaternion, Vector3 } from "three";
+import { Euler, Matrix4, Quaternion, Vector3 } from "three";
 import { objectTransformAt } from "../src/object-path.js";
 import { sceneObjectsAt, sceneObjectTravelMatrixAt } from "../src/object-travel.js";
 
@@ -11,6 +11,7 @@ const ok = (name, pass, detail = "") => {
 	if (!pass) failures += 1;
 };
 const near = (a, b, tol = 1e-6) => Math.abs(a - b) <= tol;
+const DEG = Math.PI / 180;
 const take = { frameCount: 241, fps: 24 };
 const byId = (rows, id) => rows.find((row) => row.id === id);
 const record = (fields) => ({ y: 0, rot: 0, rotX: 0, rotZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1, parent: null, attach: null, path: null, ...fields });
@@ -95,10 +96,18 @@ ok("a scene with no routes is returned as the same list", (() => {
 	return sceneObjectsAt(rows, 120, take) === rows;
 })());
 ok("a routed record with nothing routed above it reads exactly as the route sample", (() => {
+	const lone = record({ id: "lamp", x: 1, z: 1, path: { points: [{ x: 0, z: 0 }, { x: -4, z: -4 }] } });
+	const row = sceneObjectsAt([lone], 120, take)[0];
+	const at = objectTransformAt(lone, 120, take);
+	return row.x === at.x && row.y === at.y && row.z === at.z && row.rot === at.rot && row.rotX === 0 && row.rotZ === 0;
+})());
+ok("a routed record's own pitch stays about its body as the heading turns (travelPose, YXZ)", (() => {
 	const lone = record({ id: "lamp", x: 1, z: 1, rotX: 20, path: { points: [{ x: 0, z: 0 }, { x: -4, z: -4 }] } });
 	const row = sceneObjectsAt([lone], 120, take)[0];
 	const at = objectTransformAt(lone, 120, take);
-	return row.x === at.x && row.y === at.y && row.z === at.z && row.rot === at.rot && row.rotX === 20;
+	const drawn = new Quaternion().setFromEuler(new Euler(row.rotX * DEG, row.rot * DEG, row.rotZ * DEG, "XYZ"));
+	const expected = new Quaternion().setFromEuler(new Euler(20 * DEG, at.rot * DEG, 0, "YXZ"));
+	return near(row.x, at.x) && near(row.z, at.z) && drawn.angleTo(expected) < 1e-6;
 })());
 ok("records grouped under an unrouted parent stay put", (() => {
 	const rows = [record({ id: "a", x: 1, z: 1 }), record({ id: "b", x: 2, z: 2, parent: "a" }), tree, record({ id: "c", x: 0, z: 0, path: chassis.path })];
