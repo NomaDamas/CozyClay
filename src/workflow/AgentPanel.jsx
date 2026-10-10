@@ -565,7 +565,10 @@ export default function AgentPanel({
 	// Focus moves to the composer whenever the panel opens. The composer only
 	// mounts once the session resolves, so authState is a dependency too:
 	// otherwise this fires against a composer that does not exist yet. A hidden
-	// embedded panel never pulls focus out of the host's own surface.
+	// embedded panel never pulls focus out of the host's own surface. An
+	// embedded panel never collapses itself (its host hides it), so shown means
+	// open there: without that the Studio composer opened unfocused and the
+	// next Cmd+V landed on the stage.
 	useEffect(() => {
 		if (hidden) {
 			// Chrome blurs a hidden focused field only on its next lifecycle step;
@@ -573,8 +576,8 @@ export default function AgentPanel({
 			if (composerRef.current && composerRef.current === document.activeElement) composerRef.current.blur();
 			return;
 		}
-		if (!collapsed) composerRef.current?.focus();
-	}, [authState, collapsed, hidden]);
+		if (embedded || !collapsed) composerRef.current?.focus();
+	}, [authState, collapsed, embedded, hidden]);
 
 	useEffect(() => {
 		const node = transcriptRef.current;
@@ -610,7 +613,9 @@ export default function AgentPanel({
 	// composer takes one from the clipboard or the desktop. Only a transfer that
 	// actually carries a picture is intercepted: a text paste still lands in the
 	// caret, which is the whole reason the studio's document handler steps aside
-	// for a textarea in the first place.
+	// for a textarea in the first place. The paste is taken on the composer
+	// block, not the textarea, so the Send and model buttons a click just left
+	// focus on do not hand the picture to the stage.
 	const attachFiles = useCallback(async (files) => {
 		const prepared = [];
 		let failed = 0;
@@ -933,6 +938,7 @@ export default function AgentPanel({
 			onDragOver={composerDisabled ? undefined : onComposerDragOver}
 			onDragLeave={composerDisabled ? undefined : onComposerDragLeave}
 			onDrop={composerDisabled ? undefined : onComposerDrop}
+			onPaste={composerDisabled ? undefined : onComposerPaste}
 		>
 			{pendingAttachments.length > 0 && <ul className="agent-attachments" aria-label="Attached images">
 				{pendingAttachments.map((attachment) => <li key={attachment.id} className="agent-attachment">
@@ -953,7 +959,6 @@ export default function AgentPanel({
 					disabled={composerDisabled}
 					onChange={(event) => store.setDraft(event.target.value)}
 					onKeyDown={onComposerKeyDown}
-					onPaste={onComposerPaste}
 					onDragOver={onComposerDragOver}
 					onDrop={onComposerDrop}
 				/>

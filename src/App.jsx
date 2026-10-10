@@ -1687,6 +1687,8 @@ export default function App() {
 	// the gesture is "paste into the studio", not "paste into this box".
 	useEffect(() => {
 		const onPaste = (event) => {
+			// The Agent composer takes a picture pasted anywhere on it first.
+			if (event.defaultPrevented) return;
 			const target = event.target;
 			// Never steal a paste aimed at somewhere text goes.
 			if (target instanceof HTMLElement) {

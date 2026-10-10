@@ -167,7 +167,7 @@ expect("the collapsed rail is dock-only", panel.includes("if (collapsed && !embe
 expect("the global shortcut and toggle event are dock-only", (panel.match(/if \(embedded\) return;/g) || []).length >= 3);
 expect("a hidden embedded panel keeps its chat mounted", panel.includes("hidden={embedded && hidden}") && !panel.includes("if (hidden) return null"));
 expect("a hidden panel is removed from layout and focus order", /\.agent-panel\[hidden\]\s*\{[^}]*display:\s*none/.test(css));
-expect("focus never moves into a hidden panel", /if \(hidden\) \{[\s\S]{0,320}composerRef\.current\.blur\(\);[\s\S]{0,40}return;\s*\}\s*\n\s*if \(!collapsed\) composerRef\.current\?\.focus\(\)/.test(panel));
+expect("focus never moves into a hidden panel", /if \(hidden\) \{[\s\S]{0,320}composerRef\.current\.blur\(\);[\s\S]{0,40}return;\s*\}\s*\n\s*if \(embedded \|\| !collapsed\) composerRef\.current\?\.focus\(\)/.test(panel));
 expect("the host is told about dock collapse only", panel.includes("if (embedded) return;\n\t\tonCollapsedChange?.(collapsed);"));
 
 // --- one panel, two presentations (#350) ----------------------------------
@@ -211,7 +211,7 @@ expect("one acknowledgement settles one action", client.includes("if (!requestId
 // --- pasted and dropped pictures (#367) -----------------------------------
 // The studio's document paste handler steps aside for a textarea so text still
 // lands in the caret; the composer therefore has to take the picture itself.
-expect("the composer intercepts a paste", panel.includes("onPaste={onComposerPaste}") && panel.includes("const onComposerPaste = useCallback"));
+expect("the composer intercepts a paste", panel.includes("onPaste={composerDisabled ? undefined : onComposerPaste}") && panel.includes("const onComposerPaste = useCallback"));
 expect("only a clipboard carrying a picture is intercepted", /const takeTransfer = useCallback\(\(transfer\) => \{[\s\S]{0,400}if \(!images\.length\) \{[\s\S]{0,260}return unsupported > 0;/.test(panel)
 	&& panel.includes("if (takeTransfer(event.clipboardData)) event.preventDefault();"), "a text paste must reach the caret untouched");
 expect("the composer accepts a dropped picture too", panel.includes("onDrop={onComposerDrop}") && panel.includes("onDragOver={onComposerDragOver}")
