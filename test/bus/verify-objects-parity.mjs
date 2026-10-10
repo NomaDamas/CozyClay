@@ -7,7 +7,6 @@ const cases = {
   'object.add': { kind: 'cone' },
   'object.remove': { ids: ['cube'] },
   'object.rename': { id: 'cube', name: 'Renamed' },
-  'object.update': { id: 'cube', patch: { x: 2 } },
   'object.group': { parent: 'sphere', children: ['cube'] },
   'object.ungroup': { children: ['cube'] },
   'object.attach': { objectId: 'cube', characterId: 'actor-a' },
@@ -16,6 +15,28 @@ const cases = {
   'objects.arrange': { ops: [{ op: 'update', id: 'cube', position: { world: { x: 2, y: 0, z: 1 } } }] },
 };
 assert.deepEqual(Object.keys(cases).sort(), declarations.filter(entry => entry.kind === 'mutation' && entry.exposure !== 'ui-only').map(entry => entry.id).sort());
+// object.update is a legacy UI-only command: it silently ignores unknown keys, so the agent neither sees it nor can run it.
+{
+  const f = objectsFixture();
+  try {
+    const declared = declarations.find(entry => entry.id === 'object.update');
+    assert.deepEqual([declared.exposure, declared.agentHidden], ['ui-only', true]);
+    const listed = f.binding.handlers.inspect_studio({ scope: 'actions' }).actions.map(row => row.id);
+    assert.ok(listed.includes('object.set') && listed.includes('objects.arrange') && !listed.includes('object.update'), 'inspect_studio actions omits object.update');
+    assert.deepEqual(f.binding.handlers.inspect_studio({ scope: 'actions', ids: ['object.update'] }).actions, []);
+    assert.ok(!f.binding.context().actionIndex.some(row => row.id === 'object.update'), 'the turn actionIndex omits object.update');
+    assert.ok(f.binding.context().actionIndex.some(row => row.id === 'object.set'));
+    const before = structuredClone(f.objects.read());
+    for (const origin of ['agent', 'mcp', 'cli']) {
+      const refused = f.run('object.update', { id: 'cube', patch: { x: 2 } }, origin);
+      assert.equal(refused.code, 'CAPABILITY_MISSING', origin);
+      assert.match(refused.message, /object\.set/); assert.match(refused.message, /arrange_objects/);
+    }
+    assert.deepEqual(f.objects.read(), before);
+    assert.equal(f.run('object.update', { id: 'cube', patch: { x: 2 } }, 'ui').ok, true, 'the UI keeps object.update');
+    console.log('PASS object.update is hidden from the agent index and refused for agent/mcp/cli with a teaching error; the UI keeps it');
+  } finally { f.dispose(); }
+}
 for (const [command, args] of Object.entries(cases)) for (const origin of ['ui', 'agent', 'mcp', 'cli']) {
   const f = objectsFixture(), initial = structuredClone(f.objects.read());
   const ok = receipt => { assert.equal(receipt.ok, true, JSON.stringify(receipt)); return receipt; };

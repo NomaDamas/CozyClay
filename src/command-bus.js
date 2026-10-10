@@ -48,7 +48,7 @@ export function createCommandBus({ registry, ports }) {
   let agentTurn = null;
   function exposure(entry, args, request) {
     if (request.origin === 'ui') return;
-    if (entry.exposure === 'ui-only') fail('CAPABILITY_MISSING', 'This command is available only from the Studio UI.');
+    if (entry.exposure === 'ui-only') fail('CAPABILITY_MISSING', entry.uiOnlyHint ?? 'This command is available only from the Studio UI.');
     if (entry.id === 'load_scenes') {
       const ids = scenes => [...new Set(scenes.map(scene => scene.id))].sort();
       if (same(ids(args.document.scenes), ids(registry.state().scenes))) return;

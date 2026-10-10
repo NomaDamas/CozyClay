@@ -549,7 +549,7 @@ const implementations={
  async 'patch-during-gesture'(f){f.scope.studioGestureRef.current=true;const r=await f.call('patch_elements',f.request('patch_elements',{ops:[{target:{kind:'stage'},set:{'keyLight.warmth':0.9}}]}));assert.equal(r.code,'TARGET_BUSY',JSON.stringify(r));assert.equal(f.history.current.past.length,0);assert.equal(f.live.current.stage.keyLight.warmth,0.5);},
  async 'run-action-shot-create-and-undo'(f){
   const listed=await f.call('inspect_studio',{scope:'actions'});
-  assert.deepEqual(listed.actions.map(a=>a.id).sort(),commandDeclarations().map(entry=>entry.id).sort(),'the App registers every declared action');
+  assert.deepEqual(listed.actions.map(a=>a.id).sort(),commandDeclarations().filter(entry=>!entry.agentHidden).map(entry=>entry.id).sort(),'the App registers every declared action except agentHidden ones');
   const byId=Object.fromEntries(listed.actions.map(a=>[a.id,a]));
   assert.equal(byId['shot.create'].available,true,JSON.stringify(byId['shot.create']));
   assert.equal(byId['shot.create'].input,undefined,'the listing carries no schema');

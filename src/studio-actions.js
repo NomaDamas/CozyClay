@@ -214,7 +214,7 @@ export function createStudioActionRegistry({ readState } = {}) {
 		list(state = readState?.()) {
 			return [...entries.values()].map(entry => {
 				const verdict = availability(entry, state);
-				const row = { id: entry.id, label: entry.label, kind: entry.kind, description: entry.description, exposure: entry.exposure,
+				const row = { id: entry.id, label: entry.label, kind: entry.kind, description: entry.description, exposure: entry.exposure, ...(entry.agentHidden ? { agentHidden: true } : {}),
 					...(entry.timeoutMs === undefined ? {} : { timeoutMs: entry.timeoutMs }), ...(entry.generation ? { generation: entry.generation } : {}) };
 				return verdict === true ? { ...row, available: true, input: entry.input } : { ...row, available: false, reason: verdict };
 			});

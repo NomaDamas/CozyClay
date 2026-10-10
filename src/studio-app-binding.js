@@ -324,7 +324,7 @@ export function createStudioAppBinding(ports) {
 			// exposure and availability (the reason when unavailable). Schemas are on
 			// request: ids answer those actions' full declarations, input included.
 			if (command.args.scope === "actions") {
-				const actions = ports.actions?.()?.list() ?? [];
+				const actions = (ports.actions?.()?.list() ?? []).filter(row => !row.agentHidden);
 				return { context: c, actions: command.args.ids ? actions.filter(row => command.args.ids.includes(row.id)) : actions.map(({ input, description, ...row }) => row) };
 			}
 			const s = refresh();

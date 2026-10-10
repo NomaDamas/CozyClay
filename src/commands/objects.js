@@ -24,7 +24,8 @@ const semantic = [
 	mutation('object.ungroup', 'Ungroup objects', input({ children: ids })),
 	// The Outliner's "Group under new Empty": the Empty and the reparent are one write, so one undo.
 	{ ...mutation('object.groupUnderEmpty', 'Group object under a new Empty', input({ id })), exposure: 'ui-only' },
-	mutation('object.update', 'Update object', input({ id, patch: { type: 'object', properties: {}, additionalProperties: true } }, [])),
+	{ ...mutation('object.update', 'Update object', input({ id, patch: { type: 'object', properties: {}, additionalProperties: true } }, [])), exposure: 'ui-only', agentHidden: true,
+		uiOnlyHint: 'object.update is a legacy UI command that silently ignores unknown keys. Use object.set (one object, declared paths) or arrange_objects.' },
 	mutation('objects.arrange', 'Arrange objects', STUDIO_TOOL_SCHEMAS.arrange_objects),
 ];
 const batch = { id: 'objects.batch', label: 'Batch objects', description: 'Apply legacy object operations in one retained entry.', kind: 'job', domain: 'objects',
