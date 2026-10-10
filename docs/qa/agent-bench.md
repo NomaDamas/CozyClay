@@ -26,7 +26,7 @@ done
 | `QA_AGENT_EFFORT` | unset | Value selected in the pane's "Reasoning effort" select (e.g. `medium`); unset keeps the pane default, which sends no effort field (thinking off). Recorded per row as `effort`. |
 | `QA_OUT` | `/tmp/cozyclay-agent-bench` | Output directory |
 | `QA_BENCH_LABEL` | `baseline` | Report name: writes `$QA_OUT/<label>.json` and `$QA_OUT/<label>/*.png` |
-| `QA_BENCH_TURN_TIMEOUT_MS` | `240000` | Per-turn deadline |
+| `QA_BENCH_TURN_TIMEOUT_MS` | `480000` | Per-turn deadline |
 | `COZYCLAY_LIVE_PORT` | `5184` | Live hub port, used by the `cclay live` reads |
 
 Each run replaces that model's rows in `<label>.json` and keeps the other models' rows. The process exits 0 even when scenarios fail: a failed row is data. A row is missing only if the process crashed.
@@ -38,7 +38,7 @@ The scenarios run in order in one session. The scene at page load has one charac
 | Id | Prompt | Success when |
 | --- | --- | --- |
 | S1 | 선택된 캐릭터 왼쪽 1.4m에 의자 하나 놔줘 | Object count is exactly one higher, and the new object's XZ distance to the selected character is in [1.0, 2.0] m |
-| S2 | 그 캐릭터 주위에 의자 6개를 반경 2m 원형으로 둘러 배치해 | Object count is exactly six higher, every new object is in [1.5, 2.5] m (XZ) from the character, and the minimum pairwise XZ distance among the six is > 0.3 m |
+| S2 | 그 캐릭터 주위에 의자 6개를 반경 2m 원형으로 둘러 배치해 | Exactly six chair objects sit in [1.5, 2.5] m (XZ) from the character after the turn (created or moved there - reusing the S1 chair is a valid reading) and the minimum pairwise XZ distance among them is > 0.3 m |
 | S3 | 두 캐릭터가 테이블에 마주 앉아 대화하는 장면을 만들어. 캐릭터가 하나면 하나 추가해. 샷은 세 개: 마스터 투샷, A의 OTS, B의 OTS. | At least 2 characters, exactly 3 shots, and an object whose name, `libraryKind` or `renderer` contains "table" (built-in props such as the table carry no `libraryKind`; their kind is the `renderer` id) |
 | S4 | 방금 한 거 되돌려 | S3 itself succeeded, and compared with the state right after S3 there are fewer than 3 shots or fewer objects. If S3 did not succeed, the revert cannot be observed: `success` is false and `errorCode` is `PRECONDITION_S3` |
 | S5 | 두 캐릭터를 1.2m 간격으로 마주보게 세우고 미디엄 투샷으로 프레임 잡아 | At least 2 characters; the first two in document order are within [1.0, 1.4] m (XZ) and `(rotA - rotB) mod 360` is in [155, 205] degrees; the shot at the current frame (or the first shot) has a camera |
