@@ -153,6 +153,30 @@ assert.equal(undoneTurn.status, "undone");
 assert.deepEqual({ cast: cast.read(), objects: objects.read(), entry: app.historyEntry(false) }, preTurn, "one edit.undo restores the pre-turn document and history frontier");
 console.log(`PASS animation agent turn composes ${turnMutations.length} mutations into one history entry undone by one edit.undo`);
 
+// #735: "undo the last thing" arrives inside the next turn's transaction, before that turn
+// has authored anything. Traversal must be allowed then, and refused again once the turn
+// has its first authored edit.
+{
+	const redoneTurn = bus.run("edit.redo", { receiptId: closed.receiptId }, request("run_action", { action: "edit.redo", args: { receiptId: closed.receiptId } }));
+	assert.equal(redoneTurn.ok, true, JSON.stringify(redoneTurn));
+	assert.deepEqual(objects.read(), [...preTurn.objects, { id: "object-2" }, { id: "object-3" }], "redo puts the turn back so the next turn has something to undo");
+	const undoTurnId = crypto.randomUUID();
+	assert.equal(control("agent.turn.begin", undoTurnId).ok, true);
+	const undoInsideTurn = bus.run("edit.undo", { receiptId: closed.receiptId }, request("run_action", { action: "edit.undo", args: { receiptId: closed.receiptId } }, { turnId: undoTurnId }));
+	assert.equal(undoInsideTurn.ok, true, `an unauthored turn may traverse history: ${JSON.stringify(undoInsideTurn)}`);
+	assert.equal(undoInsideTurn.status, "undone");
+	assert.deepEqual({ cast: cast.read(), objects: objects.read() }, { cast: preTurn.cast, objects: preTurn.objects }, "the previous turn is undone from inside the new turn");
+	const laterEdit = bus.run("object.add", { object: { id: "object-4" } }, request("run_action", { action: "object.add", args: { object: { id: "object-4" } } }, { turnId: undoTurnId }));
+	assert.equal(laterEdit.ok, true, JSON.stringify(laterEdit));
+	const refusedAfterEdit = bus.run("edit.undo", {}, request("run_action", { action: "edit.undo", args: {} }, { turnId: undoTurnId }));
+	assert.equal(refusedAfterEdit.code, "TARGET_BUSY", "once the turn authored something, traversal waits again");
+	const closedUndoTurn = control("agent.turn.finish", undoTurnId);
+	assert.equal(closedUndoTurn.ok, true, JSON.stringify(closedUndoTurn));
+	assert.equal(closedUndoTurn.authored, true, "the later edit still lands as the turn's own entry");
+	assert.deepEqual(objects.read(), [...preTurn.objects, { id: "object-4" }]);
+	console.log("PASS #735 an unauthored agent turn may undo the previous turn; traversal is refused again after its first edit");
+}
+
 // A rolled-back turn restores every owner it touched and leaves no entry.
 const preRollback = { cast: cast.read(), objects: objects.read(), entry: app.historyEntry(false) };
 const rollbackTurnId = crypto.randomUUID();
