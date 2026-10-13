@@ -359,34 +359,37 @@ assert.deepEqual(
 		updateStatus: null,
 	},
 );
+const npmRuntime = {
+	distribution: "npm",
+	telemetryEnabled: true,
+	installationId,
+	appVersion: "1.5.0",
+	apiKey: "phc_npm",
+	apiHost: "https://t.cozyclay.org",
+	firstLaunch: true,
+};
+const expectedNpmRuntime = {
+	kind: "enabled",
+	distribution: "npm",
+	apiKey: "phc_npm",
+	apiHost: "https://t.cozyclay.org",
+	appVersion: "1.5.0",
+	installationId,
+	firstLaunch: true,
+	firstLaunchHeardFrom: null,
+	installKind: "npx",
+	originKind: "local",
+	internalQa: false,
+	updateStatus: "unknown",
+};
 assert.deepEqual(
-	resolveAnalyticsRuntime({
-		env: { PROD: true },
-		origin: "http://127.0.0.1:5180",
-		runtime: {
-			distribution: "npm",
-			telemetryEnabled: true,
-			installationId,
-			appVersion: "1.5.0",
-			apiKey: "phc_npm",
-			apiHost: "https://t.cozyclay.org",
-			firstLaunch: true,
-		},
-	}),
-	{
-		kind: "enabled",
-		distribution: "npm",
-		apiKey: "phc_npm",
-		apiHost: "https://t.cozyclay.org",
-		appVersion: "1.5.0",
-		installationId,
-		firstLaunch: true,
-		firstLaunchHeardFrom: null,
-		installKind: "npx",
-		originKind: "local",
-		internalQa: false,
-		updateStatus: "unknown",
-	},
+	resolveAnalyticsRuntime({ env: { PROD: true }, origin: "http://127.0.0.1:5180", runtime: npmRuntime }),
+	expectedNpmRuntime,
+	"the official package can enable 127.0.0.1 with its injected runtime contract",
+);
+assert.deepEqual(
+	resolveAnalyticsRuntime({ env: { PROD: true }, origin: "http://localhost:5180", runtime: npmRuntime }),
+	expectedNpmRuntime,
 	"the official package can enable localhost with its injected runtime contract",
 );
 assert.deepEqual(

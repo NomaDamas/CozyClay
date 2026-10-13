@@ -905,7 +905,7 @@ function runtimeConfig() {
 function isLoopbackOrigin(origin) {
 	try {
 		const parsed = new URL(origin);
-		return parsed.protocol === "http:" && parsed.hostname === "127.0.0.1";
+		return parsed.protocol === "http:" && ["127.0.0.1", "localhost"].includes(parsed.hostname);
 	} catch {
 		return false;
 	}
