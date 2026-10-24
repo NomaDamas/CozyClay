@@ -26,8 +26,9 @@ function bucketFrames(n) {
 
 /**
  * The draft publishDraft just stored (`n`: its ordinal for the character this turn,
- * from 1) and the compile result `r`: qa, ms.total (the whole compile, which includes
- * QA; the pipeline has no separate QA time), frameCount, search. `flags` are the
+ * from 1) and the compile result `r`: qa, ms (the whole draft: ms.repair, the repair
+ * loop's wall time with every candidate, when it ran, else ms.total, which includes QA;
+ * the pipeline has no separate QA time), frameCount, search. `flags` are the
  * handler's own: installed, stuck, repaired, adjusted.
  */
 export function noteDraftCompiled(draft, r, { installed = false, stuck = false, repaired = false, adjusted = false } = {}) {
@@ -40,7 +41,8 @@ export function noteDraftCompiled(draft, r, { installed = false, stuck = false, 
 			qa_problems: bucketFrictionCount(problems),
 			// QA records one issue per frame per group (qa-label.js): frame-level issues, not distinct frames.
 			qa_frames: bucketQaFrames(r?.qa?.total ?? 0),
-			compile: bucketShortMs(r?.ms?.total),
+			// A repaired draft compiled many candidates: ms.total is only the one it kept (compile-job.js).
+			compile: bucketShortMs(r?.ms?.repair ?? r?.ms?.total),
 			installed: Boolean(installed), stuck: Boolean(stuck), repaired: Boolean(repaired),
 			searched: Boolean(r?.search), adjusted: Boolean(adjusted),
 			frames: bucketFrames(r?.frameCount),

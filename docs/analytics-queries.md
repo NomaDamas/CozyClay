@@ -1459,7 +1459,7 @@ Builds before this release have no rows (**unknown, not 0**).
 | `qa_clean` | bool | No QA problems (`qaProblems`, `src/qa-label.js`) |
 | `qa_problems` | count bucket | QA problems (groups), the number people read |
 | `qa_frames` | `0`, `1-10`, `11-50`, `51-200`, `gte201` | `qa.total`: frame-level issues, one per frame per problem; not distinct frames |
-| `compile` | `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `ms.total`: the whole compile, including search, QA and observation |
+| `compile` | `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | The whole draft: `ms.repair` (the repair loop's wall time, every candidate) when repair ran, else `ms.total` (search, QA and observation included) |
 | `installed` | bool | The draft (or the best take so far) was installed on the character |
 | `stuck` | bool | The stop rule fired (`repair-watch.js`) |
 | `repaired` | bool | Repair ran (`repair` asked) |

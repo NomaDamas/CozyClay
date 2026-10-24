@@ -439,6 +439,9 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 	const result = (problems, total, ms, frameCount, search) => ({ qa: { ok: problems === 0, problems, total, groups: [] }, ms: { total: ms, compile: ms, qa: 1 }, frameCount, ...(search ? { search: {} } : {}) });
 	noteDraftCompiled({ n: 1 }, result(3, 640, 812, 200, true), { installed: false, stuck: false, repaired: true, adjusted: true });
 	noteDraftCompiled({ n: 6 }, result(0, 0, 40, 24), { installed: true, stuck: true });
+	// A repaired draft is timed by its whole repair loop (ms.repair), not the one candidate it kept.
+	noteDraftCompiled({ n: 2 }, { ...result(0, 0, 90, 24), ms: { total: 90, compile: 80, qa: 1, repair: 3200 } }, { repaired: true });
+	assert.equal(drafts.pop().props.compile, "gte2000", "ms.repair wins over ms.total");
 	assert.deepEqual(drafts.map(({ props }) => props), [
 		{ draft_index: "1", qa_clean: false, qa_problems: "3", qa_frames: "gte201", compile: "500-2000", installed: false, stuck: false, repaired: true, searched: true, adjusted: true, frames: "121-480" },
 		{ draft_index: "6-10", qa_clean: true, qa_problems: "0", qa_frames: "0", compile: "lt50", installed: true, stuck: true, repaired: false, searched: false, adjusted: false, frames: "lt30" },
@@ -450,7 +453,7 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 	assert.doesNotThrow(() => noteDraftCompiled(null, { get qa() { throw new Error("hostile"); } }), "a malformed result cannot break a compile");
 	drafts.length = 0;
 	for (let i = 0; i < 60; i += 1) noteDraftCompiled({ n: 1 }, result(0, 0, 10, 24));
-	assert.equal(drafts.length, 48, "the 50-per-session cap holds (two drafts were sent above)");
+	assert.equal(drafts.length, 47, "the 50-per-session cap holds (three drafts were sent above)");
 	assert.equal(friction.snapshot().compiles, "gte11", "past the cap the compiles counter keeps counting");
 	restoreDrafts();
 	friction.reset();
