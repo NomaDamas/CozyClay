@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import * as THREE from 'three';
 import { motionFixture } from './motion-fixture.mjs';
+import { DEFAULT_POSE } from '../../src/poses.js';
 import { fingerCurl, fingerTip, solveFingerCurl, solveFingerReach } from '../../src/motion/fingers.js';
 const at = bone => bone.getWorldPosition(new THREE.Vector3());
 function setup() {
@@ -51,5 +52,33 @@ test('fingers: a finger gesture keys its three joints and one Undo restores the 
     f.actual.undoScene();
     assert.equal(hook.layer('actor-a').ikKeys.length, 0);
     assert.deepEqual(f.actual.snapshotExportRig(f.rigs['actor-a']), rig);
+  } finally { f.dispose(); }
+});
+
+test('fingers: clearing the IK keys or resetting the pose straightens a keyed finger', () => {
+  for (const reset of ['clearIkKeys', 'setPose']) {
+    const { f, hook, state } = setup();
+    try {
+      if (reset === 'setPose') f.run('character.setPose', { characterId: 'actor-a', pose: { ...DEFAULT_POSE, id: 'arms-up', label: 'Arms up', bones: { lArm: [0.4, 0, 0] } } });
+      hook.ikSolve('finger', 'leftIndex', { curl: 1 });
+      hook.ikDragEnd();
+      assert.ok(fingerCurl(f.scope.ikStateRef.current.fingers.get('leftIndex')) > 0.99);
+      if (reset === 'clearIkKeys') f.run('character.clearIkKeys', { characterId: 'actor-a' });
+      else f.run('character.setPose', { characterId: 'actor-a', pose: DEFAULT_POSE, clearMotion: true });
+      assert.equal(hook.layer('actor-a').ikKeys.length, 0, reset);
+      assert.ok(fingerCurl(f.scope.ikStateRef.current.fingers.get('leftIndex')) < 1e-6, reset + ': the finger is straight again');
+    } finally { f.dispose(); }
+  }
+});
+test('fingers: setting the curl a finger reads keeps its shape, off-hinge turns included', () => {
+  const { f, state } = setup();
+  try {
+    const finger = state.fingers.get('rightRing');
+    solveFingerCurl(finger, 0.3);
+    finger.bones[0].quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), 0.17));
+    finger.bones[0].updateMatrixWorld(true);
+    const tip = fingerTip(finger);
+    solveFingerCurl(finger, fingerCurl(finger));
+    assert.ok(fingerTip(finger).distanceTo(tip) < 0.0005, 'the tip stays within 0.5 mm');
   } finally { f.dispose(); }
 });

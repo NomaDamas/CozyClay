@@ -91,10 +91,17 @@ function jointAngle(finger, i) {
 	return 2 * Math.atan2(rel.x * axis.x + rel.y * axis.y + rel.z * axis.z, rel.w);
 }
 
+// Sets the joint's bend around its hinge and keeps whatever else the pose had on the bone (a take's spread
+// toward a held ball, a thumb's wrap): the rotation from bind splits into its turn about the hinge (twist)
+// and the rest (swing), and only the twist is replaced.
 function setJointAngle(finger, i, angle) {
-	const [min, max] = finger.limits[i];
+	const [min, max] = finger.limits[i], axis = finger.axes[i];
 	const clamped = Math.min(max * DEG, Math.max(min * DEG, angle));
-	finger.bones[i].quaternion.copy(finger.bindQuats[i]).multiply(tmp.q.setFromAxisAngle(finger.axes[i], clamped));
+	const rel = finger.bindQuats[i].clone().invert().multiply(finger.bones[i].quaternion);
+	const along = rel.x * axis.x + rel.y * axis.y + rel.z * axis.z;
+	const twist = new THREE.Quaternion(axis.x * along, axis.y * along, axis.z * along, rel.w);
+	const swing = twist.lengthSq() < 1e-12 ? rel : rel.clone().multiply(twist.normalize().invert());
+	finger.bones[i].quaternion.copy(finger.bindQuats[i]).multiply(swing).multiply(tmp.q.setFromAxisAngle(axis, clamped));
 	finger.bones[i].updateMatrixWorld(true);
 }
 
@@ -105,10 +112,22 @@ export function fingerTip(finger, out = new THREE.Vector3()) {
 	return end.add(end.clone().sub(mid));
 }
 
-/** Curl the whole finger: 0 straight (bind), 1 every joint at its maximum bend. */
+/**
+ * Curl the whole finger to `amount` (0 straight, 1 every joint at its maximum bend, as fingerCurl reads it). A finger
+ * already bent keeps its shape: each joint moves the same fraction of the way to straight (less curl) or to its maximum
+ * (more), so reading the curl and setting it back moves nothing, and 0 and 1 stay straight and fully bent.
+ */
 export function solveFingerCurl(finger, amount) {
-	const t = Math.min(1, Math.max(0, amount));
-	finger.bones.forEach((_, i) => setJointAngle(finger, i, t * finger.limits[i][1] * DEG));
+	const t = Math.min(1, Math.max(0, amount)), now = fingerCurl(finger);
+	const share = (i) => Math.max(0, jointAngle(finger, i)) / (finger.limits[i][1] * DEG);
+	const shares = finger.bones.map((_, i) => (t <= now ? share(i) * (now > 1e-6 ? t / now : 0) : share(i) + (1 - share(i)) * ((t - now) / (1 - now))));
+	shares.forEach((value, i) => setJointAngle(finger, i, value * finger.limits[i][1] * DEG));
+}
+
+/** Every finger of an FK joint map back at its bind rotation: a re-pose (a reset, a pose, a take) that names no finger
+ * leaves them straight, not at the last curl they were given. */
+export function restFingers(fkJoints) {
+	for (const finger of fingersOf(fkJoints).values()) finger.bones.forEach((bone, i) => { bone.quaternion.copy(finger.bindQuats[i]); bone.updateMatrixWorld(true); });
 }
 
 /** How curled the finger is now, 0..1 (mean of the joints' share of their maximum bend). */
