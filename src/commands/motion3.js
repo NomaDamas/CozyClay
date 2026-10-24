@@ -18,7 +18,8 @@ import { fitOutput, reportPage } from "../motion3/report.js";
 import { keyObject } from "../motion3/key-edit.js";
 import { expandUse } from "../motion3/skills/index.js";
 import { publishDraft } from "../agent-progress.js";
-import { qaSay } from "../qa-label.js";
+import { qaProblems, qaSay } from "../qa-label.js";
+import { noteTurnDraft } from "../workflow/agent-turn-telemetry.js";
 import { carryEdit } from "../motion3/edit-carry.js";
 import { normalizeCompileArgs } from "../motion3/lenient.js";
 import { createCompileRunner } from "./motion3-compile.js";
@@ -182,6 +183,8 @@ export function register(registry, ports) {
 			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(stuck ? { stuck } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
+			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
+			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
 			return { affectedIds: installs || best ? [characterId] : [], summary: `Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.`, output, ...workerWarning() };
 		});
 	} });
