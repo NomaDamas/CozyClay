@@ -20,13 +20,17 @@ export const commandGroup = id => GROUPS.find(([pattern]) => pattern.test(String
 
 // The one table from a committed command to its closed edit kind (FIRST_EDIT_KINDS,
 // semantic-edit.js); its group (EDIT_GROUPS, analytics.js) follows from the kind.
-// A shot's camera framing, keys and lens record a camera key; its rail, crane and
-// mode are a rail edit; bone and IK keys are pose; placing or adding a character
-// counts as an object, as it does for object_insert. Everything else is no edit kind.
+// Recording a camera key is camera_key_record; drawing or clearing a rail (or a
+// setCamera patch naming a rail field) is rail_edit; retiming or removing keys and
+// other camera-block changes are shot_edit, as they were in version 1. Capturing the
+// viewing camera into the shot (after an orbit or fly) is navigation, not an edit.
+// Bone and IK keys are pose; placing or adding a character counts as an object, as it
+// does for object_insert. Everything else is no edit kind.
 const EDIT_KINDS = [
+	[/^shot\.captureCamera$/, null],
 	[/^shot\.(create|createStill|duplicate|split)$/, 'shot_add'],
-	[/^shot\.(setCameraRail|clearCameraRail|setCameraMode)$/, 'rail_edit'],
-	[/^shot\.(setCamera|addKey|moveKey|removeKey|clearKeys|setLens|frame|captureCamera|placeCamera)$/, 'camera_key_record'],
+	[/^shot\.(setCameraRail|clearCameraRail)$/, 'rail_edit'],
+	[/^shot\.addKey$/, 'camera_key_record'],
 	[/^shot\./, 'shot_edit'],
 	[/^(character\.(setPose|setIkKey|removeIkKey|clearIkKeys)|ik\.|motion\.rangePin\.)/, 'pose_edit'],
 	[/^(object\.(add|duplicate|sculpt|createKit)|character\.add)$/, 'object_insert'],
@@ -38,17 +42,32 @@ const EDIT_KINDS = [
 // command-bus.js -> here), where EDIT_GROUPS is not initialized yet.
 let groups = null;
 const groupOf = kind => (groups ??= new Map(Object.entries(EDIT_GROUPS).flatMap(([group, kinds]) => kinds.map(entry => [entry, group])))).get(kind);
-/** A command's closed edit kind, or null; `placeAs` (asset.import's closed enum) tells a cutout from a mesh. */
-export function firstEditKindOf(action, placeAs) {
+/** A command's closed edit kind, or null. `hint`: asset.import's closed `placeAs`, and `rail` when a
+ * shot.setCamera patch names a rail field (key names only; values are never read). */
+export function firstEditKindOf(action, { placeAs, rail = false } = {}) {
 	if (action === 'asset.import') return placeAs === 'cutout' ? 'cutout_insert' : 'object_insert';
+	if (action === 'shot.setCamera' && rail) return 'rail_edit';
 	return EDIT_KINDS.find(([pattern]) => pattern.test(String(action)))?.[1] ?? null;
+}
+// The camera block's rail fields (semantic-edit.js rail_edit): a setCamera patch naming one edits the rail.
+const RAIL_FIELDS = ['cameraRail', 'craneHeight', 'railFollow', 'dollyTiming'];
+const railPatch = args => Object.keys(args?.patch ?? {}).some(key => RAIL_FIELDS.includes(key));
+// A drag's begin/update patches, remembered by txId until its commit names the edit.
+const railTransactions = new Set();
+function hintOf(id, args, recorded) {
+	if (id === 'run.begin' || id === 'run.update') {
+		if (recorded.txId && railPatch(args?.args)) railTransactions.add(recorded.txId);
+		while (railTransactions.size > 50) railTransactions.delete(railTransactions.values().next().value);
+		return {};
+	}
+	return { placeAs: args?.placeAs, rail: id === 'run.commit' ? railTransactions.delete(recorded.txId) : railPatch(args) };
 }
 const AGENT_WORK = new Set(['agent.turn.finish', 'task.finish']);
 /** The edit:undone / post-turn group of a command: pose, camera, object, shot, prompt, agent_turn or other. */
-export function editKind(action, origin = 'ui', placeAs) {
+export function editKind(action, origin = 'ui', hint) {
 	// What the agent made (its turn, a task, or an edit it ran on its own) is undone as agent work.
 	if (AGENT_WORK.has(action) || origin !== 'ui') return 'agent_turn';
-	return groupOf(firstEditKindOf(action, placeAs)) ?? 'other';
+	return groupOf(firstEditKindOf(action, hint)) ?? 'other';
 }
 
 // The user's own edits feed the session edit buckets and the surface's first edit
@@ -87,15 +106,16 @@ export function createHistoryReceipts(ports) {
 	return {
 		get: historyEntryId => receipts.get(historyEntryId),
 		/** `id` the command, `action` the command a transaction ran (run.commit of a drag). */
-		remember(recorded, { id, origin, action, placeAs }) {
+		remember(recorded, { id, origin, action, args }) {
+			const hint = hintOf(id, args, recorded);
 			// Session friction: an undo the user made (agent undos are the agent's own correction).
 			if (id === 'edit.undo' && origin === 'ui' && recorded.status === 'undone') bump('undos');
 			// The user's edit that changed the scene, once per receipt (a drag commits once): the session edit
 			// buckets, the first edit and agent:post_turn_edit. Agent, MCP and undo/redo receipts never count.
-			if (origin === 'ui' && recorded.authored === true && !id.startsWith('edit.')) noteUserEdit(firstEditKindOf(action ?? id, placeAs));
+			if (origin === 'ui' && recorded.authored === true && !id.startsWith('edit.')) noteUserEdit(firstEditKindOf(action ?? id, hint));
 			if (recorded.undo?.canUndoDirect && !id.startsWith('edit.')) {
 				receipts.set(recorded.undo.historyEntryId, recorded);
-				stamps.set(recorded.receiptId, { at: clock(), kind: editKind(action ?? id, origin, placeAs) });
+				stamps.set(recorded.receiptId, { at: clock(), kind: editKind(action ?? id, origin, hint) });
 				while (stamps.size > STAMPS_KEPT) stamps.delete(stamps.keys().next().value);
 			}
 			for (const [key, receipt] of receipts) if (ports.isRetained?.(receipt) === false) { receipts.delete(key); stamps.delete(receipt.receiptId); }

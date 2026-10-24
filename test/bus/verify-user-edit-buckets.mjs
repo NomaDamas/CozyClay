@@ -22,16 +22,18 @@ const bucket = group => sessionEditBuckets()[`${group}_edit_bucket`];
 assert.equal(FIRST_EDIT_VERSION, 2);
 const table = {
   'shot.create': 'shot_add', 'shot.duplicate': 'shot_add', 'shot.rename': 'shot_edit', 'shot.setRange': 'shot_edit',
-  'shot.addKey': 'camera_key_record', 'shot.setCamera': 'camera_key_record', 'shot.setCameraRail': 'rail_edit', 'shot.setCameraMode': 'rail_edit',
+  'shot.addKey': 'camera_key_record', 'shot.moveKey': 'shot_edit', 'shot.setCamera': 'shot_edit', 'shot.setCameraMode': 'shot_edit', 'shot.setLens': 'shot_edit',
+  'shot.setCameraRail': 'rail_edit', 'shot.clearCameraRail': 'rail_edit', 'shot.captureCamera': null,
   'character.setPose': 'pose_edit', 'ik.setKey': 'pose_edit', 'motion.rangePin.apply': 'pose_edit',
   'object.add': 'object_insert', 'character.add': 'object_insert', 'object.set': 'object_transform', 'objects.arrange': 'object_transform', 'character.move': 'object_transform',
   'motion.set': 'prompt_block_edit', 'stage.set': null, 'scene.create': null, 'edit.undo': null, 'character.addWaypoint': null,
 };
 for (const [action, kind] of Object.entries(table)) assert.equal(firstEditKindOf(action), kind, action);
-assert.equal(firstEditKindOf('asset.import', 'cutout'), 'cutout_insert');
-assert.equal(firstEditKindOf('asset.import', 'mesh'), 'object_insert');
+assert.equal(firstEditKindOf('asset.import', { placeAs: 'cutout' }), 'cutout_insert');
+assert.equal(firstEditKindOf('asset.import', { placeAs: 'mesh' }), 'object_insert');
+assert.equal(firstEditKindOf('shot.setCamera', { rail: true }), 'rail_edit', 'a setCamera patch naming a rail field is a rail edit');
 for (const kind of Object.values(table).filter(Boolean)) assert.ok(FIRST_EDIT_KINDS.includes(kind), kind);
-assert.deepEqual(['shot.addKey', 'shot.rename', 'character.setPose', 'object.set', 'motion.set', 'stage.set'].map(action => editKind(action)), ['camera', 'shot', 'pose', 'object', 'prompt', 'other']);
+assert.deepEqual(['shot.addKey', 'shot.setCameraRail', 'shot.rename', 'shot.captureCamera', 'character.setPose', 'object.set', 'motion.set', 'stage.set'].map(action => editKind(action)), ['camera', 'camera', 'shot', 'other', 'pose', 'object', 'prompt', 'other']);
 
 // Each group's first counted edit moves its bucket from "0" to "1-3" (buckets are ranges).
 // An agent or MCP edit first, on a group still at "0", proves they move nothing.
@@ -71,5 +73,15 @@ try {
   ok(f.binding.bus.run('object.set', { id, set: { position: { x: 1, y: 0, z: 0 } } }, { origin: 'ui' }));
   ok(f.binding.bus.run('shot.create', {}, { origin: 'ui' }));
   assert.deepEqual(firstEdits().map(row => row.props.edit_kind), ['object_transform'], 'object.set counts; the next edit does not fire a second first edit');
+  // A rail drag is one transaction of shot.setCamera patches naming the rail: one rail_edit, at its commit.
+  startUserEdits('craft');
+  const shotId = f.live.current.shots?.[0]?.id;
+  const patch = { mode: 'rail', cameraRail: [{ x: -2, z: 4 }, { x: 2, z: 4 }] };
+  const tx = ok(f.binding.bus.run('run.begin', { id: 'shot.setCamera', args: { shotId, patch } }, { origin: 'ui' }));
+  ok(f.binding.bus.run('run.update', { txId: tx.txId, args: { shotId, patch } }, { origin: 'ui' }));
+  ok(f.binding.bus.run('run.update', { txId: tx.txId, args: { shotId, patch: { ...patch, cameraRail: [{ x: -3, z: 4 }, { x: 3, z: 4 }] } } }, { origin: 'ui' }));
+  assert.deepEqual(firstEdits(), [], 'nothing counts before the commit');
+  ok(f.binding.bus.run('run.commit', { txId: tx.txId }, { origin: 'ui' }));
+  assert.deepEqual(firstEdits().map(row => row.props.edit_kind), ['rail_edit'], 'the committed rail drag is one rail_edit');
 } finally { f.dispose(); restore(); }
 console.log('PASS user edit buckets: UI object/shot/camera/pose receipts move their bucket and fire first_edit v2 once; agent, MCP and undo move nothing');

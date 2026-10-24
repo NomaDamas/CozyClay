@@ -241,7 +241,7 @@ export function createCommandBus({ registry, ports }) {
         value = validateReceipt({ ...value, commandId, jobId: job.id });
       }
       const recorded = journal.record(value);
-      historyReceipts.remember(recorded, { id, origin: request.origin, action, placeAs: args?.placeAs });
+      historyReceipts.remember(recorded, { id, origin: request.origin, action, args });
       ports.remember?.(recorded); return recorded;
     };
     const rejected = error => {

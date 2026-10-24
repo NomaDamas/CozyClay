@@ -22,7 +22,10 @@ const closed = (event, props) => { const allowed = strictPropValidator(event); f
 assert.deepEqual(['object.add', 'objects.arrange', 'shot.create', 'character.add', 'characters.arrange', 'cast.replace', 'scene.set', 'motion.compile', 'edit.undo', 'task.begin', 'agent.turn.begin', 'stage.set', 'ik.setKey', 'job.await'].map(commandGroup),
   ['object', 'object', 'shot', 'cast', 'cast', 'cast', 'scene', 'motion', 'edit', 'task', 'agent', 'other', 'motion', 'other']);
 const kinds = { 'character.setPose': 'pose', 'ik.setKey': 'pose', 'ik.applyPose': 'pose', 'character.setIkKey': 'pose', 'motion.rangePin.apply': 'pose',
-  'shot.setCamera': 'camera', 'shot.addKey': 'camera', 'shot.moveKey': 'camera', 'shot.setCameraRail': 'camera', 'shot.clearCameraRail': 'camera', 'shot.setCameraMode': 'camera', 'shot.setLens': 'camera', 'shot.captureCamera': 'camera',
+  // One table with the first-edit kinds (#922): a recorded key and the rail are camera; key retiming and other
+  // camera-block changes are shot edits; capturing the viewing camera is navigation, so it is other.
+  'shot.addKey': 'camera', 'shot.setCameraRail': 'camera', 'shot.clearCameraRail': 'camera',
+  'shot.setCamera': 'shot', 'shot.moveKey': 'shot', 'shot.setCameraMode': 'shot', 'shot.setLens': 'shot', 'shot.captureCamera': 'other',
   'object.add': 'object', 'object.update': 'object', 'objects.arrange': 'object', 'character.add': 'object', 'character.move': 'object',
   'shot.create': 'shot', 'shot.setRange': 'shot', 'shot.remove': 'shot', 'motion.set': 'prompt',
   'agent.turn.finish': 'agent_turn', 'task.finish': 'agent_turn', 'stage.set': 'other', 'scene.set': 'other', 'motion.trim': 'other' };

@@ -184,6 +184,15 @@ with `definition_version = 2` and stop sending version 1.
   (`src/command-bus-telemetry.js`). Agent, MCP and undo/redo edits never
   count. A drag counts once, at its commit. The same receipts feed
   `app:session_ended.*_edit_bucket` and `agent:post_turn_edit`.
+- One table (`src/command-bus-telemetry.js`) names the kind, and the same
+  groups serve `edit:undone.kind` and `agent:post_turn_edit`:
+  - `shot.addKey` is `camera_key_record` (camera).
+  - Drawing or clearing a rail is `rail_edit` (camera). That includes a
+    `shot.setCamera` patch naming a rail field; only key names are read.
+  - Retiming or removing keys, and other camera-block changes, are `shot_edit`.
+  - Capturing the viewing camera into the shot after an orbit or a fly is
+    navigation, not an edit.
+  - `asset.import` is `cutout_insert` or `object_insert` by its `placeAs`.
 - **Version 1** diffed domain values. In the real Studio it missed every shot
   and camera edit (a domain-name mismatch), never saw object edits, and counted
   pose only from the drag preview. The `*_edit_bucket` values of those builds
