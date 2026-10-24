@@ -8,18 +8,26 @@ handoff. A handoff does not prove that the operating system saved the file.
 
 | Event | Properties |
 | --- | --- |
-| `export:attempt_started` | `attempt_id`, `export_kind`, `format`, `surface` |
+| `export:attempt_started` | `attempt_id`, `export_kind`, `format`, `surface`, `is_retry`, `retry_of` (retries only), `objects` |
 | `export:attempt_succeeded` | Started properties plus `duration_bucket` |
-| `export:attempt_failed` | Started properties plus `duration_bucket`, `failure_code` |
-| `export:attempt_cancelled` | Started properties plus `duration_bucket`, `failure_code=aborted` |
+| `export:attempt_failed` | Started properties plus `duration_bucket`, `failure_code`, `stage`, `progress` |
+| `export:attempt_cancelled` | Started properties plus `duration_bucket`, `failure_code=aborted`, `stage`, `progress` |
+| `export:saved` | `method`, `reason` (one per saved file; not part of an attempt) |
 
 - `attempt_id`: fresh random 32-character lowercase hexadecimal value, held only
   by that attempt. It is not persisted or derived from an installation, filename,
   URL, path, prompt, scene content or message/request identifier.
 - `export_kind`: `video`, `depth_video`, `frame`, `keyframe_pack`, `contact_sheet`,
-  `panel_pack`, `animatic`, `animation_project`, `workflow_send`. The last five
-  arrived with storyboard projects (#653); older data only holds the first four.
-- `format`: `mp4` for video/depth video, `png` for frames, `zip` for packs, `cclayproject` for an animation project file.
+  `panel_pack`, `animatic`, `animation_project`, `workflow_send`, `storyboard`,
+  `render_pass`, `otio`. `contact_sheet` through `workflow_send` arrived with
+  storyboard projects (#653); older data only holds the first four.
+  `storyboard` (storyboard PNG), `render_pass` (depth + normal PNGs) and `otio`
+  (OpenTimelineIO timeline) arrived with the analytics hygiene release; before
+  it those exports emitted no attempt at all, so their earlier rows are
+  **unknown, not 0**.
+- `format`: `mp4` for video/depth video, `png` for frames, storyboards and render
+  passes, `zip` for packs, `cclayproject` for an animation project file, `otio`
+  for an OpenTimelineIO file.
 - `surface`: `studio`, `workflow`, `embed`; this identifies the initiator, not
   the renderer. Workflow owns its iframe request through its own download
   handoff. The iframe's pack and nested MP4 do not emit separate attempts.
@@ -32,6 +40,33 @@ handoff. A handoff does not prove that the operating system saved the file.
   failure), `aborted` (actual abort), `unknown` (otherwise unclassified, including
   a Workflow response timeout). Raw error messages are never analytics values.
   Codes survive the iframe boundary independently of the user-facing message.
+- `is_retry`: boolean, `true` when the attempt retries an earlier attempt.
+  `retry_of`: that earlier attempt's 32-hex `attempt_id`, present only when
+  `is_retry` is `true`. Join it to `attempt_id` to follow a retry chain.
+- `objects`: scene object count bucket at start: `0`, `1-3`, `4-10`, `gte11`.
+- `stage` (failed/cancelled only): where the export stopped: `preparing`,
+  `encoding`, `finalizing`, `handoff`.
+- `progress` (failed/cancelled only): percent complete when it stopped, as a
+  bucket: `0`, `1-25`, `26-50`, `51-75`, `76-99`.
+
+Terminal events copy the start properties, so `is_retry`, `retry_of` and
+`objects` are on every `export:attempt_*` event of an attempt.
+
+`export:saved` reports how each exported file reached disk, one event per saved
+file, without a file name or path:
+
+- `method`: `workspace` (written into the user-chosen export folder) or
+  `download` (browser download).
+- `reason`: `none`; `unsupported` (the browser has no folder API);
+  `no_workspace` (no folder chosen); `permission` (folder permission denied);
+  `write_failed` (the folder write failed and the file fell back to download).
+
+It is not an attempt outcome: do not count it as a success or join it into the
+lifecycle numerator. A multi-file export emits several.
+
+`track()` drops any event name outside the allowlist (`EVENT_PROPERTIES` in
+`src/analytics.js`). Before the analytics hygiene release, unknown names were
+sent with empty properties; such rows hold no data and can be ignored.
 
 One frame download click is one attempt, including both A/B frames and an
 optional palette sidecar. One "all shots" pack click is one attempt; if a later
@@ -92,6 +127,7 @@ WITH per_attempt AS (
           'export:attempt_failed', 'export:attempt_cancelled'
       )
       AND notEmpty(properties.attempt_id)
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
     GROUP BY attempt_id
 ), cohort AS (
     SELECT *, succeeded + failed + cancelled AS terminal_kinds
@@ -131,8 +167,8 @@ not additional attempts. A start before the window can explain an orphan.
 `conflicting_outcomes` should remain zero and indicates instrumentation or
 ingestion trouble if it does not.
 
-Apply the explicitly marked internal-QA exclusion from issue #270 consistently
-to the source events when that contract is available. Do not infer QA traffic
+The query applies the explicitly marked internal-QA exclusion from issue #270
+to every source event. Do not infer QA traffic
 from names, paths, browser strings or these ephemeral attempt IDs. Source
 development and the browser QA script do not send production telemetry.
 
@@ -161,6 +197,7 @@ WITH
         WHERE event = 'install:first_launch'
           AND properties.distribution = 'npm'
           AND properties.origin_kind = 'local'
+          AND JSONExtractRaw(properties, 'internal_qa') != 'true'
         GROUP BY distinct_id
         HAVING launched_at >= cohort_start
            AND launched_at < now() - INTERVAL 7 DAY
@@ -173,6 +210,7 @@ WITH
           AND e.properties.definition_version = 1
           AND e.properties.distribution = 'npm'
           AND e.properties.origin_kind = 'local'
+          AND JSONExtractRaw(e.properties, 'internal_qa') != 'true'
           AND e.timestamp > l.launched_at
           AND e.timestamp < l.launched_at + INTERVAL 7 DAY
         GROUP BY l.distinct_id
@@ -185,6 +223,7 @@ WITH
         WHERE e.event = 'export:blocking_frame_succeeded'
           AND e.properties.distribution = 'npm'
           AND e.properties.origin_kind = 'local'
+          AND JSONExtractRaw(e.properties, 'internal_qa') != 'true'
           AND e.timestamp > d.edited_at
           AND e.timestamp < l.launched_at + INTERVAL 7 DAY
         GROUP BY l.distinct_id
@@ -331,6 +370,7 @@ WITH per_request AS (
           'motion:result_applied'
       )
       AND match(toString(properties.request_id), '^[a-f0-9]{32}$')
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
     GROUP BY request_id
 ), cohort AS (
     SELECT *,
@@ -376,8 +416,8 @@ downstream observations through a later observation time. Do not label
 as failures without separate evidence. Reuse `per_request` to inspect IDs with
 `request_deliveries = 0` as orphans, not new demand. Contradictory outcomes and
 out-of-order events should be investigated rather than added to conversions.
-Apply the eventual explicit internal-QA exclusion from #270 consistently to
-all source events; do not infer it from request IDs or user content.
+The query applies the explicit internal-QA exclusion from #270 to all source
+events; do not infer it from request IDs or user content.
 
 Browser QA uses an isolated profile, mocked health and an in-memory SDK at
 the real sanitizer/capture boundary. It sends no production telemetry and
@@ -977,7 +1017,18 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
   execution start. No raw duration reaches analytics.
 - Workflow `failure_code`: `aborted`, `capture_failed`, `generation_failed`,
   `unknown` (including missing node input). Agent: `aborted`, `auth`,
-  `rate_limited`, `tool_failed`, `upstream`, `unknown`. Never raw error prose.
+  `rate_limited`, `tool_failed`, `upstream`, `key_refused`, `stale_scene`,
+  `capability_missing`, `busy`, `invalid_request`, `unknown`. Never raw error
+  prose.
+- New Agent codes, split out of `upstream` and `auth` in the analytics hygiene
+  release (split by `app_version`; older rows keep the coarse code):
+  - `key_refused`: the model provider rejected the key or credentials.
+  - `stale_scene`: the sidecar refused the turn because the scene changed
+    underneath it (HTTP 409 `STALE_SCENE`).
+  - `capability_missing`: a required capability is unavailable (HTTP 409
+    `CAPABILITY_MISSING`), for example the live hub port is already in use.
+  - `busy`: another turn or target is busy.
+  - `invalid_request`: the sidecar rejected the request.
 - Agent `tool_category`: `workflow_read`, `workflow_write`, `workflow_run`,
   `frame_capture`, `image_generate`, `scene_write`, `other`.
 - MCP `tool_category`: `read`, `camera`, `scene_write`, `prompt_authoring`,
@@ -1122,7 +1173,7 @@ documented HogQL queries, not claimed live PostHog results.
 Seven questions a CozyClay builder asks every week, and the event that answers
 each one. Weeks are Monday to Sunday in Asia/Seoul; PostHog stores UTC, so bound
 with `toDateTime('…', 'Asia/Seoul')`. Split `distribution` (npm vs hosted) in
-every table, and exclude `internal_qa = true`. Only versions that ship this
+every table, and exclude `internal_qa = true` with `JSONExtractRaw(properties, 'internal_qa') != 'true'`. Only versions that ship this
 contract report it: before that release the new events are **unknown, not 0**.
 
 | Question | Event |
@@ -1164,7 +1215,7 @@ SELECT
 FROM events
 WHERE event = 'app:session_ended'
   AND properties.pose_edit_bucket IS NOT NULL
-  AND coalesce(properties.internal_qa, false) = false
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
   AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY distribution
 ```
@@ -1190,7 +1241,7 @@ WITH per_request AS (
         max(event = 'motion:result_applied') AS applied
     FROM events
     WHERE event LIKE 'motion:%' AND event != 'motion:backend_state'
-      AND coalesce(properties.internal_qa, false) = false
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
       AND timestamp >= now() - INTERVAL 7 DAY
     GROUP BY request_id
 )
@@ -1223,7 +1274,7 @@ SELECT
     uniq(distinct_id) AS people
 FROM events
 WHERE event = 'app:error'
-  AND coalesce(properties.internal_qa, false) = false
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
   AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY version, type, source, file, line, col
 ORDER BY people DESC, events DESC
@@ -1241,7 +1292,7 @@ SELECT
     uniq(distinct_id) AS people
 FROM events
 WHERE event = 'device:profile'
-  AND coalesce(properties.internal_qa, false) = false
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
   AND timestamp >= now() - INTERVAL 30 DAY
 GROUP BY distribution, gpu, class, fps
 ORDER BY people DESC
@@ -1259,7 +1310,7 @@ GROUP BY source ORDER BY installs DESC;
 -- Use case x team, answered after a successful export.
 SELECT properties.use_case AS use_case, properties.team AS team, uniq(distinct_id) AS people
 FROM events
-WHERE event = 'survey:use_case' AND coalesce(properties.internal_qa, false) = false
+WHERE event = 'survey:use_case' AND JSONExtractRaw(properties, 'internal_qa') != 'true'
 GROUP BY use_case, team ORDER BY people DESC;
 
 -- Share of npm users on the newest release in the last 7 days.

@@ -12,14 +12,15 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | --- | --- |
 | `install:first_launch` | First run of the official npm package |
 | `app:session_started` | Start of an official npm package session |
-| `app:session_ended` | Session duration, action count, scenes touched, and per-group edit gesture counts (`pose`, `camera`, `object`, `shot`, `prompt`), all bucketed |
-| `feature:used` | One signal per feature per session (`pose_edit` is a real pose change; `pose_save` is saving a pose to the library) |
+| `app:session_ended` | Session duration, action count and per-group edit gesture counts (`pose`, `camera`, `object`, `shot`, `prompt`), all bucketed; `scenes_touched`, the number of scenes created or loaded, as an exact count capped at 20 (not bucketed); `session_id`, the opaque random session id the PostHog SDK generates, used only to join a session's last events (for example an error right before it ended) |
+| `feature:used` | One signal per feature per session (`pose_edit` is a real pose change; `pose_save` is saving a pose to the library; `export_storyboard` and `export_render_pass` are counted too) |
 | `$pageview` | Funnel and drop-off analysis |
 | `scene:created` | Funnel and drop-off analysis; carries `previs_mode` (`storyboard` or `animation`) when the project has a mode |
 | `storyboard:panel_created` | A storyboard panel was added; `source` is `agent` or `manual`. No caption, name or id |
 | `storyboard:panel_stylized` | A Board panel Stylize finished; `outcome` is `ok` or `error`. No prompt, caption or image |
 | `cast:proxy_added` | A capsule figure was added to the scene; `surface` is `assets`, `agent` or `mcp`. No name or position |
-| `export:attempt_started`, `export:attempt_succeeded`, `export:attempt_failed`, `export:attempt_cancelled` | One export attempt; `export_kind` is `video`, `depth_video`, `frame`, `keyframe_pack`, `contact_sheet`, `panel_pack`, `animatic`, `animation_project` or `workflow_send`, plus `format` (`mp4`, `png`, `zip` or `cclayproject`), surface, duration bucket and failure code. Never file names or content |
+| `export:attempt_started`, `export:attempt_succeeded`, `export:attempt_failed`, `export:attempt_cancelled` | One export attempt; `export_kind` is `video`, `depth_video`, `frame`, `keyframe_pack`, `contact_sheet`, `panel_pack`, `animatic`, `animation_project`, `workflow_send`, `storyboard`, `render_pass` or `otio`, plus `format` (`mp4`, `png`, `zip`, `cclayproject` or `otio`), surface, `is_retry`, `retry_of` (the retried attempt's id, only on a retry), `objects` (scene object count bucket: `0`, `1-3`, `4-10`, `gte11`), duration bucket and failure code. Failures and cancellations add `stage` (`preparing`, `encoding`, `finalizing`, `handoff`) and `progress` (`0`, `1-25`, `26-50`, `51-75`, `76-99` percent). Never file names or content |
+| `export:saved` | One per saved export file: `method` (`workspace` = written into the export folder you chose, `download` = browser download) and `reason` (`none`; `unsupported` = the browser has no folder access; `no_workspace` = no folder chosen; `permission` = folder access denied; `write_failed` = the folder write failed and the file fell back to a download). Never the file name or path |
 | `scene:loaded` | Funnel and drop-off analysis |
 | `project:saved` | User-owned project persistence |
 | `project:opened` | Return to a saved project (age bucket) |
@@ -35,11 +36,12 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `motion:job_succeeded`, `motion:job_failed` | Generation result, with normalized failure/cancellation codes |
 | `motion:result_applied` | Generated result applied to its requesting character, separately from job success |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |
+| `sculpt_run` | One per finished Sculpt mode run: `outcome` (`done`, `cancelled`, `failed`), `rounds` (0-10), `final_iou` (match against the reference image, 0-1 to two decimals; omitted when unscored), `duration_ms` and `had_target` (reworked an existing sculpt). Never the reference image, recipe, part names or sculpt id |
 | `activation:completed` | Funnel and drop-off analysis |
 | `hosted:composer_viewed`, `hosted:login_started`, `hosted:ticket_created` | Hosted demo funnel |
 | `hosted:result_opened`, `hosted:opened_in_studio` | Hosted result funnel |
 
-Geo data comes from ingest-time GeoIP country lookup only — no precise location is collected. Prompt text, asset names, file names, project content, local paths, and any user-entered text are never collected.
+The app sends only the events in this table: `track()` drops any event name outside its allowlist instead of sending it with empty properties. Geo data comes from ingest-time GeoIP country lookup only — no precise location is collected. Prompt text, asset names, file names, project content, local paths, and any user-entered text are never collected.
 
 Motion requests use one ephemeral random `request_id` across intent, preflight,
 job outcome and application. The September 15, 2026 issue #273 contract stops
