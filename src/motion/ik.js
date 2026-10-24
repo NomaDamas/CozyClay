@@ -1,5 +1,8 @@
 import * as THREE from "three";
 import { normalizeBoneName, POSE_BONES, DEFAULT_POSE } from "../poses.js";
+import { resolveFingers } from "./fingers.js";
+import { findBone } from "./find-bone.js";
+export { findBone };
 
 /**
  * Frame-based IK layer for direct character posing, following the DCC
@@ -412,16 +415,6 @@ const CHAINS = {
 	leg: (side) => [`mixamorig${side}UpLeg`, `mixamorig${side}Leg`, `mixamorig${side}Foot`],
 };
 
-export function findBone(root, name) {
-	const target = normalizeBoneName(name);
-	let found = null;
-	root.traverse((object) => {
-		if (found || !object.isBone) return;
-		const norm = normalizeBoneName(object.name);
-		if (norm === target || norm.endsWith(target)) found = object;
-	});
-	return found;
-}
 
 /**
  * Resolve the IK rig against a character: the four two-bone chains, plus
@@ -508,7 +501,7 @@ export function resolveIkRig(rig) {
 			})(),
 		});
 	}
-	return { chains: out, fkJoints, contactRadii, contactHeights: measureContactHeights(rig) };
+	return { chains: out, fkJoints, fingers: resolveFingers(rig, fkJoints), contactRadii, contactHeights: measureContactHeights(rig) };
 }
 
 /**

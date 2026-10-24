@@ -283,7 +283,7 @@ const FK_ROTATE_SPEED = 5;
  * Every drag move calls `onSolve(kind, trackId, targetWorld)`; the drag end
  * calls `onDragEnd(trackId)` so the caller can key it.
  */
-export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, onSolve, onDragEnd, selectionOnly = false, onPartPick }) {
+export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, onSolve, onDragEnd, selectionOnly = false, onPartPick, focusToolsHidden = false }) {
 	const { camera, gl, raycaster, scene } = useThree();
 	const handleRefs = useRef({}); // id -> mesh (all sphere handles)
 	const handleMetaRef = useRef(new Map()); // id -> { track, radius }
@@ -757,7 +757,8 @@ export function IkHandles({ chains, fkJoints, ikState, enabled, focus, onFocus, 
 		}
 		// A focused control keeps its gizmo and rings even when the body hides it:
 		// the user picked it, and while focused nothing else can take a press.
-		const focusExposed = !!focus;
+		// Finger editing hands the focused hand's space to the fingertip handles: no gizmo, rings or readout.
+		const focusExposed = !!focus && !focusToolsHidden;
 		if (gizmoRef.current) gizmoRef.current.visible = focusExposed;
 		if (ringRef.current) ringRef.current.visible = focusExposed;
 
@@ -947,7 +948,7 @@ const CLICK_PX = 4;
 				handleRefs.current[p.track.id]?.visible &&
 				(handleRefs.current[p.track.id]?.userData.ikExposed !== false || !p.part || p.track.id === focused)
 			);
-			if (focused && !selectionOnly) picks = picks.filter((p) => p.track.id === focused);
+			if (focused && !selectionOnly) picks = picks.filter((p) => p.track.id === focused && !(focusToolsHidden && (p.axisDir || p.part)));
 			else picks = picks.filter((p) => !p.axisDir); // spheres only
 			if (!picks.length) {
 				if (focused) beginDrag("empty", { id: "empty" }, null, null, downXY);
@@ -1059,7 +1060,7 @@ const CLICK_PX = 4;
 		<group>
 			{IK_TRACKS.map((track) => (chains.has(track.id) ? sphereFor(track, "chain", sideColor(track.id), HANDLE_R) : null))}
 			{MID_TRACKS.map((track) => (chains.has(track.chain) ? sphereFor(track, "mid", sideColor(track.id), JOINT_R) : null))}
-			{[...(fkJoints ?? [])].map(([id, joint]) => sphereFor(joint.track, id === "hips" ? "body" : "fk", sideColor(id), id === "hips" ? HANDLE_R : JOINT_R))}
+			{[...(fkJoints ?? [])].filter(([, joint]) => !joint.track.finger).map(([id, joint]) => sphereFor(joint.track, id === "hips" ? "body" : "fk", sideColor(id), id === "hips" ? HANDLE_R : JOINT_R))}
 
 			{gizmoTrack && (
 				<group ref={gizmoRef} renderOrder={999}>
@@ -1141,7 +1142,7 @@ const CLICK_PX = 4;
 					})}
 				</group>
 			)}
-			{rotateTrack && rotationDeg && (
+			{rotateTrack && rotationDeg && !focusToolsHidden && (
 				<group ref={readoutRef}>
 					<Html zIndexRange={[20, 0]} style={{ pointerEvents: "none" }}>
 						<RotationReadout readout={rotationReadout(rotationDeg, rotationDrag)} />

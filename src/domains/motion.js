@@ -36,6 +36,7 @@ import { isProxyFigure } from "../scenes.js";
 import { refuseRigOnly } from "../character-kind.js";
 import { DEFAULT_POSE, restoreBindPositions, applyPose, applyHipsOffset } from "../poses.js";
 import { bakeIkDragKey, bakeIkDragRange, chainsChangedBy, ikDragRecord, ikDragTouch } from "../motion/ik-drag.js";
+import { fingersOf, solveFingerGesture } from "../motion/fingers.js";
 import { ikKeyJson, ikTrackKeyFromJson } from "../motion/ik-key-json.js";
 import { chooseIkEntryPose } from "../ik-camera.js";
 import { applyRangePin, captureRangePinTarget, normalizeRangePin, rangePinTargetWorld, rangePinTracks, removeRangePinKeys } from "../motion/range-pin.js";
@@ -74,8 +75,7 @@ export function createMotionDomain(appContext, characters) {
 	let release = native.subscribe(notify), viewRevision = 0;
 	const documentStore = { ...Object.fromEntries(Object.keys(native).map(key => [key, (...args) => native[key](...args)])),
 		subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); } };
-	const read = () => documentStore.read('motion');
-	const layer = id => read().find(row => row.id === id) ?? emptyMotionLayer(id);
+	const read = () => documentStore.read('motion'), layer = id => read().find(row => row.id === id) ?? emptyMotionLayer(id);
 	function materialize(take) {
 		if (take?.source && !takes.has(take.resourceId)) {
 			try { const compiled = compileTakeSource(take.source); if (compiled) takes.set(take.resourceId, compiled); }
@@ -758,6 +758,7 @@ export function useMotion(appContext) {
 		}
 		ikDragRef.current = ikDragRecord(ikDragRef.current, appContext.shared.tlFrame);
 		const touch = (id) => ikDragTouch(appContext.shared.ikStateRef.current, ikDragRef.current, id);
+		if (kind === "finger") return solveFingerGesture(fingersOf(appContext.shared.ikStateRef.current.fkJoints)?.get(trackId), targetWorld, touch);
 		if (kind === "chain") {
 			const chain = appContext.shared.ikStateRef.current.chains?.get(trackId);
 			if (!chain) return;
