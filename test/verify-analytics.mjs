@@ -5,6 +5,7 @@ import { startExportAttempt } from "../src/export-attempt.js";
 import * as friction from "../src/analytics-friction.js";
 import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
 import * as postTurn from "../src/post-turn-edits.js";
+import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -429,6 +430,32 @@ console.log("PASS export retries, scene size, stop stage/progress, new export ki
 	friction.reset();
 }
 console.log("PASS friction counters: closed buckets, per-event caps, validator, and feature-detected long tasks");
+
+// PR C: motion:draft_compiled buckets, flags, the closed schema and the 50-per-session cap.
+{
+	friction.reset();
+	const drafts = [];
+	const restoreDrafts = draftTelemetrySeam((event, props) => drafts.push({ event, props }));
+	const result = (problems, total, ms, frameCount, search) => ({ qa: { ok: problems === 0, problems, total, groups: [] }, ms: { total: ms, compile: ms, qa: 1 }, frameCount, ...(search ? { search: {} } : {}) });
+	noteDraftCompiled({ n: 1 }, result(3, 640, 812, 200, true), { installed: false, stuck: false, repaired: true, adjusted: true });
+	noteDraftCompiled({ n: 6 }, result(0, 0, 40, 24), { installed: true, stuck: true });
+	assert.deepEqual(drafts.map(({ props }) => props), [
+		{ draft_index: "1", qa_clean: false, qa_problems: "3", qa_frames: "gte201", compile: "500-2000", installed: false, stuck: false, repaired: true, searched: true, adjusted: true, frames: "121-480" },
+		{ draft_index: "6-10", qa_clean: true, qa_problems: "0", qa_frames: "0", compile: "lt50", installed: true, stuck: true, repaired: false, searched: false, adjusted: false, frames: "lt30" },
+	], "counts, buckets and flags only");
+	for (const { props } of drafts) assert.deepEqual(sanitizeProps("motion:draft_compiled", { ...props, spec: "private", skill: "walk" }), props, "every draft value passes the closed schema");
+	for (const [key, value] of [["draft_index", 6], ["qa_frames", "12"], ["compile", "lt1s"], ["frames", 200], ["qa_clean", "true"], ["qa_ms", "lt50"]]) {
+		assert.deepEqual(sanitizeProps("motion:draft_compiled", { [key]: value }), {}, `motion:draft_compiled rejects ${key}=${value}`);
+	}
+	assert.doesNotThrow(() => noteDraftCompiled(null, { get qa() { throw new Error("hostile"); } }), "a malformed result cannot break a compile");
+	drafts.length = 0;
+	for (let i = 0; i < 60; i += 1) noteDraftCompiled({ n: 1 }, result(0, 0, 10, 24));
+	assert.equal(drafts.length, 48, "the 50-per-session cap holds (two drafts were sent above)");
+	assert.equal(friction.snapshot().compiles, "gte11", "past the cap the compiles counter keeps counting");
+	restoreDrafts();
+	friction.reset();
+}
+console.log("PASS motion:draft_compiled: buckets, flags, closed schema, and the 50 cap with the compiles counter");
 
 // PR B base: the four bus friction events have closed schemas, and the
 // post-turn window counts only the user's edit gestures for 120 s.
@@ -888,7 +915,7 @@ try {
 		assert.deepEqual(counters, {
 			active_time: ended.properties.duration_bucket,
 			refusals_ui: "1", refusals_agent: "4-5", undos: "1", errors: "2", rage_clicks: "0", dead_clicks: "0", shortcut_ignored: "0",
-			search_empty: "0", nav_thrash: "0", camera_thrash: "0", long_tasks: "1", long_task_max: "150-500", late_tick_ratio: "0",
+			search_empty: "0", nav_thrash: "0", camera_thrash: "0", long_tasks: "1", compiles: "0", long_task_max: "150-500", late_tick_ratio: "0",
 		}, "the end beacon sends the session's counters as closed buckets");
 		friction.reset();
 		console.log("PASS app:friction_summary rides the end beacon, validated, passive, with active_time = the session duration bucket");
@@ -1032,12 +1059,12 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
 	const event = cells[0]?.trim();
-	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit"].includes(event)) continue;
+	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled"].includes(event)) continue;
 	const tokens = new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
 	for (const key of STRICT_EVENT_KEYS[event]) assert.ok(tokens.has(key), `the privacy page discloses ${event} ${key}`);
 	strictRows.add(event);
 }
-assert.deepEqual([...strictRows].sort(), ["agent:post_turn_edit", "agent:turn_summary", "edit:undone", "studio:refused"], "each bus friction event has its own privacy row");
+assert.deepEqual([...strictRows].sort(), ["agent:post_turn_edit", "agent:turn_summary", "edit:undone", "motion:draft_compiled", "studio:refused"], "each bus friction event and motion:draft_compiled has its own privacy row");
 const executionSchemas = {
 	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
 	"workflow:run_succeeded": ["run_id", "duration_bucket"],

@@ -1170,6 +1170,7 @@ sanitizer (`src/analytics-friction.js`, `src/analytics.js`). It never moves
 | `undos` | count bucket | Successful `edit.undo` runs from the UI. Agent undos and no-op undos are not counted |
 | `errors` | count bucket | Every reported window error and unhandled rejection, including repeats that `app:error`'s 10-signature dedupe does not send |
 | `long_tasks`, `long_task_max` | count bucket; `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `PerformanceObserver` `longtask` entries. Where the browser does not report long tasks (feature-detected), the values stay `0` / `lt50`: **unsupported, not smooth** |
+| `compiles` | count bucket | Every `motion.compile` draft, including those past `motion:draft_compiled`'s 50-per-session cap |
 | `late_tick_ratio` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Reserved for the playback detector; `0` until it ships |
 | `rage_clicks`, `dead_clicks`, `shortcut_ignored`, `search_empty`, `nav_thrash`, `camera_thrash` | count bucket | Reserved; `0` until their detectors ship |
 
@@ -1440,6 +1441,79 @@ For `first_tool`, swap `wall` for `first_tool` and add
 `first_tool`, and counting them as `lt10s` would hide them. Read
 `cancel_phase` beside the `cancelled` rows to see whether people gave up
 waiting for the first tool (`before_tool`) or mid-run.
+
+# Motion drafts (motion:draft_compiled)
+
+One passive event per `motion.compile` draft, fired on the main thread right
+after the draft is published (`src/commands/motion3.js`, `src/motion-draft-telemetry.js`).
+The compile itself runs in a worker; one command is one draft is one event.
+Probe compiles (`install: "never"`) publish a draft too, so they count.
+At most 50 per session; `app:friction_summary.compiles` is the uncapped total.
+Builds before this release have no rows (**unknown, not 0**).
+
+## Event contract
+
+| Property | Values | Source |
+| --- | --- | --- |
+| `draft_index` | count bucket | The draft's number for its character since the agent turn started (`src/agent-progress.js` `n`, from 1) |
+| `qa_clean` | bool | No QA problems (`qaProblems`, `src/qa-label.js`) |
+| `qa_problems` | count bucket | QA problems (groups), the number people read |
+| `qa_frames` | `0`, `1-10`, `11-50`, `51-200`, `gte201` | `qa.total`: frame-level issues, one per frame per problem; not distinct frames |
+| `compile` | `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `ms.total`: the whole compile, including search, QA and observation |
+| `installed` | bool | The draft (or the best take so far) was installed on the character |
+| `stuck` | bool | The stop rule fired (`repair-watch.js`) |
+| `repaired` | bool | Repair ran (`repair` asked) |
+| `searched` | bool | A `{range}` parameter search ran |
+| `adjusted` | bool | The compiler adjusted the spec (lenient notes) |
+| `frames` | `lt30`, `30-120`, `121-480`, `gte481` | Take length |
+
+There is no `qa_ms`. The pipeline runs QA inside the compile step
+(`src/motion3/pipeline.js` `keptRetime`), and its `ms.qa` times the
+observation pass after it, so no honest QA-only duration exists.
+
+## 2.5 QA clean rate by draft index (90 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT
+    properties.draft_index AS draft_index,
+    count() AS drafts,
+    countIf(JSONExtractRaw(properties, 'qa_clean') = 'true') AS clean,
+    round(100.0 * clean / nullIf(drafts, 0), 1) AS clean_pct,
+    countIf(JSONExtractRaw(properties, 'stuck') = 'true') AS stuck
+FROM events
+WHERE event = 'motion:draft_compiled'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY draft_index
+ORDER BY indexOf(['0', '1', '2', '3', '4-5', '6-10', 'gte11'], draft_index)
+```
+
+Read `clean` beside `drafts`: a later index has fewer drafts, and a turn that
+stops at its first clean draft never reaches the next row.
+
+## 2.6 Compile time distribution (90 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT
+    properties.compile AS compile_ms,
+    properties.frames AS frames,
+    count() AS drafts,
+    countIf(JSONExtractRaw(properties, 'searched') = 'true') AS searched,
+    countIf(JSONExtractRaw(properties, 'repaired') = 'true') AS repaired
+FROM events
+WHERE event = 'motion:draft_compiled'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY compile_ms, frames
+ORDER BY indexOf(['lt50', '50-150', '150-500', '500-2000', 'gte2000'], compile_ms), frames
+```
+
+A search or a repair compiles many candidates inside one draft, so split by
+`searched` and `repaired` before reading a slow bucket.
 
 # Storyboard and capsule-figure events (issue #653)
 

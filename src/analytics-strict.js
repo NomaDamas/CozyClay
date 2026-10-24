@@ -10,6 +10,7 @@ const TURN_ID_PATTERN = /^[a-f0-9]{32}$/;
 const COUNT_BUCKETS = new Set(["0", "1", "2", "3", "4-5", "6-10", "gte11"]);
 const LONG_BUCKETS = new Set(["lt10s", "10-30s", "30-60s", "1-2m", "2-5m", "gte5m"]);
 const AGE_BUCKETS = new Set(["lt2s", "2-10s", "10-60s", "gte60s"]);
+const SHORT_MS_BUCKETS = new Set(["lt50", "50-150", "150-500", "500-2000", "gte2000"]);
 const REFUSAL_CODES = new Set([...STUDIO_ERROR_CODES, "other"]);
 
 /** A Studio refusal code as sent: one of STUDIO_ERROR_CODES, else "other". */
@@ -55,6 +56,11 @@ const SCHEMAS = Object.freeze({
 		tool_calls: count, tool_failed: count, refused: count, refusal_top: (value) => value === "none" || REFUSAL_CODES.has(value),
 		stale_retry: count, authored: bool, drafts: count, qa_first: oneOf("clean", "problems"), qa_last: oneOf("clean", "problems"),
 		qa_trend: oneOf("improved", "flat", "worse", "na"), stuck: bool, cancel_phase: oneOf("before_tool", "during_tool", "after_tool", "na"),
+	},
+	"motion:draft_compiled": {
+		draft_index: count, qa_clean: bool, qa_problems: count, qa_frames: oneOf("0", "1-10", "11-50", "51-200", "gte201"),
+		compile: inSet(SHORT_MS_BUCKETS), installed: bool, stuck: bool, repaired: bool, searched: bool, adjusted: bool,
+		frames: oneOf("lt30", "30-120", "121-480", "gte481"),
 	},
 	"agent:post_turn_edit": {
 		// prompt_block, not prompt: "prompt" is a denied property key (analytics.js), whatever its value.

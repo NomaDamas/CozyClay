@@ -9,6 +9,8 @@ import { expandUse } from "../../src/motion3/skills/index.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { SCENE_OBJECTS as CAR_OBJECTS } from "./fixtures/exitcar-scene.mjs";
 import { SCENE_OBJECTS as CUP_OBJECTS } from "./fixtures/cup-scene.mjs";
+import { draftTelemetrySeam } from "../../src/motion-draft-telemetry.js";
+import { strictPropValidator } from "../../src/analytics-strict.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -24,6 +26,9 @@ const objects = [{ id: "wall", name: "Wall", renderer: "cube", x: 4.7, y: 0, z: 
 const ports = { state: () => ({ characters: [character], objects, frameCount: 300 }), storeDomain: name => (name === "motion" ? owner : null) };
 const registry = createStudioAppActions(ports);
 const run = (id, args) => registry.run(id, args);
+// motion:draft_compiled: one event per compile draft, captured at the telemetry seam.
+const drafts = [];
+const restoreDrafts = draftTelemetrySeam((event, props) => drafts.push({ event, props }));
 
 const sk = skeletonFor("x-bot-tpose"), I = sk.index, P = sk.restWorldPos, ank = P[I.LeftFoot][1];
 // The character stands at (1, 0, 2) facing +X (rot 90): its left is -Z.
@@ -52,6 +57,15 @@ expect("motion.qa re-measures the installed take", qa.qa.ok === true);
 let refused = null;
 try { run("motion.compile", { characterId: "char-1", spec: { ...spec, fps: 30 } }); } catch (error) { refused = error; }
 expect("a spec at another frame rate is refused", refused?.code === "INVALID_ARGUMENT" || /fps/.test(JSON.stringify(refused ?? "")), String(refused));
+// Two compiles published two drafts; motion.qa and the refused compile published none.
+const allowed = strictPropValidator("motion:draft_compiled");
+expect("motion:draft_compiled: one event per compile draft, none for motion.qa or a refused spec", drafts.length === 2 && drafts.every(row => row.event === "motion:draft_compiled"), JSON.stringify(drafts));
+expect("motion:draft_compiled: every value is in its closed set", drafts.every(({ props }) => Object.entries(props).every(([key, value]) => allowed(key, value))), JSON.stringify(drafts));
+expect("motion:draft_compiled: the clean installed walk, then the dirty probe that was not installed",
+	drafts[0]?.props.draft_index === "1" && drafts[0].props.qa_clean === true && drafts[0].props.installed === true && drafts[0].props.frames === "121-480" && drafts[0].props.qa_problems === "0"
+	&& drafts[1]?.props.draft_index === "2" && drafts[1].props.qa_clean === false && drafts[1].props.installed === false && drafts[1].props.frames === "121-480" && drafts[1].props.qa_frames !== "0",
+	JSON.stringify(drafts.map(row => row.props)));
+restoreDrafts();
 
 // install: "ifClean" installs only a clean final result (qa.ok, goals included, after repair), in the same compile.
 const ifClean = args => registry.run("motion.compile", { characterId: "char-1", install: "ifClean", ...args });

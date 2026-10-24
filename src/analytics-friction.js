@@ -6,12 +6,13 @@
 import { SESSION_DURATION_BUCKETS } from "./analytics-values.js";
 
 // Counters with a source today: refusals_ui/refusals_agent and undos (command
-// bus), errors (app:error listener), long_tasks (longtask observer). The rest
+// bus), errors (app:error listener), long_tasks (longtask observer), compiles
+// (every motion.compile draft, motion-draft-telemetry.js). The rest
 // are reserved names for the click, shortcut, search, thrash and playback
 // detectors; they report "0" until those land.
 const COUNTERS = Object.freeze([
 	"refusals_ui", "refusals_agent", "undos", "errors", "rage_clicks", "dead_clicks",
-	"shortcut_ignored", "search_empty", "nav_thrash", "camera_thrash", "long_tasks",
+	"shortcut_ignored", "search_empty", "nav_thrash", "camera_thrash", "long_tasks", "compiles",
 ]);
 export const FRICTION_SUMMARY_KEYS = Object.freeze(["active_time", ...COUNTERS, "long_task_max", "late_tick_ratio"]);
 const COUNT_BUCKETS = new Set(["0", "1", "2", "3", "4-5", "6-10", "gte11"]);
@@ -34,7 +35,8 @@ export function bucketFrictionCount(value) {
 	return "gte11";
 }
 
-function bucketLongTask(ms) {
+/** lt50, 50-150, 150-500, 500-2000, gte2000 ms: long tasks and compile times. */
+export function bucketShortMs(ms) {
 	if (!(ms >= 50)) return "lt50";
 	if (ms < 150) return "50-150";
 	if (ms < 500) return "150-500";
@@ -99,7 +101,7 @@ export function observeLongTasks(Observer = globalThis.PerformanceObserver) {
 export function snapshot() {
 	return {
 		...Object.fromEntries([...counts].map(([name, count]) => [name, bucketFrictionCount(count)])),
-		long_task_max: bucketLongTask(longTaskMax),
+		long_task_max: bucketShortMs(longTaskMax),
 		late_tick_ratio: bucketLateTicks(lateTicks, totalTicks),
 	};
 }
