@@ -13,6 +13,7 @@ import { createAgentRunner } from "./agent-runner.mjs";
 import { createProviderRoutes } from "./provider-routes.mjs";
 import { STUDIO_SYSTEM_PROMPT_STORYBOARD } from "./studio-prompt.mjs";
 import { studioTransaction } from "./studio-turn-transaction.mjs";
+import { agentFailureCode, failureCodeOf } from "./agent-failure-codes.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -77,12 +78,6 @@ const agentToolCategory = (name) => {
 	if (name === "place_image_in_scene" || name === "add_reference_node") return "scene_write";
 	return "other";
 };
-const agentFailureCode = (error, signal, tool = false) => advisory(() => {
-	if (signal.aborted || error?.name === "AbortError") return "aborted";
-	if (error?.status === 401 || error?.code === "unauthorized") return "auth";
-	if (error?.status === 429) return "rate_limited";
-	return tool ? "tool_failed" : "upstream";
-}, tool ? "tool_failed" : "upstream");
 // These existing canvas commands only return a node/edge after publishing a
 // new insertion. Read/focus, generic accepted responses, update no-ops and run
 // outputs (which can echo old values) are deliberately not application proof.
@@ -579,7 +574,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			}
 			if (frame.type === "error") {
 			turnOutcome = controller.signal.aborted || frame.code === "aborted" ? "cancelled" : "failed";
-			turnFailureCode = controller.signal.aborted ? "aborted" : frame.code;
+			turnFailureCode = controller.signal.aborted || frame.code === "aborted" ? "aborted" : failureCodeOf(frame);
 			return send(frame);
 			}
 			if (frame.type === "done") {
@@ -822,7 +817,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		const send = (event) => { if (!res.writableEnded && !res.destroyed) res.write(`data: ${JSON.stringify(event)}\n\n`); };
 		let session = sessions.get(value.sessionId);
 		if (session?.running) {
-			send({ type: "error", code: "upstream", message: "busy" }); send({ type: "done" }); res.end(); return true;
+			send({ type: "error", code: "busy", message: "busy" }); send({ type: "done" }); res.end(); return true;
 		}
 		session ||= { images: new Map(), history: [] };
 		sessions.set(value.sessionId, session);
@@ -870,7 +865,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 					return;
 				}
 				turnOutcome = signal.aborted || frame.code === "aborted" ? "cancelled" : "failed";
-				turnFailureCode = signal.aborted ? "aborted" : frame.code;
+				turnFailureCode = signal.aborted || frame.code === "aborted" ? "aborted" : failureCodeOf(frame);
 				return send(frame);
 			}
 			if (frame.type === "done") {
@@ -903,7 +898,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		catch (error) {
 			turnOutcome = signal.aborted ? "cancelled" : "failed";
 			turnFailureCode = signal.aborted ? "aborted" : agentFailureCode(error, signal, toolFailed);
-			if (!signal.aborted) emitFrame({ type: "error", ...errorInfo(error, quota) });
+			if (!signal.aborted) send({ type: "error", ...errorInfo(error, quota) });
 			if (!res.writableEnded) emitFrame({ type: "done" });
 		}
 		finally {

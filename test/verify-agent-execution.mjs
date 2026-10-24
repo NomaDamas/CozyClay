@@ -605,4 +605,77 @@ for (const count of [2, 5]) {
 	} finally { await handler.close(); await close(server); }
 }
 
+// Spec 5.2 #3: a provider that fails with a message-only 401 (no structured
+// status) is recorded as the provider refusing the key, end to end.
+{
+	const { fauxProvider, fauxAssistantMessage } = await import("@earendil-works/pi-ai/providers/faux");
+	const { createModels } = await import("@earendil-works/pi-ai");
+	const models = createModels();
+	const faux = fauxProvider({ provider: "faux", models: [{ id: "scripted", name: "Scripted", input: ["text", "image"] }] });
+	models.setProvider(faux.provider);
+	faux.setResponses([async () => fauxAssistantMessage([], { stopReason: "error", errorMessage: "401 Unauthorized: invalid x-api-key" })]);
+	const handler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, models, fauxProvider: faux, liveHub: { command: async () => ({}) } });
+	const server = createServer((req, res) => handler(req, res).catch((error) => { res.writeHead(500); res.end(error.message); }));
+	const url = await listen(server);
+	try {
+		const captured = [];
+		const wire = [];
+		const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => captured.push({ event, props }), fetchImpl: async (path, init) => {
+			const response = await fetch(url + path, init);
+			const copy = await response.clone().text(); wire.push(...[...copy.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])));
+			return response;
+		} });
+		await transport.turn({ ...request, model: "faux/scripted", sessionId: "message-only-401" }, () => {});
+		const sidecarCode = wire.find(({ event }) => event === "agent:turn_failed")?.props.failure_code;
+		const browser = captured.find(({ event }) => event === "agent:turn_failed");
+		console.log(`5.2#3 message-only 401: error frame code=${wire.find(({ type }) => type === "error")?.code} sidecar failure_code=${sidecarCode} browser ${browser?.event} failure_code=${browser?.props.failure_code}`);
+		assert.equal(sidecarCode, "key_refused", "the sidecar names a provider key refusal in the closed set");
+		assert.equal(browser?.props.failure_code, "key_refused", "the browser stores the provider key refusal, not auth or upstream");
+	} finally { await handler.close(); await close(server); }
+}
+
+// Pre-admission refusals and provider errors map to one closed vocabulary on
+// both sides; a message never decides the code.
+{
+	const { transportFailureCode, AGENT_FAILURE_CODES } = await import("../src/workflow/agent-failure-codes.js");
+	const { failureCodeOf, agentFailureCode } = await import("../bin/agent/agent-failure-codes.mjs");
+	const cases = [
+		[{ code: "unauthorized", status: 401 }, "key_refused"], [{ code: "unauthorized" }, "key_refused"], [{ code: "unauthorized", status: 403 }, "key_refused"],
+		[{ status: 401 }, "auth"], [{ code: "AUTH_REQUIRED", status: 403 }, "auth"], [{ code: "auth", status: 401 }, "auth"],
+		[{ code: "rate_limit", status: 429 }, "rate_limited"], [{ status: 429 }, "rate_limited"],
+		[{ code: "STALE_SCENE", status: 409 }, "stale_scene"], [{ code: "STALE_TARGET", status: 409 }, "stale_scene"],
+		[{ code: "CAPABILITY_MISSING", status: 409 }, "capability_missing"], [{ code: "LIVE_HUB_UNAVAILABLE", status: 409 }, "capability_missing"],
+		[{ code: "busy" }, "busy"], [{ code: "TARGET_BUSY", status: 409 }, "busy"],
+		[{ status: 400 }, "invalid_request"], [{ code: "INVALID_CONTEXT", status: 400 }, "invalid_request"], [{ code: "AMBIGUOUS_TARGET", status: 409 }, "invalid_request"],
+		[{ code: "overloaded", status: 529 }, "upstream"], [{ code: "upstream", status: 502 }, "upstream"], [{ code: "truncated" }, "upstream"], [new TypeError("offline"), "upstream"],
+		[{ code: "constructor" }, "upstream"], [{ message: "401 Unauthorized" }, "upstream"],
+	];
+	for (const [input, expected] of cases) {
+		assert.equal(transportFailureCode(input), expected, `browser ${JSON.stringify(input)}`);
+		assert.equal(failureCodeOf(input), expected, `sidecar ${JSON.stringify(input)}`);
+		assert.ok(AGENT_FAILURE_CODES.has(expected));
+	}
+	const live = new AbortController().signal;
+	assert.equal(agentFailureCode({ status: 503 }, live, true), "tool_failed");
+	assert.equal(agentFailureCode({ code: "unauthorized", status: 401 }, live, true), "key_refused");
+	assert.equal(agentFailureCode(new DOMException("x", "AbortError"), live), "aborted");
+	const foreign = Object.defineProperty({}, "status", { get() { throw new Error("foreign getter"); } });
+	assert.equal(transportFailureCode(foreign), "upstream"); assert.equal(failureCodeOf(foreign), "upstream");
+	for (const [status, body, expected] of [
+		[409, { error: { code: "STALE_SCENE", message: "private moved" } }, "stale_scene"],
+		[409, { error: { code: "CAPABILITY_MISSING", message: "private port 5184 in use" } }, "capability_missing"],
+		[400, { error: "invalid request" }, "invalid_request"],
+		[401, { error: { code: "AUTH_REQUIRED", message: "private" } }, "auth"],
+		[502, { error: { code: "upstream", message: "private" } }, "upstream"],
+	]) {
+		const captured = [];
+		await createHttpTransport({ surface: "studio", capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => Response.json(body, { status }) }).turn(request, () => {});
+		assert.deepEqual(captured.at(-1), { event: "agent:turn_failed", props: { turn_id: captured[0].props.turn_id, duration_bucket: "lt1s", failure_code: expected } }, `refusal ${status}`);
+	}
+	const captured = [];
+	await createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => new Response(encode({ type: "error", code: "busy", message: "busy" }) + encode({ type: "done" })) }).turn(request, () => {});
+	assert.equal(captured.at(-1).props.failure_code, "busy", "a turn already running is busy, not upstream");
+	console.log("PASS failure codes: refusals, provider key refusal and busy map to the same closed codes in browser and sidecar");
+}
+
 console.log("PASS Agent execution: browser ownership, refusal, failure, cancellation, retry, frame validation/dedupe, applied ack and fake-model HTTP/SSE");

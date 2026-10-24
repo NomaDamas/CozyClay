@@ -513,7 +513,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 
 		const start = async function* (input = {}) {
 			if (state.active) {
-				yield { type: "error", code: "upstream", message: "busy" };
+				yield { type: "error", code: "busy", message: "busy" };
 				yield { type: "done" };
 				return;
 			}

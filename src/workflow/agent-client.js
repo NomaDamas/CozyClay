@@ -28,6 +28,7 @@ import { appendAttachments, ATTACHMENT_MAX_COUNT } from "./attachment-image.js";
 import { ko } from "../locale.js";
 import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
 import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
+import { AGENT_FAILURE_CODES, refusalFailureCode, transportFailureCode } from "./agent-failure-codes.js";
 import { requestAgentImage, sidecarRequest, sidecarUrl } from "../agent-image-client.js"; import { clearSculptSketch, sculptSketchFrame } from "../sculpt-sketch-state.js";
 import { actionLabelsOf, changedLine, scriptNow, stepFields, thinkingLine, withCompose, withThinking, withToolStart, withTurnEnd } from "./agent-turn.js";
 import { isPlanFrame, restoredPlans, withPlanEnd, withPlanFrame } from "./agent-plan.js";
@@ -490,12 +491,9 @@ export function parseSseChunk(buffer) {
 }
 
 const validTelemetryId = (value) => typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
-const AGENT_FAILURE_CODES = new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]);
 const exactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
 	&& Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
-const transportFailureCode = (error) => advisory(() => error?.status === 401 || error?.code === "auth" ? "auth"
-	: error?.status === 429 || error?.code === "rate_limit" ? "rate_limited" : "upstream", "upstream");
 
 const UI_ERROR_CODES = new Set(["auth", "entitlement", "rate_limit", "overloaded", "upstream"]);
 
@@ -795,7 +793,7 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 					signal,
 				});
 				if (!response.ok || !response.body) {
-					telemetry.fail(transportFailureCode(response));
+					telemetry.fail(await refusalFailureCode(response));
 					// A refused turn carries the only explanation there is. Forward the
 					// status and whatever short detail the sidecar sanitized for us
 					// instead of the panel inventing "something went wrong".
