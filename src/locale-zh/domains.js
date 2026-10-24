@@ -9,6 +9,7 @@ export const ZH_DOMAINS = {
 	"Edited pose": "已编辑的姿势",
 	"Pose saved": "姿势已保存",
 	"Nothing to undo": "没有可撤销的操作",
+	"IK edit undone": "已撤销 IK 修改",
 	"Nothing to redo": "没有可重做的操作",
 	"Confirm Replace existing keys before applying this pin.": "应用此固定前请确认替换现有键。",
 	"Pose mode — preview the correction, then apply it to the selected motion block": "姿势模式 — 先预览修正，再应用到所选动作片段",

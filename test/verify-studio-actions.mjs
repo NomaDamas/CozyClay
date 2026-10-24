@@ -6,6 +6,7 @@ import { STUDIO_ACTIONS, STUDIO_ACTION_IDS, STUDIO_ACTION_KINDS, studioActionDec
 import { validateStudioCommand, validateStudioSchema } from "../src/studio-agent-protocol.js";
 import * as studioActions from "../src/studio-actions.js";
 import { FK_TRACKS, IK_TRACKS } from "../src/motion/ik.js";
+import { FINGER_TRACK_IDS } from "../src/motion/fingers.js";
 import { SCENE_ATTACH_BONES } from "../src/scene-objects.js";
 import { GUIDE_MODES } from "../src/shot-guides.js";
 import { IMAGE_MODELS } from "../src/shot.js";
@@ -73,10 +74,10 @@ for (const id of ikKeyActions) {
 }
 // The JSON form of a key names exactly the tracks the IK layer keys.
 assert.deepEqual([...studioActions.STUDIO_IK_CHAIN_TRACKS], IK_TRACKS.map(track => track.id));
-assert.deepEqual([...studioActions.STUDIO_IK_JOINT_TRACKS], FK_TRACKS.map(track => track.id));
+assert.deepEqual([...studioActions.STUDIO_IK_JOINT_TRACKS], [...FK_TRACKS.map(track => track.id), ...FINGER_TRACK_IDS]);
 const setIkKey = studioActionDeclaration("character.setIkKey").input;
 assert.deepEqual([...setIkKey.required].sort(), ["characterId", "frame", "tracks"]);
-assert.deepEqual(Object.keys(setIkKey.properties.tracks.properties).sort(), [...IK_TRACKS, ...FK_TRACKS].map(track => track.id).sort());
+assert.deepEqual(Object.keys(setIkKey.properties.tracks.properties).sort(), [...[...IK_TRACKS, ...FK_TRACKS].map(track => track.id), ...FINGER_TRACK_IDS].sort());
 const unit = { x: 0, y: 0, z: 0, w: 1 };
 const ikArgs = { characterId: "char-a", frame: 12, tracks: { leftHand: { q: [unit, unit, unit], baseQ: [unit, unit, unit] }, hips: { q: [unit], p: { x: 0, y: 0.9, z: 0 }, basePos: { x: 0, y: 1, z: 0 } } } };
 assert.deepEqual(validateStudioSchema(setIkKey, ikArgs), ikArgs);

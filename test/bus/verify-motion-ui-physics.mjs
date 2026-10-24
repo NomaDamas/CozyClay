@@ -40,6 +40,34 @@ test('motion: cancelling a preview restores the rig and leaves no authored keys 
     assert.equal(hook.applyPendingIkEdit(), false);
   } finally { f.dispose(); }
 });
+test('motion: Ctrl+Z right after an IK drag backs out the un-applied preview', () => {
+  const f = motionFixture();
+  try {
+    f.motion.load([{ id: 'actor-a', take: seedMotion() }]);
+    const hook = f.renderMotion(), before = f.snapshot(), rig = f.actual.snapshotExportRig(f.rigs['actor-a']);
+    const chain = f.scope.ikStateRef.current.chains.get('leftHand');
+    const target = chain.bones[2].getWorldPosition(chain.bones[2].position.clone()); target.y += 0.04;
+    hook.beginGesture(); hook.ikSolve('chain', 'leftHand', target); hook.ikDragEnd(); hook.finishGesture();
+    assert.equal(f.actual.undoScene().status, 'done');
+    assert.deepEqual(f.actual.snapshotExportRig(f.rigs['actor-a']), rig);
+    assert.deepEqual(f.snapshot(), before);
+    assert.equal(hook.applyPendingIkEdit(), false, 'nothing left to apply');
+  } finally { f.dispose(); }
+});
+test('motion: with no take, Ctrl+Z after an IK drag restores the pre-drag rig', () => {
+  const f = motionFixture();
+  try {
+    f.motion.load([{ id: 'actor-a', take: null }]);
+    const hook = f.renderMotion(), rig = f.actual.snapshotExportRig(f.rigs['actor-a']);
+    const chain = f.scope.ikStateRef.current.chains.get('leftHand');
+    const target = chain.bones[2].getWorldPosition(chain.bones[2].position.clone()); target.y += 0.04;
+    hook.ikSolve('chain', 'leftHand', target); hook.ikDragEnd();
+    assert.equal(hook.layer('actor-a').ikKeys.length, 1, 'the drag keys the playhead');
+    f.actual.undoScene();
+    assert.equal(hook.layer('actor-a').ikKeys.length, 0);
+    assert.deepEqual(f.actual.snapshotExportRig(f.rigs['actor-a']), rig);
+  } finally { f.dispose(); }
+});
 test('motion: range Apply covers the whole compiled take and persists the span', () => {
   const f = motionFixture();
   try {

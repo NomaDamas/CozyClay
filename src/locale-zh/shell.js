@@ -58,6 +58,7 @@ export const ZH_SHELL = {
 	"Untitled Scene": "未命名场景",
 	"Couldn't find the selected pose — pick again": "找不到所选姿势 — 请重新选择",
 	"Back to the default pose": "已返回默认姿势",
+	"Pose edits cleared — the motion stays": "已清除姿势修改 — 动作保持不变",
 	"When set, exports are written here instead of your browser's Downloads folder.": "设置后，导出文件会写入此文件夹，而不是浏览器的下载文件夹。",
 	"Folder access was denied. Choose another folder or use Downloads.": "文件夹访问被拒绝。请选择其他文件夹或使用下载文件夹。",
 	"Could not choose the export folder.": "无法选择导出文件夹。",
