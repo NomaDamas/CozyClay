@@ -168,6 +168,8 @@ import {
 	RangePinMarker,
 	warmPoseThumbnails,
 } from "./posestudio.jsx";
+import { FingerHandles, useFingerEdit } from "./finger-handles.jsx";
+import { STORYBOARD_FONT, storyboardCaption, storyboardLine } from "./shell/storyboard-caption.js";
 
 import {
 	createIkState,
@@ -296,28 +298,6 @@ const CHARACTER_SCALE_BOUNDS = elementByPath("character.scale");
 // never mistaken for selection. Paired with --agent-touch in styles.css, which
 // fades the same highlight out over the same two seconds.
 const AGENT_RECEIPT_HIGHLIGHT_MS = 2000;
-
-// The storyboard contact sheet is drawn on a bare 2d canvas, which has no
-// stylesheet to inherit from: it gets the studio's own type stack explicitly
-// so the sheet reads like the app it came out of.
-const STORYBOARD_FONT = '12px Inter, "Pretendard", "Noto Sans KR", system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif';
-// One unwrapped caption line at 12px inside a 480px cell holds about 64
-// characters before it runs into the next column.
-const STORYBOARD_CAPTION_CHARS = 64;
-
-/** Cut a caption to what one unwrapped cell line holds. */
-function storyboardLine(text) {
-	return text.length > STORYBOARD_CAPTION_CHARS ? `${text.slice(0, STORYBOARD_CAPTION_CHARS - 1)}\u2026` : text;
-}
-
-/** Fold a labelled shot prompt into the one line a board cell can hold. */
-function storyboardCaption(prompt) {
-	return storyboardLine(prompt
-		.split("\n")
-		.filter((line) => line.startsWith("SHOT:") || line.startsWith("LENS:"))
-		.map((line) => line.slice(line.indexOf(":") + 1).trim())
-		.join(" · "));
-}
 
 /**
  * Pose ONE cast member's rig at an absolute timeline frame: its own clip first,
@@ -1121,6 +1101,7 @@ export default function App() {
 		ikDragEnd, ikAddKeyframe,
 		ikDeleteKeyframe, ikApplyPoseAsKey,
 	} = motionDomain;
+	const { handFingers, fingerEditing, setFingerEdit } = useFingerEdit(ikFocus, ikFkJoints);
 	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
 	const [partColoursMode, setPartColoursMode] = useState("shaded");
 
@@ -4546,7 +4527,7 @@ export default function App() {
 		setStudioPick, appContext, removePose, activeRig, saveCurrentPose,
 		setTlFrame, tlFrameCount,
 		tlFrame, isRigSelection, ikChains, ikFocus, footSnap, poseObjectOpacity, setPoseObjectOpacity, capturePoseImage,
-		ikEditTool, setIkEditTool,
+		ikEditTool, setIkEditTool, ikSolve, ikDragEnd, ikTick, handFingers, fingerEditing, setFingerEdit,
 		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		rangePins, rangePinResiduals, rangePinSelection, rangePinPartPick,
 		rangePinPreview, setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft,
@@ -4882,7 +4863,9 @@ export default function App() {
 								onFocus={focusIkHandle}
 								onSolve={ikSolve}
 								onDragEnd={ikDragEnd}
+								focusToolsHidden={fingerEditing}
 							/>
+							<FingerHandles fingers={handFingers} enabled={fingerEditing && ikMode && ikEditTool === "ik" && !posing && !playMode} onSolve={ikSolve} onDragEnd={ikDragEnd} />
 							<RangePinMarker
 								chains={ikChains}
 								track={rangePinPreview?.track}

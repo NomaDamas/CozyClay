@@ -15,7 +15,7 @@ import PropsPanel from "../panels/PropsPanel.jsx";
 import ObjectTransformPanel from "../panels/ObjectTransformPanel.jsx";
 import ObjectLookPanel from "../panels/ObjectLookPanel.jsx";
 import { PoseStudioPanel } from "../posestudio.jsx";
-import { DEFAULT_POSE } from "../poses.js";
+import { posePanelControls } from "./pose-controls.js";
 import "../panels/details.css";
 
 export default function DetailsSlot() {
@@ -50,6 +50,7 @@ export default function DetailsSlot() {
 		savePose, beginWorkspaceResize,
 	} = useStudioShell();
 	const selection = detailsSelection({ selectedHierarchyId, selectedSceneObject, rigSelection, characters, shot, inspectorHasContent });
+	const { resetPose, fingerPanel } = posePanelControls(useStudioShell());
 	return (
 		<aside className="panel hierarchy-sidebar inspector-sidebar" data-inspector={selectedHierarchyId}>
 			{/* Save failures live above the tab content, not inside the Props
@@ -194,6 +195,8 @@ export default function DetailsSlot() {
 				pendingIkEdit={pendingIkEdit}
 				applyPendingIkEdit={applyPendingIkEdit}
 				cancelPendingIkEdit={cancelPendingIkEdit}
+				onResetPose={() => resetPose(activeChar.id)}
+				fingerPanel={fingerPanel}
 				rangePins={rangePins}
 				rangePinResiduals={rangePinResiduals}
 				rangePinSelection={rangePinSelection}
@@ -334,11 +337,7 @@ export default function DetailsSlot() {
 							setToast(ko("Couldn't find the selected pose — pick again", "선택한 포즈를 찾지 못했어요. 다시 골라 주세요"));
 						}
 					}}
-					onReset={() => {
-						if (posingChar) castDomain.run('character.setPose', { characterId: posingChar.id, pose: DEFAULT_POSE.id, clearMotion: Boolean(motion) });
-						setStudioPick(DEFAULT_POSE.id);
-						setToast(ko("Back to the default pose", "기본 포즈로 돌아왔어요"));
-					}}
+					onReset={() => { if (posingChar) resetPose(posingChar.id); }}
 					onSave={savePose}
 					onDelete={removePose}
 					onClose={closeStudio}

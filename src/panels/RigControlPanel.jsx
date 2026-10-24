@@ -2,12 +2,13 @@ import Foldout from "./Foldout.jsx";
 import { ko } from "../locale.js";
 import { HIERARCHY_INSPECTOR_TITLES } from "../app-stage.jsx";
 import { RangePinPanel } from "../range-pin-panel.jsx";
+import FingerPanel from "./FingerPanel.jsx";
 
 import "./pose.css";
 
 export default function RigControlPanel({
  isRigSelection, rigSelection, ikChains, ikFocus, footSnap, ikMode, poseObjectOpacity = 0.2, setPoseObjectOpacity,
- motion, tlFrame, ikEditTool, setIkEditTool, pendingIkEdit = null, applyPendingIkEdit, cancelPendingIkEdit,
+ motion, tlFrame, ikEditTool, setIkEditTool, pendingIkEdit = null, applyPendingIkEdit, cancelPendingIkEdit, onResetPose, fingerPanel = null,
  rangePins = [], rangePinResiduals = new Map(), rangePinSelection = null, rangePinPartPick = null,
  rangePinPreview = null, objects = [], setRangePinSelection, setRangePinPartPick,
  previewRangePinDraft, applyRangePinDraft, deleteRangePin,
@@ -26,6 +27,12 @@ export default function RigControlPanel({
       data-testid="pose-object-opacity" aria-label={ko("Scene object opacity while posing", "포즈 편집 중 오브젝트 불투명도")}
       onChange={(event) => setPoseObjectOpacity(Number(event.target.value) / 100)} />
      <b>{Math.round(poseObjectOpacity * 100)}%</b>
+    </div>}
+    {onResetPose && <div className="pose-actions">
+     <button type="button" className="btn" data-testid="pose-reset-default" onClick={onResetPose}
+      title={motion ? ko("Remove every IK edit; the motion plays as it was", "IK 수정을 모두 지워요. 모션은 원래대로 재생돼요") : ko("Back to the default pose", "기본 포즈로 되돌려요")}>
+      {motion ? ko("Clear pose edits", "포즈 수정 지우기") : ko("Reset to default pose", "기본 포즈로")}
+     </button>
     </div>}
     <p className="inspector-hint">{rigSelection && rigSelection.token !== "rig" ? ko(`${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]} is the active control group.`, `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]}이 활성 제어 그룹입니다.`, `${HIERARCHY_INSPECTOR_TITLES[rigSelection.token]}是当前控制组。`) : ko("Select a body group to pose it in the viewport.", "몸 그룹을 선택해 뷰포트에서 포즈를 잡으세요.")}</p>
    </section>
@@ -46,6 +53,7 @@ export default function RigControlPanel({
     {ikEditTool === "pin" && <RangePinPanel active motion={motion} frame={tlFrame} frameCount={motion?.frames ?? 1} fps={motion?.fps ?? 24} pins={rangePins} residuals={rangePinResiduals} objects={objects} selectedPinId={rangePinSelection} partPick={rangePinPartPick} conflictFrames={rangePinPreview?.conflictFrames ?? []} overlapError={rangePinPreview?.overlapError ?? ""} onSelectPin={(id) => { setRangePinSelection?.(id); if (id) setIkEditTool("pin"); }} onApply={applyRangePinDraft} onCancel={() => { setRangePinSelection?.(null); setIkEditTool("ik"); }} onDelete={deleteRangePin} onPreviewTarget={previewRangePinDraft} />}
     {ikEditTool === "ik" && <p className="inspector-hint">{ko("Grab a hand, foot, elbow or knee handle in the viewport.", "뷰포트에서 손·발·팔꿈치·무릎 핸들을 잡으세요.")}</p>}
    </section>}
+   {ikMode && ikEditTool === "ik" && fingerPanel && <FingerPanel {...fingerPanel} />}
   </div>
  </Foldout>;
 }
