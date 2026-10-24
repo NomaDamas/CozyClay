@@ -67,7 +67,7 @@
 	"src/studio-app-binding.js": 346,
 	"src/ui.jsx": 385,
 	"src/workflow/agent-client.js": 1295,
-	"src/workflow/AgentPanel.jsx": 811,
+	"src/workflow/AgentPanel.jsx": 807,
 	"src/workflow/WorkflowBuilder.jsx": 592,
 	"tools/qa/css-rule-usage.mjs": 251,
 	"tools/run-tests.mjs": 441
