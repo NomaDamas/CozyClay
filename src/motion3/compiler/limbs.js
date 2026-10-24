@@ -164,17 +164,24 @@ const FINGER_PRESETS = {
 // thumb side (+), by preset weight; the index leads the thumb round one side, the little finger the other.
 const SPREAD = { spherical: { Index: 9, Middle: 2, Ring: -5, Pinky: -12 } };
 
+// Two presets keyed at 1 together (a reach's grip over a held fist) would add their curls: 137 deg at the PIP. Past a
+// sum of 1 the weights share it, so a blend never curls further than its strongest preset.
+function shares(weights) {
+	const sum = Object.entries(weights ?? {}).reduce((acc, [p, w]) => acc + (p === "relaxed" ? 0 : w || 0), 0);
+	return sum > 1 ? Object.fromEntries(Object.entries(weights).map(([p, w]) => [p, p === "relaxed" ? w : (w || 0) / sum])) : weights;
+}
+
 /** Degrees phalanx k (0..2) of finger f curls at preset weights `weights` (blended over relaxed). */
 export function fingerCurl(weights, f, k) {
 	const base = FINGER_PRESETS.relaxed;
-	return base[f][k] + Object.entries(weights ?? {}).reduce((acc, [p, w]) => acc + (w || 0) * ((FINGER_PRESETS[p]?.[f]?.[k] ?? base[f][k]) - base[f][k]), 0);
+	return base[f][k] + Object.entries(shares(weights) ?? {}).reduce((acc, [p, w]) => acc + (w || 0) * ((FINGER_PRESETS[p]?.[f]?.[k] ?? base[f][k]) - base[f][k]), 0);
 }
 /** The fist's curl of phalanx k of finger f: as far as a finger closes. */
 export const fistCurl = (f, k) => FINGER_PRESETS.fist[f][k];
 
 /** Blend presets by weight over `relaxed` and curl every finger toward the palm. */
-export function fingers(sk, s, side, weights) {
-	const sign = side === "Left" ? -1 : 1, curl = (f, k) => fingerCurl(weights, f, k);
+export function fingers(sk, s, side, given) {
+	const weights = shares(given), sign = side === "Left" ? -1 : 1, curl = (f, k) => fingerCurl(weights, f, k);
 	for (const f of ["Index", "Middle", "Ring", "Pinky"]) {
 		const spread = Object.entries(weights ?? {}).reduce((acc, [p, w]) => acc + (w || 0) * (SPREAD[p]?.[f] ?? 0), 0), j = sk.index[`${side}Hand${f}1`];
 		if (spread && j !== undefined) rotateSubtree(sk, s, j, s.P[j].slice(), axisRot(palmAxes(sk, s, side).n, spread));

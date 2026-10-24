@@ -9,6 +9,7 @@
 // The fingers are phalanx capsules
 // (PHALANX m) against the held object's shapes (shapes.js: a ball is round, not its box):
 //   FINGER_PEN  "<Bone> into <id>": a phalanx's skin deeper than PEN in it
+//   THUMB_OFF   "<side> thumb off <id>": a power or spherical hold whose fingers grip it with the thumb tip farther than GAP
 //   FINGER_GAP  "<side> fingers off <id>": fewer than 3 of the 4 fingertips within GAP of its surface (pinch: the thumb
 //               and the index); the thumb and two fingers hold too (a tripod: a small ball the ring and little fingers do
 //               not reach)
@@ -96,6 +97,8 @@ function frameIssues(sk, s, h, entries, push, f) {
 	// a pinch holds between the thumb and the index; a small ball in a tripod (the thumb and two fingers); else three fingers
 	const gripped = h.grasp === "pinch" ? thumb && tipOn("Index") : fingersOn >= 3 || (thumb && fingersOn >= 2);
 	if (!gripped) push("FINGER_GAP", `${side} fingers off ${h.id}`, f, fingersOn + (thumb ? 1 : 0), h.grasp === "pinch" ? 2 : 3);
+	// a power or spherical hold closes the thumb against the fingers: three fingertips on the ball with the thumb out passed
+	else if (!thumb && (h.grasp === "power" || h.grasp === "spherical")) push("THUMB_OFF", `${side} thumb off ${h.id}`, f, -Math.max(...touch.filter(c => c.finger === "Thumb" && c.tip).map(c => c.depth)), GAP);
 	const on = touch.filter(c => c.depth >= -GAP && c.normal);
 	const c0 = scale(entries.reduce((acc, e) => add(acc, add(e.pos, apply(e.R, [0, e.half[1], 0]))), [0, 0, 0]), 1 / entries.length);
 	const under = on.filter(c => c.normal[1] <= BELOW).map(c => c.at);

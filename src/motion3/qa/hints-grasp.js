@@ -1,6 +1,7 @@
 // Hints for the grasp kinds (#816, qa/grasp-checks.js, skills/catch.js): { cause, hint, fix? } as the other hints-*.js.
 //   FINGER_GAP  fix.grasp false: the fingers stopped at the preset; fix /fix/grasp true. Else the hand toward the object
 //   FINGER_PEN  fix.grasp false: the same fix. Else the hand out of it along its surface normal at the phalanx
+//   THUMB_OFF   the fingers channel: a grip preset held on while the hand holds it (or the object nearer the palm)
 //   SUPPORT     the carry names the grasp its shape takes (sphere: spherical, cylinder: power, else palm); with
 //               fix.grasp false, grasp back on first
 //   CATCH       catchObject's f0 earlier by the frames the hand came late (the ball passed the catch point that much
@@ -40,6 +41,13 @@ export const graspHints = {
 		if (!parts.length) return null;
 		const into = parts.reduce((m, e) => (signedDistance(e, p) < signedDistance(m, p) ? e : m));
 		return moveHint(X, `hand_${k}`, f, scale(normalAt(into, p), g.worst - g.limit + MARGIN), ` (out of ${id})`);
+	},
+	THUMB_OFF(X, g) {
+		if (graspOff(X)) return turnOn;
+		const [, side, id] = /^(left|right) thumb off (\S+)$/.exec(g.subject) ?? [];
+		if (!id) return null;
+		const k = side === "left" ? "l" : "r";
+		return { cause: X.cause(`fingers_${k}`, g.worstFrame), hint: `${id}: the thumb is ${(g.worst * 100).toFixed(1)} cm off it; key fingers_${k} with the grip (or spherical) preset at 1 while the hand holds it, or set the hand so ${id} sits in the palm` };
 	},
 	SUPPORT(X, g) {
 		if (graspOff(X)) return turnOn;

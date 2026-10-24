@@ -165,7 +165,7 @@ export function pose(sk, c, hooks = {}) {
 			if (fold > ELBOW_FOLD && !hooks.foldFree) diag[`arm_fold_${k}`] = fold;
 		}
 		wrist(sk, s, side, num(c[`wtwist_${k}`]), num(c[`wflex_${k}`]));
-		fingers(sk, s, side, c[`fingers_${k}`]);
+		fingers(sk, s, side, hooks.fingerWeights?.(k) ?? c[`fingers_${k}`]);
 		const held = hooks.hold?.(k, s);
 		// a keyed carry's hand follows its object; else a fit's hand takes a grip on the body under its anchor (grip.js),
 		// and while the keys only ease in (before the first key) the arm they ease from takes it too

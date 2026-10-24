@@ -36,7 +36,7 @@ import { fitWeight } from "../fix/self.js";
 import { holdHook } from "../object-keys.js";
 import { HAND_CLEAR, keepOut, wristBody } from "../body.js";
 import { objectPoseAt, handOf, restingAt, frameAt, spanOf } from "../object-pose.js";
-import { heldFor } from "./finger-close.js";
+import { heldFor, carryFingers } from "./finger-close.js";
 import { sagOf } from "../load.js";
 
 const smooth = x => x * x * (3 - 2 * x);
@@ -143,6 +143,7 @@ function hooksFor(ctx, c, f, inFit = false, lead = true, fitSide = null) {
 		sag: inFit ? undefined : (k, s, target) => sagOf(ctx, k, f, s, target, (1 - fitWeight(ctx.spec, c, k)) * Math.min(1, Math.max(0, c[`armw_${k}`] ?? 0))),
 		// fingers close on what the hand holds, on the final pose only (finger-close.js)
 		heldShapes: inFit || !ctx.grasp ? undefined : (k, s) => heldFor(ctx, c, f, k, s),
+		fingerWeights: inFit || !ctx.grasp ? undefined : k => carryFingers(ctx, c, f, k),
 	};
 }
 
