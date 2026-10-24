@@ -20,7 +20,7 @@ const closed = (event, props) => { const allowed = strictPropValidator(event); f
 
 // Group and kind tables, from the real command ids.
 assert.deepEqual(['object.add', 'objects.arrange', 'shot.create', 'character.add', 'characters.arrange', 'cast.replace', 'scene.set', 'motion.compile', 'edit.undo', 'task.begin', 'agent.turn.begin', 'stage.set', 'ik.setKey', 'job.await'].map(commandGroup),
-  ['object', 'object', 'shot', 'cast', 'cast', 'cast', 'scene', 'motion', 'edit', 'task', 'agent', 'other', 'other', 'other']);
+  ['object', 'object', 'shot', 'cast', 'cast', 'cast', 'scene', 'motion', 'edit', 'task', 'agent', 'other', 'motion', 'other']);
 const kinds = { 'character.setPose': 'pose', 'ik.setKey': 'pose', 'ik.applyPose': 'pose', 'character.setIkKey': 'pose', 'motion.rangePin.apply': 'pose',
   'shot.setCamera': 'camera', 'shot.addKey': 'camera', 'shot.moveKey': 'camera', 'shot.setCameraRail': 'camera', 'shot.clearCameraRail': 'camera', 'shot.setCameraMode': 'camera', 'shot.setLens': 'camera', 'shot.captureCamera': 'camera',
   'object.add': 'object', 'object.update': 'object', 'objects.arrange': 'object', 'character.add': 'object', 'character.move': 'object',

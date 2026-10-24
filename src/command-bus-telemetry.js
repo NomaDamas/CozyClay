@@ -12,7 +12,7 @@ const REFUSALS_PER_KEY = 3, UNDOS_PER_SESSION = 20, STAMPS_KEPT = 500;
 // Command id prefix to studio:refused group; anything else is "other".
 const GROUPS = [
 	[/^objects?\./, 'object'], [/^shot\./, 'shot'], [/^(characters?|cast)\./, 'cast'], [/^scene\./, 'scene'],
-	[/^motion\./, 'motion'], [/^edit\./, 'edit'], [/^task\./, 'task'], [/^agent\./, 'agent'],
+	[/^(?:motion|ik)\./, 'motion'], [/^edit\./, 'edit'], [/^task\./, 'task'], [/^agent\./, 'agent'],
 ];
 export const commandGroup = id => GROUPS.find(([pattern]) => pattern.test(String(id)))?.[1] ?? 'other';
 
