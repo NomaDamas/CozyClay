@@ -9,6 +9,10 @@ import { join } from "node:path";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { createCanvasCommands } from "../src/workflow/canvas-commands.js";
+import { noteTurnDraft } from "../src/workflow/agent-turn-telemetry.js";
+import { sanitizeProps } from "../src/analytics.js";
+import { closePostTurnWindow, noteEditGesture } from "../src/post-turn-edits.js";
+import { withRunOrigin } from "../src/bus-run-origin.js";
 
 const request = { sessionId: "private-session", text: "private prompt /secret/file.png", model: "private-model" };
 process.env.COZYCLAY_CONFIG_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-config-"));
@@ -19,6 +23,8 @@ const tool = (turnId, id, outcome = "succeeded") => ({ type: "execution_telemetr
 const started = (turnId, id) => ({ type: "execution_tool_started", turn_id: turnId, telemetry_id: id, tool_category: "workflow_write" });
 const applied = (turnId) => ({ type: "execution_telemetry", event: "agent:result_applied", props: { turn_id: turnId } });
 const names = (events) => events.map(({ event }) => event);
+// The turn's summary and post-turn window have their own block at the end of this file.
+const keep = (captured, event, props) => { if (event !== "agent:turn_summary" && event !== "agent:post_turn_edit") captured.push({ event, props }); };
 const bounded = (emitter, event) => once(emitter, event, { signal: AbortSignal.timeout(5000) });
 const listen = async (server) => { const ready = bounded(server, "listening"); server.listen(0, "127.0.0.1"); await ready; return `http://127.0.0.1:${server.address().port}`; };
 const close = async (server) => { const closed = bounded(server, "close"); server.close(); server.closeAllConnections(); await closed; };
@@ -27,7 +33,7 @@ const close = async (server) => { const closed = bounded(server, "close"); serve
 {
 	const captured = [];
 	const bodies = [];
-	const transport = createHttpTransport({ surface: "studio", capture: (event, props) => captured.push({ event, props }), now: () => 100,
+	const transport = createHttpTransport({ surface: "studio", capture: (event, props) => keep(captured, event, props), now: () => 100,
 		fetchImpl: async (_url, init) => {
 			const body = JSON.parse(init.body); bodies.push(body);
 			return new Response(encode(terminal(body.turn_id)) + encode({ type: "done" }));
@@ -45,7 +51,7 @@ const close = async (server) => { const closed = bounded(server, "close"); serve
 
 {
 	const captured = [];
-	const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => captured.push({ event, props }),
+	const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => keep(captured, event, props),
 		fetchImpl: async (_url, init) => {
 			const { turn_id: id } = JSON.parse(init.body);
 			const first = tool(id, "a".repeat(32));
@@ -73,7 +79,7 @@ const close = async (server) => { const closed = bounded(server, "close"); serve
 
 for (const [status, failureCode] of [[401, "auth"], [429, "rate_limited"], [503, "upstream"]]) {
 	const captured = [];
-	const transport = createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => new Response("private response", { status }) });
+	const transport = createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => new Response("private response", { status }) });
 	await transport.turn(request, () => {});
 	assert.deepEqual(names(captured), ["agent:turn_requested", "agent:turn_failed"]);
 	assert.equal(captured[1].props.failure_code, failureCode);
@@ -81,21 +87,21 @@ for (const [status, failureCode] of [[401, "auth"], [429, "rate_limited"], [503,
 {
 	const captured = [];
 	const error = new TypeError("private network refusal");
-	const transport = createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => { throw error; } });
+	const transport = createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => { throw error; } });
 	await assert.rejects(transport.turn(request, () => {}), (caught) => caught === error);
 	assert.deepEqual(names(captured), ["agent:turn_requested", "agent:turn_failed"]);
 	assert.equal(captured[1].props.failure_code, "upstream");
 }
 for (const body of ["", encode({ type: "done" }), 'data: {"type":"execution_telemetry"']) {
 	const captured = [];
-	await createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => new Response(body) }).turn(request, () => {});
+	await createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => new Response(body) }).turn(request, () => {});
 	assert.deepEqual(names(captured), ["agent:turn_requested"], "EOF/done without explicit outcome stays unresolved");
 }
 
 {
 	const captured = [];
 	const error = new TypeError("stream connection lost");
-	const transport = createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => new Response(new ReadableStream({ start(controller) { controller.error(error); } })) });
+	const transport = createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => new Response(new ReadableStream({ start(controller) { controller.error(error); } })) });
 	await assert.rejects(transport.turn(request, () => {}), (caught) => caught === error);
 	assert.deepEqual(names(captured), ["agent:turn_requested"], "a broken in-flight SSE connection is unresolved, not a fabricated terminal");
 }
@@ -106,7 +112,7 @@ for (const explicit of [true, false]) {
 	const controller = new AbortController();
 	let stream;
 	const ready = bounded(events, "tool");
-	const transport = createHttpTransport({ capture: (event, props) => { captured.push({ event, props }); }, fetchImpl: async (_url, init) => {
+	const transport = createHttpTransport({ capture: (event, props) => { keep(captured, event, props); }, fetchImpl: async (_url, init) => {
 		if (_url === "/agent/stop") return new Response('{"ok":true}');
 		const id = JSON.parse(init.body).turn_id;
 		return new Response(new ReadableStream({ start(value) {
@@ -142,7 +148,7 @@ for (const explicit of [true, false]) {
 	}
 	const captured = [];
 	const foreign = Object.defineProperty({}, "status", { get() { throw new Error("foreign getter"); } });
-	await assert.rejects(createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => { throw foreign; } }).turn(request, () => {}), (error) => error === foreign);
+	await assert.rejects(createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => { throw foreign; } }).turn(request, () => {}), (error) => error === foreign);
 	assert.equal(captured.at(-1).props.failure_code, "upstream");
 }
 
@@ -191,7 +197,7 @@ for (const explicit of [true, false]) {
 		for (scenario of ["success", "failure", "parse", "unknown", "disconnected", "read", "accepted", "truncated"]) {
 			const captured = [];
 			const wire = [];
-			const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => captured.push({ event, props }), fetchImpl: async (url, init) => {
+			const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => keep(captured, event, props), fetchImpl: async (url, init) => {
 				const response = await fetch(sidecarUrl + url, init);
 				const copy = await response.clone().text(); wire.push(...[...copy.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])));
 				return response;
@@ -218,7 +224,7 @@ for (const explicit of [true, false]) {
 			const ready = bounded(events, "tool");
 			toolRelease = Promise.withResolvers();
 			let wireBody;
-			const transport = createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async (url, init) => {
+			const transport = createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async (url, init) => {
 				const response = await fetch(sidecarUrl + url, init);
 				if (url === "/agent/turn") wireBody = response.clone().text();
 				return response;
@@ -620,7 +626,7 @@ for (const count of [2, 5]) {
 	try {
 		const captured = [];
 		const wire = [];
-		const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => captured.push({ event, props }), fetchImpl: async (path, init) => {
+		const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => keep(captured, event, props), fetchImpl: async (path, init) => {
 			const response = await fetch(url + path, init);
 			const copy = await response.clone().text(); wire.push(...[...copy.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])));
 			return response;
@@ -669,13 +675,204 @@ for (const count of [2, 5]) {
 		[502, { error: { code: "upstream", message: "private" } }, "upstream"],
 	]) {
 		const captured = [];
-		await createHttpTransport({ surface: "studio", capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => Response.json(body, { status }) }).turn(request, () => {});
+		await createHttpTransport({ surface: "studio", capture: (event, props) => keep(captured, event, props), fetchImpl: async () => Response.json(body, { status }) }).turn(request, () => {});
 		assert.deepEqual(captured.at(-1), { event: "agent:turn_failed", props: { turn_id: captured[0].props.turn_id, duration_bucket: "lt1s", failure_code: expected } }, `refusal ${status}`);
 	}
 	const captured = [];
-	await createHttpTransport({ capture: (event, props) => captured.push({ event, props }), fetchImpl: async () => new Response(encode({ type: "error", code: "busy", message: "busy" }) + encode({ type: "done" })) }).turn(request, () => {});
+	await createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => new Response(encode({ type: "error", code: "busy", message: "busy" }) + encode({ type: "done" })) }).turn(request, () => {});
 	assert.equal(captured.at(-1).props.failure_code, "busy", "a turn already running is busy, not upstream");
 	console.log("PASS failure codes: refusals, provider key refusal and busy map to the same closed codes in browser and sidecar");
 }
+
+// agent:turn_summary (one per turn, closed values) and the post-turn edit window, through the real HTTP transport.
+const start = (callId) => ({ type: "tool.start", callId, name: "arrange_objects", label: "arrange objects", args: { secret: "private" } });
+const done = (callId, extra = {}) => ({ type: "tool.done", callId, ok: true, elapsedMs: 5, result: {}, ...extra });
+const refusedDone = (callId, code) => done(callId, { ok: false, error: `${code}: private message`, result: undefined });
+
+let clock = 0;
+/** One Studio turn: `frames(id)` are sent in order, each at the clock it names ({ at } entries move the clock). */
+async function runTurn(script, { correlation = crypto.randomUUID(), captured = [] } = {}) {
+	clock = 0;
+	const transport = createHttpTransport({ surface: "studio", now: () => clock, capture: (event, props) => captured.push({ event, props }),
+		fetchImpl: async () => new Response(new ReadableStream({
+			start(controller) {
+				for (const item of script(correlation)) {
+					if (Number.isFinite(item.at)) clock = item.at;
+					else controller.enqueue(new TextEncoder().encode(encode(item)));
+				}
+				controller.close();
+			},
+		})) });
+	await transport.turn({ surface: "studio", sessionId: "s", turnId: correlation, text: "private prompt", context: {} }, () => {});
+	return { captured, correlation, summaries: captured.filter(({ event }) => event === "agent:turn_summary").map(({ props }) => props) };
+}
+// A pull-based clock: the transport reads `now` while it consumes frames, so a pull stream moves it between frames.
+async function runTimedTurn(steps, options = {}) {
+	clock = 0;
+	const correlation = options.correlation ?? crypto.randomUUID();
+	const queue = steps(correlation);
+	const captured = options.captured ?? [];
+	const transport = createHttpTransport({ surface: "studio", now: () => clock, capture: (event, props) => captured.push({ event, props }),
+		fetchImpl: async () => new Response(new ReadableStream({
+			pull(controller) {
+				while (queue.length && Number.isFinite(queue[0].at)) clock = queue.shift().at;
+				if (!queue.length) { controller.close(); return; }
+				controller.enqueue(new TextEncoder().encode(encode(queue.shift())));
+			},
+		})) });
+	await transport.turn({ surface: "studio", sessionId: "s", turnId: correlation, text: "private prompt", context: {} }, () => {});
+	return { captured, correlation, summaries: captured.filter(({ event }) => event === "agent:turn_summary").map(({ props }) => props) };
+}
+
+// Counts, refusal_top, stale_retry, authored, first_tool, wall.
+{
+	const { summaries, captured } = await runTimedTurn((id) => [
+		{ at: 12_000 }, start("a"), done("a", { autoRebased: true, result: { autoRebased: true } }),
+		start("b"), refusedDone("b", "TARGET_BUSY"),
+		start("c"), refusedDone("c", "STALE_SCENE"),
+		start("d"), refusedDone("d", "STALE_SCENE"),
+		start("e"), done("e", { result: { ok: false, code: "MADE_UP_CODE" } }),
+		start("f"), done("f", { ok: false, error: "ABORTED: Stopped before this call finished." }),
+		start("g"), done("g", { result: { ok: true, authored: true } }),
+		done("g", { result: { ok: true, authored: true } }), start("g"),
+		{ at: 70_000 }, terminal(id),
+	]);
+	assert.equal(summaries.length, 1);
+	const [summary] = summaries;
+	assert.deepEqual(summary, {
+		turn_id: summary.turn_id, outcome: "succeeded", wall: "1-2m", tool_calls: "6-10", tool_failed: "4-5", refused: "4-5", refusal_top: "STALE_SCENE",
+		stale_retry: "1", authored: true, first_tool: "10-30s", cancel_phase: "na", drafts: "0", qa_trend: "na", stuck: false,
+	}, "duplicate start/done frames of one call count once; ABORTED is a failure, not a refusal; an unknown code reads other");
+	assert.match(summary.turn_id, /^[a-f0-9]{32}$/);
+	assert.deepEqual(sanitizeProps("agent:turn_summary", summary), summary, "the payload passes the closed schema unchanged");
+	assert.ok(!JSON.stringify(captured).includes("private") && !JSON.stringify(summary).includes("arrange"), "no names, args or messages");
+	closePostTurnWindow();
+}
+
+// refusal_top ties go to the first code seen; none without refusals; first_tool absent without tools; result_applied is authored.
+{
+	const tie = await runTurn((id) => [start("a"), refusedDone("a", "TARGET_BUSY"), start("b"), refusedDone("b", "SCOPE_DENIED"), terminal(id, "failed", "tool_failed")]);
+	assert.equal(tie.summaries[0].refusal_top, "TARGET_BUSY");
+	assert.equal(tie.summaries[0].outcome, "failed");
+	const bare = await runTurn((id) => [{ type: "execution_telemetry", event: "agent:result_applied", props: { turn_id: id } }, terminal(id)]);
+	assert.equal(bare.summaries[0].refusal_top, "none");
+	assert.equal(bare.summaries[0].tool_calls, "0");
+	assert.equal(Object.hasOwn(bare.summaries[0], "first_tool"), false, "no tool ran: no first_tool");
+	assert.equal(bare.summaries[0].authored, true, "the turn's agent:result_applied marks it authored");
+	closePostTurnWindow();
+}
+
+// cancel_phase: before_tool, during_tool, after_tool.
+for (const [frames, phase] of [
+	[() => [], "before_tool"],
+	[() => [start("a")], "during_tool"],
+	[() => [start("a"), done("a")], "after_tool"],
+]) {
+	const { summaries } = await runTurn((id) => [...frames(), terminal(id, "cancelled", "aborted")]);
+	assert.equal(summaries[0].outcome, "cancelled");
+	assert.equal(summaries[0].cancel_phase, phase);
+	closePostTurnWindow();
+}
+
+// One summary per turn even with duplicate and conflicting terminal frames.
+{
+	const { summaries, captured } = await runTurn((id) => [terminal(id), terminal(id), terminal(id, "failed", "upstream"), terminal(id, "cancelled", "aborted"), start("late")]);
+	assert.equal(summaries.length, 1);
+	assert.equal(summaries[0].tool_calls, "0", "frames after the terminal are not counted");
+	assert.deepEqual(captured.map(({ event }) => event), ["agent:turn_requested", "agent:turn_succeeded", "agent:turn_summary"]);
+	closePostTurnWindow();
+}
+
+// Drafts keyed by the turn's correlation id: trend, first/last QA, stuck, and clearing.
+for (const [drafts, expected] of [
+	[[{ clean: false, problems: 3 }, { clean: false, problems: 1 }, { clean: true, problems: 0 }], { drafts: "3", qa_first: "problems", qa_last: "clean", qa_trend: "improved", stuck: false }],
+	[[{ clean: false, problems: 1 }, { clean: false, problems: 4, stuck: true }], { drafts: "2", qa_first: "problems", qa_last: "problems", qa_trend: "worse", stuck: true }],
+	[[{ clean: false, problems: 2 }, { clean: false, problems: 2 }], { drafts: "2", qa_first: "problems", qa_last: "problems", qa_trend: "flat", stuck: false }],
+	[[{ clean: true, problems: 0 }], { drafts: "1", qa_first: "clean", qa_last: "clean", qa_trend: "na", stuck: false }],
+]) {
+	const correlation = crypto.randomUUID();
+	noteTurnDraft(crypto.randomUUID(), { clean: true, problems: 0 });
+	for (const draft of drafts) noteTurnDraft(correlation, draft);
+	const { summaries } = await runTurn((id) => [terminal(id)], { correlation });
+	const { turn_id: _id, outcome: _o, wall: _w, tool_calls: _t, tool_failed: _f, refused: _r, refusal_top: _rt, stale_retry: _s, authored: _a, cancel_phase: _c, ...rest } = summaries[0];
+	assert.deepEqual(rest, expected);
+	assert.deepEqual(sanitizeProps("agent:turn_summary", summaries[0]), summaries[0]);
+	const again = await runTurn((id) => [terminal(id)], { correlation });
+	assert.equal(again.summaries[0].drafts, "0", "the summary clears its turn's drafts");
+	assert.equal(Object.hasOwn(again.summaries[0], "qa_first"), false);
+	closePostTurnWindow();
+}
+// A turn that never finishes does not leak: only the newest 16 turns keep drafts.
+{
+	const first = crypto.randomUUID();
+	noteTurnDraft(first, { clean: true, problems: 0 });
+	for (let index = 0; index < 16; index += 1) noteTurnDraft(crypto.randomUUID(), { clean: true, problems: 0 });
+	const { summaries } = await runTurn((id) => [terminal(id)], { correlation: first });
+	assert.equal(summaries[0].drafts, "0", "the oldest unfinished turn's drafts were dropped");
+	noteTurnDraft(undefined, { clean: true });
+	closePostTurnWindow();
+}
+
+// The post-turn window opens at finish (every outcome) and the next turn's start closes it.
+{
+	const captured = [];
+	const first = await runTurn((id) => [terminal(id, "failed", "upstream")], { captured });
+	const firstId = first.summaries[0].turn_id;
+	assert.equal(captured.some(({ event }) => event === "agent:post_turn_edit"), false, "the window is open, not yet sent");
+	withRunOrigin("ui", () => noteEditGesture("pose"))();
+	withRunOrigin("agent", () => noteEditGesture("pose"))();
+	await runTurn((id) => [terminal(id, "cancelled", "aborted")], { captured });
+	const names = captured.map(({ event }) => event);
+	assert.deepEqual(names, ["agent:turn_requested", "agent:turn_failed", "agent:turn_summary", "agent:post_turn_edit", "agent:turn_requested", "agent:turn_cancelled", "agent:turn_summary"],
+		"the next turn's start closes the previous window before its own request");
+	const edit = captured[3].props;
+	assert.equal(edit.turn_id, firstId, "the window carries the analytics turn id");
+	assert.equal(edit.edited, true);
+	assert.equal(edit.pose, "1", "only the user's gesture counts");
+	assert.equal(edit.first_delay, "lt10s");
+	const closed = closePostTurnWindow();
+	assert.equal(closed.turn_id, captured[6].props.turn_id, "a cancelled turn opened its own window too");
+	assert.equal(closed.edited, false);
+}
+
+// Spec check #2, through the real sidecar route: a refused Studio call reaches the browser as tool.done { ok: false }
+// whose error only leads with the code ("TARGET_NOT_READY: ..."); the summary reads that prefix.
+{
+	const { createFakeModel } = await import("./fixtures/fake-model.mjs");
+	const { fauxAssistantMessage, fauxText, fauxToolCall } = await import("@earendil-works/pi-ai/providers/faux");
+	const { contextFixture, envelopeFixture } = await import("./verify-studio-agent-protocol.mjs");
+	const hub = {
+		command: async (name) => (name === "arrange_objects" ? { ok: false, code: "TARGET_NOT_READY", message: "private refusal", phase: "admission", recovery: { action: "none" } } : { revision: { scene: 41 }, entities: [] }),
+		workspaceId: () => "tab-7", resolveWorkspace: () => "handle-12", handleForWorkspaceId: () => "handle-12", connected: true, workspaceHandles: ["handle-12"],
+	};
+	const model = createFakeModel();
+	model.fauxProvider.setResponses([
+		async () => fauxAssistantMessage([fauxToolCall("arrange_objects", { ops: [{ op: "create", source: { kind: "chair" }, name: "Chair", position: { world: { x: -1.4, y: 0, z: 0 } } }] }, { id: "t1" })]),
+		async () => fauxAssistantMessage([fauxText("It was refused.")]),
+	]);
+	const handler = createAgentHandler({ auth: { getAccessToken: async () => "token" }, codex: { parseQuotaHeaders: () => ({ primary: {}, credits: {} }) }, models: model.models, fauxProvider: model.fauxProvider, liveHub: hub, studioRuntime: { readContext: async () => contextFixture() } });
+	const server = createServer((req, res) => handler(req, res).catch((error) => { if (!res.headersSent) res.writeHead(500); res.end(error.message); }));
+	const url = await listen(server);
+	try {
+		const captured = [], seen = [];
+		const transport = createHttpTransport({ surface: "studio", capture: (event, props) => captured.push({ event, props }), fetchImpl: (path, init) => fetch(url + path, { ...init, headers: { ...init.headers, origin: url } }) });
+		await transport.turn({ ...envelopeFixture(), turnId: crypto.randomUUID(), sessionId: crypto.randomUUID(), model: "faux/scripted" }, (event) => seen.push(event));
+		const refusal = seen.find((event) => event.type === "tool.done");
+		console.log(`spec #2 refused tool.done frame: ${JSON.stringify(refusal)}`);
+		assert.equal(refusal.ok, false);
+		assert.match(refusal.error, /^TARGET_NOT_READY: /, "the code rides only as the error's prefix");
+		assert.equal(Object.hasOwn(refusal, "code"), false, "no structured code field on the frame");
+		const summary = captured.find(({ event }) => event === "agent:turn_summary")?.props;
+		assert.equal(summary?.refused, "1");
+		assert.equal(summary.refusal_top, "TARGET_NOT_READY");
+		assert.equal(summary.tool_failed, "1");
+		assert.equal(summary.outcome, "succeeded", "the model answered after the refusal; the sidecar reports the turn as succeeded");
+		assert.deepEqual(sanitizeProps("agent:turn_summary", summary), summary);
+		assert.ok(!JSON.stringify(captured).includes("private"));
+	} finally { closePostTurnWindow(); await handler.close(); await close(server); }
+}
+
+console.log("PASS agent:turn_summary: counts, refusal_top, stale_retry, authored, first_tool, cancel_phase, drafts trend and clearing, one per turn");
+console.log("PASS post-turn window: opened at finish with the analytics turn id, closed by the next turn's start");
 
 console.log("PASS Agent execution: browser ownership, refusal, failure, cancellation, retry, frame validation/dedupe, applied ack and fake-model HTTP/SSE");

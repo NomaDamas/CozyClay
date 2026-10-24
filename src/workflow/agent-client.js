@@ -23,12 +23,12 @@
 //   POST /agent/jobs/<jobId>/accept          -> explicit "Apply with warnings"
 //   GET  /agent/turn/<turnId>/supervisor     -> 200 supervisor note | 204 none (#728)
 
-import { bucketMs, track } from "../analytics.js";
+import { track } from "../analytics.js";
 import { appendAttachments, ATTACHMENT_MAX_COUNT } from "./attachment-image.js";
 import { ko } from "../locale.js";
-import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-telemetry.js";
+import { startAgentTurn } from "./agent-turn-telemetry.js";
 import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
-import { AGENT_FAILURE_CODES, refusalFailureCode, transportFailureCode } from "./agent-failure-codes.js";
+import { refusalFailureCode, transportFailureCode } from "./agent-failure-codes.js";
 import { requestAgentImage, sidecarRequest, sidecarUrl } from "../agent-image-client.js"; import { clearSculptSketch, sculptSketchFrame } from "../sculpt-sketch-state.js";
 import { actionLabelsOf, changedLine, scriptNow, stepFields, thinkingLine, withCompose, withThinking, withToolStart, withTurnEnd } from "./agent-turn.js";
 import { isPlanFrame, restoredPlans, withPlanEnd, withPlanFrame } from "./agent-plan.js";
@@ -490,9 +490,6 @@ export function parseSseChunk(buffer) {
 	return { events, tail };
 }
 
-const validTelemetryId = (value) => typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
-const exactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
-	&& Object.keys(value).length === keys.length && keys.every((key) => Object.hasOwn(value, key));
 const advisory = (read, fallback) => { try { return read(); } catch { return fallback; } };
 
 const UI_ERROR_CODES = new Set(["auth", "entitlement", "rate_limit", "overloaded", "upstream"]);
@@ -518,86 +515,6 @@ export async function refusalEvent(response) {
 		message,
 		...(status === null ? {} : { status }),
 		...(detail?.resetAt ? { resetAt: detail.resetAt } : {}),
-	};
-}
-
-// The real browser request owns the attempt, including HTTP refusal and Stop.
-// These IDs never use panel session IDs, model call IDs or authored content.
-function startAgentTurn({ surface, capture, now, correlationId = null }) {
-	const turnId = advisory(() => {
-		const bytes = new Uint8Array(16);
-		globalThis.crypto.getRandomValues(bytes);
-		return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-	}, null);
-	const clock = () => advisory(() => { const value = now(); return Number.isFinite(value) ? value : NaN; }, NaN);
-	// A Studio turn already has a host-owned id and its frozen envelope has no
-	// room for a second one, so the sidecar names its frames with THAT id. The
-	// analytics id stays the local hex one: it is the only id analytics accepts.
-	const matchId = correlationId ?? turnId;
-	const startedAt = clock();
-	const hostSurface = advisory(() => ["studio", "workflow"].includes(surface) ? surface
-		: /^\/workflow(?:\/|$)/.test(globalThis.location?.pathname || "") ? "workflow" : "studio", "studio");
-	let terminal = false;
-	let applied = false;
-	const tools = new Map();
-	const seenTools = new Set();
-	const emit = (event, props) => {
-		if (!turnId) return;
-		try { Promise.resolve(capture(event, props)).catch(() => {}); } catch { /* telemetry is advisory */ }
-	};
-	const finish = (outcome, failureCode) => {
-		if (terminal) return;
-		terminal = true;
-		if (outcome === "cancelled") {
-			for (const [id, tool] of tools) {
-				if (!seenTools.has(id)) emit("agent:tool_executed", { turn_id: turnId, tool_category: tool.category, outcome: "cancelled", duration_bucket: bucketMs(clock() - tool.startedAt) });
-			}
-		}
-		tools.clear();
-		emit(`agent:turn_${outcome}`, { turn_id: turnId, duration_bucket: bucketMs(clock() - startedAt), ...(outcome !== "succeeded" ? { failure_code: failureCode } : {}) });
-	};
-	emit("agent:turn_requested", { surface: hostSurface, turn_id: turnId });
-	return {
-		turnId,
-		cancel: () => finish("cancelled", "aborted"),
-		fail: (code) => finish("failed", AGENT_FAILURE_CODES.has(code) ? code : "upstream"),
-		frame(frame) {
-			// Local sidecar frames are still an untrusted boundary. Reject the whole
-			// frame, including extra fields, before dedupe or analytics capture.
-			try {
-				if (!turnId || terminal) return;
-				if (frame.type === "execution_tool_started") {
-					if (!exactKeys(frame, ["type", "turn_id", "telemetry_id", "tool_category"]) || frame.turn_id !== matchId
-						|| !validTelemetryId(frame.telemetry_id) || !AGENT_TOOL_CATEGORIES.includes(frame.tool_category)) return;
-					if (!tools.has(frame.telemetry_id) && !seenTools.has(frame.telemetry_id)) tools.set(frame.telemetry_id, { category: frame.tool_category, startedAt: clock() });
-					return;
-				}
-				const { event, props } = frame;
-				if (props?.turn_id !== matchId) return;
-				if (event === "agent:tool_executed") {
-					if (!exactKeys(frame, ["type", "event", "props", "telemetry_id"]) || !validTelemetryId(frame.telemetry_id)
-						|| !exactKeys(props, ["turn_id", "tool_category", "outcome", "duration_bucket"])
-						|| !AGENT_TOOL_CATEGORIES.includes(props.tool_category) || !["succeeded", "failed", "cancelled"].includes(props.outcome)
-						|| !EXECUTION_TELEMETRY_VALUES.duration_bucket.has(props.duration_bucket) || seenTools.has(frame.telemetry_id)) return;
-					seenTools.add(frame.telemetry_id);
-					tools.delete(frame.telemetry_id);
-					emit(event, { turn_id: turnId, tool_category: props.tool_category, outcome: props.outcome, duration_bucket: props.duration_bucket });
-					return;
-				}
-				if (!exactKeys(frame, ["type", "event", "props"])) return;
-				if (event === "agent:result_applied") {
-					if (!applied && exactKeys(props, ["turn_id"])) { applied = true; emit(event, { turn_id: turnId }); }
-					return;
-				}
-				if (!["agent:turn_succeeded", "agent:turn_failed", "agent:turn_cancelled"].includes(event)) return;
-				const outcome = event.slice("agent:turn_".length);
-				const hasFailure = Object.hasOwn(props, "failure_code");
-				if (!exactKeys(props, ["turn_id", "duration_bucket", ...(hasFailure ? ["failure_code"] : [])])
-					|| !EXECUTION_TELEMETRY_VALUES.duration_bucket.has(props.duration_bucket)
-					|| (hasFailure && (outcome === "succeeded" || !AGENT_FAILURE_CODES.has(props.failure_code)))) return;
-				finish(outcome, outcome === "cancelled" ? "aborted" : props.failure_code || "unknown");
-			} catch { /* foreign getters and malformed telemetry cannot affect a turn */ }
-		},
 	};
 }
 
@@ -730,7 +647,10 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 			const attached = Array.isArray(attachments) && attachments.length ? { attachments } : {};
 			const studio = turnRequest.surface === "studio";
 			const turnId = studio ? turnRequest.turnId : null;
-			const telemetry = startAgentTurn({ surface, capture, now, correlationId: turnId });
+			// The host's own surface wins over the URL (an embedded Studio panel on a /workflow path is still Studio).
+			const hostSurface = advisory(() => ["studio", "workflow"].includes(surface) ? surface
+				: /^\/workflow(?:\/|$)/.test(globalThis.location?.pathname || "") ? "workflow" : "studio", "studio");
+			const telemetry = startAgentTurn({ surface: hostSurface, capture, now, correlationId: turnId });
 			// The steer route is keyed by the id THIS request is known by upstream:
 			// the Studio envelope's turnId, or the hex id the dock mints for its own
 			// turn. The caller cannot know it any other way.
@@ -753,6 +673,7 @@ export function createHttpTransport({ fetchImpl = globalThis.fetch?.bind(globalT
 				}
 				if (event?.type === "error") failureCode = transportFailureCode(event);
 				if (event?.type === "done") terminal = true;
+				if (event?.type === "tool.start" || event?.type === "tool.done") telemetry.tool(event);
 				onEvent(event);
 			};
 			const readStream = async (response) => {
