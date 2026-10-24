@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import * as analytics from "../src/analytics.js";
 import { startExportAttempt } from "../src/export-attempt.js";
 import * as friction from "../src/analytics-friction.js";
-import { bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
+import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
 import { withRunOrigin, runOrigin } from "../src/bus-run-origin.js";
 import * as postTurn from "../src/post-turn-edits.js";
 import { createAppContext } from "../src/app-context.js";
@@ -1028,13 +1028,24 @@ assert.deepEqual(sanitizeProps("mcp:result_applied", { request_id: executionId, 
 	assert.equal(events[1].props.duration_bucket, "3-10s");
 }
 
-const executionDisclosure = new Map();
+const executionDisclosure = new Map(), strictRows = new Set();
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
 	for (const event of cells[0]?.match(/\b(?:workflow|agent|mcp):[a-z_]+\b/g) ?? []) {
-		executionDisclosure.set(event, new Set(cells[1]?.match(/\b[a-z][a-z0-9_]*\b/g) ?? []));
+		// Closed-schema agent events (turn summary, post-turn edits) are checked below with the other strict events.
+		if (!Object.hasOwn(STRICT_EVENT_KEYS, event)) executionDisclosure.set(event, new Set(cells[1]?.match(/\b[a-z][a-z0-9_]*\b/g) ?? []));
 	}
 }
+// Every strict event's row names each of its properties.
+for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
+	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
+	const event = cells[0]?.trim();
+	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit"].includes(event)) continue;
+	const tokens = new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
+	for (const key of STRICT_EVENT_KEYS[event]) assert.ok(tokens.has(key), `the privacy page discloses ${event} ${key}`);
+	strictRows.add(event);
+}
+assert.deepEqual([...strictRows].sort(), ["agent:post_turn_edit", "agent:turn_summary", "edit:undone", "studio:refused"], "each bus friction event has its own privacy row");
 const executionSchemas = {
 	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
 	"workflow:run_succeeded": ["run_id", "duration_bucket"],
