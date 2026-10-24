@@ -1,5 +1,6 @@
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
 import { EXPORT_FAILURE_CODES, exportPropAllowed, sessionEndedPropAllowed } from "./analytics-values.js";
+import { FRICTION_SUMMARY_KEYS, bump as bumpFriction, frictionPropAllowed, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
 export const MCP_TOOL_CATEGORIES = Object.freeze([
 	"read",
 	"camera",
@@ -100,6 +101,7 @@ const EVENT_PROPERTIES = Object.freeze({
 	"install:first_launch": ["heard_from"],
 	"app:session_started": [],
 	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched", ...EDIT_BUCKET_KEYS, "session_id"],
+	"app:friction_summary": FRICTION_SUMMARY_KEYS,
 	"app:error": ["error_kind", "error_type", "error_source", "error_file", "error_line", "error_col"],
 	"device:profile": ["gpu_vendor", "gpu_class", "webgl", "cpu_bucket", "memory_bucket", "frame_rate_bucket"],
 	"survey:use_case": ["use_case", "team"],
@@ -202,7 +204,7 @@ let deviceProfileStarted = false;
 // Passive signals describe the session; they are not user actions and never
 // move action_count_bucket.
 const PASSIVE_EVENTS = new Set([
-	"app:session_started", "app:session_ended", "install:first_launch",
+	"app:session_started", "app:session_ended", "app:friction_summary", "install:first_launch",
 	"app:error", "device:profile",
 ]);
 
@@ -264,8 +266,8 @@ export function sanitizeProps(event, props) {
 		if (event === "feature:used" && (key !== "name" || !FEATURE_NAMES.has(props[key]))) continue;
 		if (event === "install:first_launch" && (key !== "heard_from" || !HEARD_FROM_VALUES.has(props[key]))) continue;
 		if ((event.startsWith("export:attempt_") || event === "export:saved") && !exportPropAllowed(key, props[key])) continue;
-		if (event === "app:session_ended") {
-			if (sessionEndedPropAllowed(key, props[key])) sanitized[key] = props[key];
+		if (event === "app:session_ended" || event === "app:friction_summary") {
+			if ((event === "app:session_ended" ? sessionEndedPropAllowed : frictionPropAllowed)(key, props[key])) sanitized[key] = props[key];
 			continue;
 		}
 		if (event === "export:keyframe_pack") {
@@ -816,6 +818,7 @@ export async function initAnalytics() {
 			sessionStartedAt = Date.now();
 			installSessionEndListeners(resolved, globalProperties);
 			installErrorListeners();
+			observeLongTasks();
 			void recordDeviceProfile();
 			if (resolved.distribution === "npm") {
 				track("app:session_started");
@@ -897,7 +900,7 @@ function installErrorListeners() {
 	errorListenersInstalled = true;
 	const report = (payload) => {
 		try {
-			const props = describeError(payload);
+			const props = describeError(payload); bumpFriction("errors");
 			const signature = [props.error_kind, props.error_type, props.error_source, props.error_file, props.error_line, props.error_col].join("|");
 			if (errorSignaturesSeen.has(signature) || errorSignaturesSeen.size >= ERROR_SIGNATURE_LIMIT) return;
 			errorSignaturesSeen.add(signature);
@@ -1027,27 +1030,19 @@ function installSessionEndListeners(resolved, globalProperties) {
 			// This transport bypasses the SDK, so explicitly apply the same
 			// current opt-out and browser DNT policy before serializing an ID.
 			if (!enabled || !posthog || getAnalyticsOptOut() || posthog.has_opted_out_capturing()) return;
-			const payload = {
-				api_key: resolved.apiKey,
-				event: "app:session_ended",
-				properties: {
-					...globalProperties,
-					distinct_id: posthog.get_distinct_id(),
-					// The same validator as every SDK event; session_id joins the last events.
-					...sanitizeProps("app:session_ended", { session_id: posthog.get_session_id?.(),
-						duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
-						action_count_bucket: bucketCount(sessionActionCount),
-						scenes_touched: Math.min(20, sessionScenesTouched),
-						...sessionEditBuckets() }),
-				},
-			};
-			const body = JSON.stringify(payload);
 			const endpoint = `${resolved.apiHost.replace(/\/$/, "")}/e/`;
-			if (typeof globalThis.navigator?.sendBeacon === "function") {
-				globalThis.navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }));
-			} else {
-				void fetch(endpoint, { method: "POST", body, keepalive: true, headers: { "content-type": "application/json" } });
-			}
+			const identity = { ...globalProperties, distinct_id: posthog.get_distinct_id() };
+			// The same validator as every SDK event, one request per event.
+			const send = (event, props) => {
+				const body = JSON.stringify({ api_key: resolved.apiKey, event, properties: { ...identity, ...sanitizeProps(event, props) } });
+				if (typeof globalThis.navigator?.sendBeacon === "function") globalThis.navigator.sendBeacon(endpoint, new Blob([body], { type: "application/json" }));
+				else void fetch(endpoint, { method: "POST", body, keepalive: true, headers: { "content-type": "application/json" } });
+			};
+			const duration = bucketSessionDuration(Date.now() - sessionStartedAt);
+			// session_id joins the last events of the session.
+			send("app:session_ended", { session_id: posthog.get_session_id?.(), duration_bucket: duration, action_count_bucket: bucketCount(sessionActionCount),
+				scenes_touched: Math.min(20, sessionScenesTouched), ...sessionEditBuckets() });
+			send("app:friction_summary", { active_time: duration, ...frictionSnapshot() });
 		} catch {
 			// Unload telemetry is best effort.
 		}

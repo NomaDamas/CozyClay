@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import * as analytics from "../src/analytics.js";
 import { startExportAttempt } from "../src/export-attempt.js";
+import * as friction from "../src/analytics-friction.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -384,6 +385,48 @@ assert.deepEqual(sanitizeProps("export:saved", { method: "folder", reason: "no-w
 	assert.deepEqual([events.at(-1).props.stage, events.at(-1).props.progress], ["handoff", "26-50"], "a file already handed off ends the run in handoff");
 }
 console.log("PASS export retries, scene size, stop stage/progress, new export kinds and export:saved values");
+
+// PR F: the friction counter module. Closed buckets, caps, and no-op detection.
+{
+	friction.reset();
+	assert.deepEqual([0, 1, 2, 3, 4, 5, 6, 10, 11, 500, -1, NaN].map(friction.bucketFrictionCount), ["0", "1", "2", "3", "4-5", "4-5", "6-10", "6-10", "gte11", "gte11", "0", "0"]);
+	assert.equal(friction.bump("private_counter"), false, "an unknown counter name is ignored");
+	for (const n of [0, -2, NaN, Infinity]) assert.equal(friction.bump("undos", n), false, `bump rejects n=${n}`);
+	for (let i = 0; i < 12; i += 1) friction.bump("errors");
+	friction.noteLongTask(60); friction.noteLongTask(2400); friction.noteLongTask(-5); friction.noteLongTask("90");
+	friction.noteTick(1, 10); friction.noteTick(4, 10); friction.noteTick(5, 2); friction.noteTick(1.5, 3);
+	const snap = friction.snapshot();
+	assert.deepEqual([snap.errors, snap.long_tasks, snap.long_task_max, snap.late_tick_ratio, snap.undos], ["gte11", "2", "gte2000", "20-50", "0"]);
+	assert.deepEqual(Object.keys(snap).sort(), friction.FRICTION_SUMMARY_KEYS.filter((key) => key !== "active_time").sort(), "the snapshot is exactly the summary keys");
+	assert.deepEqual(sanitizeProps("app:friction_summary", { active_time: "5-15m", ...snap }), { active_time: "5-15m", ...snap }, "every snapshot value passes the validator");
+	for (const [key, value] of [["active_time", "lt1s"], ["errors", 12], ["errors", "12"], ["long_task_max", 2400], ["late_tick_ratio", "30"], ["refusal_text", "x"], ["undos", "1-3"]]) {
+		assert.deepEqual(sanitizeProps("app:friction_summary", { [key]: value }), {}, `friction summary rejects ${key}=${value}`);
+	}
+	// A detector's own event is capped per session; the counter keeps counting.
+	const admitted = [];
+	for (let i = 0; i < 5; i += 1) { friction.bump("rage_clicks"); admitted.push(friction.admit("ui:rage_click", 2)); }
+	assert.deepEqual(admitted, [true, true, false, false, false], "past its cap a detector stops emitting");
+	assert.equal(friction.snapshot().rage_clicks, "4-5", "the counter still counts what the cap held back");
+	assert.equal(friction.admit("ui:other", 0), false, "a zero cap admits nothing");
+	friction.reset();
+	assert.ok(Object.values(friction.snapshot()).every((value) => value === "0" || value === "lt50"), "reset clears counters, caps and maxima");
+	assert.equal(friction.admit("ui:rage_click", 2), true, "reset clears the caps too");
+	friction.reset();
+	// Long tasks: feature-detected, a no-op where the browser lacks them.
+	assert.equal(friction.observeLongTasks(undefined), false, "no PerformanceObserver is a no-op");
+	class NoLongTask { static supportedEntryTypes = ["mark"]; observe() { throw new Error("unexpected observe"); } }
+	assert.equal(friction.observeLongTasks(NoLongTask), false, "a PerformanceObserver without longtask is a no-op");
+	class Throws { static get supportedEntryTypes() { throw new Error("hostile"); } }
+	assert.equal(friction.observeLongTasks(Throws), false, "a throwing detector is a no-op");
+	let feed;
+	class LongTasks { static supportedEntryTypes = ["longtask"]; constructor(callback) { feed = callback; } observe(options) { assert.deepEqual(options, { type: "longtask" }); } }
+	assert.equal(friction.observeLongTasks(LongTasks), true);
+	feed({ getEntries: () => [{ duration: 70 }, { duration: 620 }] });
+	assert.deepEqual([friction.snapshot().long_tasks, friction.snapshot().long_task_max], ["2", "500-2000"], "observed long tasks feed the counters");
+	assert.equal(friction.observeLongTasks(LongTasks), true, "the observer installs once");
+	friction.reset();
+}
+console.log("PASS friction counters: closed buckets, per-event caps, validator, and feature-detected long tasks");
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 
 // Previs events (#653): closed values only, never a caption, name or prompt.
@@ -715,13 +758,14 @@ async function runtimeFixture({
 	const source = runtimeSource
 		.replace('"./semantic-edit.js"', JSON.stringify(new URL("../src/semantic-edit.js", import.meta.url).href))
 		.replace('"./analytics-values.js"', JSON.stringify(new URL("../src/analytics-values.js", import.meta.url).href))
+		.replace('"./analytics-friction.js"', JSON.stringify(new URL("../src/analytics-friction.js", import.meta.url).href))
 		.replace("import.meta.env", JSON.stringify(env))
 		.replace('import("posthog-js")', "Promise.resolve({ default: globalThis.__analyticsSdkFixture })");
 	const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${++runtimeFixtureId}`);
 	await module.initAnalytics();
 	await Promise.resolve(); // settle the resolved health probe, never a timing wait
 	return {
-		module, records, beacons, requests, store, sdk, options,
+		module, records, beacons, requests, store, sdk, options, listeners,
 		async unload() {
 			listeners.get("pagehide")?.();
 			listeners.get("beforeunload")?.();
@@ -740,7 +784,7 @@ try {
 			});
 			run.module.track("scene:loaded", { scene_source: "library", internal_qa: !internalQa, distribution: "forged", prompt: "private" });
 			const [ended] = await run.unload();
-			assert.equal(run.beacons.length, 1, "pagehide plus beforeunload sends exactly once");
+			assert.equal(run.beacons.length, 2, "pagehide plus beforeunload sends each end event exactly once");
 			assert.equal(ended.properties.session_id, "0192f0d6-3a4b-7c2d-8e9f-abcdefabcdef", `${distribution} session end carries the SDK session id`);
 			for (const record of run.records) {
 				assert.equal(record.properties.internal_qa, internalQa, "every capture carries the declared marker, never event-supplied overrides");
@@ -767,6 +811,33 @@ try {
 		assert.deepEqual(sanitizeProps("app:session_ended", { duration_bucket: "1-3s", scenes_touched: 21, action_count_bucket: "lt1m", pose_edit_bucket: 2, distinct_id: "x" }), {},
 			"session end values are its own closed buckets and a capped count");
 		console.log("PASS allowlist gate drops unlisted events; session end goes through the validator with session_id");
+	}
+	{
+		friction.reset();
+		const run = await runtimeFixture();
+		friction.bump("refusals_ui");
+		friction.bump("refusals_agent", 4);
+		friction.bump("undos");
+		friction.noteLongTask(180);
+		// Every error counts, including repeats the app:error signature dedupe does not send again.
+		for (let i = 0; i < 2; i += 1) run.listeners.get("error")({ error: new TypeError("private"), filename: "http://127.0.0.1:5180/src/App.jsx", lineno: 3, colno: 4 });
+		run.listeners.get("error")({ message: "ResizeObserver loop limit exceeded" });
+		assert.equal(run.records.filter(({ event }) => event === "app:error").length, 1, "one app:error per signature");
+		run.module.track("app:friction_summary", { active_time: "lt1m", undos: "private" });
+		const [ended, summary] = await run.unload();
+		assert.equal(ended.event, "app:session_ended");
+		assert.equal(ended.properties.action_count_bucket, "0", "app:friction_summary is passive and never counts as an action");
+		assert.equal(summary.event, "app:friction_summary");
+		assert.equal(summary.properties.distinct_id, ended.properties.distinct_id);
+		assert.equal(summary.properties.distribution, ended.properties.distribution, "the summary carries the same global properties");
+		const { distinct_id: _id, distribution: _d, app_version: _v, origin_kind: _o, os: _os, install_kind: _k, update_status: _u, internal_qa: _q, ...counters } = summary.properties;
+		assert.deepEqual(counters, {
+			active_time: ended.properties.duration_bucket,
+			refusals_ui: "1", refusals_agent: "4-5", undos: "1", errors: "2", rage_clicks: "0", dead_clicks: "0", shortcut_ignored: "0",
+			search_empty: "0", nav_thrash: "0", camera_thrash: "0", long_tasks: "1", long_task_max: "150-500", late_tick_ratio: "0",
+		}, "the end beacon sends the session's counters as closed buckets");
+		friction.reset();
+		console.log("PASS app:friction_summary rides the end beacon, validated, passive, with active_time = the session duration bucket");
 	}
 	const external = cohortFixtures.filter((row) => row.properties.internal_qa !== true);
 	assert.equal(external.some((row) => row.properties.internal_qa === true), false);
@@ -836,7 +907,7 @@ try {
 	const fallback = await runtimeFixture({ beacon: false });
 	await fallback.unload();
 	const keepalive = fallback.requests.filter(({ init }) => init?.keepalive);
-	assert.equal(keepalive.length, 1);
+	assert.deepEqual(keepalive.map(({ init }) => JSON.parse(init.body).event), ["app:session_ended", "app:friction_summary"], "without sendBeacon each end event is one keepalive request");
 	assert.equal(JSON.parse(keepalive[0].init.body).properties.distribution, "npm");
 	console.log("PASS internal/external fixtures, restart identity, capture/beacon parity, opt-out and build policy");
 } finally {
@@ -1105,6 +1176,9 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 	});
 	const sessionTokens = rowTokens("app:session_ended");
 	for (const key of EDIT_BUCKET_KEYS) assert.ok(sessionTokens.has(key), `session end discloses ${key}`);
+	const frictionTokens = rowTokens("app:friction_summary");
+	for (const key of friction.FRICTION_SUMMARY_KEYS) assert.ok(frictionTokens?.has(key), `the privacy page discloses friction summary ${key}`);
+	for (const value of ["4-5", "6-10", "gte11", "150-500", "gte2000", "5-20", "gte50"]) assert.ok(frictionTokens.has(value), `the privacy page lists friction value ${value}`);
 	assert.ok(FEATURE_USAGE_NAMES.includes("pose_save"));
 	for (const name of ["export_depth_video", "export_keyframe_pack", "export_render_pass", "export_storyboard"]) assert.ok(FEATURE_USAGE_NAMES.includes(name), `${name} is no longer silently dropped`);
 	assert.deepEqual(sanitizeProps("feature:used", { name: "pose_save" }), { name: "pose_save" });

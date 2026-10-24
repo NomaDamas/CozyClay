@@ -4,6 +4,7 @@
 import { StudioProtocolError, StudioSchemas, validateStudioSchema, validateReceipt, validateStudioIdentity, refusalCode } from './studio-agent-protocol.js';
 import { agentTurnControls, markAgentTurn, turnEditPoint, recordTurnEdit, undoTurnEdit } from './agent-turn-mark.js';
 import { createBusTasks } from './bus-tasks.js';
+import { bump as bumpFriction } from './analytics-friction.js';
 
 export { withCommandHistory } from './command-history.js';
 
@@ -228,10 +229,7 @@ export function createCommandBus({ registry, ports }) {
     };
     let begun = false, releaseToasts, timer, foregroundTimer, job, applied = false, committedHistoryId;
     const controller = new AbortController();
-    const clearTimer = () => {
-      if (timer !== undefined) clear(timer);
-      if (foregroundTimer !== undefined) clear(foregroundTimer);
-    };
+    const clearTimer = () => { if (timer !== undefined) clear(timer); if (foregroundTimer !== undefined) clear(foregroundTimer); };
     const toasts = [];
     const toastRefusal = () => toasts.length && ports.read().revision === before.revision ? new StudioProtocolError('TARGET_NOT_READY', toasts.at(-1).message) : null;
     const remember = value => {
@@ -241,6 +239,8 @@ export function createCommandBus({ registry, ports }) {
         value = validateReceipt({ ...value, commandId, jobId: job.id });
       }
       const recorded = journal.record(value);
+      // Session friction: an undo the user made (agent undos are the agent's own correction).
+      if (id === 'edit.undo' && request.origin === 'ui' && recorded.status === 'undone') bumpFriction('undos');
       if (recorded.undo?.canUndoDirect && !id.startsWith('edit.')) historyReceipts.set(recorded.undo.historyEntryId, recorded);
       for (const [key, receipt] of historyReceipts) if (ports.isRetained?.(receipt) === false) historyReceipts.delete(key);
       ports.remember?.(recorded); return recorded;
@@ -251,6 +251,8 @@ export function createCommandBus({ registry, ports }) {
       if (!(error instanceof StudioProtocolError)) error = toastRefusal() ?? error;
       if (request.origin === 'ui' && error.uiMessage) ports.showRefusal?.(error.uiMessage);
       const value = refusal(request, before, error, job ? applied : undefined);
+      // Session friction: a refusal, by who asked. A cancel the caller asked for is not one.
+      if (value.code !== 'CANCELLED') bumpFriction(request.origin === 'ui' ? 'refusals_ui' : 'refusals_agent');
       const recorded = begun ? remember(value) : value;
       if (job && !job.completion) { job.outcome = recorded; job.completion = Promise.resolve(recorded); emit({ type: 'job.completed', jobId: job.id, receipt: recorded }); }
       return recorded;

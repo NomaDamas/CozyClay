@@ -27,7 +27,7 @@ export function exportPropAllowed(key, value) {
 	return EXPORT_PROPERTY_VALUES[key]?.has(value) ?? false;
 }
 
-const SESSION_DURATION_BUCKETS = new Set(["lt1m", "1-5m", "5-15m", "15-30m", "gte30m"]);
+export const SESSION_DURATION_BUCKETS = new Set(["lt1m", "1-5m", "5-15m", "15-30m", "gte30m"]);
 // The SDK's session id is a random UUID; nothing else may ride in that slot.
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const SCENES_TOUCHED_MAX = 20;

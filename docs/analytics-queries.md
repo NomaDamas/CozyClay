@@ -1123,6 +1123,59 @@ WHERE event = 'app:session_started' AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY status, version ORDER BY people DESC;
 ```
 
+# Session friction summary
+
+`app:friction_summary` is one passive event per session, sent by the same
+end-of-session beacon as `app:session_ended` and validated by the same
+sanitizer (`src/analytics-friction.js`, `src/analytics.js`). It never moves
+`action_count_bucket`. Builds before this release have no row: the summary is
+**unknown, not 0**. Exclude `internal_qa = true` with
+`JSONExtractRaw(properties, 'internal_qa') != 'true'`.
+
+## Event contract
+
+| Property | Values | Source |
+| --- | --- | --- |
+| `active_time` | `lt1m`, `1-5m`, `5-15m`, `15-30m`, `gte30m` | The session duration bucket, identical to `app:session_ended.duration_bucket` |
+| `refusals_ui`, `refusals_agent` | count bucket | Every refused command-bus run, by origin (`ui`, everything else). A cancel the caller asked for (`CANCELLED`) is not counted |
+| `undos` | count bucket | Successful `edit.undo` runs from the UI. Agent undos and no-op undos are not counted |
+| `errors` | count bucket | Every reported window error and unhandled rejection, including repeats that `app:error`'s 10-signature dedupe does not send |
+| `long_tasks`, `long_task_max` | count bucket; `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `PerformanceObserver` `longtask` entries. Where the browser does not report long tasks (feature-detected), the values stay `0` / `lt50`: **unsupported, not smooth** |
+| `late_tick_ratio` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Reserved for the playback detector; `0` until it ships |
+| `rage_clicks`, `dead_clicks`, `shortcut_ignored`, `search_empty`, `nav_thrash`, `camera_thrash` | count bucket | Reserved; `0` until their detectors ship |
+
+Count bucket: `0`, `1`, `2`, `3`, `4-5`, `6-10`, `gte11`. A detector with
+its own event emits it only up to that event's per-session cap and then only
+counts here, so `app:friction_summary` is the uncapped total.
+
+Unload delivery is best effort: a crashed or killed tab sends neither end
+event. Compare summaries with `app:session_ended` from the same build, not
+with every `app:session_started`.
+
+## 5.10 Session friction by active time (7 days)
+
+```sql
+SELECT
+    properties.active_time AS active_time,
+    count() AS sessions,
+    countIf(properties.refusals_ui != '0') AS with_ui_refusal,
+    countIf(properties.refusals_agent != '0') AS with_agent_refusal,
+    countIf(properties.undos != '0') AS with_undo,
+    countIf(properties.errors != '0') AS with_error,
+    countIf(properties.long_tasks != '0') AS with_long_task,
+    countIf(properties.long_task_max IN ('500-2000', 'gte2000')) AS with_task_over_500ms
+FROM events
+WHERE event = 'app:friction_summary'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 7 DAY
+GROUP BY active_time
+ORDER BY indexOf(['lt1m', '1-5m', '5-15m', '15-30m', 'gte30m'], active_time)
+```
+
+Read counts beside each share: at about 120 sessions in 90 days a row can
+hold a handful of sessions. A bucket is a range, so sum sessions, never the
+bucket labels.
+
 # Storyboard and capsule-figure events (issue #653)
 
 Counts only. None of these events carries a caption, a panel or character name,
