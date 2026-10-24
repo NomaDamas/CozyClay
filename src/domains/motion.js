@@ -88,10 +88,8 @@ export function createMotionDomain(appContext, characters) {
 		}
 		return decoded.get(take);
 	}
-	const motionFor = id => materialize(layer(id).take), fullMotionFor = id => materialize(layer(id).fullTake);
-	const visibleMotion = motionFor;
-	const frame = () => appContext.live.state?.timeline.currentFrame ?? 0;
-	const rigFor = id => appContext.shared.rigs[id];
+	const motionFor = id => materialize(layer(id).take), fullMotionFor = id => materialize(layer(id).fullTake), visibleMotion = motionFor;
+	const frame = () => appContext.live.state?.timeline.currentFrame ?? 0, rigFor = id => appContext.shared.rigs[id];
 	// Rig-only tools refuse a capsule figure by name before looking for its rig.
 	const rigOnly = (id, feature) => refuseRigOnly(appContext.storeDomain('cast')?.read().find(row => row.id === id), feature);
 	function rigSnapshots() {
@@ -233,7 +231,10 @@ export function createMotionDomain(appContext, characters) {
 		writeLayer(id, { take: null, fullTake: null, ikKeys: [], ikPins: [], ikPinResiduals: [], committedIkEdits: [] });
 		synchronizeTimeline();
 	}
-	function bakeCurrentKey(id, at, dragIds = null) {
+	// `preimage` is the rig before a drag: by drag end the rig already shows the drag, so the
+	// image the action records for Undo would otherwise be the dragged pose.
+	function bakeCurrentKey(id, at, dragIds = null, preimage = null) { const before = read(), receipt = bakeKey(id, at, dragIds); if (receipt && preimage) rigImages.get(before)?.set(id, preimage); return receipt; }
+	function bakeKey(id, at, dragIds) {
 		const rig = rigFor(id), resolved = rig && resolveIkRig(rig);
 		if (!resolved) return null;
 		const take = motionFor(id);
@@ -829,7 +830,7 @@ export function useMotion(appContext) {
 		const drag = ikDragRef.current;
 		ikDragRef.current = null;
 		if (!motion) {
-			keyIkPoseAtPlayhead();
+			keyIkPoseAtPlayhead(null, ikPreDragRef.current?.beforeRig ?? null);
 			ikPreDragRef.current = null;
 			setIkTick((n) => n + 1);
 			return;
@@ -869,8 +870,8 @@ export function useMotion(appContext) {
 	 * and set them as a key through the shared registry. A bake only writes
 	 * TRACKED parts: with nothing dragged yet there is no key, nothing is
 	 * dispatched and Ctrl+Z never goes dead. */
-	function keyIkPoseAtPlayhead(dragIds = null) {
-		if (appContext.storeDomain('motion')) return appContext.storeDomain('motion').bakeCurrentKey(appContext.shared.activeChar.id, appContext.shared.tlFrame, dragIds);
+	function keyIkPoseAtPlayhead(dragIds = null, preimage = null) {
+		if (appContext.storeDomain('motion')) return appContext.storeDomain('motion').bakeCurrentKey(appContext.shared.activeChar.id, appContext.shared.tlFrame, dragIds, preimage);
 		const scratch = { ...createIkState(), tracked: new Set(appContext.shared.ikStateRef.current.tracked) };
 		ikBakeKeyframe(ikChains, scratch, appContext.shared.tlFrame, ikFkJoints);
 		const baked = scratch.keys.get(appContext.shared.tlFrame);

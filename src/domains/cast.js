@@ -2,6 +2,7 @@ import { copyPhysicsKeys } from "../motion/physics-review.js";
 import { useState, useMemo, useEffect, useSyncExternalStore, useContext } from "react";
 import { AppContext } from '../app-context.js';
 import { createDocumentStore } from "../document-store.js";
+import { createSceneUndo } from "./scene-undo.js";
 import { useDocumentDomain } from "../store/use-document-store.js";
 import { arrangement } from "../studio-agent-commands.js";
 import { timelineContentExtent, timelineSpan } from '../timeline-extent.js';
@@ -713,17 +714,7 @@ export function useCast(appContext) {
 		appContext.shared.bufferRef.current = { ...appContext.shared.bufferRef.current, waypoints: layer.waypoints };
 		setWaypoints(layer.waypoints);
 	}
-	function undoScene() {
-		const receipt = appContext.bus.run('edit.undo');
-		// A refusal says why: the last edit belongs to a running task (parallel tasks), which its own card undoes.
-		if (receipt.status === 'noop' || receipt.ok === false) appContext.notify(receipt.ok === false ? ko(receipt.message ?? "Undo was refused", `실행 취소 불가: ${receipt.message ?? ""}`) : ko("Nothing to undo", "실행 취소할 작업이 없어요"));
-		return receipt;
-	}
-	function redoScene() {
-		const receipt = appContext.bus.run('edit.redo');
-		if (receipt.status === 'noop') appContext.notify(ko("Nothing to redo", "다시 실행할 작업이 없어요"));
-		return receipt;
-	}
+	const { undoScene, redoScene } = createSceneUndo(appContext);
 	function snapshotStudioDomain(domain, targetId) {
 		if (domain === 'motion' && appContext.storeDomain('motion')) return appContext.storeDomain('motion').snapshotTarget(targetId);
 		const state = appContext.shared.readStudioState();
