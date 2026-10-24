@@ -2783,7 +2783,7 @@ export default function App() {
 
 	function updateExportStatus(job, phase, details = {}) {
 		if (recRef.current !== job) return;
-		job.cancellable = details.cancellable ?? false; job.attempt?.note(phase, details);
+		job.cancellable = details.cancellable ?? false; if (!job.controller.signal.aborted) job.attempt?.note(phase, details);
 		setExportStatus({ kind: job.request.kind, phase, label: job.label, ...details });
 	}
 

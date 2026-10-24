@@ -278,6 +278,23 @@ assert.equal(depth.api.job, null);
 assertPaired(depth, 1);
 console.log("PASS cancellable depth prepass restores camera/bones and releases capture before encoding");
 
+// Stop during encoding: the "Cancelling…" status is UI only, so the cancelled
+// attempt still reports the stage and frame share it stopped at.
+const stopped = fixture();
+stopped.deps.encodeGate = deferred();
+const encodeEntered = stopped.signal("encode");
+const stoppedRun = stopped.api.exportShotVideo();
+const encodeOptions = await encodeEntered;
+encodeOptions.onPhase({ phase: "encoding", cancellable: true });
+encodeOptions.onFrame({ index: 4, frameCount: 10 });
+stopped.api.stopShotRecording();
+stopped.deps.encodeGate.resolve();
+await bounded(stoppedRun);
+const stoppedEnd = stopped.lifecycle.find(({ event }) => event === "export:attempt_cancelled");
+assert.deepEqual([stoppedEnd?.props.stage, stoppedEnd?.props.progress], ["encoding", "26-50"], "Stop keeps the stage and progress it interrupted");
+assertPaired(stopped, 1);
+console.log("PASS a stopped export reports the stage and progress it was stopped at, not the cancelling message");
+
 const render = fixture();
 const beforeRender = editor(render);
 render.deps.renderError = new Error("renderer lost");
