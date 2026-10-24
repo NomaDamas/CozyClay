@@ -4,7 +4,7 @@ import { createAppContext } from "../src/app-context.js";
 import { createSceneObject } from "../src/scene-objects.js";
 import { createSceneHistoryStore } from "../src/document-store.js";
 import { dispatchLiveFrame } from "../src/live-control.js";
-import { startExportAttempt } from "../src/analytics.js";
+import { startExportAttempt } from "../src/export-attempt.js";
 import { readFileSync } from "node:fs";
 import { requestKeyframePack, KEYFRAME_PACK_RESULT } from "../src/workflow/keyframe-pack-request.js";
 

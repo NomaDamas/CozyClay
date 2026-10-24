@@ -1,6 +1,7 @@
 // Optional export folder. When the browser grants a directory, download-type
 // exports are written there; every failure path falls back to the browser's
 // normal download so an export is never lost.
+import { track } from "./analytics.js";
 
 const DB_NAME = "cozyclay-export-workspace";
 const DB_VERSION = 1;
@@ -211,8 +212,18 @@ export async function clearExportWorkspace() {
 	}
 }
 
-/** Save an export to the chosen folder, or hand it to the browser on any miss. */
+// saveExport's fallback reasons as the closed export:saved vocabulary.
+const SAVED_REASONS = { "unsupported": "unsupported", "no-workspace": "no_workspace", "workspace-permission": "permission", "workspace-write-failed": "write_failed" };
+
+/** Save an export to the chosen folder, or hand it to the browser on any miss.
+ * Every call reports export:saved (method and fallback reason, never a name). */
 export async function saveExport(source, name, options = {}) {
+	const result = await saveExportFile(source, name, options);
+	(options.track ?? track)("export:saved", { method: result.method, reason: SAVED_REASONS[result.reason] ?? "none" });
+	return result;
+}
+
+async function saveExportFile(source, name, options) {
 	const injectedDirectory = Object.prototype.hasOwnProperty.call(options, "directory");
 	const download = options.download ?? clickDownload;
 	if (!injectedDirectory && !canChooseExportWorkspace()) {

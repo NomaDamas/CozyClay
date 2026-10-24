@@ -229,8 +229,10 @@ function assertAttempt(events, { kind, format, surface = "studio", terminal = "s
 		assert.equal(record.properties.export_kind, kind);
 		assert.equal(record.properties.format, format);
 		assert.equal(record.properties.surface, surface);
-		const expectedKeys = ["attempt_id", "export_kind", "format", "surface"];
-		if (record === end) expectedKeys.push("duration_bucket", ...(failure ? ["failure_code"] : []));
+		// objects rides only where the caller knows the scene; retry_of only on a retry.
+		const expectedKeys = ["attempt_id", "export_kind", "format", "surface", "is_retry",
+			...(Object.hasOwn(record.properties, "objects") ? ["objects"] : []), ...(record.properties.is_retry ? ["retry_of"] : [])];
+		if (record === end) expectedKeys.push("duration_bucket", ...(failure ? ["failure_code", "stage", "progress"] : []));
 		assert.deepEqual(Object.keys(record.properties).sort(), expectedKeys.sort(), "exact sanitized property allowlist");
 	}
 	assert.ok(durations.has(end.properties.duration_bucket), "terminal has bucketMs duration");

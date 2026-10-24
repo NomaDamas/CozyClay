@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { startExportAttempt, track } from "../analytics.js";
+import { track } from "../analytics.js"; import { startExportAttempt } from "../export-attempt.js";
 import { downloadPack, requestKeyframePack } from "./keyframe-pack-request.js";
 import {
 	applyCozyScenePatch,

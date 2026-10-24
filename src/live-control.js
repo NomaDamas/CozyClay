@@ -4,11 +4,7 @@
 import { sanitizeProps, track } from "./analytics.js";
 import { EXECUTION_TELEMETRY_EVENTS, EXECUTION_TELEMETRY_PROPERTY_KEYS } from "./execution-telemetry.js";
 
-const MOTION_TELEMETRY_EVENTS = new Set([
-	"motion:generate_requested", "motion:preflight_blocked", "motion:preflight_passed",
-	"motion:job_started", "motion:job_succeeded", "motion:job_failed", "motion:result_applied",
-]);
-const LIVE_TELEMETRY_EVENTS = new Set([...MOTION_TELEMETRY_EVENTS, ...EXECUTION_TELEMETRY_EVENTS.filter((event) => event.startsWith("mcp:"))]);
+const LIVE_TELEMETRY_EVENTS = new Set(EXECUTION_TELEMETRY_EVENTS.filter((event) => event.startsWith("mcp:")));
 
 const LIVE_CONTROL_PORT = import.meta.env?.VITE_COZYCLAY_LIVE_PORT ?? "5184";
 // The npm launcher serves a prebuilt bundle, so the build-time port above is
@@ -159,7 +155,6 @@ export function createLiveControl({
 	// A duplicated tab carries a copy of this tab's id; the hub refuses the
 	// second socket, so the loser mints and stores a new identity, then retries.
 	onDuplicate = () => mintLiveWorkspaceId(),
-	captureMotionTelemetry = track,
 	captureTelemetry = track,
 	workspaceId = "",
 	// Optional identity for the hub's live_status listing (scene/project names).
@@ -191,13 +186,11 @@ export function createLiveControl({
 		if (!correlationId) return;
 		if (EXECUTION_TELEMETRY_EVENTS.includes(payload.event)
 			&& EXECUTION_TELEMETRY_PROPERTY_KEYS[payload.event]?.some((key) => !Object.hasOwn(props, key))) return;
-		if ((payload.event === "motion:generate_requested" || payload.event.startsWith("motion:preflight_")) && props.surface !== "mcp") return;
 		const key = `${correlationId}:${payload.event}`;
 		if (capturedStages.has(key)) return;
 		capturedStages.add(key);
-		const capture = payload.event.startsWith("motion:") ? captureMotionTelemetry : captureTelemetry;
 		try {
-			Promise.resolve(capture(payload.event, props)).catch(() => {
+			Promise.resolve(captureTelemetry(payload.event, props)).catch(() => {
 				// SDK failures must not affect command dispatch or generation.
 			});
 		} catch {

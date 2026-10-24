@@ -4,7 +4,7 @@ import { ko } from "../locale.js";
 import { assetRecord, rememberAsset } from "../scene-asset-cache.js";
 import { ASSET_MAX_SOURCE_BYTES, importImageFile } from "../scene-assets.js";
 import { STILL_HOLD_MAX } from "../shot-authoring.js";
-import { startExportAttempt, track } from "../analytics.js";
+import { track } from "../analytics.js"; import { startExportAttempt } from "../export-attempt.js";
 import { bytesToDataUrl, panelVideoPrompt, sendPanelToWorkflow } from "../workflow-send.js";
 import { panelStylizeRequest, requestAgentImage, stylizedPngBytes, stylizeErrorMessage } from "../agent-image-client.js";
 

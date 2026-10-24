@@ -1,4 +1,5 @@
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
+import { EXPORT_FAILURE_CODES, exportPropAllowed, sessionEndedPropAllowed } from "./analytics-values.js";
 export const MCP_TOOL_CATEGORIES = Object.freeze([
 	"read",
 	"camera",
@@ -94,10 +95,11 @@ const DEFAULT_ALLOWED_ORIGINS = Object.freeze([
 	"https://cozyclay.org",
 	"https://www.cozyclay.org",
 ]);
+const EXPORT_ATTEMPT_KEYS = ["attempt_id", "export_kind", "format", "surface", "is_retry", "retry_of", "objects"];
 const EVENT_PROPERTIES = Object.freeze({
 	"install:first_launch": ["heard_from"],
 	"app:session_started": [],
-	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched", ...EDIT_BUCKET_KEYS],
+	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched", ...EDIT_BUCKET_KEYS, "session_id"],
 	"app:error": ["error_kind", "error_type", "error_source", "error_file", "error_line", "error_col"],
 	"device:profile": ["gpu_vendor", "gpu_class", "webgl", "cpu_bucket", "memory_bucket", "frame_rate_bucket"],
 	"survey:use_case": ["use_case", "team"],
@@ -116,21 +118,14 @@ const EVENT_PROPERTIES = Object.freeze({
 	"project:opened": ["age_bucket"],
 	"craft:first_action": ["action_kind"],
 	"craft:first_edit": ["edit_kind", "definition_version"],
-	"motion:generate_requested": ["surface", "input_mode", "request_id"],
-	"motion:preflight_blocked": ["reason", "surface", "request_id"],
-	"motion:preflight_passed": ["backend", "surface", "request_id"],
-	"motion:job_started": ["backend", "input_mode", "request_id"],
-	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode", "request_id"],
-	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code", "request_id"],
-	"motion:result_applied": ["request_id", "backend"],
 	"export:blocking_frame_succeeded": ["format"],
 	"export:video_succeeded": ["format"],
 	"export:keyframe_pack": ["entries", "source"],
-	"export:attempt_started": ["attempt_id", "export_kind", "format", "surface"],
-	"export:attempt_succeeded": ["attempt_id", "export_kind", "format", "surface", "duration_bucket"],
-	"export:attempt_failed": ["attempt_id", "export_kind", "format", "surface", "duration_bucket", "failure_code"],
-	"export:attempt_cancelled": ["attempt_id", "export_kind", "format", "surface", "duration_bucket", "failure_code"],
-	"sample:played": ["from"],
+	"export:attempt_started": EXPORT_ATTEMPT_KEYS,
+	"export:attempt_succeeded": [...EXPORT_ATTEMPT_KEYS, "duration_bucket"],
+	"export:attempt_failed": [...EXPORT_ATTEMPT_KEYS, "duration_bucket", "failure_code", "stage", "progress"],
+	"export:attempt_cancelled": [...EXPORT_ATTEMPT_KEYS, "duration_bucket", "failure_code", "stage", "progress"],
+	"export:saved": ["method", "reason"],
 	"playground:opened": [],
 	"playground:first_action": ["action_kind"],
 	"playground:first_edit": ["edit_kind", "definition_version"],
@@ -140,35 +135,15 @@ const EVENT_PROPERTIES = Object.freeze({
 });
 const FEATURE_NAMES = new Set([
 	"pose_edit", "pose_save", "camera_fly", "orbit", "dolly_rail", "crane_graph", "timeline_scrub",
-	"prompt_block_add", "shot_add", "shot_cut", "export_pose", "export_frame", "export_video",
-	"export_depth_video", "export_keyframe_pack",
-	"mcp_connected", "auto_color", "plan_view",
+	"export_frame", "export_video",
+	"export_depth_video", "export_keyframe_pack", "export_render_pass", "export_storyboard",
+	"auto_color",
 ]);
 // `site` and `playground` arrive through `npx cozyclay --via <source>` from the
 // landing page's copy commands; the others are the first-launch prompt answers.
 export const HEARD_FROM_SOURCES = Object.freeze(["x", "hn", "reddit", "github", "friend", "other", "site", "playground"]);
 const HEARD_FROM_VALUES = new Set(HEARD_FROM_SOURCES);
 const DENIED_PROPERTY_KEYS = new Set(["prompt", "text", "url", "path", "file"]);
-const MOTION_ERROR_CODES = new Set(["aborted", "unsupported_route", "generation_failed", "quota", "unknown"]);
-const MOTION_PROPERTY_VALUES = Object.freeze({
-	// `fal` is the Studio's AI video route (H3 Max Turbo through api.cozyclay.org).
-	backend: new Set(["none", "local_kimodo", "hosted", "fal"]),
-	surface: new Set(["timeline", "line_edit", "trail", "mcp", "fal_card", "agent"]),
-	input_mode: new Set(["prompt", "pose", "edit", "a_to_b", "still"]),
-	// `locked`: the AI video route is not enabled for this account yet.
-	// `missing_input`: A/B stills, segmentation or a shared camera are missing.
-	reason: new Set(["unconfigured", "unreachable", "unsupported_route", "locked", "missing_input"]),
-	error_code: MOTION_ERROR_CODES,
-	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
-});
-const EXPORT_FAILURE_CODES = new Set(["unsupported_codec", "encode_failed", "render_failed", "aborted", "unknown"]);
-const EXPORT_PROPERTY_VALUES = Object.freeze({
-	export_kind: new Set(["video", "depth_video", "frame", "keyframe_pack", "workflow_send", "animation_project", "contact_sheet", "panel_pack", "animatic"]),
-	format: new Set(["mp4", "png", "zip", "cclayproject"]),
-	surface: new Set(["studio", "workflow", "embed"]),
-	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
-	failure_code: EXPORT_FAILURE_CODES,
-});
 // Sculpt mode (#739): one sculpt_run per finished run. Numbers only: no
 // reference image, recipe, part name or sculpt id ever rides along.
 export const SCULPT_RUN_OUTCOMES = Object.freeze(["done", "cancelled", "failed"]);
@@ -288,10 +263,10 @@ export function sanitizeProps(event, props) {
 		if (DENIED_PROPERTY_KEYS.has(key) || !Object.hasOwn(props, key)) continue;
 		if (event === "feature:used" && (key !== "name" || !FEATURE_NAMES.has(props[key]))) continue;
 		if (event === "install:first_launch" && (key !== "heard_from" || !HEARD_FROM_VALUES.has(props[key]))) continue;
-		if (event.startsWith("export:attempt_")) {
-			if (key === "attempt_id") {
-				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
-			} else if (!EXPORT_PROPERTY_VALUES[key]?.has(props[key])) continue;
+		if ((event.startsWith("export:attempt_") || event === "export:saved") && !exportPropAllowed(key, props[key])) continue;
+		if (event === "app:session_ended") {
+			if (sessionEndedPropAllowed(key, props[key])) sanitized[key] = props[key];
+			continue;
 		}
 		if (event === "export:keyframe_pack") {
 			if (key === "source" && props[key] !== "workflow") continue;
@@ -300,11 +275,6 @@ export function sanitizeProps(event, props) {
 		if (event === "craft:first_edit" || event === "playground:first_edit") {
 			if (key === "edit_kind" && !FIRST_EDIT_KINDS.includes(props[key])) continue;
 			if (key === "definition_version" && props[key] !== FIRST_EDIT_VERSION) continue;
-		}
-		if (event.startsWith("motion:")) {
-			if (key === "request_id") {
-				if (typeof props[key] !== "string" || !/^[a-f0-9]{32}$/.test(props[key])) continue;
-			} else if (!MOTION_PROPERTY_VALUES[key]?.has(props[key])) continue;
 		}
 		if (event.startsWith("workflow:") || event.startsWith("agent:") || event.startsWith("mcp:")) {
 			if (key === "run_id" || key === "turn_id" || key === "request_id") {
@@ -545,63 +515,6 @@ export function exportFailureCode(error, fallbackCode = "unknown") {
 		// Error objects can cross realms or expose throwing getters.
 	}
 	return EXPORT_FAILURE_CODES.has(fallbackCode) ? fallbackCode : "unknown";
-}
-
-/**
- * One user-initiated export, ending at pipeline completion/download handoff.
- * Optional { now, capture } dependencies keep fixtures deterministic. Telemetry
- * failures (including unavailable randomness) must not change export behavior.
- */
-export function startExportAttempt(metadata, dependencies = {}) {
-	let terminal = false;
-	let props = null;
-	let startedAt = NaN;
-	let now = () => performance.now();
-	let capture = track;
-	const readClock = () => {
-		try { return now(); } catch { return NaN; }
-	};
-	const emit = (event, payload) => {
-		try {
-			Promise.resolve(capture(event, sanitizeProps(event, payload))).catch(() => {
-				// A rejected transport is as non-fatal as a synchronous failure.
-			});
-		} catch {
-			// Analytics must never affect the export or its error handling.
-		}
-	};
-	try {
-		now = dependencies.now ?? now;
-		capture = dependencies.capture ?? capture;
-		const bytes = globalThis.crypto.getRandomValues(new Uint8Array(16));
-		const attempt_id = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-		props = { ...sanitizeProps("export:attempt_started", metadata), attempt_id };
-		startedAt = readClock();
-		emit("export:attempt_started", props);
-	} catch {
-		// Without a secure random ID, omit the attempt rather than inventing
-		// a persistent/content-derived identifier or blocking the export.
-		props = null;
-	}
-	const finish = (result, error, fallbackCode) => {
-		if (terminal) return;
-		terminal = true;
-		if (!props) return;
-		try {
-			const payload = { ...props, duration_bucket: bucketMs(readClock() - startedAt) };
-			if (result === "failed") {
-				payload.failure_code = exportFailureCode(error, fallbackCode);
-				if (payload.failure_code === "aborted") result = "cancelled";
-			}
-			emit(`export:attempt_${result}`, payload);
-		} catch {
-			// Clock/payload failures are isolated from the actual export too.
-		}
-	};
-	return {
-		succeed() { finish("succeeded"); },
-		fail(error, fallbackCode = "unknown") { finish("failed", error, fallbackCode); },
-	};
 }
 
 const URL_PROPERTY_KEYS = [
@@ -919,7 +832,8 @@ export async function initAnalytics() {
 }
 
 export function track(event, props = {}) {
-	if (!initialized || !enabled || !posthog) return;
+	// The allowlist is the gate: an event it does not name is never sent.
+	if (!initialized || !enabled || !posthog || !Object.hasOwn(EVENT_PROPERTIES, event)) return;
 	try {
 		if (getAnalyticsOptOut()) return;
 		const sanitized = sanitizeProps(event, props);
@@ -1119,10 +1033,12 @@ function installSessionEndListeners(resolved, globalProperties) {
 				properties: {
 					...globalProperties,
 					distinct_id: posthog.get_distinct_id(),
-					duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
-					action_count_bucket: bucketCount(sessionActionCount),
-					scenes_touched: Math.min(20, sessionScenesTouched),
-					...sessionEditBuckets(),
+					// The same validator as every SDK event; session_id joins the last events.
+					...sanitizeProps("app:session_ended", { session_id: posthog.get_session_id?.(),
+						duration_bucket: bucketSessionDuration(Date.now() - sessionStartedAt),
+						action_count_bucket: bucketCount(sessionActionCount),
+						scenes_touched: Math.min(20, sessionScenesTouched),
+						...sessionEditBuckets() }),
 				},
 			};
 			const body = JSON.stringify(payload);

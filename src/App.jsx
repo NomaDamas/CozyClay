@@ -146,13 +146,13 @@ import {
 	recordUseCase,
 	sculptRunTelemetry,
 	shouldAskUseCase,
-	startExportAttempt,
 	track,
 	trackActivation,
 	trackFeature,
 } from "./analytics.js";
 import { ko, isKo, isZh } from "./locale.js";
 import { saveExport } from "./export-workspace.js";
+import { startExportAttempt } from "./export-attempt.js";
 import { characterCapabilities, kindRefusal, proxyFigureBounds } from "./character-kind.js";
 import { STARTER_SCENES, resolveSceneParam } from "./starter-scenes.js";
 import { PART_COLOURS } from "./part-colours.js";
@@ -2783,7 +2783,7 @@ export default function App() {
 
 	function updateExportStatus(job, phase, details = {}) {
 		if (recRef.current !== job) return;
-		job.cancellable = details.cancellable ?? false;
+		job.cancellable = details.cancellable ?? false; job.attempt?.note(phase, details);
 		setExportStatus({ kind: job.request.kind, phase, label: job.label, ...details });
 	}
 
@@ -2805,11 +2805,10 @@ export default function App() {
 			if (request.external) throw new Error(ko("An export is already running", "이미 내보내기 중입니다"));
 			return null;
 		}
-		const job = { request, controller: new AbortController(), capture: null, cancellable: false };
+		const job = { request, controller: new AbortController(), capture: null, cancellable: false, attempt: request.external ? null : startExportAttempt({ export_kind: request.kind, format: request.format, surface: embedMode ? "embed" : "studio", objects: sceneObjects.length, request }) };
 		recRef.current = job;
 		retryExportRef.current = request;
 		setRecState("recording");
-		const attempt = request.external ? null : startExportAttempt({ export_kind: request.kind, format: request.format, surface: embedMode ? "embed" : "studio" });
 		updateExportStatus(job, "preparing", { cancellable: request.kind !== "frame" });
 		try {
 			await exportBoundary(job);
@@ -2819,7 +2818,7 @@ export default function App() {
 			}
 			const output = await request.run(job);
 			job.controller.signal.throwIfAborted();
-			attempt?.succeed();
+			job.attempt?.succeed();
 			updateExportStatus(job, "completed", { message: request.download
 				? ko("Export completed. Check your export folder or browser downloads; the OS save is not confirmed.", "내보내기를 완료했어요. 내보내기 폴더나 브라우저 다운로드를 확인하세요. OS 저장 완료는 확인할 수 없어요.")
 				: ko("Export pipeline completed. The requesting tool handles the file handoff.", "내보내기 처리를 완료했어요. 요청한 도구에서 파일 전달을 처리합니다.") });
@@ -2842,7 +2841,7 @@ export default function App() {
 			return output;
 		} catch (error) {
 			const code = exportFailureCode(error, request.kind === "depth_video" ? "render_failed" : "unknown");
-			attempt?.fail(error, code);
+			job.attempt?.fail(error, code, request.handedOff.size);
 			const message = exportRecovery(code);
 			updateExportStatus(job, code === "aborted" ? "cancelled" : "failed", {
 				code, message, retryable: !request.external, handedOff: request.handedOff.size,
@@ -3097,6 +3096,7 @@ export default function App() {
 			setToast(ko("Add at least one Shot before exporting OTIO", "OTIO를 내보내려면 샷을 하나 이상 추가하세요"));
 			return;
 		}
+		const attempt = startExportAttempt({ export_kind: "otio", format: "otio", surface: embedMode ? "embed" : "studio", objects: sceneObjects.length });
 		try {
 			const activeScene = scenes.find((scene) => scene.id === activeSceneId);
 			const exportScene = {
@@ -3111,17 +3111,14 @@ export default function App() {
 			};
 			const serialized = serializeOtio(exportScene, shots);
 			const blob = new Blob([serialized], { type: "application/json" });
-			const slug = (activeScene?.name ?? "cut-list")
-				.toLowerCase()
-				.replace(/[^a-z0-9]+/g, "-")
-				.replace(/^-+|-+$/g, "") || "cut-list";
-			await saveExport(blob, `cozyclay-${slug}.otio`);
+			const slug = (activeScene?.name ?? "cut-list").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "cut-list";
+			await saveExport(blob, `cozyclay-${slug}.otio`); attempt.succeed();
 			const frameCount = shots.reduce((total, shot) => total + shot.endFrame - shot.startFrame + 1, 0);
 			setToast(ko(`OTIO saved · ${shots.length} shots · ${frameCount} frames`,
 				`OTIO 저장됨 · ${shots.length}샷 · ${frameCount}프레임`,
 				`OTIO 已保存 · ${shots.length} 个镜头 · ${frameCount} 帧`));
 		} catch (error) {
-			setToast(error?.message || String(error));
+			attempt.fail(error); setToast(error?.message || String(error));
 		}
 	}
 
@@ -3273,13 +3270,15 @@ export default function App() {
 
 	/** Depth and normal conditioning passes of the framing on screen now. */
 	async function exportRenderPasses() {
+		const attempt = startExportAttempt({ export_kind: "render_pass", format: "png", surface: embedMode ? "embed" : "studio", objects: sceneObjects.length });
+		let handedOff = 0;
 		try {
 			const dataUrls = renderPassDataUrls();
-			for (const kind of ["depth", "normal"]) await saveExport(dataUrls[kind], passFileName(kind));
+			for (const kind of ["depth", "normal"]) { await saveExport(dataUrls[kind], passFileName(kind)); handedOff += 1; }
 			setToast(ko("Depth and normal passes exported", "뎁스·노멀 패스를 내보냈어요"));
-			trackFeature("export_render_pass");
+			attempt.succeed(); trackFeature("export_render_pass");
 		} catch (error) {
-			setToast(error?.message || String(error));
+			attempt.fail(error, "render_failed", handedOff); setToast(error?.message || String(error));
 		}
 	}
 
@@ -3308,6 +3307,7 @@ export default function App() {
 
 	/** Contact sheet of the whole cut: one thumbnail and prompt per shot. */
 	async function exportStoryboard() {
+		const attempt = startExportAttempt({ export_kind: "storyboard", format: "png", surface: embedMode ? "embed" : "studio", objects: sceneObjects.length });
 		try {
 			if (!shots.length) throw new Error(ko("Add at least one Shot before exporting a storyboard", "스토리보드를 내보내려면 샷을 하나 이상 추가하세요"));
 			setToast(ko("Composing the storyboard…", "스토리보드 구성 중…"));
@@ -3337,9 +3337,9 @@ export default function App() {
 			});
 			await saveExport(canvas.toDataURL("image/png"), "cozyclay-storyboard.png");
 			setToast(ko(`Storyboard saved · ${cells.length} shots`, `스토리보드 저장됨 · ${cells.length}샷`, `故事板已保存 · ${cells.length} 个镜头`));
-			trackFeature("export_storyboard");
+			attempt.succeed(); trackFeature("export_storyboard");
 		} catch (error) {
-			setToast(error?.message || String(error));
+			attempt.fail(error); setToast(error?.message || String(error));
 		}
 	}
 

@@ -140,4 +140,22 @@ assert.equal(await dataUrlDirectory.files.get("note.txt").text(), "data-url", "a
 assert.equal(dataUrlDownloads.length, 0);
 console.log("PASS a data URL export is written to the workspace");
 
+// export:saved: one closed method/reason pair per saved file, never a name.
+const saved = [];
+const spy = (event, props) => saved.push({ event, props });
+const ignore = () => {};
+await saveExport(new Blob(["a"]), "private-a.zip", { directory: new FakeDirectory(), download: ignore, track: spy });
+await saveExport(new Blob(["b"]), "private-b.zip", { download: ignore, track: spy });
+await saveExport(new Blob(["c"]), "private-c.zip", { directory: null, download: ignore, track: spy });
+await saveExport(new Blob(["d"]), "private-d.zip", { directory: new FakeDirectory(), permission: "denied", download: ignore, track: spy });
+await saveExport(new Blob(["e"]), "private-e.zip", { directory: new ReadOnlyDirectory(), download: ignore, track: spy });
+assert.deepEqual(saved, [
+	{ event: "export:saved", props: { method: "workspace", reason: "none" } },
+	{ event: "export:saved", props: { method: "download", reason: "unsupported" } },
+	{ event: "export:saved", props: { method: "download", reason: "no_workspace" } },
+	{ event: "export:saved", props: { method: "download", reason: "permission" } },
+	{ event: "export:saved", props: { method: "download", reason: "write_failed" } },
+]);
+console.log("PASS every save reports export:saved with its method and closed fallback reason");
+
 console.log("all export workspace checks PASS");

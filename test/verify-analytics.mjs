@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import * as analytics from "../src/analytics.js";
+import { startExportAttempt } from "../src/export-attempt.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -257,7 +258,7 @@ const descriptor = { export_kind: "video", format: "mp4", surface: "studio" };
 function fixture(metadata = descriptor, captureOverride) {
 	let clock = 100;
 	const events = [];
-	const attempt = analytics.startExportAttempt(metadata, {
+	const attempt = startExportAttempt(metadata, {
 		now: () => clock,
 		capture: captureOverride ?? ((event, props) => events.push({ event, props })),
 	});
@@ -267,7 +268,8 @@ const success = fixture({ ...descriptor, filename: "private.mp4", prompt: "secre
 assert.equal(success.events.length, 1);
 assert.equal(success.events[0].event, "export:attempt_started");
 assert.match(success.events[0].props.attempt_id, /^[a-f0-9]{32}$/);
-assert.deepEqual(Object.keys(success.events[0].props).sort(), ["attempt_id", "export_kind", "format", "surface"]);
+assert.deepEqual(Object.keys(success.events[0].props).sort(), ["attempt_id", "export_kind", "format", "is_retry", "surface"]);
+assert.equal(success.events[0].props.is_retry, false, "a first run is never a retry");
 success.advance(3500);
 success.attempt.succeed();
 success.attempt.fail(new Error("late failure"));
@@ -298,7 +300,7 @@ for (const [error, fallback, code, terminal] of [
 	assert.equal(run.events.length, 2, `${code} emits exactly one terminal after async rejection`);
 	assert.deepEqual(run.events[1], {
 		event: `export:attempt_${terminal}`,
-		props: { ...run.events[0].props, duration_bucket: "1-3s", failure_code: code },
+		props: { ...run.events[0].props, duration_bucket: "1-3s", failure_code: code, stage: "preparing", progress: "0" },
 	});
 }
 assert.equal(analytics.exportFailureCode(new Error("unsupported codec encode failed aborted")), "unknown", "messages never determine classification");
@@ -338,6 +340,59 @@ for (const duration of ["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]) {
 	assert.deepEqual(sanitizeProps("export:attempt_succeeded", { duration_bucket: duration }), { duration_bucket: duration });
 }
 assert.deepEqual(sanitizeProps("export:video_succeeded", { format: "mp4", ...allProps }), { format: "mp4" });
+
+// PR 0 hygiene: the storyboard, render-pass and OTIO flows, retries, the scene
+// size, where a failed export stood, and where each saved file went.
+for (const [export_kind, format] of [["storyboard", "png"], ["render_pass", "png"], ["otio", "otio"]]) {
+	assert.deepEqual(sanitizeProps("export:attempt_started", { export_kind, format, surface: "studio" }), { export_kind, format, surface: "studio" });
+}
+assert.deepEqual(sanitizeProps("export:attempt_started", { is_retry: true, retry_of: "b".repeat(32), objects: "4-10" }), { is_retry: true, retry_of: "b".repeat(32), objects: "4-10" });
+for (const [key, value] of [["is_retry", "true"], ["retry_of", "B".repeat(32)], ["retry_of", "private"], ["objects", 5], ["objects", "5"]]) {
+	assert.deepEqual(sanitizeProps("export:attempt_started", { [key]: value }), {}, `attempt_started rejects ${key}=${value}`);
+}
+for (const stage of ["preparing", "encoding", "finalizing", "handoff"]) {
+	for (const progress of ["0", "1-25", "26-50", "51-75", "76-99"]) {
+		for (const event of ["export:attempt_failed", "export:attempt_cancelled"]) assert.deepEqual(sanitizeProps(event, { stage, progress }), { stage, progress });
+	}
+}
+for (const [key, value] of [["stage", "mux"], ["progress", "100"], ["progress", 50]]) assert.deepEqual(sanitizeProps("export:attempt_failed", { [key]: value }), {});
+assert.deepEqual(sanitizeProps("export:attempt_succeeded", { stage: "encoding", progress: "0" }), {}, "only a stopped export carries stage and progress");
+for (const method of ["workspace", "download"]) {
+	for (const reason of ["none", "unsupported", "no_workspace", "permission", "write_failed"]) {
+		assert.deepEqual(sanitizeProps("export:saved", { method, reason, name: "private.png", path: "/private" }), { method, reason });
+	}
+}
+assert.deepEqual(sanitizeProps("export:saved", { method: "folder", reason: "no-workspace" }), {}, "export:saved values are closed");
+{
+	const events = [];
+	const capture = (event, props) => events.push({ event, props });
+	const request = Object.freeze({ kind: "video" });
+	const first = startExportAttempt({ ...descriptor, objects: 5, request }, { capture });
+	first.note("preparing", { stage: "depth", completedFrames: 4, frameCount: 4 });
+	first.note("encoding", { completedFrames: 3, frameCount: 10 });
+	first.fail(new Error("private encode message"), "encode_failed");
+	const retry = startExportAttempt({ ...descriptor, objects: 5, request }, { capture });
+	retry.note("encoding", { completedFrames: 10, frameCount: 10 });
+	retry.note("finalizing", { stage: "mux" });
+	retry.note("failed", { completedFrames: 0, frameCount: 10 });
+	retry.fail(new DOMException("private", "AbortError"));
+	const fresh = startExportAttempt({ ...descriptor, request: Object.freeze({ kind: "video" }) }, { capture });
+	fresh.note("finalizing", { stage: "download" });
+	fresh.fail(new Error("private handoff"), "unknown");
+	const [firstStart, firstEnd, retryStart, retryEnd, freshStart, freshEnd] = events;
+	assert.equal(firstStart.props.objects, "4-10", "a numeric scene size crosses only as its bucket");
+	assert.deepEqual([firstEnd.event, firstEnd.props.stage, firstEnd.props.progress], ["export:attempt_failed", "encoding", "26-50"]);
+	assert.equal(Object.hasOwn(firstStart.props, "request"), false, "the request identity never crosses");
+	assert.deepEqual([retryStart.props.is_retry, retryStart.props.retry_of], [true, firstStart.props.attempt_id], "the same request again is a retry of its last attempt");
+	assert.deepEqual([retryEnd.event, retryEnd.props.stage, retryEnd.props.progress], ["export:attempt_cancelled", "finalizing", "76-99"], "terminal phases do not move the stop point");
+	assert.deepEqual([freshStart.props.is_retry, Object.hasOwn(freshStart.props, "retry_of")], [false, false], "a new request is not a retry");
+	assert.equal(freshEnd.props.stage, "handoff", "the download step is the handoff stage");
+	const handed = startExportAttempt(descriptor, { capture });
+	handed.note("preparing", { completedFrames: 1, frameCount: 2 });
+	handed.fail(new Error("private"), "unknown", 1);
+	assert.deepEqual([events.at(-1).props.stage, events.at(-1).props.progress], ["handoff", "26-50"], "a file already handed off ends the run in handoff");
+}
+console.log("PASS export retries, scene size, stop stage/progress, new export kinds and export:saved values");
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 
 // Previs events (#653): closed values only, never a caption, name or prompt.
@@ -431,7 +486,7 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	}
 }
 assert.deepEqual([...exportDisclosure.keys()].sort(), [
-	...lifecycleEvents, "export:keyframe_pack", "export:video_succeeded", "export:blocking_frame_succeeded",
+	...lifecycleEvents, "export:keyframe_pack", "export:video_succeeded", "export:blocking_frame_succeeded", "export:saved",
 ].sort(), "the disclosure event tokens match the export contract");
 for (const event of [...lifecycleEvents, "export:keyframe_pack"]) {
 	for (const property of Object.keys(sanitizeProps(event, allProps))) {
@@ -448,7 +503,7 @@ for (const capture of [() => { throw new Error("transport failed"); }, async () 
 	assert.doesNotThrow(() => run.attempt.fail(hostileError));
 }
 const clockEvents = [];
-const brokenClock = analytics.startExportAttempt(descriptor, {
+const brokenClock = startExportAttempt(descriptor, {
 	now() { throw new Error("clock unavailable"); },
 	capture(event, props) { clockEvents.push({ event, props }); },
 });
@@ -469,7 +524,7 @@ const performanceDescriptor = Object.getOwnPropertyDescriptor(globalThis, "perfo
 try {
 	Object.defineProperty(globalThis, "performance", { configurable: true, get() { throw new Error("global clock unavailable"); } });
 	const events = [];
-	const attempt = analytics.startExportAttempt(descriptor, { capture(event, props) { events.push({ event, props }); } });
+	const attempt = startExportAttempt(descriptor, { capture(event, props) { events.push({ event, props }); } });
 	assert.doesNotThrow(() => attempt.fail(new Error("render failure"), "render_failed"));
 	assert.equal(events.length, 2, "a throwing global clock cannot prevent the terminal event");
 	assert.equal(events[1].props.duration_bucket, "lt1s");
@@ -654,7 +709,7 @@ async function runtimeFixture({
 	runtime = { distribution: "npm", telemetryEnabled: true, installationId, appVersion: "1.8.1", apiKey: "test", apiHost: "https://telemetry.invalid", internalQa: false, installKind: "npx" },
 	origin = "http://127.0.0.1:5180", search = "", store = new Map(),
 	env = { PROD: true, VITE_POSTHOG_KEY: "test", VITE_APP_VERSION: "1.8.1" },
-	dnt = false, beacon = true, sync,
+	dnt = false, beacon = true, sync, sessionId = "0192f0d6-3a4b-7c2d-8e9f-abcdefabcdef",
 } = {}) {
 	const records = [], beacons = [], requests = [];
 	const listeners = new Map();
@@ -668,6 +723,7 @@ async function runtimeFixture({
 			if (payload) records.push(payload);
 		},
 		get_distinct_id() { return distinctId; },
+		get_session_id() { return sessionId; },
 		has_opted_out_capturing() { return optedOut || dnt; },
 		opt_out_capturing() { optedOut = true; },
 		opt_in_capturing() { optedOut = false; },
@@ -699,6 +755,7 @@ async function runtimeFixture({
 	for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 	const source = runtimeSource
 		.replace('"./semantic-edit.js"', JSON.stringify(new URL("../src/semantic-edit.js", import.meta.url).href))
+		.replace('"./analytics-values.js"', JSON.stringify(new URL("../src/analytics-values.js", import.meta.url).href))
 		.replace("import.meta.env", JSON.stringify(env))
 		.replace('import("posthog-js")', "Promise.resolve({ default: globalThis.__analyticsSdkFixture })");
 	const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${++runtimeFixtureId}`);
@@ -725,6 +782,7 @@ try {
 			run.module.track("scene:loaded", { scene_source: "library", internal_qa: !internalQa, distribution: "forged", prompt: "private" });
 			const [ended] = await run.unload();
 			assert.equal(run.beacons.length, 1, "pagehide plus beforeunload sends exactly once");
+			assert.equal(ended.properties.session_id, "0192f0d6-3a4b-7c2d-8e9f-abcdefabcdef", `${distribution} session end carries the SDK session id`);
 			for (const record of run.records) {
 				assert.equal(record.properties.internal_qa, internalQa, "every capture carries the declared marker, never event-supplied overrides");
 				for (const key of globalKeys) assert.equal(ended.properties[key], record.properties[key], `${distribution} beacon/capture parity: ${key}`);
@@ -734,6 +792,22 @@ try {
 			assert.equal(run.options.bootstrap?.isIdentifiedID, distribution === "npm" ? false : undefined);
 			cohortFixtures.push(...run.records);
 		}
+	}
+	{
+		const run = await runtimeFixture({ sessionId: "private session" });
+		const before = run.records.length;
+		run.module.track("private:unlisted", { scene_source: "library" });
+		run.module.track("motion:compile_private", {});
+		assert.equal(run.records.length, before, "an event the allowlist does not name is dropped, not sent with empty props");
+		run.module.track("scene:loaded", { scene_source: "library" });
+		assert.equal(run.records.at(-1).event, "scene:loaded", "allowlisted events still send");
+		const [ended] = await run.unload();
+		assert.equal(Object.hasOwn(ended.properties, "session_id"), false, "a malformed session id is dropped by the validator");
+		assert.equal(ended.properties.action_count_bucket, "1-3", "dropped events do not count as actions");
+		assert.equal(ended.properties.scenes_touched, 1);
+		assert.deepEqual(sanitizeProps("app:session_ended", { duration_bucket: "1-3s", scenes_touched: 21, action_count_bucket: "lt1m", pose_edit_bucket: 2, distinct_id: "x" }), {},
+			"session end values are its own closed buckets and a capped count");
+		console.log("PASS allowlist gate drops unlisted events; session end goes through the validator with session_id");
 	}
 	const external = cohortFixtures.filter((row) => row.properties.internal_qa !== true);
 	assert.equal(external.some((row) => row.properties.internal_qa === true), false);
@@ -1073,7 +1147,7 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 	const sessionTokens = rowTokens("app:session_ended");
 	for (const key of EDIT_BUCKET_KEYS) assert.ok(sessionTokens.has(key), `session end discloses ${key}`);
 	assert.ok(FEATURE_USAGE_NAMES.includes("pose_save"));
-	for (const name of ["export_depth_video", "export_keyframe_pack"]) assert.ok(FEATURE_USAGE_NAMES.includes(name), `${name} is no longer silently dropped`);
+	for (const name of ["export_depth_video", "export_keyframe_pack", "export_render_pass", "export_storyboard"]) assert.ok(FEATURE_USAGE_NAMES.includes(name), `${name} is no longer silently dropped`);
 	assert.deepEqual(sanitizeProps("feature:used", { name: "pose_save" }), { name: "pose_save" });
 	for (const name of ["pose_edit", "pose_save"]) {
 		assert.ok(FEATURE_USAGE_NAMES.includes(name), `${name} is a closed feature name`);

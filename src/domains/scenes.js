@@ -46,7 +46,7 @@ import { internWorkflowOutputs, workflowOutputRefs, resolveWorkflowOutputs } fro
 
 import { resourceManifest } from "../project-resources.js";
 import { ko } from "../locale.js";
-import { track, bucketCount, bucketProjectAge, startExportAttempt } from "../analytics.js";
+import { track, bucketCount, bucketProjectAge } from "../analytics.js"; import { startExportAttempt } from "../export-attempt.js";
 import { mergeProjectCustomPoses } from "../project-poses.js";
 import { DEFAULT_WORKSPACE_LAYOUT, DEFAULT_DURATION_S, TIMELINE_FPS } from "../app-stage.jsx";
 import { saveCustomPoses } from "../poses.js";

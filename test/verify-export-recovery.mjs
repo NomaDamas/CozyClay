@@ -6,7 +6,8 @@ import { readFileSync } from "node:fs";
 import { EventEmitter } from "node:events";
 import { parseSync } from "rolldown/utils";
 import * as THREE from "three";
-import { startExportAttempt, exportFailureCode } from "../src/analytics.js";
+import { exportFailureCode } from "../src/analytics.js";
+import { startExportAttempt } from "../src/export-attempt.js";
 import { keyframePackEntries, keyframePackName } from "../src/keyframe-pack.js";
 import { buildZip } from "../src/zip-store.js";
 import { depthRangeFromFrames } from "../src/render-passes.js";
@@ -111,7 +112,7 @@ function fixture() {
 		updateStableItem: (list, id, update) => list.map((item) => item.id === id ? update(item) : item),
 		createStableItemId: () => "new-key", recordShotUndo: () => { deps.undoCount += 1; }, undoCount: 0,
 		setShots: (list) => { deps.shots = list; deps.shotWrites += 1; }, shotWrites: 0,
-		embedMode: false, ko: (english) => english, isKo: false, setToast() {}, setRecordedVideoName() {},
+		embedMode: false, sceneObjects: [], ko: (english) => english, isKo: false, setToast() {}, setRecordedVideoName() {},
 		startExportAttempt: (descriptor) => startExportAttempt(descriptor, { capture: (event, props) => lifecycle.push({ event, props }) }),
 		exportFailureCode, track: (event) => legacy.push(event), trackFeature() {}, trackActivation() {},
 		// #466: the optional use-case question after a finished export.
