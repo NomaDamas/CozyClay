@@ -1176,6 +1176,236 @@ Read counts beside each share: at about 120 sessions in 90 days a row can
 hold a handful of sessions. A bucket is a range, so sum sessions, never the
 bucket labels.
 
+# Bus friction events: refusals, undos and agent turns
+
+Four passive events that never move `action_count_bucket`. Every property is a
+closed value checked by `src/analytics-strict.js`; a value outside its set is
+dropped, not coerced. None carries prompt text, tool names, messages, object
+names or any id other than the random 32-hex `turn_id` that `agent:turn_*`
+already uses. Exclude `internal_qa = true` with
+`JSONExtractRaw(properties, 'internal_qa') != 'true'`.
+
+## Event contract
+
+Count bucket: `0`, `1`, `2`, `3`, `4-5`, `6-10`, `gte11` (the
+`app:friction_summary` vocabulary). Long bucket: `lt10s`, `10-30s`,
+`30-60s`, `1-2m`, `2-5m`, `gte5m`. Age bucket: `lt2s`, `2-10s`, `10-60s`,
+`gte60s`.
+
+| Event | Property | Values | Meaning |
+| --- | --- | --- | --- |
+| `studio:refused` | `code` | a code from `src/studio-error-codes.js`, else `other` | Why the Studio refused the command |
+| | `origin` | `ui`, `agent` | The user's control, or the agent or an MCP client |
+| | `phase` | `admission`, `commit` | Refused before any change, or after the command started changing |
+| | `group` | `object`, `shot`, `cast`, `scene`, `motion`, `edit`, `task`, `agent`, `other` | The command's family |
+| `edit:undone` | `age` | age bucket | Time since the undone edit was made; present only when `result = done` and the age is known |
+| | `kind` | `pose`, `camera`, `object`, `shot`, `prompt`, `agent_turn`, `ik_preview`, `other` | `agent_turn` is the agent's whole turn; `ik_preview` is an un-applied IK drag |
+| | `via` | `key`, `menu`, `button` | How the user asked for the undo |
+| | `result` | `done`, `noop`, `refused` | `noop`: nothing to undo |
+| `agent:turn_summary` | `turn_id` | 32-hex | Joins `agent:turn_*` |
+| | `outcome` | `succeeded`, `failed`, `cancelled` | |
+| | `wall`, `first_tool` | long bucket | Turn length; time to the first tool call (absent without tools) |
+| | `tool_calls`, `tool_failed`, `refused` | count bucket | Tool calls, failed tool calls, tool calls the Studio refused |
+| | `stale_retry` | count bucket | Commands the sidecar re-sent once after a stale revision or a busy gesture |
+| | `drafts` | count bucket | Motion compiles in the turn |
+| | `refusal_top` | a refusal code, or `none` | The most frequent refusal code in the turn |
+| | `authored` | bool | The turn changed the scene |
+| | `qa_first`, `qa_last` | `clean`, `problems` | QA of the first and last draft; absent without drafts |
+| | `qa_trend` | `improved`, `flat`, `worse`, `na` | `na` with fewer than 2 drafts |
+| | `stuck` | bool | The compiler's stop rule fired |
+| | `cancel_phase` | `before_tool`, `during_tool`, `after_tool`, `na` | When a cancelled turn stopped |
+| `agent:post_turn_edit` | `turn_id` | 32-hex | Joins `agent:turn_summary` |
+| | `edited` | bool | The user made at least one edit gesture in the window |
+| | `pose`, `camera`, `object`, `shot`, `prompt_block` | count bucket | The user's edit gestures by group; `prompt_block` counts prompt-block adds and edits. One continuous drag is one gesture |
+| | `first_delay` | long bucket | Time to the first edit; only when `edited` is true |
+
+Caps and windows:
+
+- `studio:refused`: at most 3 per (`code`, `group`, `origin`) per session.
+  The rest are counted only in `app:friction_summary` `refusals_ui` /
+  `refusals_agent`, so rank codes with these rows but total refusals with the
+  summary. A cancel the caller asked for (`CANCELLED`) is not a refusal.
+- `edit:undone`: user undos only (agent undos are not counted); at most 20
+  per session.
+- `agent:turn_summary`: one per agent turn.
+- `agent:post_turn_edit`: one per agent turn. The window is 120 s after the
+  turn ended, closed early when the next turn starts or the page closes.
+
+Caveats:
+
+- Builds before this release have no rows: their refusals, undos and turn
+  summaries are **unknown, not 0**. Compare only sessions from builds that
+  send these events.
+- Task-mode turns may not report `drafts` (and so `qa_*`); to be confirmed by
+  the integrator before reading `drafts` across turn kinds.
+- `agent:post_turn_edit` counts only the user's edits that pass through the
+  command bus. An edit path outside the bus reads as no edit.
+- A bucket is a range. Count turns or sessions per bucket; never sum or
+  average the bucket labels.
+- Data volume is about 120 sessions in 90 days. Read every share beside its
+  count; a row can hold a handful of turns.
+
+The queries below are **unexecuted sketches**: they have not been run
+against production data. Check the column types (booleans arrive as JSON
+`true`/`false`, so they are compared through `JSONExtractRaw`) on the first
+run.
+
+## 2.2 Tool calls per turn by outcome (90 days)
+
+```sql
+SELECT
+    properties.outcome AS outcome,
+    properties.tool_calls AS tool_calls,
+    count() AS turns,
+    round(count() / sum(count()) OVER (PARTITION BY outcome), 3) AS share_of_outcome
+FROM events
+WHERE event = 'agent:turn_summary'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY outcome, tool_calls
+ORDER BY outcome, indexOf(['0', '1', '2', '3', '4-5', '6-10', 'gte11'], tool_calls)
+```
+
+## 2.3 Refusal code ranking (90 days)
+
+```sql
+SELECT
+    properties.code AS code,
+    properties.origin AS origin,
+    count() AS refusals,
+    count(DISTINCT $session_id) AS sessions,
+    code IN ('INVALID_ARGUMENT', 'STALE_SCENE', 'TARGET_BUSY', 'UNCERTAIN_APPLY') AS watched
+FROM events
+WHERE event = 'studio:refused'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY code, origin
+ORDER BY refusals DESC
+```
+
+`watched` marks the four codes to read first: `INVALID_ARGUMENT` (the agent or
+the user sent a bad argument), `STALE_SCENE` (the command was built against an
+older scene revision), `TARGET_BUSY` (another gesture held the target) and
+`UNCERTAIN_APPLY` (the Studio could not confirm the change landed). The
+per-session cap flattens frequent codes, so `refusals` is a lower bound; read
+`sessions` for reach. Split by `phase` to see refusals after a change started.
+
+## 2.7 What people fixed after the agent (90 days)
+
+Share of turns the user edited afterwards, by turn outcome:
+
+```sql
+SELECT
+    s.outcome AS outcome,
+    count() AS turns,
+    countIf(JSONExtractRaw(p.properties, 'edited') = 'true') AS edited_turns,
+    round(edited_turns / turns, 3) AS edited_share
+FROM (
+    SELECT properties.turn_id AS turn_id, properties.outcome AS outcome
+    FROM events
+    WHERE event = 'agent:turn_summary'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+) AS s
+INNER JOIN (
+    SELECT properties.turn_id AS turn_id, properties AS properties
+    FROM events
+    WHERE event = 'agent:post_turn_edit'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+) AS p ON s.turn_id = p.turn_id
+GROUP BY outcome
+ORDER BY turns DESC
+```
+
+Which groups people touched: count edited turns per group and bucket. Do not
+sum the bucket labels.
+
+```sql
+SELECT
+    grp,
+    bucket,
+    count() AS edited_turns
+FROM (
+    SELECT
+        arrayJoin([
+            ('pose', toString(properties.pose)),
+            ('camera', toString(properties.camera)),
+            ('object', toString(properties.object)),
+            ('shot', toString(properties.shot)),
+            ('prompt_block', toString(properties.prompt_block))
+        ]) AS pair,
+        pair.1 AS grp,
+        pair.2 AS bucket
+    FROM events
+    WHERE event = 'agent:post_turn_edit'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND JSONExtractRaw(properties, 'edited') = 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+)
+GROUP BY grp, bucket
+ORDER BY grp, indexOf(['0', '1', '2', '3', '4-5', '6-10', 'gte11'], bucket)
+```
+
+Read `edited_turns` with `bucket != '0'` per group as "turns where the user
+fixed this group". `first_delay` by bucket shows how soon they started.
+
+## 2.8 Agent result undone as a whole (90 days)
+
+```sql
+SELECT
+    u.age AS age,
+    u.undos AS whole_turn_undos,
+    a.applied AS applied_turns,
+    round(u.undos / a.applied, 3) AS undo_per_applied
+FROM (
+    SELECT properties.age AS age, count() AS undos
+    FROM events
+    WHERE event = 'edit:undone'
+      AND properties.kind = 'agent_turn'
+      AND properties.result = 'done'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+    GROUP BY age
+) AS u
+CROSS JOIN (
+    SELECT count() AS applied
+    FROM events
+    WHERE event = 'agent:result_applied'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+) AS a
+ORDER BY indexOf(['lt2s', '2-10s', '10-60s', 'gte60s'], age)
+```
+
+The denominator counts every applied turn, including builds without
+`edit:undone`; restrict both sides to the same builds before reading the
+ratio. A fast `lt2s` undo reads as "rejected on sight"; `gte60s` as "kept for
+a while, then dropped". The 20-per-session cap rarely binds for whole-turn
+undos, but it applies.
+
+## 2.9 Turn length and first-tool delay by outcome (90 days)
+
+```sql
+SELECT
+    properties.outcome AS outcome,
+    properties.wall AS wall,
+    count() AS turns,
+    round(count() / sum(count()) OVER (PARTITION BY outcome), 3) AS share_of_outcome
+FROM events
+WHERE event = 'agent:turn_summary'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY outcome, wall
+ORDER BY outcome, indexOf(['lt10s', '10-30s', '30-60s', '1-2m', '2-5m', 'gte5m'], wall)
+```
+
+For `first_tool`, swap `wall` for `first_tool` and add
+`AND JSONHas(properties, 'first_tool')`: turns without a tool call have no
+`first_tool`, and counting them as `lt10s` would hide them. Read
+`cancel_phase` beside the `cancelled` rows to see whether people gave up
+waiting for the first tool (`before_tool`) or mid-run.
+
 # Storyboard and capsule-figure events (issue #653)
 
 Counts only. None of these events carries a caption, a panel or character name,
