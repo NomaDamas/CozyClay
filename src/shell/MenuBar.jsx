@@ -506,7 +506,7 @@ export default function MenuBar({ preferences }) {
 		),
 		edit: (
 			<>
-				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => castDomain.undoScene())}>
+				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => castDomain.undoScene("menu"))}>
 					<span className="menubar-item-label">{ko("Undo", "실행 취소")}</span>
 					<Shortcut keys={`${MOD}Z`} />
 				</button>
