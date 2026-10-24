@@ -1712,6 +1712,56 @@ GROUP BY provider, after_failure
 ORDER BY changes DESC
 ```
 
+# Agent prompts (agent:prompt_sent)
+
+One passive event per prompt the user sends to the agent, with the same
+`turn_id` as that turn's `agent:turn_requested` (`src/workflow/prompt-telemetry.js`,
+emitted from `src/workflow/agent-turn-telemetry.js` when the turn starts). A send
+the store refuses (empty, already streaming) is no event. Builds before this
+release have no rows (**unknown, not 0**).
+
+| Property | Values | Source |
+| --- | --- | --- |
+| `provider` | the ten configured ids or `other` | the model chosen in the panel (`provider/id`) |
+| `via` | `typed`, `retry_button`, `regenerate`, `chip`, `supervisor` | the composer; Retry on a failed turn, a step list or the paused card; an image's Regenerate; a suggestion chip sent unedited; a supervisor note's Send |
+| `prompt_len` | `1-20`, `21-80`, `81-240`, `gte241` characters | the trimmed prompt |
+| `compose_ms` | long bucket | first keystroke (or chip) into the draft to send; typed and chip prompts only. A pasted prompt reads near `lt10s` |
+| `similarity` | `first`, `same` (Jaccard >= 0.9), `near` (>= 0.5), `different` | word sets in the browser: lowercase, split on non-letters/digits; no stemming, no dictionary |
+| `gap` | long bucket or `first` | since the previous turn ended |
+| `prev_outcome` | `succeeded`, `failed`, `cancelled`, `none` | the previous turn's terminal event |
+| `turn_index` | count bucket from `1` | turns this page load |
+| `attached`, `task_mode` | bool | an image or the current frame attached; the send went to the task route |
+
+Only `prompt_len` and `similarity` are derived from the text; neither the text
+nor its words leave the device (see `docs/privacy.md`).
+
+## 2.4 Retry-loop share (30 days)
+
+Unexecuted sketch. A retry loop is a prompt that repeats or nearly repeats the
+previous one after that one failed or was cancelled.
+
+```sql
+SELECT
+    count() AS prompts,
+    countIf(properties.similarity IN ('same', 'near') AND properties.prev_outcome IN ('failed', 'cancelled')) AS retry_loop,
+    round(100.0 * retry_loop / nullIf(countIf(properties.prev_outcome != 'none'), 0), 1) AS retry_loop_pct_of_followups,
+    countIf(properties.via = 'retry_button') AS retry_button,
+    countIf(properties.similarity IN ('same', 'near') AND properties.prev_outcome IN ('failed', 'cancelled') AND properties.via = 'typed') AS retyped_retry
+FROM events
+WHERE event = 'agent:prompt_sent'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
+```
+
+The denominator is prompts that follow a turn (`prev_outcome != 'none'`); read it
+beside the count. `retyped_retry` is a person rewriting rather than pressing Retry.
+
+## D4 4.1: the first-prompt step
+
+In the connect funnel (4.1 above), the "first prompt" step can read
+`agent:prompt_sent` instead of `agent:turn_requested`: the same turn, with its
+provider. Hosted builds have no sidecar and send neither.
+
 # Storyboard and capsule-figure events (issue #653)
 
 Counts only. None of these events carries a caption, a panel or character name,

@@ -143,7 +143,7 @@ const controls = [
 	["Wait & retry", "Wait &amp; retry"],
 	["Switch model", "Switch model"],
 	["error Retry", ">Retry<"],
-	["step list Retry", "onRetry={() => runTurn(chat.lastPrompt)} />"],
+	["step list Retry", "onRetry={() => runTurn(chat.lastPrompt, \"retry_button\")} />"],
 ];
 for (const [name, needle] of controls) expect(`composer/transcript exposes the ${name}`, panel.includes(needle), needle);
 
@@ -1184,6 +1184,9 @@ expect("no timer drives the auth transition", !/set(Interval|Timeout)\([^)]*(sig
 		expect("connect: every payload passes the closed schema", [...rows, ...capped].every(({ event, props }) => JSON.stringify(sanitizeProps(event, props)) === JSON.stringify(props)));
 		// The wiring: LoginPanel starts api-key/oauth attempts, AgentPanel the ChatGPT one and the openers.
 		const panelSource = readFileSync(new URL("../src/workflow/AgentPanel.jsx", import.meta.url), "utf8");
+		expect("prompt_sent: every send path names its via, the chip and the draft are noted, and the panel stages before it sends",
+			["\"retry_button\")", "\"regenerate\")", "\"supervisor\")"].every((via) => panelSource.includes(via)) && panelSource.includes("noteChipDraft(); store.setDraft(chip)")
+			&& panelSource.includes("noteDraftInput(); store.setDraft(event.target.value)") && /stagePrompt\(text, [^\n]*\n\s*return store\.send\(text/.test(panelSource));
 		expect("connect: the four openers and the ChatGPT attempt are wired", login.includes("connectStarted(provider.id, method.type)") && login.includes('connectFinished("cancelled")') && login.includes('connectFinished("abandoned")')
 			&& panelSource.includes('connectOpened("menu")') && panelSource.includes('openProviderKeys("signed_out")') && panelSource.includes('openProviderKeys("failure_card")') && panelSource.includes('connectStarted("openai-codex", "chatgpt")'));
 	} finally {

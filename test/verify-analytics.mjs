@@ -7,6 +7,7 @@ import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropVali
 import * as postTurn from "../src/post-turn-edits.js";
 import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
 import { crashTelemetrySeam, reportGlLost, reportRenderCrash } from "../src/crash-telemetry.js";
+import * as promptTelemetry from "../src/workflow/prompt-telemetry.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -479,6 +480,28 @@ console.log("PASS motion:draft_compiled: buckets, flags, closed schema, and the 
 	]) assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${value}`);
 }
 console.log("PASS connect funnel schemas: closed entries, providers, methods, outcomes, steps and durations");
+
+// PR A: agent:prompt_sent. Words stay on the device; only a length bucket and a similarity grade leave.
+{
+	const { promptTokens, similarityGrade, bucketPromptLength } = promptTelemetry;
+	assert.deepEqual([...promptTokens("Make HER walk, slowly! 2 steps—then wave.")], ["make", "her", "walk", "slowly", "2", "steps", "then", "wave"], "lowercase words split on non-letters/digits");
+	assert.deepEqual([...promptTokens("Café 走る café")], ["café", "走る"], "letters of any script; a Set");
+	const base = promptTokens("make the actor walk to the door and wave");
+	assert.equal(similarityGrade(null, base), "first");
+	assert.equal(similarityGrade(base, promptTokens("Make the actor walk to the door, and wave!")), "same");
+	assert.equal(similarityGrade(base, promptTokens("make the actor run to the door and wave twice")), "near");
+	assert.equal(similarityGrade(base, promptTokens("frame a close shot of the cup")), "different");
+	assert.equal(similarityGrade(new Set(), new Set()), "same", "two prompts with no words are the same");
+	assert.deepEqual([1, 20, 21, 80, 81, 240, 241, 5000].map(bucketPromptLength), ["1-20", "1-20", "21-80", "21-80", "81-240", "81-240", "gte241", "gte241"]);
+	const valid = { turn_id: "f".repeat(32), provider: "anthropic", via: "retry_button", prompt_len: "21-80", compose_ms: "10-30s", similarity: "near",
+		gap: "first", prev_outcome: "failed", turn_index: "3", attached: false, task_mode: true };
+	assert.deepEqual(sanitizeProps("agent:prompt_sent", { ...valid, prompt: "secret", text: "secret" }), valid, "agent:prompt_sent keeps only closed values");
+	assert.deepEqual(sanitizeProps("agent:prompt_sent", { gap: "2-5m" }), { gap: "2-5m" });
+	for (const [key, value] of [["via", "keyboard"], ["prompt_len", 42], ["similarity", 0.7], ["gap", "lt1s"], ["prev_outcome", "error"], ["turn_index", 3], ["provider", "private-cloud"]]) {
+		assert.deepEqual(sanitizeProps("agent:prompt_sent", { [key]: value }), {}, `agent:prompt_sent rejects ${key}=${value}`);
+	}
+}
+console.log("PASS agent:prompt_sent: device-side words, Jaccard grades, length buckets and the closed schema");
 
 // PR B base: the four bus friction events have closed schemas, and the
 // post-turn window counts only the user's edit gestures for 120 s.
@@ -1082,12 +1105,12 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
 	const event = cells[0]?.trim();
-	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed", "app:render_crash", "app:gl_lost"].includes(event)) continue;
+	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed", "app:render_crash", "app:gl_lost", "agent:prompt_sent"].includes(event)) continue;
 	const tokens = new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
 	for (const key of STRICT_EVENT_KEYS[event]) assert.ok(tokens.has(key), `the privacy page discloses ${event} ${key}`);
 	strictRows.add(event);
 }
-assert.deepEqual([...strictRows].sort(), ["agent:connect_finished", "agent:connect_opened", "agent:connect_started", "agent:model_changed", "agent:post_turn_edit", "agent:turn_summary", "app:gl_lost", "app:render_crash", "edit:undone", "motion:draft_compiled", "studio:refused"], "each strict event has its own privacy row");
+assert.deepEqual([...strictRows].sort(), ["agent:connect_finished", "agent:connect_opened", "agent:connect_started", "agent:model_changed", "agent:post_turn_edit", "agent:prompt_sent", "agent:turn_summary", "app:gl_lost", "app:render_crash", "edit:undone", "motion:draft_compiled", "studio:refused"], "each strict event has its own privacy row");
 const executionSchemas = {
 	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
 	"workflow:run_succeeded": ["run_id", "duration_bucket"],

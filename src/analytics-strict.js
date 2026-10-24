@@ -76,6 +76,12 @@ const SCHEMAS = Object.freeze({
 		outcome: oneOf("ok", "failed", "cancelled", "abandoned"), step: oneOf("list", "prompt", "waiting", "done"), duration: long,
 	},
 	"agent:model_changed": { provider: oneOf(...CONNECT_PROVIDERS, "other"), after_failure: bool },
+	"agent:prompt_sent": {
+		turn_id: turnId, provider: oneOf(...CONNECT_PROVIDERS, "other"), via: oneOf("typed", "retry_button", "regenerate", "chip", "supervisor"),
+		prompt_len: oneOf("1-20", "21-80", "81-240", "gte241"), compose_ms: long, similarity: oneOf("first", "same", "near", "different"),
+		gap: (value) => value === "first" || long(value), prev_outcome: oneOf("succeeded", "failed", "cancelled", "none"), turn_index: count,
+		attached: bool, task_mode: bool,
+	},
 	"agent:post_turn_edit": {
 		// prompt_block, not prompt: "prompt" is a denied property key (analytics.js), whatever its value.
 		turn_id: turnId, edited: bool, pose: count, camera: count, object: count, shot: count, prompt_block: count, first_delay: long,

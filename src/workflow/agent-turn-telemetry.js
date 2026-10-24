@@ -9,6 +9,7 @@ import { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_VALUES } from "../execution-
 import { closePostTurnWindow, openPostTurnWindow } from "../post-turn-edits.js";
 import { AGENT_FAILURE_CODES } from "./agent-failure-codes.js";
 import { noteTurnOutcome } from "./connect-telemetry.js";
+import { notePromptTurnEnded, takePrompt } from "./prompt-telemetry.js";
 
 const validTelemetryId = (value) => typeof value === "string" && /^[a-f0-9]{32}$/.test(value);
 const exactKeys = (value, keys) => value && typeof value === "object" && !Array.isArray(value)
@@ -121,7 +122,7 @@ export function startAgentTurn({ surface, capture, now, correlationId = null }) 
 	const finish = (outcome, failureCode) => {
 		if (terminal) return;
 		terminal = true;
-		noteTurnOutcome(outcome);
+		noteTurnOutcome(outcome); notePromptTurnEnded(outcome);
 		if (outcome === "cancelled") {
 			for (const [id, tool] of tools) {
 				if (!seenTools.has(id)) emit("agent:tool_executed", { turn_id: turnId, tool_category: tool.category, outcome: "cancelled", duration_bucket: bucketMs(clock() - tool.startedAt) });
@@ -135,6 +136,9 @@ export function startAgentTurn({ surface, capture, now, correlationId = null }) 
 		if (turnId && surface === "studio") openPostTurnWindow(turnId, emit, windowTimers);
 	};
 	emit("agent:turn_requested", { surface, turn_id: turnId });
+	// The prompt the panel staged as it sent this turn (prompt-telemetry.js), with the same turn id.
+	const prompt = takePrompt(turnId);
+	if (prompt) emit("agent:prompt_sent", prompt);
 	return {
 		turnId,
 		cancel: () => finish("cancelled", "aborted"),

@@ -88,7 +88,7 @@
           A copied start command such as <code>npx cozyclay --via site</code> stores that one source label
           with the first-launch receipt instead of asking where you heard about CozyClay.
           Prompt text, asset names,
-          file names, project content, local paths and any user-entered text are never collected. Session
+          file names, project content, local paths and any user-entered text are never collected. For a prompt sent to the agent, only two values derived from its text leave the device: a length bucket and a similarity grade (first, same, near or different) that the browser computes against the previous prompt. Neither the text nor its words are sent; the previous prompt is kept in the page only as its set of words, until the page closes. Session
           duration and action counts are bucketed. Source checkouts, forks, development servers, CI and tests
           send nothing.
         </p>
@@ -142,6 +142,7 @@ cclay telemetry on</code></pre>
               <tr><td>agent:connect_started</td><td>One model-connect attempt began: provider (one of the providers CozyClay configures — openai-codex, anthropic, anthropic-subscription, openai, google, minimax, minimax-cn, openrouter, cliproxy, openai-compatible — or other) and method (oauth, api_key or chatgpt).</td></tr>
               <tr><td>agent:connect_finished</td><td>That attempt ended: provider, method, outcome (ok, failed, cancelled with the Cancel button, abandoned when closed or left unfinished), step it had reached (list, prompt, waiting or done) and duration (lt10s, 10-30s, 30-60s, 1-2m, 2-5m or gte5m). Never the key, token, account, email or error text.</td></tr>
               <tr><td>agent:model_changed</td><td>A model picked in the agent's model list: its provider (as above, or other) and after_failure (whether the last agent turn had failed). At most 10 per session.</td></tr>
+              <tr><td>agent:prompt_sent</td><td>One per prompt sent to the agent: turn_id (the same random id as agent:turn_*); provider (as for agent:connect_started, or other); via (typed, retry_button, regenerate, chip or supervisor); prompt_len (1-20, 21-80, 81-240 or gte241 characters); compose_ms (first keystroke to send, typed prompts only) and gap (since the previous turn ended, or first) as lt10s, 10-30s, 30-60s, 1-2m, 2-5m or gte5m; similarity (first, same, near or different, computed in the browser against the previous prompt's words); prev_outcome (succeeded, failed, cancelled or none); turn_index (1, 2, 3, 4-5, 6-10 or gte11); attached and task_mode (true or false). Never the prompt text or its words.</td></tr>
               <tr><td>feature:used</td><td>One signal per feature per session: a fixed feature name such as pose_edit (a real bone or pose change), pose_save (saving a pose to the library), camera_fly, export_video, export_storyboard or export_render_pass</td></tr>
               <tr><td>$pageview, scene:created, scene:loaded, craft:first_action, activation:completed</td><td>Funnel and drop-off analysis</td></tr>
               <tr><td>craft:first_edit</td><td>First successful Studio authoring change per editor mount; only a fixed edit-kind label and definition version 2 (not camera navigation, playback, loading, restore, or undo/redo)</td></tr>

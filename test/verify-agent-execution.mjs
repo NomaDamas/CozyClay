@@ -872,6 +872,41 @@ for (const [drafts, expected] of [
 	} finally { closePostTurnWindow(); await handler.close(); await close(server); }
 }
 
+// PR A: agent:prompt_sent rides the real transport turn: the staged prompt, once, with the turn's own analytics id.
+{
+	const prompts = await import("../src/workflow/prompt-telemetry.js");
+	let promptClock = 1_000_000;
+	const restorePrompts = prompts.promptTelemetrySeam(() => promptClock);
+	const captured = [];
+	const SENTINEL = "QA_SENTINEL_PROMPT_TEXT";
+	const send = async (text, via, outcome) => {
+		prompts.stagePrompt(text, { via, model: "anthropic/claude-x" });
+		await runTurn((id) => [terminal(id, outcome, outcome === "failed" ? "upstream" : undefined)], { captured });
+		promptClock += 12_000;
+	};
+	prompts.noteDraftInput(); promptClock += 7000;
+	await send(`${SENTINEL} make the actor walk to the door and wave`, "typed", "failed");
+	await send(`${SENTINEL} make the actor walk to the door and wave`, "retry_button", "succeeded");
+	prompts.noteDraftInput(); promptClock += 3000;
+	await send(`${SENTINEL} make the actor run to the door and wave twice`, "typed", "succeeded");
+	// A send that never staged (or staged too long ago) is no prompt event.
+	await runTurn((id) => [terminal(id, "succeeded")], { captured });
+	prompts.stagePrompt("stale prompt", { via: "typed" }); promptClock += 11_000;
+	await runTurn((id) => [terminal(id, "succeeded")], { captured });
+	const sent = captured.filter(({ event }) => event === "agent:prompt_sent").map(({ props }) => props);
+	const requested = captured.filter(({ event }) => event === "agent:turn_requested").map(({ props }) => props.turn_id);
+	assert.equal(sent.length, 3, "one agent:prompt_sent per staged send; none without one or for a stale one");
+	assert.deepEqual(sent.map((props) => props.turn_id), requested.slice(0, 3), "each carries its own turn's analytics id");
+	assert.deepEqual(sent.map((props) => [props.via, props.similarity, props.prev_outcome, props.gap, props.turn_index]), [
+		["typed", "first", "none", "first", "1"], ["retry_button", "same", "failed", "10-30s", "2"], ["typed", "near", "succeeded", "10-30s", "3"],
+	], "retry loop signals: similarity, the previous outcome and the gap");
+	assert.deepEqual([sent[0].compose_ms, sent[1].compose_ms, sent[2].compose_ms], ["lt10s", undefined, "lt10s"], "compose time only for typed prompts");
+	assert.equal(sent[0].provider, "anthropic");
+	for (const props of sent) assert.deepEqual(sanitizeProps("agent:prompt_sent", props), props, "the payload is closed values only");
+	assert.ok(!JSON.stringify(captured).includes(SENTINEL) && !JSON.stringify(captured).includes("door"), "no prompt text or word in any payload");
+	restorePrompts();
+}
+console.log("PASS agent:prompt_sent: one per send on the real transport turn, its turn id, similarity/gap/prev_outcome, and no text anywhere");
 console.log("PASS agent:turn_summary: counts, refusal_top, stale_retry, authored, first_tool, cancel_phase, drafts trend and clearing, one per turn");
 console.log("PASS post-turn window: opened at finish with the analytics turn id, closed by the next turn's start");
 

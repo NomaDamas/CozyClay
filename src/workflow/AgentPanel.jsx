@@ -45,6 +45,7 @@ import { PlanCard } from "./AgentPlanCard.jsx";
 import { ReplyText } from "./AgentReplyText.jsx";
 import { stepLabel, turnLayout } from "./agent-turn.js";
 import { connectAuthState, connectFinished, connectOpened, connectStarted, modelChanged } from "./connect-telemetry.js";
+import { noteChipDraft, noteDraftInput, stagePrompt } from "./prompt-telemetry.js";
 
 function relativeTime(value, now = Date.now()) {
 	const at = Date.parse(value || "");
@@ -640,9 +641,10 @@ export default function AgentPanel({
 		if (!event.defaultPrevented && takeTransfer(event.dataTransfer)) event.preventDefault();
 	}, [takeTransfer]);
 
-	const runTurn = useCallback((text) => {
-		setAttachNotice(null);
-		setSteerNotice("");
+	// `via`: how the prompt was sent, for agent:prompt_sent (prompt-telemetry.js keeps no text).
+	const runTurn = useCallback((text, via = "typed") => {
+		setAttachNotice(null); setSteerNotice("");
+		stagePrompt(text, { via, model, attached: attachFrame || store.getState().pendingAttachments.length > 0, taskMode });
 		return store.send(text, { attachFrame, model, effort: effort ?? undefined, tasks: taskMode });
 	}, [attachFrame, effort, model, store, taskMode]);
 	const taskStepLabel = useCallback((call) => stepLabel(call, presentation.toolLabels), [presentation.toolLabels]);
@@ -653,8 +655,7 @@ export default function AgentPanel({
 	// leaves the draft to be sent as a normal message.
 	const steerTurn = useCallback(async (text) => {
 		if (!String(text ?? "").trim()) return;
-		setAttachNotice(null);
-		setSteerNotice("");
+		setAttachNotice(null); setSteerNotice("");
 		const result = await store.steer(text);
 		if (!result.ok) setSteerNotice(result.message || "The running turn did not take that message.");
 	}, [store]);
@@ -882,7 +883,7 @@ export default function AgentPanel({
 				<h3>{presentation.emptyTitle}</h3>
 				<p>{presentation.emptyHint(sceneName)}</p>
 				<div className="agent-suggestions">
-					{presentation.suggestions.map((chip) => <button type="button" key={chip} className="agent-chip" onClick={() => { store.setDraft(chip); composerRef.current?.focus(); }}>{chip}</button>)}
+					{presentation.suggestions.map((chip) => <button type="button" key={chip} className="agent-chip" onClick={() => { noteChipDraft(); store.setDraft(chip); composerRef.current?.focus(); }}>{chip}</button>)}
 				</div>
 			</div>}
 
@@ -890,7 +891,7 @@ export default function AgentPanel({
 			{layout.map((entry, index) => {
 				if (entry.type === "steps") return <Fragment key={entry.id}>
 					{entry.last && progressCard}
-					<div className="agent-row"><TurnSteps block={entry} now={activityNow} toolLabels={presentation.toolLabels} formatClock={formatTurnClock} onRetry={() => runTurn(chat.lastPrompt)} /></div>{taskMode && layout[index + 1]?.item?.kind !== "assistant" && <TaskRows steps={entry.steps} />}
+					<div className="agent-row"><TurnSteps block={entry} now={activityNow} toolLabels={presentation.toolLabels} formatClock={formatTurnClock} onRetry={() => runTurn(chat.lastPrompt, "retry_button")} /></div>{taskMode && layout[index + 1]?.item?.kind !== "assistant" && <TaskRows steps={entry.steps} />}
 				</Fragment>;
 				const { item } = entry;
 				if (item.kind === "user") return <div className="agent-row user" key={item.id}>
@@ -902,14 +903,14 @@ export default function AgentPanel({
 				if (item.kind === "assistant") return <Fragment key={item.id}><div className="agent-row assistant"><div className="agent-assistant-text"><ReplyText text={item.text} tail={streaming && <span className="agent-caret">▌</span>} /></div></div>{taskMode && layout[index - 1]?.type === "steps" && <TaskRows steps={layout[index - 1].steps} />}</Fragment>;
 				if (item.kind === "job") return <div className="agent-row" key={item.id}><JobCard job={item} onStop={stopTurn} onAccept={(job) => store.acceptJob(job.jobId)} /></div>;
 				if (item.kind === "receipt") return <div className="agent-row" key={item.id}><ReceiptCard item={item} /></div>;
-				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt)} onFixKey={() => openProviderKeys("failure_card")} /></div>;
-				if (item.kind === "supervisor") return <div className="agent-row" key={item.id}><SupervisorCard note={item} onSend={(text) => { store.setDraft(text); runTurn(text); }} /></div>;
+				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt, "retry_button")} onFixKey={() => openProviderKeys("failure_card")} /></div>;
+				if (item.kind === "supervisor") return <div className="agent-row" key={item.id}><SupervisorCard note={item} onSend={(text) => { store.setDraft(text); runTurn(text, "supervisor"); }} /></div>;
 				if (item.kind === "plan") return <PlanCard key={item.id} plan={item} live={streaming && !item.outcome} />;
-				return <div className="agent-row" key={item.id}><ImageResultCard image={item} onUse={(image) => store.applyImage(image.id)} onUndo={(image) => store.undoImage(image.id)} onRegenerate={() => runTurn(chat.lastPrompt)} onOpen={setLightbox} /></div>;
+				return <div className="agent-row" key={item.id}><ImageResultCard image={item} onUse={(image) => store.applyImage(image.id)} onUndo={(image) => store.undoImage(image.id)} onRegenerate={() => runTurn(chat.lastPrompt, "regenerate")} onOpen={setLightbox} /></div>;
 			})}
 
 			{!layout.some((entry) => entry.type === "steps" && entry.last) && progressCard}{taskMode && <TaskRows items={items} />}
-			{rateLimit && <PausedCard resetAt={rateLimit.resetAt} onRetry={() => { store.clearRateLimit(); runTurn(chat.lastPrompt); }} onSwitchModel={switchModel} />}
+			{rateLimit && <PausedCard resetAt={rateLimit.resetAt} onRetry={() => { store.clearRateLimit(); runTurn(chat.lastPrompt, "retry_button"); }} onSwitchModel={switchModel} />}
 		</div>
 		{surface === "studio" && taskMode && authenticated && <><Suspense fallback={null}><TaskBoard sessionId={chat.sessionId} pulse={chat.lastTurn?.endedAt ?? 0} labelOf={taskStepLabel} onMainNote={store.note} /></Suspense><TaskDetail /></>}
 
@@ -944,7 +945,7 @@ export default function AgentPanel({
 					placeholder={panelState === "rate-limited" ? "Composer is paused" : model ? presentation.composerPlaceholder : "Waiting for the model list…"}
 					value={draft}
 					disabled={composerDisabled}
-					onChange={(event) => store.setDraft(event.target.value)}
+					onChange={(event) => { noteDraftInput(); store.setDraft(event.target.value); }}
 					onKeyDown={onComposerKeyDown}
 					onDragOver={onComposerDragOver}
 					onDrop={onComposerDrop}
