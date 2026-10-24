@@ -30,11 +30,6 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `app:error` | Uncaught errors and unhandled rejections: type label, source, and for the app's own bundle only file name + line/column. Never messages, stacks, URLs, or paths |
 | `device:profile` | Once per session: GPU vendor/class, WebGL version, CPU/memory buckets, and a frame-rate bucket. Never the raw renderer string |
 | `survey:use_case` | Optional one-time question after a successful export: `use_case` and `team`, closed choices only |
-| `motion:generate_requested` | Explicit Generate request, never prompt-block authoring; includes the Fal A→B card (`surface: fal_card`, `input_mode: a_to_b`) |
-| `motion:preflight_blocked`, `motion:preflight_passed` | Request readiness outcome before execution (`locked` while the AI video route is gated) |
-| `motion:job_started` | Correlated generation execution starts |
-| `motion:job_succeeded`, `motion:job_failed` | Generation result, with normalized failure/cancellation codes |
-| `motion:result_applied` | Generated result applied to its requesting character, separately from job success |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |
 | `sculpt_run` | One per finished Sculpt mode run: `outcome` (`done`, `cancelled`, `failed`), `rounds` (0-10), `final_iou` (match against the reference image, 0-1 to two decimals; omitted when unscored), `duration_ms` and `had_target` (reworked an existing sculpt). Never the reference image, recipe, part names or sculpt id |
 | `activation:completed` | Funnel and drop-off analysis |
@@ -43,14 +38,10 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 
 The app sends only the events in this table: `track()` drops any event name outside its allowlist instead of sending it with empty properties. Geo data comes from ingest-time GeoIP country lookup only — no precise location is collected. Prompt text, asset names, file names, project content, local paths, and any user-entered text are never collected.
 
-Motion requests use one ephemeral random `request_id` across intent, preflight,
-job outcome and application. The September 15, 2026 issue #273 contract stops
-emitting the ambiguous `motion:generate_blocked`; old data is not relabeled or
-included in the new demand metric. The exact properties, entry-point mapping
-and deduplicated funnel query are in
-[`analytics-queries.md`](analytics-queries.md#motion-event-contract).
-Browser regression QA:
-`QA_URL=http://127.0.0.1:5254/app/ CDP_PORT=9493 node tools/qa-browser.mjs -- node test/qa-motion-intent-browser.mjs`.
+The 2.x motion-generation events (`motion:generate_requested`,
+`motion:preflight_*`, `motion:job_*`, `motion:result_applied`) and
+`sample:played` are no longer collected: they left the allowlist on
+October 25, 2026.
 
 ## The npm package
 

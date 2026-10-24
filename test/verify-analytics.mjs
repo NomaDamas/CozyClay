@@ -35,15 +35,14 @@ assert.equal(isOriginAllowed("https://preview.cozyclay.org", allowlist), false);
 assert.equal(isOriginAllowed("https://cozyclay.org.evil.example", allowlist), false);
 
 assert.deepEqual(
-	sanitizeProps("motion:job_succeeded", {
-		backend: "hosted",
-		duration_bucket: "1-3s",
-		input_mode: "pose",
+	sanitizeProps("project:saved", {
+		object_count_bucket: "1-3",
+		shot_count_bucket: "0",
 		prompt: "secret prompt",
 		name: "private name",
 		unknown: "discarded",
 	}),
-	{ backend: "hosted", duration_bucket: "1-3s", input_mode: "pose" },
+	{ object_count_bucket: "1-3", shot_count_bucket: "0" },
 );
 assert.deepEqual(
 	sanitizeProps("scene:created", {
@@ -55,16 +54,6 @@ assert.deepEqual(
 	{},
 	"free text and hard-denied keys are never captured",
 );
-assert.deepEqual(
-	sanitizeProps("motion:job_failed", {
-		backend: "local_kimodo",
-		duration_bucket: "gte30s",
-		input_mode: true,
-		error_code: 503,
-	}),
-	{ backend: "local_kimodo", duration_bucket: "gte30s" },
-);
-assert.deepEqual(sanitizeProps("motion:job_failed", { error_code: Number.POSITIVE_INFINITY }), {});
 assert.deepEqual(sanitizeProps("motion:generate_blocked", { surface: "timeline", prompt: "private" }), {});
 
 import { readStudioSource } from "./bus/verify-domain-modules.mjs";
@@ -76,12 +65,14 @@ const appFunction = (name) => {
 };
 assert.doesNotMatch(appSource, /trackGenerateBlocked|motion:generate_blocked/);
 
-const motionId = "0123456789abcdef0123456789abcdef";
-assert.deepEqual(sanitizeProps("motion:generate_requested", {
-	surface: "timeline", input_mode: "prompt", request_id: motionId, prompt: "private", host: "user@private",
-}), { surface: "timeline", input_mode: "prompt", request_id: motionId });
-for (const event of ["motion:generate_requested", "motion:preflight_blocked", "motion:preflight_passed", "motion:job_started", "motion:job_succeeded", "motion:job_failed", "motion:result_applied"]) {
-	assert.deepEqual(sanitizeProps(event, { surface: "private", input_mode: true, backend: "user@private", reason: "private", error_code: "PrivateError", duration_bucket: 503, host_configured: "yes", request_id: motionId.toUpperCase() }), {}, `${event} accepts only normalized values`);
+// The 2.x motion-generation funnel and the sample player have no emitter in
+// 3.0: their events left the allowlist, so nothing can send them again.
+const removedEvents = ["motion:generate_requested", "motion:preflight_blocked", "motion:preflight_passed", "motion:job_started", "motion:job_succeeded", "motion:job_failed", "motion:result_applied", "sample:played"];
+for (const event of removedEvents) {
+	assert.deepEqual(sanitizeProps(event, { surface: "timeline", backend: "hosted", request_id: "0123456789abcdef0123456789abcdef", from: "x" }), {}, `${event} is off the allowlist`);
+}
+for (const name of ["prompt_block_add", "shot_add", "shot_cut", "export_pose", "mcp_connected", "plan_view", "fal_motion_open"]) {
+	assert.deepEqual(sanitizeProps("feature:used", { name }), {}, `never-called feature name ${name} is gone`);
 }
 assert.doesNotMatch(appSource, /latency_bucket/);
 assert.deepEqual(sanitizeProps("feature:used", { name: "pose_edit", prompt: "secret" }), { name: "pose_edit" });
@@ -442,40 +433,8 @@ assert.deepEqual(
 );
 
 const privacyHtml = readFileSync(new URL("../tools/dev/pages/privacy.html", import.meta.url), "utf8");
-const motionDisclosure = new Map();
-for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
-	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
-	for (const event of cells[0]?.match(/\bmotion:[a-z_]+\b/g) ?? []) {
-		motionDisclosure.set(event, new Set(cells[1]?.match(/\b[a-z][a-z0-9_]*\b/g) ?? []));
-	}
-}
-const motionSchemas = {
-	"motion:generate_requested": ["surface", "input_mode", "request_id"],
-	"motion:preflight_blocked": ["reason", "surface", "request_id"],
-	"motion:preflight_passed": ["backend", "surface", "request_id"],
-	"motion:job_started": ["backend", "input_mode", "request_id"],
-	"motion:job_succeeded": ["backend", "duration_bucket", "input_mode", "request_id"],
-	"motion:job_failed": ["backend", "duration_bucket", "input_mode", "error_code", "request_id"],
-	"motion:result_applied": ["request_id", "backend"],
-};
-assert.deepEqual([...motionDisclosure.keys()].sort(), Object.keys(motionSchemas).sort());
-const motionProps = { backend: "local_kimodo", host_configured: true, surface: "timeline", input_mode: "prompt", reason: "unconfigured", request_id: motionId, duration_bucket: "lt1s", error_code: "aborted" };
-for (const [event, properties] of Object.entries(motionSchemas)) {
-	assert.deepEqual(Object.keys(sanitizeProps(event, motionProps)).sort(), [...properties].sort());
-	for (const property of properties) assert.ok(motionDisclosure.get(event).has(property), `${event} discloses ${property}`);
-}
-for (const [event, property, values] of [
-	["motion:generate_requested", "surface", ["timeline", "line_edit", "trail", "mcp"]],
-	["motion:generate_requested", "input_mode", ["prompt", "pose", "edit"]],
-	["motion:preflight_blocked", "reason", ["unconfigured", "unreachable", "unsupported_route"]],
-	["motion:job_failed", "error_code", ["aborted", "unsupported_route", "generation_failed", "unknown"]],
-]) {
-	for (const value of values) {
-		assert.deepEqual(sanitizeProps(event, { [property]: value }), { [property]: value });
-		assert.ok(motionDisclosure.get(event).has(value), `${event} discloses enum ${value}`);
-	}
-}
-console.log("PASS motion allowlists, normalized enums and disclosure schema tokens");
+for (const event of removedEvents) assert.equal(privacyHtml.includes(event), false, `the privacy page no longer lists ${event}`);
+console.log("PASS removed motion-generation and sample events stay off the allowlist and the privacy page");
 const shippedPrivacyHtml = readFileSync(new URL("../privacy/index.html", import.meta.url), "utf8");
 assert.ok(shippedPrivacyHtml.includes(privacyHtml.split("\n---\n")[1].trimEnd()), "the shipped privacy body matches its source disclosure");
 const exportDisclosure = new Map();
@@ -1155,20 +1114,6 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 	}
 	console.log("PASS per-group edit gestures, real pose_edit vs pose_save, and session-end disclosure");
 
-	for (const [event, property, values] of [
-		["motion:generate_requested", "surface", ["fal_card", "agent"]],
-		["motion:generate_requested", "input_mode", ["a_to_b", "still"]],
-		["motion:preflight_blocked", "reason", ["locked", "missing_input"]],
-		["motion:preflight_passed", "backend", ["fal"]],
-		["motion:job_failed", "error_code", ["quota"]],
-	]) {
-		const tokens = rowTokens(event);
-		for (const value of values) {
-			assert.deepEqual(sanitizeProps(event, { [property]: value }), { [property]: value });
-			assert.ok(tokens.has(value), `${event} discloses ${value}`);
-		}
-	}
-	console.log("PASS Fal A->B values on the motion contract: locked, missing input, fal and quota");
 
 	const { FIRST_LAUNCH_SOURCES } = await import("../bin/telemetry-state.mjs");
 	assert.deepEqual([...HEARD_FROM_SOURCES].sort(), [...FIRST_LAUNCH_SOURCES].sort(), "the CLI and the browser agree on install sources");

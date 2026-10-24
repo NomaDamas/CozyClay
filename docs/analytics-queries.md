@@ -248,182 +248,14 @@ Do not use npm first launches as the denominator for hosted Playground
 activity. The application's first-edit boundary is an App mount, whereas
 PostHog's native session boundary may span multiple mounts.
 
-# Motion generation intent
+# Motion generation intent (removed)
 
-Issue #273 introduces the explicit-request contract dated **September 15, 2026**.
-The cut-over is the first deployed build containing #273, not every build with
-the same package version or every event received after that date.
-`motion:generate_blocked` is deprecated and no longer emitted by these builds:
-its historical meaning mixed prompt-block authoring with generation attempts.
-Never relabel it as `motion:generate_requested`, add it to a new demand count,
-or infer a request from an old uncorrelated `motion:job_*` event.
-
-## Motion event contract
-
-| Event | Exact properties | Trigger |
-| --- | --- | --- |
-| `motion:backend_state` | `backend`, `host_configured` | Existing session capability baseline; not a request |
-| `motion:generate_requested` | `surface`, `input_mode`, `request_id` | One explicit generation request |
-| `motion:preflight_blocked` | `reason`, `surface`, `request_id` | Request readiness refused |
-| `motion:preflight_passed` | `backend`, `surface`, `request_id` | Readiness accepted, before queue execution |
-| `motion:job_started` | `backend`, `input_mode`, `request_id` | Execution starts, not merely queued |
-| `motion:job_succeeded` | `backend`, `duration_bucket`, `input_mode`, `request_id` | Generation completes, before delivery |
-| `motion:job_failed` | `backend`, `duration_bucket`, `input_mode`, `error_code`, `request_id` | Generation fails or is actually aborted |
-| `motion:result_applied` | `request_id`, `backend` | Generated motion is applied to the requesting character |
-
-- `request_id`: 128 secure random bits encoded as 32 lowercase hexadecimal
-  characters, fresh per request and held only by that request. No persistence,
-  prompt/content hash, installation ID, live command ID, host or credential.
-- `surface`: `timeline` (main Generate and its programmatic entry point),
-  `line_edit` (explicit line-edit generation), `trail` (trail regeneration),
-  `mcp` (the separate server-side `generate_motion` tool).
-  It describes the initiating generation path, not the selected character.
-- `input_mode`: `prompt`, `pose`, `edit`.
-- `backend`: `none`, `local_kimodo`, `hosted`; `host_configured` is a boolean.
-  The session baseline retains its existing meaning and is not a preflight.
-- `reason`: `unconfigured` (no configured backend is known), `unreachable`
-  (backend health cannot be reached/accepted), `unsupported_route` (the
-  selected request is outside the advertised route capabilities). Classification
-  uses structured state, not host addresses or raw error prose.
-- `error_code`: `aborted` (actual `AbortError` or an aborted MCP job/controller), `unsupported_route`
-  (a generation route refusal), `generation_failed` (other generation errors),
-  `unknown` (otherwise unclassified). Cancellation is
-  `motion:job_failed {error_code: "aborted"}`, not an additional event.
-- `duration_bucket`: elapsed job execution time, excluding queue time:
-  `lt1s`, `1-3s`, `3-10s`, `10-30s`, `gte30s`, using the same `bucketMs`
-  boundaries as the export contract.
-
-Prompt-block add/edit, live `set_prompt_blocks`, navigation and automatic
-line-preview drafts do not emit explicit demand. Explicit line-edit confirmation
-starts its own full-quality request through `runLineEdit`; automatic draft
-round trips are not part of this explicit-request cohort.
-The main Generate, line-edit and trail entry points own their request through
-their shared queue and result delivery. Calls through `window.__cozyclay` use
-the same path, including `runArdy` and `trailRegenerate`.
-
-MCP `generate_motion` has a separate server-side execution path. It creates the
-same lifecycle before refreshing the selected editor, probes readiness before
-the generation POST, and records job success once the returned motion URL is
-validated. `motion:result_applied` is emitted only after that editor acknowledges
-`load_motion`. A rejected or uncertain installation leaves job success without
-application. The server sends only sanitized `motion_telemetry` payloads to the
-target workspace; `src/live-control.js` validates the event name and properties,
-deduplicates each `(request_id, event)` and uses the browser's existing
-analytics/opt-out gate. No second server-side PostHog client is added.
-
-Reusing an existing `motion_url` or issuing `load_motion` directly is
-installation, not a fresh generation request. Live `set_prompt_blocks` remains
-authoring, not demand. With no connected editor, `generate_motion` retains its
-existing refusal and no browser telemetry is available. Disconnected lifecycle
-events are omitted, not reconstructed on reconnect; a later acknowledged
-application may therefore appear as an orphan outside the request cohort.
-
-There is at most one preflight outcome, one job start, one job terminal outcome
-and one result application per request. Duplicate/late callbacks cannot advance
-the state again. A decode, delivery or stale-result failure after job success
-does not retroactively fail the job or invent an application. Missing result
-URLs, removed targets, cancellation and discarded results are not successful
-applications. Analytics/clock/randomness failures must not change generation;
-without a secure request ID the lifecycle is omitted.
-
-No cancellation is inferred from a closed tab or missing event. Reloads, queue
-abandonment, opt-out and delivery loss can leave unresolved requests or orphan
-downstream events. An accepted preflight is not evidence that a job started,
-and a job success is not evidence that its result reached the scene.
-
-## Seven-day explicit-request funnel
-
-This HogQL query forms **one row per request_id**, then requires each ordered
-stage. It cannot count repeated callbacks or duplicate event deliveries as
-extra requests. The cohort requires `motion:generate_requested`; historical
-ambiguous events and uncorrelated legacy job events are excluded, even if
-received after the cut-over. Timestamps may be equal for synchronous stages.
-
-```sql
-WITH per_request AS (
-    SELECT
-        properties.request_id AS request_id,
-        minIf(properties.surface, event = 'motion:generate_requested') AS surface,
-        minIf(properties.input_mode, event = 'motion:generate_requested') AS input_mode,
-        countIf(event = 'motion:generate_requested') AS request_deliveries,
-        minIf(timestamp, event = 'motion:generate_requested') AS requested_at,
-        max(event = 'motion:preflight_passed') AS passed,
-        max(event = 'motion:preflight_blocked') AS blocked,
-        minIf(timestamp, event = 'motion:preflight_passed') AS passed_at,
-        minIf(timestamp, event = 'motion:preflight_blocked') AS blocked_at,
-        max(event = 'motion:job_started') AS job_started,
-        minIf(timestamp, event = 'motion:job_started') AS started_at,
-        max(event = 'motion:job_succeeded') AS succeeded,
-        minIf(timestamp, event = 'motion:job_succeeded') AS succeeded_at,
-        max(event = 'motion:job_failed') AS failed,
-        minIf(timestamp, event = 'motion:job_failed') AS failed_at,
-        max(event = 'motion:job_failed' AND properties.error_code = 'aborted') AS aborted,
-        max(event = 'motion:result_applied') AS applied,
-        minIf(timestamp, event = 'motion:result_applied') AS applied_at
-    FROM events
-    WHERE timestamp >= greatest(now() - INTERVAL 7 DAY, toDateTime('2026-09-15 00:00:00'))
-      AND timestamp < now()
-      AND event IN (
-          'motion:generate_requested',
-          'motion:preflight_blocked', 'motion:preflight_passed',
-          'motion:job_started', 'motion:job_succeeded', 'motion:job_failed',
-          'motion:result_applied'
-      )
-      AND match(toString(properties.request_id), '^[a-f0-9]{32}$')
-      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
-    GROUP BY request_id
-), cohort AS (
-    SELECT *,
-        passed = 1 AND blocked = 0 AND passed_at >= requested_at AS accepted,
-        blocked = 1 AND passed = 0 AND blocked_at >= requested_at AS refused
-    FROM per_request
-    WHERE request_deliveries > 0
-), execution AS (
-    SELECT *, accepted AND job_started = 1 AND started_at >= passed_at AS started
-    FROM cohort
-), outcomes AS (
-    SELECT *,
-        started AND succeeded = 1 AND failed = 0 AND succeeded_at >= started_at AS generated,
-        started AND failed = 1 AND succeeded = 0 AND failed_at >= started_at AS job_failed
-    FROM execution
-)
-SELECT
-    surface,
-    input_mode,
-    count() AS explicit_requests,
-    countIf(refused) AS preflight_blocked,
-    countIf(accepted) AS preflight_passed,
-    countIf(started) AS jobs_started,
-    countIf(generated) AS jobs_succeeded,
-    countIf(job_failed AND aborted = 0) AS jobs_failed,
-    countIf(job_failed AND aborted = 1) AS jobs_cancelled,
-    countIf(generated AND applied = 1 AND applied_at >= succeeded_at) AS results_applied,
-    countIf(passed = 0 AND blocked = 0) AS unresolved_preflight,
-    countIf(accepted AND job_started = 0) AS accepted_not_started,
-    countIf(started AND succeeded = 0 AND failed = 0) AS unresolved_jobs,
-    countIf(generated AND applied = 0) AS succeeded_without_application,
-    countIf((passed = 1 AND blocked = 1) OR (succeeded = 1 AND failed = 1)) AS conflicting_outcomes,
-    round(100.0 * countIf(generated AND applied = 1 AND applied_at >= succeeded_at)
-        / nullIf(count(), 0), 2) AS request_to_application_pct
-FROM outcomes
-GROUP BY surface, input_mode
-ORDER BY surface, input_mode
-```
-
-For a settled cohort, select request starts in a fixed interval and retain
-downstream observations through a later observation time. Do not label
-`accepted_not_started`, `unresolved_jobs` or `succeeded_without_application`
-as failures without separate evidence. Reuse `per_request` to inspect IDs with
-`request_deliveries = 0` as orphans, not new demand. Contradictory outcomes and
-out-of-order events should be investigated rather than added to conversions.
-The query applies the explicit internal-QA exclusion from #270 to all source
-events; do not infer it from request IDs or user content.
-
-Browser QA uses an isolated profile, mocked health and an in-memory SDK at
-the real sanitizer/capture boundary. It sends no production telemetry and
-does not prove production ingestion. With no backend the existing UI may
-disable Generate; QA reports that limitation and exercises the supported
-programmatic Generate path instead of enabling a disabled button.
+The 2.x motion-generation funnel (`motion:generate_requested`,
+`motion:preflight_*`, `motion:job_*`, `motion:result_applied`), the
+`fal_motion_open` feature name and `sample:played` have no emitter in 3.0.
+They left the allowlist on 2026-10-25, so builds from that release can never
+send them. Historical rows stay in PostHog; their funnel queries were removed
+with the events. Do not join old `motion:*` rows into new 3.0 metrics.
 
 # External cohort baseline (issue #270)
 
@@ -1022,13 +854,22 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
   prose.
 - New Agent codes, split out of `upstream` and `auth` in the analytics hygiene
   release (split by `app_version`; older rows keep the coarse code):
-  - `key_refused`: the model provider rejected the key or credentials.
-  - `stale_scene`: the sidecar refused the turn because the scene changed
-    underneath it (HTTP 409 `STALE_SCENE`).
-  - `capability_missing`: a required capability is unavailable (HTTP 409
-    `CAPABILITY_MISSING`), for example the live hub port is already in use.
-  - `busy`: another turn or target is busy.
-  - `invalid_request`: the sidecar rejected the request.
+  - `key_refused`: the model provider rejected the key or credentials
+    (provider `unauthorized`, including a message-only 401/403).
+  - `auth` now means only the local sidecar: no sign-in (`AUTH_REQUIRED`) or a
+    refused session, or a bare 401/403 without a code.
+  - `stale_scene`: `STALE_SCENE`, `STALE_TARGET` or `STALE_ENVIRONMENT` (the
+    scene changed underneath the turn).
+  - `capability_missing`: `CAPABILITY_MISSING` (Studio runtime absent, live hub
+    port in use) or `LIVE_HUB_UNAVAILABLE` (no connected editor).
+  - `busy`: a turn is already running, or `TARGET_BUSY`, `SCOPE_BUSY`,
+    `TARGET_NOT_READY`.
+  - `invalid_request`: `INVALID_*`, HTTP 400, or another 4xx refusal such as
+    409 `AMBIGUOUS_TARGET`.
+  - `upstream` keeps provider overload, 5xx, network and unclassified errors.
+  Source tables: `src/workflow/agent-failure-codes.js` and
+  `bin/agent/agent-failure-codes.mjs` (kept identical by
+  `test/verify-agent-execution.mjs`).
 - Agent `tool_category`: `workflow_read`, `workflow_write`, `workflow_run`,
   `frame_capture`, `image_generate`, `scene_write`, `other`.
 - MCP `tool_category`: `read`, `camera`, `scene_write`, `prompt_authoring`,
@@ -1063,8 +904,8 @@ frames; the browser revalidates, deduplicates and calls the existing analytics
 and opt-out gate. There is no server analytics client. Memory-only sessions,
 ambiguous/stale workspace routing and disconnected stages are unobserved, not
 zero use. Reconnecting never replays execution telemetry. `generate_motion`
-can complete by queuing work: its shared `motion:*` events still describe
-generation, and application requires a later acknowledged installation.
+can complete by queuing work; application requires a later acknowledged
+installation.
 Same-value mutations and rolled-back batches do not count as applied. A
 partially applied failed batch can have a failed execution and an application.
 State comparisons stay inside the local hub; if a handler has no prior
@@ -1179,7 +1020,6 @@ contract report it: before that release the new events are **unknown, not 0**.
 | Question | Event |
 | --- | --- |
 | Do people use bone-level pose control? | `feature:used` `name = 'pose_edit'` (a real pose change) and `app:session_ended.pose_edit_bucket` |
-| Do they press A→B (Fal H3 Max Turbo)? | `motion:*` with `input_mode = 'a_to_b'`; `reason = 'locked'` while the route is gated |
 | Where does it break? | `app:error` (type, source, bundle file + line/column) |
 | Can their machine run it? | `device:profile` (GPU vendor/class, WebGL, CPU/memory, frame-rate bucket) |
 | Where did the install come from? | `install:first_launch.heard_from` (`site`, `playground` from `--via`) |
@@ -1218,43 +1058,6 @@ WHERE event = 'app:session_ended'
   AND JSONExtractRaw(properties, 'internal_qa') != 'true'
   AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY distribution
-```
-
-## A→B demand and outcome
-
-One row per `request_id`, as in the motion funnel above. While the Fal route is
-gated, the card's Generate button is **disabled**, so card demand is
-`feature:used name = 'fal_motion_open'` (the A/B authoring modal was opened);
-the agent panel chip still reports `motion:preflight_blocked reason = 'locked'`.
-
-```sql
-WITH per_request AS (
-    SELECT
-        properties.request_id AS request_id,
-        any(distinct_id) AS person,
-        minIf(properties.surface, event = 'motion:generate_requested') AS surface,
-        minIf(properties.input_mode, event = 'motion:generate_requested') AS input_mode,
-        maxIf(properties.reason, event = 'motion:preflight_blocked') AS blocked_reason,
-        max(event = 'motion:job_started') AS started,
-        max(event = 'motion:job_succeeded') AS succeeded,
-        maxIf(properties.error_code, event = 'motion:job_failed') AS error_code,
-        max(event = 'motion:result_applied') AS applied
-    FROM events
-    WHERE event LIKE 'motion:%' AND event != 'motion:backend_state'
-      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
-      AND timestamp >= now() - INTERVAL 7 DAY
-    GROUP BY request_id
-)
-SELECT input_mode, surface,
-    count() AS requests, uniq(person) AS people,
-    countIf(blocked_reason = 'locked') AS locked,
-    countIf(blocked_reason = 'missing_input') AS missing_input,
-    countIf(started) AS started, countIf(succeeded) AS succeeded,
-    countIf(error_code = 'quota') AS quota, countIf(applied) AS applied
-FROM per_request
-WHERE input_mode IN ('a_to_b', 'still')
-GROUP BY input_mode, surface
-ORDER BY requests DESC
 ```
 
 ## Top errors
