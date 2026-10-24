@@ -1,6 +1,8 @@
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
-import { EXPORT_FAILURE_CODES, exportPropAllowed, sessionEndedPropAllowed } from "./analytics-values.js";
-import { FRICTION_SUMMARY_KEYS, bump as bumpFriction, frictionPropAllowed, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
+import { EXPORT_FAILURE_CODES, exportPropAllowed } from "./analytics-values.js";
+import { bump as bumpFriction, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
+import { STRICT_EVENT_KEYS, strictPropValidator } from "./analytics-strict.js";
+import { noteEditGesture } from "./post-turn-edits.js";
 export const MCP_TOOL_CATEGORIES = Object.freeze([
 	"read",
 	"camera",
@@ -101,7 +103,7 @@ const EVENT_PROPERTIES = Object.freeze({
 	"install:first_launch": ["heard_from"],
 	"app:session_started": [],
 	"app:session_ended": ["duration_bucket", "action_count_bucket", "scenes_touched", ...EDIT_BUCKET_KEYS, "session_id"],
-	"app:friction_summary": FRICTION_SUMMARY_KEYS,
+	...STRICT_EVENT_KEYS,
 	"app:error": ["error_kind", "error_type", "error_source", "error_file", "error_line", "error_col"],
 	"device:profile": ["gpu_vendor", "gpu_class", "webgl", "cpu_bucket", "memory_bucket", "frame_rate_bucket"],
 	"survey:use_case": ["use_case", "team"],
@@ -204,7 +206,7 @@ let deviceProfileStarted = false;
 // Passive signals describe the session; they are not user actions and never
 // move action_count_bucket.
 const PASSIVE_EVENTS = new Set([
-	"app:session_started", "app:session_ended", "app:friction_summary", "install:first_launch",
+	"app:session_started", "app:session_ended", "app:friction_summary", "install:first_launch", "studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit",
 	"app:error", "device:profile",
 ]);
 
@@ -260,16 +262,13 @@ const isSafePropertyValue = (value) => {
 export function sanitizeProps(event, props) {
 	const allowedKeys = EVENT_PROPERTIES[event] ?? [];
 	if (!props || typeof props !== "object" || Array.isArray(props)) return {};
-	const sanitized = {};
+	const sanitized = {}, strict = strictPropValidator(event);
 	for (const key of allowedKeys) {
 		if (DENIED_PROPERTY_KEYS.has(key) || !Object.hasOwn(props, key)) continue;
 		if (event === "feature:used" && (key !== "name" || !FEATURE_NAMES.has(props[key]))) continue;
 		if (event === "install:first_launch" && (key !== "heard_from" || !HEARD_FROM_VALUES.has(props[key]))) continue;
 		if ((event.startsWith("export:attempt_") || event === "export:saved") && !exportPropAllowed(key, props[key])) continue;
-		if (event === "app:session_ended" || event === "app:friction_summary") {
-			if ((event === "app:session_ended" ? sessionEndedPropAllowed : frictionPropAllowed)(key, props[key])) sanitized[key] = props[key];
-			continue;
-		}
+		if (strict) { if (strict(key, props[key])) sanitized[key] = props[key]; continue; }
 		if (event === "export:keyframe_pack") {
 			if (key === "source" && props[key] !== "workflow") continue;
 			if (key === "entries" && (!Number.isFinite(props[key]) || props[key] < 0)) continue;
@@ -498,7 +497,7 @@ export function recordSemanticEdit(kind, now = Date.now()) {
 	const continuing = group === lastEditGroup && now - lastEditAt < EDIT_GESTURE_GAP_MS;
 	lastEditGroup = group;
 	lastEditAt = now;
-	if (!continuing) sessionEditCounts[group] += 1;
+	if (!continuing) { sessionEditCounts[group] += 1; noteEditGesture(group); }
 	if (kind === "pose_edit") trackFeature("pose_edit");
 	return !continuing;
 }

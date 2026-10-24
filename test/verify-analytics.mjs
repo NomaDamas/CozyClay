@@ -756,9 +756,8 @@ async function runtimeFixture({
 	};
 	for (const [key, value] of Object.entries(values)) Object.defineProperty(globalThis, key, { configurable: true, writable: true, value });
 	const source = runtimeSource
-		.replace('"./semantic-edit.js"', JSON.stringify(new URL("../src/semantic-edit.js", import.meta.url).href))
-		.replace('"./analytics-values.js"', JSON.stringify(new URL("../src/analytics-values.js", import.meta.url).href))
-		.replace('"./analytics-friction.js"', JSON.stringify(new URL("../src/analytics-friction.js", import.meta.url).href))
+		// A data: module cannot resolve analytics.js's relative imports itself.
+		.replace(/from "\.\/([a-z-]+\.js)"/g, (_match, file) => `from ${JSON.stringify(new URL(`../src/${file}`, import.meta.url).href)}`)
 		.replace("import.meta.env", JSON.stringify(env))
 		.replace('import("posthog-js")', "Promise.resolve({ default: globalThis.__analyticsSdkFixture })");
 	const module = await import(`data:text/javascript;base64,${Buffer.from(source).toString("base64")}#${++runtimeFixtureId}`);
