@@ -23,7 +23,8 @@ export function closePostTurnWindow() {
 	const edited = window.firstAt !== null;
 	const props = {
 		turn_id: window.turnId, edited,
-		...Object.fromEntries(GROUPS.map((group) => [group, bucketFrictionCount(window.counts[group])])),
+		// The prompt group is sent as prompt_block: "prompt" is a denied property key.
+		...Object.fromEntries(GROUPS.map((group) => [group === "prompt" ? "prompt_block" : group, bucketFrictionCount(window.counts[group])])),
 		...(edited ? { first_delay: bucketLong(window.firstAt - window.openedAt) } : {}),
 	};
 	try { Promise.resolve(window.emit("agent:post_turn_edit", props)).catch(() => {}); } catch { /* telemetry is advisory */ }

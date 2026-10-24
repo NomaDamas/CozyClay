@@ -57,7 +57,8 @@ const SCHEMAS = Object.freeze({
 		qa_trend: oneOf("improved", "flat", "worse", "na"), stuck: bool, cancel_phase: oneOf("before_tool", "during_tool", "after_tool", "na"),
 	},
 	"agent:post_turn_edit": {
-		turn_id: turnId, edited: bool, pose: count, camera: count, object: count, shot: count, prompt: count, first_delay: long,
+		// prompt_block, not prompt: "prompt" is a denied property key (analytics.js), whatever its value.
+		turn_id: turnId, edited: bool, pose: count, camera: count, object: count, shot: count, prompt_block: count, first_delay: long,
 	},
 });
 

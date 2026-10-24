@@ -3,6 +3,9 @@ import assert from "node:assert/strict";
 import * as analytics from "../src/analytics.js";
 import { startExportAttempt } from "../src/export-attempt.js";
 import * as friction from "../src/analytics-friction.js";
+import { bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
+import { withRunOrigin, runOrigin } from "../src/bus-run-origin.js";
+import * as postTurn from "../src/post-turn-edits.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -427,6 +430,66 @@ console.log("PASS export retries, scene size, stop stage/progress, new export ki
 	friction.reset();
 }
 console.log("PASS friction counters: closed buckets, per-event caps, validator, and feature-detected long tasks");
+
+// PR B base: the four bus friction events have closed schemas, and the
+// post-turn window counts only the user's edit gestures for 120 s.
+{
+	const turn = "c".repeat(32);
+	assert.deepEqual([0, 9999, 10_000, 30_000, 60_000, 120_000, 300_000, NaN].map(bucketLong), ["lt10s", "lt10s", "10-30s", "30-60s", "1-2m", "2-5m", "gte5m", "lt10s"]);
+	assert.deepEqual([0, 1999, 2000, 10_000, 60_000, -1].map(bucketAge), ["lt2s", "lt2s", "2-10s", "10-60s", "gte60s", "lt2s"]);
+	assert.deepEqual(["STALE_SCENE", "PRIVATE", "", undefined].map(refusalCodeOf), ["STALE_SCENE", "other", "other", "other"]);
+	const valid = {
+		"studio:refused": { code: "TARGET_BUSY", origin: "agent", phase: "admission", group: "shot" },
+		"edit:undone": { age: "2-10s", kind: "agent_turn", via: "key", result: "done" },
+		"agent:turn_summary": { turn_id: turn, outcome: "cancelled", wall: "1-2m", first_tool: "lt10s", tool_calls: "4-5", tool_failed: "1", refused: "1", refusal_top: "STALE_SCENE",
+			stale_retry: "0", authored: true, drafts: "3", qa_first: "problems", qa_last: "clean", qa_trend: "improved", stuck: false, cancel_phase: "during_tool" },
+		"agent:post_turn_edit": { turn_id: turn, edited: true, pose: "2", camera: "0", object: "1", shot: "0", prompt_block: "0", first_delay: "10-30s" },
+	};
+	for (const [event, props] of Object.entries(valid)) {
+		assert.deepEqual(sanitizeProps(event, { ...props, prompt_text: "private", name: "Private" }), props, `${event} keeps its closed values and nothing else`);
+		for (const key of Object.keys(props)) {
+			for (const unsafe of ["private value", "PRIVATE", 7, null, {}, "gte12", "TURN".repeat(8)]) {
+				if (props[key] === unsafe) continue;
+				assert.equal(Object.hasOwn(sanitizeProps(event, { [key]: unsafe }), key), false, `${event} rejects ${key}=${JSON.stringify(unsafe)}`);
+			}
+		}
+	}
+	assert.deepEqual(sanitizeProps("agent:turn_summary", { refusal_top: "none" }), { refusal_top: "none" });
+	assert.deepEqual(sanitizeProps("studio:refused", { origin: "mcp" }), {}, "an MCP refusal is reported as agent, never mcp");
+	assert.equal(strictPropValidator("scene:loaded"), null, "events without a closed schema keep the generic rule");
+
+	assert.equal(runOrigin(), null, "no origin outside a run");
+	const seen = [];
+	withRunOrigin("ui", () => { seen.push(runOrigin()); withRunOrigin("agent", () => seen.push(runOrigin()))(); seen.push(runOrigin()); })();
+	assert.throws(() => withRunOrigin("agent", () => { throw new Error("edit failed"); })());
+	assert.deepEqual([...seen, runOrigin()], ["ui", "agent", "ui", null], "origins nest and restore, also after a throw");
+
+	let clock = 1000, timer = null;
+	const timers = { now: () => clock, set: (fn, ms) => { timer = { fn, ms }; return 1; }, clear: () => { timer = null; } };
+	const emitted = [];
+	const emit = (event, props) => emitted.push({ event, props });
+	const userEdit = (group) => withRunOrigin("ui", () => postTurn.noteEditGesture(group))();
+	assert.equal(userEdit("pose"), false, "no window, nothing counted");
+	postTurn.openPostTurnWindow(turn, emit, timers);
+	assert.equal(timer.ms, postTurn.POST_TURN_WINDOW_MS);
+	assert.equal(withRunOrigin("agent", () => postTurn.noteEditGesture("pose"))(), false, "the agent's edits never count");
+	assert.equal(postTurn.noteEditGesture("pose"), false, "an edit outside any bus run does not count");
+	clock += 15_000; userEdit("pose"); userEdit("pose"); userEdit("object");
+	assert.equal(userEdit("private_group"), false);
+	timer.fn();
+	assert.deepEqual(emitted.pop(), { event: "agent:post_turn_edit", props: { turn_id: turn, edited: true, pose: "2", camera: "0", object: "1", shot: "0", prompt_block: "0", first_delay: "10-30s" } }, "the 120 s timer closes the window");
+	assert.deepEqual(sanitizeProps("agent:post_turn_edit", valid["agent:post_turn_edit"]), valid["agent:post_turn_edit"]);
+	assert.equal(postTurn.closePostTurnWindow(), null, "a closed window closes once");
+	postTurn.openPostTurnWindow(turn, emit, timers);
+	postTurn.openPostTurnWindow("d".repeat(32), emit, timers);
+	assert.deepEqual(emitted.pop().props, { turn_id: turn, edited: false, pose: "0", camera: "0", object: "0", shot: "0", prompt_block: "0" }, "the next window closes the previous one; no edit, no first_delay");
+	clock += postTurn.POST_TURN_WINDOW_MS;
+	assert.equal(userEdit("shot"), false, "a late edit past 120 s (timer not yet fired) closes the window instead of counting");
+	assert.equal(emitted.pop().props.edited, false);
+	postTurn.openPostTurnWindow(turn, () => { throw new Error("transport"); }, timers);
+	assert.doesNotThrow(() => postTurn.closePostTurnWindow(), "a failing transport cannot break editing");
+	console.log("PASS bus friction schemas, run origin nesting, and the post-turn window: 120 s, next turn, user edits only");
+}
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 
 // Previs events (#653): closed values only, never a caption, name or prompt.
