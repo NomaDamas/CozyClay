@@ -129,7 +129,8 @@ export function startAgentTurn({ surface, capture, now, correlationId = null }) 
 		emit(`agent:turn_${outcome}`, { turn_id: turnId, duration_bucket: bucketMs(clock() - startedAt), ...(outcome !== "succeeded" ? { failure_code: failureCode } : {}) });
 		const summary = advisory(() => ({ turn_id: turnId, outcome, wall: bucketLong(clock() - startedAt), ...tally.props(outcome), ...takeDrafts(matchId) }), null);
 		if (summary) emit("agent:turn_summary", summary);
-		if (turnId) openPostTurnWindow(turnId, emit, windowTimers);
+		// Only a Studio turn is followed by Studio edits; the Workflow canvas has no edit groups to count.
+		if (turnId && surface === "studio") openPostTurnWindow(turnId, emit, windowTimers);
 	};
 	emit("agent:turn_requested", { surface, turn_id: turnId });
 	return {

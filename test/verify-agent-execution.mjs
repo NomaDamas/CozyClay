@@ -691,9 +691,9 @@ const refusedDone = (callId, code) => done(callId, { ok: false, error: `${code}:
 
 let clock = 0;
 /** One Studio turn: `frames(id)` are sent in order, each at the clock it names ({ at } entries move the clock). */
-async function runTurn(script, { correlation = crypto.randomUUID(), captured = [] } = {}) {
+async function runTurn(script, { correlation = crypto.randomUUID(), captured = [], surface = "studio" } = {}) {
 	clock = 0;
-	const transport = createHttpTransport({ surface: "studio", now: () => clock, capture: (event, props) => captured.push({ event, props }),
+	const transport = createHttpTransport({ surface, now: () => clock, capture: (event, props) => captured.push({ event, props }),
 		fetchImpl: async () => new Response(new ReadableStream({
 			start(controller) {
 				for (const item of script(correlation)) {
@@ -833,6 +833,8 @@ for (const [drafts, expected] of [
 	const closed = closePostTurnWindow();
 	assert.equal(closed.turn_id, captured[6].props.turn_id, "a cancelled turn opened its own window too");
 	assert.equal(closed.edited, false);
+	await runTurn((id) => [terminal(id, "failed", "upstream")], { captured, surface: "workflow" });
+	assert.equal(closePostTurnWindow(), null, "a Workflow turn opens no post-turn window: no Studio edits follow it");
 }
 
 // Spec check #2, through the real sidecar route: a refused Studio call reaches the browser as tool.done { ok: false }
