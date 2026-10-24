@@ -3610,7 +3610,9 @@ export default function App() {
 	// nothing to apply — pure FK posing / pure motion playback stays
 	// untouched.
 	useEffect(() => {
-		if (!ikChains || !activeRig || posing) return;
+		// On a selection switch this runs once before the resolve effect's
+		// setIkChains lands: the chains still pose the previous character.
+		if (!ikChains || !activeRig || posing || ikChains.values().next().value?.rig !== activeRig) return;
 		// Preview changes may re-run this effect without a playhead change.
 		// Always re-establish the motion base before adding a correction.
 		if (motion) poseMemberAtFrame(activeRig, motion, null, tlFrame);
@@ -3630,7 +3632,7 @@ export default function App() {
 	useEffect(() => {
 		const frameChanged = ikPrevFrameRef.current !== tlFrame;
 		ikPrevFrameRef.current = tlFrame;
-		if (!ikMode || !ikChains || !activeRig || posing) return;
+		if (!ikMode || !ikChains || !activeRig || posing || ikChains.values().next().value?.rig !== activeRig) return;
 		if (!frameChanged) return; // pure toggle-on: evaluate already ran
 		ikSeedTargets(ikChains, ikStateRef.current);
 	}, [ikMode, ikChains, activeRig, motion, posing, tlFrame, ikTick, ikFkJoints]);

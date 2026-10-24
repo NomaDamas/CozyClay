@@ -76,3 +76,4 @@ export function motionFixture({ proxy = false } = {}) {
   const snapshot = () => structuredClone(app.storeDomain('motion').documentStore.getSnapshot().slices);
   return { ...f, motion, registry, snapshot, renderMotion, dispose() { f.dispose(); motion.dispose?.(); } };
 }
+export { useMotion };

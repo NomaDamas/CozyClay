@@ -125,7 +125,8 @@ export function createMotionDomain(appContext, characters) {
 		}
 		publishedIds = new Set(read().map(row => row.id));
 		const id = appContext.shared.loadedLayerCharRef.current;
-		appContext.shared.ikStateRef.current = states.get(id) ?? createIkState();
+		// A character without a motion row keeps its live IK state in the map, so its first drag bakes.
+		appContext.shared.ikStateRef.current = states.get(id) ?? states.set(id, createIkState()).get(id);
 		appContext.shared.bufferRef.current = { ...appContext.shared.bufferRef.current, motion: visibleMotion(id), ik: appContext.shared.ikStateRef.current };
 		domain.onProject?.(); viewRevision++;
 	}
@@ -245,7 +246,8 @@ export function createMotionDomain(appContext, characters) {
 			if (keyed && take) for (const key of keyed.values()) key.blend = 6;
 			return keyed ? run('ik.setKey', { characterId: id, frame: at, tracks: ikKeyJson(keyed) }) : null;
 		}
-		const scratch = { ...createIkState(), tracked: new Set(appContext.shared.ikStatesRef.current.get(id)?.tracked) };
+		// The loaded character's tracks are on the live slot, as in ikStateFor.
+		const scratch = { ...createIkState(), tracked: new Set((id === appContext.shared.loadedLayerCharRef.current ? appContext.shared.ikStateRef.current : appContext.shared.ikStatesRef.current.get(id))?.tracked) };
 		ikBakeKeyframe(resolved.chains, scratch, at, resolved.fkJoints);
 		const keyed = encodeMotionKeys(scratch.keys)[0];
 		return keyed ? run('ik.setKey', { characterId: id, frame: at, tracks: keyed.tracks }) : null;
@@ -322,7 +324,7 @@ export function useMotion(appContext) {
 	useSyncExternalStore(domain.documentStore.subscribe, domain.viewRevision, domain.viewRevision);
 	useEffect(() => {
 		domain.switchLayer(appContext.shared.activeChar.id);
-		const start = () => domain.beginGesture(); window.addEventListener('pointerdown', start, true);
+		const start = () => { if (ikDragRef.current?.characterId === null) ikDragRef.current = null; domain.beginGesture(); }; window.addEventListener('pointerdown', start, true);
 		return () => { window.removeEventListener('pointerdown', start, true); domain.finishGesture(true); };
 	}, [domain, appContext.shared.activeChar.id]);
 	// IK posing for Subject 1: dragging a wrist/ankle handle FOCUSES that
@@ -416,8 +418,7 @@ export function useMotion(appContext) {
 		if (!pending) return false;
 		const restored = restorePendingIkState(pending);
 		setPendingIkEditValue(null);
-		ikDragRef.current = null;
-		ikPreDragRef.current = null;
+		ikDragRef.current = ikPreDragRef.current = null;
 		setIkTick((value) => value + 1);
 		return restored;
 	}
@@ -425,7 +426,7 @@ export function useMotion(appContext) {
 	function applyPendingIkEdit() {
 		const pending = pendingIkEditRef.current;
 		if (!pending) return false;
-		if (pending.characterId !== appContext.shared.activeChar.id || domain.layer(pending.characterId) !== pending.sourceLayer) {
+		if (domain.layer(pending.characterId) !== pending.sourceLayer) {
 			cancelPendingIkEdit();
 			return false;
 		}
@@ -438,13 +439,13 @@ export function useMotion(appContext) {
 			throw error;
 		}
 		setPendingIkEditValue(null);
-		ikDragRef.current = null;
-		ikPreDragRef.current = null;
-		if (pending.rig) appContext.shared.poseMemberAtFrame(pending.rig, motion, pending.state, appContext.shared.tlFrame, IK_CORRECTION_BLEND_FRAMES);
+		ikDragRef.current = ikPreDragRef.current = null;
+		if (pending.rig) appContext.shared.poseMemberAtFrame(pending.rig, pending.motion, pending.state, appContext.shared.tlFrame, IK_CORRECTION_BLEND_FRAMES);
 		setIkTick((value) => value + 1);
-		appContext.notify(ko(`Applied IK correction across frames ${pending.startFrame}–${pending.endFrame}`,
-			`IK 보정을 ${pending.startFrame}–${pending.endFrame}프레임에 적용했어요`,
-			`已在第 ${pending.startFrame}–${pending.endFrame} 帧应用 IK 修正`));
+		// Applied on a selection switch: name the character (its Outliner label) the edit landed on.
+		const owner = pending.characterId !== appContext.shared.activeChar.id && appContext.shared.characters.findIndex(entry => entry.id === pending.characterId) + 1;
+		appContext.notify(owner ? ko(`Applied Character ${owner}'s IK edit`, `인물 ${owner}의 IK 보정을 적용했어요`, `已应用角色 ${owner} 的 IK 修正`)
+			: ko(`Applied IK correction across frames ${pending.startFrame}–${pending.endFrame}`, `IK 보정을 ${pending.startFrame}–${pending.endFrame}프레임에 적용했어요`, `已在第 ${pending.startFrame}–${pending.endFrame} 帧应用 IK 修正`));
 		return true;
 	}
 
@@ -596,11 +597,12 @@ export function useMotion(appContext) {
 	// Loaded motion: decoded arrays plus the world anchor captured at load.
 	const motion = domain.visibleMotion(appContext.shared.activeChar.id);
 	useEffect(() => {
-		const pending = pendingIkEditRef.current;
-		if (pending && (pending.characterId !== appContext.shared.activeChar.id
-			|| pending.rig !== appContext.shared.activeRig || pending.motion !== motion
-			|| pending.sourceLayer !== domain.layer(pending.characterId)
-			|| !ikMode || ikEditTool !== "ik")) cancelPendingIkEdit();
+		if (ikDragRef.current && ikDragRef.current.characterId !== appContext.shared.activeChar.id) abortIkDrag(true);
+		const pending = pendingIkEditRef.current, id = pending?.characterId, other = id !== appContext.shared.activeChar.id;
+		const current = pending && pending.rig === appContext.shared.rigs[id] && pending.motion === domain.visibleMotion(id) && pending.sourceLayer === domain.layer(id) && ikMode && ikEditTool === "ik";
+		// Selecting another character applies a still-current preview, as leaving Pose mode does.
+		if (current && other) applyPendingIkEdit();
+		else if (pending && (!current || other || pending.rig !== appContext.shared.activeRig || pending.motion !== motion)) cancelPendingIkEdit();
 	}, [appContext.shared.activeChar.id, appContext.shared.activeRig, motion, pinLayer, ikMode, ikEditTool]);
 	const rangePinRebuildRef = useRef(null);
 	const rangePinSourceStamp = JSON.stringify([pinLayer.take, appContext.shared.activeChar.id]);
@@ -740,6 +742,7 @@ export function useMotion(appContext) {
 	// ends pinned (the handle snaps to the clamped position); FK joints swing
 	// toward the pointer. The solved pose stays a preview until Apply.
 	function ikSolve(kind, trackId, targetWorld) {
+		if (ikDragRef.current && ikDragRef.current.characterId !== appContext.shared.activeChar.id) return;
 		const state = appContext.shared.ikStateRef.current;
 		const ikChains = state.chains;
 		const ikFkJoints = state.fkJoints;
@@ -758,7 +761,7 @@ export function useMotion(appContext) {
 			};
 			ikDragRef.current = { frame: appContext.shared.tlFrame, ids: new Set(pending?.ids ?? []) };
 		}
-		ikDragRef.current = ikDragRecord(ikDragRef.current, appContext.shared.tlFrame);
+		ikDragRef.current = Object.assign(ikDragRecord(ikDragRef.current, appContext.shared.tlFrame), { characterId: appContext.shared.activeChar.id });
 		const touch = (id) => ikDragTouch(appContext.shared.ikStateRef.current, ikDragRef.current, id);
 		if (kind === "chain") {
 			const chain = appContext.shared.ikStateRef.current.chains?.get(trackId);
@@ -825,29 +828,34 @@ export function useMotion(appContext) {
 		solveSwingAngle(joint, targetWorld.axis, targetWorld.angle, targetWorld.startQuat, targetWorld.startParentQuat);
 	}
 
+	// A drag belongs to the character it started on. Switching away mid-drag
+	// restores that rig and leaves an inert record (no owner) so the rest of
+	// the stroke cannot pose the newly selected character.
+	function abortIkDrag(inert = false) {
+		if (ikPreDragRef.current?.beforeRig) appContext.shared.restoreExportRig(ikPreDragRef.current.beforeRig);
+		ikDragRef.current = inert ? { characterId: null, frame: null, ids: new Set() } : null;
+		ikPreDragRef.current = null;
+		appContext.shared.ikBodyDragRef.current = false;
+	}
+
 	// Drag end: retain the solved pose as a preview. Apply creates keys at both
 	// boundaries of the selected timeline motion segment.
 	function ikDragEnd() {
 		appContext.shared.ikBodyDragRef.current = false;
-		const drag = ikDragRef.current;
+		const drag = ikDragRef.current, pre = ikPreDragRef.current;
+		if (drag && drag.characterId !== appContext.shared.activeChar.id) return abortIkDrag();
 		ikDragRef.current = null;
 		if (!motion) {
-			keyIkPoseAtPlayhead(null, ikPreDragRef.current?.beforeRig ?? null);
+			keyIkPoseAtPlayhead(null, pre?.characterId === appContext.shared.activeChar.id ? pre.beforeRig : null);
 			ikPreDragRef.current = null;
 			setIkTick((n) => n + 1);
 			return;
 		}
-		if (!drag?.ids?.size) {
-			ikPreDragRef.current = null;
-			return;
-		}
+		if (!drag?.ids?.size) return void (ikPreDragRef.current = null);
 		const state = appContext.shared.ikStateRef.current;
 		const raw = (rawRig, at) => appContext.shared.poseMemberAtFrame(rawRig, motion, null, at);
 		const keyed = bakeIkDragKey(state.chains, state.fkJoints, drag.frame, drag.ids, raw);
-		if (!keyed) {
-			ikPreDragRef.current = null;
-			return;
-		}
+		if (!keyed) return void (ikPreDragRef.current = null);
 		const before = ikPreDragRef.current;
 		const range = pendingIkEditRef.current ?? selectedIkRange(drag.frame);
 		const next = copyPhysicsKeys(before.beforeKeys);
