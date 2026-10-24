@@ -2,7 +2,6 @@ import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
 import { EXPORT_FAILURE_CODES, exportPropAllowed } from "./analytics-values.js";
 import { bump as bumpFriction, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
 import { STRICT_EVENT_KEYS, strictPropValidator } from "./analytics-strict.js";
-import { noteEditGesture } from "./post-turn-edits.js";
 export const MCP_TOOL_CATEGORIES = Object.freeze([
 	"read",
 	"camera",
@@ -497,7 +496,7 @@ export function recordSemanticEdit(kind, now = Date.now()) {
 	const continuing = group === lastEditGroup && now - lastEditAt < EDIT_GESTURE_GAP_MS;
 	lastEditGroup = group;
 	lastEditAt = now;
-	if (!continuing) { sessionEditCounts[group] += 1; noteEditGesture(group); }
+	if (!continuing) sessionEditCounts[group] += 1;
 	if (kind === "pose_edit") trackFeature("pose_edit");
 	return !continuing;
 }

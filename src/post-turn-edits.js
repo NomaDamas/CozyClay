@@ -1,9 +1,8 @@
 // What the user changed right after an agent turn: agent:post_turn_edit, one per
 // turn. The window opens when a turn ends and closes 120 s later, when the next
 // turn starts, or when the page goes away, whichever comes first. It counts the
-// user's authored edit gestures by group (EDIT_GROUPS in analytics.js; one bone
-// drag is one gesture), never the agent's: runOrigin() must be "ui".
-import { runOrigin } from "./bus-run-origin.js";
+// user's edits that changed the scene, by group, as the command bus records them
+// (command-bus-telemetry.js: UI-origin receipts only, one drag is one receipt).
 import { bucketFrictionCount } from "./analytics-friction.js";
 import { bucketLong } from "./analytics-strict.js";
 
@@ -48,9 +47,9 @@ export function openPostTurnWindow(turnId, emit, timers = defaultTimers) {
 	}
 }
 
-/** One authored edit gesture of `group`; counted only while a window is open and the user made it. */
+/** One user edit of `group` (the caller passes only the user's own edits); counted while a window is open. */
 export function noteEditGesture(group) {
-	if (!open || runOrigin() !== "ui" || !GROUPS.includes(group)) return false;
+	if (!open || !GROUPS.includes(group)) return false;
 	try {
 		const at = open.timers.now();
 		if (at - open.openedAt >= POST_TURN_WINDOW_MS) { closePostTurnWindow(); return false; }

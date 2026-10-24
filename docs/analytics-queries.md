@@ -1216,7 +1216,7 @@ Count bucket: `0`, `1`, `2`, `3`, `4-5`, `6-10`, `gte11` (the
 | | `cancel_phase` | `before_tool`, `during_tool`, `after_tool`, `na` | When a cancelled turn stopped |
 | `agent:post_turn_edit` | `turn_id` | 32-hex | Joins `agent:turn_summary` |
 | | `edited` | bool | The user made at least one edit gesture in the window |
-| | `pose`, `camera`, `object`, `shot`, `prompt_block` | count bucket | The user's edit gestures by group; `prompt_block` counts prompt-block adds and edits. One continuous drag is one gesture |
+| | `pose`, `camera`, `object`, `shot`, `prompt_block` | count bucket | The user's edit gestures by group; `prompt_block` counts edits to a take's prompt and take fields. One continuous drag is one gesture |
 | | `first_delay` | long bucket | Time to the first edit; only when `edited` is true |
 
 Caps and windows:
@@ -1236,10 +1236,16 @@ Caveats:
 - Builds before this release have no rows: their refusals, undos and turn
   summaries are **unknown, not 0**. Compare only sessions from builds that
   send these events.
-- Task-mode turns may not report `drafts` (and so `qa_*`); to be confirmed by
-  the integrator before reading `drafts` across turn kinds.
-- `agent:post_turn_edit` counts only the user's edits that pass through the
-  command bus. An edit path outside the bus reads as no edit.
+- Task-mode turns always report `drafts: "0"` and `qa_trend: "na"`: their
+  compiles run inside tasks, which carry no turn id
+  (`bin/agent/studio-turn-transaction.mjs`, `bin/agent/studio-task-routes.mjs`).
+  Read `drafts` and `qa_*` only for plain Studio turns.
+- `outcome` is the sidecar's verdict. A turn in which a tool call was refused but
+  the model then answered can read `succeeded`; use `refused` and
+  `tool_failed` for the refusal itself.
+- `agent:post_turn_edit` counts the user's edits as the command bus records
+  them: UI-origin commands that changed the scene, one receipt each (a drag
+  commits once). The live bone-drag preview is not a receipt; its commit is.
 - A bucket is a range. Count turns or sessions per bucket; never sum or
   average the bucket labels.
 - Data volume is about 120 sessions in 90 days. Read every share beside its

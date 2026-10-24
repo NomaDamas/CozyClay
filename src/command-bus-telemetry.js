@@ -5,6 +5,7 @@
 import { track } from './analytics.js';
 import { admit, bump } from './analytics-friction.js';
 import { bucketAge, refusalCodeOf } from './analytics-strict.js';
+import { noteEditGesture } from './post-turn-edits.js';
 
 let send = track, clock = () => Date.now();
 const REFUSALS_PER_KEY = 3, UNDOS_PER_SESSION = 20, STAMPS_KEPT = 500;
@@ -66,6 +67,8 @@ export function createHistoryReceipts(ports) {
 		remember(recorded, { id, origin, action }) {
 			// Session friction: an undo the user made (agent undos are the agent's own correction).
 			if (id === 'edit.undo' && origin === 'ui' && recorded.status === 'undone') bump('undos');
+			// agent:post_turn_edit: a user edit that changed the scene, by group (a drag commits one receipt: one gesture).
+			if (origin === 'ui' && recorded.authored === true && !id.startsWith('edit.')) noteEditGesture(editKind(action ?? id, origin));
 			if (recorded.undo?.canUndoDirect && !id.startsWith('edit.')) {
 				receipts.set(recorded.undo.historyEntryId, recorded);
 				stamps.set(recorded.receiptId, { at: clock(), kind: editKind(action ?? id, origin) });

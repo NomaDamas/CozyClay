@@ -5,7 +5,6 @@ import { StudioProtocolError, StudioSchemas, validateStudioSchema, validateRecei
 import { agentTurnControls, markAgentTurn, turnEditPoint, recordTurnEdit, undoTurnEdit } from './agent-turn-mark.js';
 import { createBusTasks } from './bus-tasks.js';
 import { createHistoryReceipts, noteRefusal, noteUndone } from './command-bus-telemetry.js';
-import { withRunOrigin } from './bus-run-origin.js';
 
 export { withCommandHistory } from './command-history.js';
 
@@ -153,7 +152,7 @@ export function createCommandBus({ registry, ports }) {
         try {
           tx.updating = true; clear(tx.timer);
           tx.workTimer = (ports.setTimeout ?? setTimeout)(() => cancelTransaction(tx, true, new StudioProtocolError('TIMEOUT', `${tx.entry.id} exceeded its deadline.`)), tx.entry.timeoutMs ?? 30_000);
-          const updated = tx.session.run(withRunOrigin(request.origin, () => registry.invoke(tx.entry, prepared.args, context)));
+          const updated = tx.session.run(() => registry.invoke(tx.entry, prepared.args, context));
           if (!updated?.then) return finish(updated);
           const cancelled = new Promise((_, reject) => tx.controller.signal.addEventListener('abort', () => reject(tx.controller.signal.reason), { once: true }));
           return Promise.race([updated, cancelled]).then(finish, rejected);
@@ -222,9 +221,8 @@ export function createCommandBus({ registry, ports }) {
     const turn = request.origin === 'agent' && request.turnId === agentTurn?.txId ? agentTurn : null, task = tasks.of(request, id);
     // The command a transaction control runs (a drag's run.commit is its entry's), for telemetry.
     const action = id === 'run.begin' ? args?.id : id.startsWith('run.') ? transactions.get(args?.txId)?.entry.id : undefined;
-    const recordAction = (domain, edit, targetId, nested = false) => {
-      // While an owned edit runs, runOrigin() names who asked (post-turn-edits.js).
-      const invoke = withRunOrigin(request.origin, edit); if (!turn) return ports.recordAction(domain, invoke, targetId, nested);
+    const recordAction = (domain, invoke, targetId, nested = false) => {
+      if (!turn) return ports.recordAction(domain, invoke, targetId, nested);
       // Enrol each owner in the existing composed session. Do not commit (or
       // cancel the parent on a tool refusal) at an individual command boundary.
       turn.session ??= ports.beginAction(domain, targetId);

@@ -4,7 +4,6 @@ import * as analytics from "../src/analytics.js";
 import { startExportAttempt } from "../src/export-attempt.js";
 import * as friction from "../src/analytics-friction.js";
 import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
-import { withRunOrigin, runOrigin } from "../src/bus-run-origin.js";
 import * as postTurn from "../src/post-turn-edits.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
@@ -458,22 +457,15 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 	assert.deepEqual(sanitizeProps("studio:refused", { origin: "mcp" }), {}, "an MCP refusal is reported as agent, never mcp");
 	assert.equal(strictPropValidator("scene:loaded"), null, "events without a closed schema keep the generic rule");
 
-	assert.equal(runOrigin(), null, "no origin outside a run");
-	const seen = [];
-	withRunOrigin("ui", () => { seen.push(runOrigin()); withRunOrigin("agent", () => seen.push(runOrigin()))(); seen.push(runOrigin()); })();
-	assert.throws(() => withRunOrigin("agent", () => { throw new Error("edit failed"); })());
-	assert.deepEqual([...seen, runOrigin()], ["ui", "agent", "ui", null], "origins nest and restore, also after a throw");
 
 	let clock = 1000, timer = null;
 	const timers = { now: () => clock, set: (fn, ms) => { timer = { fn, ms }; return 1; }, clear: () => { timer = null; } };
 	const emitted = [];
 	const emit = (event, props) => emitted.push({ event, props });
-	const userEdit = (group) => withRunOrigin("ui", () => postTurn.noteEditGesture(group))();
+	const userEdit = (group) => postTurn.noteEditGesture(group);
 	assert.equal(userEdit("pose"), false, "no window, nothing counted");
 	postTurn.openPostTurnWindow(turn, emit, timers);
 	assert.equal(timer.ms, postTurn.POST_TURN_WINDOW_MS);
-	assert.equal(withRunOrigin("agent", () => postTurn.noteEditGesture("pose"))(), false, "the agent's edits never count");
-	assert.equal(postTurn.noteEditGesture("pose"), false, "an edit outside any bus run does not count");
 	clock += 15_000; userEdit("pose"); userEdit("pose"); userEdit("object");
 	assert.equal(userEdit("private_group"), false);
 	timer.fn();
@@ -488,7 +480,7 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 	assert.equal(emitted.pop().props.edited, false);
 	postTurn.openPostTurnWindow(turn, () => { throw new Error("transport"); }, timers);
 	assert.doesNotThrow(() => postTurn.closePostTurnWindow(), "a failing transport cannot break editing");
-	console.log("PASS bus friction schemas, run origin nesting, and the post-turn window: 120 s, next turn, user edits only");
+	console.log("PASS bus friction schemas, and the post-turn window: 120 s, next turn, closed groups only");
 }
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 

@@ -1,14 +1,14 @@
 // The command bus's friction events (command-bus-telemetry.js): studio:refused per
 // refusal (3 per code, group and origin), edit:undone for the user's own undos
-// (20 per session) with what was undone and how long ago, and runOrigin() naming
-// who asked while an owned edit runs.
+// (20 per session) with what was undone and how long ago, and the user's own
+// scene changes feeding the post-turn edit window.
 import assert from 'node:assert/strict';
 import { appFixture } from './app-fixture.mjs';
 import { deferred } from './fixture.mjs';
 import * as friction from '../../src/analytics-friction.js';
 import { strictPropValidator } from '../../src/analytics-strict.js';
-import { runOrigin } from '../../src/bus-run-origin.js';
-import { commandGroup, editKind, noteUndone, telemetrySeam } from '../../src/command-bus-telemetry.js';
+import * as postTurn from '../../src/post-turn-edits.js';
+import { commandGroup, createHistoryReceipts, editKind, noteUndone, telemetrySeam } from '../../src/command-bus-telemetry.js';
 import { createSceneUndo } from '../../src/domains/scene-undo.js';
 
 const sent = [];
@@ -60,20 +60,22 @@ try {
   assert.deepEqual(take('studio:refused'), [], 'CANCELLED sends nothing');
   assert.equal(friction.snapshot().refusals_ui, '4-5');
 
-  // runOrigin(): the requester while an owned edit runs, null outside any run.
-  const seen = [];
-  f.registry.register({ id: 'shot.testProbe', kind: 'mutation', undoDomain: 'shot', input: inputs, available: () => true, run: () => { seen.push(runOrigin()); return { affectedIds: [] }; } });
-  assert.equal(runOrigin(), null);
+  // agent:post_turn_edit counts the user's own scene changes as the bus records them.
+  const windowed = [];
+  postTurn.openPostTurnWindow('e'.repeat(32), (_event, props) => windowed.push(props), { now: () => now, set: () => 1, clear: () => {} });
+  f.registry.register({ id: 'shot.testProbe', kind: 'mutation', undoDomain: 'shot', input: inputs, available: () => true, run: () => ({ affectedIds: [] }) });
+  assert.equal(f.binding.bus.run('shot.create', {}, { origin: 'ui' }).ok, true);
   f.binding.bus.run('shot.testProbe', {}, { origin: 'ui' });
-  agent('shot.testProbe');
-  const tx = f.binding.bus.run('run.begin', { id: 'shot.testProbe', args: {} }, { origin: 'ui' });
-  f.binding.bus.run('run.update', { txId: tx.txId, args: {} }, { origin: 'ui' });
-  f.binding.bus.run('run.commit', { txId: tx.txId }, { origin: 'ui' });
+  // The same receipt from the agent (or MCP) is not the user's edit.
+  createHistoryReceipts({}).remember({ ok: true, authored: true, receiptId: 'r-agent', undo: null }, { id: 'shot.create', origin: 'agent' });
+  createHistoryReceipts({}).remember({ ok: true, authored: true, receiptId: 'r-mcp', undo: null }, { id: 'object.update', origin: 'mcp' });
+  const userUndo = f.binding.bus.run('edit.undo', {}, { origin: 'ui' });
+  assert.equal(userUndo.status, 'undone', JSON.stringify(userUndo));
+  const window = postTurn.closePostTurnWindow();
+  assert.equal(window.shot, '1', 'one UI edit that changed the scene; a no-change command, an agent edit and the undo do not count');
+  assert.equal(window.edited, true);
   const turnId = crypto.randomUUID();
   assert.equal(agent('agent.turn.begin', { turnId }, { turnId }).ok, true);
-  agent('shot.testProbe', {}, { turnId });
-  assert.deepEqual(seen, ['ui', 'agent', 'ui', 'agent'], 'UI edit, agent edit, a UI drag update, an edit inside the agent turn');
-  assert.equal(runOrigin(), null, 'null again outside the run');
 
   // edit:undone: the agent turn's transaction undone by the user is agent_turn, aged from its receipt.
   assert.equal(agent('shot.create', {}, { turnId }).ok, true);
@@ -89,7 +91,7 @@ try {
   const [own] = take('edit:undone');
   assert.deepEqual(own, { kind: 'shot', via: 'menu', result: 'done', age: '10-60s' });
   closed('edit:undone', own);
-  assert.equal(friction.snapshot().undos, '2', 'the counter still counts user undos');
+  assert.equal(friction.snapshot().undos, '3', 'the counter still counts user undos (one more from the post-turn block)');
   const agentUndo = agent('edit.undo');
   assert.notEqual(agentUndo.status, 'undone', JSON.stringify(agentUndo).slice(0, 200));
   assert.deepEqual(take('edit:undone'), [], 'the agent undo_edit sends nothing');
@@ -117,4 +119,4 @@ friction.reset(); sent.length = 0;
 for (let i = 0; i < 25; i++) noteUndone('key', { ok: true, status: 'noop' });
 assert.equal(take('edit:undone').length, 20, 'twenty per session');
 restore(); friction.reset();
-console.log('PASS bus friction events: studio:refused 3/key, CANCELLED skipped, mcp as agent, edit:undone kind/age/result/via, ik_preview, 20 cap, runOrigin');
+console.log('PASS bus friction events: studio:refused 3/key, CANCELLED skipped, mcp as agent, edit:undone kind/age/result/via, ik_preview, 20 cap, post-turn edits from UI receipts');

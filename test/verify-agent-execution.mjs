@@ -12,7 +12,6 @@ import { createCanvasCommands } from "../src/workflow/canvas-commands.js";
 import { noteTurnDraft } from "../src/workflow/agent-turn-telemetry.js";
 import { sanitizeProps } from "../src/analytics.js";
 import { closePostTurnWindow, noteEditGesture } from "../src/post-turn-edits.js";
-import { withRunOrigin } from "../src/bus-run-origin.js";
 
 const request = { sessionId: "private-session", text: "private prompt /secret/file.png", model: "private-model" };
 process.env.COZYCLAY_CONFIG_DIR = mkdtempSync(join(tmpdir(), "cozyclay-agent-config-"));
@@ -819,8 +818,7 @@ for (const [drafts, expected] of [
 	const first = await runTurn((id) => [terminal(id, "failed", "upstream")], { captured });
 	const firstId = first.summaries[0].turn_id;
 	assert.equal(captured.some(({ event }) => event === "agent:post_turn_edit"), false, "the window is open, not yet sent");
-	withRunOrigin("ui", () => noteEditGesture("pose"))();
-	withRunOrigin("agent", () => noteEditGesture("pose"))();
+	noteEditGesture("pose"); // the bus passes only the user's own edits (command-bus-telemetry.js)
 	await runTurn((id) => [terminal(id, "cancelled", "aborted")], { captured });
 	const names = captured.map(({ event }) => event);
 	assert.deepEqual(names, ["agent:turn_requested", "agent:turn_failed", "agent:turn_summary", "agent:post_turn_edit", "agent:turn_requested", "agent:turn_cancelled", "agent:turn_summary"],
@@ -828,7 +826,7 @@ for (const [drafts, expected] of [
 	const edit = captured[3].props;
 	assert.equal(edit.turn_id, firstId, "the window carries the analytics turn id");
 	assert.equal(edit.edited, true);
-	assert.equal(edit.pose, "1", "only the user's gesture counts");
+	assert.equal(edit.pose, "1", "the user's edit counts");
 	assert.equal(edit.first_delay, "lt10s");
 	const closed = closePostTurnWindow();
 	assert.equal(closed.turn_id, captured[6].props.turn_id, "a cancelled turn opened its own window too");
