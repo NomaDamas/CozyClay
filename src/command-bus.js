@@ -4,7 +4,8 @@
 import { StudioProtocolError, StudioSchemas, validateStudioSchema, validateReceipt, validateStudioIdentity, refusalCode } from './studio-agent-protocol.js';
 import { agentTurnControls, markAgentTurn, turnEditPoint, recordTurnEdit, undoTurnEdit } from './agent-turn-mark.js';
 import { createBusTasks } from './bus-tasks.js';
-import { bump as bumpFriction } from './analytics-friction.js';
+import { createHistoryReceipts, noteRefusal, noteUndone } from './command-bus-telemetry.js';
+import { withRunOrigin } from './bus-run-origin.js';
 
 export { withCommandHistory } from './command-history.js';
 
@@ -17,7 +18,7 @@ export const isBusRunActive = () => activeRunDepth > 0;
 
 export function createCommandBus({ registry, ports }) {
   const pending = new Map(), transactions = new Map(), jobs = new Map(), listeners = new Set();
-  const confirmations = new Map(), historyReceipts = new Map();
+  const confirmations = new Map(), historyReceipts = createHistoryReceipts(ports);
   let agentTurn = null;
   const tasks = createBusTasks({ ports, emit: event => emit(event) });
   function exposure(entry, args, request) {
@@ -152,7 +153,7 @@ export function createCommandBus({ registry, ports }) {
         try {
           tx.updating = true; clear(tx.timer);
           tx.workTimer = (ports.setTimeout ?? setTimeout)(() => cancelTransaction(tx, true, new StudioProtocolError('TIMEOUT', `${tx.entry.id} exceeded its deadline.`)), tx.entry.timeoutMs ?? 30_000);
-          const updated = tx.session.run(() => registry.invoke(tx.entry, prepared.args, context));
+          const updated = tx.session.run(withRunOrigin(request.origin, () => registry.invoke(tx.entry, prepared.args, context)));
           if (!updated?.then) return finish(updated);
           const cancelled = new Promise((_, reject) => tx.controller.signal.addEventListener('abort', () => reject(tx.controller.signal.reason), { once: true }));
           return Promise.race([updated, cancelled]).then(finish, rejected);
@@ -219,8 +220,11 @@ export function createCommandBus({ registry, ports }) {
       agentTurn.session?.cancel({ restore: false }); agentTurn = null;
     }
     const turn = request.origin === 'agent' && request.turnId === agentTurn?.txId ? agentTurn : null, task = tasks.of(request, id);
-    const recordAction = (domain, invoke, targetId, nested = false) => {
-      if (!turn) return ports.recordAction(domain, invoke, targetId, nested);
+    // The command a transaction control runs (a drag's run.commit is its entry's), for telemetry.
+    const action = id === 'run.begin' ? args?.id : id.startsWith('run.') ? transactions.get(args?.txId)?.entry.id : undefined;
+    const recordAction = (domain, edit, targetId, nested = false) => {
+      // While an owned edit runs, runOrigin() names who asked (post-turn-edits.js).
+      const invoke = withRunOrigin(request.origin, edit); if (!turn) return ports.recordAction(domain, invoke, targetId, nested);
       // Enrol each owner in the existing composed session. Do not commit (or
       // cancel the parent on a tool refusal) at an individual command boundary.
       turn.session ??= ports.beginAction(domain, targetId);
@@ -239,10 +243,7 @@ export function createCommandBus({ registry, ports }) {
         value = validateReceipt({ ...value, commandId, jobId: job.id });
       }
       const recorded = journal.record(value);
-      // Session friction: an undo the user made (agent undos are the agent's own correction).
-      if (id === 'edit.undo' && request.origin === 'ui' && recorded.status === 'undone') bumpFriction('undos');
-      if (recorded.undo?.canUndoDirect && !id.startsWith('edit.')) historyReceipts.set(recorded.undo.historyEntryId, recorded);
-      for (const [key, receipt] of historyReceipts) if (ports.isRetained?.(receipt) === false) historyReceipts.delete(key);
+      historyReceipts.remember(recorded, { id, origin: request.origin, action });
       ports.remember?.(recorded); return recorded;
     };
     const rejected = error => {
@@ -251,8 +252,8 @@ export function createCommandBus({ registry, ports }) {
       if (!(error instanceof StudioProtocolError)) error = toastRefusal() ?? error;
       if (request.origin === 'ui' && error.uiMessage) ports.showRefusal?.(error.uiMessage);
       const value = refusal(request, before, error, job ? applied : undefined);
-      // Session friction: a refusal, by who asked. A cancel the caller asked for is not one.
-      if (value.code !== 'CANCELLED') bumpFriction(request.origin === 'ui' ? 'refusals_ui' : 'refusals_agent');
+      // Session friction and studio:refused, by who asked and what (command-bus-telemetry.js).
+      noteRefusal(value, request.origin, action ?? id);
       const recorded = begun ? remember(value) : value;
       if (job && !job.completion) { job.outcome = recorded; job.completion = Promise.resolve(recorded); emit({ type: 'job.completed', jobId: job.id, receipt: recorded }); }
       return recorded;
@@ -381,7 +382,8 @@ export function createCommandBus({ registry, ports }) {
       throw error;
     }
   }
-  return { run,
+  // noteUndone: edit:undone for the user's own undo (domains/scene-undo.js), which reaches it through the bus.
+  return { run, noteUndone,
     // Trusted UI adapter only: wire callers can consume, never mint a token.
     confirm(id, args = {}) { const prepared = registry.prepare(id, args), token = crypto.randomUUID(); confirmations.set(token, { id, args: prepared.args, host: ports.read().host, expires: (ports.now ?? Date.now)() + 300_000 }); return token; },
     subscribe(listener) { listeners.add(listener); return () => listeners.delete(listener); },

@@ -1605,7 +1605,7 @@ export default function App() {
 			setToast(ko("A newer edit comes after this deletion. Use Undo history instead.", "삭제 이후의 편집이 있어요. 실행 취소 기록을 사용해 주세요."));
 			return;
 		}
-		undoScene();
+		undoScene("button");
 	}
 
 	useEffect(() => {
@@ -1627,7 +1627,7 @@ export default function App() {
 			if (event.code === "KeyZ" && (event.ctrlKey || event.metaKey)) {
 				event.preventDefault();
 				if (event.shiftKey) redoScene();
-				else undoScene();
+				else undoScene("key");
 				return;
 			}
 			// 1-4 pick the workflow mode; pose is refused (with its reason) when
