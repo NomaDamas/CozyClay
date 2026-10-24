@@ -605,14 +605,14 @@ console.log("PASS export lifecycle pairing, async failure/cancellation, duration
 console.log("PASS export allowlists, legacy payloads and analytics failure noninterference");
 console.log("PASS disclosure event/schema tokens and global clock/random failure noninterference");
 
-// First-edit version 1 is a closed vocabulary, never a free-text payload.
+// First-edit version 2 is a closed vocabulary, never a free-text payload; version 1 rows are no longer sent.
 const disclosedEvents = new Set([...privacyHtml.matchAll(/<td>([a-z_]+:[a-z_]+)<\/td>/g)].map((match) => match[1]));
 const editKinds = ["pose_edit", "object_insert", "cutout_insert", "object_transform", "shot_add", "shot_edit", "camera_key_record", "rail_edit", "prompt_block_add", "prompt_block_edit"];
 for (const event of ["craft:first_edit", "playground:first_edit"]) {
 	assert.ok(disclosedEvents.has(event), `${event} has a telemetry disclosure row`);
-	for (const edit_kind of editKinds) assert.deepEqual(sanitizeProps(event, { edit_kind, definition_version: 1, prompt: "private" }), { edit_kind, definition_version: 1 });
+	for (const edit_kind of editKinds) assert.deepEqual(sanitizeProps(event, { edit_kind, definition_version: 2, prompt: "private" }), { edit_kind, definition_version: 2 });
 	for (const edit_kind of ["private-name", "path/to/file", 1, true, null]) assert.deepEqual(sanitizeProps(event, { edit_kind }), {});
-	for (const definition_version of ["1", 2, 0, true, "private", null]) assert.deepEqual(sanitizeProps(event, { definition_version }), {});
+	for (const definition_version of ["2", 1, 0, true, "private", null]) assert.deepEqual(sanitizeProps(event, { definition_version }), {});
 }
 
 const { createFirstEditTracker, createSemanticState, semanticEditKind } = await import("../src/semantic-edit.js");
@@ -649,7 +649,7 @@ for (const surface of ["craft", "playground"]) {
 		state.edit(mutate);
 		state.edit((value) => structuredClone(value)); // repeated callback / React echo
 		state.edit(mutate); // another actual edit still dedupes at the mount boundary
-		assert.deepEqual(events, [{ event: `${surface}:first_edit`, props: { edit_kind: kind, definition_version: 1 } }], `${surface}: ${kind}`);
+		assert.deepEqual(events, [{ event: `${surface}:first_edit`, props: { edit_kind: kind, definition_version: 2 } }], `${surface}: ${kind}`);
 	}
 }
 // Passive writes still advance the before-state. A subsequent edit is measured

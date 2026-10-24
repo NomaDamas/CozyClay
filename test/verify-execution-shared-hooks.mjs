@@ -32,7 +32,7 @@ for (const first of ["user", "agent", "mcp"]) {
 	await callers[first]();
 	for (const channel of ["user", "agent", "mcp"]) await callers[channel]();
 	assert.equal(objects.length, 1);
-	assert.deepEqual(events, [{ event: "craft:first_edit", props: { edit_kind: "object_insert", definition_version: 1 } }]);
+	assert.deepEqual(events, [{ event: "craft:first_edit", props: { edit_kind: "object_insert", definition_version: 2 } }]);
 
 	// Prompt authoring alone never creates generation demand.
 	const prompts = createSemanticState([], () => {}, (domain, a, b) => observe("craft", domain, a, b), "promptClips");

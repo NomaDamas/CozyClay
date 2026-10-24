@@ -30,7 +30,7 @@ import { applyTakeFrame } from "./motion3/playback.js";
 
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
 import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
-import { createFirstEditTracker, semanticEditKind } from "./semantic-edit.js";
+import { startUserEdits } from "./command-bus-telemetry.js";
 
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import SculptPanel from "./panels/SculptPanel.jsx";
@@ -140,9 +140,7 @@ import {
 import { carriedPointAt, sceneObjectsAt } from "./object-travel.js"; import { objectTracksOf } from "./motion3/object-tracks.js"; import { ViewGhosts } from "./view-ghosts.jsx"; import { DraftGhost } from "./draft-ghost.jsx"; import { SculptSketch } from "./sculpt-sketch.jsx";
 import { routeOwnerFor } from "./route-owner.js";
 import {
-	analyticsActive,
 	exportFailureCode,
-	recordSemanticEdit,
 	recordUseCase,
 	sculptRunTelemetry,
 	shouldAskUseCase,
@@ -442,33 +440,20 @@ export default function App() {
 	if (typeof window !== "undefined") window.__cozyclayRenders = (window.__cozyclayRenders || 0) + 1;
 	const sceneRevisionRef = useRef(0);
 	const studioBindingRef = useRef(null);
-	const firstEditRef = useRef(null);
-	if (!firstEditRef.current) {
-		const firstEdit = createFirstEditTracker(track);
-		// Observe the existing semantic boundary once, even after its telemetry
-		// gate is satisfied. The semantic hook itself stays unchanged.
-		firstEditRef.current = (surface, domain, before, after) => {
+	const semanticEditRef = useRef(null);
+	if (!semanticEditRef.current) {
+		// A new mount boundary for the first edit. User edits are counted from the
+		// command bus's own receipts (command-bus-telemetry.js), not from here.
+		startUserEdits(playgroundMode ? "playground" : "craft");
+		semanticEditRef.current = (domain, before, after) => {
 			if (before !== after) sceneRevisionRef.current += 1;
 			studioBindingRef.current?.invalidate(domain, before, after);
 			studioBindingRef.current?.publishSemantic(domain, after);
-			// Every authored edit is counted by its closed kind for the session
-			// summary (#466); classification only runs while telemetry is on.
-			if (before !== after && analyticsActive()) {
-				try {
-					const kind = semanticEditKind(domain, before, after);
-					if (kind) recordSemanticEdit(kind);
-				} catch {
-					// Telemetry classification must never affect editing.
-				}
-			}
-			return firstEdit(surface, domain, before, after);
 		};
 	}
 	// One semantic hook for authored UI and programmatic mutations. Passive
 	// setters intentionally bypass it (navigation, load, seed, restore, history).
-	const markSemanticEdit = (domain, before, after) => {
-		return firstEditRef.current(playgroundMode ? "playground" : "craft", domain, before, after);
-	};
+	const markSemanticEdit = (domain, before, after) => semanticEditRef.current(domain, before, after);
 	const craftActionTrackedRef = useRef(false);
 	const markCraftAction = (actionKind) => {
 		if (craftActionTrackedRef.current) return;

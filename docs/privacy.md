@@ -30,7 +30,7 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `project:saved` | User-owned project persistence |
 | `project:opened` | Return to a saved project (age bucket) |
 | `craft:first_action` | Funnel and drop-off analysis |
-| `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 1`) |
+| `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 2`) |
 | `playground:first_edit` | First meaningful Playground edit, separate from the Studio funnel |
 | `app:error` | Uncaught errors and unhandled rejections: type label, source, and for the app's own bundle only file name + line/column. Never messages, stacks, URLs, or paths |
 | `device:profile` | Once per session: GPU vendor/class, WebGL version, CPU/memory buckets, and a frame-rate bucket. Never the raw renderer string |
@@ -128,15 +128,17 @@ See [the external cohort queries and baseline procedure](analytics-queries.md#po
 for complete KST weeks, distinct-ID denominators, retention maturity and
 coverage limits.
 
-## First-edit definition (version 1)
+## First-edit definition (version 2)
 
 `craft:first_edit` and `playground:first_edit` carry only `edit_kind` and the
-numeric `definition_version: 1`. The closed edit-kind set is `pose_edit`,
+numeric `definition_version: 2`. The closed edit-kind set is `pose_edit`,
 `object_insert`, `cutout_insert`, `object_transform`, `shot_add`, `shot_edit`,
 `camera_key_record`, `rail_edit`, `prompt_block_add`, and `prompt_block_edit`.
-An event requires an actual, successful authoring change through the shared
-semantic hook, whether the change came from the UI, `window.__cozyclay`, or
-MCP live control. Prompt text and scene values are never event properties.
+An event requires a successful authoring change the user made: a command from
+the Studio's own controls that changed the scene, as the command bus records
+it. Edits by the agent or an MCP client do not count. Version 1 (earlier
+builds) diffed editor state and also counted programmatic edits. Prompt text
+and scene values are never event properties.
 
 Deduplication is **per editor session (one App mount), not per install**.
 Repeated pointer callbacks, React effects, later edits, undo, and redo cannot

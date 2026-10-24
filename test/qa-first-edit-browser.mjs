@@ -130,7 +130,7 @@ async function click(selector) {
 }
 async function expectEvents(surface, kind, label) {
 	const actual = await b.evaluate(firstEvents);
-	assert.deepEqual(actual, kind ? [{ event: `${surface}:first_edit`, props: { edit_kind: kind, definition_version: 1 } }] : [], label);
+	assert.deepEqual(actual, kind ? [{ event: `${surface}:first_edit`, props: { edit_kind: kind, definition_version: 2 } }] : [], label);
 	assert.deepEqual(await b.evaluate(legacyEvents), [], "pose/rail/navigation do not widen legacy first_action");
 	assert.equal(await b.evaluate("!!window.__cozyclayAnalytics?.instance"), false, "real analytics SDK stays disabled");
 	console.log(`PASS ${surface} ${label}: ${JSON.stringify(actual)}`);

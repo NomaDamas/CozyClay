@@ -174,14 +174,34 @@ development and the browser QA script do not send production telemetry.
 
 # First-edit funnel
 
+## Definition version 2 (#922)
+
+Builds from this release send `craft:first_edit` / `playground:first_edit`
+with `definition_version = 2` and stop sending version 1.
+
+- **Version 2** counts the user's own committed edits. Each one is a UI-origin
+  command-bus receipt that changed the scene, classified by its command
+  (`src/command-bus-telemetry.js`). Agent, MCP and undo/redo edits never
+  count. A drag counts once, at its commit. The same receipts feed
+  `app:session_ended.*_edit_bucket` and `agent:post_turn_edit`.
+- **Version 1** diffed domain values. In the real Studio it missed every shot
+  and camera edit (a domain-name mismatch), never saw object edits, and counted
+  pose only from the drag preview. The `*_edit_bucket` values of those builds
+  under-count the same way.
+- **Never add the two versions together.** Split by `definition_version` and
+  `app_version`. A v1 rate is not comparable with a v2 rate. The cohort
+  queries B, C and D below are written for v1 rows. To run them on v2, change
+  their `definition_version` literal to 2 (`= 2` / `= '2'`) and their
+  `edit_v1_deployed_utc` to the v2 release time.
+
 ## First launch -> first edit -> exported frame
 
 This PostHog SQL/HogQL query measures official npm installations, not editor
 sessions. It deduplicates the session-scoped `craft:first_edit` event by
-`distinct_id` and accepts only numeric `definition_version = 1`.
+`distinct_id` and accepts only numeric `definition_version = 2`.
 `playground:first_edit` and the legacy `*:first_action` events are excluded.
 
-Set `cohort_start` to the actual version 1 rollout timestamp in UTC before
+Set `cohort_start` to the actual version 2 rollout timestamp in UTC before
 running the query. The timestamp below is an example, not a claimed release
 time. Only complete seven-day cohorts enter the denominator. Each later
 step must occur strictly after the preceding step and within seven days of
@@ -207,7 +227,7 @@ WITH
         FROM launches AS l
         INNER JOIN events AS e ON e.distinct_id = l.distinct_id
         WHERE e.event = 'craft:first_edit'
-          AND e.properties.definition_version = 1
+          AND e.properties.definition_version = 2
           AND e.properties.distribution = 'npm'
           AND e.properties.origin_kind = 'local'
           AND JSONExtractRaw(e.properties, 'internal_qa') != 'true'
@@ -230,20 +250,20 @@ WITH
     )
 SELECT
     (SELECT count() FROM launches) AS first_launches,
-    (SELECT count() FROM edits) AS first_edits_v1,
-    (SELECT count() FROM exports) AS exported_after_edit_v1
+    (SELECT count() FROM edits) AS first_edits_v2,
+    (SELECT count() FROM exports) AS exported_after_edit_v2
 ```
 
 The last step intentionally uses the existing successful-frame event; it
 does not infer export success from an attempt or from activation. Compare
-`first_edits_v1 / first_launches` only when the denominator is nonzero.
+`first_edits_v2 / first_launches` only when the denominator is nonzero.
 This is a first-week activation cohort, not lifetime adoption or a
 measurement of all camera use. Older installations without a new
 `install:first_launch` are deliberately outside this query.
 
 For Playground analysis, start a separate ordered funnel at
 `playground:opened`, then `playground:first_edit` filtered to
-`definition_version = 1`, with PostHog's same-session restriction.
+`definition_version = 2`, with PostHog's same-session restriction.
 Do not use npm first launches as the denominator for hosted Playground
 activity. The application's first-edit boundary is an App mount, whereas
 PostHog's native session boundary may span multiple mounts.

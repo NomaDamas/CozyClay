@@ -2,7 +2,8 @@
 // key), the history receipts an undo can name, and edit:undone for the user's own
 // undos (domains/scene-undo.js). Only closed values leave: a refusal code, a
 // command group, an edit kind, an age bucket. Never ids, args or messages.
-import { track } from './analytics.js';
+import { EDIT_GROUPS, recordSemanticEdit, track } from './analytics.js';
+import { createFirstEditRecorder } from './semantic-edit.js';
 import { admit, bump } from './analytics-friction.js';
 import { bucketAge, refusalCodeOf } from './analytics-strict.js';
 import { noteEditGesture } from './post-turn-edits.js';
@@ -17,23 +18,45 @@ const GROUPS = [
 ];
 export const commandGroup = id => GROUPS.find(([pattern]) => pattern.test(String(id)))?.[1] ?? 'other';
 
-// The undone entry's action id to edit:undone kind. Groups follow EDIT_GROUPS
-// (analytics.js) and the semantic kinds (semantic-edit.js): a shot's camera
-// framing, keys, lens, rail and mode are camera; bone and IK keys are pose;
-// placing or adding a character counts as an object, as it does for object_insert.
-const KINDS = [
-	[/^shot\.(setCamera|setCameraRail|clearCameraRail|setCameraMode|addKey|moveKey|removeKey|clearKeys|setLens|frame|captureCamera|placeCamera)$/, 'camera'],
-	[/^shot\./, 'shot'],
-	[/^(character\.(setPose|setIkKey|removeIkKey|clearIkKeys)|ik\.|motion\.rangePin\.)/, 'pose'],
-	[/^(objects?\.|character\.(set|add|remove|update|move)$|characters\.arrange$|cast\.replace$)/, 'object'],
+// The one table from a committed command to its closed edit kind (FIRST_EDIT_KINDS,
+// semantic-edit.js); its group (EDIT_GROUPS, analytics.js) follows from the kind.
+// A shot's camera framing, keys and lens record a camera key; its rail, crane and
+// mode are a rail edit; bone and IK keys are pose; placing or adding a character
+// counts as an object, as it does for object_insert. Everything else is no edit kind.
+const EDIT_KINDS = [
+	[/^shot\.(create|createStill|duplicate|split)$/, 'shot_add'],
+	[/^shot\.(setCameraRail|clearCameraRail|setCameraMode)$/, 'rail_edit'],
+	[/^shot\.(setCamera|addKey|moveKey|removeKey|clearKeys|setLens|frame|captureCamera|placeCamera)$/, 'camera_key_record'],
+	[/^shot\./, 'shot_edit'],
+	[/^(character\.(setPose|setIkKey|removeIkKey|clearIkKeys)|ik\.|motion\.rangePin\.)/, 'pose_edit'],
+	[/^(object\.(add|duplicate|sculpt|createKit)|character\.add)$/, 'object_insert'],
+	[/^(objects?\.|character\.(set|remove|update|move)$|characters\.arrange$|cast\.replace$)/, 'object_transform'],
 	// The take's fields carry its prompt (motion.take.prompt).
-	[/^motion\.set$/, 'prompt'],
+	[/^motion\.set$/, 'prompt_block_edit'],
 ];
+// Built on first use: this module loads inside an import cycle (analytics.js -> semantic-edit.js ->
+// command-bus.js -> here), where EDIT_GROUPS is not initialized yet.
+let groups = null;
+const groupOf = kind => (groups ??= new Map(Object.entries(EDIT_GROUPS).flatMap(([group, kinds]) => kinds.map(entry => [entry, group])))).get(kind);
+/** A command's closed edit kind, or null; `placeAs` (asset.import's closed enum) tells a cutout from a mesh. */
+export function firstEditKindOf(action, placeAs) {
+	if (action === 'asset.import') return placeAs === 'cutout' ? 'cutout_insert' : 'object_insert';
+	return EDIT_KINDS.find(([pattern]) => pattern.test(String(action)))?.[1] ?? null;
+}
 const AGENT_WORK = new Set(['agent.turn.finish', 'task.finish']);
-export function editKind(action, origin = 'ui') {
+/** The edit:undone / post-turn group of a command: pose, camera, object, shot, prompt, agent_turn or other. */
+export function editKind(action, origin = 'ui', placeAs) {
 	// What the agent made (its turn, a task, or an edit it ran on its own) is undone as agent work.
 	if (AGENT_WORK.has(action) || origin !== 'ui') return 'agent_turn';
-	return KINDS.find(([pattern]) => pattern.test(String(action)))?.[1] ?? 'other';
+	return groupOf(firstEditKindOf(action, placeAs)) ?? 'other';
+}
+
+// The user's own edits feed the session edit buckets and the surface's first edit
+// (definition_version 2). App starts a new mount boundary with startUserEdits.
+let editSurface = 'craft', firstEdit = createFirstEditRecorder((event, props) => send(event, props));
+export function startUserEdits(surface) {
+	editSurface = surface;
+	firstEdit = createFirstEditRecorder((event, props) => send(event, props));
 }
 
 const emit = (event, props) => {
@@ -64,19 +87,26 @@ export function createHistoryReceipts(ports) {
 	return {
 		get: historyEntryId => receipts.get(historyEntryId),
 		/** `id` the command, `action` the command a transaction ran (run.commit of a drag). */
-		remember(recorded, { id, origin, action }) {
+		remember(recorded, { id, origin, action, placeAs }) {
 			// Session friction: an undo the user made (agent undos are the agent's own correction).
 			if (id === 'edit.undo' && origin === 'ui' && recorded.status === 'undone') bump('undos');
-			// agent:post_turn_edit: a user edit that changed the scene, by group (a drag commits one receipt: one gesture).
-			if (origin === 'ui' && recorded.authored === true && !id.startsWith('edit.')) noteEditGesture(editKind(action ?? id, origin));
+			// The user's edit that changed the scene, once per receipt (a drag commits once): the session edit
+			// buckets, the first edit and agent:post_turn_edit. Agent, MCP and undo/redo receipts never count.
+			if (origin === 'ui' && recorded.authored === true && !id.startsWith('edit.')) noteUserEdit(firstEditKindOf(action ?? id, placeAs));
 			if (recorded.undo?.canUndoDirect && !id.startsWith('edit.')) {
 				receipts.set(recorded.undo.historyEntryId, recorded);
-				stamps.set(recorded.receiptId, { at: clock(), kind: editKind(action ?? id, origin) });
+				stamps.set(recorded.receiptId, { at: clock(), kind: editKind(action ?? id, origin, placeAs) });
 				while (stamps.size > STAMPS_KEPT) stamps.delete(stamps.keys().next().value);
 			}
 			for (const [key, receipt] of receipts) if (ports.isRetained?.(receipt) === false) { receipts.delete(key); stamps.delete(receipt.receiptId); }
 		},
 	};
+}
+
+function noteUserEdit(kind) {
+	if (!kind) return;
+	try { recordSemanticEdit(kind); firstEdit(editSurface, kind); } catch { /* telemetry is advisory */ }
+	noteEditGesture(groupOf(kind));
 }
 
 const RESULTS = { undone: 'done', noop: 'noop' };
