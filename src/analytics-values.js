@@ -27,6 +27,14 @@ export function exportPropAllowed(key, value) {
 	return EXPORT_PROPERTY_VALUES[key]?.has(value) ?? false;
 }
 
+// The thrown-value type labels app:error and app:render_crash share (analytics.js
+// errorType): built-in Error and DOMException names, else "non_error" or "other".
+export const ERROR_TYPE_VALUES = new Set([
+	"Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError",
+	"AggregateError", "AbortError", "TimeoutError", "NotAllowedError", "NotSupportedError", "NotFoundError",
+	"NotReadableError", "InvalidStateError", "QuotaExceededError", "SecurityError", "NetworkError",
+	"DataCloneError", "OperationError", "EncodingError", "UnknownError", "DOMException", "non_error", "other",
+]);
 export const SESSION_DURATION_BUCKETS = new Set(["lt1m", "1-5m", "5-15m", "15-30m", "gte30m"]);
 // The SDK's session id is a random UUID; nothing else may ride in that slot.
 const SESSION_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;

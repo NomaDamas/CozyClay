@@ -6,6 +6,7 @@ import * as friction from "../src/analytics-friction.js";
 import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
 import * as postTurn from "../src/post-turn-edits.js";
 import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
+import { crashTelemetrySeam, reportGlLost, reportRenderCrash } from "../src/crash-telemetry.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -1081,12 +1082,12 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
 	const event = cells[0]?.trim();
-	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed"].includes(event)) continue;
+	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed", "app:render_crash", "app:gl_lost"].includes(event)) continue;
 	const tokens = new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
 	for (const key of STRICT_EVENT_KEYS[event]) assert.ok(tokens.has(key), `the privacy page discloses ${event} ${key}`);
 	strictRows.add(event);
 }
-assert.deepEqual([...strictRows].sort(), ["agent:connect_finished", "agent:connect_opened", "agent:connect_started", "agent:model_changed", "agent:post_turn_edit", "agent:turn_summary", "edit:undone", "motion:draft_compiled", "studio:refused"], "each strict event has its own privacy row");
+assert.deepEqual([...strictRows].sort(), ["agent:connect_finished", "agent:connect_opened", "agent:connect_started", "agent:model_changed", "agent:post_turn_edit", "agent:turn_summary", "app:gl_lost", "app:render_crash", "edit:undone", "motion:draft_compiled", "studio:refused"], "each strict event has its own privacy row");
 const executionSchemas = {
 	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
 	"workflow:run_succeeded": ["run_id", "duration_bucket"],
@@ -1250,6 +1251,35 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 	const hostile = { get name() { throw new Error("getter"); }, get stack() { throw new Error("getter"); } };
 	assert.doesNotThrow(() => describeError({ error: hostile }, origin));
 	console.log("PASS app:error closed vocabulary: type, source and same-origin bundle location only");
+
+	// PR D: app:render_crash (error type only, 2 per session, bumps errors) and app:gl_lost (1 per kind).
+	{
+		friction.reset();
+		const sent = [];
+		const restoreCrash = crashTelemetrySeam((event, props) => sent.push({ event, props }));
+		reportRenderCrash(typeError);
+		reportRenderCrash(new CustomerNamedError());
+		reportRenderCrash("string throw");
+		assert.deepEqual(sent, [
+			{ event: "app:render_crash", props: { error_type: "TypeError" } },
+			{ event: "app:render_crash", props: { error_type: "other" } },
+		], "a type label only, and at most two per session");
+		assert.equal(friction.snapshot().errors, "3", "every caught crash moves the errors counter, past the cap too");
+		assert.equal(JSON.stringify(sent).includes("private"), false, "never the message or stack");
+		assert.doesNotThrow(() => reportRenderCrash(hostile), "a hostile thrown value cannot break the crash net");
+		sent.length = 0;
+		for (const kind of ["context_lost", "unavailable", "context_lost", "unavailable", "lost", undefined]) reportGlLost(kind);
+		assert.deepEqual(sent, [{ event: "app:gl_lost", props: { kind: "context_lost" } }, { event: "app:gl_lost", props: { kind: "unavailable" } }], "one per kind, closed kinds only");
+		for (const { event, props } of sent) assert.deepEqual(sanitizeProps(event, { ...props, message: "private" }), props, `${event} passes its closed schema`);
+		assert.deepEqual(sanitizeProps("app:render_crash", { error_type: "AcmeStudioError", stack: secret }), {}, "app:render_crash rejects an open type and a stack");
+		assert.deepEqual(sanitizeProps("app:render_crash", { error_type: "RangeError" }), { error_type: "RangeError" });
+		assert.deepEqual(sanitizeProps("app:gl_lost", { kind: "restored" }), {}, "app:gl_lost rejects an unknown kind");
+		assert.deepEqual(STRICT_EVENT_KEYS["app:render_crash"], ["error_type"]);
+		assert.deepEqual(STRICT_EVENT_KEYS["app:gl_lost"], ["kind"]);
+		restoreCrash();
+		friction.reset();
+	}
+	console.log("PASS app:render_crash and app:gl_lost: closed values, 2 crashes and 1 per GL kind per session");
 
 	for (const [renderer, gpu_vendor, gpu_class] of [
 		["ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)", "nvidia", "discrete"],

@@ -1,5 +1,6 @@
 import { Component } from "react";
 import { ko } from "./locale.js";
+import { reportRenderCrash } from "./crash-telemetry.js";
 
 /**
  * Last line of defense for the whole tree. A render-time throw anywhere in
@@ -23,6 +24,7 @@ export default class ErrorBoundary extends Component {
 
 	componentDidCatch(error, info) {
 		console.error("[cozyclay] render crash", error, info?.componentStack ?? "");
+		reportRenderCrash(error);
 	}
 
 	render() {

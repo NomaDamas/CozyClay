@@ -1152,6 +1152,79 @@ WHERE event = 'app:session_started' AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY status, version ORDER BY people DESC;
 ```
 
+# White screens and GPU loss (app:render_crash, app:gl_lost)
+
+Two passive events (`src/crash-telemetry.js`). They never move
+`action_count_bucket`. Builds before this release have no row: a missing
+event is **unknown, not 0**. Exclude `internal_qa = true` with
+`JSONExtractRaw(properties, 'internal_qa') != 'true'`.
+
+## Event contract
+
+| Event | Property | Values | Source | Cap |
+| --- | --- | --- | --- | --- |
+| `app:render_crash` | `error_type` | The `app:error` label set (`Error`, `TypeError`, ..., `DOMException`, `non_error`, `other`) | `ErrorBoundary.componentDidCatch` (`src/error-boundary.jsx`): the crash screen is showing | 2 per session |
+| `app:gl_lost` | `kind` | `unavailable`, `context_lost` | `unavailable`: the one-time mount check behind the WebGL-unavailable overlay (`src/use-webgl-available.js`). `context_lost`: `ContextLossGuard` (`src/stage-canvas-rigs.jsx`) on `webglcontextlost` | 1 per kind per session |
+
+- No message, stack, component stack, file name or renderer string leaves.
+- A caught render error does **not** also send `app:error`: React 19 hands a
+  boundary-caught error to the boundary and the console only, never to window
+  `error` (checked in a real browser, PR D). Every caught crash, including
+  those past the cap, moves `app:friction_summary.errors` once.
+- Both events wait for the analytics SDK to load, so a crash on the first
+  render or WebGL missing at startup is still sent.
+- A session can carry both `app:gl_lost` kinds; `context_lost` is followed by
+  the browser's own restore attempt, which is not reported.
+
+## 1.4 Quit after a failure (update)
+
+`app:render_crash` joins the failure set. The rest of the 1.4 sketch is
+unchanged. Sketch, not executed against PostHog.
+
+```sql
+SELECT count() AS quits_after_failure
+FROM events AS q
+INNER JOIN (
+  SELECT distinct_id, timestamp AS t FROM events
+  WHERE event IN ('app:error', 'export:attempt_failed', 'agent:turn_failed', 'app:render_crash')
+    AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+) AS f ON f.distinct_id = q.distinct_id
+WHERE q.event = 'app:session_ended'
+  AND JSONExtractRaw(q.properties, 'internal_qa') != 'true'
+  AND f.t BETWEEN q.timestamp - INTERVAL 60 SECOND AND q.timestamp
+```
+
+## 5.9 White screens and GPU loss by GPU class (90 days)
+
+Each failure joins the latest `device:profile` of the same person in the
+window. Sketch, not executed against PostHog.
+
+```sql
+SELECT
+    coalesce(d.gpu_class, 'no_profile') AS gpu_class,
+    countIf(f.event = 'app:render_crash') AS render_crashes,
+    countIf(f.event = 'app:gl_lost' AND f.kind = 'unavailable') AS gl_unavailable,
+    countIf(f.event = 'app:gl_lost' AND f.kind = 'context_lost') AS gl_context_lost,
+    uniq(f.distinct_id) AS people
+FROM (
+    SELECT distinct_id, event, properties.kind AS kind FROM events
+    WHERE event IN ('app:render_crash', 'app:gl_lost')
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+) AS f
+LEFT JOIN (
+    SELECT distinct_id, argMax(properties.gpu_class, timestamp) AS gpu_class FROM events
+    WHERE event = 'device:profile'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+    GROUP BY distinct_id
+) AS d ON d.distinct_id = f.distinct_id
+GROUP BY gpu_class
+ORDER BY render_crashes + gl_unavailable + gl_context_lost DESC
+```
+
+Read counts beside each share: a handful of sessions can fill a row.
+
 # Session friction summary
 
 `app:friction_summary` is one passive event per session, sent by the same
@@ -1168,7 +1241,7 @@ sanitizer (`src/analytics-friction.js`, `src/analytics.js`). It never moves
 | `active_time` | `lt1m`, `1-5m`, `5-15m`, `15-30m`, `gte30m` | The session duration bucket, identical to `app:session_ended.duration_bucket` |
 | `refusals_ui`, `refusals_agent` | count bucket | Every refused command-bus run, by origin (`ui`, everything else). A cancel the caller asked for (`CANCELLED`) is not counted |
 | `undos` | count bucket | Successful `edit.undo` runs from the UI. Agent undos and no-op undos are not counted |
-| `errors` | count bucket | Every reported window error and unhandled rejection, including repeats that `app:error`'s 10-signature dedupe does not send |
+| `errors` | count bucket | Every reported window error and unhandled rejection, including repeats that `app:error`'s 10-signature dedupe does not send, plus every render error the crash screen caught (`app:render_crash`) |
 | `long_tasks`, `long_task_max` | count bucket; `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `PerformanceObserver` `longtask` entries. Where the browser does not report long tasks (feature-detected), the values stay `0` / `lt50`: **unsupported, not smooth** |
 | `compiles` | count bucket | Every `motion.compile` draft, including those past `motion:draft_compiled`'s 50-per-session cap |
 | `late_tick_ratio` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Reserved for the playback detector; `0` until it ships |

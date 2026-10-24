@@ -2,7 +2,7 @@
 // generic "short string" rule. analytics.js asks strictPropValidator(event) once
 // per event; a property its validator refuses is dropped.
 import { STUDIO_ERROR_CODES } from "./studio-error-codes.js";
-import { sessionEndedPropAllowed } from "./analytics-values.js";
+import { ERROR_TYPE_VALUES, sessionEndedPropAllowed } from "./analytics-values.js";
 import { FRICTION_SUMMARY_KEYS, frictionPropAllowed } from "./analytics-friction.js";
 
 const TURN_ID_PATTERN = /^[a-f0-9]{32}$/;
@@ -51,6 +51,9 @@ const SCHEMAS = Object.freeze({
 		code: inSet(REFUSAL_CODES), origin: oneOf("ui", "agent"), phase: oneOf("admission", "commit"),
 		group: oneOf("object", "shot", "cast", "scene", "motion", "edit", "task", "agent", "other"),
 	},
+	// error_type: the app:error label set (analytics.js describeError); never a message or stack.
+	"app:render_crash": { error_type: inSet(ERROR_TYPE_VALUES) },
+	"app:gl_lost": { kind: oneOf("unavailable", "context_lost") },
 	"edit:undone": {
 		age: inSet(AGE_BUCKETS), kind: oneOf("pose", "camera", "object", "shot", "prompt", "agent_turn", "ik_preview", "other"),
 		via: oneOf("key", "menu", "button"), result: oneOf("done", "noop", "refused"),

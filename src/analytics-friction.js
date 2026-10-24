@@ -6,7 +6,7 @@
 import { SESSION_DURATION_BUCKETS } from "./analytics-values.js";
 
 // Counters with a source today: refusals_ui/refusals_agent and undos (command
-// bus), errors (app:error listener), long_tasks (longtask observer), compiles
+// bus), errors (app:error listener, ErrorBoundary), long_tasks (longtask observer), compiles
 // (every motion.compile draft, motion-draft-telemetry.js). The rest
 // are reserved names for the click, shortcut, search, thrash and playback
 // detectors; they report "0" until those land.

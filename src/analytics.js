@@ -1,5 +1,5 @@
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
-import { EXPORT_FAILURE_CODES, exportPropAllowed } from "./analytics-values.js";
+import { ERROR_TYPE_VALUES, EXPORT_FAILURE_CODES, exportPropAllowed } from "./analytics-values.js";
 import { bump as bumpFriction, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
 import { STRICT_EVENT_KEYS, strictPropValidator } from "./analytics-strict.js";
 export const MCP_TOOL_CATEGORIES = Object.freeze([
@@ -160,12 +160,7 @@ const EXECUTION_FAILURE_CODES = Object.freeze({
 // error message, stack text, URLs and anything a user typed never do.
 const ERROR_PROPERTY_VALUES = Object.freeze({
 	error_kind: new Set(["error", "unhandled_rejection"]),
-	error_type: new Set([
-		"Error", "TypeError", "RangeError", "ReferenceError", "SyntaxError", "EvalError", "URIError",
-		"AggregateError", "AbortError", "TimeoutError", "NotAllowedError", "NotSupportedError", "NotFoundError",
-		"NotReadableError", "InvalidStateError", "QuotaExceededError", "SecurityError", "NetworkError",
-		"DataCloneError", "OperationError", "EncodingError", "UnknownError", "DOMException", "non_error", "other",
-	]),
+	error_type: ERROR_TYPE_VALUES,
 	error_source: new Set(["app", "extension", "external", "unknown"]),
 });
 const ERROR_FILE_PATTERN = /^[A-Za-z0-9_.-]{1,80}\.(?:m?js|jsx|ts|tsx)$/;
@@ -206,7 +201,7 @@ let deviceProfileStarted = false;
 // move action_count_bucket.
 const PASSIVE_EVENTS = new Set([
 	"app:session_started", "app:session_ended", "app:friction_summary", "install:first_launch", "studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed",
-	"app:error", "device:profile",
+	"app:error", "device:profile", "app:render_crash", "app:gl_lost",
 ]);
 
 function storage() {

@@ -38,6 +38,8 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `craft:first_edit` | First meaningful Studio edit (`edit_kind`, `definition_version: 2`) |
 | `playground:first_edit` | First meaningful Playground edit, separate from the Studio funnel |
 | `app:error` | Uncaught errors and unhandled rejections: type label, source, and for the app's own bundle only file name + line/column. Never messages, stacks, URLs, or paths |
+| `app:render_crash` | A render error caught by the crash screen, at most two per session: `error_type` (the `app:error` label set). Never messages, stacks, component or file names |
+| `app:gl_lost` | The 3D view lost WebGL, once per kind per session: `kind` (`unavailable` at startup, `context_lost` later). Never the renderer string |
 | `device:profile` | Once per session: GPU vendor/class, WebGL version, CPU/memory buckets, and a frame-rate bucket. Never the raw renderer string |
 | `survey:use_case` | Optional one-time question after a successful export: `use_case` and `team`, closed choices only |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |

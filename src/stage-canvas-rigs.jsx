@@ -7,6 +7,7 @@ import { shotAtFrame } from "./cuts.js";
 import { sampleAt } from "./sample-at.js";
 import { playbackProbe, probeVisibility } from "./motion/playback-probe.js";
 import { RENDER_ACTIVITY_EVENT } from "./use-render-activity.js";
+import { reportGlLost } from "./crash-telemetry.js";
 import { PRESETS, editorFrameForSubject } from "./stage-startup-defaults.js";
 
 /** Selection marker for the picked cast member: a Unity-style XYZ tripod
@@ -371,11 +372,9 @@ export function ContextLossGuard({ onLostChange }) {
 		const onLost = (event) => {
 			event.preventDefault();
 			onLostChange(true);
+			reportGlLost("context_lost");
 		};
-		const onRestored = () => {
-			onLostChange(false);
-			invalidate();
-		};
+		const onRestored = () => { onLostChange(false); invalidate(); };
 		canvas.addEventListener("webglcontextlost", onLost);
 		canvas.addEventListener("webglcontextrestored", onRestored);
 		return () => {

@@ -179,6 +179,7 @@ import {
 	Toast,
 } from "./ui.jsx";
 import { useRenderActivity } from "./use-render-activity.js";
+import { useWebGlAvailable } from "./use-webgl-available.js";
 
 import {
 	CUSTOM_MOVE,
@@ -1794,6 +1795,7 @@ export default function App() {
 		return () => window.removeEventListener(PWA_UPDATE_EVENT, onUpdate);
 	}, []);
 	const [glContextLost, setGlContextLost] = useState(false);
+	const webGlAvailable = useWebGlAvailable();
 
 
 
@@ -5108,11 +5110,7 @@ export default function App() {
 						    — orbit, pan, click-to-select — reaches the WebGL canvas
 						    untouched while the mode is on. */}
 
-						{!(globalThis.__cozyclayWebGLAvailable ??= (() => {
-							if (typeof document === "undefined") return true;
-							const canvas = document.createElement("canvas");
-							return Boolean(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
-						})()) && (
+						{!webGlAvailable && (
 							<div className="gl-lost-overlay" role="alert" data-testid="webgl-unavailable">
 								<div className="gl-lost-card">
 									<strong>{ko("3D graphics (WebGL) is turned off in this browser", "이 브라우저에서 3D 그래픽(WebGL)이 꺼져 있어요")}</strong>
