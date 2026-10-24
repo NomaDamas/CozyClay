@@ -94,4 +94,7 @@ assert.equal(marked.tools[0].cache_control, undefined);
 assert.equal(bare.system[0].cache_control, undefined, "the payload pi built is not mutated");
 assert.equal(withAnthropicCacheBreakpoints(marked, { api: "anthropic-messages" }), undefined, "an already-marked payload is left alone");
 assert.equal(withAnthropicCacheBreakpoints(bare, { compat: { supportsCacheControlOnTools: false } }).tools.at(-1).cache_control, undefined, "tools stay unmarked when compat refuses it");
+// pi-ai 1.4 appends a deferred placeholder tool; the API rejects cache_control on it (#905).
+const deferred = withAnthropicCacheBreakpoints({ ...bare, tools: [...bare.tools, { name: "__pi_deferred_placeholder__", defer_loading: true }] }, { api: "anthropic-messages" });
+assert.deepEqual(deferred.tools.map(tool => tool.cache_control ?? null), [null, { type: "ephemeral" }, null], "the last real tool carries the mark, the deferred placeholder none");
 console.log("PASS agent context budget: one live studio context, the motion reference and actions in a stable system prompt, usage on done");

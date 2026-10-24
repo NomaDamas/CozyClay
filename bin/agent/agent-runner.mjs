@@ -220,8 +220,10 @@ export function withAnthropicCacheBreakpoints(payload, model) {
 		next = { ...next, system: [...system.slice(0, -1), { ...system.at(-1), cache_control: cacheControl }] };
 		count += 1;
 	}
-	if (tools.length && !marked(tools.at(-1)) && model?.compat?.supportsCacheControlOnTools !== false && count < 4) {
-		next = { ...next, tools: [...tools.slice(0, -1), { ...tools.at(-1), cache_control: cacheControl }] };
+	// pi-ai 1.4 appends a defer_loading placeholder tool; the API rejects cache_control on deferred tools.
+	const lastTool = tools.findLastIndex((tool) => !tool?.defer_loading);
+	if (lastTool !== -1 && !marked(tools[lastTool]) && model?.compat?.supportsCacheControlOnTools !== false && count < 4) {
+		next = { ...next, tools: tools.map((tool, index) => index === lastTool ? { ...tool, cache_control: cacheControl } : tool) };
 	}
 	return next === payload ? undefined : next;
 }
