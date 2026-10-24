@@ -9,7 +9,7 @@ const STEADY = { yaw: 0.5, pitch: 0.2, roll: 0.7 }, LIMIT = { yaw: 4, pitch: 6, 
 const AXES = ["yaw", "pitch", "roll"];
 
 /** The walk spans in the keys, start to last step: [[f0, f1], ...]. */
-function walkSpans(keys) {
+export function walkSpans(keys) {
 	const spans = new Map();
 	for (const k of keys) {
 		const m = / (start|step \d+)$/.exec(k.src ?? ""), tag = m && k.src.slice(0, -m[0].length);

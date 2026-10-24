@@ -1,4 +1,4 @@
-// Measured, not judged (output.observations.life): how mechanical a take reads. Five cheap readings
+// Measured, not judged (output.observations.life): how mechanical a take reads. Six cheap readings
 // over the baked frames and the keys the agent wrote, one linear pass each, warnings only (never a
 // QA group, never qa.ok):
 //   sync   outside walks, the frame each body part (CHAINS) starts and stops moving (its activity,
@@ -18,6 +18,9 @@
 //          sides do the same thing on the same frames. score = the share of windows that twin.
 //   dead   runs of a second or more with no joint moving over DEAD m a frame outside a still goal:
 //          a statue (idle false, or a pose held where the idle layer stays off).
+//   lead   where the pelvis turns (its heading spans LEAD_TURN degrees or more: more than a walk's sway), the lag (frames, -LAG..LAG) that best correlates the head's
+//          world yaw change with the pelvis's: positive, the head turns first (a person's leads by about 5 frames at
+//          24 fps, flow.headLead); [lag, correlation], or null without a turn. Read only, never warned.
 // Activity is a part's own motion: the turn (deg/frame) of its local rotation, and for the hips
 // their world turn or travel (cm/frame), so a hand carried by its arm does not count as moving.
 // Why: compiled takes pass QA and still read mechanical (every part starts and stops on one frame,
@@ -34,9 +37,10 @@ const GRID_CV = 0.15, GRID_KEYS = 4, HALF_SHARE = 0.7;
 const SPIKE = 4, JERK_FLOOR = 20;
 const WALK_SPEED = 0.25, FOOT_STILL = 0.005, WINDOW = 48, TWIN = 0.9, TWIN_SWEEP = 15;
 const DEAD = 1e-4;
+const LAG = 10, LEAD_TURN = 15;
 const r2 = x => Math.round(x * 100) / 100;
 
-export const LIFE_UNITS = "life (warnings, not QA): [share or s, worst f0, f1]; keys [gap cv, even channels, half-second share]; jerk [p95 m/s^3, joint, spikes]";
+export const LIFE_UNITS = "life (warnings, not QA): [share or s, worst f0, f1]; keys [gap cv, even channels, half-second share]; jerk [p95 m/s^3, joint, spikes]; lead [frames the head turns before the pelvis, correlation]";
 
 const p95 = xs => { const s = [...xs].sort((a, b) => a - b); return s.length ? s[Math.min(s.length - 1, Math.floor(0.95 * s.length))] : 0; };
 const cvOf = gaps => { const m = gaps.reduce((a, b) => a + b, 0) / gaps.length, v = gaps.reduce((a, g) => a + (g - m) ** 2, 0) / gaps.length; return m > 0 ? Math.sqrt(v) / m : 0; };
@@ -206,6 +210,25 @@ function deadOf(sk, F, spec, fps) {
 	return { frames, best };
 }
 
+/** [lag, correlation] of the head's world yaw change against the pelvis's (lag > 0: the head first), null without a turn. */
+function leadOf(sk, F) {
+	const I = sk.index, n = F.length, DEG = 180 / Math.PI, wrap = d => d - 360 * Math.round(d / 360);
+	const pelvis = F.map(({ s }) => { const a = s.P[I.LeftUpLeg], b = s.P[I.RightUpLeg]; return Math.atan2(b[0] - a[0], b[2] - a[2]) * DEG; });
+	const head = F.map(({ s }) => { const R = s.R[I.Head]; return Math.atan2(R[0][2], R[2][2]) * DEG; });
+	const dp = pelvis.map((v, f) => (f ? wrap(v - pelvis[f - 1]) : 0)), dh = head.map((v, f) => (f ? wrap(v - head[f - 1]) : 0));
+	let heading = 0, lo = 0, hi = 0;
+	for (const d of dp) { heading += d; lo = Math.min(lo, heading); hi = Math.max(hi, heading); }
+	if (n <= 4 * LAG || hi - lo < LEAD_TURN) return null;
+	let best = null;
+	for (let lag = -LAG; lag <= LAG; lag++) {
+		let ab = 0, aa = 0, bb = 0;
+		for (let f = LAG + 2; f < n - LAG - 2; f++) { ab += dp[f] * dh[f - lag]; aa += dp[f] ** 2; bb += dh[f - lag] ** 2; }
+		const c = aa > 0 && bb > 0 ? ab / Math.sqrt(aa * bb) : 0;
+		if (!best || c > best[1]) best = [lag, c];
+	}
+	return [best[0], r2(best[1])];
+}
+
 /**
  * observeLife(sk, out, keys) -> observations.life; keys are the spec keys as the agent wrote them
  * (a skill's keys are the compiler's). Frames are absolute (out.f0 added). flags names the metrics
@@ -237,7 +260,7 @@ export function observeLife(sk, out, keys) {
 	const at = (score, w) => (w ? [score, w[0] + f0, w[1] + f0] : [score]);
 	return {
 		sync: at(sync.score, sync.worst?.at), keys: [k.cv, k.grid.length, k.halfSec], jerk: [...jerk.p95, jerk.spikes],
-		arms: at(twin.arms.score, twin.arms.worst?.at), legs: at(twin.legs.score, twin.legs.worst?.at), dead: at(r2(dead.frames / fps), dead.best),
+		arms: at(twin.arms.score, twin.arms.worst?.at), legs: at(twin.legs.score, twin.legs.worst?.at), dead: at(r2(dead.frames / fps), dead.best), lead: leadOf(sk, F),
 		...(warnings.length ? { flags: warnings.map(w => w[1]), warn: warnings[0][2] } : {}),
 	};
 }

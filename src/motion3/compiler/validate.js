@@ -107,14 +107,16 @@ function validateKeys(spec, err, frames, unknown, past = "") {
  * checked when given.
  * lenient (a saved take compiled again, take-source.js) ignores unknown fields.
  */
-/** spec.flow: false, or { smooth?: boolean, lag?: false | 0..6 frames | { spine?, head?, arms? }, overlap?: boolean | 0..2 } (channels.js, overlap.js). */
+/** spec.flow: false, or { smooth?: boolean, lag?: false | 0..6 frames | { spine?, head?, arms? }, overlap?: boolean | 0..2, headLead?: boolean | 0..12 frames } (channels.js, overlap.js, head-lead.js). */
 function validateFlow(flow, err, unknown) {
 	if (flow === undefined || flow === false) return;
-	if (!flow || typeof flow !== "object" || Array.isArray(flow)) return err(`spec.flow must be false or { smooth?, lag?, overlap? }, got ${fmt(flow)}`);
-	for (const k of Object.keys(flow)) if (!["smooth", "lag", "overlap"].includes(k)) unknown(`spec.flow has unknown field "${k}" (fields: smooth, lag, overlap)`);
+	if (!flow || typeof flow !== "object" || Array.isArray(flow)) return err(`spec.flow must be false or { smooth?, lag?, overlap?, headLead? }, got ${fmt(flow)}`);
+	for (const k of Object.keys(flow)) if (!["smooth", "lag", "overlap", "headLead"].includes(k)) unknown(`spec.flow has unknown field "${k}" (fields: smooth, lag, overlap, headLead)`);
 	if (flow.smooth !== undefined && typeof flow.smooth !== "boolean") err(`spec.flow.smooth must be true or false, got ${fmt(flow.smooth)}`);
 	const o = flow.overlap;
 	if (o !== undefined && typeof o !== "boolean" && !(Number.isFinite(o) && o >= 0 && o <= 2)) err(`spec.flow.overlap must be true, false or a scale 0..2, got ${fmt(o)}`);
+	const h = flow.headLead;
+	if (h !== undefined && typeof h !== "boolean" && !(Number.isInteger(h) && h >= 0 && h <= 12)) err(`spec.flow.headLead must be true, false or 0..12 whole frames, got ${fmt(h)}`);
 	const frames = v => Number.isFinite(v) && v >= 0 && v <= 6, lag = flow.lag, LAG = "false, 0..6 frames or { spine?, head?, arms? }";
 	if (lag === undefined || lag === false || frames(lag)) return;
 	if (!lag || typeof lag !== "object" || Array.isArray(lag)) return err(`spec.flow.lag must be ${LAG}, got ${fmt(lag)}`);

@@ -42,23 +42,25 @@ function pchipEval(x, y, m, q) {
 }
 
 const FLOW_SMOOTH = /^(spine|chest|head)_(yaw|pitch|roll)$|^(aswing|abend)_[lr]$/;
-const FLOW_LAG = { spine: 0, head: 2, arms: 3 };
+const FLOW_LAG = { spine: 0, head: 2, arms: 3 }, HEAD_LEAD = 5;
 const ARM = /^(hand|armw|elbow|aswing|abend|wflex|wtwist)_[lr]$/; // one side's arm: trails as one (overlap.js sideTrail)
 const OVER_FRAC = 0.15, OVER_MAX = 6; // a smooth segment's overshoot: at most this share of its change, and degrees
 const ikSides = ch => (/^(spine|chest|head)_/.test(ch) ? ["l", "r"] : /^(aswing|abend|wflex|wtwist)_([lr])$/.test(ch) ? [ch.slice(-1)] : []);
 const lagFamily = ch => (/^(spine|chest)_/.test(ch) ? "spine" : /^head_/.test(ch) ? "head" : /^(aswing|abend)_[lr]$/.test(ch) ? "arms" : null);
 
 /**
- * spec.flow -> { smooth, lag: { spine, head, arms }, overlap, seed, hands }: undefined is the default, false turns all off.
- * overlap: true (1) | false (0) | a scale of its delays and settle (overlap.js); seed (the spec's label) picks which side trails;
+ * spec.flow -> { smooth, lag: { spine, head, arms }, overlap, headLead, seed, hands }: undefined is the default, false turns all off.
+ * overlap: true (1) | false (0) | a scale of its delays and settle (overlap.js); headLead: the frames the head leads the trunk's
+ * turn by, true (HEAD_LEAD) | false (0) | frames (head-lead.js); seed (the spec's label) picks which side trails;
  * hands: the frames each hand works on something (overlap.js handBusy), where a free IK hand's trail stops.
  */
 export function flowOptions(flow, seed = "", hands = { l: [], r: [] }) {
-	if (flow === false) return { smooth: false, lag: { spine: 0, head: 0, arms: 0 }, overlap: 0, seed, hands };
+	if (flow === false) return { smooth: false, lag: { spine: 0, head: 0, arms: 0 }, overlap: 0, headLead: 0, seed, hands };
 	const f = flow ?? {}, lag = f.lag === false ? 0 : f.lag;
 	const each = typeof lag === "number" ? { spine: lag, head: lag, arms: lag } : { ...FLOW_LAG, ...(lag ?? {}) };
 	const overlap = f.overlap === false ? 0 : typeof f.overlap === "number" ? f.overlap : 1;
-	return { smooth: f.smooth !== false, lag: each, overlap, seed, hands };
+	const headLead = f.headLead === false ? 0 : typeof f.headLead === "number" ? Math.round(f.headLead) : HEAD_LEAD;
+	return { smooth: f.smooth !== false, lag: each, overlap, headLead, seed, hands };
 }
 
 /** Catmull-Rom slopes, flat at a hold and at the ends, each segment's overshoot bounded. */

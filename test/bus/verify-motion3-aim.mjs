@@ -46,9 +46,10 @@ const car = compileSpec({ fps: 24, ...EXITCAR_SPEC }, { sk: dsk, scene: motionSc
 // re-pinned when the walk scaled its knees, swing kick, heel strike and hips at the strike with its pace and the swing foot
 // began following the shank (walk.js, walk-pelvis.js); QA 0 before and after
 // re-pinned when the walk's upper body began following its pace and leading the legs (walk.js, head-steady.js); QA 0 before and after
+// re-pinned when the head began leading the walk's turns (head-lead.js); QA 0 before and after
 const hashes = { plain: hashOf(bakeTake(sk, plain.out)), keyed: hashOf(bakeTake(sk, keyed.out)), exitcar: hashOf(bakeTake(dsk, car.out)) };
 expect("the car exit bakes the take of the grip turn on its door handle (compiler/grip.js), bit for bit; the swing without keys bakes the take of lane Q1, with the J2 rot keys the take of lane Q1",
-	hashes.plain === "7e49b1630982dfc8" && hashes.keyed === "248dc5649b0c7499" && hashes.exitcar === "7a35b86a0a288826", JSON.stringify(hashes));
+	hashes.plain === "7e49b1630982dfc8" && hashes.keyed === "248dc5649b0c7499" && hashes.exitcar === "6dfc89e506976346", JSON.stringify(hashes));
 
 // 2. the same keys as aims: +Y of each rot; roll = its turn about aim from where the plain carry holds the bat at that frame
 const rollFrom = (q, from, aim) => {

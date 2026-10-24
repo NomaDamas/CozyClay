@@ -100,6 +100,8 @@ A channel is interpolated (monotone cubic) only through the keys that set it, so
 | `wtwist_l/r`, `wflex_l/r` | Wrist twist and flex in degrees |
 | `fingers_l/r { relaxed, fist, grip, cigarette, point }` | Preset weights over relaxed |
 
+Flow (`spec.flow`) also leads the head into a turn: `headLead` (default on, 5 frames; a whole number 0..12 sets the frames, `false` turns it off). Walking or standing, the head takes the turn the trunk (`yaw` + `spine_yaw`) makes over the next frames, at most 30 degrees, so the head turns first. It skips any span where your keys move `head_yaw`. `observations.life.lead` reports `[frames the head turns before the pelvis, correlation]`.
+
 ## Anchors, props and fits
 
 - Anchors are where a hand goes:
@@ -131,5 +133,7 @@ A channel is interpolated (monotone cubic) only through the keys that set it, so
 ## QA
 
 Every take gets these checks: body capsules against scene boxes and ground contact, IK reach, planted-foot slide, bone length, speed and pops, knee and elbow flips, knee hyper-extension, hands and props entering the head or the torso, the two hands overlapping, hinged objects passing through other boxes, balance, and self contact.
+
+A take with a walk also gets `observations.gait`, read over the walks only: steps, cadence `[steps/min, "100-115"]`, `stepLength` (m), `speed` (m/s), `stance` `[L, R]` (the share of each foot's stride on the ground), and the pelvis's `rotation` and `obliquity` (deg) and `vertical` and `lateral` (cm), peak to peak per stride. `warnings` lists the values outside a person's walk: cadence outside 80-140, stance outside 0.55-0.65, pelvis rotation outside 3.7-15.3 deg, obliquity outside 2.4-12.4 deg, and vertical outside 2.7-5 cm (provisional). They are warnings, not QA: `qa.ok` does not change. A walk of fewer than 4 steps reports only `steps`. The default `walkTo` is a slow stroll (about 74 steps/min); `period: 14, step: 0.6` walks about 104.
 
 Declare the task-specific checks in `spec.checks` (skills add their own): `contacts`, `orient`, `below`, `clearance`, `appear`, `supports`, `allow`. Pass the QA numbers to the user as they are. QA proxies are capsules, boxes and an ellipsoid, not the skin.
