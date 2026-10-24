@@ -44,6 +44,7 @@ import { TurnSteps } from "./AgentTurnSteps.jsx";
 import { PlanCard } from "./AgentPlanCard.jsx";
 import { ReplyText } from "./AgentReplyText.jsx";
 import { stepLabel, turnLayout } from "./agent-turn.js";
+import { connectAuthState, connectFinished, connectOpened, connectStarted, modelChanged } from "./connect-telemetry.js";
 
 function relativeTime(value, now = Date.now()) {
 	const at = Date.parse(value || "");
@@ -311,7 +312,7 @@ export default function AgentPanel({
 	// Picking a model is a preference, not a per-session decision: the key is
 	// remembered so a reload does not quietly move the next turn to another
 	// provider's model.
-	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); storeModel(id); }, []);
+	const chooseModel = useCallback((id) => { setModel(id); setEffort(null); storeModel(id); modelChanged(id); }, []);
 	// Task mode (parallel Studio tasks): the chat talks to the main agent, which answers at once and runs tasks on the board.
 	const [taskMode, setTaskMode] = useState(() => surface === "studio" && readStoredTaskMode());
 	const toggleTaskMode = useCallback(() => setTaskMode((current) => { storeTaskMode(!current); return !current; }), []);
@@ -664,13 +665,13 @@ export default function AgentPanel({
 	// that asked for them. Refreshing the account alone leaves the panel
 	// "ready" with nothing it may send (#379).
 	const signIn = useCallback(async () => {
-		setAuthState("signing-in");
+		connectStarted("openai-codex", "chatgpt"); setAuthState("signing-in");
 		setSignInError("");
 		try {
 			await transport.signIn();
 			await refreshProviderState();
 		} catch (error) {
-			if (agentServerUnavailable(error)) { setAuthState("offline"); return; }
+			connectFinished("failed"); if (agentServerUnavailable(error)) { setAuthState("offline"); return; }
 			setSignInError(error?.message || ko("Sign-in could not start.", "로그인을 시작하지 못했어요."));
 			setAuthState("signed-out");
 		}
@@ -718,15 +719,11 @@ export default function AgentPanel({
 
 	// The section is read when it opens; every write goes back through the
 	// refresh above, because a key changes the session, not just a row.
-	const toggleProviderKeys = useCallback(() => {
-		setMenuOpen(false);
-		setKeysOpen(!keysOpen);
-	}, [keysOpen]);
+	const toggleProviderKeys = useCallback(() => { setMenuOpen(false); if (!keysOpen) connectOpened("menu"); setKeysOpen(!keysOpen); }, [keysOpen]);
 	// Opens (never toggles) Connect a model, pi's login list: the signed-out card and a refused key both lead here.
-	const openProviderKeys = useCallback(() => {
-		setMenuOpen(false);
-		setKeysOpen(true);
-	}, []);
+	const openProviderKeys = useCallback((entry) => { setMenuOpen(false); connectOpened(entry); setKeysOpen(true); }, []);
+	// The connect funnel's ChatGPT attempt settles with the auth state (connect-telemetry.js).
+	useEffect(() => { connectAuthState(authState); }, [authState]);
 
 	// Clearing the transcript also retires the session, so what the author sees
 	// and what the model remembers cannot diverge.
@@ -863,7 +860,7 @@ export default function AgentPanel({
 				<p>Sign in with ChatGPT, or log in to another provider with a subscription, an API key, or your own proxy server. Sign-in happens in your browser — no token is ever stored in this page.</p>
 				<button type="button" className="agent-primary-button agent-signin" onClick={signIn}>Sign in with ChatGPT</button>
 				{signInError && <p className="agent-key-error agent-signin-error" role="alert">{signInError}</p>}
-				<button type="button" className="agent-ghost-button agent-use-key" onClick={openProviderKeys}>Log in with another provider</button>
+				<button type="button" className="agent-ghost-button agent-use-key" onClick={() => openProviderKeys("signed_out")}>Log in with another provider</button>
 			</div>}
 
 			{authState === "offline" && <OfflineCard probing={probing} onRetry={retryServer} />}
@@ -905,7 +902,7 @@ export default function AgentPanel({
 				if (item.kind === "assistant") return <Fragment key={item.id}><div className="agent-row assistant"><div className="agent-assistant-text"><ReplyText text={item.text} tail={streaming && <span className="agent-caret">▌</span>} /></div></div>{taskMode && layout[index - 1]?.type === "steps" && <TaskRows steps={layout[index - 1].steps} />}</Fragment>;
 				if (item.kind === "job") return <div className="agent-row" key={item.id}><JobCard job={item} onStop={stopTurn} onAccept={(job) => store.acceptJob(job.jobId)} /></div>;
 				if (item.kind === "receipt") return <div className="agent-row" key={item.id}><ReceiptCard item={item} /></div>;
-				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt)} onFixKey={openProviderKeys} /></div>;
+				if (item.kind === "failure") return <div className="agent-row" key={item.id}><FailureCard failure={item.failure} onRetry={() => runTurn(chat.lastPrompt)} onFixKey={() => openProviderKeys("failure_card")} /></div>;
 				if (item.kind === "supervisor") return <div className="agent-row" key={item.id}><SupervisorCard note={item} onSend={(text) => { store.setDraft(text); runTurn(text); }} /></div>;
 				if (item.kind === "plan") return <PlanCard key={item.id} plan={item} live={streaming && !item.outcome} />;
 				return <div className="agent-row" key={item.id}><ImageResultCard image={item} onUse={(image) => store.applyImage(image.id)} onUndo={(image) => store.undoImage(image.id)} onRegenerate={() => runTurn(chat.lastPrompt)} onOpen={setLightbox} /></div>;

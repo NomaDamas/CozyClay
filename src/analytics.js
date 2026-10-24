@@ -205,7 +205,7 @@ let deviceProfileStarted = false;
 // Passive signals describe the session; they are not user actions and never
 // move action_count_bucket.
 const PASSIVE_EVENTS = new Set([
-	"app:session_started", "app:session_ended", "app:friction_summary", "install:first_launch", "studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled",
+	"app:session_started", "app:session_ended", "app:friction_summary", "install:first_launch", "studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed",
 	"app:error", "device:profile",
 ]);
 

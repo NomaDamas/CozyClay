@@ -1122,6 +1122,76 @@ expect("no timer drives the auth transition", !/set(Interval|Timeout)\([^)]*(sig
 	expect("offline: the card reads in Korean under the Korean locale", korean.includes("에이전트 서버가 실행 중이 아니에요") && korean.includes("다시 확인"), korean);
 }
 
+// The model-connect funnel (PR E): one attempt is one connect_started and one connect_finished, the
+// step it reached, and cancelled (the user's Cancel) apart from abandoned (closed or left unfinished).
+{
+	const { connectOpened, connectStarted, connectStep, connectFinished, connectPanelClosed, connectAuthState, modelChanged, noteTurnOutcome, connectTelemetrySeam } = await import("../src/workflow/connect-telemetry.js");
+	const friction = await import("../src/analytics-friction.js");
+	const { sanitizeProps } = await import("../src/analytics.js");
+	const store = new Map();
+	const saved = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+	Object.defineProperty(globalThis, "localStorage", { configurable: true, value: { getItem: (key) => store.get(key) ?? null, setItem: (key, value) => store.set(key, String(value)) } });
+	friction.reset();
+	const sent = [];
+	let clock = 0;
+	const restore = connectTelemetrySeam({ capture: (event, props) => sent.push({ event, props }), clock: () => clock });
+	try {
+		connectOpened("signed_out");
+		connectOpened("menu");
+		connectStarted("openrouter", "api_key");
+		connectStep("waiting"); connectStep("prompt");
+		clock += 4000;
+		connectFinished("cancelled");
+		connectFinished("cancelled");
+		connectStarted("some-new-cloud", "api_key");
+		connectStep("waiting");
+		clock += 42_000;
+		connectFinished("ok");
+		connectOpened("signed_out");
+		const rows = sent.splice(0);
+		expect("connect: the signed-out card reads first_run until this profile connected once, then signed_out",
+			rows[0].props.entry === "first_run" && rows.at(-1).props.entry === "signed_out", JSON.stringify(rows));
+		const started = rows.filter((row) => row.event === "agent:connect_started"), finished = rows.filter((row) => row.event === "agent:connect_finished");
+		expect("connect: each attempt is one started and one finished, a second finish sends nothing", started.length === 2 && finished.length === 2, JSON.stringify(rows));
+		expect("connect: Cancel is cancelled at the step it reached; ok ends at done with its duration; unknown ids are other",
+			JSON.stringify(finished.map((row) => row.props)) === JSON.stringify([
+				{ provider: "openrouter", method: "api_key", outcome: "cancelled", step: "prompt", duration: "lt10s" },
+				{ provider: "other", method: "api_key", outcome: "ok", step: "done", duration: "30-60s" },
+			]), JSON.stringify(finished));
+		connectStarted("anthropic", "api_key"); connectStep("waiting");
+		connectPanelClosed();
+		connectStarted("google", "api_key");
+		connectStarted("openai", "api_key");
+		connectFinished("failed");
+		const abandoned = sent.splice(0).filter((row) => row.event === "agent:connect_finished").map((row) => `${row.props.provider}:${row.props.outcome}:${row.props.step}`);
+		expect("connect: closing the panel mid-flow and starting over both abandon the open attempt", JSON.stringify(abandoned) === JSON.stringify(["anthropic:abandoned:waiting", "google:abandoned:list", "openai:failed:list"]), JSON.stringify(abandoned));
+		// ChatGPT's sign-in leaves the panel and settles with the agent panel's auth state.
+		connectStarted("openai-codex", "chatgpt");
+		connectPanelClosed();
+		connectAuthState("signing-in");
+		connectAuthState("ready");
+		connectStarted("openai-codex", "chatgpt"); connectAuthState("signing-in"); connectAuthState("signed-out");
+		const chatgpt = sent.splice(0).filter((row) => row.event === "agent:connect_finished").map((row) => `${row.props.outcome}:${row.props.step}`);
+		expect("connect: a ChatGPT sign-in survives the panel closing; ready is ok, back to signed-out is abandoned", JSON.stringify(chatgpt) === JSON.stringify(["ok:done", "abandoned:waiting"]), JSON.stringify(chatgpt));
+		// Caps: connect_opened 5, model_changed 10 per session; after_failure follows the last turn.
+		for (let i = 0; i < 9; i += 1) connectOpened("menu");
+		noteTurnOutcome("failed"); modelChanged("anthropic/claude-x");
+		noteTurnOutcome("succeeded"); for (let i = 0; i < 14; i += 1) modelChanged("private-cloud/model");
+		const capped = sent.splice(0);
+		const models = capped.filter((row) => row.event === "agent:model_changed");
+		expect("connect: caps hold (opened 5 with the 3 above, model_changed 10)", capped.filter((row) => row.event === "agent:connect_opened").length === 2 && models.length === 10, JSON.stringify(capped.length));
+		expect("connect: model_changed names the provider family and whether the last turn failed", JSON.stringify(models[0].props) === JSON.stringify({ provider: "anthropic", after_failure: true }) && models[1].props.provider === "other" && models[1].props.after_failure === false, JSON.stringify(models.slice(0, 2)));
+		expect("connect: every payload passes the closed schema", [...rows, ...capped].every(({ event, props }) => JSON.stringify(sanitizeProps(event, props)) === JSON.stringify(props)));
+		// The wiring: LoginPanel starts api-key/oauth attempts, AgentPanel the ChatGPT one and the openers.
+		const panelSource = readFileSync(new URL("../src/workflow/AgentPanel.jsx", import.meta.url), "utf8");
+		expect("connect: the four openers and the ChatGPT attempt are wired", login.includes("connectStarted(provider.id, method.type)") && login.includes('connectFinished("cancelled")') && login.includes('connectFinished("abandoned")')
+			&& panelSource.includes('connectOpened("menu")') && panelSource.includes('openProviderKeys("signed_out")') && panelSource.includes('openProviderKeys("failure_card")') && panelSource.includes('connectStarted("openai-codex", "chatgpt")'));
+	} finally {
+		restore(); friction.reset();
+		if (saved) Object.defineProperty(globalThis, "localStorage", saved); else delete globalThis.localStorage;
+	}
+}
+
 if (failures) {
 	console.error(`${failures} FAILURES`);
 	process.exitCode = 1;

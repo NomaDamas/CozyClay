@@ -12,6 +12,10 @@ const LONG_BUCKETS = new Set(["lt10s", "10-30s", "30-60s", "1-2m", "2-5m", "gte5
 const AGE_BUCKETS = new Set(["lt2s", "2-10s", "10-60s", "gte60s"]);
 const SHORT_MS_BUCKETS = new Set(["lt50", "50-150", "150-500", "500-2000", "gte2000"]);
 const REFUSAL_CODES = new Set([...STUDIO_ERROR_CODES, "other"]);
+// The providers CozyClay configures itself (bin/agent/providers.mjs PROVIDERS); the
+// connect funnel reports any other id the login list offers as "other".
+export const CONNECT_PROVIDERS = Object.freeze(["openai-codex", "anthropic", "anthropic-subscription", "openai", "google",
+	"minimax", "minimax-cn", "openrouter", "cliproxy", "openai-compatible"]);
 
 /** A Studio refusal code as sent: one of STUDIO_ERROR_CODES, else "other". */
 export const refusalCodeOf = (code) => (STUDIO_ERROR_CODES.includes(code) ? code : "other");
@@ -62,6 +66,13 @@ const SCHEMAS = Object.freeze({
 		compile: inSet(SHORT_MS_BUCKETS), installed: bool, stuck: bool, repaired: bool, searched: bool, adjusted: bool,
 		frames: oneOf("lt30", "30-120", "121-480", "gte481"),
 	},
+	"agent:connect_opened": { entry: oneOf("first_run", "failure_card", "signed_out", "menu", "other") },
+	"agent:connect_started": { provider: oneOf(...CONNECT_PROVIDERS, "other"), method: oneOf("oauth", "api_key", "chatgpt") },
+	"agent:connect_finished": {
+		provider: oneOf(...CONNECT_PROVIDERS, "other"), method: oneOf("oauth", "api_key", "chatgpt"),
+		outcome: oneOf("ok", "failed", "cancelled", "abandoned"), step: oneOf("list", "prompt", "waiting", "done"), duration: long,
+	},
+	"agent:model_changed": { provider: oneOf(...CONNECT_PROVIDERS, "other"), after_failure: bool },
 	"agent:post_turn_edit": {
 		// prompt_block, not prompt: "prompt" is a denied property key (analytics.js), whatever its value.
 		turn_id: turnId, edited: bool, pose: count, camera: count, object: count, shot: count, prompt_block: count, first_delay: long,

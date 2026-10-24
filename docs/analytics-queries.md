@@ -1515,6 +1515,130 @@ ORDER BY indexOf(['lt50', '50-150', '150-500', '500-2000', 'gte2000'], compile_m
 A search or a repair compiles many candidates inside one draft, so split by
 `searched` and `repaired` before reading a slow bucket.
 
+# Model-connect funnel
+
+The connect stage goes opened → started → finished(ok) → first prompt → first
+succeeded turn, split by provider (`src/workflow/connect-telemetry.js`). The
+connect UI needs the local sidecar: on a hosted build the panel stays offline,
+so these events never fire there (npm only, decision 5). All four are passive.
+Builds before this release have no rows (**unknown, not 0**).
+
+## Event contract
+
+| Event | Properties | Fired |
+| --- | --- | --- |
+| `agent:connect_opened` | `entry`: `first_run`, `failure_card`, `signed_out`, `menu`, `other` | The menu's Connect a model, the signed-out card's other-provider button, or a refused key's Log in again. The signed-out card reads `first_run` until this browser profile has connected once. 5 per session |
+| `agent:connect_started` | `provider`, `method` (`oauth`, `api_key`, `chatgpt`) | A provider's login button, or Sign in with ChatGPT. One per attempt |
+| `agent:connect_finished` | `provider`, `method`, `outcome`, `step`, `duration` (lt10s … gte5m) | One per attempt, see below |
+| `agent:model_changed` | `provider`, `after_failure` (bool) | The model list. 10 per session |
+
+`provider` is one of the ten providers CozyClay configures itself
+(`bin/agent/providers.mjs` `PROVIDERS`) or `other`. The login list offers
+pi's whole catalogue (45 providers measured at this release), so most rows
+of a long tail read `other`.
+
+`outcome`:
+- `ok`: the flow reached done and connected (ChatGPT: the panel became ready).
+- `failed`: the flow ended with an error, or the login could not start.
+- `cancelled`: the user pressed Cancel inside a running flow.
+- `abandoned`: the panel was closed or left mid-flow, or another attempt
+  began. A ChatGPT sign-in that comes back without a session is also
+  `abandoned`: the sidecar reports a failed and a closed browser sign-in the
+  same way, and the panel's sign-in error is set only when the start request
+  itself fails.
+
+`step` is how far the attempt got: `list` (it never started a flow),
+`waiting` (the flow ran), `prompt` (it was asking for a key, an address or a
+code), `done`.
+
+## 4.1 Connect funnel by provider (30 days)
+
+Unexecuted sketch. Steps are per `distinct_id`, in order, within 7 days.
+
+```sql
+WITH firsts AS (
+    SELECT distinct_id,
+        minIf(timestamp, event = 'agent:connect_opened') AS opened_at,
+        minIf(timestamp, event = 'agent:connect_started') AS started_at,
+        argMinIf(properties.provider, timestamp, event = 'agent:connect_started') AS provider,
+        minIf(timestamp, event = 'agent:connect_finished' AND properties.outcome = 'ok') AS connected_at,
+        minIf(timestamp, event = 'agent:turn_requested') AS prompted_at,
+        minIf(timestamp, event = 'agent:turn_succeeded') AS succeeded_at
+    FROM events
+    WHERE event IN ('agent:connect_opened', 'agent:connect_started', 'agent:connect_finished', 'agent:turn_requested', 'agent:turn_succeeded')
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 30 DAY
+    GROUP BY distinct_id
+)
+SELECT provider,
+    countIf(opened_at > 0) AS opened,
+    countIf(started_at > 0) AS started,
+    countIf(connected_at > started_at AND connected_at < started_at + INTERVAL 7 DAY) AS connected,
+    countIf(prompted_at > connected_at AND connected_at > 0) AS prompted,
+    countIf(succeeded_at > prompted_at AND prompted_at > connected_at AND connected_at > 0) AS succeeded
+FROM firsts
+GROUP BY provider
+ORDER BY started DESC
+```
+
+## 4.2 Where attempts stop (30 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT properties.method AS method, properties.outcome AS outcome, properties.step AS step,
+    count() AS attempts, uniq(distinct_id) AS people
+FROM events
+WHERE event = 'agent:connect_finished'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY method, outcome, step
+ORDER BY attempts DESC
+```
+
+## 4.3 Connected, then the key was refused (30 days)
+
+Unexecuted sketch. A connect that reads `ok` followed, within that person's
+next three turn outcomes, by `agent:turn_failed` with `failure_code = 'key_refused'`.
+A wrong key still reads `ok` at connect time, because providers do not verify
+a key until the first request.
+
+```sql
+WITH connects AS (
+    SELECT distinct_id, timestamp AS connected_at, properties.provider AS provider
+    FROM events
+    WHERE event = 'agent:connect_finished' AND properties.outcome = 'ok'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 30 DAY
+),
+outcomes AS (
+    SELECT c.distinct_id, c.provider, c.connected_at, e.event, e.properties.failure_code AS failure_code,
+        row_number() OVER (PARTITION BY c.distinct_id, c.connected_at ORDER BY e.timestamp) AS n
+    FROM connects AS c
+    INNER JOIN events AS e ON e.distinct_id = c.distinct_id
+    WHERE e.event IN ('agent:turn_succeeded', 'agent:turn_failed', 'agent:turn_cancelled')
+      AND e.timestamp > c.connected_at
+      AND JSONExtractRaw(e.properties, 'internal_qa') != 'true'
+)
+SELECT provider, uniq(distinct_id, connected_at) AS connects_with_turns,
+    uniqIf((distinct_id, connected_at), event = 'agent:turn_failed' AND failure_code = 'key_refused' AND n <= 3) AS key_refused_within_3
+FROM outcomes
+GROUP BY provider
+ORDER BY connects_with_turns DESC
+```
+
+## 4.4 Model changes after a failure (30 days)
+
+```sql
+SELECT properties.provider AS provider, JSONExtractRaw(properties, 'after_failure') AS after_failure, count() AS changes
+FROM events
+WHERE event = 'agent:model_changed'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY provider, after_failure
+ORDER BY changes DESC
+```
+
 # Storyboard and capsule-figure events (issue #653)
 
 Counts only. None of these events carries a caption, a panel or character name,

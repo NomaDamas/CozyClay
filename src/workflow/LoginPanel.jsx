@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FiX } from "react-icons/fi";
 import { answerLogin, cancelLogin, fetchLogins, logoutProvider, readLogin, startLogin } from "./login-client.js";
+import { connectFinished, connectPanelClosed, connectStarted, connectStep } from "./connect-telemetry.js";
 
 // "Connect a model": pi's own login (the coding agent's /login) inside the agent panel (#pi-login). The list
 // is what pi ships: each provider with its subscription sign-in and/or api-key login; picking one runs pi's
@@ -53,7 +54,14 @@ export function LoginPanel({ onClose, onChatGPT, onChanged }) {
 	const load = useCallback(async () => {
 		try { setProviders(await fetchLogins()); setError(""); } catch (failure) { setError(failure?.message || "The login list is unavailable."); }
 	}, []);
-	useEffect(() => { live.current = true; load(); return () => { live.current = false; }; }, [load]);
+	// Leaving the panel mid-flow abandons that attempt (a ChatGPT sign-in goes on in the agent panel).
+	useEffect(() => { live.current = true; load(); return () => { live.current = false; connectPanelClosed(); }; }, [load]);
+	// The attempt's funnel step follows the flow: waiting, a prompt to answer, then done.
+	useEffect(() => {
+		if (!flow?.flowId) return;
+		if (flow.done) connectFinished(flow.ok ? "ok" : "failed");
+		else connectStep(flow.prompt ? "prompt" : "waiting");
+	}, [flow?.flowId, flow?.done, flow?.ok, flow?.prompt]);
 	// Read the running flow until pi finishes it.
 	useEffect(() => {
 		if (!flow?.flowId || flow.done) return undefined;
@@ -83,12 +91,14 @@ export function LoginPanel({ onClose, onChatGPT, onChanged }) {
 
 	const begin = async (provider, method) => {
 		setError("");
-		// ChatGPT's own sign-in shows its waiting card in the panel body, so the list steps aside.
+		// ChatGPT's own sign-in shows its waiting card in the panel body, so the list steps aside;
+		// that sign-in reports its own connect attempt (AgentPanel signIn).
 		if (method.type === "chatgpt") { onChatGPT?.(); onClose?.(); return; }
+		connectStarted(provider.id, method.type);
 		try {
 			const flowId = await startLogin(provider.id, method.type);
 			setFlow({ flowId, name: provider.name, label: method.label, log: [], prompt: null, done: false });
-		} catch (failure) { setError(failure?.message || "That login could not start."); }
+		} catch (failure) { connectFinished("failed"); setError(failure?.message || "That login could not start."); }
 	};
 	const answer = async (value) => {
 		const prompt = flow?.prompt;
@@ -97,7 +107,7 @@ export function LoginPanel({ onClose, onChatGPT, onChanged }) {
 		try { await answerLogin(flow.flowId, prompt.promptId, value); } catch (failure) { setError(failure?.message || "That answer was not taken."); }
 	};
 	const cancel = async () => {
-		if (flow && !flow.done) await cancelLogin(flow.flowId).catch(() => {});
+		if (flow && !flow.done) { connectFinished("cancelled"); await cancelLogin(flow.flowId).catch(() => {}); }
 		setFlow(null);
 	};
 	const logout = async (provider) => {
@@ -108,7 +118,7 @@ export function LoginPanel({ onClose, onChatGPT, onChanged }) {
 	return <section className="agent-keys agent-login" aria-label="Connect a model" data-agent-keys="true">
 		<div className="agent-keys-head">
 			<h3 className="agent-keys-title">Connect a model</h3>
-			<button type="button" className="agent-icon-button agent-keys-close" aria-label="Close" onClick={async () => { await cancel(); onClose?.(); }}><FiX size={11} aria-hidden="true" /></button>
+			<button type="button" className="agent-icon-button agent-keys-close" aria-label="Close" onClick={async () => { connectFinished("abandoned"); await cancel(); onClose?.(); }}><FiX size={11} aria-hidden="true" /></button>
 		</div>
 		{error && <p className="agent-key-error" role="alert">{error}</p>}
 		{flow ? <div className="agent-login-flow" data-login-flow={flow.done ? (flow.ok ? "connected" : "failed") : "running"}>

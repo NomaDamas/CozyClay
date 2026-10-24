@@ -460,6 +460,25 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 }
 console.log("PASS motion:draft_compiled: buckets, flags, closed schema, and the 50 cap with the compiles counter");
 
+// PR E: the connect funnel's closed schemas. Never a key, token, account, email or message.
+{
+	const valid = {
+		"agent:connect_opened": { entry: "failure_card" },
+		"agent:connect_started": { provider: "openai-compatible", method: "oauth" },
+		"agent:connect_finished": { provider: "other", method: "api_key", outcome: "abandoned", step: "prompt", duration: "1-2m" },
+		"agent:model_changed": { provider: "cliproxy", after_failure: true },
+	};
+	for (const [event, props] of Object.entries(valid)) {
+		assert.deepEqual(sanitizeProps(event, { ...props, key: "sk-private", email: "a@b.c", message: "private" }), props, `${event} keeps only its closed values`);
+	}
+	for (const [event, key, value] of [
+		["agent:connect_opened", "entry", "toolbar"], ["agent:connect_started", "provider", "private-cloud"], ["agent:connect_started", "method", "password"],
+		["agent:connect_finished", "outcome", "timeout"], ["agent:connect_finished", "step", "callback"], ["agent:connect_finished", "duration", "lt1s"],
+		["agent:model_changed", "after_failure", "yes"],
+	]) assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${value}`);
+}
+console.log("PASS connect funnel schemas: closed entries, providers, methods, outcomes, steps and durations");
+
 // PR B base: the four bus friction events have closed schemas, and the
 // post-turn window counts only the user's edit gestures for 120 s.
 {
@@ -1062,12 +1081,12 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
 	const event = cells[0]?.trim();
-	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled"].includes(event)) continue;
+	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed"].includes(event)) continue;
 	const tokens = new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
 	for (const key of STRICT_EVENT_KEYS[event]) assert.ok(tokens.has(key), `the privacy page discloses ${event} ${key}`);
 	strictRows.add(event);
 }
-assert.deepEqual([...strictRows].sort(), ["agent:post_turn_edit", "agent:turn_summary", "edit:undone", "motion:draft_compiled", "studio:refused"], "each bus friction event and motion:draft_compiled has its own privacy row");
+assert.deepEqual([...strictRows].sort(), ["agent:connect_finished", "agent:connect_opened", "agent:connect_started", "agent:model_changed", "agent:post_turn_edit", "agent:turn_summary", "edit:undone", "motion:draft_compiled", "studio:refused"], "each strict event has its own privacy row");
 const executionSchemas = {
 	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
 	"workflow:run_succeeded": ["run_id", "duration_bucket"],
