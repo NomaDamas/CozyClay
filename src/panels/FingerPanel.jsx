@@ -2,7 +2,7 @@ import { ko } from "../locale.js";
 import { FINGER_PRESETS, fingerCurl } from "../motion/fingers.js";
 
 const FINGER_LABELS = { Thumb: ["Thumb", "엄지"], Index: ["Index", "검지"], Middle: ["Middle", "중지"], Ring: ["Ring", "약지"], Pinky: ["Pinky", "새끼"] };
-const PRESET_LABELS = { open: ["Open", "펴기"], fist: ["Fist", "주먹"], point: ["Point", "가리키기"] };
+const PRESET_LABELS = { open: ["Open", "펴기"], fist: ["Fist", "주먹"], point: ["Pointing", "가리키기"] };
 
 /** A slider previews while it moves and bakes once on release, the same gesture shape as a viewport drag. */
 export default function FingerPanel({ fingers, tick, editing = false, onToggleEdit, onCurl, onCommit, onPreset }) {
