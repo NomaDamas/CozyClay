@@ -19,7 +19,9 @@ const kindMix = (kinds) => (new Set(kinds).size === 1 ? kinds[0] : "mixed");
  * `threshold` events inside `windowMs`, all after the last user edit, open a
  * window that closes `windowMs` after its first event; at the close the event
  * goes out with everything that window held, and a 30 s cooldown starts. A
- * window that opens during the cooldown only moves the counter.
+ * window that opens during the cooldown only moves the counter. A user edit after
+ * a window opened cancels it: the next event starts over from the events after
+ * that edit, so a fresh run of switches is judged on its own window.
  */
 function createDetector({ event, counter, threshold, windowMs, props }) {
 	let stamps = [], open = null, cooledUntil = -Infinity;
@@ -39,15 +41,16 @@ function createDetector({ event, counter, threshold, windowMs, props }) {
 	};
 	return {
 		note(kind) {
+			if (open && lastEdit() >= open.start) { timers.clear(open.id); open = null; }
 			if (open) { stamps.push({ at: clock(), kind }); return; }
 			const now = clock();
 			stamps = [...fresh(now), { at: now, kind }];
 			if (stamps.length < threshold) return;
 			if (now < cooledUntil) { bump(counter); stamps = []; return; }
 			const start = stamps[0].at;
-			open = timers.set(() => close(start), Math.max(0, start + windowMs - now));
+			open = { start, id: timers.set(() => close(start), Math.max(0, start + windowMs - now)) };
 		},
-		reset() { if (open) timers.clear(open); stamps = []; open = null; cooledUntil = -Infinity; },
+		reset() { if (open) timers.clear(open.id); stamps = []; open = null; cooledUntil = -Infinity; },
 	};
 }
 

@@ -780,6 +780,12 @@ console.log("PASS agent:prompt_sent: device-side words, Jaccard grades, length b
 	assert.equal(thrashSent.length, 0, "an edit in between resets the count");
 	flip("dock_tab", 2); lastEdit = clock + 1; flip("dock_tab", 2); advance(10_000);
 	assert.equal(thrashSent.length, 0, "an edit inside an open window drops the switches before it");
+	// #932 review: switches at 0-3 s open a window; an edit at 4 s; then 6, 7, 8 and 11 s are four
+	// switches in five seconds with no edit between them: the old window gives way to a new one.
+	advance(31_000);
+	flip("dock_tab", 4, 1000); lastEdit = clock; advance(2000); flip("dock_tab", 3, 1000); advance(2000); thrash.noteNavSwitch("dock_tab"); advance(10_000);
+	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props), [{ surface: "dock_tab", switches: "4-5", window_s: 10 }], "an edit inside an open window restarts it with the switches after the edit");
+	assert.equal(timers.size, 0, "the cancelled window leaves no timer");
 	thrash.noteNavSwitch("details"); assert.equal(timers.size, 0, "an unknown surface is ignored");
 	flip("agent_panel", 12, 100); advance(10_000);
 	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props.switches), ["gte11"], "the agent_panel surface is ready for its follow-up hook");
