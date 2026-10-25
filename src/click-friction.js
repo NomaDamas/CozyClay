@@ -19,7 +19,7 @@ let burst = null, burstTimer = null;
 const lastRage = new Map();
 let lastReceiptAt = -Infinity, lastRefusalAt = -Infinity, lastMutationAt = -Infinity;
 
-/** The command bus recorded a receipt (command-bus-telemetry.js); `ok: false` is a refusal. */
+/** The command bus recorded a receipt for a UI-origin command (command-bus-telemetry.js); `ok: false` is a refusal. */
 export function noteBusReceipt(ok) {
 	const at = now();
 	lastReceiptAt = at;
@@ -50,7 +50,8 @@ function dead(control, reason) {
 
 /** One pointerdown, as the shell's capture listener sees it. `x`, `y` stay local (the rage radius). */
 export function notePointerDown({ target, x, y, event, observe = () => () => {} }) {
-	if (typing(target, event)) return;
+	// A right or middle click runs no control's action: only the primary button (mouse, pen, touch: 0) counts.
+	if ((event?.button ?? 0) !== 0 || typing(target, event)) return;
 	const element = target?.closest?.(CONTROL);
 	if (!element) return;
 	const fid = element.closest("[data-fid]")?.getAttribute("data-fid");

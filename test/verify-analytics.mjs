@@ -4,6 +4,7 @@ import * as analytics from "../src/analytics.js";
 import { startExportAttempt } from "../src/export-attempt.js";
 import * as friction from "../src/analytics-friction.js";
 import { clickFrictionSeam, noteBusReceipt, notePointerDown } from "../src/click-friction.js";
+import { noteRefusal as noteBusRefusal } from "../src/command-bus-telemetry.js";
 import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
 import * as postTurn from "../src/post-turn-edits.js";
 import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
@@ -487,6 +488,20 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 	click(undo, 10, 10, 10); noteBusReceipt(false);
 	await wait(600);
 	assert.deepEqual(take("ui:dead_click"), [{ control: "menu_undo", reason: "refused" }]);
+	// #930 review: a right or middle click runs no action, so it is neither a dead nor a rage click.
+	for (let i = 0; i < 4; i += 1) { notePointerDown({ target: element({ fid: "mode_pose" }), x: 10, y: 10, event: { button: 2 } }); clock += 100; }
+	await wait(1100);
+	assert.deepEqual(sent.splice(0), [], "non-primary buttons are ignored");
+	// #930 review: an agent's refusal in the same 500 ms is not the user's click; a UI refusal is.
+	const mode = element({ fid: "mode_camera" });
+	click(mode, 10, 10, 10); noteBusRefusal({ code: "TARGET_BUSY", phase: "admission" }, "agent", "shot.create");
+	await wait(600);
+	assert.deepEqual(take("ui:dead_click"), [{ control: "mode_camera", reason: "no_effect" }], "an agent refusal is not attributed to the click");
+	clock += 5000;
+	const tools = element({ fid: "tool_move" });
+	click(tools, 10, 10, 10); noteBusRefusal({ code: "TARGET_BUSY", phase: "admission" }, "ui", "object.update");
+	await wait(600);
+	assert.deepEqual(take("ui:dead_click"), [{ control: "tool_move", reason: "refused" }], "a UI refusal is");
 	// A control outside the list is "other": only its disabled clicks are dead (its effect is not watched).
 	click(element({ control: true })); await wait(600);
 	assert.deepEqual(take("ui:dead_click"), [], "an unlisted live control is not watched for effect");
@@ -509,7 +524,7 @@ console.log("PASS friction counters: closed buckets, per-event caps, validator, 
 	restoreClicks();
 	friction.reset();
 }
-console.log("PASS rage and dead clicks: 1 s and 24 px bursts, cooldown and caps, aria_disabled/refused/no_effect, typing targets ignored");
+console.log("PASS rage and dead clicks: 1 s and 24 px bursts, cooldown and caps, aria_disabled/refused/no_effect, typing targets and non-primary buttons ignored, agent refusals not attributed");
 
 // PR C: motion:draft_compiled buckets, flags, the closed schema and the 50-per-session cap.
 {
