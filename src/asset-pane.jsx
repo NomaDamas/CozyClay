@@ -8,6 +8,7 @@ import { assetKind, formatAssetBytes } from "./asset-shelf.js";
 import { assetRecord } from "./scene-asset-cache.js";
 import ResourceStatus from "./resource-status.jsx";
 import { logStore } from "./shell/log-store.js";
+import { SearchEmpty } from "./search-friction.js";
 import "./asset-pane.css";
 
 /** Casting assets offered in the Content browser's Characters folder. A rig's `id` doubles as
@@ -396,9 +397,7 @@ function catalogueTile(entry, props) {
 	);
 }
 
-function EmptyNote({ children }) {
-	return <p className="content-empty">{children}</p>;
-}
+const EmptyNote = ({ children }) => <p className="content-empty">{children}</p>;
 
 export function FolderGrid({ folder, query, ...props }) {
 	const { imageAssetIds, meshAssetIds, shots = [], takeVersions = [], poses = [], onShotOpen, onTakeOpen, selectedKey, onSelect } = props;
@@ -504,7 +503,7 @@ export function FolderGrid({ folder, query, ...props }) {
 		if (!poses.length) empty = ko("No saved poses yet. Save one from the pose studio.", "저장된 포즈가 아직 없어요. 포즈 스튜디오에서 저장하세요.");
 	}
 	if (empty) return <EmptyNote>{empty}</EmptyNote>;
-	if (query && folder !== "props" && !tiles.length) return <EmptyNote>{ko("Nothing matches this search.", "검색 결과가 없어요.")}</EmptyNote>;
+	if (query && folder !== "props" && !tiles.length) return <SearchEmpty surface="assets" query={query}><EmptyNote>{ko("Nothing matches this search.", "검색 결과가 없어요.")}</EmptyNote></SearchEmpty>;
 	return <div className="content-grid" role="list">{tiles}</div>;
 }
 
@@ -531,7 +530,7 @@ function LogView({ query }) {
 		if (list) list.scrollTop = list.scrollHeight;
 	}, [visible.length, visible[visible.length - 1]?.text]);
 	if (!entries.length) return <EmptyNote>{ko("No events yet this session. Notices, generation jobs and exports appear here.", "이번 세션의 기록이 아직 없어요. 알림, 생성 작업, 내보내기가 여기에 표시됩니다.")}</EmptyNote>;
-	if (!visible.length) return <EmptyNote>{ko("Nothing matches this search.", "검색 결과가 없어요.")}</EmptyNote>;
+	if (!visible.length) return <SearchEmpty surface="assets" query={query}><EmptyNote>{ko("Nothing matches this search.", "검색 결과가 없어요.")}</EmptyNote></SearchEmpty>;
 	return (
 		<ol className="content-log" ref={listRef} data-testid="content-log" aria-live="polite">
 			{visible.map((entry) => (

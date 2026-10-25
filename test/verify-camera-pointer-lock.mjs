@@ -68,6 +68,8 @@ function mount({ lock = "granted", enabled = true } = {}) {
 		useThree: () => ({ gl: { domElement: canvas }, invalidate: () => { invalidations += 1; } }),
 		requestAnimationFrame: (fn) => { raf.set(++sequence, fn); return sequence; },
 		cancelAnimationFrame: (id) => raf.delete(id),
+		// controls.jsx's camera:thrash hook (thrash-friction.js); its detector has its own tests.
+		noteCameraGesture: () => {},
 	};
 	const Controls = runInNewContext(`${source}\nFlyControls;`, context);
 	const camera = new THREE.PerspectiveCamera();

@@ -10,6 +10,9 @@ import * as postTurn from "../src/post-turn-edits.js";
 import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
 import { crashTelemetrySeam, reportGlLost, reportRenderCrash } from "../src/crash-telemetry.js";
 import * as promptTelemetry from "../src/workflow/prompt-telemetry.js";
+import * as shortcuts from "../src/shortcut-friction.js";
+import * as search from "../src/search-friction.js";
+import * as thrash from "../src/thrash-friction.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
 import {
@@ -664,6 +667,138 @@ console.log("PASS agent:prompt_sent: device-side words, Jaccard grades, length b
 	assert.doesNotThrow(() => postTurn.closePostTurnWindow(), "a failing transport cannot break editing");
 	console.log("PASS bus friction schemas, and the post-turn window: 120 s, next turn, closed groups only");
 }
+// P2-b: shortcut:ignored, shortcut:unbound, help:shortcuts_opened, search:no_results,
+// nav:thrash and camera:thrash. Closed values only, input elements and IME never
+// read, each detector's window, threshold, cooldown and cap.
+{
+	friction.reset();
+	const valid = {
+		"shortcut:ignored": { key_class: "undo", reason: "empty_history" },
+		"shortcut:unbound": { combo: "select_all" },
+		"search:no_results": { surface: "outliner", query_len: "4-8" },
+		"nav:thrash": { surface: "dock_tab", switches: "6-10", window_s: 10 },
+		"camera:thrash": { gestures: "gte11", kind_mix: "mixed", window_s: 20 },
+	};
+	for (const [event, props] of Object.entries(valid)) {
+		assert.deepEqual(sanitizeProps(event, { ...props, key: "z", query: "private", name: "Private" }), props, `${event} keeps only its closed values`);
+	}
+	for (const [event, key, value] of [
+		["shortcut:ignored", "key_class", "KeyZ"], ["shortcut:ignored", "key_class", "escape"], ["shortcut:ignored", "key_class", "play"], ["shortcut:ignored", "reason", "nothing"],
+		["shortcut:unbound", "combo", "save"], ["shortcut:unbound", "combo", "c"], ["search:no_results", "surface", "log"], ["search:no_results", "query_len", 3],
+		["nav:thrash", "switches", "3"], ["nav:thrash", "window_s", "10"], ["nav:thrash", "surface", "assets"], ["camera:thrash", "gestures", "4-5"], ["camera:thrash", "window_s", 10], ["camera:thrash", "kind_mix", "dolly"],
+	]) assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${value}`);
+	assert.deepEqual(sanitizeProps("help:shortcuts_opened", { from: "menu", key: "?" }), {}, "help:shortcuts_opened carries nothing");
+	assert.deepEqual(STRICT_EVENT_KEYS["help:shortcuts_opened"], []);
+
+	// The combo list is closed (at most 12 names) and every name passes the schema; the key character never leaves.
+	assert.ok(shortcuts.UNBOUND_COMBOS.length <= 12);
+	for (const combo of shortcuts.UNBOUND_COMBOS) assert.deepEqual(sanitizeProps("shortcut:unbound", { combo }), { combo });
+	const key = (code, mods = {}, rest = {}) => ({ code, key: rest.key ?? code, ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, repeat: false, defaultPrevented: false, target: { tagName: "BODY" }, ...mods, ...rest });
+	assert.deepEqual([
+		key("KeyC", { ctrlKey: true }), key("KeyV", { metaKey: true }), key("KeyX", { ctrlKey: true }), key("KeyA", { metaKey: true }), key("KeyG", { ctrlKey: true }),
+		key("KeyF", { metaKey: true }), key("F2"), key("Slash", { shiftKey: true }), key("Slash", { ctrlKey: true }),
+		key("KeyC"), key("KeyC", { ctrlKey: true, shiftKey: true }), key("KeyC", { ctrlKey: true, altKey: true }), key("KeyS", { ctrlKey: true }), key("KeyZ", { metaKey: true }), key("F2", { shiftKey: true }), key("Slash"),
+	].map(shortcuts.comboOf), ["copy", "paste", "cut", "select_all", "group", "find", "rename", "help", "help", null, null, null, null, null, null, null]);
+
+	let deferred = [];
+	const sent = [];
+	const restoreShortcuts = shortcuts.shortcutFrictionSeam({ track: (event, props) => sent.push({ event, props }), defer: (run) => deferred.push(run) });
+	const flush = () => { for (const run of deferred.splice(0)) run(); };
+	// The input guard: text fields, list boxes, editable areas and IME composition are never read.
+	for (const target of [{ tagName: "INPUT" }, { tagName: "TEXTAREA" }, { tagName: "SELECT" }, { tagName: "DIV", isContentEditable: true }]) {
+		assert.equal(shortcuts.noteUnboundKey(key("KeyA", { ctrlKey: true }, { target })), null, `${target.tagName} is typing`);
+	}
+	assert.equal(shortcuts.noteUnboundKey(key("KeyA", { ctrlKey: true }, { isComposing: true })), null, "an IME composition is typing");
+	assert.equal(shortcuts.noteUnboundKey(key("KeyA", { ctrlKey: true }, { keyCode: 229 })), null, "the legacy IME keyCode is typing");
+	assert.equal(shortcuts.noteUnboundKey(key("KeyA", { ctrlKey: true }, { repeat: true })), null, "a held key is one press");
+	assert.equal(deferred.length, 0);
+	// Judged after dispatch: a combo some handler claimed is bound.
+	const claimed = key("KeyF", { ctrlKey: true });
+	assert.equal(shortcuts.noteUnboundKey(claimed), "find");
+	claimed.defaultPrevented = true; flush();
+	for (let i = 0; i < 5; i += 1) { shortcuts.noteUnboundKey(key("KeyG", { metaKey: true })); flush(); }
+	assert.deepEqual(sent.splice(0), Array.from({ length: 3 }, () => ({ event: "shortcut:unbound", props: { combo: "group" } })), "3 per combo per session; a claimed combo sends nothing");
+
+	// shortcut:ignored: 5 per class, the counter counts every press.
+	for (let i = 0; i < 7; i += 1) shortcuts.noteShortcutIgnored("mode", "workflow_mode");
+	assert.equal(sent.splice(0).length, 5, "5 per key class per session");
+	assert.equal(friction.snapshot().shortcut_ignored, "6-10", "past the cap the shortcut_ignored counter keeps counting");
+	shortcuts.noteHistoryKey("undo", { ok: true, status: "noop" });
+	shortcuts.noteHistoryKey("redo", { ok: false, code: "TARGET_BUSY" });
+	shortcuts.noteHistoryKey("undo", { ok: true, status: "undone" });
+	assert.deepEqual(sent.splice(0).map(({ props }) => props), [{ key_class: "undo", reason: "empty_history" }, { key_class: "redo", reason: "busy" }], "an undo that stepped is not ignored");
+	// The selection gate: F, Ctrl/Cmd+D and Delete with nothing selected; another handler's claim wins.
+	for (const event of [key("KeyF"), key("KeyD", { metaKey: true }), key("Delete", {}, { key: "Delete" }), key("Backspace", {}, { key: "Backspace" }), key("KeyF", { ctrlKey: true }), key("Escape", {}, { key: "Escape" }), key("KeyF", {}, { isComposing: true })]) shortcuts.noteUnselectedKey(event);
+	const owned = key("Delete", {}, { key: "Delete" }); shortcuts.noteUnselectedKey(owned); owned.defaultPrevented = true;
+	flush();
+	assert.deepEqual(sent.splice(0).map(({ props }) => props.key_class), ["frame", "duplicate", "delete", "delete"], "Ctrl+F is left to find, Escape and IME are not classes, a claimed Delete is not ignored");
+	for (let i = 0; i < 4; i += 1) shortcuts.noteShortcutsOpened();
+	assert.deepEqual(sent.splice(0), Array.from({ length: 3 }, () => ({ event: "help:shortcuts_opened", props: {} })), "help: 3 per session");
+	restoreShortcuts();
+
+	// search:no_results: 1 s stable, once per query, 3 per surface per session.
+	assert.deepEqual([1, 2, 3, 4, 8, 9, 40].map(search.bucketQueryLength), ["1", "2-3", "2-3", "4-8", "4-8", "gte9", "gte9"]);
+	let timers = new Map(), nextTimer = 1;
+	const searchSent = [];
+	const restoreSearch = search.searchFrictionSeam({ track: (event, props) => searchSent.push({ event, props }), set: (run, ms) => { timers.set(nextTimer, { run, ms }); return nextTimer++; }, clear: (id) => timers.delete(id) });
+	const fire = () => { for (const [id, { run }] of [...timers]) { timers.delete(id); run(); } };
+	search.watchNoResults("assets", "")(); search.watchNoResults("assets", "   "); search.watchNoResults("timeline", "abc");
+	assert.equal(timers.size, 0, "an empty query or an unknown surface watches nothing");
+	const cancel = search.watchNoResults("assets", "chai");
+	assert.equal([...timers.values()][0].ms, 1000);
+	cancel();
+	assert.equal(timers.size, 0, "a query changed (or results back) within 1 s sends nothing");
+	search.watchNoResults("outliner", "  my private sofa  "); fire();
+	assert.deepEqual(searchSent.splice(0), [{ event: "search:no_results", props: { surface: "outliner", query_len: "gte9" } }], "only the trimmed length leaves");
+	for (let i = 0; i < 4; i += 1) { search.watchNoResults("assets", "zz"); fire(); }
+	assert.equal(searchSent.splice(0).length, 3, "3 per surface per session");
+	assert.equal(friction.snapshot().search_empty, "4-5", "the search_empty counter counts every empty search");
+	restoreSearch();
+
+	// nav:thrash and camera:thrash: window, threshold, edits in between, cooldown.
+	let clock = 100_000, lastEdit = -Infinity;
+	timers = new Map();
+	const thrashSent = [];
+	const restoreThrash = thrash.thrashSeam({ track: (event, props) => thrashSent.push({ event, props }), now: () => clock, lastEditAt: () => lastEdit,
+		set: (run, ms) => { timers.set(nextTimer, { run, at: clock + ms }); return nextTimer++; }, clear: (id) => timers.delete(id) });
+	const advance = (ms) => { clock += ms; for (const [id, { run, at }] of [...timers]) if (at <= clock) { timers.delete(id); run(); } };
+	const flip = (surface, times, gap = 500) => { for (let i = 0; i < times; i += 1) { thrash.noteNavSwitch(surface); advance(gap); } };
+	flip("dock_tab", 3); advance(20_000);
+	assert.equal(thrashSent.length, 0, "3 switches are not a thrash");
+	flip("dock_tab", 4, 4000); advance(20_000);
+	assert.equal(thrashSent.length, 0, "4 switches spread over more than 10 s are not a thrash");
+	flip("dock_tab", 4);
+	assert.equal(thrashSent.length, 0, "the window stays open until 10 s after its first switch");
+	flip("dock_tab", 3); advance(10_000);
+	assert.deepEqual(thrashSent.splice(0), [{ event: "nav:thrash", props: { surface: "dock_tab", switches: "6-10", window_s: 10 } }], "7 switches inside the 10 s window");
+	flip("dock_tab", 5); advance(10_000);
+	assert.equal(thrashSent.length, 0, "inside the 30 s cooldown only the counter moves");
+	flip("mode", 4); advance(10_000);
+	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props), [{ surface: "mode", switches: "4-5", window_s: 10 }], "the cooldown is per surface");
+	advance(30_000);
+	flip("dock_tab", 2); lastEdit = clock; flip("dock_tab", 3); advance(10_000);
+	assert.equal(thrashSent.length, 0, "an edit in between resets the count");
+	flip("dock_tab", 2); lastEdit = clock + 1; flip("dock_tab", 2); advance(10_000);
+	assert.equal(thrashSent.length, 0, "an edit inside an open window drops the switches before it");
+	thrash.noteNavSwitch("details"); assert.equal(timers.size, 0, "an unknown surface is ignored");
+	flip("agent_panel", 12, 100); advance(10_000);
+	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props.switches), ["gte11"], "the agent_panel surface is ready for its follow-up hook");
+	assert.equal(friction.snapshot().nav_thrash, "4-5", "nav_thrash counts every thrash: dock_tab, its cooled-down repeat, mode and agent_panel");
+	const move = (kinds, gap = 1000) => { for (const kind of kinds) { thrash.noteCameraGesture(kind); advance(gap); } };
+	move(["orbit", "orbit", "orbit", "orbit", "orbit"]); advance(30_000);
+	assert.equal(thrashSent.length, 0, "5 gestures are not a camera thrash");
+	move(["orbit", "orbit", "orbit", "orbit", "orbit", "orbit", "dolly"]); advance(20_000);
+	assert.deepEqual(thrashSent.splice(0), [{ event: "camera:thrash", props: { gestures: "6-10", kind_mix: "orbit", window_s: 20 } }], "6 orbits in 20 s; an unknown kind is ignored");
+	advance(30_000);
+	move(["orbit", "fly", "pan", "pan", "fly", "orbit"], 3000); advance(20_000);
+	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props.kind_mix), ["mixed"], "6 gestures over 15 s of mixed kinds");
+	move(["pan", "pan", "pan", "pan", "pan", "pan"], 5000); advance(20_000);
+	assert.equal(thrashSent.length, 0, "6 gestures over 25 s are outside the 20 s window");
+	assert.equal(friction.snapshot().camera_thrash, "2");
+	restoreThrash();
+	friction.reset();
+}
+console.log("PASS shortcut, search and thrash friction: closed combos and classes, input/IME guard, 1 s search, 10 s/20 s windows, 30 s cooldowns and caps");
 assert.deepEqual(sanitizeProps("export:blocking_frame_succeeded", { ...allProps, format: "png" }), { format: "png" });
 
 // Previs events (#653): closed values only, never a caption, name or prompt.

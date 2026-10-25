@@ -127,8 +127,12 @@ export function createHistoryReceipts(ports) {
 	};
 }
 
+let userEditAt = -Infinity;
+/** When the user's own last edit receipt was recorded (bus clock), or -Infinity: the thrash detectors' "no edit in between". */
+export const lastUserEditAt = () => userEditAt;
 function noteUserEdit(kind) {
 	if (!kind) return;
+	userEditAt = clock();
 	try { recordSemanticEdit(kind); firstEdit(editSurface, kind); } catch { /* telemetry is advisory */ }
 	noteEditGesture(groupOf(kind));
 }

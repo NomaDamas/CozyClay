@@ -7,6 +7,7 @@ import { CatalogueEntries, displayObjectLabel } from "./object-catalog.jsx";
 import { Dropdown } from "./ui.jsx";
 import { usePopover } from "./popover.js";
 import { isImeComposing } from "./ime.js";
+import { SearchEmpty } from "./search-friction.js";
 import "./hierarchy-panel.css";
 
 const HIERARCHY_LABELS_KO = {
@@ -881,7 +882,7 @@ export default function HierarchyPanel({
 			</label>
 			<div className="hierarchy-tree" role="tree" ref={treeRef} onKeyDown={onTreeKeyDown} onContextMenu={openCreateMenu}>
 				{filteredHierarchyNodes.length > 0 ? renderNodes(filteredHierarchyNodes) : (
-					<div className="v2-outliner-empty" role="status">{ko("No matches", "일치하는 항목 없음")}</div>
+					<SearchEmpty surface="outliner" query={search}><div className="v2-outliner-empty" role="status">{ko("No matches", "일치하는 항목 없음")}</div></SearchEmpty>
 				)}
 			</div>
 			{sceneHint && (

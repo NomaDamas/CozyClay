@@ -6,7 +6,7 @@ import assert from 'node:assert/strict';
 import { appFixture } from './app-fixture.mjs';
 import { castFixture } from './cast-fixture.mjs';
 import { sessionEditBuckets } from '../../src/analytics.js';
-import { editKind, firstEditKindOf, startUserEdits, telemetrySeam } from '../../src/command-bus-telemetry.js';
+import { editKind, firstEditKindOf, lastUserEditAt, startUserEdits, telemetrySeam } from '../../src/command-bus-telemetry.js';
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from '../../src/semantic-edit.js';
 
 const sent = [];
@@ -47,9 +47,11 @@ try {
   assert.deepEqual(firstEdits(), [], 'and fire no first edit');
   ok(c.run('edit.undo', {}, 'ui'));
   assert.equal(bucket('pose'), '0', 'undo is history, not an edit');
+  assert.equal(lastUserEditAt(), -Infinity, 'agent, MCP and undo receipts are not the user\'s last edit (thrash "no edit in between")');
   // A committed pose edit (the bone-drag commit is character.setPose) counts as pose.
   ok(c.run('character.setPose', { characterId: 'actor-a', pose: 'pose-wave' }, 'ui'));
   assert.equal(bucket('pose'), '1-3', 'a committed UI pose edit moves the pose bucket');
+  assert.equal(lastUserEditAt(), now, 'the user\'s committed edit stamps lastUserEditAt on the bus clock');
   assert.deepEqual(firstEdits(), [{ event: 'playground:first_edit', props: { edit_kind: 'pose_edit', definition_version: 2 } }], 'the playground surface has its own first edit');
 } finally { c.dispose?.(); }
 

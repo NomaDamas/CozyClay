@@ -86,6 +86,17 @@ const SCHEMAS = Object.freeze({
 		compile: inSet(SHORT_MS_BUCKETS), installed: bool, stuck: bool, repaired: bool, searched: bool, adjusted: bool,
 		frames: oneOf("lt30", "30-120", "121-480", "gte481"),
 	},
+	// Shortcut, search and thrash friction (shortcut-friction.js, search-friction.js, thrash-friction.js).
+	// A key class or combo name, never the key character; a query length bucket, never the query.
+	"shortcut:ignored": {
+		key_class: oneOf("undo", "redo", "mode", "transform", "frame", "duplicate", "delete"),
+		reason: oneOf("no_selection", "wrong_mode", "workflow_mode", "busy", "empty_history"),
+	},
+	"shortcut:unbound": { combo: oneOf("copy", "paste", "cut", "select_all", "group", "find", "rename", "help") },
+	"help:shortcuts_opened": {},
+	"search:no_results": { surface: oneOf("assets", "outliner"), query_len: oneOf("1", "2-3", "4-8", "gte9") },
+	"nav:thrash": { surface: oneOf("dock_tab", "mode", "agent_panel"), switches: oneOf("4-5", "6-10", "gte11"), window_s: oneOf(10) },
+	"camera:thrash": { gestures: oneOf("6-10", "gte11"), kind_mix: oneOf("orbit", "fly", "pan", "mixed"), window_s: oneOf(20) },
 	"agent:connect_opened": { entry: oneOf("first_run", "failure_card", "signed_out", "menu", "other") },
 	"agent:connect_started": { provider: oneOf(...CONNECT_PROVIDERS, "other"), method: oneOf("oauth", "api_key", "chatgpt") },
 	"agent:connect_finished": {

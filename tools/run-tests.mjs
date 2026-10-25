@@ -211,7 +211,7 @@ const NODE_FILES = [
 
 const BROWSER_FILES = [
 	"test/qa-proxy-entry-browser.mjs",
-	"test/qa-previs-start-browser.mjs",
+	"test/qa-previs-start-browser.mjs", "test/qa-shortcut-friction-browser.mjs",
 	"test/qa-storyboard-board-browser.mjs",
 	"test/qa-storyboard-export-browser.mjs", "test/qa-playback-guide-browser.mjs",
 	"test/qa-proxy-figure-browser.mjs", "test/qa-click-friction-browser.mjs",
@@ -259,7 +259,7 @@ const EXTRA_INVENTORY = ["test/ik/translation-step.mjs", "test/qa-scenes-v5-migr
 
 EXTRA_INVENTORY.push("test/qa-proxy-figure-browser.mjs", "test/qa-click-friction-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-proxy-entry-browser.mjs");
-EXTRA_INVENTORY.push("test/qa-previs-start-browser.mjs");
+EXTRA_INVENTORY.push("test/qa-previs-start-browser.mjs", "test/qa-shortcut-friction-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-storyboard-board-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-storyboard-export-browser.mjs", "test/qa-playback-guide-browser.mjs");
 

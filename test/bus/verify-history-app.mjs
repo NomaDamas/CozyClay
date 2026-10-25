@@ -5,6 +5,7 @@ import { motionFixture } from './motion-fixture.mjs';
 import { createObjectsDomain } from './objects-fixture.mjs';
 import { createStageDomain } from '../../src/domains/stage.js';
 import { createSceneObject } from '../../src/scene-objects.js';
+import { noteHistoryKey } from '../../src/shortcut-friction.js';
 
 const source = readFileSync(new URL('../../src/App.jsx', import.meta.url), 'utf8');
 let keyboard;
@@ -25,7 +26,7 @@ const ok = receipt => { assert.equal(receipt.ok, true, JSON.stringify(receipt));
 const input = class {}, textarea = class {}, select = class {};
 const handler = new Function('scope', `with (scope) { return (${keyboard}); }`)({
   HTMLInputElement: input, HTMLTextAreaElement: textarea, HTMLSelectElement: select,
-  flyingRef: { current: false }, undoScene: f.actual.undoScene, redoScene: f.actual.redoScene,
+  flyingRef: { current: false }, undoScene: f.actual.undoScene, redoScene: f.actual.redoScene, noteHistoryKey,
 });
 function key(redo = false, target = null) {
   let prevented = false;

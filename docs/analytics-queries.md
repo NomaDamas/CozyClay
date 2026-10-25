@@ -1410,6 +1410,127 @@ Read counts beside each share: at about 120 sessions in 90 days a row can
 hold a handful of sessions. A bucket is a range, so sum sessions, never the
 bucket labels.
 
+# Shortcut, search and thrash friction
+
+Six passive events that never move `action_count_bucket`
+(`src/shortcut-friction.js`, `src/search-friction.js`, `src/thrash-friction.js`).
+Every property is a closed value checked by `src/analytics-strict.js`. None
+carries a key character, search text, tab or mode name, or camera position.
+Keys typed into an `input`, `textarea`, `select` or contenteditable element,
+and keys of an IME composition, are never looked at. "No edit in between" is
+the bus's user-edit path (`src/command-bus-telemetry.js` `lastUserEditAt`):
+agent, MCP, undo and redo receipts never count as an edit. Builds before this
+release have no rows (**unknown, not 0**).
+
+## Event contract
+
+| Event | Property | Values | Source |
+| --- | --- | --- | --- |
+| `shortcut:ignored` | `key_class` | `undo`, `redo`, `mode`, `transform`, `frame`, `duplicate`, `delete` | The global key handler (`src/App.jsx` `onKeyDown`; undo and redo read the bus receipt) |
+| | `reason` | `no_selection`, `wrong_mode`, `workflow_mode`, `busy`, `empty_history` | See below |
+| `shortcut:unbound` | `combo` | `copy`, `paste`, `cut`, `select_all`, `group`, `find`, `rename`, `help` | A window bubble-phase `keydown`, judged after dispatch: no Studio handler called `preventDefault` |
+| `help:shortcuts_opened` | none | | Help > Keyboard shortcuts (`src/shell/MenuBar.jsx`) |
+| `search:no_results` | `surface` | `assets`, `outliner` | The Content browser's empty search (folders and Log), the Outliner's "No matches" |
+| | `query_len` | `1`, `2-3`, `4-8`, `gte9` | Trimmed length of a query unchanged for 1 s |
+| `nav:thrash` | `surface` | `dock_tab`, `mode`, `agent_panel` | Dock tab flips (`StudioShell.jsx`), mode switches (`selectWorkflowMode`); `agent_panel` is wired in a follow-up |
+| | `switches` | `4-5`, `6-10`, `gte11` | Switches in the 10 s window that opened at 4 |
+| | `window_s` | `10` | |
+| `camera:thrash` | `gestures` | `6-10`, `gte11` | Orbit, fly and pan drags that moved the view (`src/controls.jsx` gesture end) in the 20 s window that opened at 6 |
+| | `kind_mix` | `orbit`, `fly`, `pan`, `mixed` | One kind, or `mixed` |
+| | `window_s` | `20` | |
+
+`shortcut:ignored` reasons, each from a real refusal in the handler:
+
+| `key_class` | `reason` | When |
+| --- | --- | --- |
+| `undo`, `redo` | `empty_history` | Ctrl/Cmd+Z or Ctrl/Cmd+Shift+Z with nothing to step (bus `noop`) |
+| `undo`, `redo` | `busy` | The bus refused the step (the last edit belongs to a running task) |
+| `mode` | `workflow_mode` | 2 with no rig to pose (4 in a storyboard is a key with no binding there, not a refusal, and is not counted) |
+| `transform` | `wrong_mode` | E in Pose mode (W and R are its IK tools; E has none) |
+| `frame`, `duplicate`, `delete` | `no_selection` | F, Ctrl/Cmd+D, Delete/Backspace with nothing selected that the key acts on, and no other handler claimed it |
+
+Caps: `shortcut:ignored` 5 per `key_class`, `shortcut:unbound` 3 per
+`combo`, `help:shortcuts_opened` 3, `search:no_results` 3 per `surface` per
+session. `nav:thrash` and `camera:thrash` have a 30 s cooldown (per surface for
+`nav:thrash`). The `app:friction_summary` counters `shortcut_ignored`,
+`search_empty`, `nav_thrash` and `camera_thrash` count every occurrence,
+including those past a cap or inside a cooldown.
+
+Blind spots. A capture-phase handler that stops a key (`src/controls.jsx`
+Escape during navigation, `src/object-gizmo.jsx` Escape during a drag) never
+reaches the unbound listener; neither handles a listed combo. A browser that
+keeps a combo for itself (for example a tab-search shortcut) never delivers it
+to the page. Escape and Space (play) have no path that refuses, so they are
+not key classes.
+
+## 5.5 Shortcuts that did nothing, and combos people expect (90 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT
+    event,
+    coalesce(properties.key_class, properties.combo) AS key_or_combo,
+    properties.reason AS reason,
+    count() AS presses,
+    count(DISTINCT distinct_id) AS people
+FROM events
+WHERE event IN ('shortcut:ignored', 'shortcut:unbound')
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY event, key_or_combo, reason
+ORDER BY people DESC
+```
+
+Rank by `people`, not `presses`: the caps hold one person to 5 or 3 rows per
+class or combo. For discovery, compare sessions with `help:shortcuts_opened`
+against those without, joined on `$session_id`.
+
+## 5.6 Searches that found nothing (90 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT
+    properties.surface AS surface,
+    properties.query_len AS query_len,
+    count() AS empty_searches,
+    count(DISTINCT distinct_id) AS people
+FROM events
+WHERE event = 'search:no_results'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY surface, query_len
+ORDER BY surface, indexOf(['1', '2-3', '4-8', 'gte9'], query_len)
+```
+
+There is no event for a search that found something, so this is a count, not
+a rate. For a rate per session, divide by sessions from `app:friction_summary`
+and read `search_empty` there for the uncapped total.
+
+## 5.7 Panel, mode and camera thrash (90 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT
+    event,
+    coalesce(properties.surface, properties.kind_mix) AS surface_or_kind,
+    coalesce(properties.switches, properties.gestures) AS size,
+    count() AS thrashes,
+    count(DISTINCT distinct_id) AS people
+FROM events
+WHERE event IN ('nav:thrash', 'camera:thrash')
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY event, surface_or_kind, size
+ORDER BY event, people DESC
+```
+
+A thrash is a guess at "looking for something", not a measured failure.
+Read `camera:thrash` beside `device:profile` `frame_rate_bucket`: a slow
+viewport makes people drag more.
+
 # Bus friction events: refusals, undos and agent turns
 
 Four passive events that never move `action_count_bucket`. Every property is a

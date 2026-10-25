@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
+import { noteCameraGesture } from "./thrash-friction.js";
 
 const MOVE_SPEED = 2.6; // metres per second
 const CRANE_SPEED = 1.3; // Q/E up/down runs at half walk speed — fine
@@ -162,13 +163,13 @@ export function FlyControls({ enabled, cameraLocked = false, camRef, look, getPi
 			gesture.current = null;
 			if (typeof window !== "undefined") window.__cozyclayCameraGesture = false;
 			releaseNavLock();
-			flushInvalidate();
 			keys.current.clear();
 			// the fly speed set with the wheel persists between flights, as it does in Unity
 			element.style.cursor = "";
 			flyStateRef.current?.(false);
 			flushInvalidate();
-			if (active.changed) cameraChangeRef.current?.();
+			// A gesture that moved the view counts toward camera:thrash (thrash-friction.js).
+			if (active.changed) { cameraChangeRef.current?.(); noteCameraGesture(active.kind); }
 		};
 
 		const onLostCapture = (e) => {

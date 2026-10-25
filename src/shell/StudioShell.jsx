@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { installClickFriction } from "../click-friction.js";
 import { ko } from "../locale.js";
+import { noteNavSwitch } from "../thrash-friction.js";
 import { useStudioShell } from "./studio-shell-context.js";
 import TopBar, { ProjectHead } from "./TopBar.jsx";
 import OutlinerSlot from "./OutlinerSlot.jsx";
@@ -36,6 +37,8 @@ export default function StudioShell({ viewport, children, ...props }) {
 	// Rage and dead clicks on the primary controls (data-fid): one capture-phase listener for the whole shell.
 	useEffect(() => installClickFriction(), []);
 	function changeDockTab(next) {
+		// A user's tab flip toward nav:thrash (thrash-friction.js).
+		if (next !== dockTab) noteNavSwitch("dock_tab");
 		setDockTab(next);
 		try {
 			globalThis.localStorage?.setItem(DOCK_TAB_KEY, next);

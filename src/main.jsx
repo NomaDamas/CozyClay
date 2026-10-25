@@ -12,11 +12,13 @@ import { registerPwa } from "./pwa.js";
 import { LOCALE } from "./locale.js";
 import { initAnalytics } from "./analytics.js";
 import { StudioReadyMark } from "./studio-telemetry.js";
+import { listenForUnboundShortcuts } from "./shortcut-friction.js";
 import { fetchPlaygroundProject, isPlaygroundEmbed, playgroundSceneUrl, stashPlaygroundProject } from "./playground.js";
 import { preloadBodies } from "./motion3/body.js";
 
 registerPwa();
 void initAnalytics();
+listenForUnboundShortcuts();
 document.documentElement.lang = LOCALE === "zh" ? "zh-CN" : LOCALE;
 applyTheme(readTheme());
 

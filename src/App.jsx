@@ -31,6 +31,8 @@ import { applyTakeFrame } from "./motion3/playback.js";
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
 import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
 import { startUserEdits } from "./command-bus-telemetry.js";
+import { noteHistoryKey, noteShortcutIgnored, noteUnselectedKey } from "./shortcut-friction.js";
+import { noteNavSwitch } from "./thrash-friction.js";
 
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import SculptPanel from "./panels/SculptPanel.jsx";
@@ -1135,29 +1137,29 @@ export default function App() {
 	// the "load a character" one, which would read as a loading problem.
 	const activeCapabilities = characterCapabilities(activeChar);
 	const poseRefusal = !activeCapabilities.pose ? kindRefusal("pose", isKo, isZh) : ikChains ? null : ko("Load a character to pose it — Pose mode edits its rig with IK", "캐릭터를 불러와야 포즈를 잡을 수 있어요 — 포즈 모드는 IK로 리그를 편집합니다", "加载角色后才能摆姿势 — 姿势模式用 IK 编辑其骨骼");
+	// False when the mode refuses (its reason shows as a toast): the 1-5 keys report that as shortcut:ignored.
 	function selectWorkflowMode(next) {
 		if (next === "pose" && poseRefusal) {
 			setToast(poseRefusal);
-			return;
+			return false;
 		}
 		// A storyboard is stills: there is no Motion department to open.
 		if (next === "motion" && storyboardProject) {
 			setToast(ko(STORYBOARD_MOTION_REFUSAL.en, STORYBOARD_MOTION_REFUSAL.ko, STORYBOARD_MOTION_REFUSAL.zh));
-			return;
+			return false;
 		}
 		setWorkflowMode(next);
+		// A user's switch (tab, key, a shot or camera pick) toward nav:thrash; the agent's view.setMode does not come here.
+		if (next !== workflowMode) noteNavSwitch("mode");
 		// Picking a department leaves the chrome-free player. Shot-look is
 		// camera work, so it only yields when the operator leaves Camera.
 		if (preview) exitPreview();
 		else if (lookThroughShot && next !== "camera") exitPreview();
 		if (next === "camera") setSelectedHierarchyId("camera");
-		else if (next === "motion") {
-			// The active character's ROW, not the group: the placement gizmo only
-			// renders for a specific cast member, so selecting the group used to
-			// drop the operator into Motion with nothing to drag.
-			setSelectedHierarchyId(rowIdForCharIndex(activeCharIndex));
-			
-		}
+		// The active character's ROW, not the group: the placement gizmo only
+		// renders for a specific cast member, so selecting the group used to
+		// drop the operator into Motion with nothing to drag.
+		else if (next === "motion") setSelectedHierarchyId(rowIdForCharIndex(activeCharIndex));
 		// Pose lands on the active character's rig: its Rig Control panel holds
 		// the IK tools that W/E/R switch between.
 		else if (next === "pose") setSelectedHierarchyId(`${rowIdForCharIndex(activeCharIndex)}.rig`);
@@ -1613,8 +1615,8 @@ export default function App() {
 			// selected, and mid-drag the store's settle commits then steps.
 			if (event.code === "KeyZ" && (event.ctrlKey || event.metaKey)) {
 				event.preventDefault();
-				if (event.shiftKey) redoScene();
-				else undoScene("key");
+				// Nothing to undo or redo, or a refused undo, is shortcut:ignored: the bus receipt says which.
+				if (event.shiftKey) noteHistoryKey("redo", redoScene()); else noteHistoryKey("undo", undoScene("key"));
 				return;
 			}
 			// 1-4 pick the workflow mode; pose is refused (with its reason) when
@@ -1624,7 +1626,7 @@ export default function App() {
 				// A storyboard has no key 4: it does nothing, not even a refusal.
 				if (modeKey === "motion" && storyboardProject) return;
 				event.preventDefault();
-				if (modeKey !== workflowMode) selectWorkflowMode(modeKey);
+				if (modeKey !== workflowMode && selectWorkflowMode(modeKey) === false) noteShortcutIgnored("mode", "workflow_mode");
 				return;
 			}
 			// Sculpt mode's W/E/R swing the turntable to front, side and back.
@@ -1637,9 +1639,9 @@ export default function App() {
 			// buttons: the range pin needs a take.
 			if (workflowMode === "pose" && GIZMO_HOTKEYS[event.code]) {
 				event.preventDefault();
+				// E has no IK tool: a pose-mode E does nothing (shortcut:ignored).
 				if (event.code === "KeyW") setIkEditTool("ik");
-				
-				else if (event.code === "KeyR" && motion) { setIkEditTool("pin"); setRangePinPartPick(null); }
+				else if (event.code === "KeyR" && motion) { setIkEditTool("pin"); setRangePinPartPick(null); } else if (event.code === "KeyE") noteShortcutIgnored("transform", "wrong_mode");
 				return;
 			}
 			if (GIZMO_HOTKEYS[event.code]) {
@@ -1690,7 +1692,8 @@ export default function App() {
 				dropSelectedSceneObject();
 				return;
 			}
-			if (!selectedSceneObjectId) return;
+			// F, Ctrl/Cmd+D and Delete with nothing to act on reach here: shortcut:ignored, no_selection.
+			if (!selectedSceneObjectId) return noteUnselectedKey(event);
 			if (event.key !== "Delete" && event.key !== "Backspace") return;
 			// A selected path point owns Delete: the route's handles are the
 			// finer target, and deleting the whole prop out from under a point

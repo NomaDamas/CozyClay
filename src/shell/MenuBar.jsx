@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { useStudioShell } from "./studio-shell-context.js";
 import SourceOffer from "../source-offer.jsx";
 import { ko } from "../locale.js";
+import { noteShortcutsOpened } from "../shortcut-friction.js";
 
 const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
 const MOD = MAC ? "⌘" : "Ctrl+";
@@ -534,9 +535,8 @@ export default function MenuBar({ preferences }) {
 		),
 		help: (
 			<>
-				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => setDialog("shortcuts"))}>
-					<span className="menubar-item-label">{ko("Keyboard shortcuts", "단축키")}</span>
-				</button>
+				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => { setDialog("shortcuts"); noteShortcutsOpened(); })}>
+					<span className="menubar-item-label">{ko("Keyboard shortcuts", "단축키")}</span></button>
 				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => setDialog("about"))}>
 					<span className="menubar-item-label">{ko("About Cozy Clay", "Cozy Clay 정보")}</span>
 				</button>
