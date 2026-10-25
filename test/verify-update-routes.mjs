@@ -12,7 +12,7 @@
 
 import assert from "node:assert/strict";
 import { request, createServer } from "node:http";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -43,8 +43,9 @@ process.env.COZYCLAY_NPM_BIN = FAKE_NPM;
 process.env.FAKE_NPM_ROOT = globalRoot;
 process.env.FAKE_NPM_LOG = npmLog;
 
-const registry = { version: "3.9.9" };
+const registry = { version: "3.9.9", requests: 0 };
 const registryServer = createServer((req, res) => {
+	registry.requests += 1;
 	res.writeHead(200, { "content-type": "application/json" });
 	res.end(JSON.stringify({ version: registry.version }));
 });
@@ -55,8 +56,7 @@ const mounted = [];
 let stateDirs = 0;
 
 /** One launcher's update routes on a fresh port, state dir and installer. */
-async function mount({ kind = "global", enabled = true, pkgRoot = globalPkg, current = CURRENT, selfUpdate, timeoutMs } = {}) {
-	const stateDir = join(process.env.XDG_CONFIG_HOME, `cozyclay-${(stateDirs += 1)}`);
+async function mount({ kind = "global", enabled = true, pkgRoot = globalPkg, current = CURRENT, selfUpdate, timeoutMs, stateDir = join(process.env.XDG_CONFIG_HOME, `cozyclay-${(stateDirs += 1)}`) } = {}) {
 	let handler = null;
 	const server = createServer((req, res) => void handler(req, res));
 	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -150,6 +150,23 @@ try {
 	assert.equal((await call(route.port, "PUT", { origin: route.origin })).status, 405);
 	assert.deepEqual(installs(), [], "GET never installs");
 	pass("GET answers every contract field, no-store, and the /oauth Origin rule");
+
+	// A read-only config dir: the cache write fails, the fetched answer must still stand.
+	const readOnlyHome = join(temp, "read-only-config");
+	mkdirSync(readOnlyHome);
+	chmodSync(readOnlyHome, 0o555);
+	try {
+		route = await mount({ stateDir: join(readOnlyHome, "cozyclay") });
+		registry.requests = 0;
+		res = await route.get();
+		assert.equal(existsSync(join(readOnlyHome, "cozyclay")), false, "the state dir could not be created");
+		assert.deepEqual([res.body.latest, res.body.status, res.body.notesUrl], ["3.9.9", "outdated", "https://github.com/NomaDamas/CozyClay/releases/tag/v3.9.9"], "a good fetch is not lost to a failed cache write");
+		await route.get();
+		assert.equal(registry.requests, 1, "the in-memory answer serves the TTL, so polls do not refetch");
+	} finally {
+		chmodSync(readOnlyHome, 0o755);
+	}
+	pass("an unwritable state dir keeps the fetched latest in memory: GET reads 3.9.9 outdated, one registry request");
 
 	/* --------------------------------------------------- POST Origin ---- */
 

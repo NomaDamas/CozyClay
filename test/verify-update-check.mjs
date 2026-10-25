@@ -195,9 +195,9 @@ try {
 	/* ---------------------------------------------- cclay update --check ---- */
 
 	const checkHome = mkdtempSync(join(tmpdir(), "cozyclay-update-cli-"));
-	const runCheck = (url, args = ["update", "--check"]) => new Promise((resolve) => {
+	const runCheck = (url, args = ["update", "--check"], home = checkHome) => new Promise((resolve) => {
 		execFile(process.execPath, [join(ROOT, "bin", "cozyclay.mjs"), ...args], {
-			env: { ...process.env, COZYCLAY_REGISTRY_URL: url, XDG_CONFIG_HOME: checkHome },
+			env: { ...process.env, COZYCLAY_REGISTRY_URL: url, XDG_CONFIG_HOME: home },
 			timeout: 8000,
 		}, (error, stdout, stderr) => resolve({ code: error ? error.code : 0, stdout, stderr }));
 	});
@@ -221,8 +221,21 @@ try {
 	assert.match(cli.stderr, /takes no arguments except --check/);
 	cli = await runCheck(registryUrl, ["update", "--help"]);
 	assert.equal(cli.code, 1);
+	// A read-only config dir: the cache write fails, the fetched answer still decides the exit code.
+	const readOnlyHome = join(checkHome, "read-only");
+	mkdirSync(readOnlyHome);
+	chmodSync(readOnlyHome, 0o555);
+	registry.body = JSON.stringify({ version: "9.9.9" });
+	try {
+		cli = await runCheck(registryUrl, ["update", "--check"], readOnlyHome);
+	} finally {
+		chmodSync(readOnlyHome, 0o755);
+	}
+	assert.equal(cli.code, 10, `an unwritable cache must not turn a good fetch into unknown: ${cli.stdout}${cli.stderr}`);
+	assert.match(cli.stdout, /latest: 9\.9\.9/);
+	assert.equal(existsSync(join(readOnlyHome, "cozyclay")), false, "nothing could be written");
 	rmSync(checkHome, { recursive: true, force: true });
-	pass("cclay update --check exits 10 outdated, 0 latest, 11 unknown, and the guard still rejects other args");
+	pass("cclay update --check exits 10 outdated, 0 latest, 11 unknown, keeps a good fetch when the config dir is read-only, and the guard still rejects other args");
 
 	/* ----------------------------------------------------- canSelfUpdate ---- */
 

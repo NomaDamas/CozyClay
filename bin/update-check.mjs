@@ -52,20 +52,32 @@ export function compareVersions(a, b) {
 	return 0;
 }
 
+// A registry answer whose cache write failed (a read-only home), by cache file.
+// The write is best effort, so a good fetch must not depend on it.
+const fetchedInProcess = new Map();
+
+// The newer of the cache file and this process's own last fetch.
 function readCache(cacheFile) {
+	let disk = null;
 	try {
-		return JSON.parse(readFileSync(cacheFile, "utf8"));
+		disk = JSON.parse(readFileSync(cacheFile, "utf8"));
 	} catch {
-		return null;
+		/* missing or unreadable: the in-process answer, if any, stands */
 	}
+	const memory = fetchedInProcess.get(cacheFile) ?? null;
+	if (!disk) return memory;
+	return memory && !(memory.checkedAt <= disk.checkedAt) ? memory : disk;
 }
 
 function writeCache(cacheFile, cacheDir, latest) {
+	const entry = { latest, checkedAt: Date.now() };
 	try {
 		mkdirSync(cacheDir, { recursive: true });
-		writeFileSync(cacheFile, JSON.stringify({ latest, checkedAt: Date.now() }, null, "\t"));
+		writeFileSync(cacheFile, JSON.stringify(entry, null, "\t"));
+		fetchedInProcess.delete(cacheFile);
 	} catch {
-		/* a read-only home is not a reason to fail a local dev server */
+		// A read-only home is not a reason to fail a local dev server, nor to forget the answer.
+		fetchedInProcess.set(cacheFile, entry);
 	}
 }
 
