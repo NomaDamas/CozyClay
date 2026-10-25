@@ -55,13 +55,16 @@ export function connectPanelClosed() {
 	if (attempt && attempt.method !== "chatgpt") connectFinished("abandoned");
 }
 
-/** The ChatGPT sign-in settles through the agent panel's auth state. */
-export function connectAuthState(state) {
+/** The ChatGPT sign-in settles by ChatGPT's own status (`account`: /oauth/status), not by
+ * the panel's readiness: a key for another provider makes the panel ready while the
+ * ChatGPT sign-in is still pending. */
+export function connectAuthState(state, account) {
 	if (attempt?.method !== "chatgpt") return;
-	if (state === "signing-in") connectStep("waiting");
-	else if (state === "ready" || state === "no-entitlement") connectFinished("ok");
-	// The browser sign-in failed or was closed: the sidecar reports neither apart.
-	else if (state === "signed-out") connectFinished("abandoned");
+	if (account?.signedIn === true) connectFinished("ok");
+	else if (state === "signing-in" || account?.pending === true) connectStep("waiting");
+	// The browser sign-in failed or was closed, with or without another provider ready:
+	// the sidecar reports neither apart.
+	else if (state === "signed-out" || state === "ready" || state === "no-entitlement") connectFinished("abandoned");
 }
 
 /** A model picked in the dropdown (`provider/id`), and whether the last turn had failed. */

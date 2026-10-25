@@ -501,6 +501,22 @@ console.log("PASS connect funnel schemas: closed entries, providers, methods, ou
 		assert.deepEqual(sanitizeProps("agent:prompt_sent", { [key]: value }), {}, `agent:prompt_sent rejects ${key}=${value}`);
 	}
 }
+// #929 review: an accepted steering message consumed the draft, so its typing time is not the next prompt's.
+{
+	let clock = 0;
+	const restore = promptTelemetry.promptTelemetrySeam(() => clock);
+	const composed = (consumed) => {
+		promptTelemetry.noteDraftInput(); clock += 2000;                 // a steering message typed during a turn
+		if (consumed) promptTelemetry.noteDraftConsumed();               // the running turn took it
+		clock += 180_000;
+		promptTelemetry.noteDraftInput(); clock += 500;                  // the next prompt, typed in half a second
+		promptTelemetry.stagePrompt("next prompt", { via: "typed" });
+		return promptTelemetry.takePrompt("e".repeat(32)).compose_ms;
+	};
+	assert.equal(composed(false), "2-5m", "without the reset the steer's keystroke inflates the next prompt");
+	assert.equal(composed(true), "lt10s", "after an accepted steer composing starts over");
+	restore();
+}
 console.log("PASS agent:prompt_sent: device-side words, Jaccard grades, length buckets and the closed schema");
 
 // PR B base: the four bus friction events have closed schemas, and the

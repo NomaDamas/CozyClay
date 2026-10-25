@@ -45,7 +45,7 @@ import { PlanCard } from "./AgentPlanCard.jsx";
 import { ReplyText } from "./AgentReplyText.jsx";
 import { stepLabel, turnLayout } from "./agent-turn.js";
 import { connectAuthState, connectFinished, connectOpened, connectStarted, modelChanged } from "./connect-telemetry.js";
-import { noteChipDraft, noteDraftInput, stagePrompt } from "./prompt-telemetry.js";
+import { noteChipDraft, noteDraftConsumed, noteDraftInput, stagePrompt } from "./prompt-telemetry.js";
 
 function relativeTime(value, now = Date.now()) {
 	const at = Date.parse(value || "");
@@ -657,7 +657,8 @@ export default function AgentPanel({
 		if (!String(text ?? "").trim()) return;
 		setAttachNotice(null); setSteerNotice("");
 		const result = await store.steer(text);
-		if (!result.ok) setSteerNotice(result.message || "The running turn did not take that message.");
+		// An accepted steer consumed the draft: its typing time is not the next prompt's (prompt-telemetry.js).
+		if (result.ok) noteDraftConsumed(); else setSteerNotice(result.message || "The running turn did not take that message.");
 	}, [store]);
 
 	// A sign-in that succeeds is an authentication transition, not a status
@@ -724,7 +725,7 @@ export default function AgentPanel({
 	// Opens (never toggles) Connect a model, pi's login list: the signed-out card and a refused key both lead here.
 	const openProviderKeys = useCallback((entry) => { setMenuOpen(false); connectOpened(entry); setKeysOpen(true); }, []);
 	// The connect funnel's ChatGPT attempt settles with the auth state (connect-telemetry.js).
-	useEffect(() => { connectAuthState(authState); }, [authState]);
+	useEffect(() => { connectAuthState(authState, account); }, [authState, account]);
 
 	// Clearing the transcript also retires the session, so what the author sees
 	// and what the model remembers cannot diverge.

@@ -46,6 +46,12 @@ export function noteDraftInput() {
 	fromChip = false;
 }
 
+/** The draft was consumed without a new turn (an accepted steering message): composing starts over. */
+export function noteDraftConsumed() {
+	draftStartedAt = null;
+	fromChip = false;
+}
+
 /** A suggestion chip filled the draft. */
 export function noteChipDraft() {
 	if (draftStartedAt === null) draftStartedAt = now();
