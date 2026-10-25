@@ -214,7 +214,7 @@ const BROWSER_FILES = [
 	"test/qa-previs-start-browser.mjs",
 	"test/qa-storyboard-board-browser.mjs",
 	"test/qa-storyboard-export-browser.mjs",
-	"test/qa-proxy-figure-browser.mjs",
+	"test/qa-proxy-figure-browser.mjs", "test/qa-click-friction-browser.mjs",
 	"test/qa-rail-lean-browser.mjs",
 	"test/qa-export-recovery-browser.mjs", "test/qa-export-workspace-browser.mjs",
 	"test/verify-camera-mode-browser.mjs",
