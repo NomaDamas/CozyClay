@@ -6,6 +6,7 @@
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { motionScene } from "../../src/motion3/scene.js";
+import { EXITCAR_SPEC, SCENE_OBJECTS as CAR } from "./fixtures/exitcar-scene.mjs";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -53,6 +54,32 @@ expect("a retimed walk (keys on fractional frames) leads on whole frames", retim
 const keys = [{ f: 40, set: { head_yaw: 20 } }, { f: 90, set: { head_yaw: -10 } }];
 const looked = run(turnWalk({ keys })), lookedOff = run(turnWalk({ keys, flow: { headLead: false } }));
 expect("keys on head_yaw during the walk: the lead leaves the head alone", json(looked.out.baked.head_yaw) === json(lookedOff.out.baked.head_yaw));
+
+// the exitCar skill's own head look rides its swivel out of the seat: the lead goes on top of it (f70-160, the trunk
+// 0 -> 90 deg). The same look written as the agent's own keys (EXITCAR_SPEC) still wins
+const carScene = motionScene(CAR), deg = 180 / Math.PI, wrap = d => d - 360 * Math.round(d / 360);
+const swivelLag = r => {
+	const I = sk.index, F = r.out.frames.slice(69, 161);
+	const pel = F.map(({ s }) => { const a = s.P[I.LeftUpLeg], b = s.P[I.RightUpLeg]; return Math.atan2(b[0] - a[0], b[2] - a[2]) * deg; });
+	const head = F.map(({ s }) => Math.atan2(s.R[I.Head][0][2], s.R[I.Head][2][2]) * deg);
+	const dp = pel.slice(1).map((v, i) => wrap(v - pel[i])), dh = head.slice(1).map((v, i) => wrap(v - head[i]));
+	let best = null;
+	for (let lag = -10; lag <= 10; lag++) {
+		let ab = 0, aa = 0, bb = 0;
+		for (let i = 10; i < dp.length - 10; i++) { ab += dp[i] * dh[i - lag]; aa += dp[i] ** 2; bb += dh[i - lag] ** 2; }
+		if (!best || ab / Math.sqrt(aa * bb) > best[1]) best = [lag, ab / Math.sqrt(aa * bb)];
+	}
+	return best[0];
+};
+const exitSkill = flow => compileSpec({ schema: "cozyclay.motion-spec.v1", fps: 24, frames: 250, ...(flow ? { flow } : {}), use: [
+	{ skill: "sitInSeat", f0: 0, args: { car: "Car", offset: [-0.06, 0.17, 0.023] } }, { skill: "exitCar", f0: 0, args: { car: "Car", side: "l" } }] }, { sk, scene: carScene });
+const outOn = exitSkill(), outOff = exitSkill({ headLead: false }), keyed = compileSpec({ fps: 24, ...EXITCAR_SPEC }, { sk, scene: carScene });
+// (cut at f250 the hands overlap at f166 either way; the whole take, verify-smoke-pacing, is QA 0)
+const qaOf = r => json([r.qa.groups.map(g => [g.kind, g.subject, g.first, g.last]), (r.qa.warnings ?? []).map(w => w.kind ?? w)]);
+console.log(`  exitCar swivel lag: skill ${swivelLag(outOn)} (off ${swivelLag(outOff)}), agent keys ${swivelLag(keyed)}; qa ${qaOf(outOn)} / off ${qaOf(outOff)}`);
+expect("exitCar's head leads its swivel out of the seat by 3+ frames; QA reads the same, no FACE", swivelLag(outOn) >= 3 && swivelLag(outOff) < 3
+	&& qaOf(outOn) === qaOf(outOff) && !outOn.qa.groups.some(g => g.kind === "FACE"), qaOf(outOn));
+expect("the same look keyed by the agent (EXITCAR_SPEC) still wins: no lead there", swivelLag(keyed) < 3, swivelLag(keyed));
 
 console.log(failures ? `${failures} motion3 head lead check(s) failed` : "motion3 head lead: all checks passed");
 process.exit(failures ? 1 : 0);
