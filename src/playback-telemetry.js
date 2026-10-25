@@ -2,9 +2,11 @@
 // speed changes), at most 10 per session. `late_ticks` is an ESTIMATE of dropped
 // frames: the share of playback-timer ticks that had to catch up more than one frame
 // (createPlaybackClock steps > 1). It is not a measured render drop; `measured_fps`
-// is the separate rAF sample taken during the same run. Every run, past the cap too,
-// feeds app:friction_summary.late_tick_ratio through noteTick. Only closed buckets
-// leave: never the scene, the take or the frame range.
+// is the separate rAF sample taken during the same run. Every tick, past the cap too,
+// feeds app:friction_summary.late_tick_ratio through noteTick as it happens, so the
+// session-end snapshot is current even mid-run; a run still playing when the page
+// goes away is ended on pagehide (its summary is sent best effort, like any unload
+// event). Only closed buckets leave: never the scene, the take or the frame range.
 import { analyticsActive, bucketFrameRate, track } from "./analytics.js";
 import { admit, bucketLateTicks, noteTick } from "./analytics-friction.js";
 import { bucketLong } from "./analytics-strict.js";
@@ -12,6 +14,9 @@ import { bucketLong } from "./analytics-strict.js";
 const RUNS_PER_SESSION = 10;
 const IDLE_RUN = Object.freeze({ tick() {}, end() {} });
 let send = track;
+// The run still playing, ended on pagehide: React runs no effect cleanup on unload.
+let activeRun = null, unloadListener = false;
+const endActive = () => { try { activeRun?.end(); } catch { /* telemetry is advisory */ } };
 
 /** 1, 2, 3-5, gte6: the most frames one timer tick had to catch up. */
 export function bucketCatchup(steps) {
@@ -54,20 +59,26 @@ export function startPlaybackRun(fps, speed, {
 			frameId = raf(sample);
 		};
 		if (typeof raf === "function") frameId = raf(sample);
-		return {
+		if (!unloadListener && typeof globalThis.addEventListener === "function") {
+			unloadListener = true;
+			globalThis.addEventListener("pagehide", endActive);
+			globalThis.addEventListener("beforeunload", endActive);
+		}
+		const run = {
 			tick(steps) {
 				if (ended || !Number.isFinite(steps) || steps < 0) return;
 				ticks += 1;
 				if (steps > 1) late += 1;
 				maxCatchup = Math.max(maxCatchup, steps);
+				noteTick(steps > 1 ? 1 : 0, 1);
 			},
 			end() {
 				if (ended) return;
 				ended = true;
+				if (activeRun === run) activeRun = null;
 				try {
 					if (frameId !== null && typeof cancelRaf === "function") cancelRaf(frameId);
 					if (!ticks) return;
-					noteTick(late, ticks);
 					const span = lastFrame - firstFrame;
 					const props = {
 						duration: bucketLong(now() - startedAt), late_ticks: bucketLateTicks(late, ticks),
@@ -80,6 +91,9 @@ export function startPlaybackRun(fps, speed, {
 				}
 			},
 		};
+		endActive();
+		activeRun = run;
+		return run;
 	} catch {
 		return IDLE_RUN;
 	}

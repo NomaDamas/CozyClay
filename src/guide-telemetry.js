@@ -3,14 +3,16 @@
 // component's own (its STEPS_BY_MODE keys, 1-based step index); each event and step
 // is sent at most once per session. Only the mode, a step number and a duration
 // bucket leave: never step text or what the user did.
-import { track } from "./analytics.js";
+import { initAnalytics, track } from "./analytics.js";
 import { admit } from "./analytics-friction.js";
 import { bucketLong } from "./analytics-strict.js";
 
 const GUIDE_MODES = Object.freeze(["animation", "storyboard"]);
 const GUIDE_STEP_VALUES = Object.freeze(["1", "2", "3", "4"]);
 
-let send = track, clock = () => Date.now();
+// The guide can open before the SDK has loaded; initAnalytics() is idempotent (main.jsx started
+// it), so waiting on it keeps an early guide:opened instead of spending its cap on a no-op.
+let send = (event, props) => { initAnalytics().then(() => track(event, props), () => {}); }, clock = () => Date.now();
 let stepStartedAt = null;
 
 const stepValue = (step) => (GUIDE_STEP_VALUES.includes(String(step)) ? String(step) : null);

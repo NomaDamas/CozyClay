@@ -1426,6 +1426,27 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 		// One summary per run: 3 s at 24 fps, 72 timer ticks of which 9 caught up; rAF ran at 60 Hz.
 		const sent = [];
 		const restorePlayback = playbackTelemetrySeam((event, props) => sent.push({ event, props }));
+		// #931 review: a run still playing when the page goes away. Late ticks reach the friction
+		// summary as they happen, and pagehide ends the active run (React runs no cleanup on unload).
+		{
+			const listeners = new Map();
+			const savedAdd = globalThis.addEventListener;
+			globalThis.addEventListener = (type, listener) => listeners.set(type, listener);
+			try {
+				friction.reset();
+				const playing = startPlaybackRun(24, 1, { now: () => 0, active: () => true, raf: null });
+				for (const steps of [3, 2, 1, 1]) playing.tick(steps);
+				assert.equal(friction.snapshot().late_tick_ratio, "gte50", "2 of 4 ticks were late before any end()");
+				assert.equal(typeof listeners.get("pagehide"), "function", "the first run installs a pagehide flush");
+				listeners.get("pagehide")();
+				assert.deepEqual(sent.splice(0).map((row) => [row.event, row.props.late_ticks]), [["playback:summary", "gte50"]], "pagehide ends the run and sends its summary");
+				playing.end();
+				assert.deepEqual(sent, [], "the run ends once");
+				friction.reset();
+			} finally {
+				if (savedAdd) globalThis.addEventListener = savedAdd; else delete globalThis.addEventListener;
+			}
+		}
 		let clock = 0, frame = null;
 		const fakeRaf = { raf: (callback) => { frame = callback; return 1; }, cancelRaf: () => { frame = null; } };
 		assert.equal(startPlaybackRun(24, 1, { active: () => false, ...fakeRaf }).tick(3), undefined, "analytics off: a no-op run");
@@ -1521,7 +1542,13 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 		}
 		friction.reset();
 	}
-	console.log("PASS P2-c: playback:summary one per run and late ticks fed, guide once per step, 7 s delete-undo window, studio:ready once");
+	// #931 review: guide events wait for analytics initialization, so an early guide:opened is
+	// sent rather than spending its cap on a no-op track() (the same path as studio:ready).
+	{
+		const guideSource = readFileSync(new URL("../src/guide-telemetry.js", import.meta.url), "utf8");
+		assert.match(guideSource, /let send = \(event, props\) => \{ initAnalytics\(\)\.then\(\(\) => track\(event, props\)/, "the guide's default send waits on initAnalytics()");
+	}
+	console.log("PASS P2-c: playback:summary one per run and late ticks fed, guide once per step, 7 s delete-undo window, studio:ready once; pagehide flushes a playing run, early guide events wait for init");
 
 	for (const [renderer, gpu_vendor, gpu_class] of [
 		["ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)", "nvidia", "discrete"],
