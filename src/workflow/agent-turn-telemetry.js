@@ -186,3 +186,37 @@ export function startAgentTurn({ surface, capture, now, correlationId = null }) 
 		},
 	};
 }
+
+// The agent-busy signal (the update notice disables "Update now" while a turn runs, src/update/UpdateDialog.jsx).
+// createAgentTransport wraps every transport it returns, so the dock, an embedded Studio panel and sculpt mode all count.
+let runningTurns = 0;
+const turnListeners = new Set();
+const notifyTurns = () => {
+	for (const listener of [...turnListeners]) { try { listener(runningTurns > 0); } catch { /* a listener cannot break a turn */ } }
+};
+
+/** True while any transport.turn() returned by createAgentTransport has not settled. */
+export const agentTurnRunning = () => runningTurns > 0;
+
+/** `listener(running)` on every turn start and end; returns the unsubscribe. */
+export function subscribeAgentTurns(listener) {
+	turnListeners.add(listener);
+	return () => { turnListeners.delete(listener); };
+}
+
+/** Replace transport.turn in place so every end path (done, error, throw, abort) clears the signal. */
+export function trackAgentTurns(transport) {
+	const turn = transport?.turn;
+	if (typeof turn !== "function") return transport;
+	transport.turn = async function trackedTurn(...args) {
+		runningTurns += 1;
+		notifyTurns();
+		try {
+			return await turn.apply(this, args);
+		} finally {
+			runningTurns -= 1;
+			notifyTurns();
+		}
+	};
+	return transport;
+}

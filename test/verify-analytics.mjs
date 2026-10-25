@@ -9,6 +9,7 @@ import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropVali
 import * as postTurn from "../src/post-turn-edits.js";
 import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
 import { crashTelemetrySeam, reportGlLost, reportRenderCrash } from "../src/crash-telemetry.js";
+import { noteNoticeShown, noteUpdateClicked, noteUpdatePolled, updateTelemetrySeam } from "../src/update/update-telemetry.js";
 import * as promptTelemetry from "../src/workflow/prompt-telemetry.js";
 import * as shortcuts from "../src/shortcut-friction.js";
 import * as search from "../src/search-friction.js";
@@ -576,6 +577,35 @@ console.log("PASS motion:draft_compiled: buckets, flags, closed schema, and the 
 	]) assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${value}`);
 }
 console.log("PASS connect funnel schemas: closed entries, providers, methods, outcomes, steps and durations");
+
+// U1: the update notice's closed schemas and caps. Never a version string, path, command or npm output.
+{
+	friction.reset();
+	const sent = [];
+	const restoreUpdate = updateTelemetrySeam((event, props) => sent.push({ event, props }), null);
+	const valid = {
+		"update:notice_shown": { kind: "npx", behind: "major" },
+		"update:clicked": { action: "release_notes", kind: "global" },
+		"update:finished": { outcome: "failed", error_class: "node_version", duration: "1-2m" },
+	};
+	for (const [event, props] of Object.entries(valid)) {
+		assert.deepEqual(sanitizeProps(event, { ...props, version: "3.1.5", command: "npm install -g cozyclay@latest", stderr: "npm error code EACCES" }), props, `${event} keeps only its closed values`);
+	}
+	for (const [event, key, value] of [
+		["update:notice_shown", "kind", "clone"], ["update:notice_shown", "behind", "3.1.5"], ["update:clicked", "action", "retry"], ["update:clicked", "kind", "hosted"],
+		["update:finished", "outcome", "restart_needed"], ["update:finished", "error_class", "EACCES"], ["update:finished", "duration", 41000],
+	]) assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${value}`);
+	const shown = { view: "available", kind: "global", behind: "patch" };
+	for (let i = 0; i < 3; i += 1) noteNoticeShown(shown);
+	for (let i = 0; i < 14; i += 1) noteUpdateClicked(i % 2 ? "later" : "copy_command", "npx");
+	for (let i = 0; i < 5; i += 1) noteUpdatePolled({ phase: "failed", errorClass: "network", durationMs: 1000 * (i + 1), latest: "3.1.5" });
+	const count = (event) => sent.filter((row) => row.event === event).length;
+	assert.deepEqual([count("update:notice_shown"), count("update:clicked"), count("update:finished")], [1, 10, 3], "caps: notice once, clicks 10, finished 3 per session");
+	for (const { event, props } of sent) assert.deepEqual(sanitizeProps(event, props), props, `${event} passes its closed schema`);
+	restoreUpdate();
+	friction.reset();
+}
+console.log("PASS update:notice_shown, update:clicked and update:finished: closed schemas and the 1/10/3 caps");
 
 // PR A: agent:prompt_sent. Words stay on the device; only a length bucket and a similarity grade leave.
 {
@@ -1215,6 +1245,18 @@ try {
 		}, "the end beacon sends the session's counters as closed buckets");
 		friction.reset();
 		console.log("PASS app:friction_summary rides the end beacon, validated, passive, with active_time = the session duration bucket");
+	}
+	{
+		const run = await runtimeFixture();
+		run.module.track("update:notice_shown", { kind: "global", behind: "minor" });
+		run.module.track("update:clicked", { action: "update_now", kind: "global" });
+		run.module.track("update:finished", { outcome: "ok", error_class: "none", duration: "30-60s", version: "3.1.5" });
+		const [ended] = await run.unload();
+		const update = run.records.filter(({ event }) => event.startsWith("update:"));
+		assert.deepEqual(update.map(({ event }) => event), ["update:notice_shown", "update:clicked", "update:finished"], "the update events are allowlisted");
+		assert.equal(Object.hasOwn(update[2].properties, "version"), false, "never a version string");
+		assert.equal(ended.properties.action_count_bucket, "0", "the update events are passive and never count as actions");
+		console.log("PASS update:* events are allowlisted through STRICT_EVENT_KEYS and passive");
 	}
 	const external = cohortFixtures.filter((row) => row.properties.internal_qa !== true);
 	assert.equal(external.some((row) => row.properties.internal_qa === true), false);

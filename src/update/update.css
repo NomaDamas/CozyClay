@@ -1,0 +1,94 @@
+/* The update notice (U1): a quiet top-bar chip beside the MCP state, and the
+   dialog that reuses the Help dialog's menubar-dialog-* frame (topbar.css). */
+@layer regions {
+	.v2-topbar .update-chip-wrap {
+		display: inline-flex;
+		flex: none;
+		align-items: center;
+		gap: 2px;
+	}
+	.v2-topbar .update-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		height: var(--h-row, 24px);
+		padding: 0 var(--sp-1, 8px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: transparent;
+		color: var(--text-2, #9b9ba1);
+		font: 500 var(--secondary-size, 11px) var(--sans);
+		white-space: nowrap;
+		cursor: pointer;
+	}
+	.v2-topbar .update-chip:hover,
+	.v2-topbar .update-chip[aria-expanded="true"] { background: var(--surface-raised, #1e1e21); color: var(--text-1, #e4e4e7); }
+	.v2-topbar .update-chip-dot {
+		flex: none;
+		width: var(--topbar-dot, 6px);
+		height: var(--topbar-dot, 6px);
+		border-radius: 50%;
+		background: var(--primary, #7258a0);
+	}
+	.v2-topbar .update-chip[data-update-view="failed"] .update-chip-dot { background: var(--danger, #e5484d); }
+	.v2-topbar .update-chip[data-update-view="restart_needed"] .update-chip-dot { background: var(--ok, #4fbf7a); }
+	.v2-topbar .update-chip-dismiss {
+		display: grid;
+		place-items: center;
+		width: 18px;
+		height: 18px;
+		padding: 0;
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: transparent;
+		color: var(--text-3, #636369);
+		cursor: pointer;
+	}
+	.v2-topbar .update-chip-dismiss:hover { background: var(--surface-raised, #1e1e21); color: var(--text-1, #e4e4e7); }
+	.v2-topbar .update-chip-dismiss svg {
+		width: 10px;
+		height: 10px;
+		fill: none;
+		stroke: currentColor;
+		stroke-width: 2.5;
+		stroke-linecap: round;
+	}
+
+	.update-dialog .update-dialog-text { color: var(--text-1, #e4e4e7); line-height: 1.45; }
+	.update-dialog .update-dialog-command {
+		display: block;
+		margin: 0 0 var(--sp-1, 8px);
+		padding: 6px var(--sp-1, 8px);
+		border-radius: var(--r-1, 4px);
+		background: var(--surface-bar, #121214);
+		color: var(--text-1, #e4e4e7);
+		font: 400 var(--secondary-size, 11px) var(--mono);
+		user-select: all;
+	}
+	.update-dialog .update-dialog-notes { color: var(--camera, #a78bfa); font-size: var(--secondary-size, 11px); }
+	.update-dialog .update-dialog-busy { color: var(--select, #e8a33d); font-size: var(--secondary-size, 11px); }
+	.update-dialog .update-dialog-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: var(--sp-1, 8px);
+		margin-top: var(--sp-2, 12px);
+	}
+	.update-dialog .update-dialog-actions button {
+		height: var(--topbar-primary-height, 30px);
+		padding: 0 var(--sp-2, 12px);
+		border: 0;
+		border-radius: var(--r-1, 4px);
+		background: var(--surface-raised, #1e1e21);
+		color: var(--text-1, #e4e4e7);
+		font: 500 var(--ui-size, 12px) var(--sans);
+		cursor: pointer;
+	}
+	.update-dialog .update-dialog-actions button:hover:not(:disabled) { background: var(--surface-active, #26262a); }
+	.update-dialog .update-dialog-actions .update-dialog-primary { background: var(--primary, #7258a0); color: var(--text-selected, #fff); }
+	.update-dialog .update-dialog-actions .update-dialog-primary:hover:not(:disabled) {
+		background: color-mix(in srgb, var(--primary, #7258a0) 86%, var(--text-selected, #fff));
+	}
+	.update-dialog .update-dialog-actions button:disabled { color: var(--text-off, #4f4f55); cursor: default; }
+	.update-dialog .update-dialog-actions .update-dialog-primary:disabled { background: var(--surface-raised, #1e1e21); }
+}
