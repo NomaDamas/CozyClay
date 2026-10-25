@@ -990,10 +990,10 @@ export default function AgentPanel({
 					    that can be steered, Send becomes the way INTO it. */}
 					{streaming
 						? <>
-							<button type="button" className="agent-send stop agent-stop" data-fid="agent_stop" onClick={stopTurn}>Stop</button>
-							{presentation.steer && <button type="button" className="agent-send agent-steer" data-fid="agent_steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
+							<button type="button" data-fid="agent_stop" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
+							{presentation.steer && <button type="button" data-fid="agent_steer" className="agent-send agent-steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
 						</>
-						: <button type="button" className="agent-send" data-fid="agent_send" aria-label="Send" title="Send (Enter)" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}><FiArrowUp size={14} aria-hidden="true" /></button>}
+						: <button type="button" data-fid="agent_send" className="agent-send" aria-label="Send" title="Send (Enter)" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}><FiArrowUp size={14} aria-hidden="true" /></button>}
 				</div>
 				<ModelRolesLine model={model} roles={selectedModelRoles(modelRoles, model)} />
 			</div>
