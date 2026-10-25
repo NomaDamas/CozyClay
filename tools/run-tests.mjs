@@ -181,7 +181,7 @@ const NODE_FILES = [
 	"test/verify-shot-cast-overrides.mjs",
 	"test/verify-panel-stylize.mjs",
 	"test/verify-tool-handlers.mjs",
-	"test/verify-update-check.mjs", "test/verify-star-prompt.mjs",
+	"test/verify-update-check.mjs", "test/verify-update-routes.mjs", "test/verify-star-prompt.mjs",
 	"test/verify-usd-camera.mjs",
 	"test/verify-zip-store.mjs",
 	"test/verify-render-passes.mjs",
