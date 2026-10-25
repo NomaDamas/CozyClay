@@ -1376,7 +1376,9 @@ sanitizer (`src/analytics-friction.js`, `src/analytics.js`). It never moves
 | `long_tasks`, `long_task_max` | count bucket; `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `PerformanceObserver` `longtask` entries. Where the browser does not report long tasks (feature-detected), the values stay `0` / `lt50`: **unsupported, not smooth** |
 | `compiles` | count bucket | Every `motion.compile` draft, including those past `motion:draft_compiled`'s 50-per-session cap |
 | `late_tick_ratio` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Every playback run's late timer ticks out of all its ticks (`playback:summary`, past its cap too). An **estimate** of dropped frames, not measured render drops; `0` with no playback |
-| `rage_clicks`, `dead_clicks`, `shortcut_ignored`, `search_empty`, `nav_thrash`, `camera_thrash` | count bucket | Reserved; `0` until their detectors ship |
+| `rage_clicks`, `dead_clicks` | count bucket | Every rage and dead click (`ui:rage_click`, `ui:dead_click`), including those past their per-control caps and cooldown |
+| `shortcut_ignored`, `search_empty` | count bucket | Every ignored shortcut (`shortcut:ignored`) and empty search (`search:no_results`), including those past their caps |
+| `nav_thrash`, `camera_thrash` | count bucket | Every `nav:thrash` and `camera:thrash` window, including those inside a cooldown |
 
 Count bucket: `0`, `1`, `2`, `3`, `4-5`, `6-10`, `gte11`. A detector with
 its own event emits it only up to that event's per-session cap and then only
@@ -1432,7 +1434,7 @@ release have no rows (**unknown, not 0**).
 | `help:shortcuts_opened` | none | | Help > Keyboard shortcuts (`src/shell/MenuBar.jsx`) |
 | `search:no_results` | `surface` | `assets`, `outliner` | The Content browser's empty search (folders and Log), the Outliner's "No matches" |
 | | `query_len` | `1`, `2-3`, `4-8`, `gte9` | Trimmed length of a query unchanged for 1 s |
-| `nav:thrash` | `surface` | `dock_tab`, `mode`, `agent_panel` | Dock tab flips (`StudioShell.jsx`), mode switches (`selectWorkflowMode`); `agent_panel` is wired in a follow-up |
+| `nav:thrash` | `surface` | `dock_tab`, `mode`, `agent_panel` | Dock tab flips (`StudioShell.jsx`), mode switches (`selectWorkflowMode`), agent panel toggles (Cmd/Ctrl+B and the toolbar control, `App.jsx`) |
 | | `switches` | `4-5`, `6-10`, `gte11` | Switches in the 10 s window that opened at 4 |
 | | `window_s` | `10` | |
 | `camera:thrash` | `gestures` | `6-10`, `gte11` | Orbit, fly and pan drags that moved the view (`src/controls.jsx` gesture end) in the 20 s window that opened at 6 |

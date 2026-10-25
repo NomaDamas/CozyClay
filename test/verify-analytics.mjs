@@ -788,7 +788,7 @@ console.log("PASS agent:prompt_sent: device-side words, Jaccard grades, length b
 	assert.equal(timers.size, 0, "the cancelled window leaves no timer");
 	thrash.noteNavSwitch("details"); assert.equal(timers.size, 0, "an unknown surface is ignored");
 	flip("agent_panel", 12, 100); advance(10_000);
-	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props.switches), ["gte11"], "the agent_panel surface is ready for its follow-up hook");
+	assert.deepEqual(thrashSent.splice(0).map(({ props }) => props.switches), ["gte11"], "agent_panel thrashes like any surface"); assert.match(readFileSync(new URL("../src/App.jsx", import.meta.url), "utf8"), /const toggle = \(event\) => \{ notePanelToggled\([^;]*\); noteNavSwitch\("agent_panel"\); setAgentCollapsed/, "the agent panel toggle reports an agent_panel switch");
 	assert.equal(friction.snapshot().nav_thrash, "4-5", "nav_thrash counts every thrash: dock_tab, its cooled-down repeat, mode and agent_panel");
 	const move = (kinds, gap = 1000) => { for (const kind of kinds) { thrash.noteCameraGesture(kind); advance(gap); } };
 	move(["orbit", "orbit", "orbit", "orbit", "orbit"]); advance(30_000);

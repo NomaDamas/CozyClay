@@ -5,11 +5,11 @@
 // elements or text: callers pass counts and durations, never content.
 import { SESSION_DURATION_BUCKETS } from "./analytics-values.js";
 
-// Counters with a source today: refusals_ui/refusals_agent and undos (command
-// bus), errors (app:error listener, ErrorBoundary), long_tasks (longtask observer), compiles
-// (every motion.compile draft, motion-draft-telemetry.js). The rest
-// are reserved names for the click, shortcut, search, thrash and playback
-// detectors; they report "0" until those land.
+// Counter sources: refusals_ui/refusals_agent and undos (command bus), errors
+// (app:error listener, ErrorBoundary), long_tasks (longtask observer), compiles
+// (every motion.compile draft, motion-draft-telemetry.js), rage_clicks/dead_clicks
+// (click-friction.js), shortcut_ignored (shortcut-friction.js), search_empty
+// (search-friction.js), nav_thrash/camera_thrash (thrash-friction.js).
 const COUNTERS = Object.freeze([
 	"refusals_ui", "refusals_agent", "undos", "errors", "rage_clicks", "dead_clicks",
 	"shortcut_ignored", "search_empty", "nav_thrash", "camera_thrash", "long_tasks", "compiles",

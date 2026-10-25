@@ -66,8 +66,8 @@ const camera = createDetector({
 
 /**
  * One user switch on `surface`: dock_tab (StudioShell.jsx), mode (App.jsx
- * selectWorkflowMode) or agent_panel (the agent panel toggle, wired in a
- * follow-up). 4 or more in 10 s with no edit is a thrash; 30 s cooldown per surface.
+ * selectWorkflowMode) or agent_panel (App.jsx, the agent panel toggle). 4 or
+ * more in 10 s with no edit is a thrash; 30 s cooldown per surface.
  */
 export function noteNavSwitch(surface) {
 	try { nav[surface]?.note(surface); } catch { /* telemetry is advisory */ }

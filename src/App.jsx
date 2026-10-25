@@ -2241,7 +2241,7 @@ export default function App() {
 	useEffect(() => {
 		if (embedMode) return;
 		// The toolbar control and Workflow's button dispatch the event; Cmd/Ctrl+B calls toggle with the keydown.
-		const toggle = (event) => { notePanelToggled(agentCollapsedRef.current, event?.type === "keydown" ? "key" : "button"); setAgentCollapsed(value => !value); };
+		const toggle = (event) => { notePanelToggled(agentCollapsedRef.current, event?.type === "keydown" ? "key" : "button"); noteNavSwitch("agent_panel"); setAgentCollapsed(value => !value); };
 		const key = event => { if ((event.metaKey || event.ctrlKey) && event.code === "KeyB") { event.preventDefault(); toggle(event); } };
 		window.addEventListener("cozyclay:agent-panel-toggle", toggle); window.addEventListener("keydown", key);
 		return () => { window.removeEventListener("cozyclay:agent-panel-toggle", toggle); window.removeEventListener("keydown", key); };
