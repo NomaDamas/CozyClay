@@ -58,6 +58,9 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `agent:panel_toggled` | The agent panel opened or closed, at most 10 per session: `open` (true or false) and `via` (`key` for Cmd/Ctrl+B, `button` for the toolbar control). Never what the panel showed |
 | `object:deleted_soon` | You deleted an object you added in this session, at most 10 per session: `age` (how long after adding it: `lt2s`, `2-10s`, `10-60s` or `gte60s`). Object ids are reused names, so this is an estimate. Never the object's id, name or kind |
 | `object:delete_undone` | You undid an object deletion within its 7-second undo window, at most 10 per session: `age` (time from the deletion to the undo: `lt2s` or `2-10s`). Never the object's id, name or kind |
+| `update:notice_shown` | The update notice appeared in the top bar of an npm studio, once per session: `kind` (`global` or `npx`) and `behind` (`patch`, `minor` or `major`: how far the running version is behind the newest release). Never a path or a command |
+| `update:clicked` | A button on the update notice, at most 10 per session: `action` (`update_now`, `copy_command`, `later`, `dismiss` or `release_notes`) and `kind` (`global` or `npx`) |
+| `update:finished` | A one-click update ended, at most 3 per session: `outcome` (`ok` or `failed`), `error_class` (`none`, `permission`, `network`, `node_version`, `npm_missing` or `other`) and `duration` (`lt10s`, `10-30s`, `30-60s`, `1-2m`, `2-5m` or `gte5m`). Never npm's output, a path or the command line |
 | `device:profile` | Once per session: GPU vendor/class, WebGL version, CPU/memory buckets, and a frame-rate bucket. Never the raw renderer string |
 | `survey:use_case` | Optional one-time question after a successful export: `use_case` and `team`, closed choices only |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |
@@ -94,6 +97,10 @@ Every regular event and the session-end beacon use the same `distribution`
 operating-system label, and (for npm sessions) `install_kind` (`npx` or
 `global`) and `update_status` (`latest`, `outdated`, or `unknown`, from the
 package's own cached update check). Source checkouts are classified as `clone` and remain telemetry-off.
+The update notice asks the launcher on `127.0.0.1` whether a newer release
+exists. The launcher answers from that same cached check, so the notice adds
+no request to anyone else. **Update now** runs `npm install -g
+cozyclay@<version>` on your machine, and only when you press it.
 The first npm launch may optionally answer a one-line channel question
 (`x`, `hn`, `reddit`, `github`, `site`, `friend`, `other`, or `skip`); `skip` sends no
 acquisition value. A copied `npx cozyclay --via site` (or `--via playground`)

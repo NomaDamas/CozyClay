@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+Studio
+
+- An npm studio shows a small **Update** chip in the top bar when a newer
+  release is out, once per version. A global install whose folder npm can
+  write gets **Update now**, which installs the release and then asks you
+  to restart `cclay`. Other installs get the command to copy, and npx gets
+  "run `npx cozyclay` again". **Update now** waits while an agent turn,
+  an export or a recording runs. A failed install names the cause
+  (permissions, network, Node version, npm missing) and keeps the command.
+
+CLI
+
+- `cclay update --check` prints the current and latest version without
+  installing, and exits 0 (up to date), 10 (update available) or 11
+  (unknown). `cclay update` now refuses a release your Node.js cannot run.
+- A source checkout reports itself as `clone`, and a Windows global install
+  is no longer mistaken for npx.
+
+Analytics
+
+- `update:notice_shown`, `update:clicked` and `update:finished`: closed
+  values only (install kind, how far behind, the button, the outcome and
+  error class, a duration bucket). Never npm's output or a path.
+
 ## 3.1.4 - 2026-10-24
 
 Starring CozyClay from the terminal takes one key when the GitHub CLI is signed in.

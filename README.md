@@ -58,6 +58,11 @@ npx cozyclay
 That is the whole install. You need Node.js 22.19 or newer and a Chromium browser. You do not need
 a GPU, Python or a model download. The studio opens at `http://127.0.0.1:5180/app/`.
 
+**Updating.** `npx cozyclay` fetches the newest release each time you run it. After
+`npm install -g cozyclay`, the studio shows a small **Update** chip in the top bar when a newer
+release is out. **Update now** installs it, and then you restart `cclay`. `cclay update` does the
+same from the terminal. `--no-update-check` or `COZYCLAY_NO_UPDATE_CHECK=1` turns the check off.
+
 > **Asking an AI agent to set it up?** Give it this repository link. Its instructions are in
 > [`INSTALL_FOR_AGENTS.md`](INSTALL_FOR_AGENTS.md).
 

@@ -2075,6 +2075,86 @@ In the connect funnel (4.1 above), the "first prompt" step can read
 `agent:prompt_sent` instead of `agent:turn_requested`: the same turn, with its
 provider. Hosted builds have no sidecar and send neither.
 
+# Update notice (update:*)
+
+The in-Studio update notice on npm launches (`src/update/`). The Studio asks
+its own launcher (`GET /__cozyclay/update`), and the launcher answers from its
+cached registry check. A global install whose folder npm can write gets
+**Update now**, which runs `npm install -g cozyclay@<version>`. Every other
+global install gets a command to copy. npx gets "run `npx cozyclay` again".
+All three events are passive. Builds before this release have no rows
+(**unknown, not 0**). The first build that can show the notice is the one
+after the build that ships it.
+
+## Event contract
+
+| Event | Properties | Fired |
+| --- | --- | --- |
+| `update:notice_shown` | `kind` (`global`, `npx`), `behind` (`patch`, `minor`, `major`) | The chip first appears in a session. Once per session |
+| `update:clicked` | `action` (`update_now`, `copy_command`, `later`, `dismiss`, `release_notes`), `kind` | Each button on the chip or the dialog. 10 per session |
+| `update:finished` | `outcome` (`ok`, `failed`), `error_class` (`none`, `permission`, `network`, `node_version`, `npm_missing`, `other`), `duration` (lt10s … gte5m) | Polling sees the install end (`restart_needed` or `failed`). Once per install, 3 per session |
+
+`behind` compares the running version with the newest release: a different
+major, else a different minor, else patch. A tab closed while npm runs loses
+its `update:finished` (the launcher never calls PostHog itself).
+`error_class` reads npm's `npm error code` line: `permission` (EACCES,
+EPERM), `network` (ENOTFOUND, ETIMEDOUT, ECONNREFUSED, ECONNRESET, EAI_AGAIN),
+`node_version` (EBADENGINE), `npm_missing` (npm not on PATH), `other`.
+
+## 6.1 Update funnel (30 days)
+
+Unexecuted sketch. Steps are per `distinct_id`. The last step is a later
+session whose `app_version` is newer than the one that showed the notice.
+
+```sql
+WITH shown AS (
+    SELECT distinct_id,
+        min(timestamp) AS shown_at,
+        argMin(properties.kind, timestamp) AS kind,
+        argMin(properties.app_version, timestamp) AS shown_version
+    FROM events
+    WHERE event = 'update:notice_shown'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 30 DAY
+    GROUP BY distinct_id
+), steps AS (
+    SELECT e.distinct_id,
+        minIf(e.timestamp, e.event = 'update:clicked' AND e.properties.action = 'update_now') AS clicked_at,
+        minIf(e.timestamp, e.event = 'update:finished' AND e.properties.outcome = 'ok') AS installed_at,
+        minIf(e.timestamp, e.event = 'app:session_started' AND e.properties.app_version != s.shown_version) AS upgraded_at
+    FROM events e
+    INNER JOIN shown s ON e.distinct_id = s.distinct_id
+    WHERE e.event IN ('update:clicked', 'update:finished', 'app:session_started')
+      AND JSONExtractRaw(e.properties, 'internal_qa') != 'true'
+      AND e.timestamp >= s.shown_at
+    GROUP BY e.distinct_id
+)
+SELECT s.kind,
+    count() AS shown,
+    countIf(clicked_at > 0) AS clicked_update_now,
+    countIf(installed_at > clicked_at AND clicked_at > 0) AS installed,
+    countIf(upgraded_at > s.shown_at) AS running_newer
+FROM shown s
+LEFT JOIN steps USING (distinct_id)
+GROUP BY s.kind
+```
+
+`running_newer` counts npx users too: they upgrade by running `npx cozyclay`
+again, with no click. `app_version != shown_version` also counts a downgrade
+(**rare, assumed**).
+
+## 6.2 Why one-click updates fail (30 days)
+
+```sql
+SELECT properties.error_class AS error_class, properties.duration AS duration, count() AS installs
+FROM events
+WHERE event = 'update:finished' AND properties.outcome = 'failed'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY error_class, duration
+ORDER BY installs DESC
+```
+
 # Storyboard and capsule-figure events (issue #653)
 
 Counts only. None of these events carries a caption, a panel or character name,

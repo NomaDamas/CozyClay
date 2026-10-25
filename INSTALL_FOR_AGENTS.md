@@ -32,6 +32,9 @@ npx -y cozyclay --no-star
 
 For a permanent install, run `npm install -g cozyclay`. Then `cclay` and `cozyclay` are the same
 command. `cclay update` installs the latest release.
+`cclay update --check` installs nothing. It prints the current version, the latest version and
+the install kind, then exits `0` when up to date, `10` when an update is available, and `11` when
+it cannot tell (offline, or checks turned off).
 
 Tell the user:
 
