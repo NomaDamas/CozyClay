@@ -16,6 +16,7 @@ import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from
 import { createServer } from "node:http";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
+import { SCENES_STORAGE_KEY } from "../src/scenes.js";
 
 const ROOT = resolve(import.meta.dirname, "..");
 const origin = new URL(process.env.QA_URL || "http://127.0.0.1:5371/app/").origin;
@@ -98,6 +99,11 @@ const waitFor = async (expression, label, ms = 30_000) => {
 };
 const view = (testid) => `document.querySelector('[data-testid=${testid}]')?.dataset.updateView`;
 const click = (testid) => evaluate(`document.querySelector('[data-testid=${testid}]').click(), true`);
+// A real pointer press: the clipboard wants a trusted gesture.
+async function press(testid) {
+	const { x, y } = await evaluate(`(() => { const r = document.querySelector('[data-testid=${testid}]').getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; })()`);
+	for (const type of ["mousePressed", "mouseReleased"]) await send("Input.dispatchMouseEvent", { type, x, y, button: "left", buttons: type === "mousePressed" ? 1 : 0, clickCount: 1 });
+}
 const text = (selector) => evaluate(`document.querySelector(${JSON.stringify(selector)})?.textContent ?? ''`);
 async function shot(name) {
 	const { data } = await send("Page.captureScreenshot", { format: "png" });
@@ -107,20 +113,23 @@ async function shot(name) {
 async function load(query = "") {
 	const before = proxied;
 	await send("Page.navigate", { url: `${origin}/app/${query}` });
-	await waitFor("!!document.querySelector('.topbar')", "the Studio top bar", 120_000);
+	await waitFor("!!document.querySelector('.topbar') && !!window.__cozyclay", "the Studio and its editor", 120_000);
 	for (let t = 0; t < 150 && proxied === before; t += 1) await sleep(200);
 	assert.ok(proxied > before, "the Studio asked the launcher for update info");
 }
 const updates = () => records.filter((record) => record.event.startsWith("update:")).map((record) => ({ event: record.event, ...Object.fromEntries(Object.entries(record.properties).filter(([key]) => ["kind", "behind", "action", "outcome", "error_class", "duration"].includes(key))) }));
+const scene = { version: 4, activeSceneId: "qa-update", scenes: [{ id: "qa-update", name: "QA update", objects: [], shotDocument: { version: 4, frameCount: 96, waypoints: [], shots: [] },
+	stage: { characters: [{ id: "char-a", model: "y-bot-tpose", x: 0, z: 0, rot: 0, hidden: false, pose: null, subject: "QA" }], hasCharSheet: false, shotAspect: "16:9" } }] };
 const runtime = { distribution: "npm", telemetryEnabled: true, apiKey: "internal-qa-u1", apiHost: "https://telemetry.invalid", appVersion: version, installKind: "global",
 	installationId: "0192f0d6-3a4b-7c2d-8e9f-abcdefabcd01", internalQa: true, updateStatus: "outdated" };
 
 try {
 	await send("Page.enable"); await send("Runtime.enable");
+	await send("Browser.grantPermissions", { origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"] });
 	await send("Runtime.addBinding", { name: "__qaRecord" });
 	await send("Fetch.enable", { patterns: [{ urlPattern: "*/__cozyclay/update*", requestStage: "Request" }, { urlPattern: "*/src/analytics.js*", requestStage: "Response" }] });
 	await send("Page.addScriptToEvaluateOnNewDocument", { source: `if (window === window.top) {
-		if (!sessionStorage.getItem('qa-u1-seeded')) { localStorage.clear(); localStorage.setItem('cozyclay.locale', 'en'); localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'QA', updatedAt: Date.now() })); sessionStorage.setItem('qa-u1-seeded', '1'); }
+		if (!sessionStorage.getItem('qa-u1-seeded')) { localStorage.clear(); localStorage.setItem('cozyclay.locale', 'en'); localStorage.setItem('cozyclay.project-session.v1', JSON.stringify({ name: 'QA', updatedAt: Date.now() })); localStorage.setItem(${JSON.stringify(SCENES_STORAGE_KEY)}, ${JSON.stringify(JSON.stringify(scene))}); sessionStorage.setItem('qa-u1-seeded', '1'); }
 		window.__COZYCLAY_RUNTIME__ = ${JSON.stringify(runtime)}; }
 		let beforeSend; window.__qaPosthog = { init(_key, options) { beforeSend = options.before_send; }, register() {}, opt_in_capturing() {}, opt_out_capturing() {},
 			has_opted_out_capturing: () => false, get_distinct_id: () => 'internal-qa-u1', get_session_id: () => '0192f0d6-3a4b-7c2d-8e9f-abcdefabcd02',
@@ -139,10 +148,19 @@ try {
 	await evaluate("document.querySelector('.menubar-dialog-close').click(), true");
 	if (!await evaluate("!!document.querySelector('.agent-input')")) await evaluate("document.querySelector('.studio-agent-bar')?.click(), true");
 	await waitFor("!!document.querySelector('.agent-input')", "the agent composer");
-	await evaluate("(() => { const t = document.querySelector('.agent-input'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, 'Frame a wide two-shot'); t.dispatchEvent(new Event('input', { bubbles: true })); })()");
-	await waitFor("document.querySelector('.agent-send:not(.stop)')?.disabled === false", "Send enabled");
-	await evaluate("document.querySelector('.agent-send').click(), true");
-	await waitFor("!!document.querySelector('.agent-send.stop')", "a running agent turn", 10_000);
+	await waitFor("!!document.querySelector('[data-fid=\"tl_play\"]')", "the timeline", 60_000);
+	await sleep(1500);
+	// The editor answers the turn's first scene read only once it has booted; a refusal this early is retried.
+	for (let attempt = 0; ; attempt += 1) {
+		await evaluate("(() => { const t = document.querySelector('.agent-input'); Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(t, 'Frame a wide two-shot'); t.dispatchEvent(new Event('input', { bubbles: true })); })()");
+		await waitFor("document.querySelector('.agent-send:not(.stop)')?.disabled === false", "Send enabled");
+		await evaluate("document.querySelector('.agent-send').click(), true");
+		try { await waitFor("!!document.querySelector('.agent-send.stop')", "a running agent turn", 10_000); break; } catch (error) {
+			console.log(`AGENT ${await evaluate("JSON.stringify({ state: document.querySelector('.agent-panel')?.dataset.agentState, last: [...document.querySelectorAll('.agent-row')].at(-1)?.textContent.slice(0, 120) })")}`);
+			if (attempt >= 4) throw error;
+			await sleep(2000);
+		}
+	}
 	await click("update-chip");
 	await waitFor("document.querySelector('[data-testid=update-now]')?.disabled === true && !!document.querySelector('[data-testid=update-busy]')", "Update now disabled during the turn", 5000);
 	console.log(`BUSY ${await text("[data-testid=update-busy]")}`);
@@ -173,10 +191,11 @@ try {
 	await click("update-now");
 	await waitFor(`${view("update-chip")} === 'failed'`, "the failed chip", 15_000);
 	await waitFor(`${view("update-dialog")} === 'failed'`, "the failure card");
-	await click("update-copy");
+	await press("update-copy");
 	await waitFor("document.querySelector('[data-testid=update-copy]')?.dataset.copied === 'true'", "the copied command");
 	const failed = await text("[data-testid=update-dialog]");
 	console.log(`FAILED ${failed}`);
+	console.log(`CLIPBOARD ${await evaluate("navigator.clipboard.readText()")}`);
 	assert.match(failed, /npm can't write to its global folder/);
 	assert.match(await text(".update-dialog-command"), /^npm install -g cozyclay@latest$/);
 	await shot("06-failed-permission");
