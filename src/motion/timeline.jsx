@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { frameFromClientX, groupKeyRuns, KEY_RUN_MIN, rangePinBandGeometry, shotBlockGeometry } from "./timeline-coordinates.js";
 import { createPlaybackClock } from "./playback-clock.js";
+import { startPlaybackRun } from "../playback-telemetry.js";
 
 import { ko } from "../locale.js";
 import { isImeComposing } from "../ime.js";
@@ -1195,14 +1196,17 @@ export default function Timeline({
 	useEffect(() => {
 		if (!playing) return;
 		const elapsedFrames = createPlaybackClock(fps, playbackSpeed, performance.now());
+		// playback:summary: steps > 1 is a late tick (an estimate of dropped frames, not a measured one).
+		const run = startPlaybackRun(fps, playbackSpeed);
 		const id = window.setInterval(
 			() => {
 				const steps = elapsedFrames(performance.now());
+				run.tick(steps);
 				if (steps) handlers.current.onAdvance?.(steps);
 			},
 			1000 / Math.max(1, fps * playbackSpeed),
 		);
-		return () => window.clearInterval(id);
+		return () => { window.clearInterval(id); run.end(); };
 	}, [playing, fps, playbackSpeed]);
 
 	// Space toggles playback, j/k step the playhead, p toggles waypoint mode —

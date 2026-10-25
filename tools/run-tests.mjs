@@ -213,7 +213,7 @@ const BROWSER_FILES = [
 	"test/qa-proxy-entry-browser.mjs",
 	"test/qa-previs-start-browser.mjs",
 	"test/qa-storyboard-board-browser.mjs",
-	"test/qa-storyboard-export-browser.mjs",
+	"test/qa-storyboard-export-browser.mjs", "test/qa-playback-guide-browser.mjs",
 	"test/qa-proxy-figure-browser.mjs", "test/qa-click-friction-browser.mjs",
 	"test/qa-rail-lean-browser.mjs",
 	"test/qa-export-recovery-browser.mjs", "test/qa-export-workspace-browser.mjs",
@@ -261,7 +261,7 @@ EXTRA_INVENTORY.push("test/qa-proxy-figure-browser.mjs", "test/qa-click-friction
 EXTRA_INVENTORY.push("test/qa-proxy-entry-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-previs-start-browser.mjs");
 EXTRA_INVENTORY.push("test/qa-storyboard-board-browser.mjs");
-EXTRA_INVENTORY.push("test/qa-storyboard-export-browser.mjs");
+EXTRA_INVENTORY.push("test/qa-storyboard-export-browser.mjs", "test/qa-playback-guide-browser.mjs");
 
 function verificationFiles(directory) {
 	return readdirSync(directory, { withFileTypes: true })

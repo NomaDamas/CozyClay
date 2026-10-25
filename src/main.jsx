@@ -11,6 +11,7 @@ import "./styles.css";
 import { registerPwa } from "./pwa.js";
 import { LOCALE } from "./locale.js";
 import { initAnalytics } from "./analytics.js";
+import { StudioReadyMark } from "./studio-telemetry.js";
 import { fetchPlaygroundProject, isPlaygroundEmbed, playgroundSceneUrl, stashPlaygroundProject } from "./playground.js";
 import { preloadBodies } from "./motion3/body.js";
 
@@ -32,6 +33,8 @@ async function boot() {
 		<StrictMode>
 			<ErrorBoundary>
 				<App />
+				{/* studio:ready: one frame after this first commit, without delaying it. */}
+				<StudioReadyMark />
 			</ErrorBoundary>
 		</StrictMode>,
 	);

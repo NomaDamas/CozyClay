@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ko } from "./locale.js";
+import { noteGuideDismissed, noteGuideOpened, noteGuideStep } from "./guide-telemetry.js";
 
 const ANIMATION_STEPS = [
 	{
@@ -76,13 +77,16 @@ const STEPS_BY_MODE = { animation: ANIMATION_STEPS, storyboard: STORYBOARD_STEPS
 /** A compact, dismissible first-run checklist that follows the v2 shell grammar. */
 export default function FirstSuccessGuide({ open, onDismiss, previsMode = "animation" }) {
 	const storyboard = previsMode === "storyboard";
-	const STEPS = STEPS_BY_MODE[storyboard ? "storyboard" : "animation"];
+	const mode = storyboard ? "storyboard" : "animation";
+	const STEPS = STEPS_BY_MODE[mode];
 	const [step, setStep] = useState(0);
 	useEffect(() => {
-		if (open) setStep(0);
-	}, [open]);
+		if (open) { setStep(0); noteGuideOpened(mode); }
+	}, [open]); // eslint-disable-line react-hooks/exhaustive-deps -- the mode at opening time
 	if (!open) return null;
 	const complete = step >= STEPS.length;
+	// Closing after the last step is not a drop-off: only an unfinished guide reports guide:dismissed.
+	const dismiss = () => { if (!complete) noteGuideDismissed(mode, step + 1); onDismiss(); };
 
 	return (
 		<aside className="v2-first-success-guide first-success-guide" role="dialog" aria-labelledby="first-success-guide-title" aria-describedby="first-success-guide-description">
@@ -91,14 +95,14 @@ export default function FirstSuccessGuide({ open, onDismiss, previsMode = "anima
 					<strong id="first-success-guide-title">{ko("Your first 60 seconds", "첫 60초")}</strong>
 					<span>{complete ? ko("Core loop complete", "핵심 흐름 완료", "核心流程完成") : ko(`Step ${step + 1} of ${STEPS.length}`, `${step + 1} / ${STEPS.length} 단계`, `第 ${step + 1} / ${STEPS.length} 步`)}</span>
 				</div>
-				<button type="button" className="v2-first-success-guide-close first-success-guide-close" onClick={onDismiss} aria-label={ko("Dismiss guide", "가이드 닫기")}>×</button>
+				<button type="button" className="v2-first-success-guide-close first-success-guide-close" onClick={dismiss} aria-label={ko("Dismiss guide", "가이드 닫기")}>×</button>
 			</div>
 			{complete ? (
 				<div className="v2-first-success-guide-complete first-success-guide-complete" id="first-success-guide-description" role="status">
 					<div className="v2-first-success-guide-check first-success-guide-check">✓</div>
 					<strong>{storyboard ? ko("You made your first panel.", "첫 패널을 만들었어요.") : ko("You made your first shot.", "첫 샷을 만들었어요.")}</strong>
 					<p>{storyboard ? ko("Describe, review on the Board, then stylize or export. You can close this guide and keep adding panels.", "설명하고, 보드에서 확인한 뒤 스타일을 입히거나 내보내세요. 가이드를 닫고 패널을 계속 추가하세요.") : ko("Select, move, ask, and play are the core CozyClay loop. You can close this guide and keep blocking.", "선택하고, 움직이고, 요청하고, 재생하는 것이 CozyClay의 핵심 흐름입니다. 가이드를 닫고 계속 블로킹하세요.")}</p>
-					<button type="button" className="v2-first-success-guide-next first-success-guide-next btn primary" onClick={onDismiss}>{ko("Continue editing", "편집 계속하기")}</button>
+					<button type="button" className="v2-first-success-guide-next first-success-guide-next btn primary" onClick={dismiss}>{ko("Continue editing", "편집 계속하기")}</button>
 				</div>
 			) : (
 				<>
@@ -111,12 +115,12 @@ export default function FirstSuccessGuide({ open, onDismiss, previsMode = "anima
 							</li>
 						))}
 					</ol>
-					<button type="button" className="v2-first-success-guide-next first-success-guide-next btn primary" onClick={() => setStep((value) => value + 1)}>
+					<button type="button" className="v2-first-success-guide-next first-success-guide-next btn primary" onClick={() => { noteGuideStep(mode, step + 1, STEPS.length); setStep(step + 1); }}>
 						{ko(step === STEPS.length - 1 ? "Mark complete" : "I did this", step === STEPS.length - 1 ? "완료로 표시" : "했어요", step === STEPS.length - 1 ? "标记完成" : "我做了这一步")}
 					</button>
 				</>
 			)}
-			<button type="button" className="v2-first-success-guide-skip first-success-guide-skip" onClick={onDismiss}>{ko("Skip guide", "가이드 건너뛰기")}</button>
+			<button type="button" className="v2-first-success-guide-skip first-success-guide-skip" onClick={dismiss}>{ko("Skip guide", "가이드 건너뛰기")}</button>
 		</aside>
 	);
 }

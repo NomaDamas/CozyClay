@@ -118,6 +118,7 @@ import {
 } from "./project.js";
 import ProjectBrowser, { ProjectNameDialog } from "./project-browser.jsx";
 import FirstSuccessGuide from "./first-success-guide.jsx";
+import { noteDeleteUndone, notePanelToggled } from "./studio-telemetry.js";
 import UseCaseQuestion from "./use-case-question.jsx";
 import ObjectGizmo from "./object-gizmo.jsx";
 import { useHeldObjectEdit } from "./held-object-edit.jsx";
@@ -2232,14 +2233,14 @@ export default function App() {
 		try { const value = studioBindingRef.current.context(); setStudioAgentError(null); return value; }
 		catch (error) { setStudioAgentError(`${error.code ?? "INVALID_CONTEXT"}: ${error.message}`); return null; }
 	};
+	const agentCollapsedRef = useRef(agentCollapsed);
+	useEffect(() => { agentCollapsedRef.current = agentCollapsed; }, [agentCollapsed]);
 	useEffect(() => {
 		if (embedMode) return;
-		const toggle = () => setAgentCollapsed(value => !value);
-		const key = event => {
-			if ((event.metaKey || event.ctrlKey) && event.code === "KeyB") { event.preventDefault(); toggle(); }
-		};
-		window.addEventListener("cozyclay:agent-panel-toggle", toggle);
-		window.addEventListener("keydown", key);
+		// The toolbar control and Workflow's button dispatch the event; Cmd/Ctrl+B calls toggle with the keydown.
+		const toggle = (event) => { notePanelToggled(agentCollapsedRef.current, event?.type === "keydown" ? "key" : "button"); setAgentCollapsed(value => !value); };
+		const key = event => { if ((event.metaKey || event.ctrlKey) && event.code === "KeyB") { event.preventDefault(); toggle(event); } };
+		window.addEventListener("cozyclay:agent-panel-toggle", toggle); window.addEventListener("keydown", key);
 		return () => { window.removeEventListener("cozyclay:agent-panel-toggle", toggle); window.removeEventListener("keydown", key); };
 	}, [embedMode]);
 	const projectHandleRef = useRef(null);
@@ -4260,7 +4261,7 @@ export default function App() {
 		const restored = storeRef.current.objects;
 		if (before !== restored) {
 			if (!redo && objectDeleteUndo?.id && restored.some(object => object.id === objectDeleteUndo.id)) {
-				setSelectedHierarchyId(`object:${objectDeleteUndo.id}`); setObjectDeleteUndo(null);
+				setSelectedHierarchyId(`object:${objectDeleteUndo.id}`); setObjectDeleteUndo(null); noteDeleteUndone(objectDeleteUndo.id);
 			} else if (selectedSceneObjectId && !restored.some(object => object.id === selectedSceneObjectId)) setSelectedHierarchyId("props");
 		}
 		setToast(redo ? ko("Redone", "다시 실행됨") : ko("Undone", "실행 취소됨"));

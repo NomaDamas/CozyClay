@@ -55,6 +55,22 @@ const SCHEMAS = Object.freeze({
 	// error_type: the app:error label set (analytics.js describeError); never a message or stack.
 	"app:render_crash": { error_type: inSet(ERROR_TYPE_VALUES) },
 	"app:gl_lost": { kind: oneOf("unavailable", "context_lost") },
+	"studio:ready": { boot: oneOf("lt2s", "2-5s", "5-15s", "gte15s") },
+	// late_ticks (the late_tick_ratio set) is an estimate: timer ticks that caught up more than one frame,
+	// not measured render drops. measured_fps is device:profile's frame_rate_bucket set (bucketFrameRate).
+	"playback:summary": {
+		duration: long, late_ticks: oneOf("0", "lt5", "5-20", "20-50", "gte50"), max_catchup: oneOf("1", "2", "3-5", "gte6"),
+		fps: oneOf("12", "24", "30", "60", "other"), speed: oneOf("0.5", "1", "2", "other"),
+		measured_fps: oneOf("lt20", "20-40", "40-55", "gte55", "unknown"),
+	},
+	// mode and step: first-success-guide.jsx's STEPS_BY_MODE keys and its 4 steps per mode.
+	"guide:opened": { mode: oneOf("animation", "storyboard") },
+	"guide:step": { mode: oneOf("animation", "storyboard"), step: oneOf("1", "2", "3", "4"), step_ms: long },
+	"guide:dismissed": { mode: oneOf("animation", "storyboard"), reached: oneOf("1", "2", "3", "4") },
+	"guide:completed": { mode: oneOf("animation", "storyboard") },
+	"agent:panel_toggled": { open: bool, via: oneOf("key", "button") },
+	"object:deleted_soon": { age: inSet(AGE_BUCKETS) },
+	"object:delete_undone": { age: inSet(AGE_BUCKETS) },
 	"edit:undone": {
 		age: inSet(AGE_BUCKETS), kind: oneOf("pose", "camera", "object", "shot", "prompt", "agent_turn", "ik_preview", "other"),
 		via: oneOf("key", "menu", "button"), result: oneOf("done", "noop", "refused"),

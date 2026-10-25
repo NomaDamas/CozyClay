@@ -45,7 +45,7 @@ export function bucketShortMs(ms) {
 }
 
 /** Share of playback ticks that ran late, as a closed percent bucket. */
-function bucketLateTicks(late, total) {
+export function bucketLateTicks(late, total) {
 	if (!(total > 0) || !(late > 0)) return "0";
 	const percent = (late / total) * 100;
 	if (percent < 5) return "lt5";

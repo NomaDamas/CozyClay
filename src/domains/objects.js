@@ -3,6 +3,7 @@ import { useState, useRef } from "react";
 import { createDocumentStore } from "../document-store.js";
 import { useDocumentDomain } from "../store/use-document-store.js";
 import { arrangement } from "../studio-agent-commands.js";
+import { noteObjectCreated, noteObjectDeleted } from "../studio-telemetry.js";
 import {
 	readStoredObjectColors,
 	rememberObjectColor,
@@ -243,6 +244,7 @@ export function useObjects(appContext) {
 		if (!id) return;
 		const wasSelected = id === selectedSceneObjectId;
 		run("object.remove", { ids: [id] });
+		noteObjectDeleted(id);
 		setObjectDeleteUndo({ id, pastDepth: store.depths().past });
 		appContext.shared.setInspectorActionsOpen(false);
 		if (wasSelected) {
@@ -306,6 +308,7 @@ export function useObjects(appContext) {
 			: {});
 		const receipt = run("object.add", { kind, placement, first: true });
 		const object = domain.read().find(row => row.id === receipt.affectedIds[0]);
+		noteObjectCreated(object.id);
 		appContext.shared.markCraftAction("object");
 		appContext.shared.setSelectedHierarchyId(`object:${object.id}`);
 		if (object.renderer === "empty") setRenameRequest({ id: `object:${object.id}`, nonce: Date.now() });

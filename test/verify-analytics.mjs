@@ -1412,6 +1412,116 @@ console.log("PASS Workflow, Agent and MCP execution allowlists and disclosure sc
 		friction.reset();
 	}
 	console.log("PASS app:render_crash and app:gl_lost: closed values, 2 crashes and 1 per GL kind per session");
+	// P2-c: playback:summary, the first-success guide, agent:panel_toggled, studio:ready and delete regret.
+	{
+		const { bucketCatchup, bucketPlaybackFps, bucketSpeed, playbackTelemetrySeam, startPlaybackRun } = await import("../src/playback-telemetry.js");
+		const { guideTelemetrySeam, noteGuideDismissed, noteGuideOpened, noteGuideStep } = await import("../src/guide-telemetry.js");
+		const studio = await import("../src/studio-telemetry.js");
+		friction.reset();
+		assert.deepEqual([0, 1, 2, 3, 5, 6, 40, NaN].map(bucketCatchup), ["1", "1", "2", "3-5", "3-5", "gte6", "gte6", "1"]);
+		assert.deepEqual([12, 24, 25, 30, 60, 120, "24"].map(bucketPlaybackFps), ["12", "24", "other", "30", "60", "other", "other"]);
+		assert.deepEqual([0.5, 1, 1.5, 2, 4, "1"].map(bucketSpeed), ["0.5", "1", "other", "2", "other", "other"]);
+		assert.deepEqual([0, 1999, 2000, 4999, 5000, 14_999, 15_000, NaN].map(studio.bucketBoot), ["lt2s", "lt2s", "2-5s", "2-5s", "5-15s", "5-15s", "gte15s", "lt2s"]);
+
+		// One summary per run: 3 s at 24 fps, 72 timer ticks of which 9 caught up; rAF ran at 60 Hz.
+		const sent = [];
+		const restorePlayback = playbackTelemetrySeam((event, props) => sent.push({ event, props }));
+		let clock = 0, frame = null;
+		const fakeRaf = { raf: (callback) => { frame = callback; return 1; }, cancelRaf: () => { frame = null; } };
+		assert.equal(startPlaybackRun(24, 1, { active: () => false, ...fakeRaf }).tick(3), undefined, "analytics off: a no-op run");
+		assert.equal(frame, null, "analytics off: no rAF sampler");
+		const run = startPlaybackRun(24, 1, { now: () => clock, active: () => true, ...fakeRaf });
+		for (let i = 0; i <= 180; i += 1) frame?.(i * (1000 / 60));
+		for (let i = 0; i < 72; i += 1) run.tick(i < 9 ? (i === 0 ? 7 : 2) : (i % 10 === 0 ? 0 : 1));
+		clock = 3000;
+		run.end();
+		run.end();
+		run.tick(5);
+		assert.equal(frame, null, "end() cancels the rAF sample");
+		assert.deepEqual(sent, [{ event: "playback:summary", props: { duration: "lt10s", late_ticks: "5-20", max_catchup: "gte6", fps: "24", speed: "1", measured_fps: "gte55" } }], "one summary per run, idempotent end");
+		assert.equal(friction.snapshot().late_tick_ratio, "5-20", "the run feeds app:friction_summary.late_tick_ratio");
+		assert.deepEqual(sanitizeProps("playback:summary", { ...sent[0].props, scene: "private" }), sent[0].props, "playback:summary passes its closed schema");
+		sent.length = 0;
+		startPlaybackRun(24, 1, { active: () => true, raf: null }).end();
+		assert.deepEqual(sent, [], "a run without ticks sends nothing");
+		for (let i = 0; i < 12; i += 1) { const each = startPlaybackRun(30, 0.5, { now: () => 0, active: () => true, raf: null }); each.tick(1); each.end(); }
+		assert.equal(sent.length, 9, "10 summaries per session (one was the 3 s run)");
+		assert.deepEqual(sent[0].props, { duration: "lt10s", late_ticks: "0", max_catchup: "1", fps: "30", speed: "0.5", measured_fps: "unknown" }, "no rAF sample is unknown");
+		for (const value of ["lt20", "20-40", "40-55", "gte55", "unknown"]) {
+			assert.deepEqual(sanitizeProps("device:profile", { frame_rate_bucket: value }), { frame_rate_bucket: value });
+			assert.deepEqual(sanitizeProps("playback:summary", { measured_fps: value }), { measured_fps: value }, `measured_fps reuses frame_rate_bucket ${value}`);
+		}
+		for (const fps of [0, 10, 20, 39, 45, 60, NaN]) assert.ok(sanitizeProps("playback:summary", { measured_fps: bucketFrameRate(fps) }).measured_fps);
+		for (const [late, total] of [[0, 1], [1, 100], [1, 10], [3, 10], [9, 10]]) {
+			const value = friction.bucketLateTicks(late, total);
+			assert.deepEqual(sanitizeProps("playback:summary", { late_ticks: value }), { late_ticks: value }, "late_ticks is the late_tick_ratio set");
+			assert.deepEqual(sanitizeProps("app:friction_summary", { late_tick_ratio: value }), { late_tick_ratio: value });
+		}
+		assert.deepEqual(sanitizeProps("playback:summary", { fps: 24, speed: 1, late_ticks: "12", duration: 3000 }), {}, "raw numbers never pass");
+		restorePlayback();
+
+		// The guide: once per step, a step clock, completion, and no dismissal after completion.
+		const guide = [];
+		let now = 0;
+		const restoreGuide = guideTelemetrySeam((event, props) => guide.push({ event, props }), () => now);
+		noteGuideOpened("private"); noteGuideOpened("animation"); noteGuideOpened("animation");
+		now = 4000; noteGuideStep("animation", 1, 4);
+		now = 40_000; noteGuideStep("animation", 2, 4); noteGuideStep("animation", 2, 4); noteGuideStep("animation", 9, 4);
+		noteGuideDismissed("animation", 3); noteGuideDismissed("animation", 3);
+		now = 50_000; noteGuideStep("animation", 3, 4); now = 400_000; noteGuideStep("animation", 4, 4);
+		assert.deepEqual(guide, [
+			{ event: "guide:opened", props: { mode: "animation" } },
+			{ event: "guide:step", props: { mode: "animation", step: "1", step_ms: "lt10s" } },
+			{ event: "guide:step", props: { mode: "animation", step: "2", step_ms: "30-60s" } },
+			{ event: "guide:dismissed", props: { mode: "animation", reached: "3" } },
+			{ event: "guide:step", props: { mode: "animation", step: "3", step_ms: "lt10s" } },
+			{ event: "guide:step", props: { mode: "animation", step: "4", step_ms: "gte5m" } },
+			{ event: "guide:completed", props: { mode: "animation" } },
+		], "each guide event and step once per session; closed modes and steps only");
+		for (const { event, props } of guide) assert.deepEqual(sanitizeProps(event, { ...props, text: "private" }), props, `${event} passes its closed schema`);
+		assert.deepEqual(sanitizeProps("guide:step", { mode: "film", step: 5, step_ms: 4000 }), {}, "guide values are closed");
+		const guideSource = readFileSync(new URL("../src/first-success-guide.jsx", import.meta.url), "utf8");
+		assert.match(guideSource, /const STEPS_BY_MODE = \{ animation: ANIMATION_STEPS, storyboard: STORYBOARD_STEPS \};/, "the schema's modes are the component's own");
+		for (const name of ["ANIMATION_STEPS", "STORYBOARD_STEPS"]) {
+			const block = guideSource.slice(guideSource.indexOf(`const ${name} = [`), guideSource.indexOf("];", guideSource.indexOf(`const ${name} = [`)));
+			assert.equal(block.match(/^\t\ten: /gm)?.length, 4, `${name} has the schema's 4 steps`);
+		}
+		restoreGuide();
+
+		// studio:ready once, agent:panel_toggled 10 per session, deletes of session-created ids, the 7 s undo window.
+		const shell = [];
+		now = 0;
+		const restoreStudio = studio.studioTelemetrySeam((event, props) => shell.push({ event, props }), () => now);
+		studio.noteStudioReady(NaN); studio.noteStudioReady(3200); studio.noteStudioReady(900);
+		for (let i = 0; i < 12; i += 1) studio.notePanelToggled(i % 2 === 0, i === 0 ? "key" : "button");
+		studio.notePanelToggled("yes", "key"); studio.notePanelToggled(true, "menu");
+		studio.noteObjectCreated("cube");
+		now = 1500; studio.noteObjectDeleted("cube");
+		now = 2500; studio.noteObjectDeleted("chair");
+		now = 4000; studio.noteDeleteUndone("cube");
+		now = 10_000; studio.noteDeleteUndone("chair");
+		studio.noteDeleteUndone("cube");
+		const byEvent = (name) => shell.filter(({ event }) => event === name);
+		assert.deepEqual(byEvent("studio:ready"), [{ event: "studio:ready", props: { boot: "2-5s" } }], "studio:ready once per session");
+		assert.equal(byEvent("agent:panel_toggled").length, 10, "agent:panel_toggled is capped at 10");
+		assert.deepEqual(byEvent("agent:panel_toggled").slice(0, 2).map(({ props }) => props), [{ open: true, via: "key" }, { open: false, via: "button" }]);
+		assert.deepEqual(byEvent("object:deleted_soon"), [{ event: "object:deleted_soon", props: { age: "lt2s" } }], "only an id this session created counts");
+		assert.deepEqual(byEvent("object:delete_undone"), [{ event: "object:delete_undone", props: { age: "2-10s" } }], "undo at 2.5 s counts; 7.5 s is past the window; one undo per delete");
+		now = 20_000; studio.noteObjectDeleted("lamp"); now = 27_000; studio.noteDeleteUndone("lamp");
+		assert.equal(byEvent("object:delete_undone").length, 2, "exactly 7 s is still inside the window");
+		for (let i = 0; i < 12; i += 1) { studio.noteObjectCreated(`box-${i}`); studio.noteObjectDeleted(`box-${i}`); }
+		assert.equal(byEvent("object:deleted_soon").length, 10, "object:deleted_soon is capped at 10");
+		for (const { event, props } of shell) assert.deepEqual(sanitizeProps(event, { ...props, id: "cube" }), props, `${event} passes its closed schema`);
+		assert.equal(JSON.stringify(shell).includes("cube"), false, "never an object id");
+		const undoWindow = readFileSync(new URL("../src/stage-startup-defaults.js", import.meta.url), "utf8").match(/OBJECT_DELETE_UNDO_MS = (\d+)/)?.[1];
+		assert.equal(Number(undoWindow), studio.DELETE_UNDO_WINDOW_MS, "the telemetry window is the toast's undo window");
+		restoreStudio();
+		for (const event of ["studio:ready", "playback:summary", "guide:opened", "guide:step", "guide:dismissed", "guide:completed", "agent:panel_toggled", "object:deleted_soon", "object:delete_undone"]) {
+			assert.ok(Object.hasOwn(STRICT_EVENT_KEYS, event), `${event} has a closed schema (and so is passive)`);
+		}
+		friction.reset();
+	}
+	console.log("PASS P2-c: playback:summary one per run and late ticks fed, guide once per step, 7 s delete-undo window, studio:ready once");
 
 	for (const [renderer, gpu_vendor, gpu_class] of [
 		["ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)", "nvidia", "discrete"],

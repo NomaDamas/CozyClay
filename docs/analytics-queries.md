@@ -1225,6 +1225,137 @@ ORDER BY render_crashes + gl_unavailable + gl_context_lost DESC
 
 Read counts beside each share: a handful of sessions can fill a row.
 
+# Boot, playback, the guide, the agent panel and delete regret
+
+Nine passive events (`src/studio-telemetry.js`, `src/playback-telemetry.js`,
+`src/guide-telemetry.js`). They never move `action_count_bucket`. Builds
+before this release have no row: a missing event is **unknown, not 0**.
+Exclude `internal_qa = true` with
+`JSONExtractRaw(properties, 'internal_qa') != 'true'`.
+
+## Event contract
+
+| Event | Property | Values | Source | Cap |
+| --- | --- | --- | --- | --- |
+| `studio:ready` | `boot` | `lt2s`, `2-5s`, `5-15s`, `gte15s` | `StudioReadyMark` (`src/main.jsx`): one rAF after the first React commit, `performance.now()` (navigation start origin). It waits for the SDK, never delays the render | 1 per session |
+| `playback:summary` | `duration` | `lt10s`, `10-30s`, `30-60s`, `1-2m`, `2-5m`, `gte5m` | The timeline's playback effect (`src/motion/timeline.jsx`): play until stop, unmount, or an fps/speed change | 10 per session |
+| | `late_ticks` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Timer ticks whose `createPlaybackClock` step count was over 1, out of all ticks. **An estimate of dropped frames, not measured render drops**: a late timer is a symptom of a busy main thread | |
+| | `max_catchup` | `1`, `2`, `3-5`, `gte6` | The most frames one tick caught up | |
+| | `fps`, `speed` | `12`, `24`, `30`, `60`, `other`; `0.5`, `1`, `2`, `other` | The take's frame rate and the playback speed | |
+| | `measured_fps` | `device:profile.frame_rate_bucket` set: `lt20`, `20-40`, `40-55`, `gte55`, `unknown` | rAF frames counted during the same run | |
+| `guide:opened` | `mode` | `animation`, `storyboard` | `src/first-success-guide.jsx` (`STEPS_BY_MODE` keys) | 1 per session |
+| `guide:step` | `mode`, `step`, `step_ms` | `step` `1`-`4`; `step_ms` the `duration` set | "I did this" / "Mark complete"; `step_ms` since opening or the previous step | 1 per step per session |
+| `guide:dismissed` | `mode`, `reached` | `reached` `1`-`4`: the step showing | Close or Skip before the last step. Closing the completed guide is not a dismissal | 1 per session |
+| `guide:completed` | `mode` | | The last step marked done | 1 per session |
+| `agent:panel_toggled` | `open`, `via` | bool; `key` (Cmd/Ctrl+B), `button` (toolbar or Workflow control) | The studio's agent-panel toggle (`src/App.jsx`) | 10 per session |
+| `object:deleted_soon` | `age` | `lt2s`, `2-10s`, `10-60s`, `gte60s` | A delete (`src/domains/objects.js`) of an id the user added this session. Ids are slugs a re-created object reuses, so the age is an **estimate** | 10 per session |
+| `object:delete_undone` | `age` | `lt2s`, `2-10s` | Undo (toast button or Cmd/Ctrl+Z) inside the 7 s delete-undo window; age from the delete | 10 per session |
+
+- Every playback run, past the cap too, feeds
+  `app:friction_summary.late_tick_ratio`. A hidden tab throttles timers to
+  about 1 Hz, so a run left playing in the background reads as late.
+- `app:session_started` is sent by npm installs only. Hosted sessions start
+  with `$pageview`; use it in place of `app:session_started` there.
+
+## 1.1 Step funnel (update: `studio:ready`)
+
+Ordered funnel, 7-day window, by `distinct_id`, split by `app_version` and
+`install_kind`: `app:session_started` -> `studio:ready` ->
+`craft:first_action` -> `craft:first_edit` -> later steps. Sketch, not
+executed against PostHog.
+
+```sql
+SELECT
+    countIf(steps >= 1) AS started,
+    countIf(steps >= 2) AS ready,
+    countIf(steps >= 3) AS first_action,
+    countIf(steps >= 4) AS first_edit
+FROM (
+    SELECT distinct_id, windowFunnel(7 * 86400)(toDateTime(timestamp),
+        event = 'app:session_started', event = 'studio:ready',
+        event = 'craft:first_action', event = 'craft:first_edit') AS steps
+    FROM events
+    WHERE event IN ('app:session_started', 'studio:ready', 'craft:first_action', 'craft:first_edit')
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 30 DAY
+    GROUP BY distinct_id
+)
+```
+
+## 1.5 Suspected white screens (30 days)
+
+A session start with no `studio:ready` from the same person within 60 s.
+Builds without `studio:ready` would all count, so filter to versions that
+ship it. Sketch, not executed against PostHog.
+
+```sql
+SELECT count() AS starts, countIf(r.t IS NULL) AS no_ready_in_60s
+FROM (
+    SELECT distinct_id, timestamp AS t0 FROM events
+    WHERE event = 'app:session_started'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 30 DAY
+) AS s
+LEFT JOIN (
+    SELECT distinct_id, timestamp AS t FROM events
+    WHERE event = 'studio:ready' AND timestamp >= now() - INTERVAL 30 DAY
+) AS r ON r.distinct_id = s.distinct_id AND r.t BETWEEN s.t0 AND s.t0 + INTERVAL 60 SECOND
+```
+
+Several ready events can join one start; count distinct starts if the
+numbers look high.
+
+## 5.4 Deleted right after adding (90 days)
+
+Sketch, not executed against PostHog.
+
+```sql
+SELECT
+    event,
+    properties.age AS age,
+    count() AS events,
+    uniq(distinct_id) AS people
+FROM events
+WHERE event IN ('object:deleted_soon', 'object:delete_undone')
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 90 DAY
+GROUP BY event, age
+ORDER BY event, indexOf(['lt2s', '2-10s', '10-60s', 'gte60s'], age)
+```
+
+`object:deleted_soon` is an estimate (slug ids), and both events cap at 10
+per session: read them as "how many people", not as totals.
+
+## 5.8 Playback lateness by GPU class (90 days)
+
+Each summary joins the latest `device:profile` of the same person.
+`late_ticks` is an **estimate** (late timer ticks), not measured render
+drops; read it next to `measured_fps`. Sketch, not executed against PostHog.
+
+```sql
+SELECT
+    coalesce(d.gpu_class, 'no_profile') AS gpu_class,
+    p.late_ticks AS late_ticks,
+    p.measured_fps AS measured_fps,
+    count() AS runs,
+    uniq(p.distinct_id) AS people
+FROM (
+    SELECT distinct_id, properties.late_ticks AS late_ticks, properties.measured_fps AS measured_fps FROM events
+    WHERE event = 'playback:summary'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+) AS p
+LEFT JOIN (
+    SELECT distinct_id, argMax(properties.gpu_class, timestamp) AS gpu_class FROM events
+    WHERE event = 'device:profile'
+      AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+      AND timestamp >= now() - INTERVAL 90 DAY
+    GROUP BY distinct_id
+) AS d ON d.distinct_id = p.distinct_id
+GROUP BY gpu_class, late_ticks, measured_fps
+ORDER BY gpu_class, indexOf(['0', 'lt5', '5-20', '20-50', 'gte50'], late_ticks)
+```
+
 # Session friction summary
 
 `app:friction_summary` is one passive event per session, sent by the same
@@ -1244,7 +1375,7 @@ sanitizer (`src/analytics-friction.js`, `src/analytics.js`). It never moves
 | `errors` | count bucket | Every reported window error and unhandled rejection, including repeats that `app:error`'s 10-signature dedupe does not send, plus every render error the crash screen caught (`app:render_crash`) |
 | `long_tasks`, `long_task_max` | count bucket; `lt50`, `50-150`, `150-500`, `500-2000`, `gte2000` ms | `PerformanceObserver` `longtask` entries. Where the browser does not report long tasks (feature-detected), the values stay `0` / `lt50`: **unsupported, not smooth** |
 | `compiles` | count bucket | Every `motion.compile` draft, including those past `motion:draft_compiled`'s 50-per-session cap |
-| `late_tick_ratio` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Reserved for the playback detector; `0` until it ships |
+| `late_tick_ratio` | `0`, `lt5`, `5-20`, `20-50`, `gte50` % | Every playback run's late timer ticks out of all its ticks (`playback:summary`, past its cap too). An **estimate** of dropped frames, not measured render drops; `0` with no playback |
 | `rage_clicks`, `dead_clicks`, `shortcut_ignored`, `search_empty`, `nav_thrash`, `camera_thrash` | count bucket | Reserved; `0` until their detectors ship |
 
 Count bucket: `0`, `1`, `2`, `3`, `4-5`, `6-10`, `gte11`. A detector with

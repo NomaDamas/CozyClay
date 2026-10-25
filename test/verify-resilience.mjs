@@ -11,7 +11,8 @@ const read = (path) => readFile(new URL(`../src/${path}`, import.meta.url), "utf
 
 // --- the error boundary wraps the whole tree -------------------------------
 const main = await read("main.jsx");
-assert.match(main, /<ErrorBoundary>\s*<App \/>\s*<\/ErrorBoundary>/, "App must render inside the error boundary");
+// StudioReadyMark (studio:ready) sits beside App inside the boundary, so a crashed first render never reports ready.
+assert.match(main, /<ErrorBoundary>\s*<App \/>\s*(?:\{\/\*[^}]*\*\/\}\s*)?(?:<StudioReadyMark \/>\s*)?<\/ErrorBoundary>/, "App must render inside the error boundary");
 
 const boundary = await read("error-boundary.jsx");
 assert.match(boundary, /static getDerivedStateFromError/, "the boundary must derive fallback state from the error");
