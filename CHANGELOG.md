@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+MCP
+
+- The npm package now ships `mcp/project-camera.mjs`, so the Studio's live
+  tools and `cozyclay mcp` start on an npm install instead of failing with
+  "Cannot find module" (broken since 3.1.2). The package check now fails a
+  release whose `bin/` or `mcp/` code imports a file the package leaves out.
+
 ## 3.1.5 - 2026-10-25
 
 The Studio tells you when a new release is out and installs it in one click, Claude models work in the agent panel again, IK edits stay on their own character, turns and walks look more natural, and anonymous analytics show where the Studio gets in the way.

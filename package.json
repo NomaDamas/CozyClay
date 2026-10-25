@@ -104,6 +104,7 @@
     "mcp/live-hub.mjs",
     "mcp/mesh-file.mjs",
     "mcp/image-file.mjs",
+    "mcp/project-camera.mjs",
     "mcp/runtime",
     "mcp/package.json",
     "mcp/README.md",
