@@ -3,6 +3,7 @@ import ProjectPanel from "../panels/ProjectPanel.jsx";
 import MenuBar from "./MenuBar.jsx";
 import { SaveState } from "./StatusBar.jsx";
 import { ko } from "../locale.js";
+import UpdateChip from "../update/UpdateChip.jsx";
 import "./topbar.css";
 
 // 2a top bar: File/Edit/Window/Help, then the MCP state. Motion is authored by the
@@ -15,6 +16,7 @@ export default function TopBar({ preferences }) {
 		<header className="topbar v2-topbar" data-rec-state={recState}>
 			<MenuBar preferences={preferences} />
 			<div className="topbar-spacer" />
+			<UpdateChip />
 			<span
 				className={"topbar-mcp" + (liveWorkspaceHandle ? " live-workspace-handle" : "")}
 				data-state={connected ? "connected" : "disconnected"}

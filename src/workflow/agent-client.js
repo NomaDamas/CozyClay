@@ -26,7 +26,7 @@
 import { track } from "../analytics.js";
 import { appendAttachments, ATTACHMENT_MAX_COUNT } from "./attachment-image.js";
 import { ko } from "../locale.js";
-import { startAgentTurn } from "./agent-turn-telemetry.js";
+import { startAgentTurn, trackAgentTurns } from "./agent-turn-telemetry.js";
 import { STUDIO_VARIANTS, validateReceipt } from "../studio-agent-protocol.js";
 import { refusalFailureCode, transportFailureCode } from "./agent-failure-codes.js";
 import { requestAgentImage, sidecarRequest, sidecarUrl } from "../agent-image-client.js"; import { clearSculptSketch, sculptSketchFrame } from "../sculpt-sketch-state.js";
@@ -1053,7 +1053,7 @@ export function createAgentTransport(options = {}) {
 	const config = options.mockConfig !== undefined ? options.mockConfig : mockConfigFromSearch();
 	// The surface is the host's own prop, never a guess from the URL: an
 	// embedded Studio panel is a Studio panel wherever it is mounted.
-	return config ? createMockTransport({ surface: options.surface, ...config }) : createHttpTransport(options);
+	return trackAgentTurns(config ? createMockTransport({ surface: options.surface, ...config }) : createHttpTransport(options));
 }
 
 // One conversation: session identity, transcript, motion jobs, receipts and
