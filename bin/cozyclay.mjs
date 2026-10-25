@@ -14,7 +14,6 @@
  * that needs an install step before it can serve a prebuilt app is a
  * launcher that will break.
  */
-import { spawn } from "node:child_process";
 import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { homedir } from "node:os";
@@ -24,7 +23,8 @@ import { fileURLToPath } from "node:url";
 import { ensureMcpRuntime, runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { maybeAskForStar } from "./star-prompt.mjs";
-import { checkForUpdate, readUpdateStatus, runUpdate } from "./update-check.mjs";
+import { checkForUpdate, readUpdateStatus, runUpdate, runUpdateCheck, updateChecksOn } from "./update-check.mjs";
+import { createStudioRoutes } from "./studio-routes.mjs";
 import { handleOAuthRequest } from "./codex-auth.mjs";
 import { createAgentHandler } from "./agent/agent-routes.mjs";
 import { liveHubPort } from "./live-endpoint.mjs";
@@ -56,8 +56,8 @@ const OFFICIAL_PACKAGE = (
 	&& !SOURCE_CHECKOUT
 	&& verifyPackageMarker(join(DIST, "cozyclay-package.json"), PKG_ROOT, packageMetadata)
 );
-const INSTALL_KIND = process.env.npm_config_global === "true"
-	|| (PKG_ROOT.includes("/node_modules/") && !PKG_ROOT.includes("/_npx/"))
+const INSTALL_KIND = SOURCE_CHECKOUT ? "clone" : process.env.npm_config_global === "true"
+	|| (/[\\/]node_modules[\\/]/.test(PKG_ROOT) && !/[\\/]_npx[\\/]/.test(PKG_ROOT))
 	? "global"
 	: "npx";
 
@@ -143,6 +143,7 @@ const HELP = `cozyclay - browser-based 3D staging studio
   cclay live status         drive a running studio from the terminal
                             (cclay live --help lists every verb)
   cclay update              install the latest cozyclay globally (npm install -g)
+  cclay update --check      only compare: exit 0 latest, 10 newer exists, 11 unknown
   npx cozyclay --port 5200  serve on another port
   npx cozyclay --no-open    do not open a browser
   npx cozyclay --scene <id> open the studio on a bundled starter scene
@@ -211,11 +212,12 @@ if (argv[0] === "mcp") {
 } else if (argv[0] === "update") {
 	// This branch bypasses parseArgs, so anything trailing would be swallowed
 	// and `cclay update --help` would perform an unrequested global install.
-	if (argv.length > 1) {
-		console.error(`cozyclay: update takes no arguments (got ${argv.slice(1).join(" ")})`);
+	if (argv.length > 1 && !(argv.length === 2 && argv[1] === "--check")) {
+		console.error(`cozyclay: update takes no arguments except --check (got ${argv.slice(1).join(" ")})`);
 		process.exit(1);
 	}
-	runUpdate();
+	if (argv[1] === "--check") process.exit(await runUpdateCheck({ currentVersion: readVersion(), kind: INSTALL_KIND, stateDir: STATE_DIR }));
+	else runUpdate();
 } else if (argv[0] === "telemetry") {
 	const action = argv[1] ?? "status";
 	const internalAction = action === "internal" ? argv[2] : null;
@@ -251,21 +253,14 @@ if (opts.version) {
 	console.log(version);
 	process.exit(0);
 }
-let runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
-	appVersion: version,
-	officialPackage: OFFICIAL_PACKAGE,
-	installKind: INSTALL_KIND,
-});
+const takeRuntime = () => takeRuntimeTelemetryConfig(STATE_FILE, { appVersion: version, officialPackage: OFFICIAL_PACKAGE, installKind: INSTALL_KIND });
+let runtimeTelemetry = takeRuntime();
 if (runtimeTelemetry.firstLaunch && !readTelemetryState(STATE_FILE).firstLaunchHeardFrom) {
 	// A copied `--via` command already says where the install came from.
 	const heardFrom = opts.via || await askFirstLaunchSource();
 	if (heardFrom) {
 		setTelemetryFirstLaunchSource(STATE_FILE, heardFrom);
-	runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
-		appVersion: version,
-		officialPackage: OFFICIAL_PACKAGE,
-		installKind: INSTALL_KIND,
-	});
+	runtimeTelemetry = takeRuntime();
 	}
 }
 const telemetryState = readTelemetryState(STATE_FILE);
@@ -281,7 +276,7 @@ if (
 }
 // Fired before anything blocking and never awaited on the launch path: the
 // notice is worth a line of output, never a second of startup.
-const updateChecksEnabled = Boolean(opts.updateCheck && !process.env.CI && !process.env.COZYCLAY_NO_UPDATE_CHECK);
+const updateChecksEnabled = updateChecksOn(opts.updateCheck);
 const updatePending = updateChecksEnabled ? checkForUpdate(version, STATE_DIR) : null;
 if (!existsSync(join(DIST, "app", "index.html"))) {
 	console.error("cozyclay: this package is missing its build (dist/app/index.html).");
@@ -309,6 +304,7 @@ process.on("SIGTERM", () => shutdown(143));
 // A source checkout has mcp/node_modules; the package loads the Studio's live
 // tools from the staged MCP runtime that `cclay mcp` also uses (#576).
 const agentHandler = createAgentHandler({ port: () => opts.port, ...(SOURCE_CHECKOUT ? {} : { mcpRuntime: { ensure: ensureMcpRuntime } }) });
+const studioRoutes = createStudioRoutes({ port: opts.port, stateFile: STATE_FILE, takeRuntime, update: { currentVersion: version, stateDir: STATE_DIR, kind: INSTALL_KIND, enabled: updateChecksEnabled, pkgRoot: PKG_ROOT } });
 server = createServer((req, res) => {
 	const url = new URL(req.url ?? "/", "http://127.0.0.1");
 	if (/^\/oauth\/(start|status|logout)$/.test(url.pathname)) {
@@ -328,47 +324,7 @@ server = createServer((req, res) => {
 		});
 		return;
 	}
-	if (url.pathname === "/__cozyclay/telemetry") {
-		if (req.method === "POST") {
-			const origin = req.headers.origin;
-			const expectedOrigin = `http://127.0.0.1:${opts.port}`;
-			if (origin !== expectedOrigin) {
-				res.writeHead(403, { "content-type": "application/json; charset=utf-8" });
-				res.end(JSON.stringify({ error: "forbidden origin" }));
-				return;
-			}
-			let body = "";
-			req.setEncoding("utf8");
-			req.on("data", (chunk) => {
-				body += chunk;
-				if (body.length > 1024) req.destroy();
-			});
-			req.on("end", () => {
-				try {
-					const value = JSON.parse(body);
-					if (typeof value.enabled !== "boolean") throw new TypeError("enabled must be boolean");
-					setTelemetryEnabled(STATE_FILE, value.enabled);
-					runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
-						appVersion: version,
-						officialPackage: OFFICIAL_PACKAGE,
-						installKind: INSTALL_KIND,
-					});
-					res.writeHead(200, {
-						"content-type": "application/json; charset=utf-8",
-						"cache-control": "no-store",
-					});
-					res.end(JSON.stringify(runtimeTelemetry));
-				} catch {
-					res.writeHead(400, { "content-type": "application/json; charset=utf-8" });
-					res.end(JSON.stringify({ error: "invalid telemetry setting" }));
-				}
-			});
-			return;
-		}
-		res.writeHead(405, { allow: "POST", "content-type": "application/json; charset=utf-8" });
-		res.end(JSON.stringify({ error: "method not allowed" }));
-		return;
-	}
+	if (studioRoutes(req, res, url)) return;
 	let rel;
 	try {
 		rel = decodeURIComponent(url.pathname);
@@ -396,11 +352,7 @@ server = createServer((req, res) => {
 		return;
 	}
 	if (target === join(DIST, "app", "index.html")) {
-		runtimeTelemetry = takeRuntimeTelemetryConfig(STATE_FILE, {
-			appVersion: version,
-			officialPackage: OFFICIAL_PACKAGE,
-			installKind: INSTALL_KIND,
-		});
+		runtimeTelemetry = takeRuntime();
 		// Whether this launch is the newest release, from the registry answer the
 		// update check already cached (#466). Never a request of its own.
 		const runtime = { ...runtimeTelemetry, updateStatus: updateChecksEnabled ? readUpdateStatus(version, STATE_DIR) : "unknown" };

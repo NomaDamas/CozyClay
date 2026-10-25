@@ -13,12 +13,19 @@
  */
 
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { checkForUpdate, compareVersions } from "../bin/update-check.mjs";
+import { canSelfUpdate, classifyNpmError } from "../bin/update-install.mjs";
+
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
+const FAKE_NPM = join(ROOT, "test", "fixtures", "fake-npm.mjs");
+const PACKAGE_VERSION = JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version;
 
 function pass(message) {
 	console.log(`PASS ${message}`);
@@ -158,6 +165,94 @@ try {
 	registry.body = JSON.stringify({ version: "9.9.9" });
 	assert.equal(await check("1.3.0", { url: "not a url" }), null);
 	pass("checkForUpdate returns null when the registry URL itself is unusable");
+
+	/* -------------------------------------------------- classifyNpmError ---- */
+
+	const table = [
+		["npm error code EACCES\nnpm error syscall mkdir", null, "permission"],
+		["npm ERR! code EPERM", null, "permission"],
+		["npm error code ENOTFOUND", null, "network"],
+		["npm error code ETIMEDOUT", null, "network"],
+		["npm error code ECONNREFUSED", null, "network"],
+		["npm error code ECONNRESET", null, "network"],
+		["npm error code EAI_AGAIN", null, "network"],
+		["npm error code EBADENGINE", null, "node_version"],
+		["npm error notsup Not compatible with your version of node/npm: cozyclay@3.9.9", null, "node_version"],
+		["", { code: "ENOENT" }, "npm_missing"],
+		["npm error code ENOENT\nnpm error syscall open", null, "other"],
+		["npm error code E404", null, "other"],
+		["something broke", null, "other"],
+		["", null, "other"],
+		["Error: EACCES: permission denied, mkdir '/usr/local/lib/node_modules'", null, "permission"],
+		["", { code: "EACCES" }, "permission"],
+		[undefined, undefined, "other"],
+	];
+	for (const [stderr, spawnError, expected] of table) {
+		assert.equal(classifyNpmError(stderr, spawnError), expected, `${JSON.stringify(stderr)} / ${spawnError?.code}`);
+	}
+	pass(`classifyNpmError maps ${table.length} npm outputs onto the 5 classes`);
+
+	/* ---------------------------------------------- cclay update --check ---- */
+
+	const checkHome = mkdtempSync(join(tmpdir(), "cozyclay-update-cli-"));
+	const runCheck = (url, args = ["update", "--check"]) => new Promise((resolve) => {
+		execFile(process.execPath, [join(ROOT, "bin", "cozyclay.mjs"), ...args], {
+			env: { ...process.env, COZYCLAY_REGISTRY_URL: url, XDG_CONFIG_HOME: checkHome },
+			timeout: 8000,
+		}, (error, stdout, stderr) => resolve({ code: error ? error.code : 0, stdout, stderr }));
+	});
+	registry.body = JSON.stringify({ version: "9.9.9" });
+	let cli = await runCheck(registryUrl);
+	assert.equal(cli.code, 10, cli.stderr);
+	assert.match(cli.stdout, new RegExp(`current: ${PACKAGE_VERSION.replaceAll(".", "\\.")}`));
+	assert.match(cli.stdout, /latest: 9\.9\.9/);
+	assert.match(cli.stdout, /kind: clone/, "a source checkout reports clone");
+	assert.match(cli.stdout, /status: outdated/);
+	registry.body = JSON.stringify({ version: PACKAGE_VERSION });
+	cli = await runCheck(registryUrl);
+	assert.equal(cli.code, 0, "--check asks the registry even inside the TTL");
+	assert.match(cli.stdout, /status: latest/);
+	rmSync(join(checkHome, "cozyclay"), { recursive: true, force: true });
+	cli = await runCheck(deadUrl);
+	assert.equal(cli.code, 11);
+	assert.match(cli.stdout, /latest: unknown/);
+	cli = await runCheck(registryUrl, ["update", "--check", "--help"]);
+	assert.equal(cli.code, 1, "anything beyond --check is still refused");
+	assert.match(cli.stderr, /takes no arguments except --check/);
+	cli = await runCheck(registryUrl, ["update", "--help"]);
+	assert.equal(cli.code, 1);
+	rmSync(checkHome, { recursive: true, force: true });
+	pass("cclay update --check exits 10 outdated, 0 latest, 11 unknown, and the guard still rejects other args");
+
+	/* ----------------------------------------------------- canSelfUpdate ---- */
+
+	const npmHome = mkdtempSync(join(tmpdir(), "cozyclay-npm-root-"));
+	const globalRoot = join(npmHome, "lib", "node_modules");
+	mkdirSync(join(globalRoot, "cozyclay"), { recursive: true });
+	const elsewhere = join(npmHome, "project", "node_modules", "cozyclay");
+	mkdirSync(elsewhere, { recursive: true });
+	const readOnlyRoot = join(npmHome, "ro", "node_modules");
+	mkdirSync(join(readOnlyRoot, "cozyclay"), { recursive: true });
+	chmodSync(join(readOnlyRoot, "cozyclay"), 0o555);
+	process.env.COZYCLAY_NPM_BIN = FAKE_NPM;
+	try {
+		process.env.FAKE_NPM_ROOT = globalRoot;
+		const inRoot = canSelfUpdate({ pkgRoot: join(globalRoot, "cozyclay"), platform: "darwin" });
+		assert.equal(await inRoot, true, "the package npm root -g names, writable");
+		assert.equal(canSelfUpdate({ pkgRoot: join(globalRoot, "cozyclay"), platform: "darwin" }), inRoot, "computed once, then cached");
+		assert.equal(await canSelfUpdate({ pkgRoot: elsewhere, platform: "darwin" }), false, "a project-local install is not the global one");
+		assert.equal(await canSelfUpdate({ pkgRoot: join(globalRoot, "cozyclay"), platform: "win32" }), false, "Windows is out of U1 scope");
+		assert.equal(await canSelfUpdate({ pkgRoot: join(globalRoot, "cozyclay"), platform: "darwin", npmBin: join(npmHome, "no-npm") }), false, "no npm, no self-update");
+		process.env.FAKE_NPM_ROOT = readOnlyRoot;
+		// root ignores W_OK bits, so only a normal user can see the read-only case.
+		if (process.getuid?.() !== 0) assert.equal(await canSelfUpdate({ pkgRoot: join(readOnlyRoot, "cozyclay"), platform: "darwin" }), false, "a read-only global folder needs the copied command");
+	} finally {
+		delete process.env.COZYCLAY_NPM_BIN;
+		delete process.env.FAKE_NPM_ROOT;
+		chmodSync(join(readOnlyRoot, "cozyclay"), 0o755);
+		rmSync(npmHome, { recursive: true, force: true });
+	}
+	pass("canSelfUpdate is true only for a writable package at <npm root -g>/cozyclay off Windows");
 
 	console.log("all Cozy Clay update-check checks PASS");
 } finally {

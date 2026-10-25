@@ -5,7 +5,7 @@
 	"bin/agent/session-store.mjs": 324,
 	"bin/agent/supervisor.mjs": 283,
 	"bin/agent/video-adapters.mjs": 334,
-	"bin/cozyclay.mjs": 399,
+	"bin/cozyclay.mjs": 351,
 	"bin/live/cli.mjs": 456,
 	"mcp/live-hub.mjs": 529,
 	"mcp/tool-handlers.mjs": 1730,
