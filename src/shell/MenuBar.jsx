@@ -351,7 +351,7 @@ export default function MenuBar({ preferences }) {
 						type="button"
 						role="menuitem"
 						className="menubar-item"
-						data-testid="export-animation-project"
+						data-testid="export-animation-project" data-fid="export_animation_project"
 						onClick={item(() => runStudioAction("project.exportAsAnimation"))}
 					>
 						<span className="menubar-item-label">{ko("Export as Animation project…", "애니메이션 프로젝트로 내보내기…")}</span>
@@ -389,7 +389,7 @@ export default function MenuBar({ preferences }) {
 								type="button"
 								role="menuitem"
 								className="menubar-item export-menu-primary"
-								data-testid="export-keyframe-pack"
+								data-testid="export-keyframe-pack" data-fid="export_keyframe_pack"
 								disabled={!shots.length || recording}
 								data-disabled-reason={shots.length ? undefined : "no-shots"}
 								title={shots.length
@@ -410,7 +410,7 @@ export default function MenuBar({ preferences }) {
 									type="button"
 									role="menuitem"
 									className="menubar-item"
-									data-testid="export-video"
+									data-testid="export-video" data-fid="export_video"
 									disabled={recording}
 									title={ko("Render the whole timeline to one MP4 — every shot back to back, camera and motion, no editor chrome", "타임라인 전체를 MP4 하나로 — 모든 샷을 이어서, 카메라·모션만, 편집 UI 제외")}
 									onClick={() => {
@@ -426,7 +426,7 @@ export default function MenuBar({ preferences }) {
 									type="button"
 									role="menuitem"
 									className="menubar-item"
-									data-testid="export-video-shot"
+									data-testid="export-video-shot" data-fid="export_video_shot"
 									disabled={recording}
 									title={ko("Render one shot to its own MP4 — the shot you opened the menu from, or the one under the playhead", "샷 하나만 MP4로 — 메뉴를 연 샷, 아니면 재생 위치의 샷")}
 									onClick={() => {
@@ -442,7 +442,7 @@ export default function MenuBar({ preferences }) {
 								type="button"
 								role="menuitem"
 								className="menubar-item"
-								data-testid="export-render-passes"
+								data-testid="export-render-passes" data-fid="export_render_passes"
 								disabled={recording}
 								title={ko("Depth and normal conditioning plates of the current framing", "현재 프레이밍의 뎁스·노멀 컨디션 플레이트")}
 								onClick={item(exportRenderPasses)}
@@ -453,7 +453,7 @@ export default function MenuBar({ preferences }) {
 								type="button"
 								role="menuitem"
 								className="menubar-item"
-								data-testid="export-depth-video"
+								data-testid="export-depth-video" data-fid="export_depth_video"
 								disabled={!shots.length || recording}
 								data-disabled-reason={shots.length ? undefined : "no-shots"}
 								title={ko("Depth pass of the whole shot as an mp4 for video-model conditioning", "샷 전체의 뎁스 패스를 mp4로 — 영상 모델 컨디셔닝용")}
@@ -469,7 +469,7 @@ export default function MenuBar({ preferences }) {
 								type="button"
 								role="menuitem"
 								className="menubar-item"
-								data-testid="export-storyboard"
+								data-testid="export-storyboard" data-fid="export_storyboard"
 								disabled={!shots.length || recording}
 								data-disabled-reason={shots.length ? undefined : "no-shots"}
 								title={shots.length
@@ -484,7 +484,7 @@ export default function MenuBar({ preferences }) {
 									type="button"
 									role="menuitem"
 									className="menubar-item"
-									data-testid="export-otio"
+									data-testid="export-otio" data-fid="export_otio"
 									title={ko("Download OTIO cut list", "OTIO 컷 목록 다운로드")}
 									onClick={item(downloadOtioCutList)}
 								>
@@ -506,11 +506,11 @@ export default function MenuBar({ preferences }) {
 		),
 		edit: (
 			<>
-				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => castDomain.undoScene("menu"))}>
+				<button type="button" role="menuitem" className="menubar-item" data-fid="menu_undo" onClick={item(() => castDomain.undoScene("menu"))}>
 					<span className="menubar-item-label">{ko("Undo", "실행 취소")}</span>
 					<Shortcut keys={`${MOD}Z`} />
 				</button>
-				<button type="button" role="menuitem" className="menubar-item" onClick={item(() => castDomain.redoScene())}>
+				<button type="button" role="menuitem" className="menubar-item" data-fid="menu_redo" onClick={item(() => castDomain.redoScene())}>
 					<span className="menubar-item-label">{ko("Redo", "다시 실행")}</span>
 					<Shortcut keys={`${SHIFT}${MOD}Z`} />
 				</button>

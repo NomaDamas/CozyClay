@@ -1592,7 +1592,7 @@ export default function Timeline({
 							</button>
 							<button
 								type="button"
-								className={"tl-btn play" + (playing ? " on" : "")}
+								className={"tl-btn play" + (playing ? " on" : "")} data-fid="tl_play"
 								aria-label={playing ? ko("Pause playback", "재생 일시중지") : ko("Play playback", "재생 시작")}
 								title={ko("Play / pause (Space)", "재생/일시중지 (Space)")}
 								onClick={() => handlers.current.onPlayToggle?.()}
@@ -1849,7 +1849,7 @@ export default function Timeline({
 									{name === SHOTS_LANE && (
 										<button
 											type="button"
-											className="tl-track-add cut"
+											className="tl-track-add cut" data-fid="shot_add"
 											disabled={shotCutDisabled}
 											title={ko("Add a 2 second shot without changing existing shots", "기존 샷을 바꾸지 않고 2초 샷 추가")}
 											onClick={() => handlers.current.onShotCut?.()}
@@ -1993,7 +1993,7 @@ export default function Timeline({
 											<span className="tl-shot-actions">
 												<button type="button" title={ko("Split at the playhead", "재생 헤드에서 분할")} disabled={frame <= shot.startFrame || frame > shot.endFrame} onClick={(e) => { e.stopPropagation(); handlers.current.onShotSplit?.(shot.id); }}>{ko("Split", "분할")}</button>
 												<button type="button" title={ko("Duplicate shot", "샷 복제")} onClick={(e) => { e.stopPropagation(); handlers.current.onShotDuplicate?.(shot.id); }}>{ko("Duplicate", "복제")}</button>
-													<button type="button" title={ko("Delete shot and leave free-camera time", "샷을 지우고 자유 카메라 구간으로 비우기")} onClick={(e) => { e.stopPropagation(); handlers.current.onShotRemove?.(shot.id); }}>{ko("Delete", "삭제")}</button>
+													<button type="button" data-fid="shot_delete" title={ko("Delete shot and leave free-camera time", "샷을 지우고 자유 카메라 구간으로 비우기")} onClick={(e) => { e.stopPropagation(); handlers.current.onShotRemove?.(shot.id); }}>{ko("Delete", "삭제")}</button>
 												</span>
 												<span className="tl-shot-camera-summary">
 													<span className="tl-camera-block-state">{stateLabel}</span>
@@ -2055,7 +2055,7 @@ export default function Timeline({
 												    one gesture cannot both reorder a shot and edit a curve. */}
 												<button
 													type="button"
-													className="tl-shot-key-surface"
+													className="tl-shot-key-surface" data-fid="camera_key_add"
 													aria-label={shot.camera?.mode === "rail" && shot.camera?.craneHeight
 														? ko(`Add crane point in ${shot.name}`, `${shot.name}에 크레인 점 추가`, `在 ${shot.name} 中添加摇臂点`)
 														: ko(`Add camera key in ${shot.name}`, `${shot.name}에 카메라 키 추가`, `在 ${shot.name} 中添加摄影机关键帧`)}

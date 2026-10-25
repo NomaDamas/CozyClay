@@ -309,7 +309,7 @@ export default function ViewportToolbar() {
 							type="button"
 							key={tool.key}
 							data-tool-key={tool.key}
-							data-tool={tool.id}
+							data-tool={tool.id} data-fid={`tool_${tool.id}`}
 							className={"vp-tool-key" + (tool.active ? " active" : "")}
 							aria-pressed={tool.active}
 							aria-disabled={tool.refused ? true : undefined}
@@ -341,7 +341,7 @@ export default function ViewportToolbar() {
 								role="tab"
 								key={mode.id}
 								data-mode-key={mode.key}
-								data-mode={mode.id}
+								data-mode={mode.id} data-fid={`mode_${mode.id}`}
 								className={"vp-mode-key" + (active ? " active" : "")}
 								aria-selected={active}
 								aria-disabled={refused ? true : undefined}

@@ -1515,6 +1515,65 @@ For `first_tool`, swap `wall` for `first_tool` and add
 `cancel_phase` beside the `cancelled` rows to see whether people gave up
 waiting for the first tool (`before_tool`) or mid-run.
 
+# Click friction (ui:rage_click, ui:dead_click)
+
+One capture-phase `pointerdown` listener on the Studio shell (`src/click-friction.js`,
+installed by `src/shell/StudioShell.jsx`). The primary controls carry `data-fid` from
+one closed list (`src/analytics-controls.js`); any other button, tab, menu item or
+link reports `other`. Clicks into `input`, `textarea`, `select`, `contenteditable`
+and during IME composition are ignored outright. Both events are passive, and both
+always bump `app:friction_summary` `rage_clicks` / `dead_clicks`, past their caps too.
+Builds before this release have no rows (**unknown, not 0**).
+
+Real pointer input on a natively `disabled` button still reaches a document
+capture-phase `pointerdown` listener (Chrome 155, measured; `mousedown` and
+`click` do not), so disabled controls need no `aria-disabled` rewrite to be seen.
+
+| Event | Properties | Rule |
+| --- | --- | --- |
+| `ui:rage_click` | `control`, `clicks` (`3`, `4-5`, `gte6`), `changed` (bool) | 3 or more `pointerdown`s on one control within 1 s of the first and 24 px of where it began. `changed`: a command-bus receipt or any DOM change in the shell after the first click. 2 per control per session, 10 s cooldown per control |
+| `ui:dead_click` | `control`, `reason` | `aria_disabled`: the control or an ancestor is `disabled` / `aria-disabled="true"`. `refused`: a command-bus refusal within 500 ms. `no_effect`: no receipt and no DOM change within 500 ms (closed-list controls only). 2 per control per session |
+
+`changed` and `no_effect` read DOM mutations, so during playback (the playhead
+moves the DOM) a click always reads as having changed something: dead clicks are
+undercounted while playing. Keyboard refusals (mode keys) are `shortcut:*`, not
+clicks.
+
+## 5.1 Rage-clicked controls (30 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT properties.control AS control, count() AS bursts, uniq(distinct_id) AS people,
+    countIf(JSONExtractRaw(properties, 'changed') = 'false') AS unchanged,
+    round(100.0 * unchanged / nullIf(bursts, 0), 1) AS unchanged_pct
+FROM events
+WHERE event = 'ui:rage_click'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY control
+ORDER BY bursts DESC
+```
+
+A high `unchanged_pct` is a control that looks broken: people hammer it and nothing responds.
+
+## 5.2 Dead clicks (30 days)
+
+Unexecuted sketch.
+
+```sql
+SELECT properties.control AS control, properties.reason AS reason, count() AS clicks, uniq(distinct_id) AS people
+FROM events
+WHERE event = 'ui:dead_click'
+  AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
+GROUP BY control, reason
+ORDER BY clicks DESC
+```
+
+`aria_disabled` on a primary control is people trying something the UI does not
+explain; read it beside that control's `title` or disabled-reason text.
+
 # Motion drafts (motion:draft_compiled)
 
 One passive event per `motion.compile` draft, fired on the main thread right

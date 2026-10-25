@@ -194,7 +194,7 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 						type="button"
 						role="tab"
 						key={entry.key}
-						data-testid={`dock-tab-${entry.key}`}
+						data-testid={`dock-tab-${entry.key}`} data-fid={`dock_tab_${entry.key}`}
 						aria-selected={tab === entry.key}
 						onClick={() => onTabChange?.(entry.key)}
 					>

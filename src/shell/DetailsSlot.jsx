@@ -271,7 +271,7 @@ export default function DetailsSlot() {
 				<button
 					type="button"
 					className="studio-agent-bar"
-					data-testid="studio-agent-bar"
+					data-testid="studio-agent-bar" data-fid="agent_panel"
 					aria-expanded="false"
 					title={ko("Open Agent (Cmd/Ctrl+B)", "에이전트 열기 (Cmd/Ctrl+B)")}
 					onClick={() => setStudioAgentMode(true)}

@@ -245,7 +245,7 @@ function FailureCard({ failure, onRetry, onFixKey }) {
 		<div className="agent-failure-head"><FiAlertTriangle size={12} aria-hidden="true" /><span className="agent-failure-code">{failure.code}</span></div>
 		<p className="agent-failure-message">{failure.message || "The command did not complete."}</p>
 		<p className="agent-failure-recovery">{RECOVERY_COPY[failure.recovery?.action] || RECOVERY_COPY.none}{failure.preserved?.authoredState === "unchanged" ? " Nothing in the scene changed." : failure.preserved?.authoredState === "unknown" ? " Whether the scene changed is unknown." : ""}</p>
-		{failure.recovery?.retryAllowed && <div className="agent-error-actions">{failure.recovery.action === "fix_key" && onFixKey && <button type="button" className="agent-ghost-button agent-error-keys" onClick={onFixKey}>Log in again</button>}<button type="button" className="agent-ghost-button agent-error-retry" onClick={onRetry}>Retry</button></div>}
+		{failure.recovery?.retryAllowed && <div className="agent-error-actions">{failure.recovery.action === "fix_key" && onFixKey && <button type="button" className="agent-ghost-button agent-error-keys" onClick={onFixKey}>Log in again</button>}<button type="button" className="agent-ghost-button agent-error-retry" data-fid="agent_retry" onClick={onRetry}>Retry</button></div>}
 	</div>;
 }
 
@@ -841,7 +841,7 @@ export default function AgentPanel({
 						{resetLabel && <span className="agent-account-reset">resets in {resetLabel}</span>}
 					</div>}
 					<button type="button" role="menuitem" onClick={clearContext}>Clear context</button>
-					<button type="button" role="menuitem" className="agent-menu-keys" aria-expanded={keysOpen} onClick={toggleProviderKeys}
+					<button type="button" role="menuitem" className="agent-menu-keys" data-fid="agent_connect" aria-expanded={keysOpen} onClick={toggleProviderKeys}
 						disabled={authState === "offline"} title={authState === "offline" ? ko("The agent server is not running", "에이전트 서버가 실행 중이 아니에요") : undefined}>Connect a model…</button>
 					{account?.signedIn && <button type="button" role="menuitem" onClick={signOut}>Sign out</button>}
 				</div>}
@@ -990,10 +990,10 @@ export default function AgentPanel({
 					    that can be steered, Send becomes the way INTO it. */}
 					{streaming
 						? <>
-							<button type="button" className="agent-send stop agent-stop" onClick={stopTurn}>Stop</button>
-							{presentation.steer && <button type="button" className="agent-send agent-steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
+							<button type="button" className="agent-send stop agent-stop" data-fid="agent_stop" onClick={stopTurn}>Stop</button>
+							{presentation.steer && <button type="button" className="agent-send agent-steer" data-fid="agent_steer" disabled={!draft.trim()} onClick={() => steerTurn(draft)}>Steer</button>}
 						</>
-						: <button type="button" className="agent-send" aria-label="Send" title="Send (Enter)" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}><FiArrowUp size={14} aria-hidden="true" /></button>}
+						: <button type="button" className="agent-send" data-fid="agent_send" aria-label="Send" title="Send (Enter)" disabled={composerDisabled || !draft.trim()} onClick={() => runTurn(draft)}><FiArrowUp size={14} aria-hidden="true" /></button>}
 				</div>
 				<ModelRolesLine model={model} roles={selectedModelRoles(modelRoles, model)} />
 			</div>

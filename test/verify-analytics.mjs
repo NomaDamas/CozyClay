@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import * as analytics from "../src/analytics.js";
 import { startExportAttempt } from "../src/export-attempt.js";
 import * as friction from "../src/analytics-friction.js";
+import { clickFrictionSeam, noteBusReceipt, notePointerDown } from "../src/click-friction.js";
 import { STRICT_EVENT_KEYS, bucketAge, bucketLong, refusalCodeOf, strictPropValidator } from "../src/analytics-strict.js";
 import * as postTurn from "../src/post-turn-edits.js";
 import { draftTelemetrySeam, noteDraftCompiled } from "../src/motion-draft-telemetry.js";
@@ -432,6 +433,83 @@ console.log("PASS export retries, scene size, stop stage/progress, new export ki
 	friction.reset();
 }
 console.log("PASS friction counters: closed buckets, per-event caps, validator, and feature-detected long tasks");
+
+// P2-a: rage and dead clicks from one pointerdown listener. A fake element answers the
+// selectors the detector asks; the 1 s window and the 500 ms effect wait run on real timers.
+{
+	friction.reset();
+	const sent = [];
+	let clock = 0;
+	const restoreClicks = clickFrictionSeam({ capture: (event, props) => sent.push({ event, props }), clock: () => clock });
+	const element = ({ fid = null, disabled = false, typing = false, control = true } = {}) => {
+		const el = {
+			getAttribute: (name) => (name === "data-fid" ? fid : null),
+			closest: (selector) => {
+				if (selector.includes("textarea")) return typing ? el : null;
+				if (selector === "[data-fid]") return fid ? el : null;
+				if (selector.includes("aria-disabled")) return disabled ? el : null;
+				return control || fid ? el : null;
+			},
+		};
+		return el;
+	};
+	const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+	const click = (target, x = 10, y = 10, step = 150) => { notePointerDown({ target, x, y }); clock += step; };
+	const take = (event) => sent.splice(0).filter((row) => row.event === event).map((row) => row.props);
+	// Four fast clicks on Play, no receipt and no DOM change: a rage burst that changed nothing, and dead clicks.
+	const play = element({ fid: "tl_play" });
+	for (let i = 0; i < 4; i += 1) click(play);
+	await wait(1100);
+	const rows = sent.splice(0);
+	assert.deepEqual(rows.filter((row) => row.event === "ui:rage_click").map((row) => row.props), [{ control: "tl_play", clicks: "4-5", changed: false }]);
+	assert.deepEqual(rows.filter((row) => row.event === "ui:dead_click").map((row) => row.props), [{ control: "tl_play", reason: "no_effect" }, { control: "tl_play", reason: "no_effect" }], "dead clicks stop at 2 per control");
+	// The same burst again within 10 s: cooldown, so only the counter moves; a burst whose clicks led to a receipt is changed.
+	for (let i = 0; i < 3; i += 1) click(play);
+	await wait(1100);
+	assert.deepEqual(take("ui:rage_click"), [], "a second burst inside the 10 s cooldown is not sent");
+	clock += 11_000;
+	const send = element({ fid: "agent_send" });
+	click(send); noteBusReceipt(true); click(send); click(send); click(send); click(send); click(send);
+	await wait(1100);
+	assert.deepEqual(take("ui:rage_click"), [{ control: "agent_send", clicks: "gte6", changed: true }]);
+	// Too far apart (24 px) or too slow (1 s) is no burst.
+	clock += 11_000;
+	const shot = element({ fid: "shot_add" });
+	click(shot, 10, 10); click(shot, 60, 10); click(shot, 110, 10);
+	clock += 1200; click(shot); click(shot); clock += 1000; click(shot);
+	await wait(1100);
+	assert.deepEqual(take("ui:rage_click"), [], "distance and the 1 s window both break a burst");
+	// A disabled control is an aria_disabled dead click at once; a refusal within 500 ms is refused.
+	const exportEntry = element({ fid: "export_video", disabled: true });
+	click(exportEntry);
+	assert.deepEqual(take("ui:dead_click"), [{ control: "export_video", reason: "aria_disabled" }]);
+	const undo = element({ fid: "menu_undo" });
+	click(undo, 10, 10, 10); noteBusReceipt(false);
+	await wait(600);
+	assert.deepEqual(take("ui:dead_click"), [{ control: "menu_undo", reason: "refused" }]);
+	// A control outside the list is "other": only its disabled clicks are dead (its effect is not watched).
+	click(element({ control: true })); await wait(600);
+	assert.deepEqual(take("ui:dead_click"), [], "an unlisted live control is not watched for effect");
+	click(element({ control: true, disabled: true }));
+	assert.deepEqual(take("ui:dead_click"), [{ control: "other", reason: "aria_disabled" }]);
+	// Typing targets and plain surfaces never feed the detector, counters included.
+	const before = friction.snapshot();
+	for (let i = 0; i < 5; i += 1) click(element({ fid: "agent_send", typing: true }));
+	for (let i = 0; i < 5; i += 1) click(element({ control: false }));
+	await wait(1100);
+	assert.deepEqual(sent.splice(0), [], "the composer and non-controls emit nothing");
+	assert.deepEqual([friction.snapshot().rage_clicks, friction.snapshot().dead_clicks], [before.rage_clicks, before.dead_clicks], "and move no counter");
+	assert.ok(["3", "4-5", "6-10", "gte11"].includes(friction.snapshot().rage_clicks), "every rage burst bumped the counter, past the cooldown too");
+	for (const [event, props] of [["ui:rage_click", { control: "tl_play", clicks: "3", changed: false }], ["ui:dead_click", { control: "other", reason: "no_effect" }]]) {
+		assert.deepEqual(sanitizeProps(event, { ...props, x: 10, text: "Play", id: "obj-1" }), props, `${event} keeps only its closed values`);
+	}
+	for (const [event, key, value] of [["ui:rage_click", "control", "tl_pause"], ["ui:rage_click", "clicks", "2"], ["ui:dead_click", "reason", "hover"]]) {
+		assert.deepEqual(sanitizeProps(event, { [key]: value }), {}, `${event} rejects ${key}=${value}`);
+	}
+	restoreClicks();
+	friction.reset();
+}
+console.log("PASS rage and dead clicks: 1 s and 24 px bursts, cooldown and caps, aria_disabled/refused/no_effect, typing targets ignored");
 
 // PR C: motion:draft_compiled buckets, flags, the closed schema and the 50-per-session cap.
 {
@@ -1121,12 +1199,12 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	const cells = [...row[1].matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/g)].map((cell) => cell[1].replace(/<[^>]*>/g, " "));
 	const event = cells[0]?.trim();
-	if (!["studio:refused", "edit:undone", "agent:turn_summary", "agent:post_turn_edit", "motion:draft_compiled", "agent:connect_opened", "agent:connect_started", "agent:connect_finished", "agent:model_changed", "app:render_crash", "app:gl_lost", "agent:prompt_sent"].includes(event)) continue;
+	if (!Object.hasOwn(STRICT_EVENT_KEYS, event) || event === "app:friction_summary") continue;
 	const tokens = new Set(cells[1]?.match(/[A-Za-z0-9][A-Za-z0-9_-]*/g) ?? []);
 	for (const key of STRICT_EVENT_KEYS[event]) assert.ok(tokens.has(key), `the privacy page discloses ${event} ${key}`);
 	strictRows.add(event);
 }
-assert.deepEqual([...strictRows].sort(), ["agent:connect_finished", "agent:connect_opened", "agent:connect_started", "agent:model_changed", "agent:post_turn_edit", "agent:prompt_sent", "agent:turn_summary", "app:gl_lost", "app:render_crash", "edit:undone", "motion:draft_compiled", "studio:refused"], "each strict event has its own privacy row");
+assert.deepEqual([...strictRows].sort(), Object.keys(STRICT_EVENT_KEYS).filter((event) => event !== "app:friction_summary").sort(), "each strict event has its own privacy row");
 const executionSchemas = {
 	"workflow:run_requested": ["surface", "run_id", "node_count_bucket"],
 	"workflow:run_succeeded": ["run_id", "duration_bucket"],

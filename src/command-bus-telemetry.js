@@ -7,6 +7,7 @@ import { createFirstEditRecorder } from './semantic-edit.js';
 import { admit, bump } from './analytics-friction.js';
 import { bucketAge, refusalCodeOf } from './analytics-strict.js';
 import { noteEditGesture } from './post-turn-edits.js';
+import { noteBusReceipt } from './click-friction.js';
 
 let send = track, clock = () => Date.now();
 const REFUSALS_PER_KEY = 3, UNDOS_PER_SESSION = 20, STAMPS_KEPT = 500;
@@ -84,8 +85,9 @@ const emit = (event, props) => {
 
 /** A refusal receipt: the session counter always moves; the event, at most 3 times per (code, group, origin). */
 export function noteRefusal(value, origin, id) {
-	// A cancel the caller asked for is not a refusal.
+	// A cancel the caller asked for is not a refusal. Any other one tells a click it was refused (click-friction.js).
 	if (value.code === 'CANCELLED') return;
+	noteBusReceipt(false);
 	const by = origin === 'ui' ? 'ui' : 'agent', code = refusalCodeOf(value.code), group = commandGroup(id);
 	bump(by === 'ui' ? 'refusals_ui' : 'refusals_agent');
 	if (admit(`studio:refused:${code}:${group}:${by}`, REFUSALS_PER_KEY)) emit('studio:refused', { code, origin: by, phase: value.phase, group });
@@ -108,6 +110,7 @@ export function createHistoryReceipts(ports) {
 		/** `id` the command, `action` the command a transaction ran (run.commit of a drag). */
 		remember(recorded, { id, origin, action, args }) {
 			const hint = hintOf(id, args, recorded);
+			if (recorded.ok !== false) noteBusReceipt(true);
 			// Session friction: an undo the user made (agent undos are the agent's own correction).
 			if (id === 'edit.undo' && origin === 'ui' && recorded.status === 'undone') bump('undos');
 			// The user's edit that changed the scene, once per receipt (a drag commits once): the session edit

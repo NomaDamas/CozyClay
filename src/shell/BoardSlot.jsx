@@ -266,7 +266,7 @@ function PanelCard({ shot, index, fps, thumb, stylizing, onStylize, onUnstylize,
 			<div className="dock-board-actions">
 				<button type="button" data-action="duplicate" title={ko("Duplicate this panel after itself", "이 패널을 바로 뒤에 복제")} onClick={(event) => { stop(event); onDuplicate(); }}>{ko("Duplicate", "복제")}</button>
 				<button type="button" data-action="delete" className="danger" title={ko("Delete this panel (Delete)", "이 패널 삭제 (Delete)")} onClick={(event) => { stop(event); onRemove(); }}>{ko("Delete", "삭제")}</button>
-				<button type="button" data-action="stylize" disabled={stylizing}
+				<button type="button" data-action="stylize" data-fid="board_stylize" disabled={stylizing}
 					title={shot.stylizedAssetId
 						? ko("Generate a new stylized picture from this panel's frame and caption (replaces the current one)", "이 패널의 프레임과 캡션으로 스타일화 그림을 새로 생성 (지금 그림을 바꿔요)")
 						: ko("Generate a stylized picture from this panel's frame and caption", "이 패널의 프레임과 캡션으로 스타일화 그림 생성")}
@@ -295,7 +295,7 @@ function PanelCard({ shot, index, fps, thumb, stylizing, onStylize, onUnstylize,
 						<button type="button" role="menuitem" data-send-source="greybox" onClick={(event) => { stop(event); setSendMenu(false); onSendToWorkflow("greybox"); }}>{ko("Greybox", "그레이박스")}</button>
 					</div>
 				)}
-				<button type="button" data-action="export" disabled={exporting} title={exporting ? ko("Export — another export is running", "내보내기 — 다른 내보내기가 진행 중입니다") : ko("Export this panel as a pack (zip)", "이 패널을 팩(zip)으로 내보내기")} data-disabled-reason={exporting ? "export-running" : undefined} onClick={(event) => { stop(event); onExport(); }}>{ko("Export", "내보내기")}</button>
+				<button type="button" data-action="export" data-fid="board_export" disabled={exporting} title={exporting ? ko("Export — another export is running", "내보내기 — 다른 내보내기가 진행 중입니다") : ko("Export this panel as a pack (zip)", "이 패널을 팩(zip)으로 내보내기")} data-disabled-reason={exporting ? "export-running" : undefined} onClick={(event) => { stop(event); onExport(); }}>{ko("Export", "내보내기")}</button>
 			</div>
 			<div className="dock-board-thumb" data-stylized={stylized ? "true" : undefined}>
 				{stylized ? <img className="dock-board-image" src={stylized} alt="" draggable={false} /> : thumb && <img className="dock-board-image" src={thumb} alt="" draggable={false} />}

@@ -4,6 +4,7 @@
 import { STUDIO_ERROR_CODES } from "./studio-error-codes.js";
 import { ERROR_TYPE_VALUES, sessionEndedPropAllowed } from "./analytics-values.js";
 import { FRICTION_SUMMARY_KEYS, frictionPropAllowed } from "./analytics-friction.js";
+import { CONTROL_IDS } from "./analytics-controls.js";
 
 const TURN_ID_PATTERN = /^[a-f0-9]{32}$/;
 // The friction count vocabulary (analytics-friction.js bucketFrictionCount).
@@ -82,6 +83,8 @@ const SCHEMAS = Object.freeze({
 		gap: (value) => value === "first" || long(value), prev_outcome: oneOf("succeeded", "failed", "cancelled", "none"), turn_index: count,
 		attached: bool, task_mode: bool,
 	},
+	"ui:rage_click": { control: oneOf(...CONTROL_IDS, "other"), clicks: oneOf("3", "4-5", "gte6"), changed: bool },
+	"ui:dead_click": { control: oneOf(...CONTROL_IDS, "other"), reason: oneOf("aria_disabled", "refused", "no_effect") },
 	"agent:post_turn_edit": {
 		// prompt_block, not prompt: "prompt" is a denied property key (analytics.js), whatever its value.
 		turn_id: turnId, edited: bool, pose: count, camera: count, object: count, shot: count, prompt_block: count, first_delay: long,

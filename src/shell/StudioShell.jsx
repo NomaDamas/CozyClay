@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { installClickFriction } from "../click-friction.js";
 import { ko } from "../locale.js";
 import { useStudioShell } from "./studio-shell-context.js";
 import TopBar, { ProjectHead } from "./TopBar.jsx";
@@ -32,6 +33,8 @@ export default function StudioShell({ viewport, children, ...props }) {
 	// Embeds (playview, playground) keep the Sequencer-only dock.
 	const embedded = Boolean(props["data-embed-mode"]);
 	const shownTab = embedded ? "animation" : dockTab;
+	// Rage and dead clicks on the primary controls (data-fid): one capture-phase listener for the whole shell.
+	useEffect(() => installClickFriction(), []);
 	function changeDockTab(next) {
 		setDockTab(next);
 		try {
