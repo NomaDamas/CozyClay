@@ -50,5 +50,19 @@ const kept = { groups: [G("LOAD", "right holds box at 50 N m", 80.16), G("BODY",
 const still = { groups: [G("LOAD", "right holds box at 40 N m", 70), G("POP", "x", 1), G("SPEED", "y", 1)] };
 expect("LOAD still there: more groups are not better", /^problems 2 -> 3/.test(compareQa(still, kept).why), compareQa(still, kept).why);
 
+// Candidates are ranked by severity, then each is put to compareQa: the cheapest face breaks a goal that held
+// (total 0, goal lost), so the next face the rule keeps wins instead of every face being dropped.
+const face = (x) => [{ op: "replace", path: "/x", value: x }];
+const ranked = s => {
+	if (s.x === 0) return { qa: { goals: [{ ok: true }], groups: [{ kind: "LOAD", subject: "right holds box", count: 1, worst: 1, limit: 0, first: 0, last: 0, worstFrame: 0, severity: 80, patch: face(1), candidates: [face(1), face(2), face(3)] }] } };
+	if (s.x === 1) return { qa: { goals: [{ ok: false }], groups: [] } };
+	if (s.x === 2) return { qa: { goals: [{ ok: true }], groups: [{ kind: "COLLIDE", subject: "farm_l x box", count: 1, worst: 0.006, limit: 0.005, first: 0, last: 0, worstFrame: 0, severity: 3 }] } };
+	return { qa: { goals: [{ ok: true }], groups: [{ kind: "COLLIDE", subject: "farm_l x box", count: 1, worst: 0.02, limit: 0.005, first: 0, last: 0, worstFrame: 0, severity: 30 }] } };
+};
+const pickFace = repairSpec({ x: 0 }, { rounds: 1, limitMs: Infinity }, ranked);
+expect("a cheaper face that breaks a goal does not hide the next face compareQa keeps", pickFace.spec.x === 2 && pickFace.repair.applied.length === 1 && pickFace.repair.rejected === 2, JSON.stringify(pickFace.repair));
+const none = repairSpec({ x: 0 }, { rounds: 1, limitMs: Infinity }, s => (s.x === 0 ? ranked(s) : { qa: { goals: [{ ok: false }], groups: [] } }));
+expect("no face kept: the spec stays and every face counts as rejected", none.spec.x === 0 && none.repair.applied.length === 0 && none.repair.rejected === 3, JSON.stringify(none.repair));
+
 if (failures) { console.error(`${failures} failure(s)`); process.exit(1); }
 console.log("load faces: all checks passed");

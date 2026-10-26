@@ -63,17 +63,22 @@ export function repairSpec(spec, opts, compile) {
 			return null;
 		}
 	};
-	/** g's patch compiled, or of its candidates the one with the lowest summed severity ({ next, r, patch }); null when none compiles. */
+	/** g's patch compiled, or of its candidates ranked by summed severity the first that better() keeps ({ next, r, patch });
+	 * with none kept, the cheapest (the caller refuses it); null when none compiles. A cheaper face that breaks a goal
+	 * that held does not hide a dearer one that is kept. */
 	const cheapest = g => {
-		let top = null;
+		const tried = [];
 		for (const patch of (g.candidates ?? [g.patch]).slice(0, CANDIDATES)) {
-			if (top && late()) break;
+			if (tried.length && late()) break;
 			const t = attempt(patch);
 			if (!t) continue;
-			if (!top || totalOf(t.r) < totalOf(top.r)) { if (top) rejected += 1; top = { ...t, patch }; } else rejected += 1;
-			if (totalOf(top.r) === 0 && !failedOf(top.r)) break;
+			tried.push({ ...t, patch });
+			if (totalOf(t.r) === 0 && !failedOf(t.r) && better(t.r, result)) break;
 		}
-		return top;
+		tried.sort((a, b) => totalOf(a.r) - totalOf(b.r));
+		const pick = tried.find(t => better(t.r, result)) ?? tried[0] ?? null;
+		rejected += tried.filter(t => t !== pick).length;
+		return pick;
 	};
 	const keep = (g, key, patch, { next, r }) => {
 		const moved = armLocal(g) && movesBody(patch);
