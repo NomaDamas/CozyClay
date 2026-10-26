@@ -12,7 +12,7 @@ ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PAGES_DIR = os.path.join(os.path.dirname(__file__), "pages")
 
 NAV = """        <nav>
-          <a href="/#try">Try it</a>
+          <a href="/app/">Try it</a>
           <a href="/greybox-to-video/">Greybox to video</a>
           <a href="/previs-software/">Previs software</a>
           <a href="/ai-camera-control/">Camera control</a>
