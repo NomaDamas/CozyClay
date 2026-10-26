@@ -238,4 +238,8 @@ export const ZH_PANELS = {
 	"Middle": "中指",
 	"Ring": "无名指",
 	"Pinky": "小指",
+	"Keep a copy on the asset shelf (Content › Sculpts), for any scene or project": "在素材架（内容 › 雕塑）上保存一份副本，可用于任何场景或项目",
+	"No sculpts on the shelf yet. Press Save to shelf in Sculpt mode (5), or import a .cozysculpt.json.": "素材架上还没有雕塑。在雕塑模式（5）中按“保存到素材架”，或导入 .cozysculpt.json 文件。",
+	"Select a sculpt to save it to the shelf.": "请选择一个雕塑以保存到素材架。",
+	"That card is no longer on the shelf.": "该卡片已不在素材架上。",
 };
