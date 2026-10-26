@@ -158,12 +158,20 @@ jobs:
           fi
           sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run build
-      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/4"
+      # The shard split is balanced by tools/test-durations.json; each shard
+      # records its own per-file seconds for tools/update-test-durations.mjs
+      # and writes "selected N, predicted X s, actual Y s" to its summary (#632).
+      - run: node tools/run-tests.mjs --shard "${{ matrix.shard }}/4" --durations-out test-durations.json
         env:
           # test/verify-morphgs-exporter.mjs: the MorphGS truth comparison
           # needs uv + a torch wheel; the runner has neither, so only its
           # structural checks run here. Run the full test locally.
           MORPHGS_SKIP_TRUTH: "1"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: test-durations-${{ matrix.shard }}
+          path: test-durations.json
+          retention-days: 14
 
   # MCP <-> real-editor element management, end to end: each suite spawns its
   # own Vite, Chrome and MCP server on reserved ports. These are the only

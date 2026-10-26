@@ -3,6 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join, relative } from "node:path";
+import { assignShards, parseShard, readDurations, reportDurations, slowestFirst } from "./test-shards.mjs";
 
 // Whatever a suite drives through the agent sidecar lands in a scratch
 // session dir for the whole run, never in the author's ~/.config (#375).
@@ -15,7 +16,7 @@ if (!process.env.COZYCLAY_AGENT_SESSIONS_DIR) {
 const NODE_FILES = [
 	"test/motion3/verify-motion3-core.mjs", "test/motion3/verify-playback-frame-store.mjs", "test/verify-playback-render-isolation.mjs", "test/motion3/verify-motion3-idle.mjs", "test/motion3/verify-motion3-life.mjs", "test/motion3/verify-motion3-headlead.mjs", "test/motion3/verify-motion3-gait.mjs", "test/motion3/verify-motion3-overlap.mjs", "test/motion3/verify-motion3-flip.mjs", "test/motion3/verify-motion3-float-fix.mjs", "test/motion3/verify-motion3-timing.mjs", "test/motion3/verify-motion3-self.mjs", "test/motion3/verify-motion3-commands.mjs", "test/motion3/verify-motion3-exitcar.mjs", "test/motion3/verify-motion3-agentloop.mjs", "test/motion3/verify-motion3-search.mjs", "test/motion3/verify-motion3-skills.mjs", "test/motion3/verify-motion3-carried.mjs", "test/motion3/verify-motion3-people.mjs", "test/motion3/verify-motion3-hit.mjs", "test/motion3/verify-motion3-person-fix.mjs", "test/motion3/verify-motion3-socket.mjs", "test/motion3/verify-motion3-shapes.mjs", "test/motion3/verify-motion3-grasp-fields.mjs", "test/motion3/verify-motion3-finger-contact.mjs", "test/motion3/verify-motion3-finger-pose.mjs", "test/motion3/verify-motion3-grasp-qa.mjs", "test/motion3/verify-motion3-load.mjs", "test/motion3/verify-motion3-throw.mjs", "test/motion3/verify-motion3-catch.mjs", "test/motion3/verify-motion3-spring.mjs", "test/motion3/verify-motion3-grasp-hints.mjs", "test/motion3/verify-motion3-ball-pickup-repair.mjs", "test/motion3/verify-motion3-reach-human.mjs", "test/motion3/verify-motion3-stance-grasp.mjs", "test/motion3/verify-motion3-grasp-friction.mjs", "test/motion3/verify-motion3-grasp-measure.mjs", "test/motion3/verify-motion3-contracts.mjs", "test/motion3/verify-motion3-describe.mjs", "test/motion3/verify-motion3-timeline.mjs", "test/motion3/verify-motion3-probes.mjs", "test/motion3/verify-motion3-grab.mjs", "test/motion3/verify-motion3-grab-blend.mjs", "test/motion3/verify-motion3-patch.mjs", "test/motion3/verify-motion3-patch-keys.mjs", "test/motion3/verify-motion3-stuck.mjs", "test/motion3/verify-motion3-repair.mjs", "test/motion3/verify-motion3-specstore.mjs", "test/motion3/verify-motion3-visual.mjs", "test/motion3/verify-motion3-goals.mjs", "test/motion3/verify-motion3-prompt.mjs", "test/motion3/verify-motion3-cup.mjs", "test/motion3/verify-motion3-arm.mjs", "test/motion3/verify-motion3-balance.mjs", "test/motion3/verify-physics-overlay.mjs", "test/verify-proxy-figure.mjs", "test/verify-text-object.mjs",
 	"test/verify-proxy-figure-bounds.mjs",
-	"test/verify-character-capabilities.mjs",
+	"test/verify-character-capabilities.mjs", "test/verify-test-shards.mjs",
 	"test/verify-root-path.mjs",
 	"test/verify-studio-elements.mjs",
 	"test/bus/verify-view-mode-pose.mjs",
@@ -275,14 +276,16 @@ function verificationFiles(directory) {
 // Every suite reserves its own ports and writes under a temp dir, so files
 // are independent of each other; running them serially cost CI five minutes
 // (#413). `--jobs 1` restores the old interleaved live output for debugging.
-// `--shard INDEX/TOTAL` selects a deterministic round-robin slice for CI
-// runners. Shards are disjoint over the sorted inventory and together cover
-// the same runnable set as an unsharded invocation.
+// `--shard INDEX/TOTAL` selects a deterministic slice for CI runners, balanced
+// by the recorded seconds in tools/test-durations.json (tools/test-shards.mjs).
+// Shards are disjoint and together cover the same runnable set as an unsharded
+// invocation. `--durations-out PATH` writes each file's wall-clock seconds.
 function parseArguments(arguments_) {
 	let listOnly = false;
 	let scope = "all";
 	let jobs = Number(process.env.COZYCLAY_TEST_JOBS) || availableParallelism();
 	let shard = null;
+	let durationsOut = null;
 	for (let index = 0; index < arguments_.length; index += 1) {
 		const argument = arguments_[index];
 		if (argument === "--list") {
@@ -300,31 +303,30 @@ function parseArguments(arguments_) {
 			continue;
 		}
 		if (argument === "--shard") {
-			const value = arguments_[index + 1] ?? "";
-			const match = /^(\d+)\/(\d+)$/.exec(value);
-			if (!match) throw new Error(`--shard must be INDEX/TOTAL with 1 <= INDEX <= TOTAL, got ${value}`);
-			const current = Number(match[1]);
-			const total = Number(match[2]);
-			if (!Number.isInteger(current) || !Number.isInteger(total) || current < 1 || total < 1 || current > total) {
-				throw new Error(`--shard must be INDEX/TOTAL with 1 <= INDEX <= TOTAL, got ${value}`);
-			}
-			shard = { current, total };
-			index += 1;
+			shard = parseShard(arguments_[(index += 1)]);
+			continue;
+		}
+		if (argument === "--durations-out") {
+			durationsOut = arguments_[(index += 1)] ?? "";
 			continue;
 		}
 		throw new Error(`unknown argument: ${argument}`);
 	}
 	if (scope !== "all" && scope !== "ardy") throw new Error(`unknown test scope: ${scope}`);
 	if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`--jobs must be a positive integer, got ${jobs}`);
-	return { listOnly, scope, jobs, shard };
+	if (durationsOut === "") throw new Error("--durations-out needs a file path");
+	return { listOnly, scope, jobs, shard, durationsOut };
 }
 
 // One file per child. With more than one job the output is buffered per file
 // and replayed as a block when the file finishes, so PASS/FAIL lines of
-// different suites never interleave.
+// different suites never interleave. Each file's wall-clock seconds land in
+// `timings` for --durations-out and the CI step summary.
+const timings = new Map();
 function run(file, { buffered }) {
 	return new Promise((resolve, reject) => {
 		const chunks = [];
+		const started = performance.now();
 		const child = spawn(process.execPath, [file], { stdio: buffered ? ["ignore", "pipe", "pipe"] : "inherit" });
 		if (buffered) {
 			child.stdout.on("data", (chunk) => chunks.push(chunk));
@@ -332,6 +334,7 @@ function run(file, { buffered }) {
 		}
 		child.once("error", reject);
 		child.once("exit", (code, signal) => {
+			timings.set(file, (performance.now() - started) / 1000);
 			if (buffered) process.stdout.write(`\nRUNNING ${file}\n${Buffer.concat(chunks)}`);
 			if (code === 0) resolve();
 			else reject(new Error(`${file} failed${signal ? ` with ${signal}` : ` with exit code ${code}`}`));
@@ -352,17 +355,8 @@ const SERIAL_ONLY = new Set([
 	"mcp/verify-live-routing.mjs",
 ]);
 
-// Longest files first so the tail of the run is not one slow suite on its own.
-const SLOW_FIRST = [
-	"test/verify-studio-agent-motion.mjs",
-	"test/verify-studio-agent-binding.mjs",
-	"test/verify-part-colours.mjs",
-	"test/verify-agent-runner-errors.mjs",
-];
-
 async function runAll(files, jobs) {
-	const parallel = files.filter((file) => !SERIAL_ONLY.has(file));
-	const queue = [...SLOW_FIRST.filter((file) => parallel.includes(file)), ...parallel.filter((file) => !SLOW_FIRST.includes(file))];
+	const queue = slowestFirst(files.filter((file) => !SERIAL_ONLY.has(file)), durations);
 	let failure = null;
 	const worker = async () => {
 		while (queue.length > 0 && !failure) {
@@ -440,7 +434,8 @@ if (!mcpDepsInstalled) {
 	}
 }
 
-const { listOnly, scope, jobs, shard } = parseArguments(process.argv.slice(2));
+const { listOnly, scope, jobs, shard, durationsOut } = parseArguments(process.argv.slice(2));
+const durations = readDurations();
 const inventory = [...verificationFiles("test"), ...verificationFiles("mcp"), ...EXTRA_INVENTORY].sort();
 for (const file of inventory) {
 	if (/^test\/bus\/verify-.*\.mjs$/.test(file)) categories.set(file, { kind: "node", reason: "command bus contract verification" });
@@ -456,12 +451,12 @@ if (unclassified.length > 0 || stale.length > 0) {
 
 const scoped = inventory.filter((file) => scope === "all" || file.startsWith("test/ardy/") || file.startsWith("test/ik/"));
 const runnable = scoped.filter((file) => categories.get(file).kind === "node");
-const selected = shard ? runnable.filter((_, index) => index % shard.total === shard.current - 1) : runnable;
+const { files: selected, predicted } = assignShards(runnable, durations, shard?.total ?? 1)[(shard?.current ?? 1) - 1];
 const selectedSet = new Set(selected);
 console.log(
 	`TEST MANIFEST scope=${scope} runnable=${runnable.length} selected=${selected.length} total=${scoped.length} jobs=${jobs}${
 		shard ? ` shard=${shard.current}/${shard.total}` : ""
-	}`,
+	} predicted=${predicted.toFixed(1)}s`,
 );
 for (const file of scoped) {
 	const { kind, reason } = categories.get(file);
@@ -473,6 +468,7 @@ for (const file of scoped) {
 }
 
 if (!listOnly) {
+	process.on("exit", () => reportDurations(timings, { out: durationsOut, selected: selected.length, predicted }));
 	if (jobs === 1) {
 		for (const file of selected) {
 			console.log(`\nRUNNING ${file}`);
