@@ -84,8 +84,9 @@ const xb = skeletonFor("x-bot-tpose"), car = compileSpec(exitcar, { sk: xb, scen
 // and its walk has the narrower foot width, flat-ish heel strike and less stride-time noise (walk.js, gait-rhythm.js; was d1e1f37c072d3d94; QA 0 before and after),
 // its walk scales its knees, kick, strike and hips with its pace, the swing foot following the shank (walk.js, walk-pelvis.js; was 76db856fa910b0c0; QA 0 before and after),
 // and its walk's upper body follows its pace and leads the legs (walk.js, head-steady.js; was 26b40e28f45e83b3; QA 0 before and after),
-// and its head leads the walk's turns (head-lead.js; was b9ba45c96cc782c5; QA 0 before and after)
-expect("the exitcar take from skills bakes bit for bit as before", hashOf(bakeTake(xb, car.out)) === "4c47b555a7cd8b53" && !car.observations.paced, hashOf(bakeTake(xb, car.out)));
+// and its head leads the walk's turns (head-lead.js; was b9ba45c96cc782c5; QA 0 before and after),
+// and its head leads its swivel out of the seat (head-lead.js NOT_A_LOOK; was 4c47b555a7cd8b53; QA 0 before and after, f8-156 only)
+expect("the exitcar take from skills bakes bit for bit as before", hashOf(bakeTake(xb, car.out)) === "b7f959b1fd3ed33d" && !car.observations.paced, hashOf(bakeTake(xb, car.out)));
 // re-pinned when standIdle and walks began keying arm_hang (compiler/pose.js: a free forearm hangs plumb); QA unchanged
 const HASHES = { "y-bot-tpose": "23c7c29a978ffeb1", "x-bot-tpose": "35bbaaf6f2607e62" };
 for (const [rig, hash] of Object.entries(HASHES)) {
