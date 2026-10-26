@@ -23,7 +23,7 @@ const NODE_FILES = [
 	"test/verify-studio-actions.mjs",
 	"test/ardy/verify-collision-blockers.mjs",
 	"test/verify-pose-fade.mjs",
-	"test/verify-pose-gizmo.mjs",
+	"test/verify-pose-gizmo.mjs", "test/verify-fingertip-pick.mjs",
 	"test/ardy/verify-key-runs.mjs",
 	"test/ardy/verify-playback-clock.mjs",
 	"test/ardy/verify-timeline-coordinates.mjs",

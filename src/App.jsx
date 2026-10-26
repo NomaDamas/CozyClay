@@ -1101,7 +1101,7 @@ export default function App() {
 		ikDragEnd, ikAddKeyframe,
 		ikDeleteKeyframe, ikApplyPoseAsKey,
 	} = motionDomain;
-	const { handFingers, fingerEditing, setFingerEdit } = useFingerEdit(ikFocus, ikFkJoints);
+	const { handFingers, fingerEditing, setFingerEdit, exposureProbeRef: fingerExposureRef } = useFingerEdit(ikFocus, ikFkJoints);
 	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
 	const [partColoursMode, setPartColoursMode] = useState("shaded");
 
@@ -4863,9 +4863,9 @@ export default function App() {
 								onFocus={focusIkHandle}
 								onSolve={ikSolve}
 								onDragEnd={ikDragEnd}
-								focusToolsHidden={fingerEditing}
+								focusToolsHidden={fingerEditing} exposureProbeRef={fingerExposureRef}
 							/>
-							<FingerHandles fingers={handFingers} enabled={fingerEditing && ikMode && ikEditTool === "ik" && !posing && !playMode} onSolve={ikSolve} onDragEnd={ikDragEnd} />
+							<FingerHandles fingers={handFingers} enabled={fingerEditing && ikMode && ikEditTool === "ik" && !posing && !playMode} onSolve={ikSolve} onDragEnd={ikDragEnd} exposureProbeRef={fingerExposureRef} />
 							<RangePinMarker
 								chains={ikChains}
 								track={rangePinPreview?.track}
