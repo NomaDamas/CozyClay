@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import * as THREE from 'three';
 import { normalizeSculptRecipe } from '../../src/sculpt-recipe.js';
 import { buildSculptGroup, disposeSculptGroup } from '../../src/sculpt-geometry.js';
-import { pickSculptPart, sculptPartMeshIds, sculptPartTree } from '../../src/sculpt-pick.js';
+import { overlayOwnsEscape, pickSculptPart, sculptPartMeshIds, sculptPartTree } from '../../src/sculpt-pick.js';
 
 const normalized = normalizeSculptRecipe({ version: 1, parts: [
 	{ id: 'body', shape: 'blob', size: [1, 1, 1], position: [0, 0.5, 0], rotation: [0, 0, 0], color: '#3f5f5a' },
@@ -77,4 +77,13 @@ test('the part tree lists parents before children, with depth and mirror', () =>
 	assert.deepEqual(sculptPartTree(null), []);
 	assert.deepEqual(sculptPartMeshIds({ partId: 'eye', mirrored: true }), ['eye', 'eye.mirror']);
 	assert.deepEqual(sculptPartMeshIds(null), []);
+});
+
+test('an open menu or modal dialog owns Escape before the part selection', () => {
+  const root = (selector) => ({ querySelector: (query) => (query.split(', ').includes(selector) ? {} : null) });
+  assert.equal(overlayOwnsEscape(root('[role="menu"]')), true, 'a File/Project/viewport menu');
+  assert.equal(overlayOwnsEscape(root('[role="dialog"][aria-modal="true"]')), true, 'a modal dialog');
+  assert.equal(overlayOwnsEscape(root('dialog[open]')), true, 'a native dialog');
+  assert.equal(overlayOwnsEscape({ querySelector: () => null }), false, 'nothing open: the part clears');
+  assert.equal(overlayOwnsEscape(undefined), false, 'no document');
 });

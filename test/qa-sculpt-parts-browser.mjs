@@ -218,6 +218,12 @@ expect("no outline is left", await waitForFrame("true") && (await outlineShells(
 // --- Esc clears the part first, then the scene selection as before ----------------------------
 await clickAt(await screenPoint(sculptId, "head", [0, 0.22, 0]));
 expect("the head is picked again", await waitForRow("head"), JSON.stringify(await pressedRow()));
+// An open menu takes the first Esc; the part stays until the menu has closed.
+await evaluate("document.querySelector('[data-testid=menu-file]')?.click()");
+expect("the File menu opens over a selected part", await waitFor("!!document.querySelector('[role=menu]')"), "no menu");
+await press("Escape");
+expect("Esc closes the menu", await waitFor("!document.querySelector('[role=menu]')"), "menu still open");
+expect("that Esc keeps the part", JSON.stringify(await pressedRow()) === JSON.stringify({ part: "head", mirrored: false }), JSON.stringify(await pressedRow()));
 await press("Escape");
 expect("Esc clears the part", await waitForRow(null), JSON.stringify(await pressedRow()));
 expect("that Esc leaves the scene selection alone", (await sceneSelection()) === selectionBefore, await sceneSelection());

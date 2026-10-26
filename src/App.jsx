@@ -1683,7 +1683,7 @@ export default function App() {
 				runStudioAction("object.duplicate");
 				return;
 			}
-			if (event.key === "Escape" && selectedSceneObjectId) {
+			if (event.key === "Escape" && selectedSceneObjectId && !event.defaultPrevented) {
 				setSelectedHierarchyId("props");
 				return;
 			}

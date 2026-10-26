@@ -46,3 +46,8 @@ export function sculptPartTree(recipe) {
 export function sculptPartMeshIds(selected) {
 	return selected ? [selected.partId, `${selected.partId}${SCULPT_MIRROR_SUFFIX}`] : [];
 }
+
+/** An open menu or modal dialog owns Escape: the part selection waits until it has closed. */
+export function overlayOwnsEscape(root = globalThis.document) {
+	return Boolean(root?.querySelector?.('[role="menu"], [role="dialog"][aria-modal="true"], dialog[open]'));
+}

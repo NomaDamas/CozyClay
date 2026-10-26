@@ -4,7 +4,7 @@ import { requestAgentImage, stylizeErrorMessage } from "./agent-image-client.js"
 import { blueprintErrorMessage, blueprintRequest } from "./sculpt-blueprint.js";
 import { agentSessionReady, createCommandTap, sculptModelChoice, sculptTargetFromSelection, storeSculptModel } from "./sculpt-mode.js";
 import { SCULPT_KIND } from "./scene-objects.js";
-import { sculptPartTree } from "./sculpt-pick.js";
+import { overlayOwnsEscape, sculptPartTree } from "./sculpt-pick.js";
 
 export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId }) {
 	// Sculpt mode (#739): one sculpt on an isolated turntable, the Sculpt panel
@@ -68,13 +68,13 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 	}, [sculptMode, sculptTransport]);
 	// Part picking (#740 S7): one part of the target, chosen on the turntable or
 	// in the panel's tree. A new target or leaving the mode drops it; Esc drops
-	// it before Esc reaches the scene selection.
+	// it before Esc reaches the scene selection, unless an open menu or dialog takes that Esc.
 	const [sculptPart, setSculptPart] = useState(null);
 	useEffect(() => { setSculptPart(null); }, [sculptMode, sculptTargetId]);
 	useEffect(() => {
 		if (!sculptMode || !sculptPart) return undefined;
 		const onKey = (event) => {
-			if (event.key !== "Escape" || event.target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+			if (event.key !== "Escape" || event.target?.closest?.("input, textarea, select, [contenteditable='true']") || overlayOwnsEscape()) return;
 			event.stopPropagation();
 			setSculptPart(null);
 		};
