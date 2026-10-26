@@ -22,6 +22,9 @@ function titleOf(state) {
 	if (state.view === "updating") return ko("Updating…", "업데이트 중…", "正在更新…");
 	if (state.view === "restart_needed") return ko("Restart to finish", "다시 시작하면 끝나요", "重启以完成");
 	if (state.view === "failed") return ko("Update failed", "업데이트 실패", "更新失败");
+	if (state.view === "restarting") return ko("Restarting…", "다시 시작하는 중…", "正在重启…");
+	if (state.view === "restarted") return ko(`Updated to ${v}`, `${v}로 업데이트됨`, `已更新到 ${v}`);
+	if (state.view === "restart_timeout") return ko("Restart didn't finish", "다시 시작하지 못했어요", "重启未完成");
 	return ko(`CozyClay ${v} is available`, `CozyClay ${v} 버전이 나왔어요`, `CozyClay ${v} 已发布`);
 }
 
@@ -29,11 +32,18 @@ function bodyOf(state) {
 	const v = state.latest;
 	if (state.view === "updating") return ko(`Installing ${v}. This takes about a minute.`, `${v} 설치 중이에요. 1분쯤 걸려요.`, `正在安装 ${v}，大约需要一分钟。`);
 	if (state.view === "restart_needed") {
-		return ko(`Updated to ${v}. Quit CozyClay in the terminal (Ctrl+C), then run \`cclay\` again.`,
-			`${v} 설치 완료. 터미널에서 CozyClay를 종료(Ctrl+C)하고 \`cclay\`를 다시 실행하세요.`,
-			`已更新到 ${v}。请在终端中退出 CozyClay（Ctrl+C），然后重新运行 \`cclay\`。`);
+		return ko(`Updated to ${v}. Restart now, or quit CozyClay in the terminal (Ctrl+C) and run \`cclay\` again.`,
+			`${v} 설치 완료. 지금 다시 시작하거나, 터미널에서 CozyClay를 종료(Ctrl+C)하고 \`cclay\`를 다시 실행하세요.`,
+			`已更新到 ${v}。请立即重启，或在终端中退出 CozyClay（Ctrl+C）后重新运行 \`cclay\`。`);
 	}
 	if (state.view === "failed") return (failureCopy[state.errorClass] ?? failureCopy.other)();
+	if (state.view === "restarting") return ko(`Starting ${v}. The Studio reloads when it answers.`, `${v}를 시작하는 중이에요. 응답하면 Studio가 다시 로드돼요.`, `正在启动 ${v}。它响应后 Studio 会重新加载。`);
+	if (state.view === "restarted") return ko("Updated. Save your project, then reload.", "업데이트됐어요. 프로젝트를 저장한 뒤 다시 로드하세요.", "已更新。请先保存项目，然后重新加载。");
+	if (state.view === "restart_timeout") {
+		return ko("CozyClay didn't come back within 30 seconds. Quit it in the terminal (Ctrl+C), then run `cclay` again.",
+			"CozyClay가 30초 안에 돌아오지 않았어요. 터미널에서 종료(Ctrl+C)하고 `cclay`를 다시 실행하세요.",
+			"CozyClay 未在 30 秒内恢复。请在终端中退出（Ctrl+C），然后重新运行 `cclay`。");
+	}
 	if (state.kind === "npx") {
 		return ko("Quit CozyClay in the terminal and run `npx cozyclay` again. npx fetches the newest version each time (internet needed).",
 			"터미널에서 CozyClay를 종료하고 `npx cozyclay`를 다시 실행하세요. npx가 매번 최신 버전을 받아요 (인터넷 필요).",
@@ -65,7 +75,7 @@ async function copyText(text) {
 	}
 }
 
-export default function UpdateDialog({ state, onClose, onLater, onUpdate, onAction }) {
+export default function UpdateDialog({ state, onClose, onLater, onUpdate, onRestart, onAction }) {
 	const closeRef = useRef(null);
 	const titleId = useId();
 	// "Copied" belongs to the view it was pressed in: a later phase shows its own command afresh.
@@ -89,7 +99,7 @@ export default function UpdateDialog({ state, onClose, onLater, onUpdate, onActi
 		const view = state.view;
 		setCopiedView((await copyText(state.command)) ? view : null);
 	};
-	const startsInstall = state.actions.includes("update_now") || state.actions.includes("retry");
+	const startsInstall = ["update_now", "retry", "restart"].some((action) => state.actions.includes(action));
 	const body = bodyOf(state);
 	return createPortal(
 		<div className="menubar-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
@@ -127,6 +137,16 @@ export default function UpdateDialog({ state, onClose, onLater, onUpdate, onActi
 								{ko("Try again", "다시 시도", "重试")}
 							</button>
 						)}
+						{state.actions.includes("restart") && (
+							<button type="button" className="update-dialog-primary" data-testid="update-restart" disabled={blocked} onClick={onRestart}>
+								{ko("Restart now", "지금 다시 시작", "立即重启")}
+							</button>
+						)}
+						{state.actions.includes("reload") && (
+							<button type="button" className="update-dialog-primary" data-testid="update-reload" onClick={() => window.location.reload()}>
+								{ko("Reload", "다시 로드", "重新加载")}
+							</button>
+						)}
 						{state.actions.includes("copy_command") && (
 							<button type="button" data-testid="update-copy" data-copied={copied || undefined} onClick={() => void copy()}>
 								{copied ? ko("Copied", "복사했어요", "已复制") : ko("Copy command", "명령 복사", "复制命令")}
@@ -135,7 +155,7 @@ export default function UpdateDialog({ state, onClose, onLater, onUpdate, onActi
 						{state.actions.includes("later") && (
 							<button type="button" data-testid="update-later" onClick={onLater}>{ko("Later", "나중에", "稍后")}</button>
 						)}
-						{state.view === "restart_needed" && (
+						{["restart_needed", "restart_timeout"].includes(state.view) && (
 							<button type="button" onClick={onClose}>{ko("Close", "닫기", "关闭")}</button>
 						)}
 					</div>

@@ -6,15 +6,17 @@
 import { setTelemetryEnabled } from "./telemetry-state.mjs";
 import { lookupLatest } from "./update-check.mjs";
 import { canSelfUpdate, createInstaller } from "./update-install.mjs";
+import { createRestarter } from "./update-restart.mjs";
 import { createUpdateRoutes } from "./update-routes.mjs";
 
 /**
  * Returns a handler that answers a /__cozyclay/* request and returns true, or
  * returns false for any other path. `takeRuntime` re-reads the runtime
  * telemetry config after a change; `update` names this launch's version,
- * state dir, install kind, package root and whether update checks are on.
+ * state dir, install kind, package root and whether update checks are on;
+ * `restart` ({ getServer, closeHub }) is what the supervised restart closes.
  */
-export function createStudioRoutes({ port, stateFile, takeRuntime, update: { currentVersion, stateDir, kind, enabled, pkgRoot } }) {
+export function createStudioRoutes({ port, stateFile, takeRuntime, update: { currentVersion, stateDir, kind, enabled, pkgRoot }, restart }) {
 	const updateRoute = createUpdateRoutes({
 		currentVersion,
 		kind,
@@ -23,9 +25,10 @@ export function createStudioRoutes({ port, stateFile, takeRuntime, update: { cur
 		checkLatest: () => lookupLatest(currentVersion, stateDir),
 		canSelfUpdate: () => canSelfUpdate({ pkgRoot }),
 		installer: createInstaller(),
+		restarter: restart ? createRestarter({ port, ...restart }) : null,
 	});
 	return function handleStudioRoute(req, res, url) {
-		if (url.pathname === "/__cozyclay/update") {
+		if (url.pathname === "/__cozyclay/update" || url.pathname === "/__cozyclay/update/restart") {
 			void updateRoute(req, res);
 			return true;
 		}

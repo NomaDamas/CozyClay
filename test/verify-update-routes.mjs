@@ -7,22 +7,30 @@
  * starts from a fresh install state. Nothing touches the real registry, the
  * real npm or the user's config: state lives in temp dirs.
  *
+ * POST /__cozyclay/update/restart (#960): its gating, and the real restarter
+ * with an SSE stream held open, a real live hub with a client attached, and
+ * test/fixtures/fake-launcher.mjs as the new launcher on the same port.
+ *
  * Run: `node test/verify-update-routes.mjs`.
  */
 
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { request, createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { lookupLatest, updateChecksOn } from "../bin/update-check.mjs";
-import { canSelfUpdate, createInstaller } from "../bin/update-install.mjs";
+import { canSelfUpdate, createInstaller, globalLauncherPath } from "../bin/update-install.mjs";
 import { createUpdateRoutes } from "../bin/update-routes.mjs";
+import { RESTART_FALLBACK, closeServer, createRestarter } from "../bin/update-restart.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const FAKE_NPM = join(ROOT, "test", "fixtures", "fake-npm.mjs");
+const FAKE_LAUNCHER = join(ROOT, "test", "fixtures", "fake-launcher.mjs");
 const CURRENT = "3.1.4";
 
 function pass(message) {
@@ -56,9 +64,13 @@ const mounted = [];
 let stateDirs = 0;
 
 /** One launcher's update routes on a fresh port, state dir and installer. */
-async function mount({ kind = "global", enabled = true, pkgRoot = globalPkg, current = CURRENT, selfUpdate, timeoutMs, stateDir = join(process.env.XDG_CONFIG_HOME, `cozyclay-${(stateDirs += 1)}`) } = {}) {
+async function mount({ kind = "global", enabled = true, pkgRoot = globalPkg, current = CURRENT, selfUpdate, timeoutMs, restarter, stateDir = join(process.env.XDG_CONFIG_HOME, `cozyclay-${(stateDirs += 1)}`) } = {}) {
 	let handler = null;
-	const server = createServer((req, res) => void handler(req, res));
+	// /sse is a stream that never ends on its own, like the agent pane's.
+	const server = createServer((req, res) => {
+		if (req.url === "/sse") { res.writeHead(200, { "content-type": "text/event-stream" }); res.write(": open\n\n"); return; }
+		void handler(req, res);
+	});
 	await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
 	const port = server.address().port;
 	handler = createUpdateRoutes({
@@ -69,12 +81,15 @@ async function mount({ kind = "global", enabled = true, pkgRoot = globalPkg, cur
 		port,
 		canSelfUpdate: selfUpdate ?? (() => canSelfUpdate({ pkgRoot, platform: "darwin" })),
 		installer: createInstaller(timeoutMs ? { timeoutMs } : {}),
+		restarter: typeof restarter === "function" ? restarter(port, server) : restarter,
 	});
 	mounted.push(server);
 	const origin = `http://127.0.0.1:${port}`;
 	return {
 		port,
 		origin,
+		server,
+		restart: (headers = { origin }, method = "POST") => call(port, method, headers, undefined, "/__cozyclay/update/restart"),
 		get: (headers = {}) => call(port, "GET", headers),
 		post: (headers = { origin }, body) => call(port, "POST", headers, body),
 		async settle() {
@@ -89,9 +104,9 @@ async function mount({ kind = "global", enabled = true, pkgRoot = globalPkg, cur
 	};
 }
 
-function call(port, method, headers = {}, body) {
+function call(port, method, headers = {}, body, path = "/__cozyclay/update") {
 	return new Promise((resolve, reject) => {
-		const req = request({ host: "127.0.0.1", port, method, path: "/__cozyclay/update", headers }, (res) => {
+		const req = request({ host: "127.0.0.1", port, method, path, headers }, (res) => {
 			let text = "";
 			res.setEncoding("utf8");
 			res.on("data", (chunk) => {
@@ -312,6 +327,148 @@ try {
 	assert.equal((await route.post()).status, 409, "only an exact x.y.z reaches npm");
 	assert.deepEqual(installs(), []);
 	pass("POST is 409 for npx, clone, a non-global path, an up-to-date launch and a non x.y.z latest");
+
+	/* ------------------------------------------- POST /update/restart ---- */
+
+	registry.version = "3.9.9";
+	resetNpm("ok");
+	const spy = { restarts: 0, target: "/nowhere/bin/cozyclay.mjs", async targetPath() { return this.target; } };
+	const spyRestarter = { target: () => spy.targetPath(), restart: async () => { spy.restarts += 1; } };
+	route = await mount({ restarter: spyRestarter });
+	res = await route.restart();
+	assert.equal(res.status, 409, "idle: nothing to restart into");
+	assert.deepEqual(res.body, { error: "restart unavailable" });
+	for (const headers of [{}, { origin: "http://evil.test" }, { origin: `http://localhost:${route.port}` }]) {
+		assert.equal((await route.restart(headers)).status, 403, JSON.stringify(headers));
+	}
+	assert.equal((await route.restart({ origin: route.origin }, "GET")).status, 405);
+	process.env.FAKE_NPM_GATE = gate;
+	assert.equal((await route.post()).status, 202);
+	assert.equal((await route.restart()).status, 409, "updating: npm has not finished");
+	writeFileSync(gate, "");
+	assert.equal((await route.settle()).phase, "restart_needed");
+	spy.target = null;
+	assert.equal((await route.restart()).status, 409, "no new launcher on disk");
+	spy.target = "/nowhere/bin/cozyclay.mjs";
+	assert.equal((await route.restart({ origin: "http://evil.test" })).status, 403, "Origin first, even in restart_needed");
+	res = await route.restart({ origin: route.origin, "content-type": "application/json" }, "POST");
+	assert.equal(res.status, 202);
+	assert.equal(res.body.phase, "restart_needed");
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(spy.restarts, 1, "the restart runs once the 202 has left");
+	assert.equal((await route.restart()).status, 202, "a second press is accepted");
+	await new Promise((resolve) => setTimeout(resolve, 150));
+	assert.equal(spy.restarts, 1, "and restarts nothing new");
+	const noRestarter = await mount();
+	resetNpm("ok");
+	assert.equal((await noRestarter.post()).status, 202);
+	assert.equal((await noRestarter.settle()).phase, "restart_needed");
+	assert.equal((await noRestarter.restart()).status, 409, "no restarter: 409");
+	const disabled = await mount({ enabled: false, restarter: spyRestarter });
+	assert.equal((await disabled.restart()).status, 409, "checks off: 409");
+	pass("POST /update/restart: exact Origin, 405 for other methods, 409 outside restart_needed or without a launcher, once");
+
+	// An open SSE stream holds a plain close() (research 1.2); closeAllConnections first frees it.
+	const openSse = (port) => new Promise((resolve, reject) => {
+		const req = request({ host: "127.0.0.1", port, path: "/sse" }, (stream) => {
+			stream.resume();
+			resolve({ ended: new Promise((done) => { stream.once("close", done); stream.once("error", done); }) });
+		});
+		req.once("error", reject);
+		req.end();
+	});
+	const held = await mount();
+	await openSse(held.port);
+	let closedPlain = false;
+	held.server.close(() => { closedPlain = true; });
+	await new Promise((resolve) => setTimeout(resolve, 600));
+	assert.equal(closedPlain, false, "server.close() alone is still waiting on the SSE stream after 600 ms");
+	held.server.closeAllConnections();
+	await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.equal(closedPlain, true);
+	const freed = await mount();
+	const sse = await openSse(freed.port);
+	const t0 = Date.now();
+	await closeServer(freed.server);
+	await sse.ended;
+	assert.ok(Date.now() - t0 < 500, `closeServer returns at once with an SSE stream open (${Date.now() - t0} ms)`);
+	pass("an open SSE stream holds server.close() for 600 ms+; closeServer (closeAllConnections first) closes at once");
+
+	// The real hub the launcher starts: a connected client, then close, then its port binds again.
+	const reserve = () => new Promise((resolve) => { const probe = createNetServer(); probe.listen(0, "127.0.0.1", () => { const { port } = probe.address(); probe.close(() => resolve(port)); }); });
+	const hubPort = await reserve();
+	process.env.COZYCLAY_LIVE_PORT = String(hubPort);
+	process.env.COZYCLAY_AGENT_SESSIONS_DIR = join(temp, "sessions");
+	const { createAgentHandler } = await import("../bin/agent/agent-routes.mjs");
+	const agentHandler = createAgentHandler({ port: () => 5180 });
+	let client = null;
+	for (let t = 0; t < 100 && !client; t += 1) {
+		client = await new Promise((resolve) => { const socket = new WebSocket(`ws://127.0.0.1:${hubPort}/live`); socket.onopen = () => resolve(socket); socket.onerror = () => resolve(null); });
+		if (!client) await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	assert.ok(client, "a client is attached to the live hub");
+	const clientClosed = new Promise((resolve) => { client.onclose = resolve; });
+
+	// The whole path through the route: SSE open, hub attached, 202, the fake new launcher on the same port.
+	resetNpm("ok");
+	const launcherLog = join(temp, "launcher.log");
+	const exits = [], lines = [];
+	const signals = new EventEmitter();
+	const full = await mount({
+		restarter: (port, server) => createRestarter({
+			port, getServer: () => server, closeHub: () => agentHandler.close(), launcherPath: async () => FAKE_LAUNCHER,
+			argv: ["--port", String(port), "--no-star"], env: { ...process.env, FAKE_LAUNCHER_LOG: launcherLog, FAKE_LAUNCHER_EXIT: "7" },
+			exit: (code) => exits.push(code), log: (line) => lines.push(line), signals,
+		}),
+	});
+	assert.equal((await full.post()).status, 202);
+	assert.equal((await full.settle()).phase, "restart_needed");
+	const fullSse = await openSse(full.port);
+	assert.equal((await full.restart()).status, 202);
+	await fullSse.ended;
+	await clientClosed;
+	let answer = null;
+	for (let t = 0; t < 100 && answer?.current !== "3.9.9"; t += 1) {
+		try { answer = (await call(full.port, "GET")).body; } catch { /* between the two launchers */ }
+		if (answer?.current !== "3.9.9") await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+	assert.equal(answer?.current, "3.9.9", "the new launcher answers on the same port");
+	assert.deepEqual(readFileSync(launcherLog, "utf8").trim().split("\n").map((line) => JSON.parse(line)), [["--port", String(full.port), "--no-star", "--no-open"]], "same argv, plus --no-open");
+	const hubFree = await new Promise((resolve) => { const probe = createNetServer(); probe.once("error", () => resolve(false)); probe.listen(hubPort, "127.0.0.1", () => probe.close(() => resolve(true))); });
+	assert.equal(hubFree, true, "the live hub's port is free again");
+	assert.deepEqual([exits, lines], [[], []], "the parent waits on the child");
+	signals.emit("SIGTERM");
+	for (let t = 0; t < 50 && !exits.length; t += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.deepEqual(exits, [7], "SIGTERM reaches the child, and the parent exits with the child's code");
+	pass("restart: SSE stream and hub client dropped, hub port released, the new launcher binds the same port with the same argv, exit code passed through");
+
+	// A child that never binds: the fallback line and exit 1 after the bind window.
+	const quiet = [], quietExits = [];
+	const nobind = await mount({
+		restarter: (port, server) => createRestarter({
+			port, getServer: () => server, launcherPath: async () => FAKE_LAUNCHER, argv: ["--port", String(port)],
+			env: { ...process.env, FAKE_LAUNCHER_MODE: "nobind" }, exit: (code) => quietExits.push(code), log: (line) => quiet.push(line),
+			signals: new EventEmitter(), bindTimeoutMs: 600,
+		}),
+	});
+	resetNpm("ok");
+	assert.equal((await nobind.post()).status, 202);
+	assert.equal((await nobind.settle()).phase, "restart_needed");
+	assert.equal((await nobind.restart()).status, 202);
+	for (let t = 0; t < 60 && !quietExits.length; t += 1) await new Promise((resolve) => setTimeout(resolve, 50));
+	assert.deepEqual([quietExits, quiet], [[1], [RESTART_FALLBACK]], "no bind within the window: the fallback line, exit 1");
+	assert.match(RESTART_FALLBACK, /run `cclay` again/);
+	pass("a new launcher that does not bind in time: the fallback line and exit 1");
+
+	// The restart target: <npm root -g>/cozyclay/bin/cozyclay.mjs once it exists; the env override wins.
+	assert.equal(await globalLauncherPath("darwin"), null, "no bin under npm root -g yet");
+	mkdirSync(join(globalPkg, "bin"), { recursive: true });
+	writeFileSync(join(globalPkg, "bin", "cozyclay.mjs"), "");
+	assert.equal(await globalLauncherPath("darwin"), join(globalRoot, "cozyclay", "bin", "cozyclay.mjs"));
+	process.env.COZYCLAY_RESTART_BIN = FAKE_LAUNCHER;
+	assert.equal(await globalLauncherPath("darwin"), FAKE_LAUNCHER);
+	delete process.env.COZYCLAY_RESTART_BIN;
+	pass("the restart target is <npm root -g>/cozyclay/bin/cozyclay.mjs, or COZYCLAY_RESTART_BIN");
 
 	console.log("all Cozy Clay update-routes checks PASS");
 } finally {

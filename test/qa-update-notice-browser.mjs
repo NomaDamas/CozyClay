@@ -10,6 +10,10 @@
 // launcher's own Origin. The analytics module gets a PROD environment and an
 // in-memory SDK at the real track()/before_send boundary. Screenshots go to
 // QA_SHOT_DIR (default ~/CozyClay3-wt/logs/qa-u1).
+// U2b (#960): Restart now runs for real. COZYCLAY_RESTART_BIN makes the launcher
+// hand over to test/fixtures/fake-launcher.mjs, a "new launcher" that binds the
+// same port and answers current 3.9.9: once with unsaved changes (the save-first
+// card and its Reload button), once saved (the Studio reloads by itself).
 import assert from "node:assert/strict";
 import { execFileSync, spawn } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
@@ -45,7 +49,10 @@ async function startLauncher(mode) {
 	if (launcher) { launcher.kill("SIGTERM"); await new Promise((done) => launcher.once("exit", done)); }
 	const env = { ...process.env, COZYCLAY_REGISTRY_URL: `http://127.0.0.1:${registry.address().port}/cozyclay/latest`,
 		COZYCLAY_NPM_BIN: join(ROOT, "test", "fixtures", "fake-npm.mjs"), FAKE_NPM_ROOT: npmRoot, FAKE_NPM_MODE: mode, FAKE_NPM_GATE: gate,
-		FAKE_NPM_LOG: join(temp, "npm.log"), XDG_CONFIG_HOME: join(temp, "config"), COZYCLAY_LIVE_PORT: String(launcherPort + 100) };
+		FAKE_NPM_LOG: join(temp, "npm.log"), XDG_CONFIG_HOME: join(temp, "config"), COZYCLAY_LIVE_PORT: String(launcherPort + 100),
+		COZYCLAY_RESTART_BIN: join(ROOT, "test", "fixtures", "fake-launcher.mjs"), FAKE_LAUNCHER_LOG: join(temp, "launcher.log"),
+		// The new launcher binds 2.5 s late, so the Studio's 1 s poll meets a closed port first.
+		FAKE_LAUNCHER_DELAY_MS: "2500" };
 	delete env.CI; delete env.COZYCLAY_NO_UPDATE_CHECK;
 	launcher = spawn(process.execPath, [join(pkg, "bin", "cozyclay.mjs"), "--port", String(launcherPort), "--no-open", "--no-star", "--no-motion"], { env, stdio: ["ignore", "pipe", "pipe"] });
 	launcher.stdout.resume();
@@ -59,16 +66,21 @@ const page = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(
 assert.ok(page, "QA Chrome must expose a page target");
 const ws = new WebSocket(page.webSocketDebuggerUrl);
 await new Promise((done, fail) => { ws.onopen = done; ws.onerror = fail; });
-let sequence = 0, proxied = 0;
+let sequence = 0, proxied = 0, gaps = 0;
 const pending = new Map(), records = [], errors = [], log = [];
 const send = (method, params = {}) => new Promise((done, fail) => { const id = ++sequence; pending.set(id, { done, fail }); ws.send(JSON.stringify({ id, method, params })); });
 async function forward({ requestId, request }) {
 	const route = new URL(request.url);
 	const headers = request.headers.Origin || request.headers.origin ? { origin: `http://127.0.0.1:${launcherPort}` } : {};
-	const answer = await fetch(`http://127.0.0.1:${launcherPort}${route.pathname}`, { method: request.method, headers });
+	let answer;
+	try { answer = await fetch(`http://127.0.0.1:${launcherPort}${route.pathname}`, { method: request.method, headers }); } catch {
+		// Between the old launcher and the new one nothing listens: the page sees a failed fetch.
+		gaps += 1;
+		return send("Fetch.failRequest", { requestId, errorReason: "ConnectionRefused" });
+	}
 	const body = await answer.text();
 	proxied += 1;
-	if (request.method === "POST") log.push(`POST /__cozyclay/update -> ${answer.status} ${JSON.parse(body).phase ?? JSON.parse(body).error}`);
+	if (request.method === "POST") log.push(`POST ${route.pathname} -> ${answer.status} ${JSON.parse(body).phase ?? JSON.parse(body).error}`);
 	await send("Fetch.fulfillRequest", { requestId, responseCode: answer.status, responseHeaders: [{ name: "Content-Type", value: "application/json; charset=utf-8" }, { name: "Cache-Control", value: "no-store" }], body: Buffer.from(body).toString("base64") });
 }
 async function rewriteAnalytics({ requestId }) {
@@ -177,10 +189,55 @@ try {
 	await waitFor(`${view("update-chip")} === 'restart_needed'`, "the restart chip", 15_000);
 	const restart = await text("[data-testid=update-dialog]");
 	console.log(`RESTART ${restart}`);
-	assert.match(restart, /Quit CozyClay in the terminal \(Ctrl\+C\), then run `cclay` again/);
+	assert.match(restart, /Restart now, or quit CozyClay in the terminal \(Ctrl\+C\) and run `cclay` again/);
+	await waitFor("document.querySelector('[data-testid=update-restart]')?.disabled === false", "Restart now enabled", 5000);
 	await shot("05-restart-needed");
 	assert.deepEqual(readFileSync(join(temp, "npm.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line)), [["install", "-g", "cozyclay@3.9.9", "--engine-strict"]], "one pinned install");
 	console.log("PASS one click ran npm install -g cozyclay@3.9.9 --engine-strict and ended in the restart text");
+
+	// 2b. Restart now with unsaved changes: Restarting…, the new launcher answers 3.9.9, the save-first card, Reload.
+	await evaluate("window.__cozyclay.sceneObject.place({ kind: 'cube', x: 0, z: 0 }), true");
+	await waitFor("!!document.querySelector('.project-dirty-dot')", "unsaved changes");
+	await evaluate("window.__qaBeforeRestart = true");
+	await click("update-restart");
+	await waitFor(`${view("update-chip")} === 'restarting'`, "the restarting chip", 5000);
+	console.log(`RESTARTING ${await text("[data-testid=update-dialog]")}`);
+	await shot("09-restarting");
+	await waitFor(`${view("update-dialog")} === 'restarted'`, "the save-first card", 30_000);
+	const saveFirst = await text("[data-testid=update-dialog]");
+	console.log(`SAVE_FIRST ${saveFirst}`);
+	assert.match(saveFirst, /Updated\. Save your project, then reload\./);
+	assert.equal(await evaluate("window.__qaBeforeRestart === true"), true, "a dirty project is not reloaded");
+	assert.ok(gaps > 0, "the Studio kept polling through failed fetches while no launcher listened");
+	console.log(`GAPS ${gaps} failed fetches while no launcher listened`);
+	await shot("10-restarted-save-first");
+	const before = proxied;
+	await click("update-reload");
+	await waitFor("!!document.querySelector('.topbar') && !!window.__cozyclay && window.__qaBeforeRestart !== true", "the reloaded Studio", 120_000);
+	for (let t = 0; t < 150 && proxied === before; t += 1) await sleep(200);
+	await sleep(1000);
+	assert.equal(await evaluate("!!document.querySelector('[data-testid=update-chip]')"), false, "3.9.9 is current now: no chip");
+	assert.deepEqual(readFileSync(join(temp, "launcher.log"), "utf8").trim().split("\n").map((line) => JSON.parse(line)), [["--port", String(launcherPort), "--no-open", "--no-star", "--no-motion"]], "the new launcher got the same argv");
+	await shot("11-after-reload");
+	console.log("PASS Restart now: Restarting…, the new launcher on the same port answers 3.9.9, a dirty project gets Save then Reload");
+
+	// 2c. The same with a saved project: the Studio reloads by itself.
+	await startLauncher("ok");
+	writeFileSync(gate, "go");
+	await load();
+	await waitFor(`${view("update-chip")} === 'available'`, "the available chip");
+	assert.equal(await evaluate("!document.querySelector('.project-dirty-dot')"), true, "nothing unsaved");
+	await click("update-chip");
+	await waitFor("document.querySelector('[data-testid=update-now]')?.disabled === false", "Update now enabled");
+	await click("update-now");
+	await waitFor("document.querySelector('[data-testid=update-restart]')?.disabled === false", "Restart now", 15_000);
+	await evaluate("window.__qaBeforeRestart = true");
+	await click("update-restart");
+	await waitFor("!!document.querySelector('.topbar') && !!window.__cozyclay && window.__qaBeforeRestart !== true", "the Studio reloaded by itself", 60_000);
+	await sleep(1500);
+	assert.equal(await evaluate("!!document.querySelector('[data-testid=update-chip]')"), false, "no chip after the automatic reload");
+	await shot("12-auto-reloaded");
+	console.log("PASS Restart now with a saved project reloads the Studio by itself onto 3.9.9");
 
 	// 3. a fresh launcher whose npm fails with EACCES -> the failure card
 	await startLauncher("eacces");
@@ -237,10 +294,12 @@ try {
 	assert.ok(has({ event: "update:finished", outcome: "failed", error_class: "permission" }), "finished failed permission");
 	assert.ok(has({ event: "update:clicked", action: "copy_command" }), "clicked copy_command");
 	assert.ok(has({ event: "update:clicked", action: "dismiss" }), "clicked dismiss");
-	assert.equal(events.filter((event) => event.event === "update:finished").length, 2, "one update:finished per install");
+	assert.ok(has({ event: "update:clicked", action: "restart", kind: "global" }), "clicked restart");
+	assert.equal(events.filter((event) => event.event === "update:restarted" && event.outcome === "ok").length, 2, "update:restarted ok, once per restart");
+	assert.equal(events.filter((event) => event.event === "update:finished").length, 3, "one update:finished per install");
 	assert.ok(!JSON.stringify(records.filter((r) => r.event.startsWith("update:"))).match(/3\.9\.9|EACCES|node_modules|npm install/), "no version string, npm output, path or command in update:* payloads");
 	assert.deepEqual(errors, [], "no uncaught page errors");
-	console.log("PASS qa-update-notice-browser: available, busy, updating, restart, EACCES failure, dismiss, Korean, and the update:* events");
+	console.log("PASS qa-update-notice-browser: available, busy, updating, restart, Restart now (dirty and saved), EACCES failure, dismiss, Korean, and the update:* events");
 } finally {
 	ws.close();
 	launcher?.kill("SIGTERM");

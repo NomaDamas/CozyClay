@@ -5,8 +5,12 @@
 // site, Vite dev) makes no request at all. Tabs share a dismiss, an install
 // start and a phase change at once (U2): over a BroadcastChannel, or through a
 // storage event where there is none. A hint only makes a tab fetch now; the
-// launcher's answer stays the only phase a tab shows.
+// launcher's answer stays the only phase a tab shows. Restart now (U2b, #960)
+// hands the launcher to the new version and waits for it to answer.
 export const UPDATE_URL = "/__cozyclay/update";
+export const RESTART_URL = "/__cozyclay/update/restart";
+export const RESTART_WAIT_MS = 30_000;
+export const RESTART_POLL_MS = 1000;
 export const DISMISS_KEY = "cozyclay:update-dismissed";
 export const POLL_MS = 6 * 60 * 60 * 1000;
 export const VISIBLE_STALE_MS = 60 * 60 * 1000;
@@ -53,10 +57,10 @@ export function normalizeUpdateInfo(body) {
 	};
 }
 
-async function request(fetchImpl, init, win) {
+async function request(fetchImpl, init, win, url = UPDATE_URL) {
 	if (!hasLauncherRuntime(win) || typeof fetchImpl !== "function") return null;
 	try {
-		const response = await fetchImpl(UPDATE_URL, { cache: "no-store", credentials: "same-origin", ...init });
+		const response = await fetchImpl(url, { cache: "no-store", credentials: "same-origin", ...init });
 		if (!response?.ok) return null;
 		return normalizeUpdateInfo(await response.json());
 	} catch {
@@ -69,6 +73,16 @@ export const fetchUpdateInfo = (fetchImpl = globalThis.fetch?.bind(globalThis), 
 
 /** POST: ask the launcher to install `latest`. The 202 body, or null (403/409/network). No body is sent. */
 export const startUpdate = (fetchImpl = globalThis.fetch?.bind(globalThis), win = globalThis.window) => request(fetchImpl, { method: "POST" }, win);
+
+/** POST: hand the launcher to the installed version. The 202 body, or null (403/409/network). No body is sent. */
+export const requestRestart = (fetchImpl = globalThis.fetch?.bind(globalThis), win = globalThis.window) => request(fetchImpl, { method: "POST" }, win, RESTART_URL);
+
+/** After the new launcher answers: reload only a saved project. True when it reloaded. */
+export function reloadAfterRestart({ dirty, reload }) {
+	if (dirty) return false;
+	reload();
+	return true;
+}
 
 /** patch | minor | major: how far `current` is behind `latest`. */
 export function behindOf(current, latest) {
@@ -88,16 +102,22 @@ export function updateBlocked({ agentRunning = false, exportStatus = null, recSt
 
 const HIDDEN = Object.freeze({ view: "hidden", actions: [] });
 
-/** The chip and dialog view for one poll result and the local dismiss state ({ dismissed }). */
+const RESTART_ACTIONS = { restarting: [], restarted: ["reload"], restart_timeout: ["copy_command"] };
+
+/**
+ * The chip and dialog view for one poll result and the local state: { dismissed }, and { restart }
+ * (restarting | restarted | restart_timeout) once Restart now ran here or in another tab.
+ */
 export function nextUpdateState(info, local = {}) {
 	if (!info || !info.enabled) return HIDDEN;
 	const base = {
 		current: info.current, latest: info.latest, kind: info.kind, notesUrl: info.notesUrl,
 		command: info.command, canSelfUpdate: info.canSelfUpdate, errorClass: null,
 	};
+	if (RESTART_ACTIONS[local.restart]) return { ...base, latest: local.target ?? info.latest, view: local.restart, command: RESTART_COMMAND, actions: RESTART_ACTIONS[local.restart] };
 	const oneClick = info.kind === "global" && info.canSelfUpdate;
 	if (info.phase === "updating") return { ...base, view: "updating", actions: [] };
-	if (info.phase === "restart_needed") return { ...base, view: "restart_needed", command: RESTART_COMMAND, actions: ["copy_command"] };
+	if (info.phase === "restart_needed") return { ...base, view: "restart_needed", command: RESTART_COMMAND, actions: ["restart", "copy_command"] };
 	if (info.phase === "failed") {
 		return { ...base, view: "failed", errorClass: info.errorClass ?? "other", command: GLOBAL_COMMAND,
 			actions: oneClick ? ["retry", "copy_command"] : ["copy_command"] };
@@ -120,7 +140,7 @@ export function writeDismissed(latest, storage = safeStorage()) {
 	try { storage.setItem(DISMISS_KEY, latest); return true; } catch { return false; }
 }
 
-const HINTS = new Set(["dismiss", "install", "phase"]);
+const HINTS = new Set(["dismiss", "install", "phase", "restart"]);
 
 // A missing or throwing BroadcastChannel is null: hints then travel as a storage event.
 function openUpdateChannel() {
@@ -145,17 +165,19 @@ const defaultTimers = {
  * gets { state, info } after every change. Returns { dismiss, update, stop }.
  * `channel` is a BroadcastChannel-shaped object (default: one is opened when
  * the browser has it); null sends the other tabs' hints through `storage`.
+ * restart() and a restart hint poll every 1 s, failures included, until the
+ * launcher's `current` is the installed version, for up to 30 s.
  */
 export function createUpdatePoller({
 	fetchImpl = globalThis.fetch?.bind(globalThis), onState = () => {}, timers = defaultTimers,
 	storage = safeStorage(), win = globalThis.window, doc = globalThis.document, channel: injected,
 } = {}) {
-	const noop = { dismiss() {}, update: async () => null, stop() {} };
+	const noop = { dismiss() {}, update: async () => null, restart: async () => null, stop() {} };
 	if (!hasLauncherRuntime(win)) return noop;
 	const channel = injected === undefined ? openUpdateChannel() : injected;
 	let info = null, timer = null, stopped = false, inflight = null, lastCheck = -Infinity, hints = 0;
-	let dismissed = readDismissed(storage);
-	const emit = () => { if (!stopped) onState({ state: nextUpdateState(info, { dismissed }), info }); };
+	let dismissed = readDismissed(storage), restart = null, target = null, following = null;
+	const emit = () => { if (!stopped) onState({ state: nextUpdateState(info, { dismissed, restart, target }), info }); };
 	const schedule = () => {
 		if (stopped) return;
 		if (timer !== null) timers.clear(timer);
@@ -191,8 +213,30 @@ export function createUpdatePoller({
 	};
 	// A fetch already in flight may predate the hint, so one more follows it.
 	const refresh = () => (inflight ? inflight.then(() => check("hinted")) : check("hinted"));
+	// The old launcher stops answering for a moment, so a failed fetch is only another try.
+	const followRestart = (to) => {
+		if (following || !to) return following ?? Promise.resolve(null);
+		restart = "restarting";
+		target = to;
+		emit();
+		const deadline = timers.now() + RESTART_WAIT_MS;
+		following = (async () => {
+			for (;;) {
+				await new Promise((done) => timers.set(done, RESTART_POLL_MS));
+				if (stopped) return null;
+				const next = await fetchUpdateInfo(fetchImpl, win);
+				if (next?.current === to) { info = next; restart = "restarted"; break; }
+				if (timers.now() >= deadline) { restart = "restart_timeout"; break; }
+			}
+			emit();
+			return restart === "restarted" ? "ok" : "timeout";
+		})();
+		return following;
+	};
+	const restartTarget = (latest) => version(latest) ?? (info?.phase === "restart_needed" ? info.latest : null);
 	const onHint = (type, latest = null) => {
 		if (stopped || !HINTS.has(type)) return;
+		if (type === "restart") return void followRestart(restartTarget(latest));
 		if (type !== "dismiss") return void refresh();
 		dismissed = readDismissed(storage) ?? version(latest) ?? dismissed;
 		emit();
@@ -223,6 +267,14 @@ export function createUpdatePoller({
 			apply(next, "install");
 			schedule();
 			return next;
+		},
+		// Resolves to the outcome (ok | timeout), or null when the launcher refused.
+		async restart() {
+			const to = restartTarget(null);
+			if (!to || following) return following;
+			if (!(await requestRestart(fetchImpl, win))) return null;
+			hint("restart", to);
+			return followRestart(to);
 		},
 		stop() {
 			stopped = true;

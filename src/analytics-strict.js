@@ -114,7 +114,8 @@ const SCHEMAS = Object.freeze({
 	"ui:dead_click": { control: oneOf(...CONTROL_IDS, "other"), reason: oneOf("aria_disabled", "refused", "no_effect") },
 	// The update notice (src/update/update-telemetry.js): an install kind and buckets, never a version string or npm output.
 	"update:notice_shown": { kind: oneOf("global", "npx"), behind: oneOf("patch", "minor", "major") },
-	"update:clicked": { action: oneOf("update_now", "copy_command", "later", "dismiss", "release_notes"), kind: oneOf("global", "npx") },
+	"update:clicked": { action: oneOf("update_now", "copy_command", "later", "dismiss", "release_notes", "restart"), kind: oneOf("global", "npx") },
+	"update:restarted": { outcome: oneOf("ok", "timeout") },
 	"update:finished": {
 		outcome: oneOf("ok", "failed"), error_class: oneOf("none", "permission", "network", "node_version", "npm_missing", "other"), duration: long,
 	},

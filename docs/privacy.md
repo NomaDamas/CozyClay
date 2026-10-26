@@ -59,8 +59,9 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 | `object:deleted_soon` | You deleted an object you added in this session, at most 10 per session: `age` (how long after adding it: `lt2s`, `2-10s`, `10-60s` or `gte60s`). Object ids are reused names, so this is an estimate. Never the object's id, name or kind |
 | `object:delete_undone` | You undid an object deletion within its 7-second undo window, at most 10 per session: `age` (time from the deletion to the undo: `lt2s` or `2-10s`). Never the object's id, name or kind |
 | `update:notice_shown` | The update notice appeared in the top bar of an npm studio, once per session: `kind` (`global` or `npx`) and `behind` (`patch`, `minor` or `major`: how far the running version is behind the newest release). Never a path or a command |
-| `update:clicked` | A button on the update notice, at most 10 per session: `action` (`update_now`, `copy_command`, `later`, `dismiss` or `release_notes`) and `kind` (`global` or `npx`) |
+| `update:clicked` | A button on the update notice, at most 10 per session: `action` (`update_now`, `copy_command`, `later`, `dismiss`, `release_notes` or `restart`) and `kind` (`global` or `npx`) |
 | `update:finished` | A one-click update ended, at most 3 per session: `outcome` (`ok` or `failed`), `error_class` (`none`, `permission`, `network`, `node_version`, `npm_missing` or `other`) and `duration` (`lt10s`, `10-30s`, `30-60s`, `1-2m`, `2-5m` or `gte5m`). Never npm's output, a path or the command line |
+| `update:restarted` | **Restart now** ended in the tab that pressed it, once per session: `outcome` (`ok`: the updated launcher answered; `timeout`: it did not within 30 seconds). Never a version string, a path or the command line |
 | `device:profile` | Once per session: GPU vendor/class, WebGL version, CPU/memory buckets, and a frame-rate bucket. Never the raw renderer string |
 | `survey:use_case` | Optional one-time question after a successful export: `use_case` and `team`, closed choices only |
 | `export:blocking_frame_succeeded` | Funnel and drop-off analysis |

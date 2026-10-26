@@ -5,6 +5,10 @@
  *
  * POST reads no body. The version it installs is the registry's latest after
  * an exact x.y.z test, never anything the request says.
+ *
+ * POST /__cozyclay/update/restart (#960) hands the launcher to the version a
+ * finished install put in place (bin/update-restart.mjs). Same Origin rule,
+ * no body, 409 unless the install state is restart_needed.
  */
 const VERSION = /^\d+\.\d+\.\d+$/;
 const NOTES_URL = "https://github.com/NomaDamas/CozyClay/releases/tag/v";
@@ -23,8 +27,9 @@ function sendJson(res, status, body, headers = {}) {
  * @param {number} options.port the launcher's loopback port
  * @param {() => Promise<boolean>} options.canSelfUpdate
  * @param {{startInstall(version: string): boolean, getState(): object}} options.installer
+ * @param {{target(): Promise<string|null>, restart(): Promise<void>}} [options.restarter] absent: restart answers 409
  */
-export function createUpdateRoutes({ currentVersion, checkLatest, kind, enabled, port, canSelfUpdate, installer }) {
+export function createUpdateRoutes({ currentVersion, checkLatest, kind, enabled, port, canSelfUpdate, installer, restarter = null }) {
 	const command = kind === "npx" ? "npx cozyclay" : "npm install -g cozyclay@latest";
 	const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
 	// Spelled in two parts so the G014 loopback invariant does not read it as a client URL.
@@ -64,8 +69,23 @@ export function createUpdateRoutes({ currentVersion, checkLatest, kind, enabled,
 		return sendJson(res, 202, await info());
 	}
 
+	let restarting = false;
+	async function handleRestart(req, res) {
+		if (req.method !== "POST") return sendJson(res, 405, { error: "method not allowed" }, { allow: "POST" });
+		if (req.headers.origin !== `http://127.0.0.1:${port}`) return sendJson(res, 403, { error: "forbidden origin" });
+		if (restarting) return sendJson(res, 202, await info());
+		if (!enabled || installer.getState().phase !== "restart_needed" || !restarter || !(await restarter.target())) {
+			return sendJson(res, 409, { error: "restart unavailable" });
+		}
+		restarting = true;
+		// The answer has to leave before the server drops every connection.
+		res.once("finish", () => setTimeout(() => void restarter.restart(), 50));
+		return sendJson(res, 202, await info());
+	}
+
 	return async function handleUpdateRoute(req, res) {
 		try {
+			if (req.url?.split("?")[0] === "/__cozyclay/update/restart") return await handleRestart(req, res);
 			if (req.method === "GET") {
 				const origin = req.headers.origin;
 				if (!(origins.has(origin) || (origin === undefined && hosts.has(req.headers.host)))) return sendJson(res, 403, { error: "forbidden origin" });

@@ -16,6 +16,10 @@ Studio
   in **Content › Sculpts**, with a thumbnail. Drag a card into any scene of
   any project to place a copy. Export a card as `.cozysculpt.json` and import
   it on another machine.
+- After a one-click update, **Restart now** starts the new version on the same
+  port in the same terminal (macOS and Linux), and the Studio reloads when it
+  answers. A project with unsaved changes asks you to save, then reload.
+  Windows keeps the copy command by design.
 
 CLI
 

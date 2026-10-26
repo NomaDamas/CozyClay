@@ -3,13 +3,15 @@
 // schedule, the hosted-page no-op, silent fetch failures, the once-per-install
 // update:finished rule and the agent-busy signal. U2: multi-tab sync over an
 // injected channel or storage events, and the version Help › About names.
+// U2b (#960): Restart now polls until the new version answers, tolerates the
+// old launcher's silence, reloads only a saved project and tells other tabs.
 // No browser, no launcher.
 import assert from "node:assert/strict";
 import {
-	CHANNEL_NAME, DISMISS_KEY, HINT_KEY, POLL_MS, UPDATE_URL, UPDATING_POLL_MS, VISIBLE_STALE_MS, behindOf, createUpdatePoller, fetchUpdateInfo,
-	nextUpdateState, normalizeUpdateInfo, readDismissed, startUpdate, updateBlocked, writeDismissed,
+	CHANNEL_NAME, DISMISS_KEY, HINT_KEY, POLL_MS, RESTART_POLL_MS, RESTART_URL, RESTART_WAIT_MS, UPDATE_URL, UPDATING_POLL_MS, VISIBLE_STALE_MS, behindOf,
+	createUpdatePoller, fetchUpdateInfo, nextUpdateState, normalizeUpdateInfo, readDismissed, reloadAfterRestart, requestRestart, startUpdate, updateBlocked, writeDismissed,
 } from "../src/update/update-client.js";
-import { noteNoticeShown, noteUpdateClicked, noteUpdatePolled, updateTelemetrySeam } from "../src/update/update-telemetry.js";
+import { noteNoticeShown, noteUpdateClicked, noteUpdatePolled, noteUpdateRestarted, updateTelemetrySeam } from "../src/update/update-telemetry.js";
 import * as friction from "../src/analytics-friction.js";
 import { agentTurnRunning, subscribeAgentTurns, trackAgentTurns } from "../src/workflow/agent-turn-telemetry.js";
 import { createAgentTransport, createMockTransport } from "../src/workflow/agent-client.js";
@@ -46,7 +48,10 @@ const settle = async () => { for (let i = 0; i < 5; i += 1) await Promise.resolv
 		["dismissed this version", info(), { dismissed: "3.1.5" }, "hidden", []],
 		["dismissed an older version", info(), { dismissed: "3.1.4" }, "available", ["update_now", "later"]],
 		["updating, even when dismissed", info({ phase: "updating" }), { dismissed: "3.1.5" }, "updating", []],
-		["restart needed, even when dismissed", info({ phase: "restart_needed", durationMs: 4000 }), { dismissed: "3.1.5" }, "restart_needed", ["copy_command"]],
+		["restart needed, even when dismissed", info({ phase: "restart_needed", durationMs: 4000 }), { dismissed: "3.1.5" }, "restart_needed", ["restart", "copy_command"]],
+		["restarting here or in another tab", info({ phase: "restart_needed" }), { restart: "restarting" }, "restarting", []],
+		["the new launcher answered", info({ phase: "idle", status: "latest", current: "3.1.5" }), { restart: "restarted" }, "restarted", ["reload"]],
+		["the restart timed out", info({ phase: "restart_needed" }), { restart: "restart_timeout" }, "restart_timeout", ["copy_command"]],
 		["failed, retry possible", info({ phase: "failed", errorClass: "network", durationMs: 900 }), {}, "failed", ["retry", "copy_command"]],
 		["failed, no self-update", info({ phase: "failed", errorClass: "permission", canSelfUpdate: false }), {}, "failed", ["copy_command"]],
 		["no info", null, {}, "hidden", []],
@@ -423,6 +428,123 @@ console.log("PASS agent-busy signal: on during a mock turn, off on done, abort, 
 	assert.equal(CHANNEL_NAME, "cozyclay:update");
 }
 console.log("PASS multi-tab: dismiss, install start and phase hints reach other tabs at once; hints trigger a poll, never a state; storage fallback");
+
+// 11. Restart now: POST, poll until `current` is the installed version through failed fetches,
+//     the 30 s ceiling, the dirty gate, the cross-tab message, and update:restarted.
+{
+	let clock = 0, nextId = 1;
+	const pending = new Map();
+	const timers = {
+		set: (fn, ms) => { pending.set(nextId, { fn, at: clock + ms }); return nextId++; },
+		clear: (id) => pending.delete(id),
+		now: () => clock,
+		afterFirstFrame: (fn) => fn(),
+	};
+	const advance = async (ms) => {
+		clock += ms;
+		for (const [id, timer] of [...pending]) if (timer.at <= clock) { pending.delete(id); timer.fn(); }
+		for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+	};
+	// The launcher: restart_needed on 3.1.4, then silent (fetch throws), then the new one on 3.1.5.
+	const launcher = { mode: "old", gets: 0, restarts: [] };
+	const fetchImpl = async (url, init) => {
+		if (url === RESTART_URL) {
+			launcher.restarts.push([init.method, init.body]);
+			if (launcher.refuse) return { ok: false, status: 409, json: async () => ({ error: "restart unavailable" }) };
+			launcher.mode = "down";
+			return { ok: true, status: 202, json: async () => body({ phase: "restart_needed", durationMs: 4000 }) };
+		}
+		launcher.gets += 1;
+		if (launcher.mode === "down") throw new TypeError("Failed to fetch");
+		if (launcher.mode === "new") return { ok: true, json: async () => body({ current: "3.1.5", status: "latest", phase: "idle" }) };
+		return { ok: true, json: async () => body({ phase: "restart_needed", durationMs: 4000 }) };
+	};
+	const channels = new Set();
+	const openChannel = () => {
+		const end = {
+			listeners: new Set(), sent: [],
+			postMessage(data) { end.sent.push(data); for (const other of channels) if (other !== end) queueMicrotask(() => { for (const fn of other.listeners) fn({ data }); }); },
+			addEventListener: (name, fn) => { if (name === "message") end.listeners.add(fn); },
+			removeEventListener: (name, fn) => end.listeners.delete(fn),
+			close() { channels.delete(end); },
+		};
+		channels.add(end);
+		return end;
+	};
+	const tab = (channel) => {
+		const views = [];
+		const poller = createUpdatePoller({ fetchImpl, timers, win: runtimeWindow(), doc: null, storage: memoryStorage(), channel, onState: ({ state }) => views.push(state) });
+		return { poller, views, view: () => views.at(-1)?.view };
+	};
+	const endA = openChannel(), endB = openChannel();
+	const a = tab(endA), b = tab(endB);
+	await advance(0);
+	assert.deepEqual([a.view(), b.view()], ["restart_needed", "restart_needed"]);
+	assert.deepEqual(a.views.at(-1).actions, ["restart", "copy_command"], "restart_needed offers Restart now");
+	const outcome = a.poller.restart();
+	await advance(0);
+	assert.deepEqual(launcher.restarts, [["POST", undefined]], "one body-less POST to the restart route");
+	assert.deepEqual(endA.sent.at(-1), { type: "restart", latest: "3.1.5" }, "the other tabs are told which version to wait for");
+	assert.deepEqual([a.view(), b.view()], ["restarting", "restarting"], "both tabs show Restarting… at once");
+	const getsBefore = launcher.gets;
+	for (let t = 0; t < 5; t += 1) await advance(RESTART_POLL_MS);
+	assert.ok(launcher.gets - getsBefore >= 8, "both tabs poll every second while the launcher is down");
+	assert.deepEqual([a.view(), b.view()], ["restarting", "restarting"], "failed fetches are tolerated, not shown");
+	launcher.mode = "old";
+	await advance(RESTART_POLL_MS);
+	assert.equal(a.view(), "restarting", "an answer that still names the old version keeps waiting");
+	launcher.mode = "new";
+	await advance(RESTART_POLL_MS);
+	assert.deepEqual([a.view(), b.view()], ["restarted", "restarted"], "both tabs see the new launcher's 3.1.5");
+	assert.equal(await outcome, "ok");
+	assert.deepEqual(a.views.at(-1).actions, ["reload"]);
+	assert.equal(endB.sent.length, 0, "a tab told about the restart does not echo it");
+	assert.equal(await a.poller.restart(), "ok", "a second press returns the same outcome, no second POST");
+	assert.equal(launcher.restarts.length, 1);
+	a.poller.stop(); b.poller.stop();
+
+	// 30 s of silence: restart_timeout with the cclay command.
+	launcher.mode = "old";
+	const c = tab(null);
+	await advance(0);
+	const timedOut = c.poller.restart();
+	await advance(0);
+	for (let t = 0; t < RESTART_WAIT_MS / RESTART_POLL_MS + 1; t += 1) await advance(RESTART_POLL_MS);
+	assert.equal(await timedOut, "timeout");
+	assert.equal(c.view(), "restart_timeout");
+	assert.deepEqual([c.views.at(-1).actions, c.views.at(-1).command], [["copy_command"], "cclay"]);
+	c.poller.stop();
+
+	// A 409: nothing changes, nothing is hinted.
+	launcher.mode = "old"; launcher.refuse = true;
+	const endD = openChannel();
+	const d = tab(endD);
+	await advance(0);
+	assert.equal(await d.poller.restart(), null);
+	assert.equal(d.view(), "restart_needed");
+	assert.equal(endD.sent.length, 0);
+	assert.equal(await requestRestart(fetchImpl, {}), null, "no runtime: no request");
+	d.poller.stop();
+
+	// The dirty gate.
+	let reloads = 0;
+	assert.equal(reloadAfterRestart({ dirty: false, reload: () => { reloads += 1; } }), true);
+	assert.equal(reloadAfterRestart({ dirty: true, reload: () => { reloads += 1; } }), false, "a dirty project is never reloaded");
+	assert.equal(reloads, 1);
+
+	// update:restarted: closed outcomes, once per session; restart joins the click actions.
+	friction.reset();
+	const sent = [];
+	const restore = updateTelemetrySeam((event, props) => sent.push({ event, props }), memoryStorage());
+	noteUpdateClicked("restart", "global");
+	noteUpdateRestarted("bogus");
+	noteUpdateRestarted("ok");
+	noteUpdateRestarted("timeout");
+	assert.deepEqual(sent, [{ event: "update:clicked", props: { action: "restart", kind: "global" } }, { event: "update:restarted", props: { outcome: "ok" } }]);
+	restore();
+	friction.reset();
+}
+console.log("PASS restart: one POST, every tab waits through failed fetches for the new version, 30 s timeout, 409 no-op, dirty gate, update:restarted once");
 
 // 10. Help › About names the runtime appVersion, not the never-defined VITE_APP_VERSION.
 {

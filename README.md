@@ -60,8 +60,9 @@ a GPU, Python or a model download. The studio opens at `http://127.0.0.1:5180/ap
 
 **Updating.** `npx cozyclay` fetches the newest release each time you run it. After
 `npm install -g cozyclay`, the studio shows a small **Update** chip in the top bar when a newer
-release is out. **Update now** installs it, and then you restart `cclay`. `cclay update` does the
-same from the terminal. `--no-update-check` or `COZYCLAY_NO_UPDATE_CHECK=1` turns the check off
+release is out. **Update now** installs it, and **Restart now** starts the new version in the same
+terminal; the studio reloads once your project is saved. On Windows the chip gives you the command to
+copy instead: one-click stays off there by design. `cclay update` does the same from the terminal. `--no-update-check` or `COZYCLAY_NO_UPDATE_CHECK=1` turns the check off
 for one launch; `cclay update --off` turns it off for good, and `cclay update --on` brings it back.
 
 > **Asking an AI agent to set it up?** Give it this repository link. Its instructions are in

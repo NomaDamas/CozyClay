@@ -1,4 +1,5 @@
-// update:notice_shown, update:clicked and update:finished (the U1 update notice).
+// update:notice_shown, update:clicked, update:finished (the U1 update notice) and
+// update:restarted (Restart now, #960).
 // Only closed values leave: the install kind, how far behind (patch/minor/major),
 // the button, the outcome, the npm error class and a duration bucket. Never a
 // version string, a path, a command or npm's output. All three are passive
@@ -10,7 +11,8 @@ import { bucketLong } from "../analytics-strict.js";
 const CLICKS_PER_SESSION = 10;
 const FINISHED_PER_SESSION = 3;
 const NOTICE_KINDS = new Set(["global", "npx"]);
-const CLICK_ACTIONS = new Set(["update_now", "copy_command", "later", "dismiss", "release_notes"]);
+const CLICK_ACTIONS = new Set(["update_now", "copy_command", "later", "dismiss", "release_notes", "restart"]);
+const RESTART_OUTCOMES = new Set(["ok", "timeout"]);
 // The install this browser already reported, shared by the tabs of one profile:
 // several tabs (and several polls) see the same terminal phase, the event leaves once.
 const REPORTED_KEY = "cozyclay:update-reported";
@@ -31,13 +33,23 @@ export function noteNoticeShown(state) {
 	}
 }
 
-/** A notice button: update_now (also Try again), copy_command, later, dismiss or release_notes. */
+/** A notice button: update_now (also Try again), copy_command, later, dismiss, release_notes or restart. */
 export function noteUpdateClicked(action, kind) {
 	try {
 		if (!CLICK_ACTIONS.has(action) || !NOTICE_KINDS.has(kind)) return;
 		if (admit("update:clicked", CLICKS_PER_SESSION)) send("update:clicked", { action, kind });
 	} catch {
 		// Telemetry must never affect the notice.
+	}
+}
+
+/** Restart now ended in the tab that pressed it: the new launcher answered (ok) or 30 s passed (timeout). Once per session. */
+export function noteUpdateRestarted(outcome) {
+	try {
+		if (!RESTART_OUTCOMES.has(outcome)) return;
+		if (admit("update:restarted", 1)) send("update:restarted", { outcome });
+	} catch {
+		// Telemetry must never affect the restart.
 	}
 }
 

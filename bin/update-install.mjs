@@ -7,7 +7,7 @@
  * only argument that varies is a version that has passed an exact x.y.z test.
  */
 import { execFile, spawn } from "node:child_process";
-import { constants, accessSync, realpathSync } from "node:fs";
+import { constants, accessSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 
 const VERSION = /^\d+\.\d+\.\d+$/;
@@ -63,6 +63,19 @@ async function computeSelfUpdate(pkgRoot, platform, npmBin) {
 	} catch {
 		return false;
 	}
+}
+
+/**
+ * `<npm root -g>/cozyclay/bin/cozyclay.mjs`, the launcher a finished global
+ * install put in place (the folder canSelfUpdate matched), or null when npm
+ * does not answer or the file is missing. COZYCLAY_RESTART_BIN overrides it
+ * for tests, the way COZYCLAY_NPM_BIN stands in for npm.
+ */
+export async function globalLauncherPath(platform = process.platform) {
+	if (process.env.COZYCLAY_RESTART_BIN) return process.env.COZYCLAY_RESTART_BIN;
+	const root = await npmRootGlobal(npmBinary(platform), platform);
+	const bin = root && join(root, "cozyclay", "bin", "cozyclay.mjs");
+	return bin && existsSync(bin) ? bin : null;
 }
 
 function classOf(code) {

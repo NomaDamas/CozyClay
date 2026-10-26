@@ -2083,9 +2083,12 @@ provider. Hosted builds have no sidecar and send neither.
 The in-Studio update notice on npm launches (`src/update/`). The Studio asks
 its own launcher (`GET /__cozyclay/update`), and the launcher answers from its
 cached registry check. A global install whose folder npm can write gets
-**Update now**, which runs `npm install -g cozyclay@<version>`. Every other
-global install gets a command to copy. npx gets "run `npx cozyclay` again".
-All three events are passive. Builds before this release have no rows
+**Update now**, which runs `npm install -g cozyclay@<version>`, then
+**Restart now**, which hands the launcher to the installed version on the
+same port (macOS and Linux). Every other global install gets a command to
+copy. Windows one-click stays off by design (`canSelfUpdate` is false on
+win32), so a Windows install always gets the copy command. npx gets "run
+`npx cozyclay` again". All four events are passive. Builds before this release have no rows
 (**unknown, not 0**). The first build that can show the notice is the one
 after the build that ships it.
 
@@ -2094,8 +2097,9 @@ after the build that ships it.
 | Event | Properties | Fired |
 | --- | --- | --- |
 | `update:notice_shown` | `kind` (`global`, `npx`), `behind` (`patch`, `minor`, `major`) | The chip first appears in a session. Once per session |
-| `update:clicked` | `action` (`update_now`, `copy_command`, `later`, `dismiss`, `release_notes`), `kind` | Each button on the chip or the dialog. 10 per session |
+| `update:clicked` | `action` (`update_now`, `copy_command`, `later`, `dismiss`, `release_notes`, `restart`), `kind` | Each button on the chip or the dialog. 10 per session |
 | `update:finished` | `outcome` (`ok`, `failed`), `error_class` (`none`, `permission`, `network`, `node_version`, `npm_missing`, `other`), `duration` (lt10s … gte5m) | Polling sees the install end (`restart_needed` or `failed`). Once per install, 3 per session |
+| `update:restarted` | `outcome` (`ok`, `timeout`) | **Restart now** ends in the tab that pressed it: the launcher answers with the installed version (`ok`) or 30 s pass (`timeout`). Once per session |
 
 `behind` compares the running version with the newest release: a different
 major, else a different minor, else patch. A tab closed while npm runs loses
@@ -2103,6 +2107,9 @@ its `update:finished` (the launcher never calls PostHog itself).
 `error_class` reads npm's `npm error code` line: `permission` (EACCES,
 EPERM), `network` (ENOTFOUND, ETIMEDOUT, ECONNREFUSED, ECONNRESET, EAI_AGAIN),
 `node_version` (EBADENGINE), `npm_missing` (npm not on PATH), `other`.
+`update:restarted` leaves just before the reload, so a reload that wins the
+race can lose an `ok` row (**unknown, not 0**). Other tabs follow the restart
+over the BroadcastChannel and send nothing.
 
 ## 6.1 Update funnel (30 days)
 
