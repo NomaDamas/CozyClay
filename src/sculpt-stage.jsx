@@ -5,6 +5,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
 import * as THREE from "three";
 import { SCULPT_LAYER, isolatedObjectIds, sculptFraming } from "./sculpt-mode.js";
+import { pickSculptPart } from "./sculpt-pick.js";
+import { SculptPartOutline } from "./sculpt-part-outline.jsx";
 
 const SCULPT_FOV = 35;
 // Where a new sculpt lands (object.sculpt without placement): the origin.
@@ -87,9 +89,11 @@ function ClayLump({ at }) {
 
 // How long a changed part glows after an edit lands.
 const FLASH_MS = 1400;
+// A press that travels further than this is an orbit, not a click.
+const CLICK_SLOP_PX = 4;
 
-export function SculptTurntable({ camRef, objects, target, size, view, light = false, busy = false, changedParts = null }) {
-	const { scene, raycaster, invalidate } = useThree();
+export function SculptTurntable({ camRef, objects, target, size, view, light = false, busy = false, changedParts = null, parts = null }) {
+	const { scene, raycaster, invalidate, gl } = useThree();
 	const [camera, setCamera] = useState(null);
 	// The key light aims at the sculpt; its target must sit in the scene graph.
 	const [lightTarget] = useState(() => new THREE.Object3D());
@@ -146,6 +150,32 @@ export function SculptTurntable({ camRef, objects, target, size, view, light = f
 		return () => { raycaster.layers.mask = mask; };
 	}, [raycaster]);
 
+	// Part picking (#740 S7): a left click (not an orbit drag) on the sculpt
+	// selects the part under it, on empty space clears. The pointer maps into
+	// the main pane, the rect the sculpt camera's projection spans.
+	const partsRef = useRef(parts);
+	partsRef.current = parts;
+	const [pickRay] = useState(() => { const ray = new THREE.Raycaster(); ray.layers.set(SCULPT_LAYER); return ray; });
+	useEffect(() => {
+		if (!camera) return undefined;
+		const canvas = gl.domElement;
+		let down = null;
+		const onDown = (event) => { down = event.button === 0 && event.target === canvas ? [event.clientX, event.clientY] : null; };
+		const onUp = (event) => {
+			const start = down;
+			down = null;
+			if (!start || !partsRef.current?.onSelect || Math.hypot(event.clientX - start[0], event.clientY - start[1]) > CLICK_SLOP_PX) return;
+			const pane = (document.querySelector(".vp-pane.vp-main") ?? canvas).getBoundingClientRect();
+			if (pane.width < 2 || pane.height < 2) return;
+			camera.updateMatrixWorld();
+			pickRay.setFromCamera(new THREE.Vector2(((event.clientX - pane.left) / pane.width) * 2 - 1, -((event.clientY - pane.top) / pane.height) * 2 + 1), camera);
+			partsRef.current.onSelect(pickSculptPart(pickRay, nodesRef.current));
+		};
+		canvas.addEventListener("pointerdown", onDown);
+		window.addEventListener("pointerup", onUp);
+		return () => { canvas.removeEventListener("pointerdown", onDown); window.removeEventListener("pointerup", onUp); };
+	}, [camera, gl, pickRay]);
+
 	useEffect(() => () => {
 		for (const node of taggedRef.current) node.layers.disable(SCULPT_LAYER);
 		taggedRef.current = new Set();
@@ -192,6 +222,7 @@ export function SculptTurntable({ camRef, objects, target, size, view, light = f
 			<PerspectiveCamera ref={(node) => { camRef.current = node; setCamera(node); }} makeDefault fov={SCULPT_FOV} near={0.05} far={100} />
 			{camera && <OrbitControls ref={controlsRef} camera={camera} enableDamping={false} minDistance={0.3} maxDistance={40} autoRotate={spinning} autoRotateSpeed={1.4}
 				onStart={() => setGrabbed(true)} onChange={() => invalidate()} />}
+			<SculptPartOutline nodesRef={nodesRef} selected={parts?.selected ?? null} />
 			<group ref={furnitureRef}>
 				<hemisphereLight args={["#ffffff", "#3a3c42", 0.9]} />
 				<primitive object={lightTarget} position={framing.target} />

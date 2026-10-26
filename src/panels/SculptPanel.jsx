@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import Foldout from "./Foldout.jsx";
 import { ko } from "../locale.js";
 import { effortOptions } from "../workflow/agent-client.js"; import { saveExport } from "../export-workspace.js";
+import SculptPartTree from "./SculptPartTree.jsx";
 import "./sculpt.css";
 
 // Sculpt mode side panel (#739). Pure view: the run controller owns the run state and the
@@ -255,7 +256,7 @@ function BlueprintSection({ blueprint, disabled }) {
 	);
 }
 
-export default function SculptPanel({ run, reference, onReference, onStart, onCancel, onPlaceInScene, canStart, startRefusal, sculptName, hidden, modelPicker = null, blueprint = null }) {
+export default function SculptPanel({ run, reference, onReference, onStart, onCancel, onPlaceInScene, canStart, startRefusal, sculptName, hidden, modelPicker = null, blueprint = null, parts = null }) {
 	const fileRef = useRef(null);
 	const [dragging, setDragging] = useState(false);
 	// The sheet is the clearest picture of what is off, so it starts open.
@@ -266,8 +267,6 @@ export default function SculptPanel({ run, reference, onReference, onStart, onCa
 	const stageIndex = STAGES.findIndex(([id]) => id === stage);
 	const iou = Number.isFinite(run?.iou) ? run.iou : null;
 	const target = Number.isFinite(run?.targetIou) ? run.targetIou : null;
-	const showProgress = stage !== "idle";
-	const startDisabled = !canStart || Boolean(startRefusal);
 	const hasLog = Boolean(run?.activity?.length);
 	useTicking((running && Boolean(run?.waiting)) || blueprint?.state === "generating");
 
@@ -327,14 +326,15 @@ export default function SculptPanel({ run, reference, onReference, onStart, onCa
 						{ko("Cancel", "취소")}
 					</button>
 				) : (
-					<button type="button" className="btn primary full" data-testid="sculpt-start" disabled={startDisabled}
+					<button type="button" className="btn primary full" data-testid="sculpt-start" disabled={!canStart || Boolean(startRefusal)}
 						aria-describedby={startRefusal ? "sculpt-start-refusal" : undefined} onClick={() => onStart?.()}>
 						{ko("Start (fast draft)", "시작 (빠른 초안)")}
 					</button>
 				)}
 				{!running && startRefusal && <p className="inspector-hint sculpt-refusal" id="sculpt-start-refusal" role="status" data-testid="sculpt-start-refusal">{startRefusal}</p>}
+				{sculptName && <SculptPartTree {...parts} />}
 
-				{showProgress && (
+				{stage !== "idle" && (
 					<div className="sculpt-progress" data-testid="sculpt-progress">
 						<ol className="sculpt-stepper" aria-label={ko("Sculpt stages", "조형 단계")}>
 							{STAGES.map(([id, label], index) => {
