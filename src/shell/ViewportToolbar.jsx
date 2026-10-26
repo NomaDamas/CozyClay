@@ -122,7 +122,7 @@ export default function ViewportToolbar() {
 		autoColor, setAutoColor, isCharacterSelection, partColoursChoice, embedMode,
 		agentCollapsed, addSceneObject, spawnCharacter, characters, flySpeed,
 		ikEditTool, setIkEditTool, motion, setRangePinPartPick,
-		previsMode, sculptView, requestSculptView, appContext, setToast,
+		previsMode, sculptView, requestSculptView, sculptParts, appContext, setToast,
 	} = useStudioShell();
 	const menu = useOverlayMenu();
 
@@ -154,11 +154,11 @@ export default function ViewportToolbar() {
 		],
 		// Motion is compiled by the agent (motion.compile); the department has no tools of its own.
 		motion: [],
-		// Sculpt mode's W/E/R swing the turntable camera to a reference view.
-		sculpt: [
-			{ key: "W", id: "front", name: ko("Front view", "정면 보기"), active: sculptView?.view === "front", pick: () => requestSculptView("front") },
-			{ key: "E", id: "side", name: ko("Side view", "측면 보기"), active: sculptView?.view === "side", pick: () => requestSculptView("side") },
-			{ key: "R", id: "back", name: ko("Back view", "뒷면 보기"), active: sculptView?.view === "back", pick: () => requestSculptView("back") },
+		// Sculpt mode's W/E/R swing the turntable camera to a reference view; with a part selected they drive its gizmo.
+		sculpt: sculptParts?.selected ? sculptParts.tools : [
+			{ key: "W", id: "front", name: ko("Front view (with a part selected, W moves it)", "정면 보기 (부품을 선택하면 W는 이동)"), active: sculptView?.view === "front", pick: () => requestSculptView("front") },
+			{ key: "E", id: "side", name: ko("Side view (with a part selected, E rotates it)", "측면 보기 (부품을 선택하면 E는 회전)"), active: sculptView?.view === "side", pick: () => requestSculptView("side") },
+			{ key: "R", id: "back", name: ko("Back view (with a part selected, R scales it)", "뒷면 보기 (부품을 선택하면 R은 크기)"), active: sculptView?.view === "back", pick: () => requestSculptView("back") },
 		],
 	}[workflowMode] ?? [];
 

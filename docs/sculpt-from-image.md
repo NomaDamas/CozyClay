@@ -116,7 +116,7 @@ Sculpt mode is the Studio's fifth viewport mode. It runs the workflow above for 
 
 **Running it**
 
-1. Press **5**, or pick Sculpt in the viewport mode toolbar. If a sculpt is selected, the mode opens on that sculpt and a run re-sculpts it in place. Otherwise the first run creates a new sculpt. The main view shows only that sculpt on a turntable; W, E and R swing it to front, side and back. The shot preview still shows the whole scene.
+1. Press **5**, or pick Sculpt in the viewport mode toolbar. If a sculpt is selected, the mode opens on that sculpt and a run re-sculpts it in place. Otherwise the first run creates a new sculpt. The main view shows only that sculpt on a turntable; W, E and R swing it to front, side and back (while a part is selected they drive the part gizmo instead, see **Moving a part**). The shot preview still shows the whole scene.
 2. Drop, paste or choose a reference image (PNG, JPEG or WebP) in the **Sculpt from image** panel.
 3. Pick the **model** and its **effort**. The list is the Agent panel's: models are grouped by provider, and a provider without a credential lists its models disabled. Sculpt remembers its own pick, apart from the chat model. The first time, it starts from the Agent panel's model. Both pickers are locked during a run, and the panel names the running model ("Claude Fable 5.1 is writing the recipe").
 4. Press **Start**. Start needs the Agent: sign in (⌘B) or configure a provider key, and the live editor must be connected. Without them the button stays disabled and the panel says why.
@@ -139,6 +139,17 @@ Click a part of the sculpt on the turntable to select it. The part gets an outli
 - The scene selection does not change: the sculpt stays the selected object.
 - A drag still orbits the turntable. Only a click without movement picks.
 - A click on empty space, or Esc, clears the part. Esc clears the part first, then the scene selection as before.
+
+**Moving a part**
+
+A selected part gets a gizmo. While a part is selected, **W** moves it, **E** rotates it and **R** scales it; the toolbar's W/E/R buttons switch to the same three tools. With no part selected, W/E/R are the front, side and back views again.
+
+- The part moves in its parent's frame: children ride along, and the recipe keeps `position` and `rotation` relative to the parent.
+- Releasing the drag writes one `object.sculpt { id, edits: [{ set: part, position | rotation | size }] }` with only the fields that changed. One drag is one undo.
+- A mirrored copy drags where it is drawn. The edit goes to the recipe's part, reflected, so the pair stays a pair.
+- Scale changes the part's `size`. Hold **Shift** while dragging to scale all three axes by the same factor.
+- An edit the recipe refuses (a size dragged through zero, past 20 m or below 5 mm) puts the part back, and the refusal shows under the **Parts** tree.
+- Delete or Backspace with a part selected does not delete the sculpt; it says so. Press Esc first to delete the whole sculpt.
 
 **The sculpt shelf**
 
@@ -247,4 +258,4 @@ What this says:
 | 6 | QA: the turtle recipe through MCP into a live editor, with a screenshot in the PR. |
 | 7 | Part-level `edits`, `compare_sculpt` (reference mask, silhouette IoU, overlay sheet), `capture: true`. |
 
-Out of scope, for follow-ups: a gizmo that moves, turns and scales the picked part (picking itself is in, see **Picking a part**), and textures. The asset shelf shipped as [the sculpt shelf](#the-sculpt-shelf) (#740).
+Out of scope, for follow-ups: textures. Picking a part and its gizmo are in (see **Picking a part** and **Moving a part**), and the asset shelf shipped as [the sculpt shelf](#the-sculpt-shelf) (#740).

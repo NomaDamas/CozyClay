@@ -4,7 +4,8 @@ import { ko } from "../locale.js";
 // The sculpt's parts as an indented tree (#740 S7). Pure view: Sculpt mode
 // owns the selection; a row press selects that part, the same state a click
 // on the turntable sets. A mirrored part is listed once, as the recipe has it.
-export default function SculptPartTree({ tree, selected, onSelect }) {
+// `notice` is the part gizmo's last refusal (#740 S8), shown under the list.
+export default function SculptPartTree({ tree, selected, onSelect, notice = null }) {
 	const listRef = useRef(null);
 	const selectedId = selected?.partId ?? null;
 	// A pick on the turntable brings its row into view.
@@ -16,7 +17,9 @@ export default function SculptPartTree({ tree, selected, onSelect }) {
 		<div className="sculpt-parts" data-testid="sculpt-part-tree">
 			<div className="sculpt-label">
 				<span>{ko("Parts", "부품", "部件")}</span>
-				<small>{selectedId ? ko("Esc to deselect", "Esc로 선택 해제", "按 Esc 取消选择") : ko(`${tree.length} parts`, `부품 ${tree.length}개`, `${tree.length} 个部件`)}</small>
+				<small title={selectedId ? ko("W move · E rotate · R scale (Shift: uniform) · Esc to deselect", "W 이동 · E 회전 · R 크기 (Shift: 균등) · Esc로 선택 해제", "W 移动 · E 旋转 · R 缩放（Shift：等比）· 按 Esc 取消选择") : undefined}>
+					{selectedId ? ko("W move · E rotate · R scale", "W 이동 · E 회전 · R 크기", "W 移动 · E 旋转 · R 缩放") : ko(`${tree.length} parts`, `부품 ${tree.length}개`, `${tree.length} 个部件`)}
+				</small>
 			</div>
 			<ul className="sculpt-part-list" ref={listRef} aria-label={ko("Sculpt parts", "조형 부품", "雕塑部件")}>
 				{tree.map((row) => {
@@ -34,6 +37,7 @@ export default function SculptPartTree({ tree, selected, onSelect }) {
 					);
 				})}
 			</ul>
+			{notice && <p className="inspector-hint sculpt-error" role="alert" data-testid="sculpt-part-notice">{notice}</p>}
 		</div>
 	);
 }

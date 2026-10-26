@@ -5,8 +5,10 @@ import { blueprintErrorMessage, blueprintRequest } from "./sculpt-blueprint.js";
 import { agentSessionReady, createCommandTap, sculptModelChoice, sculptTargetFromSelection, storeSculptModel } from "./sculpt-mode.js";
 import { SCULPT_KIND } from "./scene-objects.js";
 import { overlayOwnsEscape, sculptPartTree } from "./sculpt-pick.js";
+import { GIZMO_HOTKEYS } from "./stage-startup-defaults.js";
+import { ko } from "./locale.js";
 
-export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId }) {
+export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId, appContext }) {
 	// Sculpt mode (#739): one sculpt on an isolated turntable, the Sculpt panel
 	// and its agent run. The target is the sculpt selected on entry, or a new one
 	// the first run creates; picking another sculpt while here retargets.
@@ -71,10 +73,22 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 	// it before Esc reaches the scene selection, unless an open menu or dialog takes that Esc.
 	const [sculptPart, setSculptPart] = useState(null);
 	useEffect(() => { setSculptPart(null); }, [sculptMode, sculptTargetId]);
+	// The part gizmo (#740 S8): its tool, and the last refusal or notice it shows under the tree.
+	const [partTool, setPartTool] = useState("move");
+	const [partNotice, setPartNotice] = useState(null);
+	useEffect(() => { setPartNotice(null); }, [sculptPart?.partId, sculptPart?.mirrored, sculptTargetId]);
 	useEffect(() => {
 		if (!sculptMode || !sculptPart) return undefined;
 		const onKey = (event) => {
-			if (event.key !== "Escape" || event.target?.closest?.("input, textarea, select, [contenteditable='true']") || overlayOwnsEscape()) return;
+			if (event.target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+			// Delete with a part picked would take the whole sculpt: refused, Esc first.
+			if (event.key === "Delete" || event.key === "Backspace") {
+				event.stopPropagation();
+				event.preventDefault();
+				setPartNotice(ko("Delete removes the whole sculpt. Press Esc to deselect the part first.", "Delete는 조형물 전체를 지워요. 먼저 Esc로 부품 선택을 해제하세요.", "Delete 会删除整个雕塑。请先按 Esc 取消部件选择。"));
+				return;
+			}
+			if (event.key !== "Escape" || overlayOwnsEscape()) return;
 			event.stopPropagation();
 			setSculptPart(null);
 		};
@@ -85,7 +99,19 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 	const sculptTree = useMemo(() => sculptPartTree(sculptRecipe), [sculptRecipe]);
 	// A recipe edit that removed the part leaves nothing selected.
 	const selectedPart = sculptPart && sculptTree.some((row) => row.id === sculptPart.partId) ? sculptPart : null;
-	const sculptParts = { tree: sculptTree, selected: selectedPart, onSelect: setSculptPart };
+	// W/E/R: the selected part's move, rotate and scale; with no part, the turntable views.
+	const onKey = (code) => (selectedPart ? setPartTool(GIZMO_HOTKEYS[code]) : requestSculptView({ KeyW: "front", KeyE: "side", KeyR: "back" }[code]));
+	const tools = [["W", "move", ko("Move part", "부품 이동", "移动部件")], ["E", "rotate", ko("Rotate part", "부품 회전", "旋转部件")], ["R", "scale", ko("Scale part (Shift: uniform)", "부품 크기 (Shift: 균등)", "缩放部件（Shift：等比）")]]
+		.map(([key, id, name]) => ({ key, id, name, active: partTool === id, pick: () => setPartTool(id) }));
+	// One drag, one write: the command refuses what cannot be drawn and its reason is shown.
+	const commit = (edit) => {
+		if (!edit || !sculptTarget || !appContext) return false;
+		let receipt;
+		try { receipt = appContext.bus.run("object.sculpt", { id: sculptTarget.id, edits: [edit] }, { origin: "ui" }); } catch (error) { receipt = { ok: false, message: error?.message }; }
+		setPartNotice(receipt?.ok === false ? `${ko("Edit refused", "편집 거부", "编辑被拒绝")}: ${receipt.message ?? ""}` : null);
+		return receipt?.ok !== false;
+	};
+	const sculptParts = { tree: sculptTree, selected: selectedPart, onSelect: setSculptPart, tool: partTool, tools, onKey, commit, notice: partNotice };
 	// The blueprint step: the reference turned into a four-view model sheet by one image request.
 	const [sculptBlueprint, setSculptBlueprint] = useState({ state: "idle", pose: "keep", notes: "", sheet: null, error: null, startedAt: null });
 	const blueprintAbortRef = useRef(null);

@@ -20,6 +20,11 @@ Studio
   port in the same terminal (macOS and Linux), and the Studio reloads when it
   answers. A project with unsaved changes asks you to save, then reload.
   Windows keeps the copy command by design.
+- A selected sculpt part gets a gizmo: W moves it, E rotates it and R scales
+  it (Shift scales evenly), and W/E/R go back to the turntable views once the
+  part is cleared. One drag is one undo, a mirrored pair moves together, and
+  an edit the recipe refuses snaps back with the reason. Delete with a part
+  selected no longer deletes the whole sculpt.
 
 CLI
 

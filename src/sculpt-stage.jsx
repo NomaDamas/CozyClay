@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { SCULPT_LAYER, isolatedObjectIds, sculptFraming } from "./sculpt-mode.js";
 import { pickSculptPart } from "./sculpt-pick.js";
 import { SculptPartOutline } from "./sculpt-part-outline.jsx";
+import { SculptPartGizmo } from "./sculpt-part-gizmo.jsx";
 
 const SCULPT_FOV = 35;
 // Where a new sculpt lands (object.sculpt without placement): the origin.
@@ -156,11 +157,14 @@ export function SculptTurntable({ camRef, objects, target, size, view, light = f
 	const partsRef = useRef(parts);
 	partsRef.current = parts;
 	const [pickRay] = useState(() => { const ray = new THREE.Raycaster(); ray.layers.set(SCULPT_LAYER); return ray; });
+	// The part gizmo's controls (#740 S8): a still click on one of its handles
+	// picks the part under it, but never clears the selection.
+	const gizmoRef = useRef(null);
 	useEffect(() => {
 		if (!camera) return undefined;
 		const canvas = gl.domElement;
 		let down = null;
-		const onDown = (event) => { down = event.button === 0 && event.target === canvas ? [event.clientX, event.clientY] : null; };
+		const onDown = (event) => { down = event.button === 0 && event.target === canvas ? [event.clientX, event.clientY, Boolean(gizmoRef.current?.axis)] : null; };
 		const onUp = (event) => {
 			const start = down;
 			down = null;
@@ -169,7 +173,8 @@ export function SculptTurntable({ camRef, objects, target, size, view, light = f
 			if (pane.width < 2 || pane.height < 2) return;
 			camera.updateMatrixWorld();
 			pickRay.setFromCamera(new THREE.Vector2(((event.clientX - pane.left) / pane.width) * 2 - 1, -((event.clientY - pane.top) / pane.height) * 2 + 1), camera);
-			partsRef.current.onSelect(pickSculptPart(pickRay, nodesRef.current));
+			const hit = pickSculptPart(pickRay, nodesRef.current);
+			if (hit || !start[2]) partsRef.current.onSelect(hit);
 		};
 		canvas.addEventListener("pointerdown", onDown);
 		window.addEventListener("pointerup", onUp);
@@ -223,6 +228,7 @@ export function SculptTurntable({ camRef, objects, target, size, view, light = f
 			{camera && <OrbitControls ref={controlsRef} camera={camera} enableDamping={false} minDistance={0.3} maxDistance={40} autoRotate={spinning} autoRotateSpeed={1.4}
 				onStart={() => setGrabbed(true)} onChange={() => invalidate()} />}
 			<SculptPartOutline nodesRef={nodesRef} selected={parts?.selected ?? null} />
+			<SculptPartGizmo camera={camera} orbitRef={controlsRef} nodesRef={nodesRef} gizmoRef={gizmoRef} recipe={target?.recipe} parts={parts} />
 			<group ref={furnitureRef}>
 				<hemisphereLight args={["#ffffff", "#3a3c42", 0.9]} />
 				<primitive object={lightTarget} position={framing.target} />

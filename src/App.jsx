@@ -1209,7 +1209,7 @@ export default function App() {
 		attachTargetForRow, attachTargetLabel, attachSceneObject,
 	} = objectsDomain;
 
-	const { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts } = useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId });
+	const { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts } = useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId, appContext });
 	async function chooseSculptReference(file) {
 		try {
 			// A new reference makes the old sheet a drawing of something else.
@@ -1599,10 +1599,10 @@ export default function App() {
 				if (modeKey !== workflowMode && selectWorkflowMode(modeKey) === false) noteShortcutIgnored("mode", "workflow_mode");
 				return;
 			}
-			// Sculpt mode's W/E/R swing the turntable to front, side and back.
+			// Sculpt mode's W/E/R swing the turntable to front, side and back, or drive a selected part's gizmo.
 			if (workflowMode === "sculpt" && GIZMO_HOTKEYS[event.code]) {
 				event.preventDefault();
-				requestSculptView({ KeyW: "front", KeyE: "side", KeyR: "back" }[event.code]);
+				sculptParts.onKey(event.code);
 				return;
 			}
 			// Pose mode's W/R are the IK tools, gated like their Rig Control
@@ -4500,7 +4500,7 @@ export default function App() {
 		activeSceneId, selectSceneDocument, createSceneDocumentFromUi, duplicateSceneDocumentFromUi, renameSceneDocumentFromUi,
 		deleteSceneDocumentFromUi, addSceneObject, renameSceneObject, deleteSceneObject, frameSelection, groupObjectUnderNewEmpty, renameRequest,
 		toggleHierarchyHidden, propsDrop, hierarchyReparent, agentTouchedRows, workflowMode,
-		selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled, sculptView, requestSculptView,
+		selectWorkflowMode, gizmoMode, setGizmoMode, snapEnabled, setSnapEnabled, sculptView, requestSculptView, sculptParts,
 		preset, applyPreset, cameraPresetId, shotAspectKey,
 		fovDeg, shotsDomain, shot, setNonce, workspaceLayout,
 		viewMenuTriggerRef, viewMenuOpen, setViewMenuAnchor, setViewMenuOpen, viewLooksActive,

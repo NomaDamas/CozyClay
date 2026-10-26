@@ -241,6 +241,10 @@ const sheet = "data:image/png;base64,BBBB";
 	assert.match(rows[1], /--sculpt-part-depth:1/, "a child is indented by its depth");
 	assert.match(html, /mirror copy/);
 	assert.match(html, /blob ×2/, "a mirrored part says it draws twice");
-	assert.match(html, /Esc to deselect/);
+	assert.match(html, />W move · E rotate · R scale</, "a selected part names its gizmo keys");
+	assert.match(html, /title="W move · E rotate · R scale \(Shift: uniform\) · Esc to deselect"/);
+	assert.equal(tag(html, "sculpt-part-notice"), null, "no notice until the gizmo has one");
+	const refused = render({ sculptName: "Hero sculpt", parts: { tree, selected: { partId: "eye", mirrored: false }, onSelect: noop, notice: "Edit refused: Recipe refused at parts[eye].size" } });
+	assert.match(refused, /data-testid="sculpt-part-notice"[^>]*>Edit refused: Recipe refused at parts\[eye\]\.size</, "a refused gizmo edit shows its reason");
 	console.log("PASS sculpt panel: part tree");
 }
