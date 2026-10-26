@@ -96,10 +96,22 @@ function probes(X, f, nm) {
 	return Object.entries(diag.props?.[nm.slice(5)] ?? {}).filter(([k, p]) => Array.isArray(p) && k !== "origin").map(([, p]) => p);
 }
 
+/** The most a hand's reachGrip world anchor rises over a scene box's top it went into (#819: past ~3.5 cm the fingers miss the thing). */
+const GRIP_LIFT = 0.035;
+/** A hand whose reachGrip world anchor sits too low over a scene box's top: that anchor rises by what the hit lacks. */
+function gripLift(X, g, part, id, need) {
+	const f = g.worstFrame, k = sideOf(part), box = X.out.objectsAt(X.rel(f))[id], d = X.hand(k, f);
+	const grip = d.anchor && X.keys(d.ch).some(key => / reachGrip$/.test(key.src));
+	if (!/^hand_[lr]$/.test(part) || !box || X.spec.objects?.[id] || !grip || X.spec.anchors?.[d.anchor]?.kind !== "world" || !(need > 0 && need <= GRIP_LIFT)) return null;
+	return deepest(X, f, part, box).n[1] > 0.5 ? moveHint(X, part, f, [0, need, 0], ` (over ${id}'s top)`) : null;
+}
+
 export const contactHints = {
 	COLLIDE(X, g) {
 		const [, part, id] = /^(\S+) x (.+)$/.exec(g.subject) ?? [];
 		if (/^foot_[lr]$/.test(part ?? "")) return footHint(X, g, part, id);
+		const lift = gripLift(X, g, part, id, g.worst - g.limit + MARGIN);
+		if (lift) return lift;
 		const r = boxHint(X, g, part, id, g.worst - g.limit + MARGIN);
 		if (r && /^(hand|farm)_/.test(part) && !X.spec.fix?.penetration && g.worst - g.limit <= 0.05) {
 			r.hint += "; or fix.penetration: 0.02 pushes shallow hand hits out";

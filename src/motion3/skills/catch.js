@@ -42,7 +42,8 @@ export function catchObject(ctx) {
 	// the hand needs REACH frames from f0: a later pick it would get to in time; else it comes late to where the thing was
 	const contact = Math.max(pick.f, ctx.f0 + REACH + ARRIVE), p = pick.p;
 	const incoming = scale(sub(at(pick.f), at(pick.f - 1)), fps), speed = len(incoming), mass = massOf({ objects: ctx.objects }, scene, id);
-	const give = clamp(0.08 + 0.02 * mass * speed, 0.08, 0.15), u = norm(incoming), ease = t => 1 - (1 - t) ** 3;
+	// the give's first frame takes 24% of it (1 - (5/6)^1.5): a cubic's 42% of a 3 kg ball's 0.15 m jolted the hands, POP (#819)
+	const give = clamp(0.08 + 0.02 * mass * speed, 0.08, 0.15), u = norm(incoming), ease = t => 1 - (1 - t) ** 1.5;
 	const path = [p, ...Array.from({ length: ABSORB }, (_, i) => add(p, scale(u, give * ease((i + 1) / ABSORB)))), add(p, scale(u, give * 0.4))];
 	const start = Math.max(ctx.f0, contact - ARRIVE - LONG), both = side === "both" || mass > HEAVY;
 	// the left hand (both hands, or a heavy thing) on its left side, its finger middles across the thing from the right's
