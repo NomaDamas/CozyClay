@@ -318,6 +318,8 @@ jobs:
             tier: observation
           - suite: qa-sculpt-parts-browser
             tier: observation
+          - suite: qa-sculpt-shelf-browser
+            tier: observation
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

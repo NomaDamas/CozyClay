@@ -19,6 +19,8 @@
  * adapter is the only part that needs a browser.
  */
 import { isHdrAssetId, normalizeHdrAsset } from "./stage-hdr.js";
+// A `sculpt-` id is a sculpt card on the shelf: the user's own library, never swept.
+import { isSculptAssetId, normalizeSculptAsset } from "./sculpt-shelf-file.js";
 
 /** Content-addressed, so the same bytes always land on the same id. */
 export const ASSET_ID_PREFIX = "img-";
@@ -86,7 +88,7 @@ export function isMeshAssetId(value) {
 }
 
 export function isAssetId(value) {
-	return isImageAssetId(value) || isMeshAssetId(value) || isHdrAssetId(value);
+	return isImageAssetId(value) || isMeshAssetId(value) || isHdrAssetId(value) || isSculptAssetId(value);
 }
 
 async function sha256Hex(bytes, subtle) {
@@ -152,6 +154,7 @@ export function normalizeAsset(record) {
 	if (!bytes || !bytes.byteLength) return null;
 	// An `hdr-` id is an HDR environment file (stage-hdr.js), stored verbatim.
 	if (isHdrAssetId(record.id)) return normalizeHdrAsset(record, bytes);
+	if (isSculptAssetId(record.id)) return normalizeSculptAsset(record, bytes);
 	// Prefix and MIME must agree: a mesh id with an image type (or the reverse)
 	// is a cross-wired record and cannot be drawn as either kind.
 	if (isMeshAssetId(record.id)) {
@@ -378,13 +381,22 @@ export async function deleteAssetWithGraphGuard({
 	return false;
 }
 
-/** Stored ids that nothing points at any more, ready to be swept. */
+// Stored ids that nothing points at any more, ready to be swept. A sculpt card
+// is referenced by no scene on purpose: the shelf, not Manage storage, deletes it.
 export function unreachableAssetIds(storedIds, scenes) {
 	const reachable = referencedAssetIds(scenes);
-	return (Array.isArray(storedIds) ? storedIds : []).filter((id) => isAssetId(id) && !reachable.has(id));
+	return (Array.isArray(storedIds) ? storedIds : []).filter((id) => isAssetId(id) && !isSculptAssetId(id) && !reachable.has(id));
 }
 
 /* ------------------------------------------------------------ storage ---- */
+
+// A readwrite transaction settles on complete, error or abort.
+const committed = (tx) =>
+	new Promise((resolve, reject) => {
+		tx.oncomplete = resolve;
+		tx.onerror = () => reject(tx.error);
+		tx.onabort = () => reject(tx.error);
+	});
 
 const request = (req) =>
 	new Promise((resolve, reject) => {
@@ -416,11 +428,7 @@ export async function putAsset(db, record) {
 	if (!asset) throw new TypeError("putAsset needs a normalizable asset record");
 	const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
 	tx.objectStore(ASSET_STORE_NAME).put(asset);
-	await new Promise((resolve, reject) => {
-		tx.oncomplete = resolve;
-		tx.onerror = () => reject(tx.error);
-		tx.onabort = () => reject(tx.error);
-	});
+	await committed(tx);
 	return asset;
 }
 
@@ -440,10 +448,6 @@ export async function deleteAsset(db, id) {
 	if (!isAssetId(id)) return false;
 	const tx = db.transaction(ASSET_STORE_NAME, "readwrite");
 	tx.objectStore(ASSET_STORE_NAME).delete(id);
-	await new Promise((resolve, reject) => {
-		tx.oncomplete = resolve;
-		tx.onerror = () => reject(tx.error);
-		tx.onabort = () => reject(tx.error);
-	});
+	await committed(tx);
 	return true;
 }

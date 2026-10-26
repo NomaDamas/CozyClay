@@ -12,6 +12,10 @@ Studio
   outline, and its row lights up in the new **Parts** tree in the Sculpt
   panel. A click on a mirrored copy selects the part it mirrors. A click on
   empty space, or Esc, clears it.
+- **Sculpt shelf.** **Save to shelf** in Sculpt mode keeps a sculpt as a card
+  in **Content › Sculpts**, with a thumbnail. Drag a card into any scene of
+  any project to place a copy. Export a card as `.cozysculpt.json` and import
+  it on another machine.
 
 CLI
 

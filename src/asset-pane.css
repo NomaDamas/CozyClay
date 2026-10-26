@@ -460,3 +460,37 @@
 		scrollbar-color: var(--surface-active, #26262a) transparent;
 	}
 }
+
+@layer regions {
+	/* #740: the Sculpts folder's import / export / delete row above its grid. */
+	.content-browser .sculpt-shelf-actions {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--sp-1, 8px);
+		margin-bottom: var(--sp-1, 8px);
+	}
+
+	.content-browser .sculpt-shelf-actions button {
+		padding: 3px 10px;
+		border: 1px solid var(--line2, #2c2c31);
+		border-radius: var(--r-1, 4px);
+		background: var(--surface-raised, #1e1e21);
+		color: var(--text-row, #c9c9ce);
+		font-size: var(--content-font-secondary);
+		cursor: pointer;
+	}
+
+	.content-browser .sculpt-shelf-actions button:hover {
+		border-color: var(--select, #e8a33d);
+	}
+
+	.content-browser .sculpt-shelf-note {
+		color: var(--text-3, #636369);
+		font-size: var(--content-font-secondary);
+	}
+
+	.content-browser .sculpt-shelf-delete {
+		color: var(--danger, #e5484d);
+	}
+}

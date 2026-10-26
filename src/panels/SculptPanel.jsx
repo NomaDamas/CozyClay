@@ -256,7 +256,7 @@ function BlueprintSection({ blueprint, disabled }) {
 	);
 }
 
-export default function SculptPanel({ run, reference, onReference, onStart, onCancel, onPlaceInScene, canStart, startRefusal, sculptName, hidden, modelPicker = null, blueprint = null, parts = null }) {
+export default function SculptPanel({ run, reference, onReference, onStart, onCancel, onPlaceInScene, onSaveToShelf, canStart, startRefusal, sculptName, hidden, modelPicker = null, blueprint = null, parts = null }) {
 	const fileRef = useRef(null);
 	const [dragging, setDragging] = useState(false);
 	// The sheet is the clearest picture of what is off, so it starts open.
@@ -392,9 +392,8 @@ export default function SculptPanel({ run, reference, onReference, onStart, onCa
 
 				<button type="button" className="btn full" data-testid="sculpt-place" disabled={!sculptName || running}
 					aria-label={sculptName ? ko(`Place ${sculptName} in scene`, `${sculptName} 장면에 배치`, `将 ${sculptName} 放入场景`) : ko("Place in scene", "장면에 배치")}
-					onClick={() => onPlaceInScene?.()}>
-					{ko("Place in scene", "장면에 배치")}
-				</button>
+					onClick={() => onPlaceInScene?.()}>{ko("Place in scene", "장면에 배치")}</button>
+				<button type="button" className="btn ghost full" data-testid="sculpt-save-shelf" disabled={!sculptName || running} title={ko("Keep a copy on the asset shelf (Content › Sculpts), for any scene or project", "에셋 선반(콘텐츠 › 조형물)에 사본을 보관해 어느 씬·프로젝트에서나 씁니다")} onClick={() => onSaveToShelf?.()}>{ko("Save to shelf", "선반에 저장", "保存到架子")}</button>
 
 				<p className="inspector-hint sculpt-hint" data-testid="sculpt-hint">
 					{ko("Fix details by chatting with the Agent (⌘B) while the sculpt is selected.", "조형물을 선택한 채 에이전트(⌘B)와 대화해 디테일을 고치세요.")}

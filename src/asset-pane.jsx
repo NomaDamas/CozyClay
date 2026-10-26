@@ -7,6 +7,8 @@ import { assetAspect, isImageAssetId, isMeshAssetId, isSupportedMeshType } from 
 import { assetKind, formatAssetBytes } from "./asset-shelf.js";
 import { assetRecord } from "./scene-asset-cache.js";
 import ResourceStatus from "./resource-status.jsx";
+import { ContentTile, grabProps } from "./content-tile.jsx";
+import SculptShelf from "./sculpt-shelf-tiles.jsx";
 import { logStore } from "./shell/log-store.js";
 import { SearchEmpty } from "./search-friction.js";
 import "./asset-pane.css";
@@ -130,18 +132,6 @@ function loadThumb(id) {
 	return thumbCache.get(id);
 }
 
-/** The grab wire every card shares: left button only, App owns the rest. */
-function grabProps(onAssetGrab, payload) {
-	return {
-		onPointerDown: (event) => {
-			if (event.button !== 0) return;
-			event.preventDefault();
-			onAssetGrab?.(payload, event);
-		},
-	};
-}
-
-
 function StorageAssetRow({ id, onDelete, deleting, usageCount = 0, graphSignature }) {
 	const [thumb, setThumb] = useState(null);
 	// Capture the graph observed when the explicit confirmation opens. A render
@@ -244,29 +234,6 @@ function StorageManager({ unusedAssetIds, usedAssetIds, usageCounts, graphSignat
 	);
 }
 
-
-/** The Content grid's one tile grammar: a square thumbnail, an 11px name and
- * a 10px type line. Click selects (amber ring), a left-button press starts the
- * App-owned drag, double-click places the asset at the origin. */
-function ContentTile({ assetKey, label, type, title, preview, selected, onSelect, grab, onPlace, failed = false }) {
-	return (
-		<button
-			type="button"
-			className={"content-tile" + (failed ? " is-failed" : "")}
-			data-testid="content-asset"
-			data-asset-key={assetKey}
-			aria-pressed={selected}
-			title={title}
-			{...(grab ?? {})}
-			onClick={() => onSelect(assetKey)}
-			onDoubleClick={onPlace ? () => onPlace() : undefined}
-		>
-			<span className="content-tile-thumb">{preview}</span>
-			<span className="content-tile-name">{label}</span>
-			<span className="content-tile-type">{type}</span>
-		</button>
-	);
-}
 
 function useThumb(id) {
 	// null = decoding (skeleton), undefined = record gone, object = ready.
@@ -375,6 +342,7 @@ const FOLDERS = [
 	{ id: "cameras", label: () => ko("Cameras", "카메라") },
 	{ id: "motions", label: () => ko("Motions", "모션") },
 	{ id: "poses", label: () => ko("Poses", "포즈") },
+	{ id: "sculpts", label: () => ko("Sculpts", "조형물", "雕塑") },
 ];
 
 function catalogueTile(entry, props) {
@@ -403,6 +371,7 @@ export function FolderGrid({ folder, query, ...props }) {
 	const { imageAssetIds, meshAssetIds, shots = [], takeVersions = [], poses = [], onShotOpen, onTakeOpen, selectedKey, onSelect } = props;
 	let tiles = [];
 	let empty = null;
+	if (folder === "sculpts") return <SculptShelf query={query} {...props} />;
 	if (folder === "basic") {
 		tiles = OBJECT_LIBRARY
 			.filter((entry) => entry.group === "Primitives" && matchesQuery(displayObjectLabel(entry.label), query))

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useStudioShell } from "./studio-shell-context.js";
 import { ko } from "../locale.js";
 import AssetPane from "../asset-pane.jsx";
+import { dropAssetAt } from "../asset-drop.js";
 
 const CONTENT_COLLAPSED_KEY = "cozyclay.dock.content-collapsed.v1";
 
@@ -29,7 +30,7 @@ export default function LibrarySlot({ active = true }) {
 		manageAssetStorage, setManageAssetStorage, unusedAssetIds, usedAssetIds, usageCounts,
 		projectAssetGraphSignature, assetTrash, deleteUnusedAsset, undoDeletedAsset, deletingAssetId,
 		projectManifest, shots, selectTimelineShot, allPoses,
-		spawnCharacter, addSceneObject, runStudioAction,
+		spawnCharacter, addSceneObject, runStudioAction, setSelectedHierarchyId,
 	} = useStudioShell();
 	const [collapsed, setCollapsed] = useState(readContentCollapsed);
 	const [shelfShown, setShelfShown] = useState(false);
@@ -41,15 +42,12 @@ export default function LibrarySlot({ active = true }) {
 	}, [active, shelfShown, setBottomTab]);
 
 	// Double-click in Content: the same payloads the drag carries, placed at
-	// the origin through the named domain actions.
-	function placeAssetAtOrigin(payload) {
-		const origin = { x: 0, z: 0 };
-		if (payload.kind === "character") spawnCharacter(payload.id, origin.x, origin.z);
-		else if (payload.kind === "object") addSceneObject(payload.objectKind, origin);
-		else if (payload.kind === "image" || payload.kind === "mesh") {
-			runStudioAction("asset.import", { assetId: payload.assetId, placeAs: payload.kind === "mesh" ? "mesh" : "cutout", placement: origin });
-		}
-	}
+	// the origin through the same drop table (asset-drop.js).
+	const placeAssetAtOrigin = (payload) => dropAssetAt(payload, { x: 0, z: 0 }, {
+		spawnCharacter, addSceneObject, runStudioAction, select: setSelectedHierarchyId,
+		spawnCutoutAt: (assetId, placement) => runStudioAction("asset.import", { assetId, placeAs: "cutout", placement }),
+		spawnMeshAt: (assetId, placement) => runStudioAction("asset.import", { assetId, placeAs: "mesh", placement }),
+	});
 
 	return (
 		<section className="assets-pane studio-library" aria-label={ko("Library", "라이브러리")} data-content-collapsed={collapsed || undefined} hidden={!active}>

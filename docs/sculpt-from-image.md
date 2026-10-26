@@ -123,6 +123,7 @@ Sculpt mode is the Studio's fifth viewport mode. It runs the workflow above for 
 5. Watch the stages: **Measure → Draft → Score → Refine**. The panel shows the round, the elapsed time, the IoU against the 0.9 target and, once scored, the overlay sheet. **Cancel** stops the run at any point.
 6. Fix details by chatting with the Agent (⌘B) while the sculpt is selected. These are ordinary `object.sculpt` edits, one undo each.
 7. Press **Place in scene**. The sculpt stands on the ground in front of the scene camera, stays selected, and the editor returns to Stage. One undo puts it back where it was.
+8. Press **Save to shelf** to keep a copy for later. See [The sculpt shelf](#the-sculpt-shelf).
 
 | Mode 5, nothing selected | A sculpt on the isolated turntable | After Place in scene |
 |---|---|---|
@@ -138,6 +139,17 @@ Click a part of the sculpt on the turntable to select it. The part gets an outli
 - The scene selection does not change: the sculpt stays the selected object.
 - A drag still orbits the turntable. Only a click without movement picks.
 - A click on empty space, or Esc, clears the part. Esc clears the part first, then the scene selection as before.
+
+**The sculpt shelf**
+
+**Save to shelf** puts a card in the Assets dock under **Content › Sculpts**. A card holds a copy of the recipe, the sculpt's name and a 256 px picture from the front three-quarter view.
+
+- The shelf belongs to this browser, not to a project. Every scene and every project shows the same cards, and deleting the placed sculpt keeps its card.
+- Drag a card into the viewport, and a new sculpt stands where it lands. Double-click a card to place it at the origin. Each placement is one undo step.
+- Select a card to **Export** it as `<name>.cozysculpt.json` or to **Delete** it. **Import…**, or dropping card files on the folder, brings cards back.
+- The file is `{ "format": "cozysculpt", "version": 1, "name", "recipe", "thumb" }`. Import checks the whole recipe and refuses a bad file with the reason.
+- Saving the same recipe again updates its card and does not make a second one.
+- Cards stay on this machine and are not part of a project export. A placed sculpt is already in the project, because its recipe is in the scene.
 
 **Blueprint (model sheet)**
 
@@ -235,4 +247,4 @@ What this says:
 | 6 | QA: the turtle recipe through MCP into a live editor, with a screenshot in the PR. |
 | 7 | Part-level `edits`, `compare_sculpt` (reference mask, silhouette IoU, overlay sheet), `capture: true`. |
 
-Out of scope, for follow-ups: saving a sculpt to the asset shelf, a gizmo that moves, turns and scales the picked part (picking itself is in, see **Picking a part**), and textures.
+Out of scope, for follow-ups: a gizmo that moves, turns and scales the picked part (picking itself is in, see **Picking a part**), and textures. The asset shelf shipped as [the sculpt shelf](#the-sculpt-shelf) (#740).

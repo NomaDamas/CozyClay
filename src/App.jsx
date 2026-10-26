@@ -36,6 +36,8 @@ import { noteNavSwitch } from "./thrash-friction.js";
 
 import AgentPanel from "./workflow/AgentPanel.jsx";
 import SculptPanel from "./panels/SculptPanel.jsx";
+import { dropAssetAt } from "./asset-drop.js";
+import { saveSculptToShelf } from "./sculpt-shelf.js";
 import { createAgentPort, createSculptRun } from "./sculpt-run.js";
 import { SculptTurntable } from "./sculpt-stage.jsx";
 import { measureReferenceOutline } from "./sculpt-compare.js";
@@ -992,21 +994,8 @@ export default function App() {
 			raycaster.setFromCamera(pointer, cam);
 			const hit = new THREE.Vector3();
 			if (!raycaster.ray.intersectPlane(new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit)) return;
-			// Dispatch on the payload kind: same ray, four spawners. Characters
-			// keep their tighter stage clamp (the rig walks, a prop does not);
-			// objects, cutouts and meshes take the same ROOM_LIMIT clamp their
-			// creators already apply.
-			if (payload.kind === "character") {
-				spawnCharacter(payload.id,
-					THREE.MathUtils.clamp(hit.x, CHARACTER_POSITION_BOUNDS.min.x, CHARACTER_POSITION_BOUNDS.max.x),
-					THREE.MathUtils.clamp(hit.z, CHARACTER_POSITION_BOUNDS.min.z, CHARACTER_POSITION_BOUNDS.max.z));
-			} else if (payload.kind === "object") {
-				addSceneObject(payload.objectKind, { x: hit.x, z: hit.z });
-			} else if (payload.kind === "image") {
-				spawnCutoutAt(payload.assetId, { x: hit.x, z: hit.z });
-			} else if (payload.kind === "mesh") {
-				spawnMeshAt(payload.assetId, { x: hit.x, z: hit.z });
-			}
+			// Dispatch on the payload kind (asset-drop.js): same ray, one spawner per kind.
+			dropAssetAt(payload, hit, { spawnCharacter, addSceneObject, spawnCutoutAt, spawnMeshAt, runStudioAction, select: setSelectedHierarchyId });
 		};
 		window.addEventListener("pointermove", onMove);
 		window.addEventListener("pointerup", onUp);
@@ -4463,6 +4452,7 @@ export default function App() {
 			onStart={startSculptRun}
 			onCancel={() => sculptRunRef.current?.cancel()}
 			onPlaceInScene={placeSculptInScene}
+			onSaveToShelf={() => void saveSculptToShelf(sculptTarget).then(setToast)}
 			canStart={Boolean(sculptReference) && sculptAgentStatus === "ready" && Boolean(liveWorkspaceHandle) && Boolean(sculptModelPick.model)}
 			blueprint={{
 				...sculptBlueprint,
