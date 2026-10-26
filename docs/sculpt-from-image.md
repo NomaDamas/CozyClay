@@ -130,6 +130,15 @@ Sculpt mode is the Studio's fifth viewport mode. It runs the workflow above for 
 
 ![A real run on the Snorlax reference: done after 2 rounds at IoU 0.771](images/sculpt-mode-run.png)
 
+**Picking a part**
+
+Click a part of the sculpt on the turntable to select it. The part gets an outline in the selection colour, and its row is highlighted in the **Parts** tree in the Sculpt panel. The tree lists the recipe's parts, children indented under their parent. Clicking a row selects that part as well.
+
+- A mirrored part is listed once and drawn twice (`blob ×2`). Clicking either copy selects the recipe's part and outlines both. A click on the copy marks the row **mirror copy**.
+- The scene selection does not change: the sculpt stays the selected object.
+- A drag still orbits the turntable. Only a click without movement picks.
+- A click on empty space, or Esc, clears the part. Esc clears the part first, then the scene selection as before.
+
 **Blueprint (model sheet)**
 
 Once a reference is in, **Generate blueprint** makes one image request (gpt-image-2, ChatGPT sign-in) that turns the reference into a four-view orthographic model sheet: FRONT and LEFT SIDE on the top row, sharing their head and foot lines, then BACK and TOP. The request is a fixed, subject-agnostic template (`src/sculpt-blueprint.js`). It asks for:
@@ -226,4 +235,4 @@ What this says:
 | 6 | QA: the turtle recipe through MCP into a live editor, with a screenshot in the PR. |
 | 7 | Part-level `edits`, `compare_sculpt` (reference mask, silhouette IoU, overlay sheet), `capture: true`. |
 
-Out of scope, for follow-ups: saving a sculpt to the asset shelf, per-part editing gizmos, and textures.
+Out of scope, for follow-ups: saving a sculpt to the asset shelf, a gizmo that moves, turns and scales the picked part (picking itself is in, see **Picking a part**), and textures.

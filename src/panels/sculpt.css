@@ -111,6 +111,17 @@
 .sculpt-race-row[data-leader="true"] .sculpt-race-label::before { content: "\2605  "; color: var(--ok); }
 .sculpt-race-row[data-refused="true"] { opacity: .5; text-decoration: line-through; }
 
+/* Part tree (#740 S7) */
+.sculpt-parts { display: grid; gap: 4px; }
+.sculpt-part-list { display: grid; gap: 1px; max-height: 200px; margin: 0; padding: 2px; list-style: none; overflow-y: auto; overscroll-behavior: contain; border-radius: var(--r-2); border: 1px solid var(--row-divider); background: var(--field); }
+.sculpt-part-row { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 24px; padding: 2px 6px 2px calc(6px + var(--sculpt-part-depth) * 12px); border: 0; border-radius: var(--r-1); background: transparent; color: var(--text-2); font: inherit; font-size: 11px; text-align: left; cursor: pointer; }
+.sculpt-part-row:hover { background: var(--surface-active); color: var(--text-1); }
+.sculpt-part-row:focus-visible { outline: none; box-shadow: inset 0 0 0 2px var(--select-tint); }
+.sculpt-part-row[aria-pressed="true"] { background: var(--select-tint); color: var(--text-1); box-shadow: inset 2px 0 0 var(--select); }
+.sculpt-part-id { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.sculpt-part-tag { flex: none; padding: 0 4px; border-radius: var(--r-1); background: var(--select); color: var(--surface-raised); font-size: 10px; }
+.sculpt-part-shape { flex: none; margin-left: auto; color: var(--text-3); }
+
 /* Activity log */
 .sculpt-log { display: grid; gap: 2px; max-height: 168px; margin: 0; padding: 4px 2px; list-style: none; overflow-y: auto; overscroll-behavior: contain; scroll-behavior: smooth; }
 .sculpt-log-row { display: grid; grid-template-columns: 30px 8px minmax(0, 1fr); align-items: baseline; gap: 6px; font-size: 11px; line-height: 1.4; color: var(--text-2); animation: sculpt-in .35s var(--ease) both; }

@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createAgentTransport } from "./workflow/agent-client.js";
 import { requestAgentImage, stylizeErrorMessage } from "./agent-image-client.js";
 import { blueprintErrorMessage, blueprintRequest } from "./sculpt-blueprint.js";
 import { agentSessionReady, createCommandTap, sculptModelChoice, sculptTargetFromSelection, storeSculptModel } from "./sculpt-mode.js";
 import { SCULPT_KIND } from "./scene-objects.js";
+import { sculptPartTree } from "./sculpt-pick.js";
 
 export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId }) {
 	// Sculpt mode (#739): one sculpt on an isolated turntable, the Sculpt panel
@@ -65,6 +66,26 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 		window.addEventListener("focus", read);
 		return () => { live = false; window.removeEventListener("focus", read); };
 	}, [sculptMode, sculptTransport]);
+	// Part picking (#740 S7): one part of the target, chosen on the turntable or
+	// in the panel's tree. A new target or leaving the mode drops it; Esc drops
+	// it before Esc reaches the scene selection.
+	const [sculptPart, setSculptPart] = useState(null);
+	useEffect(() => { setSculptPart(null); }, [sculptMode, sculptTargetId]);
+	useEffect(() => {
+		if (!sculptMode || !sculptPart) return undefined;
+		const onKey = (event) => {
+			if (event.key !== "Escape" || event.target?.closest?.("input, textarea, select, [contenteditable='true']")) return;
+			event.stopPropagation();
+			setSculptPart(null);
+		};
+		window.addEventListener("keydown", onKey, true);
+		return () => window.removeEventListener("keydown", onKey, true);
+	}, [sculptMode, sculptPart]);
+	const sculptRecipe = sculptTarget?.recipe;
+	const sculptTree = useMemo(() => sculptPartTree(sculptRecipe), [sculptRecipe]);
+	// A recipe edit that removed the part leaves nothing selected.
+	const selectedPart = sculptPart && sculptTree.some((row) => row.id === sculptPart.partId) ? sculptPart : null;
+	const sculptParts = { tree: sculptTree, selected: selectedPart, onSelect: setSculptPart };
 	// The blueprint step: the reference turned into a four-view model sheet by one image request.
 	const [sculptBlueprint, setSculptBlueprint] = useState({ state: "idle", pose: "keep", notes: "", sheet: null, error: null, startedAt: null });
 	const blueprintAbortRef = useRef(null);
@@ -91,5 +112,5 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 		controller?.abort();
 		setSculptBlueprint((current) => ({ ...current, state: current.sheet ? "ready" : "idle" }));
 	}
-	return { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint };
+	return { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts };
 }

@@ -222,3 +222,25 @@ const sheet = "data:image/png;base64,BBBB";
 	assert.ok(tag(cancelled, "sculpt-start"));
 	console.log("PASS sculpt panel: failed and cancelled");
 }
+
+/* ----------------------------------------------------------- part tree --- */
+{
+	const tree = [
+		{ id: "head", shape: "blob", depth: 0, parent: null, mirror: false },
+		{ id: "eye", shape: "blob", depth: 1, parent: "head", mirror: true },
+	];
+	assert.equal(tag(render({ parts: { tree, selected: null, onSelect: noop } }), "sculpt-part-tree"), null, "no tree without a sculpt");
+	const html = render({ sculptName: "Hero sculpt", parts: { tree, selected: { partId: "eye", mirrored: true }, onSelect: noop } });
+	assert.ok(tag(html, "sculpt-part-tree"), "a sculpt lists its parts");
+	const rows = [...html.matchAll(/<button[^>]*data-testid="sculpt-part-row"[^>]*>/g)].map((match) => match[0]);
+	assert.equal(rows.length, 2);
+	assert.match(rows[0], /data-part="head"/);
+	assert.match(rows[0], /aria-pressed="false"/);
+	assert.match(rows[1], /aria-pressed="true"/, "the selected part's row is pressed");
+	assert.match(rows[1], /data-mirrored="true"/, "a mirror-copy pick marks the source row");
+	assert.match(rows[1], /--sculpt-part-depth:1/, "a child is indented by its depth");
+	assert.match(html, /mirror copy/);
+	assert.match(html, /blob ×2/, "a mirrored part says it draws twice");
+	assert.match(html, /Esc to deselect/);
+	console.log("PASS sculpt panel: part tree");
+}

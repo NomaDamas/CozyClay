@@ -1239,7 +1239,7 @@ export default function App() {
 		attachTargetForRow, attachTargetLabel, attachSceneObject,
 	} = objectsDomain;
 
-	const { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint } = useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId });
+	const { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts } = useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId });
 	async function chooseSculptReference(file) {
 		try {
 			// A new reference makes the old sheet a drawing of something else.
@@ -4476,7 +4476,7 @@ export default function App() {
 	// Sculpt mode's panel heads the Details column (DetailsSlot mounts it).
 	const sculptPanel = sculptMode && !embedMode ? (
 		<SculptPanel
-			run={sculptRun}
+			run={sculptRun} parts={sculptParts}
 			reference={sculptReference}
 			onReference={(file) => void chooseSculptReference(file)}
 			onStart={startSculptRun}
@@ -4724,7 +4724,7 @@ export default function App() {
 							{sculptMode && (
 								<SculptTurntable
 									camRef={sculptCamRef}
-									objects={sceneObjects}
+									objects={sceneObjects} parts={sculptParts}
 									target={sculptTarget}
 									size={sculptTarget ? objectSize(sculptTarget) : null}
 									view={sculptView}

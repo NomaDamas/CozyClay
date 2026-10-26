@@ -8,6 +8,10 @@ Studio
   pressing **Update now** or an install finishing in one tab shows in the
   others without waiting for their next check.
 - **Help › About** shows the version you are running.
+- In Sculpt mode, click a part of the sculpt to select it: the part gets an
+  outline, and its row lights up in the new **Parts** tree in the Sculpt
+  panel. A click on a mirrored copy selects the part it mirrors. A click on
+  empty space, or Esc, clears it.
 
 CLI
 
