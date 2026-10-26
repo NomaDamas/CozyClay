@@ -390,7 +390,8 @@ The actual call paths do not provide an own-project-reopen event contract:
   consumes it without reading saved local scenes and without `applyProject`.
   Its automatic initial preset is not a project reopen. Normal cached scene
   startup likewise need not emit `project:opened`.
-- `src/semantic-edit.js::createFirstEditTracker` emits numeric version 1 once
+- `src/semantic-edit.js::createFirstEditTracker` (removed in #956; version 2 counts
+  bus receipts, `src/command-bus-telemetry.js`) emitted numeric version 1 once
   per App mount per surface, only for a successful authored before/after
   change. Passive load, restore, seeding, navigation, no-ops and history replay
   are excluded. Scene/project switches do not reset the tracker.
