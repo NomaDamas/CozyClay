@@ -39,10 +39,8 @@ const EDIT_KINDS = [
 	// The take's fields carry its prompt (motion.take.prompt).
 	[/^motion\.set$/, 'prompt_block_edit'],
 ];
-// Built on first use: this module loads inside an import cycle (analytics.js -> semantic-edit.js ->
-// command-bus.js -> here), where EDIT_GROUPS is not initialized yet.
-let groups = null;
-const groupOf = kind => (groups ??= new Map(Object.entries(EDIT_GROUPS).flatMap(([group, kinds]) => kinds.map(entry => [entry, group])))).get(kind);
+const GROUP_BY_KIND = new Map(Object.entries(EDIT_GROUPS).flatMap(([group, kinds]) => kinds.map(entry => [entry, group])));
+const groupOf = kind => GROUP_BY_KIND.get(kind);
 /** A command's closed edit kind, or null. `hint`: asset.import's closed `placeAs`, and `rail` when a
  * shot.setCamera patch names a rail field (key names only; values are never read). */
 export function firstEditKindOf(action, { placeAs, rail = false } = {}) {

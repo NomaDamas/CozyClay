@@ -18,7 +18,6 @@ import { judgeNextWaypoint } from '../src/motion/waypoints.js';
 import { createStableItemId, removeStableItem, updateStableItem } from '../src/stable-items.js';
 import { createCameraBlock, removeCameraRail, updateCameraBlock } from '../src/camera-block.js';
 import { railFollowForNewGeometry } from '../src/camera-rail-schedule.js';
-import { createSemanticState, createFirstEditTracker } from '../src/semantic-edit.js';
 import * as objects from '../src/scene-objects.js';
 import * as ik from '../src/motion/ik.js';
 import { copyPhysicsKeys, physicsKeyStamp } from '../src/motion/physics-review.js';
@@ -94,10 +93,11 @@ function fixture(options={}) {
  const values={}, semantic=[], motionStore=options.motionStore??new Map(), motionSet=[];
  let urlLoader=async url=>{throw new Error(`bridge does not serve ${url}`);};
  let currentBinding;
- const firstEdit = createFirstEditTracker(() => {});
- const markSemanticEdit=(domain,before,after)=>{if(before!==after)revision.current++;currentBinding?.invalidate?.(domain,before,after);semantic.push(domain);firstEdit('craft',domain,before,after);if(domain==='characters'&&Array.isArray(after)){characterRef.current=after;live.current.characters=after;}if(domain==='shots')live.current.shots=after;};
- const castOwner=createSemanticState(chars,v=>{values.characters=v;},markSemanticEdit,'characters');
- const shotsOwner=createSemanticState([],v=>{values.shots=v;},markSemanticEdit,'shots');
+ const markSemanticEdit=(domain,before,after)=>{if(before!==after)revision.current++;currentBinding?.invalidate?.(domain,before,after);semantic.push(domain);if(domain==='characters'&&Array.isArray(after)){characterRef.current=after;live.current.characters=after;}if(domain==='shots')live.current.shots=after;};
+ // A value owner: set publishes, edit publishes and marks the semantic edit against the value it replaced.
+ const owner=(initial,publish,domain)=>{let current=initial;const apply=(update,authored)=>{const before=current;current=typeof update==='function'?update(before):update;publish(current);if(authored)markSemanticEdit(domain,before,current);return current;};return {set:update=>apply(update,false),edit:update=>apply(update,true)};};
+ const castOwner=owner(chars,v=>{values.characters=v;},'characters');
+ const shotsOwner=owner([],v=>{values.shots=v;},'shots');
  const suppressObjectClock=ref(false);
  const store=ref(withCommandHistory(createSceneHistoryStore([], {onObjects(next){if(!suppressObjectClock.current)lastObject.current=++clock.current;values.objects=next;},onCommit(before,after){markSemanticEdit('objects',before,after);}})));
  const noPublish = name => value => {values[name]=typeof value==='function'?value(values[name]??0):value;};

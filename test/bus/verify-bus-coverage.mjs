@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { join, relative } from "node:path";
 import { parseSync } from "rolldown/experimental";
-import { createSemanticState } from "../../src/semantic-edit.js";
+import { startUserEdits, telemetrySeam } from "../../src/command-bus-telemetry.js";
 import { fixture, result } from "./fixture.mjs";
 
 const WRITER_NAMES = new Set([
@@ -133,25 +133,18 @@ test("ratchet baseline is non-increasing", () => {
   assert.deepEqual(applyRatchet({ Panel: 2 }, { Panel: 1 }), ["Panel: 2 exceeds baseline 1"]);
 });
 
-test("semantic edit warns when called outside a bus run", () => {
-  const warnings = [];
-  const previous = console.warn;
-  console.warn = message => warnings.push(String(message));
-  try { createSemanticState(0, () => {}, () => {}, "stage").edit(1); }
-  finally { console.warn = previous; }
-  assert.equal(warnings.some(message => message.includes("outside a bus run")), true);
-});
-
-test("semantic edit is silent inside a bus run", () => {
-  const warnings = [];
-  const previous = console.warn;
-  const f = fixture();
-  const state = createSemanticState(0, () => {}, () => {}, "stage");
-  f.register("shot.create", () => { state.edit(1); return result(); });
-  console.warn = message => warnings.push(String(message));
-  try { assert.equal(f.bus.run("shot.create", {}, f.request("ui")).ok, true); }
-  finally { console.warn = previous; }
-  assert.deepEqual(warnings, []);
+test("a user edit counts from its bus receipt, not from a write outside a bus run", () => {
+  const sent = [];
+  const restore = telemetrySeam({ track: (event, props) => sent.push({ event, props }) });
+  try {
+    startUserEdits("craft");
+    const f = fixture();
+    f.register("shot.create", () => { f.edit(1); return result(); });
+    f.edit(2);
+    assert.deepEqual(sent, [], "a document write outside a bus run is not an edit");
+    assert.equal(f.bus.run("shot.create", {}, f.request("ui")).ok, true);
+    assert.deepEqual(sent.filter(({ event }) => event.endsWith(":first_edit")), [{ event: "craft:first_edit", props: { edit_kind: "shot_add", definition_version: 2 } }]);
+  } finally { restore(); }
 });
 
 export { scanSource, scanTree, applyRatchet, writerName, isRunCall };

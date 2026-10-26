@@ -1,43 +1,31 @@
 import assert from "node:assert/strict";
-import { createFirstEditTracker, createSemanticState } from "../src/semantic-edit.js";
+import { createHistoryReceipts, startUserEdits, telemetrySeam } from "../src/command-bus-telemetry.js";
 import { createAppContext } from "../src/app-context.js";
-import { createSceneObject } from "../src/scene-objects.js";
-import { createSceneHistoryStore } from "../src/document-store.js";
-import { dispatchLiveFrame } from "../src/live-control.js";
 import { startExportAttempt } from "../src/export-attempt.js";
 import { readFileSync } from "node:fs";
 import { requestKeyframePack, KEYFRAME_PACK_RESULT } from "../src/workflow/keyframe-pack-request.js";
 
-// Same authored setter/store for user callbacks and both programmatic callers.
-// These are shared-boundary fixtures, not a claim that Agent exposes new tools.
+// The user's, the agent's and an MCP client's receipts for the same edit reach one
+// bus-receipt path. Only the user's own committed receipt is an edit, once per mount.
 for (const first of ["user", "agent", "mcp"]) {
 	const events = [];
-	const track = (event, props) => events.push({ event, props });
-	const observe = createFirstEditTracker(track);
-	let objects = [];
-	const store = createSceneHistoryStore(objects, {
-		onObjects(next) { objects = next; },
-		onCommit(a, b) { observe("craft", "objects", a, b); },
-	});
-	const object = createSceneObject("cube", []);
-	const mutate = () => store.applyAtomic(() => [object]);
-	const handlers = { place_object: mutate };
-	const callers = {
-		user: mutate,
-		agent: () => dispatchLiveFrame(JSON.stringify({ type: "cmd", id: "local-agent", name: "place_object", args: {} }), handlers),
-		mcp: () => dispatchLiveFrame(JSON.stringify({ type: "cmd", id: "local-mcp", name: "place_object", args: {} }), handlers),
-	};
-	// Given one successful scene edit, When the other adapters echo its value,
-	// Then one mount-scoped semantic edit survives all three arrival orders.
-	await callers[first]();
-	for (const channel of ["user", "agent", "mcp"]) await callers[channel]();
-	assert.equal(objects.length, 1);
-	assert.deepEqual(events, [{ event: "craft:first_edit", props: { edit_kind: "object_insert", definition_version: 2 } }]);
+	const restore = telemetrySeam({ track: (event, props) => events.push({ event, props }) });
+	try {
+		startUserEdits("craft");
+		const receipts = createHistoryReceipts({});
+		let n = 0;
+		const place = (origin) => receipts.remember({ ok: true, authored: true, receiptId: `r-${++n}` }, { id: "object.add", origin });
+		const callers = { user: () => place("ui"), agent: () => place("agent"), mcp: () => place("mcp") };
+		// Given one successful scene edit, When the other adapters echo it,
+		// Then one mount-scoped first edit survives all three arrival orders.
+		callers[first]();
+		for (const channel of ["user", "agent", "mcp"]) callers[channel]();
+		assert.deepEqual(events.filter(({ event }) => event.endsWith(":first_edit")), [{ event: "craft:first_edit", props: { edit_kind: "object_insert", definition_version: 2 } }], first);
 
-	// Prompt authoring alone never creates generation demand.
-	const prompts = createSemanticState([], () => {}, (domain, a, b) => observe("craft", domain, a, b), "promptClips");
-	prompts.edit([{ id: "private", text: "private", startFrame: 0, endFrame: 24 }]);
-	assert.equal(events.filter(({ event }) => event.startsWith("motion:")).length, 0);
+		// Prompt authoring alone never creates generation demand.
+		receipts.remember({ ok: true, authored: true, receiptId: `r-${++n}` }, { id: "motion.set", origin: "ui", args: { prompt: "private" } });
+		assert.equal(events.filter(({ event }) => event.startsWith("motion:")).length, 0);
+	} finally { restore(); }
 }
 
 // Execute the actual embed export callback. Workflow owns the one top-level

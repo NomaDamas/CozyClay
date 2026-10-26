@@ -12,8 +12,6 @@ const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 const mapResult = (value, success, failure) => value?.then ? value.then(success, failure) : success(value);
 const toastWarnings = toasts => toasts.slice(-12).map(toast => ({ code: 'STUDIO_TOAST', message: [...toast.message].slice(0, 120).join('') }));
-let activeRunDepth = 0;
-export const isBusRunActive = () => activeRunDepth > 0;
 
 export function createCommandBus({ registry, ports }) {
   const pending = new Map(), transactions = new Map(), jobs = new Map(), listeners = new Set();
@@ -211,7 +209,7 @@ export function createCommandBus({ registry, ports }) {
       catch (error) { if (level >= 2 || error?.code !== 'INVALID_RECEIPT' || !/8 KiB/.test(error.message)) throw error; }
     }
   }
-  function executeRun(id, args = {}, options = {}) {
+  function run(id, args = {}, options = {}) {
     const request = { origin: 'ui', commandId: crypto.randomUUID(), ...options };
     if (request.origin === 'ui' && (id === 'edit.undo' || id === 'edit.redo')) ports.finishHistoryGesture?.();
     const before = ports.read(), journal = ports.journal();
@@ -367,18 +365,6 @@ export function createCommandBus({ registry, ports }) {
       if (answer?.then) { const settled = (job?.completion ?? answer).finally(() => pending.delete(request.commandId)); pending.set(request.commandId, settled); return settled; }
       return answer;
     } catch (error) { return rejected(error); }
-  }
-  function run(...args) {
-    activeRunDepth++;
-    try {
-      const value = executeRun(...args);
-      if (value?.then) return value.finally(() => { activeRunDepth--; });
-      activeRunDepth--;
-      return value;
-    } catch (error) {
-      activeRunDepth--;
-      throw error;
-    }
   }
   // noteUndone: edit:undone for the user's own undo (domains/scene-undo.js), which reaches it through the bus.
   return { run, noteUndone,
