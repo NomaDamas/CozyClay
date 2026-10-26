@@ -36,13 +36,13 @@ export function createUpdateRoutes({ currentVersion, checkLatest, kind, enabled,
 	const origins = new Set([`http://127.0.0.1:${port}`, `http://${"local" + "host"}:${port}`]);
 
 	async function info() {
-		const base = { enabled, current: currentVersion, latest: null, status: "unknown", kind, canSelfUpdate: false, phase: "idle", errorClass: null, durationMs: null, notesUrl: null, command };
+		const base = { enabled, current: currentVersion, latest: null, status: "unknown", kind, canSelfUpdate: false, phase: "idle", errorClass: null, durationMs: null, installed: null, notesUrl: null, command };
 		if (!enabled) return base;
 		const [{ latest, status }, selfUpdate] = await Promise.all([
 			checkLatest().catch(() => ({ latest: null, status: "unknown" })),
 			kind === "global" ? canSelfUpdate().catch(() => false) : false,
 		]);
-		const { phase, errorClass, durationMs } = installer.getState();
+		const { phase, errorClass, durationMs, version: installing } = installer.getState();
 		const finished = phase === "restart_needed" || phase === "failed";
 		return {
 			...base,
@@ -52,6 +52,8 @@ export function createUpdateRoutes({ currentVersion, checkLatest, kind, enabled,
 			phase,
 			errorClass: phase === "failed" ? errorClass : null,
 			durationMs: finished ? durationMs : null,
+			// The version npm installs or installed: the restart target, even if the registry moves on meanwhile.
+			installed: phase === "updating" || phase === "restart_needed" ? installing : null,
 			notesUrl: latest ? `${NOTES_URL}${latest}` : null,
 		};
 	}

@@ -153,6 +153,7 @@ try {
 		phase: "idle",
 		errorClass: null,
 		durationMs: null,
+		installed: null,
 		notesUrl: "https://github.com/NomaDamas/CozyClay/releases/tag/v3.9.9",
 		command: "npm install -g cozyclay@latest",
 	});
@@ -202,6 +203,7 @@ try {
 	assert.equal(res.status, 202);
 	assert.equal(res.body.phase, "updating");
 	assert.equal(res.body.durationMs, null);
+	assert.equal(res.body.installed, "3.9.9", "GET names the version npm is installing");
 	res = await route.post();
 	assert.equal(res.status, 202, "a second POST while updating is accepted");
 	assert.equal(res.body.phase, "updating");
@@ -209,6 +211,7 @@ try {
 	let settled = await route.settle();
 	assert.equal(settled.phase, "restart_needed");
 	assert.equal(settled.errorClass, null);
+	assert.equal(settled.installed, "3.9.9", "restart_needed keeps naming the installed version: the restart target");
 	assert.ok(Number.isFinite(settled.durationMs) && settled.durationMs >= 0);
 	assert.deepEqual(installs(), [["install", "-g", "cozyclay@3.9.9", "--engine-strict"]], "one install, pinned to the exact registry version; the body is ignored");
 	res = await route.post();
@@ -268,6 +271,7 @@ try {
 		phase: "idle",
 		errorClass: null,
 		durationMs: null,
+		installed: null,
 		notesUrl: null,
 		command: "npm install -g cozyclay@latest",
 	});

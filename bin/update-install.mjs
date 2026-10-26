@@ -105,7 +105,7 @@ export function classifyNpmError(stderr = "", spawnError = null) {
  * for a restart, it starts nothing and returns false.
  */
 export function createInstaller({ timeoutMs = INSTALL_TIMEOUT_MS } = {}) {
-	const state = { phase: "idle", errorClass: null, startedAt: null, durationMs: null };
+	const state = { phase: "idle", errorClass: null, startedAt: null, durationMs: null, version: null };
 	let timer = null;
 	function finish(phase, errorClass) {
 		if (state.phase !== "updating") return;
@@ -115,7 +115,7 @@ export function createInstaller({ timeoutMs = INSTALL_TIMEOUT_MS } = {}) {
 	function startInstall(version) {
 		if (!VERSION.test(String(version))) throw new TypeError("cozyclay: refusing to install a version that is not x.y.z");
 		if (state.phase === "updating" || state.phase === "restart_needed") return false;
-		Object.assign(state, { phase: "updating", errorClass: null, startedAt: Date.now(), durationMs: null });
+		Object.assign(state, { phase: "updating", errorClass: null, startedAt: Date.now(), durationMs: null, version });
 		const platform = process.platform;
 		let child;
 		try {

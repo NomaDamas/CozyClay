@@ -51,6 +51,7 @@ export function normalizeUpdateInfo(body) {
 		phase,
 		errorClass: phase === "failed" ? (ERROR_CLASSES.has(body.errorClass) ? body.errorClass : "other") : null,
 		durationMs: Number.isFinite(body.durationMs) && body.durationMs >= 0 ? body.durationMs : null,
+		installed: version(body.installed),
 		// Opened in a new tab, so only the project's own release page is accepted.
 		notesUrl: latest && body.notesUrl === `${NOTES_PREFIX}${latest}` ? body.notesUrl : null,
 		command: kind === "npx" ? NPX_COMMAND : GLOBAL_COMMAND,
@@ -116,8 +117,10 @@ export function nextUpdateState(info, local = {}) {
 	};
 	if (RESTART_ACTIONS[local.restart]) return { ...base, latest: local.target ?? info.latest, view: local.restart, command: RESTART_COMMAND, actions: RESTART_ACTIONS[local.restart] };
 	const oneClick = info.kind === "global" && info.canSelfUpdate;
-	if (info.phase === "updating") return { ...base, view: "updating", actions: [] };
-	if (info.phase === "restart_needed") return { ...base, view: "restart_needed", command: RESTART_COMMAND, actions: ["restart", "copy_command"] };
+	// "Installing X" and "Updated to X" name the version npm installs, which the registry may have passed since.
+	const installed = info.installed ?? info.latest;
+	if (info.phase === "updating") return { ...base, latest: installed, view: "updating", actions: [] };
+	if (info.phase === "restart_needed") return { ...base, latest: installed, view: "restart_needed", command: RESTART_COMMAND, actions: ["restart", "copy_command"] };
 	if (info.phase === "failed") {
 		return { ...base, view: "failed", errorClass: info.errorClass ?? "other", command: GLOBAL_COMMAND,
 			actions: oneClick ? ["retry", "copy_command"] : ["copy_command"] };
@@ -187,7 +190,7 @@ export function createUpdatePoller({
 	const hint = (type, latest = null) => {
 		try {
 			if (channel) channel.postMessage({ type, latest });
-			else if (type !== "dismiss") storage?.setItem(HINT_KEY, `${type}:${timers.now()}:${(hints += 1)}`);
+			else if (type !== "dismiss") storage?.setItem(HINT_KEY, `${type}:${timers.now()}:${(hints += 1)}:${version(latest) ?? ""}`);
 		} catch { /* best effort */ }
 	};
 	// Emitted first, so this tab's update:finished claim is in storage before any other tab re-polls.
@@ -233,7 +236,8 @@ export function createUpdatePoller({
 		})();
 		return following;
 	};
-	const restartTarget = (latest) => version(latest) ?? (info?.phase === "restart_needed" ? info.latest : null);
+	// The version the launcher installed, not the registry's latest: a newer release may appear while it waits.
+	const restartTarget = (latest) => version(latest) ?? (info?.phase === "restart_needed" ? info.installed ?? info.latest : null);
 	const onHint = (type, latest = null) => {
 		if (stopped || !HINTS.has(type)) return;
 		if (type === "restart") return void followRestart(restartTarget(latest));
@@ -243,7 +247,7 @@ export function createUpdatePoller({
 	};
 	const onMessage = (event) => onHint(event?.data?.type, event?.data?.latest);
 	const onStorage = (event) => {
-		if (event?.key === HINT_KEY) return onHint(String(event.newValue ?? "").split(":")[0]);
+		if (event?.key === HINT_KEY) { const [type, , , latest] = String(event.newValue ?? "").split(":"); return onHint(type, latest || null); }
 		if (event?.key !== DISMISS_KEY && event?.key !== null) return;
 		dismissed = readDismissed(storage);
 		emit();

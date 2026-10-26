@@ -546,6 +546,50 @@ console.log("PASS multi-tab: dismiss, install start and phase hints reach other 
 }
 console.log("PASS restart: one POST, every tab waits through failed fetches for the new version, 30 s timeout, 409 no-op, dirty gate, update:restarted once");
 
+// The restart target is the installed version, not the registry's latest (a newer release may appear while the
+// launcher waits), and the storage fallback's hint carries it to the other tab.
+{
+	let clock = 0, nextId = 1;
+	const pending = new Map();
+	const timers = { set: (fn, ms) => { pending.set(nextId, { fn, at: clock + ms }); return nextId++; }, clear: (id) => pending.delete(id), now: () => clock, afterFirstFrame: (fn) => fn() };
+	const advance = async (ms) => {
+		clock += ms;
+		for (const [id, timer] of [...pending]) if (timer.at <= clock) { pending.delete(id); timer.fn(); }
+		for (let i = 0; i < 4; i += 1) await new Promise((resolve) => setImmediate(resolve));
+	};
+	const waiting = { phase: "restart_needed", installed: "3.1.5", latest: "3.2.0", notesUrl: "https://github.com/NomaDamas/CozyClay/releases/tag/v3.2.0", durationMs: 4000 };
+	const launcher = { mode: "old" };
+	const fetchImpl = async (url) => {
+		if (url === RESTART_URL) { launcher.mode = "down"; return { ok: true, status: 202, json: async () => body(waiting) }; }
+		if (launcher.mode === "down") throw new TypeError("Failed to fetch");
+		if (launcher.mode === "new") return { ok: true, json: async () => body({ current: "3.1.5", latest: "3.2.0", notesUrl: waiting.notesUrl, status: "outdated", phase: "idle" }) };
+		return { ok: true, json: async () => body(waiting) };
+	};
+	const map = new Map(), wins = [];
+	const tab = () => {
+		const win = runtimeWindow(), views = [];
+		wins.push(win);
+		const storage = { getItem: (key) => map.get(key) ?? null, setItem(key, value) { map.set(key, String(value)); for (const other of wins) if (other !== win) other.listeners.get("storage")?.({ key, newValue: String(value) }); } };
+		const poller = createUpdatePoller({ fetchImpl, timers, win, doc: null, storage, channel: null, onState: ({ state }) => views.push(state) });
+		return { poller, view: () => views.at(-1) };
+	};
+	const a = tab(), b = tab();
+	await advance(0);
+	assert.deepEqual([a.view().view, a.view().latest], ["restart_needed", "3.1.5"], "Updated to names the installed 3.1.5, not the registry's newer 3.2.0");
+	const outcome = a.poller.restart();
+	await advance(0);
+	assert.match(map.get(HINT_KEY), /^restart:\d+:\d+:3\.1\.5$/, "the storage fallback's restart hint carries the target version");
+	assert.deepEqual([a.view().view, b.view().view, b.view().latest], ["restarting", "restarting", "3.1.5"], "the other tab waits for the installed version");
+	launcher.mode = "new";
+	await advance(RESTART_POLL_MS);
+	await advance(RESTART_POLL_MS);
+	assert.deepEqual([a.view().view, b.view().view], ["restarted", "restarted"], "a launcher on 3.1.5 ends the wait, though the registry now says 3.2.0");
+	assert.equal(await outcome, "ok");
+	a.poller.stop();
+	b.poller.stop();
+}
+console.log("PASS restart target: the installed version, not the registry's latest; the storage fallback hint carries it");
+
 // 10. Help › About names the runtime appVersion, not the never-defined VITE_APP_VERSION.
 {
 	const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
