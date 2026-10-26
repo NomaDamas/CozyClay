@@ -20,7 +20,7 @@ identity first.
    - sync a scene across devices,
    - AI generation queue (if a hosted queue ever bills per user).
 3. Instrumentation (already shipped in this branch): `install:first_launch`,
-   `sample:played`, `craft:first_action`, `scene:created` (including the
+   `sample:played` (removed in #914), `craft:first_action`, `scene:created` (including the
    startup scene), `export:video_succeeded`, `export:blocking_frame_succeeded`,
    `activation:completed`. When a lazy-identity prompt lands, add
    `identity:prompted` / `identity:completed` / `identity:dismissed`.

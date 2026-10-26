@@ -1136,7 +1136,8 @@ ORDER BY people DESC
 -- Install source: blank means the prompt was skipped and no --via was given.
 SELECT coalesce(properties.heard_from, '(blank)') AS source, uniq(distinct_id) AS installs
 FROM events
-WHERE event = 'install:first_launch' AND timestamp >= now() - INTERVAL 30 DAY
+WHERE event = 'install:first_launch' AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 30 DAY
 GROUP BY source ORDER BY installs DESC;
 
 -- Use case x team, answered after a successful export.
@@ -1148,7 +1149,8 @@ GROUP BY use_case, team ORDER BY people DESC;
 -- Share of npm users on the newest release in the last 7 days.
 SELECT properties.update_status AS status, properties.app_version AS version, uniq(distinct_id) AS people
 FROM events
-WHERE event = 'app:session_started' AND timestamp >= now() - INTERVAL 7 DAY
+WHERE event = 'app:session_started' AND JSONExtractRaw(properties, 'internal_qa') != 'true'
+  AND timestamp >= now() - INTERVAL 7 DAY
 GROUP BY status, version ORDER BY people DESC;
 ```
 
