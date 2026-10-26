@@ -49,6 +49,15 @@ export function assignShards(files, durations, total) {
 	return shards;
 }
 
+// tools/select-tests.mjs output: null (run everything) unless mode is "selected".
+export function readSelection(path) {
+	if (!path) return null;
+	const { mode, files } = JSON.parse(readFileSync(path, "utf8"));
+	if (mode !== "selected") return null;
+	if (!Array.isArray(files)) throw new Error(`${path}: a selected run needs a files array`);
+	return new Set(files);
+}
+
 export function parseShard(value = "") {
 	const match = /^(\d+)\/(\d+)$/.exec(value);
 	const current = Number(match?.[1]);

@@ -3,7 +3,7 @@ import { spawn } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { availableParallelism, tmpdir } from "node:os";
 import { join, relative } from "node:path";
-import { assignShards, parseShard, readDurations, reportDurations, slowestFirst } from "./test-shards.mjs";
+import { assignShards, parseShard, readDurations, readSelection, reportDurations, slowestFirst } from "./test-shards.mjs";
 
 // Whatever a suite drives through the agent sidecar lands in a scratch
 // session dir for the whole run, never in the author's ~/.config (#375).
@@ -16,7 +16,7 @@ if (!process.env.COZYCLAY_AGENT_SESSIONS_DIR) {
 const NODE_FILES = [
 	"test/motion3/verify-motion3-core.mjs", "test/motion3/verify-playback-frame-store.mjs", "test/verify-playback-render-isolation.mjs", "test/motion3/verify-motion3-idle.mjs", "test/motion3/verify-motion3-life.mjs", "test/motion3/verify-motion3-headlead.mjs", "test/motion3/verify-motion3-gait.mjs", "test/motion3/verify-motion3-overlap.mjs", "test/motion3/verify-motion3-flip.mjs", "test/motion3/verify-motion3-float-fix.mjs", "test/motion3/verify-motion3-timing.mjs", "test/motion3/verify-motion3-self.mjs", "test/motion3/verify-motion3-commands.mjs", "test/motion3/verify-motion3-exitcar.mjs", "test/motion3/verify-motion3-agentloop.mjs", "test/motion3/verify-motion3-search.mjs", "test/motion3/verify-motion3-skills.mjs", "test/motion3/verify-motion3-carried.mjs", "test/motion3/verify-motion3-people.mjs", "test/motion3/verify-motion3-hit.mjs", "test/motion3/verify-motion3-person-fix.mjs", "test/motion3/verify-motion3-socket.mjs", "test/motion3/verify-motion3-shapes.mjs", "test/motion3/verify-motion3-grasp-fields.mjs", "test/motion3/verify-motion3-finger-contact.mjs", "test/motion3/verify-motion3-finger-pose.mjs", "test/motion3/verify-motion3-grasp-qa.mjs", "test/motion3/verify-motion3-load.mjs", "test/motion3/verify-motion3-throw.mjs", "test/motion3/verify-motion3-catch.mjs", "test/motion3/verify-motion3-spring.mjs", "test/motion3/verify-motion3-grasp-hints.mjs", "test/motion3/verify-motion3-ball-pickup-repair.mjs", "test/motion3/verify-motion3-reach-human.mjs", "test/motion3/verify-motion3-stance-grasp.mjs", "test/motion3/verify-motion3-grasp-friction.mjs", "test/motion3/verify-motion3-grasp-measure.mjs", "test/motion3/verify-motion3-contracts.mjs", "test/motion3/verify-motion3-describe.mjs", "test/motion3/verify-motion3-timeline.mjs", "test/motion3/verify-motion3-probes.mjs", "test/motion3/verify-motion3-grab.mjs", "test/motion3/verify-motion3-grab-blend.mjs", "test/motion3/verify-motion3-patch.mjs", "test/motion3/verify-motion3-patch-keys.mjs", "test/motion3/verify-motion3-stuck.mjs", "test/motion3/verify-motion3-repair.mjs", "test/motion3/verify-motion3-specstore.mjs", "test/motion3/verify-motion3-visual.mjs", "test/motion3/verify-motion3-goals.mjs", "test/motion3/verify-motion3-prompt.mjs", "test/motion3/verify-motion3-cup.mjs", "test/motion3/verify-motion3-arm.mjs", "test/motion3/verify-motion3-balance.mjs", "test/motion3/verify-physics-overlay.mjs", "test/verify-proxy-figure.mjs", "test/verify-text-object.mjs",
 	"test/verify-proxy-figure-bounds.mjs",
-	"test/verify-character-capabilities.mjs", "test/verify-test-shards.mjs",
+	"test/verify-character-capabilities.mjs", "test/verify-test-shards.mjs", "test/verify-select-tests.mjs",
 	"test/verify-root-path.mjs",
 	"test/verify-studio-elements.mjs",
 	"test/bus/verify-view-mode-pose.mjs",
@@ -280,42 +280,23 @@ function verificationFiles(directory) {
 // by the recorded seconds in tools/test-durations.json (tools/test-shards.mjs).
 // Shards are disjoint and together cover the same runnable set as an unsharded
 // invocation. `--durations-out PATH` writes each file's wall-clock seconds.
+// `--only-from SELECTION.json` (tools/select-tests.mjs) narrows the runnable
+// set before sharding; a shard left with no files passes.
 function parseArguments(arguments_) {
-	let listOnly = false;
-	let scope = "all";
-	let jobs = Number(process.env.COZYCLAY_TEST_JOBS) || availableParallelism();
-	let shard = null;
-	let durationsOut = null;
+	const options = { listOnly: false, scope: "all", jobs: Number(process.env.COZYCLAY_TEST_JOBS) || availableParallelism(), shard: null, durationsOut: null, onlyFrom: null };
+	const valued = { "--scope": "scope", "--jobs": "jobs", "--shard": "shard", "--durations-out": "durationsOut", "--only-from": "onlyFrom" };
 	for (let index = 0; index < arguments_.length; index += 1) {
 		const argument = arguments_[index];
-		if (argument === "--list") {
-			listOnly = true;
-			continue;
-		}
-		if (argument === "--scope") {
-			scope = arguments_[index + 1] ?? "";
-			index += 1;
-			continue;
-		}
-		if (argument === "--jobs") {
-			jobs = Number(arguments_[index + 1]);
-			index += 1;
-			continue;
-		}
-		if (argument === "--shard") {
-			shard = parseShard(arguments_[(index += 1)]);
-			continue;
-		}
-		if (argument === "--durations-out") {
-			durationsOut = arguments_[(index += 1)] ?? "";
-			continue;
-		}
-		throw new Error(`unknown argument: ${argument}`);
+		if (argument === "--list") options.listOnly = true;
+		else if (Object.hasOwn(valued, argument)) options[valued[argument]] = arguments_[(index += 1)] ?? "";
+		else throw new Error(`unknown argument: ${argument}`);
 	}
-	if (scope !== "all" && scope !== "ardy") throw new Error(`unknown test scope: ${scope}`);
-	if (!Number.isInteger(jobs) || jobs < 1) throw new Error(`--jobs must be a positive integer, got ${jobs}`);
-	if (durationsOut === "") throw new Error("--durations-out needs a file path");
-	return { listOnly, scope, jobs, shard, durationsOut };
+	options.jobs = Number(options.jobs);
+	if (options.shard !== null) options.shard = parseShard(options.shard);
+	if (options.scope !== "all" && options.scope !== "ardy") throw new Error(`unknown test scope: ${options.scope}`);
+	if (!Number.isInteger(options.jobs) || options.jobs < 1) throw new Error(`--jobs must be a positive integer, got ${options.jobs}`);
+	if (options.durationsOut === "" || options.onlyFrom === "") throw new Error("--durations-out and --only-from need a file path");
+	return options;
 }
 
 // One file per child. With more than one job the output is buffered per file
@@ -434,7 +415,7 @@ if (!mcpDepsInstalled) {
 	}
 }
 
-const { listOnly, scope, jobs, shard, durationsOut } = parseArguments(process.argv.slice(2));
+const { listOnly, scope, jobs, shard, durationsOut, onlyFrom } = parseArguments(process.argv.slice(2));
 const durations = readDurations();
 const inventory = [...verificationFiles("test"), ...verificationFiles("mcp"), ...EXTRA_INVENTORY].sort();
 for (const file of inventory) {
@@ -450,7 +431,8 @@ if (unclassified.length > 0 || stale.length > 0) {
 }
 
 const scoped = inventory.filter((file) => scope === "all" || file.startsWith("test/ardy/") || file.startsWith("test/ik/"));
-const runnable = scoped.filter((file) => categories.get(file).kind === "node");
+const only = readSelection(onlyFrom);
+const runnable = scoped.filter((file) => categories.get(file).kind === "node" && (!only || only.has(file)));
 const { files: selected, predicted } = assignShards(runnable, durations, shard?.total ?? 1)[(shard?.current ?? 1) - 1];
 const selectedSet = new Set(selected);
 console.log(
@@ -460,11 +442,9 @@ console.log(
 );
 for (const file of scoped) {
 	const { kind, reason } = categories.get(file);
-	if (kind === "node" && shard && !selectedSet.has(file)) {
-		console.log(`SHARD node ${file} - assigned to another shard`);
-		continue;
-	}
-	console.log(`${kind === "node" ? "RUN" : "EXCLUDE"} ${kind} ${file} - ${reason}`);
+	if (kind === "node" && only && !only.has(file)) console.log(`SKIP node ${file} - not selected by ${onlyFrom}`);
+	else if (kind === "node" && shard && !selectedSet.has(file)) console.log(`SHARD node ${file} - assigned to another shard`);
+	else console.log(`${kind === "node" ? "RUN" : "EXCLUDE"} ${kind} ${file} - ${reason}`);
 }
 
 if (!listOnly) {
