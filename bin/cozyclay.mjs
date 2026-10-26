@@ -23,7 +23,7 @@ import { fileURLToPath } from "node:url";
 import { ensureMcpRuntime, runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
 import { maybeAskForStar } from "./star-prompt.mjs";
-import { checkForUpdate, readUpdateStatus, runUpdate, runUpdateCheck, updateChecksOn } from "./update-check.mjs";
+import { checkForUpdate, readUpdateStatus, runUpdateCommand, updateChecksOn } from "./update-check.mjs";
 import { createStudioRoutes } from "./studio-routes.mjs";
 import { handleOAuthRequest } from "./codex-auth.mjs";
 import { createAgentHandler } from "./agent/agent-routes.mjs";
@@ -144,6 +144,7 @@ const HELP = `cozyclay - browser-based 3D staging studio
                             (cclay live --help lists every verb)
   cclay update              install the latest cozyclay globally (npm install -g)
   cclay update --check      only compare: exit 0 latest, 10 newer exists, 11 unknown
+  cclay update --off|--on   stop or resume update notices (launch line, Studio chip)
   npx cozyclay --port 5200  serve on another port
   npx cozyclay --no-open    do not open a browser
   npx cozyclay --scene <id> open the studio on a bundled starter scene
@@ -210,14 +211,10 @@ if (argv[0] === "mcp") {
 	const { runLiveCli } = await import("./live/cli.mjs");
 	process.exit(await runLiveCli(argv.slice(1)));
 } else if (argv[0] === "update") {
-	// This branch bypasses parseArgs, so anything trailing would be swallowed
-	// and `cclay update --help` would perform an unrequested global install.
-	if (argv.length > 1 && !(argv.length === 2 && argv[1] === "--check")) {
-		console.error(`cozyclay: update takes no arguments except --check (got ${argv.slice(1).join(" ")})`);
-		process.exit(1);
-	}
-	if (argv[1] === "--check") process.exit(await runUpdateCheck({ currentVersion: readVersion(), kind: INSTALL_KIND, stateDir: STATE_DIR }));
-	else runUpdate();
+	// This branch bypasses parseArgs; runUpdateCommand refuses anything but one
+	// known flag, so `cclay update --help` never performs a global install.
+	const code = await runUpdateCommand(argv.slice(1), { currentVersion: readVersion(), kind: INSTALL_KIND, stateDir: STATE_DIR });
+	if (code !== null) process.exit(code);
 } else if (argv[0] === "telemetry") {
 	const action = argv[1] ?? "status";
 	const internalAction = action === "internal" ? argv[2] : null;
@@ -276,7 +273,7 @@ if (
 }
 // Fired before anything blocking and never awaited on the launch path: the
 // notice is worth a line of output, never a second of startup.
-const updateChecksEnabled = updateChecksOn(opts.updateCheck);
+const updateChecksEnabled = updateChecksOn(opts.updateCheck, process.env, STATE_DIR);
 const updatePending = updateChecksEnabled ? checkForUpdate(version, STATE_DIR) : null;
 if (!existsSync(join(DIST, "app", "index.html"))) {
 	console.error("cozyclay: this package is missing its build (dist/app/index.html).");

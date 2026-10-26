@@ -35,6 +35,7 @@ command. `cclay update` installs the latest release.
 `cclay update --check` installs nothing. It prints the current version, the latest version and
 the install kind, then exits `0` when up to date, `10` when an update is available, and `11` when
 it cannot tell (offline, or checks turned off).
+`cclay update --off` stops the update line and the Studio chip for good; `cclay update --on` undoes it.
 
 Tell the user:
 

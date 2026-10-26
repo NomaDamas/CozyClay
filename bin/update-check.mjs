@@ -7,7 +7,7 @@
  * launcher it serves.
  */
 import { spawn } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 const REGISTRY_URL = "https://registry.npmjs.org/cozyclay/latest";
@@ -146,10 +146,46 @@ export function readUpdateStatus(currentVersion, stateDir) {
 	}
 }
 
-// `--no-update-check`, COZYCLAY_NO_UPDATE_CHECK and CI each turn the notice,
-// the Studio chip and the one-click install off.
-export function updateChecksOn(flag, env = process.env) {
-	return Boolean(flag && !env.CI && !env.COZYCLAY_NO_UPDATE_CHECK);
+// The launcher's state file, shared with telemetry and the star prompt.
+const stateFileOf = (stateDir) => join(stateDir, "state.json");
+
+// A missing file is {}; a corrupt one is null, so nothing overwrites it.
+function readStateFile(stateFile) {
+	try {
+		const parsed = JSON.parse(readFileSync(stateFile, "utf8"));
+		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : null;
+	} catch (error) {
+		return error?.code === "ENOENT" ? {} : null;
+	}
+}
+
+// `--no-update-check`, COZYCLAY_NO_UPDATE_CHECK, CI and `cclay update --off`
+// (updateNotice: false in the state file) each turn the launch line, the
+// Studio chip and the one-click install off.
+export function updateChecksOn(flag, env = process.env, stateDir = null) {
+	if (!flag || env.CI || env.COZYCLAY_NO_UPDATE_CHECK) return false;
+	return !stateDir || readStateFile(stateFileOf(stateDir))?.updateNotice !== false;
+}
+
+// `cclay update --off|--on`: keeps every other key, writes atomically, and
+// says what changed and how to undo it. A corrupt or unwritable file is exit 1.
+function setUpdateNotice(stateDir, on) {
+	const stateFile = stateFileOf(stateDir);
+	const state = readStateFile(stateFile);
+	try {
+		if (!state) throw new Error(`${stateFile} is not valid JSON`);
+		mkdirSync(stateDir, { recursive: true });
+		const temporary = `${stateFile}.${process.pid}.tmp`;
+		writeFileSync(temporary, JSON.stringify({ ...state, updateNotice: on }, null, "\t"), { mode: 0o600 });
+		renameSync(temporary, stateFile);
+	} catch (error) {
+		console.error(`cozyclay: could not save the update setting: ${error.message}`);
+		return 1;
+	}
+	console.log(on
+		? "Update notices are on: the launch line and the Studio chip are back. Undo with `cclay update --off`."
+		: "Update notices are off: no launch line, no Studio chip. Undo with `cclay update --on`.");
+	return 0;
 }
 
 /**
@@ -176,7 +212,7 @@ export async function lookupLatest(currentVersion, stateDir, { fresh = false } =
  * newest release, 10 when a newer one exists, 11 when the registry could not
  * answer and nothing is cached. Scripts and agents branch on the code.
  */
-export async function runUpdateCheck({ currentVersion, kind, stateDir }) {
+async function runUpdateCheck({ currentVersion, kind, stateDir }) {
 	const { latest, status } = await lookupLatest(currentVersion, stateDir, { fresh: true });
 	console.log(`current: ${currentVersion}\nlatest: ${latest ?? "unknown"}\nkind: ${kind}\nstatus: ${status}`);
 	return { latest: 0, outdated: 10 }[status] ?? 11;
@@ -184,7 +220,7 @@ export async function runUpdateCheck({ currentVersion, kind, stateDir }) {
 
 // npx/bunx runs from a temp dir, so there is no local install to upgrade in
 // place; `npm install -g` is the one command that is right either way.
-export function runUpdate() {
+function runUpdate() {
 	const npm = process.platform === "win32" ? "npm.cmd" : "npm";
 	const child = spawn(npm, ["install", "-g", "cozyclay@latest", "--engine-strict"], { stdio: "inherit", shell: process.platform === "win32" });
 	child.on("error", (err) => {
@@ -218,4 +254,22 @@ export function runUpdate() {
 			process.exit(0);
 		});
 	});
+}
+
+const UPDATE_FLAGS = new Set(["--check", "--off", "--on"]);
+
+/**
+ * `cclay update [--check|--off|--on]`. Resolves to the exit code, or null
+ * while the bare install runs (it exits on its own). Anything else, including
+ * two flags, is refused: `cclay update --help` must not install.
+ */
+export async function runUpdateCommand(args, { currentVersion, kind, stateDir }) {
+	if (args.length > 1 || (args.length === 1 && !UPDATE_FLAGS.has(args[0]))) {
+		console.error(`cozyclay: update takes at most one of --check, --off or --on (got ${args.join(" ")})`);
+		return 1;
+	}
+	if (args[0] === "--check") return runUpdateCheck({ currentVersion, kind, stateDir });
+	if (args[0]) return setUpdateNotice(stateDir, args[0] === "--on");
+	runUpdate();
+	return null;
 }

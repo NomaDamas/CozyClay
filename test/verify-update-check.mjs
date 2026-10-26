@@ -20,7 +20,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { checkForUpdate, compareVersions } from "../bin/update-check.mjs";
+import { checkForUpdate, compareVersions, updateChecksOn } from "../bin/update-check.mjs";
 import { canSelfUpdate, classifyNpmError } from "../bin/update-install.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -218,7 +218,7 @@ try {
 	assert.match(cli.stdout, /latest: unknown/);
 	cli = await runCheck(registryUrl, ["update", "--check", "--help"]);
 	assert.equal(cli.code, 1, "anything beyond --check is still refused");
-	assert.match(cli.stderr, /takes no arguments except --check/);
+	assert.match(cli.stderr, /takes at most one of --check, --off or --on/);
 	cli = await runCheck(registryUrl, ["update", "--help"]);
 	assert.equal(cli.code, 1);
 	// A read-only config dir: the cache write fails, the fetched answer still decides the exit code.
@@ -236,6 +236,50 @@ try {
 	assert.equal(existsSync(join(readOnlyHome, "cozyclay")), false, "nothing could be written");
 	rmSync(checkHome, { recursive: true, force: true });
 	pass("cclay update --check exits 10 outdated, 0 latest, 11 unknown, keeps a good fetch when the config dir is read-only, and the guard still rejects other args");
+
+	/* ------------------------------------------- cclay update --off|--on ---- */
+
+	const offHome = mkdtempSync(join(tmpdir(), "cozyclay-update-off-"));
+	const offDir = join(offHome, "cozyclay");
+	const offState = join(offDir, "state.json");
+	const readOffState = () => JSON.parse(readFileSync(offState, "utf8"));
+	mkdirSync(offDir);
+	writeFileSync(offState, JSON.stringify({ telemetryEnabled: false, starPrompted: true }));
+	assert.equal(updateChecksOn(true, {}, offDir), true, "no updateNotice key reads as on");
+	cli = await runCheck(registryUrl, ["update", "--off"], offHome);
+	assert.equal(cli.code, 0, cli.stderr);
+	assert.match(cli.stdout, /^Update notices are off\b.*Undo with `cclay update --on`\.\n$/);
+	assert.deepEqual(readOffState(), { telemetryEnabled: false, starPrompted: true, updateNotice: false }, "other keys survive");
+	assert.equal(updateChecksOn(true, {}, offDir), false, "the launch reads the switch: no line, no chip, no POST");
+	registry.body = JSON.stringify({ version: "9.9.9" });
+	cli = await runCheck(registryUrl, ["update", "--check"], offHome);
+	assert.equal(cli.code, 10, "--check is an explicit command and still answers while notices are off");
+	assert.match(cli.stdout, /latest: 9\.9\.9/);
+	for (const args of [["--off", "--on"], ["--foo"], ["--check", "--off"], ["off"]]) {
+		cli = await runCheck(registryUrl, ["update", ...args], offHome);
+		assert.equal(cli.code, 1, args.join(" "));
+		assert.match(cli.stderr, /takes at most one of --check, --off or --on/);
+	}
+	assert.equal(readOffState().updateNotice, false, "a refused command changes nothing");
+	cli = await runCheck(registryUrl, ["update", "--on"], offHome);
+	assert.equal(cli.code, 0, cli.stderr);
+	assert.match(cli.stdout, /^Update notices are on\b.*Undo with `cclay update --off`\.\n$/);
+	assert.equal(readOffState().updateNotice, true);
+	assert.equal(updateChecksOn(true, {}, offDir), true, "--on restores the notice");
+	assert.equal(updateChecksOn(true, { CI: "true" }, offDir), false, "CI still wins over --on");
+	assert.equal(updateChecksOn(false, {}, offDir), false, "--no-update-check still wins over --on");
+	writeFileSync(offState, "{not json");
+	cli = await runCheck(registryUrl, ["update", "--off"], offHome);
+	assert.equal(cli.code, 1, "a corrupt state file is not overwritten");
+	assert.match(cli.stderr, /could not save the update setting/);
+	assert.equal(readFileSync(offState, "utf8"), "{not json");
+	assert.equal(updateChecksOn(true, {}, offDir), true, "a corrupt state file does not silence the notice");
+	const freshHome = join(offHome, "fresh");
+	cli = await runCheck(registryUrl, ["update", "--off"], freshHome);
+	assert.equal(cli.code, 0, "--off creates the config dir");
+	assert.deepEqual(JSON.parse(readFileSync(join(freshHome, "cozyclay", "state.json"), "utf8")), { updateNotice: false });
+	rmSync(offHome, { recursive: true, force: true });
+	pass("cclay update --off|--on toggle updateNotice in the state file, --check still answers, and the guard takes exactly one flag");
 
 	/* ----------------------------------------------------- canSelfUpdate ---- */
 

@@ -266,6 +266,27 @@ try {
 	assert.deepEqual(installs(), []);
 	pass("with CI set, GET says enabled: false and POST is 403");
 
+	/* ------------------------------------- cclay update --off: the switch ---- */
+
+	const offDir = join(process.env.XDG_CONFIG_HOME, "cozyclay-off");
+	mkdirSync(offDir, { recursive: true });
+	writeFileSync(join(offDir, "state.json"), JSON.stringify({ updateNotice: false }));
+	route = await mount({ enabled: updateChecksOn(true, {}, offDir), stateDir: offDir });
+	res = await route.get();
+	assert.equal(res.status, 200);
+	assert.equal(res.body.enabled, false);
+	assert.equal(res.body.status, "unknown");
+	assert.equal(res.body.latest, null);
+	assert.equal(res.body.canSelfUpdate, false);
+	res = await route.post();
+	assert.equal(res.status, 403);
+	assert.deepEqual(res.body, { error: "update checks are disabled" });
+	writeFileSync(join(offDir, "state.json"), JSON.stringify({ updateNotice: true }));
+	route = await mount({ enabled: updateChecksOn(true, {}, offDir), stateDir: offDir });
+	assert.equal((await route.get()).body.enabled, true, "--on turns the route back on at the next launch");
+	assert.deepEqual(installs(), []);
+	pass("with updateNotice: false in the state file, GET says enabled: false and POST is 403");
+
 	/* ------------------------------------------- not self-updatable: 409 ---- */
 
 	for (const kind of ["npx", "clone"]) {

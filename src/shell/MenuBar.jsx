@@ -4,6 +4,7 @@ import { useStudioShell } from "./studio-shell-context.js";
 import SourceOffer from "../source-offer.jsx";
 import { ko } from "../locale.js";
 import { noteShortcutsOpened } from "../shortcut-friction.js";
+import { appVersion } from "../app-version.js";
 
 const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
 const MOD = MAC ? "⌘" : "Ctrl+";
@@ -632,7 +633,6 @@ function MenuDialog({ kind, onClose }) {
 		document.addEventListener("keydown", onKey);
 		return () => document.removeEventListener("keydown", onKey);
 	}, [onClose]);
-	const version = import.meta.env.VITE_APP_VERSION;
 	return createPortal(
 		<div className="menubar-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
 			<div className="menubar-dialog" role="dialog" aria-modal="true" aria-labelledby={titleId} data-dialog={kind}>
@@ -645,7 +645,7 @@ function MenuDialog({ kind, onClose }) {
 				{kind === "about" ? (
 					<div className="menubar-dialog-body">
 						<p>{ko("Previs studio: stage, pose, camera and motion.", "프리비즈 스튜디오: 배치, 포즈, 카메라, 모션.")}</p>
-						{version && <p className="menubar-dialog-meta">{ko("Version", "버전")} {version}</p>}
+						<p className="menubar-dialog-meta">{ko("Version", "버전")} {appVersion()}</p>
 						<SourceOffer />
 					</div>
 				) : (

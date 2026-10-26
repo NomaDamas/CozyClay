@@ -1,16 +1,20 @@
 #!/usr/bin/env node
 // The in-Studio update notice (U1): the client reducer, dismiss storage, poll
 // schedule, the hosted-page no-op, silent fetch failures, the once-per-install
-// update:finished rule and the agent-busy signal. No browser, no launcher.
+// update:finished rule and the agent-busy signal. U2: multi-tab sync over an
+// injected channel or storage events, and the version Help › About names.
+// No browser, no launcher.
 import assert from "node:assert/strict";
 import {
-	DISMISS_KEY, POLL_MS, UPDATE_URL, UPDATING_POLL_MS, VISIBLE_STALE_MS, behindOf, createUpdatePoller, fetchUpdateInfo,
+	CHANNEL_NAME, DISMISS_KEY, HINT_KEY, POLL_MS, UPDATE_URL, UPDATING_POLL_MS, VISIBLE_STALE_MS, behindOf, createUpdatePoller, fetchUpdateInfo,
 	nextUpdateState, normalizeUpdateInfo, readDismissed, startUpdate, updateBlocked, writeDismissed,
 } from "../src/update/update-client.js";
 import { noteNoticeShown, noteUpdateClicked, noteUpdatePolled, updateTelemetrySeam } from "../src/update/update-telemetry.js";
 import * as friction from "../src/analytics-friction.js";
 import { agentTurnRunning, subscribeAgentTurns, trackAgentTurns } from "../src/workflow/agent-turn-telemetry.js";
 import { createAgentTransport, createMockTransport } from "../src/workflow/agent-client.js";
+import { appVersion } from "../src/app-version.js";
+import { readFileSync } from "node:fs";
 
 const body = (over = {}) => ({
 	enabled: true, current: "3.1.4", latest: "3.1.5", status: "outdated", kind: "global", canSelfUpdate: true, phase: "idle",
@@ -298,3 +302,138 @@ console.log("PASS telemetry: notice_shown once, clicked cap 10, finished once pe
 	assert.deepEqual(changes, [true, false, true, false, true, false, true, false, true, false]);
 }
 console.log("PASS agent-busy signal: on during a mock turn, off on done, abort, throw and error");
+
+// 9. Multi-tab sync: two pollers on one profile, over a fake BroadcastChannel and over storage alone.
+{
+	// Microtasks alone can end before a hinted fetch lands; a macrotask turn drains it.
+	const drain = () => new Promise((resolve) => setImmediate(resolve));
+	// One launcher both tabs fetch from; `phase` is its truth.
+	const launcher = { phase: "idle", gets: 0, posts: 0 };
+	const fetchImpl = async (_url, init) => {
+		if (init.method === "POST") { launcher.posts += 1; launcher.phase = "updating"; } else launcher.gets += 1;
+		return { ok: true, json: async () => body({ phase: launcher.phase, durationMs: launcher.phase === "restart_needed" ? 41_000 : null }) };
+	};
+	// The fake channel delivers to every other end asynchronously, as a BroadcastChannel does.
+	const channels = new Set();
+	const openChannel = () => {
+		const end = {
+			listeners: new Set(), closed: false, sent: [],
+			postMessage(data) { end.sent.push(data); for (const other of channels) if (other !== end) queueMicrotask(() => { for (const fn of other.listeners) fn({ data }); }); },
+			addEventListener: (name, fn) => { if (name === "message") end.listeners.add(fn); },
+			removeEventListener: (name, fn) => end.listeners.delete(fn),
+			close() { end.closed = true; channels.delete(end); },
+		};
+		channels.add(end);
+		return end;
+	};
+	// localStorage shared by the profile: a write fires `storage` on every other tab's window.
+	const windows = new Set();
+	const sharedStorage = () => {
+		const store = memoryStorage();
+		const setItem = store.setItem;
+		store.setItem = (key, value) => { setItem(key, value); for (const win of windows) if (win !== store.writer) win.listeners.get("storage")?.({ key, newValue: String(value) }); };
+		return store;
+	};
+	const tab = (store, channel) => {
+		const win = runtimeWindow();
+		windows.add(win);
+		const views = [];
+		let scheduled = null;
+		const timers = { set: (fn) => { scheduled = fn; return 1; }, clear() {}, now: () => 0, afterFirstFrame: (fn) => fn() };
+		// Writes from this tab do not fire its own storage listener.
+		const own = { getItem: (key) => store.getItem(key), setItem: (key, value) => { store.writer = win; store.setItem(key, value); store.writer = null; } };
+		const poller = createUpdatePoller({ fetchImpl, timers, win, doc: null, storage: own, channel, onState: ({ state }) => views.push(state.view) });
+		return { poller, views, win, poll: () => scheduled() };
+	};
+
+	// BroadcastChannel path.
+	let store = sharedStorage();
+	const endA = openChannel(), endB = openChannel();
+	const a = tab(store, endA), b = tab(store, endB);
+	await drain();
+	assert.deepEqual([a.views.at(-1), b.views.at(-1), launcher.gets], ["available", "available", 2]);
+	a.poller.dismiss("3.1.5");
+	await drain();
+	assert.equal(b.views.at(-1), "hidden", "a dismiss in one tab hides the chip in the other");
+	assert.deepEqual(endA.sent.at(-1), { type: "dismiss", latest: "3.1.5" });
+	await a.poller.update();
+	await drain();
+	assert.equal(launcher.posts, 1);
+	assert.equal(launcher.gets, 3, "an install start makes the other tab poll now, not in 2 s");
+	assert.equal(b.views.at(-1), "updating", "the other tab shows the launcher's phase");
+	launcher.phase = "restart_needed";
+	let gets = launcher.gets;
+	a.poll();
+	await drain();
+	assert.deepEqual(endA.sent.at(-1), { type: "phase", latest: null }, "a tab whose own poll sees a new phase says so");
+	assert.equal(launcher.gets, gets + 2, "the other tab polls at once; it does not echo the hint back");
+	assert.equal(b.views.at(-1), "restart_needed");
+	assert.equal(endB.sent.length, 0, "a tab only told about a change never re-broadcasts it");
+	a.poller.stop();
+	const c = tab(store, openChannel());
+	await drain();
+	gets = launcher.gets;
+	endB.listeners.forEach((fn) => fn({ data: { type: "phase", phase: "failed" } }));
+	await drain();
+	assert.equal(launcher.gets, gets + 1, "a phase hint makes the tab poll now");
+	assert.equal(b.views.at(-1), "restart_needed", "the hint's own phase is never trusted; the launcher's is");
+	assert.equal(c.views.at(-1), "restart_needed");
+	endB.listeners.forEach((fn) => fn({ data: { type: "bogus" } }));
+	endB.listeners.forEach((fn) => fn({ data: null }));
+	await drain();
+	assert.equal(launcher.gets, gets + 1, "unknown or empty messages do nothing");
+	assert.equal(endA.closed, true, "stop closes the channel");
+	b.poller.stop();
+	c.poller.stop();
+	assert.equal(channels.size, 0);
+
+	// A dismiss still reaches a tab whose storage throws: the message carries the version.
+	launcher.phase = "idle";
+	const d = tab(sharedStorage(), openChannel());
+	const e = (() => {
+		const win = runtimeWindow();
+		const views = [];
+		const poller = createUpdatePoller({ fetchImpl, timers: { set: () => 0, clear() {}, now: () => 0, afterFirstFrame: (fn) => fn() }, win, doc: null, storage: throwingStorage, channel: openChannel(), onState: ({ state }) => views.push(state.view) });
+		return { poller, views };
+	})();
+	await drain();
+	d.poller.dismiss("3.1.5");
+	await drain();
+	assert.equal(e.views.at(-1), "hidden", "a tab without storage takes the dismissed version from the message");
+	d.poller.stop();
+	e.poller.stop();
+
+	// No BroadcastChannel: the storage event carries the dismiss and the install hint.
+	windows.clear();
+	store = sharedStorage();
+	const f = tab(store, null), g = tab(store, null);
+	await drain();
+	assert.deepEqual([f.views.at(-1), g.views.at(-1)], ["available", "available"]);
+	f.poller.dismiss("3.1.5");
+	assert.equal(g.views.at(-1), "hidden", "storage fallback: a dismiss reaches the other tab");
+	assert.equal(store.map.has(HINT_KEY), false, "a dismiss needs no hint key: the dismiss key is the event");
+	const before = launcher.gets;
+	await f.poller.update();
+	await drain();
+	assert.match(store.map.get(HINT_KEY), /^install:/);
+	assert.equal(launcher.gets, before + 1, "storage fallback: an install start makes the other tab poll now");
+	assert.equal(g.views.at(-1), "updating");
+	f.poller.stop();
+	g.poller.stop();
+	assert.equal(CHANNEL_NAME, "cozyclay:update");
+}
+console.log("PASS multi-tab: dismiss, install start and phase hints reach other tabs at once; hints trigger a poll, never a state; storage fallback");
+
+// 10. Help › About names the runtime appVersion, not the never-defined VITE_APP_VERSION.
+{
+	const packageVersion = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
+	assert.equal(appVersion({ __COZYCLAY_RUNTIME__: { appVersion: "3.9.1" } }), "3.9.1", "the launcher's runtime wins");
+	assert.equal(appVersion({}), packageVersion, "a hosted page falls back to package.json");
+	assert.equal(appVersion(undefined), packageVersion);
+	assert.equal(appVersion({ __COZYCLAY_RUNTIME__: { appVersion: "" } }), packageVersion);
+	assert.equal(appVersion({ get __COZYCLAY_RUNTIME__() { throw new Error("blocked"); } }), packageVersion);
+	const menuBar = readFileSync(new URL("../src/shell/MenuBar.jsx", import.meta.url), "utf8");
+	assert.doesNotMatch(menuBar, /VITE_APP_VERSION/, "About no longer reads VITE_APP_VERSION");
+	assert.match(menuBar, /\{ko\("Version", "버전"\)\} \{appVersion\(\)\}/, "About always names a version");
+}
+console.log("PASS About: window.__COZYCLAY_RUNTIME__.appVersion, else package.json; no VITE_APP_VERSION");

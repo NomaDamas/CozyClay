@@ -2,12 +2,17 @@
 // (bin/update-routes.mjs) read and driven from the page. Pure apart from the
 // injected fetch, timers, storage and window, so test/verify-update-client.mjs
 // drives it under Node. A page without window.__COZYCLAY_RUNTIME__ (the hosted
-// site, Vite dev) makes no request at all.
+// site, Vite dev) makes no request at all. Tabs share a dismiss, an install
+// start and a phase change at once (U2): over a BroadcastChannel, or through a
+// storage event where there is none. A hint only makes a tab fetch now; the
+// launcher's answer stays the only phase a tab shows.
 export const UPDATE_URL = "/__cozyclay/update";
 export const DISMISS_KEY = "cozyclay:update-dismissed";
 export const POLL_MS = 6 * 60 * 60 * 1000;
 export const VISIBLE_STALE_MS = 60 * 60 * 1000;
 export const UPDATING_POLL_MS = 2000;
+export const CHANNEL_NAME = "cozyclay:update";
+export const HINT_KEY = "cozyclay:update-hint";
 
 const VERSION = /^\d+\.\d+\.\d+$/;
 const KINDS = new Set(["global", "npx", "clone"]);
@@ -115,6 +120,13 @@ export function writeDismissed(latest, storage = safeStorage()) {
 	try { storage.setItem(DISMISS_KEY, latest); return true; } catch { return false; }
 }
 
+const HINTS = new Set(["dismiss", "install", "phase"]);
+
+// A missing or throwing BroadcastChannel is null: hints then travel as a storage event.
+function openUpdateChannel() {
+	try { return typeof globalThis.BroadcastChannel === "function" ? new globalThis.BroadcastChannel(CHANNEL_NAME) : null; } catch { return null; }
+}
+
 const defaultTimers = {
 	set: (fn, ms) => setTimeout(fn, ms),
 	clear: (timer) => clearTimeout(timer),
@@ -131,14 +143,17 @@ const defaultTimers = {
  * The poll loop: once after the first frame and idle, every 6 h, on a visible
  * tab whose last check is over 1 h old, every 2 s while installing. `onState`
  * gets { state, info } after every change. Returns { dismiss, update, stop }.
+ * `channel` is a BroadcastChannel-shaped object (default: one is opened when
+ * the browser has it); null sends the other tabs' hints through `storage`.
  */
 export function createUpdatePoller({
 	fetchImpl = globalThis.fetch?.bind(globalThis), onState = () => {}, timers = defaultTimers,
-	storage = safeStorage(), win = globalThis.window, doc = globalThis.document,
+	storage = safeStorage(), win = globalThis.window, doc = globalThis.document, channel: injected,
 } = {}) {
 	const noop = { dismiss() {}, update: async () => null, stop() {} };
 	if (!hasLauncherRuntime(win)) return noop;
-	let info = null, timer = null, stopped = false, inflight = null, lastCheck = -Infinity;
+	const channel = injected === undefined ? openUpdateChannel() : injected;
+	let info = null, timer = null, stopped = false, inflight = null, lastCheck = -Infinity, hints = 0;
 	let dismissed = readDismissed(storage);
 	const emit = () => { if (!stopped) onState({ state: nextUpdateState(info, { dismissed }), info }); };
 	const schedule = () => {
@@ -146,25 +161,54 @@ export function createUpdatePoller({
 		if (timer !== null) timers.clear(timer);
 		timer = timers.set(check, info?.phase === "updating" ? UPDATING_POLL_MS : POLL_MS);
 	};
-	const apply = (next) => { if (next) { info = next; emit(); } };
-	function check() {
+	// Tell the other tabs; a lost hint only costs them the wait for their next poll.
+	const hint = (type, latest = null) => {
+		try {
+			if (channel) channel.postMessage({ type, latest });
+			else if (type !== "dismiss") storage?.setItem(HINT_KEY, `${type}:${timers.now()}:${(hints += 1)}`);
+		} catch { /* best effort */ }
+	};
+	// Emitted first, so this tab's update:finished claim is in storage before any other tab re-polls.
+	// A change a hint led to is not hinted again: the other tabs had the same hint.
+	const apply = (next, cause = "phase") => {
+		if (!next) return;
+		const changed = info !== null && info.phase !== next.phase;
+		info = next;
+		emit();
+		if (cause === "install" || (changed && cause === "phase")) hint(cause);
+	};
+	function check(cause = "phase") {
 		if (stopped) return Promise.resolve(info);
 		if (inflight) return inflight;
 		// An early check (a visible tab) replaces the pending poll; the schedule never doubles.
 		if (timer !== null) { timers.clear(timer); timer = null; }
 		lastCheck = timers.now();
 		inflight = fetchUpdateInfo(fetchImpl, win);
-		return inflight.then((next) => { inflight = null; apply(next); schedule(); return info; });
+		return inflight.then((next) => { inflight = null; apply(next, cause); schedule(); return info; });
 	}
 	const onVisible = () => {
 		if (doc?.visibilityState === "visible" && timers.now() - lastCheck > VISIBLE_STALE_MS) void check();
 	};
+	// A fetch already in flight may predate the hint, so one more follows it.
+	const refresh = () => (inflight ? inflight.then(() => check("hinted")) : check("hinted"));
+	const onHint = (type, latest = null) => {
+		if (stopped || !HINTS.has(type)) return;
+		if (type !== "dismiss") return void refresh();
+		dismissed = readDismissed(storage) ?? version(latest) ?? dismissed;
+		emit();
+	};
+	const onMessage = (event) => onHint(event?.data?.type, event?.data?.latest);
 	const onStorage = (event) => {
+		if (event?.key === HINT_KEY) return onHint(String(event.newValue ?? "").split(":")[0]);
 		if (event?.key !== DISMISS_KEY && event?.key !== null) return;
 		dismissed = readDismissed(storage);
 		emit();
 	};
-	try { doc?.addEventListener?.("visibilitychange", onVisible); win?.addEventListener?.("storage", onStorage); } catch { /* no listeners: the 6 h poll still runs */ }
+	try {
+		doc?.addEventListener?.("visibilitychange", onVisible);
+		win?.addEventListener?.("storage", onStorage);
+		channel?.addEventListener?.("message", onMessage);
+	} catch { /* no listeners: the 6 h poll still runs */ }
 	timers.afterFirstFrame(() => { if (!stopped) void check(); });
 	return {
 		dismiss(latest) {
@@ -172,17 +216,23 @@ export function createUpdatePoller({
 			writeDismissed(latest, storage);
 			dismissed = latest;
 			emit();
+			hint("dismiss", latest);
 		},
 		async update() {
 			const next = await startUpdate(fetchImpl, win);
-			apply(next);
+			apply(next, "install");
 			schedule();
 			return next;
 		},
 		stop() {
 			stopped = true;
 			if (timer !== null) timers.clear(timer);
-			try { doc?.removeEventListener?.("visibilitychange", onVisible); win?.removeEventListener?.("storage", onStorage); } catch { /* best effort */ }
+			try {
+				doc?.removeEventListener?.("visibilitychange", onVisible);
+				win?.removeEventListener?.("storage", onStorage);
+				channel?.removeEventListener?.("message", onMessage);
+				channel?.close?.();
+			} catch { /* best effort */ }
 		},
 	};
 }

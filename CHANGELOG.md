@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+Studio
+
+- The **Update** chip now agrees across open Studio tabs at once: closing it,
+  pressing **Update now** or an install finishing in one tab shows in the
+  others without waiting for their next check.
+- **Help › About** shows the version you are running.
+
+CLI
+
+- `cclay update --off` turns the update line and the Studio's **Update** chip
+  off for good; `cclay update --on` turns them back on. `cclay update --check`
+  still answers either way.
+
 ## 3.2.0 - 2026-10-26
 
 Motion gets physics you can see and trust: props swing and settle after the hand stops, balance and jumps are judged by real mass and gravity and the Studio draws why, and characters no longer pass through each other when you drag or compile.
