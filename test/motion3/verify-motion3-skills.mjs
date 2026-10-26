@@ -37,10 +37,17 @@ expect("the skills report where each ends", JSON.stringify(r.used.map(u => u.end
 for (const part of ["anchors", "props", "fits", "objects"]) expect(`same ${part} as the fixture`, JSON.stringify(r.expanded[part]) === JSON.stringify(EXITCAR_SPEC[part]), JSON.stringify(r.expanded[part]).slice(0, 200));
 // the skills rebuild the fixture with the earlier lanes' compiler (fix.self: verify-motion3-self.mjs)
 const ref = compileMotion(legacySpec(JSON.parse(JSON.stringify(EXITCAR_SPEC))), { sk, scene: car });
-let worst = 0;
-for (let f = 0; f < 730; f++) for (let j = 0; j < sk.names.length; j++) worst = Math.max(worst, dist(ref.frames[f].s.P[j], r.out.frames[f].s.P[j]));
+// but the head top in the swivel out of the seat: from the skill the head leads that turn (head-lead.js NOT_A_LOOK), the
+// fixture keys the same look as the agent's own keys, which win
+let worst = 0, lead = 0;
+const swivel = (f, j) => f >= 70 && f <= 160 && j === I.HeadTop_End;
+for (let f = 0; f < 730; f++) for (let j = 0; j < sk.names.length; j++) {
+	const d = dist(ref.frames[f].s.P[j], r.out.frames[f].s.P[j]);
+	if (swivel(f, j)) lead = Math.max(lead, d); else worst = Math.max(worst, d);
+}
 console.log(`  largest joint difference to the fixture over 730 frames: ${(worst * 1000).toFixed(1)} mm (the skills use the rig's ankle height 0.0873 m, the fixture 0.087)`);
 expect("every joint within 1 cm of the hand-written fixture", worst < 0.01, worst);
+expect("the head top in the swivel within 4 cm of it (the head leads that turn)", lead < 0.04, lead);
 
 // 2. The same car moved and turned 40 deg, and mirrored with the driver door on the right.
 const place = (yaw, mirror) => {

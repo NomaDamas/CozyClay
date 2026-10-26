@@ -5,10 +5,12 @@
 // step, head-steady.js walkSpans) and around every turn of the trunk faster than TURN deg/frame (from LEAD + FADE
 // frames before it, so the head starts first), faded in and out over FADE frames, and never where the spec's own keys move
 // head_yaw during that span (keys on it, or on either side of it, that differ): a keyed look wins; a head held still
-// (a stance's head_yaw 0) leads.
+// (a stance's head_yaw 0) leads. A skill's own look that rides a turn (NOT_A_LOOK: exitCar's head as it swivels out of
+// the seat) is not a keyed look: the lead goes on top of it. The agent's keys, and every other skill's, still win.
 import { walkSpans } from "./head-steady.js";
 
 const MAX = 30, TURN = 0.3, FADE = 8, STRIDE = 33;
+const NOT_A_LOOK = /\bwalk(To)? (start|step \d+|end)$|^use\[\d+\] exitCar$/; // walk.js keys, OWN_LOOK skills (skills/car.js)
 
 /** Inside a walk the trunk's heading, its sway each step taken out: the median over about a stride keeps a turn's timing. */
 function heading(trunk, walks) {
@@ -45,7 +47,7 @@ function merged(spans) {
 
 /** The keys outside walks that move head_yaw during [f0, f1]: those in it and the nearest on either side differ. */
 function looked(keys, f0, f1) {
-	const looks = keys.filter(k => k.set?.head_yaw !== undefined && !/\bwalk(To)? (start|step \d+|end)$/.test(k.src ?? "")).sort((a, b) => a.f - b.f);
+	const looks = keys.filter(k => k.set?.head_yaw !== undefined && !NOT_A_LOOK.test(k.src ?? "")).sort((a, b) => a.f - b.f);
 	const near = [looks.filter(k => k.f < f0).at(-1), ...looks.filter(k => k.f >= f0 && k.f <= f1), looks.find(k => k.f > f1)].filter(Boolean);
 	return near.some(k => JSON.stringify(k.set.head_yaw) !== JSON.stringify(near[0].set.head_yaw));
 }
