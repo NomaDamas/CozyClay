@@ -307,6 +307,30 @@ await screenshot("sculpt-gizmo-01-moved.png");
 await undoKey();
 expect("one undo restores the recipe exactly", await waitForFrame(`JSON.stringify(window.__cozyclay.objects.find((o) => o.id === ${JSON.stringify(sculptId)})?.recipe) === ${JSON.stringify(recipeBefore)}`, 5000), await recipeNow());
 
+// Esc in the middle of a drag (the handle moved, the button still down): the selection goes, nothing is
+// written, and the meshes are back where they were before the press.
+const headWorld = async () => JSON.parse(await evaluate(`(() => { let p = null; let root = window.__cozyclay?.editorCam; while (root?.parent) root = root.parent; root.traverse((node) => { if (node.userData?.sceneObjectId === ${JSON.stringify(sculptId)}) node.traverse((c) => { if (c.userData?.sculptPart === "head") p = c.getWorldPosition(c.position.clone()).toArray(); }); }); return JSON.stringify(p); })()`));
+expect("the head is still picked for the Esc check", await waitForRow("head"), JSON.stringify(await pressedRow()));
+const headDrawn = await headWorld();
+handle = await gizmoHandle("translate", "X");
+if (!Number.isFinite(handle?.x)) throw new Error(`no gizmo handle: ${JSON.stringify(handle)}`);
+const [escX, escY] = along(handle, 60);
+await mouse("mouseMoved", handle.x - 2, handle.y);
+await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: handle.x, y: handle.y, button: "none", buttons: 0 });
+await mouse("mousePressed", handle.x, handle.y);
+for (let step = 1; step <= 8; step += 1) await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: handle.x + (escX * step) / 8, y: handle.y + (escY * step) / 8, button: "left", buttons: 1 });
+await waitForFrame("false", 150);
+const midDrag = await headWorld();
+await press("Escape");
+expect("Esc mid-drag clears the part", await waitForRow(null), JSON.stringify(await pressedRow()));
+expect("the head had moved during the drag", Math.abs(midDrag[0] - headDrawn[0]) > 0.01, `${headDrawn} -> ${midDrag}`);
+expect("Esc mid-drag puts the head mesh back where it was", await waitForFrame(`(() => { let p = null; let root = window.__cozyclay?.editorCam; while (root?.parent) root = root.parent; root.traverse((node) => { if (node.userData?.sceneObjectId === ${JSON.stringify(sculptId)}) node.traverse((c) => { if (c.userData?.sculptPart === "head") p = c.getWorldPosition(c.position.clone()).toArray(); }); }); return p && p.every((v, i) => Math.abs(v - ${JSON.stringify(headDrawn)}[i]) < 1e-6); })()`, 3000), JSON.stringify(await headWorld()));
+await mouse("mouseReleased", handle.x + escX, handle.y + escY);
+await waitForFrame("false", 300);
+expect("Esc mid-drag writes nothing", (await recipeNow()) === recipeBefore, await recipeNow());
+await clickAt(await screenPoint(sculptId, "head", [0, 0.22, 0]));
+expect("the head can be picked again after an interrupted drag", await waitForRow("head"), JSON.stringify(await pressedRow()));
+
 // The mirrored copy: drag it +x on screen and its pair moves the mirrored way.
 await clickAt(await screenPoint(sculptId, "eye.mirror"));
 expect("the mirrored eye is picked for the gizmo", await waitForRow("eye", true), JSON.stringify(await pressedRow()));

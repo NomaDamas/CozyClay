@@ -37,6 +37,8 @@ export function SculptPartGizmo({ camera, orbitRef, nodesRef, gizmoRef, recipe, 
 	useLayoutEffect(() => { live.current = { recipe, selected, commit: parts?.commit }; });
 	// { meshes: [[mesh, position, quaternion, scale]] } while a drag runs; { held } after a write until its recipe lands.
 	const dragRef = useRef(null);
+	// The controls' restore, for the selection effect: a selection change mid-drag (Esc) puts the meshes back first.
+	const restoreRef = useRef(() => {});
 
 	useEffect(() => {
 		if (!camera) return undefined;
@@ -63,6 +65,7 @@ export function SculptPartGizmo({ camera, orbitRef, nodesRef, gizmoRef, recipe, 
 			dragRef.current = null;
 			invalidate();
 		};
+		restoreRef.current = restore;
 		const editNow = () => {
 			const { recipe: current, selected: part } = live.current;
 			if (made.mode === "scale" && shift) rig.proxy.scale.fromArray(uniformScale(rig.proxy.scale.toArray()));
@@ -131,10 +134,12 @@ export function SculptPartGizmo({ camera, orbitRef, nodesRef, gizmoRef, recipe, 
 		const controls = gizmoRef.current;
 		if (!controls) return;
 		if (dragRef.current?.held) dragRef.current = null;
+		// A drag the selection change interrupted (Esc before the release) writes nothing and puts the meshes back.
+		if (dragRef.current?.meshes) { restoreRef.current(); if (orbitRef.current) orbitRef.current.enabled = true; }
 		if (frame) controls.attach(rig.proxy);
 		else controls.detach();
 		invalidate();
-	}, [camera, gizmoRef, frame, rig, invalidate]);
+	}, [camera, gizmoRef, frame, rig, orbitRef, invalidate]);
 
 	// Between drags the proxy follows the part where it is drawn now.
 	useFrame(() => {

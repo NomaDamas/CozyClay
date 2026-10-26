@@ -34,7 +34,7 @@ export function sculptPartTree(recipe) {
 		for (const part of parts) {
 			if ((part.parent ?? null) !== parent) continue;
 			const mirror = mirrored || part.mirror === true;
-			rows.push({ id: part.id, shape: part.shape, depth, parent, mirror });
+			rows.push({ id: part.id, shape: part.shape, depth, parent, mirror, cutter: Boolean(part.op) });
 			visit(part.id, depth + 1, mirror);
 		}
 	};

@@ -28,6 +28,9 @@ export default function SculptPartTree({ tree, selected, onSelect, notice = null
 						<li key={row.id}>
 							<button type="button" className="sculpt-part-row" data-testid="sculpt-part-row" data-part={row.id} aria-pressed={on}
 								data-mirrored={on && selected.mirrored ? "true" : undefined} style={{ "--sculpt-part-depth": row.depth }}
+								// A cutter is never drawn (it cuts its parent): nothing on the turntable to pick or move.
+								disabled={row.cutter} data-cutter={row.cutter || undefined}
+								title={row.cutter ? ko("A cutter is not drawn: it cuts its parent. Ask the agent to change it.", "커터는 그려지지 않아요. 부모 부품을 깎아요. 바꾸려면 에이전트에게 요청하세요.", "切割体不会被绘制，它用于切削父部件。如需修改，请让智能体处理。") : undefined}
 								onClick={() => onSelect?.({ partId: row.id, mirrored: false })}>
 								<span className="sculpt-part-id">{row.id}</span>
 								{on && selected.mirrored && <span className="sculpt-part-tag">{ko("mirror copy", "미러 사본", "镜像副本")}</span>}

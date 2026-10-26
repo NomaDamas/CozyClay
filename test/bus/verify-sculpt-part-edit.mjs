@@ -131,3 +131,13 @@ test('an Object3D reads back as recipe values', () => {
 	close(local.rotation, [0.1, -0.2, 0.3].map((rad) => (rad * 180) / Math.PI), 1e-9, 'rotation');
 	close(local.scale, [1, 2, 1], 1e-9, 'scale');
 });
+
+test('a cutter has no frame for the gizmo: it is never drawn', () => {
+  const withCutter = normalizeSculptRecipe({ version: 1, parts: [
+    { id: 'body', shape: 'box', size: [1, 1, 1], position: [0, 0.5, 0], rotation: [0, 0, 0], color: '#3f5f5a' },
+    { id: 'notch', parent: 'body', op: 'subtract', shape: 'box', size: [0.2, 0.2, 0.2], position: [0, 0.3, 0.45], rotation: [0, 0, 0] },
+  ] });
+  assert.ok(withCutter.ok, JSON.stringify(withCutter));
+  assert.equal(sculptPartFrame(withCutter.recipe, { partId: 'notch', mirrored: false }), null);
+  assert.ok(sculptPartFrame(withCutter.recipe, { partId: 'body', mirrored: false }), 'a drawn part still has its frame');
+});

@@ -26,6 +26,8 @@ const angleGap = (a, b) => Math.abs(wrap(a - b));
  */
 export function sculptPartFrame(recipe, selected) {
 	if (!recipe?.parts || !selected?.partId) return null;
+	// A cutter (op) is never drawn, so it has no mesh for the gizmo to sit on (the tree does not offer it).
+	if (recipe.parts.find((part) => part.id === selected.partId)?.op) return null;
 	const drawn = expandSculptParts(recipe);
 	const meshId = selected.mirrored ? `${selected.partId}${SCULPT_MIRROR_SUFFIX}` : selected.partId;
 	const row = drawn.find((entry) => entry.id === meshId);

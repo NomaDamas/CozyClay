@@ -87,3 +87,8 @@ test('an open menu or modal dialog owns Escape before the part selection', () =>
   assert.equal(overlayOwnsEscape({ querySelector: () => null }), false, 'nothing open: the part clears');
   assert.equal(overlayOwnsEscape(undefined), false, 'no document');
 });
+
+test('the part tree marks a cutter, which has no mesh to pick or move', () => {
+  const rows = sculptPartTree({ parts: [{ id: 'body', shape: 'box' }, { id: 'notch', parent: 'body', op: 'subtract', shape: 'box' }] });
+  assert.deepEqual(rows.map((row) => [row.id, row.cutter]), [['body', false], ['notch', true]]);
+});
