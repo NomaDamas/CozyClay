@@ -7,6 +7,8 @@
 //   { path: "/anchors/cupHandle/p", delta: [dx, dy, dz] }     move a spec value by delta
 //   { channel: "root", f, delta, hold: true }                  move the body that stands at f
 //   { ops: userSpec => [{ op, path, value }] }                 the operations for the agent's spec (a second hand: load.js)
+//     + candidates: [ops, ...]                                 other ways to the same end, which compile repair alone can
+//                                                              price: g.candidates (non-enumerable, never in the output)
 // Each becomes g.patch = [{ op, path, value }] against opts.userSpec (the spec as the agent sent
 // it, use[] not expanded): a user key that sets the channel within f +-2 -> replace
 // /keys/<i>/set/<ch> (a delta: with the agent's keys next to it that hold the same value, so a held
@@ -177,8 +179,9 @@ export function attachPatches(groups, { X, userSpec } = {}) {
 	for (const g of groups) {
 		if (!g.fix) continue;
 		try {
-			const patch = patchOf(g.fix, X, userSpec);
+			const patch = patchOf(g.fix, X, userSpec), more = patch && (g.fix.candidates ?? []).map(ops => patchOf({ ops }, X, userSpec)).filter(Boolean);
 			if (patch) g.patch = patch;
+			if (more?.length > 1) Object.defineProperty(g, "candidates", { value: more, enumerable: false, configurable: true });
 		} catch {
 			// a fix the context cannot place (no frame, no key table) gets no patch
 		}

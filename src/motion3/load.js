@@ -7,7 +7,8 @@
 //   observe  output.observations.load: each hand that carries something, { object, mass, maxNm, at, frames }
 //   LOAD     "<side> holds <id> at <x> N m": past QA_LIMITS-style ONE_HAND N m with no second hand on the object; its
 //            hint asks for the other hand, and when the right hand holds, a patch adds a left reachGrip that arrives at
-//            the grab on the object's face nearest the left shoulder (second-hand.js holds only a right-hand carry)
+//            the grab on the object's face nearest the left shoulder, with the other faces as candidates repair compiles
+//            and picks from (repair.js; second-hand.js holds only a right-hand carry)
 // fix.grasp false turns all three off: the take of before.
 import { add, sub, scale, norm, apply, T, len } from "./compiler/math.js";
 import { SIDES } from "./compiler/pose.js";
@@ -18,6 +19,9 @@ import { handOf, spanOf, partsOf, objectPoseAt } from "./object-pose.js";
 import { SETTLE, restOf } from "./seat.js";
 
 const REACH = 10, G = 9.81, LIGHT = 2, SAG_MAX = 0.06, SAG_PER_KG = 0.006, ONE_HAND = 25, SECOND = 0.5;
+// the left palm's axis sits a palm radius (qa/grasp-checks.js PALM) out of the face, so its skin is on it, not its bone;
+// on the 12 kg box at 0 the forearm grazed the edge (+X face: QA 42), at 0.022 none (QA 0); at most FACES candidates
+const STANDOFF = 0.022, FACES = 4;
 export const LOAD_UNITS = "load: what each hand carries, kg, and its most N m (mass x 9.81 x the shoulder-to-wrist distance across) at f; frames [first, last] held";
 
 const graspOn = spec => spec?.fix !== false && spec?.fix?.grasp !== false;
@@ -91,19 +95,21 @@ export function loadChecks(sk, out) {
 }
 
 /**
- * The anchor point (object local) for the left hand on carry id at frame f: the centre of the face nearest the left
- * shoulder, of the faces other than the bottom and the one the right palm is on (the box's other side, as two hands hold it).
+ * The anchor points (object local) for the left hand on carry id at frame f, nearest the left shoulder first: the
+ * centres of the faces other than the bottom and the one the right palm is on (the box's other side, as two hands hold
+ * it), each STANDOFF out of its face. Which face is cheapest the distance does not tell (on the 12 kg box the top won
+ * by 0.3 mm and sent the hand through the edge: QA 121, the +X face 42), so repair compiles them all (repair.js).
  */
-function otherFace(out, id, f) {
+function otherFaces(out, id, f) {
 	const { sk, scene } = out.ctx, s = out.frames[f - (out.f0 ?? 0)]?.s, pose = objectPoseAt(out, id, f), rest = restOf(scene, id);
 	const part = scene.objects[partsOf(scene, id)[0]] ?? scene.objects[id];
-	if (!s || !pose || !part?.half) return null;
+	if (!s || !pose || !part?.half) return [];
 	const toLocal = p => apply(T(pose.R), sub(p, pose.pos)), c = apply(T(rest.R), sub(add(part.pos, apply(part.R, [0, part.half[1], 0])), rest.pos));
 	const palm = toLocal(scale(add(s.P[sk.index.RightHand], s.P[sk.index.RightHandMiddle1]), 0.5)), shoulder = toLocal(s.P[sk.index.LeftArm]);
 	const faces = [0, 1, 2].flatMap(i => [-1, 1].map(sg => { const p = c.slice(); p[i] += sg * part.half[i]; return { p, i, sg }; })).filter(x => !(x.i === 1 && x.sg < 0));
 	const palmFace = faces.reduce((m, x) => (Math.abs(palm[x.i] - x.p[x.i]) < Math.abs(palm[m.i] - m.p[m.i]) ? x : m));
-	const best = faces.filter(x => x !== palmFace).reduce((m, x) => (len(sub(x.p, shoulder)) < len(sub(m.p, shoulder)) ? x : m));
-	return best.p.map(x => Math.round(x * 1000) / 1000);
+	const off = x => x.p.map((v, i) => Math.round((i === x.i ? v + x.sg * STANDOFF : v) * 1000) / 1000);
+	return faces.filter(x => x !== palmFace).map(x => ({ x, d: len(sub(x.p, shoulder)) })).sort((a, b) => a.d - b.d).slice(0, FACES).map(({ x }) => off(x));
 }
 
 export const loadHints = {
@@ -114,12 +120,13 @@ export const loadHints = {
 		const k = side === "left" ? "l" : "r", other = k === "r" ? "left" : "right", [grab] = spanOf(X.out, o), kg = massOf(X.spec, X.out.ctx.scene, id);
 		const plain = { cause: `objects.${id} (${kg.toFixed(1)} kg)`, hint: `${id} weighs ${kg.toFixed(1)} kg: ${g.worst.toFixed(0)} N m on the ${side} arm at f${g.worstFrame} (one hand holds ${ONE_HAND}); put the ${other} hand on it too (a reachGrip on an object anchor on ${id} from f${grab}), or carry it closer to the body` };
 		if (k !== "r") return plain;
-		const local = otherFace(X.out, id, Math.max(grab, Math.min(g.worstFrame, spanOf(X.out, o)[1])));
-		if (!local) return plain;
+		const faces = otherFaces(X.out, id, Math.max(grab, Math.min(g.worstFrame, spanOf(X.out, o)[1])));
+		if (!faces.length) return plain;
 		const name = `${id}Other`;
 		// a big face takes the flat palm against it (a power grip's thumb would go into the box)
-		const anchor = { kind: "object", object: id, local, grasp: "palm" };
-		return { ...plain, fix: { ops: user => [user.anchors ? { op: "add", path: `/anchors/${name}`, value: anchor } : { op: "add", path: "/anchors", value: { [name]: anchor } },
-			{ op: "add", path: "/use/-", value: { skill: "reachGrip", f0: Math.max(0, grab - REACH), args: { anchor: name, side: "l", reach: Math.min(REACH, grab) || 1, hold: Math.max(1, spanOf(X.out, o)[1] - grab), release: 1 } } }] } };
+		const ops = local => user => { const anchor = { kind: "object", object: id, local, grasp: "palm" };
+			return [user.anchors ? { op: "add", path: `/anchors/${name}`, value: anchor } : { op: "add", path: "/anchors", value: { [name]: anchor } },
+				{ op: "add", path: "/use/-", value: { skill: "reachGrip", f0: Math.max(0, grab - REACH), args: { anchor: name, side: "l", reach: Math.min(REACH, grab) || 1, hold: Math.max(1, spanOf(X.out, o)[1] - grab), release: 1 } } }]; };
+		return { ...plain, fix: { ops: ops(faces[0]), candidates: faces.map(ops) } };
 	},
 };

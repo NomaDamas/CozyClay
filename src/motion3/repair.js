@@ -12,13 +12,16 @@
 // else is kept, and the applied entry says so (movedBody). A patch tried and not kept is not tried
 // again, so the groups after it get their turn. A round that keeps nothing ends the repair. The
 // compiler is deterministic and the candidates come in a fixed order, so the repair is too; no new
-// compile starts after 20 s.
+// compile starts after 20 s. A group whose hint has candidate patches (g.candidates, qa/patch.js: the
+// faces of a box a second hand can take, load.js) gets them all compiled, at most CANDIDATES, and the
+// one with the lowest summed severity stands for its patch: a hint compiles nothing, so only here
+// can the cheapest be found.
 import { applyPatch } from "./json-patch.js";
 import { groupKey } from "./qa/severity.js";
 import { tuneCandidates } from "./repair-tune.js";
 import { compareQa } from "./qa/verdict.js";
 
-const TRIES = 3, TUNE_GROUPS = 2, LIMIT_MS = 20000;
+const TRIES = 3, TUNE_GROUPS = 2, LIMIT_MS = 20000, CANDIDATES = 4;
 const groupsOf = r => r?.qa?.groups ?? [];
 const totalOf = r => groupsOf(r).reduce((sum, g) => sum + (g.severity ?? 0), 0);
 const failedOf = r => (r?.qa?.goals ?? []).filter(g => !g.ok).length;
@@ -60,6 +63,18 @@ export function repairSpec(spec, opts, compile) {
 			return null;
 		}
 	};
+	/** g's patch compiled, or of its candidates the one with the lowest summed severity ({ next, r, patch }); null when none compiles. */
+	const cheapest = g => {
+		let top = null;
+		for (const patch of (g.candidates ?? [g.patch]).slice(0, CANDIDATES)) {
+			if (top && late()) break;
+			const t = attempt(patch);
+			if (!t) continue;
+			if (!top || totalOf(t.r) < totalOf(top.r)) { if (top) rejected += 1; top = { ...t, patch }; } else rejected += 1;
+			if (totalOf(top.r) === 0 && !failedOf(top.r)) break;
+		}
+		return top;
+	};
 	const keep = (g, key, patch, { next, r }) => {
 		const moved = armLocal(g) && movesBody(patch);
 		applied.push({ kind: g.kind, subject: g.subject, patch, severity: [g.severity, groupIn(r, key)?.severity ?? 0], ...(moved ? { movedBody: MOVED } : {}) });
@@ -97,8 +112,8 @@ export function repairSpec(spec, opts, compile) {
 			if (!g?.patch || late()) continue;
 			// an arm's failure whose patch moves the body waits until nothing else is kept this round
 			if (armLocal(g) && movesBody(g.patch)) { deferred.push(key); continue; }
-			const t = attempt(g.patch);
-			if (t && better(t.r, result)) { keep(g, key, g.patch, t); kept += 1; } else { refused.add(JSON.stringify(g.patch)); if (t) rejected += 1; }
+			const t = cheapest(g);
+			if (t && better(t.r, result)) { keep(g, key, t.patch, t); kept += 1; } else { refused.add(JSON.stringify(g.patch)); if (t) rejected += 1; }
 		}
 		for (const key of kept ? [] : near) {
 			const g = groupIn(result, key);
@@ -107,8 +122,8 @@ export function repairSpec(spec, opts, compile) {
 		for (const key of kept ? [] : deferred) {
 			const g = groupIn(result, key);
 			if (!g?.patch || late()) continue;
-			const t = attempt(g.patch);
-			if (t && better(t.r, result)) { keep(g, key, g.patch, t); kept += 1; break; } else { refused.add(JSON.stringify(g.patch)); if (t) rejected += 1; }
+			const t = cheapest(g);
+			if (t && better(t.r, result)) { keep(g, key, t.patch, t); kept += 1; break; } else { refused.add(JSON.stringify(g.patch)); if (t) rejected += 1; }
 		}
 		if (!kept) break;
 	}
