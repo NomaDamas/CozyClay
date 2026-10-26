@@ -6,6 +6,8 @@ import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
+// CI has no signing key: --imports-only stops after the import check.
+const importsOnly = process.argv.includes("--imports-only");
 const temporaryRoot = mkdtempSync(join(tmpdir(), "cozyclay-package-check-"));
 const extractionRoot = join(temporaryRoot, "extracted");
 // Static, side-effect and dynamic imports with a relative specifier.
@@ -34,6 +36,21 @@ function missingImports(packedRoot) {
 	return missing;
 }
 
+async function verifySignature(packedRoot) {
+	const metadataPath = join(packedRoot, "package.json");
+	const markerPath = join(packedRoot, "dist", "cozyclay-package.json");
+	const signatureModulePath = join(packedRoot, "bin", "package-signature.mjs");
+	if (!existsSync(metadataPath) || !existsSync(markerPath) || !existsSync(signatureModulePath)) {
+		throw new Error("npm tarball is missing package metadata or its signature marker");
+	}
+	const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
+	const { verifyPackageMarker } = await import(pathToFileURL(signatureModulePath).href);
+	if (!verifyPackageMarker(markerPath, packedRoot, metadata)) {
+		throw new Error("npm tarball signature digest does not match the files npm ships");
+	}
+	console.log(`package tarball signature PASS (${metadata.name}@${metadata.version})`);
+}
+
 try {
 	mkdirSync(extractionRoot);
 	execFileSync("npm", [
@@ -52,18 +69,7 @@ try {
 	const missing = missingImports(packedRoot);
 	if (missing.length > 0) throw new Error(`npm tarball is missing modules its bin/ and mcp/ code imports:\n  ${missing.join("\n  ")}`);
 	console.log("package tarball imports PASS (every relative import in bin/ and mcp/ resolves inside the tarball)");
-	const metadataPath = join(packedRoot, "package.json");
-	const markerPath = join(packedRoot, "dist", "cozyclay-package.json");
-	const signatureModulePath = join(packedRoot, "bin", "package-signature.mjs");
-	if (!existsSync(metadataPath) || !existsSync(markerPath) || !existsSync(signatureModulePath)) {
-		throw new Error("npm tarball is missing package metadata or its signature marker");
-	}
-	const metadata = JSON.parse(readFileSync(metadataPath, "utf8"));
-	const { verifyPackageMarker } = await import(pathToFileURL(signatureModulePath).href);
-	if (!verifyPackageMarker(markerPath, packedRoot, metadata)) {
-		throw new Error("npm tarball signature digest does not match the files npm ships");
-	}
-	console.log(`package tarball signature PASS (${metadata.name}@${metadata.version})`);
+	if (!importsOnly) await verifySignature(packedRoot);
 } finally {
 	rmSync(temporaryRoot, { recursive: true, force: true });
 }

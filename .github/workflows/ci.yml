@@ -72,6 +72,10 @@ jobs:
             mcp/package-lock.json
       - run: npm ci
       - run: npm run lint
+      # The packed tarball, not the checkout: every relative import of a shipped
+      # bin/ or mcp/ module must be in it (#940). The signature step is publish-only.
+      - name: Package tarball imports
+        run: node tools/verify-package-tarball.mjs --imports-only
 
   # Keep the historical `test` check name stable for branch protection while
   # the actual suite runs on four deterministic shards below.
