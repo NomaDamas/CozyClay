@@ -13,6 +13,9 @@ const EXTENSIONS = ["", ".js", ".jsx", ".mjs", ".cjs", "/index.js", "/index.jsx"
 const STATIC_IMPORT = /\b(?:import|export)\b[^;"'`]*?\bfrom\s*(["'])([^"'\n]+)\1|\bimport\s*(["'])([^"'\n]+)\3/g;
 const DYNAMIC_IMPORT = /\bimport\(\s*([^)]*)\)/g;
 const SPAWN = /\b(?:spawn|spawnSync|execFile|execFileSync|fork)\(\s*process\.execPath\s*,\s*\[([^\]]{0,300})/g;
+// File reads and URLs: a path built at run time hides what the test reads, like a non-literal import().
+// The argument is a lookahead, so readFileSync(new URL(...)) still yields its inner new URL( match.
+const READ = /\b(?:readFileSync|readFile|createReadStream|new URL)\((?=([^\n]{0,300}))/g;
 const JOINED = /\b(?:join|resolve)\(\s*[\w.$]+\s*,((?:\s*["'][^"'$\n]+["']\s*,?)+)\)/g;
 const PATH_LITERAL = /(["'`])((?:\.{0,2}\/)?[\w@.-]+(?:\/[\w@.-]*)*)\1/g;
 const STRING = /^\s*(["'`])([^"'`$]*)\1\s*$/;
@@ -86,6 +89,24 @@ function scanFile(root, file) {
 	for (const [, list] of source.matchAll(SPAWN)) {
 		const argument = firstElement(list);
 		if (!literalArgument(source, argument)) unresolved ??= `spawn(process.execPath, [${argument.trim().slice(0, 60)}])`;
+	}
+	for (const match of source.matchAll(READ)) {
+		const [call, list] = match;
+		let argument = firstElement(list);
+		// readFileSync(new URL(...)) is judged by its own new URL( match; join(root, x) by its last part.
+		if (/^\s*new URL\(/.test(argument) || literalArgument(source, argument)) continue;
+		argument = /^\s*(?:join|resolve)\(\s*[\w.$]+\s*,\s*([A-Za-z_$][\w$]*)\s*\)\s*$/.exec(argument)?.[1] ?? argument;
+		// A bare parameter of the enclosing arrow or function (`paths.map(path => readFileSync(new URL(path, ...)))`):
+		// its values are the call sites' strings, which the literal scan below already records.
+		const name = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(argument)?.[1]?.replace("$", "\\$");
+		const context = source.slice(0, match.index).split("\n").slice(-4).join("\n");
+		if (name && new RegExp(`(?:\\b${name}\\s*=>|\\(([^()]*,\\s*)?${name}\\s*(?:,[^()]*)?\\)\\s*(?:=>|\\{))`).test(context)) continue;
+		// `../src/panels/${name}.jsx`, inline or in the `const` it names: the fixed directory before the first ${.
+		const bound = name && new RegExp(`\\bconst\\s+${name}\\s*=\\s*(\`[^\`\\n]*\`)`).exec(source.slice(0, match.index).split("\n").slice(-6).join("\n"))?.[1];
+		const prefix = /`([^`$]*\/)[^`/$]*\$\{/.exec(bound ?? argument)?.[1];
+		const directory = prefix && resolveLiteral(root, file, prefix)?.directory;
+		if (directory) directories.add(directory);
+		else unresolved ??= `${call.slice(0, call.indexOf("("))}(${argument.trim().slice(0, 60)})`;
 	}
 	for (const specifier of imports) {
 		const resolved = resolveFile(root, file, specifier);

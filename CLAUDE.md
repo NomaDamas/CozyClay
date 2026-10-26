@@ -69,4 +69,5 @@
 - PR(`pull_request`)의 Node 샤드는 `tools/select-tests.mjs`가 고른 테스트만 돌린다: 변경 파일에 import·리터럴 읽기·리터럴 동적 import·리터럴 스폰으로 닿는 테스트, 바뀐 테스트 자신, smoke 집합(10개 이하), 경로를 변수로 조립하는 테스트.
 - 아무 테스트도 닿지 않는 파일은 같은 경로 접두사의 테스트로 대신한다 (`src/motion3/` → `test/motion3/`). 그것도 비면 전체를 돌린다.
 - 다음이면 전체를 돌린다: `package*.json`, `mcp/package*.json`, `vite.config.js`, `eslint.config.js`, `knip.json`, `tools/{run-tests,test-shards,select-tests,test-graph,qa-browser}.mjs`, `tools/*-baseline.json`, 워크플로, 테스트 픽스처 변경, 선택기 예외, 인벤토리 불일치, 선택이 실행 가능 집합의 50% 이상. `workflow_dispatch`는 기본이 전체이고, main의 `pages.yml`은 선택기 없이 항상 전체를 돌린다.
+- 선택 결과는 `changes` 잡이 아티팩트로 한 번 올리고(전체 모드 포함), 네 샤드가 같은 목록을 나눈다. 아티팩트를 받지 못한 샤드는 전체로 대체하지 않고 실패한다(샤드끼리 목록이 달라지지 않게). 다시 실행하면 된다.
 - 결과는 `changes` 잡의 step summary 표에 남는다. 로컬 확인: `git diff --name-only origin/main...HEAD | node tools/select-tests.mjs`.

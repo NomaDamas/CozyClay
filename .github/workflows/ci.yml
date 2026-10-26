@@ -197,9 +197,10 @@ jobs:
           fi
           sudo apt-get install -y --no-install-recommends ffmpeg
       - run: npm run build
-      # The `changes` job's selection. Without it the shard runs everything.
+      # The `changes` job's selection. It always uploads one (mode full included), so a
+      # failed download fails this shard rather than letting one runner run everything
+      # while the others run the selection: the four shards must split the same list.
       - uses: actions/download-artifact@v4
-        continue-on-error: true
         with:
           name: test-selection
       # The shard split is balanced by tools/test-durations.json; each shard
@@ -207,9 +208,8 @@ jobs:
       # and writes "selected N, predicted X s, actual Y s" to its summary (#632).
       # --only-from narrows the split to the selected files; an empty shard passes.
       - run: |
-          only=()
-          if [ -f test-selection.json ]; then only=(--only-from test-selection.json); fi
-          node tools/run-tests.mjs --shard "${{ matrix.shard }}/4" --durations-out test-durations.json "${only[@]}"
+          if [ ! -f test-selection.json ]; then echo "::error title=test selection missing::the changes job's test-selection artifact did not arrive; rerun the job"; exit 1; fi
+          node tools/run-tests.mjs --shard "${{ matrix.shard }}/4" --durations-out test-durations.json --only-from test-selection.json
         env:
           # test/verify-morphgs-exporter.mjs: the MorphGS truth comparison
           # needs uv + a torch wheel; the runner has neither, so only its

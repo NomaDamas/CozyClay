@@ -2,7 +2,7 @@
 // with a full run whenever the selector cannot vouch for the selection.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ALWAYS_RUN, readManifest, safeSelect, selectTests, summaryTable } from "../tools/select-tests.mjs";
@@ -93,6 +93,28 @@ result = safeSelect(["src/m0.js"], { root, manifest: null });
 assert.deepEqual([result.mode, /^selector error: /.test(result.reason)], ["full", true]);
 console.log("PASS (g) a selector exception falls back to full");
 
+// (h) a file read whose path is built at run time is treated like a non-literal import: always run,
+// unless the path has a fixed directory (a dependency on that directory) or is a parameter fed literals.
+const reads = join(root, "reads");
+const put = (path, text) => { mkdirSync(dirname(join(reads, path)), { recursive: true }); writeFileSync(join(reads, path), text); };
+for (let index = 0; index < 6; index += 1) {
+	put(`src/r${index}.js`, `export const r${index} = ${index};\n`);
+	put(`test/verify-r${index}.mjs`, `import { r${index} } from "../src/r${index}.js";\nconsole.log(r${index});\n`);
+}
+put("src/shapes/box.js", "export const box = 1;\n");
+put("test/verify-concat.mjs", 'import { readFileSync } from "node:fs";\nreadFileSync("src/" + process.argv[2], "utf8");\n');
+put("test/verify-template-dir.mjs", 'import { readFileSync } from "node:fs";\nconst name = process.argv[2] ?? "box";\nreadFileSync(new URL(`../src/shapes/${name}.js`, import.meta.url), "utf8");\n');
+put("test/verify-param.mjs", 'import { readFileSync } from "node:fs";\nconst text = ["../src/r5.js"].map(path => readFileSync(new URL(path, import.meta.url), "utf8"));\nconsole.log(text);\n');
+const readTests = [...Array.from({ length: 6 }, (_, index) => `test/verify-r${index}.mjs`), "test/verify-concat.mjs", "test/verify-template-dir.mjs", "test/verify-param.mjs"];
+const pick = (changed) => selectTests(changed, { root: reads, manifest: readTests.map((file) => ({ kind: "node", file })), always: [] });
+result = pick(["src/r1.js"]);
+assert.equal(result.mode, "selected", result.reason);
+assert.deepEqual(result.files, ["test/verify-concat.mjs", "test/verify-r1.mjs"], "a concatenated read path always runs; a template with a fixed directory does not");
+assert.equal(result.alwaysRun, 1);
+assert.deepEqual(pick(["src/shapes/box.js"]).files, ["test/verify-concat.mjs", "test/verify-template-dir.mjs"], "`../src/shapes/${name}.js` depends on src/shapes/");
+assert.deepEqual(pick(["src/r5.js"]).files, ["test/verify-concat.mjs", "test/verify-param.mjs", "test/verify-r5.mjs"], "a parameter fed literal paths depends on those files");
+console.log("PASS (h) non-literal readFileSync/new URL paths: always run, directory prefix, or literal call sites");
+
 // The smoke set stays small and runnable; the CI summary carries every field.
 assert.ok(ALWAYS_RUN.length <= 10 && ALWAYS_RUN.includes("test/bus/verify-manifest.mjs"));
 const runnableReal = new Set(real.filter(({ kind }) => kind === "node" || kind === "mcp-deps").map(({ file }) => file));
@@ -114,3 +136,12 @@ assert.ok(shards.some((files) => files.length === 0), "two files leave at least 
 write("full.json", JSON.stringify({ mode: "full", files: [] }));
 assert.equal(listed(["--only-from", join(root, "full.json")]).length, listed([]).length);
 console.log("PASS run-tests --only-from shards the selection; empty shards and full mode work");
+
+// Every shard splits the same list: a selection that did not arrive fails the shard, never a lone full run.
+const workflow = readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8");
+const download = /- uses: actions\/download-artifact@v4\n((?: {8}.*\n)+)/.exec(workflow)?.[1] ?? "";
+assert.match(download, /name: test-selection/);
+assert.doesNotMatch(download, /continue-on-error/, "a failed selection download fails the shard");
+assert.match(workflow, /if \[ ! -f test-selection\.json \]; then echo "::error[^\n]*exit 1; fi/);
+assert.match(workflow, /--only-from test-selection\.json\n/);
+console.log("PASS ci.yml: a shard without the selection artifact fails instead of running everything");
