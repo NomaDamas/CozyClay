@@ -38,14 +38,14 @@ const MOVED = "the body moved: no change that keeps it in place fixed this arm's
 /**
  * repairSpec(spec, { rounds }, compile) -> { spec, result, repair }
  * @param {object} spec  the agent's spec (patches address it)
- * @param {{ rounds?: number }} opts  1..8 (default 4)
+ * @param {{ rounds?: number, limitMs?: number }} opts  rounds 1..8 (default 4); limitMs, the wall-clock stop (default 20 s)
  * @param {(spec: object) => object} compile  spec -> pipeline.js compileSpec result (qa.groups[i].patch)
  * @returns {{ spec: object, result: object, repair: { rounds: number, compiles: number,
  *   applied: { kind: string, subject: string, patch: object[], severity: number[], movedBody?: string }[], rejected: number } }}
  */
 export function repairSpec(spec, opts, compile) {
 	const want = Math.min(8, Math.max(1, Math.round(Number(opts?.rounds ?? 4)) || 4)), t0 = performance.now();
-	const late = () => performance.now() - t0 >= LIMIT_MS;
+	const late = () => performance.now() - t0 >= (opts?.limitMs > 0 ? opts.limitMs : LIMIT_MS);
 	let current = spec, result = compile(spec), compiles = 1, rejected = 0, rounds = 0;
 	const refused = new Set();
 	const applied = [];

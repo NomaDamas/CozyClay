@@ -29,8 +29,8 @@ function expect(name, condition, detail = "") {
 }
 const sk = skeletonFor("x-bot-tpose"), I = sk.index, car = motionScene(SCENE_OBJECTS), empty = { objects: {} };
 const json = JSON.stringify;
-const repair = (spec, scene = car, rounds = 4) => {
-	const t0 = performance.now(), r = repairSpec(spec, { rounds }, s => compileSpec(s, { sk, scene }));
+const repair = (spec, scene = car, rounds = 4, limitMs) => {
+	const t0 = performance.now(), r = repairSpec(spec, { rounds, limitMs }, s => compileSpec(s, { sk, scene }));
 	r.ms = Math.round(performance.now() - t0);
 	console.log(`  ${r.ms} ms, ${json({ ...r.repair, applied: r.repair.applied.map(a => `${a.kind} ${a.subject} ${a.patch.map(p => `${p.op} ${p.path}`)} ${a.severity}`) })}`);
 	return r;
@@ -51,14 +51,16 @@ expect("board: the agent's spec object is not changed", json(held) === sent);
 // 2. The seat set 7 cm too low in the car scene: the seat hit is gone, within 10 s.
 const low = structuredClone(EXITCAR_SPEC);
 low.keys[0].set.root = [0.48, 0.85, -0.052];
-r = repair(low);
+// No wall-clock stop here: on a loaded CI runner this repair takes 20-40 s, and a run cut at 20 s
+// after its first patch is not comparable with one that got to the second (case 3).
+r = repair(low, car, 4, Infinity);
 const first = r;
 expect("exit car, hips sunk: the seat collision is repaired", !r.result.qa.groups.some(g => /hips x Car_Seat_Driver/.test(g.subject)) && r.repair.applied[0].patch[0].path === "/keys/0/set/root", json(r.repair));
 expect("exit car, hips sunk: under 10 s", r.ms < budgetMs(10000), `${r.ms} ms`);
 expect("exit car: result.spec is the repaired spec", r.result.spec.keys[0].set.root[1] > 0.87);
 
-// 3. Twice the same input, twice the same answer.
-r = repair(low);
+// 3. Twice the same input, twice the same answer (both without the wall-clock stop).
+r = repair(low, car, 4, Infinity);
 expect("deterministic: the same spec, report and QA", json(r.spec) === json(first.spec) && json(r.repair) === json(first.repair) && json(r.result.qa) === json(first.result.qa));
 
 // 4. Nothing helps: the spec stays as sent and the rejected patches are counted. The REACH
@@ -138,6 +140,17 @@ expect("run3 + checks.limits.accLimb: only ACC LeftForeArm 4.95, between keys[0]
 	&& /between keys\[0\] f86 and keys\[2\] f110/.test(pop.groups[0].cause) && !pop.groups[0].patch, json(pop.groups));
 r = cupRepair(optedAcc);
 expect("ACC near the limit: repair moves a key of the pair one frame apart and reaches qa.ok", r.result.qa.ok && json(r.repair.applied[0]?.patch) === json([{ op: "replace", path: "/keys/0/f", value: 85 }]), json(r.repair));
+
+// 7b. limitMs is the wall-clock stop: a slow compile past it ends the repair, without it the rounds run.
+const slow = s => {
+	const until = performance.now() + 40;
+	while (performance.now() < until);
+	const worst = [0.03, 0.02, 0.004][s.x];
+	return { qa: { goals: [{ ok: true }], groups: s.x === 2 ? [] : [{ kind: "COLLIDE", subject: "a x b", count: 1, worst, limit: 0.005, first: 0, last: 0, worstFrame: 0,
+		severity: Math.round(worst * 1e4) / 10, patch: [{ op: "replace", path: "/x", value: s.x + 1 }] }] } };
+};
+const cut = repairSpec({ x: 0 }, { rounds: 4, limitMs: 30 }, slow), full = repairSpec({ x: 0 }, { rounds: 4, limitMs: Infinity }, slow);
+expect("limitMs: a compile past the stop ends the repair; without a stop it reaches qa.ok", cut.repair.compiles === 1 && cut.spec.x === 0 && full.spec.x === 2 && full.result.qa.groups.length === 0, json([cut.repair, full.repair]));
 
 // 8. A change that makes the total worse, or fails a goal that held, is never kept.
 const fake = s => {
