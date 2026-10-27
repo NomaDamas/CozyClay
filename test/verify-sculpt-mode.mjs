@@ -16,7 +16,7 @@ const WORKFLOW_MODES = [...modesBlock.matchAll(/\{ id: "(\w+)", key: "(\d)"/g)].
 assert.ok(toolbar.includes('previsMode === "storyboard" ? MODES.filter((mode) => mode.id !== "motion") : MODES'));
 const modesFor = (previsMode) => (previsMode === "storyboard" ? WORKFLOW_MODES.filter((mode) => mode.id !== "motion") : WORKFLOW_MODES);
 const {
-	SCULPT_LAYER, SCULPT_VIEWS, agentSessionReady, createCommandTap, isolatedObjectIds,
+	SCULPT_LAYER, SCULPT_VIEWS, agentSessionReady, chatgptSignedIn, createCommandTap, isolatedObjectIds,
 	sculptAgentClient, sculptFraming, sculptPlacement, sculptTargetFromSelection,
 	sculptModelChoice,
 	sculptModelLabel,
@@ -175,6 +175,11 @@ check("Start follows the Agent panel's readiness rule", () => {
 	assert.equal(agentSessionReady({ signedIn: false, providersConfigured: 2 }), true);
 	assert.equal(agentSessionReady({ signedIn: false, providersConfigured: 0 }), false);
 	assert.equal(agentSessionReady(null), false);
+	// #970: the blueprint needs the ChatGPT token itself; a provider key alone (the API-key-only user) does not count.
+	assert.equal(chatgptSignedIn({ signedIn: true, providersConfigured: 0 }), true);
+	assert.equal(chatgptSignedIn({ signedIn: false, providersConfigured: 2 }), false, "API-key-only: Start is ready, the blueprint is not");
+	assert.equal(agentSessionReady({ signedIn: false, providersConfigured: 2 }) && !chatgptSignedIn({ signedIn: false, providersConfigured: 2 }), true);
+	assert.equal(chatgptSignedIn(null), false);
 });
 
 check("the run's agent client carries the live editor context", () => {

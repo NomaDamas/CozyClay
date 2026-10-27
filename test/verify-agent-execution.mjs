@@ -7,6 +7,7 @@ import { registerHooks } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createHttpTransport } from "../src/workflow/agent-client.js";
+import { readStoredTaskMode } from "../src/workflow/task-board.js";
 import { createAgentHandler } from "../bin/agent/agent-routes.mjs";
 import { createCanvasCommands } from "../src/workflow/canvas-commands.js";
 import { noteTurnDraft } from "../src/workflow/agent-turn-telemetry.js";
@@ -46,6 +47,21 @@ const close = async (server) => { const closed = bounded(server, "close"); serve
 	await transport.turn(request, () => {});
 	assert.notEqual(bodies[0].turn_id, bodies[1].turn_id, "retry gets a fresh ID despite reusing session, prompt and model");
 	assert.ok(!JSON.stringify(captured).includes("private"));
+}
+
+// Task mode is on by default (nothing stored), so a studio turn goes to the main agent with the opt-in header.
+{
+	const sent = [];
+	const transport = createHttpTransport({ surface: "studio", capture: () => {}, fetchImpl: async (url, init) => {
+		sent.push({ url: String(url), tasks: init.headers["x-cozyclay-tasks"] });
+		return new Response(encode({ type: "done" }));
+	} });
+	const tasks = readStoredTaskMode({ getItem: () => null });
+	const studioTurn = { ...request, surface: "studio", turnId: "turn-tasks", context: {} };
+	await transport.turn({ ...studioTurn, ...(tasks ? { tasks: true } : {}) }, () => {});
+	await transport.turn(studioTurn, () => {});
+	assert.ok(sent[0].url.endsWith("/agent/main") && sent[0].tasks === "on", `default task mode goes to /agent/main with x-cozyclay-tasks: on: ${JSON.stringify(sent[0])}`);
+	assert.ok(sent[1].url.endsWith("/agent/turn") && sent[1].tasks === undefined, `task mode off goes to /agent/turn without the header: ${JSON.stringify(sent[1])}`);
 }
 
 {

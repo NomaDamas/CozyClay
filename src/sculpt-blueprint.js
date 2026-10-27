@@ -2,6 +2,7 @@
 // reference picture into an orthographic model sheet, the drawing a sculpt is
 // built from. The template names no subject: everything subject-specific comes
 // from the attached reference and the operator's optional notes.
+import { referenceMask } from "./sculpt-compare.js";
 
 /** The sheet's fixed layout, as fractions of the image: a 2 x 2 grid. FRONT and
  * SIDE share the top row so their head and foot lines are the same pixels;
@@ -63,3 +64,58 @@ export function blueprintErrorMessage(error, fallback) {
 	}
 	return fallback;
 }
+
+/** The camera yaw each compared view was drawn from (sculpt-compare.js: 0 in
+ * front, positive toward the subject's own left). TOP looks straight down and is
+ * cropped but not compared: sculpt.compare's elevation stops at 60 degrees. */
+export const BLUEPRINT_VIEW_YAWS = Object.freeze({ front: 0, side: 90, back: 180 });
+
+/** One panel of an RGBA sheet, cut on whole pixels from the layout fractions. */
+export function cropBlueprintPanel(image, { x, y, width, height }) {
+	const left = Math.round(x * image.width), top = Math.round(y * image.height);
+	const w = Math.round((x + width) * image.width) - left, h = Math.round((y + height) * image.height) - top;
+	const data = new Uint8Array(w * h * 4);
+	for (let row = 0; row < h; row += 1) {
+		const start = ((top + row) * image.width + left) * 4;
+		data.set(image.data.subarray(start, start + w * 4), row * w * 4);
+	}
+	return { width: w, height: h, data };
+}
+
+/**
+ * Cut a generated sheet (RGBA) into its views by BLUEPRINT_LAYOUT and mask each
+ * one. A view whose mask fails (no subject, no background, or a subject that
+ * touches the panel edge and so was cut or spills into its neighbour) is dropped
+ * with a notice. Returns { views: [{ view, label, yaw, image, mask }], notices }.
+ */
+export function cropBlueprintViews(sheet, layout = BLUEPRINT_LAYOUT) {
+	const views = [], notices = [];
+	for (const panel of layout) {
+		const image = cropBlueprintPanel(sheet, panel);
+		try {
+			const { width, height, mask, source } = referenceMask(image);
+			let minX = width, maxX = -1, minY = height, maxY = -1;
+			for (let i = 0; i < mask.length; i += 1) if (mask[i]) {
+				const px = i % width, py = (i - px) / width;
+				minX = Math.min(minX, px); maxX = Math.max(maxX, px); minY = Math.min(minY, py); maxY = Math.max(maxY, py);
+			}
+			if (minX === 0 || minY === 0 || maxX === width - 1 || maxY === height - 1) throw new Error("the subject touches the panel edge");
+			const box = { x: minX / width, y: minY / height, width: (maxX - minX + 1) / width, height: (maxY - minY + 1) / height };
+			views.push({ view: panel.view, label: panel.label, yaw: BLUEPRINT_VIEW_YAWS[panel.view] ?? null, image, mask: { source, box } });
+		} catch (error) {
+			notices.push(`${panel.label} view dropped: ${String(error?.message || error).replace(/\.$/, "")}.`);
+		}
+	}
+	return { views, notices };
+}
+
+/** The cropped views of a generated sheet as PNG data URLs, through an image
+ * port ({ decode, encodePng }: commands/sculpt-images.js in the browser). */
+export async function blueprintViewImages(sheetDataUrl, images) {
+	const { views, notices } = cropBlueprintViews(await images.decode({ dataUrl: sheetDataUrl }));
+	return { notices, views: await Promise.all(views.map(async ({ view, label, yaw, image, mask }) => ({ view, label, yaw, mask, width: image.width, height: image.height, dataUrl: await images.encodePng(image) }))) };
+}
+
+/** What a sculpt run takes from a sheet: its side and back views (the front is the reference itself). */
+export const blueprintRunViews = (sheet) => (sheet?.views ?? []).filter((view) => view.view === "side" || view.view === "back")
+	.map(({ view, yaw, dataUrl }) => ({ view, yaw, dataUrl, name: `blueprint-${view}.png` }));

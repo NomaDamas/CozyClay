@@ -356,6 +356,36 @@ await runCase("every turn runs on the chosen model and effort, and the run names
 	assert.ok(seen.some(row => row.waiting?.label === "GPT-6 Astra is writing the recipe"));
 });
 
+await runCase("Start attaches the blueprint's side and back next to the reference and scores against all three (#970)", async () => {
+	const f = fixture({ turns: [[sculpt()], [sculpt()]] });
+	const requests = [];
+	const inner = f.agent.sendTurn;
+	f.agent.sendTurn = function (request) { requests.push(request); return inner.call(this, request); };
+	const scored = [];
+	const views = [{ view: "side", yaw: 90, dataUrl: "data:image/png;base64,SIDE", name: "blueprint-side.png" }, { view: "back", yaw: 180, dataUrl: "data:image/png;base64,BACK", name: "blueprint-back.png" }];
+	const run = createSculptRun({ ...f, maxRounds: 2, targetIou: 0.99, reference: { ...reference, assetId: "asset-snorlax" }, views, score: async (args) => { scored.push(args); return { output: { iou: 0.8 } }; } });
+	await run.start();
+	// Without views nothing changes: only the reference rides, and the score is the one-view shape.
+	const g = fixture({ turns: [[sculpt()]] });
+	const plain = [];
+	const innerPlain = g.agent.sendTurn;
+	g.agent.sendTurn = function (request) { plain.push(request); return innerPlain.call(this, request); };
+	const plainScored = [];
+	await createSculptRun({ ...g, reference, targetIou: 0.5, score: async (args) => { plainScored.push(args); return { iou: 0.9 }; } }).start();
+	return { run, requests, scored, plain, plainScored };
+}, ({ run, requests, scored, plain, plainScored }) => {
+	for (const request of requests) {
+		assert.deepEqual(request.attachments, [{ dataUrl: "data:image/png;base64,AA==", name: "reference.png" }, { dataUrl: "data:image/png;base64,SIDE", name: "blueprint-side.png" }, { dataUrl: "data:image/png;base64,BACK", name: "blueprint-back.png" }]);
+	}
+	assert.match(requests[0].text, /Also attached, after the reference: the blueprint's side view \(yaw 90, [^)]*\) and back view \(yaw 180, [^)]*\)/);
+	assert.match(requests[1].text, /against the reference and the blueprint's side and back views \(weighted\)/);
+	assert.deepEqual(scored[0], { id: "sculpt-1", views: [{ yaw: 0, reference: { assetId: "asset-snorlax" } }, { yaw: 90, reference: { dataUrl: "data:image/png;base64,SIDE" } }, { yaw: 180, reference: { dataUrl: "data:image/png;base64,BACK" } }] });
+	assert.ok(run.getState().activity.some(entry => entry.text === "Using the blueprint's side and back views next to the reference"));
+	assert.deepEqual(plain[0].attachments, [{ dataUrl: "data:image/png;base64,AA==", name: "reference.png" }]);
+	assert.doesNotMatch(plain[0].text, /Also attached/);
+	assert.deepEqual(plainScored[0], { id: "sculpt-1", reference: { dataUrl: "data:image/png;base64,AA==" } });
+});
+
 await runCase("the agent port sends the model and effort on the Studio envelope", async () => {
 	const requests = [];
 	const port = createAgentPort({ turn: async (request) => { requests.push(request); } });

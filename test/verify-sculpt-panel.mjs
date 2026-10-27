@@ -185,8 +185,14 @@ const sheet = "data:image/png;base64,BBBB";
 	const failed = render({ reference, blueprint: { ...base, error: "This account cannot generate images." } });
 	assert.match(failed, /data-testid="sculpt-blueprint-error"[^>]*>This account cannot generate images\.</);
 	const refused = render({ reference, blueprint: { ...base, refusal: "Sign in with ChatGPT in the Agent panel to generate a blueprint." } });
-	assert.match(tag(refused, "sculpt-blueprint-generate"), /disabled=""/);
+	// #970: without a ChatGPT token App passes a refusal and the button is not shown at all; with one it is.
+	assert.equal(tag(refused, "sculpt-blueprint-generate"), null, "no Generate button without a ChatGPT token");
+	assert.doesNotMatch(refused, /Generate blueprint/);
 	assert.ok(tag(refused, "sculpt-blueprint-refusal"));
+	assert.ok(tag(idle, "sculpt-blueprint-generate"), "the button is shown when there is no refusal (a ChatGPT token exists)");
+	const dropped = render({ reference, blueprint: { ...base, state: "ready", sheet: { dataUrl: "data:image/png;base64,SHEET", width: 1536, height: 1024, notices: ["Back view dropped: No subject found in the reference."] } } });
+	assert.match(dropped, /data-testid="sculpt-blueprint-notices"[^>]*>Back view dropped: No subject found in the reference\.</, "a dropped view says so");
+	assert.equal(tag(ready, "sculpt-blueprint-notices"), null, "no notice when every view was kept");
 	assert.match(tag(render({ reference, blueprint: base, run: { ...baseRun, stage: "draft" } }), "sculpt-blueprint-generate"), /disabled=""/, "no new sheet while a sculpt run is out");
 	console.log("PASS sculpt panel: blueprint (pose, notes, visible request, wait, sheet with view tags, errors)");
 }
