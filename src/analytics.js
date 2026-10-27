@@ -1,3 +1,4 @@
+import { appVersion } from "./app-version.js";
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
 import { ERROR_TYPE_VALUES, EXPORT_FAILURE_CODES, exportPropAllowed } from "./analytics-values.js";
 import { bump as bumpFriction, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
@@ -715,7 +716,8 @@ export function resolveAnalyticsRuntime({
 		distribution: "hosted",
 		apiKey: env.VITE_POSTHOG_KEY,
 		apiHost: env.VITE_POSTHOG_HOST || "https://us.i.posthog.com",
-		appVersion: env.VITE_APP_VERSION || null,
+		// The deploy sets no VITE_APP_VERSION, so the bundled package version stands in.
+		appVersion: env.VITE_APP_VERSION || appVersion(),
 		installationId: null,
 		firstLaunch: false,
 		firstLaunchHeardFrom: null,
