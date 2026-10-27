@@ -13,7 +13,7 @@ import { createAgentRunner } from "./agent-runner.mjs";
 import { createProviderRoutes } from "./provider-routes.mjs";
 import { STUDIO_SYSTEM_PROMPT_STORYBOARD } from "./studio-prompt.mjs";
 import { studioTransaction } from "./studio-turn-transaction.mjs";
-import { agentFailureCode, failureCodeOf } from "./agent-failure-codes.mjs";
+import { agentFailureCode, failureCodeOf, frameCodeOf } from "./agent-failure-codes.mjs";
 
 // Values the codex backend accepts for reasoning.effort (its own 400 lists them).
 export const REASONING_EFFORTS = ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"];
@@ -212,7 +212,7 @@ function errorInfo(error, quota) {
 	if (error?.code === "entitlement") return { code: "entitlement", ...explain("This account cannot generate images.") };
 	if (error?.code === "overloaded") return { code: "overloaded", ...explain("The model service is overloaded right now. Try again in a moment.") };
 	if (error?.code === "server_error") return { code: "overloaded", ...explain("The model service hit an internal error. Try again in a moment.") };
-	return { code: "upstream", ...explain("The model or live editor could not complete this turn.") };
+	return { code: frameCodeOf(error), ...explain("The model or live editor could not complete this turn.") };
 }
 
 /** Use the existing client and its request queue, retaining failure headers that
@@ -608,7 +608,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 			const info = errorInfo(error);
 			turnOutcome = controller.signal.aborted ? "cancelled" : "failed";
 			turnFailureCode = controller.signal.aborted ? "aborted" : agentFailureCode(error, controller.signal, toolFailed);
-			send({ type: "error", code: controller.signal.aborted ? "aborted" : error.code || "upstream", message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
+			send({ type: "error", code: controller.signal.aborted ? "aborted" : frameCodeOf(error), message: info.status === undefined ? error.message : info.message, ...(info.status === undefined ? {} : { status: info.status }) });
 			emitFrame({ type: "done" });
 		}
 		if (controller.signal.aborted) { turnOutcome = "cancelled"; turnFailureCode = "aborted"; }

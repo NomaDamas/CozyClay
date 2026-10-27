@@ -13,8 +13,11 @@ const BY_CODE = {
 	STALE_SCENE: "stale_scene", STALE_TARGET: "stale_scene", STALE_ENVIRONMENT: "stale_scene",
 	CAPABILITY_MISSING: "capability_missing", LIVE_HUB_UNAVAILABLE: "capability_missing",
 	busy: "busy", TARGET_BUSY: "busy", SCOPE_BUSY: "busy", TARGET_NOT_READY: "busy",
-	overloaded: "upstream", upstream: "upstream", truncated: "upstream", server_error: "upstream",
+	// A sidecar frame whose code is already this table's fallback answer passes through.
+	network: "network", unknown: "unknown",
 };
+// The runner's provider codes read as upstream, after the status: a 4xx beside one is the request's fault.
+const PROVIDER_CODES = new Set(["overloaded", "upstream", "truncated", "server_error"]);
 const NETWORK_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EPIPE",
 	"ENETUNREACH", "ENETDOWN", "EHOSTUNREACH", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]);
 const codeOf = (value) => (typeof value?.code === "string" ? value.code : "");
@@ -30,10 +33,17 @@ export function failureCodeOf(error) {
 		if (status === 429) return "rate_limited";
 		if (Number.isInteger(status) && status >= 400 && status < 500) return "invalid_request";
 		if (Number.isInteger(status) && status >= 500 && status < 600) return "upstream";
+		if (PROVIDER_CODES.has(code)) return "upstream";
 		if (Number.isInteger(status)) return "unknown";
 		if (NETWORK_CODES.has(code) || NETWORK_CODES.has(codeOf(error?.cause)) || error?.name === "TypeError") return "network";
 		return "unknown";
 	} catch { return "unknown"; }
+}
+
+/** The `code` a sidecar error frame carries: the error's own code, else failureCodeOf (never a literal fallback). */
+export function frameCodeOf(error) {
+	try { if (typeof error?.code === "string" && error.code) return error.code; } catch { /* foreign getter */ }
+	return failureCodeOf(error);
 }
 
 // After a tool failed, a turn that dies without a more specific code is the tool's failure.

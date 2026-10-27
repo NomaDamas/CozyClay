@@ -3,6 +3,7 @@ import { createReasoningFrames } from "./turn-frames.mjs";
 import { sanitizeUpstreamDetail } from "./agent-routes.mjs";
 import { budgetStudioRequest } from "./studio-context-budget.mjs";
 import { createRetryingStream } from "./agent-stream.mjs";
+import { frameCodeOf } from "./agent-failure-codes.mjs";
 
 const DEFAULT_MODEL = "gpt-6-astra";
 
@@ -81,7 +82,7 @@ function publicDetails(result) {
 function errorFrame(error, aborted = false) {
 	return {
 		type: "error",
-		code: aborted || error?.name === "AbortError" ? "aborted" : error?.code || "upstream",
+		code: aborted || error?.name === "AbortError" ? "aborted" : frameCodeOf(error),
 		message: error?.message || "The model or live editor could not complete this turn.",
 		...(Number.isInteger(error?.status) ? { status: error.status } : {}),
 	};

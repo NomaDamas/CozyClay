@@ -655,6 +655,7 @@ for (const count of [2, 5]) {
 		[{ code: "overloaded", status: 529 }, "upstream"], [{ code: "upstream", status: 502 }, "upstream"], [{ code: "truncated" }, "upstream"], [{ status: 500 }, "upstream"], [{ code: "server_error" }, "upstream"],
 		[new TypeError("offline"), "network"], [{ code: "ECONNRESET" }, "network"], [{ code: "ENOTFOUND" }, "network"],
 		[Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }), "network"], [{ name: "TypeError", status: 502 }, "upstream"],
+		[{ code: "network" }, "network"], [{ code: "unknown" }, "unknown"], [{ code: "upstream", status: 400 }, "invalid_request"], [{ code: "overloaded", status: 429 }, "rate_limited"],
 		[{ code: "constructor" }, "unknown"], [{ code: "entitlement" }, "unknown"], [{ message: "401 Unauthorized" }, "unknown"], [new Error("network down"), "unknown"], [{}, "unknown"],
 	];
 	for (const [input, expected] of cases) {
@@ -671,6 +672,19 @@ for (const count of [2, 5]) {
 	assert.equal(agentFailureCode(new TypeError("offline"), live), "network");
 	assert.equal(agentFailureCode({ code: "constructor" }, live), "unknown");
 	assert.equal(transportFailureCode(foreign), "unknown"); assert.equal(failureCodeOf(foreign), "unknown");
+	// A sidecar error frame carries the error's own code, else failureCodeOf: never a literal upstream.
+	const { frameCodeOf } = await import("../bin/agent/agent-failure-codes.mjs");
+	const refused = Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } });
+	assert.equal(frameCodeOf({ code: "overloaded", status: 529 }), "overloaded", "a runner code is sent unchanged");
+	assert.equal(frameCodeOf(foreign), "unknown");
+	for (const [thrown, expected] of [[refused, "network"], [new Error("private x"), "unknown"], [{ status: 503 }, "upstream"]]) {
+		const captured = [];
+		const frame = { type: "error", code: frameCodeOf(thrown), message: "private sidecar failure", ...(Number.isInteger(thrown.status) ? { status: thrown.status } : {}) };
+		const transport = createHttpTransport({ capture: (event, props) => keep(captured, event, props), fetchImpl: async () => new Response(encode(frame) + encode({ type: "done" })) });
+		await transport.turn(request, () => {});
+		assert.deepEqual(names(captured), ["agent:turn_requested", "agent:turn_failed"]);
+		assert.equal(captured[1].props.failure_code, expected, `sidecar frame for ${thrown.name ?? "status"} reads ${expected} in the browser`);
+	}
 	for (const [status, body, expected] of [
 		[409, { error: { code: "STALE_SCENE", message: "private moved" } }, "stale_scene"],
 		[409, { error: { code: "CAPABILITY_MISSING", message: "private port 5184 in use" } }, "capability_missing"],

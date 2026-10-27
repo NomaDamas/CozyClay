@@ -899,10 +899,15 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
     409 `AMBIGUOUS_TARGET`.
   - `upstream`: provider trouble only, an HTTP 5xx or the runner's
     `overloaded`, `upstream` or `truncated` (or the provider's `server_error`).
+    A 4xx status beside one of those codes reads by the status.
   - `network`: the request never got an HTTP answer. A fetch `TypeError`
     (offline, refused, DNS) or a socket code such as `ECONNRESET`, `ENOTFOUND`
     or `ETIMEDOUT` on the error or its `cause`. Read from `name`, `code` and
-    `status` only, never the message.
+    `status` only, never the message. The sidecar classifies an error it
+    throws itself the same way and sends that code on its error frame, so a
+    sidecar-side network failure also reads `network`. A provider request that
+    fails inside the model client reaches the turn as a failed message with no
+    structured code, so it still reads `upstream`.
   - `unknown`: anything else, including a code outside this set and an error
     whose fields throw.
   - Rows before the `network`/`unknown` split carry `upstream` for all three;
