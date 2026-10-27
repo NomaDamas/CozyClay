@@ -140,6 +140,31 @@ try {
 		}
 	});
 
+	await check("views [{ yaw, reference, weight }] score weighted views, the same in the editor and MCP; the old shape still works", async () => {
+		const views = [{ yaw: 0, reference: { dataUrl } }, { yaw: 180, reference: { assetId: ASSET_ID } }];
+		const receipt = ok(await f.run("sculpt.compare", { id: sculptId, views }, "agent"));
+		const out = receipt.output;
+		assert.deepEqual(out.views.map(row => [row.view, row.yaw, row.weight]), [["front", 0, 0.8], ["back", 180, 0.2]], "front 0.6 and back 0.15, renormalized");
+		assert.ok(Math.abs(out.iou - (out.views[0].iou * 0.8 + out.views[1].iou * 0.2)) < 0.002);
+		assert.match(receipt.summary, /^Compared Snorlax with 2 weighted views \(front 0\.8, back 0\.2\): IoU 0\.\d+\.$/);
+		assert.ok(out.sheetDataUrl.startsWith("data:image/png;base64,"), "the front's sheet rides along");
+		const path = join(tmpdir(), `cozyclay-sculpt-compare-views-${process.pid}.png`);
+		writeFileSync(path, png);
+		let viaMcp;
+		try { viaMcp = JSON.parse((await tool("compare_sculpt").handler({ id: mcpId, views: [{ yaw: 0, reference: path }, { yaw: 180, reference: path }] })).content[0].text); } finally { rmSync(path, { force: true }); }
+		assert.ok(Math.abs(out.iou - viaMcp.iou) < 0.001, `${out.iou} vs ${viaMcp.iou}`);
+		assert.deepEqual(viaMcp.views.map(row => row.weight), [0.8, 0.2]);
+		// An explicit weight replaces the table's.
+		const even = ok(await f.run("sculpt.compare", { id: sculptId, views: views.map(view => ({ ...view, weight: 0.5 })) }, "agent")).output;
+		assert.deepEqual(even.views.map(row => row.weight), [0.5, 0.5]);
+		for (const args of [{ id: sculptId }, { id: sculptId, reference: { dataUrl }, views }]) {
+			const refused = await f.run("sculpt.compare", args, "agent");
+			assert.equal(refused.code, "INVALID_ARGUMENT");
+			assert.match(refused.message, /exactly one of reference .* or views/);
+		}
+		assert.equal((await tool("compare_sculpt").handler({ id: mcpId })).isError, true, "MCP refuses neither shape too");
+	});
+
 	await check("a sheet narrower than 64 px is still sent when it fits", async () => {
 		const out = ok(await f.run("sculpt.compare", { id: sculptId, reference: { assetId: SMALL_ID } }, "agent")).output;
 		assert.equal(out.sheetOmitted, undefined, out.sheetOmitted);

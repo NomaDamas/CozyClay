@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createAgentTransport } from "./workflow/agent-client.js";
 import { requestAgentImage, stylizeErrorMessage } from "./agent-image-client.js";
-import { blueprintErrorMessage, blueprintRequest } from "./sculpt-blueprint.js";
-import { agentSessionReady, createCommandTap, sculptModelChoice, sculptTargetFromSelection, storeSculptModel } from "./sculpt-mode.js";
+import { blueprintErrorMessage, blueprintRequest, blueprintViewImages } from "./sculpt-blueprint.js";
+import { browserSculptImages } from "./commands/sculpt-images.js";
+import { agentSessionReady, chatgptSignedIn, createCommandTap, sculptModelChoice, sculptTargetFromSelection, storeSculptModel } from "./sculpt-mode.js";
 import { SCULPT_KIND } from "./scene-objects.js";
 import { overlayOwnsEscape, sculptPartTree } from "./sculpt-pick.js";
 import { GIZMO_HOTKEYS } from "./stage-startup-defaults.js";
@@ -20,6 +21,8 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 	const [sculptRun, setSculptRun] = useState(null);
 	const sculptRunRef = useRef(null);
 	const [sculptAgentStatus, setSculptAgentStatus] = useState("unknown");
+	// Whether the sidecar holds a ChatGPT token: the blueprint's image model needs one (#970).
+	const [sculptChatgpt, setSculptChatgpt] = useState(false);
 	// The model Sculpt runs on (its own pick, remembered apart from the chat model) and the list it comes from.
 	const [sculptModels, setSculptModels] = useState({ state: "loading", providers: [], models: [] });
 	const [sculptModelPick, setSculptModelPick] = useState({ model: "", effort: null });
@@ -50,8 +53,8 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 		let live = true;
 		const read = () => {
 			sculptTransport.status().then(
-				(status) => { if (live) setSculptAgentStatus(agentSessionReady(status) ? "ready" : "signed-out"); },
-				() => { if (live) setSculptAgentStatus("signed-out"); },
+				(status) => { if (live) { setSculptAgentStatus(agentSessionReady(status) ? "ready" : "signed-out"); setSculptChatgpt(chatgptSignedIn(status)); } },
+				() => { if (live) { setSculptAgentStatus("signed-out"); setSculptChatgpt(false); } },
 			);
 			// The Agent panel's catalogue: a key added or removed elsewhere changes what can run.
 			sculptTransport.models().then(
@@ -125,7 +128,11 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 		try {
 			const result = await requestAgentImage(blueprintRequest({ reference: sculptReference, pose: sculptBlueprint.pose, notes: sculptBlueprint.notes }), { signal: controller.signal });
 			if (blueprintAbortRef.current !== controller) return;
-			setSculptBlueprint((current) => ({ ...current, state: "ready", sheet: { dataUrl: result.dataUrl, width: result.width, height: result.height, ms: Date.now() - startedAt } }));
+			// Cut into views (#970): side and back go to Start next to the reference; a view whose mask fails is dropped with a notice.
+			let cropped;
+			try { cropped = await blueprintViewImages(result.dataUrl, browserSculptImages); } catch (error) { cropped = { views: [], notices: [`The sheet could not be cut into views: ${error?.message || error}`] }; }
+			if (blueprintAbortRef.current !== controller) return;
+			setSculptBlueprint((current) => ({ ...current, state: "ready", sheet: { dataUrl: result.dataUrl, width: result.width, height: result.height, ms: Date.now() - startedAt, views: cropped.views, notices: cropped.notices } }));
 		} catch (error) {
 			if (blueprintAbortRef.current !== controller) return;
 			const cancelled = controller.signal.aborted;
@@ -138,5 +145,5 @@ export function useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectI
 		controller?.abort();
 		setSculptBlueprint((current) => ({ ...current, state: current.sheet ? "ready" : "idle" }));
 	}
-	return { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts };
+	return { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptChatgpt, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts };
 }
