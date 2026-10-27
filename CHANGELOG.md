@@ -29,6 +29,9 @@ Studio
   part is cleared. One drag is one undo, a mirrored pair moves together, and
   an edit the recipe refuses snaps back with the reason. Delete with a part
   selected no longer deletes the whole sculpt.
+- A capsule figure set to **Sit** now sits on the floor in an L, with its legs
+  reaching forward the way it faces, instead of only getting shorter. Its
+  bounds, and so framing, follow the new shape.
 
 CLI
 
