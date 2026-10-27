@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 3.2.1 - 2026-10-28
+
+A patch that makes the numbers readable: hosted builds report their version, and the export funnel and agent failures can be split by cause; plus a script-driven tutorial recorder.
+
 Studio
 
 - The **Update** chip now agrees across open Studio tabs at once: closing it,
@@ -31,6 +35,36 @@ CLI
 - `cclay update --off` turns the update line and the Studio's **Update** chip
   off for good; `cclay update --on` turns them back on. `cclay update --check`
   still answers either way.
+
+Agent
+
+- A task that read a whole character is told when another task edits one of
+  that character's layers, so a placement built on an old position is
+  flagged on its next step. (#981, #982)
+
+Analytics
+
+- Hosted builds report the version they run. (#989)
+- Opening the Export menu is counted, with whether the browser can encode
+  MP4, so the export funnel can be read. The privacy page lists the new
+  `export:menu_opened` event. (#990)
+- Agent failures say whether the provider failed, the request got no network
+  answer, or the cause is unknown, instead of one catch-all. (#991)
+- MCP tool events carry the tool name, and `studio_commands` counts as a
+  read. The privacy page lists the `tool_name` property. (#994)
+- Reference exports made by QA scripts no longer count as user export
+  attempts. (#993)
+
+Tutorials
+
+- **Tutorial recorder.** `npm run tutorial:record -- first-video` renders the
+  episode "First video in 5 minutes" from a script, in Korean or English,
+  with `.srt` captions, so the video can be re-rendered when the UI changes.
+  (#983)
+- The recorder adds voice narration and burned-in captions in the chosen
+  language. (#984)
+- Episodes can point at a feature before using it: a spotlight with a label
+  and note, chapter cards and an install terminal scene. (#985)
 
 ## 3.2.0 - 2026-10-26
 

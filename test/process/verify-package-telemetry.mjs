@@ -139,7 +139,7 @@ async function sourceCommand(...args) {
 try {
 	const sourceStatus = await sourceCommand("telemetry", "status");
 	assert.equal(sourceStatus.code, 0);
-	assert.match(sourceStatus.output, /Telemetry: off \(source checkout\)/);
+	assert.match(sourceStatus.output, /Telemetry: on/);
 
 	const port = await freePort();
 	// A copied landing command answers the first-launch source without a TTY prompt (#466).

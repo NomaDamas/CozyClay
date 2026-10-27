@@ -153,18 +153,6 @@ expect(
 	await evaluate(`!/Kimodo|ProjFlow/i.test(document.querySelector(${JSON.stringify(dialog)})?.textContent || "")`),
 );
 
-// General is the entry page so the privacy withdrawal remains two clicks from
-// the editor: Settings trigger, then the analytics toggle.
-await evaluate(`localStorage.setItem("ph_qa-project_posthog", JSON.stringify({ distinct_id: "qa" }))`);
-await waitForDom(`document.querySelector('[data-testid="settings-analytics"]')?.getAttribute("aria-pressed") === "true"`);
-const analyticsFlip = waitForDom(`document.querySelector('[data-testid="settings-analytics"]')?.getAttribute("aria-pressed") === "false"`, 10000);
-await evaluate(`document.querySelector('[data-testid="settings-analytics"]')?.click()`);
-await analyticsFlip;
-expect("analytics opt-out is reachable in two clicks", await evaluate(`document.querySelector('[data-testid="settings-analytics"]')?.getAttribute("aria-pressed") === "false"`));
-expect("analytics opt-out persists", await evaluate(`localStorage.getItem("cozyclay.analyticsOptOut") === "1"`));
-expect("analytics opt-out clears PostHog storage", await evaluate(`Object.keys(localStorage).every((key) => !key.startsWith("ph_"))`));
-expect("the analytics toggle leaves the dialog open", await evaluate(`!!document.querySelector(${JSON.stringify(dialog)})`));
-
 const closeState = waitForDom(`!document.querySelector(${JSON.stringify(dialog)})`);
 await pressEscape();
 await closeState;

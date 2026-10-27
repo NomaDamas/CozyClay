@@ -8,6 +8,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { objectsFixture } from './objects-fixture.mjs';
 import { motionFixture } from './motion-fixture.mjs';
+import { castFixture, proxyCast } from './cast-fixture.mjs';
+import { appFixture } from './app-fixture.mjs';
 import { commandKeys, scopeConflict, isScopeKey } from '../../src/bus-task-scopes.js';
 import { createBusTasks } from '../../src/bus-tasks.js';
 import { skeletonFor } from '../../src/motion3/rigs/index.js';
@@ -124,6 +126,35 @@ test("a mark and its rollback; undo_edit of the task's newest edit; a reader hea
     assert.ok(heard.warnings.some(w => w.code === 'DEPENDENCY_CHANGED'), JSON.stringify(heard.warnings));
     ok(a('task.finish', { taskId: 'task-a' })); ok(b('task.finish', { taskId: 'task-b' }));
   } finally { f.dispose(); }
+});
+
+for (const { name, reads, notified } of [
+  { name: 'whole character', reads: ['character:actor-a'], notified: true },
+  { name: 'same layer', reads: ['character:actor-a:placement'], notified: true },
+  { name: 'whole character and its layer', reads: ['character:actor-a', 'character:actor-a:placement'], notified: true },
+  { name: 'different layer', reads: ['character:actor-a:take'], notified: false },
+  { name: 'different character', reads: ['character:actor-b'], notified: false },
+]) test(`dependency notice for ${name}`, () => {
+  const f = castFixture(appFixture({ characters: proxyCast() }));
+  const events = [];
+  const stop = f.binding.bus.subscribe(event => { if (event?.type === 'task.dependencyChanged') events.push(event); });
+  const task = taskId => (action, args = {}) => f.run(action, args, 'agent', { taskId, expectedRevision: 0 });
+  try {
+    const writer = task('writer'), reader = task('reader');
+    ok(writer('task.begin', { taskId: 'writer', scope: ['character:actor-a:placement'] }));
+    ok(reader('task.begin', { taskId: 'reader', scope: ['character:actor-b:placement'], reads }));
+    const observedX = f.cast.read().find(row => row.id === 'actor-a').x;
+    ok(writer('character.move', { characterId: 'actor-a', x: 3, z: 0, rot: 0 }));
+    const receipt = ok(reader('character.move', { characterId: 'actor-b', x: observedX + 1.5, z: 0, rot: 0 }));
+    const warnings = receipt.warnings.filter(warning => warning.code === 'DEPENDENCY_CHANGED');
+    assert.equal(warnings.length, notified ? 1 : 0, JSON.stringify(receipt.warnings));
+    assert.deepEqual(events, notified ? [{ type: 'task.dependencyChanged', taskId: 'reader', key: 'character:actor-a:placement', by: 'writer' }] : []);
+    if (notified) assert.match(warnings[0].message, /character:actor-a:placement/);
+    const next = ok(reader('character.move', { characterId: 'actor-b', x: 4.5, z: 0, rot: 0 }));
+    assert.equal(next.warnings.filter(warning => warning.code === 'DEPENDENCY_CHANGED').length, 0, 'the notice is delivered once');
+    ok(writer('task.finish', { taskId: 'writer' }));
+    ok(reader('task.finish', { taskId: 'reader' }));
+  } finally { stop(); f.dispose(); }
 });
 
 test('what a command writes, known before it runs', () => {

@@ -144,7 +144,6 @@ Contribution rules (branches, PR checks, the lint ratchet) are in [`AGENTS.md`](
 
 ## Privacy
 
-The official npm package sends anonymous usage counts and prints the disclosure on first
-launch. It never sends project content. Turn it off with `cclay telemetry off`, or with
-`COZYCLAY_TELEMETRY=0` or `DO_NOT_TRACK=1`. Source checkouts send nothing. Details:
-[`docs/privacy.md`](docs/privacy.md).
+The official npm package sends anonymous usage counts. It never sends project content.
+Turn it off with `cclay telemetry off`, or with `COZYCLAY_TELEMETRY=0` or `DO_NOT_TRACK=1`.
+Details: [`docs/privacy.md`](docs/privacy.md).

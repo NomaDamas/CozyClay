@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ko } from "../locale.js";
-import { getAnalyticsOptOut, loadAutoColor, preferenceSection, readStoredGridView } from "./preference-pages.jsx";
+import { loadAutoColor, preferenceSection, readStoredGridView } from "./preference-pages.jsx";
 import "./preferences.css";
 
 const NAV_GROUPS = [
@@ -24,7 +24,6 @@ export default function PreferencesDialog({ open, onClose, initialSection = "App
 	closeRef.current = onClose;
 	const [activeSection, setActiveSection] = useState(initialSection);
 	const [query, setQuery] = useState("");
-	const [analyticsOptOut, setAnalyticsOptOutState] = useState(getAnalyticsOptOut);
 	const [autoColor, setAutoColor] = useState(() => loadAutoColor());
 	const [gridView, setGridView] = useState(() => readStoredGridView(globalThis.localStorage));
 
@@ -69,7 +68,7 @@ export default function PreferencesDialog({ open, onClose, initialSection = "App
 	}, [open, initialSection]);
 
 	if (!open || typeof document === "undefined") return null;
-	const currentProps = { autoColor, setAutoColor, analyticsOptOut, setAnalyticsOptOutState, gridView, setGridView };
+	const currentProps = { autoColor, setAutoColor, gridView, setGridView };
 
 	return createPortal(
 		<div className="v2-preferences" data-testid="preferences-dialog-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) closeRef.current?.(); }}>

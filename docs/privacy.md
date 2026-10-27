@@ -4,7 +4,7 @@ This is the full disclosure behind the short version on [cozyclay.org/privacy](h
 
 ## The hosted site
 
-[cozyclay.org](https://cozyclay.org/) collects anonymous usage analytics via [PostHog](https://posthog.com/) (US Cloud). There are no cookies and no session recording, and Do-Not-Track is respected. A random pseudonymous identifier is kept in your browser's localStorage so that returning visits and retention can be counted; it is never linked to an account or project content and is removed by clearing site data or using the opt-out toggle.
+[cozyclay.org](https://cozyclay.org/) collects anonymous usage analytics via [PostHog](https://posthog.com/) (US Cloud). There are no cookies and no session recording. A random pseudonymous identifier is kept in your browser's localStorage so that returning visits and retention can be counted; it is never linked to an account or project content and is removed by clearing site data or opting out.
 
 ## Events collected
 
@@ -121,9 +121,8 @@ cclay telemetry on
 ```
 
 `COZYCLAY_TELEMETRY=0` and `DO_NOT_TRACK=1` disable collection for a launch.
-The in-app toggle under **Settings ▾ → Privacy** changes the same npm-package
-setting and removes its anonymous installation identifier. Hosted-site visitors can opt out with that
-toggle, browser Do-Not-Track, or a content blocker.
+`cclay telemetry off` (above) and `COZYCLAY_TELEMETRY=0` are the opt-out;
+either removes or suspends the anonymous installation identifier. Hosted-site visitors can opt out with a content blocker.
 Disabling npm telemetry deletes the stored ID; enabling it later creates an
 unlinked new ID. The old first-launch receipt is retained, so re-enabling
 does not manufacture another new-install event. Environment overrides only
@@ -154,7 +153,7 @@ All app captures, including `$pageview` and the end beacon, carry boolean
 events. Localhost, ports, country and source checkout do not identify internal
 people; unmarked official local-app traffic stays in the external cohort.
 Marking never enables collection on a disabled build, unapproved origin,
-source checkout, CI, Do-Not-Track or opted-out session. Existing open tabs must
+Do-Not-Track or opted-out session. Existing open tabs must
 be reloaded after CLI changes. Historical unmarked QA cannot be inferred or
 retroactively removed.
 

@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Terminal</title>
+<style>
+	html, body { margin: 0; height: 100%; background: #2b2f36; }
+	body { display: flex; align-items: center; justify-content: center; }
+	.window { width: 1240px; height: 700px; border-radius: 12px; overflow: hidden; background: #16181d; box-shadow: 0 30px 80px rgba(0, 0, 0, .5); display: flex; flex-direction: column; }
+	.bar { height: 40px; display: flex; align-items: center; gap: 9px; padding: 0 16px; background: #23262d; color: #9aa3b2; font: 500 15px/1 system-ui, sans-serif; }
+	.bar i { width: 13px; height: 13px; border-radius: 50%; background: #4b5160; }
+	.bar span { flex: 1; text-align: center; margin-right: 60px; }
+	pre { flex: 1; margin: 0; padding: 26px 30px; color: #e5e7eb; font: 23px/1.6 ui-monospace, "DejaVu Sans Mono", "Noto Sans Mono", monospace; white-space: pre-wrap; }
+	.line { min-height: 1.6em; }
+	.prompt { color: #7dd3a7; }
+	.out { color: #b6bfcc; }
+	.caret { display: inline-block; width: .6em; height: 1.1em; vertical-align: -.18em; background: #e5e7eb; animation: blink 1s steps(1) infinite; }
+	@keyframes blink { 50% { opacity: 0; } }
+</style>
+</head>
+<body>
+<div class="window">
+	<div class="bar"><i></i><i></i><i></i><span>Terminal</span></div>
+	<pre id="screen"><div class="line"><span class="prompt">~ $ </span><span class="text"></span></div></pre>
+</div>
+<script>
+	// Played by tools/tutorial/terminal.mjs: events [{ at, kind: "line" | "char" | "enter", text }].
+	// A line prints on a new row (or fills the empty row an Enter left), a char
+	// types on the last row, an Enter opens an empty row. The caret follows.
+	const screen = document.getElementById("screen");
+	const caret = document.createElement("span");
+	caret.className = "caret";
+	const last = () => screen.lastElementChild;
+	const textOf = (line) => line.querySelector(".text");
+	const newLine = (className = "") => {
+		const line = document.createElement("div");
+		line.className = "line";
+		const text = document.createElement("span");
+		text.className = "text " + className;
+		line.append(text);
+		screen.append(line);
+		return line;
+	};
+	const placeCaret = () => last().append(caret);
+	placeCaret();
+	window.__terminal = {
+		play(events) {
+			for (const event of events) setTimeout(() => {
+				if (event.kind === "char") textOf(last()).textContent += event.text;
+				else if (event.kind === "enter") newLine();
+				else {
+					const blank = !last().querySelector(".prompt") && !textOf(last()).textContent;
+					const line = blank ? last() : newLine();
+					textOf(line).classList.add("out");
+					textOf(line).textContent = event.text;
+				}
+				placeCaret();
+			}, event.at);
+		},
+	};
+</script>
+</body>
+</html>

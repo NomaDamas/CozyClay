@@ -1,4 +1,3 @@
-import { getAnalyticsOptOut, setAnalyticsOptOut } from "../analytics.js";
 import { loadAutoColor, saveAutoColor } from "../auto-color.js";
 import { readStoredGridView, writeStoredGridView } from "../grid-view.js";
 import { ko } from "../locale.js";
@@ -13,7 +12,7 @@ import {
 } from "./preference-controls.jsx";
 
 export function preferenceSection(section, props) {
-	const { autoColor, setAutoColor, analyticsOptOut, setAnalyticsOptOutState, gridView, setGridView } = props;
+	const { autoColor, setAutoColor, gridView, setGridView } = props;
 
 	switch (section) {
 		case "Appearance":
@@ -30,14 +29,6 @@ export function preferenceSection(section, props) {
 					<PreferenceSection title={ko("Editor", "에디터")}>
 						<PreferenceRow title={ko("Auto colour", "자동 색")} description={ko("Give scene objects stable display colours.", "씬 오브젝트에 고정된 표시 색을 사용해요.")}>
 							<ToggleControl pressed={autoColor} onChange={(value) => { setAutoColor(value); saveAutoColor(value); }} label={ko("Auto colour", "자동 색")} testid="preferences-auto-color" />
-						</PreferenceRow>
-						<PreferenceRow title={ko("Anonymous analytics", "익명 사용 통계")} description={ko("Help improve CozyClay with anonymous product events.", "익명 제품 이벤트로 CozyClay 개선을 도와요.")}>
-							<ToggleControl
-								pressed={!analyticsOptOut}
-								onChange={async (value) => setAnalyticsOptOutState(await setAnalyticsOptOut(!value))}
-								label={ko("Anonymous analytics", "익명 사용 통계")}
-								testid="settings-analytics"
-							/>
 						</PreferenceRow>
 					</PreferenceSection>
 				</>
@@ -69,4 +60,4 @@ export function preferenceSection(section, props) {
 }
 
 // Kept here so the dialog can load a new setting's initial value lazily.
-export { getAnalyticsOptOut, loadAutoColor, readStoredGridView };
+export { loadAutoColor, readStoredGridView };

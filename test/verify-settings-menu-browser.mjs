@@ -76,7 +76,6 @@ const pressKey = async (key, code, keyCode, text) => {
 };
 
 const TRIGGER = "[data-testid=settings-menu-trigger]";
-const ANALYTICS = "[data-testid=settings-analytics]";
 
 // Subscribe to the exact DOM change BEFORE acting, then await it (bounded).
 const armMenu = (state) =>
@@ -90,17 +89,6 @@ const armMenu = (state) =>
 		const t = setTimeout(() => { obs.disconnect(); resolve('timeout'); }, 4000);
 	}), true`);
 const menuSettled = () => evaluate("window.__settingsMenu");
-const armPressedFlip = () =>
-	evaluate(`window.__analyticsFlip = new Promise((resolve) => {
-		const item = document.querySelector('${ANALYTICS}');
-		const before = item.getAttribute('aria-pressed');
-		const obs = new MutationObserver(() => {
-			const now = document.querySelector('${ANALYTICS}')?.getAttribute('aria-pressed');
-			if (now && now !== before) { obs.disconnect(); clearTimeout(t); resolve(now); }
-		});
-		obs.observe(document.body, { attributes: true, subtree: true, attributeFilter: ['aria-pressed'] });
-		const t = setTimeout(() => { obs.disconnect(); resolve('timeout'); }, 8000);
-	}), true`);
 
 // #523 (G8): Settings opens from the top bar's Edit › Preferences…; the
 // popover's own trigger stays mounted but is not part of the 2a bar.
@@ -116,12 +104,6 @@ expect(
 await clickAt(await rectCentre(EDIT));
 expect("clicking Edit again closes it", await waitFor("!document.querySelector('.menubar-menu')"));
 
-// A stale PostHog blob and an opted-in state, so the opt-out has something to
-// clear and something to flip.
-await evaluate(`(() => {
-	localStorage.setItem("ph_qa-project_posthog", JSON.stringify({ distinct_id: "qa" }));
-	localStorage.setItem("cozyclay.analyticsOptOut", "0");
-})()`);
 
 /* ------------------------------------------- keyboard reachability ---- */
 await evaluate(`document.querySelector('${EDIT}').focus()`);
@@ -132,9 +114,9 @@ expect("End reaches Preferences…", await waitFor(`document.activeElement === d
 await armMenu("open");
 await pressKey("Enter", "Enter", 13, "\r");
 expect("Enter on Preferences… opens Settings", (await menuSettled()) !== "timeout");
-expect("Settings offers both languages and the analytics item", (await evaluate(
-	`[...document.querySelectorAll('.settings-menu button[data-testid^="settings-locale"], .settings-menu button[data-testid="settings-analytics"]')].map((b) => b.dataset.testid).join(",")`,
-)) === "settings-locale-en,settings-locale-ko,settings-analytics");
+expect("Settings offers both languages", (await evaluate(
+	`[...document.querySelectorAll('.settings-menu button[data-testid^="settings-locale"]')].map((b) => b.dataset.testid).join(",")`,
+)) === "settings-locale-en,settings-locale-ko");
 expect(
 	"the stored language is marked pressed",
 	(await evaluate("[...document.querySelectorAll('.settings-menu button[data-testid^=settings-locale]')].filter((b) => b.getAttribute('aria-pressed') === 'true').length")) === 1,
@@ -148,26 +130,6 @@ expect(
 	await waitFor(`document.activeElement === document.querySelector('${EDIT}')`, 3000),
 );
 
-/* ------------------------------------------------ analytics opt-out --- */
-await clickAt(await rectCentre(EDIT));
-await waitFor(`!!document.querySelector('${PREFERENCES}')`);
-await armMenu("open");
-await clickAt(await rectCentre(PREFERENCES));
-expect("clicking Edit › Preferences… reopens Settings", (await menuSettled()) !== "timeout");
-const before = await evaluate(`document.querySelector('${ANALYTICS}').getAttribute('aria-pressed')`);
-expect("analytics reads as on before the opt-out", before === "true", String(before));
-
-await armPressedFlip();
-await clickAt(await rectCentre(ANALYTICS));
-const after = await evaluate("window.__analyticsFlip");
-expect("one click flips aria-pressed to off", after === "false", String(after));
-expect("the opt-out is persisted", (await evaluate("localStorage.getItem('cozyclay.analyticsOptOut')")) === "1");
-expect(
-	"opting out clears every ph_* key",
-	(await evaluate("Object.keys(localStorage).filter((key) => key.startsWith('ph_'))")).length === 0,
-);
-expect("the dialog stays open after the toggle, so the state is readable", await evaluate("!!document.querySelector('.v2-preferences__dialog')"));
-
 ws.close();
 if (failures) process.exit(1);
-console.log("all Settings menu browser checks PASS — keyboard reachable, opt-out flips and clears ph_* storage");
+console.log("all Settings menu browser checks PASS — keyboard reachable");

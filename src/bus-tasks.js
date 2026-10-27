@@ -167,7 +167,7 @@ export function createBusTasks({ ports, emit }) {
 				task.edits.push({ receiptId: recorded.receiptId, values: point.values, keys: point.keys, mark: point.mark });
 				task.affectedIds = [...new Set([...task.affectedIds, ...recorded.affectedIds])];
 				if (recorded.undo?.historyEntryId) entryTask.set(recorded.undo.historyEntryId, task.taskId);
-				for (const other of open.values()) for (const key of point.keys) if (other !== task && other.reads.has(key)) {
+				for (const other of open.values()) for (const key of point.keys) if (other !== task && [...other.reads].some(read => keysOverlap(read, key))) {
 					other.notices.push({ code: 'DEPENDENCY_CHANGED', message: `${key}, which this task reads, was changed by task ${task.taskId}.` });
 					emit?.({ type: 'task.dependencyChanged', taskId: other.taskId, key, by: task.taskId });
 				}

@@ -26,3 +26,6 @@ mcp/node_modules/
 
 # agent scratch
 .omo/
+
+# Recorded or synthesized tutorial narration stays local
+tools/tutorial/voice/
