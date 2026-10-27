@@ -42,6 +42,16 @@ Agent
   that character's layers, so a placement built on an old position is
   flagged on its next step. (#981, #982)
 
+Sculpt
+
+- **Multi-view compare.** The blueprint sheet is cropped into front, side,
+  back and top views, each with its own mask; a view whose mask fails is
+  dropped with a notice. `sculpt.compare` takes `views: [{ yaw, reference,
+  weight }]` and weighs front, side and back 0.6, 0.25 and 0.15, giving 0 to
+  a view whose proportions differ from the front by more than 35%. Start
+  compares against the cropped side and back next to the front reference.
+  **Generate blueprint** shows only with a ChatGPT sign-in. (#970, #995)
+
 Analytics
 
 - Hosted builds report the version they run. (#989)
@@ -54,6 +64,14 @@ Analytics
   read. The privacy page lists the `tool_name` property. (#994)
 - Reference exports made by QA scripts no longer count as user export
   attempts. (#993)
+- Usage analytics no longer switch themselves off in source checkouts, forks
+  or CI (a `CI` variable alone does not disable them), and the browser's
+  Do-Not-Track setting is no longer read. Turn them off with `cclay telemetry
+  off`, `COZYCLAY_TELEMETRY=0` or `DO_NOT_TRACK=1`; the analytics toggle in
+  Preferences and the launch notice are gone. An unreadable state file now
+  reads as the defaults, with analytics on, and a Studio served on a local
+  network address counts as local. The star question is asked once per
+  version when the Studio starts, instead of on exit. (#988)
 
 Tutorials
 
