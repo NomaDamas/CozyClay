@@ -126,5 +126,10 @@ let part = "";
 try { keyObject(cupHeld, motionScene(CUP_OBJECTS), { objectId: "cube-6", frame: 50, pos: [0, 1, 0], rot: [0, 0, 0, 1] }); } catch (error) { part = error.message; }
 expect("keyObject: a part of a carried group names the group to key", part === 'MOTION_SPEC_INVALID: "cube-6" moves with "empty-2" (spec.objects.empty-2); key "empty-2" with its root pose', part);
 
+// A hybrid project (scenes domain castStyle) gets the capsule hint on that collision; a rig project does not.
+const styled = style => createStudioAppActions({ ...ports, storeDomain: name => (name === "motion" ? owner : name === "scenes" ? { metadata: () => ({ castStyle: style }) } : null) });
+const hinted = style => (r => r?.output ?? r)(styled(style).run("motion.compile", { characterId: "char-1", spec: long, install: false }));
+expect("a hybrid project's colliding take carries the capsule hint", hinted("hybrid").hint === "hybrid project: propose capsule figures to the user before more repairs", JSON.stringify(hinted("hybrid").qa.groups.slice(0, 2)));
+expect("a rig project's colliding take carries no hint", hinted("rig").hint === undefined && bad.hint === undefined);
 if (failures) { console.error(`${failures} motion3 command check(s) failed`); process.exit(1); }
 console.log("motion3 commands: all checks passed");
