@@ -42,7 +42,7 @@ Agent
   that character's layers, so a placement built on an old position is
   flagged on its next step. (#981, #982)
 - Task mode in the agent panel is on by default. Turning it off is
-  remembered in this browser.
+  remembered in this browser. (#998)
 
 Analytics
 
