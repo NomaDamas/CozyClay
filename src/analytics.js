@@ -1,17 +1,16 @@
+import { appVersion } from "./app-version.js";
 import { FIRST_EDIT_KINDS, FIRST_EDIT_VERSION } from "./semantic-edit.js";
 import { ERROR_TYPE_VALUES, EXPORT_FAILURE_CODES, exportPropAllowed } from "./analytics-values.js";
 import { bump as bumpFriction, observeLongTasks, snapshot as frictionSnapshot } from "./analytics-friction.js";
 import { STRICT_EVENT_KEYS, strictPropValidator } from "./analytics-strict.js";
-export const MCP_TOOL_CATEGORIES = Object.freeze([
-	"read",
-	"camera",
-	"scene_write",
-	"prompt_authoring",
-	"frame_capture",
-	"motion_generate",
-	"motion_apply",
-	"project_io",
-	"other",
+export const MCP_TOOL_CATEGORIES = Object.freeze(["read", "camera", "scene_write", "prompt_authoring", "frame_capture", "motion_generate", "motion_apply", "project_io", "other"]);
+// The live MCP tools (mcp/tool-handlers.mjs liveWorkspaceTools) plus "other".
+// Any other name is sent as "other"; test/verify-analytics.mjs holds the two lists equal.
+export const MCP_TOOL_NAMES = Object.freeze([
+	"describe_scene", "describe_shot", "render_prompt", "mark_camera_move", "describe_camera_move", "save_project", "set_camera",
+	"frame_shot", "add_character", "place_character", "remove_character", "focus_character", "place_object", "import_mesh",
+	"sculpt_object", "compare_sculpt", "group_objects", "update_object", "remove_object", "apply_batch", "add_scene",
+	"switch_scene", "open_project", "capture_frame", "studio_commands", "studio_run", "other",
 ]);
 export const AGENT_TOOL_CATEGORIES = Object.freeze([
 	"workflow_read",
@@ -52,8 +51,8 @@ export const EXECUTION_TELEMETRY_PROPERTY_KEYS = Object.freeze({
 	"agent:turn_failed": ["turn_id", "duration_bucket", "failure_code"],
 	"agent:turn_cancelled": ["turn_id", "duration_bucket", "failure_code"],
 	"agent:result_applied": ["turn_id"],
-	"mcp:tool_requested": ["tool_category", "request_id"],
-	"mcp:tool_executed": ["tool_category", "outcome", "duration_bucket", "request_id"],
+	"mcp:tool_requested": ["tool_category", "tool_name", "request_id"],
+	"mcp:tool_executed": ["tool_category", "tool_name", "outcome", "duration_bucket", "request_id"],
 	"mcp:result_applied": ["request_id"],
 });
 
@@ -62,6 +61,7 @@ export const EXECUTION_TELEMETRY_VALUES = Object.freeze({
 	node_count_bucket: new Set(["0", "1-3", "4-10", "gte11"]),
 	duration_bucket: new Set(["lt1s", "1-3s", "3-10s", "10-30s", "gte30s"]),
 	tool_category: new Set([...MCP_TOOL_CATEGORIES, ...AGENT_TOOL_CATEGORIES]),
+	tool_name: new Set(MCP_TOOL_NAMES),
 	outcome: new Set(["succeeded", "failed", "uncertain", "cancelled"]),
 });
 
@@ -282,6 +282,8 @@ export function sanitizeProps(event, props) {
 			else if (key === "tool_category") {
 				const categories = event.startsWith("agent:") ? AGENT_TOOL_CATEGORIES : MCP_TOOL_CATEGORIES;
 				if (!categories.includes(props[key])) continue;
+			} else if (key === "tool_name") {
+				if (!event.startsWith("mcp:") || !EXECUTION_TELEMETRY_VALUES.tool_name.has(props[key])) continue;
 			} else if (key === "outcome") {
 				const outcomes = event === "mcp:tool_executed" ? ["succeeded", "failed", "uncertain", "cancelled"] : ["succeeded", "failed", "cancelled"];
 				if (!outcomes.includes(props[key])) continue;
@@ -715,7 +717,8 @@ export function resolveAnalyticsRuntime({
 		distribution: "hosted",
 		apiKey: env.VITE_POSTHOG_KEY,
 		apiHost: env.VITE_POSTHOG_HOST || "https://us.i.posthog.com",
-		appVersion: env.VITE_APP_VERSION || null,
+		// The deploy sets no VITE_APP_VERSION, so the bundled package version stands in.
+		appVersion: env.VITE_APP_VERSION || appVersion(),
 		installationId: null,
 		firstLaunch: false,
 		firstLaunchHeardFrom: null,

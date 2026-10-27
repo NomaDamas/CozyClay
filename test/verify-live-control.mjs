@@ -120,9 +120,19 @@ executionSocket.receive({
 	name: "telemetry",
 	payload: { event: "mcp:tool_executed", props: { request_id: requestId, tool_category: "private", outcome: "succeeded", duration_bucket: "lt1s" } },
 });
+// A current hub names the tool; an out-of-list name is dropped, not relayed.
+for (const [id, tool_name] of [["b".repeat(32), "describe_scene"], ["c".repeat(32), "private_unlisted_tool"]]) {
+	executionSocket.receive({
+		type: "event",
+		name: "telemetry",
+		payload: { event: "mcp:tool_requested", props: { request_id: id, tool_category: "read", tool_name } },
+	});
+}
 assert.deepEqual(executionEvents, [
 	{ event: "mcp:tool_executed", props: { request_id: requestId, tool_category: "read", outcome: "succeeded", duration_bucket: "lt1s" } },
 	{ event: "mcp:result_applied", props: { request_id: requestId } },
+	{ event: "mcp:tool_requested", props: { request_id: "b".repeat(32), tool_category: "read", tool_name: "describe_scene" } },
+	{ event: "mcp:tool_requested", props: { request_id: "c".repeat(32), tool_category: "read" } },
 ]);
 executionClient.close();
 

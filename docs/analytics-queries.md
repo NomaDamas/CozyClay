@@ -13,6 +13,7 @@ handoff. A handoff does not prove that the operating system saved the file.
 | `export:attempt_failed` | Started properties plus `duration_bucket`, `failure_code`, `stage`, `progress` |
 | `export:attempt_cancelled` | Started properties plus `duration_bucket`, `failure_code=aborted`, `stage`, `progress` |
 | `export:saved` | `method`, `reason` (one per saved file; not part of an attempt) |
+| `export:menu_opened` | `surface`, `mode`, `webcodecs`, `shots` (one per Export flyout open; not part of an attempt) |
 
 - `attempt_id`: fresh random 32-character lowercase hexadecimal value, held only
   by that attempt. It is not persisted or derived from an installation, filename,
@@ -63,6 +64,19 @@ file, without a file name or path:
 
 It is not an attempt outcome: do not count it as a success or join it into the
 lifecycle numerator. A multi-file export emits several.
+
+`export:menu_opened` fires once each time the Export flyout opens, by click or
+keyboard; reopening counts again and there is no session cap. `surface` is
+`studio` or `embed`, `mode` is `animation` or `storyboard`, `shots` the shot
+count bucket (panels in a storyboard; `0`, `1-3`, `4-10`, `gte11`), and
+`webcodecs` is `true` when the window has both `VideoEncoder` and `VideoFrame`.
+That is a synchronous presence check, not `isConfigSupported`, so `true` does
+not promise an MP4 export will encode. For menu -> attempt conversion, join
+`export:menu_opened` to `export:attempt_started` by `distinct_id` and
+`$session_id`, and split by `webcodecs`: a low rate with `webcodecs = false`
+reads as "could not use it", a low rate after opening as "did not choose it",
+and no `export:menu_opened` at all as "did not find it". Rows before this
+event existed have no menu opens; do not read them as zero.
 
 `track()` drops any event name outside the allowlist (`EVENT_PROPERTIES` in
 `src/analytics.js`). Before the analytics hygiene release, unknown names were
@@ -867,8 +881,8 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
 | `agent:turn_succeeded` | `turn_id`, `duration_bucket` |
 | `agent:turn_failed`, `agent:turn_cancelled` | `turn_id`, `duration_bucket`, `failure_code` |
 | `agent:result_applied` | `turn_id` |
-| `mcp:tool_requested` | `request_id`, `tool_category` |
-| `mcp:tool_executed` | `request_id`, `tool_category`, `outcome`, `duration_bucket` |
+| `mcp:tool_requested` | `request_id`, `tool_category`, `tool_name` |
+| `mcp:tool_executed` | `request_id`, `tool_category`, `tool_name`, `outcome`, `duration_bucket` |
 | `mcp:result_applied` | `request_id` |
 
 - IDs are fresh 128-bit secure random values, encoded as 32 lowercase hex
@@ -907,6 +921,20 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
   `frame_capture`, `image_generate`, `scene_write`, `other`.
 - MCP `tool_category`: `read`, `camera`, `scene_write`, `prompt_authoring`,
   `frame_capture`, `motion_generate`, `motion_apply`, `project_io`, `other`.
+  `studio_commands` counts as `read`; `studio_run` stays `other` because its
+  kind depends on its action, so read it by `tool_name`.
+- MCP `tool_name` (on `mcp:tool_requested` and `mcp:tool_executed` only): the
+  live tool that ran, one of `describe_scene`, `describe_shot`,
+  `render_prompt`, `mark_camera_move`, `describe_camera_move`, `save_project`,
+  `set_camera`, `frame_shot`, `add_character`, `place_character`,
+  `remove_character`, `focus_character`, `place_object`, `import_mesh`,
+  `sculpt_object`, `compare_sculpt`, `group_objects`, `update_object`,
+  `remove_object`, `apply_batch`, `add_scene`, `switch_scene`, `open_project`,
+  `capture_frame`, `studio_commands`, `studio_run`, or `other` for any name
+  outside that list. Source: `MCP_TOOL_NAMES` in `src/analytics.js`, held equal
+  to `liveWorkspaceTools` in `mcp/tool-handlers.mjs` by
+  `test/verify-analytics.mjs`. Rows sent before this change (and by older MCP
+  servers) have no `tool_name`; before it, `studio_commands` counted as `other`.
 - Agent tool `outcome`: `succeeded`, `failed`, `cancelled`. MCP also permits
   `uncertain` when editor acknowledgement/verification cannot establish an
   outcome. Uncertainty is not an ordinary failure or confirmed application.
@@ -1035,7 +1063,9 @@ execute several tools in the same category. Browser wire deduplication suppresse
 repeat frames without collapsing separate tool invocations. Tool counts are not
 Agent turn demand. For MCP category reliability, include requested `tool_category`
 in `per_execution`; retain the request-ID cohort so missing terminal frames are
-not silently excluded from the denominator.
+not silently excluded from the denominator. For per-tool reliability and the
+applied ratio per tool, group the same cohort by requested `tool_name`; rows
+without `tool_name` predate it.
 
 This query applies #270's type-exact internal-QA exclusion to every source event.
 Do not infer traffic or channel use from prompts, responses, arguments, labels,
@@ -1262,6 +1292,9 @@ Exclude `internal_qa = true` with
   about 1 Hz, so a run left playing in the background reads as late.
 - `app:session_started` is sent by npm installs only. Hosted sessions start
   with `$pageview`; use it in place of `app:session_started` there.
+- Hosted rows carry `app_version` from the deployed package version as of
+  the change that added the fallback (the deploy sets no `VITE_APP_VERSION`).
+  Earlier hosted rows have no `app_version`.
 
 ## 1.1 Step funnel (update: `studio:ready`)
 
