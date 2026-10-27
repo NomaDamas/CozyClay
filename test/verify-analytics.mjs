@@ -16,7 +16,9 @@ import * as shortcuts from "../src/shortcut-friction.js";
 import * as search from "../src/search-friction.js";
 import * as thrash from "../src/thrash-friction.js";
 import { createAppContext } from "../src/app-context.js";
+import { exportMenuOpenedProps } from "../src/export-menu-telemetry.js";
 import { readFileSync } from "node:fs";
+import packageInfo from "../package.json" with { type: "json" };
 import {
 	bucketMs,
 	scrubEventUrls,
@@ -164,7 +166,7 @@ assert.deepEqual(
 		distribution: "hosted",
 		apiKey: "phc_hosted",
 		apiHost: "https://t.cozyclay.org",
-		appVersion: null,
+		appVersion: packageInfo.version,
 		installationId: null,
 		firstLaunch: false,
 		firstLaunchHeardFrom: null,
@@ -715,6 +717,25 @@ console.log("PASS agent:prompt_sent: device-side words, Jaccard grades, length b
 	assert.doesNotThrow(() => postTurn.closePostTurnWindow(), "a failing transport cannot break editing");
 	console.log("PASS bus friction schemas, and the post-turn window: 120 s, next turn, closed groups only");
 }
+// export:menu_opened: surface, mode, a synchronous WebCodecs check and the shot
+// (storyboard: panel) count bucket; nothing else leaves.
+{
+	const encoder = { VideoEncoder: class {}, VideoFrame: class {} };
+	const shots = [{ kind: "clip" }, { kind: "still" }, { kind: "still" }, { kind: "clip" }, { kind: "clip" }];
+	assert.deepEqual(exportMenuOpenedProps({ embedMode: false, previsMode: "animation", shots }, encoder),
+		{ surface: "studio", mode: "animation", webcodecs: true, shots: "4-10" });
+	assert.deepEqual(exportMenuOpenedProps({ embedMode: true, previsMode: "storyboard", shots }, {}),
+		{ surface: "embed", mode: "storyboard", webcodecs: false, shots: "1-3" }, "storyboard counts panels; no VideoEncoder reads false");
+	assert.deepEqual(exportMenuOpenedProps({ previsMode: undefined, shots: undefined }, { VideoEncoder: class {} }),
+		{ surface: "studio", mode: "animation", webcodecs: false, shots: "0" }, "VideoEncoder without VideoFrame is not WebCodecs");
+	const props = exportMenuOpenedProps({ embedMode: false, previsMode: "animation", shots }, encoder);
+	assert.deepEqual(sanitizeProps("export:menu_opened", { ...props, shot_id: "s1", name: "Private" }), props, "only the closed properties pass");
+	assert.deepEqual(STRICT_EVENT_KEYS["export:menu_opened"], ["surface", "mode", "webcodecs", "shots"]);
+	for (const [key, value] of [["surface", "workflow"], ["mode", "film"], ["webcodecs", "true"], ["shots", 5], ["shots", "2"]]) {
+		assert.deepEqual(sanitizeProps("export:menu_opened", { [key]: value }), {}, `export:menu_opened rejects ${key}=${value}`);
+	}
+	console.log("PASS export:menu_opened closed props: surface, mode, webcodecs, shots bucket");
+}
 // P2-b: shortcut:ignored, shortcut:unbound, help:shortcuts_opened, search:no_results,
 // nav:thrash and camera:thrash. Closed values only, input elements and IME never
 // read, each detector's window, threshold, cooldown and cap.
@@ -914,8 +935,11 @@ for (const row of privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)) {
 	}
 }
 assert.deepEqual([...exportDisclosure.keys()].sort(), [
-	...lifecycleEvents, "export:keyframe_pack", "export:video_succeeded", "export:blocking_frame_succeeded", "export:saved",
+	...lifecycleEvents, "export:keyframe_pack", "export:video_succeeded", "export:blocking_frame_succeeded", "export:saved", "export:menu_opened",
 ].sort(), "the disclosure event tokens match the export contract");
+for (const property of STRICT_EVENT_KEYS["export:menu_opened"]) {
+	assert.ok(exportDisclosure.get("export:menu_opened").has(property), `export:menu_opened discloses ${property}`);
+}
 for (const event of [...lifecycleEvents, "export:keyframe_pack"]) {
 	for (const property of Object.keys(sanitizeProps(event, allProps))) {
 		assert.ok(exportDisclosure.get(event).has(property), `${event} discloses schema token ${property}`);
@@ -1139,6 +1163,14 @@ try {
 			assert.equal(run.options.bootstrap?.isIdentifiedID, distribution === "npm" ? false : undefined);
 			cohortFixtures.push(...run.records);
 		}
+	}
+	{
+		const run = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org", env: { PROD: true, VITE_POSTHOG_KEY: "test" } });
+		run.module.track("scene:loaded", { scene_source: "library" });
+		const [ended] = await run.unload();
+		assert.equal(run.records.at(-1).properties.app_version, packageInfo.version, "a hosted build without VITE_APP_VERSION registers the package version");
+		assert.equal(ended.properties.app_version, packageInfo.version, "the hosted beacon carries the same app_version");
+		console.log("PASS hosted builds fall back to the package version for app_version");
 	}
 	{
 		const run = await runtimeFixture({ sessionId: "private session" });

@@ -26,6 +26,7 @@ import { normalizeCompileArgs } from "../motion3/lenient.js";
 import { createCompileRunner } from "./motion3-compile.js";
 import { createRepairWatch } from "../motion3/repair-watch.js";
 import { peopleOf } from "../motion3/people.js";
+import { hybridCapsuleHint } from "../motion3/hybrid-hint.js";
 
 const TIMELINE_FPS = 24;
 const id = { type: "string", minLength: 1 };
@@ -181,7 +182,8 @@ export function register(registry, ports) {
 			if (best) timing = put(character, best.take, context) ?? timing;
 			const self = best?.specId === own, how = kept ? "; already installed, unchanged" : self ? "; installed as the best take so far"
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(stuck ? { stuck } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}) });
+			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });

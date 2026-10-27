@@ -6,9 +6,11 @@ import { STUDIO_SYSTEM_PROMPT as prompt, STUDIO_SYSTEM_PROMPT_STORYBOARD as stor
 import { studioSystemPrompt } from "../bin/agent/studio-motion-reference.mjs";
 import { SUPERVISOR_RUBRIC } from "../bin/agent/supervisor.mjs";
 import { MAIN_SYSTEM_PROMPT } from "../bin/agent/main-prompt.mjs";
+import { SKILL_NAMES } from "../src/motion3/skills/index.js";
+import { HYBRID_CAPSULE_HINT, HYBRID_HARD_KINDS, hybridCapsuleHint } from "../src/motion3/hybrid-hint.js";
 
 const PROXY_SENTENCE = "so use only placement commands on it.";
-const CAST_HEAD = "Cast style is context scene.castStyle. Never ask which body to use: the project already chose.";
+const CAST_HEAD = "Cast style is context scene.castStyle. In a rig or capsule project never ask which body to use: the project already chose.";
 const FALLBACK = "If scene.castStyle is absent, treat the project as hybrid.";
 const PROPOSAL = "Proposal: \"This shot needs <what>. The rig path would need <cost: N compiles, still failing <group>>. Use capsule figures for this shot instead? (yes = capsules, no = keep the rig)\"";
 
@@ -17,12 +19,18 @@ test("the animation prompt states one rule per cast style", () => {
 	assert.equal(prompt.split(FALLBACK).length, 2, "the fallback is stated once");
 	assert.match(prompt, /\n- rig: cast only X Bot or Y Bot \(model y-bot-tpose or x-bot-tpose\)\. Never add a proxy-figure\./);
 	assert.match(prompt, /\n- capsule: cast only capsule figures \(model "proxy-figure", posture stand, sit or lie\)\. [^\n]*do not call motion, pose or IK actions\./);
-	assert.match(prompt, /\n- hybrid: use rigs by default\. Judge the shot before and after compiling\./);
-	for (const signal of ["more than two hand or prop interactions outside the skill list", "three or more rigs touch or pass props", "scale is not 1",
-		"output.stuck and qa.ok false", "LOAD, COLLIDE, BODY, SELF or PERSON group stays at the top severity",
-		"do not change the scene: end the turn with the proposal below, in the user's language", "the user's next message is the answer",
-		"add the capsule figures as NEW characters (never convert a rig)", "hide a rig only if the user agrees, and say that hiding applies to every shot", "Ask once per shot."])
+	assert.match(prompt, /\n- hybrid: the cast gate decides, before any rig work\. Before you add, move or compile the first rig for a request, check its moves\./);
+	assert.doesNotMatch(prompt, /(^|\. )Never ask which body to use/, "hybrid projects are not told never to ask");
+	for (const signal of ["If a move is not one of the skills", "hands or feet must touch a vehicle, furniture or a prop in a way no skill covers (climbing onto a car, striking with a held bat",
+		"two or more rigs touch or pass something", "scale is not 1", "change nothing in the scene, end the turn with the proposal below in the user's language, and wait",
+		"After a compile whose qa.ok is false and whose output carries stuck or hint, or leaves a LOAD, COLLIDE, BODY, SELF or PERSON group: stop there, do not repair, recompile or install again",
+		"A stuck output whose take passes QA is no reason to ask.",
+		"The user's next message is the answer.", "add the capsule figures as NEW characters (model proxy-figure; never convert a rig)",
+		"hide a rig only if the user agrees, and say that hiding applies to every shot", "On no, use the rig and do not ask again for that shot.", "Ask once per shot."])
 		assert.ok(prompt.includes(signal), signal);
+	const gate = prompt.slice(prompt.indexOf("- hybrid: the cast gate"), prompt.indexOf("Proposal: "));
+	for (const skill of SKILL_NAMES) assert.ok(gate.includes(skill), `the gate names the skill ${skill}`);
+	assert.match(prompt, /\n1\. Read the request into beats:[^\n]*In a hybrid project run the cast gate \(Cast style, hybrid\) now, before step 2 places anyone\./, "the procedure runs the gate first");
 	assert.ok(prompt.includes(`\n${PROPOSAL}\n`));
 });
 
@@ -45,4 +53,17 @@ test("the storyboard prompt, supervisor rubric and coordinator read the cast sty
 	assert.doesNotMatch(storyboard, /- hybrid:/);
 	assert.match(SUPERVISOR_RUBRIC, /In a hybrid project \(castStyle hybrid, or no castStyle given\), capsule figures the user approved in place of rigs for a shot \(previousExchange holds the proposal the request answers\) are not a coverage miss\./);
 	assert.match(MAIN_SYSTEM_PROMPT, /Carry the project's cast style \(context scene\.castStyle: rig, capsule or hybrid\)/);
+});
+
+test("motion.compile hints a hybrid project to propose capsules when the rig take is stuck or left a hard group", () => {
+	const failing = kind => ({ ok: false, groups: [{ kind: "GOAL" }, { kind }, { kind: "LOAD" }] });
+	assert.equal(hybridCapsuleHint("hybrid", { stuck: "spec-1 stopped paying", qa: failing("LIMIT") }), HYBRID_CAPSULE_HINT, "stuck in hybrid");
+	for (const kind of HYBRID_HARD_KINDS) assert.equal(hybridCapsuleHint("hybrid", { qa: failing(kind) }), HYBRID_CAPSULE_HINT, `top ${kind} in hybrid`);
+	assert.equal(hybridCapsuleHint("hybrid", { qa: failing("LIMIT") }), null, "a soft top group alone does not hint");
+	assert.equal(hybridCapsuleHint("hybrid", { stuck: "x", qa: { ok: true, groups: [] } }), null, "a clean take does not hint");
+	// The repair watch's polish note: another variant after a passing take is stuck, and passes QA too.
+	assert.equal(hybridCapsuleHint("hybrid", { stuck: "spec-a already passed QA: stop unless the user asked for a specific change.", qa: { ok: true, groups: [{ kind: "COLLIDE" }] } }), null, "a stuck output whose take passes QA gets no hint");
+	assert.equal(hybridCapsuleHint("hybrid", { stuck: "x", qa: { groups: [{ kind: "COLLIDE" }] } }), null, "no hint without a failing QA verdict");
+	for (const style of ["rig", "capsule", undefined]) assert.equal(hybridCapsuleHint(style, { stuck: "x", qa: failing("COLLIDE") }), null, `no hint for ${style}`);
+	assert.ok(prompt.includes("qa.ok is false and whose output carries stuck or hint"), "the prompt tells the agent what the hint means, on a failing take only");
 });

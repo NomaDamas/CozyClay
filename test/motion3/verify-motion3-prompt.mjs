@@ -21,7 +21,9 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +168 for the repair loop (patch by frame or name after the first compile, obey output.stuck): +170
 // +1452 for the cast styles (scene.castStyle rig, capsule, hybrid and the capsule proposal): +1453
 // +55 for the cast-style fallback (an absent scene.castStyle is hybrid): +55
-check("the whole prompt is at most 14,298 characters", () => assert.ok(prompt.length <= 14298, `${prompt.length}`));
+// +558 for the hybrid cast gate (skills, contacts and rigs decide before any rig work; stuck or hint stops repairs): +558
+// +80 for the gate's failing-QA guard (a stuck output whose take passes QA is no reason to ask): +80
+check("the whole prompt is at most 14,936 characters", () => assert.ok(prompt.length <= 14936, `${prompt.length}`));
 check("the motion part is at most 2,690 characters", () => {
 	assert.ok(motion.length > 0 && motion.length <= 2690, `${motion.length}`);
 });

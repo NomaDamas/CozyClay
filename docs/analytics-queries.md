@@ -13,6 +13,7 @@ handoff. A handoff does not prove that the operating system saved the file.
 | `export:attempt_failed` | Started properties plus `duration_bucket`, `failure_code`, `stage`, `progress` |
 | `export:attempt_cancelled` | Started properties plus `duration_bucket`, `failure_code=aborted`, `stage`, `progress` |
 | `export:saved` | `method`, `reason` (one per saved file; not part of an attempt) |
+| `export:menu_opened` | `surface`, `mode`, `webcodecs`, `shots` (one per Export flyout open; not part of an attempt) |
 
 - `attempt_id`: fresh random 32-character lowercase hexadecimal value, held only
   by that attempt. It is not persisted or derived from an installation, filename,
@@ -63,6 +64,19 @@ file, without a file name or path:
 
 It is not an attempt outcome: do not count it as a success or join it into the
 lifecycle numerator. A multi-file export emits several.
+
+`export:menu_opened` fires once each time the Export flyout opens, by click or
+keyboard; reopening counts again and there is no session cap. `surface` is
+`studio` or `embed`, `mode` is `animation` or `storyboard`, `shots` the shot
+count bucket (panels in a storyboard; `0`, `1-3`, `4-10`, `gte11`), and
+`webcodecs` is `true` when the window has both `VideoEncoder` and `VideoFrame`.
+That is a synchronous presence check, not `isConfigSupported`, so `true` does
+not promise an MP4 export will encode. For menu -> attempt conversion, join
+`export:menu_opened` to `export:attempt_started` by `distinct_id` and
+`$session_id`, and split by `webcodecs`: a low rate with `webcodecs = false`
+reads as "could not use it", a low rate after opening as "did not choose it",
+and no `export:menu_opened` at all as "did not find it". Rows before this
+event existed have no menu opens; do not read them as zero.
 
 `track()` drops any event name outside the allowlist (`EVENT_PROPERTIES` in
 `src/analytics.js`). Before the analytics hygiene release, unknown names were
@@ -1275,6 +1289,9 @@ Exclude `internal_qa = true` with
   about 1 Hz, so a run left playing in the background reads as late.
 - `app:session_started` is sent by npm installs only. Hosted sessions start
   with `$pageview`; use it in place of `app:session_started` there.
+- Hosted rows carry `app_version` from the deployed package version as of
+  the change that added the fallback (the deploy sets no `VITE_APP_VERSION`).
+  Earlier hosted rows have no `app_version`.
 
 ## 1.1 Step funnel (update: `studio:ready`)
 
