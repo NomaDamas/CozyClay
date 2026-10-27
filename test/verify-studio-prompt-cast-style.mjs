@@ -23,7 +23,8 @@ test("the animation prompt states one rule per cast style", () => {
 	assert.doesNotMatch(prompt, /(^|\. )Never ask which body to use/, "hybrid projects are not told never to ask");
 	for (const signal of ["If a move is not one of the skills", "hands or feet must touch a vehicle, furniture or a prop in a way no skill covers (climbing onto a car, striking with a held bat",
 		"two or more rigs touch or pass something", "scale is not 1", "change nothing in the scene, end the turn with the proposal below in the user's language, and wait",
-		"After any compile whose output carries stuck or hint, or leaves a LOAD, COLLIDE, BODY, SELF or PERSON group: stop there, do not repair, recompile or install again",
+		"After a compile whose qa.ok is false and whose output carries stuck or hint, or leaves a LOAD, COLLIDE, BODY, SELF or PERSON group: stop there, do not repair, recompile or install again",
+		"A stuck output whose take passes QA is no reason to ask.",
 		"The user's next message is the answer.", "add the capsule figures as NEW characters (model proxy-figure; never convert a rig)",
 		"hide a rig only if the user agrees, and say that hiding applies to every shot", "On no, use the rig and do not ask again for that shot.", "Ask once per shot."])
 		assert.ok(prompt.includes(signal), signal);
@@ -60,6 +61,9 @@ test("motion.compile hints a hybrid project to propose capsules when the rig tak
 	for (const kind of HYBRID_HARD_KINDS) assert.equal(hybridCapsuleHint("hybrid", { qa: failing(kind) }), HYBRID_CAPSULE_HINT, `top ${kind} in hybrid`);
 	assert.equal(hybridCapsuleHint("hybrid", { qa: failing("LIMIT") }), null, "a soft top group alone does not hint");
 	assert.equal(hybridCapsuleHint("hybrid", { stuck: "x", qa: { ok: true, groups: [] } }), null, "a clean take does not hint");
+	// The repair watch's polish note: another variant after a passing take is stuck, and passes QA too.
+	assert.equal(hybridCapsuleHint("hybrid", { stuck: "spec-a already passed QA: stop unless the user asked for a specific change.", qa: { ok: true, groups: [{ kind: "COLLIDE" }] } }), null, "a stuck output whose take passes QA gets no hint");
+	assert.equal(hybridCapsuleHint("hybrid", { stuck: "x", qa: { groups: [{ kind: "COLLIDE" }] } }), null, "no hint without a failing QA verdict");
 	for (const style of ["rig", "capsule", undefined]) assert.equal(hybridCapsuleHint(style, { stuck: "x", qa: failing("COLLIDE") }), null, `no hint for ${style}`);
-	assert.ok(prompt.includes("output carries stuck or hint"), "the prompt tells the agent what the hint means");
+	assert.ok(prompt.includes("qa.ok is false and whose output carries stuck or hint"), "the prompt tells the agent what the hint means, on a failing take only");
 });
