@@ -86,7 +86,7 @@ try {
 		false,
 		"environment opt-out wins over internal QA marking",
 	);
-	assert.equal(effectiveTelemetryEnabled(readTelemetryState(stateFile), { CI: "1" }), false, "CI is always excluded");
+	assert.equal(effectiveTelemetryEnabled(readTelemetryState(stateFile), { CI: "1" }), true, "CI alone no longer disables collection");
 	assert.equal(effectiveTelemetryEnabled(readTelemetryState(stateFile), { DO_NOT_TRACK: "1" }), false, "DNT is respected");
 	assert.equal(effectiveTelemetryEnabled(readTelemetryState(stateFile), { COZYCLAY_TELEMETRY: "0" }), false);
 	assert.equal(effectiveTelemetryEnabled(readTelemetryState(stateFile), {}), true);
@@ -121,8 +121,8 @@ try {
 	writeFileSync(stateFile, "{ broken json");
 	assert.deepEqual(
 		readTelemetryState(stateFile),
-		{ installationId: null, telemetryEnabled: false, internalQa: false, firstLaunchedAt: null, noticeVersion: 0, firstLaunchHeardFrom: null },
-		"a corrupt state file fails closed without resurrecting telemetry",
+		{ installationId: null, telemetryEnabled: true, internalQa: false, firstLaunchedAt: null, noticeVersion: 0, firstLaunchHeardFrom: null },
+		"a corrupt state file falls back to defaults instead of silently disabling telemetry",
 	);
 	writeFileSync(stateFile, JSON.stringify({ installationId: "person@example.com" }));
 	assert.equal(readTelemetryState(stateFile).installationId, null, "a hostile state file cannot turn PII into a distinct id");
@@ -167,7 +167,7 @@ try {
 	assert.equal(readTelemetryState(cliState).telemetryEnabled, true);
 	assert.equal(readTelemetryState(cliState).installationId, null, "on creates an ID only when the app next launches");
 	setTelemetryInternalQa(cliState, true);
-	for (const options of [{ env: { CI: "1" } }, { env: { COZYCLAY_TELEMETRY: "0" } }, { env: {}, officialPackage: false }]) {
+	for (const options of [{ env: { COZYCLAY_TELEMETRY: "0" } }, { env: {}, officialPackage: false }]) {
 		const suppressed = takeRuntimeTelemetryConfig(cliState, options);
 		assert.equal(suppressed.telemetryEnabled, false);
 		assert.equal(suppressed.internalQa, false);

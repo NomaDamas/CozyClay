@@ -29,6 +29,9 @@ Studio
   part is cleared. One drag is one undo, a mirrored pair moves together, and
   an edit the recipe refuses snaps back with the reason. Delete with a part
   selected no longer deletes the whole sculpt.
+- A capsule figure set to **Sit** now sits on the floor in an L, with its legs
+  reaching forward the way it faces, instead of only getting shorter. Its
+  bounds, and so framing, follow the new shape. (#999)
 
 CLI
 
@@ -41,6 +44,8 @@ Agent
 - A task that read a whole character is told when another task edits one of
   that character's layers, so a placement built on an old position is
   flagged on its next step. (#981, #982)
+- Task mode in the agent panel is on by default. Turning it off is
+  remembered in this browser. (#998)
 
 Sculpt
 

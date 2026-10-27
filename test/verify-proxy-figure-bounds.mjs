@@ -12,8 +12,9 @@ test("proxy bounds follow rendered stature and posture", () => {
 
 	const sit = proxyFigureBounds({ model: "proxy-figure", posture: "sit", scale: 2 }, { x: -1, y: 0.4, z: 3, rot: 90, scale: 2 });
 	assert.equal(sit.min.y, 0.4);
-	assert.equal(sit.max.y, 2.64);
-	assert.ok(sit.min.x < -1.43 && sit.max.x >= -0.56);
+	assert.equal(sit.max.y, 2.6);
+	// rot 90 faces +x: the seated legs reach 0.55 * 2 ahead, the back 0.22 * 2 behind.
+	assert.ok(Math.abs(sit.min.x + 1.44) < 1e-9 && Math.abs(sit.max.x - 0.1) < 1e-9, JSON.stringify(sit));
 
 	const lie = proxyFigureBounds({ model: "proxy-figure", posture: "lie", x: 4, z: 5, scale: 1.5 }, { x: 4, y: 0.2, z: 5, rot: 0, scale: 1.5 });
 	assert.ok(Math.abs(lie.min.y - 0.35) < 1e-12);

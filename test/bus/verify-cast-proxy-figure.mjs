@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { castFixture } from './cast-fixture.mjs';
+import { proxyFigureBounds } from '../../src/character-kind.js';
 
 const ok = receipt => { assert.equal(receipt.ok, true, JSON.stringify(receipt)); return receipt; };
 const proxy = { id: 'actor-proxy', subject: 'A stand-in', model: 'proxy-figure', posture: 'sit', x: 1, z: -1 };
@@ -89,5 +90,25 @@ test('cast: character.update refuses an in-place rig <-> capsule figure conversi
       assert.equal(f.cast.read().find(entry => entry.id === proxy.id).posture, 'lie');
       console.log(`PASS character.update model kind change refused with INVALID_ARGUMENT (${origin}); posture/name patches still succeed`);
     } finally { f.dispose(); }
+  }
+});
+
+test('cast: a seated capsule figure is an L - torso and head 1.1 m, legs reaching forward', () => {
+  const near = (a, b) => Math.abs(a - b) < 1e-9;
+  const box = rot => proxyFigureBounds({ model: 'proxy-figure', posture: 'sit', x: 1, z: -1, rot });
+  const front = box(0);
+  assert.ok(near(front.min.y, 0) && near(front.max.y, 1.1), JSON.stringify(front));
+  assert.ok(near(front.max.z, -1 + 0.55) && near(front.min.z, -1 - 0.22), JSON.stringify(front));
+  assert.ok(near(front.min.x, 1 - 0.22) && near(front.max.x, 1 + 0.22), JSON.stringify(front));
+  const stand = proxyFigureBounds({ model: 'proxy-figure', posture: 'stand', x: 1, z: -1 });
+  assert.ok(near(stand.max.y, 1.7) && near(stand.max.z, -1 + 0.22), JSON.stringify(stand));
+  console.log(`PASS sit bounds ${JSON.stringify(front)}: height 1.1, legs 0.55 forward of the hip`);
+  // Facing is (sin rot, cos rot), as for a rig; the legs' far end follows it round.
+  for (const [rot, axis, sign] of [[90, 'x', 1], [180, 'z', -1], [270, 'x', -1]]) {
+    const b = box(rot), origin = axis === 'x' ? 1 : -1;
+    const reach = sign > 0 ? b.max[axis] - origin : origin - b.min[axis];
+    const back = sign > 0 ? origin - b.min[axis] : b.max[axis] - origin;
+    assert.ok(near(reach, 0.55) && near(back, 0.22), `rot ${rot}: ${JSON.stringify(b)}`);
+    console.log(`PASS sit rot ${rot}: legs reach 0.55 toward ${sign > 0 ? '+' : '-'}${axis}, back 0.22 behind`);
   }
 });

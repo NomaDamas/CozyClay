@@ -41,7 +41,7 @@ import { saveSculptToShelf } from "./sculpt-shelf.js";
 import { createAgentPort, createSculptRun } from "./sculpt-run.js";
 import { SculptTurntable } from "./sculpt-stage.jsx";
 import { measureReferenceOutline } from "./sculpt-compare.js";
-import { BLUEPRINT_LAYOUT, buildBlueprintPrompt } from "./sculpt-blueprint.js";
+import { BLUEPRINT_LAYOUT, blueprintRunViews, buildBlueprintPrompt } from "./sculpt-blueprint.js";
 import { browserSculptImages } from "./commands/sculpt-images.js";
 import { sculptAgentClient, sculptModelLabel } from "./sculpt-mode.js";
 import { useSculptMode } from "./use-sculpt-mode.js";
@@ -1209,7 +1209,7 @@ export default function App() {
 		attachTargetForRow, attachTargetLabel, attachSceneObject,
 	} = objectsDomain;
 
-	const { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts } = useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId, appContext });
+	const { sculptMode, sculptCamRef, sculptView, sculptReference, setSculptReference, sculptRun, setSculptRun, sculptRunRef, sculptAgentStatus, sculptChatgpt, sculptModels, sculptModelPick, chooseSculptModel, sculptTransport, sculptTap, sculptTarget, setSculptTargetId, requestSculptView, sculptBlueprint, setSculptBlueprint, generateSculptBlueprint, cancelSculptBlueprint, sculptParts } = useSculptMode({ workflowMode, sceneObjects, selectedSceneObjectId, appContext });
 	async function chooseSculptReference(file) {
 		try {
 			// A new reference makes the old sheet a drawing of something else.
@@ -1227,6 +1227,8 @@ export default function App() {
 			bus: { subscribe: (listener) => sculptTap.subscribe(listener, studioBindingRef.current?.bus) },
 			agent: createAgentPort(sculptAgentClient(sculptTransport, () => buildStudioAgentContext())),
 			reference: sculptReference,
+			// The blueprint's side and back crops, when a sheet was drawn (#970).
+			views: blueprintRunViews(sculptBlueprint.sheet),
 			sculptId: sculptTarget?.id ?? null,
 			score: (args) => appContext.bus.run("sculpt.compare", args, { origin: "ui" }),
 			measure: async (reference) => measureReferenceOutline(await browserSculptImages.decode(reference)),
@@ -4450,8 +4452,8 @@ export default function App() {
 				...sculptBlueprint,
 				prompt: buildBlueprintPrompt({ pose: sculptBlueprint.pose, notes: sculptBlueprint.notes }),
 				layout: BLUEPRINT_LAYOUT,
-				// The image model is ChatGPT-only (the sidecar refuses others with a reason).
-				refusal: sculptAgentStatus === "signed-out" ? ko("Sign in with ChatGPT in the Agent panel to generate a blueprint.", "도면을 생성하려면 에이전트 패널에서 ChatGPT로 로그인하세요.") : null,
+				// The image model is ChatGPT-only: without a ChatGPT token the button is hidden and this says why (#970).
+				refusal: !sculptChatgpt ? ko("Sign in with ChatGPT in the Agent panel to generate a blueprint.", "도면을 생성하려면 에이전트 패널에서 ChatGPT로 로그인하세요.") : null,
 				onPose: (pose) => setSculptBlueprint((current) => ({ ...current, pose })),
 				onNotes: (notes) => setSculptBlueprint((current) => ({ ...current, notes })),
 				onGenerate: () => void generateSculptBlueprint(),

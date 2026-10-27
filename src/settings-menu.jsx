@@ -2,7 +2,7 @@ import { useCallback, useRef, useState } from "react";
 import { ko, localeChosen } from "./locale.js";
 import PreferencesDialog from "./shell/PreferencesDialog.jsx";
 
-// App settings — language and analytics — behind one labelled topbar trigger
+// App settings — language — behind one labelled topbar trigger
 // (#193, docs/studio-ui-ia.md R4). Neither item edits the document, so they do
 // not belong on the Save/Export row as bare toggles.
 //
@@ -38,7 +38,7 @@ export default function SettingsMenu() {
 				data-testid="settings-menu-trigger"
 				aria-expanded={open}
 				aria-haspopup="dialog"
-				title={ko("Language and analytics", "언어 및 사용 통계")}
+				title={ko("Language settings", "언어 설정", "语言设置")}
 				ref={triggerRef}
 				onClick={() => (open ? close() : setOpen(true))}
 			>

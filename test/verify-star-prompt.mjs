@@ -1,11 +1,11 @@
 #!/usr/bin/env node
 /**
- * The one-time star question on exit (#900), without a terminal, gh, or the network.
+ * The per-version star question at launch (#900), without a terminal, gh, or the network.
  *
  * gh, the question, the star count and the browser are injected, and every call is
  * recorded, so each case proves both what happened and what did not: a declined
- * question never stars, an account that already starred is never asked, and the
- * guards stop before gh is even run.
+ * question never stars, an account that already starred is never asked again, an
+ * update asks again, and the guards stop before gh is even run.
  */
 
 import assert from "node:assert/strict";
@@ -17,21 +17,22 @@ function pass(message) {
 }
 
 const STARRED = "/user/starred/NomaDamas/CozyClay";
+const VERSION = "9.9.9";
 
 /** One run of the prompt with fakes; returns everything it touched. */
-async function run({ opts = { star: true }, env = {}, interactive = true, elapsed = 120_000, state = {}, ghResults = {}, answer = "" } = {}) {
+async function run({ opts = { star: true }, env = {}, interactive = true, elapsed = 120_000, state = {}, ghResults = {}, answer = "", version = VERSION } = {}) {
 	const calls = { gh: [], ask: [], open: [], log: [], writes: [] };
 	const store = { ...state };
-	await maybeAskForStar(0, opts, {
+	await maybeAskForStar(opts, {
 		readState: () => store,
 		writeState: (patch) => {
 			calls.writes.push(patch);
 			Object.assign(store, patch);
 		},
+		version,
 		env,
 		interactive,
 		now: () => elapsed,
-		minSessionMs: 60_000,
 		gh: async (args) => {
 			calls.gh.push(args.join(" "));
 			return ghResults[args.join(" ")] ?? false;
@@ -58,7 +59,8 @@ const starPut = `api --method PUT ${STARRED} --silent`;
 	assert.match(calls.ask[0], /42 so far/);
 	assert.deepEqual(calls.open, []);
 	assert.match(calls.log.at(-1), /^Starred NomaDamas\/CozyClay/);
-	assert.ok(store.starPromptedAt);
+	assert.ok(store.starredAt);
+	assert.equal(store.starPromptedVersion, VERSION);
 	pass("signed-in gh: y stars the repo through gh and opens no browser");
 }
 
@@ -73,7 +75,7 @@ pass("signed-in gh: anything but y/yes (Enter included) stars nothing and opens 
 	const { calls, store } = await run({ ghResults: { ...signedIn, [`api ${STARRED} --silent`]: true }, answer: "y" });
 	assert.equal(calls.ask.length, 0);
 	assert.ok(!calls.gh.includes(starPut));
-	assert.ok(store.starPromptedAt);
+	assert.ok(store.starredAt);
 	pass("an account that already starred the repo is not asked, and is not asked again");
 }
 
@@ -99,8 +101,8 @@ const guards = [
 	["CI", { env: { CI: "1" } }],
 	["COZYCLAY_NO_STAR", { env: { COZYCLAY_NO_STAR: "1" } }],
 	["no terminal", { interactive: false }],
-	["a short session", { elapsed: 59_999 }],
-	["an earlier prompt", { state: { starPromptedAt: "2026-01-01T00:00:00.000Z" } }],
+	["an earlier prompt for this version", { state: { starPromptedVersion: VERSION } }],
+	["a confirmed star", { state: { starredAt: "2026-01-01T00:00:00.000Z" } }],
 ];
 for (const [name, overrides] of guards) {
 	const { calls } = await run({ ghResults: { ...signedIn, [starPut]: true }, answer: "y", ...overrides });
@@ -109,5 +111,12 @@ for (const [name, overrides] of guards) {
 	assert.deepEqual(calls.writes, [], `${name}: state is untouched`);
 }
 pass(`guards stop before gh runs: ${guards.map(([name]) => name).join(", ")}`);
+
+{
+	const { calls, store } = await run({ state: { starPromptedVersion: "0.0.1" }, ghResults: { ...signedIn, [starPut]: true }, answer: "y" });
+	assert.equal(calls.ask.length, 1);
+	assert.equal(store.starPromptedVersion, VERSION);
+	pass("an update asks again, even after a decline on the previous version");
+}
 
 console.log("star prompt verification passed");

@@ -203,8 +203,7 @@ function ModelPicker({ picker, locked }) {
 function BlueprintSection({ blueprint, disabled }) {
 	if (!blueprint) return null;
 	const { state = "idle", pose = "keep", notes = "", prompt = "", sheet = null, error = null, startedAt = null, refusal = null, onPose, onNotes, onGenerate, onCancel, layout = [] } = blueprint;
-	const busy = state === "generating";
-	const waited = busy && startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
+	const busy = state === "generating", waited = busy && startedAt ? Math.floor((Date.now() - startedAt) / 1000) : 0;
 	return (
 		<div className="sculpt-blueprint" data-testid="sculpt-blueprint" data-state={state}>
 			<div className="sculpt-label"><span>{ko("Blueprint (model sheet)", "도면 (모델 시트)")}</span><small>{ko("front · side · back · top", "정면 · 측면 · 뒷면 · 윗면")}</small></div>
@@ -225,13 +224,15 @@ function BlueprintSection({ blueprint, disabled }) {
 					<span className="sculpt-now-expect">{ko("usually ~40–90s", "보통 ~40–90초")}</span>
 					<button type="button" className="btn ghost small" data-testid="sculpt-blueprint-cancel" onClick={() => onCancel?.()}>{ko("Cancel", "취소")}</button>
 				</div>
-			) : (
-				<button type="button" className="btn full" data-testid="sculpt-blueprint-generate" disabled={disabled || Boolean(refusal)} onClick={() => onGenerate?.()}>
+			) : !refusal && (
+				// Without a ChatGPT token there is no button: the refusal below says why (#970).
+				<button type="button" className="btn full" data-testid="sculpt-blueprint-generate" disabled={disabled} onClick={() => onGenerate?.()}>
 					{sheet ? ko("Generate again", "다시 생성") : ko("Generate blueprint", "도면 생성")}
 				</button>
 			)}
 			{refusal && !busy && <p className="inspector-hint" role="status" data-testid="sculpt-blueprint-refusal">{refusal}</p>}
 			{error && !busy && <p className="inspector-hint sculpt-error" role="alert" data-testid="sculpt-blueprint-error">{error}</p>}
+			{sheet?.notices?.length > 0 && !busy && <p className="inspector-hint" role="status" data-testid="sculpt-blueprint-notices">{sheet.notices.join(" ")}</p>}
 			{sheet && (
 				<figure className="sculpt-sheet-figure" data-testid="sculpt-blueprint-sheet">
 					<a href={sheet.dataUrl} target="_blank" rel="noreferrer" title={ko("Open full size", "원본 크기로 열기")}>

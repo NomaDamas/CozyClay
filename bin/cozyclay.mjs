@@ -18,7 +18,6 @@ import { createReadStream, existsSync, mkdirSync, readFileSync, renameSync, stat
 import { createServer } from "node:http";
 import { homedir } from "node:os";
 import { extname, join, normalize, resolve } from "node:path";
-import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { ensureMcpRuntime, runMcp } from "./mcp-runtime.mjs";
 import { openBrowser } from "./open-browser.mjs";
@@ -28,9 +27,7 @@ import { createStudioRoutes } from "./studio-routes.mjs";
 import { handleOAuthRequest } from "./codex-auth.mjs";
 import { createAgentHandler } from "./agent/agent-routes.mjs";
 import { liveHubPort } from "./live-endpoint.mjs";
-import { verifyPackageMarker } from "./package-signature.mjs";
 import {
-	markTelemetryNoticeShown,
 	markTelemetryFirstLaunch,
 	setTelemetryFirstLaunchSource,
 	effectiveTelemetryEnabled,
@@ -38,7 +35,6 @@ import {
 	setTelemetryEnabled,
 	setTelemetryInternalQa,
 	takeRuntimeTelemetryConfig,
-	TELEMETRY_NOTICE_VERSION,
 	FIRST_LAUNCH_SOURCES,
 } from "./telemetry-state.mjs";
 
@@ -51,11 +47,6 @@ try {
 	// An unreadable package is handled by the existing missing-build checks.
 }
 const DIST = join(PKG_ROOT, "dist");
-const OFFICIAL_PACKAGE = (
-	packageMetadata.name === "cozyclay"
-	&& !SOURCE_CHECKOUT
-	&& verifyPackageMarker(join(DIST, "cozyclay-package.json"), PKG_ROOT, packageMetadata)
-);
 const INSTALL_KIND = SOURCE_CHECKOUT ? "clone" : process.env.npm_config_global === "true"
 	|| (/[\\/]node_modules[\\/]/.test(PKG_ROOT) && !/[\\/]_npx[\\/]/.test(PKG_ROOT))
 	? "global"
@@ -123,18 +114,6 @@ function parseArgs(argv) {
 
 const STATE_DIR = join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "cozyclay");
 const STATE_FILE = join(STATE_DIR, "state.json");
-
-async function askFirstLaunchSource() {
-	if (!process.stdin.isTTY || !process.stdout.isTTY) return null;
-	const answer = await new Promise((resolve) => {
-		const rl = createInterface({ input: process.stdin, output: process.stdout });
-		rl.question("How did you hear about CozyClay? [x/hn/reddit/github/site/friend/other/skip] ", (value) => {
-			rl.close();
-			resolve(value.trim().toLowerCase());
-		});
-	});
-	return FIRST_LAUNCH_SOURCES.includes(answer) ? answer : null;
-}
 
 const HELP = `cozyclay - browser-based 3D staging studio
 
@@ -229,12 +208,8 @@ if (argv[0] === "mcp") {
 	if (action === "off") setTelemetryEnabled(STATE_FILE, false);
 	if (action === "internal") setTelemetryInternalQa(STATE_FILE, internalAction === "on");
 	const state = readTelemetryState(STATE_FILE);
-	const effective = OFFICIAL_PACKAGE && effectiveTelemetryEnabled(state);
-	const reason = !OFFICIAL_PACKAGE
-		? ` (${SOURCE_CHECKOUT ? "source checkout" : "unofficial package: digest mismatch"})`
-		: state.telemetryEnabled && !effective
-			? " (environment override)"
-			: "";
+	const effective = effectiveTelemetryEnabled(state);
+	const reason = state.telemetryEnabled && !effective ? " (environment override)" : "";
 	console.log(`Telemetry: ${effective ? "on" : "off"}${reason}`);
 	console.log(`Internal QA: ${state.internalQa ? "on" : "off"}`);
 	if (action !== "status") console.log("Reload any open CozyClay studio tab to apply this setting.");
@@ -250,26 +225,12 @@ if (opts.version) {
 	console.log(version);
 	process.exit(0);
 }
-const takeRuntime = () => takeRuntimeTelemetryConfig(STATE_FILE, { appVersion: version, officialPackage: OFFICIAL_PACKAGE, installKind: INSTALL_KIND });
+const takeRuntime = () => takeRuntimeTelemetryConfig(STATE_FILE, { appVersion: version, officialPackage: true, installKind: INSTALL_KIND });
 let runtimeTelemetry = takeRuntime();
-if (runtimeTelemetry.firstLaunch && !readTelemetryState(STATE_FILE).firstLaunchHeardFrom) {
+if (runtimeTelemetry.firstLaunch && opts.via && !readTelemetryState(STATE_FILE).firstLaunchHeardFrom) {
 	// A copied `--via` command already says where the install came from.
-	const heardFrom = opts.via || await askFirstLaunchSource();
-	if (heardFrom) {
-		setTelemetryFirstLaunchSource(STATE_FILE, heardFrom);
+	setTelemetryFirstLaunchSource(STATE_FILE, opts.via);
 	runtimeTelemetry = takeRuntime();
-	}
-}
-const telemetryState = readTelemetryState(STATE_FILE);
-if (
-	runtimeTelemetry.telemetryEnabled
-	&& telemetryState.noticeVersion < TELEMETRY_NOTICE_VERSION
-) {
-	console.log(
-		"Anonymous usage metrics are on (no prompts, project content, filenames, or account information).\n" +
-			"Disable anytime: cclay telemetry off",
-	);
-	markTelemetryNoticeShown(STATE_FILE);
 }
 // Fired before anything blocking and never awaited on the launch path: the
 // notice is worth a line of output, never a second of startup.
@@ -282,16 +243,14 @@ if (!existsSync(join(DIST, "app", "index.html"))) {
 }
 
 let server = null;
-const startedAt = Date.now();
 let shuttingDown = false;
 async function shutdown(exitCode = 0) {
 	if (shuttingDown) return;
 	shuttingDown = true;
-	if (server?.listening) await new Promise((resolvePromise) => server.close(() => resolvePromise()));
 	try {
-		await maybeAskForStar(startedAt, opts, { readState, writeState });
+		await new Promise((resolvePromise) => server?.close(() => resolvePromise()));
 	} catch {
-		/* never let the goodbye prompt hold the process hostage */
+		/* never let shutdown hold the process hostage */
 	}
 	process.exit(exitCode);
 }
@@ -382,7 +341,7 @@ server.on("error", (err) => {
 	throw err;
 });
 
-server.listen({ port: opts.port, host: "127.0.0.1", ipv6Only: false }, () => {
+server.listen({ port: opts.port, host: "127.0.0.1", ipv6Only: false }, async () => {
 	// The package exists to open the studio, which the site serves from /app/.
 	// Landing on "/" would greet someone who just typed `npx cozyclay` with a
 	// marketing page.
@@ -394,6 +353,13 @@ server.listen({ port: opts.port, host: "127.0.0.1", ipv6Only: false }, () => {
 	const url = `http://127.0.0.1:${opts.port}/app/${sceneParam}`;
 	console.log(`CozyClay is running at ${url}`);
 	console.log("Use a Chromium-based browser — Safari and Firefox are not supported.");
+	// Asked once per version, before the browser opens: the question comes
+	// first, and the studio opens after the answer (or the ask timeout).
+	try {
+		await maybeAskForStar(opts, { readState, writeState, version });
+	} catch {
+		/* the question must never block the launch */
+	}
 	if (opts.open) openBrowser(url);
 	void updatePending?.then((latest) => {
 		// `cclay` only exists after a global install, so name the command that

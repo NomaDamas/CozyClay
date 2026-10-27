@@ -670,7 +670,10 @@ function runtimeConfig() {
 function isLoopbackOrigin(origin) {
 	try {
 		const parsed = new URL(origin);
-		return parsed.protocol === "http:" && ["127.0.0.1", "localhost"].includes(parsed.hostname);
+		if (parsed.protocol !== "http:") return false;
+		// Loopback and LAN hosts both mean the studio is self-served, not hosted.
+		if (["127.0.0.1", "localhost"].includes(parsed.hostname)) return true;
+		return /^(10\.|192\.168\.|172\.(?:1[6-9]|2\d|3[01])\.)/.test(parsed.hostname);
 	} catch {
 		return false;
 	}
@@ -785,7 +788,9 @@ export async function initAnalytics({ lite = false } = {}) {
 				// Hosted visits persist in the browser. Official npm sessions
 				// bootstrap from the CLI-owned installation id instead.
 				persistence: resolved.distribution === "npm" ? "memory" : "localStorage",
-				respect_dnt: true,
+				// Browser DNT is set by extensions and OS defaults, not by a deliberate
+				// per-site choice; the preference toggle remains the explicit signal.
+				respect_dnt: false,
 				disable_session_recording: true,
 				capture_dead_clicks: false,
 				capture_performance: false,

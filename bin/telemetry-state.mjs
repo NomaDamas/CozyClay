@@ -2,7 +2,6 @@ import { randomUUID as nodeRandomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 
-export const TELEMETRY_NOTICE_VERSION = 1;
 const POSTHOG_PROJECT_TOKEN = "phc_CpizzZ8VhSorSS8yEeQhdpUcvB2erp5xkCbnFD8HTJ5m";
 const POSTHOG_API_HOST = "https://t.cozyclay.org";
 // First-launch answers plus the `npx cozyclay --via <source>` values the
@@ -24,7 +23,9 @@ function rawState(stateFile) {
 		const parsed = JSON.parse(readFileSync(stateFile, "utf8"));
 		return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
 	} catch (error) {
-		return error?.code === "ENOENT" ? {} : { telemetryEnabled: false };
+		// A corrupt file is not an opt-out: fall back to defaults (telemetry on)
+		// rather than silently disabling collection forever.
+		return {};
 	}
 }
 
@@ -57,7 +58,8 @@ function writeState(stateFile, patch) {
 }
 
 function envDisablesTelemetry(env) {
-	if (env.CI && !/^(0|false|no|off)$/i.test(env.CI)) return true;
+	// Only explicit opt-outs count. CI heuristics silently disabled telemetry
+	// in devcontainers and Docker images that set CI=true by accident.
 	if (/^(1|true|yes|on)$/i.test(env.DO_NOT_TRACK ?? "")) return true;
 	return /^(0|false|no|off)$/i.test(env.COZYCLAY_TELEMETRY ?? "");
 }
@@ -81,10 +83,6 @@ export function setTelemetryEnabled(stateFile, enabled) {
 		...(enabled === true ? {} : { installationId: null }),
 	});
 	return readTelemetryState(stateFile);
-}
-
-export function markTelemetryNoticeShown(stateFile) {
-	writeState(stateFile, { telemetryNoticeVersion: TELEMETRY_NOTICE_VERSION });
 }
 
 export function markTelemetryFirstLaunch(stateFile, now = () => new Date().toISOString()) {

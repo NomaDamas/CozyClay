@@ -1,3 +1,5 @@
+import { makeTurnText, referenceArg } from "./sculpt-run-text.js";
+
 const INITIAL_MESSAGE = "Measure the reference landmarks before placing parts.";
 
 const initialState = ({ targetIou, maxRounds }) => ({
@@ -45,48 +47,6 @@ function dataUrlFromSheet(sheet) {
 	return null;
 }
 
-// The reference as sculpt.compare takes it: the stored asset when there is one.
-const referenceArg = reference => (reference?.assetId ? { assetId: reference.assetId } : { dataUrl: reference?.dataUrl });
-
-// The recipe rules the agent needs to get object.sculpt right the first time (sculpt-recipe.js).
-const RECIPE_RULES = "Recipe: { \"version\": 1, \"parts\": [{ \"id\", \"shape\", \"size\": [x,y,z] metres, \"position\": [x,y,z] centre, \"rotation\": [x,y,z] degrees, \"color\": \"#rrggbb\", \"parent\"?, \"mirror\"?, \"roundness\"? 0-1, \"taper\"? }] }. id: lowercase a-z, 0-9 and -, starting with a letter or digit, at most 40 characters. shape is exactly one of blob, box, cylinder, torus, frame, lathe, tube, extrude, loft, convex, scatter (no cone, sphere or other names): lathe { \"profile\": [[r 0-1, y 0-1], ...] } for turned forms (pot, bottle, bowl), tube { \"path\": [[x,y,z] each -0.5..0.5 of size], \"thickness\" m } for ropes, tails, handles and limbs that bend, extrude { \"outline\": [[x,y] -0.5..0.5] } for flat cut shapes (ears, fins, leaves, signs), loft { \"sections\": [{ \"y\", \"w\", \"d\" }, ...] } for bodies whose cross-section changes, convex { \"seed\" } for rocks. Any part may add \"detail\": { \"amount\": 0-1 } for a lumpy surface, \"gradient\": { \"color\" } for a two-tone blend, or \"op\": \"subtract\" to cut its parent (a mouth, a hollow). Up to 48 parts after mirrors. Floor is y=0 (feet touch it), front is +z, the subject's left is +x, mirror: true adds the reflection across x=0. roundness works backwards from its name: 0 is a smooth ellipsoid and 1 is a rounded box. roundness belongs only on blob, box and extrude, taper only on blob, cylinder and tube: leave both off the other shapes. Keep roundness at 0.2 or below on every organic part (body, belly, head, face, limbs); go above 0.3 only for hard-edged objects. Use box only for hard-edged things.";
-
-// A compact score for the next turn: what is missing where, and which parts stick out.
-function reportText(report) {
-	if (!report) return "";
-	const extra = Array.isArray(report.extraByPart) ? report.extraByPart.slice(0, 4) : report.extraByPart;
-	return ` Score detail: ${JSON.stringify({ widthToHeight: report.widthToHeight, missingByBand: report.missingByBand, extraByPart: extra })}.`;
-}
-
-function outlineText(outline) {
-	if (!outline) return "";
-	return ` The harness measured the reference outline in pixels (front view; x is a fraction of the subject's height from its centre, + toward image right = the subject's own left; y is a fraction of height from the head top; spans are the filled runs across each slice): ${JSON.stringify(outline)}. Put parts on these measurements.`;
-}
-
-function makeTurnText(reference, sculptId, continuation, outline = null) {
-	const ref = JSON.stringify(referenceArg(reference));
-	if (continuation) {
-		return [
-			`Round ${continuation.round} of ${continuation.maxRounds}. The harness scored sculpt ${sculptId} at IoU ${continuation.iou ?? "unknown"} against the reference.${reportText(continuation.report)}`,
-			`Write 3-6 candidate edit sets that fix the biggest mismatch (proportion first, then placement), rank them with ONE run_action sculpt.compare { "id": "${sculptId}", "reference": ${ref}, "candidates": [{ "label", "edits" }] },`,
-			`apply the best-ranked set with ONE run_action object.sculpt { "id": "${sculptId}", "edits": [...] }, then end the turn with one short line. Do not inspect first; the harness scores the result after your turn.`,
-			RECIPE_RULES,
-		].join(" ");
-	}
-	return [
-		"Sculpt the subject of the attached reference image as a clay recipe.",
-		outline
-			? `Use the measured outline below, scaled to a real-world height in metres.${outlineText(outline)}`
-			: "First measure the visible outline in the image: the subject's bounding box, then where the head top, each limb tip and the feet sit as fractions of its height, and convert them to metres for a real-world height.",
-		sculptId
-			? `Then rewrite sculpt ${sculptId} with ONE run_action object.sculpt { "id": "${sculptId}", "recipe": ... }, keeping parts on the measured landmarks.`
-			: "Then create it with ONE run_action object.sculpt { \"name\", \"recipe\" }, keeping parts on the measured landmarks.",
-		"No inspect calls are needed and do not call sculpt.compare: the harness scores the sculpt after your turn and tells you the result.",
-		"End the turn with one short line naming what the image hides.",
-		RECIPE_RULES,
-	].join(" ");
-}
-
 /**
  * Adapt the callback-based Studio client into the small port consumed by the
  * sculpt controller. The controller deliberately owns the session/turn loop.
@@ -131,6 +91,8 @@ export function createSculptRun({
 	score = null,
 	// Optional (reference) -> measureReferenceOutline result, put into the first turn's text.
 	measure = null,
+	// The blueprint's cropped views ([{ view, yaw, dataUrl, name? }], #970): attached next to the reference and scored with it.
+	views = [],
 	// The model every turn runs on (a /agent/models key) and its effort; omitted = the sidecar's defaults.
 	// Measured on the Snorlax reference: effort "high" made the draft twice as slow for no better score.
 	model = undefined,
@@ -252,7 +214,8 @@ export function createSculptRun({
 		};
 		const turnId = crypto.randomUUID();
 		ownTurns.add(turnId);
-		const returned = agent.sendTurn({ turnId, text, attachments: reference?.dataUrl ? [{ dataUrl: reference.dataUrl, name: reference.name }] : [], signal: controller.signal, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, callback);
+		const attachments = [...(reference?.dataUrl ? [{ dataUrl: reference.dataUrl, name: reference.name }] : []), ...views.map(view => ({ dataUrl: view.dataUrl, name: view.name ?? `blueprint-${view.view}.png` }))];
+		const returned = agent.sendTurn({ turnId, text, attachments, signal: controller.signal, ...(model ? { model } : {}), ...(effort ? { effort } : {}) }, callback);
 		if (isAsyncIterable(returned)) {
 			for await (const event of returned) callback(event);
 		} else await returned;
@@ -274,7 +237,8 @@ export function createSculptRun({
 			} catch (error) { note("warn", `Could not measure the reference: ${shortError(error?.message || error)}`, { message: `Could not measure the reference: ${String(error?.message || error)}` }); }
 		}
 		if (controller.signal.aborted) { note("warn", "Cancelled", { stage: "cancelled", message: "Sculpt run cancelled.", waiting: null }); settled = true; return; }
-		let text = makeTurnText(reference, sculptId, false, outline);
+		if (views.length) note("ok", `Using the blueprint's ${views.map(view => view.view).join(" and ")} view${views.length > 1 ? "s" : ""} next to the reference`);
+		let text = makeTurnText(reference, sculptId, false, outline, views);
 		while (!controller.signal.aborted) {
 			if (elapsed() >= timeBudgetMs) break;
 			const roundBefore = state.round;
@@ -304,7 +268,7 @@ export function createSculptRun({
 			}
 			retryCount = 0;
 			if (!turnScored && score && state.sculptId) {
-				const args = { id: state.sculptId, reference: referenceArg(reference) };
+				const args = views.length ? { id: state.sculptId, views: [{ yaw: 0, reference: referenceArg(reference) }, ...views.map(view => ({ yaw: view.yaw, reference: { dataUrl: view.dataUrl } }))] } : { id: state.sculptId, reference: referenceArg(reference) };
 				publish({ waiting: waitFor("score", "Scoring the silhouette against the reference") });
 				try {
 					const value = await score(args);
@@ -319,7 +283,7 @@ export function createSculptRun({
 			const nextRound = Math.max(1, state.round + 1);
 			publish({ stage: "refine", round: nextRound, message: `Preparing refinement round ${nextRound} of ${maxRounds}.` });
 			// The next turn's note says what was asked; nothing to log in between.
-			text = makeTurnText(reference, state.sculptId, { round: nextRound, maxRounds, iou: state.iou, report: lastReport });
+			text = makeTurnText(reference, state.sculptId, { round: nextRound, maxRounds, iou: state.iou, report: lastReport }, null, views);
 		}
 		if (controller.signal.aborted) {
 			note("warn", "Cancelled", { stage: "cancelled", message: "Sculpt run cancelled.", waiting: null });
