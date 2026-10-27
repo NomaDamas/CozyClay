@@ -41,6 +41,8 @@ Agent
 - A task that read a whole character is told when another task edits one of
   that character's layers, so a placement built on an old position is
   flagged on its next step. (#981, #982)
+- Task mode in the agent panel is on by default. Turning it off is
+  remembered in this browser.
 
 Analytics
 
