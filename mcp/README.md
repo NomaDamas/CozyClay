@@ -73,7 +73,7 @@ generated frame matches the blocking instead of drifting off into a generic shot
 | `place_object` / `update_object` / `remove_object` | the set — `place_object` also accepts `name` and `parent`, so multi-part assets like "Building A" land as one named assembly |
 | `import_mesh` | load a local GLB, OBJ or FBX from a filesystem path as a mesh prop (live editor required); optional floor position, yaw, standing height, clay |
 | `sculpt_object` | build a clay prop from a recipe of soft parts (blob, box, cylinder, torus, frame), usually from a reference image; pass `id` with `recipe` to re-sculpt or with `edits` to patch parts; `capture: true` returns the frame too. Works without an editor. Contract: `docs/sculpt-from-image.md` |
-| `compare_sculpt` | score a sculpt's silhouette against its reference image (PNG/JPEG path): IoU, proportion delta, missing area by height band, parts that stick out, and a reference \| overlay sheet; `candidates` ranks up to 12 edit sets without applying any. Works without an editor |
+| `compare_sculpt` | score a sculpt's silhouette against its reference image (PNG/JPEG path): IoU, proportion delta, missing area by height band, parts that stick out, and a reference \| overlay sheet; `views` [{ yaw, reference, weight? }] scores several views (front 0.6, side 0.25, back 0.15 by default) in place of `reference`; `candidates` ranks up to 12 edit sets without applying any. Works without an editor |
 | `group_objects` | attach children to a parent so they move as one; pass `parent: null` to detach |
 | `apply_batch` | execute up to 100 object mutations as one user-visible undo transaction |
 | `render_prompt` | the shot as an AI image or video prompt |

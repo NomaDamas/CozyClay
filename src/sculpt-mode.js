@@ -115,6 +115,11 @@ export function sculptAgentClient(transport, readContext) {
  * signed in, or a provider key held by the sidecar). */
 export const agentSessionReady = (status) => Boolean(status?.signedIn || status?.providersConfigured > 0);
 
+/** Whether the sidecar holds a ChatGPT token: /oauth/status `signedIn` is the
+ * ChatGPT login alone (a provider key only counts in providersConfigured). The
+ * blueprint's image model is ChatGPT-only, so its button needs this (#970). */
+export const chatgptSignedIn = (status) => status?.signedIn === true;
+
 /** A stored image asset as a data URL (the bytes the store holds, so the run
  * scores against exactly the stored, possibly downscaled, picture). */
 export function assetDataUrl(asset) {
