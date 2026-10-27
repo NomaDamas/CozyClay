@@ -81,7 +81,10 @@ clock or randomness failure cannot stop the export. Reloads, tab closure,
 opt-out, blocked delivery or process termination can leave unresolved starts or
 orphan terminals. No recovery event is invented. QA helpers that invoke a
 top-level export use pipeline completion; the raw `__exportOffscreen` test seam
-is an internal encoder probe, not a user attempt.
+is an internal encoder probe and the `exportKeyframePack` QA seam is a reference
+export without the download; neither is a user attempt.
+Exclude keyframe_pack rows from that seam before this change by their shape: no
+`objects`, `surface` studio, up to several starts per second from one id.
 
 ### Compatibility mapping
 
