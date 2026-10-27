@@ -5,6 +5,7 @@ import SourceOffer from "../source-offer.jsx";
 import { ko } from "../locale.js";
 import { noteShortcutsOpened } from "../shortcut-friction.js";
 import { appVersion } from "../app-version.js";
+import { useExportMenuTelemetry } from "../export-menu-telemetry.js";
 
 const MAC = typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform ?? "");
 const MOD = MAC ? "⌘" : "Ctrl+";
@@ -198,10 +199,9 @@ export default function MenuBar({ preferences }) {
 		? panelCount ? "" : noPanels
 		: shots.length ? "" : ko("Add a shot first — a pack describes one cut", "샷을 먼저 추가하세요 — 팩은 컷 하나를 설명합니다");
 
-	// Export's flyout lives in File, so an open Export menu opens File.
-	useEffect(() => {
-		if (exportMenuOpen) setOpen("file");
-	}, [exportMenuOpen]);
+	// Export's flyout lives in File, so an open Export menu opens File; each open is counted.
+	useEffect(() => { if (exportMenuOpen) setOpen("file"); }, [exportMenuOpen]);
+	useExportMenuTelemetry(exportMenuOpen, shell);
 
 	const closeMenus = (focusTrigger) => {
 		const was = open;
