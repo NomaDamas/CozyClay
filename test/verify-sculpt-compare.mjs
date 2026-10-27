@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { normalizeSculptRecipe } from "../src/sculpt-recipe.js";
 import { bestViewForReference, compareSculptToReference, measureReferenceOutline, referenceMask, sculptViewPolygons } from "../src/sculpt-compare.js";
+import { VIEW_RATIO_TOLERANCE, VIEW_WEIGHTS, scoreSculptAgainstViews, viewOfYaw, viewWeights } from "../src/sculpt-views.js";
 
 let failures = 0;
 async function check(name, fn) {
@@ -126,6 +127,59 @@ await check("the measured outline finds the raised arms apart from the head, in 
 	assert.ok(outline.rows.every(row => row.y >= 0 && row.y <= 1 && row.spans.every(([a, b]) => a < b && a >= -0.6 && b <= 0.6)), JSON.stringify(outline));
 	assert.ok(outline.rows.slice(1, 4).some(row => row.spans.length >= 2), "an upper slice crosses an arm and the head separately");
 	assert.ok(outline.rows.at(-1).spans.length >= 1, "the feet reach the bottom slice");
+});
+
+/* ------------------------------------------- weighted views (#970) --- */
+await check("the weight table is front 0.6, side 0.25, back 0.15, read from the yaw", () => {
+	assert.deepEqual(VIEW_WEIGHTS, { front: 0.6, side: 0.25, back: 0.15 });
+	assert.equal(VIEW_RATIO_TOLERANCE, 0.35);
+	assert.deepEqual([0, 30, -45, 46, 90, -90, 134, 135, 180, -180, -150].map(viewOfYaw), ["front", "front", "front", "side", "side", "side", "side", "back", "back", "back", "back"]);
+	const same = viewWeights([{ yaw: 0, heightToWidth: 2 }, { yaw: 90, heightToWidth: 2 }, { yaw: 180, heightToWidth: 2 }]);
+	assert.deepEqual(same, [{ weight: 0.6 }, { weight: 0.25 }, { weight: 0.15 }]);
+	assert.deepEqual(viewWeights([{ yaw: 0, heightToWidth: 2, weight: 0.5 }, { yaw: 90, heightToWidth: 2, weight: 0.5 }]), [{ weight: 0.5 }, { weight: 0.5 }], "an explicit weight replaces the table's");
+});
+
+await check("a view whose height:width differs from the front's by more than 35% gets weight 0, with the reason", () => {
+	// Front 2.0: a side at 2.6 (+30%) and a back at 1.4 (-30%) keep their weight; 2.8 (+40%) and 1.2 (-40%) do not.
+	const kept = viewWeights([{ yaw: 0, heightToWidth: 2 }, { yaw: 90, heightToWidth: 2.6 }, { yaw: 180, heightToWidth: 1.4 }]);
+	assert.deepEqual(kept.map((row) => row.weight), [0.6, 0.25, 0.15]);
+	const cut = viewWeights([{ yaw: 0, heightToWidth: 2 }, { yaw: 90, heightToWidth: 2.8 }, { yaw: 180, heightToWidth: 1.2 }]);
+	assert.deepEqual(cut.map((row) => row.weight), [0.6, 0, 0]);
+	assert.match(cut[1].excluded, /height:width 2\.80 differs from the front's 2\.00 by 40% \(over 35%\)/);
+	// The front is the front view nearest yaw 0; with no front view the rule has nothing to measure against.
+	assert.deepEqual(viewWeights([{ yaw: 20, heightToWidth: 9 }, { yaw: 0, heightToWidth: 2 }]).map((row) => row.weight), [0, 0.6]);
+	assert.deepEqual(viewWeights([{ yaw: 90, heightToWidth: 2 }, { yaw: 180, heightToWidth: 9 }]).map((row) => row.weight), [0.25, 0.15]);
+});
+
+await check("a sculpt scored on front, side and back blends the IoUs by weight and drops an off-scale view", () => {
+	const slab = box(0.4, 1.2, 0.36);
+	const front = rectImage({ x0: 0.4, x1: 0.6, y0: 0.2, y1: 0.8 });
+	const side = rectImage({ x0: 0.41, x1: 0.59, y0: 0.2, y1: 0.8 });
+	const { result } = scoreSculptAgainstViews(slab, [{ yaw: 0, image: front }, { yaw: 90, image: side }, { yaw: 180, image: front }]);
+	const rows = result.report.views;
+	assert.deepEqual(rows.map((row) => [row.view, row.yaw, row.weight]), [["front", 0, 0.6], ["side", 90, 0.25], ["back", 180, 0.15]]);
+	const blended = rows.reduce((sum, row) => sum + row.iou * row.weight, 0);
+	assert.ok(Math.abs(result.report.iou - blended) < 0.002, `${result.report.iou} vs ${blended}`);
+	assert.ok(result.report.iou > 0.9, JSON.stringify(rows));
+	assert.equal(result.report.view.yaw, 0, "the report and its sheet are the front's, the heaviest view");
+	// A side drawn square (height:width 1 against the front's 3) is off scale: weight 0, and the rest renormalize.
+	const square = rectImage({ x0: 0.2, x1: 0.8, y0: 0.2, y1: 0.8 });
+	const off = scoreSculptAgainstViews(slab, [{ yaw: 0, image: front }, { yaw: 90, image: square }, { yaw: 180, image: front }]).result.report;
+	assert.deepEqual(off.views.map((row) => row.weight), [0.8, 0, 0.2]);
+	assert.match(off.views[1].excluded, /differs from the front's/);
+	assert.ok(Math.abs(off.iou - (off.views[0].iou * 0.8 + off.views[2].iou * 0.2)) < 0.002);
+	assert.throws(() => scoreSculptAgainstViews(slab, [{ yaw: 0, image: front, weight: 0 }]), /No view carries any weight/);
+	assert.throws(() => scoreSculptAgainstViews(slab, []), /at least one/);
+});
+
+await check("candidates are ranked on the same views and weights; none is applied", () => {
+	const slab = box(0.4, 1.2, 0.36);
+	const front = rectImage({ x0: 0.4, x1: 0.6, y0: 0.2, y1: 0.8 });
+	const side = rectImage({ x0: 0.41, x1: 0.59, y0: 0.2, y1: 0.8 });
+	const scored = scoreSculptAgainstViews(slab, [{ yaw: 0, image: front }, { yaw: 90, image: side }], { candidates: [{ label: "deep", edits: [{ set: "b", size: [0.4, 1.2, 0.9] }] }, { label: "ghost", edits: [{ set: "nope", color: "#000000" }] }] });
+	assert.deepEqual(scored.ranked.map((row) => row.label), ["current", "deep"], "a too-deep slab loses on the side view");
+	assert.ok(scored.ranked[1].result.report.views[1].iou < scored.ranked[0].result.report.views[1].iou);
+	assert.match(scored.refused[0].error, /no part named "nope"/);
 });
 
 if (failures) {

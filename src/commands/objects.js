@@ -5,8 +5,7 @@ import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/object.js';
 import { createSceneObject, updateSceneObject, removeSceneObject, setSceneObjectParent, descendantsOf, normalizeSceneObject, groupUnderNewEmpty, objectPatchFields, createSculptObject, SCULPT_KIND } from '../scene-objects.js';
 import { expandSculptParts, normalizeSculptRecipe, patchSculptRecipe } from '../sculpt-recipe.js';
-import { rankingRow, scoreSculptAgainstReference } from '../sculpt-compare.js';
-import { browserSculptImages, shrinkRgba } from './sculpt-images.js';
+import { runSculptCompare, sculptCompare } from './sculpt-compare.js';
 import { clampWarning } from '../receipt-findings.js';
 import { effectPresetSet } from '../effects/effect-record.js';
 import { withLightWarnings } from '../light-blockers.js';
@@ -52,16 +51,6 @@ const assetImport = { ...studioActionDeclaration('asset.import'), kind: 'job', d
 		input({ assetId: id, placement, placeAs: assetProperties.placeAs }, ['assetId', 'placeAs']),
 		input({ fileToken: id, placeAs: { type: 'string', enum: ['mesh', 'cutout'] } }, ['fileToken', 'placeAs']),
 	] } };
-// Read-only: a job that never commits, so its receipt is `completed` with the score as output,
-// authored false and no undo. The scoring is MCP compare_sculpt's (sculpt-compare.js).
-const openObject = { type: 'object', properties: {}, additionalProperties: true };
-const sculptCompare = { id: 'sculpt.compare', label: 'Compare a sculpt with its reference', kind: 'job', timeoutMs: 60000,
-	description: 'Score a sculpt\'s silhouette against a reference image without changing anything: IoU, width-to-height delta, missing area by height band (top, middle, bottom), parts that stick out, and a reference | overlay sheet (grey both, red missing, blue extra) as sheetDataUrl. reference is { assetId } of a project image or { dataUrl }. yaw is the reference camera azimuth in degrees (0 in front, positive toward the subject\'s own left); omitted tries -45..45 and keeps the best. candidates (up to 12 { label, edits }) are scored from the same view and ranked against the current sculpt; none is applied. Apply the winner with object.sculpt { id, edits }.',
-	input: input({ id, reference: { oneOf: [input({ assetId: id }), input({ dataUrl: { type: 'string', pattern: '^data:image/(png|jpeg|webp|gif);base64,', maxLength: 6000000 } })] },
-		yaw: { type: 'number', minimum: -180, maximum: 180 }, elevation: { type: 'number', minimum: -60, maximum: 60 },
-		candidates: { type: 'array', minItems: 1, maxItems: 12, items: input({ label: { type: 'string', maxLength: 60 }, edits: { type: 'array', minItems: 1, maxItems: 48, items: openObject } }) } }, ['id', 'reference']) };
-// A receipt is at most 8 KiB, so the sheet is shrunk until the whole output fits this.
-const SCULPT_COMPARE_OUTPUT_BYTES = 6500;
 const matte = { id: 'object.matte', label: 'Apply object matte', description: 'Prepare derived assets, then publish one fenced object edit.', kind: 'job', domain: 'objects', exposure: 'ui-only', input: input({ objectId: id }) };
 export const declarations = Object.freeze([...semantic, replace, batch, ...['object.attach', 'object.detach', 'object.duplicate'].map(studioActionDeclaration), matte, sculptCompare, assetImport]);
 
@@ -229,31 +218,7 @@ export function register(registry, ports) {
 		await owned().applyMatte(objectId, context);
 		return { affectedIds: [objectId], summary: 'Applied the object matte.' };
 	} });
-	registry.register({ ...sculptCompare, available, run: async ({ id: objectId, reference, yaw, elevation = 0, candidates }, context) => {
-		const target = objectOf(objectId);
-		if (target.renderer !== SCULPT_KIND || !target.recipe) fail('INVALID_ARGUMENT', `${objectId} is a ${target.renderer}, not a sculpt.`);
-		const images = ports.sculptImages ?? browserSculptImages;
-		let image, scored;
-		try { image = await images.decode(reference); }
-		catch (error) { fail('INVALID_ARGUMENT', `Could not read the reference image: ${error?.message || error}`); }
-		context?.signal?.throwIfAborted();
-		try { scored = scoreSculptAgainstReference(target.recipe, image, { yaw, elevation, candidates }); }
-		catch (error) { fail('INVALID_ARGUMENT', error?.message || String(error)); }
-		const { result, ranked, refused } = scored;
-		const output = { id: objectId, ...result.report };
-		if (ranked) Object.assign(output, { ranking: [...ranked.map(row => rankingRow(row, result)), ...refused.map(({ label, error }) => ({ label, refused: error }))],
-			sheetLabel: ranked[0].label, note: `Nothing was applied. Apply the winner with object.sculpt { id: "${objectId}", edits }.` });
-		const sheet = (ranked ? ranked[0].result : result).sheet;
-		const room = SCULPT_COMPARE_OUTPUT_BYTES - JSON.stringify(output).length;
-		// The full-size sheet is always tried, however narrow; shrinking stops at 64 px.
-		for (let factor = 1; factor === 1 || sheet.width / factor >= 64; factor *= 2) {
-			const dataUrl = await images.encodePng(factor === 1 ? sheet : shrinkRgba(sheet, factor));
-			if (dataUrl.length + 40 <= room) { Object.assign(output, { sheetDataUrl: dataUrl, ...(factor > 1 ? { sheetScale: 1 / factor } : {}) }); break; }
-		}
-		if (!output.sheetDataUrl) output.sheetOmitted = 'The overlay sheet does not fit in a receipt at a readable size; read missingByBand and extraByPart.';
-		const lead = ranked ? `best ${ranked[0].label} at IoU ${ranked[0].result.report.iou} (current ${result.report.iou}), ${candidates.length} candidates scored, none applied` : `IoU ${result.report.iou}`;
-		return { affectedIds: [], output, summary: `Compared ${target.name || objectId} with the reference at yaw ${result.report.view.yaw}: ${lead}.` };
-	} });
+	registry.register({ ...sculptCompare, available, run: runSculptCompare(ports, objectOf) });
 	registry.register({ ...assetImport, available: () => true,
 		run: async (args, context) => {
 			const { source, ...options } = args;
