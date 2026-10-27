@@ -142,7 +142,7 @@ export function startAgentTurn({ surface, capture, now, correlationId = null }) 
 	return {
 		turnId,
 		cancel: () => finish("cancelled", "aborted"),
-		fail: (code) => finish("failed", AGENT_FAILURE_CODES.has(code) ? code : "upstream"),
+		fail: (code) => finish("failed", AGENT_FAILURE_CODES.has(code) ? code : "unknown"),
 		/** A tool.start / tool.done frame the panel sees (after replay dedupe). */
 		tool(event) {
 			if (!terminal) advisory(() => tally.note(event), null);

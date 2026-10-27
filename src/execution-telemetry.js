@@ -1,7 +1,7 @@
 import { bucketMs, track, EXECUTION_TELEMETRY_VALUES } from "./analytics.js";
 export { AGENT_TOOL_CATEGORIES, EXECUTION_TELEMETRY_EVENTS, EXECUTION_TELEMETRY_PROPERTY_KEYS, EXECUTION_TELEMETRY_VALUES } from "./analytics.js";
 const WORKFLOW_FAILURE_CODES = new Set(["aborted", "capture_failed", "generation_failed", "unknown"]);
-const AGENT_FAILURE_CODES = new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "unknown"]);
+const AGENT_FAILURE_CODES = new Set(["aborted", "auth", "rate_limited", "tool_failed", "upstream", "network", "unknown"]);
 function secureId() {
 	try {
 		if (!globalThis.crypto?.getRandomValues) return null;
