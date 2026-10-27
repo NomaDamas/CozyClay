@@ -67,23 +67,25 @@ const disconnect = async (handle) => {
 	await closed;
 };
 let handle = await connect();
-const run = (name, command, args = {}) => hub.runExclusive(name, handle, (resolved) => hub.observeExecution(name, resolved, async () => {
+let toolName;
+const run = (name, command, args = {}) => (toolName = name, hub.runExclusive(name, handle, (resolved) => hub.observeExecution(name, resolved, async () => {
 	try {
 		await hub.command(command, args, resolved);
 		await hub.command("describe", {}, resolved);
 		return { content: [] };
 	} catch { return { isError: true, content: [{ type: "text", text: "unchanged handler error prose" }] }; }
-}));
+})));
 const expect = (offset, outcome, applied) => {
 	const events = telemetry.slice(offset);
 	assert.deepEqual(events.map(({ event }) => event), ["mcp:tool_requested", "mcp:tool_executed", ...(applied ? ["mcp:result_applied"] : [])]);
 	assert.equal(events[1].props.outcome, outcome);
 	assert.match(events[0].props.request_id, /^[a-f0-9]{32}$/);
 	assert.ok(events.every(({ props }) => props.request_id === events[0].props.request_id));
-	assert.deepEqual(Object.keys(events[0].props).sort(), ["request_id", "tool_category"]);
-	assert.deepEqual(Object.keys(events[1].props).sort(), ["duration_bucket", "outcome", "request_id", "tool_category"]);
+	assert.deepEqual(Object.keys(events[0].props).sort(), ["request_id", "tool_category", "tool_name"]);
+	assert.deepEqual(Object.keys(events[1].props).sort(), ["duration_bucket", "outcome", "request_id", "tool_category", "tool_name"]);
+	assert.ok(events.slice(0, 2).every(({ props }) => props.tool_name === toolName), `tool_name is ${toolName}`);
 	if (applied) assert.deepEqual(Object.keys(events[2].props), ["request_id"]);
-	assert.doesNotMatch(JSON.stringify(events), /PRIVATE|private-editor|set_camera|unchanged handler/);
+	assert.doesNotMatch(JSON.stringify(events), /PRIVATE|private-editor|unchanged handler/);
 };
 try {
 	let offset = telemetry.length;
@@ -95,6 +97,14 @@ try {
 	offset = telemetry.length;
 	await run("place_character", "update_character", { x: 3 });
 	expect(offset, "succeeded", true);
+	offset = telemetry.length;
+	await run("describe_scene", "describe");
+	expect(offset, "succeeded", false);
+	assert.deepEqual([telemetry[offset].props.tool_category, telemetry[offset + 1].props.tool_name], ["read", "describe_scene"]);
+	offset = telemetry.length;
+	await run("private_unlisted_tool", "describe");
+	toolName = "other"; expect(offset, "succeeded", false);
+	assert.doesNotMatch(JSON.stringify(telemetry.slice(offset)), /private_unlisted_tool/);
 	for (const [nextMode, outcome, applied] of [["noop", "succeeded", false], ["rollback", "failed", false], ["partial", "failed", true], ["ok", "succeeded", true]]) {
 		mode = nextMode; offset = telemetry.length;
 		await run("apply_batch", "apply_batch");

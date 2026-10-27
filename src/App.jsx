@@ -3672,22 +3672,14 @@ export default function App() {
 			// instead of driving a file dialog. Same liveStateRef reasoning as
 			// captureMeta — the effect does not depend on the shot list.
 			exportKeyframePack: async (shotId) => {
-				const attempt = startExportAttempt({ export_kind: "keyframe_pack", format: "zip", surface: embedMode ? "embed" : "studio" });
-				try {
-					const live = appContext.live.state;
-					const index = live.shotIndexForPack(shotId ?? null);
-					const pack = await live.buildShotKeyframePack(live.shots[index], index);
-					// base64: a pack holds an MP4, and a megabyte-scale JS number array
-					// is not something to hand a CDP evaluate.
-					let binary = "";
-					for (const byte of pack.bytes) binary += String.fromCharCode(byte);
-					const result = { name: pack.name, entries: pack.entries.map((entry) => entry.name), byteLength: pack.bytes.byteLength, bytes: btoa(binary) };
-					attempt.succeed();
-					return result;
-				} catch (error) {
-					attempt.fail(error);
-					throw error;
-				}
+				const live = appContext.live.state;
+				const index = live.shotIndexForPack(shotId ?? null);
+				const pack = await live.buildShotKeyframePack(live.shots[index], index);
+				// base64: a pack holds an MP4, and a megabyte-scale JS number array
+				// is not something to hand a CDP evaluate.
+				let binary = "";
+				for (const byte of pack.bytes) binary += String.fromCharCode(byte);
+				return { name: pack.name, entries: pack.entries.map((entry) => entry.name), byteLength: pack.bytes.byteLength, bytes: btoa(binary) };
 			},
 			renderPass: (kind) => appContext.live.state.renderPassDataUrls([kind])[kind],
 			// QA-only video export (#193): the Export menu's Video item without the

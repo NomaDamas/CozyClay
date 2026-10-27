@@ -338,14 +338,23 @@ try {
 	await runAttempt("studio-depth", { kind: "depth_video", format: "mp4" }, () => exportMenu("export-depth-video"), { downloads: 1 });
 	await runAttempt("studio-pack", { kind: "keyframe_pack", format: "zip" }, () => exportMenu("export-keyframe-pack"), { downloads: 1 });
 	await runAttempt("studio-all-packs", { kind: "keyframe_pack", format: "zip" }, () => exportMenu("export-keyframe-pack", 8), { downloads: 2 });
-	await runAttempt("studio-pack-api", { kind: "keyframe_pack", format: "zip" }, async () => {
+	// The QA seam is a reference export, not a user attempt: it must add no
+	// export:attempt_* event (the UI cases above cover the keyframe lifecycle).
+	{
+		const offset = telemetry.length;
+		const eventsFrom = await evaluate("window.__qaExport.events.length");
 		const pack = await evaluate("window.__cozyclay.exportKeyframePack('qa-pair')");
 		assert.ok(pack.byteLength > 0 && pack.entries.some((entry) => entry.endsWith('/last.png')));
 		const bytes = Buffer.from(pack.bytes, "base64");
 		assert.equal(bytes.length, pack.byteLength);
 		await writeFile(`${out}/studio-pack-api.zip`, bytes);
 		execFileSync("unzip", ["-t", `${out}/studio-pack-api.zip`]);
-	});
+		const pageAttempts = await evaluate(`window.__qaExport.events.slice(${eventsFrom}).map(({event}) => event).filter((event) => event.startsWith("export:attempt_"))`);
+		const recordedAttempts = telemetry.slice(offset).map(({ event }) => event).filter((event) => event.startsWith("export:attempt_"));
+		assert.deepEqual(pageAttempts, [], "QA seam emits no export attempt in the page");
+		assert.deepEqual(recordedAttempts, [], "QA seam records no export attempt");
+		pass("studio-pack-api", { byteLength: pack.byteLength, attempts: 0 });
+	}
 
 	assert.ok(await evaluate("typeof window.__cozyclay.prepareFrameExport === 'function'"), "App QA surface must delegate prepareFrameExport() to live generate()");
 	for (const [label, frame, count] of [["single-frame", 0, 1], ["paired-frames", 4, 2]]) {

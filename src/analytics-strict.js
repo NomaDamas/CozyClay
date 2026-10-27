@@ -74,6 +74,10 @@ const SCHEMAS = Object.freeze({
 	"guide:dismissed": { mode: oneOf("animation", "storyboard"), reached: oneOf("1", "2", "3", "4") },
 	"guide:completed": { mode: oneOf("animation", "storyboard") },
 	"agent:panel_toggled": { open: bool, via: oneOf("key", "button") },
+	// The Export flyout opening (export-menu-telemetry.js); shots is analytics.js bucketCount.
+	"export:menu_opened": {
+		surface: oneOf("studio", "embed"), mode: oneOf("animation", "storyboard"), webcodecs: bool, shots: oneOf("0", "1-3", "4-10", "gte11"),
+	},
 	"object:deleted_soon": { age: inSet(AGE_BUCKETS) },
 	"object:delete_undone": { age: inSet(AGE_BUCKETS) },
 	"edit:undone": {

@@ -185,7 +185,8 @@ export function createLiveControl({
 		const correlationId = props.request_id;
 		if (!correlationId) return;
 		if (EXECUTION_TELEMETRY_EVENTS.includes(payload.event)
-			&& EXECUTION_TELEMETRY_PROPERTY_KEYS[payload.event]?.some((key) => !Object.hasOwn(props, key))) return;
+			// A hub older than tool_name still sends a complete frame without it.
+			&& EXECUTION_TELEMETRY_PROPERTY_KEYS[payload.event]?.some((key) => key !== "tool_name" && !Object.hasOwn(props, key))) return;
 		const key = `${correlationId}:${payload.event}`;
 		if (capturedStages.has(key)) return;
 		capturedStages.add(key);

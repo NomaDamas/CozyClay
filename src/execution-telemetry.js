@@ -41,13 +41,17 @@ function executionFailureCode(error, channel, fallbackCode = "unknown") {
 	return allowed.has(fallbackCode) ? fallbackCode : "unknown";
 }
 
+/** The closed `tool_name` for an MCP tool event: a live tool name, else "other". */
+export function mcpToolName(name) {
+	return EXECUTION_TELEMETRY_VALUES.tool_name.has(name) ? name : "other";
+}
+
 export function mcpToolCategory(name) {
-	
 	if (name === "capture_frame") return "frame_capture";
 	if (name === "set_camera" || name === "frame_shot" || name === "mark_camera_move" || name === "describe_camera_move") return "camera";
 	
 	if (name === "save_project" || name === "open_project") return "project_io";
-	if (name === "describe_scene" || name === "describe_shot" || name === "render_prompt" || name === "live_status" || name === "compare_sculpt") return "read";
+	if (name === "describe_scene" || name === "describe_shot" || name === "render_prompt" || name === "live_status" || name === "compare_sculpt" || name === "studio_commands") return "read";
 	if (name === "add_character" || name === "place_character" || name === "remove_character" || name === "focus_character" || name === "place_object" || name === "import_mesh" || name === "sculpt_object" || name === "group_objects" || name === "update_object" || name === "remove_object" || name === "apply_batch" || name === "add_scene" || name === "switch_scene") return "scene_write";
 	return "other";
 }
