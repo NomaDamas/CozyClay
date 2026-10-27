@@ -5,25 +5,27 @@
 import { isProxyFigure } from "./scenes.js";
 import { isKo, isZh } from "./locale.js";
 import { StudioProtocolError } from "./studio-agent-protocol.js";
+import {
+	PROXY_BODY_HEIGHT, PROXY_BODY_RADIUS, PROXY_HEAD_LIFT, PROXY_HEAD_RADIUS, PROXY_SIT_LEG_REACH, PROXY_SIT_TORSO_HEIGHT,
+} from "./proxy-figure-shape.js";
 
 export const CHARACTER_CAPABILITIES = Object.freeze(["rig", "ik", "pose", "motion"]);
-const PROXY_BODY_RADIUS = 0.22;
-const PROXY_BODY_HEIGHT = 1.45;
-const PROXY_HEAD_RADIUS = 0.12;
 
 /** Return a capsule figure's rendered world-space bounds without a rig. */
 export function proxyFigureBounds(character, placement = character) {
 	const posture = character?.posture === "sit" || character?.posture === "lie" ? character.posture : "stand";
-	const bodyHeight = posture === "sit" ? PROXY_BODY_HEIGHT * 0.6 : PROXY_BODY_HEIGHT;
+	const bodyHeight = posture === "sit" ? PROXY_SIT_TORSO_HEIGHT : PROXY_BODY_HEIGHT;
+	const top = bodyHeight + (PROXY_HEAD_LIFT + PROXY_HEAD_RADIUS);
 	const stature = Number.isFinite(placement?.scale) ? placement.scale : Number.isFinite(character?.scale) ? character.scale : 1;
 	const x = Number.isFinite(placement?.x) ? placement.x : character?.x ?? 0;
 	const y = Number.isFinite(placement?.y) ? placement.y : character?.y ?? 0;
 	const z = Number.isFinite(placement?.z) ? placement.z : character?.z ?? 0;
 	const yaw = ((Number.isFinite(placement?.rot) ? placement.rot : character?.rot ?? 0) + (posture === "lie" ? 180 : 0)) * Math.PI / 180;
 	const [minCorner, maxCorner] = posture === "lie"
-		? [[-PROXY_BODY_RADIUS, PROXY_BODY_RADIUS - PROXY_HEAD_RADIUS, -(bodyHeight + 0.25)],
+		? [[-PROXY_BODY_RADIUS, PROXY_BODY_RADIUS - PROXY_HEAD_RADIUS, -top],
 			[PROXY_BODY_RADIUS, PROXY_BODY_RADIUS + PROXY_HEAD_RADIUS, 0]]
-		: [[-PROXY_BODY_RADIUS, 0, -PROXY_BODY_RADIUS], [PROXY_BODY_RADIUS, bodyHeight + 0.25, PROXY_BODY_RADIUS]];
+		// Sit reaches forward (local +z, the facing direction) with its legs.
+		: [[-PROXY_BODY_RADIUS, 0, -PROXY_BODY_RADIUS], [PROXY_BODY_RADIUS, top, posture === "sit" ? PROXY_SIT_LEG_REACH : PROXY_BODY_RADIUS]];
 	const min = { x: Infinity, y: Infinity, z: Infinity }, max = { x: -Infinity, y: -Infinity, z: -Infinity };
 	for (const lx of [minCorner[0], maxCorner[0]]) for (const ly of [minCorner[1], maxCorner[1]]) for (const lz of [minCorner[2], maxCorner[2]]) {
 		const sx = lx * stature, sy = ly * stature, sz = lz * stature;
