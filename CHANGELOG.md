@@ -31,7 +31,7 @@ Studio
   selected no longer deletes the whole sculpt.
 - A capsule figure set to **Sit** now sits on the floor in an L, with its legs
   reaching forward the way it faces, instead of only getting shorter. Its
-  bounds, and so framing, follow the new shape.
+  bounds, and so framing, follow the new shape. (#999)
 
 CLI
 
