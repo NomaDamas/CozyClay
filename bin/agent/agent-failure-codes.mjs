@@ -18,7 +18,7 @@ const BY_CODE = {
 };
 // The runner's provider codes read as upstream, after the status: a 4xx beside one is the request's fault.
 const PROVIDER_CODES = new Set(["overloaded", "upstream", "truncated", "server_error"]);
-const NETWORK_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EPIPE",
+export const NETWORK_CODES = new Set(["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "ETIMEDOUT", "EPIPE",
 	"ENETUNREACH", "ENETDOWN", "EHOSTUNREACH", "UND_ERR_SOCKET", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_HEADERS_TIMEOUT", "UND_ERR_BODY_TIMEOUT"]);
 const codeOf = (value) => (typeof value?.code === "string" ? value.code : "");
 

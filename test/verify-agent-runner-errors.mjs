@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { createModels, createAssistantMessageEventStream } from "@earendil-works/pi-ai";
 import { fauxProvider, fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai/providers/faux";
 import { fauxToolCall } from "@earendil-works/pi-ai/providers/faux";
-import { createAgentRunner, classifyError } from "../bin/agent/agent-runner.mjs";
+import { createAgentRunner, classifyError, classifyProviderError } from "../bin/agent/agent-runner.mjs";
 import { retryHintMs } from "../bin/agent/agent-stream.mjs";
 import { createSessionStore, transcriptFromHistory } from "../bin/agent/session-store.mjs";
 import { createModels as createAgentModels, loadProvider } from "../bin/agent/providers.mjs";
@@ -674,6 +674,15 @@ for (const via of ["session", "signal"]) {
 	expect("the numeric status is preserved on the classification even when it decided the code", overloadedWordsWrongStatus.status === 500, JSON.stringify(overloadedWordsWrongStatus));
 	const noStatusFallsBackToText = classifyError({ message: "529 Overloaded" });
 	expect("with no structured status, the message-text fallback still classifies 529 as overloaded", noStatusFallsBackToText.code === "overloaded" && noStatusFallsBackToText.status === 529, JSON.stringify(noStatusFallsBackToText));
+	// network: status first, then the structure agent-stream.mjs kept (errorCode), then the message patterns.
+	expect("'fetch failed' (pi-ai's folded string) classifies as network", classifyProviderError("fetch failed") === "network" && classifyError({ message: "fetch failed" }).code === "network");
+	expect("{errorCode:'ECONNREFUSED', message:'x'} classifies as network from the structure", classifyError({ errorCode: "ECONNREFUSED", message: "x" }).code === "network");
+	expect("{errorCode:'TypeError'} classifies as network", classifyProviderError("x", "TypeError") === "network");
+	expect("{status:503, message:'fetch failed'}: the status wins, upstream", classifyError({ status: 503, message: "fetch failed" }).code === "upstream", JSON.stringify(classifyError({ status: 503, message: "fetch failed" })));
+	expect("'429 too many requests' stays rate_limit", classifyError({ message: "429 too many requests" }).code === "rate_limit");
+	expect("'unauthorized' stays unauthorized", classifyProviderError("unauthorized") === "unauthorized");
+	expect("'unauthorized ... fetch failed' keeps the earlier patterns first", classifyProviderError("unauthorized: fetch failed") === "unauthorized");
+	expect("an unrelated errorCode does not decide", classifyError({ errorCode: "ERR_INVALID_ARG", message: "x" }).code === "upstream");
 }
 
 // --- a tool error containing a status-shaped substring in its own text must

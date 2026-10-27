@@ -3,7 +3,7 @@ import { createReasoningFrames } from "./turn-frames.mjs";
 import { sanitizeUpstreamDetail } from "./agent-routes.mjs";
 import { budgetStudioRequest } from "./studio-context-budget.mjs";
 import { createRetryingStream } from "./agent-stream.mjs";
-import { frameCodeOf } from "./agent-failure-codes.mjs";
+import { NETWORK_CODES, frameCodeOf } from "./agent-failure-codes.mjs";
 
 const DEFAULT_MODEL = "gpt-6-astra";
 
@@ -17,6 +17,8 @@ const RETRY_MAX_DELAY_MS = 20000;
 const AUTH_ERROR_PATTERN = /\b(401|403)\b|unauthorized|forbidden/i;
 const RATE_LIMIT_PATTERN = /\b429\b|rate.?limit|too many requests/i;
 const OVERLOAD_PATTERN = /\b529\b|overloaded/i;
+// Checked after the three above: a request that never got an HTTP answer, when only pi-ai's folded string survives.
+const NETWORK_PATTERN = /fetch failed|ECONNREFUSED|ENOTFOUND|ETIMEDOUT|ECONNRESET|EAI_AGAIN|socket hang up|network error/i;
 
 // A numeric HTTP status, one per code. 401/403 both read as "unauthorized";
 // 529 (Anthropic's overload status) reads as "overloaded"; every other 5xx
@@ -27,20 +29,20 @@ const STATUS_CODES = { 401: "unauthorized", 403: "unauthorized", 429: "rate_limi
 function statusToCode(status) {
 	if (STATUS_CODES[status]) return STATUS_CODES[status];
 	if (Number.isInteger(status) && status >= 500 && status <= 599) return "upstream";
-	return undefined;
 }
 
-/** Classify a failed assistant message's `errorMessage` into the runner's
- * frozen error vocabulary. Providers do not hand us a structured status/code
- * here (pi folds both into one string, see `formatProviderError`), so this
- * mirrors the same pattern-matching pi itself uses to decide retryability.
- * Message-only fallback: use `classifyError` at the run_end boundary so a
- * structured status (when the error object carries one) wins first. */
-export function classifyProviderError(message) {
+/** Classify a failed message into the runner's frozen vocabulary (unauthorized,
+ * rate_limit, overloaded, network, upstream). pi folds status and code into one
+ * string (`formatProviderError`), so the patterns mirror pi's retryability
+ * check; `errorCode`, the structure agent-stream.mjs kept from a thrown error
+ * (a socket code or "TypeError"), decides first. Message-only fallback: use
+ * `classifyError` at the run_end boundary so a structured status wins first. */
+export function classifyProviderError(message, errorCode) {
+	if (errorCode === "TypeError" || NETWORK_CODES.has(errorCode)) return "network";
 	if (AUTH_ERROR_PATTERN.test(message)) return "unauthorized";
 	if (RATE_LIMIT_PATTERN.test(message)) return "rate_limit";
 	if (OVERLOAD_PATTERN.test(message)) return "overloaded";
-	return "upstream";
+	return NETWORK_PATTERN.test(message) ? "network" : "upstream";
 }
 
 function extractStatus(message) {
@@ -65,7 +67,7 @@ export function classifyError(error) {
 	const message = typeof error?.message === "string" ? error.message : "";
 	const structuredStatus = extractErrorStatus(error);
 	const status = structuredStatus ?? extractStatus(message);
-	const code = (structuredStatus !== undefined ? statusToCode(structuredStatus) : undefined) ?? classifyProviderError(message);
+	const code = (structuredStatus !== undefined ? statusToCode(structuredStatus) : undefined) ?? classifyProviderError(message, typeof error?.errorCode === "string" ? error.errorCode : undefined);
 	return { code, status };
 }
 
@@ -321,7 +323,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				const cancelled = aborted || failedAssistant.stopReason === "aborted";
 				const rawMessage = failedAssistant.errorMessage || "The model or live editor could not complete this turn.";
 				const message = cancelled ? "The turn was aborted." : sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage })) || rawMessage;
-				const code = cancelled ? "aborted" : classifyProviderError(rawMessage);
+				const code = cancelled ? "aborted" : classifyProviderError(rawMessage, failedAssistant.errorCode);
 				await sessionStore.appendTurnError(sessionId, { code, message, at: new Date().toISOString() }, { surface, ...(input.meta || {}) });
 			}
 		};
@@ -498,7 +500,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 				if (status !== "completed" && !quiet) {
 					const rawMessage = last?.errorMessage || (status === "aborted" ? "The turn was aborted." : "The model or live editor could not complete this turn.");
 					const truncated = /ended before a terminal response event/i.test(rawMessage);
-					const classified = status === "aborted" ? { code: "aborted", status: undefined } : classifyError({ message: rawMessage });
+					const classified = status === "aborted" ? { code: "aborted", status: undefined } : classifyError({ message: rawMessage, errorCode: last?.errorCode });
 					const code = status === "aborted" ? "aborted" : truncated || outOfTokens ? "truncated" : classified.code;
 					const detail = sanitizeUpstreamDetail(JSON.stringify({ message: rawMessage }));
 					const fallback = code === "aborted" ? "The turn was aborted." : code === "truncated" ? "The model stream ended before a terminal response event." : "The model or live editor could not complete this turn.";

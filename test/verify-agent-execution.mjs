@@ -251,6 +251,33 @@ for (const explicit of [true, false]) {
 		}
 	} finally { await handler.close(); await close(sidecar); await close(model); }
 }
+// A model URL that refuses the connection: the model client folds the fetch
+// error into a failed message, and the turn still reads network on all three
+// readings (the error frame, the sidecar's turn_failed, the browser's).
+{
+	const refusing = createServer();
+	const modelUrl = await listen(refusing);
+	await close(refusing);
+	const fixtureToken = `e30.${Buffer.from(JSON.stringify({ "https://api.openai.com/auth": { chatgpt_account_id: "fixture" } })).toString("base64url")}.e30`;
+	const auth = { getAccessToken: async () => fixtureToken, readStored: async () => ({ refresh_token: "fixture-refresh", access_token: fixtureToken, expires_at: Date.now() + 60 * 60 * 1000 }) };
+	const handler = createAgentHandler({ auth, codexBaseUrl: modelUrl, liveHub: { command: async () => ({ accepted: true }) } });
+	const sidecar = createServer((req, res) => handler(req, res).catch((error) => { res.writeHead(500); res.end(error.message); }));
+	const sidecarUrl = await listen(sidecar);
+	try {
+		const captured = [];
+		const wire = [];
+		const transport = createHttpTransport({ surface: "workflow", capture: (event, props) => keep(captured, event, props), fetchImpl: async (url, init) => {
+			const response = await fetch(sidecarUrl + url, init);
+			const copy = await response.clone().text(); wire.push(...[...copy.matchAll(/^data: (.+)$/gm)].map((match) => JSON.parse(match[1])));
+			return response;
+		} });
+		await transport.turn({ ...request, model: "gpt-6-astra", sessionId: "refused-model" }, () => {});
+		assert.equal(wire.find(({ type }) => type === "error")?.code, "network", `the error frame: ${JSON.stringify(wire.filter(({ type }) => type === "error"))}`);
+		assert.equal(wire.find(({ event }) => event === "agent:turn_failed")?.props.failure_code, "network", "the sidecar's agent:turn_failed");
+		assert.deepEqual(names(captured), ["agent:turn_requested", "agent:turn_failed"]);
+		assert.equal(captured[1].props.failure_code, "network", "the browser's agent:turn_failed");
+	} finally { await handler.close(); await close(sidecar); }
+}
 // --- #379 / 16k (F2 pass 5 finding 4): on the REAL codex HTTP path, the
 // quota frame must carry the ACTUAL response header values (proving the
 // providers.mjs fetch seam reaches the runner with real headers) and must

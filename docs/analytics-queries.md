@@ -903,11 +903,14 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
   - `network`: the request never got an HTTP answer. A fetch `TypeError`
     (offline, refused, DNS) or a socket code such as `ECONNRESET`, `ENOTFOUND`
     or `ETIMEDOUT` on the error or its `cause`. Read from `name`, `code` and
-    `status` only, never the message. The sidecar classifies an error it
-    throws itself the same way and sends that code on its error frame, so a
-    sidecar-side network failure also reads `network`. A provider request that
-    fails inside the model client reaches the turn as a failed message with no
-    structured code, so it still reads `upstream`.
+    `status` only, never the message. `network` covers both hops: browser to
+    sidecar, and sidecar to provider. The sidecar sends the same code on its
+    error frame for an error it throws itself, and a provider request that
+    fails in the model client reads `network` from the thrown error's socket
+    code or `TypeError`, kept before the client folds it into a string, or,
+    when only that string survives, from the runner's existing message
+    classification (`fetch failed`, `ECONNREFUSED`, ...). An HTTP status still
+    wins over both.
   - `unknown`: anything else, including a code outside this set and an error
     whose fields throw.
   - Rows before the `network`/`unknown` split carry `upstream` for all three;

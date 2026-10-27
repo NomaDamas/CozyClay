@@ -34,12 +34,23 @@ function pause(ms, signal) {
 	});
 }
 
+/** The thrown error's structure a string would lose: its own code, its cause's, or a fetch TypeError. Never the message. */
+function structuredCode(error) {
+	try {
+		if (typeof error?.code === "string" && error.code) return error.code;
+		if (typeof error?.cause?.code === "string" && error.cause.code) return error.cause.code;
+		return error?.name === "TypeError" ? "TypeError" : undefined;
+	} catch { return undefined; }
+}
+
 /** An assistant message for a request that never produced one (pi-ai throws when a request has no credential). */
 function failedMessage(model, error, signal) {
+	const errorCode = structuredCode(error);
 	return {
 		role: "assistant", content: [], api: model.api, provider: model.provider, model: model.id, usage: EMPTY_USAGE,
 		stopReason: signal?.aborted ? "aborted" : "error",
 		errorMessage: error instanceof Error ? error.message : String(error),
+		...(errorCode ? { errorCode } : {}),
 		timestamp: Date.now(),
 	};
 }
