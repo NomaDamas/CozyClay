@@ -864,8 +864,8 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
 | `agent:turn_succeeded` | `turn_id`, `duration_bucket` |
 | `agent:turn_failed`, `agent:turn_cancelled` | `turn_id`, `duration_bucket`, `failure_code` |
 | `agent:result_applied` | `turn_id` |
-| `mcp:tool_requested` | `request_id`, `tool_category` |
-| `mcp:tool_executed` | `request_id`, `tool_category`, `outcome`, `duration_bucket` |
+| `mcp:tool_requested` | `request_id`, `tool_category`, `tool_name` |
+| `mcp:tool_executed` | `request_id`, `tool_category`, `tool_name`, `outcome`, `duration_bucket` |
 | `mcp:result_applied` | `request_id` |
 
 - IDs are fresh 128-bit secure random values, encoded as 32 lowercase hex
@@ -904,6 +904,20 @@ Historical `feature:used(mcp_connected)` is a connection signal, not work.
   `frame_capture`, `image_generate`, `scene_write`, `other`.
 - MCP `tool_category`: `read`, `camera`, `scene_write`, `prompt_authoring`,
   `frame_capture`, `motion_generate`, `motion_apply`, `project_io`, `other`.
+  `studio_commands` counts as `read`; `studio_run` stays `other` because its
+  kind depends on its action, so read it by `tool_name`.
+- MCP `tool_name` (on `mcp:tool_requested` and `mcp:tool_executed` only): the
+  live tool that ran, one of `describe_scene`, `describe_shot`,
+  `render_prompt`, `mark_camera_move`, `describe_camera_move`, `save_project`,
+  `set_camera`, `frame_shot`, `add_character`, `place_character`,
+  `remove_character`, `focus_character`, `place_object`, `import_mesh`,
+  `sculpt_object`, `compare_sculpt`, `group_objects`, `update_object`,
+  `remove_object`, `apply_batch`, `add_scene`, `switch_scene`, `open_project`,
+  `capture_frame`, `studio_commands`, `studio_run`, or `other` for any name
+  outside that list. Source: `MCP_TOOL_NAMES` in `src/analytics.js`, held equal
+  to `liveWorkspaceTools` in `mcp/tool-handlers.mjs` by
+  `test/verify-analytics.mjs`. Rows sent before this change (and by older MCP
+  servers) have no `tool_name`; before it, `studio_commands` counted as `other`.
 - Agent tool `outcome`: `succeeded`, `failed`, `cancelled`. MCP also permits
   `uncertain` when editor acknowledgement/verification cannot establish an
   outcome. Uncertainty is not an ordinary failure or confirmed application.
@@ -1032,7 +1046,9 @@ execute several tools in the same category. Browser wire deduplication suppresse
 repeat frames without collapsing separate tool invocations. Tool counts are not
 Agent turn demand. For MCP category reliability, include requested `tool_category`
 in `per_execution`; retain the request-ID cohort so missing terminal frames are
-not silently excluded from the denominator.
+not silently excluded from the denominator. For per-tool reliability and the
+applied ratio per tool, group the same cohort by requested `tool_name`; rows
+without `tool_name` predate it.
 
 This query applies #270's type-exact internal-QA exclusion to every source event.
 Do not infer traffic or channel use from prompts, responses, arguments, labels,

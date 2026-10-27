@@ -1276,7 +1276,18 @@ try {
 console.log("all analytics checks PASS");
 
 // Issue #274: execution contracts (existing analytics sections above retained).
-const { startWorkflowExecution } = await import("../src/execution-telemetry.js");
+const { mcpToolCategory, mcpToolName, startWorkflowExecution } = await import("../src/execution-telemetry.js");
+{
+	// tool_name is the live tool list plus "other"; the two lists cannot drift.
+	const handlers = readFileSync(new URL("../mcp/tool-handlers.mjs", import.meta.url), "utf8");
+	const liveTools = [...handlers.match(/const liveWorkspaceTools = new Set\(\[([\s\S]*?)\]\)/)[1].matchAll(/"([a-z_]+)"/g)].map(([, name]) => name);
+	assert.equal(liveTools.length, 26);
+	assert.deepEqual([...analytics.MCP_TOOL_NAMES].sort(), [...liveTools, "other"].sort());
+	for (const name of liveTools) assert.equal(mcpToolName(name), name);
+	for (const name of ["private_unlisted_tool", "live_status", "", null, undefined, 42]) assert.equal(mcpToolName(name), "other");
+	assert.equal(mcpToolCategory("studio_commands"), "read");
+	assert.equal(mcpToolCategory("studio_run"), "other");
+}
 const executionId = "0123456789abcdef0123456789abcdef";
 assert.deepEqual(
 	sanitizeProps("workflow:run_requested", {
@@ -1299,6 +1310,13 @@ assert.deepEqual(
 	}),
 	{ request_id: executionId, tool_category: "motion_generate", outcome: "uncertain", duration_bucket: "gte30s" },
 );
+assert.deepEqual(
+	sanitizeProps("mcp:tool_executed", { request_id: executionId, tool_category: "read", tool_name: "describe_scene", outcome: "succeeded", duration_bucket: "lt1s" }),
+	{ request_id: executionId, tool_category: "read", tool_name: "describe_scene", outcome: "succeeded", duration_bucket: "lt1s" },
+);
+assert.deepEqual(sanitizeProps("mcp:tool_requested", { request_id: executionId, tool_category: "other", tool_name: "private_unlisted_tool" }), { request_id: executionId, tool_category: "other" });
+assert.deepEqual(sanitizeProps("mcp:tool_requested", { request_id: executionId, tool_category: "other", tool_name: "other" }), { request_id: executionId, tool_category: "other", tool_name: "other" });
+assert.deepEqual(sanitizeProps("agent:tool_executed", { turn_id: executionId, tool_category: "other", tool_name: "describe_scene" }), { turn_id: executionId, tool_category: "other" });
 assert.deepEqual(sanitizeProps("mcp:tool_executed", { request_id: executionId, tool_category: "workflow_run", outcome: "succeeded" }), { request_id: executionId, outcome: "succeeded" });
 assert.deepEqual(sanitizeProps("workflow:run_failed", { run_id: executionId, duration_bucket: "1-3s", failure_code: "generation_failed" }), {
 	run_id: executionId, duration_bucket: "1-3s", failure_code: "generation_failed",
@@ -1352,14 +1370,14 @@ const executionSchemas = {
 	"agent:turn_failed": ["turn_id", "duration_bucket", "failure_code"],
 	"agent:turn_cancelled": ["turn_id", "duration_bucket", "failure_code"],
 	"agent:result_applied": ["turn_id"],
-	"mcp:tool_requested": ["tool_category", "request_id"],
-	"mcp:tool_executed": ["tool_category", "outcome", "duration_bucket", "request_id"],
+	"mcp:tool_requested": ["tool_category", "tool_name", "request_id"],
+	"mcp:tool_executed": ["tool_category", "tool_name", "outcome", "duration_bucket", "request_id"],
 	"mcp:result_applied": ["request_id"],
 };
 assert.deepEqual([...executionDisclosure.keys()].sort(), Object.keys(executionSchemas).sort());
 const executionProps = {
 	surface: "workflow", run_id: executionId, turn_id: executionId, request_id: executionId,
-	node_count_bucket: "1-3", tool_category: "other", outcome: "succeeded",
+	node_count_bucket: "1-3", tool_category: "other", tool_name: "describe_scene", outcome: "succeeded",
 	duration_bucket: "1-3s", failure_code: "unknown",
 };
 for (const [event, properties] of Object.entries(executionSchemas)) {
@@ -1389,6 +1407,8 @@ const executionEnums = [
 	["mcp:tool_executed", "tool_category", ["read", "camera", "scene_write", "prompt_authoring", "frame_capture", "motion_generate", "motion_apply", "project_io", "other"]],
 	["agent:tool_executed", "outcome", ["succeeded", "failed", "cancelled"]],
 	["mcp:tool_executed", "outcome", ["succeeded", "failed", "uncertain", "cancelled"]],
+	["mcp:tool_requested", "tool_name", analytics.MCP_TOOL_NAMES],
+	["mcp:tool_executed", "tool_name", analytics.MCP_TOOL_NAMES],
 ];
 for (const [event, key, values] of executionEnums) {
 	const row = [...privacyHtml.matchAll(/<tr\b[^>]*>([\s\S]*?)<\/tr>/g)].find(([row]) => row.includes(event))?.[0] ?? "";

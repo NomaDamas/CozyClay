@@ -12,7 +12,7 @@ import { WebSocket } from "ws";
 
 import { chromeArgs, resolveChromePath, seedCharacterStage } from "./qa-chrome.mjs";
 import { LiveHub } from "./live-hub.mjs";
-import { mcpToolCategory } from "../src/execution-telemetry.js";
+import { mcpToolCategory, mcpToolName } from "../src/execution-telemetry.js";
 
 const root = fileURLToPath(new URL("..", import.meta.url)); const serverPath = fileURLToPath(new URL("./server.mjs", import.meta.url));
 
@@ -64,14 +64,14 @@ function createExecutionObserver({ schedule = setTimeout, unschedule = clearTime
 			if (frame.value?.objects) descriptions.set(id, frame.value);
 			notify();
 		},
-		async call(trigger, category) {
+		async call(trigger, category, toolName) {
 			assert.equal(currentCall, null, "verification tool calls must be serial");
 			const call = { id: null }; currentCall = call;
 			const terminal = wait(() => {
 				if (call.id === null) return;
 				const lifecycle = events.get(call.id);
 				assert.match(call.id, /^[a-f0-9]{32}$/);
-				assert.equal(lifecycle[0].props.tool_category, category);
+				assert.deepEqual([lifecycle[0].props.tool_category, lifecycle[0].props.tool_name], [category, toolName]);
 				return lifecycle.some(e => e.event === "mcp:tool_executed") ? call.id : undefined;
 			}, `${category} request_id and terminal event`);
 			try {
@@ -119,7 +119,7 @@ async function verifyExecutionObservation() {
 				return { content: [] };
 			}, { randomId: () => (++request).toString(16).padStart(32, "0"), now: () => 0 });
 			response.resolve(); return value;
-		}, mcpToolCategory(name));
+		}, mcpToolCategory(name), mcpToolName(name));
 		return { response: response.promise, result };
 	};
 	const read = start("describe_scene"); await read.response;
@@ -302,7 +302,7 @@ try {
 		"window.__cozyclayMcpRigReady?.includes('char-a') ? true : new Promise((resolve) => window.addEventListener('cozyclay:mcp-rig-ready', (event) => event.detail === 'char-a' && resolve(true), { once: true }))",
 	), "character rig readiness");
 	const call = (name, args = {}, observe = true) => observe
-		? execution.call(() => client.callTool({ name, arguments: args }), mcpToolCategory(name))
+		? execution.call(() => client.callTool({ name, arguments: args }), mcpToolCategory(name), mcpToolName(name))
 		: client.callTool({ name, arguments: args });
 	const history = () => evaluate("window.__sceneHistory()");
 	const description = async () => JSON.stringify(await execution.description(await call("describe_scene")));

@@ -2,7 +2,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomBytes, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { bucketMs, sanitizeProps } from "../src/analytics.js";
-import { mcpToolCategory } from "../src/execution-telemetry.js";
+import { mcpToolCategory, mcpToolName } from "../src/execution-telemetry.js";
 
 import { WebSocket, WebSocketServer } from "ws";
 
@@ -192,7 +192,7 @@ export class LiveHub {
 		const startedAt = safely(now);
 		if (typeof requestId !== "string" || !/^[a-f0-9]{32}$/.test(requestId) || !Number.isFinite(startedAt)) return work();
 		const workspaceId = this.workspaceId(handle);
-		const category = mcpToolCategory(name);
+		const category = mcpToolCategory(name), toolName = mcpToolName(name);
 		const emit = (event, props) => safely(() => {
 			// Do not reconstruct this lifecycle on a replacement connection.
 			if (this.editors.get(handle) !== socket || socket.readyState !== WebSocket.OPEN) return;
@@ -266,14 +266,14 @@ export class LiveHub {
 			if (value?.isError === true && !failure) failure = acknowledgedMutation ? "uncertain" : "failed";
 			terminal = true;
 			const endedAt = safely(now);
-			if (Number.isFinite(endedAt)) emit("mcp:tool_executed", { request_id: requestId, tool_category: category, outcome: failure ?? "succeeded", duration_bucket: bucketMs(endedAt - startedAt) });
+			if (Number.isFinite(endedAt)) emit("mcp:tool_executed", { request_id: requestId, tool_category: category, tool_name: toolName, outcome: failure ?? "succeeded", duration_bucket: bucketMs(endedAt - startedAt) });
 			emitApplied();
 			// Never retain scene data with an asynchronous motion job.
 			description = undefined;
 			studioContext = undefined;
 			mutation = null;
 		});
-		emit("mcp:tool_requested", { request_id: requestId, tool_category: category });
+		emit("mcp:tool_requested", { request_id: requestId, tool_category: category, tool_name: toolName });
 		return executionObserver.run(observer, async () => {
 			try {
 				const value = await work();
