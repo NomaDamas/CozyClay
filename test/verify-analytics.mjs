@@ -17,6 +17,7 @@ import * as search from "../src/search-friction.js";
 import * as thrash from "../src/thrash-friction.js";
 import { createAppContext } from "../src/app-context.js";
 import { readFileSync } from "node:fs";
+import packageInfo from "../package.json" with { type: "json" };
 import {
 	bucketMs,
 	scrubEventUrls,
@@ -164,7 +165,7 @@ assert.deepEqual(
 		distribution: "hosted",
 		apiKey: "phc_hosted",
 		apiHost: "https://t.cozyclay.org",
-		appVersion: null,
+		appVersion: packageInfo.version,
 		installationId: null,
 		firstLaunch: false,
 		firstLaunchHeardFrom: null,
@@ -1139,6 +1140,14 @@ try {
 			assert.equal(run.options.bootstrap?.isIdentifiedID, distribution === "npm" ? false : undefined);
 			cohortFixtures.push(...run.records);
 		}
+	}
+	{
+		const run = await runtimeFixture({ runtime: null, origin: "https://cozyclay.org", env: { PROD: true, VITE_POSTHOG_KEY: "test" } });
+		run.module.track("scene:loaded", { scene_source: "library" });
+		const [ended] = await run.unload();
+		assert.equal(run.records.at(-1).properties.app_version, packageInfo.version, "a hosted build without VITE_APP_VERSION registers the package version");
+		assert.equal(ended.properties.app_version, packageInfo.version, "the hosted beacon carries the same app_version");
+		console.log("PASS hosted builds fall back to the package version for app_version");
 	}
 	{
 		const run = await runtimeFixture({ sessionId: "private session" });

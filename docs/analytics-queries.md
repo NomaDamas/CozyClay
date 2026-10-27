@@ -1259,6 +1259,9 @@ Exclude `internal_qa = true` with
   about 1 Hz, so a run left playing in the background reads as late.
 - `app:session_started` is sent by npm installs only. Hosted sessions start
   with `$pageview`; use it in place of `app:session_started` there.
+- Hosted rows carry `app_version` from the deployed package version as of
+  the change that added the fallback (the deploy sets no `VITE_APP_VERSION`).
+  Earlier hosted rows have no `app_version`.
 
 ## 1.1 Step funnel (update: `studio:ready`)
 
