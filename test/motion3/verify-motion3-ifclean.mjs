@@ -2,6 +2,7 @@
 // install: "ifClean" (variant K, deep research 20): installs a clean result, the first take when none is on, and one whose QA
 // beats the installed take's (fewer groups, then fewer frame issues); "never" never installs. A hand pushed into a board by
 // 3.5 / 4.0 / 3.6 / 3.8 cm gives one COLLIDE group of a different length each.
+import { readFileSync } from "node:fs";
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { createStudioAppActions } from "../../src/commands/index.js";
@@ -29,5 +30,23 @@ const d = run(0.35, "ifClean");
 expect("ifClean: a take that beats the installed one is installed (installs twice in the sequence)", d.installed === true && JSON.stringify(on()) !== firstSpec && issues(d) < issues(a), `${issues(a)} -> ${issues(d)}`);
 const e = run(0.3, "ifClean");
 expect("ifClean: a clean take is installed", e.qa.ok && e.installed === true);
+// key thinning (thin.js, variant L) runs only on a take that installs: install true thins in the compile job, ifClean thins once
+// it decided to install, an ifClean that does not install and "never" do not thin
+const sit = JSON.parse(readFileSync(new URL("./fixtures/h-sit-spec.json", import.meta.url), "utf8"));
+const sitTakes = new Map(), sitOwner = { replace: (cid, take) => sitTakes.set(cid, take), motionFor: cid => sitTakes.get(cid) ?? null };
+const sitReg = createStudioAppActions({ state: () => ({ characters: [{ ...actor, model: sit.model }], objects: sit.objects, frameCount: 240 }), storeDomain: name => (name === "motion" ? sitOwner : null) });
+const sitRun = install => sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install, repair: false });
+const never = sitRun("never");
+expect("never: no thinning", never.output.installed === false && never.output.thinned === undefined && sitTakes.size === 0, JSON.stringify(never.output.thinned));
+const firstClean = sitRun("ifClean"), thinnedSpec = JSON.stringify(sitTakes.get("c")?.spec);
+expect("ifClean that installs: thinned, the installed take is the thinned spec, the summary says so", firstClean.output.installed === true && firstClean.output.thinned?.removed?.length > 0
+	&& sitTakes.get("c").spec.keys.length < sit.spec.keys.length && /Thinned \d+ free-span key/.test(firstClean.summary), JSON.stringify({ installed: firstClean.output.installed, thinned: firstClean.output.thinned }));
+const again = sitRun("ifClean");
+expect("ifClean that does not install (no better than the take on): no output.thinned", again.output.installed === false && again.output.thinned === undefined && JSON.stringify(sitTakes.get("c")?.spec) === thinnedSpec,
+	JSON.stringify({ installed: again.output.installed, thinned: again.output.thinned, ok: again.output.qa.ok }));
+const always = sitRun(true);
+expect("install true still thins", always.output.installed === true && always.output.thinned?.removed?.length > 0, JSON.stringify(always.output.thinned));
+const off = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: "ifClean", repair: false, thin: false });
+expect("thin: false opts out under ifClean", off.output.thinned === undefined);
 if (failures) { console.error(`${failures} ifClean check(s) failed`); process.exit(1); }
 console.log("verify-motion3-ifclean: all checks passed");

@@ -186,12 +186,18 @@ export function register(registry, ports) {
 		const protect = before ? [...new Set((source.keys ?? []).map(k => k.f))].filter(f => keysAt(before, f) !== keysAt(source, f)) : [];
 		// a small patch on one authored key keeps the fill beside it (patch-guard.js): re-fills there made 14-22% of the new problems
 		const keepFill = base === undefined ? null : keptFill(store.get(base) ?? installedSpec(), source);
-		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith, finish: install !== false, thin, protect }, {}, context?.taskId, scene), r => {
-			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
+		const job = (spec, opts) => compile(character, spec, { protect, ...opts }, {}, context?.taskId, scene);
+		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(job(auto.spec, { probes, repair: repairWith, finish: install !== false, thin: install === "ifClean" ? false : thin }), first => {
 			// ifClean: install a clean result (qa.ok includes the goals; after repair when asked), and one that beats the installed
 			// take's QA (fewer groups, then fewer frame issues) or the first when none is on (variant K: box ended with no take in 4 of
 			// 5 runs under ifClean / never); a take whose QA this session never measured is replaced only by a clean one
-			const wanted = install === "ifClean" ? qa.ok || beatsInstalled(characterId, qa) : install;
+			const wanted = install === "ifClean" ? first.qa.ok || beatsInstalled(characterId, first.qa) : install;
+			// key thinning (thin.js) only on a take that installs: ifClean thins once it decided to (variant L; thinning never raises QA);
+			// the spec's own probes ride along, as the first job lifted them (pipeline.js liftRequest)
+			const inSpec = auto.spec?.probes, all = inSpec === undefined ? probes : [...(probes ?? []), ...[inSpec].flat()];
+			return after(install === "ifClean" && wanted && thin !== false ? job(first.stored, { probes: all, thinOnly: true }) : first, t => {
+			const r = t === first || !t.thinned ? first : { ...t, ...(first.repair ? { repair: first.repair } : {}), notes: first.notes, ms: first.ms.repair === undefined ? t.ms : { ...t.ms, repair: first.ms.repair } };
+			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
 			let installs = wanted, kept = false, timing;
 			// open ranges are stored with the values the search chose, so motion.qa re-measures this take
 			if (wanted) {
@@ -216,6 +222,7 @@ export function register(registry, ports) {
 			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
 			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
 			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${install !== false && qaProblems(qa) === 0 ? " QA clean — done (no further rounds)." : ""}${installs || kept || self ? ` Installed take: ${output.specId}.` : best ? ` Installed take: ${best.specId}.` : ""}${r.thinned ? ` Thinned ${r.thinned.removed.length} free-span key${r.thinned.removed.length === 1 ? "" : "s"} QA did not need (output.thinned).` : ""}`, output, ...workerWarning() };
+			});
 		}));
 	} });
 	registry.register({ ...declarations[1], available: mounted, run({ characterId, checks }) {

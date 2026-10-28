@@ -15,7 +15,9 @@ import { bakeTake } from "./take.js";
 import { skeletonFor } from "./rigs/index.js";
 import { keptPeople } from "./people.js";
 
-const TIMELINE_FPS = 24, FINISH_AT = 2;
+// REPAIR_MS: the whole repair of one compile, main repair and finish pass together (variant L: K spent 0.88 min a run in
+// repair; each was 20 s before); a caller's repair.limitMs wins
+const TIMELINE_FPS = 24, FINISH_AT = 2, REPAIR_MS = 8000;
 const refuse = (code, message) => { throw Object.assign(new Error(message), { code }); };
 
 /** Runs `run`, turning a MOTION_SPEC_INVALID error into INVALID_ARGUMENT with the exact message. */
@@ -40,8 +42,9 @@ const fresh = value => (Array.isArray(value) ? value.map(fresh) : value && typeo
  * runCompileJob({ model, scene, spec, probes?, checks?, lenient?, repair?, bake? }) -> { stored, qa, observations,
  * used, fixed, search, timeline, probes?, notes?, ms (+ repair: its wall ms), frameCount, label, repair?, take? }
  * bake: { position, yaw, prompt? } bakes the final result's take (prompt: given, else the final spec's label).
+ * thinOnly: compile the spec as given and thin it (no repair): an ifClean compile thins once it decides to install.
  */
-export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, finish, thin, protect, bake }) {
+export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair: asking, finish, thin, thinOnly, protect, bake }) {
 	const sk = skeletonFor(model);
 	const opts = { ...(checks ? { checks } : {}), ...(lenient ? { lenient: true } : {}) };
 	// spec.probes and bare moved ids are lifted before fps is filled in, so the specId stays the spec's own
@@ -53,24 +56,27 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 		return { ...r, stored: r.spec === sent ? spec : r.spec };
 	};
 	// repair patches address the stored spec, so a repair starts from it corrected (correct.js), and says what was
+	const repair = asking && { limitMs: REPAIR_MS, ...asking };
 	const corrected = [], start = repair && !lenient ? prepareSpec(asked, { sk, scene }, corrected) : asked;
 	// every compile's QA by its spec, so a hint patch repair already tried is not compiled again (hint-check.js)
 	const seen = new Map(), measured = s => { const r = once(s); seen.set(JSON.stringify(s), r.qa); return r; };
 	const t0 = performance.now(), first = repair ? repairSpec(start, repair, measured) : { spec: asked, result: measured(asked) };
 	// the finish pass (finish: an installing compile): a take left with 1-2 QA groups (variant I: 1-4 ran it on 11 compiles at ~20 s each) repairs once more, up to 6 rounds (deep research 10:
 	// about +5 s; offline -0.5 groups mean, 0 worse, 21% of 1-2-group takes reach 0; it fixes a single SLIDE or BODY, not POP, SELF or REACH)
-	const left = first.result.qa?.groups?.length ?? 0, more = repair && finish && left > 0 && left <= FINISH_AT ? repairSpec(first.spec, { ...repair, rounds: 6 }, measured) : null;
+	// it gets what is left of repair.limitMs, and none after a main repair whose last round kept nothing (the same patches again)
+	const left = first.result.qa?.groups?.length ?? 0, spare = repair ? repair.limitMs - (performance.now() - t0) : 0;
+	const more = repair && finish && !first.stalled && spare > 0 && left > 0 && left <= FINISH_AT ? repairSpec(first.spec, { ...repair, rounds: 6, limitMs: spare }, measured) : null;
 	const repaired = more?.repair.applied.length ? { spec: more.spec, result: more.result, repair: { ...first.repair, rounds: first.repair.rounds + more.repair.rounds,
 		compiles: first.repair.compiles + more.repair.compiles, applied: [...first.repair.applied, ...more.repair.applied], rejected: first.repair.rejected + more.repair.rejected, finish: more.repair.rounds } }
 		: more ? { ...first, repair: { ...first.repair, finish: 0 } } : first;
 	// key thinning (thin.js): an installing compile drops the free-span keys QA does not miss; thin: false opts out
-	const thinned = finish && thin !== false && !lenient ? thinSpec(repaired.spec, repaired.result, measured, { protect: protect ?? [] }) : null;
+	const thinned = (finish || thinOnly) && thin !== false && !lenient ? thinSpec(repaired.spec, repaired.result, measured, { protect: protect ?? [] }) : null;
 	const fixed = thinned ? { ...repaired, spec: thinned.spec, result: thinned.result } : repaired;
 	// a hint's patch is offered only when its compile helped (hint-check.js), and only by a compile that repairs: repair has
 	// compiled most of the patches already (seen), where a plain compile paid two more compiles for them (bench replay: first
 	// compile 1.6 -> 5.2 s median) and the agent applied an offered patch as sent once in the 60 bench runs (374 direct
 	// compiles, 319 with repair; a plain compile is mostly a variant in a sweep); a plain compile keeps the hint's words only
-	if (repair) checkHints(fixed.spec, fixed.result.qa, s => seen.get(JSON.stringify(s)) ?? measured(s).qa);
+	if (repair || (thinOnly && thinned)) checkHints(fixed.spec, fixed.result.qa, s => seen.get(JSON.stringify(s)) ?? measured(s).qa);
 	else for (const g of fixed.result.qa?.groups ?? []) delete g.patch;
 	// ms.repair: the whole repair's wall time, so a sweep that repairs every variant shows what it costs
 	const r = fixed.result, label = fixed.spec?.label ?? null, ms = fixed.repair ? { ...r.ms, repair: Math.round(performance.now() - t0) } : r.ms;

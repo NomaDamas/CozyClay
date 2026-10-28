@@ -39,7 +39,7 @@ const movesBody = patch => patch.some(o => /^\/use\/\d+\/args(\/(at|step|firstSt
 const MOVED = "the body moved: no change that keeps it in place fixed this arm's failure";
 
 /**
- * repairSpec(spec, { rounds }, compile) -> { spec, result, repair }
+ * repairSpec(spec, { rounds }, compile) -> { spec, result, repair, stalled } (stalled: the loop stopped on a round that kept nothing)
  * @param {object} spec  the agent's spec (patches address it)
  * @param {{ rounds?: number, limitMs?: number }} opts  rounds 1..8 (default 4); limitMs, the wall-clock stop (default 20 s)
  * @param {(spec: object) => object} compile  spec -> pipeline.js compileSpec result (qa.groups[i].patch)
@@ -49,7 +49,7 @@ const MOVED = "the body moved: no change that keeps it in place fixed this arm's
 export function repairSpec(spec, opts, compile) {
 	const want = Math.min(8, Math.max(1, Math.round(Number(opts?.rounds ?? 4)) || 4)), t0 = performance.now();
 	const late = () => performance.now() - t0 >= (opts?.limitMs > 0 ? opts.limitMs : LIMIT_MS);
-	let current = spec, result = compile(spec), compiles = 1, rejected = 0, rounds = 0;
+	let current = spec, result = compile(spec), compiles = 1, rejected = 0, rounds = 0, stalled = false;
 	const refused = new Set();
 	const applied = [];
 	/** Compiles current + patch; null (counted as rejected) when the patch or the spec fails. */
@@ -108,7 +108,7 @@ export function repairSpec(spec, opts, compile) {
 		// a patch already tried and not kept is not tried again: the groups after it get their turn
 		const keys = groupsOf(result).filter(g => g.patch && !refused.has(JSON.stringify(g.patch))).slice(0, TRIES).map(groupKey);
 		const near = groupsOf(result).filter(g => tuneCandidates(g, current).length).slice(0, TUNE_GROUPS).map(groupKey);
-		if (!keys.length && !near.length) break;
+		if (!keys.length && !near.length) { stalled = true; break; }
 		rounds += 1;
 		let kept = 0;
 		const deferred = [];
@@ -130,7 +130,7 @@ export function repairSpec(spec, opts, compile) {
 			const t = cheapest(g);
 			if (t && better(t.r, result)) { keep(g, key, t.patch, t); kept += 1; break; } else { refused.add(JSON.stringify(g.patch)); if (t) rejected += 1; }
 		}
-		if (!kept) break;
+		if (!kept) { stalled = true; break; }
 	}
-	return { spec: current, result, repair: { rounds, compiles, applied, rejected } };
+	return { spec: current, result, repair: { rounds, compiles, applied, rejected }, stalled };
 }
