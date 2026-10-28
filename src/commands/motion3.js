@@ -29,6 +29,7 @@ import { createRoundWatch } from "./motion3-rounds.js";
 import { createRepairWatch } from "../motion3/repair-watch.js";
 import { peopleOf } from "../motion3/people.js";
 import { hybridCapsuleHint } from "../motion3/hybrid-hint.js";
+import { patchTooBroad } from "../motion3/patch-guard.js";
 
 const TIMELINE_FPS = 24;
 const id = { type: "string", minLength: 1 };
@@ -191,8 +192,8 @@ export function register(registry, ports) {
 			const self = best?.specId === own, how = kept ? "; already installed, unchanged" : self ? "; installed as the best take so far"
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
 			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
-			const flat = rounds(characterId, qa, base === undefined);
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}) });
+			const flat = rounds(characterId, qa, base === undefined), broad = patchTooBroad(patch);
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad ? { notes: [broad] } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });

@@ -131,5 +131,11 @@ const styled = style => createStudioAppActions({ ...ports, storeDomain: name => 
 const hinted = style => (r => r?.output ?? r)(styled(style).run("motion.compile", { characterId: "char-1", spec: long, install: false }));
 expect("a hybrid project's colliding take carries the capsule hint", hinted("hybrid").hint === "hybrid project: propose capsule figures to the user before more repairs", JSON.stringify(hinted("hybrid").qa.groups.slice(0, 2)));
 expect("a rig project's colliding take carries no hint", hinted("rig").hint === undefined && bad.hint === undefined);
+// PATCH_TOO_BROAD (patch-guard.js): a patch that mixes /fix with key edits is applied and answered with the note
+const broadBase = boardReg.run("motion.compile", { characterId: "char-2", spec: held, install: false }).output.specId;
+r = boardReg.run("motion.compile", { characterId: "char-2", base: broadBase, install: false, patch: [{ op: "replace", path: "/keys/@f=30/set/hand_r", value: [-0.22, 1.1, 0.34] }, { op: "add", path: "/fix", value: { retime: false } }] });
+const narrow = boardReg.run("motion.compile", { characterId: "char-2", base: broadBase, install: false, patch: [{ op: "add", path: "/fix", value: { retime: false } }] });
+expect("PATCH_TOO_BROAD: /fix mixed with key edits is noted and still applied; a narrow patch carries no note", /^PATCH_TOO_BROAD \/fix mixed with key edits/.test(r.output.notes?.[0] ?? "")
+	&& r.output.specId !== broadBase && narrow.output.notes === undefined, JSON.stringify(r.output.notes));
 if (failures) { console.error(`${failures} motion3 command check(s) failed`); process.exit(1); }
 console.log("motion3 commands: all checks passed");
