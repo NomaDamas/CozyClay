@@ -19,7 +19,7 @@ function keyTable(out) {
 	const byCh = new Map();
 	for (const k of out.keys ?? []) for (const ch of Object.keys(k.set ?? {})) {
 		if (!byCh.has(ch)) byCh.set(ch, []);
-		byCh.get(ch).push({ f: k.f, src: k.src ?? "keys", step: k.step?.includes(ch) });
+		byCh.get(ch).push({ f: k.f, src: k.src ?? "keys", step: k.step?.includes(ch), ...(k.fill ? { fill: true } : {}) });
 	}
 	for (const list of byCh.values()) list.sort((a, b) => a.f - b.f);
 	return byCh;
@@ -44,7 +44,7 @@ function context(sk, out, spec) {
 			const { prev, next } = X.bracket(ch, f);
 			if (!prev && !next) return `${ch} (not keyed)`;
 			const near = prev && f - prev.f <= 2 ? prev : next && next.f - f <= 2 ? next : null;
-			if (near) return `${near.src} f${Math.round(near.f)} ${ch}`;
+			if (near) return `${near.src} f${Math.round(near.f)} ${ch}${near.fill ? " (a MotionBricks fill key; editing it makes it authored)" : ""}`;
 			if (!next) return `${ch} held since ${prev.src} f${Math.round(prev.f)}`;
 			if (!prev) return `${ch} before ${next.src} f${Math.round(next.f)}`;
 			return `${ch} between ${prev.src} f${Math.round(prev.f)} and ${next.src === prev.src ? "" : `${next.src} `}f${Math.round(next.f)}`;

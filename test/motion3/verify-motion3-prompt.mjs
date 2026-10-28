@@ -26,9 +26,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +293 for MotionBricks (key poses or an A-to-B move go to motion.fill; motion brick is available): +296
 // +49 for motion.fill install: true, never ifClean (an unclean fill was never shown): +50
 // +236 for the 24-frame pose grid that motion.compile fills by itself (autofill-24): +240
-check("the whole prompt is at most 15,522 characters", () => assert.ok(prompt.length <= 15522, `${prompt.length}`));
-check("the motion part is at most 3,270 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 3270, `${motion.length}`);
+// +10 for "edit the key a hint names; you do not need to remove src" (fill keys keep their edits): +10
+check("the whole prompt is at most 15,532 characters", () => assert.ok(prompt.length <= 15532, `${prompt.length}`));
+check("the motion part is at most 3,280 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 3280, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);

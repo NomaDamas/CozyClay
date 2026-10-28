@@ -9,6 +9,7 @@ import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { fillSpec } from "../../src/motion3/bricks/fill.js";
+import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
 import { createRunner } from "./model.mjs";
 
 const args = process.argv.slice(2), opt = n => { const i = args.indexOf(n); return i < 0 ? undefined : args[i + 1]; };
@@ -28,7 +29,7 @@ const t0 = performance.now();
 const run = await createRunner(m => console.error(m));
 const tLoad = performance.now();
 const spec = JSON.parse(readFileSync(input, "utf8"));
-const authored = { ...spec, keys: (spec.keys ?? []).filter(k => k.src !== "fill") };
+const authored = { ...spec, keys: (spec.keys ?? []).filter(k => !isFillKey(k)) };
 const before = compile(at === undefined ? authored : spec);
 const filled = await fillSpec(spec, { sk, compile, run }, { at });
 const after = compile(filled.spec);
@@ -36,7 +37,7 @@ writeFileSync(out, JSON.stringify(filled.spec, null, "\t") + "\n");
 const tEnd = performance.now();
 console.log(JSON.stringify({
 	out, at, gaps: filled.gaps, onnxCalls: filled.calls,
-	keys: { before: (spec.keys ?? []).length, after: filled.spec.keys.length, fill: filled.spec.keys.filter(k => k.src === "fill").length },
+	keys: { before: (spec.keys ?? []).length, after: filled.spec.keys.length, fill: filled.spec.keys.filter(k => isFillKey(k)).length },
 	qa: { before: { groups: before.qa.groups.length, list: groups(before) }, after: { groups: after.qa.groups.length, list: groups(after) } },
 	ms: { modelLoad: Math.round(tLoad - t0), fill: Math.round(tEnd - tLoad), total: Math.round(tEnd - t0) },
 }, null, 1));

@@ -5,6 +5,7 @@
 import { fail, characterOf } from "./shared.js";
 import { specIdOf } from "../motion3/spec-store.js";
 import { MOTION_ACTION_HELP as HELP } from "../motion3/docs.js";
+import { isFillKey } from "../motion3/bricks/fill-src.js";
 
 const id = { type: "string", minLength: 1 };
 const openObject = { type: "object", properties: {}, required: [], additionalProperties: true };
@@ -39,7 +40,7 @@ export function fillSource({ spec, base }, specOf, installedSpec) {
 	if ((spec === undefined) === (base === undefined)) fail("INVALID_ARGUMENT", "Send exactly one of spec or base (the specId of a compiled spec).");
 	const source = spec ?? specOf(base) ?? (specIdOf(installedSpec ?? null) === base ? installedSpec : null)
 		?? fail("INVALID_ARGUMENT", `base "${base}" is not known (the editor keeps the last compiled specs this session); send spec`);
-	if (!Array.isArray(source.keys) || new Set(source.keys.filter(k => k?.src !== "fill").map(k => k?.f)).size < 2)
+	if (!Array.isArray(source.keys) || new Set(source.keys.filter(k => !isFillKey(k)).map(k => k?.f)).size < 2)
 		fail("INVALID_ARGUMENT", "motion.fill needs at least 2 authored key poses in spec.keys (keys without src: \"fill\"); a gap is filled between neighbours.");
 	return structuredClone(source);
 }
@@ -51,11 +52,11 @@ export function fillSource({ spec, base }, specOf, installedSpec) {
  */
 export function autoFill(ports, character, spec) {
 	const fetcher = ports.fetch ?? (typeof window === "undefined" ? null : globalThis.fetch);
-	const authored = Array.isArray(spec?.keys) ? new Set(spec.keys.filter(k => k?.src !== "fill").map(k => k?.f)).size : 0;
+	const authored = Array.isArray(spec?.keys) ? new Set(spec.keys.filter(k => !isFillKey(k)).map(k => k?.f)).size : 0;
 	if (!fetcher || spec?.fill === false || authored < 2) return { spec, fill: null };
 	if (spec.use?.length || spec.generators?.length) return { spec, fill: { skipped: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
 	return requestFill(fetcher, { spec, model: character.model, auto: true }).then(
-		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => k.src === "fill").length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
+		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => isFillKey(k)).length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.promoted ? { promoted: filled.promoted } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
 		error => ({ spec, fill: { skipped: `MotionBricks fill did not run (${error.message}); compiled with the default interpolation` } }));
 }
 
@@ -66,7 +67,7 @@ export function register(registry, ports) {
 		const source = fillSource({ spec, base }, b => registry.motionSpecOf?.(b), ports.storeDomain("motion")?.motionFor(characterId)?.spec);
 		const filled = await requestFill(ports.fetch ?? globalThis.fetch, { spec: source, model: character.model, ...(at === undefined ? {} : { at }) });
 		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install }, context);
-		const keys = filled.spec.keys.filter(k => k.src === "fill").length;
+		const keys = filled.spec.keys.filter(k => isFillKey(k)).length;
 		return { ...r, summary: `MotionBricks filled ${filled.gaps.length} gap${filled.gaps.length === 1 ? "" : "s"} (${keys} fill keys, ${filled.calls} model calls). ${r.summary}`,
 			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms, ...(filled.warnings ? { warnings: filled.warnings } : {}) } } };
 	} });

@@ -122,6 +122,6 @@ export const NOTES = {
 		"Author one whole-body pose every 24 frames (f0, f24, f48 ...) plus one at each event between (contact change, apex, turn, grasp), never more than 36 frames apart. Each pose keys root, yaw/pitch/roll, spine_*, head_*, foot_l/r, knee_l/r, fyaw/fpitch, hand_l/r with elbow_l/r, and armw_l: 1, armw_r: 1 on the first key; spec.flow: false keeps the fill as keyed.",
 		"A gap under 14 frames stays the compiler's curve; one over 46 frames gets the compiler's own pose at its middle as a pass-through key (src: \"pass\") first. Filled keys carry src: \"fill\"; QA names them keys[n] like your own.",
 		"A gap may move the character at most ~1.1 m per second (24 frames: 1.1 m): farther, the gap keeps the compiler's curve (noted in output.fill), so add poses or use walkTo. For a jump or lying down write the mid pose (knees bending, feet rising).",
-		"To change the motion, edit a key (an edited fill key drops its src) and compile again, or motion.fill { base, at: <its f> } to re-fill only the two gaps beside it. Without the local dev server the spec compiles as written.",
+		"To change the motion, edit the key the hint names; you do not need to remove src (an edited fill key becomes authored) and the next compile fills only the gaps beside it again. Without the local dev server the spec compiles as written.",
 		"Fingers, wrist twist (wtwist/wflex) and props are not filled: key them yourself. The user's Pose-mode keys (K: whole pose + where the character stands) are the same authored poses; their Fill button runs motion.fill."],
 };

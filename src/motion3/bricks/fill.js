@@ -10,10 +10,11 @@ import { somaFK, toCozyPoint } from "./soma.js";
 import { encodePoses, decodeMotion, MIN_TOKENS, MAX_TOKENS } from "./model-io.js";
 import { frameChannels, unwrapSeries, roundChannels } from "./forward.js";
 import { pickKeys } from "./rekey.js";
+import { isFillKey, shortHash, fillSrc, editedFill, fillGapOf } from "./fill-src.js";
 import { quatFromMat, matFromQuat } from "../compiler/math.js";
 
 const STEP = 24 / 30; // one model frame in spec frames
-const isFill = k => k.src === "fill";
+const isFill = isFillKey;
 const lerp = (a, b, t) => (Array.isArray(a) ? a.map((v, i) => v + (b[i] - v) * t) : a + (b - a) * t);
 
 function nlerpRot(A, B, t) {
@@ -89,7 +90,7 @@ function lockFeet(out, planted) {
 	}
 }
 
-function sparseKeys(dense, fa) {
+function sparseKeys(dense, fa, gap) {
 	const byF = new Map();
 	for (const ch of Object.keys(dense[0])) {
 		for (const i of pickKeys(ch, dense.map(d => d[ch]))) {
@@ -97,7 +98,7 @@ function sparseKeys(dense, fa) {
 			byF.get(i)[ch] = dense[i][ch];
 		}
 	}
-	return [...byF].sort((a, b) => a[0] - b[0]).map(([i, set]) => ({ f: fa + i, set: roundChannels(set), src: "fill" }));
+	return [...byF].sort((a, b) => a[0] - b[0]).map(([i, set]) => { const rounded = roundChannels(set); return { f: fa + i, set: rounded, src: fillSrc(rounded, gap) }; });
 }
 
 const merge = (keys, add) => [...keys, ...add].map((k, i) => [k, i]).sort((a, b) => a[0].f - b[0].f || a[1] - b[1]).map(([k]) => k);
@@ -141,13 +142,20 @@ export function gapCheck(baked, fa, fb) {
  * refusing the call. Returns { spec, gaps: [{ f: [fa, fb], tokens, frames, keys, ms } | { f, skipped }], calls, warnings }.
  */
 export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } = {}) {
+	// a fill key someone edited is the author's from now on: it stays, and the gaps beside it fill again around it
+	const promoted = (spec.keys ?? []).filter(editedFill).length;
+	spec = { ...spec, keys: (spec.keys ?? []).map(k => (editedFill(k) ? Object.fromEntries(Object.entries(k).filter(([field]) => field !== "src")) : k)) };
 	// auto (motion.compile): a gap under 14 frames stays the compiler's; one over 46 gets pass-through poses first
 	const passed = auto ? passThrough(spec, compile) : { spec, added: 0 };
 	spec = passed.spec;
-	const gaps = fillGaps(spec.keys ?? [], at, auto ? MIN_AUTO_GAP : 2), inside = k => isFill(k) && gaps.some(([fa, fb]) => k.f > fa && k.f < fb);
-	let keys = (spec.keys ?? []).filter(k => !inside(k));
+	const gaps = fillGaps(spec.keys ?? [], at, auto ? MIN_AUTO_GAP : 2);
+	// a gap whose two authored ends did not change keeps its fill (unless at names it)
+	const ends = gaps.map(([fa, fb]) => shortHash(spec.keys.filter(k => !isFill(k) && (k.f === fa || k.f === fb)).map(k => [k.f, k.set])));
+	const keep = gaps.map(([fa, fb], i) => { const inside = spec.keys.filter(k => isFill(k) && k.f > fa && k.f < fb); return at === undefined && inside.length > 0 && inside.every(k => fillGapOf(k) === ends[i]); });
+	let keys = spec.keys.filter(k => !(isFill(k) && gaps.some(([fa, fb], i) => !keep[i] && k.f > fa && k.f < fb)));
 	const report = [], warnings = [];
-	for (const [fa, fb] of gaps) {
+	for (const [i, [fa, fb]] of gaps.entries()) {
+		if (keep[i]) { report.push({ f: [fa, fb], kept: true }); continue; }
 		// one token count, the gap's own: the output is as long as the gap, never a sprint stretched to fit
 		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map(), check = gapCheck(r.out.baked, fa, fb);
 		warnings.push(...check.warnings);
@@ -156,12 +164,13 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 			report.push({ f: [fa, fb], skipped: check.far.replace(/^FILL_GAP_TOO_FAR: /, "compiler interpolation kept: ") });
 			continue;
 		}
-		const poses = [...[3, 2, 1, 0].map(i => fa - i * STEP), ...[0, 1, 2, 3].map(i => fb + i * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
+		const poses = [...[3, 2, 1, 0].map(n => fa - n * STEP), ...[0, 1, 2, 3].map(n => fb + n * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
 		const { feed, align } = encodePoses(poses, [tokens]);
 		const t0 = performance.now(), res = await run(feed), ms = performance.now() - t0;
-		const fill = sparseKeys(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa);
+		const fill = sparseKeys(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa, ends[i]);
 		keys = merge(keys, fill);
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}
-	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped).length, ...(passed.added ? { passThrough: passed.added } : {}), ...(warnings.length ? { warnings } : {}) };
+	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, ...(promoted ? { promoted } : {}),
+		...(passed.added ? { passThrough: passed.added } : {}), ...(warnings.length ? { warnings } : {}) };
 }

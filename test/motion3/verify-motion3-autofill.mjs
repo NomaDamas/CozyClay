@@ -10,6 +10,7 @@ import { autoFill } from "../../src/commands/motion3-fill.js";
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
+import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -38,13 +39,25 @@ else {
 	const fetch = async (_url, init) => { try { return new Response(JSON.stringify(await fillRequest(JSON.parse(init.body))), { status: 200 }); } catch (error) { return new Response(JSON.stringify({ error: { code: "INVALID_ARGUMENT", message: error.message } }), { status: 400 }); } };
 	const sk = skeletonFor("x-bot-tpose"), scene = motionScene([]);
 	const three = await autoFill({ fetch }, character, grid);
-	const fillKeys = three.spec.keys.filter(k => k.src === "fill").length;
+	const fillKeys = three.spec.keys.filter(k => isFillKey(k)).length;
 	const qa = compileSpec(three.spec, { sk, scene }).qa;
 	expect("f0, f24, f48: two gaps filled, src: \"fill\" keys, output.fill", three.fill?.calls === 2 && fillKeys > 0 && three.fill.keys === fillKeys, JSON.stringify(three.fill));
 	expect("the filled spec compiles", Array.isArray(qa.groups), "");
 	const long = { ...grid, frames: 101, keys: [{ ...grid.keys[0], f: 0 }, { ...grid.keys[2], f: 100 }] };
 	const split = await autoFill({ fetch }, character, long);
 	expect("a 100-frame gap: 3 pass-through poses, 4 gaps filled", split.fill?.passThrough === 3 && split.fill?.calls === 4 && split.spec.keys.filter(k => k.src === "pass").length === 3, JSON.stringify(split.fill));
+	// the loop the hint drives: patch a fill key (src kept), compile again: the edit stays, only the two gaps beside it run
+	const target = three.spec.keys.find(k => isFillKey(k) && k.f > 0 && k.f < 24 && Object.keys(k.set).length);
+	const ch = Object.keys(target.set)[0], edited = Array.isArray(target.set[ch]) ? target.set[ch].map(v => v + 0.03) : target.set[ch] + 3;
+	const patched = { ...three.spec, keys: three.spec.keys.map(k => (k === target ? { ...k, set: { ...k.set, [ch]: edited } } : k)) };
+	const again = await autoFill({ fetch }, character, patched);
+	const kept = again.spec.keys.find(k => k.f === target.f && !isFillKey(k));
+	expect("an edited fill key stays (its value, no src) and becomes authored", kept && JSON.stringify(kept.set[ch]) === JSON.stringify(edited) && again.fill.promoted === 1, JSON.stringify({ kept, fill: again.fill }));
+	// the edit splits f0-f24 in two; a part under 14 frames stays the compiler's curve, so 1 or 2 calls, all inside f0-f24
+	const ran = again.fill.gaps.filter(g => !g.kept && !g.skipped);
+	expect("only the gaps beside it ran again (inside f0-f24); f24-f48 kept its fill", ran.length >= 1 && ran.length <= 2 && ran.every(g => g.f[0] >= 0 && g.f[1] <= 24) && again.fill.gaps.some(g => g.kept && g.f[0] === 24), JSON.stringify(again.fill.gaps));
+	const hinted = compileSpec(again.spec, { sk, scene }).qa.groups.map(g => g.cause).filter(c => /MotionBricks fill key/.test(c ?? ""));
+	console.log(`  edit loop: promoted ${again.fill.promoted}, ${again.fill.calls} calls, kept ${again.fill.gaps.filter(g => g.kept).length} gap; fill-key hints: ${hinted.length}`);
 	console.log(`  3-key grid: ${three.fill.calls} calls, ${fillKeys} fill keys, QA ${qa.groups.length} groups; 100-frame gap: ${split.fill.passThrough} pass-through, ${split.fill.calls} calls`);
 }
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
