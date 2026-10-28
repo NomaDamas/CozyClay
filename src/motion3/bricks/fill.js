@@ -68,6 +68,8 @@ function spanChannels(motion, fa, fb, baked) {
 }
 
 const flightKeyedGap = (authored, fa, fb) => { const floor = floorAnkle(authored); return floor !== null && authored.some(k => (k.f === fa || k.f === fb) && ["foot_l", "foot_r"].every(ch => (k.set?.[ch]?.[1] ?? -Infinity) > floor + 0.05)); };
+/** QA problems a gap owns: the groups whose worst frame lies in it, and their frame issues. */
+const gapQa = (qa, fa, fb) => { const own = (qa?.groups ?? []).filter(g => g.worstFrame >= fa && g.worstFrame <= fb); return { groups: own.length, count: own.reduce((n, g) => n + (g.count ?? 1), 0) }; };
 const smoothstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const handOn = (keys, f, k) => keys.some(key => key.f === f && Object.entries(key.set ?? {}).some(([ch, v]) => new RegExp(`^w_.+_${k}$`).test(ch) && v > 0.5));
 
@@ -181,7 +183,7 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 	const ends = gaps.map(([fa, fb]) => shortHash(spec.keys.filter(k => !isFill(k) && (k.f === fa || k.f === fb)).map(k => [k.f, k.set])));
 	const keep = gaps.map(([fa, fb], i) => { const inside = spec.keys.filter(k => isFill(k) && k.f > fa && k.f < fb); return at === undefined && inside.length > 0 && inside.every(k => fillGapOf(k) === ends[i]); });
 	let keys = spec.keys.filter(k => !(isFill(k) && gaps.some(([fa, fb], i) => !keep[i] && k.f > fa && k.f < fb)));
-	const report = [], warnings = [], skipped = [];
+	const report = [], warnings = [], skipped = [], dropped = [];
 	for (const [i, [fa, fb]] of gaps.entries()) {
 		if (keep[i]) { report.push({ f: [fa, fb], kept: true }); continue; }
 		// one token count, the gap's own: the output is as long as the gap, never a sprint stretched to fit
@@ -200,12 +202,20 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 		const t0 = performance.now(), res = await run(feed), ms = performance.now() - t0;
 		const dense = pinHands(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa, fb, keys.filter(k => !isFill(k)), r.out.frames, sk);
 		const fill = sparseKeys(dense, fa, ends[i]);
-		keys = merge(keys, fill);
+		// QA gate: the model's keys stay only if the gap's QA (groups and frame issues whose worst frame lies in the gap) does not
+		// get worse than the compiler's own curve there (r: this gap unfilled); the 90-run bench saw the fill add problems
+		const withFill = merge(keys, fill), qaModel = gapQa(compile({ ...spec, keys: withFill }).qa, fa, fb), qaCurve = gapQa(r.qa, fa, fb);
+		if (qaModel.groups > qaCurve.groups || (qaModel.groups === qaCurve.groups && qaModel.count > qaCurve.count)) {
+			dropped.push({ f0: fa, f1: fb, qaModel: qaModel.groups, qaCurve: qaCurve.groups });
+			report.push({ f: [fa, fb], tokens: res.tokens, dropped: true, qaModel, qaCurve, ms: Math.round(ms) });
+			continue;
+		}
+		keys = withFill;
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}
 	// the take's spans (free / contact / flight) and the density notes, on the filled spec as stored (keys[n] as QA names them)
 	const baked = compile({ ...spec, keys }).out.baked, frames = baked.root?.length ?? (Number.isFinite(spec.frames) ? spec.frames : 0);
 	const { kind, spans } = classifySpans({ ...spec, keys }, baked, frames), notes = densityNotes(keys, kind, spans, baked);
-	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, spans, ...(notes.length ? { notes } : {}), ...(skipped.length ? { skipped } : {}), ...(promoted ? { promoted } : {}),
+	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, spans, ...(dropped.length ? { dropped } : {}), ...(notes.length ? { notes } : {}), ...(skipped.length ? { skipped } : {}), ...(promoted ? { promoted } : {}),
 		...(passed.added ? { passThrough: passed.added } : {}), ...(warnings.length ? { warnings } : {}) };
 }
