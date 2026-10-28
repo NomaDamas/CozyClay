@@ -156,9 +156,10 @@ expect("spans: a clearance check over the whole take (no frames, or over half of
 	const still = { hand_l: Array.from({ length: 40 }, () => [0.2, 1, 0.5]), hand_r: Array.from({ length: 40 }, () => [-0.2, 1, 0.5]) };
 	const moving = { ...still, hand_r: Array.from({ length: 40 }, (_, f) => [-0.2, 1, 0.5 + f * 0.01]) };
 	const anchored = { ...moving, w_bar_r: Array(40).fill(1) };
-	const unkeyed = baked => densityNotes(keysAt(0, 30), contact, [], baked).filter(n => n.startsWith("CONTACT_UNKEYED")).length;
-	expect("density: a still hand over a 30-frame contact needs no more keys; a moving one does; one on an anchor does not", unkeyed(still) === 0 && unkeyed(moving) === 1 && unkeyed(anchored) === 0,
-		JSON.stringify([unkeyed(still), unkeyed(moving), unkeyed(anchored)]));
+	const unkeyed = (baked, gap) => densityNotes(keysAt(0, gap), contact, [], baked).filter(n => n.startsWith("CONTACT_UNKEYED")).length;
+	expect("density: a held hand is keyed again every 8-12 frames (12 ok, 30 not); a moving one every 8 (10 not); one on an anchor counts as held",
+		unkeyed(still, 12) === 0 && unkeyed(still, 30) === 1 && unkeyed(moving, 10) === 1 && unkeyed(anchored, 12) === 0 && unkeyed(anchored, 30) === 1,
+		JSON.stringify([unkeyed(still, 12), unkeyed(still, 30), unkeyed(moving, 10), unkeyed(anchored, 12), unkeyed(anchored, 30)]));
 }
 
 // fix.retime is on by default (deep research 4: POP -1.58 frames) and kept only when QA is no worse; fix: { retime: false } opts out
