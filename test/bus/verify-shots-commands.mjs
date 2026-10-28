@@ -21,7 +21,9 @@ const inputs = {
   'shot.set': { id: 'shot-a', set: { targetModel: 'seedance-2.5' } },
   'shot.frame': { subjectIds: ['actor-a'], keyAtFrame: 5, framing: { exact: { position: { x: 1, y: 2, z: 6 }, lookAt: { x: 0, y: 1, z: 0 }, focalMm: 35 } } },
 };
-assert.deepEqual(Object.keys(inputs).sort(), declarations.filter(row => row.kind === 'mutation' && row.exposure !== 'ui-only').map(row => row.id).sort());
+// shot.setTimeline is open to agents (a task with timeline in scope grows the scene) but writes the timeline, not a shot:
+// its own check is below, not the shot parity loop
+assert.deepEqual(Object.keys(inputs).sort(), declarations.filter(row => row.kind === 'mutation' && row.exposure !== 'ui-only' && row.id !== 'shot.setTimeline').map(row => row.id).sort());
 function owned(f) { assert.ok(f.shots.documentStore?.owns('shot'), 'the shipped useShots hook must own the shot slice'); }
 function seed(f, command) {
   const shot = seedShot();
@@ -174,5 +176,15 @@ test('setCameraMode: an agent sets a shot camera to keys after its rail is gone;
     assert.equal(f.run('shot.rename', { shotId: 'shot-a', name: 'Wide opener' }, 'agent').ok, true);
     assert.equal(f.shots.read().find(shot => shot.id === 'shot-a').name, 'Wide opener');
     console.log('PASS setCameraMode and rename from the agent');
+  } finally { f.dispose(); }
+});
+
+test('shot.setTimeline runs from an agent too (a task with timeline in its scope grows the scene)', () => {
+  const f = shotsFixture();
+  try {
+    owned(f); seed(f, 'shot.setTimeline');
+    const receipt = f.run('shot.setTimeline', { frameCount: 144 }, 'agent');
+    assert.equal(receipt.ok, true, JSON.stringify(receipt));
+    assert.equal(f.run('edit.undo', { receiptId: receipt.receiptId }, 'agent').status, 'undone');
   } finally { f.dispose(); }
 });

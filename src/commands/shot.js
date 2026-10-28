@@ -42,7 +42,7 @@ const extra = [
   { ...mutation('shot.setStylized', 'Set stylized panel image', input({ shotId: id, assetId: { oneOf: [{ type: 'string' }, { type: 'null' }] } })), exposure: 'ui-only' },
   { ...mutation('shot.placeCamera', 'Place camera', input(Object.fromEntries(['x', 'y', 'z', 'lookAtX', 'lookAtY', 'lookAtZ', 'focalMm'].map(key => [key, number])), [])), exposure: 'ui-only' },
 ];
-export const declarations = Object.freeze([extra[0], ...existing, ...extra.slice(1).map(entry => entry.id === 'shot.frame' ? entry : { ...entry, exposure: 'ui-only' })]);
+export const declarations = Object.freeze([extra[0], ...existing, ...extra.slice(1).map(entry => ['shot.frame', 'shot.setTimeline'].includes(entry.id) ? entry : { ...entry, exposure: 'ui-only' })]);
 
 // shot.setRange also takes range: [startFrame, endFrameExclusive] or flat startFrame/endFrameExclusive
 // fields; both become range: { startFrame, endFrameExclusive } before validation (registry normalizeArgs).

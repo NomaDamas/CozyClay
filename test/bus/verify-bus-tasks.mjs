@@ -287,3 +287,18 @@ test("two tasks place one character and make her take at once; each layer is its
     assert.equal(x(), x0); assert.equal(f.motion.motionFor('actor-a')?.schema, 'cozyclay.take.v3', 'a plain key restores all four');
   } finally { f.dispose(); }
 });
+
+test('a holder its board no longer runs is released after 30 s idle; a live or recent one still answers SCOPE_BUSY', () => {
+  const { f, ids, begin } = setup();
+  const realNow = Date.now;
+  let t = realNow();
+  Date.now = () => t;
+  try {
+    ok(begin('task-a', [`object:${ids.cube}`]));
+    refused(begin('task-b', [`object:${ids.cube}`], { live: [] }), 'SCOPE_BUSY');
+    t += 31_000;
+    refused(begin('task-c', [`object:${ids.cube}`], { live: ['task-a'] }), 'SCOPE_BUSY');
+    refused(begin('task-d', [`object:${ids.cube}`]), 'SCOPE_BUSY');
+    ok(begin('task-e', [`object:${ids.cube}`], { live: [] }));
+  } finally { Date.now = realNow; f.dispose(); }
+});

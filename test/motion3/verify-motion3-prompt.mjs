@@ -24,9 +24,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +558 for the hybrid cast gate (skills, contacts and rigs decide before any rig work; stuck or hint stops repairs): +558
 // +80 for the gate's failing-QA guard (a stuck output whose take passes QA is no reason to ask): +80
 // +293 for MotionBricks (key poses or an A-to-B move go to motion.fill; motion brick is available): +296
-check("the whole prompt is at most 15,232 characters", () => assert.ok(prompt.length <= 15232, `${prompt.length}`));
-check("the motion part is at most 2,980 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 2980, `${motion.length}`);
+// +49 for motion.fill install: true, never ifClean (an unclean fill was never shown): +50
+check("the whole prompt is at most 15,282 characters", () => assert.ok(prompt.length <= 15282, `${prompt.length}`));
+check("the motion part is at most 3,030 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 3030, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);

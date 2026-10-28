@@ -33,7 +33,7 @@ export function studioTransaction({ hub, context, turnId, admission, task = null
 	};
 	const owner = task ? "taskId" : "turnId", id = task ? task.taskId : turnId;
 	const open = async () => {
-		await control("begin", task ? { scope: task.scope, ...(task.reads?.length ? { reads: task.reads } : {}), ...(task.title ? { title: task.title.slice(0, 120) } : {}) } : {});
+		await control("begin", task ? { scope: task.scope, ...(task.reads?.length ? { reads: task.reads } : {}), ...(task.title ? { title: task.title.slice(0, 120) } : {}), ...(task.live ? { live: task.live() } : {}) } : {});
 		admission[owner] = id;
 	};
 	return {
