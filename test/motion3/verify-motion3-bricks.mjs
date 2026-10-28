@@ -13,8 +13,9 @@ import { SOMA_JOINTS, SID, toSomaPoint, toCozyPoint } from "../../src/motion3/br
 import { fillSource } from "../../src/commands/motion3-fill.js";
 import { placementRows, samplePlacement, placementTrackKey } from "../../src/motion/placement-keys.js";
 import { authoredFrames } from "../../src/motion3/bricks/authored-keys.js";
-import { gapCheck } from "../../src/motion3/bricks/fill.js";
+import { gapCheck, pinHands } from "../../src/motion3/bricks/fill.js";
 import { spanReason } from "../../src/motion3/bricks/fill-spans.js";
+import { densityNotes } from "../../src/motion3/bricks/fill-density.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -104,8 +105,22 @@ const flat = { foot_l: Array(100).fill([0.1, 0.087, 0]), foot_r: Array(100).fill
 const recovery = { frames: 100, goals: [{ name: "feet still", still: "joint:LeftFoot", at: [60, 96] }] };
 expect("spans: a foot goal over the recovery does not block the fill", spanReason(recovery, [stand(60), stand(72)], flat, 60, 72) === null);
 expect("spans: one stride foot 0.2 m up at an end key is not airborne", spanReason({ frames: 100 }, [stand(0), stand(12, 0.22, 0.087)], flat, 0, 12) === null);
-expect("spans: both feet up at an end key is airborne", spanReason({ frames: 100 }, [stand(0), stand(12, 0.3, 0.3)], flat, 0, 12) === "airborne");
-expect("spans: a hand goal over the gap is hand_contact", spanReason({ frames: 100, goals: [{ near: ["joint:LeftHand", "object:wall"], at: [18, 30] }] }, [stand(18), stand(30)], flat, 18, 30) === "hand_contact");
+expect("spans: a jump runs through the model (no airborne skip; Entry/Apex/Exit keys instead)", spanReason({ frames: 100 }, [stand(0), stand(12, 0.3, 0.3)], flat, 0, 12) === null);
+expect("spans: a hand plant runs through the model (pinned after), only a clearance check skips", spanReason({ frames: 100, goals: [{ near: ["joint:LeftHand", "object:wall"], at: [18, 30] }] }, [stand(18), stand(30)], flat, 18, 30) === null
+	&& spanReason({ frames: 100, checks: { clearance: [{ part: "hips", object: "wall", min: 0.05, frames: [20, 26] }] } }, [stand(18), stand(30)], flat, 18, 30) === "check_span");
+// the hand pin (upstream's IK pin): a planted end eases the hand onto the anchor over the second half; planted at both ends it holds
+{
+	const frames = Array.from({ length: 31 }, (_, f) => ({ s: { P: Object.assign([], { [sk.index.LeftHand]: f === 30 ? [0.3, 1.0, 1.2] : [0.2, 0.9, 0.5], [sk.index.RightHand]: [-0.2, 0.9, 0.5] }) } }));
+	const dense = Array.from({ length: 31 }, () => ({ hand_l: [0, 0.8, 0], hand_r: [0, 0.8, 0] }));
+	pinHands(dense, 0, 30, [{ f: 0, set: {} }, { f: 30, set: { w_plant_l: 1 } }], frames, sk);
+	const at = i => dense[i].hand_l, end = [0.3, 1.0, 1.2];
+	expect("pin: the hand is exactly on the anchor at the planted end key", JSON.stringify(at(30)) === JSON.stringify(end), JSON.stringify(at(30)));
+	expect("pin: the first half of the gap is the model's, then a smoothstep ramp", JSON.stringify(at(10)) === JSON.stringify([0, 0.8, 0]) && Math.abs(at(23)[2] - 1.2 * (() => { const t = (23 / 30 - 0.5) / 0.5; return t * t * (3 - 2 * t); })()) < 1e-9, JSON.stringify([at(10), at(23)]));
+	expect("pin: the other hand is untouched", JSON.stringify(dense[30].hand_r) === JSON.stringify([0, 0.8, 0]));
+	const both = Array.from({ length: 31 }, () => ({ hand_l: [0, 0.8, 0] }));
+	pinHands(both, 0, 30, [{ f: 0, set: { w_plant_l: 1 } }, { f: 30, set: { w_plant_l: 1 } }], frames, sk);
+	expect("pin: planted at both ends, the hand holds the anchor spot for the whole gap", both.every(r => JSON.stringify(r.hand_l) === JSON.stringify(end)));
+}
 
 // the bench-2 r2 vault spec (an agent's own parkour take): run-up and recovery fill, the plant and the flight (f28-f48) do not
 {
@@ -113,8 +128,15 @@ expect("spans: a hand goal over the gap is hand_contact", spanReason({ frames: 1
 	const own = vault.keys.filter(k => !k.src), at = [...new Set(own.map(k => k.f))].sort((a, b) => a - b);
 	const baked = compileSpec(vault, { sk, scene: motionScene([]) }).out.baked;
 	const reasons = at.slice(1).map((f, i) => [at[i], f, spanReason(vault, own, baked, at[i], f)]);
-	const wrong = reasons.filter(([a, b, why]) => (b <= 28 || a >= 48 ? why !== null : why === null));
-	expect("vault spec: run-up and recovery gaps are free, every gap in the vault f28-f48 stays authored", wrong.length === 0, JSON.stringify(reasons));
+	const wrong = reasons.filter(([, , why]) => why !== null);
+	expect("vault spec: every gap goes to the model now (no clearance check in it); the plant is pinned, the jump keyed", wrong.length === 0, JSON.stringify(reasons));
+}
+
+// density thresholds: free keys closer than 14 frames get KEYS_TOO_DENSE, 16 apart do not
+{
+	const free = Array(40).fill("free"), keysAt = (...fs) => fs.map(f => ({ f, set: {} }));
+	expect("density: free keys 10 frames apart are KEYS_TOO_DENSE", /^KEYS_TOO_DENSE .*keys\[0\] f0 and keys\[1\] f10/.test(densityNotes(keysAt(0, 10), free, [], {})[0] ?? ""));
+	expect("density: free keys 16 apart are fine", densityNotes(keysAt(0, 16, 32), free, [], {}).length === 0);
 }
 
 if (failures) { console.error(`${failures} failed`); process.exit(1); }

@@ -11,7 +11,7 @@ import { encodePoses, decodeMotion, MIN_TOKENS, MAX_TOKENS } from "./model-io.js
 import { frameChannels, unwrapSeries, roundChannels } from "./forward.js";
 import { pickKeys } from "./rekey.js";
 import { isFillKey, shortHash, fillSrc, editedFill, fillGapOf } from "./fill-src.js";
-import { spanReason } from "./fill-spans.js";
+import { spanReason, floorAnkle } from "./fill-spans.js";
 import { classifySpans, densityNotes } from "./fill-density.js";
 import { quatFromMat, matFromQuat } from "../compiler/math.js";
 
@@ -67,6 +67,30 @@ function spanChannels(motion, fa, fb, baked) {
 	return out;
 }
 
+const flightKeyedGap = (authored, fa, fb) => { const floor = floorAnkle(authored); return floor !== null && authored.some(k => (k.f === fa || k.f === fb) && ["foot_l", "foot_r"].every(ch => (k.set?.[ch]?.[1] ?? -Infinity) > floor + 0.05)); };
+const smoothstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
+const handOn = (keys, f, k) => keys.some(key => key.f === f && Object.entries(key.set ?? {}).some(([ch, v]) => new RegExp(`^w_.+_${k}$`).test(ch) && v > 0.5));
+
+/**
+ * The model in-betweens bodies, not contacts: a hand an authored key plants on an anchor (w_<anchor>_l/r on) is pinned like
+ * upstream's IK pin. At a planted end the hand target eases onto where the compiled take puts the hand there over the second half
+ * of the gap (smoothstep 0.5..1); planted at both ends it holds that spot for the whole gap. frames: the compiled take's frames.
+ */
+export function pinHands(dense, fa, fb, authored, frames, sk) {
+	const last = dense.length - 1;
+	for (const [k, bone] of [["l", "LeftHand"], ["r", "RightHand"]]) {
+		const start = handOn(authored, fa, k), end = handOn(authored, fb, k), at = f => frames[f]?.s?.P?.[sk.index[bone]];
+		if (!start && !end) continue;
+		const ch = `hand_${k}`, target = end ? at(fb) : at(fa);
+		if (!target) continue;
+		dense.forEach((row, i) => {
+			const w = start && end ? 1 : smoothstep(0.5, 1, end ? i / last : 1 - i / last);
+			row[ch] = lerp(row[ch] ?? target, target, w);
+		});
+	}
+	return dense;
+}
+
 /**
  * A foot the model plants (heel and toe contact) stays put: over each planted run its ankle and angles hold the value
  * where the run starts, or where it ends when the run reaches the gap's end (the authored key there), or slide straight
@@ -105,8 +129,8 @@ function sparseKeys(dense, fa, gap) {
 
 const merge = (keys, add) => [...keys, ...add].map((k, i) => [k, i]).sort((a, b) => a[0].f - b[0].f || a[1] - b[1]).map(([k]) => k);
 
-// 8: a 12-frame grid's gaps go to the model too (6 tokens, 18 model frames compressed onto the gap); under 8 the curve stays the compiler's
-const MIN_AUTO_GAP = 8, MAX_GAP = 46;
+// 14: the shortest call is 6 tokens = 18 model frames = 13.6 spec frames; a shorter gap would compress time 1.13-1.7x
+const MIN_AUTO_GAP = 14, MAX_GAP = 46;
 /**
  * A gap longer than one call (46 frames) gets the compiler's own pose at its middle as an authored pass-through key
  * (src: "pass"), again until every gap fits; the channels are the ones the authored keys set.
@@ -128,13 +152,14 @@ function passThrough(spec, compile) {
 /** Fill policy from the measured limits: the model sprints rather than stretch time, so a gap whose floor travel beats walking speed is not
  * its job (FILL_GAP_TOO_FAR); a big change (hips 0.4 m, lying down, airborne) is filled but named. Root, pitch, feet: the compiled spec at the gap's ends. */
 const WALK = 1.1, STAND_ANKLE = 0.11;
-export function gapCheck(baked, fa, fb) {
+export function gapCheck(baked, fa, fb, flightKeyed = false) {
 	const a = baked.root?.[fa], b = baked.root?.[fb], seconds = (fb - fa) / 24, warnings = [];
 	const travel = a && b ? Math.hypot(b[0] - a[0], b[2] - a[2]) : 0;
 	if (a && b && Math.abs(b[1] - a[1]) >= 0.4) warnings.push(`f${fa}-f${fb}: the hips move ${Math.abs(b[1] - a[1]).toFixed(2)} m up or down; write the mid pose yourself if the fill looks wrong`);
 	if (Math.abs(baked.pitch?.[fb] ?? 0) > 60) warnings.push(`f${fb}: the body lies down; the model fills lying poorly, write the mid pose`);
 	const planted = k => (baked[`foot_${k}`]?.[fa]?.[1] ?? 0) <= STAND_ANKLE, up = k => (baked[`foot_${k}`]?.[fb]?.[1] ?? 0) > (baked[`foot_${k}`]?.[fa]?.[1] ?? 0) + 0.05;
-	if (["l", "r"].some(k => planted(k) && up(k))) warnings.push(`f${fb}: a foot leaves the floor (a jump?); write the mid pose (knees bending, feet rising)`);
+	// a jump the author keyed (an end key with both feet up: its Apex) needs no warning
+	if (!flightKeyed && ["l", "r"].some(k => planted(k) && up(k))) warnings.push(`f${fb}: a foot leaves the floor (a jump?); write the mid pose (knees bending, feet rising)`);
 	const far = travel > seconds * WALK ? `FILL_GAP_TOO_FAR: f${fa}-f${fb} travels ${travel.toFixed(2)} m in ${seconds.toFixed(2)} s (over ${WALK} m/s, the model would sprint); add a pass-through pose every ~1 m with more frames, or use the walkTo skill for this leg` : null;
 	return { travel, seconds, far, warnings };
 }
@@ -148,7 +173,7 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 	// a fill key someone edited is the author's from now on: it stays, and the gaps beside it fill again around it
 	const promoted = (spec.keys ?? []).filter(editedFill).length;
 	spec = { ...spec, keys: (spec.keys ?? []).map(k => (editedFill(k) ? Object.fromEntries(Object.entries(k).filter(([field]) => field !== "src")) : k)) };
-	// auto (motion.compile): a gap under 8 frames stays the compiler's; one over 46 gets pass-through poses first
+	// auto (motion.compile): a gap under 14 frames stays the compiler's; one over 46 gets pass-through poses first
 	const passed = auto ? passThrough(spec, compile) : { spec, added: 0 };
 	spec = passed.spec;
 	const gaps = fillGaps(spec.keys ?? [], at, auto ? MIN_AUTO_GAP : 2);
@@ -160,7 +185,7 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 	for (const [i, [fa, fb]] of gaps.entries()) {
 		if (keep[i]) { report.push({ f: [fa, fb], kept: true }); continue; }
 		// one token count, the gap's own: the output is as long as the gap, never a sprint stretched to fit
-		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map(), check = gapCheck(r.out.baked, fa, fb);
+		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map(), check = gapCheck(r.out.baked, fa, fb, flightKeyedGap(keys.filter(k => !isFill(k)), fa, fb));
 		// hand plants, flights and checked spans stay the author's (fill-spans.js)
 		const reason = spanReason(spec, keys.filter(k => !isFill(k)), r.out.baked, fa, fb);
 		if (reason) { skipped.push({ f: [fa, fb], reason }); report.push({ f: [fa, fb], skipped: reason }); continue; }
@@ -173,7 +198,8 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 		const poses = [...[3, 2, 1, 0].map(n => fa - n * STEP), ...[0, 1, 2, 3].map(n => fb + n * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
 		const { feed, align } = encodePoses(poses, [tokens]);
 		const t0 = performance.now(), res = await run(feed), ms = performance.now() - t0;
-		const fill = sparseKeys(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa, ends[i]);
+		const dense = pinHands(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa, fb, keys.filter(k => !isFill(k)), r.out.frames, sk);
+		const fill = sparseKeys(dense, fa, ends[i]);
 		keys = merge(keys, fill);
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}

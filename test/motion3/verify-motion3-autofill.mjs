@@ -64,8 +64,8 @@ else {
 		goals: [{ name: "hands on the wall top", near: ["joint:LeftHand", "joint:RightHand"], tol: 0.6, at: [18, 30] }] };
 	const vault = await autoFill({ fetch }, character, parkour);
 	const filledGaps = vault.fill.gaps.filter(g => !g.skipped && !g.kept).map(g => g.f.join("-"));
-	expect("parkour: only the approach and the landing gaps fill; the hand plant and the flight stay authored", JSON.stringify(filledGaps) === '["0-18","42-60"]'
-		&& JSON.stringify(vault.fill.skipped?.map(s => `${s.f.join("-")} ${s.reason}`)) === '["18-30 hand_contact","30-42 airborne"]', JSON.stringify(vault.fill));
+	// 12-frame plant and flight gaps are under the 14-frame model minimum here; nothing is skipped for contact or flight any more
+	expect("parkour: the 18-frame approach and landing fill, no contact/flight skips", JSON.stringify(filledGaps) === '["0-18","42-60"]' && !vault.fill.skipped, JSON.stringify(vault.fill));
 	expect("parkour: spans free / contact / flight are reported", ["free", "contact", "flight"].every(k => vault.fill.spans?.some(sp => sp.kind === k)), JSON.stringify(vault.fill.spans));
 	// density notes: a free gap of 4, a 16-frame gap across the hand plant, a flight landing with no key near it
 	const dense = { ...parkour, frames: 61, keys: [pose(0), pose(4, { z: 0.05 }), pose(18, { z: 0.4 }), pose(34, { z: 0.9, foot: 0.45, root: [0, 1.25, 0], hand: 1.0 }), pose(52, { z: 1.7 })],
