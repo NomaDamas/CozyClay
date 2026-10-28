@@ -100,12 +100,14 @@ export function pinHands(dense, fa, fb, authored, frames, sk) {
  */
 function lockFeet(out, planted) {
 	const last = out.length - 1;
+	out.holds = { l: [], r: [] };
 	for (const [k, h] of [["l", 0], ["r", 2]]) {
 		const on = planted.map(c => c[h] > 0.5 && c[h + 1] > 0.5);
 		for (let i = 0; i <= last; i++) {
 			if (!on[i]) continue;
 			let j = i;
 			while (j < last && on[j + 1]) j++;
+			if (j > i) out.holds[k].push([i, j]);
 			for (const ch of [`foot_${k}`, `fyaw_${k}`, `fpitch_${k}`]) {
 				const a = out[i][ch], b = out[j][ch];
 				for (let f = i; f <= j; f++) {
@@ -121,7 +123,9 @@ function lockFeet(out, planted) {
 function sparseKeys(dense, fa, gap) {
 	const byF = new Map();
 	for (const ch of Object.keys(dense[0])) {
-		for (const i of pickKeys(ch, dense.map(d => d[ch]))) {
+		// a held sole is keyed at both ends of its contact episode, so the curve between them stays flat (SLIDE was 41% of fill-span problems)
+		const side = /^(foot|fyaw|fpitch)_([lr])$/.exec(ch)?.[2], forced = side ? (dense.holds?.[side] ?? []).flat() : [];
+		for (const i of pickKeys(ch, dense.map(d => d[ch]), forced)) {
 			if (!byF.has(i)) byF.set(i, {});
 			byF.get(i)[ch] = dense[i][ch];
 		}

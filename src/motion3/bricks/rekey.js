@@ -41,10 +41,10 @@ function errors(values, keys) {
 
 /**
  * values: one channel's dense values over a span, first and last fixed (they are the authored keys around the gap).
- * Returns the interior indices to key.
+ * forced: indices that must be keys (a held foot's contact edges). Returns the interior indices to key.
  */
-export function pickKeys(ch, values) {
-	const tol = tolFor(ch), keys = [0, values.length - 1];
+export function pickKeys(ch, values, forced = []) {
+	const tol = tolFor(ch), keys = [0, values.length - 1, ...forced.filter(i => i > 0 && i < values.length - 1)];
 	if (/^(knee|elbow)_[lr]$/.test(ch)) {
 		// never interpolate across a pole that swings past ~60 deg between frames: key both sides of the swing
 		for (let i = 1; i < values.length; i++) {

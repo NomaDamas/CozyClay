@@ -83,6 +83,19 @@ else {
 	try { await fillRequest({ spec: planted, model: "x-bot-tpose", auto: true }); } catch (error) { refused = error.message; }
 	expect("scene: a plant on a scene object fills when the editor sends its objects", withScene.calls === 2 && withScene.spec.keys.some(isFillKey), JSON.stringify({ calls: withScene.calls, gaps: withScene.gaps }));
 	expect("scene: without the objects the same spec is refused as before (unknown object)", /unknown object|names|not in the scene|cube/i.test(refused), refused);
+	// QA gate and foot hold on two agent specs from the 90-run box bench (sit, box carry): the fill never adds SLIDE, and a dropped
+	// gap is one whose model keys added QA over the compiler's curve
+	const slideOf = qa => qa.groups.filter(g => g.kind === "SLIDE").reduce((n, g) => n + g.count, 0);
+	for (const name of ["bench-sit-spec", "bench-box-spec"]) {
+		const { spec: benchSpec, objects } = JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+		const benchScene = motionScene(objects), plainQa = compileSpec(benchSpec, { sk, scene: benchScene }).qa;
+		const gated = await fillRequest({ spec: benchSpec, model: "x-bot-tpose", auto: true, objects });
+		const filledQa = compileSpec(gated.spec, { sk, scene: benchScene }).qa;
+		expect(`${name}: the fill adds no SLIDE (${slideOf(plainQa)} -> ${slideOf(filledQa)})`, slideOf(filledQa) <= slideOf(plainQa));
+		expect(`${name}: every dropped gap had more QA with the model's keys`, (gated.dropped ?? []).every(d => d.qaModel >= d.qaCurve)
+			&& (gated.dropped ?? []).every(d => !gated.spec.keys.some(k => isFillKey(k) && k.f > d.f0 && k.f < d.f1)), JSON.stringify(gated.dropped));
+		console.log(`  ${name}: fill keys ${gated.spec.keys.filter(isFillKey).length}, dropped ${(gated.dropped ?? []).length}, QA groups ${plainQa.groups.length} -> ${filledQa.groups.length}`);
+	}
 	console.log(`  edit loop: promoted ${again.fill.promoted}, ${again.fill.calls} calls, kept ${again.fill.gaps.filter(g => g.kept).length} gap; fill-key hints: ${hinted.length}`);
 	console.log(`  3-key grid: ${three.fill.calls} calls, ${fillKeys} fill keys, QA ${qa.groups.length} groups; 100-frame gap: ${split.fill.passThrough} pass-through, ${split.fill.calls} calls`);
 }
