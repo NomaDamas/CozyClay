@@ -161,5 +161,11 @@ expect("spans: a clearance check over the whole take (no frames, or over half of
 		JSON.stringify([unkeyed(still), unkeyed(moving), unkeyed(anchored)]));
 }
 
+// fix.retime is on by default (deep research 4: POP -1.58 frames) and kept only when QA is no worse; fix: { retime: false } opts out
+{
+	const { fixOptions } = await import("../../src/motion3/fix/index.js");
+	expect("fix: retime on by default, off with retime: false or fix: false", fixOptions(undefined).retime === true && fixOptions({}).retime === true && fixOptions({ retime: false }).retime === false && fixOptions(false).retime === false);
+}
+
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log("all passed");

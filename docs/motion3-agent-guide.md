@@ -46,7 +46,7 @@ Every group: `{ kind, subject, count, first, last, worst, worstFrame, limit, cau
 - `cause` names the spec element most responsible at the worst frame: a key and channel (`keys[12] f200 hand_r`), the two keys around the frame (`root between keys[3] f84 and keys[7] f97`), an anchor and its fit (`anchor mouth (fits[1]) via keys[50] f498 w_mouth_r`), a generator step (`generators[0] walk step 3 f316 root`), or a skill (`use[1] exitCar f116 foot_l`).
 - `hint` says what to change, with a direction and an amount in world metres or degrees, at a frame. Examples:
   - `root: move [0, +0.026, 0] m at f0 (out of Car_Seat_Driver)`. Add the vector to that key.
-  - `retime: stretch f300-f312 by 1.4x (+5 frames, move the keys from f312 on later); or fix.retime: true`.
+  - `retime: stretch f300-f312 by 1.4x (+5 frames, move the keys from f312 on later)` (fix.retime, on by default, already tries this).
   - `cig_vis: move the step from f454 to f460 (RightHand 0 m from rpocket there)`.
   - `elbow_r: key [+0.5, -1, +0.5] (body frame: +y up, +z forward) at f497`.
   - `walk path: root needs [+0.049, 0, +0.122] m at f315 (out of Car_Door_L); change that walk's heading/turnDistance/step (or give one a { range: [lo, hi] })`.
@@ -63,7 +63,7 @@ The compiler fixes small mechanical errors itself and reports each fix in `outpu
 | `slide` | on | A sole point under the floor lifts its ankle onto the floor (`fixed.ground`), so a squat with the heels up stands on the balls of the feet. A planted heel or ball that drifts less than 1 cm stays where it landed. A foot that turns (`fyaw`, `fpitch`) on its planted ball with the heel up, or on its planted heel, pivots about that point whatever the drift (`fixed.slide.pivots`): a batter's back foot turns on its ball. |
 | `penetration` | off; `0.02` or `true` | A hand or forearm inside a scene box by at most this much past its allowance moves out along the box normal, eased. FK arms (`armw` 0) are counted as `skipped`. |
 | `person` | on | An upper arm, forearm or hand inside another character (QA `PERSON`, their installed take) moves its wrist target out by the depth plus 4 mm, eased, over 6 fixed passes. The escape keeps the side the hand came from, so a hand keyed deep into someone comes back out the front, not through their back. No depth limit. `checks.allow { part, object: "person:<id>", depth }` lets a meant touch go that deep. FK arms (`armw` 0) are counted as `skipped`. |
-| `retime` | off; `true` | Key intervals around a speed or acceleration spike get longer, borrowed from the neighbouring key intervals. The frame count stays. Frame-range checks follow. |
+| `retime` | on; `false` | Key intervals around a speed or acceleration spike get longer, borrowed from the neighbouring key intervals. The frame count stays. Frame-range checks follow. |
 
 `fix: false` turns everything off.
 
