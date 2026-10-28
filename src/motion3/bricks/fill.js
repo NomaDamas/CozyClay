@@ -49,7 +49,7 @@ function tokensFor(fa, fb) {
 }
 
 /** Dense channels over spec frames fa..fb from the decoded motion, ends bent onto the compiled values there. */
-function spanChannels(motion, fa, fb, baked) {
+function spanChannels(motion, fa, fb, baked, footLock = "channel") {
 	const gen = motion.map(m => frameChannels(m.P.map(toCozyPoint))), n = gen.length, out = [];
 	for (let f = fa; f <= fb; f++) {
 		const x = (f - fa) / (fb - fa) * (n - 1), i = Math.min(Math.floor(x), n - 2), u = x - i;
@@ -62,11 +62,12 @@ function spanChannels(motion, fa, fb, baked) {
 		const s = diff(baked[k][fa], out[0][k]), e = diff(baked[k][fb], out[out.length - 1][k]);
 		out.forEach((ch, i) => { const w = i / (out.length - 1); ch[k] = Array.isArray(s) ? ch[k].map((v, c) => v + s[c] * (1 - w) + e[c] * w) : ch[k] + s * (1 - w) + e * w; });
 	}
-	// planted = a model contact channel on AND the ankle nearly still (< 0.2 m/s at 30 fps): the channel alone was right 60% of the time,
-	// with the speed 73% (deep research 1)
+	// planted = the model's heel and toe contact channels on (research 1b: on the safe gaps this gives 0.000 m slide; adding "ankle under
+	// 0.2 m/s" gave +0.020 m and SLIDE +0.27); footLock "speed" keeps that stricter detector for experiments
 	const ankleSpeed = (j, side) => { const a = motion[Math.max(0, j - 1)].P[SID[`${side}Foot`]], b = motion[Math.min(n - 1, j + 1)].P[SID[`${side}Foot`]];
 		return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) / ((Math.min(n - 1, j + 1) - Math.max(0, j - 1)) / 30 || 1); };
 	const planted = out.map((_, i) => { const j = Math.round(i / (out.length - 1) * (n - 1)), c = motion[j].contacts;
+		if (footLock !== "speed") return c;
 		return [["Left", 0], ["Right", 2]].flatMap(([side, h]) => { const on = (c[h] > 0.5 || c[h + 1] > 0.5) && ankleSpeed(j, side) < 0.2; return [on ? 1 : 0, on ? 1 : 0]; }); });
 	lockFeet(out, planted);
 	return out;
@@ -198,7 +199,7 @@ export function gapCheck(baked, fa, fb, flightKeyed = false) {
  * opts.at: re-fill only the gaps around this frame. opts.auto: a gap too far for the model is left to the compiler (noted) instead of
  * refusing the call. Returns { spec, gaps: [{ f: [fa, fb], tokens, frames, keys, ms } | { f, skipped }], calls, warnings }.
  */
-export async function fillSpec(spec, { sk, compile, run }, { at, auto = false, targets = 1 } = {}) {
+export async function fillSpec(spec, { sk, compile, run }, { at, auto = false, targets = 1, footLock = "channel" } = {}) {
 	// a fill key someone edited is the author's from now on: it stays, and the gaps beside it fill again around it
 	const promoted = (spec.keys ?? []).filter(editedFill).length;
 	spec = { ...spec, keys: (spec.keys ?? []).map(k => (editedFill(k) ? Object.fromEntries(Object.entries(k).filter(([field]) => field !== "src")) : k)) };
@@ -228,7 +229,7 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false, t
 		const poses = [...[3, 2, 1, 0].map(n => fa - n * STEP), ...Array.from({ length: targets }, (_, n) => fb + n * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
 		const { feed, align } = encodePoses(poses, [tokens]);
 		const t0 = performance.now(), res = await run(feed), ms = performance.now() - t0;
-		const dense = pinHands(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa, fb, keys.filter(k => !isFill(k)), r.out.frames, sk);
+		const dense = pinHands(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked, footLock), fa, fb, keys.filter(k => !isFill(k)), r.out.frames, sk);
 		const fill = sparseKeys(dense, fa, ends[i]);
 		// QA gate: the model's keys stay only if the gap's QA (groups and frame issues whose worst frame lies in the gap) does not
 		// get worse than the compiler's own curve there (r: this gap unfilled); the 90-run bench saw the fill add problems

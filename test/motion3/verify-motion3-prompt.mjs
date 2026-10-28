@@ -32,9 +32,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +5 for the 16-frame grid and Entry / Apex / Exit jump keys (upstream design review): +8
 // the repair-loop round (2026-10-29) replaced the ifClean / comparison-script procedure; +213 for its rules (install: true first, base + patch rounds, noImprovementRounds stop, one contact sheet): +216
 // +67 for span-based spacing (contact/flight 4-8, free 19-24, holds; deep research 1): +70
-check("the whole prompt is at most 16,086 characters", () => assert.ok(prompt.length <= 16086, `${prompt.length}`));
-check("the motion part is at most 3,835 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 3835, `${motion.length}`);
+// +163 for research 1b: dense keys only while an effector moves, two keys for a static hold, holds add frames: +166
+check("the whole prompt is at most 16,252 characters", () => assert.ok(prompt.length <= 16252, `${prompt.length}`));
+check("the motion part is at most 4,000 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 4000, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);

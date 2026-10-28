@@ -18,7 +18,7 @@ export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = fals
 	const run = await (runner ??= createRunner().catch(error => { runner = undefined; throw error; }));
 	// the editor's scene objects (motion3-fill.js sends them): an anchor or a check naming a wall, a table or a door handle compiles here too
 	const scene = motionScene(Array.isArray(objects) ? objects : []);
-	const filled = await fillSpec(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at, auto: auto === true, targets: Number(process.env.COZYCLAY_MB_TARGETS) === 4 ? 4 : 1 });
+	const filled = await fillSpec(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at, auto: auto === true, targets: Number(process.env.COZYCLAY_MB_TARGETS) === 4 ? 4 : 1, footLock: process.env.COZYCLAY_MB_FOOTLOCK === "speed" ? "speed" : "channel" });
 	return { ...filled, ms: Math.round(performance.now() - t0) };
 }
 

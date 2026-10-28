@@ -150,5 +150,16 @@ expect("spans: a clearance check over the whole take (no frames, or over half of
 	expect("rounds: 0 on the first and on every improvement, +1 per flat or worse round, reset by a new spec", JSON.stringify(seq) === "[0,0,1,2,0,0]", JSON.stringify(seq));
 }
 
+// CONTACT_UNKEYED only while a hand or foot moves (> 2 cm) in a contact gap over 8 frames; a still or anchored hand needs two keys
+{
+	const contact = Array(40).fill("contact"), keysAt = (...fs) => fs.map(f => ({ f, set: {} }));
+	const still = { hand_l: Array.from({ length: 40 }, () => [0.2, 1, 0.5]), hand_r: Array.from({ length: 40 }, () => [-0.2, 1, 0.5]) };
+	const moving = { ...still, hand_r: Array.from({ length: 40 }, (_, f) => [-0.2, 1, 0.5 + f * 0.01]) };
+	const anchored = { ...moving, w_bar_r: Array(40).fill(1) };
+	const unkeyed = baked => densityNotes(keysAt(0, 30), contact, [], baked).filter(n => n.startsWith("CONTACT_UNKEYED")).length;
+	expect("density: a still hand over a 30-frame contact needs no more keys; a moving one does; one on an anchor does not", unkeyed(still) === 0 && unkeyed(moving) === 1 && unkeyed(anchored) === 0,
+		JSON.stringify([unkeyed(still), unkeyed(moving), unkeyed(anchored)]));
+}
+
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log("all passed");
