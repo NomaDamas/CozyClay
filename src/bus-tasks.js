@@ -13,6 +13,8 @@ import { commandKeys, keyOfId, scopeConflict, isScopeKey, layerOf, expandScope, 
 const fail = (code, message) => { throw new StudioProtocolError(code, message); };
 const VERBS = ['begin', 'requestScope', 'mark', 'rollback', 'finish', 'cancel', 'undo'];
 const FINISHED_KEPT = 32;
+/** Task controls that write no document (they grant, mark or close a scope): admitted mid-gesture, so a begin or finish never waits on the user's drag. */
+export const GESTURE_FREE_TASK_CONTROLS = new Set(['task.begin', 'task.requestScope', 'task.mark', 'task.finish']);
 // A holder the board no longer runs (its run ended without task.finish: a crash, a lost frame) and that sent nothing for this
 // long is released when another task's begin needs its keys, instead of answering SCOPE_BUSY forever.
 const ORPHAN_IDLE_MS = 30_000;

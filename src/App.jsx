@@ -222,6 +222,7 @@ import {
 } from "./cuts.js";
 import { playbackFrame } from "./motion/playback-frame-store.js";
 import { usePlaybackSubjectPosition } from "./motion/playback-subject.js";
+import { studioBusy } from "./studio-busy.js";
 import { characterGizmoObject as buildCharacterGizmoObject, characterGizmoView, followCameraActive, playbackSceneWithTrack, updateShotMetrics } from "./stage-gizmo.js";
 import {
 	CameraGlide,
@@ -4173,8 +4174,8 @@ export default function App() {
 			objects: storeRef.current.objects, characters: list, targets, shots: live.shots, frameCount: live.timeline.frameCount,
 			selection: live.studioSelection, activeCharacterId: live.activeCharacterId, selectedShotId: live.studioShotId,
 			view: live.studioView, camera: live.studioCamera ?? readStudioCamera(), filmback: live.filmback, manual: manualCameraOverrideRef.current,
-			bridgeReady: false, busy: storeRef.current.present() !== storeRef.current.objects || Boolean(studioGestureRef.current ||
-				ikBodyDragRef.current || recRef.current) };
+			// The user's drag transaction is added by the binding (studio-busy.js); clicks, orbit, scrubbing and playback never count.
+			bridgeReady: false, busy: studioBusy({ ikBodyDrag: ikBodyDragRef.current, recording: recRef.current }) };
 	}
 	function sampleStudioStateAt(frame, current = readStudioState()) {
 		const shot = shotAtFrame(current.shots ?? current.shotDocument?.shots ?? [], frame);
@@ -4308,17 +4309,9 @@ export default function App() {
 		// names no mode keeps the editor in it.
 		setTlFrame(frame); setWorkflowMode((current) => (current === "sculpt" && !modeSet && view.mode === "scene" ? current : view.mode)); setLookThroughShot(view.lookThrough); setGridView(view.grid); setAutoColor(view.autoColor); setTlPlaying(view.playing);
 	}
-	const studioGestureRef = useRef(false);
 	// The Studio turn authors the scene through its own families and never
 	// returns an image, so there is no image action for this host to accept.
 	// The Workflow dock keeps its half of that contract.
-	useEffect(() => {
-		if (embedMode) return;
-		const down = event => { if (event.target.closest?.("canvas, .inspector-scroll, .tl-body, .plan-board")) studioGestureRef.current = true; };
-		const up = () => { studioGestureRef.current = false; };
-		window.addEventListener("pointerdown", down, true); window.addEventListener("pointerup", up, true); window.addEventListener("pointercancel", up, true);
-		return () => { window.removeEventListener("pointerdown", down, true); window.removeEventListener("pointerup", up, true); window.removeEventListener("pointercancel", up, true); };
-	}, [embedMode]);
 	const selectedStudioChar = charIdFromHierarchyId(parseRigNodeId(selectedHierarchyId)?.rowId ?? selectedHierarchyId);
 	appContext.patchLive({
 		studioSelection: selectedSceneObjectId ? { kind: "object", id: selectedSceneObjectId, hierarchyId: selectedHierarchyId } :
