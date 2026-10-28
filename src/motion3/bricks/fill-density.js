@@ -1,15 +1,14 @@
 // Key density by span: free motion is sparse and MotionBricks fills it; hand/foot contact and flight are authored densely.
 // The take's frames are classed from the compiled curve: contact (a hand or foot on an anchor, or a goal / checks.contacts
-// naming one, +-2 frames), flight (both feet more than 5 cm above the lowest authored ankle for 2+ frames, +-2), else free.
+// naming one, +-2 frames), flight (both feet more than 5 cm above the lowest authored ankle for 4+ frames, +-2), else free.
 // Notes name keys[n] like QA hints:
 //   KEYS_TOO_DENSE  two authored keys closer than 8 frames in a free span (no room for the fill; the keys stay)
 //   CONTACT_UNKEYED two authored keys more than 12 frames apart across a contact span
 //   FLIGHT_UNKEYED  a flight without an authored key at its apex or at its landing
-import { floorAnkle } from "./fill-spans.js";
+import { floorAnkle, limbContact, FLIGHT_MIN } from "./fill-spans.js";
 import { isFillKey } from "./fill-src.js";
 
 const PAD = 2, LIFT = 0.05, FREE_MIN = 8, CONTACT_MAX = 12;
-const LIMB = /hand|foot|toe|wrist|ankle|finger/i;
 const rangeOf = (at, frames) => (Array.isArray(at) ? [at[0], at[1]] : Number.isFinite(at) ? [at, at] : null);
 
 /** Per-frame kinds ("contact" > "flight" > "free") and their runs as spans [{ f0, f1, kind }]. */
@@ -23,13 +22,13 @@ export function classifySpans(spec, baked, frames) {
 		for (let f = 0; f <= frames; f++) {
 			const up = f < frames && baked.foot_l?.[f]?.[1] > floor + LIFT && baked.foot_r?.[f]?.[1] > floor + LIFT;
 			if (up && start < 0) start = f;
-			if (!up && start >= 0) { if (f - start >= 2) mark(start, f - 1, "flight"); start = -1; }
+			if (!up && start >= 0) { if (f - start >= FLIGHT_MIN) mark(start, f - 1, "flight"); start = -1; }
 		}
 	}
 	const contact = [];
 	for (const [ch, values] of Object.entries(baked)) if (/^w_.+_[lr]$/.test(ch)) values.forEach((v, f) => { if (v > 0.5) contact.push([f, f]); });
-	for (const goal of spec.goals ?? []) if (LIMB.test(JSON.stringify([goal.near, goal.above, goal.still]))) { const r = rangeOf(goal.at, frames); if (r) contact.push(r); }
-	for (const check of spec.checks?.contacts ?? []) if (LIMB.test(String(check.point ?? ""))) { const r = rangeOf(check.when, frames); if (r) contact.push(r); }
+	for (const goal of spec.goals ?? []) { const r = rangeOf(goal.at, frames); if (r && limbContact([goal.near, goal.above, goal.still], r, baked, floor)) contact.push(r); }
+	for (const check of spec.checks?.contacts ?? []) { const r = rangeOf(check.when, frames); if (r && limbContact(check.point, r, baked, floor)) contact.push(r); }
 	for (const [a, b] of contact) for (let f = Math.max(0, a - PAD); f <= Math.min(frames - 1, b + PAD); f++) kind[f] = "contact";
 	const spans = [];
 	kind.forEach((k, f) => { if (spans.at(-1)?.kind === k) spans.at(-1).f1 = f; else spans.push({ f0: f, f1: f, kind: k }); });

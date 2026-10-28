@@ -2,6 +2,7 @@
 // The MotionBricks converters (src/motion3/bricks) on synthetic poses: forward (SOMA joints -> spec channels) reads a hand-built
 // skeleton's heading, root, targets and poles exactly; reverse (compiled X Bot frame -> SOMA pose) puts SOMA's wrists, ankles
 // and hip sockets on the X Bot's and keeps every rotation proper, and the round trip gives back the keyed channels.
+import { readFileSync } from "node:fs";
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
@@ -13,6 +14,7 @@ import { fillSource } from "../../src/commands/motion3-fill.js";
 import { placementRows, samplePlacement, placementTrackKey } from "../../src/motion/placement-keys.js";
 import { authoredFrames } from "../../src/motion3/bricks/authored-keys.js";
 import { gapCheck } from "../../src/motion3/bricks/fill.js";
+import { spanReason } from "../../src/motion3/bricks/fill-spans.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -95,6 +97,25 @@ const bake = (a, b) => ({ root: { 0: a, 24: b }, pitch: { 24: 0 }, foot_l: { 0: 
 expect("fill policy: 1 m in 24 frames is fine", gapCheck(bake([0, 1, 0], [0, 1, 1]), 0, 24).far === null);
 expect("fill policy: 3 m in 24 frames is FILL_GAP_TOO_FAR", /^FILL_GAP_TOO_FAR: f0-f24 travels 3.00 m in 1.00 s/.test(gapCheck(bake([0, 1, 0], [0, 1, 3]), 0, 24).far ?? ""));
 expect("fill policy: sitting 0.45 m lower warns", gapCheck(bake([0, 1, 0], [0, 0.55, 0.2]), 0, 24).warnings.length === 1);
+
+// 5. Fill spans (parkour bench-2): a foot "still" goal over the recovery and one stride foot up are free motion, not a plant
+const stand = (f, l = 0.087, r = 0.087) => ({ f, set: { foot_l: [0.1, l, 0], foot_r: [-0.1, r, 0] } });
+const flat = { foot_l: Array(100).fill([0.1, 0.087, 0]), foot_r: Array(100).fill([-0.1, 0.087, 0]) };
+const recovery = { frames: 100, goals: [{ name: "feet still", still: "joint:LeftFoot", at: [60, 96] }] };
+expect("spans: a foot goal over the recovery does not block the fill", spanReason(recovery, [stand(60), stand(72)], flat, 60, 72) === null);
+expect("spans: one stride foot 0.2 m up at an end key is not airborne", spanReason({ frames: 100 }, [stand(0), stand(12, 0.22, 0.087)], flat, 0, 12) === null);
+expect("spans: both feet up at an end key is airborne", spanReason({ frames: 100 }, [stand(0), stand(12, 0.3, 0.3)], flat, 0, 12) === "airborne");
+expect("spans: a hand goal over the gap is hand_contact", spanReason({ frames: 100, goals: [{ near: ["joint:LeftHand", "object:wall"], at: [18, 30] }] }, [stand(18), stand(30)], flat, 18, 30) === "hand_contact");
+
+// the bench-2 r2 vault spec (an agent's own parkour take): run-up and recovery fill, the plant and the flight (f28-f48) do not
+{
+	const vault = JSON.parse(readFileSync(new URL("./fixtures/parkour-vault-spec.json", import.meta.url), "utf8"));
+	const own = vault.keys.filter(k => !k.src), at = [...new Set(own.map(k => k.f))].sort((a, b) => a - b);
+	const baked = compileSpec(vault, { sk, scene: motionScene([]) }).out.baked;
+	const reasons = at.slice(1).map((f, i) => [at[i], f, spanReason(vault, own, baked, at[i], f)]);
+	const wrong = reasons.filter(([a, b, why]) => (b <= 28 || a >= 48 ? why !== null : why === null));
+	expect("vault spec: run-up and recovery gaps are free, every gap in the vault f28-f48 stays authored", wrong.length === 0, JSON.stringify(reasons));
+}
 
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log("all passed");
