@@ -26,9 +26,9 @@ expect("no fetcher (a Node compile): nothing sent, the spec compiles as written"
 const never = () => { throw new Error("must not fetch"); };
 expect("fill: false: nothing sent", autoFill({ fetch: never }, character, { ...grid, fill: false }).fill === null);
 const skill = autoFill({ fetch: never }, character, { ...grid, use: [{ skill: "walkTo", f0: 0, args: { to: [0, 1] } }] });
-expect("a spec with use is not filled and says so", /use or generators is not filled/.test(skill.fill?.skipped ?? ""), JSON.stringify(skill.fill));
+expect("a spec with use is not filled and says so", /use or generators is not filled/.test(skill.fill?.note ?? ""), JSON.stringify(skill.fill));
 const down = await autoFill({ fetch: async () => { throw new TypeError("fetch failed"); } }, character, grid);
-expect("no dev server: compiles as written with a note, never an error", down.spec === grid && /did not run/.test(down.fill?.skipped ?? ""), JSON.stringify(down.fill));
+expect("no dev server: compiles as written with a note, never an error", down.spec === grid && /did not run/.test(down.fill?.note ?? ""), JSON.stringify(down.fill));
 
 // the runtime lives next to the server (mcp/node_modules, installed with --no-save), not in the root package
 const onnx = existsSync(new URL("../../mcp/node_modules/onnxruntime-node", import.meta.url));
@@ -57,6 +57,15 @@ else {
 	const ran = again.fill.gaps.filter(g => !g.kept && !g.skipped);
 	expect("only the gaps beside it ran again (inside f0-f24); f24-f48 kept its fill", ran.length >= 1 && ran.length <= 2 && ran.every(g => g.f[0] >= 0 && g.f[1] <= 24) && again.fill.gaps.some(g => g.kept && g.f[0] === 24), JSON.stringify(again.fill.gaps));
 	const hinted = compileSpec(again.spec, { sk, scene }).qa.groups.map(g => g.cause).filter(c => /MotionBricks fill key/.test(c ?? ""));
+	// parkour shape: approach f0-f18, hands on the wall f18-f30, flight f30-f42, landing f42-f60: only the first and last gaps fill
+	const pose = (f, { root = [0, 1.016, 0], foot = 0.087, hand = 0.9, z = 0 } = {}) => ({ f, set: { ...grid.keys[0].set, root: [root[0], root[1], root[2] + z],
+		foot_l: [0.1, foot, z], foot_r: [-0.1, foot, z], hand_l: [0.24, hand, z + 0.1], hand_r: [-0.24, hand, z + 0.1] } });
+	const parkour = { ...grid, frames: 61, keys: [pose(0), pose(18, { z: 0.4 }), pose(30, { z: 0.7, foot: 0.45, root: [0, 1.25, 0], hand: 1.0 }), pose(42, { z: 1.4, root: [0, 1.0, 0] }), pose(60, { z: 1.7 })],
+		goals: [{ name: "hands on the wall top", near: ["joint:LeftHand", "joint:RightHand"], tol: 0.6, at: [18, 30] }] };
+	const vault = await autoFill({ fetch }, character, parkour);
+	const filledGaps = vault.fill.gaps.filter(g => !g.skipped && !g.kept).map(g => g.f.join("-"));
+	expect("parkour: only the approach and the landing gaps fill; the hand plant and the flight stay authored", JSON.stringify(filledGaps) === '["0-18","42-60"]'
+		&& JSON.stringify(vault.fill.skipped?.map(s => `${s.f.join("-")} ${s.reason}`)) === '["18-30 hand_contact","30-42 airborne"]', JSON.stringify(vault.fill));
 	console.log(`  edit loop: promoted ${again.fill.promoted}, ${again.fill.calls} calls, kept ${again.fill.gaps.filter(g => g.kept).length} gap; fill-key hints: ${hinted.length}`);
 	console.log(`  3-key grid: ${three.fill.calls} calls, ${fillKeys} fill keys, QA ${qa.groups.length} groups; 100-frame gap: ${split.fill.passThrough} pass-through, ${split.fill.calls} calls`);
 }

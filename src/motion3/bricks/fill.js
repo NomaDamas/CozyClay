@@ -11,6 +11,7 @@ import { encodePoses, decodeMotion, MIN_TOKENS, MAX_TOKENS } from "./model-io.js
 import { frameChannels, unwrapSeries, roundChannels } from "./forward.js";
 import { pickKeys } from "./rekey.js";
 import { isFillKey, shortHash, fillSrc, editedFill, fillGapOf } from "./fill-src.js";
+import { spanReason } from "./fill-spans.js";
 import { quatFromMat, matFromQuat } from "../compiler/math.js";
 
 const STEP = 24 / 30; // one model frame in spec frames
@@ -154,15 +155,18 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 	const ends = gaps.map(([fa, fb]) => shortHash(spec.keys.filter(k => !isFill(k) && (k.f === fa || k.f === fb)).map(k => [k.f, k.set])));
 	const keep = gaps.map(([fa, fb], i) => { const inside = spec.keys.filter(k => isFill(k) && k.f > fa && k.f < fb); return at === undefined && inside.length > 0 && inside.every(k => fillGapOf(k) === ends[i]); });
 	let keys = spec.keys.filter(k => !(isFill(k) && gaps.some(([fa, fb], i) => !keep[i] && k.f > fa && k.f < fb)));
-	const report = [], warnings = [];
+	const report = [], warnings = [], skipped = [];
 	for (const [i, [fa, fb]] of gaps.entries()) {
 		if (keep[i]) { report.push({ f: [fa, fb], kept: true }); continue; }
 		// one token count, the gap's own: the output is as long as the gap, never a sprint stretched to fit
 		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map(), check = gapCheck(r.out.baked, fa, fb);
+		// hand plants, flights and checked spans stay the author's (fill-spans.js)
+		const reason = spanReason(spec, keys.filter(k => !isFill(k)), r.out.baked, fa, fb);
+		if (reason) { skipped.push({ f: [fa, fb], reason }); report.push({ f: [fa, fb], skipped: reason }); continue; }
 		warnings.push(...check.warnings);
 		if (check.far) {
 			if (!auto) throw new Error(check.far);
-			report.push({ f: [fa, fb], skipped: check.far.replace(/^FILL_GAP_TOO_FAR: /, "compiler interpolation kept: ") });
+			skipped.push({ f: [fa, fb], reason: "too_far" }); report.push({ f: [fa, fb], skipped: check.far.replace(/^FILL_GAP_TOO_FAR: /, "compiler interpolation kept: ") });
 			continue;
 		}
 		const poses = [...[3, 2, 1, 0].map(n => fa - n * STEP), ...[0, 1, 2, 3].map(n => fb + n * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
@@ -172,6 +176,6 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 		keys = merge(keys, fill);
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}
-	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, ...(promoted ? { promoted } : {}),
+	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, ...(skipped.length ? { skipped } : {}), ...(promoted ? { promoted } : {}),
 		...(passed.added ? { passThrough: passed.added } : {}), ...(warnings.length ? { warnings } : {}) };
 }

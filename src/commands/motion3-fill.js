@@ -54,10 +54,10 @@ export function autoFill(ports, character, spec) {
 	const fetcher = ports.fetch ?? (typeof window === "undefined" ? null : globalThis.fetch);
 	const authored = Array.isArray(spec?.keys) ? new Set(spec.keys.filter(k => !isFillKey(k)).map(k => k?.f)).size : 0;
 	if (!fetcher || spec?.fill === false || authored < 2) return { spec, fill: null };
-	if (spec.use?.length || spec.generators?.length) return { spec, fill: { skipped: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
+	if (spec.use?.length || spec.generators?.length) return { spec, fill: { note: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
 	return requestFill(fetcher, { spec, model: character.model, auto: true }).then(
-		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => isFillKey(k)).length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.promoted ? { promoted: filled.promoted } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
-		error => ({ spec, fill: { skipped: `MotionBricks fill did not run (${error.message}); compiled with the default interpolation` } }));
+		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => isFillKey(k)).length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.promoted ? { promoted: filled.promoted } : {}), ...(filled.skipped ? { skipped: filled.skipped } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
+		error => ({ spec, fill: { note: `MotionBricks fill did not run (${error.message}); compiled with the default interpolation` } }));
 }
 
 export function register(registry, ports) {
@@ -69,6 +69,6 @@ export function register(registry, ports) {
 		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install }, context);
 		const keys = filled.spec.keys.filter(k => isFillKey(k)).length;
 		return { ...r, summary: `MotionBricks filled ${filled.gaps.length} gap${filled.gaps.length === 1 ? "" : "s"} (${keys} fill keys, ${filled.calls} model calls). ${r.summary}`,
-			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms, ...(filled.warnings ? { warnings: filled.warnings } : {}) } } };
+			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms, ...(filled.skipped ? { skipped: filled.skipped } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } } };
 	} });
 }
