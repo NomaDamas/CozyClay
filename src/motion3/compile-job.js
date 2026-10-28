@@ -14,7 +14,7 @@ import { bakeTake } from "./take.js";
 import { skeletonFor } from "./rigs/index.js";
 import { keptPeople } from "./people.js";
 
-const TIMELINE_FPS = 24;
+const TIMELINE_FPS = 24, FINISH_AT = 4;
 const refuse = (code, message) => { throw Object.assign(new Error(message), { code }); };
 
 /** Runs `run`, turning a MOTION_SPEC_INVALID error into INVALID_ARGUMENT with the exact message. */
@@ -40,7 +40,7 @@ const fresh = value => (Array.isArray(value) ? value.map(fresh) : value && typeo
  * used, fixed, search, timeline, probes?, notes?, ms (+ repair: its wall ms), frameCount, label, repair?, take? }
  * bake: { position, yaw, prompt? } bakes the final result's take (prompt: given, else the final spec's label).
  */
-export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, bake }) {
+export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, finish, bake }) {
 	const sk = skeletonFor(model);
 	const opts = { ...(checks ? { checks } : {}), ...(lenient ? { lenient: true } : {}) };
 	// spec.probes and bare moved ids are lifted before fps is filled in, so the specId stays the spec's own
@@ -55,7 +55,13 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	const corrected = [], start = repair && !lenient ? prepareSpec(asked, { sk, scene }, corrected) : asked;
 	// every compile's QA by its spec, so a hint patch repair already tried is not compiled again (hint-check.js)
 	const seen = new Map(), measured = s => { const r = once(s); seen.set(JSON.stringify(s), r.qa); return r; };
-	const t0 = performance.now(), fixed = repair ? repairSpec(start, repair, measured) : { spec: asked, result: measured(asked) };
+	const t0 = performance.now(), first = repair ? repairSpec(start, repair, measured) : { spec: asked, result: measured(asked) };
+	// the finish pass (finish: an installing compile): a take left with 1-4 QA groups repairs once more, up to 6 rounds (deep research 10:
+	// about +5 s; offline -0.5 groups mean, 0 worse, 21% of 1-2-group takes reach 0; it fixes a single SLIDE or BODY, not POP, SELF or REACH)
+	const left = first.result.qa?.groups?.length ?? 0, more = repair && finish && left > 0 && left <= FINISH_AT ? repairSpec(first.spec, { ...repair, rounds: 6 }, measured) : null;
+	const fixed = more?.repair.applied.length ? { spec: more.spec, result: more.result, repair: { ...first.repair, rounds: first.repair.rounds + more.repair.rounds,
+		compiles: first.repair.compiles + more.repair.compiles, applied: [...first.repair.applied, ...more.repair.applied], rejected: first.repair.rejected + more.repair.rejected, finish: more.repair.rounds } }
+		: more ? { ...first, repair: { ...first.repair, finish: 0 } } : first;
 	// a hint's patch is offered only when its compile helped (hint-check.js), and only by a compile that repairs: repair has
 	// compiled most of the patches already (seen), where a plain compile paid two more compiles for them (bench replay: first
 	// compile 1.6 -> 5.2 s median) and the agent applied an offered patch as sent once in the 60 bench runs (374 direct
