@@ -20,6 +20,7 @@
 	"dependencies": {
 		"@modelcontextprotocol/sdk": "^1.30.0",
 		"jpeg-js": "0.4.4",
+		"onnxruntime-node": "^1.23.0",
 		"ws": "^8.19.0",
 		"zod": "^3.25.0"
 	}
