@@ -103,7 +103,8 @@ function sparseKeys(dense, fa, gap) {
 
 const merge = (keys, add) => [...keys, ...add].map((k, i) => [k, i]).sort((a, b) => a[0].f - b[0].f || a[1] - b[1]).map(([k]) => k);
 
-const MIN_AUTO_GAP = 14, MAX_GAP = 46;
+// 8: a 12-frame grid's gaps go to the model too (6 tokens, 18 model frames compressed onto the gap); under 8 the curve stays the compiler's
+const MIN_AUTO_GAP = 8, MAX_GAP = 46;
 /**
  * A gap longer than one call (46 frames) gets the compiler's own pose at its middle as an authored pass-through key
  * (src: "pass"), again until every gap fits; the channels are the ones the authored keys set.
@@ -145,7 +146,7 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 	// a fill key someone edited is the author's from now on: it stays, and the gaps beside it fill again around it
 	const promoted = (spec.keys ?? []).filter(editedFill).length;
 	spec = { ...spec, keys: (spec.keys ?? []).map(k => (editedFill(k) ? Object.fromEntries(Object.entries(k).filter(([field]) => field !== "src")) : k)) };
-	// auto (motion.compile): a gap under 14 frames stays the compiler's; one over 46 gets pass-through poses first
+	// auto (motion.compile): a gap under 8 frames stays the compiler's; one over 46 gets pass-through poses first
 	const passed = auto ? passThrough(spec, compile) : { spec, added: 0 };
 	spec = passed.spec;
 	const gaps = fillGaps(spec.keys ?? [], at, auto ? MIN_AUTO_GAP : 2);
