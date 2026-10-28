@@ -33,9 +33,9 @@ function poseAt(sk, frames, cache, t) {
 }
 
 /** Authored key frames in order and the gaps between neighbours (only those with frames to fill), optionally those around `at`. */
-function fillGaps(keys, at) {
+function fillGaps(keys, at, minGap = 2) {
 	const fs = [...new Set(keys.filter(k => !isFill(k)).map(k => k.f))].sort((a, b) => a - b);
-	const gaps = fs.slice(1).map((fb, i) => [fs[i], fb]).filter(([fa, fb]) => fb - fa >= 2);
+	const gaps = fs.slice(1).map((fb, i) => [fs[i], fb]).filter(([fa, fb]) => fb - fa >= minGap);
 	return at === undefined ? gaps : gaps.filter(([fa, fb]) => fa <= at && at <= fb);
 }
 
@@ -102,6 +102,25 @@ function sparseKeys(dense, fa) {
 
 const merge = (keys, add) => [...keys, ...add].map((k, i) => [k, i]).sort((a, b) => a[0].f - b[0].f || a[1] - b[1]).map(([k]) => k);
 
+const MIN_AUTO_GAP = 14, MAX_GAP = 46;
+/**
+ * A gap longer than one call (46 frames) gets the compiler's own pose at its middle as an authored pass-through key
+ * (src: "pass"), again until every gap fits; the channels are the ones the authored keys set.
+ */
+function passThrough(spec, compile) {
+	let keys = [...(spec.keys ?? [])], added = 0;
+	for (let guard = 0; guard < 64; guard++) {
+		const fs = [...new Set(keys.filter(k => !isFill(k)).map(k => k.f))].sort((a, b) => a - b);
+		const i = fs.findIndex((f, n) => n > 0 && f - fs[n - 1] > MAX_GAP);
+		if (i < 0) break;
+		const mid = Math.round((fs[i - 1] + fs[i]) / 2), baked = compile({ ...spec, keys }).out.baked;
+		const names = [...new Set(keys.filter(k => !isFill(k)).flatMap(k => Object.keys(k.set ?? {})))].filter(ch => baked[ch]);
+		const set = Object.fromEntries(names.map(ch => [ch, Array.isArray(baked[ch][mid]) ? baked[ch][mid].map(v => Math.round(v * 1e5) / 1e5) : typeof baked[ch][mid] === "number" ? Math.round(baked[ch][mid] * 1e4) / 1e4 : baked[ch][mid]]));
+		keys = merge(keys, [{ f: mid, set, src: "pass" }]); added++;
+	}
+	return { spec: { ...spec, keys }, added };
+}
+
 /** Fill policy from the measured limits: the model sprints rather than stretch time, so a gap whose floor travel beats walking speed is not
  * its job (FILL_GAP_TOO_FAR); a big change (hips 0.4 m, lying down, airborne) is filled but named. Root, pitch, feet: the compiled spec at the gap's ends. */
 const WALK = 1.1, STAND_ANKLE = 0.11;
@@ -122,7 +141,10 @@ export function gapCheck(baked, fa, fb) {
  * refusing the call. Returns { spec, gaps: [{ f: [fa, fb], tokens, frames, keys, ms } | { f, skipped }], calls, warnings }.
  */
 export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } = {}) {
-	const gaps = fillGaps(spec.keys ?? [], at), inside = k => isFill(k) && gaps.some(([fa, fb]) => k.f > fa && k.f < fb);
+	// auto (motion.compile): a gap under 14 frames stays the compiler's; one over 46 gets pass-through poses first
+	const passed = auto ? passThrough(spec, compile) : { spec, added: 0 };
+	spec = passed.spec;
+	const gaps = fillGaps(spec.keys ?? [], at, auto ? MIN_AUTO_GAP : 2), inside = k => isFill(k) && gaps.some(([fa, fb]) => k.f > fa && k.f < fb);
 	let keys = (spec.keys ?? []).filter(k => !inside(k));
 	const report = [], warnings = [];
 	for (const [fa, fb] of gaps) {
@@ -141,5 +163,5 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 		keys = merge(keys, fill);
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}
-	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped).length, ...(warnings.length ? { warnings } : {}) };
+	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped).length, ...(passed.added ? { passThrough: passed.added } : {}), ...(warnings.length ? { warnings } : {}) };
 }

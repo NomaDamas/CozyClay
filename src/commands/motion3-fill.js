@@ -44,6 +44,21 @@ export function fillSource({ spec, base }, specOf, installedSpec) {
 	return structuredClone(source);
 }
 
+/**
+ * motion.compile's automatic fill: a spec with 2+ authored key poses and no skills or generators is filled by MotionBricks
+ * before it compiles, unless spec.fill is false. In the browser only (the dev server runs the model); without it, or on any
+ * refusal, the spec compiles as written with a note in output.fill. Answers { spec, fill } at once when nothing is sent.
+ */
+export function autoFill(ports, character, spec) {
+	const fetcher = ports.fetch ?? (typeof window === "undefined" ? null : globalThis.fetch);
+	const authored = Array.isArray(spec?.keys) ? new Set(spec.keys.filter(k => k?.src !== "fill").map(k => k?.f)).size : 0;
+	if (!fetcher || spec?.fill === false || authored < 2) return { spec, fill: null };
+	if (spec.use?.length || spec.generators?.length) return { spec, fill: { skipped: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
+	return requestFill(fetcher, { spec, model: character.model, auto: true }).then(
+		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => k.src === "fill").length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
+		error => ({ spec, fill: { skipped: `MotionBricks fill did not run (${error.message}); compiled with the default interpolation` } }));
+}
+
 export function register(registry, ports) {
 	const mounted = () => Boolean(ports.storeDomain?.("motion")) || "The motion owner is not mounted.";
 	registry.register({ ...declarations[0], available: mounted, target: args => args.characterId, async run({ characterId, spec, base, at, install = true }, context) {
