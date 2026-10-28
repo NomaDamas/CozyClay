@@ -41,7 +41,10 @@ async function ensureModel(log = () => {}) {
 
 /** run(feed) -> { out: Float32Array [64 x 366], tokens } for one request (feed from src/motion3/bricks/model-io.js). */
 export async function createRunner(log) {
-	const ort = await import("onnxruntime-node");
+	// not an MCP dependency (the server stays free of a native runtime): install it next to the server to use this tool
+	const ort = await import("onnxruntime-node").catch(() => {
+		throw new Error("MOTIONBRICKS_RUNTIME_MISSING: run `npm install --no-save onnxruntime-node@1.23` in mcp/ first");
+	});
 	const session = await ort.InferenceSession.create(await ensureModel(log), { executionProviders: ["cpu"] });
 	return async feed => {
 		const inputs = Object.fromEntries(Object.entries(feed).map(([k, { data, dims, type }]) => [k, new ort.Tensor(type, data, dims)]));

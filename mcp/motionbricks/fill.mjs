@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // motion.fill (local tool): fills the gaps between a spec's authored key poses with MotionBricks motion (X Bot).
 // usage: node mcp/motionbricks/fill.mjs <spec.json> [--out filled.json] [--at <frame>]
+//   needs onnxruntime-node next to the server once: (cd mcp && npm install --no-save onnxruntime-node@1.23)
 //   --at re-fills only the gaps around that frame (an edited key: drop its src: "fill" so it counts as authored).
 // Prints QA before (authored keys only) and after, the gaps filled, model calls and wall time as JSON.
 import { readFileSync, writeFileSync } from "node:fs";
