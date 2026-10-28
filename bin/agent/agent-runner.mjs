@@ -509,8 +509,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					const fallback = code === "aborted" ? "The turn was aborted." : code === "truncated" ? "The model stream ended before a terminal response event." : "The model or live editor could not complete this turn.";
 					queue.push({ type: "error", code, message: outOfTokens || detail || fallback, ...(classified.status ? { status: classified.status } : {}) });
 				}
-				if (state.active.pendingContext) { queue.push(state.active.pendingContext); state.active.pendingContext = null; }
-				queue.push({ type: "done", usage: { ...state.active.usage }, ...(state.lastInput?.reportCost ? { cost: state.active.cost ?? 0 } : {}) });
+				if (state.active.pendingContext) queue.push(state.active.pendingContext); queue.push({ type: "done", usage: { ...state.active.usage }, ...(state.lastInput?.reportCost ? { cost: state.active.cost ?? 0 } : {}) });
 				queue.close();
 			};
 			return state.agent.subscribe((event) => {
@@ -518,8 +517,7 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 					reasoning.onMessageEvent(event.assistantMessageEvent);
 					if (event.assistantMessageEvent?.type === "text_delta") pushFrame({ type: "text.delta", text: event.assistantMessageEvent.delta });
 				} else if (event.type === "tool_execution_start") startTool(event);
-				else if (event.type === "tool_execution_end") endTool(event);
-				else if (event.type === "message_end" && state.active?.pendingContext) { pushFrame(state.active.pendingContext); state.active.pendingContext = null; }
+				else if (event.type === "tool_execution_end") endTool(event); else if (event.type === "message_end" && state.active?.pendingContext) { pushFrame(state.active.pendingContext); state.active.pendingContext = null; }
 				else if (event.type === "agent_end") finish(event);
 			});
 		};
