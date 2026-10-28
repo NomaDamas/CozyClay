@@ -66,6 +66,8 @@ const DEFAULT_BONES = ["Hips", "Head", "LeftHand", "RightHand", "LeftFoot", "Rig
 // the inputs a compile fixed instead of refusing (lenient.js), kept in every answer (report.js keeps the head)
 const MAX_ADJUSTED = 8;
 const adjustedOf = notes => (notes.length ? { adjusted: notes.length > MAX_ADJUSTED ? [...notes.slice(0, MAX_ADJUSTED - 1), `${notes.length - MAX_ADJUSTED + 1} more`] : notes } : {});
+// the fill's density notes ride in the summary line the agent reads, not only in output.fill.notes (variant I)
+const fillSay = fill => (fill?.notes?.length ? ` Fill notes: ${fill.notes.join(" | ").slice(0, 600)}${fill.notes.join(" | ").length > 600 ? " ... (output.fill.notes)" : ""}` : "");
 const adjustedSay = notes => (notes.length ? `; ${notes.length} input${notes.length > 1 ? "s" : ""} adjusted (output.adjusted)` : "");
 const unknownSpec = (what, value, then = "send spec") => fail("INVALID_ARGUMENT", `${what} "${value}" is not known (the editor keeps the last ${SPEC_STORE_SIZE} compiled specs this session); ${then}`);
 
@@ -93,7 +95,7 @@ export function register(registry, ports) {
 	const store = createSpecStore();
 	registry.motionSpecOf = base => store.get(base); // motion.fill (motion3-fill.js) reads a base the same way
 	// the stop rule: output.stuck when more compiles stopped paying (repair-watch.js)
-	const watch = createRepairWatch();
+	const watch = createRepairWatch(), compiledOnce = new Set();
 	const rounds = createRoundWatch(); // output.noImprovementRounds (motion3-rounds.js)
 	const owner = () => ports.storeDomain("motion");
 	const mounted = () => Boolean(ports.storeDomain?.("motion")) || "The motion owner is not mounted.";
@@ -171,7 +173,9 @@ export function register(registry, ports) {
 		// MotionBricks fills between the authored key poses first, when the dev server can run it (motion3-fill.js autoFill)
 		// the repair engine runs by default (2 rounds) on an installing compile; repair: false opts out (deep research 5: hand-keyed sessions
 		// repaired 93% of first compiles, ours 2-4%, and without it the hints carry no patch)
-		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: 2 });
+		// rounds 2 on a character's first compile, 1 on the repeats (variant I: repair cost +20 s a step on 45% of the compiles)
+		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: compiledOnce.has(characterId) ? 1 : 2 });
+		compiledOnce.add(characterId);
 		// a small patch on one authored key keeps the fill beside it (patch-guard.js): re-fills there made 14-22% of the new problems
 		const keepFill = base === undefined ? null : keptFill(store.get(base) ?? installedSpec(), source);
 		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith, finish: install !== false }, {}, context?.taskId, scene), r => {
@@ -201,7 +205,7 @@ export function register(registry, ports) {
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });
 			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
 			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
-			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.`, output, ...workerWarning() };
+			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${fillSay(auto.fill)}`, output, ...workerWarning() };
 		}));
 	} });
 	registry.register({ ...declarations[1], available: mounted, run({ characterId, checks }) {

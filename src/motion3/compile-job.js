@@ -14,7 +14,7 @@ import { bakeTake } from "./take.js";
 import { skeletonFor } from "./rigs/index.js";
 import { keptPeople } from "./people.js";
 
-const TIMELINE_FPS = 24, FINISH_AT = 4;
+const TIMELINE_FPS = 24, FINISH_AT = 2;
 const refuse = (code, message) => { throw Object.assign(new Error(message), { code }); };
 
 /** Runs `run`, turning a MOTION_SPEC_INVALID error into INVALID_ARGUMENT with the exact message. */
@@ -56,7 +56,7 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	// every compile's QA by its spec, so a hint patch repair already tried is not compiled again (hint-check.js)
 	const seen = new Map(), measured = s => { const r = once(s); seen.set(JSON.stringify(s), r.qa); return r; };
 	const t0 = performance.now(), first = repair ? repairSpec(start, repair, measured) : { spec: asked, result: measured(asked) };
-	// the finish pass (finish: an installing compile): a take left with 1-4 QA groups repairs once more, up to 6 rounds (deep research 10:
+	// the finish pass (finish: an installing compile): a take left with 1-2 QA groups (variant I: 1-4 ran it on 11 compiles at ~20 s each) repairs once more, up to 6 rounds (deep research 10:
 	// about +5 s; offline -0.5 groups mean, 0 worse, 21% of 1-2-group takes reach 0; it fixes a single SLIDE or BODY, not POP, SELF or REACH)
 	const left = first.result.qa?.groups?.length ?? 0, more = repair && finish && left > 0 && left <= FINISH_AT ? repairSpec(first.spec, { ...repair, rounds: 6 }, measured) : null;
 	const fixed = more?.repair.applied.length ? { spec: more.spec, result: more.result, repair: { ...first.repair, rounds: first.repair.rounds + more.repair.rounds,
