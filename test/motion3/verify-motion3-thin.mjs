@@ -5,10 +5,19 @@ import { readFileSync } from "node:fs";
 import { runCompileJob } from "../../src/motion3/compile-job.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
+import { compileSpec } from "../../src/motion3/pipeline.js";
+import { skeletonFor } from "../../src/motion3/rigs/index.js";
 
 let failures = 0;
 const expect = (name, ok, detail = "") => { console.log(`${ok ? "PASS" : "FAIL"} ${name}${ok ? "" : ` — ${detail}`}`); if (!ok) failures++; };
 const load = name => JSON.parse(readFileSync(new URL(`./fixtures/${name}-spec.json`, import.meta.url), "utf8"));
+// the move-start delay of the bench scorer (deep research 15): the first frame 10 joints average 0.15 m/s, in seconds
+const BONES = ["Hips", "Head", "LeftHand", "RightHand", "LeftFoot", "RightFoot", "LeftLeg", "RightLeg", "LeftForeArm", "RightForeArm"];
+function onset(doc, spec) {
+	const sk = skeletonFor(doc.model), F = compileSpec({ fps: 24, ...spec }, { sk, scene: motionScene(doc.objects) }).out.frames, ix = BONES.map(b => sk.index[b]);
+	for (let f = 1; f < F.length; f++) if (ix.reduce((m, i) => m + Math.hypot(...F[f].s.P[i].map((v, k) => v - F[f - 1].s.P[i][k])) * 24, 0) / ix.length >= 0.15) return (f - 1) / 24;
+	return 0;
+}
 const frames = spec => new Set(spec.keys.filter(k => !isFillKey(k)).map(k => k.f));
 for (const [name, least] of [["h-sit", 0.15], ["h-parkour", 0.15]]) {
 	const doc = load(name), job = extra => runCompileJob({ model: doc.model, scene: motionScene(doc.objects), spec: doc.spec, finish: true, ...extra });
@@ -20,6 +29,7 @@ for (const [name, least] of [["h-sit", 0.15], ["h-parkour", 0.15]]) {
 	expect(`${name}: thin: false and a non-installing compile (finish off) leave the keys`, plain.thinned === undefined && runCompileJob({ model: doc.model, scene: motionScene(doc.objects), spec: doc.spec }).thinned === undefined);
 	const guard = job({ protect: t?.removed ?? [] }).thinned;
 	expect(`${name}: protected frames (a patch's) are never removed`, !guard || guard.removed.every(f => !(t?.removed ?? []).includes(f)), JSON.stringify(guard));
+	expect(`${name}: the move-start delay stays (within 0.1 s)`, onset(doc, thin.stored) >= onset(doc, plain.stored) - 0.1, `${onset(doc, plain.stored)} -> ${onset(doc, thin.stored)}`);
 	expect(`${name}: under 10 s`, (t?.ms ?? 0) < 10000, `${t?.ms}`);
 }
 // a hold: two neighbouring keys with the same pose in a free span stay together
