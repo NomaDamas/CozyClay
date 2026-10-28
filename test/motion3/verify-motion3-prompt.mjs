@@ -40,9 +40,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +209 for the strategy switch when a group survives two rounds (GOAL/REACH, POP, COLLIDE; deep research 5): +209
 // +170 for plants back on anchors (w_<anchor> 1 with armw 1; hand_l/r only for free motion near the shoulder; deep research 8): +170
 // +26 for "5 when 4 or fewer remain" in the stop rule (deep research 10): +26
-check("the whole prompt is at most 16,926 characters", () => assert.ok(prompt.length <= 16926, `${prompt.length}`));
-check("the motion part is at most 4,675 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 4675, `${motion.length}`);
+// +120 for splayed knee poles and feet 0.24 m apart when the hips are below 0.75 m (deep research 11): +120
+check("the whole prompt is at most 17,046 characters", () => assert.ok(prompt.length <= 17046, `${prompt.length}`));
+check("the motion part is at most 4,795 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 4795, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);

@@ -34,14 +34,22 @@ function movers(X, j, f) {
 	return list.filter(ch => b[ch]).sort((p, q) => change(q) - change(p));
 }
 
-function speedHint(X, g, power) {
+// a POP that retime did not clear (deep research 11): a limb's key between or moved, or an arm's hold lower and nearer the body
+const LEG = /^(foot|knee|fyaw|fpitch)_[lr]$/, ARM = /^(hand|elbow|armw|aswing|abend|wflex|wtwist)_[lr]$/;
+function popMore(ch, a, b) {
+	if (LEG.test(ch)) return `. If retime did not clear it: add a key at f${Math.round((a + b) / 2)} on ${ch} that lifts it 0.1-0.2 m off its floor value, or move the key at f${b} later by 1-2 frames, or remove ${ch} from f${b} and key it again 2 frames earlier with the next value`;
+	if (ARM.test(ch)) return `. If retime did not clear it: add one key between the two keys that holds the hand 0.1-0.2 m lower and nearer the body, plus an elbow pole key`;
+	return "";
+}
+
+function speedHint(X, g, power, pop = false) {
 	const j = g.subject.split(" ")[0], f = g.worstFrame, ch = movers(X, j, f)[0] ?? "root";
 	const { prev, next } = X.bracket(ch, f), stepped = X.keys(ch).find(k => k.step && Math.abs(k.f - f) <= 1);
 	if (stepped) return { cause: X.cause(ch, f), hint: `${ch}: a step key jumps at f${Math.round(stepped.f)}; ease it over 4+ frames (key the old value 4 frames earlier, drop the step)` };
 	const factor = Math.ceil(Math.pow(g.worst / g.limit, power) * 1.1 * 10) / 10;
 	const a = Math.round(prev?.f ?? f - 4), b = Math.round(next?.f ?? f + 4), extra = Math.ceil((b - a) * (factor - 1));
 	const anchor = /^w_(.+)_[lr]$/.exec(ch);
-	return { cause: X.cause(ch, f), hint: `retime: stretch f${a}-f${b} by ${factor}x (+${extra} frames, move the keys from f${b} on later)${anchor ? ` - the hand switches to anchor ${anchor[1]} too fast` : ""}`,
+	return { cause: X.cause(ch, f), hint: `retime: stretch f${a}-f${b} by ${factor}x (+${extra} frames, move the keys from f${b} on later)${anchor ? ` - the hand switches to anchor ${anchor[1]} too fast` : ""}${pop ? popMore(ch, a, b) : ""}`,
 		fix: X.spec.fix === false ? undefined : { path: "/fix/retime", value: true } };
 }
 
@@ -175,7 +183,7 @@ export const motionHints = {
 			fix: hold && { channel: `foot_${k}`, f: g.last, value: hold } };
 	},
 	SPEED: (X, g) => speedHint(X, g, 1),
-	POP: (X, g) => speedHint(X, g, 0.5),
+	POP: (X, g) => speedHint(X, g, 0.5, true),
 	ACC: (X, g) => speedHint(X, g, 0.5),
 	FLOAT(X, g) {
 		const base = `over f${g.first}-f${g.last} lower the root or key foot_l/foot_r back onto the ground, the floor or the top of an object under the foot (the ankle stands ${ankleY(X.sk)} m above it); a jump needs the hips to rise and fall; a seat or ledge the hips rest on goes in checks.supports (a foot on an object's top needs none)`;
