@@ -1,5 +1,5 @@
 // The MotionBricks fill as a request the dev server answers (POST /agent/motion-fill, tools/dev-full.mjs):
-// { spec, at?, model? } -> { spec (the filled spec, fill keys src: "fill"), gaps, calls, ms }. The Studio's motion.fill
+// { spec, at?, model?, auto?, objects? } -> { spec (the filled spec, fill keys src: "fill"), gaps, calls, ms }. The Studio's motion.fill
 // action sends the authored spec here because the model runs on onnxruntime-node, not in the browser. One runner per process.
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
@@ -9,19 +9,20 @@ import { createRunner } from "./model.mjs";
 
 let runner;
 
-export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = false } = {}) {
+export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = false, objects = [] } = {}) {
 	if (!spec || typeof spec !== "object" || !Array.isArray(spec.keys)) throw Object.assign(new Error("spec must be a motion spec with keys"), { code: "INVALID_ARGUMENT" });
 	if (at !== undefined && !Number.isInteger(at)) throw Object.assign(new Error("at must be a whole frame"), { code: "INVALID_ARGUMENT" });
 	const sk = skeletonFor(model);
 	if (!sk) throw Object.assign(new Error(`${model} is not a rig the fill can drive`), { code: "TARGET_NOT_READY" });
 	const t0 = performance.now();
 	const run = await (runner ??= createRunner().catch(error => { runner = undefined; throw error; }));
-	const scene = motionScene([]);
+	// the editor's scene objects (motion3-fill.js sends them): an anchor or a check naming a wall, a table or a door handle compiles here too
+	const scene = motionScene(Array.isArray(objects) ? objects : []);
 	const filled = await fillSpec(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at, auto: auto === true });
 	return { ...filled, ms: Math.round(performance.now() - t0) };
 }
 
-const BODY_LIMIT = 1024 * 1024;
+const BODY_LIMIT = 16 * 1024 * 1024; // the spec and the scene's objects
 
 /** POST /agent/motion-fill on the dev server (tools/dev-full.mjs): JSON { spec, at?, model? } in, fillRequest's answer or { error: { code, message } } out. */
 export async function handleFillRoute(req, res) {
@@ -31,7 +32,7 @@ export async function handleFillRoute(req, res) {
 		const chunks = [];
 		for await (const chunk of req) {
 			size += chunk.length;
-			if (size > BODY_LIMIT) throw Object.assign(new Error("request body is over 1 MB"), { code: "INVALID_ARGUMENT" });
+			if (size > BODY_LIMIT) throw Object.assign(new Error("request body is over 16 MB"), { code: "INVALID_ARGUMENT" });
 			chunks.push(chunk);
 		}
 		send(200, await fillRequest(JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}")));

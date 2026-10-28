@@ -11,6 +11,7 @@ import { compileSpec } from "../../src/motion3/pipeline.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
+import { SCENE_OBJECTS } from "./fixtures/cup-scene.mjs";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -74,6 +75,14 @@ else {
 	expect("density notes: KEYS_TOO_DENSE, CONTACT_UNKEYED and FLIGHT_UNKEYED, each naming keys[n] or frames", ["KEYS_TOO_DENSE", "CONTACT_UNKEYED", "FLIGHT_UNKEYED"].every(c => codes.includes(c))
 		&& /keys\[\d+\] f0 and keys\[\d+\] f4/.test(noted.fill.notes.join("\n")), JSON.stringify({ notes: noted.fill.notes, spans: noted.fill.spans }));
 	console.log(`  notes: ${noted.fill.notes?.join(" | ")}`);
+	// the fill compiles in the editor's scene: a plant anchored on a scene object (the table top) fills with the scene and is
+	// refused without it, as before the fix (the Studio then fell back to the compiler's curve)
+	const planted = { ...grid, anchors: { top: { kind: "object", object: "cube", local: [0.1, 0.5, 0] } }, keys: grid.keys.map((k, i) => (i === 1 ? { ...k, set: { ...k.set, w_top_r: 1 } } : k)) };
+	const withScene = await fillRequest({ spec: planted, model: "x-bot-tpose", auto: true, objects: SCENE_OBJECTS });
+	let refused = "";
+	try { await fillRequest({ spec: planted, model: "x-bot-tpose", auto: true }); } catch (error) { refused = error.message; }
+	expect("scene: a plant on a scene object fills when the editor sends its objects", withScene.calls === 2 && withScene.spec.keys.some(isFillKey), JSON.stringify({ calls: withScene.calls, gaps: withScene.gaps }));
+	expect("scene: without the objects the same spec is refused as before (unknown object)", /unknown object|names|not in the scene|cube/i.test(refused), refused);
 	console.log(`  edit loop: promoted ${again.fill.promoted}, ${again.fill.calls} calls, kept ${again.fill.gaps.filter(g => g.kept).length} gap; fill-key hints: ${hinted.length}`);
 	console.log(`  3-key grid: ${three.fill.calls} calls, ${fillKeys} fill keys, QA ${qa.groups.length} groups; 100-frame gap: ${split.fill.passThrough} pass-through, ${split.fill.calls} calls`);
 }

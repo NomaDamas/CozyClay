@@ -55,7 +55,7 @@ export function autoFill(ports, character, spec) {
 	const authored = Array.isArray(spec?.keys) ? new Set(spec.keys.filter(k => !isFillKey(k)).map(k => k?.f)).size : 0;
 	if (!fetcher || spec?.fill === false || authored < 2) return { spec, fill: null };
 	if (spec.use?.length || spec.generators?.length) return { spec, fill: { note: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
-	return requestFill(fetcher, { spec, model: character.model, auto: true }).then(
+	return requestFill(fetcher, { spec, model: character.model, auto: true, objects: ports.state?.().objects ?? [] }).then(
 		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => isFillKey(k)).length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.promoted ? { promoted: filled.promoted } : {}), ...(filled.skipped ? { skipped: filled.skipped } : {}), spans: filled.spans, ...(filled.notes ? { notes: filled.notes } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),
 		error => ({ spec, fill: { note: `MotionBricks fill did not run (${error.message}); compiled with the default interpolation` } }));
 }
@@ -65,7 +65,7 @@ export function register(registry, ports) {
 	registry.register({ ...declarations[0], available: mounted, target: args => args.characterId, async run({ characterId, spec, base, at, install = true }, context) {
 		const character = characterOf(ports, characterId);
 		const source = fillSource({ spec, base }, b => registry.motionSpecOf?.(b), ports.storeDomain("motion")?.motionFor(characterId)?.spec);
-		const filled = await requestFill(ports.fetch ?? globalThis.fetch, { spec: source, model: character.model, ...(at === undefined ? {} : { at }) });
+		const filled = await requestFill(ports.fetch ?? globalThis.fetch, { spec: source, model: character.model, objects: ports.state?.().objects ?? [], ...(at === undefined ? {} : { at }) });
 		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install }, context);
 		const keys = filled.spec.keys.filter(k => isFillKey(k)).length;
 		return { ...r, summary: `MotionBricks filled ${filled.gaps.length} gap${filled.gaps.length === 1 ? "" : "s"} (${keys} fill keys, ${filled.calls} model calls). ${r.summary}`,
