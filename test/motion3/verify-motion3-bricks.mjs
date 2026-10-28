@@ -10,6 +10,9 @@ import { frameChannels, XBOT_HIPMID } from "../../src/motion3/bricks/forward.js"
 import { somaPose } from "../../src/motion3/bricks/reverse.js";
 import { SOMA_JOINTS, SID, toSomaPoint, toCozyPoint } from "../../src/motion3/bricks/soma.js";
 import { fillSource } from "../../src/commands/motion3-fill.js";
+import { placementRows, samplePlacement, placementTrackKey } from "../../src/motion/placement-keys.js";
+import { authoredFrames } from "../../src/motion3/bricks/authored-keys.js";
+import { gapCheck } from "../../src/motion3/bricks/fill.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -80,6 +83,18 @@ expect("fill args: one authored pose is refused (fill keys do not count)", refus
 const copy = fillSource({ spec: two }, none);
 expect("fill args: a spec is taken as a copy", copy !== two && copy.keys.length === 3);
 expect("fill args: base reads the spec store", fillSource({ base: "spec-0123456789ab" }, b => (b === "spec-0123456789ab" ? two : undefined)).keys.length === 3);
+
+// 4. Pose-mode keys: placement interpolates (straight line, short way round), long gaps get middles, the fill policy guards.
+const rows = placementRows([{ frame: 0, tracks: { placement: placementTrackKey({ x: 0, z: 0, rot: 170 }) } }, { frame: 100, tracks: { placement: placementTrackKey({ x: 3, z: -1, rot: -170 }), hips: { q: [{ x: 0, y: 0, z: 0, w: 1 }] } } }]);
+const mid = samplePlacement(rows, 50);
+expect("placement: mid frame is halfway, yaw turns the short way (170 -> -170 through 180)", near([mid.x, mid.z], [1.5, -0.5], 1e-9) && near(Math.abs(mid.rot), 180, 1e-9), JSON.stringify(mid));
+expect("placement: holds before the first and after the last key", near(samplePlacement(rows, -5).x, 0, 0) && near(samplePlacement(rows, 400).x, 3, 0));
+expect("placement: no keys, no placement", samplePlacement([], 10) === null);
+expect("long gaps get middle poses until each fits 46 frames", JSON.stringify(authoredFrames([0, 100])) === "[0,25,50,75,100]" && JSON.stringify(authoredFrames([0, 40])) === "[0,40]", JSON.stringify(authoredFrames([0, 100])));
+const bake = (a, b) => ({ root: { 0: a, 24: b }, pitch: { 24: 0 }, foot_l: { 0: [0, 0.087, 0], 24: [0, 0.087, 0] }, foot_r: { 0: [0, 0.087, 0], 24: [0, 0.087, 0] } });
+expect("fill policy: 1 m in 24 frames is fine", gapCheck(bake([0, 1, 0], [0, 1, 1]), 0, 24).far === null);
+expect("fill policy: 3 m in 24 frames is FILL_GAP_TOO_FAR", /^FILL_GAP_TOO_FAR: f0-f24 travels 3.00 m in 1.00 s/.test(gapCheck(bake([0, 1, 0], [0, 1, 3]), 0, 24).far ?? ""));
+expect("fill policy: sitting 0.45 m lower warns", gapCheck(bake([0, 1, 0], [0, 0.55, 0.2]), 0, 24).warnings.length === 1);
 
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log("all passed");

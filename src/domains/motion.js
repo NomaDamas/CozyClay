@@ -38,6 +38,7 @@ import { ikKeyJson, ikTrackKeyFromJson } from "../motion/ik-key-json.js";
 import { chooseIkEntryPose } from "../ik-camera.js";
 import { applyRangePin, captureRangePinTarget, normalizeRangePin, rangePinTargetWorld, rangePinTracks, removeRangePinKeys } from "../motion/range-pin.js";
 import { rangePinObjectMatrixAt } from "../range-pin-object-transform.js";
+import { PLACEMENT_TRACK, placementRows, placementTrackKey } from "../motion/placement-keys.js";
 import { ensureRangePinState, overlappingRangePin, rangePinConflictFrames, rangePinOverlapMessage } from "./motion/motion-range-pin-rules.js";
 
 import { takeSource, normalizeTakeSource, compileTakeSource, renderTakeEdit } from "./motion/take-source.js";
@@ -98,10 +99,10 @@ export function createMotionDomain(appContext, characters) {
 		const ids = new Set([...publishedIds, ...read().map(row => row.id)]);
 		for (const id of ids) {
 			const row = layer(id), take = visibleMotion(id), full = fullMotionFor(id);
-			cast.publishMotion(id, take);
+			cast.publishMotion(id, take); cast.publishPlacement?.(id, placementRows(row.ikKeys));
 			if (full) appContext.shared.motionFullRef.current.set(id, full); else appContext.shared.motionFullRef.current.delete(id);
 			const state = states.get(id) ?? createIkState();
-			state.keys = decodeMotionKeys(row.ikKeys); state.tracked = new Set([...state.keys.values()].flatMap(entry => [...entry.keys()]));
+			state.keys = decodeMotionKeys(row.ikKeys); state.tracked = new Set([...state.keys.values()].flatMap(entry => [...entry.keys()]).filter(track => track !== PLACEMENT_TRACK));
 			state.pins = decodeRangePins(row.ikPins);
 			state.pinResiduals = decodeRangePinResiduals(row.ikPinResiduals);
 			states.set(id, state);
@@ -109,15 +110,7 @@ export function createMotionDomain(appContext, characters) {
 			if (rig) {
 				const resolved = resolveIkRig(rig); if (resolved) Object.assign(state, resolved, { rig });
 				if (savedRigs?.has(id)) appContext.shared.restoreExportRig(savedRigs.get(id));
-				else if (resolved) {
-					restFingers(resolved.fkJoints); if (take) applyTakeFrame(rig, take, Math.min(frame(), take.frames - 1));
-					else {
-						const character = cast.read().find(entry => entry.id === id);
-						restoreBindPositions(rig); applyPose(rig, { ...REST_BONES, ...(character?.pose ?? DEFAULT_POSE).bones });
-						applyHipsOffset(rig, character?.pose?.rootY ?? 0);
-					}
-					ikEvaluate(resolved.chains, state, frame(), resolved.fkJoints, take ? 6 : 0);
-				}
+				else if (resolved) poseRig(id, rig, resolved, state, take, frame());
 			}
 		}
 		publishedIds = new Set(read().map(row => row.id));
@@ -126,6 +119,22 @@ export function createMotionDomain(appContext, characters) {
 		appContext.shared.ikStateRef.current = states.get(id) ?? states.set(id, createIkState()).get(id);
 		appContext.shared.bufferRef.current = { ...appContext.shared.bufferRef.current, motion: visibleMotion(id), ik: appContext.shared.ikStateRef.current };
 		domain.onProject?.(); viewRevision++;
+	}
+	// The rig as it plays at frame `at`: the take or the stage pose, then the IK keys (project; Pose mode's Fill reads keyed frames).
+	function poseRig(id, rig, resolved, state, take, at) {
+		restFingers(resolved.fkJoints); if (take) applyTakeFrame(rig, take, Math.min(at, take.frames - 1));
+		else {
+			const character = appContext.storeDomain('cast').read().find(entry => entry.id === id);
+			restoreBindPositions(rig); applyPose(rig, { ...REST_BONES, ...(character?.pose ?? DEFAULT_POSE).bones });
+			applyHipsOffset(rig, character?.pose?.rootY ?? 0);
+		}
+		ikEvaluate(resolved.chains, state, at, resolved.fkJoints, take ? 6 : 0);
+	}
+	function poseRigAt(id, at) {
+		const rig = rigFor(id), resolved = rig && resolveIkRig(rig), state = appContext.shared.ikStatesRef.current.get(id);
+		if (!resolved || !state) return null;
+		poseRig(id, rig, resolved, state, visibleMotion(id), at); rig.updateMatrixWorld(true);
+		return rig;
 	}
 	const unsubscribe = documentStore.subscribe(project);
 	function write(update) {
@@ -249,6 +258,21 @@ export function createMotionDomain(appContext, characters) {
 		const keyed = encodeMotionKeys(scratch.keys)[0];
 		return keyed ? run('ik.setKey', { characterId: id, frame: at, tracks: keyed.tracks }) : null;
 	}
+	// Pose mode's K: every part of the body as it stands at the playhead, plus where the character stands (placement-keys.js).
+	function keyAll(id, at, placement) {
+		const rig = rigFor(id), resolved = rig && resolveIkRig(rig);
+		if (!resolved) throw new StudioProtocolError('TARGET_NOT_READY', 'The character rig is not loaded.');
+		const scratch = { ...createIkState(), tracked: new Set([...resolved.chains.keys(), ...resolved.fkJoints.keys()]) };
+		ikBakeKeyframe(resolved.chains, scratch, at, resolved.fkJoints);
+		const keyed = encodeMotionKeys(scratch.keys)[0]?.tracks ?? {};
+		return run('ik.setKey', { characterId: id, frame: at, tracks: { ...keyed, [PLACEMENT_TRACK]: placementTrackKey(placement) } });
+	}
+	function setPlacementKey(id, at, placement) {
+		editKeys(id, state => {
+			if (!state.keys.has(at)) state.keys.set(at, new Map());
+			state.keys.get(at).set(PLACEMENT_TRACK, { q: null, p: new THREE.Vector3(placement.x, placement.rot, placement.z) });
+		});
+	}
 	function keyPose(id, at, pose) {
 		rigOnly(id, 'pose');
 		const rig = rigFor(id), resolved = rig && resolveIkRig(rig);
@@ -288,7 +312,7 @@ export function createMotionDomain(appContext, characters) {
 		return run('run.update', { txId: gesture.txId, args });
 	}
 	const domain = { documentStore, read, write, layer, writeLayer, motionFor, fullMotionFor, visibleMotion, snapshotTake, project,
-		setKeys, setRangePinState, bakeRangePin, removePin, editKeys, setKey, replace, clear, run, edit, beginGesture, finishGesture, beginAction,
+		setKeys, setRangePinState, bakeRangePin, removePin, editKeys, setKey, keyAll, setPlacementKey, poseRigAt, replace, clear, run, edit, beginGesture, finishGesture, beginAction,
 		insideAction: () => running > 0, bakeCurrentKey, keyPose,
 		bindRender(context) { appContext = context; },
 		viewRevision: () => viewRevision, canUndo: id => documentStore.canUndo(id),

@@ -22,6 +22,7 @@ import {
 } from "../app-stage.jsx";
 import { ko } from "../locale.js";
 import { createIkState } from "../motion/ik.js";
+import { samplePlacement } from "../motion/placement-keys.js";
 import { judgeNextWaypoint } from "../motion/waypoints.js";
 import { StudioProtocolError } from "../studio-agent-protocol.js";
 import { studioActionRefusal } from "../studio-actions.js";
@@ -36,7 +37,7 @@ function createCastDomain(appContext, initial, customPoses = []) {
 	const normalize = value => ({ characters: (Array.isArray(value) ? value : value.characters).map(createCharacterEntry),
 		customPoses: Array.isArray(value) ? customPoses : value.customPoses ?? customPoses });
 	let native = createDocumentStore({ owned: { cast: normalize(initial) } });
-	const listeners = new Set(), motions = new Map();
+	const listeners = new Set(), motions = new Map(), placements = new Map();
 	const notify = () => { for (const listener of listeners) listener(); };
 	let release = native.subscribe(notify);
 	const documentStore = { ...Object.fromEntries(Object.keys(native).map(key => [key, (...args) => native[key](...args)])),
@@ -44,7 +45,10 @@ function createCastDomain(appContext, initial, customPoses = []) {
 	const state = () => documentStore.read('cast'), read = () => state().characters;
 	let projection = read(), previous = state();
 	function publish() {
-		projection = read().map(entry => motions.has(entry.id) ? { ...entry, sessionMotion: motions.get(entry.id) } : entry);
+		projection = read().map(entry => {
+			const placed = placements.get(entry.id), withKeys = placed?.length ? { ...entry, placementKeys: placed } : entry;
+			return motions.has(entry.id) ? { ...withKeys, sessionMotion: motions.get(entry.id) } : withKeys;
+		});
 		appContext.publishCharacters(projection);
 		if (appContext.live.state) appContext.patchLive({ characters: projection });
 		domain.syncLayer?.();
@@ -86,10 +90,24 @@ function createCastDomain(appContext, initial, customPoses = []) {
 			appContext.recordAction('shot', () => shots.setCastOverride(shot.id, characterId, override), null, true);
 			patch = Object.fromEntries(Object.entries(patch).filter(([key]) => !fields.includes(key)));
 		}
+		// A character keyed in Pose mode (placement keys, no take) moves at the playhead: the move keys its placement there.
+		const placed = placements.get(characterId), motion = appContext.storeDomain('motion');
+		if (placed?.length && !motions.has(characterId) && motion && ['x', 'z', 'rot'].some(key => patch[key] !== undefined)) {
+			const at = samplePlacement(placed, raw.view.frame), value = { x: patch.x ?? at.x, z: patch.z ?? at.z, rot: patch.rot ?? at.rot };
+			appContext.recordAction('motion', () => motion.setPlacementKey(characterId, raw.view.frame, value), null, true);
+			patch = Object.fromEntries(Object.entries(patch).filter(([key]) => !['x', 'z', 'rot'].includes(key)));
+		}
 		if (Object.keys(patch).length) write(rows => rows.map(row => row.id === characterId ? { ...row, ...patch } : row));
 	}
 	function publishMotion(characterId, motion) {
 		if (motion) motions.set(characterId, motion); else motions.delete(characterId);
+		publish(); notify();
+	}
+	// Pose-mode placement keys (the motion owner's "placement" track), published like a take: render and gizmo read them.
+	function publishPlacement(characterId, rows) {
+		const before = placements.get(characterId) ?? [];
+		if (JSON.stringify(before) === JSON.stringify(rows ?? [])) return;
+		if (rows?.length) placements.set(characterId, rows); else placements.delete(characterId);
 		publish(); notify();
 	}
 	function run(id, args = {}) {
@@ -124,7 +142,7 @@ function createCastDomain(appContext, initial, customPoses = []) {
 		return run('run.update', { txId: gesture.txId, args });
 	}
 	const domain = { documentStore, state, read, write, update, writeState, run, edit, beginGesture, finishGesture,
-		activeId: read()[0]?.id ?? null, projection: () => projection, publishMotion, normalizeCharacters: rows => rows.map(createCharacterEntry),
+		activeId: read()[0]?.id ?? null, projection: () => projection, publishMotion, publishPlacement, normalizeCharacters: rows => rows.map(createCharacterEntry),
 		bindRender(context) { appContext = context; },
 		beginAction: () => documentStore.beginAction('cast'), canUndo: id => documentStore.canUndo(id),
 		stepHistory: redo => { finishGesture(); return Boolean((redo ? documentStore.redo : documentStore.undo)()); },
@@ -811,7 +829,8 @@ export function useCast(appContext) {
 		if (!shots) return;
 		const current = domain.projection(), active = current.find(entry => entry.id === domain.activeId) ?? current[0];
 		const extent = timelineContentExtent(current, active?.id ?? null, appContext.shared.bufferRef.current.motion, null);
-		domain.setTimeline(Math.max(24, timelineSpan(extent, shots.read(), shots.state().frameCount)));
+		// grow only: a take shorter than the timeline (or a 43-frame fill) never cuts the frames the user set
+		domain.setTimeline(Math.max(24, shots.state().frameCount, timelineSpan(extent, shots.read(), shots.state().frameCount)));
 	};
 	domain.extendTimeline = domain.syncTimeline;
 	domain.applyPose = (characterId, pose, clearMotion) => {

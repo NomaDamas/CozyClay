@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import PoseKeyBar from "./PoseKeyBar.jsx";
 import { useStudioPlaybackFrame, useStudioShell } from "./studio-shell-context.js";
 import { logStore } from "./log-store.js";
 import "./dock.css";
@@ -205,6 +206,7 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 			{!embedded && <LibrarySlot active={tab === "assets"} />}
 			{!embedded && previsMode === "storyboard" && <BoardSlot active={tab === "board"} />}
 			<div className="bottom-timeline" hidden={tab !== "animation"}>
+			<PoseKeyBar frame={liveFrame} frameCount={tlFrameCount} poseMode={Boolean(ikMode)} keyedFrames={ikFrames ?? []} characterId={characters[activeCharIndex]?.id ?? null} />
 			<Timeline
 				frame={liveFrame}
 				craneSelectedIndex={craneSelectedIndex}

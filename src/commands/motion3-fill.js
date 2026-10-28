@@ -53,6 +53,6 @@ export function register(registry, ports) {
 		const r = await registry.get("motion.compile").run({ characterId, spec: filled.spec, install }, context);
 		const keys = filled.spec.keys.filter(k => k.src === "fill").length;
 		return { ...r, summary: `MotionBricks filled ${filled.gaps.length} gap${filled.gaps.length === 1 ? "" : "s"} (${keys} fill keys, ${filled.calls} model calls). ${r.summary}`,
-			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms } } };
+			output: { ...r.output, fill: { gaps: filled.gaps, calls: filled.calls, keys, ms: filled.ms, ...(filled.warnings ? { warnings: filled.warnings } : {}) } } };
 	} });
 }

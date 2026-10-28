@@ -123,5 +123,6 @@ export const NOTES = {
 		"Each gap between neighbouring authored keys is one model call and at most 46 frames (1.9 s); a longer gap is refused (FILL_GAP_TOO_LONG): add a pose between. A gap under 14 frames is time-stretched.",
 		"The answer is motion.compile's (specId, qa, installed) plus output.fill { gaps, calls, keys }. The filled keys carry src: \"fill\" and QA names them keys[n] like your own.",
 		"To change the motion, edit a key (a fill key you edit: drop its src so it counts as authored), then motion.fill { base, at: <that key's f> }: only the two gaps beside it are filled again, the rest stays.",
-		"Fingers, wrist twist (wtwist/wflex) and props are not filled: key them yourself. X Bot is calibrated; a Y Bot is filled with the X Bot's proportions."],
+		"Fingers, wrist twist (wtwist/wflex) and props are not filled: key them yourself. X Bot is calibrated; a Y Bot is filled with the X Bot's proportions.",
+		"A gap may move the character at most ~1.1 m per second of gap (FILL_GAP_TOO_FAR beyond: add poses or use walkTo); for jumps and lying down write the mid pose. The user's Pose-mode keys (K: whole pose + where the character stands) are the same authored poses; their Fill button runs this action."],
 };

@@ -102,16 +102,38 @@ function sparseKeys(dense, fa) {
 
 const merge = (keys, add) => [...keys, ...add].map((k, i) => [k, i]).sort((a, b) => a[0].f - b[0].f || a[1] - b[1]).map(([k]) => k);
 
+/** Fill policy from the measured limits: the model sprints rather than stretch time, so a gap whose floor travel beats walking speed is not
+ * its job (FILL_GAP_TOO_FAR); a big change (hips 0.4 m, lying down, airborne) is filled but named. Root, pitch, feet: the compiled spec at the gap's ends. */
+const WALK = 1.1, STAND_ANKLE = 0.11;
+export function gapCheck(baked, fa, fb) {
+	const a = baked.root?.[fa], b = baked.root?.[fb], seconds = (fb - fa) / 24, warnings = [];
+	const travel = a && b ? Math.hypot(b[0] - a[0], b[2] - a[2]) : 0;
+	if (a && b && Math.abs(b[1] - a[1]) >= 0.4) warnings.push(`f${fa}-f${fb}: the hips move ${Math.abs(b[1] - a[1]).toFixed(2)} m up or down; write the mid pose yourself if the fill looks wrong`);
+	if (Math.abs(baked.pitch?.[fb] ?? 0) > 60) warnings.push(`f${fb}: the body lies down; the model fills lying poorly, write the mid pose`);
+	const planted = k => (baked[`foot_${k}`]?.[fa]?.[1] ?? 0) <= STAND_ANKLE, up = k => (baked[`foot_${k}`]?.[fb]?.[1] ?? 0) > (baked[`foot_${k}`]?.[fa]?.[1] ?? 0) + 0.05;
+	if (["l", "r"].some(k => planted(k) && up(k))) warnings.push(`f${fb}: a foot leaves the floor (a jump?); write the mid pose (knees bending, feet rising)`);
+	const far = travel > seconds * WALK ? `FILL_GAP_TOO_FAR: f${fa}-f${fb} travels ${travel.toFixed(2)} m in ${seconds.toFixed(2)} s (over ${WALK} m/s, the model would sprint); add a pass-through pose every ~1 m with more frames, or use the walkTo skill for this leg` : null;
+	return { travel, seconds, far, warnings };
+}
+
 /**
  * spec: a motion spec with 2+ authored key poses. ctx: { sk, compile: spec -> compileSpec result, run: async feed -> { out, tokens } }.
- * opts.at: re-fill only the gaps around this frame. Returns { spec, gaps: [{ f: [fa, fb], tokens, frames, keys, ms }], calls }.
+ * opts.at: re-fill only the gaps around this frame. opts.auto: a gap too far for the model is left to the compiler (noted) instead of
+ * refusing the call. Returns { spec, gaps: [{ f: [fa, fb], tokens, frames, keys, ms } | { f, skipped }], calls, warnings }.
  */
-export async function fillSpec(spec, { sk, compile, run }, { at } = {}) {
+export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } = {}) {
 	const gaps = fillGaps(spec.keys ?? [], at), inside = k => isFill(k) && gaps.some(([fa, fb]) => k.f > fa && k.f < fb);
 	let keys = (spec.keys ?? []).filter(k => !inside(k));
-	const report = [];
+	const report = [], warnings = [];
 	for (const [fa, fb] of gaps) {
-		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map();
+		// one token count, the gap's own: the output is as long as the gap, never a sprint stretched to fit
+		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map(), check = gapCheck(r.out.baked, fa, fb);
+		warnings.push(...check.warnings);
+		if (check.far) {
+			if (!auto) throw new Error(check.far);
+			report.push({ f: [fa, fb], skipped: check.far.replace(/^FILL_GAP_TOO_FAR: /, "compiler interpolation kept: ") });
+			continue;
+		}
 		const poses = [...[3, 2, 1, 0].map(i => fa - i * STEP), ...[0, 1, 2, 3].map(i => fb + i * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
 		const { feed, align } = encodePoses(poses, [tokens]);
 		const t0 = performance.now(), res = await run(feed), ms = performance.now() - t0;
@@ -119,5 +141,5 @@ export async function fillSpec(spec, { sk, compile, run }, { at } = {}) {
 		keys = merge(keys, fill);
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}
-	return { spec: { ...spec, keys }, gaps: report, calls: report.length };
+	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped).length, ...(warnings.length ? { warnings } : {}) };
 }

@@ -56,7 +56,8 @@ const ikTrackKey = input({}, { q: perBone(quaternion), p: StudioSchemas.Vec3, ba
 	chainP: perBone(StudioSchemas.Vec3), keepTranslations: { type: "boolean" }, blend: { type: "integer", minimum: 1, maximum: 240 },
 	correctionRange: input({ start: frame, end: frame }),
 	pin: { type: "string", minLength: 1, maxLength: 64 } });
-const ikTracks = input({}, Object.fromEntries([...STUDIO_IK_CHAIN_TRACKS, ...STUDIO_IK_JOINT_TRACKS].map(track => [track, ikTrackKey])));
+// placement: the whole character's world spot in Pose mode, p = { x, y: yaw in degrees, z } (src/motion/placement-keys.js)
+const ikTracks = input({}, { ...Object.fromEntries([...STUDIO_IK_CHAIN_TRACKS, ...STUDIO_IK_JOINT_TRACKS].map(track => [track, ikTrackKey])), placement: input({ p: StudioSchemas.Vec3 }) });
 /** The bones an object can ride (src/scene-objects.js SCENE_ATTACH_BONES). */
 export const STUDIO_ATTACH_BONES = freezeStudioData(["hips", "spine", "chest", "neck", "head", "leftShoulder", "leftElbow", "leftHand",
 	"rightShoulder", "rightElbow", "rightHand", "leftKnee", "leftFoot", "rightKnee", "rightFoot"]);

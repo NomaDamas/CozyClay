@@ -9,7 +9,7 @@ import { createRunner } from "./model.mjs";
 
 let runner;
 
-export async function fillRequest({ spec, at, model = "x-bot-tpose" } = {}) {
+export async function fillRequest({ spec, at, model = "x-bot-tpose", auto = false } = {}) {
 	if (!spec || typeof spec !== "object" || !Array.isArray(spec.keys)) throw Object.assign(new Error("spec must be a motion spec with keys"), { code: "INVALID_ARGUMENT" });
 	if (at !== undefined && !Number.isInteger(at)) throw Object.assign(new Error("at must be a whole frame"), { code: "INVALID_ARGUMENT" });
 	const sk = skeletonFor(model);
@@ -17,7 +17,7 @@ export async function fillRequest({ spec, at, model = "x-bot-tpose" } = {}) {
 	const t0 = performance.now();
 	const run = await (runner ??= createRunner().catch(error => { runner = undefined; throw error; }));
 	const scene = motionScene([]);
-	const filled = await fillSpec(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at });
+	const filled = await fillSpec(spec, { sk, compile: s => compileSpec(s, { sk, scene }), run }, { at, auto: auto === true });
 	return { ...filled, ms: Math.round(performance.now() - t0) };
 }
 
