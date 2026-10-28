@@ -162,6 +162,14 @@ expect("spans: a clearance check over the whole take (no frames, or over half of
 		JSON.stringify([unkeyed(still, 12), unkeyed(still, 30), unkeyed(moving, 10), unkeyed(anchored, 12), unkeyed(anchored, 30)]));
 }
 
+// HAND_COORDS_FREE: hand_l/r coordinates on free-motion keys with the arm on IK, one note naming them; a contact, or an FK arm, is not flagged
+{
+	const kind = [...Array(20).fill("free"), ...Array(20).fill("contact")], ik = { armw_r: Array(40).fill(1), armw_l: Array(40).fill(0) };
+	const keys = [{ f: 0, set: { hand_r: [-0.2, 1, 0.4] } }, { f: 10, set: { hand_l: [0.2, 1, 0.4] } }, { f: 24, set: { root: [0, 0.9, 0] } }, { f: 30, set: { hand_r: [-0.2, 1, 0.4] } }, { f: 39, set: { root: [0, 0.9, 0] } }];
+	const free = densityNotes(keys, kind, [], ik).filter(n => n.startsWith("HAND_COORDS_FREE"));
+	expect("density: HAND_COORDS_FREE names the free IK hand key only (not the FK arm's, not the one in a contact)", free.length === 1 && /^HAND_COORDS_FREE keys\[0\] f0: hand coordinates in free motion; prefer FK/.test(free[0]), JSON.stringify(free));
+}
+
 // fix.retime is on by default (deep research 4: POP -1.58 frames) and kept only when QA is no worse; fix: { retime: false } opts out
 {
 	const { fixOptions } = await import("../../src/motion3/fix/index.js");

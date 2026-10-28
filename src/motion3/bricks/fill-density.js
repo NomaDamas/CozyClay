@@ -6,6 +6,8 @@
 //   CONTACT_UNKEYED two authored keys more than 8 frames apart while a hand or foot moves more than 2 cm in a contact, or more than 12
 //                   frames apart across a held contact (held effectors repeat their coordinates every 8-12 frames)
 //   FLIGHT_UNKEYED  a jump without its Entry (~0.2 s before takeoff), Apex and Exit (~0.4 s after landing) keys (upstream's jump primitive)
+//   HAND_COORDS_FREE hand_l/r coordinates on keys in free motion (no contact there) with the arm on IK: one note naming them (deep research 8:
+//                   D's sit keyed hand coordinates on 61-76% of keys, the reference sessions 32%, and they dragged the hands as the pelvis moved)
 import { floorAnkle, limbContact, FLIGHT_MIN } from "./fill-spans.js";
 import { isFillKey } from "./fill-src.js";
 
@@ -75,5 +77,7 @@ export function densityNotes(keys, kind, spans, baked) {
 			!within(land + EXIT - 4, land + EXIT + 4) && `Exit (about f${land + EXIT}, ~0.4 s after landing)`].filter(Boolean);
 		if (missing.length) notes.push(`FLIGHT_UNKEYED the jump f${takeoff}-f${land} needs Entry, Apex and Exit keys; missing ${missing.join(", ")}; write those poses`);
 	}
+	const free = authored.filter(({ k }) => kind[k.f] === "free" && ["l", "r"].some(q => k.set?.[`hand_${q}`] !== undefined && baked[`armw_${q}`]?.[k.f] > 0.5));
+	if (free.length) notes.push(`HAND_COORDS_FREE ${free.map(name).join(", ")}: hand coordinates in free motion; prefer FK (aswing/abend), or an anchor for a plant`);
 	return notes;
 }
