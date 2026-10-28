@@ -107,7 +107,7 @@ const held = { schema: "cozyclay.motion-spec.v1", fps: 24, frames: 60, use: [{ s
 const P30 = compileSpec(held, { sk, scene: { objects: {} } }).out.frames[30].s.P, front = Math.max(P30[I.RightHand][2], P30[I.RightHandMiddle3][2]) + 0.022;
 const board = [{ id: "board", name: "Board", renderer: "cube", x: -0.2, y: 0, z: front + 0.035, rot: 0, rotX: 0, rotZ: 0, scaleX: 0.6, scaleY: 1.6, scaleZ: 0.1, footprint: { width: 1, depth: 1 }, height: 1 }];
 const boardReg = createStudioAppActions({ state: () => ({ characters: [still], objects: board, frameCount: 60 }), storeDomain: name => (name === "motion" ? boardOwner : null) });
-r = boardReg.run("motion.compile", { characterId: "char-2", spec: held, install: "ifClean" });
+r = boardReg.run("motion.compile", { characterId: "char-2", spec: held, install: "ifClean", repair: false });
 expect("ifClean without repair: the hand in the board is not installed", r.output.qa.ok === false && r.output.installed === false && !boardTakes.has("char-2"));
 r = boardReg.run("motion.compile", { characterId: "char-2", spec: held, install: "ifClean", repair: { rounds: 4 } });
 const repaired = boardTakes.get("char-2");

@@ -206,7 +206,7 @@ const registry = createStudioAppActions({ state: () => ({ characters: [CUP_CHARA
 const act = (id, args) => { const out = registry.run(id, args); return out?.output ?? out; };
 const refused = run => { try { run(); return ""; } catch (error) { return error.message; } };
 const pickUp = act("motion.compile", { characterId: CUP_CHARACTER.id, spec: RUN2_SPEC, install: false });
-const installedPickUp = act("motion.compile", { characterId: CUP_CHARACTER.id, base: pickUp.specId, install: true });
+const installedPickUp = act("motion.compile", { characterId: CUP_CHARACTER.id, base: pickUp.specId, install: true, repair: false });
 expect("frames auto: the pick-up resolves to 195 frames, and the installed take keeps the number", pickUp.frames === 195 && installedPickUp.specId === pickUp.specId
 	&& takes.get(CUP_CHARACTER.id)?.spec?.frames === 195, JSON.stringify({ frames: pickUp.frames, take: takes.get(CUP_CHARACTER.id)?.spec?.frames }));
 let drink = null;

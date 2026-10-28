@@ -44,7 +44,7 @@ const declarations = Object.freeze([
 		// patch may be empty: base alone (or patch: []) re-measures the stored spec, with new probes; "never" is install: false
 		input: input({ characterId: id, spec: openObject, base: specId, patch: { type: "array", items: openObject, maxItems: 64 },
 			install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true },
-			probes: list(openObject, 16), repair: input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []) }, ["characterId"]) },
+			probes: list(openObject, 16), repair: { oneOf: [input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []), { const: false }] } }, ["characterId"]) },
 	{ id: "motion.qa", label: "Measure motion", kind: "job", domain: "motion", timeoutMs: 120000, readOnly: true, description: HELP.qa,
 		input: input({ characterId: id, checks: openObject }, ["characterId"]) },
 	{ id: "motion.sample", label: "Sample motion", kind: "job", domain: "motion", timeoutMs: 30000, readOnly: true, description: HELP.sample,
@@ -168,7 +168,10 @@ export function register(registry, ports) {
 		const scene = sceneFor(character), at = placeKey(character, scene);
 		// the take is always baked: the user watches every draft, installed or not
 		// MotionBricks fills between the authored key poses first, when the dev server can run it (motion3-fill.js autoFill)
-		return after(autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair }, {}, context?.taskId, scene), r => {
+		// the repair engine runs by default (2 rounds) on an installing compile; repair: false opts out (deep research 5: hand-keyed sessions
+		// repaired 93% of first compiles, ours 2-4%, and without it the hints carry no patch)
+		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: 2 });
+		return after(autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith }, {}, context?.taskId, scene), r => {
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
 			// ifClean: install only a clean final result (qa.ok includes the goals; after repair when asked)
 			const wanted = install === "ifClean" ? qa.ok : install;
