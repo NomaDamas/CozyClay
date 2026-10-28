@@ -14,15 +14,15 @@ export const MOTION_ACTION_HELP = {
 		+ "Answers brief (qa, misses, top groups: a script returns it as is), frames, installed, stuck (when to stop), specId, qa { ok, total, goals, groups (GOAL first, then severity; cause, hint, repair patch?) }, observations (asked: skill ends, contacts, goal points), delta (with base), repair, probes, timeline, fixed, search, skills. more: motion.report pages the rest.",
 	fill: "Fills the gaps between authored key poses with MotionBricks; author 2-4 poses (armw on), then call this instead of relying on the default interpolation. "
 		+ "Send spec (or base, an answered specId) with the poses as keys; each gap between neighbouring authored keys (at most 46 frames) becomes keys marked src: \"fill\", "
-		+ "then the filled spec compiles, runs QA and installs like motion.compile (install, the same answer, plus output.fill { gaps, calls, keys }). "
+		+ "then it compiles, runs QA and installs like motion.compile (same answer plus output.fill). "
 		+ "at: a frame re-fills only the gaps beside it (edit a key, drop its src, send base + at). Needs the local dev server. motion.describe topic fill: the workflow.",
 	qa: "Measure the character's installed take again against the scene as it is now (objects may have moved). Optional checks replace the spec's checks and its skills' checks. "
 		+ "Answers specId and qa as motion.compile does (goals, ranked groups with cause, hint and patch); output.more pages with motion.report. Changes nothing.",
 	sample: "World positions (metres) of named bones of the installed take at up to 64 frames. Bone names may be loose (any case, a mixamorig: prefix, aliases such as hips or hand_l); an unknown one answers a did-you-mean. "
 		+ "Before a take is installed, use motion.compile probes instead. Changes nothing.",
 	describe: "The motion spec reference. topic essentials: all a first spec needs, { types (every field of every topic, one line each; objects, channels and reachGrip "
-		+ "say what fields mean), skills (typed args, needs, frames, adds), notes }. topic fill: the MotionBricks key-pose workflow (motion.fill), { topic, notes }. topic spec, skills, anchors, props, objects, checks, goals, probes, channels, refs or fix: "
-		+ "{ topic, schema, example, notes }; skills lists the skills, with name one skill's args and a use example. topic examples answers whole specs that compile. "
+		+ "say what fields mean), skills (typed args, needs, frames, adds), notes }. topic spec, skills, anchors, props, objects, checks, goals, probes, channels, refs, fix or fill: "
+		+ "{ topic, schema, example, notes }; skills lists the skills, with name one skill's args and a use example. topic examples: whole specs that compile. "
 		+ "topics: [topic | { topic, name? }] answers several in one call: { topics, more (the asks that did not fit) }. Changes nothing.",
 	keyObject: "Key an object the installed take moves (objectId) at frame, then compile and install it whatever QA says (a user edit, one undo). "
 		+ "A carried object takes pos [x, y, z] and rot [x, y, z, w], or aim [x, y, z] (its +Y) and roll?: its base's world pose (a group: its root), grab..release only (objects.<id>.keys); the hand follows. "
