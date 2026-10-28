@@ -40,7 +40,7 @@ const CHARACTER = /^(character\.|characters?\b|cast\.(savePose|setLayer)$|ik\.|m
 // motion clears both, and attaching a prop changes what she holds. A command this table does not name writes all four.
 const WRITES = {
 	'character.move': ['placement'], 'characters.arrange': ['placement'], 'cast.setLayer': ['take'], 'motion.set': ['take'],
-	'motion.compile': ['take', 'ik'], 'motion.clear': ['take', 'ik'], 'motion.keyObject': ['take', 'ik', 'props'], 'object.attach': ['props'],
+	'motion.compile': ['take', 'ik'], 'motion.fill': ['take', 'ik'], 'motion.clear': ['take', 'ik'], 'motion.keyObject': ['take', 'ik', 'props'], 'object.attach': ['props'],
 	...Object.fromEntries(['addWaypoint', 'moveWaypoint', 'removeWaypoint', 'clearWaypoints'].map(verb => [`character.${verb}`, ['take']])),
 	...Object.fromEntries(['cut', 'setSegmentSpeed', 'removeSegment', 'trim', 'resetTiming'].map(verb => [`motion.${verb}`, ['take', 'ik']])),
 	...Object.fromEntries(['character.setIkKey', 'character.removeIkKey', 'character.clearIkKeys', 'ik.setKey', 'ik.removeKey', 'ik.clearKeys', 'ik.applyPose',

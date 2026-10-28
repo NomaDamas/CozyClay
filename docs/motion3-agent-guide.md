@@ -11,6 +11,10 @@ The agent writes a **motion spec**. The deterministic compiler bakes every frame
 5. `motion.compile` with `install: true`. Then do one `verify_result` contact sheet as a visual check.
 6. Report the QA numbers, `output.fixed` (what the compiler changed for you), what was declared in `checks`, and anything that was not checked.
 
+## Key poses filled by MotionBricks (`motion.fill`)
+
+For a pose-to-pose move no skill covers (sit down, stand up, a jump, "A pose to B pose"), author 2-4 whole-body key poses and run `run_action motion.fill { characterId, spec }` instead of relying on the default interpolation. Each pose keys root, `yaw/pitch/roll`, `spine_*`, `head_*`, `foot_l/r`, `knee_l/r`, `fyaw`/`fpitch`, `hand_l/r` with `elbow_l/r`, and `armw_l: 1, armw_r: 1` on the first key. MotionBricks (a local pose in-betweening model, run by the dev server) fills each gap between neighbouring authored keys, at most 46 frames per gap, as keys marked `src: "fill"`; the filled spec then compiles, runs QA and installs like `motion.compile`, and QA names fill keys `keys[n]` like your own. To change it, edit a key (an edited fill key drops its `src`) and send `motion.fill { base, at: <its frame> }`: only the two gaps beside it are filled again. Fingers, wrist twist and props are not filled. `motion.describe { topic: "fill" }` has the details.
+
 ## Skills (`spec.use`)
 
 `use: [{ skill, args, f0 }]` expands, in order, into keys, anchors, props, fits, objects and checks before compile. Each skill starts from the pose the earlier keys leave at its `f0`. Your own `keys` come after the skill keys, so your key on the same frame wins; your own anchors, props and fits replace a skill's of the same name. `output.skills` lists where each skill ends.

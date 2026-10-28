@@ -88,6 +88,7 @@ function asArgument(run) {
 
 export function register(registry, ports) {
 	const store = createSpecStore();
+	registry.motionSpecOf = base => store.get(base); // motion.fill (motion3-fill.js) reads a base the same way
 	// the stop rule: output.stuck when more compiles stopped paying (repair-watch.js)
 	const watch = createRepairWatch();
 	const owner = () => ports.storeDomain("motion");

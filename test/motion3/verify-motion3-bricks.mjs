@@ -9,6 +9,7 @@ import { apply, ry, add, mul, T } from "../../src/motion3/compiler/math.js";
 import { frameChannels, XBOT_HIPMID } from "../../src/motion3/bricks/forward.js";
 import { somaPose } from "../../src/motion3/bricks/reverse.js";
 import { SOMA_JOINTS, SID, toSomaPoint, toCozyPoint } from "../../src/motion3/bricks/soma.js";
+import { fillSource } from "../../src/commands/motion3-fill.js";
 
 let failures = 0;
 function expect(name, condition, detail = "") {
@@ -67,6 +68,18 @@ expect("round trip: ankle and wrist targets come back within 1 cm", ["foot_l", "
 	JSON.stringify(["foot_l", "foot_r", "hand_l", "hand_r"].map(k => (dist(back[k], set[k]) * 100).toFixed(2))));
 expect("round trip: feet stay flat and straight within 5 deg", near([back.fpitch_l, back.fpitch_r, back.fyaw_l, back.fyaw_r], [0, 0, 30, 30], 5),
 	JSON.stringify([back.fpitch_l, back.fpitch_r, back.fyaw_l, back.fyaw_r]));
+
+// 3. motion.fill arguments: exactly one of spec or base, a known base (or the installed take's), 2+ authored key poses.
+const refused = (run, code, words) => { try { run(); return false; } catch (error) { return error.code === code && words.test(error.message); } };
+const two = { keys: [{ f: 0, set: {} }, { f: 20, set: {} }, { f: 9, set: {}, src: "fill" }] };
+const none = () => undefined;
+expect("fill args: spec and base together are refused", refused(() => fillSource({ spec: two, base: "spec-000000000000" }, none), "INVALID_ARGUMENT", /exactly one of spec or base/));
+expect("fill args: neither is refused", refused(() => fillSource({}, none), "INVALID_ARGUMENT", /exactly one of spec or base/));
+expect("fill args: an unknown base is refused", refused(() => fillSource({ base: "spec-0123456789ab" }, none), "INVALID_ARGUMENT", /not known/));
+expect("fill args: one authored pose is refused (fill keys do not count)", refused(() => fillSource({ spec: { keys: [{ f: 0, set: {} }, { f: 5, set: {}, src: "fill" }] } }, none), "INVALID_ARGUMENT", /at least 2 authored key poses/));
+const copy = fillSource({ spec: two }, none);
+expect("fill args: a spec is taken as a copy", copy !== two && copy.keys.length === 3);
+expect("fill args: base reads the spec store", fillSource({ base: "spec-0123456789ab" }, b => (b === "spec-0123456789ab" ? two : undefined)).keys.length === 3);
 
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log("all passed");
