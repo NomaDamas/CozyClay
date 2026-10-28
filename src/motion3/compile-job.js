@@ -9,12 +9,13 @@
 import { compileSpec, liftRequest } from "./pipeline.js";
 import { prepareSpec } from "./correct.js";
 import { repairSpec } from "./repair.js";
+import { thinSpec } from "./thin.js";
 import { checkHints } from "./hint-check.js";
 import { bakeTake } from "./take.js";
 import { skeletonFor } from "./rigs/index.js";
 import { keptPeople } from "./people.js";
 
-const TIMELINE_FPS = 24, FINISH_AT = 4;
+const TIMELINE_FPS = 24, FINISH_AT = 2;
 const refuse = (code, message) => { throw Object.assign(new Error(message), { code }); };
 
 /** Runs `run`, turning a MOTION_SPEC_INVALID error into INVALID_ARGUMENT with the exact message. */
@@ -40,7 +41,7 @@ const fresh = value => (Array.isArray(value) ? value.map(fresh) : value && typeo
  * used, fixed, search, timeline, probes?, notes?, ms (+ repair: its wall ms), frameCount, label, repair?, take? }
  * bake: { position, yaw, prompt? } bakes the final result's take (prompt: given, else the final spec's label).
  */
-export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, finish, bake }) {
+export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, finish, thin, protect, bake }) {
 	const sk = skeletonFor(model);
 	const opts = { ...(checks ? { checks } : {}), ...(lenient ? { lenient: true } : {}) };
 	// spec.probes and bare moved ids are lifted before fps is filled in, so the specId stays the spec's own
@@ -56,12 +57,15 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	// every compile's QA by its spec, so a hint patch repair already tried is not compiled again (hint-check.js)
 	const seen = new Map(), measured = s => { const r = once(s); seen.set(JSON.stringify(s), r.qa); return r; };
 	const t0 = performance.now(), first = repair ? repairSpec(start, repair, measured) : { spec: asked, result: measured(asked) };
-	// the finish pass (finish: an installing compile): a take left with 1-4 QA groups repairs once more, up to 6 rounds (deep research 10:
+	// the finish pass (finish: an installing compile): a take left with 1-2 QA groups (variant I: 1-4 ran it on 11 compiles at ~20 s each) repairs once more, up to 6 rounds (deep research 10:
 	// about +5 s; offline -0.5 groups mean, 0 worse, 21% of 1-2-group takes reach 0; it fixes a single SLIDE or BODY, not POP, SELF or REACH)
 	const left = first.result.qa?.groups?.length ?? 0, more = repair && finish && left > 0 && left <= FINISH_AT ? repairSpec(first.spec, { ...repair, rounds: 6 }, measured) : null;
-	const fixed = more?.repair.applied.length ? { spec: more.spec, result: more.result, repair: { ...first.repair, rounds: first.repair.rounds + more.repair.rounds,
+	const repaired = more?.repair.applied.length ? { spec: more.spec, result: more.result, repair: { ...first.repair, rounds: first.repair.rounds + more.repair.rounds,
 		compiles: first.repair.compiles + more.repair.compiles, applied: [...first.repair.applied, ...more.repair.applied], rejected: first.repair.rejected + more.repair.rejected, finish: more.repair.rounds } }
 		: more ? { ...first, repair: { ...first.repair, finish: 0 } } : first;
+	// key thinning (thin.js): an installing compile drops the free-span keys QA does not miss; thin: false opts out
+	const thinned = finish && thin !== false && !lenient ? thinSpec(repaired.spec, repaired.result, measured, { protect: protect ?? [] }) : null;
+	const fixed = thinned ? { ...repaired, spec: thinned.spec, result: thinned.result } : repaired;
 	// a hint's patch is offered only when its compile helped (hint-check.js), and only by a compile that repairs: repair has
 	// compiled most of the patches already (seen), where a plain compile paid two more compiles for them (bench replay: first
 	// compile 1.6 -> 5.2 s median) and the agent applied an offered patch as sent once in the 60 bench runs (374 direct
@@ -77,7 +81,7 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	if (people) take.people = people;
 	return { stored: r.stored, qa: r.qa, observations: r.observations, used: r.used, fixed: r.fixed, search: r.search, timeline: r.timeline,
 		...(r.probes ? { probes: r.probes } : {}), ...(r.notes || corrected.length ? { notes: [...corrected, ...(r.notes ?? [])] } : {}), ms, frameCount: r.out.frameCount, label,
-		...(fixed.repair ? { repair: fixed.repair } : {}), ...(take ? { take } : {}) };
+		...(fixed.repair ? { repair: fixed.repair } : {}), ...(thinned ? { thinned: thinned.thinned } : {}), ...(take ? { take } : {}) };
 }
 
 /** The ArrayBuffers under a job answer's typed arrays (each once), to transfer instead of copy. */

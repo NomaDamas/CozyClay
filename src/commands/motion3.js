@@ -45,7 +45,7 @@ const declarations = Object.freeze([
 		// patch may be empty: base alone (or patch: []) re-measures the stored spec, with new probes; "never" is install: false
 		input: input({ characterId: id, spec: openObject, base: specId, patch: { type: "array", items: openObject, maxItems: 64 },
 			install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true },
-			probes: list(openObject, 16), repair: { oneOf: [input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []), { const: false }] } }, ["characterId"]) },
+			probes: list(openObject, 16), repair: { oneOf: [input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []), { const: false }] }, thin: { type: "boolean" } }, ["characterId"]) },
 	{ id: "motion.qa", label: "Measure motion", kind: "job", domain: "motion", timeoutMs: 120000, readOnly: true, description: HELP.qa,
 		input: input({ characterId: id, checks: openObject }, ["characterId"]) },
 	{ id: "motion.sample", label: "Sample motion", kind: "job", domain: "motion", timeoutMs: 30000, readOnly: true, description: HELP.sample,
@@ -93,7 +93,7 @@ export function register(registry, ports) {
 	const store = createSpecStore();
 	registry.motionSpecOf = base => store.get(base); // motion.fill (motion3-fill.js) reads a base the same way
 	// the stop rule: output.stuck when more compiles stopped paying (repair-watch.js)
-	const watch = createRepairWatch();
+	const watch = createRepairWatch(), compiledOnce = new Set();
 	const rounds = createRoundWatch(); // output.noImprovementRounds (motion3-rounds.js)
 	const owner = () => ports.storeDomain("motion");
 	const mounted = () => Boolean(ports.storeDomain?.("motion")) || "The motion owner is not mounted.";
@@ -158,7 +158,7 @@ export function register(registry, ports) {
 		: fail("TARGET_NOT_READY", "This character has no compiled take; run motion.compile first.");
 
 	// normalizeArgs: other spellings of install and repair become the declared ones before the schema check (lenient.js)
-	registry.register({ ...declarations[0], normalizeArgs: normalizeCompileArgs, available: mounted, target: args => args.characterId, run({ characterId, spec, base, patch, install: asked = true, probes, repair }, context) {
+	registry.register({ ...declarations[0], normalizeArgs: normalizeCompileArgs, available: mounted, target: args => args.characterId, run({ characterId, spec, base, patch, install: asked = true, probes, repair, thin }, context) {
 		const install = asked === "never" ? false : asked;
 		const character = characterOf(ports, characterId);
 		if ((spec === undefined) === (base === undefined)) fail("INVALID_ARGUMENT", "Send exactly one of spec or base (the specId of a compiled spec, with patch).");
@@ -171,10 +171,15 @@ export function register(registry, ports) {
 		// MotionBricks fills between the authored key poses first, when the dev server can run it (motion3-fill.js autoFill)
 		// the repair engine runs by default (2 rounds) on an installing compile; repair: false opts out (deep research 5: hand-keyed sessions
 		// repaired 93% of first compiles, ours 2-4%, and without it the hints carry no patch)
-		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: 2 });
+		// rounds 2 on a character's first compile, 1 on the repeats (variant I: repair cost +20 s a step on 45% of the compiles)
+		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: compiledOnce.has(characterId) ? 1 : 2 });
+		compiledOnce.add(characterId);
+		// the frames this patch touched stay through key thinning (thin.js)
+		const before = base === undefined ? null : store.get(base) ?? installedSpec(), keysAt = (sp, f) => JSON.stringify((sp?.keys ?? []).filter(k => k.f === f));
+		const protect = before ? [...new Set((source.keys ?? []).map(k => k.f))].filter(f => keysAt(before, f) !== keysAt(source, f)) : [];
 		// a small patch on one authored key keeps the fill beside it (patch-guard.js): re-fills there made 14-22% of the new problems
 		const keepFill = base === undefined ? null : keptFill(store.get(base) ?? installedSpec(), source);
-		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith, finish: install !== false }, {}, context?.taskId, scene), r => {
+		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith, finish: install !== false, thin, protect }, {}, context?.taskId, scene), r => {
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
 			// ifClean: install only a clean final result (qa.ok includes the goals; after repair when asked)
 			const wanted = install === "ifClean" ? qa.ok : install;
@@ -195,13 +200,13 @@ export function register(registry, ports) {
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
 			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
 			const flat = rounds(characterId, qa, base === undefined), broad = patchTooBroad(patch);
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad ? { notes: [broad] } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}) });
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad ? { notes: [broad] } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}), ...(r.thinned ? { thinned: r.thinned } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });
 			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
 			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
-			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.`, output, ...workerWarning() };
+			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${r.thinned ? ` Thinned ${r.thinned.removed.length} free-span key${r.thinned.removed.length === 1 ? "" : "s"} QA did not need (output.thinned).` : ""}`, output, ...workerWarning() };
 		}));
 	} });
 	registry.register({ ...declarations[1], available: mounted, run({ characterId, checks }) {
