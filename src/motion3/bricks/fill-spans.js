@@ -36,6 +36,12 @@ export function spanReason(spec, keys, baked, fa, fb) {
 	// hand plants and flights run through the model now (the fill pins the hands, fill.js pinHands; jumps carry Entry / Apex /
 	// Exit keys, fill-density.js); only a checked clearance span keeps the compiler's curve
 	const frames = Number.isFinite(spec.frames) ? spec.frames : fb + 1;
-	for (const check of spec.checks?.clearance ?? []) if (touches(rangeOf(check.frames, frames), fa, fb)) return "check_span";
+	// a span is a clearance check with its own frames, under half the take; one over the whole take is a guard, not a span
+	// (the span-density bench: a whole-take clearance made every gap check_span and the model never ran)
+	for (const check of spec.checks?.clearance ?? []) {
+		if (!Array.isArray(check.frames) && !Number.isFinite(check.frames)) continue;
+		const span = rangeOf(check.frames, frames);
+		if (span[1] - span[0] + 1 <= frames / 2 && touches(span, fa, fb)) return "check_span";
+	}
 	return null;
 }

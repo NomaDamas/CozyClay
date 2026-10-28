@@ -108,6 +108,9 @@ expect("spans: one stride foot 0.2 m up at an end key is not airborne", spanReas
 expect("spans: a jump runs through the model (no airborne skip; Entry/Apex/Exit keys instead)", spanReason({ frames: 100 }, [stand(0), stand(12, 0.3, 0.3)], flat, 0, 12) === null);
 expect("spans: a hand plant runs through the model (pinned after), only a clearance check skips", spanReason({ frames: 100, goals: [{ near: ["joint:LeftHand", "object:wall"], at: [18, 30] }] }, [stand(18), stand(30)], flat, 18, 30) === null
 	&& spanReason({ frames: 100, checks: { clearance: [{ part: "hips", object: "wall", min: 0.05, frames: [20, 26] }] } }, [stand(18), stand(30)], flat, 18, 30) === "check_span");
+expect("spans: a clearance check over the whole take (no frames, or over half of it) is a guard, not a span",
+	spanReason({ frames: 100, checks: { clearance: [{ part: "hips", object: "wall", min: 0.05 }] } }, [stand(18), stand(30)], flat, 18, 30) === null
+	&& spanReason({ frames: 100, checks: { clearance: [{ part: "hips", object: "wall", min: 0.05, frames: [0, 99] }] } }, [stand(18), stand(30)], flat, 18, 30) === null);
 // the hand pin (upstream's IK pin): a planted end eases the hand onto the anchor over the second half; planted at both ends it holds
 {
 	const frames = Array.from({ length: 31 }, (_, f) => ({ s: { P: Object.assign([], { [sk.index.LeftHand]: f === 30 ? [0.3, 1.0, 1.2] : [0.2, 0.9, 0.5], [sk.index.RightHand]: [-0.2, 0.9, 0.5] }) } }));
