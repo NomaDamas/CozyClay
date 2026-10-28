@@ -6,7 +6,7 @@
 // the fill keys of the gaps around that frame only. Gaps run in order and the spec is compiled again after each, so the
 // next gap's context is the motion just filled. The model runs elsewhere (run: feed -> { out, tokens }).
 import { somaPose } from "./reverse.js";
-import { somaFK, toCozyPoint } from "./soma.js";
+import { somaFK, toCozyPoint, SID } from "./soma.js";
 import { encodePoses, decodeMotion, MIN_TOKENS, MAX_TOKENS } from "./model-io.js";
 import { frameChannels, unwrapSeries, roundChannels } from "./forward.js";
 import { pickKeys } from "./rekey.js";
@@ -62,12 +62,35 @@ function spanChannels(motion, fa, fb, baked) {
 		const s = diff(baked[k][fa], out[0][k]), e = diff(baked[k][fb], out[out.length - 1][k]);
 		out.forEach((ch, i) => { const w = i / (out.length - 1); ch[k] = Array.isArray(s) ? ch[k].map((v, c) => v + s[c] * (1 - w) + e[c] * w) : ch[k] + s * (1 - w) + e * w; });
 	}
-	const planted = out.map((_, i) => motion[Math.round(i / (out.length - 1) * (n - 1))].contacts);
+	// planted = a model contact channel on AND the ankle nearly still (< 0.2 m/s at 30 fps): the channel alone was right 60% of the time,
+	// with the speed 73% (deep research 1)
+	const ankleSpeed = (j, side) => { const a = motion[Math.max(0, j - 1)].P[SID[`${side}Foot`]], b = motion[Math.min(n - 1, j + 1)].P[SID[`${side}Foot`]];
+		return Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]) / ((Math.min(n - 1, j + 1) - Math.max(0, j - 1)) / 30 || 1); };
+	const planted = out.map((_, i) => { const j = Math.round(i / (out.length - 1) * (n - 1)), c = motion[j].contacts;
+		return [["Left", 0], ["Right", 2]].flatMap(([side, h]) => { const on = (c[h] > 0.5 || c[h + 1] > 0.5) && ankleSpeed(j, side) < 0.2; return [on ? 1 : 0, on ? 1 : 0]; }); });
 	lockFeet(out, planted);
 	return out;
 }
 
 const flightKeyedGap = (authored, fa, fb) => { const floor = floorAnkle(authored); return floor !== null && authored.some(k => (k.f === fa || k.f === fb) && ["foot_l", "foot_r"].every(ch => (k.set?.[ch]?.[1] ?? -Infinity) > floor + 0.05)); };
+/**
+ * The gaps the model fills without hurting (deep research 1, n=27 neutral: POP 0, penetration 0): 19+ frames, both feet planted at both
+ * ends, the hips moving less than 0.3 m up or down; and never a hold (the two authored ends the same pose: a pause stays a pause).
+ * 14-18-frame gaps were where the fill hurt (POP +0.74, penetration +1.73 per gap). Else "unsafe_gap" or "hold".
+ */
+const SAFE_GAP = 19, HIP_CHANGE = 0.3;
+function safeGap(authored, baked, fa, fb) {
+	const at = f => authored.filter(k => k.f === f).reduce((set, k) => ({ ...set, ...k.set }), {});
+	const a = at(fa), b = at(fb), names = Object.keys(a).filter(ch => ch in b);
+	const near = (x, y, ch) => (Array.isArray(x) ? x.every((v, i) => Math.abs(v - y[i]) <= (/^(knee|elbow)_/.test(ch) ? 0.05 : 0.01)) : Math.abs(x - y) <= 1);
+	if (names.length && names.every(ch => near(a[ch], b[ch], ch))) return "hold";
+	if (fb - fa < SAFE_GAP) return "unsafe_gap";
+	const floor = floorAnkle(authored), planted = f => floor !== null && ["foot_l", "foot_r"].every(ch => (baked[ch]?.[f]?.[1] ?? Infinity) <= floor + 0.05);
+	if (!planted(fa) || !planted(fb)) return "unsafe_gap";
+	if (Math.abs((baked.root?.[fb]?.[1] ?? 0) - (baked.root?.[fa]?.[1] ?? 0)) >= HIP_CHANGE) return "unsafe_gap";
+	return null;
+}
+
 /** QA problems a gap owns: the groups whose worst frame lies in it, and their frame issues. */
 const gapQa = (qa, fa, fb) => { const own = (qa?.groups ?? []).filter(g => g.worstFrame >= fa && g.worstFrame <= fb); return { groups: own.length, count: own.reduce((n, g) => n + (g.count ?? 1), 0) }; };
 const smoothstep = (a, b, x) => { const t = Math.max(0, Math.min(1, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
@@ -175,7 +198,7 @@ export function gapCheck(baked, fa, fb, flightKeyed = false) {
  * opts.at: re-fill only the gaps around this frame. opts.auto: a gap too far for the model is left to the compiler (noted) instead of
  * refusing the call. Returns { spec, gaps: [{ f: [fa, fb], tokens, frames, keys, ms } | { f, skipped }], calls, warnings }.
  */
-export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } = {}) {
+export async function fillSpec(spec, { sk, compile, run }, { at, auto = false, targets = 1 } = {}) {
 	// a fill key someone edited is the author's from now on: it stays, and the gaps beside it fill again around it
 	const promoted = (spec.keys ?? []).filter(editedFill).length;
 	spec = { ...spec, keys: (spec.keys ?? []).map(k => (editedFill(k) ? Object.fromEntries(Object.entries(k).filter(([field]) => field !== "src")) : k)) };
@@ -193,7 +216,7 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 		// one token count, the gap's own: the output is as long as the gap, never a sprint stretched to fit
 		const tokens = tokensFor(fa, fb), r = compile({ ...spec, keys }), cache = new Map(), check = gapCheck(r.out.baked, fa, fb, flightKeyedGap(keys.filter(k => !isFill(k)), fa, fb));
 		// hand plants, flights and checked spans stay the author's (fill-spans.js)
-		const reason = spanReason(spec, keys.filter(k => !isFill(k)), r.out.baked, fa, fb);
+		const reason = spanReason(spec, keys.filter(k => !isFill(k)), r.out.baked, fa, fb) ?? safeGap(keys.filter(k => !isFill(k)), r.out.baked, fa, fb);
 		if (reason) { skipped.push({ f: [fa, fb], reason }); report.push({ f: [fa, fb], skipped: reason }); continue; }
 		warnings.push(...check.warnings);
 		if (check.far) {
@@ -201,7 +224,8 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 			skipped.push({ f: [fa, fb], reason: "too_far" }); report.push({ f: [fa, fb], skipped: check.far.replace(/^FILL_GAP_TOO_FAR: /, "compiler interpolation kept: ") });
 			continue;
 		}
-		const poses = [...[3, 2, 1, 0].map(n => fa - n * STEP), ...[0, 1, 2, 3].map(n => fb + n * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
+		// one target pose by default (arrive and stop: QA groups -35%, POP -33%, penetration -64% against four, deep research 1)
+		const poses = [...[3, 2, 1, 0].map(n => fa - n * STEP), ...Array.from({ length: targets }, (_, n) => fb + n * STEP)].map(t => poseAt(sk, r.out.frames, cache, t));
 		const { feed, align } = encodePoses(poses, [tokens]);
 		const t0 = performance.now(), res = await run(feed), ms = performance.now() - t0;
 		const dense = pinHands(spanChannels(decodeMotion(res.out, res.tokens, align), fa, fb, r.out.baked), fa, fb, keys.filter(k => !isFill(k)), r.out.frames, sk);

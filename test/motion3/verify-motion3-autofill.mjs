@@ -56,7 +56,8 @@ else {
 	expect("an edited fill key stays (its value, no src) and becomes authored", kept && JSON.stringify(kept.set[ch]) === JSON.stringify(edited) && again.fill.promoted === 1, JSON.stringify({ kept, fill: again.fill }));
 	// the edit splits f0-f24 in two; a part under 14 frames stays the compiler's curve, so 1 or 2 calls, all inside f0-f24
 	const ran = again.fill.gaps.filter(g => !g.kept && !g.skipped);
-	expect("only the gaps beside it ran again (inside f0-f24); f24-f48 kept its fill", ran.length >= 1 && ran.length <= 2 && ran.every(g => g.f[0] >= 0 && g.f[1] <= 24) && again.fill.gaps.some(g => g.kept && g.f[0] === 24), JSON.stringify(again.fill.gaps));
+	// the split parts are under the 19-frame safe gap now, so they keep the curve: nothing outside f0-f24 runs again
+	expect("only the gaps beside it are reconsidered (inside f0-f24); f24-f48 kept its fill", ran.length <= 2 && ran.every(g => g.f[0] >= 0 && g.f[1] <= 24) && again.fill.gaps.some(g => g.kept && g.f[0] === 24), JSON.stringify(again.fill.gaps));
 	const hinted = compileSpec(again.spec, { sk, scene }).qa.groups.map(g => g.cause).filter(c => /MotionBricks fill key/.test(c ?? ""));
 	// parkour shape: approach f0-f18, hands on the wall f18-f30, flight f30-f42, landing f42-f60: only the first and last gaps fill
 	const pose = (f, { root = [0, 1.016, 0], foot = 0.087, hand = 0.9, z = 0 } = {}) => ({ f, set: { ...grid.keys[0].set, root: [root[0], root[1], root[2] + z],
@@ -66,7 +67,9 @@ else {
 	const vault = await autoFill({ fetch }, character, parkour);
 	const filledGaps = vault.fill.gaps.filter(g => !g.skipped && !g.kept).map(g => g.f.join("-"));
 	// 12-frame plant and flight gaps are under the 14-frame model minimum here; nothing is skipped for contact or flight any more
-	expect("parkour: the 18-frame approach and landing fill, no contact/flight skips", JSON.stringify(filledGaps) === '["0-18","42-60"]' && !vault.fill.skipped, JSON.stringify(vault.fill));
+	// iteration 2: 18-frame gaps are under the safe 19 and the feet are off the floor around the vault, so the curve stays everywhere
+	expect("parkour: no gap is safe for the fill (18-frame approach and landing are unsafe_gap)", filledGaps.length === 0
+		&& JSON.stringify(vault.fill.skipped?.map(x => `${x.f.join("-")} ${x.reason}`)) === '["0-18 unsafe_gap","42-60 unsafe_gap"]', JSON.stringify(vault.fill));
 	expect("parkour: spans free / contact / flight are reported", ["free", "contact", "flight"].every(k => vault.fill.spans?.some(sp => sp.kind === k)), JSON.stringify(vault.fill.spans));
 	// density notes: a free gap of 4, a 16-frame gap across the hand plant, a flight landing with no key near it
 	const dense = { ...parkour, frames: 61, keys: [pose(0), pose(4, { z: 0.05 }), pose(18, { z: 0.4 }), pose(34, { z: 0.9, foot: 0.45, root: [0, 1.25, 0], hand: 1.0 }), pose(52, { z: 1.7 })],
@@ -95,6 +98,14 @@ else {
 		expect(`${name}: every dropped gap had more QA with the model's keys`, (gated.dropped ?? []).every(d => d.qaModel >= d.qaCurve)
 			&& (gated.dropped ?? []).every(d => !gated.spec.keys.some(k => isFillKey(k) && k.f > d.f0 && k.f < d.f1)), JSON.stringify(gated.dropped));
 		console.log(`  ${name}: fill keys ${gated.spec.keys.filter(isFillKey).length}, dropped ${(gated.dropped ?? []).length}, QA groups ${plainQa.groups.length} -> ${filledQa.groups.length}`);
+	}
+	// iteration 2 suite check: on three agent specs from the bench the fill adds at most 0.3 QA groups per filled gap
+	for (const name of ["bench-sit-spec", "bench-box2-spec", "bench-parkour-spec"]) {
+		const { spec: benchSpec, objects } = JSON.parse(readFileSync(new URL(`./fixtures/${name}.json`, import.meta.url), "utf8"));
+		const benchScene = motionScene(objects), plainGroups = compileSpec(benchSpec, { sk, scene: benchScene }).qa.groups.length;
+		const gated = await fillRequest({ spec: benchSpec, model: "x-bot-tpose", auto: true, objects });
+		const filledGaps = gated.gaps.filter(g => !g.skipped && !g.kept && !g.dropped).length, added = compileSpec(gated.spec, { sk, scene: benchScene }).qa.groups.length - plainGroups;
+		expect(`${name}: the fill adds <= 0.3 QA groups per filled gap (${added} over ${filledGaps} gaps)`, added <= 0.3 * Math.max(1, filledGaps), JSON.stringify({ added, filledGaps, skipped: gated.skipped?.map(x => x.reason) }));
 	}
 	console.log(`  edit loop: promoted ${again.fill.promoted}, ${again.fill.calls} calls, kept ${again.fill.gaps.filter(g => g.kept).length} gap; fill-key hints: ${hinted.length}`);
 	console.log(`  3-key grid: ${three.fill.calls} calls, ${fillKeys} fill keys, QA ${qa.groups.length} groups; 100-frame gap: ${split.fill.passThrough} pass-through, ${split.fill.calls} calls`);
