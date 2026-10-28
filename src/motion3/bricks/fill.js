@@ -12,6 +12,7 @@ import { frameChannels, unwrapSeries, roundChannels } from "./forward.js";
 import { pickKeys } from "./rekey.js";
 import { isFillKey, shortHash, fillSrc, editedFill, fillGapOf } from "./fill-src.js";
 import { spanReason } from "./fill-spans.js";
+import { classifySpans, densityNotes } from "./fill-density.js";
 import { quatFromMat, matFromQuat } from "../compiler/math.js";
 
 const STEP = 24 / 30; // one model frame in spec frames
@@ -176,6 +177,9 @@ export async function fillSpec(spec, { sk, compile, run }, { at, auto = false } 
 		keys = merge(keys, fill);
 		report.push({ f: [fa, fb], tokens: res.tokens, frames: res.tokens * 4 - 6, keys: fill.length, ms: Math.round(ms) });
 	}
-	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, ...(skipped.length ? { skipped } : {}), ...(promoted ? { promoted } : {}),
+	// the take's spans (free / contact / flight) and the density notes, on the filled spec as stored (keys[n] as QA names them)
+	const baked = compile({ ...spec, keys }).out.baked, frames = baked.root?.length ?? (Number.isFinite(spec.frames) ? spec.frames : 0);
+	const { kind, spans } = classifySpans({ ...spec, keys }, baked, frames), notes = densityNotes(keys, kind, spans, baked);
+	return { spec: { ...spec, keys }, gaps: report, calls: report.filter(g => !g.skipped && !g.kept).length, spans, ...(notes.length ? { notes } : {}), ...(skipped.length ? { skipped } : {}), ...(promoted ? { promoted } : {}),
 		...(passed.added ? { passThrough: passed.added } : {}), ...(warnings.length ? { warnings } : {}) };
 }

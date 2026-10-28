@@ -66,6 +66,14 @@ else {
 	const filledGaps = vault.fill.gaps.filter(g => !g.skipped && !g.kept).map(g => g.f.join("-"));
 	expect("parkour: only the approach and the landing gaps fill; the hand plant and the flight stay authored", JSON.stringify(filledGaps) === '["0-18","42-60"]'
 		&& JSON.stringify(vault.fill.skipped?.map(s => `${s.f.join("-")} ${s.reason}`)) === '["18-30 hand_contact","30-42 airborne"]', JSON.stringify(vault.fill));
+	expect("parkour: spans free / contact / flight are reported", ["free", "contact", "flight"].every(k => vault.fill.spans?.some(sp => sp.kind === k)), JSON.stringify(vault.fill.spans));
+	// density notes: a free gap of 4, a 16-frame gap across the hand plant, a flight landing with no key near it
+	const dense = { ...parkour, frames: 61, keys: [pose(0), pose(4, { z: 0.05 }), pose(18, { z: 0.4 }), pose(34, { z: 0.9, foot: 0.45, root: [0, 1.25, 0], hand: 1.0 }), pose(52, { z: 1.7 })],
+		goals: [{ name: "hands on the wall top", near: ["joint:LeftHand", "joint:RightHand"], tol: 0.6, at: [18, 34] }] };
+	const noted = await autoFill({ fetch }, character, dense), codes = (noted.fill.notes ?? []).map(n => n.split(" ")[0]);
+	expect("density notes: KEYS_TOO_DENSE, CONTACT_UNKEYED and FLIGHT_UNKEYED, each naming keys[n] or frames", ["KEYS_TOO_DENSE", "CONTACT_UNKEYED", "FLIGHT_UNKEYED"].every(c => codes.includes(c))
+		&& /keys\[\d+\] f0 and keys\[\d+\] f4/.test(noted.fill.notes.join("\n")), JSON.stringify({ notes: noted.fill.notes, spans: noted.fill.spans }));
+	console.log(`  notes: ${noted.fill.notes?.join(" | ")}`);
 	console.log(`  edit loop: promoted ${again.fill.promoted}, ${again.fill.calls} calls, kept ${again.fill.gaps.filter(g => g.kept).length} gap; fill-key hints: ${hinted.length}`);
 	console.log(`  3-key grid: ${three.fill.calls} calls, ${fillKeys} fill keys, QA ${qa.groups.length} groups; 100-frame gap: ${split.fill.passThrough} pass-through, ${split.fill.calls} calls`);
 }

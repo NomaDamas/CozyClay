@@ -28,9 +28,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +236 for the 24-frame pose grid that motion.compile fills by itself (autofill-24): +240
 // +10 for "edit the key a hint names; you do not need to remove src" (fill keys keep their edits): +10
 // +98 for "fill covers run-up and recovery; hand plants and jumps stay authored" (the parkour benchmark): +100
-check("the whole prompt is at most 15,632 characters", () => assert.ok(prompt.length <= 15632, `${prompt.length}`));
-check("the motion part is at most 3,380 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 3380, `${motion.length}`);
+// +158 for the span density lines (free every 12, never closer than 8; plants and jumps dense; KEYS_TOO_DENSE): +160
+check("the whole prompt is at most 15,792 characters", () => assert.ok(prompt.length <= 15792, `${prompt.length}`));
+check("the motion part is at most 3,540 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 3540, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);
