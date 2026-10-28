@@ -25,6 +25,7 @@ import { carryEdit } from "../motion3/edit-carry.js";
 import { normalizeCompileArgs } from "../motion3/lenient.js";
 import { createCompileRunner } from "./motion3-compile.js";
 import { autoFill } from "./motion3-fill.js";
+import { createRoundWatch } from "./motion3-rounds.js";
 import { createRepairWatch } from "../motion3/repair-watch.js";
 import { peopleOf } from "../motion3/people.js";
 import { hybridCapsuleHint } from "../motion3/hybrid-hint.js";
@@ -92,6 +93,7 @@ export function register(registry, ports) {
 	registry.motionSpecOf = base => store.get(base); // motion.fill (motion3-fill.js) reads a base the same way
 	// the stop rule: output.stuck when more compiles stopped paying (repair-watch.js)
 	const watch = createRepairWatch();
+	const rounds = createRoundWatch(); // output.noImprovementRounds (motion3-rounds.js)
 	const owner = () => ports.storeDomain("motion");
 	const mounted = () => Boolean(ports.storeDomain?.("motion")) || "The motion owner is not mounted.";
 	const always = () => true;
@@ -186,7 +188,8 @@ export function register(registry, ports) {
 			const self = best?.specId === own, how = kept ? "; already installed, unchanged" : self ? "; installed as the best take so far"
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
 			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}) });
+			const flat = rounds(characterId, qa, base === undefined);
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });

@@ -142,5 +142,13 @@ expect("spans: a clearance check over the whole take (no frames, or over half of
 	expect("density: free keys 16 apart are fine", densityNotes(keysAt(0, 16, 32), free, [], {}).length === 0);
 }
 
+// stop rule: noImprovementRounds counts compiles in a row that did not beat the best QA; a new spec starts over
+{
+	const { createRoundWatch } = await import("../../src/commands/motion3-rounds.js");
+	const watch = createRoundWatch(), qa = problems => ({ problems });
+	const seq = [watch("c", qa(10), true), watch("c", qa(8), false), watch("c", qa(9), false), watch("c", qa(8), false), watch("c", qa(5), false), watch("c", qa(7), true)];
+	expect("rounds: 0 on the first and on every improvement, +1 per flat or worse round, reset by a new spec", JSON.stringify(seq) === "[0,0,1,2,0,0]", JSON.stringify(seq));
+}
+
 if (failures) { console.error(`${failures} failed`); process.exit(1); }
 console.log("all passed");

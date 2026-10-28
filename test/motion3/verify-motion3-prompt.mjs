@@ -30,9 +30,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +98 for "fill covers run-up and recovery; hand plants and jumps stay authored" (the parkour benchmark): +100
 // +158 for the span density lines (free every 12, never closer than 8; plants and jumps dense; KEYS_TOO_DENSE): +160
 // +5 for the 16-frame grid and Entry / Apex / Exit jump keys (upstream design review): +8
-check("the whole prompt is at most 15,800 characters", () => assert.ok(prompt.length <= 15800, `${prompt.length}`));
-check("the motion part is at most 3,550 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 3550, `${motion.length}`);
+// the repair-loop round (2026-10-29) replaced the ifClean / comparison-script procedure; +213 for its rules (install: true first, base + patch rounds, noImprovementRounds stop, one contact sheet): +216
+check("the whole prompt is at most 16,016 characters", () => assert.ok(prompt.length <= 16016, `${prompt.length}`));
+check("the motion part is at most 3,765 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 3765, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);
@@ -43,9 +44,9 @@ check("the motion part keeps the coordinate rules", () => {
 });
 check("the motion part states the procedure", () => {
 	for (const rule of [/The <motion-reference> block below is motion\.describe/, /read them there, not by a call/, /topics: \[\.\.\.\]/, /never probe the schema/, /reachGrip/, /grab\/release/, /frames: "auto"/,
-		/group \(Empty\) is carried or hinged as one unit/, /at least one goals entry per motion request: first list its causes, contacts, effects and what must not happen/, /report the lines no goal measures \(Unmeasured/, /install: "ifClean" and repair: \{ rounds \}/, /topic: "essentials"/, /topic: "goals"/, /never sweep values by hand/, /loop in one script without repair \(tools\.run_action/, /then repair the pick until clean \(install: "ifClean"\)/, /independent calls in the same turn/,
-		/base .*plus patch addressed by frame or name/, /never by index; send a whole spec only to start over/, /Obey output\.stuck/, /probes and output\.timeline instead of .*motion\.sample/, /qa\.ok, which includes the goals\) installs in that call/,
-		/visual: "contact_sheet", frames: "beats"/, /visual: "trace"/, /Report qa\.problems, not qa\.total, the goals and output\.fixed/, /read output\.observations near and wrist and verify_result exportFraming/, /output\.observations, not QA/, /views, focus, trail/,
+		/group \(Empty\) is carried or hinged as one unit/, /at least one goals entry per motion request: first list its causes, contacts, effects and what must not happen/, /report the lines no goal measures \(Unmeasured/, /install: true the first time .*repair: \{ rounds \}/, /topic: "essentials"/, /topic: "goals"/, /never sweep values by hand/, /never re-send the spec or a comparison script/, /output\.noImprovementRounds reaches 2, install the best take so far/, /independent calls in the same turn/,
+		/base .*plus patch addressed by frame or name/, /never by index; send a whole spec only to start over/, /Obey output\.stuck/, /probes and output\.timeline instead of .*motion\.sample/, /"ifClean" stays for comparisons/,
+		/visual: "contact_sheet", frames: "beats"/, /once, at the end/, /visual: "trace"/, /Report qa\.problems, not qa\.total, the goals and output\.fixed/, /read output\.observations near and wrist and verify_result exportFraming/, /output\.observations, not QA/, /views, focus, trail/,
 		/Key the extremes .*never an even beat: vary the gaps/, /Lead with root, hands and feet; leave spine, head and arm swing to flow/, /a few frames off the pelvis/, /same pose on the same frame only when the action needs it/,
 		/fix the worst output\.observations\.life warning/]) assert.match(motion, rule);
 });
