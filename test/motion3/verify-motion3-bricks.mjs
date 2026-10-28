@@ -135,11 +135,11 @@ expect("spans: a clearance check over the whole take (no frames, or over half of
 	expect("vault spec: every gap goes to the model now (no clearance check in it); the plant is pinned, the jump keyed", wrong.length === 0, JSON.stringify(reasons));
 }
 
-// density thresholds: free keys closer than 14 frames get KEYS_TOO_DENSE, 16 apart do not
+// density thresholds: free keys closer than 19 frames get KEYS_TOO_DENSE (the fill's safe gap), 20 apart do not
 {
 	const free = Array(40).fill("free"), keysAt = (...fs) => fs.map(f => ({ f, set: {} }));
 	expect("density: free keys 10 frames apart are KEYS_TOO_DENSE", /^KEYS_TOO_DENSE .*keys\[0\] f0 and keys\[1\] f10/.test(densityNotes(keysAt(0, 10), free, [], {})[0] ?? ""));
-	expect("density: free keys 16 apart are fine", densityNotes(keysAt(0, 16, 32), free, [], {}).length === 0);
+	expect("density: free keys 16 apart are KEYS_TOO_DENSE, 20 apart are fine", densityNotes(keysAt(0, 16), free, [], {}).length === 1 && densityNotes(keysAt(0, 20), free, [], {}).length === 0);
 }
 
 // stop rule: noImprovementRounds counts compiles in a row that did not beat the best QA; a new spec starts over

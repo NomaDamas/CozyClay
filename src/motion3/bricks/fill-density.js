@@ -2,13 +2,13 @@
 // The take's frames are classed from the compiled curve: contact (a hand or foot on an anchor, or a goal / checks.contacts
 // naming one, +-2 frames), flight (both feet more than 5 cm above the lowest authored ankle for 4+ frames, +-2), else free.
 // Notes name keys[n] like QA hints:
-//   KEYS_TOO_DENSE  two authored keys closer than 14 frames in a free span (no room for the fill; the keys stay)
-//   CONTACT_UNKEYED two authored keys more than 12 frames apart across a contact span
+//   KEYS_TOO_DENSE  two authored keys closer than 19 frames in a free span (no room for the fill; the keys stay)
+//   CONTACT_UNKEYED two authored keys more than 8 frames apart across a contact span (hand-keyed motion keys contact at 3-7)
 //   FLIGHT_UNKEYED  a jump without its Entry (~0.2 s before takeoff), Apex and Exit (~0.4 s after landing) keys (upstream's jump primitive)
 import { floorAnkle, limbContact, FLIGHT_MIN } from "./fill-spans.js";
 import { isFillKey } from "./fill-src.js";
 
-const PAD = 2, LIFT = 0.05, FREE_MIN = 14, CONTACT_MAX = 12, ENTRY = 5, EXIT = 10; // entry ~0.2 s before takeoff, exit ~0.4 s after landing
+const PAD = 2, LIFT = 0.05, FREE_MIN = 19, CONTACT_MAX = 8, ENTRY = 5, EXIT = 10; // entry ~0.2 s before takeoff, exit ~0.4 s after landing
 const rangeOf = at => (Array.isArray(at) ? [at[0], at[1]] : Number.isFinite(at) ? [at, at] : null);
 
 /** Per-frame kinds ("contact" > "flight" > "free") and their runs as spans [{ f0, f1, kind }]. */
@@ -43,7 +43,7 @@ export function densityNotes(keys, kind, spans, baked) {
 		const a = authored[n - 1], b = authored[n], gap = b.k.f - a.k.f;
 		if (gap <= 0) continue;
 		const inside = kind.slice(a.k.f, b.k.f + 1);
-		if (gap < FREE_MIN && inside.every(k => k === "free")) notes.push(`KEYS_TOO_DENSE no room for the fill between ${name(a)} and ${name(b)} (${gap} frames; free motion keys every 14-24 frames, about 16, remove one)`);
+		if (gap < FREE_MIN && inside.every(k => k === "free")) notes.push(`KEYS_TOO_DENSE no room for the fill between ${name(a)} and ${name(b)} (${gap} frames; free motion keys every 19-24 frames, remove one)`);
 		// across a plant, not only its +-2 padding brushing a free gap
 		if (gap > CONTACT_MAX && inside.filter(k => k === "contact").length > 2 * PAD + 1) notes.push(`CONTACT_UNKEYED ${name(a)} and ${name(b)} are ${gap} frames apart across a hand/foot contact; key it at least every ${CONTACT_MAX} frames`);
 	}
