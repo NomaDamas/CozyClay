@@ -206,7 +206,7 @@ export function register(registry, ports) {
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });
 			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
 			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
-			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${install !== false && qaProblems(qa) === 0 ? " QA clean — done (no further rounds)." : ""}${r.thinned ? ` Thinned ${r.thinned.removed.length} free-span key${r.thinned.removed.length === 1 ? "" : "s"} QA did not need (output.thinned).` : ""}`, output, ...workerWarning() };
+			return { affectedIds: installs || best ? [characterId] : [], summary: `${auto.fill?.calls ? `MotionBricks filled ${auto.fill.calls} gap${auto.fill.calls === 1 ? "" : "s"}. ` : ""}Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${install !== false && qaProblems(qa) === 0 ? " QA clean — done (no further rounds)." : ""}${installs || kept || self ? ` Installed take: ${output.specId}.` : best ? ` Installed take: ${best.specId}.` : ""}${r.thinned ? ` Thinned ${r.thinned.removed.length} free-span key${r.thinned.removed.length === 1 ? "" : "s"} QA did not need (output.thinned).` : ""}`, output, ...workerWarning() };
 		}));
 	} });
 	registry.register({ ...declarations[1], available: mounted, run({ characterId, checks }) {
