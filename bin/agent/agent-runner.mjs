@@ -368,12 +368,14 @@ export function createAgentRunner({ models: suppliedModels, sessionStore, tools 
 		};
 
 		// Every finished provider request counts, failed attempts included (agent-stream.mjs retries in place).
+		// On the Studio surface, a request that reported a prompt also tells the panel its context: that prompt (input + cache read + cache write,
+		// this request only, never the turn's sum) against the model's catalog window (src/workflow/agent-context-meter.js).
 		const countAttempt = (message) => {
-			const usage = state.active?.usage;
-			if (!usage) return;
-			usage.requests += 1;
+			const usage = state.active?.usage; if (!usage) return;
+			usage.requests += 1; const prompt = ["input", "cacheRead", "cacheWrite"].reduce((sum, key) => sum + (Number.isFinite(message?.usage?.[key]) ? message.usage[key] : 0), 0);
 			for (const key of ["input", "output", "cacheRead", "cacheWrite"]) if (Number.isFinite(message?.usage?.[key])) usage[key] += message.usage[key];
 			if (Number.isFinite(message?.usage?.cost?.total)) state.active.cost = (state.active.cost ?? 0) + message.usage.cost.total;
+			if (prompt > 0 && state.lastInput?.surface === "studio") state.active.queue.push({ type: "context", tokens: prompt, window: state.currentModel?.contextWindow > 0 ? state.currentModel.contextWindow : null });
 		};
 
 		// A Codex 401 earns one forced credential refresh per turn and one more try of the same request: completed tools
