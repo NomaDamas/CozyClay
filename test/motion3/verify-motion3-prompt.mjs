@@ -34,9 +34,10 @@ const sentences = text => text.split(/(?<=[.;:])\s+/).map(s => s.trim()).filter(
 // +67 for span-based spacing (contact/flight 4-8, free 19-24, holds; deep research 1): +70
 // +163 for research 1b: dense keys only while an effector moves, two keys for a static hold, holds add frames: +166
 // +128 for research 2 (R3): a hand plant is world coordinates on two keys, an anchor only for a moving object point: +132
-check("the whole prompt is at most 16,384 characters", () => assert.ok(prompt.length <= 16384, `${prompt.length}`));
-check("the motion part is at most 4,130 characters", () => {
-	assert.ok(motion.length > 0 && motion.length <= 4130, `${motion.length}`);
+// +33 for the relaxed stop rule (3 flat rounds, or 2 with <= 4 problems left; deep research 3): +36
+check("the whole prompt is at most 16,420 characters", () => assert.ok(prompt.length <= 16420, `${prompt.length}`));
+check("the motion part is at most 4,170 characters", () => {
+	assert.ok(motion.length > 0 && motion.length <= 4170, `${motion.length}`);
 });
 check("the prompt names describe, grab, goals, repair, base, beats and the 0.01 m scale floor", () => {
 	for (const word of ["motion.describe", "grab", "goals", "repair", "base", "\"beats\"", "0.01 m"]) assert.ok(prompt.includes(word), word);
@@ -47,7 +48,7 @@ check("the motion part keeps the coordinate rules", () => {
 });
 check("the motion part states the procedure", () => {
 	for (const rule of [/The <motion-reference> block below is motion\.describe/, /read them there, not by a call/, /topics: \[\.\.\.\]/, /never probe the schema/, /reachGrip/, /grab\/release/, /frames: "auto"/,
-		/group \(Empty\) is carried or hinged as one unit/, /at least one goals entry per motion request: first list its causes, contacts, effects and what must not happen/, /report the lines no goal measures \(Unmeasured/, /install: true the first time .*repair: \{ rounds \}/, /topic: "essentials"/, /topic: "goals"/, /never sweep values by hand/, /never re-send the spec or a comparison script/, /output\.noImprovementRounds reaches 2, install the best take so far/, /independent calls in the same turn/,
+		/group \(Empty\) is carried or hinged as one unit/, /at least one goals entry per motion request: first list its causes, contacts, effects and what must not happen/, /report the lines no goal measures \(Unmeasured/, /install: true the first time .*repair: \{ rounds \}/, /topic: "essentials"/, /topic: "goals"/, /never sweep values by hand/, /never re-send the spec or a comparison script/, /output\.noImprovementRounds reaches 3 \(or 2 with 4 or fewer problems left\), install the best take so far/, /independent calls in the same turn/,
 		/base .*plus patch addressed by frame or name/, /never by index; send a whole spec only to start over/, /Obey output\.stuck/, /probes and output\.timeline instead of .*motion\.sample/, /"ifClean" stays for comparisons/,
 		/visual: "contact_sheet", frames: "beats"/, /once, at the end/, /visual: "trace"/, /Report qa\.problems, not qa\.total, the goals and output\.fixed/, /read output\.observations near and wrist and verify_result exportFraming/, /output\.observations, not QA/, /views, focus, trail/,
 		/Key the extremes .*never an even beat: vary the gaps/, /Lead with root, hands and feet; leave spine, head and arm swing to flow/, /a few frames off the pelvis/, /same pose on the same frame only when the action needs it/,
