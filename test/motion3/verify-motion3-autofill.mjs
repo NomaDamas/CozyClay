@@ -11,6 +11,7 @@ import { compileSpec } from "../../src/motion3/pipeline.js";
 import { motionScene } from "../../src/motion3/scene.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { isFillKey } from "../../src/motion3/bricks/fill-src.js";
+import { keptFill } from "../../src/motion3/patch-guard.js";
 import { SCENE_OBJECTS } from "./fixtures/cup-scene.mjs";
 
 let failures = 0;
@@ -47,6 +48,9 @@ else {
 	const long = { ...grid, frames: 101, keys: [{ ...grid.keys[0], f: 0 }, { ...grid.keys[2], f: 100 }] };
 	const split = await autoFill({ fetch }, character, long);
 	expect("a 100-frame gap: 3 pass-through poses, 4 gaps filled", split.fill?.passThrough === 3 && split.fill?.calls === 4 && split.spec.keys.filter(k => k.src === "pass").length === 3, JSON.stringify(split.fill));
+	// a small patch on an authored key (patch-guard.js, motion.compile): the fill keys stay as they are, no model call
+	const nudged = { ...three.spec, keys: three.spec.keys.map(k => (k.f === 24 && !isFillKey(k) ? { ...k, set: { ...k.set, root: k.set.root.map((v, i) => (i === 0 ? v + 0.02 : v)) } } : k)) };
+	expect("a 2 cm patch on the f24 key keeps every fill key", keptFill(three.spec, nudged)?.keys === fillKeys, JSON.stringify(keptFill(three.spec, nudged)));
 	// the loop the hint drives: patch a fill key (src kept), compile again: the edit stays, only the two gaps beside it run
 	const target = three.spec.keys.find(k => isFillKey(k) && k.f > 0 && k.f < 24 && Object.keys(k.set).length);
 	const ch = Object.keys(target.set)[0], edited = Array.isArray(target.set[ch]) ? target.set[ch].map(v => v + 0.03) : target.set[ch] + 3;

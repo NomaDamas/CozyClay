@@ -29,7 +29,7 @@ import { createRoundWatch } from "./motion3-rounds.js";
 import { createRepairWatch } from "../motion3/repair-watch.js";
 import { peopleOf } from "../motion3/people.js";
 import { hybridCapsuleHint } from "../motion3/hybrid-hint.js";
-import { patchTooBroad } from "../motion3/patch-guard.js";
+import { patchTooBroad, keptFill } from "../motion3/patch-guard.js";
 
 const TIMELINE_FPS = 24;
 const id = { type: "string", minLength: 1 };
@@ -172,7 +172,9 @@ export function register(registry, ports) {
 		// the repair engine runs by default (2 rounds) on an installing compile; repair: false opts out (deep research 5: hand-keyed sessions
 		// repaired 93% of first compiles, ours 2-4%, and without it the hints carry no patch)
 		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: 2 });
-		return after(autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith }, {}, context?.taskId, scene), r => {
+		// a small patch on one authored key keeps the fill beside it (patch-guard.js): re-fills there made 14-22% of the new problems
+		const keepFill = base === undefined ? null : keptFill(store.get(base) ?? installedSpec(), source);
+		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith }, {}, context?.taskId, scene), r => {
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
 			// ifClean: install only a clean final result (qa.ok includes the goals; after repair when asked)
 			const wanted = install === "ifClean" ? qa.ok : install;
