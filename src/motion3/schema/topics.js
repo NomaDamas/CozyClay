@@ -118,5 +118,5 @@ export const NOTES = {
 		"reach also brings the body to a hand on a world or scene-object anchor the straight arm misses: a lean, a hip shift, lower hips, the feet kept (fixed.reachBody lists each move); farther, place the body. retime is kept only when QA is no worse with it.",
 		"self keeps the arms out of the body on its fitted skin (QA BODY measures the same skin): wrist targets inside it go onto it, elbows turn about the shoulder-wrist line, a hand a little inside is pushed out. A fit's target (the mouth) is never moved; what is left is BODY, with checks.allow { part, object: <body part>, depth } for a contact meant to touch (a hand on a knee).",
 		"person keeps the arms out of the other characters (QA PERSON): the wrist target moves out back the side the hand came from, however deep; an FK arm is left (fixed.person.skipped). A touch you mean: checks.allow { part, object: \"person:<id>\", depth }."],
-	fill: ["motion.compile fills safe gaps by itself; nothing to do. Free gaps of 19 frames or more are filled by the model when safe; fill: false opts out."],
+	fill: ["motion.compile fills safe gaps by itself; nothing to do."],
 };
