@@ -123,6 +123,13 @@ export function register(registry, ports) {
 	};
 	// where a take was baked: the body's place and a hash of the scene's bodies (a take kept for the stop rule fits only
 	// there): 0.14 ms for 860 bodies, where their JSON took 0.9 ms and 295 KB a key
+	const issues = groups => groups.reduce((n, g) => n + (g.count ?? 1), 0);
+	const beatsInstalled = (characterId, qa) => {
+		const on = owner().motionFor(characterId);
+		if (!on?.spec) return true;
+		const was = store.parts(specIdOf(on.spec))?.groups;
+		return Array.isArray(was) && (qa.groups.length < was.length || (qa.groups.length === was.length && issues(qa.groups) < issues(was)));
+	};
 	const placeKey = (character, scene) => {
 		let h = 2166136261;
 		const mix = v => { h = Math.imul(h ^ Math.round(v * 1e4), 16777619); };
@@ -181,8 +188,10 @@ export function register(registry, ports) {
 		const keepFill = base === undefined ? null : keptFill(store.get(base) ?? installedSpec(), source);
 		return after(keepFill ? { spec: source, fill: keepFill } : autoFill(ports, character, source), auto => after(compile(character, auto.spec, { probes, repair: repairWith, finish: install !== false, thin, protect }, {}, context?.taskId, scene), r => {
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
-			// ifClean: install only a clean final result (qa.ok includes the goals; after repair when asked)
-			const wanted = install === "ifClean" ? qa.ok : install;
+			// ifClean: install a clean result (qa.ok includes the goals; after repair when asked), and one that beats the installed
+			// take's QA (fewer groups, then fewer frame issues) or the first when none is on (variant K: box ended with no take in 4 of
+			// 5 runs under ifClean / never); a take whose QA this session never measured is replaced only by a clean one
+			const wanted = install === "ifClean" ? qa.ok || beatsInstalled(characterId, qa) : install;
 			let installs = wanted, kept = false, timing;
 			// open ranges are stored with the values the search chose, so motion.qa re-measures this take
 			if (wanted) {
