@@ -38,12 +38,13 @@ const numbers = n => ({ type: "array", items: { type: "number" }, minItems: n, m
 
 // readOnly: reads the scene and the take, never changes them (C10).
 const declarations = Object.freeze([
-	{ id: "motion.compile", label: "Compile motion", kind: "job", domain: "motion", timeoutMs: 120000, description: HELP.compile,
+	// motion jobs get 240 s (deep research 28: box compiles take up to 108 s, 5.6-8.7% passed 120 s; elsewhere p99 is 40 s)
+	{ id: "motion.compile", label: "Compile motion", kind: "job", domain: "motion", timeoutMs: 240000, description: HELP.compile,
 		// patch may be empty: base alone (or patch: []) re-measures the stored spec, with new probes; "never" is install: false
 		input: input({ characterId: id, spec: openObject, base: specId, patch: { type: "array", items: openObject, maxItems: 64 },
 			install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true },
 			probes: list(openObject, 16), repair: input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []) }, ["characterId"]) },
-	{ id: "motion.qa", label: "Measure motion", kind: "job", domain: "motion", timeoutMs: 120000, readOnly: true, description: HELP.qa,
+	{ id: "motion.qa", label: "Measure motion", kind: "job", domain: "motion", timeoutMs: 240000, readOnly: true, description: HELP.qa,
 		input: input({ characterId: id, checks: openObject }, ["characterId"]) },
 	{ id: "motion.sample", label: "Sample motion", kind: "job", domain: "motion", timeoutMs: 30000, readOnly: true, description: HELP.sample,
 		input: input({ characterId: id, frames: { type: "array", items: { type: "integer", minimum: 0 }, minItems: 1, maxItems: 64 },
@@ -53,7 +54,7 @@ const declarations = Object.freeze([
 			topics: list({ oneOf: [{ type: "string", enum: DESCRIBE_TOPICS }, input({ topic: { type: "string", enum: DESCRIBE_TOPICS }, name: id }, ["topic"])] }, 8) }, []) },
 	{ id: "motion.report", label: "Read motion report", kind: "job", domain: "motion", timeoutMs: 10000, readOnly: true, description: HELP.report,
 		input: input({ specId, characterId: id, part: { type: "string", enum: ["groups", "timeline", "probes"], default: "groups" }, from: { type: "integer", minimum: 0, default: 0 } }, []) },
-	{ id: "motion.keyObject", label: "Key held object", kind: "job", domain: "motion", timeoutMs: 120000, description: HELP.keyObject,
+	{ id: "motion.keyObject", label: "Key held object", kind: "job", domain: "motion", timeoutMs: 240000, description: HELP.keyObject,
 		input: input({ characterId: id, objectId: id, frame: { type: "integer", minimum: 0 }, pos: numbers(3), rot: numbers(4), aim: numbers(3), roll: { type: "number" },
 			angle: { type: "number" }, remove: { type: "boolean", default: false } }, ["characterId", "objectId", "frame"]) },
 ]);
