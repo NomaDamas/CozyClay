@@ -21,6 +21,10 @@ const keys = cameraPerformanceKeys([
 assert.deepEqual(keys.map(key => key.frame), [10, 11, 34]);
 assert.equal(keys[1].framing.yaw, 0.3, "one addressed frame keeps the latest sample");
 assert.equal(cameraPerformanceKeys([], { startFrame: 0, endFrame: 10 }).length, 0);
+const longPerformance = cameraPerformanceKeys(Array.from({ length: 2000 }, (_, frame) => ({ seconds: frame / 24, framing })), { startFrame: 0, endFrame: 1999, fps: 24 });
+assert.equal(longPerformance.length, 600, "long recordings fit the shot command limit");
+assert.equal(longPerformance[0].frame, 0);
+assert.equal(longPerformance.at(-1).frame, 1999, "downsampling preserves the performance end");
 
 assert.deepEqual(repairOptics({ shiftX: 2, shiftY: -2, focusTargetId: " hero " }), { shiftX: 0.5, shiftY: -0.5, focusTargetId: "hero" });
 applyCameraOptics(camera, { shiftX: 0.1, shiftY: -0.2 });

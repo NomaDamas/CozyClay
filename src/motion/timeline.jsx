@@ -1357,8 +1357,8 @@ export default function Timeline({
 		const framesPerPixel = Math.max(0, active.displayFrameCount - 1) / Math.max(1, active.laneWidth);
 		const next = Math.max(0, Math.min(frameCount - 1, Math.round(active.fromFrame + (event.clientX - active.startClientX) * framesPerPixel)));
 		if (next === active.currentFrame) return;
-		const from = active.currentFrame; active.currentFrame = next;
-		handlers.current.onIkKeyframeMove?.(from, next);
+		const from = active.currentFrame, moved = handlers.current.onIkKeyframeMove?.(from, next);
+		if (moved !== false) active.currentFrame = next;
 	}
 	function endIkKeyDrag(event) {
 		const active = ikDragRef.current;

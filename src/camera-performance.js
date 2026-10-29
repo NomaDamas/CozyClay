@@ -24,7 +24,11 @@ export function cameraPerformanceKeys(samples, { startFrame, endFrame, fps = 24 
 	if (!byFrame.has(startFrame)) byFrame.set(startFrame, samples.find(sample => sample?.framing)?.framing);
 	const last = [...byFrame.keys()].at(-1);
 	if (last < endFrame && samples.at(-1)?.framing) byFrame.set(endFrame, samples.at(-1).framing);
-	return [...byFrame.entries()].sort((a, b) => a[0] - b[0]).map(([frame, framing]) => ({ frame, framing }));
+	const ordered = [...byFrame.entries()].sort((a, b) => a[0] - b[0]);
+	// The shot command accepts at most 600 keys. Long takes are retimed onto an
+	// evenly spaced subset while both performance boundaries stay exact.
+	const limited = ordered.length <= 600 ? ordered : Array.from({ length: 600 }, (_, index) => ordered[Math.round(index * (ordered.length - 1) / 599)]);
+	return limited.map(([frame, framing]) => ({ frame, framing }));
 }
 
 export function createCameraPerformance({ now = () => performance.now() / 1000, sample, onFrame } = {}) {

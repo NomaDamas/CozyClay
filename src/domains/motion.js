@@ -907,8 +907,8 @@ export function useMotion(appContext) {
 		if (!appContext.shared.ikStateRef.current.keys.has(frame)) return;
 		appContext.shared.runStudioAction("character.removeIkKey", { characterId: appContext.shared.activeChar.id, frame });
 	}
-	function ikMoveKeyframe(from, to) {
-		if (from !== to) return domain.edit('ik.moveKey', { characterId: appContext.shared.activeChar.id, from, to });
+	function ikMoveKeyframe(from, to) { const keys = domain.layer(appContext.shared.activeChar.id).ikKeys;
+		return from === to || !keys.some(row => row.frame === from) || keys.some(row => row.frame === to) ? (appContext.notify(ko(`Frame ${to} already has an IK key or is not a valid drag source`, `${to}프레임에 이미 IK 키가 있거나 드래그 원본이 올바르지 않습니다`)), false) : domain.edit('ik.moveKey', { characterId: appContext.shared.activeChar.id, from, to });
 	}
 
 	/** With IK mode on over a loaded take, a pose pick is a CORRECTION, not a

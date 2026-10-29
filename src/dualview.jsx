@@ -379,17 +379,17 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 		// the shot monitor, plan or offscreen capture can draw the same scene.
 		const drawEditorPane = (...args) => {
 			if (!xray) { draw(...args); return; }
-			const changed = [];
+			const changed = new Map();
 			scene.traverse(node => {
 				if (!node.isMesh || node.userData?.noXray) return;
 				for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
-					if (!material) continue;
-					changed.push({ material, transparent: material.transparent, opacity: material.opacity, depthWrite: material.depthWrite });
+					if (!material || changed.has(material)) continue;
+					changed.set(material, { transparent: material.transparent, opacity: material.opacity, depthWrite: material.depthWrite });
 					material.transparent = true; material.opacity = Math.min(material.opacity, 0.22); material.depthWrite = false;
 				}
 			});
 			try { draw(...args); }
-			finally { for (const { material, ...saved } of changed) Object.assign(material, saved); }
+			finally { for (const [material, saved] of changed) Object.assign(material, saved); }
 		};
 		const drawVisibleInset = (...args) => {
 			if (!insetOff) draw(...args);

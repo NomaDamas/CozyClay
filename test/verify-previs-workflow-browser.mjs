@@ -91,8 +91,11 @@ await sleep(400);
 expect("Front axis view is available", await evaluate(`window.__cozyclay.editorCam.position.z > 0`));
 
 await click('[data-testid="view-menu-trigger"]');
+await evaluate(`window.__xrayBaseline = new Map(); window.__cozyclay.rigA?.traverse(node => { for (const material of Array.isArray(node.material) ? node.material : [node.material]) if (material && !window.__xrayBaseline.has(material)) window.__xrayBaseline.set(material, material.opacity); });`);
 await click('[data-testid="view-xray"]');
 expect("X-Ray viewer preference toggles", await evaluate(`JSON.parse(localStorage.getItem("cozyclay.viewport-tools.v1")).xray === true`));
+await click('[data-testid="view-xray"]');
+expect("X-Ray restores shared material opacity", await evaluate(`[...window.__xrayBaseline].every(([material, opacity]) => material.opacity === opacity)`));
 await click('[data-testid="surface-snap"]');
 expect("Surface snap is available from Show", await evaluate(`JSON.parse(localStorage.getItem("cozyclay.viewport-tools.v1")).surfaceSnap === true`));
 await click('[data-testid="measure-tool"]');
@@ -126,6 +129,12 @@ await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: drag.x + 1, y: d
 await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: drag.x + drag.dx, y: drag.y, button: "left", buttons: 1, clickCount: 1 });
 await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: drag.x + drag.dx, y: drag.y, button: "left", buttons: 0, clickCount: 1 });
 expect("Dope Sheet drag moves a pose key", await wait(`[...document.querySelectorAll(".tl-marker.ik")].some(element => element.title.includes("frame 13")) && ![...document.querySelectorAll(".tl-marker.ik")].some(element => element.title.includes("frame 12"))`));
+const collision = await evaluate(`(() => { const marker = [...document.querySelectorAll(".tl-marker.ik")].find(element => element.title.includes("frame 13")); const box = marker.getBoundingClientRect(), lane = marker.closest(".tl-lane").getBoundingClientRect(); return { x: box.left + box.width / 2, y: box.top + box.height / 2, dx: lane.width * 11 / 359 }; })()`);
+await send("Input.dispatchMouseEvent", { type: "mousePressed", x: collision.x, y: collision.y, button: "left", buttons: 1, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: collision.x + 1, y: collision.y, button: "left", buttons: 1, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseMoved", x: collision.x + collision.dx, y: collision.y, button: "left", buttons: 1, clickCount: 1 });
+await send("Input.dispatchMouseEvent", { type: "mouseReleased", x: collision.x + collision.dx, y: collision.y, button: "left", buttons: 0, clickCount: 1 });
+expect("Dope Sheet refuses to overwrite an occupied key", await evaluate(`[...document.querySelectorAll(".tl-marker.ik")].some(element => element.title.includes("frame 13")) && [...document.querySelectorAll(".tl-marker.ik")].some(element => element.title.includes("frame 24"))`));
 expect("burn-in changes actual RGBA output", await evaluate(`(async () => { const { burnInRgba } = await import("/src/review-burn-in.js"); const output = burnInRgba(new Uint8ClampedArray(16), 2, 2, { title: "QA", detail: "F 0000" }); return output.some(value => value !== 0); })()`));
 
 const image = await send("Page.captureScreenshot", { format: "png", captureBeyondViewport: true });
