@@ -42,10 +42,25 @@ expect("INSTALL_WORSE: install true over a better installed take installs and no
 	&& worseNote.includes(cleanId) && worseNote.includes("(0 QA problems)") && worseNote.includes(`(${f.qa.groups.length})`), JSON.stringify({ installed: f.installed, notes: f.notes }));
 const g = run(0.3, true);
 expect("INSTALL_WORSE: install true over a worse installed take: no note", g.installed === true && !(g.notes ?? []).some(n => n.startsWith("INSTALL_WORSE")), JSON.stringify(g.notes));
+// after a document reload the spec store is empty (a new registry here) while the take stays on: the installed take's QA is
+// measured once from its own spec (session eeff213e, deep-36 §4: 12 ifClean compiles in a row after a reload never installed)
 const unmeasured = new Map([["c", { schema: "cozyclay.take.v3", spec: held(0.31) }]]), fresh = createStudioAppActions({ state: () => ({ characters: [actor], objects: board, frameCount: 60 }),
 	storeDomain: name => (name === "motion" ? { replace: (cid, take) => unmeasured.set(cid, take), motionFor: cid => unmeasured.get(cid) ?? null } : null) });
 const h = fresh.run("motion.compile", { characterId: "c", spec: held(0.4), install: true, repair: false, thin: false }).output;
-expect("INSTALL_WORSE: an installed take never measured in this session: no note", h.installed === true && !(h.notes ?? []).some(n => n.startsWith("INSTALL_WORSE")), JSON.stringify(h.notes));
+expect("INSTALL_WORSE after a reload: the installed take is measured, and replacing it with a worse one is noted", h.installed === true && (h.notes ?? []).some(n => n.startsWith("INSTALL_WORSE") && n.includes("(0 QA problems)")), JSON.stringify(h.notes));
+const reloaded = () => createStudioAppActions({ state: () => ({ characters: [actor], objects: board, frameCount: 60 }), storeDomain: name => (name === "motion" ? owner : null) });
+takes.clear(); run(0.38, "ifClean"); run(0.4, "ifClean");
+const before = JSON.stringify(on()), afterReload = reloaded(), runR = (z, reg2 = afterReload) => reg2.run("motion.compile", { characterId: "c", spec: held(z), install: "ifClean", repair: false, thin: false }).output;
+const worseR = runR(0.4);
+expect("ifClean after a reload: a worse take is not installed (the installed take's QA is measured)", worseR.installed === false && JSON.stringify(on()) === before && !(worseR.notes ?? []).length, JSON.stringify({ installed: worseR.installed, notes: worseR.notes }));
+const betterR = runR(0.35);
+expect("ifClean after a reload: a take that beats the installed one is installed", betterR.qa.ok === false && betterR.installed === true && JSON.stringify(on()) !== before, JSON.stringify({ installed: betterR.installed, problems: issues(betterR) }));
+takes.set("c", { schema: "cozyclay.take.v3", spec: { schema: "cozyclay.motion-spec.v1", fps: 24, frames: 60, use: [{ skill: "noSuchSkill" }] } });
+const lostR = runR(0.4, reloaded());
+expect("ifClean over a take whose spec no longer compiles: installed, with a note", lostR.installed === true && (lostR.notes ?? []).some(n => n.includes("could not be measured")), JSON.stringify({ installed: lostR.installed, notes: lostR.notes }));
+takes.set("c", { schema: "cozyclay.take.v3" });
+const nospecR = runR(0.4, reloaded());
+expect("ifClean over a take with no spec: installed, with a note", nospecR.installed === true && (nospecR.notes ?? []).some(n => n.includes("could not be measured")), JSON.stringify({ installed: nospecR.installed, notes: nospecR.notes }));
 // output.repair.ms (the repair's wall time) and output.thinned.ms on a compile that repaired and thinned, also on the ifClean path
 const timed = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: true, repair: { rounds: 1 } }).output;
 // thinning stops at its 10 s limit, so a loaded machine may thin nothing here: thinned.ms is checked when it thinned (verify-motion3-thin.mjs pins it)
