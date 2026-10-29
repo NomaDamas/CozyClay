@@ -53,7 +53,8 @@ export function fillSource({ spec, base }, specOf, installedSpec) {
 export function autoFill(ports, character, spec) {
 	const fetcher = ports.fetch ?? (typeof window === "undefined" ? null : globalThis.fetch);
 	const authored = Array.isArray(spec?.keys) ? new Set(spec.keys.filter(k => !isFillKey(k)).map(k => k?.f)).size : 0;
-	if (!fetcher || spec?.fill === false || authored < 2) return { spec, fill: null };
+	// off unless the spec asks with fill: true (option A: every K/L/M2 bench filled by default; the fill reached installed takes only on sit)
+	if (!fetcher || spec?.fill !== true || authored < 2) return { spec, fill: null };
 	if (spec.use?.length || spec.generators?.length) return { spec, fill: { note: "a spec with use or generators is not filled (skills own their frames); key poses only, or motion.fill" } };
 	return requestFill(fetcher, { spec, model: character.model, auto: true, objects: ports.state?.().objects ?? [] }).then(
 		filled => ({ spec: filled.spec, fill: { gaps: filled.gaps, calls: filled.calls, keys: filled.spec.keys.filter(k => isFillKey(k)).length, ...(filled.passThrough ? { passThrough: filled.passThrough } : {}), ...(filled.promoted ? { promoted: filled.promoted } : {}), ...(filled.skipped ? { skipped: filled.skipped } : {}), spans: filled.spans, ...(filled.dropped ? { dropped: filled.dropped } : {}), ...(filled.notes ? { notes: filled.notes } : {}), ...(filled.warnings ? { warnings: filled.warnings } : {}) } }),

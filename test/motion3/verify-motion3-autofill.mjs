@@ -22,10 +22,12 @@ function expect(name, condition, detail = "") {
 const model = process.env.COZYCLAY_MOTIONBRICKS_MODEL ?? join(homedir(), ".cache", "cozyclay", "motionbricks", "mmm_v6_soma_fp16.onnx");
 const character = { id: "actor-a", model: "x-bot-tpose" };
 const demo = JSON.parse(readFileSync(new URL("../../mcp/motionbricks/demo/sit.json", import.meta.url), "utf8"));
-const grid = { ...demo, frames: 49, keys: demo.keys.map((k, i) => ({ ...k, f: i * 24 })) };
+// the fill is off unless the spec asks (fill: true, bench/m2-nofill): every filled spec below carries it
+const grid = { ...demo, frames: 49, fill: true, keys: demo.keys.map((k, i) => ({ ...k, f: i * 24 })) };
 
 expect("no fetcher (a Node compile): nothing sent, the spec compiles as written", JSON.stringify(autoFill({}, character, grid)) === JSON.stringify({ spec: grid, fill: null }));
 const never = () => { throw new Error("must not fetch"); };
+expect("no fill field (the default): nothing sent", (({ fill, ...rest }) => autoFill({ fetch: never }, character, rest).fill === null)(grid));
 expect("fill: false: nothing sent", autoFill({ fetch: never }, character, { ...grid, fill: false }).fill === null);
 const skill = autoFill({ fetch: never }, character, { ...grid, use: [{ skill: "walkTo", f0: 0, args: { to: [0, 1] } }] });
 expect("a spec with use is not filled and says so", /use or generators is not filled/.test(skill.fill?.note ?? ""), JSON.stringify(skill.fill));

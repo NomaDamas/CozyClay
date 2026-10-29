@@ -58,7 +58,7 @@ export const SPEC_TYPES = {
 	goals: { type: "array", description: "topic goals" },
 	flow: { oneOf: [{ const: false }, { type: "object" }] },
 	idle: { const: false, description: "held poses do not breathe" },
-	fill: { const: false, description: "no MotionBricks fill" },
+	fill: { type: "boolean", description: "true: MotionBricks fills the safe gaps between key poses (off by default)" },
 };
 
 export const ANCHOR_TYPES = {
