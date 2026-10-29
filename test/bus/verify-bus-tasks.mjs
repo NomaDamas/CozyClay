@@ -287,3 +287,27 @@ test("two tasks place one character and make her take at once; each layer is its
     assert.equal(x(), x0); assert.equal(f.motion.motionFor('actor-a')?.schema, 'cozyclay.take.v3', 'a plain key restores all four');
   } finally { f.dispose(); }
 });
+
+// Box bench (box-old-r2, box-kf-r1): a motion.compile past the hub's 120 s answered UNCERTAIN_APPLY, the sidecar read it
+// as a lost Studio and paused the task, then resumed it with the same task.begin while this editor still held it open.
+test('its owner begins an open task again after a cut-off run: it resumes, keeps its pre-images, and a finished one is still refused', () => {
+  const { f, ids, task, begin, x, move } = setup();
+  try {
+    const a = task('task-a'), x0 = x(ids.cube);
+    ok(begin('task-a', [`object:${ids.cube}`], { title: 'cube' }));
+    ok(a('task.mark', { taskId: 'task-a' }));
+    ok(move(a, ids.cube, 1));
+    const again = ok(begin('task-a', [`object:${ids.cube}`, `object:${ids.sphere}`], { title: 'cube' }));
+    assert.equal(again.output.resumed, true);
+    assert.deepEqual([...again.output.scope].sort(), [`object:${ids.cube}`, `object:${ids.sphere}`].sort());
+    refused(task('task-b')('task.begin', { taskId: 'task-a', scope: [`object:${ids.cube}`] }), 'CAPABILITY_MISSING');
+    refused(begin('task-b', [`object:${ids.cube}`]), 'SCOPE_BUSY');
+    refused(a('task.rollback', { taskId: 'task-a' }), 'STALE_TARGET');
+    ok(move(a, ids.cube, 2)); assert.equal(x(ids.cube), 2);
+    ok(a('task.cancel', { taskId: 'task-a' }));
+    assert.equal(x(ids.cube), x0, 'cancel after the resume restores the pre-image from before the first run');
+    ok(begin('task-c', [`object:${ids.cube}`]));
+    ok(task('task-c')('task.finish', { taskId: 'task-c' }));
+    refused(begin('task-c', [`object:${ids.cube}`]), 'INVALID_ARGUMENT');
+  } finally { f.dispose(); }
+});
