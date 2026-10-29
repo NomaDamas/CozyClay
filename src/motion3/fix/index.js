@@ -2,7 +2,8 @@
 // the baked channels or the per-frame IK offsets and re-solves only the frames it touched, so QA
 // still measures the final frames; every fix reports what it changed (counts, worst amount).
 //
-// spec.fix = { reach: true, slide: true, penetration: 0.02, self: true, retime: false, person: true } (false = all off)
+// spec.fix = { reach: true, slide: true, penetration: 0.02, self: true, retime: true, person: true } (false = all off; retime on by default
+// since deep research 4: POP -1.58 +- 0.58 frames, kept only when QA is no worse)
 //   reach        wrist targets past the arm's reach go onto it through a soft knee (no snap);
 //                ankle targets past the leg's reach lower the hips just enough, eased in and out; a hand
 //                on a pinned target (a world or a scene object's anchor) that the straight arm misses brings
@@ -39,7 +40,7 @@ export function fixOptions(fix) {
 	if (fix === false) return { reach: false, slide: false, penetration: 0, self: false, retime: false, stance: false, grasp: false, person: false };
 	const f = fix ?? {};
 	const pen = f.penetration === true ? 0.02 : Math.min(0.05, Math.max(0, Number(f.penetration) || 0));
-	return { reach: f.reach !== false, slide: f.slide !== false, penetration: pen, self: f.self !== false, retime: f.retime === true, stance: f.stance !== false, grasp: f.grasp !== false, person: f.person !== false };
+	return { reach: f.reach !== false, slide: f.slide !== false, penetration: pen, self: f.self !== false, retime: f.retime !== false, stance: f.stance !== false, grasp: f.grasp !== false, person: f.person !== false };
 }
 
 /** The slide report with the flat feet whose turn waited (turn.js): turns { frames, max deg }. */
