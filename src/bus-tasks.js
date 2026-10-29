@@ -106,7 +106,17 @@ export function createBusTasks({ ports, emit }) {
 			ownerOf(request, args.taskId);
 			if (id === 'task.begin') {
 				if (busy) fail('TARGET_BUSY', busy);
-				if (open.has(args.taskId) || finished.has(args.taskId)) fail('INVALID_ARGUMENT', `Task ${args.taskId} already exists.`);
+				// Its owner begins it again after its run was cut off while this editor stayed (a hub timeout read as a lost
+				// Studio): it resumes with its pre-images and edits, so a cancel still restores; the cut-off run's mark is gone.
+				const held = open.get(args.taskId);
+				if (held) {
+					grant(held, args.scope);
+					for (const key of held.keys) held.tokens.set(key, tokenOf(key));
+					held.mark = null; held.lastAt = (ports.now ?? Date.now)();
+					emit?.({ type: 'task.scope', taskId: held.taskId, scope: [...held.keys] });
+					return receipt(id, held, request, before, { output: { resumed: true } });
+				}
+				if (finished.has(args.taskId)) fail('INVALID_ARGUMENT', `Task ${args.taskId} already exists.`);
 				const task = { taskId: args.taskId, title: args.title ?? '', keys: new Set(), reads: new Set(args.reads ?? []), tokens: new Map(), pre: new Map(), edits: [], notices: [], affectedIds: [], lastAt: (ports.now ?? Date.now)() };
 				grant(task, args.scope, Array.isArray(args.live) ? args.live : null);
 				open.set(task.taskId, task);
