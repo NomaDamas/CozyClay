@@ -63,6 +63,8 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	const repaired = more?.repair.applied.length ? { spec: more.spec, result: more.result, repair: { ...first.repair, rounds: first.repair.rounds + more.repair.rounds,
 		compiles: first.repair.compiles + more.repair.compiles, applied: [...first.repair.applied, ...more.repair.applied], rejected: first.repair.rejected + more.repair.rejected, finish: more.repair.rounds } }
 		: more ? { ...first, repair: { ...first.repair, finish: 0 } } : first;
+	// repair.ms: the repair's own wall time (main repair and finish pass, before thinning)
+	const repairMs = repair ? Math.round(performance.now() - t0) : 0;
 	// key thinning (thin.js): an installing compile drops the free-span keys QA does not miss; thin: false opts out
 	const thinned = finish && thin !== false && !lenient ? thinSpec(repaired.spec, repaired.result, measured, { protect: protect ?? [] }) : null;
 	const fixed = thinned ? { ...repaired, spec: thinned.spec, result: thinned.result } : repaired;
@@ -81,7 +83,7 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	if (people) take.people = people;
 	return { stored: r.stored, qa: r.qa, observations: r.observations, used: r.used, fixed: r.fixed, search: r.search, timeline: r.timeline,
 		...(r.probes ? { probes: r.probes } : {}), ...(r.notes || corrected.length ? { notes: [...corrected, ...(r.notes ?? [])] } : {}), ms, frameCount: r.out.frameCount, label,
-		...(fixed.repair ? { repair: fixed.repair } : {}), ...(thinned ? { thinned: thinned.thinned } : {}), ...(take ? { take } : {}) };
+		...(fixed.repair ? { repair: { ...fixed.repair, ms: repairMs } } : {}), ...(thinned ? { thinned: thinned.thinned } : {}), ...(take ? { take } : {}) };
 }
 
 /** The ArrayBuffers under a job answer's typed arrays (each once), to transfer instead of copy. */

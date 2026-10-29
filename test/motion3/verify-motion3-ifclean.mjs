@@ -2,6 +2,7 @@
 // install: "ifClean" (variant K, deep research 20): installs a clean result, the first take when none is on, and one whose QA
 // beats the installed take's (fewer groups, then fewer frame issues); "never" never installs. A hand pushed into a board by
 // 3.5 / 4.0 / 3.6 / 3.8 cm gives one COLLIDE group of a different length each.
+import { readFileSync } from "node:fs";
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { skeletonFor } from "../../src/motion3/rigs/index.js";
 import { createStudioAppActions } from "../../src/commands/index.js";
@@ -29,5 +30,28 @@ const d = run(0.35, "ifClean");
 expect("ifClean: a take that beats the installed one is installed (installs twice in the sequence)", d.installed === true && JSON.stringify(on()) !== firstSpec && issues(d) < issues(a), `${issues(a)} -> ${issues(d)}`);
 const e = run(0.3, "ifClean");
 expect("ifClean: a clean take is installed", e.qa.ok && e.installed === true);
+// a sit spec that repairs and thins (output.repair.ms / thinned.ms below)
+const sit = JSON.parse(readFileSync(new URL("./fixtures/h-sit-spec.json", import.meta.url), "utf8"));
+const sitTakes = new Map(), sitOwner = { replace: (cid, take) => sitTakes.set(cid, take), motionFor: cid => sitTakes.get(cid) ?? null };
+const sitReg = createStudioAppActions({ state: () => ({ characters: [{ ...actor, model: sit.model }], objects: sit.objects, frameCount: 240 }), storeDomain: name => (name === "motion" ? sitOwner : null) });
+// INSTALL_WORSE (variant M): install: true over an installed take with fewer QA problems still installs and says so (the installed
+// specId, its problems and the new ones); over a worse take there is no note; a take never measured here gets none either
+const clean = JSON.stringify(on()), cleanId = e.specId;
+const f = run(0.4, true), worseNote = (f.notes ?? []).find(n => n.startsWith("INSTALL_WORSE"));
+expect("INSTALL_WORSE: install true over a better installed take installs and notes it", f.installed === true && JSON.stringify(on()) !== clean && Boolean(worseNote)
+	&& worseNote.includes(cleanId) && worseNote.includes("(0 QA problems)") && worseNote.includes(`(${f.qa.groups.length})`), JSON.stringify({ installed: f.installed, notes: f.notes }));
+const g = run(0.3, true);
+expect("INSTALL_WORSE: install true over a worse installed take: no note", g.installed === true && !(g.notes ?? []).some(n => n.startsWith("INSTALL_WORSE")), JSON.stringify(g.notes));
+const unmeasured = new Map([["c", { schema: "cozyclay.take.v3", spec: held(0.31) }]]), fresh = createStudioAppActions({ state: () => ({ characters: [actor], objects: board, frameCount: 60 }),
+	storeDomain: name => (name === "motion" ? { replace: (cid, take) => unmeasured.set(cid, take), motionFor: cid => unmeasured.get(cid) ?? null } : null) });
+const h = fresh.run("motion.compile", { characterId: "c", spec: held(0.4), install: true, repair: false, thin: false }).output;
+expect("INSTALL_WORSE: an installed take never measured in this session: no note", h.installed === true && !(h.notes ?? []).some(n => n.startsWith("INSTALL_WORSE")), JSON.stringify(h.notes));
+// output.repair.ms (the repair's wall time) and output.thinned.ms on a compile that repaired and thinned, also on the ifClean path
+const timed = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: true, repair: { rounds: 1 } }).output;
+expect("repair.ms and thinned.ms on a repaired, thinned compile (install true)", Number.isInteger(timed.repair?.ms) && Number.isInteger(timed.thinned?.ms) && timed.ms.repair >= timed.repair.ms, JSON.stringify({ repair: timed.repair, thinned: timed.thinned }));
+sitTakes.clear();
+const timedIf = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: "ifClean", repair: { rounds: 1 } }).output;
+expect("ifClean that installs: repair.ms is the first job's, thinned.ms the thinning's", timedIf.installed === true && Number.isInteger(timedIf.repair?.ms) && Number.isInteger(timedIf.thinned?.ms) && timedIf.ms.repair >= timedIf.repair.ms,
+	JSON.stringify({ repair: timedIf.repair, thinned: timedIf.thinned, ms: timedIf.ms.repair }));
 if (failures) { console.error(`${failures} ifClean check(s) failed`); process.exit(1); }
 console.log("verify-motion3-ifclean: all checks passed");
