@@ -130,6 +130,14 @@ export function register(registry, ports) {
 		const was = store.parts(specIdOf(on.spec))?.groups;
 		return Array.isArray(was) && (qa.groups.length < was.length || (qa.groups.length === was.length && issues(qa.groups) < issues(was)));
 	};
+	// INSTALL_WORSE (variant M, sit-l-r1: a 1-problem take overwritten by a 4-problem recompile): install: true still installs, and
+	// says so when the take it replaces had fewer QA problems; a take whose QA this session never measured gets no note
+	const installWorse = (characterId, qa) => {
+		const on = owner().motionFor(characterId), onId = on?.spec ? specIdOf(on.spec) : null, was = onId && store.parts(onId)?.groups;
+		if (!Array.isArray(was)) return null;
+		const before = qaProblems({ groups: was, ok: was.length === 0 }), now = qaProblems(qa);
+		return before < now ? `INSTALL_WORSE: replaced the installed take ${onId} (${before} QA problem${before === 1 ? "" : "s"}) with this one (${now}); install: "ifClean" keeps the better take` : null;
+	};
 	const placeKey = (character, scene) => {
 		let h = 2166136261;
 		const mix = v => { h = Math.imul(h ^ Math.round(v * 1e4), 16777619); };
@@ -199,6 +207,7 @@ export function register(registry, ports) {
 			const r = t === first || !t.thinned ? first : { ...t, ...(first.repair ? { repair: first.repair } : {}), notes: first.notes, ms: first.ms.repair === undefined ? t.ms : { ...t.ms, repair: first.ms.repair } };
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
 			let installs = wanted, kept = false, timing;
+			const worse = install === true ? installWorse(characterId, qa) : null;
 			// open ranges are stored with the values the search chose, so motion.qa re-measures this take
 			if (wanted) {
 				// ifClean of the take already installed changes nothing (no undo entry; IK edits on it stay)
@@ -215,7 +224,7 @@ export function register(registry, ports) {
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
 			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
 			const flat = rounds(characterId, qa, base === undefined), broad = patchTooBroad(patch);
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad ? { notes: [broad] } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}), ...(r.thinned ? { thinned: r.thinned } : {}) });
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad || worse ? { notes: [broad, worse].filter(Boolean) } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(auto.fill ? { fill: auto.fill } : {}), ...(r.thinned ? { thinned: r.thinned } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });

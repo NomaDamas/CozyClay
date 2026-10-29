@@ -48,5 +48,24 @@ const always = sitRun(true);
 expect("install true still thins", always.output.installed === true && always.output.thinned?.removed?.length > 0, JSON.stringify(always.output.thinned));
 const off = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: "ifClean", repair: false, thin: false });
 expect("thin: false opts out under ifClean", off.output.thinned === undefined);
+// INSTALL_WORSE (variant M): install: true over an installed take with fewer QA problems still installs and says so (the installed
+// specId, its problems and the new ones); over a worse take there is no note; a take never measured here gets none either
+const clean = JSON.stringify(on()), cleanId = e.specId;
+const f = run(0.4, true), worseNote = (f.notes ?? []).find(n => n.startsWith("INSTALL_WORSE"));
+expect("INSTALL_WORSE: install true over a better installed take installs and notes it", f.installed === true && JSON.stringify(on()) !== clean && Boolean(worseNote)
+	&& worseNote.includes(cleanId) && worseNote.includes("(0 QA problems)") && worseNote.includes(`(${f.qa.groups.length})`), JSON.stringify({ installed: f.installed, notes: f.notes }));
+const g = run(0.3, true);
+expect("INSTALL_WORSE: install true over a worse installed take: no note", g.installed === true && !(g.notes ?? []).some(n => n.startsWith("INSTALL_WORSE")), JSON.stringify(g.notes));
+const unmeasured = new Map([["c", { schema: "cozyclay.take.v3", spec: held(0.31) }]]), fresh = createStudioAppActions({ state: () => ({ characters: [actor], objects: board, frameCount: 60 }),
+	storeDomain: name => (name === "motion" ? { replace: (cid, take) => unmeasured.set(cid, take), motionFor: cid => unmeasured.get(cid) ?? null } : null) });
+const h = fresh.run("motion.compile", { characterId: "c", spec: held(0.4), install: true, repair: false, thin: false }).output;
+expect("INSTALL_WORSE: an installed take never measured in this session: no note", h.installed === true && !(h.notes ?? []).some(n => n.startsWith("INSTALL_WORSE")), JSON.stringify(h.notes));
+// output.repair.ms (the repair's wall time) and output.thinned.ms on a compile that repaired and thinned, also on the ifClean path
+const timed = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: true, repair: { rounds: 1 } }).output;
+expect("repair.ms and thinned.ms on a repaired, thinned compile (install true)", Number.isInteger(timed.repair?.ms) && Number.isInteger(timed.thinned?.ms) && timed.ms.repair >= timed.repair.ms, JSON.stringify({ repair: timed.repair, thinned: timed.thinned }));
+sitTakes.clear();
+const timedIf = sitReg.run("motion.compile", { characterId: "c", spec: sit.spec, install: "ifClean", repair: { rounds: 1 } }).output;
+expect("ifClean that installs: repair.ms is the first job's, thinned.ms the thinning's", timedIf.installed === true && Number.isInteger(timedIf.repair?.ms) && Number.isInteger(timedIf.thinned?.ms) && timedIf.ms.repair >= timedIf.repair.ms,
+	JSON.stringify({ repair: timedIf.repair, thinned: timedIf.thinned, ms: timedIf.ms.repair }));
 if (failures) { console.error(`${failures} ifClean check(s) failed`); process.exit(1); }
 console.log("verify-motion3-ifclean: all checks passed");
