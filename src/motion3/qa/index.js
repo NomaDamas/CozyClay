@@ -16,6 +16,7 @@ import { wristIssues } from "./wrist-checks.js";
 import { peopleChecks } from "./people-checks.js";
 import { armWarnings } from "./arm-checks.js";
 import { explainGroups } from "./explain.js";
+import { heldDriftIssues } from "./held-drift.js";
 import { LOW_IS_BAD, groupKey, rankGroups } from "./severity.js";
 
 /** Group issues by kind + subject (severity.js groupKey); each group reports count, worst value and frame range. */
@@ -41,7 +42,7 @@ export function runMotionQa(sk, out, spec, opts = {}) {
 	const checks = spec.checks ?? {}, goals = goalChecks(out, spec.goals ?? []);
 	const issues = [...generalChecks(sk, out, { allow: checks.allow, limits: checks.limits, mouthPoints: checks.mouthPoints }), ...specChecks(out, checks),
 		...objectChecks(sk, out, spec), ...graspChecks(sk, out), ...fingerChecks(sk, out), ...loadChecks(sk, out), ...floatChecks(out, checks),
-		...styleChecks(sk, out, checks, { ...QA_LIMITS, ...checks.limits }), ...wristIssues(sk, out), ...peopleChecks(sk, out, checks), ...goals.issues];
+		...styleChecks(sk, out, checks, { ...QA_LIMITS, ...checks.limits }), ...wristIssues(sk, out), ...peopleChecks(sk, out, checks), ...heldDriftIssues(sk, out), ...goals.issues];
 	if (out.f0) for (const i of issues) i.frame += out.f0;
 	const groups = summarizeIssues(issues);
 	if (opts.explain !== false) explainGroups(sk, out, spec, groups, { userSpec: opts.userSpec });

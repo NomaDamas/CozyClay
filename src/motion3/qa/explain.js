@@ -11,9 +11,10 @@ import { wristHints } from "./wrist-checks.js";
 import { loadHints } from "../load.js";
 import { graspHints } from "./hints-grasp.js";
 import { fingerHints } from "./finger-checks.js";
+import { heldDriftHints } from "./held-drift.js";
 import { attachPatches } from "./patch.js";
 
-const HINTS = { ...contactHints, ...motionHints, ...objectHints, ...goalHints, ...wristHints, ...loadHints, ...graspHints, ...fingerHints };
+const HINTS = { ...contactHints, ...motionHints, ...objectHints, ...goalHints, ...wristHints, ...loadHints, ...graspHints, ...fingerHints, ...heldDriftHints };
 
 function keyTable(out) {
 	const byCh = new Map();
