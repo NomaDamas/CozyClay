@@ -241,6 +241,7 @@ export function taskHeader(task, { deps = [], resume = null } = {}) {
 		`You are one of several tasks working on this scene at once. Your scope (the only things you may change): ${task.scope.join(", ")}.`,
 		"Everything else is read-only for you: another task or the user may be changing it. A command outside your scope is refused with SCOPE_DENIED; ask for more with run_action task.requestScope { taskId, scope }, and if that answers SCOPE_BUSY, do what you can inside your scope and say what is left.",
 		"When you finish, end with a short report for the coordinator in English: what you changed (receipt ids, ids), the QA problems left, and anything not done. The coordinator talks to the user.",
+		"Before you finish, check each visible criterion in the instructions (the user's words) and report it as met, unmet or not measurable by QA, with the measured value when there is one (anchor 7 cm off the bar). A QA count alone never means done.",
 		...deps.map(dep => `Earlier task ${dep.taskId} (${dep.title}) is done: ${dep.summary?.reply ?? ""}${dep.changed?.length ? ` It changed: ${dep.changed.join(", ")}.` : ""}`),
 		...(resume?.note ? [resume.note] : []),
 		"</task>", "", task.instructions].join("\n");
