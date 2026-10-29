@@ -3,6 +3,7 @@
 // every compile, because the probe has no moving objects and the hands gripping the box missed it (arm REACH) on every
 // candidate; then checkHints compiled two hint patches with no time bound. walk-plan.js leaves arm REACH out of a walk's
 // issues; compile-job.js stops compiling hint patches past HINT_LIMIT_MS (a patch repair already compiled is still checked).
+// box-m2f-r2 still paid 22 probes (no cadence walked clean with the box left out); a carry checks at most CARRY_TRIALS.
 import { readFileSync } from "node:fs";
 import { compileSpec } from "../../src/motion3/pipeline.js";
 import { runCompileJob } from "../../src/motion3/compile-job.js";
@@ -22,6 +23,15 @@ expect("box carry: the walk is planned", planned.length === 1, JSON.stringify(pl
 // arm REACH on the gripped box does not count: before, every candidate showed 178 issues (the hands missing the box) and none walked clean
 const left = /no candidate walked clean \((\d+) issues/.exec(planned[0] ?? "")?.[1];
 expect("box carry: the walk is planned within 6 probes, with at most a few issues left (arm REACH on the gripped box does not count)", checked <= 6 && (left === undefined || Number(left) <= 10), planned[0]);
+
+// 1b. the r2 carry walks clean on no candidate (the probe leaves the box out: the right forearm pops and flips on every
+// one); a spec that carries an object checks at most 6 cadences (it checked 22, ~35 s of a 37 s compile on the Mac)
+const r2 = load("bench-box-m2f-r2-spec.json");
+const t2 = performance.now();
+const planned2 = compileSpec({ fps: 24, ...r2.spec }, { sk: skeletonFor("x-bot-tpose"), scene: motionScene(r2.objects) }, {}).observations.planned ?? [];
+const checked2 = Number(/\((\d+) checked\)/.exec(planned2[0] ?? "")?.[1]);
+expect("box carry r2: the walk is planned", planned2.length === 1, JSON.stringify(planned2));
+expect("box carry r2: at most 6 cadences checked for a carried object", checked2 >= 1 && checked2 <= 6, `${planned2[0]} (${Math.round(performance.now() - t2)} ms)`);
 
 // 2. checkHints: a compile that answers null (out of time) drops the patch and says so
 const qa = { groups: [{ kind: "SLIDE", subject: "Left ball slides", count: 2, severity: 2, patch: [{ op: "add", path: "/keys/-", value: { f: 1, set: {} } }] }] };
