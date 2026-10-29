@@ -137,7 +137,7 @@ expect("reportPage answers { specId, part, from, items, next }", JSON.stringify(
 const answers = DESCRIBE_TOPICS.map(topic => run(cupRegistry, "motion.describe", { topic }));
 expect("motion.describe answers every topic with { topic, schema, example, notes } (essentials: { types, skills, notes } within DESCRIBE_BUDGET)", answers.every((a, i) => a.topic === DESCRIBE_TOPICS[i]
 	&& bytes(a) <= (a.topic === "essentials" ? DESCRIBE_BUDGET : MOTION_OUTPUT_BUDGET)
-	&& (a.topic === "skills" ? Array.isArray(a.skills) && a.skills.length > 0 : a.topic === "examples" ? a.examples.length > 0 && Array.isArray(a.notes) : a.topic === "essentials" ? a.types && a.skills.length > 0 && Array.isArray(a.notes) : a.schema && a.example && Array.isArray(a.notes))));
+	&& (a.topic === "skills" ? Array.isArray(a.skills) && a.skills.length > 0 : a.topic === "examples" ? a.examples.length > 0 && Array.isArray(a.notes) : a.topic === "fill" ? a.notes.length > 0 : a.topic === "essentials" ? a.types && a.skills.length > 0 && Array.isArray(a.notes) : a.schema && a.example && Array.isArray(a.notes))));
 const one = run(cupRegistry, "motion.describe", { topic: "skills", name: "reachGrip" });
 expect("motion.describe { skills, name } answers one skill", one.name === "reachGrip" && one.example.skill === "reachGrip" && /did you mean "reachGrip"/.test(refusal(() => cupRegistry.run("motion.describe", { topic: "skills", name: "reachGirp" }))));
 const many = run(cupRegistry, "motion.describe", { topics: [{ topic: "objects" }, { topic: "skills", name: "reachGrip" }, { topic: "objects" }, { topic: "anchors" }, { topic: "skills", name: "walkTo" }] });

@@ -11,6 +11,23 @@ The agent writes a **motion spec**. The deterministic compiler bakes every frame
 5. `motion.compile` with `install: true`. Then do one `verify_result` contact sheet as a visual check.
 6. Report the QA numbers, `output.fixed` (what the compiler changed for you), what was declared in `checks`, and anything that was not checked.
 
+## Transition between two poses (free spans): MotionBricks fill (`motion.fill`, opt-in)
+
+The fill is a **transition between two poses (free spans)**. MotionBricks, a local motion model the dev server runs, generates the motion between neighbouring authored key poses. It is off by default: `motion.compile` fills only when the spec says `fill: true`, and `motion.fill { characterId, spec }` fills on request. Use it for a free pose-to-pose move no skill covers (sit down, stand up, "A pose to B pose"). Keep contacts and plants on your own keys.
+
+Author 2-4 whole-body key poses. Each pose keys root, `yaw/pitch/roll`, `spine_*`, `head_*`, `foot_l/r`, `knee_l/r`, `fyaw`/`fpitch`, `hand_l/r` with `elbow_l/r`, and `armw_l: 1, armw_r: 1` on the first key. Each gap between neighbouring authored keys (at most 46 frames per model call) becomes keys marked `src: "fill"`. The filled spec then compiles, runs QA and installs like `motion.compile`, and QA names fill keys `keys[n]` like your own. To change it, edit a key (an edited fill key drops its `src`) and send `motion.fill { base, at: <its frame> }`: only the two gaps beside it are filled again. Fingers, wrist twist and props are not filled. `motion.describe { topic: "fill" }` has the details.
+
+In the Studio, Pose mode has the same workflow on the Sequencer's key bar: **Key** (K) keys the whole pose and the character's spot at the playhead, Shift+K removes it, **Frames** sets the timeline length, and **Fill transition (free spans)** runs `motion.fill` over the keyed frames.
+
+### Model setup (dev server only)
+
+- The fill runs on `onnxruntime-node`, which is not a dependency of the app or the MCP package. Install it once next to the server: `(cd mcp && npm install --no-save onnxruntime-node@1.23)`.
+- The weights are not in this repository. On first use the dev server (`npm run dev`) downloads the MotionBricks SOMA ONNX model from the model's upstream repository and checks its SHA-256. You can also download the file yourself and put it in the cache directory.
+- Cache: `~/.cache/cozyclay/motionbricks/` (or `$XDG_CACHE_HOME/cozyclay/motionbricks/`). `COZYCLAY_MOTIONBRICKS_MODEL=<path to the .onnx file>` uses a file somewhere else.
+- Precision: fp32 by default (`mmm_v6_soma_fp32.onnx`, 758 MB, about 15 ms per call on CPU). `COZYCLAY_MB_PRECISION=fp16` uses `mmm_v6_soma_fp16.onnx` (380 MB, slower on CPU, up to 3.4 cm drift).
+- A static build has no Node side: `motion.fill` answers `CAPABILITY_MISSING`, and `fill: true` compiles with the default interpolation and a note in `output.fill`.
+- License: see `mcp/motionbricks/NOTICE.md`. The user fetches the weights under the model's own license, and no sample motion data is shipped.
+
 ## Skills (`spec.use`)
 
 `use: [{ skill, args, f0 }]` expands, in order, into keys, anchors, props, fits, objects and checks before compile. Each skill starts from the pose the earlier keys leave at its `f0`. Your own `keys` come after the skill keys, so your key on the same frame wins; your own anchors, props and fits replace a skill's of the same name. `output.skills` lists where each skill ends.
