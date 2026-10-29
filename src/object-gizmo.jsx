@@ -6,6 +6,7 @@ import { fitAspect } from "./shot-frame.js";
 import { HANDLE_PROXY_FLAG, claimsPress } from "./gizmo-claim.js";
 import { CUTOUT_KIND, rotatePatch, scalePatch, screenRotatePatch, translatePatch, wrapAngle } from "./scene-objects.js";
 import { dragTravel, dragTurn } from "./held-object-pose.js";
+import { viewportTools } from "./viewport-tools.js";
 import { HeldTrail } from "./held-object-edit.jsx";
 import { ACTIVE_COLOR, ARROW_LEN, AXES, AXIS_VECTORS, BOX_SIZE, CARD_CORNERS, CENTRE_BOX, CORNER_BOX, FAR_HALF_ALPHA, GROUND, PICK_CENTRE_R, PICK_CORNER_R, PICK_SHAFT_R, PICK_TUBE_R,
 	PLANES, PLANE_OFFSET, PLANE_SIZE, RING_R, RING_TUBE, SCREEN_RING_R, SCREEN_SCALE, SHAFT_R, TIP_LEN, TIP_R, gizmoOrigin, gizmoTurn, handleKey } from "./object-gizmo-parts.js";
@@ -306,6 +307,15 @@ export default function ObjectGizmo({ object, objects = [], mode = "move", snap 
 				const patch = {};
 				for (const axis of drag.planeAxes) {
 					Object.assign(patch, translatePatch(drag.start, axis, tools.delta.dot(AXIS_VECTORS[axis]), snapping ? undefined : 0));
+				}
+				if (viewportTools().surfaceSnap && drag.planeAxes.includes("x") && drag.planeAxes.includes("z")) {
+					tools.raycaster.layers.set(0);
+					const surface = tools.raycaster.intersectObjects(scene.children, true).find(hit => {
+						if (!hit.object.isMesh || !hit.object.visible) return false;
+						for (let node = hit.object; node; node = node.parent) if (node.userData?.sceneObjectId === drag.id) return false;
+						return true;
+					});
+					if (surface) patch.y = surface.point.y;
 				}
 				change?.(drag.id, patch, drag.token);
 				return;

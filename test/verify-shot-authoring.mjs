@@ -46,7 +46,7 @@ const shots = [
 	},
 ];
 
-// v5 writes only the canonical body and round-trips per-shot camera blocks.
+// v6 writes only the canonical body and round-trips per-shot camera blocks.
 const authored = {
 	shots,
 	waypoints: [{ id: "waypoint-authored", frame: 60, x: 1.5, z: -2, heading: null }],
@@ -56,7 +56,7 @@ const authored = {
 };
 const document = createShotAuthoringDocument(authored);
 assert.deepEqual(Object.keys(document), ["version", "frameCount", "waypoints", "shots"]);
-assert.equal(document.version, 5);
+assert.equal(document.version, 6);
 const objectRestored = readShotAuthoringDocument(document);
 assert.equal(objectRestored.status, "valid");
 assert.deepEqual(objectRestored.state, {
@@ -82,7 +82,7 @@ assert.equal("followCam" in restored.state, false);
 assert.equal("cameraRail" in restored.state, false);
 assert.deepEqual(restored.state.shots[1].camera.railFollow, { mode: "range", startFrame: 10, endFrame: 80 });
 
-const emptyV4 = readShotAuthoring(JSON.stringify({ version: 5, frameCount: 300, shots: [], waypoints: [] }));
+const emptyV4 = readShotAuthoring(JSON.stringify({ version: 6, frameCount: 300, shots: [], waypoints: [] }));
 assert.equal(emptyV4.status, "valid");
 assert.deepEqual(emptyV4.state.shots, [], "zero Shots is a normal persisted state");
 const highCamera = readShotAuthoring(JSON.stringify({
@@ -314,9 +314,21 @@ assert.equal(readShotAuthoring(JSON.stringify({ version: 4, frameCount: 100 })).
 assert.equal(readShotAuthoring(JSON.stringify({ version: 99, shots: [] })).status, "future");
 assert.equal(loadShotAuthoring("{nope"), null);
 
-assert.equal(SHOT_AUTHORING_KEY, "cozyclay.shot-authoring.v5");
-assert.equal(SHOT_AUTHORING_LEGACY_KEY, "cozyclay.shot-authoring.v4");
-assert.deepEqual(SHOT_AUTHORING_LEGACY_KEYS, ["cozyclay.shot-authoring.v4", "cozyclay.shot-authoring.v3", "cozyclay.shot-authoring.v2", "cozyclay.shot-authoring.v1"]);
-assert.equal(SHOT_AUTHORING_QUARANTINE_KEY, "cozyclay.shot-authoring.v5.quarantine");
+assert.equal(SHOT_AUTHORING_KEY, "cozyclay.shot-authoring.v6");
+assert.equal(SHOT_AUTHORING_LEGACY_KEY, "cozyclay.shot-authoring.v5");
+assert.deepEqual(SHOT_AUTHORING_LEGACY_KEYS, ["cozyclay.shot-authoring.v5", "cozyclay.shot-authoring.v4", "cozyclay.shot-authoring.v3", "cozyclay.shot-authoring.v2", "cozyclay.shot-authoring.v1"]);
+assert.equal(SHOT_AUTHORING_QUARANTINE_KEY, "cozyclay.shot-authoring.v6.quarantine");
+
+const reviewed = loadShotAuthoring(serializeShotAuthoring({ frameCount: 100, shots: [{
+	...shots[0], endFrame: 99,
+	optics: { shiftX: 0.75, shiftY: -0.2, focusTargetId: " character-1 " },
+	review: { burnIn: true, comments: [{ id: "note", frame: 24, text: " Hold this ", resolved: false }, { id: "old", frame: 120, text: "outside" }],
+		annotations: [{ id: "stroke", frame: 24, color: "#ffbf47", points: [[0, 0], [0.5, 0.75]] }] },
+}] }));
+assert.deepEqual(reviewed.shots[0].optics, { shiftX: 0.5, shiftY: -0.2, focusTargetId: "character-1" });
+assert.equal(reviewed.shots[0].review.burnIn, true);
+assert.equal(reviewed.shots[0].review.comments.length, 1);
+assert.equal(reviewed.shots[0].review.comments[0].text, "Hold this");
+assert.equal(reviewed.shots[0].review.annotations.length, 1);
 
 console.log("all shot-authoring checks PASS");

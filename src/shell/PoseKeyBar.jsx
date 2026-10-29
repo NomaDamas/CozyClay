@@ -5,11 +5,15 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { AppContext } from "../app-context.js";
 import { ko } from "../locale.js";
 import { placementOf, poseKeysSpec } from "../motion/pose-fill.js";
+import { applyBreakdownPose, breakdownNeighbors, breakdownPlacement, restoreLocalRig, snapshotLocalRig } from "../motion/pose-breakdown.js";
+import { useStudioShell } from "./studio-shell-context.js";
 
 export default function PoseKeyBar({ frame, frameCount, poseMode, keyedFrames = [], characterId: activeId = null }) {
 	const app = useContext(AppContext);
 	// the field shows the timeline's length unless the user is typing a new one (null: not editing)
 	const [typed, setDraft] = useState(null), [busy, setBusy] = useState(false), [status, setStatus] = useState("");
+	const [breakdownWeight, setBreakdownWeight] = useState(0.5);
+	const { autoKey, setAutoKey, activeRig } = useStudioShell();
 	const draft = typed ?? String(frameCount);
 	const say = text => { setStatus(text); app?.notify?.(text); };
 	const motion = () => app.storeDomain("motion"), characterId = () => activeId;
@@ -32,6 +36,25 @@ export default function PoseKeyBar({ frame, frameCount, poseMode, keyedFrames = 
 	const unkey = () => {
 		if (!keyedFrames.includes(frame)) return;
 		run("ik.removeKey", { characterId: characterId(), frame }).then(() => say(ko(`Key at frame ${frame} removed`, `${frame}프레임 키를 지웠어요`)), error => say(error.message));
+	};
+	const breakdown = () => {
+		const neighbors = breakdownNeighbors(keyedFrames, frame), owner = motion();
+		if (!neighbors) return;
+		try {
+			const id = characterId(), rig = activeRig;
+			if (!rig) throw new Error("The character rig is not loaded.");
+			const keys = owner.layer(id).ikKeys, current = snapshotLocalRig(rig);
+			owner.poseRigAt(id, neighbors.before);
+			const before = snapshotLocalRig(rig);
+			owner.poseRigAt(id, neighbors.after);
+			const after = snapshotLocalRig(rig);
+			owner.poseRigAt(id, frame);
+			restoreLocalRig(rig, current);
+			applyBreakdownPose(rig, before, after, breakdownWeight);
+			const at = breakdownPlacement(placementOf(entry(), keys, neighbors.before), placementOf(entry(), keys, neighbors.after), breakdownWeight);
+			owner.keyAll(id, frame, at);
+			say(ko(`Breakdown keyed at frame ${frame}`, `${frame}프레임에 브레이크다운 키를 저장했어요`));
+		} catch (error) { owner.project?.(); say(error.message); }
 	};
 	const fill = async () => {
 		setBusy(true); setStatus(ko("Generating the transition with MotionBricks…", "MotionBricks로 전환 생성 중…"));
@@ -72,6 +95,12 @@ export default function PoseKeyBar({ frame, frameCount, poseMode, keyedFrames = 
 					title={ko("Key the whole pose and the character's spot at the playhead (K; Shift+K removes)", "재생 위치에 전신 포즈와 위치를 키로 저장 (K, Shift+K로 삭제)")}>
 					{keyedFrames.includes(frame) ? ko(`Unkey f${frame}`, `f${frame} 키 삭제`) : ko(`Key f${frame}`, `f${frame} 키`)}
 				</button>
+				<button type="button" aria-pressed={autoKey} data-testid="pose-auto-key" onClick={() => setAutoKey(value => !value)}
+					title={ko("Apply IK corrections as keys when each drag ends", "드래그가 끝날 때마다 IK 보정을 키로 적용")}>{ko(`Auto-key ${autoKey ? "on" : "off"}`, `오토 키 ${autoKey ? "켜짐" : "꺼짐"}`)}</button>
+				<label title={ko("Breakdown interpolation weight", "브레이크다운 보간 비율")}><span>{ko("Weight", "비율")}</span>
+					<input type="range" min="0.1" max="0.9" step="0.05" value={breakdownWeight} onChange={event => setBreakdownWeight(Number(event.target.value))} />
+					<output>{Math.round(breakdownWeight * 100)}%</output></label>
+				<button type="button" onClick={breakdown} disabled={!breakdownNeighbors(keyedFrames, frame)} data-testid="pose-breakdown">{ko("Breakdown", "브레이크다운")}</button>
 				<button type="button" onClick={fill} disabled={busy || keyedFrames.length < 2} data-fid="pose_fill"
 					title={ko("Transition between two poses (free spans): MotionBricks generates the motion between neighbouring keyed frames, then it compiles, checks and installs", "두 포즈 사이 전환 생성 (자유 구간용): MotionBricks가 이웃한 키 프레임 사이 동작을 만들고 컴파일·검사·설치")}>
 					{busy ? ko("Generating…", "생성 중…") : ko("Fill transition (free spans)", "전환 생성 (자유 구간용)")}

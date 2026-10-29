@@ -99,6 +99,7 @@ export async function exportOffscreenVideo({
 	width,
 	height,
 	capture,
+	decorate = null,
 	signal,
 	passKind = null,
 	onFrame,
@@ -165,12 +166,16 @@ export async function exportOffscreenVideo({
 			if (!(pixels instanceof Uint8Array) || pixels.byteLength !== topDown.byteLength) {
 				throw new Error(`frame ${frame} returned ${pixels?.byteLength ?? 0} RGBA bytes; expected ${topDown.byteLength}`);
 			}
-			const hash = await abortable(pixelHash(pixels), signal);
-			hashes.push(hash);
 			flipRows(pixels, topDown, width, height);
+			const outputPixels = decorate ? decorate(frame, topDown) : topDown;
+			if (!(outputPixels instanceof Uint8ClampedArray) || outputPixels.byteLength !== topDown.byteLength) {
+				throw new Error(`frame ${frame} decoration returned invalid RGBA bytes`);
+			}
+			const hash = await abortable(pixelHash(decorate ? outputPixels : pixels), signal);
+			hashes.push(hash);
 			failureCode = "encode_failed";
 			if (signal?.aborted) throw abortError();
-			const videoFrame = new VideoFrameClass(topDown, {
+			const videoFrame = new VideoFrameClass(outputPixels, {
 				format: "RGBA",
 				codedWidth: width,
 				codedHeight: height,

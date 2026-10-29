@@ -3,9 +3,21 @@ import { ko } from "../locale.js";
 import { Field } from "../ui.jsx";
 import { VIDEO_MODEL_PRESETS } from "../model-presets.js";
 import { useBus } from "../app-context.js";
+import { useStudioShell } from "../shell/studio-shell-context.js";
+import { focusDistance } from "../camera-optics.js";
 
 export default function CameraPanel({ isCameraSelection, shot, moveSequence, cameraKeys, activeShot }) {
 	const { run } = useBus();
+	const { startCameraPerformance, stopCameraPerformance, cameraPerformanceRecording, characters, sceneObjects, shotsDomain, runStudioAction } = useStudioShell();
+	const optics = activeShot?.optics ?? { shiftX: 0, shiftY: 0, focusTargetId: null };
+	const setOptics = patch => activeShot && runStudioAction("shot.setOptics", { shotId: activeShot.id, optics: { ...optics, ...patch } });
+	const focusId = optics.focusTargetId;
+	const focusCharacter = characters.find(entry => entry.id === focusId);
+	const focusObject = sceneObjects.find(entry => entry.id === focusId);
+	const cameraPosition = shotsDomain.state().camera?.position;
+	const focusTarget = focusCharacter ? { x: focusCharacter.x, y: 1.3 * (focusCharacter.scale ?? 1), z: focusCharacter.z }
+		: focusObject ? { x: focusObject.x, y: (focusObject.y ?? 0) + (focusObject.height ?? 0) / 2, z: focusObject.z } : null;
+	const focusMeters = focusDistance(cameraPosition, focusTarget);
 	return (
 <Foldout hidden={!isCameraSelection} title={ko("Camera", "카메라")}>
 						<div className="readout v2-details-readout">
@@ -37,6 +49,29 @@ export default function CameraPanel({ isCameraSelection, shot, moveSequence, cam
 						    re-times or re-crops the shot — the timeline simply warns
 						    when the cut runs past the target's clip length or leaves
 						    its delivery aspects. */}
+						<h3 className="move-head v2-details-subsection-title">{ko("Camera performance", "퍼포먼스")}</h3>
+						<button type="button" className="btn full" data-testid="camera-performance-record" disabled={!activeShot}
+							onClick={cameraPerformanceRecording ? stopCameraPerformance : startCameraPerformance}>
+							{cameraPerformanceRecording ? ko("Stop + save keys", "정지 + 키 저장") : ko("Record walk camera", "Walk 녹화")}
+						</button>
+						<p className="inspector-hint">{ko("Enters Look through. Right-drag and WASD record the shot; Stop writes one undo step.", "샷 시점으로 전환됩니다. 오른쪽 드래그·WASD로 촬영하고 정지하면 한 번의 실행 취소로 저장됩니다.")}</p>
+
+						<h3 className="move-head v2-details-subsection-title">{ko("Optics", "광학")}</h3>
+						<div className="v2-details-grid-2">
+							<Field label={ko("Shift X", "시프트 X")}><input type="number" min="-0.5" max="0.5" step="0.01" value={optics.shiftX ?? 0} disabled={!activeShot}
+								onChange={event => setOptics({ shiftX: Number(event.target.value) })} /></Field>
+							<Field label={ko("Shift Y", "시프트 Y")}><input type="number" min="-0.5" max="0.5" step="0.01" value={optics.shiftY ?? 0} disabled={!activeShot}
+								onChange={event => setOptics({ shiftY: Number(event.target.value) })} /></Field>
+						</div>
+						<Field label={ko("Focus target", "초점 대상")}>
+							<select value={focusId ?? ""} disabled={!activeShot} onChange={event => setOptics({ focusTargetId: event.target.value || null })}>
+								<option value="">{ko("None", "없음")}</option>
+								{characters.map(entry => <option key={entry.id} value={entry.id}>{entry.name ?? entry.id}</option>)}
+								{sceneObjects.map(entry => <option key={entry.id} value={entry.id}>{entry.name ?? entry.id}</option>)}
+							</select>
+						</Field>
+						{focusMeters !== null && <p className="inspector-hint" data-testid="focus-distance">{ko(`Focus distance ${focusMeters.toFixed(2)} m · included in review burn-in`, `초점 거리 ${focusMeters.toFixed(2)} m · 리뷰 번인에 포함`)}</p>}
+
 						<h3 className="move-head v2-details-subsection-title">{ko("Target model", "타깃 모델")}</h3>
 						<p className="inspector-hint v2-details-hint">
 							{ko("The timeline flags this shot when the cut runs past the model's clip length or leaves its delivery ratios. Nothing is re-timed or re-cropped.", "컷 길이나 화면 비율이 모델 한계를 벗어나면 타임라인이 표시해줘요. 자동으로 재조정하지는 않습니다.")}

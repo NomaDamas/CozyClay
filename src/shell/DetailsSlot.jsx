@@ -3,6 +3,7 @@ import { ko } from "../locale.js";
 import { detailsSelection } from "./details-selection.js";
 import LightPanel from "../panels/LightPanel.jsx";
 import CameraPanel from "../panels/CameraPanel.jsx";
+import ReviewPanel from "../panels/ReviewPanel.jsx";
 import SubjectsPanel from "../panels/SubjectsPanel.jsx";
 import CharacterTransformPanel from "../panels/CharacterTransformPanel.jsx";
 import RigPanel from "../panels/RigPanel.jsx";
@@ -129,6 +130,7 @@ export default function DetailsSlot() {
 			    selecting the camera now switches to Camera mode so the bar's
 			    controls are on screen when this panel opens. */}
 			<CameraPanel isCameraSelection={isCameraSelection} shot={shot} moveSequence={moveSequence} cameraKeys={cameraKeys} activeShot={activeShot} />
+			<ReviewPanel hidden={!isCameraSelection} />
 
 		<SubjectsPanel
 			isCharacterSelection={isCharacterSelection}

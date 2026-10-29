@@ -81,7 +81,7 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 		bodyContact, shots, shotAspectKey, activeShotIdx, railDraw,
 		pathDraw, pathTarget, setPathDraw, setRailDraw, setWorkspaceLayout,
 		changeSceneObject, timingTokenRef, beginSceneTransaction, endSceneTransaction, railCurve,
-		posing, ikAddKeyframe, ikDeleteKeyframe, setRangePinSelection, setIkEditTool,
+		posing, ikAddKeyframe, ikDeleteKeyframe, ikMoveKeyframe, setRangePinSelection, setIkEditTool,
 		setBodyContact, setToast, setFootSnap, setTlFrame, advanceFrame,
 		stepFrame, cameraPreviewEndRef, manualCameraOverrideRef, setTlPlaying, toggleWaypointMode,
 		setWaypointMode, selectActiveCharacterInHierarchy, setActiveWaypointId, setPendingWaypointFrame, removeWaypoint,
@@ -291,6 +291,7 @@ export default function BottomDock({ tab: requestedTab = "animation", onTabChang
 			shotCutDisabled={!!posing || ikMode || waypointMode}
 			onIkKeyframeAdd={ikAddKeyframe}
 			onIkKeyframeRemove={ikDeleteKeyframe}
+			onIkKeyframeMove={ikMoveKeyframe}
 			onPinSelect={(id) => { setRangePinSelection(id); setIkEditTool("pin"); }}
 			onBodyContactToggle={() => {
 				setBodyContact((v) => {

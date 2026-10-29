@@ -121,4 +121,6 @@ export const ZH_APP = {
 	"Low Angle": "低角度",
 	"High Angle": "高角度",
 	"Saved scenes were written by a newer CozyClay — they have been left untouched and this session will not save": "已保存的场景由更新版本的 CozyClay 创建 — 已保持原样，本次会话也不会保存",
+	"Recording camera performance — right-drag and WASD to shoot; Stop saves editable keys": "正在录制摄影机运动 — 右键拖动和 WASD 拍摄；停止后保存可编辑关键帧",
+	"No camera performance was recorded": "未录制到摄影机运动",
 };

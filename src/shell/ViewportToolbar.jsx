@@ -11,6 +11,7 @@ import { saveAutoColor } from "../auto-color.js";
 import { trackFeature } from "../analytics.js";
 import { GUIDE_LABELS, nextGuideMode } from "../shot-guides.js";
 import GhostsMenuGroup from "./GhostsMenuGroup.jsx"; import { addCameraShot } from "./add-camera-shot.js"; import { addCharacterEntries } from "./add-character-entries.js";
+import { toggleViewportTool, useViewportTools } from "../viewport-tools.js";
 import "./viewport.css";
 
 // G1: the single mode+tool pill. Keys 1-5 and W/E/R are bound in App's
@@ -119,11 +120,12 @@ export default function ViewportToolbar() {
 		setNonce, workspaceLayout, viewMenuTriggerRef, viewMenuOpen,
 		setViewMenuOpen, viewLooksActive, gridView, setGridView, guideMode,
 		autoColor, setAutoColor, isCharacterSelection, partColoursChoice, embedMode,
-		agentCollapsed, addSceneObject, spawnCharacter, characters, flySpeed,
+		agentCollapsed, addSceneObject, spawnCharacter, characters, flySpeed, frameAll, setAxisView,
 		ikEditTool, setIkEditTool, motion, setRangePinPartPick,
 		previsMode, castStyle, sculptView, requestSculptView, sculptParts, appContext, setToast,
 	} = useStudioShell();
 	const menu = useOverlayMenu();
+	const viewportTools = useViewportTools();
 
 	const setAutoColorOn = (next) => {
 		if (next === autoColor) return;
@@ -375,6 +377,10 @@ export default function ViewportToolbar() {
 							<div className="vp-menu" role="menu" aria-label={ko("Views and shot cameras", "보기와 샷 카메라")}>
 								<span className="vp-menu-label">{ko("View", "보기")}</span>
 								<MenuItem checked onClick={menu.close}>{ko("Perspective", "원근")}</MenuItem>
+								<MenuItem role="menuitem" data-testid="view-frame-all" onClick={() => { frameAll(); menu.close(); }}>{ko("Frame all (Home)", "전체 프레임 (Home)")}</MenuItem>
+								<MenuItem role="menuitem" data-testid="view-front" onClick={() => { setAxisView("front"); menu.close(); }}>{ko("Front", "정면")}</MenuItem>
+								<MenuItem role="menuitem" data-testid="view-side" onClick={() => { setAxisView("side"); menu.close(); }}>{ko("Side", "측면")}</MenuItem>
+								<MenuItem role="menuitem" data-testid="view-top-axis" onClick={() => { setAxisView("top"); menu.close(); }}>{ko("Top view", "상면")}</MenuItem>
 								<MenuItem
 									role="menuitemcheckbox"
 									checked={!workspaceLayout.insetCollapsed}
@@ -529,6 +535,9 @@ export default function ViewportToolbar() {
 									<small>{ko(GUIDE_LABELS[guideMode].en, GUIDE_LABELS[guideMode].ko, GUIDE_LABELS[guideMode].zh)}</small>
 								</button>
 								<GhostsMenuGroup />
+								<MenuItem role="menuitemcheckbox" data-testid="view-xray" checked={viewportTools.xray} onClick={() => toggleViewportTool("xray")}>{ko("X-Ray", "X-Ray")}</MenuItem>
+								<MenuItem role="menuitemcheckbox" data-testid="surface-snap" checked={viewportTools.surfaceSnap} onClick={() => toggleViewportTool("surfaceSnap")}>{ko("Surface snap", "표면 스냅")}</MenuItem>
+								<MenuItem role="menuitemcheckbox" data-testid="measure-tool" checked={viewportTools.measure} onClick={() => toggleViewportTool("measure")}>{ko("Ruler — pick two surface points", "룰러 — 표면 두 점 선택")}</MenuItem>
 								{/* Part colours repaint a BODY, so the section only exists
 								    while a character is selected (R2). */}
 								{isCharacterSelection && (

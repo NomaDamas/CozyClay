@@ -30,9 +30,10 @@ const tools = [
 const legacyIk = ['character.setIkKey', 'character.removeIkKey', 'character.clearIkKeys'].map(studioActionDeclaration);
 const ik = legacyIk.map((entry, index) => ({ ...entry, id: ['ik.setKey', 'ik.removeKey', 'ik.clearKeys'][index] }));
 
+const moveIk = { ...mutation('ik.moveKey', 'Move IK key', { characterId: id, from: frame, to: frame }), exposure: 'ui-only' };
 const clear = { id: 'motion.clear', label: 'Clear motion', description: 'Clear the character\'s compiled take and its IK corrections.',
 	kind: 'mutation', undoDomain: 'motion', input: { type: 'object', properties: { characterId: { type: 'string' } }, required: ['characterId'], additionalProperties: false } };
-export const declarations = Object.freeze([...tools, ...rangePins, ...edits, ...timingDeclarations, ...legacyIk, ...ik, clear]);
+export const declarations = Object.freeze([...tools, ...rangePins, ...edits, ...timingDeclarations, ...legacyIk, ...ik, moveIk, clear]);
 
 export function register(registry, ports) {
 	const owner = () => ports.storeDomain('motion');
@@ -77,6 +78,12 @@ export function register(registry, ports) {
 			else ports.clearCharacterIkKeys(args.characterId);
 			return { affectedIds: [character.id], summary: declaration.label };
 		} });
+	registry.register({ ...moveIk, available: mounted, run({ characterId, from, to }) {
+		characterOf(ports, characterId);
+		if (to >= ports.state().frameCount) fail('INVALID_RANGE', 'IK frame is outside the timeline.');
+		owner().moveKey(characterId, from, to);
+		return { affectedIds: [characterId], summary: moveIk.label };
+	} });
 	registry.register({ ...clear, available: () => Boolean(ports.storeDomain?.('motion')) || typeof ports.clearMotionNative === 'function' || 'The motion owner is not mounted.',
 		run({ characterId }) {
 			if (ports.storeDomain?.('motion')) { characterOf(ports, characterId); owner().clear(characterId); }
