@@ -12,19 +12,25 @@
 //               nothing after it; no goals, checks or moving objects) and the first with no POP, REACH,
 //               SLIDE, FLOAT, FLIP or KNEE issue between f0 and its end wins (at most TRIALS compiles): the
 //               best on-time ones, then the top few again with a longer swing, a longer first stride or a
-//               lower lift (a quick walk often needs one of them), then the late ones, earliest first.
+//               lower lift (a quick walk often needs one of them), then the late ones, earliest first;
+//               a spec that carries an object (spec.objects with keys or a prop) checks only the first
+//               CARRY_TRIALS: the probe leaves the object out, so the hands on it miss, pop or flip on
+//               every candidate and the issues past the best on-time ones say little (bench box, M2:
+//               22 probes, 33-57 s of one compile on the Mac, ~1.6x that on the box).
 // When no walk ends by arrive (the distance is too far for the frames), the earliest clean one is
 // taken and the note says the speed the request needs and the frame it ends. The spec keeps arrive (a
 // recompile plans the same walk again, cached); observations.planned reads what was chosen.
 import { expandUse } from "./skills/index.js";
 import { stateAt } from "./compiler/walk.js";
 
-const WALK_RATIO = 9.7, STRIDE_MIN = 0.25, STRIDE_MAX = 0.75, SWING = 0.88, SLOW = 0.5, TRIALS = 22, LATE = 4, FPS = 24;
+const WALK_RATIO = 9.7, STRIDE_MIN = 0.25, STRIDE_MAX = 0.75, SWING = 0.88, SLOW = 0.5, TRIALS = 22, CARRY_TRIALS = 6, LATE = 4, FPS = 24;
 const PERIODS = Array.from({ length: 16 }, (_, i) => 9 + i);
 const PLANNED = ["steps", "period", "step", "swing"];
 const WALK_KINDS = new Set(["POP", "REACH", "SLIDE", "FLOAT", "FLIP", "KNEE"]);
 const cache = new Map();
 const r2 = x => Math.round(x * 100) / 100;
+/** An object the body carries: keyed along a path or gripped as a prop (a door on its pivot is not). */
+const carries = spec => Object.values(spec?.objects ?? {}).some(o => (Array.isArray(o?.keys) && o.keys.length > 0) || Boolean(o?.prop));
 
 /** The walkTo uses that plan their cadence: [{ i, u }]. */
 const toPlan = spec => (Array.isArray(spec?.use) ? spec.use : []).map((u, i) => ({ i, u }))
@@ -74,9 +80,9 @@ const walkIssues = (qa, f0, end) => qa.groups.filter(g => WALK_KINDS.has(g.kind)
  * the args in). trial(spec) -> QA of a compile of that spec (pipeline.js), or throws.
  */
 export function planWalks(spec, { sk, scene, trial }) {
-	const plans = [];
+	const plans = [], trials = carries(spec) ? CARRY_TRIALS : TRIALS;
 	for (const { i, u } of toPlan(spec)) {
-		const key = JSON.stringify([spec.keys, spec.use.slice(0, i + 1), spec.anchors, spec.props, spec.fits, spec.fix, scene?.objects ?? null]);
+		const key = JSON.stringify([spec.keys, spec.use.slice(0, i + 1), spec.anchors, spec.props, spec.fits, spec.fix, scene?.objects ?? null, trials]);
 		if (cache.has(key)) { plans.push(cache.get(key)); continue; }
 		const before = spec.use.slice(0, i).filter(x => x.f0 < u.f0);
 		let state, ends = [];
@@ -94,7 +100,7 @@ export function planWalks(spec, { sk, scene, trial }) {
 		};
 		let chosen = null, tried = 0, best = null, onTried = 0;
 		const order = [...onTime.slice(0, 6), ...onTime.slice(0, 3).flatMap(c => variants(c, d))].slice(0, TRIALS - LATE);
-		for (const c of [...order, ...late.slice(0, TRIALS - order.length)]) {
+		for (const c of [...order, ...late.slice(0, TRIALS - order.length)].slice(0, trials)) {
 			let issues;
 			try { issues = walkIssues(trial(probe(c)), u.f0, c.end); } catch { issues = Infinity; }
 			tried++; onTried += c.late ? 0 : 1;
