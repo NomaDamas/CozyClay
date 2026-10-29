@@ -24,9 +24,11 @@ import { noteDraftCompiled } from "../motion-draft-telemetry.js";
 import { carryEdit } from "../motion3/edit-carry.js";
 import { normalizeCompileArgs } from "../motion3/lenient.js";
 import { createCompileRunner } from "./motion3-compile.js";
+import { createRoundWatch } from "./motion3-rounds.js";
 import { createRepairWatch } from "../motion3/repair-watch.js";
 import { peopleOf } from "../motion3/people.js";
 import { hybridCapsuleHint } from "../motion3/hybrid-hint.js";
+import { patchTooBroad } from "../motion3/patch-guard.js";
 
 const TIMELINE_FPS = 24;
 const id = { type: "string", minLength: 1 };
@@ -43,7 +45,7 @@ const declarations = Object.freeze([
 		// patch may be empty: base alone (or patch: []) re-measures the stored spec, with new probes; "never" is install: false
 		input: input({ characterId: id, spec: openObject, base: specId, patch: { type: "array", items: openObject, maxItems: 64 },
 			install: { oneOf: [{ type: "boolean" }, { const: "ifClean" }, { const: "never" }], default: true },
-			probes: list(openObject, 16), repair: input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []) }, ["characterId"]) },
+			probes: list(openObject, 16), repair: { oneOf: [input({ rounds: { type: "integer", minimum: 1, maximum: 8, default: 4 } }, []), { const: false }] }, thin: { type: "boolean" } }, ["characterId"]) },
 	{ id: "motion.qa", label: "Measure motion", kind: "job", domain: "motion", timeoutMs: 240000, readOnly: true, description: HELP.qa,
 		input: input({ characterId: id, checks: openObject }, ["characterId"]) },
 	{ id: "motion.sample", label: "Sample motion", kind: "job", domain: "motion", timeoutMs: 30000, readOnly: true, description: HELP.sample,
@@ -90,7 +92,8 @@ function asArgument(run) {
 export function register(registry, ports) {
 	const store = createSpecStore();
 	// the stop rule: output.stuck when more compiles stopped paying (repair-watch.js)
-	const watch = createRepairWatch();
+	const watch = createRepairWatch(), compiledOnce = new Set();
+	const rounds = createRoundWatch(); // output.noImprovementRounds (motion3-rounds.js)
 	const owner = () => ports.storeDomain("motion");
 	const mounted = () => Boolean(ports.storeDomain?.("motion")) || "The motion owner is not mounted.";
 	const always = () => true;
@@ -119,6 +122,21 @@ export function register(registry, ports) {
 	};
 	// where a take was baked: the body's place and a hash of the scene's bodies (a take kept for the stop rule fits only
 	// there): 0.14 ms for 860 bodies, where their JSON took 0.9 ms and 295 KB a key
+	const issues = groups => groups.reduce((n, g) => n + (g.count ?? 1), 0);
+	const beatsInstalled = (characterId, qa) => {
+		const on = owner().motionFor(characterId);
+		if (!on?.spec) return true;
+		const was = store.parts(specIdOf(on.spec))?.groups;
+		return Array.isArray(was) && (qa.groups.length < was.length || (qa.groups.length === was.length && issues(qa.groups) < issues(was)));
+	};
+	// INSTALL_WORSE (variant M, sit-l-r1: a 1-problem take overwritten by a 4-problem recompile): install: true still installs, and
+	// says so when the take it replaces had fewer QA problems; a take whose QA this session never measured gets no note
+	const installWorse = (characterId, qa) => {
+		const on = owner().motionFor(characterId), onId = on?.spec ? specIdOf(on.spec) : null, was = onId && store.parts(onId)?.groups;
+		if (!Array.isArray(was)) return null;
+		const before = qaProblems({ groups: was, ok: was.length === 0 }), now = qaProblems(qa);
+		return before < now ? `INSTALL_WORSE: replaced the installed take ${onId} (${before} QA problem${before === 1 ? "" : "s"}) with this one (${now}); install: "ifClean" keeps the better take` : null;
+	};
 	const placeKey = (character, scene) => {
 		let h = 2166136261;
 		const mix = v => { h = Math.imul(h ^ Math.round(v * 1e4), 16777619); };
@@ -154,7 +172,7 @@ export function register(registry, ports) {
 		: fail("TARGET_NOT_READY", "This character has no compiled take; run motion.compile first.");
 
 	// normalizeArgs: other spellings of install and repair become the declared ones before the schema check (lenient.js)
-	registry.register({ ...declarations[0], normalizeArgs: normalizeCompileArgs, available: mounted, target: args => args.characterId, run({ characterId, spec, base, patch, install: asked = true, probes, repair }, context) {
+	registry.register({ ...declarations[0], normalizeArgs: normalizeCompileArgs, available: mounted, target: args => args.characterId, run({ characterId, spec, base, patch, install: asked = true, probes, repair, thin }, context) {
 		const install = asked === "never" ? false : asked;
 		const character = characterOf(ports, characterId);
 		if ((spec === undefined) === (base === undefined)) fail("INVALID_ARGUMENT", "Send exactly one of spec or base (the specId of a compiled spec, with patch).");
@@ -164,11 +182,22 @@ export function register(registry, ports) {
 		const patched = [], source = spec ?? asArgument(() => applyPatch(store.get(base) ?? installedSpec() ?? unknownSpec("base", base), patch ?? [], patched));
 		const scene = sceneFor(character), at = placeKey(character, scene);
 		// the take is always baked: the user watches every draft, installed or not
-		return after(compile(character, source, { probes, repair }, {}, context?.taskId, scene), r => {
+		// the repair engine runs by default (2 rounds) on an installing compile; repair: false opts out (deep research 5: hand-keyed sessions
+		// repaired 93% of first compiles, ours 2-4%, and without it the hints carry no patch)
+		// rounds 2 on a character's first compile, 1 on the repeats (variant I: repair cost +20 s a step on 45% of the compiles)
+		const repairWith = repair === false ? undefined : repair ?? (install === false ? undefined : { rounds: compiledOnce.has(characterId) ? 1 : 2 });
+		compiledOnce.add(characterId);
+		// the frames this patch touched stay through key thinning (thin.js)
+		const before = base === undefined ? null : store.get(base) ?? installedSpec(), keysAt = (sp, f) => JSON.stringify((sp?.keys ?? []).filter(k => k.f === f));
+		const protect = before ? [...new Set((source.keys ?? []).map(k => k.f))].filter(f => keysAt(before, f) !== keysAt(source, f)) : [];
+		return after(compile(character, source, { probes, repair: repairWith, installing: install !== false, thin, protect }, {}, context?.taskId, scene), r => {
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
-			// ifClean: install only a clean final result (qa.ok includes the goals; after repair when asked)
-			const wanted = install === "ifClean" ? qa.ok : install;
+			// ifClean: install a clean result (qa.ok includes the goals; after repair when asked), and one that beats the installed
+			// take's QA (fewer groups, then fewer frame issues) or the first when none is on (variant K: box ended with no take in 4 of
+			// 5 runs under ifClean / never); a take whose QA this session never measured is replaced only by a clean one
+			const wanted = install === "ifClean" ? qa.ok || beatsInstalled(characterId, qa) : install;
 			let installs = wanted, kept = false, timing;
+			const worse = install === true ? installWorse(characterId, qa) : null;
 			// open ranges are stored with the values the search chose, so motion.qa re-measures this take
 			if (wanted) {
 				// ifClean of the take already installed changes nothing (no undo entry; IK edits on it stay)
@@ -184,13 +213,14 @@ export function register(registry, ports) {
 			const self = best?.specId === own, how = kept ? "; already installed, unchanged" : self ? "; installed as the best take so far"
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
 			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}) });
+			const flat = rounds(characterId, qa, base === undefined), broad = patchTooBroad(patch);
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad || worse ? { notes: [broad, worse].filter(Boolean) } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(r.thinned ? { thinned: r.thinned } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });
 			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
 			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
-			return { affectedIds: installs || best ? [characterId] : [], summary: `Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.`, output, ...workerWarning() };
+			return { affectedIds: installs || best ? [characterId] : [], summary: `Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${install !== false && qaProblems(qa) === 0 ? " QA clean — done (no further rounds)." : ""}${installs || kept || self ? ` Installed take: ${output.specId}.` : best ? ` Installed take: ${best.specId}.` : ""}${r.thinned ? ` Thinned ${r.thinned.removed.length} free-span key${r.thinned.removed.length === 1 ? "" : "s"} QA did not need (output.thinned).` : ""}`, output, ...workerWarning() };
 		});
 	} });
 	registry.register({ ...declarations[1], available: mounted, run({ characterId, checks }) {
