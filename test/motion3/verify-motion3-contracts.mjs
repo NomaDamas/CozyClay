@@ -237,7 +237,7 @@ const slips = [], relaxed = relaxSpec({ frames: 60, goals: [{ name: "g", near: [
 expect("C19: a goal window past the clip is cut, one wholly past it is left; a free pos-only key takes its scene turn; one note each",
 	JSON.stringify(relaxed.goals.map(g => g.at)) === "[[50,59],[70,80]]" && JSON.stringify(relaxed.objects[CUP.group].keys[0].rot) === "[0,0,0,1]" && slips.length === 2, JSON.stringify(slips));
 expect("C19: verify_result frames are pulled into the range; install and repair spellings are the declared ones", JSON.stringify(clampFrames([10, 60], [0, 47])) === JSON.stringify({ frames: [10, 47], adjusted: "frames 60 lie outside 0..47: drawn at 47" })
-	&& JSON.stringify(normalizeCompileArgs({ install: "always", repair: { rounds: 0 } })) === JSON.stringify({ install: true }));
+	&& JSON.stringify(normalizeCompileArgs({ install: "always", repair: { rounds: 0 } })) === JSON.stringify({ install: true, repair: false }));
 
 if (failures) { console.error(`${failures} motion3 contract check(s) failed`); process.exit(1); }
 console.log("motion3 contracts: all checks passed");
