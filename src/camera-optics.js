@@ -19,6 +19,7 @@ export function repairOptics(value) {
  * fractions of that gate. */
 export function applyCameraOptics(camera, optics) {
 	if (!camera) return;
+	const aspect = camera.aspect;
 	camera.clearViewOffset();
 	if (!optics || (!optics.shiftX && !optics.shiftY)) {
 		camera.updateProjectionMatrix();
@@ -26,6 +27,9 @@ export function applyCameraOptics(camera, optics) {
 	}
 	const gate = 1000;
 	camera.setViewOffset(gate, gate, -(optics.shiftX ?? 0) * gate, (optics.shiftY ?? 0) * gate, gate, gate);
+	// Three's setViewOffset also replaces aspect with fullWidth/fullHeight.
+	// The shot's delivery ratio is not the virtual gate's ratio.
+	camera.aspect = aspect;
 	camera.updateProjectionMatrix();
 }
 

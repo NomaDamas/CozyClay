@@ -53,6 +53,7 @@ const focusId = await evaluate(`window.__cozyclay.characters[0]?.id ?? window.__
 await evaluate(`window.__cozyclay.runStudioAction("shot.setOptics", { shotId: ${JSON.stringify(shotId)}, optics: { shiftX: 0.1, shiftY: -0.05, focusTargetId: ${JSON.stringify(focusId)} } })`);
 await sleep(250);
 expect("lens shift reaches the live shot camera", await evaluate(`window.__cozyclay.shotCam.view?.enabled === true`));
+expect("lens shift preserves the delivery aspect", await evaluate(`Math.abs(window.__cozyclay.shotCam.aspect - 16 / 9) < 1e-9`));
 expect("focus distance is visible", focusId ? await wait(`!!document.querySelector('[data-testid="focus-distance"]')`) : true);
 
 await evaluate(`window.__cozyclay.runStudioAction("shot.setReview", { shotId: ${JSON.stringify(shotId)}, review: { burnIn: true, comments: [], annotations: [] } })`);
@@ -81,6 +82,18 @@ for (const [type, x, y, buttons] of [["mousePressed", 650, 350, 2], ["mouseMoved
 await sleep(300);
 await click('[data-testid="camera-performance-record"]');
 expect("camera recording saves editable keys", await evaluate(`document.querySelectorAll(".tl-marker.cam").length >= 2`));
+const firstShotKeyCount = await evaluate(`document.querySelectorAll(".tl-marker.cam").length`);
+await evaluate(`window.__cozyclay.runStudioAction("shot.create")`);
+await wait(`document.querySelectorAll(".tl-shot-block").length === 2`);
+await evaluate(`document.querySelectorAll(".tl-shot-block")[1].click()`); await sleep(200);
+const secondShotId = await evaluate(`window.__cozyclay.activeShotId()`);
+await click('[data-testid="camera-performance-record"]');
+await evaluate(`document.querySelectorAll(".tl-shot-block")[0].click()`); await sleep(150);
+await click('[data-testid="camera-performance-record"]');
+await evaluate(`document.querySelectorAll(".tl-shot-block")[1].click()`); await sleep(200);
+expect("recording after a shot switch lands on the original shot", await evaluate(`window.__cozyclay.shotCameraKeyCount(${JSON.stringify(secondShotId)}) >= 2`));
+await evaluate(`document.querySelectorAll(".tl-shot-block")[0].click()`); await sleep(150);
+expect("switching shots does not append to the other recording", await evaluate(`window.__cozyclay.shotCameraKeyCount(${JSON.stringify(shotId)}) === ${firstShotKeyCount}`));
 await evaluate(`window.__cozyclay.setLookThrough(false)`);
 const beforeFrameAll = await evaluate(`window.__cozyclay.editorCam.position.toArray()`);
 await click('[data-testid="view-camera-trigger"]'); await click('[data-testid="view-frame-all"]');

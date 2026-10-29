@@ -31,6 +31,7 @@ applyCameraOptics(camera, { shiftX: 0.1, shiftY: -0.2 });
 assert.equal(camera.view.enabled, true);
 assert.equal(camera.view.offsetX, -100);
 assert.equal(camera.view.offsetY, -200);
+assert.equal(camera.aspect, 16 / 9, "lens shift must not change the delivery aspect ratio");
 applyCameraOptics(camera, null);
 assert.equal(camera.view.enabled, false, "switching shots cannot leak lens shift");
 assert.equal(focusDistance({ x: 0, y: 0, z: 0 }, { x: 0, y: 3, z: 4 }), 5);

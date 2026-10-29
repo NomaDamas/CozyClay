@@ -2740,7 +2740,7 @@ export default function App() {
 	// CaptureRig reads the shot camera's WebGLRenderTarget, and WebCodecs receives
 	// exactly one VideoFrame for every address in the inclusive export range.
 	const [recState, setRecState] = useState("idle"); // "idle" | "recording"
-	const recRef = useRef(null), cameraPerformanceRef = useRef(null);
+	const recRef = useRef(null), cameraPerformanceRef = useRef(null), cameraPerformanceShotRef = useRef(null);
 	const tlFrameRef = useRef(0);
 	tlFrameRef.current = tlFrame;
 	const [exportStatus, setExportStatus] = useState(null);
@@ -2755,14 +2755,13 @@ export default function App() {
 		const started = cameraPerformanceRef.current.start({ startFrame: activeShot.startFrame, endFrame: activeShot.endFrame, fps: tlFps });
 		if (!started) return false;
 		enterShotLook();
-		manualCameraOverrideRef.current = true;
+		cameraPerformanceShotRef.current = activeShot.id; manualCameraOverrideRef.current = true;
 		setCameraPerformanceRecording(true);
 		setToast(ko("Recording camera performance — right-drag and WASD to shoot; Stop saves editable keys", "퍼포먼스 녹화 중 — 오른쪽 드래그와 WASD로 촬영하고 Stop으로 키를 저장하세요"));
 		return true;
 	}
 	function stopCameraPerformance() {
-		const shotId = activeShot?.id;
-		const keys = cameraPerformanceRef.current?.stop() ?? [];
+		const shotId = cameraPerformanceShotRef.current, keys = cameraPerformanceRef.current?.stop() ?? []; cameraPerformanceShotRef.current = null;
 		setCameraPerformanceRecording(false);
 		manualCameraOverrideRef.current = false;
 		if (!shotId || !keys.length) { setToast(ko("No camera performance was recorded", "녹화된 퍼포먼스가 없습니다")); return null; }
@@ -3732,7 +3731,7 @@ export default function App() {
 			// effect does not depend on the shot list, so a closure over it would
 			// answer with the cut as it stood when the effect last ran.
 			captureMeta: (frame) => appContext.live.state.captureShotMeta(frame ?? appContext.live.state.timeline.currentFrame),
-			activeShotId: () => appContext.live.state.activeShotId,
+			activeShotId: () => appContext.live.state.activeShotId, shotCameraKeyCount: (shotId) => appContext.live.state.shots.find(entry => entry.id === shotId)?.cameraKeys.length ?? 0,
 			// QA-only reference slots (#167): set the pictures a headless run cannot
 			// reach through a file dialog, then take the capture the live
 			// capture_framing_png command returns — references included.
