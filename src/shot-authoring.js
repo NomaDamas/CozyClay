@@ -12,22 +12,25 @@ import { VIDEO_MODEL_PRESETS } from "./model-presets.js";
 import { elementByPath } from "./studio-elements.js";
 import { isImageAssetId } from "./scene-assets.js";
 import { createCharacterEntry } from "./scenes.js";
+import { repairOptics } from "./camera-optics.js";
+import { repairReview } from "./shot-review.js";
 
 const VIDEO_MODEL_IDS = new Set(VIDEO_MODEL_PRESETS.map((preset) => preset.id));
 const CAMERA_KEY_LIMITS = elementByPath("shot.cameraKeys");
 
-export const SHOT_AUTHORING_VERSION = 5;
-export const SHOT_AUTHORING_KEY = "cozyclay.shot-authoring.v5";
+export const SHOT_AUTHORING_VERSION = 6;
+export const SHOT_AUTHORING_KEY = "cozyclay.shot-authoring.v6";
 // The single-key alias points at the newest legacy body for older callers.
 // New readers should walk the list so a user can still arrive directly from v1.
-export const SHOT_AUTHORING_LEGACY_KEY = "cozyclay.shot-authoring.v4";
+export const SHOT_AUTHORING_LEGACY_KEY = "cozyclay.shot-authoring.v5";
 export const SHOT_AUTHORING_LEGACY_KEYS = Object.freeze([
 	SHOT_AUTHORING_LEGACY_KEY,
+	"cozyclay.shot-authoring.v4",
 	"cozyclay.shot-authoring.v3",
 	"cozyclay.shot-authoring.v2",
 	"cozyclay.shot-authoring.v1",
 ]);
-export const SHOT_AUTHORING_QUARANTINE_KEY = "cozyclay.shot-authoring.v5.quarantine";
+export const SHOT_AUTHORING_QUARANTINE_KEY = "cozyclay.shot-authoring.v6.quarantine";
 
 /** A still holds one picture for `endFrame - startFrame + 1` frames (24 fps). */
 export const STILL_HOLD_DEFAULT = 48;
@@ -183,11 +186,13 @@ function repairShots(entries, frameCount, inheritedCamera = null, ids = new Set(
 		// from a newer build is dropped rather than kept, because the badge must
 		// never cite a preset this build cannot describe.
 		const targetModel = VIDEO_MODEL_IDS.has(entry.targetModel) ? { targetModel: entry.targetModel } : null;
+		const optics = repairOptics(entry.optics);
 		const nextStart = ordered[index + 1]?.startFrame ?? frameCount;
 		// Pre-overlay v3 bodies had no endFrame and were gapless by definition.
 		// Infer their old boundary exactly; new bodies persist an explicit end.
 		const storedEnd = finite(entry.endFrame) ? Math.round(entry.endFrame) : nextStart - 1;
 		const endFrame = Math.max(startFrame, Math.min(frameCount - 1, nextStart - 1, storedEnd));
+		const review = repairReview(entry.review, { startFrame, endFrame });
 		return {
 			id: entry.id,
 			name: typeof entry.name === "string" && entry.name.trim() ? entry.name.trim() : `Shot ${index + 1}`,
@@ -196,6 +201,8 @@ function repairShots(entries, frameCount, inheritedCamera = null, ids = new Set(
 			cameraKeys: repairKeys(entry.cameraKeys, startFrame, endFrame, ids),
 			camera: repairCamera(inheritedCamera ?? entry.camera),
 			...targetModel,
+			...(optics ? { optics } : {}),
+			...(review ? { review } : {}),
 			kind: SHOT_KINDS.has(entry.kind) ? entry.kind : "clip",
 			caption: repairCaption(entry.caption),
 			cast: repairCast(entry.cast),
@@ -372,9 +379,8 @@ export function readShotAuthoringDocument(raw) {
 	}
 	const ids = new Set();
 	return {
-		// A v3 body was authored on the old clock and a v4 body lacks the v5
-		// kind/caption/cast/stylizedAssetId defaults; both are rewritten, so they
-		// report as migrated, not valid.
+		// Older bodies were authored on another clock or lack newer shot fields;
+		// all are rewritten, so they report as migrated, not valid.
 		status: version < SHOT_AUTHORING_VERSION ? "migrated" : "valid",
 		state: { ...repairShared(parsed, frameCount, ids), shots: repairShots(parsed.shots, effectiveFrameCount, null, ids) },
 	};

@@ -1053,6 +1053,7 @@ export default function Timeline({
 	onClearMotion,
 	onIkKeyframeAdd,
 	onIkKeyframeRemove,
+	onIkKeyframeMove,
 	onPinSelect,
 	onFootSnapToggle,
 	onBodyContactToggle,
@@ -1120,7 +1121,7 @@ export default function Timeline({
 	// The window key/interval handlers register once; the latest callbacks
 	// are read through a ref so they never go stale mid-playback.
 	const handlers = useRef({});
-	handlers.current = { onScrub, onAdvance, onStep, onPlayToggle, onWaypointToggle, onMarkerSelect, onMarkerRemove, onRootKeyframeAdd, onIkKeyframeAdd, onIkKeyframeRemove, onPinSelect, onFootSnapToggle, onBodyContactToggle, onCameraMoveSelect, onCameraKeyframeAdd, onCameraKeyframeMove, onCameraKeyframeRemove, onCameraBlockSelect, onCameraBlockChange, onCameraPreview, onCameraRailDrawToggle, onCameraRailDelete, onObjectPathDrawToggle, onObjectPathChange, onObjectPathClear, onObjectTimingGestureStart, onObjectTimingGestureEnd, onObjectMarkAdd, onObjectMarkLean, onObjectMarkScrubStart, onObjectMarkScrubEnd, onShotSelect, onShotBoundaryMove, onShotRename, onShotRemove, onShotDuplicate, onShotCut, onShotSplit, onShotMove, onEditGestureStart };
+	handlers.current = { onScrub, onAdvance, onStep, onPlayToggle, onWaypointToggle, onMarkerSelect, onMarkerRemove, onRootKeyframeAdd, onIkKeyframeAdd, onIkKeyframeRemove, onIkKeyframeMove, onPinSelect, onFootSnapToggle, onBodyContactToggle, onCameraMoveSelect, onCameraKeyframeAdd, onCameraKeyframeMove, onCameraKeyframeRemove, onCameraBlockSelect, onCameraBlockChange, onCameraPreview, onCameraRailDrawToggle, onCameraRailDelete, onObjectPathDrawToggle, onObjectPathChange, onObjectPathClear, onObjectTimingGestureStart, onObjectTimingGestureEnd, onObjectMarkAdd, onObjectMarkLean, onObjectMarkScrubStart, onObjectMarkScrubEnd, onShotSelect, onShotBoundaryMove, onShotRename, onShotRemove, onShotDuplicate, onShotCut, onShotSplit, onShotMove, onEditGestureStart };
 
 	// Trackpad/wheel zoom over the FRAME ruler lane only. React registers
 	// onWheel as passive, so a synthetic onWheel could never preventDefault —
@@ -1276,6 +1277,7 @@ export default function Timeline({
 		geometry: rangePinBandGeometry(pin, frameCount, displayFrameCount),
 	})).filter((entry) => entry.geometry), [displayFrameCount, frameCount, rangePins]);
 		const camDragRef = useRef(null);
+	const ikDragRef = useRef(null);
 	const camSuppressClickRef = useRef(false);
 	const shotBoundaryRef = useRef(null);
 	const shotMoveRef = useRef(null);
@@ -1336,6 +1338,35 @@ export default function Timeline({
 			queueMicrotask(() => { camSuppressClickRef.current = false; });
 		}
 		camDragRef.current = null;
+	}
+
+	function beginIkKeyDrag(event, fromFrame) {
+		if (event.button !== 0) return;
+		event.stopPropagation();
+		event.currentTarget.setPointerCapture?.(event.pointerId);
+		const rect = event.currentTarget.closest('.tl-lane')?.getBoundingClientRect();
+		ikDragRef.current = { pointerId: event.pointerId, startClientX: event.clientX, fromFrame, currentFrame: fromFrame,
+			laneWidth: rect?.width ?? 1, displayFrameCount, moved: false };
+		handlers.current.onEditGestureStart?.('ik-key');
+	}
+	function moveIkKeyDrag(event) {
+		const active = ikDragRef.current;
+		if (!active || event.pointerId !== active.pointerId) return;
+		if (!active.moved && Math.abs(event.clientX - active.startClientX) < 1) return;
+		active.moved = true; event.preventDefault(); event.stopPropagation();
+		const framesPerPixel = Math.max(0, active.displayFrameCount - 1) / Math.max(1, active.laneWidth);
+		const next = Math.max(0, Math.min(frameCount - 1, Math.round(active.fromFrame + (event.clientX - active.startClientX) * framesPerPixel)));
+		if (next === active.currentFrame) return;
+		const from = active.currentFrame, moved = handlers.current.onIkKeyframeMove?.(from, next);
+		if (moved !== false) active.currentFrame = next;
+	}
+	function endIkKeyDrag(event) {
+		const active = ikDragRef.current;
+		if (!active || event.pointerId !== active.pointerId) return;
+		if (active.moved) { event.preventDefault(); event.stopPropagation(); }
+		else handlers.current.onScrub?.(active.fromFrame);
+		if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+		ikDragRef.current = null;
 	}
 
 	function onCameraKeyClick(e, key, shotIndex) {
@@ -2118,11 +2149,10 @@ export default function Timeline({
 													className={"tl-marker ik" + (f === frame ? " current" : "")}
 													style={{ "--tl-f": framePct(f, displayFrameCount) }}
 													title={ko(`Full-body IK key at frame ${f} — click to jump, right-click to remove`, `${f}프레임의 전신 IK 키 — 클릭해 이동, 오른쪽 클릭으로 삭제`, `第 ${f} 帧的全身 IK 键 — 点击跳转，右键删除`)}
-													onPointerDown={(e) => {
-														if (e.button !== 0) return;
-														e.stopPropagation();
-														handlers.current.onScrub?.(f);
-													}}
+													onPointerDown={(e) => beginIkKeyDrag(e, f)}
+													onPointerMove={moveIkKeyDrag}
+													onPointerUp={endIkKeyDrag}
+													onPointerCancel={endIkKeyDrag}
 													onContextMenu={(e) => {
 														e.preventDefault();
 														e.stopPropagation();

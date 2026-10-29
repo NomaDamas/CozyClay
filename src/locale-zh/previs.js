@@ -1,0 +1,23 @@
+// Chinese UI copy for camera performance, review and pose-blocking tools.
+export const ZH_PREVIS = {
+	"Camera performance": "摄影机运动",
+	"Stop + save keys": "停止并保存关键帧",
+	"Record walk camera": "录制行走摄影机",
+	"Enters Look through. Right-drag and WASD record the shot; Stop writes one undo step.": "进入镜头视角。右键拖动和 WASD 录制镜头；停止时只生成一个撤销步骤。",
+	"Optics": "光学",
+	"Shift X": "X 轴偏移",
+	"Shift Y": "Y 轴偏移",
+	"Focus target": "对焦目标",
+	"Review": "审阅",
+	"Burn shot metadata into MP4": "将镜头元数据烧录到 MP4",
+	"Draw on this frame": "在此帧上绘制批注",
+	"Finish annotation": "完成批注",
+	"Frame comment": "帧评论",
+	"Add frame comment": "添加帧评论",
+	"Resolve or reopen": "解决或重新打开",
+	"Delete comment": "删除评论",
+	"Weight": "权重",
+	"Breakdown": "中间姿势",
+	"Apply IK corrections as keys when each drag ends": "每次拖动结束时将 IK 修正记录为关键帧",
+	"Breakdown interpolation weight": "中间姿势插值权重",
+};

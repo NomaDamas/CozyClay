@@ -155,6 +155,10 @@ const COMMAND_INPUTS = {
 	"shot.set": { id: "shot-1", set: { targetModel: "seedance-2.5" } }, "shot.rename": { shotId: "shot-1", name: "Renamed" },
 	"shot.setCamera": { shotId: "shot-1", patch: { mode: "follow" } }, "shot.setCameraMode": { shotId: "shot-1", mode: "follow" }, "shot.addKey": { shotId: "shot-1", frame: 8 },
 	"shot.moveKey": { shotId: "shot-1", keyId: "key-1", frame: 8 }, "shot.removeKey": { shotId: "shot-1", keyId: "key-1" },
+	"shot.recordKeys": { shotId: "shot-1", keys: [{ frame: 8, framing: { pos: { x: 0, y: 1.6, z: 5 }, yaw: 0, pitch: 0, fovDeg: 40 } }] },
+	"shot.setOptics": { shotId: "shot-1", optics: { shiftX: 0.1, shiftY: 0, focusTargetId: "actor" } },
+	"shot.setReview": { shotId: "shot-1", review: { burnIn: true, comments: [{ id: "note", frame: 8, text: "Note", resolved: false }], annotations: [] } },
+	"ik.moveKey": { characterId: "actor", from: 8, to: 12 },
 	"shot.clearKeys": { shotId: "shot-1" }, "shot.setTimeline": { frameCount: 96 }, "shot.setLens": { fovDeg: 35 },
 	"shot.frame": { preset: "mocapInteraction" }, "shot.replace": { shots: [createShot("Replacement", 0, 23)] },
 	"shot.captureCamera": { shotId: "shot-1" }, "shot.placeCamera": { x: 2 }, "shot.setStylized": { shotId: "shot-1", assetId: `img-${"e".repeat(32)}` },
@@ -326,7 +330,7 @@ const cases = {
 	},
 	async "every command mutation writes inside one entry of its undo domain"() {
 		const mutations = Object.values(COMMAND_MODULES).flatMap(module => module.declarations).filter(entry => entry.kind === "mutation");
-		assert.equal(mutations.length, 78);
+		assert.equal(mutations.length, 82);
 		for (const declaration of mutations) {
 			// A new shot needs free room at the playhead; the others act inside shot-1.
 			const f = commandFixture({ frame: declaration.id === "shot.create" ? 24 : 8, still: ["shot.setHold", "shot.createStill"].includes(declaration.id) }), [name] = Object.entries(COMMAND_MODULES).find(([, module]) => module.declarations.includes(declaration));

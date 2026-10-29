@@ -231,4 +231,11 @@ export const ZH_SHELL = {
 	"Front view (with a part selected, W moves it)": "前视图（选中部件时，W 移动部件）",
 	"Side view (with a part selected, E rotates it)": "侧视图（选中部件时，E 旋转部件）",
 	"Back view (with a part selected, R scales it)": "后视图（选中部件时，R 缩放部件）",
+	"Frame all (Home)": "全部适配 (Home)",
+	"Front": "正面",
+	"Side": "侧面",
+	"Top view": "顶视图",
+	"X-Ray": "透视",
+	"Surface snap": "表面吸附",
+	"Ruler — pick two surface points": "标尺 — 选择两个表面点",
 };

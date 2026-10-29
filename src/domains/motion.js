@@ -212,6 +212,14 @@ export function createMotionDomain(appContext, characters) {
 			for (const [track, key] of incoming) entry.set(track, key); state.keys.set(at, entry);
 		});
 	}
+	function moveKey(id, from, to) {
+		if (from === to) return;
+		editKeys(id, state => {
+			if (!state.keys.has(from) || state.keys.has(to)) throw new StudioProtocolError('INVALID_ARGUMENT', `Cannot move IK key ${from} to occupied frame ${to}.`);
+			const entry = state.keys.get(from);
+			state.keys.delete(from); state.keys.set(to, entry);
+		});
+	}
 	function synchronizeTimeline() { appContext.storeDomain('cast').syncTimeline(); }
 	// Install a take (motion.compile): one descriptor serves as both the visible and the full take.
 	function replace(id, take, { ikKeys = [], ikPins = [], ikPinResiduals = [] } = {}) {
@@ -283,7 +291,7 @@ export function createMotionDomain(appContext, characters) {
 	}
 	const domain = { documentStore, read, write, layer, writeLayer, motionFor, fullMotionFor, visibleMotion, snapshotTake, project,
 		setKeys, setRangePinState, bakeRangePin, removePin, editKeys, setKey, ...poseKeys, replace, clear, run, edit, beginGesture, finishGesture, beginAction,
-		insideAction: () => running > 0, bakeCurrentKey, keyPose,
+		insideAction: () => running > 0, bakeCurrentKey, keyPose, moveKey,
 		bindRender(context) { appContext = context; },
 		viewRevision: () => viewRevision, canUndo: id => documentStore.canUndo(id),
 		stepHistory: redo => { finishGesture(); return Boolean((redo ? documentStore.redo : documentStore.undo)()); },
@@ -347,6 +355,12 @@ export function useMotion(appContext) {
 	const [footSnap, setFootSnap] = useState(true);
 
 	const [bodyContact, setBodyContact] = useState(true);
+	const [autoKey, setAutoKey] = useState(() => {
+		try { return localStorage.getItem("cozyclay.pose-auto-key") === "true"; } catch { return false; }
+	});
+	useEffect(() => {
+		try { localStorage.setItem("cozyclay.pose-auto-key", String(autoKey)); } catch { /* viewer preference */ }
+	}, [autoKey]);
 
 	// How far (in frames) a correction eases back to the underlying motion
 	// outside its keyed range. 6 frames @ 24 fps = 0.25 s — long enough to
@@ -867,6 +881,7 @@ export function useMotion(appContext) {
 			ids: [...drag.ids],
 			candidate: { ...state, keys: next, tracked: new Set([...state.tracked, ...drag.ids]) },
 		});
+		if (autoKey) applyPendingIkEdit();
 	}
 
 	/** Bake the current tracked rotations at the playhead into a scratch layer
@@ -891,6 +906,9 @@ export function useMotion(appContext) {
 	function ikDeleteKeyframe(frame) {
 		if (!appContext.shared.ikStateRef.current.keys.has(frame)) return;
 		appContext.shared.runStudioAction("character.removeIkKey", { characterId: appContext.shared.activeChar.id, frame });
+	}
+	function ikMoveKeyframe(from, to) { const keys = domain.layer(appContext.shared.activeChar.id).ikKeys;
+		return from === to || !keys.some(row => row.frame === from) || keys.some(row => row.frame === to) ? (appContext.notify(ko(`Frame ${to} already has an IK key or is not a valid drag source`, `${to}프레임에 이미 IK 키가 있거나 드래그 원본이 올바르지 않습니다`)), false) : domain.edit('ik.moveKey', { characterId: appContext.shared.activeChar.id, from, to });
 	}
 
 	/** With IK mode on over a loaded take, a pose pick is a CORRECTION, not a
@@ -933,7 +951,7 @@ export function useMotion(appContext) {
 	return {
 		...domain,
 		ikMode, ikChains, setIkChains, ikFkJoints, setIkFkJoints, ikFocus, setIkFocus, footSnap, setFootSnap,
-		bodyContact, setBodyContact, IK_CORRECTION_BLEND_FRAMES,
+		bodyContact, setBodyContact, autoKey, setAutoKey, IK_CORRECTION_BLEND_FRAMES,
 		ikTick, setIkTick, committedIkEdits, setCommittedIkEdits, ikEditTool, setIkEditTool, focusIkHandle, snapshotIkKeys,
 		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		rangePinApplySpec: (pin) => {
@@ -944,6 +962,6 @@ export function useMotion(appContext) {
 		setCharacterIkKey, removeCharacterIkKey, clearCharacterIkKeys, motion,
 		advanceFrame, stepFrame,
 		leaveIkMode, clearMotion: () => appContext.bus.run('motion.clear', { characterId: appContext.shared.activeChar.id }), clearMotionNative: clearMotion,
-		poseOtherCastMembers, toggleIkMode, ikSolve, ikDragEnd, ikAddKeyframe, ikDeleteKeyframe, ikApplyPoseAsKey,
+		poseOtherCastMembers, toggleIkMode, ikSolve, ikDragEnd, ikAddKeyframe, ikDeleteKeyframe, ikMoveKeyframe, ikApplyPoseAsKey,
 	};
 }

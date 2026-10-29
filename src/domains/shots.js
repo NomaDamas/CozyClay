@@ -272,6 +272,7 @@ export function useShots(appContext) {
   function commitManualCameraFraming() { trackFeature('orbit'); return syncActiveCameraFraming(); }
   function beginCameraFramingGesture() { if (!appContext.shared.ikMode && !appContext.shared.playMode) domain.beginGesture(); }
   function beginTimelineEditGesture(kind, id) {
+    if (kind === 'ik-key') return appContext.storeDomain('motion').beginGesture();
     if (['camera-key', 'rail', 'shot-boundary'].includes(kind)) return domain.beginGesture();
     if (['prompt-move', 'prompt-resize', 'prompt-text'].includes(kind)) return appContext.storeDomain('cast').beginGesture();
   }

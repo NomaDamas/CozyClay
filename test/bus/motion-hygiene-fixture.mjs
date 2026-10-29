@@ -28,6 +28,7 @@ export function motionHygieneDomain(ports) {
     layer: id => rows.find(row => row.id === id), writeLayer: (id, update) => write(rows.map(row => (row.id === id ? { ...row, ...update } : row))),
     clear: () => patch({ take: null, ikKeys: [] }),
     keyPose: corrected,
+    moveKey: corrected,
     bakeRangePin: (_id, pin) => patch({ ikPins: [pin], ikKeys: [{ frame: pin.startFrame, tracks: { [pin.track]: { p: { x: 0, y: 0, z: 0 }, pin: pin.id } } }] }),
     removePin: () => patch({ ikPins: [], ikKeys: [] }),
     requestLineEdit: () => ports.queueMotion('line'), requestTrailRegeneration: () => ports.queueMotion('trail'),

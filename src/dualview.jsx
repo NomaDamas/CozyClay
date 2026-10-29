@@ -3,6 +3,8 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import { fitAspect } from "./shot-frame.js";
 import { updateVisibleViewOffsets } from "./viewport-visible-rect.js";
+import { applyCameraOptics } from "./camera-optics.js";
+import { useViewportTools } from "./viewport-tools.js";
 
 /**
  * Two live viewports out of one scene.
@@ -106,7 +108,8 @@ const EDGE_FRAGMENT = `
 	}
 `;
 
-export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCamRef, planCamRef, poserCamRef, editorCamRef, ikMode = false, planIsMain, playMode = false, lookThrough = false, insetCollapsed = false, planZoom = 1, shotAspect = SHOT_ASPECT, editorLook = false }) {
+export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCamRef, planCamRef, poserCamRef, editorCamRef, ikMode = false, planIsMain, playMode = false, lookThrough = false, insetCollapsed = false, planZoom = 1, shotAspect = SHOT_ASPECT, shotOptics = null, editorLook = false }) {
+	const { xray } = useViewportTools();
 	const invalidate = useThree((state) => state.invalidate);
 	const lastPoserPose = useRef({ position: new THREE.Vector3(), quaternion: new THREE.Quaternion(), valid: false });
 	const interactivePixelRatio = useRef({ base: null, reduced: false, needsFrozenRedraw: false });
@@ -372,9 +375,22 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 				gl.autoClear = true;
 			}
 		};
-		// The stage is the grey workbench in every pane and in every capture
-		// (STAGE_BACKGROUND, room.jsx), so an editor pane is a plain draw.
-		const drawEditorPane = draw;
+		// X-Ray belongs to the working view only. Restore every material before
+		// the shot monitor, plan or offscreen capture can draw the same scene.
+		const drawEditorPane = (...args) => {
+			if (!xray) { draw(...args); return; }
+			const changed = new Map();
+			scene.traverse(node => {
+				if (!node.isMesh || node.userData?.noXray) return;
+				for (const material of Array.isArray(node.material) ? node.material : [node.material]) {
+					if (!material || changed.has(material)) continue;
+					changed.set(material, { transparent: material.transparent, opacity: material.opacity, depthWrite: material.depthWrite });
+					material.transparent = true; material.opacity = Math.min(material.opacity, 0.22); material.depthWrite = false;
+				}
+			});
+			try { draw(...args); }
+			finally { for (const [material, saved] of changed) Object.assign(material, saved); }
+		};
 		const drawVisibleInset = (...args) => {
 			if (!insetOff) draw(...args);
 		};
@@ -407,7 +423,7 @@ export function DualRender({ stageRef, mainRef, insetRef, shotPreviewRef, shotCa
 
 		gl.autoClear = true;
 		shotCam.aspect = shotAspect;
-		shotCam.updateProjectionMatrix();
+		applyCameraOptics(shotCam, shotOptics);
 		// An orthographic plan keeps every puck the same size and the floor
 		// undistorted; a perspective one skews the pucks near the edges and reads
 		// as a 3/4 view rather than a plan.

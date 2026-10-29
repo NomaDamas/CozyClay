@@ -50,16 +50,16 @@ migrated.state.shots.forEach((shot, index) => {
 });
 // The migrated body writes as v5 and then reads back as current.
 const rewritten = JSON.parse(serializeShotAuthoring(migrated.state));
-assert.equal(rewritten.version, 5);
+assert.equal(rewritten.version, 6);
 assert.equal(readShotAuthoring(JSON.stringify(rewritten)).status, "valid");
 assert.deepEqual(readShotAuthoring(JSON.stringify(rewritten)).state.shots, migrated.state.shots);
 
 // Keys step with the version; a v4 body is the newest legacy body.
-assert.equal(SHOT_AUTHORING_VERSION, 5);
-assert.equal(SHOT_AUTHORING_KEY, "cozyclay.shot-authoring.v5");
-assert.equal(SHOT_AUTHORING_QUARANTINE_KEY, "cozyclay.shot-authoring.v5.quarantine");
-assert.deepEqual([...SHOT_AUTHORING_LEGACY_KEYS], ["cozyclay.shot-authoring.v4", "cozyclay.shot-authoring.v3", "cozyclay.shot-authoring.v2", "cozyclay.shot-authoring.v1"]);
-assert.equal(readShotAuthoringDocument({ version: 6, shots: [] }).status, "future");
+assert.equal(SHOT_AUTHORING_VERSION, 6);
+assert.equal(SHOT_AUTHORING_KEY, "cozyclay.shot-authoring.v6");
+assert.equal(SHOT_AUTHORING_QUARANTINE_KEY, "cozyclay.shot-authoring.v6.quarantine");
+assert.deepEqual([...SHOT_AUTHORING_LEGACY_KEYS], ["cozyclay.shot-authoring.v5", "cozyclay.shot-authoring.v4", "cozyclay.shot-authoring.v3", "cozyclay.shot-authoring.v2", "cozyclay.shot-authoring.v1"]);
+assert.equal(readShotAuthoringDocument({ version: 7, shots: [] }).status, "future");
 
 // A still holding a single frame survives with its kind.
 assert.equal(STILL_HOLD_DEFAULT, 48);

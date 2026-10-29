@@ -14,6 +14,7 @@ import { depthRangeFromFrames } from "../src/render-passes.js";
 import { shotsFixture } from "./bus/shots-fixture.mjs";
 import { isProxyFigure } from "../src/scenes.js";
 import { placementAt } from "../src/root-path.js";
+import { applyCameraOptics } from "../src/camera-optics.js";
 const shotFixtures = [];
 import { readStudioFunction } from "./bus/verify-domain-modules.mjs";
 
@@ -75,6 +76,7 @@ function fixture() {
 	const shots = [0, 1].map((index) => ({ id: `shot-${index}`, name: `Shot ${index}`, startFrame: index * 2, endFrame: index * 2 + 1,
 		cameraKeys: [{ id: `key-${index}`, frame: index * 2, framing: structuredClone(framing) }] }));
 	const deps = {
+		useEffect: () => {}, applyCameraOptics,
 		useRef: (value) => ({ current: value }),
 		useState: (value) => {
 			const index = hookIndex++;

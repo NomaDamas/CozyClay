@@ -15,6 +15,8 @@ import { STUDIO_TOOL_SCHEMAS, StudioSchemas } from '../studio-agent-protocol.js'
 import { elementSetSchema, registerElementSet } from './elements.js';
 import './elements/shot.js';
 import { changedIds, fail, shotLabel } from './shared.js';
+import { repairOptics } from '../camera-optics.js';
+import { repairReview } from '../shot-review.js';
 
 const id = StudioSchemas.TargetGuard.properties.targetId;
 const TAKE_FRAME_MAX = 28800;
@@ -28,6 +30,9 @@ const extra = [
   mutation('shot.set', 'Set shot fields', elementSetSchema('shot')),
   mutation('shot.setCamera', 'Set camera block', input({ shotId: id, patch: { type: 'object', properties: {}, additionalProperties: true } })),
   mutation('shot.addKey', 'Add camera key', input({ shotId: id, frame })),
+  { ...mutation('shot.recordKeys', 'Record camera performance', input({ shotId: id, keys: { type: 'array', maxItems: 600, items: { type: 'object', properties: {}, additionalProperties: true } } })), exposure: 'ui-only' },
+  { ...mutation('shot.setOptics', 'Set shot optics', input({ shotId: id, optics: { type: 'object', properties: {}, additionalProperties: true } })), exposure: 'ui-only' },
+  { ...mutation('shot.setReview', 'Set shot review', input({ shotId: id, review: { type: 'object', properties: {}, additionalProperties: true } })), exposure: 'ui-only' },
   mutation('shot.moveKey', 'Move camera key', input({ shotId: id, keyId: id, frame })),
   mutation('shot.removeKey', 'Remove camera key', input({ shotId: id, keyId: id })),
   mutation('shot.clearKeys', 'Clear camera keys', input({ shotId: id })),
@@ -97,7 +102,8 @@ export function register(registry, ports) {
     if (added) ports.publishView({ selection, view: { ...view, frame: added.startFrame }, shotId: added.id });
   }
   function duplicate(shotId) {
-    const source = shotOf(shotId), copied = { kind: source.kind, caption: source.caption, cast: structuredClone(source.cast), stylizedAssetId: source.stylizedAssetId };
+    const source = shotOf(shotId), copied = { kind: source.kind, caption: source.caption, cast: structuredClone(source.cast), stylizedAssetId: source.stylizedAssetId,
+      ...(source.optics ? { optics: structuredClone(source.optics) } : {}), ...(source.review ? { review: structuredClone(source.review) } : {}) };
     if (source.kind !== 'still') {
       const before = owner().read(), next = duplicateShot(before, shotId, owner().state().frameCount);
       return owner().write(next.map(shot => before.includes(shot) ? shot : { ...shot, ...copied }));
@@ -176,6 +182,14 @@ export function register(registry, ports) {
       patchShot(shotId, row => ({ ...row, camera: updateCameraBlock(row.camera, { mode }) }));
     },
     'shot.setCamera': ({ shotId, patch }) => patchShot(shotId, shot => ({ ...shot, camera: updateCameraBlock(shot.camera, patch) })),
+    'shot.recordKeys': ({ shotId, keys }) => {
+      shotOf(shotId);
+      if (!keys.length) fail('INVALID_ARGUMENT', 'A recording must contain at least one camera key.');
+      patchShot(shotId, row => ({ ...row, camera: updateCameraBlock(row.camera, { mode: 'keys' }),
+        cameraKeys: keys.map(key => ({ id: row.cameraKeys.find(current => current.frame === key.frame)?.id ?? createStableItemId('camera-key'), frame: key.frame, framing: key.framing })) }));
+    },
+    'shot.setOptics': ({ shotId, optics }) => patchShot(shotId, shot => ({ ...shot, optics: repairOptics(optics) })),
+    'shot.setReview': ({ shotId, review }) => patchShot(shotId, shot => ({ ...shot, review: repairReview(review, shot) })),
     'shot.addKey': ({ shotId, frame }) => {
       const shot = shotOf(shotId), target = Math.min(owner().state().frameCount - 1, frame);
       if (target < shot.startFrame || target > shot.endFrame) return;

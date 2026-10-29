@@ -29,6 +29,12 @@ import { restorePlaybackBones, snapshotPlaybackBones } from "./motion/rig-snapsh
 import { applyTakeFrame } from "./motion3/playback.js";
 
 import { FlyControls, aimAt, forwardFrom } from "./controls.jsx";
+import { createCameraPerformance, framingFromCamera } from "./camera-performance.js";
+import ViewportMeasurement from "./viewport-measurement.jsx";
+import ReviewOverlay from "./review-overlay.jsx";
+import "./previs.css";
+import { applyCameraOptics, focusDistance } from "./camera-optics.js";
+import { burnInRgba, reviewSlate } from "./review-burn-in.js";
 import { createLiveControl, loadLiveWorkspaceId, mintLiveWorkspaceId } from "./live-control.js";
 import { startUserEdits } from "./command-bus-telemetry.js";
 import { noteHistoryKey, noteShortcutIgnored, noteUnselectedKey } from "./shortcut-friction.js";
@@ -617,6 +623,7 @@ export default function App() {
 	 * back, playback paused, so leaving never leaves the timeline running
 	 * underneath it. */
 	function exitPreview() {
+		if (cameraPerformanceRef.current?.active) stopCameraPerformance();
 		setPreview(false);
 		setLookThroughShot(false);
 		setTlPlaying(false);
@@ -1088,8 +1095,8 @@ export default function App() {
 		motion,
 		advanceFrame, stepFrame,
 		leaveIkMode, clearMotion, poseOtherCastMembers, toggleIkMode, ikSolve,
-		ikDragEnd, ikAddKeyframe,
-		ikDeleteKeyframe, ikApplyPoseAsKey,
+		ikDragEnd, ikAddKeyframe, autoKey, setAutoKey,
+		ikDeleteKeyframe, ikMoveKeyframe, ikApplyPoseAsKey,
 	} = motionDomain;
 	const { handFingers, fingerEditing, setFingerEdit, exposureProbeRef: fingerExposureRef } = useFingerEdit(ikFocus, ikFkJoints);
 	const [partColoursEnabled, setPartColoursEnabled] = useState(false);
@@ -1521,6 +1528,25 @@ export default function App() {
 		camera.rotation.set(angles.pitch, angles.yaw, 0);
 	}
 
+	function wholeSceneFrame() {
+		const rows = [
+			...characters.map(entry => ({ x: entry.x, y: (entry.y ?? 0) + 0.9 * (entry.scale ?? 1), z: entry.z, radius: entry.scale ?? 1 })),
+			...sceneObjects.filter(entry => !isEffectivelyHidden(entry, sceneObjects, characters)).map(entry => ({ x: entry.x, y: (entry.y ?? 0) + (entry.height ?? 1) / 2, z: entry.z,
+				radius: Math.max(entry.height ?? 1, entry.footprint?.width ?? 1, entry.footprint?.depth ?? 1) / 2 })),
+		];
+		if (!rows.length) return { target: { x: 0, y: 1, z: 0 }, radius: 2 };
+		const target = rows.reduce((sum, row) => ({ x: sum.x + row.x / rows.length, y: sum.y + row.y / rows.length, z: sum.z + row.z / rows.length }), { x: 0, y: 0, z: 0 });
+		const radius = Math.max(1, ...rows.map(row => Math.hypot(row.x - target.x, row.y - target.y, row.z - target.z) + row.radius));
+		return { target, radius };
+	}
+	function frameAll() { const { target, radius } = wholeSceneFrame(); frameWorldTarget(target, radius); }
+	function setAxisView(axis) {
+		const { target, radius } = wholeSceneFrame(), distance = radius * 2.4 + 0.6;
+		const offsets = { front: { x: 0, y: radius * 0.2, z: distance }, side: { x: distance, y: radius * 0.2, z: 0 }, top: { x: 0, y: distance, z: 0.001 } };
+		const offset = offsets[axis];
+		if (!offset || lookThroughShot || ikMode) return;
+		setCamGlide({ position: { x: target.x + offset.x, y: Math.max(0.3, target.y + offset.y), z: target.z + offset.z }, target });
+	}
 	// Viewport/plan camera framing would otherwise push an entry per pointermove.
 	const framingSessionRef = useRef(null);
 	// A colour picker streams values for as long as its dialog is open.
@@ -1621,6 +1647,9 @@ export default function App() {
 				event.preventDefault();
 				setGizmoMode(GIZMO_HOTKEYS[event.code]);
 				return;
+			}
+			if (event.code === "Home") {
+				event.preventDefault(); frameAll(); return;
 			}
 			if (event.code === "KeyF") {
 				// Frame whatever is selected — Unity's F, not just for props: the
@@ -2711,13 +2740,37 @@ export default function App() {
 	// CaptureRig reads the shot camera's WebGLRenderTarget, and WebCodecs receives
 	// exactly one VideoFrame for every address in the inclusive export range.
 	const [recState, setRecState] = useState("idle"); // "idle" | "recording"
-	const recRef = useRef(null);
+	const recRef = useRef(null), cameraPerformanceRef = useRef(null), cameraPerformanceShotRef = useRef(null);
 	const tlFrameRef = useRef(0);
 	tlFrameRef.current = tlFrame;
 	const [exportStatus, setExportStatus] = useState(null);
+	const [cameraPerformanceRecording, setCameraPerformanceRecording] = useState(false);
 	const retryExportRef = useRef(null);
 	const frameExportRef = useRef(null);
-
+	function startCameraPerformance() {
+		if (!activeShot || cameraPerformanceRef.current?.active) return false;
+		if (!cameraPerformanceRef.current) {
+			cameraPerformanceRef.current = createCameraPerformance({ sample: () => framingFromCamera(shotCamRef.current, look.current) });
+		}
+		const started = cameraPerformanceRef.current.start({ startFrame: activeShot.startFrame, endFrame: activeShot.endFrame, fps: tlFps });
+		if (!started) return false;
+		enterShotLook();
+		cameraPerformanceShotRef.current = activeShot.id; manualCameraOverrideRef.current = true;
+		setCameraPerformanceRecording(true);
+		setToast(ko("Recording camera performance — right-drag and WASD to shoot; Stop saves editable keys", "퍼포먼스 녹화 중 — 오른쪽 드래그와 WASD로 촬영하고 Stop으로 키를 저장하세요"));
+		return true;
+	}
+	function stopCameraPerformance() {
+		const shotId = cameraPerformanceShotRef.current, keys = cameraPerformanceRef.current?.stop() ?? []; cameraPerformanceShotRef.current = null;
+		setCameraPerformanceRecording(false);
+		manualCameraOverrideRef.current = false;
+		if (!shotId || !keys.length) { setToast(ko("No camera performance was recorded", "녹화된 퍼포먼스가 없습니다")); return null; }
+		setTlFrame(keys.at(-1).frame);
+		runStudioAction("shot.recordKeys", { shotId, keys });
+		setToast(ko(`Camera performance saved as ${keys.length} editable keys`, `퍼포먼스를 편집 가능한 키 ${keys.length}개로 저장했어요`));
+		return keys;
+	}
+	useEffect(() => () => cameraPerformanceRef.current?.cancel(), []);
 	// Snapshot authored inputs once, not when Retry is pressed. Runtime render
 	// resources are acquired per attempt; they are never part of the snapshot.
 	function exportRequest(kind, run, { exportShots = shots, external = false, download = true } = {}) {
@@ -2848,7 +2901,8 @@ export default function App() {
 		// Riding characters move with their object first, then the props.
 		syncCarriers();
 		propSyncRef.current?.(); syncPhysicsOverlays(frame);
-		const sampled = sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame);
+		const shotForFrame = shotAtFrame(context?.shots ?? shots, frame);
+		const sampled = sampleAt(context?.playbackScene ?? playbackScene, shotForFrame, frame);
 		const framing = sampled.camera ?? context?.framing;
 		const cam = shotCamRef.current;
 		if (cam && framing) {
@@ -2858,7 +2912,7 @@ export default function App() {
 			look.current.yaw = framing.yaw;
 			look.current.pitch = framing.pitch;
 			cam.fov = framing.fovDeg;
-			cam.updateProjectionMatrix();
+			applyCameraOptics(cam, shotForFrame?.optics);
 		}
 		return (recRef.current?.capture ?? captureRef.current)?.render() ?? null;
 	}
@@ -2884,7 +2938,7 @@ export default function App() {
 		const cam = shotCamRef.current;
 		if (!cam) throw Object.assign(new Error("The shot renderer is not ready"), { exportFailureCode: "render_failed" });
 		const cameraSnapshot = { position: cam.position.clone(), quaternion: cam.quaternion.clone(),
-			rotationOrder: cam.rotation.order, fov: cam.fov, yaw: look.current.yaw, pitch: look.current.pitch };
+			rotationOrder: cam.rotation.order, fov: cam.fov, view: cam.view?.enabled ? structuredClone(cam.view) : null, yaw: look.current.yaw, pitch: look.current.pitch };
 		const rigSnapshots = Object.values(rigs).filter(Boolean).map(snapshotExportRig);
 		const proxySnapshots = [];
 		const context = recRef.current?.request.context;
@@ -2927,6 +2981,7 @@ export default function App() {
 			cam.rotation.order = cameraSnapshot.rotationOrder;
 			cam.quaternion.copy(cameraSnapshot.quaternion);
 			cam.fov = cameraSnapshot.fov;
+			if (cameraSnapshot.view) cam.view = cameraSnapshot.view; else cam.clearViewOffset();
 			cam.updateProjectionMatrix();
 			look.current.yaw = cameraSnapshot.yaw;
 			look.current.pitch = cameraSnapshot.pitch;
@@ -2949,6 +3004,25 @@ export default function App() {
 		return contentExtent > 0 ? contentExtent : tlFrameCount;
 	}
 
+	function exportReviewDecoration(frame, pixels) {
+		const context = recRef.current?.request.context;
+		const shotForFrame = shotAtFrame(context?.shots ?? shots, frame);
+		if (!shotForFrame?.review?.burnIn) return pixels;
+		const sampled = sampleAt(context?.playbackScene ?? playbackScene, shotForFrame, frame).camera;
+		const targetId = shotForFrame.optics?.focusTargetId;
+		const targetCharacter = (context?.characters ?? characters).find(entry => entry.id === targetId);
+		const targetObject = sceneObjects.find(entry => entry.id === targetId);
+		const at = targetCharacter ? placementAt(targetCharacter, frame, {
+			shotAt: value => shotAtFrame(context?.shots ?? shots, value),
+			takeRoot: targetCharacter.id === (context?.activeId ?? activeChar.id) && (context?.motion ?? motion)
+				? sampleAt({ frameCount: (context?.motion ?? motion).frames, motion: context?.motion ?? motion }, null, frame).subject : null,
+		}) : null;
+		const target = at ? { x: at.x, y: 1.3 * (targetCharacter.scale ?? 1), z: at.z }
+			: targetObject ? { x: targetObject.x, y: (targetObject.y ?? 0) + (targetObject.height ?? 0) / 2, z: targetObject.z } : null;
+		const output = recRef.current?.request.context?.output ?? shotOutput;
+		return burnInRgba(pixels, output.width, output.height, reviewSlate({ shot: shotForFrame, frame, fps: TIMELINE_FPS,
+			focalMm: sampled?.focalMm, projectName, focusDistance: focusDistance(sampled?.pos, target) }));
+	}
 	async function runShotExport({ startFrame = 0, endFrame, download = true, passKind = null, depthRange = null, fileName = null } = {}, job = null) {
 		const resolvedEndFrame = endFrame ?? Math.max(0, currentRecordFrameCount() - 1);
 		// Preserve the download-free browser seam, without a nested lifecycle.
@@ -2962,6 +3036,7 @@ export default function App() {
 			width: output.width, height: output.height,
 			capture: (frame, kind) => withExportFrame(frame, kind
 				? () => renderPass(job.capture, job.capture.scene, shotCamRef.current, kind, null, { depthRange }) : null),
+			decorate: passKind ? null : exportReviewDecoration,
 			passKind, signal: job.controller.signal,
 			onFrame: ({ index, frameCount }) => updateExportStatus(job, "encoding", {
 				completedFrames: index + 1, frameCount, cancellable: true,
@@ -3656,6 +3731,7 @@ export default function App() {
 			// effect does not depend on the shot list, so a closure over it would
 			// answer with the cut as it stood when the effect last ran.
 			captureMeta: (frame) => appContext.live.state.captureShotMeta(frame ?? appContext.live.state.timeline.currentFrame),
+			activeShotId: () => appContext.live.state.activeShotId, shotCameraKeyCount: (shotId) => appContext.live.state.shots.find(entry => entry.id === shotId)?.cameraKeys.length ?? 0,
 			// QA-only reference slots (#167): set the pictures a headless run cannot
 			// reach through a file dialog, then take the capture the live
 			// capture_framing_png command returns — references included.
@@ -4504,7 +4580,7 @@ export default function App() {
 		setStudioPick, appContext, removePose, activeRig, saveCurrentPose,
 		setTlFrame, tlFrameCount,
 		tlFrame, isRigSelection, ikChains, ikFocus, footSnap, poseObjectOpacity, setPoseObjectOpacity, capturePoseImage,
-		ikEditTool, setIkEditTool, ikSolve, ikDragEnd, ikTick, handFingers, fingerEditing, setFingerEdit,
+		ikEditTool, setIkEditTool, ikSolve, ikDragEnd, ikTick, autoKey, setAutoKey, ikMoveKeyframe, handFingers, fingerEditing, setFingerEdit,
 		pendingIkEdit, applyPendingIkEdit, cancelPendingIkEdit,
 		rangePins, rangePinResiduals, rangePinSelection, rangePinPartPick,
 		rangePinPreview, setRangePinSelection, setRangePinPartPick, previewRangePinDraft, applyRangePinDraft,
@@ -4534,7 +4610,7 @@ export default function App() {
 		changeActiveCamera, cameraRail, previewCameraShot, toggleCameraRailDraw, deleteCameraRail,
 		selectTimelineShot, clearMotion,
 		spawnCharacter, exportShotVideo, stopShotRecording, retryExport, poseRefusal,
-		beginWorkspaceResize,
+		beginWorkspaceResize, frameAll, setAxisView,
 		preferencesOpen, setPreferencesOpen, statusText, setStatusText, previewRanges, setPreviewRanges,
 		flySpeed, liveHubStatus: liveWorkspaceHandle ? "connected" : "disconnected",
 		agentOpen: !agentCollapsed,
@@ -4542,7 +4618,7 @@ export default function App() {
 		saveStatus: { state: projectSaveState, text: projectStatus, dirty: projectDirty, name: projectName },
 		exportStatus: exportStatus && { ...exportStatus, cancel: stopShotRecording, retry: retryExport },
 		subscribeToasts: (listener) => { toastSinkRef.current.add(listener); return () => toastSinkRef.current.delete(listener); },
-		enterShotLook,
+		enterShotLook, startCameraPerformance, stopCameraPerformance, cameraPerformanceRecording,
 		lookThroughShot, exitShotLook: exitPreview,
 	};
 
@@ -4560,6 +4636,7 @@ export default function App() {
 						}
 					}}>
 				<ViewportToolbar />
+				<ReviewOverlay />
 				{(embedMode || playgroundMode) && <CompositionGuideButton guideMode={guideMode} onCycle={(mode) => runStudioAction("view.setGuideMode", { mode })} />}
 				{sculptMode && !sculptTarget && (
 					<div className="vp-sculpt-hint" role="status" data-testid="sculpt-empty">
@@ -5017,6 +5094,7 @@ export default function App() {
 							/>
 							<EditorCamSeed camRef={editorCamRef} lookRef={editorLook} shotCamRef={shotCamRef} subject={charA} />
 							<CameraGlide glide={camGlide} camRef={editorCamRef} lookRef={editorLook} onDone={() => setCamGlide(null)} />
+							<ViewportMeasurement camRef={ikMode ? poserCamRef : lookThroughShot ? shotCamRef : editorCamRef} />
 							<ShotLookApplier camRef={shotCamRef} look={look} />
 							<ShotCameraGhost
 								camRef={shotCamRef}
@@ -5060,6 +5138,7 @@ export default function App() {
 								insetCollapsed={workspaceLayout.insetCollapsed || workflowMode === "motion" || workflowMode === "pose" || workflowMode === "sculpt"}
 								planZoom={workspaceLayout.planZoom}
 								shotAspect={shotOutput.aspect}
+								shotOptics={activeShot?.optics ?? null}
 							/>
 						</Canvas>
 

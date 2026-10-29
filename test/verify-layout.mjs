@@ -134,14 +134,15 @@ expect("selection routing is derived once, not repeated per foldout", app.includ
 expect("an unowned selection explains itself instead of showing a blank column", app.includes("data-inspector-empty") && css.includes(".inspector-empty"));
 expect("the heavy motion pipeline starts collapsed", app.includes("function Foldout({ title, hidden, defaultOpen = true, openSignal = 0, children })") && app.includes("useState(defaultOpen)"));
 expect(
-	"recording captures the clean render without a frame stamp",
+	"recording stays clean unless review burn-in is explicitly enabled",
 	app.includes("capture: (frame, kind) => withExportFrame(frame, kind") &&
 		app.includes("const plate = applyExportFrame(frame);") &&
-		!app.includes("burnInCapture") &&
+		app.includes("if (!shotForFrame?.review?.burnIn) return pixels;") &&
+		app.includes("decorate: passKind ? null : exportReviewDecoration") &&
 		// #276 retains #193's preflight shot list in the immutable request.
 		// The executable export-recovery tests verify selection and retry.
 		app.includes("structuredClone({ shots: exportShots, playbackScene") &&
-		app.includes("sampleAt(context?.playbackScene ?? playbackScene, shotAtFrame(context?.shots ?? shots, frame), frame)"),
+		app.includes("sampleAt(context?.playbackScene ?? playbackScene, shotForFrame, frame)"),
 );
 expect(
 	"recording uses current motion content instead of a stale timeline tail",
