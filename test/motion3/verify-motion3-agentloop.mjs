@@ -228,7 +228,7 @@ const lateGoal = reject(s => { s.goals = [{ name: "late", near: ["joint:LeftHand
 expect("frames: a goal past the end that \"auto\" would not cover gets the number alone",
 	lateGoal.replace(/^MOTION_SPEC_INVALID: /, "").split("\n").includes("goals[0].at = [740,760] is outside 0..729 (spec.frames 730); set frames >= 761"), lateGoal);
 const overview = refused(() => act("motion.describe", { topic: "overview" }));
-expect("describe: an unknown topic names the allowed ones", overview === "$.args.topic: \"overview\" is not one of: essentials, spec, skills, anchors, props, objects, checks, goals, probes, channels, refs, fix, examples.", overview);
+expect("describe: an unknown topic names the allowed ones", overview === "$.args.topic: \"overview\" is not one of: essentials, spec, skills, anchors, props, objects, checks, goals, probes, channels, refs, fix, examples, fill.", overview);
 
 if (failures) { console.error(`${failures} motion3 agent-loop check(s) failed`); process.exit(1); }
 console.log("motion3 agent loop: all checks passed");
