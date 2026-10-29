@@ -29,6 +29,7 @@ import { createRepairWatch } from "../motion3/repair-watch.js";
 import { peopleOf } from "../motion3/people.js";
 import { hybridCapsuleHint } from "../motion3/hybrid-hint.js";
 import { patchTooBroad } from "../motion3/patch-guard.js";
+import { createInstalledQa } from "./motion3-installed.js";
 
 const TIMELINE_FPS = 24;
 const id = { type: "string", minLength: 1 };
@@ -122,21 +123,8 @@ export function register(registry, ports) {
 	};
 	// where a take was baked: the body's place and a hash of the scene's bodies (a take kept for the stop rule fits only
 	// there): 0.14 ms for 860 bodies, where their JSON took 0.9 ms and 295 KB a key
-	const issues = groups => groups.reduce((n, g) => n + (g.count ?? 1), 0);
-	const beatsInstalled = (characterId, qa) => {
-		const on = owner().motionFor(characterId);
-		if (!on?.spec) return true;
-		const was = store.parts(specIdOf(on.spec))?.groups;
-		return Array.isArray(was) && (qa.groups.length < was.length || (qa.groups.length === was.length && issues(qa.groups) < issues(was)));
-	};
-	// INSTALL_WORSE (variant M, sit-l-r1: a 1-problem take overwritten by a 4-problem recompile): install: true still installs, and
-	// says so when the take it replaces had fewer QA problems; a take whose QA this session never measured gets no note
-	const installWorse = (characterId, qa) => {
-		const on = owner().motionFor(characterId), onId = on?.spec ? specIdOf(on.spec) : null, was = onId && store.parts(onId)?.groups;
-		if (!Array.isArray(was)) return null;
-		const before = qaProblems({ groups: was, ok: was.length === 0 }), now = qaProblems(qa);
-		return before < now ? `INSTALL_WORSE: replaced the installed take ${onId} (${before} QA problem${before === 1 ? "" : "s"}) with this one (${now}); install: "ifClean" keeps the better take` : null;
-	};
+	// the installed take's QA for ifClean and INSTALL_WORSE: stored, or measured once from its spec (a reload empties the store)
+	const installedQa = createInstalledQa({ store, owner, compile });
 	const placeKey = (character, scene) => {
 		let h = 2166136261;
 		const mix = v => { h = Math.imul(h ^ Math.round(v * 1e4), 16777619); };
@@ -190,14 +178,16 @@ export function register(registry, ports) {
 		// the frames this patch touched stay through key thinning (thin.js)
 		const before = base === undefined ? null : store.get(base) ?? installedSpec(), keysAt = (sp, f) => JSON.stringify((sp?.keys ?? []).filter(k => k.f === f));
 		const protect = before ? [...new Set((source.keys ?? []).map(k => k.f))].filter(f => keysAt(before, f) !== keysAt(source, f)) : [];
-		return after(compile(character, source, { probes, repair: repairWith, installing: install !== false, thin, protect }, {}, context?.taskId, scene), r => {
+		// the installed take's QA, measured before this compile when the store lost it (motion3-installed.js)
+		return after(install === false ? null : installedQa.measure(character, scene), on => after(compile(character, source, { probes, repair: repairWith, installing: install !== false, thin, protect }, {}, context?.taskId, scene), r => {
 			const { qa, take } = r, notes = [...patched, ...(r.notes ?? [])];
 			// ifClean: install a clean result (qa.ok includes the goals; after repair when asked), and one that beats the installed
 			// take's QA (fewer groups, then fewer frame issues) or the first when none is on (variant K: box ended with no take in 4 of
-			// 5 runs under ifClean / never); a take whose QA this session never measured is replaced only by a clean one
-			const wanted = install === "ifClean" ? qa.ok || beatsInstalled(characterId, qa) : install;
+			// 5 runs under ifClean / never); over a take whose QA cannot be measured, any take (with a note)
+			const verdict = install === "ifClean" ? installedQa.verdict(on, qa) : { wanted: install };
+			const wanted = verdict.wanted;
 			let installs = wanted, kept = false, timing;
-			const worse = install === true ? installWorse(characterId, qa) : null;
+			const worse = install === true ? installedQa.worse(on, qa) : null;
 			// open ranges are stored with the values the search chose, so motion.qa re-measures this take
 			if (wanted) {
 				// ifClean of the take already installed changes nothing (no undo entry; IK edits on it stay)
@@ -214,14 +204,14 @@ export function register(registry, ports) {
 				: best ? `; not installed; the best take so far, ${best.specId}, installed` : install === "ifClean" ? (installs ? "; installed" : "; not installed") : "";
 			const hint = hybridCapsuleHint(ports.storeDomain?.("scenes")?.metadata?.().castStyle, { stuck, qa });
 			const flat = rounds(characterId, qa, base === undefined), broad = patchTooBroad(patch);
-			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad || worse ? { notes: [broad, worse].filter(Boolean) } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(r.thinned ? { thinned: r.thinned } : {}) });
+			const output = report(r, { frames: r.frameCount, fps: TIMELINE_FPS, installed: Boolean(wanted) || self, ...(flat ? { noImprovementRounds: flat } : {}), ...(stuck ? { stuck } : {}), ...(hint ? { hint } : {}), ...adjustedOf(notes), ...(broad || worse || verdict.note ? { notes: [broad, worse, verdict.note].filter(Boolean) } : {}) }, { ...delta, ...(r.repair ? { repair: r.repair } : {}), ...(timing ? { timing } : {}), ...(r.thinned ? { thinned: r.thinned } : {}) });
 			// agent-progress.js: viewport ghost, timeline beats, agent panel
 			const draft = publishDraft(characterId, { take, installed: installs || kept || self, specId: output.specId, label: r.label, qa, timeline: r.timeline });
 			noteDraftCompiled(draft, r, { installed: installs || kept || self, stuck, repaired: Boolean(r.repair), adjusted: notes.length > 0 });
 			// agent:turn_summary: this turn's drafts and their QA (agent-turn-telemetry.js)
 			noteTurnDraft(context?.turnId, { clean: Boolean(qa.ok), problems: qaProblems(qa), stuck: Boolean(stuck) });
 			return { affectedIds: installs || best ? [characterId] : [], summary: `Compiled ${r.frameCount} frames; QA ${qaSay(qa)}${how}${adjustedSay(notes)}.${install !== false && qaProblems(qa) === 0 ? " QA clean — done (no further rounds)." : ""}${installs || kept || self ? ` Installed take: ${output.specId}.` : best ? ` Installed take: ${best.specId}.` : ""}${r.thinned ? ` Thinned ${r.thinned.removed.length} free-span key${r.thinned.removed.length === 1 ? "" : "s"} QA did not need (output.thinned).` : ""}`, output, ...workerWarning() };
-		});
+		}));
 	} });
 	registry.register({ ...declarations[1], available: mounted, run({ characterId, checks }) {
 		const character = characterOf(ports, characterId), take = installed(characterId);
