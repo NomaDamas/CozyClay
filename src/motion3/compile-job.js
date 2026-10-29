@@ -15,7 +15,7 @@ import { bakeTake } from "./take.js";
 import { skeletonFor } from "./rigs/index.js";
 import { keptPeople } from "./people.js";
 
-const TIMELINE_FPS = 24, FINISH_AT = 2;
+const TIMELINE_FPS = 24, FINISH_AT = 2, HINT_LIMIT_MS = 20000;
 const refuse = (code, message) => { throw Object.assign(new Error(message), { code }); };
 
 /** Runs `run`, turning a MOTION_SPEC_INVALID error into INVALID_ARGUMENT with the exact message. */
@@ -40,8 +40,9 @@ const fresh = value => (Array.isArray(value) ? value.map(fresh) : value && typeo
  * runCompileJob({ model, scene, spec, probes?, checks?, lenient?, repair?, bake? }) -> { stored, qa, observations,
  * used, fixed, search, timeline, probes?, notes?, ms (+ repair: its wall ms), frameCount, label, repair?, take? }
  * bake: { position, yaw, prompt? } bakes the final result's take (prompt: given, else the final spec's label).
+ * hintLimitMs: the job's time after which hint patches are no longer compiled (default HINT_LIMIT_MS; tests pass 0).
  */
-export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, finish, thin, protect, bake }) {
+export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, checks, lenient, repair, finish, thin, protect, bake, hintLimitMs }) {
 	const sk = skeletonFor(model);
 	const opts = { ...(checks ? { checks } : {}), ...(lenient ? { lenient: true } : {}) };
 	// spec.probes and bare moved ids are lifted before fps is filled in, so the specId stays the spec's own
@@ -72,7 +73,9 @@ export function runCompileJob({ model, scene, spec: asked, probes: sentProbes, c
 	// compiled most of the patches already (seen), where a plain compile paid two more compiles for them (bench replay: first
 	// compile 1.6 -> 5.2 s median) and the agent applied an offered patch as sent once in the 60 bench runs (374 direct
 	// compiles, 319 with repair; a plain compile is mostly a variant in a sweep); a plain compile keeps the hint's words only
-	if (repair) checkHints(fixed.spec, fixed.result.qa, s => seen.get(JSON.stringify(s)) ?? measured(s).qa);
+	// past HINT_LIMIT_MS since the job began a patch not compiled yet is dropped (bench box, M2: two hint compiles of a slow
+	// walk added 155 s to a 33 s compile on the Mac, and the job ran past the hub's 240 s on the box)
+	if (repair) checkHints(fixed.spec, fixed.result.qa, s => seen.get(JSON.stringify(s)) ?? (performance.now() - t0 > (hintLimitMs ?? HINT_LIMIT_MS) ? null : measured(s).qa));
 	else for (const g of fixed.result.qa?.groups ?? []) delete g.patch;
 	// ms.repair: the whole repair's wall time, so a sweep that repairs every variant shows what it costs
 	const r = fixed.result, label = fixed.spec?.label ?? null, ms = fixed.repair ? { ...r.ms, repair: Math.round(performance.now() - t0) } : r.ms;

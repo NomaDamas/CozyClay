@@ -60,8 +60,14 @@ function variants(c, d) {
 		.filter(v => v.args.step >= STRIDE_MIN && v.args.step <= STRIDE_MAX);
 }
 
-/** Issues in the walk's own frames (the kinds a cadence causes) of a compiled probe: a count. */
-const walkIssues = (qa, f0, end) => qa.groups.filter(g => WALK_KINDS.has(g.kind) && g.last >= f0 && g.first <= end).reduce((n, g) => n + g.count, 0);
+/**
+ * Issues in the walk's own frames (the kinds a cadence causes) of a compiled probe: a count. An arm's REACH is not one:
+ * the probe has no moving objects, so a hand gripping a carried box misses it every frame whatever the cadence, no
+ * candidate walked clean and every compile paid all TRIALS probes (bench box, M2: ~25 s of a 34 s compile on the Mac,
+ * 80 s on the box, three compiles past the hub's 240 s).
+ */
+const walkIssues = (qa, f0, end) => qa.groups.filter(g => WALK_KINDS.has(g.kind) && !(g.kind === "REACH" && /^arm_/.test(g.subject ?? ""))
+	&& g.last >= f0 && g.first <= end).reduce((n, g) => n + g.count, 0);
 
 /**
  * planWalks(spec, { sk, scene, trial }) -> [{ i, args, note }] for every walkTo with arrive (applyWalkPlans puts
