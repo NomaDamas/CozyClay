@@ -44,7 +44,7 @@ export const EXAMPLES = {
 		{ name: "fingers at the spot", near: ["prop:cupGrip.fingers", "anchor:spot"], at: 30 },
 		{ name: "cup at the mouth", near: ["object:cup.rim", "landmark:mouth"], tol: 0.06, at: [40, 50] },
 		{ name: "hand above the hips", above: ["joint:RightHand", "bone:Hips"], at: 30 }] },
-	fix: { fix: { reach: true, slide: true, penetration: 0.02, self: true, retime: false } },
+	fix: { fix: { reach: true, slide: true, penetration: 0.02, self: true, retime: true } },
 };
 
 const UNITS = `World metres, +Y up; ${CONVENTIONS.yaw}; the character's left is +X at yaw 0. Angles in degrees.`;
@@ -114,7 +114,7 @@ export const NOTES = {
 		"object:<id> takes a body or a group (the box around its parts); in a distance a bare object:<id> means its surface.",
 		"Goals and probes take every kind; spec.checks keep joint:, prop: and anchor:."],
 	fix: [`spec.fix keys: ${FIX_KEYS.join(", ")}; false turns all off. output.fixed reports what each one changed.`,
-		"reach, slide, self, stance and person are on by default; penetration and retime are opt-in.",
+		"reach, slide, self, stance, person and retime are on by default; penetration is opt-in; fix: { retime: false } keeps the key timing exactly.",
 		"reach also brings the body to a hand on a world or scene-object anchor the straight arm misses: a lean, a hip shift, lower hips, the feet kept (fixed.reachBody lists each move); farther, place the body. retime is kept only when QA is no worse with it.",
 		"self keeps the arms out of the body on its fitted skin (QA BODY measures the same skin): wrist targets inside it go onto it, elbows turn about the shoulder-wrist line, a hand a little inside is pushed out. A fit's target (the mouth) is never moved; what is left is BODY, with checks.allow { part, object: <body part>, depth } for a contact meant to touch (a hand on a knee).",
 		"person keeps the arms out of the other characters (QA PERSON): the wrist target moves out back the side the hand came from, however deep; an FK arm is left (fixed.person.skipped). A touch you mean: checks.allow { part, object: \"person:<id>\", depth }."],

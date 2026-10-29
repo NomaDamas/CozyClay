@@ -144,7 +144,7 @@ export const FIX_TYPES = {
 	slide: bool("lifts sunk soles; a planted heel or ball drifting under 1 cm stays put; a heel-up foot pivots on its ball", { default: true }),
 	penetration: { oneOf: [{ type: "boolean" }, { type: "number", minimum: 0, maximum: 0.05 }], default: 0, description: "push hands out of boxes up to this depth, m (true = 0.02)" },
 	self: bool("arms kept out of the body's skin (wrists, elbows)", { default: true }),
-	retime: bool("speed spikes borrow frames from the neighbouring keys", { default: false }),
+	retime: bool("speed spikes borrow frames from the neighbouring keys", { default: true }),
 	stance: bool("a standIdle stance in a scene body slides out of it (observations.placed)", { default: true }),
 	grasp: bool("fingers close on what the hand holds; it rests in the hand", { default: true }),
 	person: bool("arms kept out of the other characters (QA PERSON)", { default: true }),
