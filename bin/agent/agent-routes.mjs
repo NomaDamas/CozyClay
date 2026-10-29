@@ -472,7 +472,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 		let replySegment = "", lastReply = "";
 		const send = event => {
 			if (event.type === "text.delta") { replySegment += event.text ?? ""; lastReply = replySegment; }
-			else if (!["execution_telemetry", "execution_tool_started", "thinking.delta", "tool.compose", "tool.progress", "sculpt.sketch"].includes(event.type)) {
+			else if (!["execution_telemetry", "execution_tool_started", "thinking.delta", "tool.compose", "tool.progress", "sculpt.sketch", "studio.waiting"].includes(event.type)) {
 				if (event.type === "tool.start") replySegment = "";
 				turnFrames.push(event);
 			}
@@ -504,7 +504,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				return refreshed;
 			},
 		};
-		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, previsMode: value.context.scene?.previsMode, session: { signal: controller.signal, admission, actionIndex: current?.actionIndex ?? [], baseline: value.context }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
+		const tools = createStudioTools({ liveHub: hub, workspaceHandle: value.context.host.workspaceHandle, previsMode: value.context.scene?.previsMode, session: { signal: controller.signal, admission, actionIndex: current?.actionIndex ?? [], baseline: value.context, onGestureWait: waiting => send({ type: "studio.waiting", reason: "gesture", waiting }) }, resolveImage: async (id, correlation) => hub.command("resolve_studio_image", { imageId: id, ...correlation }, value.context.host.workspaceHandle) });
 		const modelTools = tools.map(tool => ({
 			...tool,
 			handler: async (args, call) => {
@@ -516,7 +516,7 @@ export function createAgentHandler({ auth = defaultAuth, codex, models, codexBas
 				return { ...result, visualStatus: visual.visualStatus, imageId: visual.imageId, revision: visual.revision, receiptId: visual.receiptId, ...(visual.dataUrl ? { dataUrl: visual.dataUrl } : {}) };
 			},
 		}));
-		const turnTransaction = studioTransaction({ hub, context: current, turnId: value.turnId, admission, task: value.task, signal: controller.signal, plain: Boolean(value.main) });
+		const turnTransaction = studioTransaction({ hub, context: current, turnId: value.turnId, admission, task: value.task, signal: controller.signal, plain: Boolean(value.main), onWait: waiting => send({ type: "studio.waiting", reason: "gesture", waiting }) }); // the user mid-drag (studio-busy-wait.mjs)
 		// The turn's step checklist (plan-tool.mjs): the model calls it directly or inside a script, and the panel shows it.
 		const plan = createPlanTool({ emit: send }), script = createScriptTool({ tools: [...modelTools, plan.nested], signal: controller.signal, emit: send });
 		const scriptTool = {

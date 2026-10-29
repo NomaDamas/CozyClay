@@ -47,7 +47,7 @@ export function createStudioAppBinding(ports) {
 	let physicsRevision = 0, viewRevision = 0;
 	function refresh() {
 		const document = Object.assign({}, ...(ports.storeDomains?.() ?? []).map(domain => domain.document()));
-		const raw = { ...ports.read(), ...document, document };
+		const read = ports.read(), raw = { ...read, ...document, document, busy: Boolean(read.busy || actionBus?.uiGesture?.()) }; // busy: studio-busy.js
 		const host = validateStudioIdentity(raw.host);
 		if (!same(owner, host)) {
 			owner = host; tokens.clear(); receipts.clear(); images.clear();
